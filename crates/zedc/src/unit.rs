@@ -4,16 +4,24 @@
 //!
 //! A unit path `geometry.shapes` names the file `geometry/shapes.zed` under the root. The
 //! loader reads the units the roots import, and the units those import, once each; orders them
-//! by a depth-first search with a visited set, so that each unit is resolved after the units
-//! it imports, in time linear in the units and imports; and rejects each import that closes a
-//! cycle, naming every unit and import on the cycle. A unit is resolved by the query
-//! [`Query::Resolve`](crate::query::Query::Resolve), keyed by its text and the exports of the
-//! units it imports, so an edit that leaves a unit's exports alone resolves no importer again.
-//! Linking a use of another unit's name to its definition is step L2.4.
+//! by the strongly connected components of the import graph, found by a depth-first search
+//! with a visited set, so that each unit is resolved after the units it imports, in time
+//! linear in the units and imports; and rejects the imports inside each component, which all
+//! lie on cycles, reporting each component once at an import the graph alone fixes, naming
+//! every unit and import on one cycle through it (DESIGN.md sec:units). A unit is resolved by
+//! the query [`Query::Resolve`](crate::query::Query::Resolve), keyed by its text and the
+//! exports of the units it imports, so an edit that leaves a unit's exports alone resolves no
+//! importer again. Linking a use of another unit's name to its definition is step L2.4.
 //!
-//! Where DESIGN.md does not say: a unit on an import cycle sees the units after it on the
-//! cycle, and the import that closes the cycle is the one rejected, so each cycle is one error;
-//! a manifest that cannot be read or parsed stops the package before any unit is read.
+//! Nothing here depends on the order of the roots or on the order in which the loader meets
+//! units: the components, the order of the units, the import each cycle is reported at, its
+//! text, and the order of the problems (by file, each file's in a fixed order) are the same for
+//! every order of the roots, and so for a unit checked alone and in a batch.
+//!
+//! Where DESIGN.md does not say: a unit on an import cycle sees none of the units of its
+//! component, whose imports of each other are each rejected, with the names they bring in bound
+//! but unchecked; a manifest that cannot be read or parsed stops the package before any unit is
+//! read.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,7 +31,7 @@ use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
 use crate::lex::{self, Span, Tok};
 use crate::parse::{TOP, parse};
 use crate::query::{self, Db, Parsed};
-use crate::resolve::{self, Alone, Exports, Resolved, Units};
+use crate::resolve::{self, Alone, Exports, Refused, Resolved, Units};
 use crate::run::{self, Diagnostic};
 use crate::source;
 
@@ -256,12 +264,15 @@ pub struct Package {
     pub units: Vec<Loaded>,
     /// Each unit's index in `units`, by path.
     pub index: HashMap<Arc<str>, usize>,
-    /// The units in dependency order: each after the units it imports, but for an import that
-    /// closes a cycle.
+    /// The units in dependency order: each after the units it imports outside its strongly
+    /// connected component, the units of a component together, in order of their paths. The
+    /// order depends only on the import graph and the units' paths, never on the roots' order.
     pub order: Vec<usize>,
     /// The errors of the manifest, of a root that names no file, and of each unit: a
-    /// rejection of each import of a unit with no file, or one that does not parse, or that
-    /// closes a cycle; and each unit's own errors and forms of later steps.
+    /// rejection of each import of a unit with no file, or one that does not parse; each import
+    /// cycle, once per strongly connected component and once per unit that imports itself; and
+    /// each unit's own errors and forms of later steps. In order of their files, each file's in
+    /// an order fixed by its text and the package.
     pub problems: Vec<Problem>,
 }
 
@@ -323,14 +334,6 @@ fn add(pkg: &mut Package, todo: &mut Vec<Arc<str>>, path: &Arc<str>) -> usize {
     });
     todo.push(path.clone());
     i
-}
-
-/// The colors of the depth-first search: not met, on the search's path, done.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Color {
-    White,
-    Gray,
-    Black,
 }
 
 /// The package under `files` that the units `roots` reach, each unit resolved through `db`
@@ -433,7 +436,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             ),
         });
     }
-    let cycles = order(&mut pkg, &edges);
+    let comp = order(&mut pkg, &edges, prelude.map(|(p, _)| p));
     // The prelude unit and every unit it reaches see no prelude unit.
     let mut bare = vec![false; pkg.units.len()];
     if let Some((p, _)) = prelude {
@@ -467,17 +470,24 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                 continue;
             }
             let dep = &pkg.units[v];
+            let because = |why: String| Err(Refused::Because(why));
+            // An import inside the unit's component lies on a cycle, which `order` reported.
             let got = match (&dep.resolved, &dep.text, &dep.parsed) {
+                _ if comp[v] == comp[u] => Err(Refused::OnCycle),
                 (Some(r), _, _) => Ok(r.clone()),
-                (None, None, _) => Err(format!("there is no file `{}` under the root", dep.file)),
-                (None, Some(Err(why)), _) => {
-                    Err(format!("the file `{}` cannot be read: {why}", dep.file))
+                (None, None, _) => {
+                    because(format!("there is no file `{}` under the root", dep.file))
                 }
-                (None, Some(Ok(_)), Some(p)) if p.is_err() => Err(format!(
+                (None, Some(Err(why)), _) => {
+                    because(format!("the file `{}` cannot be read: {why}", dep.file))
+                }
+                (None, Some(Ok(_)), Some(p)) if p.is_err() => because(format!(
                     "the file `{}` does not parse, so the names it defines are not known",
                     dep.file
                 )),
-                (None, _, _) => Err(cycles[&(u, v)].clone()),
+                (None, _, _) => {
+                    unreachable!("a unit's imports outside its component are put before it")
+                }
             };
             deps.push((dep.path.clone(), got));
         }
@@ -492,7 +502,8 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         for (path, d) in &deps {
             let read = match d {
                 Ok(_) => Read::Unit(&numbers[pkg.index[path]]),
-                Err(why) => Read::Failed(why),
+                Err(Refused::Because(why)) => Read::Failed(why),
+                Err(Refused::OnCycle) => Read::OnCycle,
             };
             push_read(&mut parts, path, read);
         }
@@ -512,88 +523,213 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         numbers[u] = db.exports_number(&r.res.exports).to_le_bytes();
         pkg.units[u].resolved = Some(r);
     }
+    // The problems were met in an order that follows the roots (the units read, those that do
+    // not parse, the roots with no file); by file, each file's in the order it was given them,
+    // they are the same for every order of the roots. A stable sort, O(P log P).
+    pkg.problems.sort_by(|a, b| a.file.cmp(&b.file));
     pkg
 }
 
-/// Orders the units of `pkg` into `pkg.order`, each after the units it imports by `edges`,
-/// by a depth-first search with an explicit stack and a color per unit, so each unit and
-/// import is met once. Returns the rejection of each import that closes a cycle, by its
-/// importer and the unit it names: the whole cycle, each unit with the import that leads on.
-fn order(pkg: &mut Package, edges: &[Vec<(usize, Span)>]) -> HashMap<(usize, usize), String> {
+/// Puts the units of `pkg` in `pkg.order` by the strongly connected components of the import
+/// graph `edges`, and reports each import cycle in `pkg.problems`; returns each unit's
+/// component, the components numbered in the order they are put.
+///
+/// The components are found by Tarjan's algorithm on an explicit stack, each unit and import
+/// met once. The search starts from the units in order of their paths and takes each unit's
+/// imports in the order of its text, so the order of the components, each after the
+/// components it imports, depends on the graph and the paths alone, never on the order of the
+/// roots or of the indices the loader gave the units; a component's units are put in order of
+/// their paths. The search starts first from the `prelude` unit, so it and the units it reaches
+/// come before every unit that sees it, as each such unit's resolution reads it. Each import
+/// inside a component lies on a cycle, since the unit it names reaches back. A unit that
+/// imports itself is reported at its first import of itself, and a component of two units or
+/// more once, by [`report`]. Time O(U log U + E + T) for U units, E imports and T the bytes of
+/// the units whose imports a report names: the sort by path, one visit of each unit and import,
+/// and the lines of those units.
+fn order(pkg: &mut Package, edges: &[Vec<(usize, Span)>], prelude: Option<usize>) -> Vec<usize> {
+    const UNSEEN: usize = usize::MAX;
     let n = pkg.units.len();
-    let mut color = vec![Color::White; n];
-    let mut at = vec![0; n];
-    let mut lines: Vec<Option<source::Lines>> = (0..n).map(|_| None).collect();
-    let mut cycles = HashMap::new();
-    for s in 0..n {
-        if color[s] != Color::White {
+    let mut starts: Vec<usize> = (0..n).collect();
+    starts.sort_unstable_by(|&a, &b| pkg.units[a].path.cmp(&pkg.units[b].path));
+    starts.splice(0..0, prelude);
+    // When each unit was met, and the earliest-met unit still on `stack` that it reaches.
+    let (mut met, mut low) = (vec![UNSEEN; n], vec![0; n]);
+    let mut comp = vec![UNSEEN; n];
+    // The units met whose component is not yet found, and where each stands on it.
+    let (mut stack, mut at): (Vec<usize>, Vec<usize>) = (Vec::new(), vec![0; n]);
+    // The search's path: each unit on it and how many of its imports are taken.
+    let mut path: Vec<(usize, usize)> = Vec::new();
+    let mut search = Search {
+        queue: Vec::new(),
+        met: vec![UNSEEN; n],
+        by: vec![(0, NOWHERE); n],
+        lines: (0..n).map(|_| None).collect(),
+    };
+    let (mut count, mut comps) = (0, 0);
+    for &s in &starts {
+        if met[s] != UNSEEN {
             continue;
         }
-        // Each entry is a unit on the search's path and how many of its imports are taken.
-        let mut stack = vec![(s, 0)];
-        color[s] = Color::Gray;
-        while let Some(&(u, e)) = stack.last() {
-            let Some(&(v, _)) = edges[u].get(e) else {
-                color[u] = Color::Black;
-                pkg.order.push(u);
-                stack.pop();
+        (met[s], low[s], at[s]) = (count, count, stack.len());
+        count += 1;
+        stack.push(s);
+        path.push((s, 0));
+        while let Some(&(u, e)) = path.last() {
+            if let Some(&(v, _)) = edges[u].get(e) {
+                path.last_mut().expect("the unit read").1 = e + 1;
+                if met[v] == UNSEEN {
+                    (met[v], low[v], at[v]) = (count, count, stack.len());
+                    count += 1;
+                    stack.push(v);
+                    path.push((v, 0));
+                } else if comp[v] == UNSEEN {
+                    low[u] = low[u].min(met[v]);
+                }
                 continue;
-            };
-            if let Some(top) = stack.last_mut() {
-                top.1 += 1;
             }
-            match color[v] {
-                Color::White => {
-                    color[v] = Color::Gray;
-                    at[v] = stack.len();
-                    stack.push((v, 0));
+            path.pop();
+            if let Some(&(p, _)) = path.last() {
+                low[p] = low[p].min(low[u]);
+            }
+            if low[u] == met[u] {
+                let members = &mut stack[at[u]..];
+                members.sort_unstable_by(|&a, &b| pkg.units[a].path.cmp(&pkg.units[b].path));
+                for &x in members.iter() {
+                    comp[x] = comps;
                 }
-                // Complexity tradeoff: each import that closes a cycle names the whole cycle,
-                // so b such imports on a path of k units write O(b·k) text; that text is the
-                // rejection the step asks for, and an acyclic package writes none. Trigger:
-                // many imports back into one long path, as k units each also importing the
-                // first, O(k²) text from O(k) imports. Test:
-                // `l02_03_name_resolution::scaling::a_long_cycle_is_named_whole_in_linear_time`
-                // (one cycle of 200 and 1,600 units); COMPLEXITY.md row F84. A complete
-                // solution writing O(k + b) text would print each cycle as a reference to the
-                // part of the path an earlier rejection already named.
-                Color::Gray => {
-                    let mut steps = Vec::new();
-                    for &(w, taken) in &stack[at[v]..] {
-                        let (next, span) = edges[w][taken - 1];
-                        let unit = &pkg.units[w];
-                        let Some(Ok(text)) = &unit.text else {
-                            unreachable!("a unit with imports has text")
-                        };
-                        let l = lines[w].get_or_insert_with(|| source::Lines::new(text.as_bytes()));
-                        let (line, col) = l.line_col(text.as_bytes(), span.start);
-                        steps.push(format!(
-                            "`{}` imports `{}` at {}:{line}:{col}",
-                            unit.path, pkg.units[next].path, unit.file
-                        ));
-                    }
-                    cycles.insert(
-                        (u, v),
-                        format!(
-                            "the imports form a cycle, so its units have no order to be \
-                             resolved in: {}",
-                            steps.join(", ")
-                        ),
-                    );
-                }
-                Color::Black => {}
+                pkg.order.extend_from_slice(members);
+                report(
+                    &pkg.units,
+                    &mut pkg.problems,
+                    edges,
+                    (&comp, comps),
+                    members,
+                    &mut search,
+                );
+                stack.truncate(at[u]);
+                comps += 1;
             }
         }
     }
-    cycles
+    comp
+}
+
+/// The breadth-first search that finds the cycle a component is reported with, kept across
+/// components so that each search costs only its own component: the units waiting, the
+/// component whose search met each unit, and the unit and import each was met by; and the
+/// lines of each unit whose imports a report names.
+struct Search {
+    queue: Vec<usize>,
+    met: Vec<usize>,
+    by: Vec<(usize, Span)>,
+    lines: Vec<Option<source::Lines>>,
+}
+
+/// Reports the import cycles of the component `c` (of the numbering `comp`), whose units are
+/// `members` in order of their paths: each self-import, at the unit's first import of itself;
+/// and, for a component of two units or more, the shortest cycle through its first unit `c0`
+/// that leaves no unit for itself, of those the one whose imports come first in their units'
+/// texts, at the import of `c0` that begins it, written from `c0`. A breadth-first search from
+/// `c0` within the component, taking each unit's imports in text order, finds it, since it
+/// meets each unit first by a shortest path and, of those, the one whose imports come first;
+/// the first import back to `c0` it takes closes the cycle. O(units + imports) of the
+/// component, and the lines of the units on the cycle.
+fn report(
+    units: &[Loaded],
+    problems: &mut Vec<Problem>,
+    edges: &[Vec<(usize, Span)>],
+    (comp, c): (&[usize], usize),
+    members: &[usize],
+    search: &mut Search,
+) {
+    for &u in members {
+        if let Some(&(_, span)) = edges[u].iter().find(|&&(v, _)| v == u) {
+            problems.push(cycle_error(units, &mut search.lines, &[(u, span, u)]));
+        }
+    }
+    let [c0, _, ..] = *members else {
+        return;
+    };
+    search.queue.clear();
+    search.queue.push(c0);
+    search.met[c0] = c;
+    let mut head = 0;
+    let (last, close) = 'search: loop {
+        let u = *search
+            .queue
+            .get(head)
+            .expect("a component of two units has a cycle through each of them");
+        head += 1;
+        for &(v, span) in &edges[u] {
+            if comp[v] != c || v == u {
+                continue;
+            }
+            if v == c0 {
+                break 'search (u, span);
+            }
+            if search.met[v] != c {
+                search.met[v] = c;
+                search.by[v] = (u, span);
+                search.queue.push(v);
+            }
+        }
+    };
+    let mut steps = vec![(last, close, c0)];
+    let mut x = last;
+    while x != c0 {
+        let (from, span) = search.by[x];
+        steps.push((from, span, x));
+        x = from;
+    }
+    steps.reverse();
+    problems.push(cycle_error(units, &mut search.lines, &steps));
+}
+
+/// The rejection of the import cycle `steps`, each a unit, its import and the unit it names, in
+/// order: at the first step's import, naming each step with its file, line and column.
+fn cycle_error(
+    units: &[Loaded],
+    lines: &mut [Option<source::Lines>],
+    steps: &[(usize, Span, usize)],
+) -> Problem {
+    let named: Vec<String> = steps
+        .iter()
+        .map(|&(from, span, to)| {
+            let unit = &units[from];
+            let Some(Ok(text)) = &unit.text else {
+                unreachable!("a unit with imports has text")
+            };
+            let l = lines[from].get_or_insert_with(|| source::Lines::new(text.as_bytes()));
+            let (line, col) = l.line_col(text.as_bytes(), span.start);
+            format!(
+                "`{}` imports `{}` at {}:{line}:{col}",
+                unit.path, units[to].path, unit.file
+            )
+        })
+        .collect();
+    let (from, span, to) = steps[0];
+    Problem {
+        file: units[from].file.clone(),
+        error: error(
+            span,
+            format!(
+                "the unit `{}` cannot be imported: the imports form a cycle, so its units have no \
+                 order to be resolved in: {}",
+                units[to].path,
+                named.join(", ")
+            ),
+        ),
+    }
 }
 
 /// What a unit's resolution reads of another unit: an import resolved to the number of its
-/// exports, an import that failed and why, or the prelude unit with the number of its exports.
+/// exports, an import that failed and why, the prelude unit with the number of its exports, or
+/// an import on a cycle, which fails with no error of its own.
 enum Read<'a> {
     Unit(&'a [u8; 8]),
     Failed(&'a str),
     Prelude(&'a [u8; 8]),
+    OnCycle,
 }
 
 /// Appends to the parts of a resolve key what the resolution reads of the unit `path`: its
@@ -606,11 +742,12 @@ fn push_read<'a>(parts: &mut Vec<&'a [u8]>, path: &'a str, read: Read<'a>) {
         Read::Unit(n) => parts.extend([&[0][..], n]),
         Read::Failed(why) => parts.extend([&[1][..], why.as_bytes()]),
         Read::Prelude(n) => parts.extend([&[2][..], n]),
+        Read::OnCycle => parts.push(&[3]),
     }
 }
 
 /// A unit a unit imports, by path, resolved or with why it is not.
-type Dep = (Arc<str>, Result<Arc<Resolved>, String>);
+type Dep = (Arc<str>, Result<Arc<Resolved>, Refused>);
 
 /// The units a unit imports, each resolved or with why it is not, and the prelude unit it
 /// sees: what its resolution reads.
@@ -620,7 +757,7 @@ struct Linked {
 }
 
 impl Units for Linked {
-    fn exports(&self, path: &str) -> Result<&Exports, String> {
+    fn exports(&self, path: &str) -> Result<&Exports, Refused> {
         let i = self
             .deps
             .binary_search_by(|d| (*d.0).cmp(path))

@@ -711,10 +711,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `trait Files` with `Dir` and `Memory`, a `&dyn Files` read through a vtable | `unit::load` | None | A function value passed in, `read: (String) -> Option<…>` |
-| `Vec<Color>` written in place during the depth-first search, and the explicit stack's top counter incremented through `last_mut` | `unit::order` | Mutation | A loop with `mutable` colors and stack, or a fold over the search's steps |
+| `Vec`s of met numbers, low links, components and stack places written in place during Tarjan's search, a tuple assigned to three of them at once (`(met[v], low[v], at[v]) = (count, count, stack.len())`), and the explicit path's top counter incremented through `last_mut` (CYCLE-root-order) | `unit::order` | Mutation | A loop with `mutable` maps and stack, or a fold over the search's steps; three assignments for the tuple |
+| A breadth-first search's arrays kept across components in a struct passed `&mut`, each entry marked with the component number so none is cleared (CYCLE-root-order) | `unit::Search`, `unit::report` | Mutation | A state receiver over maps from unit to component, or a map made new for each component (its own units only) |
+| A labeled `loop` left by `break 'search (u, span)` with a value from inside a nested `for` (CYCLE-root-order) | `unit::report` | Early exit (gap 12) | A recursive function over the queue that returns the closing import |
+| `let [c0, _, ..] = *members else { return; }`, a slice pattern testing for two units or more (CYCLE-root-order) | `unit::report` | Slice patterns | Test the length, then index |
 | `HashMap<Arc<str>, usize>` index beside a `Vec` of units, both pushed to as units are found | `unit::add`, `Package::index` | Mutation | A map from path to unit built by a fold over the work list |
 | `binary_search_by` on a sorted `Vec` of imported units | `Linked::exports` | None | A map from path to resolution |
-| `let … else { unreachable!(…) }` for a unit with imports that has text | `unit::order` | Broken invariants | A type that carries the text with the parsed unit |
+| `let … else { unreachable!(…) }` for a unit with imports that has text | `unit::cycle_error` | Broken invariants | A type that carries the text with the parsed unit |
 
 ## Entries from T4 (`zedc/src/store/utvpi.rs`, `presburger.rs`)
 

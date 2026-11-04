@@ -99,7 +99,7 @@ fn a_unit_that_does_not_parse_reports_its_own_error_and_its_importer_one() {
 }
 
 #[test]
-fn a_cycle_is_rejected_once_at_the_import_that_closes_it_naming_every_unit_on_it() {
+fn a_cycle_is_rejected_once_at_the_import_of_its_first_unit_naming_every_unit_on_it() {
     let p = package(&[
         ("main.zed", "import orders.{place};\nrun = place(1);\n"),
         (
@@ -111,14 +111,15 @@ fn a_cycle_is_rejected_once_at_the_import_that_closes_it_naming_every_unit_on_it
     assert_eq!(
         mistakes(&p),
         [
-            "stock.zed:2:1: the unit `orders` cannot be imported: the imports form a cycle, so its \
+            "orders.zed:1:1: the unit `stock` cannot be imported: the imports form a cycle, so its \
           units have no order to be resolved in: `orders` imports `stock` at orders.zed:1:1, \
           `stock` imports `orders` at stock.zed:2:1"
         ]
     );
-    // The order puts each unit after the units it imports, the closing import aside.
+    // The order puts each unit after the units it imports outside its component, and the units
+    // of the cycle together, in order of their paths.
     let order: Vec<&str> = p.order.iter().map(|&i| &*p.units[i].path).collect();
-    assert_eq!(order, ["stock", "orders", "main"]);
+    assert_eq!(order, ["orders", "stock", "main"]);
 }
 
 #[test]

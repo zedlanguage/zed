@@ -130,30 +130,162 @@ fn an_import_of_many_names_loads_in_linear_time() {
     linear("an import of many names", 500, names);
 }
 
-#[test]
-fn a_long_cycle_is_named_whole_in_linear_time() {
-    // The chain closed into a cycle: `c0` imports the last unit.
-    let make = |k: usize| {
-        let mut fs = chain(k);
-        fs[0].1 = format!("import c{l}.{{step{l}}};\nstep0 = 0;\n", l = k - 1);
-        fs
-    };
-    let pkgs: HashMap<usize, Memory> = [200, 1600]
+/// Checks that loading the package `make(k)` from `main` is linear in `k`, from `k` = `n`, and
+/// that `expect(k, mistakes)` holds of its mistakes at each size: the cycles it reports.
+fn rejected(
+    what: &str,
+    n: usize,
+    make: impl Fn(usize) -> Vec<(String, String)>,
+    expect: impl Fn(usize, &[String]),
+) {
+    let pkgs: HashMap<usize, Memory> = [n, 8 * n]
         .into_iter()
         .map(|k| (k, memory(make(k))))
         .collect();
-    let p = load(&mut Db::new(), &pkgs[&200], &["main"]);
-    let m = mistakes(&p);
-    assert_eq!(m.len(), 1, "{m:?}");
-    assert!(m[0].starts_with("c0.zed:1:1: "), "{}", m[0]);
-    assert!(
-        m[0].ends_with("`c0` imports `c199` at c0.zed:1:1"),
-        "{}",
-        m[0]
-    );
-    scaling::check_order("a cycle of units", 200, 1, |k| {
+    for (&k, fs) in &pkgs {
+        expect(k, &mistakes(&load(&mut Db::new(), fs, &["main"])));
+    }
+    scaling::check_order(what, n, 1, |k| {
         std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
     });
+}
+
+/// The steps of the cycle the message `m` names, each `` `a` imports `b` at file:line:col ``.
+fn steps(m: &str) -> usize {
+    m.matches("` imports `").count()
+}
+
+/// [`chain`] of `k` units with `c0` also importing the unit `c{to}`, closing a cycle of
+/// `to + 1` units.
+fn closed(k: usize, to: usize) -> Vec<(String, String)> {
+    let mut fs = chain(k);
+    fs[0].1 = format!("import c{to}.{{step{to}}};\nstep0 = 0;\n");
+    fs
+}
+
+#[test]
+fn a_long_cycle_is_named_whole_in_linear_time() {
+    // The chain closed into a cycle: `c0` imports the last unit.
+    rejected(
+        "a cycle of units",
+        200,
+        |k| closed(k, k - 1),
+        |k, m| {
+            assert_eq!(m.len(), 1, "{m:?}");
+            let l = k - 1;
+            assert!(
+                m[0].starts_with(&format!(
+                    "c0.zed:1:1: the unit `c{l}` cannot be imported: the imports form a cycle, so \
+                     its units have no order to be resolved in: `c0` imports `c{l}` at \
+                     c0.zed:1:1, `c{l}` imports `c{}` at c{l}.zed:1:1, ",
+                    l - 1
+                )),
+                "{}",
+                m[0]
+            );
+            assert!(
+                m[0].ends_with("`c1` imports `c0` at c1.zed:1:1"),
+                "{}",
+                m[0]
+            );
+            assert_eq!(steps(&m[0]), k);
+        },
+    );
+}
+
+#[test]
+fn a_chain_with_one_import_back_is_named_in_linear_time() {
+    // `c0` imports the middle of the chain: a cycle of half the units, the rest outside it.
+    rejected(
+        "a chain with one import back",
+        200,
+        |k| closed(k, k / 2),
+        |k, m| {
+            assert_eq!(m.len(), 1, "{m:?}");
+            let h = k / 2;
+            assert!(
+                m[0].starts_with(&format!("c0.zed:1:1: the unit `c{h}` cannot be imported: ")),
+                "{}",
+                m[0]
+            );
+            assert!(
+                m[0].ends_with("`c1` imports `c0` at c1.zed:1:1"),
+                "{}",
+                m[0]
+            );
+            assert_eq!(steps(&m[0]), h + 1);
+        },
+    );
+}
+
+#[test]
+fn many_imports_back_into_a_long_cycle_are_named_once_in_linear_time() {
+    // Each unit of the cycle also imports its last unit: k imports, each on a cycle, of which
+    // a report per import naming its cycle would write O(k²) text. The component is named
+    // once, by its shortest cycle through `c0`, which is the whole chain.
+    rejected(
+        "many imports back into a cycle",
+        200,
+        |k| {
+            let mut fs = closed(k, k - 1);
+            let l = k - 1;
+            for (i, (_, text)) in fs.iter_mut().enumerate().take(l).skip(1) {
+                *text = format!("import c{l}.{{step{l}}};\n{text}step{i}b = step{l};\n");
+            }
+            fs
+        },
+        |k, m| {
+            assert_eq!(m.len(), 1, "{m:?}");
+            assert!(m[0].starts_with("c0.zed:1:1: "), "{}", m[0]);
+            assert_eq!(steps(&m[0]), k);
+        },
+    );
+}
+
+#[test]
+fn many_disjoint_cycles_are_each_named_in_linear_time() {
+    // `k` pairs of units that import each other, as a package split into many halves that
+    // still lean on each other; `main` imports one unit of each pair.
+    rejected(
+        "many cycles of two",
+        200,
+        |k| {
+            let mut fs: Vec<(String, String)> = (0..k)
+                .flat_map(|i| {
+                    [
+                        (
+                            format!("p{i}/a.zed"),
+                            format!("import p{i}.b.{{b{i}}};\na{i} = 1;\n"),
+                        ),
+                        (
+                            format!("p{i}/b.zed"),
+                            format!("import p{i}.a.{{a{i}}};\nb{i} = a{i};\n"),
+                        ),
+                    ]
+                })
+                .collect();
+            let imports: String = (0..k)
+                .map(|i| format!("import p{i}.a.{{a{i}}};\n"))
+                .collect();
+            fs.push(("main.zed".into(), format!("{imports}total = 0;\n")));
+            fs
+        },
+        |k, m| {
+            assert_eq!(m.len(), k, "{m:?}");
+            for line in m {
+                let file = line.split(':').next().unwrap();
+                let i = &file[1..file.len() - "/a.zed".len()];
+                assert_eq!(
+                    line,
+                    &format!(
+                        "p{i}/a.zed:1:1: the unit `p{i}.b` cannot be imported: the imports form a \
+                         cycle, so its units have no order to be resolved in: `p{i}.a` imports \
+                         `p{i}.b` at p{i}/a.zed:1:1, `p{i}.b` imports `p{i}.a` at p{i}/b.zed:1:1"
+                    )
+                );
+            }
+        },
+    );
 }
 
 /// `k` units `u0` … `u{k-1}`, each a new empty file, all given as roots, as when every unit of

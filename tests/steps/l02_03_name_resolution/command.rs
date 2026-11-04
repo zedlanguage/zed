@@ -101,3 +101,52 @@ fn a_file_whose_name_is_no_unit_path_is_reported() {
          the package root and the file's stem must be one\n"
     );
 }
+
+#[test]
+fn a_cycle_is_reported_alike_by_each_of_its_units_run_alone_and_by_the_whole_package() {
+    let d = package_dir(
+        "cycle",
+        &[
+            ("zed.manifest", "// the shop\n"),
+            (
+                "main.zed",
+                "import orders.{place};\nmain() -> (stdout: Lines) {}\n",
+            ),
+            (
+                "orders.zed",
+                "import stock.{reserve};\nplace(n) = reserve(n);\n",
+            ),
+            (
+                "stock.zed",
+                "\nimport orders.{place};\nreserve(n) = n;\nrestock(n) = place(n);\n",
+            ),
+        ],
+    );
+    let cycle_lines = |lines: Vec<String>| -> Vec<String> {
+        lines
+            .into_iter()
+            .filter(|l| l.contains("the imports form a cycle"))
+            .collect()
+    };
+    let batch = zedc::unit::load(
+        &mut zedc::query::Db::new(),
+        &zedc::unit::Dir(d.clone()),
+        &["stock", "main", "orders"],
+    );
+    let batch = cycle_lines(batch.report(&d));
+    let root = d.display();
+    assert_eq!(
+        batch,
+        [format!(
+            "{root}/orders.zed:1:1: the unit `stock` cannot be imported: the imports form a cycle, \
+             so its units have no order to be resolved in: `orders` imports `stock` at \
+             orders.zed:1:1, `stock` imports `orders` at stock.zed:2:1"
+        )]
+    );
+    for unit in ["main.zed", "orders.zed", "stock.zed"] {
+        let (status, err) = run(d.join(unit).to_str().unwrap());
+        assert_eq!(status, 1, "{unit}: {err}");
+        let alone = cycle_lines(err.lines().map(str::to_string).collect());
+        assert_eq!(alone, batch, "`zedc run {unit}`: {err}");
+    }
+}

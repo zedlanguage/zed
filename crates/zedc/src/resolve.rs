@@ -245,10 +245,21 @@ impl Exports {
     }
 }
 
+/// Why a unit cannot read the exports of a unit it imports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// The import is rejected with this reason.
+    Because(String),
+    /// The import lies on an import cycle, which the loader reports once for the cycle's whole
+    /// strongly connected component (`unit::order`): the import is rejected with no error of
+    /// its own.
+    OnCycle,
+}
+
 /// The other units a unit's resolution reads.
 pub trait Units {
     /// The exports of the unit `path`, or why the unit cannot import it.
-    fn exports(&self, path: &str) -> Result<&Exports, String>;
+    fn exports(&self, path: &str) -> Result<&Exports, Refused>;
     /// The prelude unit the unit sees, by its path, with its exports: the one the manifest
     /// names, for every unit but it and the units it reaches.
     fn prelude(&self) -> Option<(&Arc<str>, &Exports)>;
@@ -258,12 +269,12 @@ pub trait Units {
 pub struct Alone;
 
 impl Units for Alone {
-    fn exports(&self, _: &str) -> Result<&Exports, String> {
-        Err(
+    fn exports(&self, _: &str) -> Result<&Exports, Refused> {
+        Err(Refused::Because(
             "no manifest `zed.manifest` marks a package root at or above this unit, so it \
              imports no unit"
                 .into(),
-        )
+        ))
     }
 
     fn prelude(&self) -> Option<(&Arc<str>, &Exports)> {
@@ -883,14 +894,15 @@ impl Resolver<'_> {
     }
 
     /// The import `i`, the statement at `span`: the names it binds, each in the scope of its
-    /// imports. An import of a unit the loader could not give is one error, and its names are
-    /// bound all the same, so that their uses are not reported as well.
+    /// imports. An import of a unit the loader could not give is one error, or none when it lies
+    /// on an import cycle, which the loader reports; its names are bound all the same, so that
+    /// their uses are not reported as well.
     fn import(&mut self, i: &Import, span: Span) {
         let unit: Arc<str> = i.path.as_str().into();
         self.out.units.push((unit.clone(), span));
         let exports = match self.units.map(|u| u.exports(&i.path)) {
             Some(Ok(e)) => Some(e),
-            Some(Err(why)) => {
+            Some(Err(Refused::Because(why))) => {
                 self.errors.push(Error {
                     row: None,
                     span,
@@ -899,6 +911,7 @@ impl Resolver<'_> {
                 });
                 None
             }
+            Some(Err(Refused::OnCycle)) => None,
             None => None,
         };
         let qualifier = match &i.kind {
