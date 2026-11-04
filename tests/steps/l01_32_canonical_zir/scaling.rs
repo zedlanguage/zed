@@ -1,6 +1,7 @@
 //! A graph nested 100,000 deep, whose deepest region matches a value against a pattern that
 //! binds a written name: the canonicalizer renames the binder, normalizes, ranks and keys the
-//! graph on a thread of the default 2 MiB stack, in time linear in its depth.
+//! graph on a thread of the default 2 MiB stack, in time linear in its depth. An edge of many
+//! facets in reverse order is canonicalized and keyed in `O(F log F)`, its facets sorted once.
 
 use std::sync::Arc;
 
@@ -9,6 +10,7 @@ use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling::check_order;
+use zedc::canon::Facet;
 use zedc::zir::canon::{address, canonicalize, key, ranks, step};
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src};
 
@@ -77,5 +79,47 @@ fn canonicalizing_a_deep_graph_is_linear_in_its_depth() {
                 while step(&mut g).is_some() {}
             },
         );
+    });
+}
+
+/// A function region whose one argument is an `int` with `n` facets in reverse order: units
+/// and locales, each value twice, and every third facet a hint.
+fn many_facets(n: usize) -> Region {
+    let facets = (0..n).rev().map(|i| Facet {
+        hint: i % 3 == 0,
+        kind: if i % 2 == 0 { "units" } else { "locale" }.into(),
+        value: Value::Int(i as i64 / 4),
+    });
+    let mut arg = Edge::value(Type::int());
+    if let Edge::Value(v) = &mut arg {
+        v.facets = facets.collect();
+    }
+    Region {
+        kind: RegionKind::Function,
+        args: vec![arg],
+        nodes: Vec::new(),
+        results: vec![Src::Arg(0)],
+    }
+}
+
+#[test]
+fn canonicalizing_an_edge_of_many_facets_is_n_log_n() {
+    let (small, large) = (many_facets(100), many_facets(800));
+    let pick = |k| if k == 100 { &small } else { &large };
+    check_order(
+        "canonicalizing an edge of n facets in reverse order",
+        100,
+        1,
+        |k| {
+            let g = canonicalize(pick(k));
+            let Edge::Value(v) = &g.args[0] else {
+                panic!("a value edge")
+            };
+            assert!(v.facets.windows(2).all(|w| w[0] < w[1]));
+            assert!(v.facets.iter().all(|f| !f.hint));
+        },
+    );
+    check_order("keying an edge of n facets in reverse order", 100, 1, |k| {
+        key(pick(k));
     });
 }

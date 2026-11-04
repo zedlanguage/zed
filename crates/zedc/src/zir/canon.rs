@@ -18,7 +18,9 @@
 //!
 //! Every rule acts on one edge, or on one pattern, alone, and the binder rule's hint is
 //! removed by the hints rule. So [`canonicalize`] normalizes each edge and each pattern in one
-//! pass and reaches the normal form that [`step`] reaches, in time linear in the graph; and
+//! pass and reaches the normal form that [`step`] reaches: each edge's facets are sorted once,
+//! `O(F log F)` comparisons for an edge of `F` facets, so `O(n log n)` for all the facets of a
+//! graph of size `n`, and each edge's integer facts are put in normal form once; and
 //! [`key`] hashes a node from the keys of its regions, so the lowering keys each new node
 //! without walking the regions below it again.
 
@@ -101,22 +103,17 @@ fn normal_shell(n: &mut Node) {
     }
 }
 
-/// An edge in normal form: the first rule in priority order that applies, until none does.
+/// An edge in normal form, the one the rules after the binder rule reach (DESIGN M0.7): its
+/// hints dropped, its facets sorted once and each run of equal ones kept once, and its integer
+/// facts normal. `O(F log F)` comparisons for `F` facets. The facets end in the one order with
+/// no adjacent pair out of order or equal, since a facet's [`Ord`] is total and its ties are
+/// exactly `==`; so which of two equal facets the unstable sort puts first does not matter.
 fn normal_edge(e: &mut Edge) {
     if let Edge::Value(v) = e {
-        // The facts are moved into the definition and back, not copied: the empty interval
-        // left behind meanwhile allocates nothing.
-        let empty =
-            crate::canon::domain::Domain::ints(crate::store::interval::IntervalSet::empty());
-        let mut d = Def {
-            name: "".into(),
-            domain: Some(std::mem::replace(&mut v.domain, empty)),
-            facets: std::mem::take(&mut v.facets),
-            body: Term::Lit(Value::tuple(Vec::new())),
-        };
-        while RULES[1..].iter().any(|rule| (rule.apply)(&mut d)) {}
-        v.domain = d.domain.expect("an edge has a domain");
-        v.facets = d.facets;
+        v.facets.retain(|f| !f.hint);
+        v.facets.sort_unstable();
+        v.facets.dedup();
+        v.domain = v.domain.normal();
     }
 }
 
