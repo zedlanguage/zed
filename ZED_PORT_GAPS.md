@@ -1007,6 +1007,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A visited `HashSet<Id>` built in one walk to find the parts reached through two or more parents | `deep::Id::reached_twice`, `Id::among`, `Formula::chooses` | Mutation (gap 11) | A fold with the set in its state |
 | Two stacks of `slice::Iter` over borrowed parts, each level tagged with the number of the entry it was entered with, read in step; a `HashSet<(Id, Id)>` of pairs found equal and a `Vec<Option<(Id, Id)>>` of open entries, `take`n when an entry ends | `deep::Side`, `deep::Level`, `Formula::cmp` | Mutation (gap 11), identity (gap 1) | A fold over the two sides' worklists with the set of equal pairs in its state, the pairs keyed by node identity |
 
+## Entries from ST-formula-shift (`zedc/src/store/presburger/deep.rs`, `presburger/deep/canon.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An intern table for one call: a `Vec<Sym>` of symbols and a `HashMap<Sym, usize>` from each symbol to its number, so equal symbols get one number and equality is a comparison of numbers | `deep::canon::Canon::intern` | Mutation (gap 11), shared tables (gap 2, here within one call only) | A state receiver holding the map from symbol to number and the list, threaded through the parse; or the content digest of gap 1 with an exact check |
+| A memo `HashMap<Id, Option<usize>>` from each shared part to the root of its parse, and a visited `HashSet<Id>` of the shared parts entered | `Canon::value`, `Formula::cmp` | Identity (gap 1), mutation (gap 11) | The memo and the set in the state of the fold, keyed by node identity |
+| A cursor into a lazily expanded parse tree: one `Vec` of entries per level, each with a cursor `(usize, usize)` into the level above, expanded on demand from the top | `deep::canon::Finger::grow`, `Finger::cut` | Mutation (gap 11) | A list of levels held in a state receiver, each level a list with its cursor |
+| Unbounded counts of repeats (`num_bigint::BigUint`), since a run can be longer than 2^64 | `Sym::Run`, `Canon::cmp_seqs`, `Finger::cut` | None (`int` is unbounded) | `int` |
+| Bit operations on symbol numbers for deterministic coin tossing (`^`, `trailing_zeros`, `>>`, `& 1`) | `Canon::chunk` | Bit operations (gap 4, built) | The bit words of L1.39a |
+
 ## Entries from OSP-drop (`zedc/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |

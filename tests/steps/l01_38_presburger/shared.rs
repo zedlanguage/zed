@@ -542,8 +542,8 @@ fn formulas_grouped_and_shared_at_random_compare_and_hash_as_written_out() {
 /// One sequence of constraints grouped at other places on each side: `t0 = [c]` and
 /// `ti = [t(i-1), t(i-1), ci]` on one, and on the other `[c, rd]` with `r0 = []` and
 /// `ri = [r(i-1), c, r(i-1), ci]`, so that no node on one side begins and ends where one on
-/// the other does. Compare reads it at the cost of the `2^(d+1) - 1` constraints written out
-/// (the tradeoff at [`Formula::cmp`], COMPLEXITY.md S31b).
+/// the other does. Each side holds `2^(d+1) - 1` constraints written out in `2d + 2` distinct
+/// parts; compare parses the two sequences ([`Formula::cmp`], COMPLEXITY.md S31b).
 fn shifted_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Formula) {
     let c = con(0, 1, 0, false);
     let (mut t, mut r) = (join(vec![c.clone()]), join(vec![]));
@@ -557,7 +557,7 @@ fn shifted_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Form
 
 #[test]
 fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out() {
-    for d in 0..=9 {
+    for d in 0..=12 {
         for join in [and as fn(Vec<Formula>) -> Formula, or] {
             let (t, r) = shifted_chains(d, join);
             let (split_a, split_b) = split_chains(d, join);
@@ -573,6 +573,109 @@ fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out() {
             }
             assert_eq!(fs[0], fs[1]);
             assert_eq!(fs[2], fs[3]);
+        }
+    }
+}
+
+/// [`shifted_chains`] and the same two with one more constraint at the end of each, unequal,
+/// so that they differ at the last of their constraints written out.
+fn shifted_pairs(d: usize) -> Vec<(Formula, Formula, Ordering)> {
+    let mut out = Vec::new();
+    for join in [and as fn(Vec<Formula>) -> Formula, or] {
+        let (t, r) = shifted_chains(d, join);
+        let (x, y) = (con(0, 1, -1, false), con(0, 1, -2, false));
+        let o = written(&x).cmp(&written(&y));
+        out.push((join(vec![t.clone(), x]), join(vec![r.clone(), y]), o));
+        out.push((t, r, Ordering::Equal));
+    }
+    out
+}
+
+#[test]
+fn one_sequence_grouped_at_other_places_on_each_side_compares_in_time_near_quadratic_in_the_depth()
+{
+    // Each side has n = 2d + 2 distinct parts and 2^(d+1) - 1 constraints written out. The
+    // parse of a sequence of N parts has O(log N) = O(d) levels and each part joins its parts'
+    // parses at O(d) levels, so compare costs O(n log N) = O(d^2), of power 2: no exact method
+    // known compares two such sequences in time near n alone (the tradeoff at
+    // [`Formula::cmp`], COMPLEXITY.md S31b). Read through, it costs 2^d.
+    let built: BTreeMap<usize, Vec<(Formula, Formula, Ordering)>> =
+        [30, 240].map(|d| (d, shifted_pairs(d))).into();
+    scaling::check_order(
+        "one sequence of 2^(d+1) - 1 constraints in d levels, grouped at other places on each side",
+        30,
+        2,
+        |d| {
+            for (a, b, o) in &built[&d] {
+                assert_eq!(a.cmp(b), *o);
+                assert_eq!(b.cmp(a), o.reverse());
+            }
+        },
+    );
+    for d in [0, 1, 2, 7, 12] {
+        for (a, b, o) in shifted_pairs(d) {
+            assert_eq!(written(&a).cmp(&written(&b)), o, "d = {d}");
+            if o == Ordering::Equal {
+                assert_eq!(hash(&a), hash(&b), "d = {d}");
+            }
+        }
+    }
+}
+
+/// Specs of `depth` levels over three constraints, each level of two or three nodes over the
+/// level below and the constraints, so that a node is reached by many paths and its parts,
+/// written out, are up to `3^depth` constraints.
+fn layered_specs(rng: &mut Rng, depth: usize) -> Vec<Spec> {
+    let mut specs: Vec<Spec> = (0..3)
+        .map(|_| Spec::Con(con(rng.int(-1, 1), rng.int(-1, 1), rng.int(-2, 2), false)))
+        .collect();
+    let mut below: Vec<usize> = (0..3).collect();
+    for _ in 0..depth {
+        let start = specs.len();
+        for _ in 0..2 + rng.below(2) {
+            let mut from = below.clone();
+            from.extend(0..3);
+            let kids = |rng: &mut Rng| (0..1 + rng.below(3)).map(|_| rng.pick(&from)).collect();
+            specs.push(match rng.below(8) {
+                0 => Spec::Not(rng.pick(&below)),
+                1 => Spec::Or(kids(rng)),
+                _ => Spec::And(kids(rng)),
+            });
+        }
+        below = (start..specs.len()).collect();
+    }
+    specs
+}
+
+#[test]
+fn formulas_shared_and_regrouped_at_random_at_several_depths_compare_and_hash_as_written_out() {
+    // Each round builds several formulas from one set of layered specs, each node kept or
+    // built and grouped anew at random at each place it is used, so that shared parts are
+    // met at many places and grouped otherwise on each side; and one with a constraint
+    // changed, so that they differ, often late.
+    let mut rng = Rng::new(0x5_31b);
+    for depth in [2, 4, 6, 8] {
+        for round in 0..60 {
+            let mut specs = layered_specs(&mut rng, depth);
+            let top = specs.len() - 1;
+            let mut kept: Vec<Option<Formula>> = vec![None; specs.len()];
+            let mut fs: Vec<Formula> = (0..4)
+                .map(|_| build(&specs, top, &mut rng, &mut kept))
+                .collect();
+            specs[rng.below(3)] = Spec::Con(con(1, 1, 3, true));
+            let mut fresh: Vec<Option<Formula>> = vec![None; specs.len()];
+            fs.push(build(&specs, top, &mut rng, &mut fresh));
+            let ws: Vec<Written> = fs.iter().map(written).collect();
+            for (p, wp) in fs.iter().zip(&ws) {
+                for (q, wq) in fs.iter().zip(&ws) {
+                    let o = wp.cmp(wq);
+                    assert_eq!(p.cmp(q), o, "depth {depth}, round {round}");
+                    assert_eq!(p == q, o == Ordering::Equal, "depth {depth}, round {round}");
+                    if o == Ordering::Equal {
+                        assert_eq!(hash(p), hash(q), "depth {depth}, round {round}");
+                    }
+                }
+            }
         }
     }
 }

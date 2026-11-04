@@ -17,6 +17,10 @@ use std::sync::Arc;
 
 use super::{Con, Formula, Lin, Model, Rel};
 
+mod canon;
+
+use canon::Canon;
+
 impl Con {
     /// The constraint, moved out of `c`, with `c` left the constraint `0 >= 0` of no atoms.
     pub fn take(c: &mut Con) -> Con {
@@ -557,21 +561,25 @@ impl Ord for Formula {
     /// equal at once (COMPLEXITY.md S31), and a pair of parts one of which is shared is
     /// compared once per call: a pair found equal is kept. Two kept parts of the level's own
     /// kind met at one point of the two flattened sequences are entered together, and kept as
-    /// equal when their parts run out together, so a pair met again is passed over.
-    // Complexity tradeoff: a kept part entered on one side alone, against a part of the other
-    // side that is not kept, or entered with a partner whose parts run out at another place, is
-    // read through at each place it is met, since its parts are then compared against parts
-    // grouped otherwise. No answer is given up; the cost is. Two formulas whose kept parts line
-    // up (a named chain against an equal one or one extended at either end, built apart, or
-    // pairs whose inner parts end apart inside outer ones that end together) are compared at a
-    // cost linear in their distinct parts (`l01_38_presburger::shared`, the two scaling tests
-    // of chains). Two that group one sequence at other places on each side, at many shared
-    // places, cost the size of the sequence written out: exponential in the depth of sharing,
-    // 211 ms at d = 20 for 2^21 - 1 constraints (`shared::shifted_chains`, checked for order
-    // at d up to 9; COMPLEXITY.md S31b). A complete solution compares the sequences as
-    // compressed strings (a hash of each part's sequence and its prefixes, searched for the
-    // first difference), which no program seen so far needs.
+    /// equal when their parts run out together, so a pair met again is passed over. A shared
+    /// part of the level's own kind entered a second time in one call, alone or with another
+    /// partner, is not read through again: the parts the two sides have left at the level are
+    /// compared as sequences parsed the same way whatever their grouping ([`Canon`]).
+    // Complexity tradeoff: until a shared part is entered twice, the walk reads each part once
+    // per parent read (a visited set of the shared parts entered), so its cost is linear in
+    // the distinct parts and edges and it stops at the first difference; formulas whose kept
+    // parts line up never leave it (`l01_38_presburger::shared`, the scaling tests of chains).
+    // Two that group one sequence at other places on each side, so that a shared part is
+    // entered again, cost O(e log N) for e distinct edges and N parts written out ([`Canon`]),
+    // which is O(n^2) when N is exponential in the n distinct parts (`shared::shifted_chains`,
+    // COMPLEXITY.md S31b); read through, they cost N. The parse is built once per call, so a
+    // pair compared again is parsed again. No answer is given up; the cost is. A complete
+    // solution keeps each part's parse with it.
     fn cmp(&self, other: &Formula) -> Ordering {
+        /// Whether `g` is shared and was entered before in this call, which it now is.
+        fn again(read: &mut HashSet<Id>, g: &Formula) -> bool {
+            g.is_shared() && !read.insert(Id::any(g))
+        }
         match self.cmp_node(other) {
             Ordering::Equal => {}
             o => return o,
@@ -582,35 +590,74 @@ impl Ord for Formula {
         let mut equal: HashSet<(Id, Id)> = HashSet::new();
         // The key of each pair entered together, until it is kept as equal.
         let mut entries: Vec<Option<(Id, Id)>> = Vec::new();
+        // The shared parts of a level's own kind entered so far.
+        let mut read: HashSet<Id> = HashSet::new();
+        let mut canon: Option<Canon> = None;
         let mut level = Level::of(self, other, None);
         let mut above: Vec<Level> = Vec::new();
         loop {
             level.settle(&mut equal, &mut entries);
             let (x, y) = (level.a.peek(), level.b.peek());
             let kind = level.kind;
-            match (x, y) {
+            let twice = match (x, y) {
                 (Some(x), Some(y)) if x.flattens_into(kind) && y.flattens_into(kind) => {
-                    level.a.advance();
-                    level.b.advance();
                     if x.same(y) {
+                        level.a.advance();
+                        level.b.advance();
                         continue;
                     }
+                    // Whether each is shared, read before a key raises its count.
+                    let (sx, sy) = (x.is_shared(), y.is_shared());
                     let key = (Id::any(x), Id::any(y));
                     if equal.contains(&key) {
+                        level.a.advance();
+                        level.b.advance();
                         continue;
                     }
-                    entries.push(Some(key));
-                    level.a.enter(x, Some(entries.len() - 1));
-                    level.b.enter(y, Some(entries.len() - 1));
+                    let twice = (sx && !read.insert(Id::any(x))) | (sy && !read.insert(Id::any(y)));
+                    if !twice {
+                        level.a.advance();
+                        level.b.advance();
+                        entries.push(Some(key));
+                        level.a.enter(x, Some(entries.len() - 1));
+                        level.b.enter(y, Some(entries.len() - 1));
+                        continue;
+                    }
+                    true
                 }
                 (Some(x), _) if x.flattens_into(kind) => {
-                    level.a.advance();
-                    level.a.enter(x, None);
+                    if !again(&mut read, x) {
+                        level.a.advance();
+                        level.a.enter(x, None);
+                        continue;
+                    }
+                    true
                 }
                 (_, Some(y)) if y.flattens_into(kind) => {
-                    level.b.advance();
-                    level.b.enter(y, None);
+                    if !again(&mut read, y) {
+                        level.b.advance();
+                        level.b.enter(y, None);
+                        continue;
+                    }
+                    true
                 }
+                _ => false,
+            };
+            if twice {
+                match canon
+                    .get_or_insert_with(Canon::new)
+                    .cmp_rest(kind, &level.a, &level.b)
+                {
+                    Ordering::Equal => {}
+                    o => return o,
+                }
+                match above.pop() {
+                    Some(l) => equal.extend(mem::replace(&mut level, l).key),
+                    None => return Ordering::Equal,
+                }
+                continue;
+            }
+            match (x, y) {
                 (Some(x), Some(y)) => {
                     level.a.advance();
                     level.b.advance();
