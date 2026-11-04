@@ -997,19 +997,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | BEND-spec | running | 2026-11-03 20:17 | start: reading BEND-study report |
 | CHK-cost | repair attempt 1 | 2026-11-03 15:48 | curried probe 15.7M->130.6M instr at n=125..1000 (was 187M->12418M); steps groups pass; full suite started; load 51.63 |
-| ISSUE1-else-atoms | repair attempt 3 | 2026-11-03 16:04 | new scaling test chain of n handler functions: 8.0x bytes (106.4M, 851.8M) n=200/1600 load 38; negative control (every outside set cloned and formatted per call |
+| ISSUE1-else-atoms | verify attempt 4 | 2026-11-03 16:04 | start; verifying a2b8d5dd on wt/issue1-else-atoms (repair#3); no earlier verify#4 lines; load 25.99 43.22 41.43 |
 | LIT-adopt | verify attempt 2 | 2026-11-03 16:46 | BLOCKING: == misses the union rules: x == 1 with x: f64 / rat accepted and false at 1.0 and 1r (spec sentence says rejected); p == (1, 2) with p: (f64, f64) / ( |
-| LOOP-boundary | running | 2026-11-03 19:33 | report saved to wt/loop-boundary/REPORT.md; adopted in full; spec agent LOOP-boundary-spec launching |
 | LOOP-boundary-spec merge | running | 2026-11-03 20:16 | plan-loopbound merged 72e14a7e + spec copies synced; l01_07_fences 11/11; pushed; lock released |
-| NAME-ties | verify attempt 4 | 2026-11-03 09:30 | started (tip 5d688a7a, spec 9e57519) / load 23.54 28.74 34.31 |
+| NAME-ties | verify attempt 4 | 2026-11-03 09:30 | probe (ctl worktree, not committed): decide((C4 && x<=4) // (C4 && x<=3)) with C4 the tied cycle -x_i+3x_{i+1}>=10 = Ok(true), but it has no point (sum gives 2* |
 | NARROW-if | verify attempt 2 | 2026-11-03 16:46 | returning ok=false: one blocking item, quadratic rejection notes (arms.rs deciding lists tests on unrelated names), easy fix, not hard; everything else verified |
 | plan-loopbound | merge attempt  | 2026-11-03 20:10 | lock taken |
-| STUDIES3-spec | running | 2026-11-03 19:30 | merged zed bb9a806, zed-impl 9ff30c5e + b8a8e10a (l01_07 snapshots); pushed |
 | TD-cong | verify attempt 1 | 2026-11-03 04:35 | started; reading diff 0d32a264 vs main |
-| TEST-slow | running (item wf_29c4acd4-fb5) | 2026-11-03 19:00 | workflow item wf_29c4acd4-fb5 covering the five TEST-slow-* splits of the s22 preimage tests |
 
-Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (1 commits); the push follows one full test run on the merged tree:
 
+- ec78d613 STATUS: in progress as of 2026-11-03 20:20
 
 ## Open points
 
