@@ -2002,7 +2002,15 @@ impl Mixer {
     // functions. Trigger: a part shared below `let`s of functions that differ on each path and
     // are called inside a family operation, through a parameter, or with such an argument;
     // for the restart, a function that calls many earlier functions at many new arguments in
-    // one run. Tests:
+    // one run. On the family of the scaling test below (d nested `if c`s whose arms are
+    // `let f = (y) -> f(y) + 1` and `+ 2` over one body, `f(1)` at the bottom) the mixed term
+    // has (3d^2 + 17d - 6)/2 nodes, a quadratic the output itself needs: `c` is run-stage,
+    // so every path stays; the `if` at depth k (k = 0 to d - 1) is reached under k + 1
+    // functions `y + s`, s = k to 2k the sum of the steps above it, and the leftmost literal
+    // below it is 1 + s + d - k, so its k + 1 mixed forms differ as terms and no sharing can
+    // merge them: the output holds exactly the sum of k + 1 over k, d(d + 1)/2 distinct `if`s
+    // (counted by structure at d = 1 to 32), and the node count is 3 times that plus 7d - 3, so
+    // it is within a constant factor of what the output needs. Tests:
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`,
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_scales` (at d and
     // 8d), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written` and
@@ -2386,6 +2394,13 @@ impl Mixer {
                     sum: Summary::default(),
                 },
                 Err(why) => {
+                    // Not fixed (COMPLEXITY.md F83, open): the term is printed as a tree, so a
+                    // part shared by many places is written at each, 2^d text on d nested
+                    // `if`s whose arms are one node (test
+                    // `l01_28_staging::dag::reporting_a_term_left_to_run_whose_arms_are_one_part`,
+                    // ignored). A `let` can name a shared part only where the names it reads
+                    // resolve alike at every place; elsewhere it must be a lambda over them,
+                    // whose arguments are not O(n log n) in general.
                     self.report.left.push((t.to_string(), why));
                     as_written()
                 }

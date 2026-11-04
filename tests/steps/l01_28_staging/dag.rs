@@ -456,7 +456,9 @@ fn mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives() {
 /// what it asked of it (COMPLEXITY.md F83): the `2^k` functions on the paths to level `k` take
 /// `k + 1` values at 1, so the parts below level `k` are mixed once for each, and the mixed
 /// term has `(3d^2 + 17d - 6) / 2` nodes, not `2^d` (before: 1298, 5144, 20510, 81956 nodes at
-/// d = 8, 10, 12, 14).
+/// d = 8, 10, 12, 14). The quadratic is the output's own: it holds `d(d + 1) / 2` distinct `if`s, the
+/// `k + 1` at depth `k` differing in the literals below them (the argument is at `Mixer::eval`),
+/// so the test allows power 2.
 #[test]
 fn mixing_lets_of_composed_functions_over_one_body_scales() {
     deep(|| {
@@ -540,4 +542,52 @@ fn a_call_at_a_long_join_is_mixed_as_written() {
             .contains("if c { 1 } else { 1 }")
     );
     assert!(report.left.is_empty(), "{report:?}");
+}
+
+/// `main = (n) -> n + td` with `t0 = w(w)`, `w = (f) -> f(f)`, and `tj = if j >= 1 { t(j-1) }
+/// else { t(j-1) }`, the two arms one node: a build-stage term whose form does not show that
+/// it ends, so mixing leaves it to run and prints it in the report. Not fixed (COMPLEXITY.md
+/// F83, open): the report prints the term as a tree, 2^d text (repair 4, release build, load 9:
+/// 2.3, 36, 143, 589, 2238 ms and 30.7 KB, 492 KB, 1.97 MB, 7.86 MB, 31.5 MB at d = 10, 14,
+/// 16, 18, 20). Kept so that the fix measures the same family.
+#[test]
+#[ignore = "open: Report::left prints a term with shared parts as a tree (COMPLEXITY.md F83)"]
+fn reporting_a_term_left_to_run_whose_arms_are_one_part() {
+    fn unit(d: usize) -> Unit {
+        let w = lam(&["f"], Term::App(Shared::new(var("f")), vec![var("f")]));
+        let bottom = Term::App(Shared::new(var("w")), vec![var("w")]);
+        let t = (1..=d as i64).fold(bottom, |t, j| {
+            let t = Shared::new(t);
+            let guard = Shared::new(prim(Prim::Ge, vec![lit(j), lit(1i64)]));
+            Term::If(guard, t.clone(), t)
+        });
+        let main = Term::Lam(
+            vec!["n".into()],
+            Shared::new(prim(Prim::Add, vec![var("n"), t])),
+        );
+        Unit {
+            defs: vec![def("w", w), def("main", main)],
+            tests: Arc::from([]),
+            warnings: Vec::new(),
+        }
+    }
+    deep(|| {
+        let n = 12;
+        let units: BTreeMap<usize, Unit> =
+            [n, FACTOR * n].into_iter().map(|d| (d, unit(d))).collect();
+        scaling::check_order(
+            "the report of a term left to run, on d nested ifs whose two arms are one node",
+            n,
+            1,
+            |d| {
+                let (_, report) = stage::mix(&units[&d], &["main"]);
+                assert_eq!(report.left.len(), 1);
+                assert!(
+                    report.left[0].0.len() <= 200 * d,
+                    "{} bytes",
+                    report.left[0].0.len()
+                );
+            },
+        );
+    });
 }
