@@ -48,8 +48,10 @@ fn types_not_known_finite() {
         Type::tuple(vec![Type::int(), s.clone()]),
         &Type::tuple(vec![s.clone(), s.clone()]) | &Type::tuple(vec![Type::int(), lit(0)]),
         Type::morphism(Type::empty(), Type::top(), lit(1)),
-        // One value, but the box `(int, 0)` is read as written.
-        &Type::tuple(vec![Type::int(), lit(0)]) & &Type::tuple(vec![lit(0), lit(0)]),
+        // One value, `(0, 0)`, but the box `(int, 0)` is read as written: a negated tuple
+        // type is not taken out of the box it is met with.
+        &Type::tuple(vec![Type::int(), lit(0)])
+            - &Type::tuple(vec![&Type::int() - &lit(0), lit(0)]),
     ] {
         assert!(!t.finite(), "{t}");
         assert!(t.each_value().is_none(), "{t}");
@@ -57,6 +59,14 @@ fn types_not_known_finite() {
     // A negated tuple type met with a finite one is finite: the box is the meet.
     let t = &Type::tuple(vec![lit(0), lit(0)]) - &Type::tuple(vec![Type::int(), lit(1)]);
     assert_eq!(listed(&t).map(|v| v.len()), Some(1));
+    // Two tuple types met are finite when their meet is, whichever the diagram tests first:
+    // only the box of the last tuple type a path to `true` takes is read (step L1.37a).
+    for t in [
+        &Type::tuple(vec![Type::int(), lit(0)]) & &Type::tuple(vec![lit(0), lit(0)]),
+        &Type::tuple(vec![lit(0), lit(0)]) & &Type::tuple(vec![Type::int(), lit(0)]),
+    ] {
+        assert_eq!(listed(&t).map(|v| v.len()), Some(1), "{t}");
+    }
 }
 
 /// A small random type over the literals 0..3 and pairs of them, from `seed`.

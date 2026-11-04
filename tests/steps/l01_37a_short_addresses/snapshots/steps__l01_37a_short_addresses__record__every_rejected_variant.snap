@@ -1,0 +1,149 @@
+---
+source: tests/steps/l01_37a_short_addresses/record.rs
+expression: out
+---
+constructor-called-by-position
+  rejected: [
+    Diagnostic {
+        line: 6,
+        col: 5,
+        message: "`Point` is not defined",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 6, col: 5, failure: None }]
+
+dot-never-mutates
+  rejected: [
+    Diagnostic {
+        line: 8,
+        col: 29,
+        message: "this form (ResultType) is built from layer L10",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 30, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+
+nullable-column-missing-none
+  rejected: [
+    Diagnostic {
+        line: 40,
+        col: 1,
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+
+numeric-is-not-binary-float
+  rejected: [
+    Diagnostic {
+        line: 40,
+        col: 1,
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+
+payload-built-by-position
+  rejected: [
+    Diagnostic {
+        line: 3,
+        col: 1,
+        message: "a type declaration is compiled from step L2.5",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 6,
+        col: 13,
+        message: "the type `Fail` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 6,
+        col: 21,
+        message: "a `match` is compiled from step L2.4",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 13, failure: Some("the type `Fail` is not defined") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
+
+taint-reaches-clean-sink
+  rejected: [
+    Diagnostic {
+        line: 39,
+        col: 1,
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 39, col: 1, failure: None }]
+
+taint-through-concatenation
+  rejected: [
+    Diagnostic {
+        line: 75,
+        col: 51,
+        message: "no token starts with '…' (U+2026)",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 51, failure: Some("no token starts with '…' (U+2026)") }]
+
+two-writers-of-one-generation
+  rejected: [
+    Diagnostic {
+        line: 8,
+        col: 29,
+        message: "this form (ResultType) is built from layer L10",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+
+unit-mismatch-force-energy
+  rejected: [
+    Diagnostic {
+        line: 76,
+        col: 51,
+        message: "no token starts with '…' (U+2026)",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 51, failure: Some("no token starts with '…' (U+2026)") }]
+
+unit-mismatch-in-sum
+  rejected: [
+    Diagnostic {
+        line: 40,
+        col: 1,
+        message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+
+value-binding-has-no-next-generation
+  rejected: [
+    Diagnostic {
+        line: 8,
+        col: 29,
+        message: "this form (ResultType) is built from layer L10",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]

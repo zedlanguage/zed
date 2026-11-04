@@ -87,7 +87,7 @@ pub(crate) fn mix(a: u64, b: u64) -> u64 {
     let mut z = (a.rotate_left(29) ^ b).wrapping_add(0x9e37_79b9_7f4a_7c15);
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    crate::address::short64(z ^ (z >> 31))
 }
 
 /// FNV-1a over `b`.
@@ -741,8 +741,9 @@ impl Type {
     /// Whether `self` is known to have finitely many values: it holds only bools, finite
     /// literal sets, bare atoms, and tuples whose boxes ([`Type::boxes`]) hold only types known
     /// finite. A recursive type, a payload, a struct or a function is not known finite, and a
-    /// box is read as written, so `(int, 0) & (0, 0)` is not known finite although it has one
-    /// value. No size is compared: the answer depends on the type alone.
+    /// box is read as written, so `(int, 0) - (int - 0, 0)` is not known finite although it has
+    /// one value. No size is compared: the answer depends on the type alone, not on the order
+    /// its diagram tests tuple types in.
     pub fn finite(&self) -> bool {
         self.finite_order().is_some()
     }
@@ -836,9 +837,11 @@ impl Type {
     /// Tuple types, the boxes, whose union holds every tuple of `self`, when the rest of
     /// `self` is finite and every tuple of it is in a tuple type the diagram takes; `None`
     /// otherwise. A value of a diagram is in the last tuple type its path takes, and in the
-    /// meet of those the path took before; so each node of the diagram gives the box of its
-    /// tuple type met with the union of the meets on the paths to it, one pass over the
-    /// nodes, never over the paths. An expression gives each of its tuple types.
+    /// meet of those the path took before; so each node that is the last tuple type taken on a
+    /// path to `true` gives the box of its tuple type met with the union of the meets on the
+    /// paths to it, one pass over the nodes, never over the paths. A node whose taken branch
+    /// meets another tuple type before `true` gives no box of its own, so a meet of tuple types
+    /// gives its meet in either order of the diagram. An expression gives each of its tuple types.
     fn boxes(&self) -> Option<Vec<Row>> {
         let Node::Parts(p, _) = &*self.0 else {
             return None;

@@ -197,7 +197,7 @@ pub fn address_at(
     h.update(b"zed-canon\0");
     h.update(&version.to_le_bytes());
     h.update(&serialize(&canonicalize(d), refs));
-    ContentAddress(*h.finalize().as_bytes())
+    ContentAddress::hashed(&h)
 }
 
 /// The serialization of a definition already in normal form: a self-delimiting byte string,
@@ -224,5 +224,5 @@ pub fn unit_address(exports: &[(&str, ContentAddress)]) -> ContentAddress {
         h.update(name.as_bytes());
         h.update(&address.0);
     }
-    ContentAddress(*h.finalize().as_bytes())
+    ContentAddress::hashed(&h)
 }

@@ -95,8 +95,11 @@ struct Frame {
     brought: HashMap<(usize, (usize, usize)), Src>,
     /// The current state edge of each port the region has touched.
     states: HashMap<Arc<str>, Src>,
-    /// The nodes entered by content address.
+    /// The last node entered with each key.
     seen: HashMap<ContentAddress, usize>,
+    /// For each node, the node entered before it with its key, if any: the nodes of one key
+    /// form a chain from [`Frame::seen`], so a key that collides keeps each node it names.
+    same_key: Vec<Option<usize>>,
     /// The keys of each node's regions, in node order.
     keys: Vec<Vec<ContentAddress>>,
 }
@@ -115,6 +118,7 @@ impl Frame {
             brought: HashMap::new(),
             states: HashMap::new(),
             seen: HashMap::new(),
+            same_key: Vec::new(),
             keys: Vec::new(),
         }
     }
@@ -381,17 +385,30 @@ impl<'t> Lower<'t> {
     /// Adds `node` to the current region, or finds the node with its content address. A node
     /// that takes a state edge never repeats one, since each state edge is used once, so the
     /// effects stay apart without a test of their own.
-    /// Adds `node`, whose regions have the keys `regions`, unless a node of its key is there.
+    /// Adds `node`, whose regions have the keys `regions`, unless a node of equal normal form
+    /// is there. A node of its key is confirmed by its contents ([`canon::same_normal`]), so two
+    /// distinct nodes whose keys collide stay two (step L1.37a).
     fn add(&mut self, node: Node, regions: Vec<ContentAddress>) -> usize {
         let key = canon::node_key(&node, &regions);
         let f = self.frame();
-        if let Some(&n) = f.seen.get(&key) {
-            return n;
+        // Complexity tradeoff: the nodes of one key form a chain (`same_key`), walked with a
+        // confirmation each. A 256-bit key gives chains of one node, so each add costs the
+        // size of the node; with `short-addresses` (8-bit keys, a test build) a chain holds
+        // every node of its key, and lowering n distinct nodes costs O(n²/256), accepted there
+        // since that build exists to make keys collide. Tests:
+        // l01_37a_short_addresses::scaling, l01_37a_short_addresses::collide; COMPLEXITY.md
+        // C29.
+        let mut at = f.seen.get(&key).copied();
+        while let Some(m) = at {
+            if canon::same_normal(&f.region.nodes[m], &node) {
+                return m;
+            }
+            at = f.same_key[m];
         }
         f.region.nodes.push(node);
         f.keys.push(regions);
         let n = f.region.nodes.len() - 1;
-        f.seen.insert(key, n);
+        f.same_key.push(f.seen.insert(key, n));
         n
     }
 

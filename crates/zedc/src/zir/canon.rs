@@ -136,9 +136,9 @@ fn rename_all(p: &mut Pattern, index: &mut usize) {
     }
 }
 
-/// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
-/// forms of the one-node regions holding the nodes (up to the hash).
-pub fn node_key(n: &Node, regions: &[ContentAddress]) -> ContentAddress {
+/// The bytes [`node_key`] hashes for `n` besides its regions' keys: the binary form of the
+/// one-node region holding `n`'s operation, inputs and outputs in normal form.
+fn shell_bytes(n: &Node) -> Vec<u8> {
     let mut shell = Node {
         op: n.op.clone(),
         inputs: n.inputs.clone(),
@@ -146,24 +146,17 @@ pub fn node_key(n: &Node, regions: &[ContentAddress]) -> ContentAddress {
         regions: Vec::new(),
     };
     normal_shell(&mut shell);
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-zir-node\0");
-    h.update(&canon::VERSION.to_le_bytes());
-    h.update(&binary::encode(&Region {
+    binary::encode(&Region {
         kind: RegionKind::Function,
         args: Vec::new(),
         nodes: vec![shell],
         results: Vec::new(),
-    }));
-    h.update(&(regions.len() as u64).to_le_bytes());
-    for r in regions {
-        h.update(&r.0);
-    }
-    ContentAddress(*h.finalize().as_bytes())
+    })
 }
 
-/// The key of region `r` whose nodes' regions have the keys `inner`, one list per node.
-pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
+/// The bytes [`region_key`] hashes for `r` besides its nodes' keys: the binary form of its
+/// kind, its arguments in normal form and its results.
+fn region_bytes(r: &Region) -> Vec<u8> {
     let mut shell = Region {
         kind: r.kind,
         args: r.args.clone(),
@@ -171,15 +164,61 @@ pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
         results: r.results.clone(),
     };
     shell.args.iter_mut().for_each(normal_edge);
+    binary::encode(&shell)
+}
+
+/// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
+/// forms of the one-node regions holding the nodes (up to the hash; [`same_normal`] decides
+/// it without the hash).
+pub fn node_key(n: &Node, regions: &[ContentAddress]) -> ContentAddress {
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-zir-node\0");
+    h.update(&canon::VERSION.to_le_bytes());
+    h.update(&shell_bytes(n));
+    h.update(&(regions.len() as u64).to_le_bytes());
+    for r in regions {
+        h.update(&r.0);
+    }
+    ContentAddress::hashed(&h)
+}
+
+/// The key of region `r` whose nodes' regions have the keys `inner`, one list per node.
+pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir-region\0");
     h.update(&canon::VERSION.to_le_bytes());
-    h.update(&binary::encode(&shell));
+    h.update(&region_bytes(r));
     h.update(&(r.nodes.len() as u64).to_le_bytes());
     for (n, keys) in r.nodes.iter().zip(inner) {
         h.update(&node_key(n, keys).0);
     }
-    ContentAddress(*h.finalize().as_bytes())
+    ContentAddress::hashed(&h)
+}
+
+/// Whether `a` and `b` have equal keys by their contents rather than by the hash: whether
+/// every pair of nodes and of regions at one place in the two, from `a` and `b` down, has the
+/// bytes [`node_key`] and [`region_key`] hash. A key never decides equality alone (DESIGN.md
+/// sec:theories, the trusted base), so the lowering confirms each key it finds with this
+/// (step L1.37a). It reads each pair once, from a stack of the pairs left, and stops at the
+/// first that differs, so it costs at most the size of the smaller of `a` and `b`; regions
+/// the two share are skipped.
+pub fn same_normal(a: &Node, b: &Node) -> bool {
+    let mut todo = vec![(a, b)];
+    while let Some((a, b)) = todo.pop() {
+        if a.regions.len() != b.regions.len() || shell_bytes(a) != shell_bytes(b) {
+            return false;
+        }
+        for (r, s) in a.regions.iter().zip(&b.regions) {
+            if Arc::ptr_eq(r, s) {
+                continue;
+            }
+            if r.nodes.len() != s.nodes.len() || region_bytes(r) != region_bytes(s) {
+                return false;
+            }
+            todo.extend(r.nodes.iter().zip(&s.nodes));
+        }
+    }
+    true
 }
 
 /// The key of `g` from the bottom up: what [`region_key`] gives with every region's key.
@@ -215,7 +254,7 @@ pub fn address(g: &Region) -> ContentAddress {
     h.update(b"zed-zir\0");
     h.update(&canon::VERSION.to_le_bytes());
     h.update(&binary::encode(&canonicalize(g)));
-    ContentAddress(*h.finalize().as_bytes())
+    ContentAddress::hashed(&h)
 }
 
 /// An edge's facts as the M0.7 rules see a definition: no name and no body.

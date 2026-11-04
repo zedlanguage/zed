@@ -1,0 +1,16 @@
+---
+source: tests/steps/l01_37a_short_addresses/record.rs
+expression: out
+---
+2: (| (tuple 0 #a0) (tuple 1 #a1))
+  (| #b0 #b1)
+  (& (tuple 2 int) (tuple int 0))
+  (| bool int rat f64 String #_ (& tuple (! (| (tuple 0 #a0) (tuple 1 #a1)))) struct morphism)
+5: (| (tuple 0 #a0) (tuple 1 #a1) (tuple 2 #a2) (tuple 3 #a3) (tuple 4 #a4))
+  (| #b0 #b1 #b2 #b3 #b4)
+  (& (tuple 5 int) (tuple int 0))
+  (| bool int rat f64 String #_ (& tuple (! (| (tuple 0 #a0) (tuple 1 #a1) (tuple 2 #a2) (tuple 3 #a3) (tuple 4 #a4)))) struct morphism)
+12: (| (tuple 0 #a0) (tuple 1 #a1) (tuple 10 #a10) (tuple 11 #a11) (tuple 2 #a2) (tuple 3 #a3) (tuple 4 #a4) (tuple 5 #a5) (tuple 6 #a6) (tuple 7 #a7) (tuple 8 #a8) (tuple 9 #a9))
+  (| #b0 #b1 #b10 #b11 #b2 #b3 #b4 #b5 #b6 #b7 #b8 #b9)
+  (& (tuple 12 int) (tuple int 0))
+  (| bool int rat f64 String #_ (& tuple (! (| (tuple 0 #a0) (tuple 1 #a1) (tuple 10 #a10) (tuple 11 #a11) (tuple 2 #a2) (tuple 3 #a3) (tuple 4 #a4) (tuple 5 #a5) (tuple 6 #a6) (tuple 7 #a7) (tuple 8 #a8) (tuple 9 #a9)))) struct morphism)

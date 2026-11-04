@@ -463,11 +463,18 @@ impl<A: Literal> Bdd<A> {
         go(self, prune, &mut Vec::new(), &mut Vec::new(), f)
     }
 
-    /// Whether `f` holds of each node's atom and state, for the nodes whose `hi` is not
-    /// `false`. The root has the state `start`; an edge to a node's `hi` passes on `take` of its
+    /// Whether `f` holds of each node's atom and state, for the nodes from whose `hi` a chain of
+    /// `lo` edges alone reaches `true`: the nodes that are the last `hi` taken on some path to
+    /// `true`. The root has the state `start`; an edge to a node's `hi` passes on `take` of its
     /// state and its atom, an edge to its `lo` its state; a node's state is `join` of the states
     /// of the edges into it. Each node is visited once, after every node with an edge into it,
     /// so the time is linear in the nodes however many paths there are.
+    ///
+    /// Which nodes are the last `hi` of a path does not depend on the atom order as much as
+    /// which nodes have a `hi` other than `false`: a meet `x & y` has the one path `x, y` in
+    /// either order, and only its last node is passed to `f`, so a user that reads a node's state
+    /// as the atoms its paths took sees the meet in both orders (step L1.37a: the atom order
+    /// follows digests, and truncated digests order atoms differently).
     pub(super) fn reaching<S>(
         &self,
         start: S,
@@ -499,12 +506,24 @@ impl<A: Literal> Bdd<A> {
                 }
             }
         }
+        // Whether a chain of `lo` edges from each node reaches `true`, children first.
+        let mut lo_true: HashMap<u64, bool> = HashMap::with_capacity(order.len());
+        let chain = |b: &Bdd<A>, lo_true: &HashMap<u64, bool>| match b {
+            Bdd::Leaf(v) => *v,
+            Bdd::Node(c) => *lo_true
+                .get(&c.id)
+                .expect("a node is ordered after its children"),
+        };
+        for n in &order {
+            let t = chain(&n.lo, &lo_true);
+            lo_true.insert(n.id, t);
+        }
         let mut state: HashMap<u64, S> = HashMap::from([(root.id, start)]);
         for n in order.into_iter().rev() {
             let here = state
                 .remove(&n.id)
                 .expect("a node is reached before it is visited");
-            if !matches!(n.hi, Bdd::Leaf(false)) && !f(&n.atom, &here) {
+            if chain(&n.hi, &lo_true) && !f(&n.atom, &here) {
                 return false;
             }
             for (child, s) in [(&n.hi, take(&here, &n.atom)), (&n.lo, here)] {
@@ -566,6 +585,16 @@ impl<A: Literal> Part<A> {
             Part::Bdd(b) => b.digest(),
             Part::Expr(e) => e.digest,
         }
+    }
+
+    /// Whether `self` goes first of the two operands of a connective: the smaller digest, and
+    /// of equal digests the smaller in the order of contents, so that two distinct parts whose
+    /// digests collide still have one order (step L1.37a).
+    fn before(&self, other: &Part<A>) -> bool {
+        self.digest()
+            .cmp(&other.digest())
+            .then_with(|| self.cmp(other))
+            .is_le()
     }
 
     pub(super) fn leaf(b: bool) -> Part<A> {
@@ -655,7 +684,7 @@ impl<A: Literal> Part<A> {
         if let Some((c, x, y)) = Part::choice_of(self, other, op) {
             return Part::choose(&c, &x, &y);
         }
-        let (a, b) = if self.digest() <= other.digest() {
+        let (a, b) = if self.before(other) {
             (self, other)
         } else {
             (other, self)
@@ -677,10 +706,10 @@ impl<A: Literal> Part<A> {
         }
     }
 
-    /// The condition of a choice, of `c` and `!c` the one whose digest is smaller.
+    /// The condition of a choice, of `c` and `!c` the one [`Part::before`] puts first.
     fn condition(c: &Part<A>) -> (Part<A>, bool) {
         let n = c.not();
-        if c.digest() <= n.digest() {
+        if c.before(&n) {
             (c.clone(), true)
         } else {
             (n, false)
@@ -701,7 +730,7 @@ impl<A: Literal> Part<A> {
             _ => {}
         }
         let parts = [c.zip(x, Op::And), c.not().zip(y, Op::And)];
-        let [a, b] = if parts[0].digest() <= parts[1].digest() {
+        let [a, b] = if parts[0].before(&parts[1]) {
             parts
         } else {
             let [p, q] = parts;

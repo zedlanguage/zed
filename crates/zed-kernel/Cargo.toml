@@ -9,6 +9,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Truncates every content address and digest to a few bits, so that distinct values collide
+# (step L1.37a; see src/address.rs). Off in a release build.
+short-addresses = []
+
 [dependencies]
 imbl = "7.0.2"
 num-bigint = "0.4"

@@ -199,3 +199,50 @@ pub fn step_units() -> Vec<PathBuf> {
     out.sort();
     out
 }
+
+/// Replays each counterexample the checker reports for the unit `text` (step L1.37a): for each
+/// failing row of a table other than `main`'s, whose failure names the result of its call,
+/// the call is run alone under the interpreter and each of `engines`, and each must give the
+/// result the failure names. Returns the comparisons and how many rows were replayed; a
+/// rejected unit replays nothing.
+pub fn counterexamples(text: &str, engines: &[Engine<'_>]) -> (Report, usize) {
+    let mut r = Report::default();
+    let front = Db::new().front(text);
+    let Ok((_, u, _)) = &*front else {
+        return (r, 0);
+    };
+    let failures: Vec<String> = test(text).into_iter().filter_map(|o| o.failure).collect();
+    let mut replayed = 0;
+    for t in u.tests.iter().filter(|t| t.function != "main") {
+        let row = format!("`{}` of `{}`", &text[t.span.start..t.span.end], t.function);
+        let Some(why) = failures
+            .iter()
+            .find_map(|f| f.strip_prefix(row.as_str())?.strip_prefix(": "))
+        else {
+            continue;
+        };
+        if !why.starts_with("the result is ") {
+            continue;
+        }
+        let zed_kernel::Term::Prim(_, sides) = &t.check else {
+            unreachable!("a check is `call == want`")
+        };
+        let call = interp::prelude(u.close(sides[0].clone()));
+        let named = |v: Result<Value, String>| match v {
+            Ok(v) => format!("the result is {v}"),
+            Err(e) => format!("the error `{e}`"),
+        };
+        let direct: &Through<'_> = &run::direct;
+        for (name, engine) in std::iter::once(&("the interpreter", direct)).chain(engines) {
+            let got = named(engine(&call, &mut Evaluator::new(World::new())));
+            r.compared += 1;
+            if got != why {
+                r.mismatches.push(format!(
+                    "the counterexample {row}: the checker names {why}, and {name} gives {got}"
+                ));
+            }
+        }
+        replayed += 1;
+    }
+    (r, replayed)
+}

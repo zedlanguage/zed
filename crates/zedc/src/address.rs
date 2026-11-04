@@ -27,6 +27,15 @@ impl ContentAddress {
         }
         Some(ContentAddress(bytes))
     }
+
+    /// The address `h` has hashed: its BLAKE3-256 digest, of which the build with zed-kernel's
+    /// feature `short-addresses` keeps only the first byte, so that addresses collide (step
+    /// L1.37a).
+    pub fn hashed(h: &blake3::Hasher) -> Self {
+        let mut bytes = *h.finalize().as_bytes();
+        zed_kernel::address::short256(&mut bytes);
+        ContentAddress(bytes)
+    }
 }
 
 impl fmt::Display for ContentAddress {

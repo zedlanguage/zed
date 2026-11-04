@@ -105,8 +105,10 @@ pub struct Cones<'u> {
     by_kernel: HashMap<&'u str, usize>,
     /// The positions of the definitions each definition reads.
     reads: Vec<OnceCell<Vec<usize>>>,
-    /// Each definition's digest, for a query key.
-    digests: Vec<OnceCell<[u8; 32]>>,
+    /// The number a query database gave each definition's text, for a query key.
+    numbers: Vec<OnceCell<u64>>,
+    /// The stamp of that database.
+    db: OnceCell<u64>,
 }
 
 impl<'u> Cones<'u> {
@@ -121,7 +123,8 @@ impl<'u> Cones<'u> {
                 .map(|(i, d)| (&*d.kernel, i))
                 .collect(),
             reads: unit.defs.iter().map(|_| OnceCell::new()).collect(),
-            digests: unit.defs.iter().map(|_| OnceCell::new()).collect(),
+            numbers: unit.defs.iter().map(|_| OnceCell::new()).collect(),
+            db: OnceCell::new(),
         }
     }
 
@@ -153,12 +156,18 @@ impl<'u> Cones<'u> {
         self.reach(roots).into_iter().map(move |i| &unit.defs[i])
     }
 
-    /// The BLAKE3 digest of the definition at position `i`: of its kernel name and its term
-    /// as `Debug` prints them, made once.
-    pub fn digest(&self, i: usize) -> &[u8; 32] {
-        self.digests[i].get_or_init(|| {
+    /// The number of the definition at position `i` in the query database of stamp `db`:
+    /// what `number` gives its text, its kernel name and its term as `Debug` prints them,
+    /// asked once. The numbers are those of one database, so a [`Cones`] is read with one.
+    pub(crate) fn number(&self, i: usize, db: u64, number: impl FnOnce(&str) -> u64) -> u64 {
+        let first = *self.db.get_or_init(|| db);
+        assert_eq!(
+            first, db,
+            "the definitions of a unit are numbered by the one query database that met them"
+        );
+        *self.numbers[i].get_or_init(|| {
             let d = &self.unit.defs[i];
-            *blake3::hash(format!("{}={:?}", d.kernel, d.term).as_bytes()).as_bytes()
+            number(&format!("{}={:?}", d.kernel, d.term))
         })
     }
 

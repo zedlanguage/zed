@@ -133,14 +133,13 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                         let mut roots = vec![&main, &t.want];
                         roots.extend(&t.args);
                         let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
-                        let k =
-                            query::key("wave", &[&query::cone(&cones, &roots), ports.as_bytes()]);
+                        let k = query::key("wave", &[&db.cone(&cones, &roots), ports.as_bytes()]);
                         db.row(Query::Wave, k, || wave(&cones, None, p, t, map))
                             .err()
                     }
                     (None, "main") => continue,
                     _ => {
-                        let k = query::key("row", &[&query::cone(&cones, &[&t.check])]);
+                        let k = query::key("row", &[&db.cone(&cones, &[&t.check])]);
                         db.row(Query::Row, k, || row(&cones, None, t, map)).err()
                     }
                 };

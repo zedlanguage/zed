@@ -42,6 +42,8 @@ path = "steps/l01_22_type_representation/deep_types.rs"
 
 [features]
 full = []
+# The build whose content addresses collide, for the tests of step L1.37a.
+short-addresses = ["zedc/short-addresses", "zed-kernel/short-addresses"]
 
 [dependencies]
 insta.workspace = true

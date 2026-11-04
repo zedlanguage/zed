@@ -1393,3 +1393,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Two more `OnceLock`s in `Facts`: the settled signature (`Sig::settle`) and the hash (`Sig::digest`), each made on first use from those of the functions it holds; `Hash` for `Sig` writes the digest | `check::ty::{Facts, Sig::settle, Sig::digest}` | Mutation (interior mutability) | Lazy fields of the record; the port computes the digest at construction, as `Row` does, and settles at the end in one fold that shares results by value |
 | A method on `self: &Arc<Sig>` that returns the shared `Arc` itself when nothing changes | `check::ty::Sig::settle` | None | Values are shared in Zed; returning the argument unchanged is the default |
 | A resolver passed as `&dyn Fn(&str) -> Option<Ty>` (`Solve`) into the comparisons and held in `Cx` | `check::ty::{Solve, Cx, sub_with, subtype_with, fits_sig_with}`, `check::Ck::stale` | None | A function value passed as an argument |
+
+## Entries from L1.37a (`zed-kernel/src/address.rs`, `types/bdd.rs`, `zedc/src/address.rs`, `zir/canon.rs`, `zir/lower.rs`, `query.rs`, `elab.rs`, `cost.rs`, `store/product.rs`, `tests/src/oracle.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A cargo feature, `short-addresses`, read as `cfg!(feature = …)` in a `const` that masks every digest and address | `zed_kernel::address::SHORT`, `short64`, `short256`, `ContentAddress::hashed` | Missing (compile-time build option) | A unit parameter of the kernel, a `Bool` given at the import, read by the two masking functions |
+| A `HashMap<ContentAddress, usize>` from key to the newest node, and a `Vec<Option<usize>>` linking each node to the earlier node of its key, walked until one has equal contents | `Lower::add`, `Lower::same_key` | Mutation (gap 11), Early exit (gap 12) | A map from key to the list of nodes of that key, searched with `find` on `same_normal` |
+| An explicit `Vec` stack of node pairs left to compare, and `Arc::ptr_eq` to skip a region the two nodes share | `canon::same_normal` | Mutation (gap 11), Identity (gap 1) | A fold over a work list; without identity each shared region is compared, which costs its size again |
+| A `HashMap<u64, bool>` filled in postorder for whether each node's chain of `lo` edges reaches `true`, read by a closure that borrows it | `Bdd::reaching` | Mutation (gap 11), Identity (gap 1: node ids) | A fold over the postorder into a persistent map keyed by node digest, confirmed by contents |
+| A key as `Box<[u8]>` of the encoded inputs, compared in full on a hash-map hit | `query::Key` | Bytes (gap 5) | A key as a tuple of the inputs, compared by `==` |
+| A `OnceCell<u64>` per definition for its number, given once through `&self` | `Cones::number`, `Db::cone` | Lazy cells (gap 3) | A table of numbers built once per unit, before the cones are read |
+| `min_by_key` on a tuple of the cost and borrowed slices of the plan | `cost::pick`, `cost::order` | none | `minBy` on the same tuple; slices are lists |
+| Each nest's sides and each level sorted in place by `sort_by_key` and `sort_by`, and ids written into a `Vec` by position | `store::product::Tree::of` | Mutation (gap 11) | `sort` of each level into a new list, ids by `zip` with the positions |

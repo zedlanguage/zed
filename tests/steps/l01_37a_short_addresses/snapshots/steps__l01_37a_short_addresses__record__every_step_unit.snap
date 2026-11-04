@@ -1,0 +1,253 @@
+---
+source: tests/steps/l01_37a_short_addresses/record.rs
+expression: out
+---
+l01_21_test_runner/zed/config.zed
+  warnings: []
+  checks: [Outcome { line: 8, col: 3, failure: None }, Outcome { line: 9, col: 3, failure: None }, Outcome { line: 10, col: 3, failure: None }]
+
+l01_21_test_runner/zed/fahrenheit.zed
+  warnings: []
+  checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 17, failure: None }, Outcome { line: 4, col: 29, failure: None }, Outcome { line: 4, col: 41, failure: None }, Outcome { line: 4, col: 51, failure: None }, Outcome { line: 11, col: 3, failure: None }, Outcome { line: 12, col: 3, failure: None }, Outcome { line: 13, col: 3, failure: None }]
+
+l01_21_test_runner/zed/greeting.zed
+  warnings: []
+  checks: [Outcome { line: 3, col: 8, failure: None }, Outcome { line: 3, col: 32, failure: None }, Outcome { line: 3, col: 57, failure: None }, Outcome { line: 9, col: 3, failure: None }, Outcome { line: 10, col: 3, failure: None }, Outcome { line: 11, col: 3, failure: None }]
+
+l01_21_test_runner/zed/labels.zed
+  rejected: [
+    Diagnostic {
+        line: 5,
+        col: 5,
+        message: "missing argument `city` of `label`",
+        steps: [
+            Step {
+                line: 3,
+                col: 1,
+                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
+                width: 110,
+            },
+        ],
+        row: Some(
+            MissingArgument,
+        ),
+    },
+    Diagnostic {
+        line: 5,
+        col: 5,
+        message: "missing argument `name` of `label`",
+        steps: [
+            Step {
+                line: 3,
+                col: 1,
+                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
+                width: 110,
+            },
+        ],
+        row: Some(
+            MissingArgument,
+        ),
+    },
+    Diagnostic {
+        line: 6,
+        col: 17,
+        message: "`name` of `label` is positional: pass it by position",
+        steps: [
+            Step {
+                line: 3,
+                col: 1,
+                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
+                width: 110,
+            },
+        ],
+        row: Some(
+            WrongForm,
+        ),
+    },
+    Diagnostic {
+        line: 7,
+        col: 5,
+        message: "`...` leaves no named parameter out",
+        steps: [
+            Step {
+                line: 3,
+                col: 1,
+                text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
+                source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
+                width: 110,
+            },
+        ],
+        row: Some(
+            NothingLeftOut,
+        ),
+    },
+    Diagnostic {
+        line: 8,
+        col: 25,
+        message: "the lambda's parameter `g` is not a parameter of `(grams: int) -> String`: rename it `grams`",
+        steps: [
+            Step {
+                line: 4,
+                col: 1,
+                text: "`stamp` is declared here, `(int, handler: ((grams: int) -> String)) -> String`",
+                source: "stamp(positional weight: int, handler: (grams: int) -> String) = handler(grams: weight);",
+                width: 88,
+            },
+        ],
+        row: Some(
+            ParameterKinds,
+        ),
+    },
+]
+  checks: [Outcome { line: 5, col: 5, failure: None }, Outcome { line: 6, col: 17, failure: None }, Outcome { line: 7, col: 5, failure: None }, Outcome { line: 8, col: 25, failure: None }]
+
+l01_21_test_runner/zed/username.zed
+  warnings: []
+  checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 24, failure: None }, Outcome { line: 4, col: 40, failure: None }, Outcome { line: 13, col: 3, failure: None }, Outcome { line: 14, col: 3, failure: None }]
+
+l01_22_type_representation/zed/kinds.zed
+  warnings: []
+  checks: [Outcome { line: 11, col: 3, failure: None }, Outcome { line: 12, col: 3, failure: None }, Outcome { line: 13, col: 3, failure: None }, Outcome { line: 14, col: 3, failure: None }, Outcome { line: 15, col: 3, failure: None }, Outcome { line: 16, col: 3, failure: None }, Outcome { line: 17, col: 3, failure: None }, Outcome { line: 18, col: 3, failure: None }, Outcome { line: 19, col: 3, failure: None }, Outcome { line: 20, col: 3, failure: None }, Outcome { line: 21, col: 3, failure: None }, Outcome { line: 27, col: 3, failure: None }, Outcome { line: 28, col: 3, failure: None }, Outcome { line: 29, col: 3, failure: None }, Outcome { line: 30, col: 3, failure: None }, Outcome { line: 31, col: 3, failure: None }, Outcome { line: 37, col: 3, failure: None }, Outcome { line: 38, col: 3, failure: None }, Outcome { line: 39, col: 3, failure: None }]
+
+l01_22_type_representation/zed/retry.zed
+  warnings: []
+  checks: [Outcome { line: 5, col: 3, failure: None }, Outcome { line: 6, col: 3, failure: None }, Outcome { line: 7, col: 3, failure: None }, Outcome { line: 8, col: 3, failure: None }, Outcome { line: 9, col: 3, failure: None }, Outcome { line: 10, col: 3, failure: None }]
+
+l01_22_type_representation/zed/shape.zed
+  warnings: []
+  checks: [Outcome { line: 15, col: 3, failure: None }, Outcome { line: 16, col: 3, failure: None }, Outcome { line: 17, col: 3, failure: None }, Outcome { line: 18, col: 3, failure: None }, Outcome { line: 19, col: 3, failure: None }, Outcome { line: 20, col: 3, failure: None }, Outcome { line: 21, col: 3, failure: None }, Outcome { line: 22, col: 3, failure: None }, Outcome { line: 23, col: 3, failure: None }, Outcome { line: 24, col: 3, failure: None }, Outcome { line: 25, col: 3, failure: None }]
+
+l01_22_type_representation/zed/untestable.zed
+  rejected: [
+    Diagnostic {
+        line: 3,
+        col: 19,
+        message: "`is` cannot test a value against a function type at run time",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 4,
+        col: 17,
+        message: "`Lines` is the type of a port, and no value has it",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 3, col: 19, failure: None }, Outcome { line: 4, col: 17, failure: None }]
+
+l01_26_type_resolution/zed/readings.zed
+  warnings: []
+  checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 19, failure: None }, Outcome { line: 4, col: 32, failure: None }, Outcome { line: 4, col: 44, failure: None }, Outcome { line: 4, col: 56, failure: None }, Outcome { line: 8, col: 8, failure: None }, Outcome { line: 8, col: 21, failure: None }, Outcome { line: 8, col: 38, failure: None }, Outcome { line: 12, col: 8, failure: None }, Outcome { line: 12, col: 19, failure: None }, Outcome { line: 12, col: 32, failure: None }, Outcome { line: 12, col: 44, failure: None }, Outcome { line: 18, col: 8, failure: None }, Outcome { line: 22, col: 8, failure: None }, Outcome { line: 22, col: 20, failure: None }, Outcome { line: 27, col: 8, failure: None }, Outcome { line: 27, col: 28, failure: None }, Outcome { line: 30, col: 8, failure: None }]
+
+l01_29_diagnostics/zed/narrowed.zed
+  rejected: [
+    Diagnostic {
+        line: 3,
+        col: 22,
+        message: "`++` does not take (int, \"x\")",
+        steps: [
+            Step {
+                line: 3,
+                col: 22,
+                text: "`v` is int here",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                width: 1,
+            },
+            Step {
+                line: 3,
+                col: 11,
+                text: "`v` is narrowed to int where this test decides",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                width: 8,
+            },
+            Step {
+                line: 3,
+                col: 3,
+                text: "`v` has no declared type; its uses give it _",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                width: 1,
+            },
+            Step {
+                line: 3,
+                col: 27,
+                text: "this expression is \"x\"",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                width: 3,
+            },
+            Step {
+                line: 3,
+                col: 22,
+                text: "`++` takes (String, String) -> String",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                width: 8,
+            },
+            Step {
+                line: 3,
+                col: 22,
+                text: "repair: wrap this in `String(…)`; the checker accepts that",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                width: 1,
+            },
+        ],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 3, col: 22, failure: None }]
+
+l01_29_diagnostics/zed/offsets.zed
+  rejected: [
+    Diagnostic {
+        line: 4,
+        col: 9,
+        message: "a prefix `-` on a postfix chain whose base is the numeric literal `1`: the chain binds tighter, so this is `-(1.abs)`, which is -1, not `(-1).abs`, which is 1; write the grouping you mean",
+        steps: [
+            Step {
+                line: 4,
+                col: 10,
+                text: "the chain starts at the numeric literal `1`",
+                source: "drift = -1.abs;            // ✗ Prefix `-` on a numeric literal's postfix chain: -(1.abs) is -1",
+                width: 1,
+            },
+            Step {
+                line: 4,
+                col: 10,
+                text: "the postfix chain `1.abs` binds tighter than a prefix `-` (precedence tiers 1 and 3)",
+                source: "drift = -1.abs;            // ✗ Prefix `-` on a numeric literal's postfix chain: -(1.abs) is -1",
+                width: 5,
+            },
+            Step {
+                line: 4,
+                col: 9,
+                text: "so the `-` applies to the whole chain: `-(1.abs)`, which is -1",
+                source: "drift = -1.abs;            // ✗ Prefix `-` on a numeric literal's postfix chain: -(1.abs) is -1",
+                width: 6,
+            },
+            Step {
+                line: 4,
+                col: 9,
+                text: "repair: `(-1).abs`, the chain started at `-1`, which is 1",
+                source: "drift = -1.abs;            // ✗ Prefix `-` on a numeric literal's postfix chain: -(1.abs) is -1",
+                width: 6,
+            },
+            Step {
+                line: 4,
+                col: 9,
+                text: "repair: `-(1.abs)`, the meaning as written, which is -1",
+                source: "drift = -1.abs;            // ✗ Prefix `-` on a numeric literal's postfix chain: -(1.abs) is -1",
+                width: 6,
+            },
+        ],
+        row: Some(
+            PrefixMinus,
+        ),
+    },
+]
+  checks: [Outcome { line: 4, col: 9, failure: None }]
+
+l25_08_mutate/zed/fares.zed
+  warnings: []
+  checks: [Outcome { line: 3, col: 8, failure: None }, Outcome { line: 3, col: 20, failure: None }, Outcome { line: 3, col: 33, failure: None }, Outcome { line: 7, col: 8, failure: None }, Outcome { line: 7, col: 19, failure: None }, Outcome { line: 11, col: 8, failure: None }, Outcome { line: 11, col: 19, failure: None }]

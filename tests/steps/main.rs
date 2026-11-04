@@ -38,6 +38,7 @@ mod l01_34_memory;
 mod l01_35_mlir_study;
 mod l01_36_cranelift;
 mod l01_37_oracle;
+mod l01_37a_short_addresses;
 mod l01_38_presburger;
 mod l01_39_reduced_product;
 mod l01_39a_bit_words;

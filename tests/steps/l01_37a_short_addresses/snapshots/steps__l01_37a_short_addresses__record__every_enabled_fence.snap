@@ -1,0 +1,109 @@
+---
+source: tests/steps/l01_37a_short_addresses/record.rs
+expression: out
+---
+EXAMPLES.md [2. Bindings and values] 2
+  rejected: [
+    Diagnostic {
+        line: 4,
+        col: 3,
+        message: "`y` is already bound in this scope",
+        steps: [
+            Step {
+                line: 3,
+                col: 3,
+                text: "the first binding of `y`",
+                source: "  y = x + 1;",
+                width: 10,
+            },
+        ],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 4, col: 3, failure: None }]
+
+EXAMPLES.md [5. Conditionals] 2
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 11,
+        message: "`age` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 2,
+        col: 24,
+        message: "`country` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 11,
+        message: "`age` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 24,
+        message: "`member` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 34,
+        message: "`override` is not defined",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 11, failure: Some("`age` is not defined") }, Outcome { line: 2, col: 24, failure: Some("`country` is not defined") }, Outcome { line: 3, col: 11, failure: Some("`age` is not defined") }, Outcome { line: 3, col: 24, failure: Some("`member` is not defined") }, Outcome { line: 3, col: 34, failure: Some("`override` is not defined") }]
+
+EXAMPLES.md [6. Functions] 2
+  warnings: []
+  `five`: Ok(Int(5))
+  `seven`: Ok(Int(7))
+  checks: []
+
+EXAMPLES.md [6. Functions] 3
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 8,
+        message: "`greet` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 3,
+        col: 8,
+        message: "`add` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 4,
+        col: 14,
+        message: "`add` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 5,
+        col: 8,
+        message: "`greet` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 6,
+        col: 8,
+        message: "`greet` is not defined",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]

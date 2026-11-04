@@ -2219,9 +2219,11 @@ struct Node<'a> {
     /// The test.
     term: &'a Term,
     kind: Kind,
-    /// A hash of the node, equal for two tests that differ only in the order of the sides of
-    /// their nests.
-    key: u64,
+    /// The node's place in the order of the forms of the tests, from 1: equal for two tests
+    /// that differ only in the order of the sides of their nests, and otherwise ordered by
+    /// height and then by form ([`Tree::of`]). No hash decides it, so neither the order the
+    /// tests are written in nor a collision of hashes changes it (step L1.37a).
+    id: usize,
     /// The number of nodes in the tree below it, itself included.
     size: usize,
     /// Where the node stands among the sides of a nest ([`rank`]).
@@ -2235,13 +2237,30 @@ enum Kind {
     /// A test that is not taken apart.
     Atom,
     /// A nest of `&&` (`true`) or `||` (`false`): its sides, each with its polarity, in the
-    /// order of their keys and polarities, those equal kept once.
+    /// order of their ranks, ids and polarities, those equal kept once.
     Nest(bool, Vec<(usize, bool)>),
     /// `if c { a } else { b }` with tests as arms: `c`, `a` and `b`, each with its polarity.
     If([(usize, bool); 3]),
 }
 
-/// Where a node stands among the sides of a nest, before its key: a later case knows the
+impl Kind {
+    /// The kind's place in the order of forms: literals, atoms, nests, `if`s.
+    fn tag(&self) -> u8 {
+        match self {
+            Kind::Lit(_) => 0,
+            Kind::Atom => 1,
+            Kind::Nest(..) => 2,
+            Kind::If(_) => 3,
+        }
+    }
+}
+
+/// The ids of the nodes `s` names, with their polarities.
+fn ids<'n>(nodes: &'n [Node], s: &'n [(usize, bool)]) -> impl Iterator<Item = (usize, bool)> + 'n {
+    s.iter().map(|&(k, p)| (nodes[k].id, p))
+}
+
+/// Where a node stands among the sides of a nest, before its id: a later case knows the
 /// sides before it through the names' products alone ([`Scope::exclude`]), so the sides
 /// those products hold exactly come first. A literal, then a comparison of a name with a
 /// literal, then any other comparison, then any other test, then a nest or an `if`.
@@ -2303,7 +2322,7 @@ impl<'a> Tree<'a> {
         let leaf = |term| Node {
             term,
             kind: Kind::Atom,
-            key: 0,
+            id: 0,
             size: 1,
             rank: 0,
         };
@@ -2344,40 +2363,70 @@ impl<'a> Tree<'a> {
                 Kind::Atom
             };
         }
-        // Keys and sizes, each node after the nodes below it.
+        // The nodes by height, each node after the nodes below it; an atom's text once.
+        let mut height = vec![0usize; nodes.len()];
+        let mut texts = vec![String::new(); nodes.len()];
         for i in (0..nodes.len()).rev() {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            let mut kind = std::mem::replace(&mut nodes[i].kind, Kind::Atom);
-            let mut size = 1;
-            match &mut kind {
-                Kind::Lit(b) => (0u8, *b).hash(&mut h),
-                Kind::Atom => (1u8, nodes[i].term.to_string()).hash(&mut h),
-                Kind::Nest(and, sides) => {
-                    sides.sort_by_key(|&(k, p)| (nodes[k].rank, nodes[k].key, p));
-                    sides.dedup_by(|x, y| {
-                        x.1 == y.1
-                            && nodes[x.0].key == nodes[y.0].key
-                            && nodes[x.0].term == nodes[y.0].term
-                    });
-                    (2u8, *and).hash(&mut h);
-                    for &(k, p) in sides.iter() {
-                        (nodes[k].key, p).hash(&mut h);
-                        size += nodes[k].size;
+            let below = |k: &(usize, bool)| height[k.0] + 1;
+            height[i] = match &nodes[i].kind {
+                Kind::Nest(_, sides) => sides.iter().map(below).max().unwrap_or(1),
+                Kind::If(arms) => arms.iter().map(below).max().unwrap_or(1),
+                Kind::Atom => {
+                    texts[i] = nodes[i].term.to_string();
+                    0
+                }
+                Kind::Lit(_) => 0,
+            };
+        }
+        let mut levels: Vec<Vec<usize>> =
+            vec![Vec::new(); height.iter().max().map_or(0, |h| h + 1)];
+        for (i, &h) in height.iter().enumerate() {
+            levels[h].push(i);
+        }
+        // Ids and sizes, one height at a time from the leaves up: a node's sides are put in
+        // order by the ids below it, then the nodes of the height are sorted by their forms
+        // and numbered after those below them.
+        let mut next = 0;
+        for mut level in levels {
+            for &i in &level {
+                let mut kind = std::mem::replace(&mut nodes[i].kind, Kind::Atom);
+                let mut size = 1;
+                match &mut kind {
+                    Kind::Lit(_) | Kind::Atom => {}
+                    Kind::Nest(_, sides) => {
+                        sides.sort_by_key(|&(k, p)| (nodes[k].rank, nodes[k].id, p));
+                        sides.dedup_by(|x, y| {
+                            x.1 == y.1
+                                && nodes[x.0].id == nodes[y.0].id
+                                && nodes[x.0].term == nodes[y.0].term
+                        });
+                        size += sides.iter().map(|&(k, _)| nodes[k].size).sum::<usize>();
+                    }
+                    Kind::If(arms) => {
+                        size += arms.iter().map(|&(k, _)| nodes[k].size).sum::<usize>();
                     }
                 }
-                Kind::If(arms) => {
-                    3u8.hash(&mut h);
-                    for &(k, p) in arms.iter() {
-                        (nodes[k].key, p).hash(&mut h);
-                        size += nodes[k].size;
-                    }
-                }
+                nodes[i].kind = kind;
+                nodes[i].size = size;
+                nodes[i].rank = rank(&nodes[i]);
             }
-            nodes[i].kind = kind;
-            nodes[i].key = h.finish();
-            nodes[i].size = size;
-            nodes[i].rank = rank(&nodes[i]);
+            let form = |a: usize, b: usize| match (&nodes[a].kind, &nodes[b].kind) {
+                (Kind::Lit(x), Kind::Lit(y)) => x.cmp(y),
+                (Kind::Atom, Kind::Atom) => texts[a].cmp(&texts[b]),
+                (Kind::Nest(x, s), Kind::Nest(y, t)) => {
+                    x.cmp(y).then_with(|| ids(&nodes, s).cmp(ids(&nodes, t)))
+                }
+                (Kind::If(s), Kind::If(t)) => ids(&nodes, s).cmp(ids(&nodes, t)),
+                (x, y) => x.tag().cmp(&y.tag()),
+            };
+            level.sort_by(|&a, &b| form(a, b));
+            let new: Vec<bool> = (0..level.len())
+                .map(|j| j == 0 || form(level[j - 1], level[j]).is_ne())
+                .collect();
+            for (&i, new) in level.iter().zip(new) {
+                next += usize::from(new);
+                nodes[i].id = next;
+            }
         }
         (Tree { nodes }, pol)
     }

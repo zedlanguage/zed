@@ -69,7 +69,7 @@ impl Target {
 }
 
 /// The symbolic cost of one region placed on one device, evaluated at the target's sizes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Region {
     /// The index of the device in [`Target::devices`].
     pub device: usize,
@@ -185,7 +185,7 @@ pub fn dominates(a: &[u64], b: &[u64]) -> bool {
 }
 
 /// The Pareto frontier of the feasible `plans` on `target`: the feasible plans no other
-/// feasible plan dominates, in content-address order. Plans with equal cost vectors are all
+/// feasible plan dominates, in content-address order ([`order`]). Plans with equal cost vectors are all
 /// kept.
 ///
 /// A plan's dominators all precede it in the lexicographic order of the vectors, and a
@@ -208,17 +208,24 @@ pub fn frontier(plans: &[Plan], target: &Target) -> Vec<Plan> {
         }
     }
     let mut kept: Vec<Plan> = front.into_iter().map(|(p, _)| p.clone()).collect();
-    kept.sort_by_key(|p| p.address);
+    kept.sort_by(|a, b| order(a).cmp(&order(b)));
     kept
 }
 
+/// The order plans are kept and tied in: by content address, and of equal addresses by their
+/// regions and cut edges, so that two distinct plans whose addresses collide still have one
+/// order and the pick does not depend on the order the plans were given in (step L1.37a).
+fn order(p: &Plan) -> (ContentAddress, &[Region], &[u64]) {
+    (p.address, &p.regions, &p.cut_edges)
+}
+
 /// The plan the scalarization picks: on the frontier, the least scalar cost, then the least
-/// content address. `None` when no plan is feasible, where the placement solver falls back to
-/// its list schedule (sec:runtime).
+/// content address, and of equal addresses the first in [`order`]. `None` when no plan is
+/// feasible, where the placement solver falls back to its list schedule (sec:runtime).
 pub fn pick(plans: &[Plan], target: &Target) -> Option<Plan> {
-    frontier(plans, target)
-        .into_iter()
-        .min_by_key(|p| (scalarize(p, target), p.address))
+    let mut front = frontier(plans, target);
+    let i = (0..front.len()).min_by_key(|&i| (scalarize(&front[i], target), order(&front[i])))?;
+    Some(front.swap_remove(i))
 }
 
 #[cfg(test)]

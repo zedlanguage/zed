@@ -49,6 +49,7 @@ impl Position {
     pub fn child(&self, i: u32) -> Self {
         let hash = (self.hash_value().rotate_left(26) ^ (u64::from(i) + 1))
             .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let hash = crate::address::short64(hash);
         Position(Some(Arc::new(Link {
             up: self.clone(),
             child: i,

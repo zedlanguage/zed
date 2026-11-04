@@ -31,6 +31,8 @@ path = "../../tests/steps/l01_19a_command_line/binary.rs"
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
 printed-types = []
+# Truncates content addresses so that they collide (step L1.37a); see zed-kernel src/address.rs.
+short-addresses = ["zed-kernel/short-addresses"]
 
 [lints]
 workspace = true
