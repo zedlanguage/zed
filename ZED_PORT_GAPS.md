@@ -1244,3 +1244,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `Scope` of `HashMap<Arc<str>, Vec<Option<Arc<str>>>>` (the printed name of each variable, innermost last), a `HashSet` of names in use and a counter, held as `&mut Scope` across the recursion of the printer, pushed by `Scope::open` at each signature and popped by `Scope::close` after it | `Ty::write`, `Sig::write`, `Scope::open`, `Scope::close` | Mutation (gap 11): a map held across a recursion and undone after it | A persistent map from variable to printed name and a set of names in use, passed down into each signature, so nothing is undone; the counter is returned with the text, so a fresh name is still tried once in the whole type |
+
+## Entries from ADDR-cell (`zedc/src/store/cell.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A premise-set node's id, drawn by `zed_kernel::family::fresh_id` (made `pub` for it) and shared by copies, as the key of a `HashSet` of the parts a walk has read and as the "one shared set" test in `extend` and `==` | `Premises::{one, extend, set, eq}`, `Node::id` | Identity (gap 1) | Stable ids from the runtime, as for `deep::walk`, or an id counter threaded as state |

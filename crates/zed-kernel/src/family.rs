@@ -29,8 +29,9 @@ pub type Keypath = Vec<Value>;
 /// from those of the family it was made from, and a walk can know a shared part met again.
 /// Copies share it; a family changed in place takes a new one. Ids are drawn once each and
 /// never reused, and a walk only tests them for equality: what it finds does not depend on
-/// their values. The empty family, sequence and list have id 0.
-pub(crate) type Id = u64;
+/// their values. The empty family, sequence and list have id 0. Other crates draw ids for
+/// their own shared nodes from the same source (the premise sets of `zedc::store::cell`).
+pub type Id = u64;
 
 /// The ids a thread draws from, a block at a time, so that threads building values do not
 /// share one counter.
@@ -42,7 +43,7 @@ thread_local! {
 }
 
 /// A new id. Block 0 is never drawn, so nothing built non-empty has id 0.
-pub(crate) fn fresh_id() -> Id {
+pub fn fresh_id() -> Id {
     NEXT.with(|next| {
         let (mut id, mut end) = next.get();
         if id == end {

@@ -26,6 +26,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use zed_kernel::Value;
+use zed_kernel::family::{Id, fresh_id};
 use zed_kernel::provenance::FactAddress;
 
 use super::affine::{Affine, Bounds};
@@ -48,6 +49,9 @@ pub enum Premise {
 pub struct Premises(Option<Arc<Node>>);
 
 struct Node {
+    /// The node's id, drawn when it is built: copies of a set share it and no other node has
+    /// it, so a walk knows a shared part met again by its id, never by its address.
+    id: Id,
     /// Whether a premise of the set is a widening.
     widened: bool,
     kind: Kind,
@@ -67,6 +71,7 @@ impl Premises {
     /// The set of `p` alone.
     pub fn one(p: Premise) -> Premises {
         Premises(Some(Arc::new(Node {
+            id: fresh_id(),
             widened: matches!(p, Premise::Widened(_)),
             kind: Kind::One(p),
         })))
@@ -87,11 +92,12 @@ impl Premises {
         match (&self.0, &other.0) {
             (_, None) => {}
             (None, Some(_)) => *self = other.clone(),
-            (Some(a), Some(b)) if Arc::ptr_eq(a, b) => {}
+            (Some(a), Some(b)) if a.id == b.id => {}
             (Some(a), Some(b)) => {
                 let widened = a.widened || b.widened;
                 let both = Kind::Both(self.clone(), other.clone());
                 *self = Premises(Some(Arc::new(Node {
+                    id: fresh_id(),
                     widened,
                     kind: both,
                 })));
@@ -104,13 +110,14 @@ impl Premises {
         self.extend(&Premises::one(p));
     }
 
-    /// The premises, each once, in order. It visits each shared part once.
+    /// The premises, each once, in order. It visits each shared part once, knowing it by its id,
+    /// so for `m` distinct parts it costs `O(m log m)`, however many paths reach a part.
     pub fn set(&self) -> BTreeSet<Premise> {
         let mut out = BTreeSet::new();
         let mut seen = HashSet::new();
         let mut todo: Vec<&Arc<Node>> = self.0.iter().collect();
         while let Some(n) = todo.pop() {
-            if !seen.insert(Arc::as_ptr(n)) {
+            if !seen.insert(n.id) {
                 continue;
             }
             match &n.kind {
@@ -149,7 +156,7 @@ impl PartialEq for Premises {
         match (&self.0, &other.0) {
             (None, None) => true,
             (None, _) | (_, None) => false,
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b) || self.set() == other.set(),
+            (Some(a), Some(b)) => a.id == b.id || self.set() == other.set(),
         }
     }
 }

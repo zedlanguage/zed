@@ -190,3 +190,61 @@ fn a_cell_joins_and_widens_entry_by_entry() {
     assert_eq!(c.premises(), BTreeSet::from([Premise::Widened(head)]));
     assert_eq!(store.cells().count(), 1);
 }
+
+/// The premises of a loop's summary after `n` iterations, as the store builds them: each
+/// iteration's test `i < bound_k` narrows `i`, so its entry gains one premise, and the summary
+/// joins the entry after each iteration into what it held. Every entry is shared by all later
+/// ones and by the summary, so the set has about `3n` parts and about `n²/2` paths through
+/// them. `keep` runs between the parts built, so a caller can place other allocations among
+/// them.
+fn loop_summary(addrs: &[FactAddress], keep: &mut dyn FnMut()) -> Premises {
+    let (mut entry, mut summary) = (Premises::new(), Premises::new());
+    for a in addrs {
+        keep();
+        entry.insert(Premise::Constraint(a.clone()));
+        keep();
+        summary.extend(&entry);
+    }
+    summary
+}
+
+/// A set's premises are found by the identity of its shared parts, never by where they are in
+/// memory: the same summary built in three allocation orders has the same premises, the same
+/// printed form and compares equal.
+#[test]
+fn premises_are_found_by_part_not_address() {
+    let addrs: Vec<FactAddress> = (0..200).map(addr).collect();
+    let plain = loop_summary(&addrs, &mut || {});
+    let mut held: Vec<Vec<u64>> = Vec::new();
+    let interleaved = loop_summary(&addrs, &mut || held.push(vec![0; 1 + held.len() % 7]));
+    let mut big: Vec<Box<[u8]>> = (0..1000).map(|i| vec![0; 16 + i % 64].into()).collect();
+    big.retain(|b| b.len() % 2 == 0);
+    let shifted = loop_summary(&addrs, &mut || {});
+    let expected: BTreeSet<Premise> = addrs.iter().cloned().map(Premise::Constraint).collect();
+    for p in [&plain, &interleaved, &shifted] {
+        assert_eq!(p.set(), expected);
+        assert_eq!(format!("{p:?}"), format!("{expected:?}"));
+        assert!(!p.widened());
+    }
+    assert!(plain == interleaved && plain == shifted);
+    drop((held, big));
+}
+
+/// Reading the premises of a loop's summary costs the parts of the set, not its paths: the
+/// summary after `n` iterations has about `3n` parts and `n²/2` paths.
+#[test]
+fn reading_a_shared_premise_set_scales() {
+    // The sets, built before the timing; reading them is timed.
+    let sets: std::collections::BTreeMap<usize, Premises> = [2000, 16000]
+        .into_iter()
+        .map(|n| {
+            let addrs: Vec<FactAddress> = (0..n as u32).map(addr).collect();
+            (n, loop_summary(&addrs, &mut || {}))
+        })
+        .collect();
+    zed_tests::scaling::check(
+        "the premises of a loop summary after n iterations",
+        2000,
+        |n| assert_eq!(sets[&n].set().len(), n),
+    );
+}
