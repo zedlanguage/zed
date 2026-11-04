@@ -38,6 +38,7 @@ pub mod widen;
 mod walk;
 
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -487,6 +488,10 @@ struct Ck<'t, 'a> {
     /// of [`Self::widened`], by its span, as last found: those a call passing that parameter
     /// no atom may still give. No entry is none.
     outside: HashMap<Span, KType>,
+    /// The loose atoms each call gives from outside, by its span, as [`Self::try_outside`]
+    /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
+    /// takes the entry.
+    tried: HashMap<Span, Option<KType>>,
 }
 
 /// A need being checked at a call.
@@ -529,6 +534,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             handled: handled(t.res),
             widened: HashSet::new(),
             outside: HashMap::new(),
+            tried: HashMap::new(),
         }
     }
 
@@ -1036,15 +1042,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// parameter of [`Self::widened`]: what `e` gives when each such parameter holds no atom,
     /// as on the first arrow of [`Self::handled_sig`]. It follows [`Self::unnamed_of`]: a
     /// name of such a parameter gives none; an `else` gives its default's only when its
-    /// value may give an atom; an operator, a call of a function [`Self::called`] names (a
-    /// method call's receiver one of its parts) or a prelude word passes on its parts' and
-    /// gives the atoms its arrows' results hold, and `#errs` only when two of its parts give
-    /// atoms; a call of a function of two arrows from
-    /// [`Self::handled_sig`] gives only those of the arrow [`Self::outside_arrow`] selects;
-    /// any other expression gives all its loose atoms.
+    /// value may give an atom; a call that [`Self::try_outside`] applied again, `tried`, gives
+    /// what that application gave (unknown, `None`, is all its loose atoms), so a call of a
+    /// function of two arrows from [`Self::handled_sig`] gives only those of the arrow it
+    /// takes from outside; an operator, another call of a function [`Self::called`] names (a
+    /// method call's receiver one of its parts, `x.r` as `x.r()`) or a prelude word passes on
+    /// its parts' and gives the atoms its arrows' results hold, and `#errs` only when two of
+    /// its parts give atoms; any other expression gives all its loose atoms.
     /// Each set is compared with the empty type as written, in `O(1)`, as in
     /// [`Self::unnamed_of`], so a chain of `n` expressions costs `O(n log² n)`.
-    fn outside_of(&self, e: &Expr, t: &Ty, src: &Src<'_>) -> Option<KType> {
+    fn outside_of(
+        &self,
+        e: &Expr,
+        t: &Ty,
+        src: &Src<'_>,
+        tried: Option<Option<KType>>,
+    ) -> Option<KType> {
         let loose = t.loose();
         if loose == KType::empty() {
             return None;
@@ -1093,6 +1106,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             (ExprKind::Unary(op, _) | ExprKind::Binary(op, _, _), _) => {
                 made(&op_sig(op).arrows, flows(e))
             }
+            // A call [`Self::try_outside`] applied again from outside gives what that gave, and
+            // what reaches its value around the application: the callee's own atoms, and a
+            // receiver's through `?.`.
+            (ExprKind::Call { callee: f, .. }, _) | (ExprKind::Member { of: f, .. }, _)
+                if let Some(k) = &tried =>
+            {
+                // `f` is a call's callee, or a member's receiver.
+                let around = match (&e.kind, &f.kind) {
+                    (ExprKind::Member { safe, .. }, _) if *safe => o(f.span),
+                    (ExprKind::Member { .. }, _) => KType::empty(),
+                    (_, ExprKind::Member { of, safe, .. }) if *safe => o(of.span),
+                    (_, ExprKind::Member { .. }) => KType::empty(),
+                    _ => o(f.span),
+                };
+                match k {
+                    Some(k) => &loose & &(k | &around),
+                    None => loose,
+                }
+            }
             (ExprKind::Call { callee, .. }, _)
                 if let Some((sig, receiver)) = self.called(callee) =>
             {
@@ -1102,10 +1134,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let Some((r, _)) = receiver {
                     parts.insert(0, r.span);
                 }
-                match self.outside_arrow(&sig, e, receiver) {
-                    Some(k) => made(&sig.arrows[k..=k], parts),
-                    None => made(&sig.arrows, parts),
-                }
+                made(&sig.arrows, parts)
+            }
+            // `x.r` is `x.r()`; its one part is the receiver.
+            (ExprKind::Member { .. }, _) if let Some((sig, _)) = self.called(e) => {
+                made(&sig.arrows, flows(e))
             }
             (_, Src::Name(id)) => match self.alias.get(id) {
                 Some(&value) if self.seen.contains_key(&value) => o(value),
@@ -1119,54 +1152,93 @@ impl<'t, 'a> Ck<'t, 'a> {
         })
     }
 
-    /// The arrow of `sig`, a signature of [`handled_shape`], that the call `e` takes when each
-    /// argument holds only the atoms that reach it from elsewhere than a parameter of
-    /// [`Self::widened`]: the one [`Self::first_taking`] selects for those atoms, so the first
-    /// when no argument holds any. A call that passes a handled parameter on to such a
-    /// function then gives, from outside, only what the first arrow's result holds, not the
-    /// atoms the second arrow gives back for that parameter. `None` for any other signature.
-    /// The receiver of a method call, from [`Self::called`], fills the first parameter, and
-    /// with `?.` holds no atom there; a positional argument fills the next parameter and a
-    /// named one the first parameter of its name, as the checker's `call_sig` places them;
-    /// `O(a log a)` for `a` arguments, the names looked up in a map.
-    fn outside_arrow(&self, sig: &Sig, e: &Expr, receiver: Option<(&Expr, bool)>) -> Option<usize> {
-        let ExprKind::Call {
-            positional, named, ..
-        } = &e.kind
-        else {
+    /// The arguments of a call as they are when each parameter of [`Self::widened`] holds no
+    /// atom: each argument's loose atoms cut to those [`Self::outside`] keeps for its
+    /// expression. `None` when no argument holds a loose atom, so that the call gives the same
+    /// from outside.
+    fn outside_args(&self, args: &[Option<Arg>]) -> Option<Vec<Option<Arg>>> {
+        let holds = |a: &Arg| a.at.is_some() && a.ty.loose() != KType::empty();
+        if !args.iter().flatten().any(holds) {
             return None;
+        }
+        let cut = |a: &Arg| match a.at {
+            Some(at) if holds(a) => {
+                let o = self.outside.get(&at).cloned().unwrap_or_else(KType::empty);
+                let kept = &a.ty.loose() & &o;
+                Arg {
+                    ty: a
+                        .ty
+                        .without_loose()
+                        .union(&a.ty.of_piece(&Piece::Set(kept))),
+                    ..a.clone()
+                }
+            }
+            _ => a.clone(),
         };
-        if !handled_shape(sig) {
-            return None;
+        Some(args.iter().map(|a| a.as_ref().map(cut)).collect())
+    }
+
+    /// The call of `sig` at `span` applied again to `with`, from [`Self::outside_args`], with
+    /// the checker's state restored after, as [`Self::repairs`] tries a call: the loose atoms
+    /// it then gives are those that reach the call's value from outside, which
+    /// [`Self::outside_of`] reads. It selects the arrow the call takes from outside for any
+    /// callee, a declared function, a method, a function value passed to another function or
+    /// computed: `r(x)`, `x.r()`, `x.r`, `ap(r, x)` and `(if c { r } else { r })(x)` alike. A
+    /// trial the arguments do not pass leaves the call's atoms from outside unknown, so all
+    /// its loose atoms. One more application per call that passes a loose atom inside a
+    /// function with a widened parameter.
+    fn try_outside(&mut self, what: &str, sig: &Sig, with: Vec<Option<Arg>>, span: Span) {
+        let applied = self.applied.take();
+        let saved = self.mark();
+        self.trying = true;
+        let (t, _) = self.apply(what, sig, with, false, span);
+        let ok = self.info.errors.len() == saved.errors;
+        self.trying = false;
+        self.undo(&saved);
+        self.applied = applied;
+        self.tried_at(span, ok.then(|| t.loose()));
+    }
+
+    /// Joins `k` to the loose atoms from outside recorded for the call at `span`: a call of a
+    /// value of several functions is applied once per function. `None`, unknown, absorbs.
+    /// A trial, or the check of a need at a call, applies calls that are not in the text, so
+    /// it records nothing.
+    fn tried_at(&mut self, span: Span, k: Option<KType>) {
+        if self.trying || self.replaying > 0 {
+            return;
         }
-        let o = |s: Span| self.outside.get(&s).cloned().unwrap_or_else(KType::empty);
-        let mut loose = vec![KType::empty(); sig.params.len()];
-        let first = usize::from(receiver.is_some());
-        if let (Some((r, false)), Some(slot)) = (receiver, loose.first_mut()) {
-            *slot = o(r.span);
-        }
-        for (slot, a) in loose.iter_mut().skip(first).zip(positional) {
-            *slot = o(a.span);
-        }
-        let at: HashMap<&str, usize> = sig
-            .params
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(j, p)| (&*p.name, j))
-            .collect();
-        for (name, a) in named {
-            if let Some(&j) = at.get(name.as_str()) {
-                loose[j] = o(a.span);
+        match self.tried.entry(span) {
+            Entry::Vacant(v) => {
+                v.insert(k);
+            }
+            Entry::Occupied(mut o) => {
+                let v = o.get_mut();
+                *v = v.take().zip(k).map(|(a, b)| &a | &b);
             }
         }
-        self.taking(sig, &loose)
     }
 
     /// The prelude word `e` applies to one argument, and the argument's span, when `e` is
-    /// `w(x)` or `x.w()` for a word of layer L1 other than `sum` and the bit words, which
-    /// [`word_sig`] types.
+    /// `w(x)`, `x.w()` or `x.w` for a word of layer L1 other than `sum` and the bit words,
+    /// which [`word_sig`] types.
     fn word_call<'e>(&self, e: &'e Expr) -> Option<(&'e str, Span)> {
+        if let ExprKind::Member {
+            of,
+            name,
+            safe: false,
+        } = &e.kind
+        {
+            return match self.t.res.uses.get(&e.span) {
+                Some(Ref::Bound(_)) => None,
+                _ if crate::resolve::prelude_layer(name) == Some(1)
+                    && name != "sum"
+                    && bit_prim(name).is_none() =>
+                {
+                    Some((name.as_str(), of.span))
+                }
+                _ => None,
+            };
+        }
         let ExprKind::Call {
             callee,
             positional,

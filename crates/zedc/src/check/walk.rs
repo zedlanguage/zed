@@ -540,7 +540,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some((u, made)) => (Some(u), made),
                     None => (None, None),
                 };
-                let outside = self.outside_of(e, &t, &src);
+                let tried = self.tried.remove(&e.span);
+                let outside = self.outside_of(e, &t, &src, tried);
                 for (map, set) in [
                     (&mut self.unnamed, u),
                     (&mut self.made, made),
@@ -1908,6 +1909,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     s.checked = true;
+                    // No application, so no trial: the atoms from outside are unknown.
+                    self.tried_at(span, None);
                     let ty_of = |a: &ArgSrc| match a {
                         ArgSrc::Got(x) => x.ty.clone(),
                         ArgSrc::Expr(_) => unreachable!("found above"),
@@ -1931,8 +1934,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = self.need(k, kind, true, span);
                     s.out = s.out.union(&r);
                 }
-                Piece::Dyn => self.any(&format!("a call of `{}`", s.what), span),
-                Piece::Var(_) => s.out = s.out.union(&Ty::dynamic()),
+                Piece::Dyn => {
+                    self.tried_at(span, None);
+                    self.any(&format!("a call of `{}`", s.what), span);
+                }
+                Piece::Var(_) => {
+                    self.tried_at(span, None);
+                    s.out = s.out.union(&Ty::dynamic());
+                }
                 p if p.is_atoms() => {}
                 p => {
                     self.error(span, format!("`{}` is {}, not a function", s.what, p.ty()));
@@ -2087,7 +2096,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => self.partial(&s.sig, args, &s.missing, false, &s.what, s.span),
             false => {
                 let what = format!("`{}`", s.what);
-                self.apply(&what, &s.sig, args, false, s.span).0
+                // Inside a function with a widened parameter, each call records the atoms it
+                // gives from outside: its own when no argument holds a loose atom, else those
+                // of a trial.
+                let from_outside = !self.trying && self.replaying == 0 && !self.widened.is_empty();
+                let with = from_outside.then(|| self.outside_args(&args)).flatten();
+                let t = self.apply(&what, &s.sig, args, false, s.span).0;
+                match with {
+                    Some(with) => self.try_outside(&what, &s.sig, with, s.span),
+                    None if from_outside => self.tried_at(s.span, Some(t.loose())),
+                    None => {}
+                }
+                t
             }
         };
         m.ty(t);

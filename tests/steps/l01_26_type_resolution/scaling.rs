@@ -462,14 +462,23 @@ fn a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_scales() {
 
 #[test]
 fn many_calls_passing_a_handled_parameter_on_scale() {
-    // One function calls `r` n times on its handled parameter, as `r(x)` and as `x.r()`; each
-    // call takes `r`'s first arrow from outside, so `g`'s first arrow gives a `String` alone.
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n";
+    // One function calls `r` n times on its handled parameter, as `r(x)`, `x.r()`, `x.r`,
+    // through the higher-order `ap` and through a computed callee; each call takes `r`'s first
+    // arrow from outside, so `g`'s first arrow gives a `String` alone. Each call whose
+    // argument holds a loose atom is applied once more, on the atoms from outside alone.
+    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+             ap(positional f, positional v) = f(v);\n";
     let calls = |n: usize, call: &str| {
         let body: String = (0..n).map(|i| format!("a{i} = {call}; ")).collect();
         format!("{r}g(positional x) = {{ d = x else \"\"; {body}a0 }};\n")
     };
-    for call in ["r(x)", "x.r()"] {
+    for call in [
+        "r(x)",
+        "x.r()",
+        "x.r",
+        "ap(r, x)",
+        "(if true { r } else { r })(x)",
+    ] {
         let first = sig_of(&calls(3, call), "g").expand()[0].result.clone();
         assert!(first.atoms().is_empty(), "{call}: {first}");
         scaling::check(
@@ -481,4 +490,24 @@ fn many_calls_passing_a_handled_parameter_on_scale() {
             },
         );
     }
+}
+
+#[test]
+fn a_chain_of_method_calls_without_parentheses_scales() {
+    // `x.r.r` … `.r`, n deep: each call is applied once more on the atoms from outside, and
+    // that application takes its receiver's type as found, so the chain is checked in time
+    // linear in n. The first arrow of `g` gives a `String` alone.
+    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n";
+    let chain = |n: usize| {
+        format!(
+            "{r}g(positional x) = {{ d = x else \"\"; x{} }};\n",
+            ".r".repeat(n)
+        )
+    };
+    let first = sig_of(&chain(3), "g").expand()[0].result.clone();
+    assert!(first.atoms().is_empty(), "{first}");
+    scaling::check("a chain of n method calls without parentheses", 1000, |n| {
+        let (info, _) = info(&chain(n));
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
 }

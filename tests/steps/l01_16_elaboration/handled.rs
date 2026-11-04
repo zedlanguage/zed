@@ -225,6 +225,57 @@ fn a_method_call_passes_its_receiver_as_the_first_argument() {
             "g(positional x) = { f = (positional y) -> if (y else \"\") == \"\" { \"e\" } else { trim(y) }; if (x else \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
             "a,dash,e\n",
         ),
+        (
+            "method_without_parentheses",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "methods_without_parentheses_chained",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r.r };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "method_without_parentheses_after_a_binding",
+            "g(positional x) = { d = x else \"\"; x.r };\n",
+            "a,-,empty\n",
+        ),
+        (
+            "prelude_word_without_parentheses",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.trim };\n",
+            "a,dash,gone\n",
+        ),
+    ] {
+        assert_eq!(output(name, &format!("{r}{g}{main}")), want, "{g}");
+    }
+}
+
+#[test]
+fn a_function_value_called_with_a_handled_parameter_gives_a_string_for_a_string() {
+    // The function reaches the call as a value: through a function `ap` that calls the one it
+    // is given, or as the value of an expression. With no atom in `x`, `r` takes its first
+    // arrow there too, so each `g` gives a string for a string; a missing line reaches `r`'s
+    // second arrow, which handles it. A `g` that handles nothing takes no atom, so a missing
+    // line passes its call by.
+    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+             ap(positional f, positional v) = f(v);\n";
+    let main = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(stdin[2]) else \"gone\");\n}\n";
+    for (name, g, want) in [
+        (
+            "higher_order",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { ap(r, x) };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "computed_callee",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { (if true { r } else { r })(x) };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "higher_order_wrapper",
+            "g(positional x) = ap(r, x);\n",
+            "a,-,gone\n",
+        ),
     ] {
         assert_eq!(output(name, &format!("{r}{g}{main}")), want, "{g}");
     }
