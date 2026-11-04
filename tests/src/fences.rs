@@ -8,7 +8,11 @@ use zedc::fence;
 /// A fence of DESIGN.md or EXAMPLES.md, with what the `sync` tool recorded about it.
 #[derive(Clone, Debug)]
 pub struct DocFence {
-    /// The document and line of its ```` ```zed ````: `DESIGN.md:196`.
+    /// Its document, section and place among the fences of that section: `DESIGN.md
+    /// [sec:remap_law] 1`. Expected outputs are keyed by it, so that an edit in one section of
+    /// the document changes no other section's keys.
+    pub key: String,
+    /// The document and line of its ```` ```zed ````, for messages: `DESIGN.md:196`.
     pub at: String,
     /// The layer from which it is parsed, checked and run.
     pub layer: u32,
@@ -39,13 +43,23 @@ pub fn dir() -> PathBuf {
 /// The fences of the copy `file` (`design.md` or `examples.md`), in order.
 pub fn of(file: &str) -> Vec<DocFence> {
     let md = std::fs::read_to_string(dir().join(file)).expect("the fence copy is readable");
-    fence::extract(&md)
+    parse(&md)
+}
+
+/// The fences of `md`, the text of a copy the `sync` tool wrote, in order.
+pub fn parse(md: &str) -> Vec<DocFence> {
+    fence::extract(md)
         .into_iter()
         .map(|f| {
             let head = f
                 .before
                 .strip_prefix("<!-- ")
+                .and_then(|h| h.strip_suffix(" -->"))
                 .unwrap_or_else(|| panic!("no header before the fence at line {}", f.line));
+            let (head, section) = head
+                .split_once("; section [")
+                .unwrap_or_else(|| panic!("no section in the header at line {}", f.line));
+            let (section, index) = section.rsplit_once("] ").expect("a section and an index");
             let (at, rest) = head.split_once(" layer L").expect("a layer");
             let layer = rest[..rest.find(':').expect("a `:`")]
                 .parse()
@@ -54,11 +68,13 @@ pub fn of(file: &str) -> Vec<DocFence> {
                 .split_once(": ring L")
                 .and_then(|(_, r)| r[..r.find(',')?].parse().ok())
                 .expect("a ring");
+            let doc = at.split_once(':').expect("a document and a line").0;
             DocFence {
+                key: format!("{doc} [{section}] {index}"),
                 at: at.into(),
                 layer,
                 ring,
-                notation: head.ends_with(", documentation notation -->"),
+                notation: head.ends_with(", documentation notation"),
                 text: f.text,
             }
         })

@@ -15,7 +15,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
         let free = |w: &&String| w.ends_with("is not defined");
         if failures.is_empty() {
             rejection += usize::from(!zedc::fence::marks(&f.text).lines.is_empty());
-            clean.push((f.at.clone(), outcomes.len()));
+            clean.push((f.key.clone(), outcomes.len()));
             continue;
         }
         let unchecked = |w: &&String| w.as_str() == "the line is marked ✗ and has no diagnostic";
@@ -33,8 +33,8 @@ fn every_l1_fence_passes_but_for_its_free_names() {
     assert_eq!(
         clean,
         [
-            ("EXAMPLES.md:78".to_string(), 1),
-            ("EXAMPLES.md:203".to_string(), 0)
+            ("EXAMPLES.md [2. Bindings and values] 2".to_string(), 1),
+            ("EXAMPLES.md [6. Functions] 2".to_string(), 0)
         ]
     );
 }

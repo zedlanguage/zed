@@ -1,9 +1,11 @@
 //! `sync SPEC_DIR [--check]` copies the `zed` fences of the spec's `DESIGN.md` and `EXAMPLES.md`
 //! into `zed/fences/design.md` and `zed/fences/examples.md`, each under a header naming its
-//! source line and its layer (step L1.7), and the syntactic grammar, the documentation notation,
-//! the lexical grammar and the desugaring rules into `zed/grammar` (step L1.8), and the row names
-//! of the rejection table into `zed/fences/rejections.txt`. With `--check` it
-//! writes nothing and fails if a copy is out of date.
+//! source line, its layer (step L1.7) and its section and place in the section (by which the
+//! tests key it, so an edit in one section moves no other section's keys), and the syntactic
+//! grammar, the documentation notation, the lexical grammar and the desugaring rules into
+//! `zed/grammar` (step L1.8), and the row names of the rejection table into
+//! `zed/fences/rejections.txt`. With `--check` it writes nothing and fails if a copy is out of
+//! date.
 //!
 //! CI does not read the spec repository, so the copies are the fixtures; run this by hand after
 //! the spec changes. The layer is computed as the M0.4 layer checker computes a corpus
@@ -87,10 +89,11 @@ fn render(path: &str, spec: &Spec, table: &WordTable) -> Result<String, String> 
             ""
         };
         let (line, layer, ring, text) = (f.line, l.layer, l.ring, f.text);
+        let (section, index) = (f.section, f.index);
         writeln!(
             out,
-            "\n<!-- {name}:{line} layer L{layer}: ring L{ring}, word {word}, label {label}{doc} \
-             -->\n```zed\n{text}\n```"
+            "\n<!-- {name}:{line} layer L{layer}: ring L{ring}, word {word}, label {label}{doc}; \
+             section [{section}] {index} -->\n```zed\n{text}\n```"
         )
         .expect("writing to a String");
     }

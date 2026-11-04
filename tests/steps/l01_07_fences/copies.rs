@@ -5,16 +5,18 @@ use zed_tests::tokens::render_lines;
 use zedc::fence::{self, label, marks};
 use zedc::lex::{lex, lex_fence};
 
-fn golden_tokens(file: &str) -> String {
-    let out: Vec<String> = fences::of(file)
+/// The tokens of each of `fences`, under its key: the expected output of the lexer. A fence that
+/// does not lex is named by its line.
+pub(super) fn tokens_by_key(fences: &[DocFence]) -> String {
+    let out: Vec<String> = fences
         .iter()
         .map(|f| {
             let tokens = lex_fence(&f.text).unwrap_or_else(|e| {
-                panic!("{} does not lex: {e} at {:?}", f.at, e.span);
+                panic!("{} ({}) does not lex: {e} at {:?}", f.at, f.key, e.span);
             });
             format!(
                 "== {} L{}\n{}",
-                f.at,
+                f.key,
                 f.layer,
                 render_lines(&f.text, &tokens)
             )
@@ -23,14 +25,34 @@ fn golden_tokens(file: &str) -> String {
     out.join("\n")
 }
 
+/// The ✗ marks of each of `fences` that has any, under its key.
+pub(super) fn marks_by_key(fences: &[DocFence]) -> String {
+    let out: Vec<String> = fences
+        .iter()
+        .filter_map(|f| {
+            let m = marks(&f.text);
+            (!m.lines.is_empty() || !m.variants.is_empty())
+                .then(|| format!("{}: ✗ {:?} variants {:?}", f.key, m.lines, m.variants))
+        })
+        .collect();
+    out.join("\n")
+}
+
 #[test]
 fn every_design_fence_lexes() {
-    insta::assert_snapshot!(golden_tokens("design.md"));
+    insta::assert_snapshot!(tokens_by_key(&fences::of("design.md")));
 }
 
 #[test]
 fn every_examples_fence_lexes() {
-    insta::assert_snapshot!(golden_tokens("examples.md"));
+    insta::assert_snapshot!(tokens_by_key(&fences::of("examples.md")));
+}
+
+#[test]
+fn every_fence_key_is_its_own() {
+    let all = fences::all();
+    let keys: std::collections::HashSet<&str> = all.iter().map(|f| f.key.as_str()).collect();
+    assert_eq!(keys.len(), all.len());
 }
 
 #[test]
@@ -54,16 +76,8 @@ fn every_fence_has_a_layer_no_lower_than_its_label() {
 }
 
 #[test]
-fn golden_marks() {
-    let out: Vec<String> = fences::all()
-        .iter()
-        .filter_map(|f: &DocFence| {
-            let m = marks(&f.text);
-            (!m.lines.is_empty() || !m.variants.is_empty())
-                .then(|| format!("{:<16} ✗ {:?} variants {:?}", f.at, m.lines, m.variants))
-        })
-        .collect();
-    insta::assert_snapshot!(out.join("\n"));
+fn expected_marks() {
+    insta::assert_snapshot!(marks_by_key(&fences::all()));
 }
 
 #[test]
