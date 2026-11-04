@@ -1003,12 +1003,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHK-cost | repair attempt 1 | 2026-11-03 15:48 | curried probe 15.7M->130.6M instr at n=125..1000 (was 187M->12418M); steps groups pass; full suite started; load 51.63 |
-| ISSUE1-else-atoms | verify attempt 4 | 2026-11-03 16:04 | done: ok=false (1 blocking: method form x.r() of a two-arrow function in a handler, g(" a ") at a Lines port ran on main, now rejected; walk.rs:529 Src::Call on |
-| LOOP-boundary-spec merge | running | 2026-11-03 20:16 | plan-loopbound merged 72e14a7e + spec copies synced; l01_07_fences 11/11; pushed; lock released |
-| NAME-ties | verify attempt 4 | 2026-11-03 09:30 | done: ok=false; blocking: unsound decide Ok(true) on a formula with no point (settle_as_sets presburger.rs:1087 keeps disjuncts whose solve was refused; alone() |
-| NARROW-if | verify attempt 2 | 2026-11-03 16:46 | returning ok=false: one blocking item, quadratic rejection notes (arms.rs deciding lists tests on unrelated names), easy fix, not hard; everything else verified |
-| plan-loopbound | merge attempt  | 2026-11-03 20:10 | lock taken |
+| BIT-axioms | verify attempt 1 | 2026-11-03 16:32 | start (no earlier verify lines; load 29.58 36.25 40.77) |
+| CHK-cost | verify attempt 4 | 2026-11-03 15:48 | suite (run_tests.sh 4) running on 133364bf; control worktree wt/chk-cost-v4ctl at main e5eda472 with the branch's scaling.rs; load 28.56 35.30 38.84 |
+| CHK-curried | running | 2026-11-03 19:35 |  |
+| ISSUE1-else-atoms | repair attempt 4 | 2026-11-03 16:04 | docs rows (F69, STATUS, PORT_GAPS) done; fmt, clippy -D warnings clean (type alias Called); spec branch rebased on zed main b4d27e6 -> 77eae84 (handled-atoms sp |
+| ITEM-order | impl attempt 1 | 2026-11-03 20:39 | docs: COMPLEXITY F69, STATUS L1.29b row, ZED_PORT_GAPS entry; spec branch wt/item-order-spec (int[_..=10], layer note); ledger ITEM-order-dispatch (needs L2.6,  |
+| LIVE3-TESTS | impl attempt 1 | 2026-11-03 12:15 | 5 tests in l01_38_presburger::live3 pass; slab family 256->2048 rows: 7.8x instr (2.47e9->1.93e10), 9.0x bytes; controls (not committed): all-pairs Lin2::minus  |
+| NAME-ties | repair attempt 4 | 2026-11-03 09:30 | found: s22 chain_cross_live_scales fails on branch (34.9x bytes, limit 24), passes on main: renamed atoms #k sort as text (#10<#2), so nnf hands chain disjuncts |
+| NARROW-if | repair attempt 5 | 2026-11-03 16:46 | committed b4ffd104 + 60827647 on wt/narrow-if, rebased onto main e5eda472 (product.rs and ZED_PORT_GAPS conflicts rebuilt by hand); suite before rebase 356 piec |
+| TERM-id | verify attempt 1 | 2026-11-03 19:25 | started (no earlier verify lines in the log) |
+| TEST-fence-lines | verify attempt 1 | 2026-11-03 20:39 | full suite 356 pieces, 0 failed (load 28-51); starting negative control (count by rescanning earlier keys, O(n^2)) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
