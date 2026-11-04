@@ -32,33 +32,55 @@ test("the same graph gives the same layout", async () => {
   assert.deepEqual(await layoutInWorker(graph), await layoutInWorker(graph));
 });
 
-test("the last layout is served while a newer graph is laid out, and older requests are skipped", async () => {
+test("aborting a layout terminates its worker", async () => {
+  const stop = new AbortController();
+  const run = layoutInWorker(graph, stop.signal);
+  stop.abort();
+  await assert.rejects(run, /layout stopped/);
+});
+
+test("the last layout is served while a newer graph is laid out, and a newer graph stops the running layout", async () => {
   const started: string[] = [];
+  const stopped: string[] = [];
   const finish: (() => void)[] = [];
-  const layouts = new Layouts((g) => {
-    started.push(g.nodes[0].id);
-    return new Promise<Layout>((resolve) => finish.push(() => resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] })));
+  const layouts = new Layouts((g, signal) => {
+    const id = g.nodes[0].id;
+    started.push(id);
+    return new Promise<Layout>((resolve, reject) => {
+      signal.addEventListener("abort", () => (stopped.push(id), reject(new Error("stopped"))));
+      finish.push(() => resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] }));
+    });
   });
   const g = (id: string): Graph => ({ nodes: [{ id, w: 1, h: 1 }], edges: [] });
   const settle = () => new Promise((r) => setImmediate(r));
 
   assert.deepEqual(layouts.request("direct", g("one")), { layout: null, fresh: false });
-  layouts.request("direct", g("two"));
-  layouts.request("direct", g("three"));
-  assert.deepEqual(started, ["one"]);
   finish.shift()!();
   await settle();
-  // "two" was replaced by "three" before it started.
-  assert.deepEqual(started, ["one", "three"]);
+  assert.equal(layouts.request("direct", g("one")).fresh, true);
+  layouts.request("direct", g("two"));
+  layouts.request("direct", g("three"));
+  // "two" stopped as soon as "three" was asked for, and "three" started in its place.
+  assert.deepEqual(stopped, ["two"]);
+  await settle();
+  assert.deepEqual(started, ["one", "two", "three"]);
   const stale = layouts.request("direct", g("three"));
   assert.equal(stale.fresh, false);
   assert.equal(stale.layout?.key, graphKey(g("one")));
+  // Asking again for the graph being laid out does not stop it.
+  assert.deepEqual(stopped, ["two"]);
+  // A stopped layout that resolves anyway is not kept.
+  finish.shift()!();
+  await settle();
+  assert.equal(layouts.request("direct", g("three")).layout?.key, graphKey(g("one")));
   finish.shift()!();
   await settle();
   const now = layouts.request("direct", g("three"));
   assert.equal(now.fresh, true);
   assert.equal(now.layout?.key, graphKey(g("three")));
-  assert.deepEqual(started, ["one", "three"]);
+  assert.deepEqual(started, ["one", "two", "three"]);
+  // A stopped layout is not reported as failed.
+  assert.equal(layouts.request("direct", g("two")).error, undefined);
   // Each edge mode keeps its own layout.
   assert.deepEqual(layouts.request("all", g("three")), { layout: null, fresh: false });
 });
