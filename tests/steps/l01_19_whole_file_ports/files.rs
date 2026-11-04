@@ -131,6 +131,16 @@ fn a_helper_port_is_lines_at_l1() {
         e.as_deref(),
         Some("1:38: output port `err` of `say` is `Lines` at layer L1")
     );
+    // Only the unit's own `main` is the program's; a `main` nested in a block is a helper.
+    let e = load(
+        b"g() = {\n  main() -> (out: Files) { 0 }\n  1\n};\n\
+          main() -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n",
+    )
+    .err();
+    assert_eq!(
+        e.as_deref(),
+        Some("2:14: output port `out` of `main` is `Lines` at layer L1")
+    );
     let ok = b"say(positional s) -> (stdout: Lines) {\n  stdout <- s;\n}\n\
                main() -> (stdout: Lines) {\n  a = say(\"one\");\n}\n";
     assert!(load(ok).is_ok());

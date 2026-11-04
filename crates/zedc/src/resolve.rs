@@ -272,7 +272,7 @@ const CARRIERS: &[&str] = &["int", "f64", "rat", "String", "bool"];
 pub fn resolve(unit: &[Stmt]) -> Result<Resolution, Vec<Error>> {
     let mut r = Resolver::default();
     r.scopes.push(Vec::new());
-    r.walk(Task::Stmts(unit));
+    r.walk(Task::Unit(unit));
     if r.errors.is_empty() {
         Ok(r.out)
     } else {
@@ -477,8 +477,9 @@ impl Resolver {
         let mut todo = vec![root];
         while let Some(task) = todo.pop() {
             match task {
-                Task::Stmts(stmts) => self.stmts(stmts, &mut todo),
-                Task::Stmt(s) => self.stmt(s, &mut todo),
+                Task::Unit(stmts) => self.stmts(stmts, true, &mut todo),
+                Task::Stmts(stmts) => self.stmts(stmts, false, &mut todo),
+                Task::Stmt(s, top) => self.stmt(s, top, &mut todo),
                 Task::Function {
                     params,
                     ports,
@@ -523,7 +524,8 @@ impl Resolver {
     }
 
     /// The statements of the innermost scope: their binders first, since order has no meaning.
-    fn stmts<'a>(&mut self, stmts: &'a [Stmt], todo: &mut Vec<Task<'a>>) {
+    /// They are the unit's own statements when `top` holds.
+    fn stmts<'a>(&mut self, stmts: &'a [Stmt], top: bool, todo: &mut Vec<Task<'a>>) {
         let mut families = HashSet::new();
         for s in stmts {
             if !matches!(
@@ -539,7 +541,7 @@ impl Resolver {
             }
             self.declare(s, false, &mut families);
         }
-        todo.extend(stmts.iter().rev().map(Task::Stmt));
+        todo.extend(stmts.iter().rev().map(|s| Task::Stmt(s, top)));
     }
 
     /// Binds the names the statement `s` declares. Resolution refuses the forms of layer L6
@@ -610,8 +612,9 @@ impl Resolver {
         }
     }
 
-    /// The statement `s`, whose binders its scope has.
-    fn stmt<'a>(&mut self, s: &'a Stmt, todo: &mut Vec<Task<'a>>) {
+    /// The statement `s`, whose binders its scope has; `top` holds when it is one of the unit's
+    /// own statements.
+    fn stmt<'a>(&mut self, s: &'a Stmt, top: bool, todo: &mut Vec<Task<'a>>) {
         match &s.kind {
             StmtKind::Bind { boundary, .. } if !boundary.is_empty() => {
                 self.later(s.span, "a boundary `with`", "L6.2")
@@ -627,9 +630,10 @@ impl Resolver {
             }
             StmtKind::Function(f) => {
                 let ports: &[Port] = f.ports.as_deref().unwrap_or_default();
-                // At L1 an output port is `Lines` (DESIGN.md step L1.19). `main`'s ports are
-                // checked with its inputs when the unit is loaded as a program (`run::program`).
-                if f.name != "main" {
+                // At L1 an output port is `Lines` (DESIGN.md step L1.19). The ports of a `main`
+                // among the unit's own statements are checked with its inputs when the unit is
+                // loaded as a program (`run::program`); a `main` nested in a block is checked here.
+                if !(top && f.name == "main") {
                     for p in ports {
                         if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
                             self.errors.push(Error {
@@ -671,7 +675,7 @@ impl Resolver {
             StmtKind::Expr(_) => self.later(s.span, "an expression statement", "L6.3"),
             StmtKind::Annotated { annots, decl } => {
                 annots.iter().for_each(|a| self.annotation(a));
-                todo.push(Task::Stmt(decl));
+                todo.push(Task::Stmt(decl, false));
             }
             StmtKind::UnitAnnot(a) => self.unit_annotation(a, s.span),
         }
@@ -1183,8 +1187,11 @@ impl Resolver {
 /// A piece of the walk still to do, kept on the walk's stack.
 #[derive(Clone, Copy)]
 enum Task<'a> {
+    /// The unit's own statements.
+    Unit(&'a [Stmt]),
     Stmts(&'a [Stmt]),
-    Stmt(&'a Stmt),
+    /// A statement, and whether it is one of the unit's own.
+    Stmt(&'a Stmt, bool),
     /// A function's or lambda's parameters, ports and body.
     Function {
         params: &'a [Param],
