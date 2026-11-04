@@ -7,7 +7,7 @@
 //! conjuncts found, in time near the number of changes. The conjuncts are in the order of
 //! formulas, so a relation does not depend on the order its conjuncts were added in.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -170,14 +170,27 @@ impl Conjuncts {
         }
     }
 
+    /// Adds the conjuncts of `f`, read on an explicit stack in order. A conjunction held in
+    /// more than one place (a named conjunction that `Formula::and` keeps whole, used inside
+    /// another) is read once, at its first place: a conjunct added twice changes nothing, and
+    /// a chain of names each conjoining the two before it would otherwise be read once for
+    /// each path to it, a number exponential in its length.
     fn and_held(&mut self, f: Formula, held: &mut Held) {
-        match f {
-            Formula::And(_) => f
-                .into_parts()
-                .expect("a conjunction")
-                .into_iter()
-                .for_each(|g| self.and_one(g, held)),
-            g => self.and_one(g, held),
+        let mut seen: HashSet<*const Vec<Formula>> = HashSet::new();
+        // The shared conjunctions read, held so that their addresses are not reused.
+        let mut read: Vec<Formula> = Vec::new();
+        let mut stack = vec![f];
+        while let Some(g) = stack.pop() {
+            let Formula::And(gs) = &g else {
+                self.and_one(g, held);
+                continue;
+            };
+            if Arc::strong_count(gs) == 1 {
+                stack.extend(g.into_parts().expect("a conjunction").into_iter().rev());
+            } else if seen.insert(Arc::as_ptr(gs)) {
+                stack.extend(gs.iter().rev().cloned());
+                read.push(g);
+            }
         }
     }
 

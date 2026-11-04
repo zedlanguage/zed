@@ -2780,11 +2780,13 @@ impl<'t> Tx<'t> {
                 Callee::Lam(..) => None,
             },
             Node::If(g, a, b) => {
+                // The formula of a name is kept whole, as for `&&` below.
+                let named = [g, a, b].map(|t| matches!(self.node(t), Node::Var(_)));
                 let g = self.formula(tr, g, env)?;
                 let (fa, fb) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
                 Some(Formula::or(vec![
-                    Formula::and(vec![g.clone(), fa]),
-                    Formula::and(vec![Formula::negate(g), fb]),
+                    Formula::and_keeping(vec![g.clone(), fa], |i| named[i]),
+                    Formula::and_keeping(vec![Formula::negate(g), fb], |i| i == 1 && named[2]),
                 ]))
             }
             Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
@@ -2796,11 +2798,14 @@ impl<'t> Tx<'t> {
                     Not => Some(Formula::negate(self.formula(tr, a, env)?)),
                     And | Or => {
                         let b = b.expect("two operands");
+                        // The formula of a name is kept whole, so a named part used at many
+                        // places is one node and not copied into each (COMPLEXITY.md S31b).
+                        let named = [a, b].map(|t| matches!(self.node(t), Node::Var(_)));
                         let (a, b) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
                         Some(if p == And {
-                            Formula::and(vec![a, b])
+                            Formula::and_keeping(vec![a, b], |i| named[i])
                         } else {
-                            Formula::or(vec![a, b])
+                            Formula::or_keeping(vec![a, b], |i| named[i])
                         })
                     }
                     Lt | Le | Gt | Ge | Eq | Ne => {

@@ -505,24 +505,34 @@ impl Formula {
     }
 
     /// The conjunction, flattened, `true` dropped and `false` absorbing.
-    // Complexity tradeoff: a conjunction among `fs` is flattened into this one even when it is
-    // shared, so a shared conjunction is copied one level deep (`into_parts` clones its list of
-    // conjuncts, each conjunct an O(1) handle) at each place that holds it. No answer is given
-    // up; the cost is. Trigger: a `let`-bound conjunction of k constraints used inside a
-    // conjunction at each of d places costs O(d k) to build here, and its k constraints are
-    // then read at each place by the solver (`Parts::of`, `settle`, `pick`), O(d k) in all,
-    // quadratic in the size of the program when k is about d. Flattening is kept because the
-    // tightening below (one constraint per left-hand side), `Formula::either` and the base of
-    // `Parts` read the conjuncts at the top level. Test
-    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`
-    // (ignored, fails: 1.18 to 59.0 G at d = 30 to 240), COMPLEXITY.md S31b, open in item
-    // ST-formula-wide. A complete solution keeps a shared conjunction as a node of its own, and
-    // lets `Parts` hold it as a shared chunk of the base, which `settle`, `pick`, `witness` and
-    // `project_parts` read once per model and once per base that already holds it.
     pub fn and(fs: Vec<Formula>) -> Formula {
+        Formula::and_keeping(fs, |_| false)
+    }
+
+    /// [`Formula::and`], with each conjunction at an index of `fs` where `keep` holds kept
+    /// whole, as one conjunct, and not flattened into this one. The translator keeps the
+    /// formula of a name used as an operand of `&&` (`preimage::Tx::formula_at`), and the
+    /// maps of a formula keep a conjunction that was kept in the node they rebuild
+    /// ([`Formula::rebuild`]), so whether a part is kept follows the program and never how
+    /// many handles hold it. A kept conjunction is read as flattened by compare, hash
+    /// and show (`deep::Flat`), and, each kept part at its first place alone, by
+    /// [`Formula::conjuncts`], by `Conjuncts::and` and by `Parts::of`.
+    // Complexity tradeoff: a kept conjunction is not merged into this one, so the tightening
+    // below (one constraint per left-hand side) does not reach the constraints inside it, and a
+    // constraint written both inside it and beside it is kept twice. No point is given up and
+    // no answer changes; the printed relation lists the named part's constraints as written.
+    // Merging would copy the named part's k constraints into each of the d places that use it,
+    // O(d k), quadratic in the size of the program when k is about d. Trigger: a name of a
+    // conjunction used as an operand of `&&`. Test
+    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`,
+    // COMPLEXITY.md S31b. A complete merge needs the conjunction as a persistent map from each
+    // left-hand side to its constraint, shared with the named part and extended at each place.
+    pub fn and_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
         let mut flat = Vec::new();
-        for f in fs {
+        for (i, f) in fs.into_iter().enumerate() {
             match f {
+                Formula::And(ref gs) if gs.is_empty() => {}
+                Formula::And(_) if keep(i) => flat.push(f),
                 Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
                 Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
                 g => flat.push(g),
@@ -563,23 +573,27 @@ impl Formula {
 
     /// The disjunction, flattened, `false` dropped and `true` absorbing, and `true` when two
     /// disjuncts are complements (`Formula::complementary`).
-    // Complexity tradeoff: a disjunction among `fs` is flattened into this one even when it is
-    // shared, so a shared disjunction is copied one level deep (`into_parts` clones its list of
-    // disjuncts, each disjunct an O(1) handle) at each place that holds it, and `Parts::of`
-    // then meets its disjuncts as disjuncts of each place, not as one shared node. No answer is
-    // given up; the cost is. Trigger: a `let`-bound disjunction of k constraints used as a
-    // disjunct of a disjunction at each of d places costs O(d k), quadratic in the size of the
-    // program when k is about d. Flattening is kept because `complementary` and `settle` read
-    // the disjuncts at the top level. Test
-    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_depth`
-    // (ignored, fails: 0.37 to 14.2 G at d = 30 to 240), COMPLEXITY.md S31b, open in item
-    // ST-formula-wide. A complete solution keeps a shared disjunction as a node of its own,
-    // made once by `Parts::of` and read by `settle` once per base, with `complementary` and the
-    // printed relations checked against the flattened form.
     pub fn or(fs: Vec<Formula>) -> Formula {
+        Formula::or_keeping(fs, |_| false)
+    }
+
+    /// [`Formula::or`], with each disjunction at an index of `fs` where `keep` holds kept
+    /// whole, as one disjunct, as [`Formula::and_keeping`] keeps a conjunction: the formula of
+    /// a name used as an operand of `||`, and a disjunction kept in the node a map rebuilds.
+    // Complexity tradeoff: a kept disjunction is not merged into this one, so `complementary`
+    // does not find a constraint inside it beside its complement outside it, and the disjunction
+    // stays one, which holds at the same points: no answer changes, but each later test splits
+    // into its cases. Merging would copy the named part's k disjuncts into each of the d places
+    // that use it, O(d k). Trigger: a name of a disjunction used as an operand of `||`. Test
+    // `l01_39_reduced_product::named_test::arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_depth`,
+    // COMPLEXITY.md S31b. A complete check needs each kept part's constraints indexed in its
+    // node, so that the lookup across it costs O(1) per disjunct.
+    pub fn or_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
         let mut out = Vec::new();
-        for f in fs {
+        for (i, f) in fs.into_iter().enumerate() {
             match f {
+                Formula::Or(ref gs) if gs.is_empty() => {}
+                Formula::Or(_) if keep(i) => out.push(f),
                 Formula::Or(_) => out.extend(f.into_parts().expect("a disjunction")),
                 Formula::And(ref gs) if gs.is_empty() => return Formula::top(),
                 g => out.push(g),
@@ -706,13 +720,25 @@ impl Formula {
     }
 
     /// The node `self` with `parts` in place of its parts, through [`Formula::negate`],
-    /// [`Formula::and`] or [`Formula::or`]; a constraint has no parts and is copied.
+    /// [`Formula::and_keeping`] or [`Formula::or_keeping`]; a constraint has no parts and is
+    /// copied. A part in the place of a conjunction kept in a conjunction, or of a disjunction
+    /// kept in a disjunction ([`Formula::kept`]), is kept whole.
     fn rebuild(&self, mut parts: Vec<Formula>) -> Formula {
         match self {
             Formula::Con(c) => Formula::Con(c.clone()),
             Formula::Not(_) => Formula::negate(parts.pop().expect("one part")),
-            Formula::And(_) => Formula::and(parts),
-            Formula::Or(_) => Formula::or(parts),
+            Formula::And(_) => Formula::and_keeping(parts, |i| self.kept(i)),
+            Formula::Or(_) => Formula::or_keeping(parts, |i| self.kept(i)),
+        }
+    }
+
+    /// Whether the part at `i` of `self` is a conjunction kept whole in a conjunction, or a
+    /// disjunction kept whole in a disjunction.
+    fn kept(&self, i: usize) -> bool {
+        match self {
+            Formula::And(gs) => matches!(gs[i], Formula::And(_)),
+            Formula::Or(gs) => matches!(gs[i], Formula::Or(_)),
+            Formula::Con(_) | Formula::Not(_) => false,
         }
     }
 
@@ -754,12 +780,23 @@ impl Formula {
         self.holds_as(values)
     }
 
-    /// The top-level conjuncts.
+    /// The top-level conjuncts, with a conjunction kept among them ([`Formula::and_keeping`])
+    /// read as flattened into it; a conjunction kept at more than one place is read at its first.
     fn conjuncts(&self) -> Vec<&Formula> {
-        match self {
-            Formula::And(gs) => gs.iter().collect(),
-            g => vec![g],
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![self];
+        while let Some(g) = stack.pop() {
+            match g {
+                Formula::And(gs) => {
+                    if seen.insert(Arc::as_ptr(gs)) {
+                        stack.extend(gs.iter().rev());
+                    }
+                }
+                g => out.push(g),
+            }
         }
+        out
     }
 }
 
@@ -2267,50 +2304,78 @@ impl Parts {
     /// is read without recursion (COMPLEXITY.md S27). A disjunction that the formula holds as a
     /// conjunct in more than one place, and a disjunct held in more than one place, are made
     /// once and shared, as [`Rc`]s, at each place (COMPLEXITY.md S31).
-    // Complexity tradeoff: three shapes of shared part are still read once per place, not once.
-    // (1) A shared conjunction used as a conjunct: `Formula::and` has flattened it into the
-    // conjunction around it, so it has no node here, and its constraints are added to the base
-    // of each place, one by one. (2) A shared disjunction used as a disjunct: `Formula::or` has
-    // flattened it into the disjunction around it, so its disjuncts are entered as disjuncts of
-    // each place (each disjunct that is a node is made once, but the list is walked at each
-    // place). (3) A shared disjunction used as a conjunct: its disjuncts are made once (`ors`
-    // below), but its list of k disjuncts is copied into each place (`done.clone()`,
-    // `ds.clone()`), and `settle`, `pick` and `witness` then read the k disjuncts once per
-    // place, as a disjunction of its own at each. No answer is given up; the cost is. Trigger:
-    // a `let`-bound conjunction (1) or disjunction (2, 3) of k parts used at each of d places
-    // costs O(d k) here and in the solver after it, quadratic in the size of the program when
-    // k is about d. A shared disjunct, and a shared disjunction of few disjuncts used as a
-    // conjunct (the form the `let`-bound rule takes in `named_test`), are made once and cost
-    // O(1) per place here. Tests in `l01_39_reduced_product::named_test`, all three ignored and
-    // failing:
-    // `arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth` (1:
-    // 1.18 to 59.0 G at d = 30 to 240), `..._wide_named_disjunction_at_each_tier_...` (2: 0.37
-    // to 14.2 G) and `..._wide_named_disjunction_required_at_each_tier_...` (3: 2.76 to 157.6 G),
-    // COMPLEXITY.md S31b, open in item ST-formula-wide. A complete solution keeps a shared
-    // conjunction and a shared disjunction as nodes of their own in `Formula::and` and
-    // `Formula::or`, holds a shared conjunction here as a shared chunk of the base and a shared
-    // disjunction as one shared list (`Rc<[Rc<Parts>]>`), and lets `settle`, `pick`, `witness`
-    // and `project_parts` read a chunk or a disjunction they have already met once per model
-    // and skip a chunk that the base already holds; reading a repeated disjunction once can
-    // change which disjuncts `pick` takes, so the models it returns must then be checked
-    // against the present ones.
+    // Complexity tradeoff: a part reached twice in the formula is made once, but the skip of
+    // one already conjoined above reaches only the places below the place that conjoined it.
+    // A shared conjunction or disjunction used as a conjunct at places on separate branches
+    // (disjuncts beside each other, not nested) is read at each: a conjunction's k constraints
+    // are added to the base of each place, and a disjunction's list of k disjuncts is copied
+    // into each (`ds.clone()`), where `settle`, `pick` and `witness` read it again. No answer is
+    // given up. Trigger: a `let`-bound conjunction or disjunction of k parts used at each of d
+    // disjuncts of one disjunction costs O(d k) here, inferred from this code and not measured.
+    // The nested shapes are near linear (`Formula::and` and `Formula::or` keep a named part
+    // whole): tests in `l01_39_reduced_product::named_test`
+    // `arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`,
+    // `..._wide_named_disjunction_at_each_tier_...`, `..._wide_named_disjunction_required_at_each_tier_...`
+    // and `arms_of_a_chain_of_named_{conjunctions,disjunctions}_take_time_near_linear_in_its_length`,
+    // COMPLEXITY.md S31b. A complete solution holds a shared conjunction as a shared chunk of
+    // the base and a shared disjunction as one shared list (`Rc<[Rc<Parts>]>`), and lets
+    // `settle`, `pick` and `witness` read a chunk or a disjunction they have already met once
+    // per model; reading a repeated disjunction once can change which disjuncts `pick` takes,
+    // so the models it returns must then be checked against the present ones.
     fn of(f: Formula) -> Parts {
-        /// A disjunction being entered: its key when shared, its disjuncts left and those made.
-        type Entering = (Option<Id>, std::vec::IntoIter<Formula>, Vec<Rc<Parts>>);
+        /// The shared parts known to hold (`yes`) and known not to hold (`no`) where a part is
+        /// made: those conjoined on the way down, and the shared disjuncts beside a disjunct.
+        #[derive(Clone, Default)]
+        struct Assumed {
+            yes: imbl::HashSet<Id>,
+            no: imbl::HashSet<Id>,
+        }
+        /// A disjunction being entered: its key when shared, its disjuncts left and those
+        /// made, and what is assumed where a disjunct held by it alone is made.
+        type Entering = (
+            Option<Id>,
+            std::vec::IntoIter<Formula>,
+            Vec<Rc<Parts>>,
+            Assumed,
+        );
         /// A part being made: its disjunctions not yet entered, last first, the disjunction
-        /// being entered, as its key when shared, its disjuncts left and those made, and the
-        /// part's own key when shared.
+        /// being entered, the part's own key when shared, and what is assumed where it is.
         struct Frame {
             p: Parts,
             todo: Vec<Formula>,
             arms: Option<Entering>,
             id: Option<Id>,
+            at: Assumed,
         }
-        fn open(f: Formula, id: Option<Id>) -> Frame {
+        fn open(
+            f: Formula,
+            id: Option<Id>,
+            mut at: Assumed,
+            twice: &std::collections::HashSet<Id>,
+        ) -> Frame {
             let mut p = Parts::default();
             let mut todo = Vec::new();
             let mut stack = vec![f];
             while let Some(mut g) = stack.pop() {
+                // A shared part already conjoined above holds here; one known not to hold
+                // makes the part false.
+                if let Some(k) = Id::among(&g, twice) {
+                    if at.yes.contains(&k) {
+                        continue;
+                    }
+                    if at.no.contains(&k) {
+                        let mut p = Parts::default();
+                        p.ors.push(Vec::new());
+                        return Frame {
+                            p,
+                            todo: Vec::new(),
+                            arms: None,
+                            id,
+                            at,
+                        };
+                    }
+                    at.yes.insert(k);
+                }
                 match &mut g {
                     Formula::Con(c) => p.cons.push(Con::take(c)),
                     // Reversed, so the conjuncts are added in order.
@@ -2327,42 +2392,81 @@ impl Parts {
                 todo,
                 arms: None,
                 id,
+                at,
             }
         }
-        // The disjunctions and the disjuncts already made that are held in more than one place.
+        // The parts that the formula reaches through more than one parent: only these are made
+        // once and assumed by key, so the parts made follow the formula's own sharing, never the
+        // handles that hold its parts outside it.
+        let twice = Id::reached_twice(&f);
+        // The disjunctions and the disjuncts already made that are held in more than one place,
+        // each made with nothing assumed, so that it serves at every place.
         let mut ors: HashMap<Id, Vec<Rc<Parts>>> = HashMap::new();
         let mut arms: HashMap<Id, Rc<Parts>> = HashMap::new();
-        let mut stack = vec![open(f, None)];
+        let mut stack = vec![open(f, None, Assumed::default(), &twice)];
         let mut made: Option<Rc<Parts>> = None;
         while let Some(top) = stack.last_mut() {
-            if let (Some(q), Some((_, _, done))) = (made.take(), &mut top.arms) {
-                done.push(q);
+            if let (Some(q), Some((_, _, done, _))) = (made.take(), &mut top.arms) {
+                // A false disjunct is left out.
+                if !q.ors.iter().any(Vec::is_empty) {
+                    done.push(q);
+                }
             }
-            if let Some((_, left, done)) = &mut top.arms {
+            if let Some((_, left, done, at)) = &mut top.arms {
                 if let Some(g) = left.next() {
-                    match Id::of(&g) {
+                    match Id::among(&g, &twice) {
                         Some(id) => match arms.get(&id) {
-                            Some(q) => done.push(Rc::clone(q)),
-                            None => stack.push(open(g, Some(id))),
+                            Some(q) => {
+                                if !q.ors.iter().any(Vec::is_empty) {
+                                    done.push(Rc::clone(q))
+                                }
+                            }
+                            None => stack.push(open(g, Some(id), Assumed::default(), &twice)),
                         },
-                        None => stack.push(open(g, None)),
+                        None => {
+                            let at = at.clone();
+                            stack.push(open(g, None, at, &twice))
+                        }
                     }
                     continue;
                 }
-                let (id, _, done) = top.arms.take().expect("the disjunction entered");
+                let (id, _, done, _) = top.arms.take().expect("the disjunction entered");
                 if let Some(id) = id {
                     ors.insert(id, done.clone());
                 }
                 top.p.ors.push(done);
             }
             if let Some(g) = top.todo.pop() {
-                let id = Id::of(&g);
+                let id = Id::among(&g, &twice);
                 if let Some(ds) = id.as_ref().and_then(|id| ors.get(id)) {
                     top.p.ors.push(ds.clone());
                     continue;
                 }
-                let ds = g.into_parts().expect("a disjunction");
-                top.arms = Some((id, ds.into_iter(), Vec::new()));
+                // A shared disjunction is made with nothing assumed. Each of its disjuncts
+                // held by it alone is made with its shared disjuncts assumed not to hold, since
+                // it serves only where they do not; a shared disjunct known to hold makes the
+                // disjunction hold, and one known not to hold, or met twice, is left out.
+                let mut at = match id {
+                    Some(_) => Assumed::default(),
+                    None => top.at.clone(),
+                };
+                let mut keep = Vec::new();
+                let mut holds = false;
+                for d in g.into_parts().expect("a disjunction") {
+                    if let Some(k) = Id::among(&d, &twice) {
+                        if at.yes.contains(&k) {
+                            holds = true;
+                            break;
+                        }
+                        if at.no.insert(k).is_some() {
+                            continue;
+                        }
+                    }
+                    keep.push(d);
+                }
+                if !holds {
+                    top.arms = Some((id, keep.into_iter(), Vec::new(), at));
+                }
                 continue;
             }
             let Frame { p, id, .. } = stack.pop().expect("the top frame");
@@ -2523,8 +2627,12 @@ fn nnf(f: &Formula, sign: bool) -> Formula {
         |g, sign, mut parts| {
             let mut out = match (g, sign) {
                 (Formula::Not(_), _) => parts.pop().expect("one part"),
-                (Formula::And(_), true) | (Formula::Or(_), false) => Formula::and(parts),
-                (Formula::And(_), false) | (Formula::Or(_), true) => Formula::or(parts),
+                (Formula::And(_), true) | (Formula::Or(_), false) => {
+                    Formula::and_keeping(parts, |i| g.kept(i))
+                }
+                (Formula::And(_), false) | (Formula::Or(_), true) => {
+                    Formula::or_keeping(parts, |i| g.kept(i))
+                }
                 (Formula::Con(c), true) => Formula::Con(c.clone()),
                 (Formula::Con(c), false) => {
                     let one = Lin::constant(1);
@@ -5410,7 +5518,9 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             return match settle_as_sets(Parts::of(nnf(f, true)))? {
                 None => Ok(no_points(syms)),
                 // A projection may keep a disjunct not shown to have a point.
-                Some(AsSets { p, .. }) => project_parts(p, syms, Some(f), true),
+                Some(AsSets { p, .. }) => {
+                    project_parts(p, syms, Some(f), true, &mut HashMap::new())
+                }
             };
         }
     };
@@ -5427,7 +5537,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// [`project_each`] of a formula whose names no longer matter ([`Renamed`]).
 fn project_each_inner(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     match propagate(f)? {
-        Some(p) => project_parts(p, syms, Some(f), false),
+        Some(p) => project_parts(p, syms, Some(f), false, &mut HashMap::new()),
         None => Ok(no_points(syms)),
     }
 }
@@ -5465,6 +5575,7 @@ fn project_parts(
     syms: &[Atom],
     whole: Option<&Formula>,
     sets: bool,
+    memo: &mut Below,
 ) -> Result<Each, Refusal> {
     let none = || no_points(syms);
     let mut skipped: Vec<Refusal> = Vec::new();
@@ -5587,7 +5698,7 @@ fn project_parts(
         // the nest below it. With `sets`, each disjunct is settled first, and each
         // that may have a point is asked for the symbols that all such disjuncts touch, which
         // no order changes; the others are not asked.
-        let mut order: Vec<&Parts> = ds.iter().map(|d| &**d).collect();
+        let mut order: Vec<&Rc<Parts>> = ds.iter().collect();
         order.sort_by_key(|d| d.atoms().len());
         let mut wanted: Option<Vec<usize>> = None;
         let mut pre: Vec<Option<Result<Option<Parts>, Refusal>>> = Vec::new();
@@ -5636,27 +5747,42 @@ fn project_parts(
             let sub: Vec<Atom> = ks.iter().map(|&k| syms[k].clone()).collect();
             // A disjunct asked for no symbol is only asked whether it has a point, as
             // [`decide`] asks it; with `sets` it was asked above.
-            let settled = match pre_d {
-                Some(s) => s,
-                None => settle(parts_of(d, &roots)),
+            // A disjunct met before, at the same base groups and asked for the same symbols,
+            // is read once: its answer depends on these alone.
+            let key: BelowKey = (
+                Rc::as_ptr(d),
+                (roots.iter())
+                    .flat_map(|r| linked.held[*r].iter().map(|i| linked.cons[*i].clone()))
+                    .collect(),
+                sub.clone(),
+            );
+            let found_rs = if let Some((_, r)) = memo.get(&key) {
+                r.clone()
+            } else {
+                let settled = match pre_d {
+                    Some(s) => s,
+                    None => settle(parts_of(d, &roots)),
+                };
+                let r = settled.and_then(|q| match q {
+                    None => Ok((no_points(&sub), false)),
+                    Some(q) if ks.is_empty() => {
+                        // A point of the disjunct with each disjunct below cut to its own
+                        // constraints keeps it, as a level below the top is tightened
+                        // ([`summarize`]); the search below it runs only when there is none.
+                        let point = sets
+                            || q.ors.is_empty()
+                            || pick(&q, false).is_ok()
+                            || !matches!(probe(q), Ok(None));
+                        Ok(((Vec::new(), Vec::new()), point))
+                    }
+                    Some(q) => project_parts(q, &sub, None, sets, memo).map(|e| {
+                        let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
+                        (e, point)
+                    }),
+                });
+                memo.insert(key, (Rc::clone(d), r.clone()));
+                r
             };
-            let found_rs = settled.and_then(|q| match q {
-                None => Ok((no_points(&sub), false)),
-                Some(q) if ks.is_empty() => {
-                    // A point of the disjunct with each disjunct below cut to its own
-                    // constraints keeps it, as a level below the top is tightened
-                    // ([`summarize`]); the search below it runs only when there is none.
-                    let point = sets
-                        || q.ors.is_empty()
-                        || pick(&q, false).is_ok()
-                        || !matches!(probe(q), Ok(None));
-                    Ok(((Vec::new(), Vec::new()), point))
-                }
-                Some(q) => project_parts(q, &sub, None, sets).map(|e| {
-                    let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
-                    (e, point)
-                }),
-            });
             let (rs, has_point) = match found_rs {
                 Ok(((rs, more), point)) => {
                     skipped.extend(more);
@@ -5694,7 +5820,7 @@ fn project_parts(
                 }
             }
             if n_ors > 1 {
-                found_here.push((d, kept));
+                found_here.push((&**d, kept));
             }
             if !sets {
                 wanted = Some(ks);
@@ -5737,6 +5863,17 @@ fn project_parts(
     skipped.dedup();
     Ok((out, skipped))
 }
+
+/// A disjunct of [`project_parts`] below the top, by address, with the constraints of the base
+/// groups it is read with and the symbols it is asked for.
+type BelowKey = (*const Parts, Vec<Con>, Vec<Atom>);
+
+/// The answers of [`project_parts`] for the disjuncts below the top already read, each with
+/// the disjunct it is keyed by, held so that its address is not reused. A disjunct shared by
+/// several disjunctions (a named disjunction used as a disjunct at each of several places,
+/// COMPLEXITY.md S31b) is then projected once for each base and set of symbols, not once for
+/// each path to it, which is exponential in the depth when the shared disjunctions nest.
+type Below = HashMap<BelowKey, (Rc<Parts>, Result<(Each, bool), Refusal>)>;
 
 /// A disjunct with a point and its projections, each with the index of its symbol, sorted.
 type Projected<'a> = (&'a Parts, Vec<(usize, IntervalSet)>);

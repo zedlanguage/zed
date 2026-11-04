@@ -984,6 +984,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `u64` hash folded bottom up per node with `DefaultHasher`, then written once, so a formula hashes alike however its parts are shared | `impl Hash for Formula` | None | The runtime's structural hash, which must read a shared value once |
 | `Rc<Parts>` memo tables (`HashMap<Id, Vec<Rc<Parts>>>` for disjunctions and `HashMap<Id, Rc<Parts>>` for disjuncts) filled while the frames of an explicit stack are made | `Parts::of` | Mutation (gap 11) | A fold over the formula with the tables in its state |
 
+## Entries from ST-formula-wide (`zedc/src/store/presburger.rs`, `presburger/deep.rs`, `preimage.rs`, `conjuncts.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A closure `impl Fn(usize) -> bool` that says which operands to keep whole, passed to `and_keeping` and `or_keeping` | `Formula::and_keeping`, `or_keeping`, `rebuild`, `nnf`, `preimage::Tx::formula_at` | None | A function value parameter |
+| A `HashMap` memo keyed by a raw `*const Parts` address with the base constraints and symbols, holding an `Rc` of the key so the address is not reused, threaded by `&mut` through a recursive function | `project_parts` (`Below`) | Shared tables across pure calls (gap 2), mutation (gap 11) | A memo keyed by the value's identity, if the runtime gives one, in the state of a fold |
+| A `HashSet<*const Vec<Formula>>` of visited shared conjunctions, with the formulas held in a `Vec` so their addresses stay live, on an explicit stack | `Conjuncts::and_held` | Mutation (gap 11) | A fold over the worklist with the visited set in its state |
+| A visited `HashSet<Id>` built in one walk to find the parts reached through two or more parents | `deep::Id::reached_twice`, `Id::among`, `Formula::chooses` | Mutation (gap 11) | A fold with the set in its state |
+
 ## Entries from OSP-drop (`zedc/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |

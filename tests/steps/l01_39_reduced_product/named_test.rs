@@ -5,10 +5,10 @@
 //! of fallbacks on the balance `x` and the credit `y`, as long as the approval is deep. The
 //! formula of the test holds the rule's formula once at each tier, shared and not copied, so
 //! the arms take time near linear in `d` and not in `d²` (COMPLEXITY.md S31). A named
-//! conjunction of many credit limits, a named disjunction of many exemptions, or a named
-//! disjunction of many credit limits any one of which a tier requires, is still read once at
-//! each tier (COMPLEXITY.md S31b, open in ST-formula-wide); three ignored tests below measure
-//! it.
+//! conjunction of many credit limits, a named disjunction of many exemptions, a named
+//! disjunction of many credit limits any one of which a tier requires, and a chain of names
+//! each joining the two before it are each held once and read once, near linear in `d`
+//! (COMPLEXITY.md S31b).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -223,13 +223,14 @@ fn wide_scaling(what: &str, family: fn(usize, usize, bool) -> Term) {
 }
 
 #[test]
-#[ignore = "fails: a shared conjunction is flattened into each place; open in ST-formula-wide (COMPLEXITY.md S31b)"]
 fn arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth() {
     // k = d credit limits named once and required at each of d tiers. Measured on the branch
     // of ST-formula-share, in instructions at d = 30, 60, 120, 240: 1.18, 3.87, 14.8, 59.0 G
     // (about 4 times per doubling); written out at each tier 12.1, 56.0, 251 G at d = 30 to
-    // 120. `Formula::and` flattens the shared conjunction into each tier's conjunction, so its
-    // k constraints are read at each tier (tradeoff comments at `Formula::and` and `Parts::of`).
+    // 120. That code flattened the shared conjunction into each tier's conjunction; on
+    // origin/main ae9b63e9 this test fails at 36.4 times the bytes (limit 24). `Formula::and`
+    // now keeps the named conjunction whole and `Parts::of` reads it once: 10.0 times the
+    // instructions and 8.8 times the bytes from d = 30 to 240.
     wide_scaling(
         "arms of k = d credit limits named once, required at each of d tiers",
         approval_within,
@@ -237,13 +238,13 @@ fn arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_de
 }
 
 #[test]
-#[ignore = "fails: a shared disjunction is flattened into each place; open in ST-formula-wide (COMPLEXITY.md S31b)"]
 fn arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_depth() {
     // k = d exemptions named once, any of which approves at each of d tiers. Measured on the
     // branch of ST-formula-share, in instructions at d = 30, 60, 120, 240: 0.37, 1.14, 3.88,
     // 14.2 G (3.1 to 3.7 times per doubling); written out at each tier 7.5, 33.7, 150 G at
-    // d = 30 to 120. `Formula::or` flattens the shared disjunction into each tier's
-    // disjunction (tradeoff comments at `Formula::or` and `Parts::of`).
+    // d = 30 to 120. That code flattened the shared disjunction into each tier's disjunction;
+    // on origin/main ae9b63e9 this test fails at 41.6 times the bytes. `Formula::or` now keeps
+    // the named disjunction whole: 13.9 times the instructions and 12.3 times the bytes.
     wide_scaling(
         "arms of k = d exemptions named once, any of which approves at each of d tiers",
         approval_exempt,
@@ -251,17 +252,101 @@ fn arms_of_a_wide_named_disjunction_at_each_tier_take_time_near_linear_in_the_de
 }
 
 #[test]
-#[ignore = "fails: a shared disjunction used as a conjunct is read once per place; open in ST-formula-wide (COMPLEXITY.md S31b)"]
 fn arms_of_a_wide_named_disjunction_required_at_each_tier_take_time_near_linear_in_the_depth() {
     // Any one of k = d credit limits, named once, required of a small request at each of d
     // tiers. Measured by ST-formula-share verify#2, in instructions at d = 30, 60, 120, 240:
     // 2.76, 10.4, 40.2, 157.6 G (3.8 times per doubling), 0.73 to 39.6 GB allocated; written
     // out at each tier, d = 30, 60 and 120 did not finish in 300 s together. The test fails at
-    // 54.1 times the bytes (limit 24). `Parts::of` makes the disjunction's k disjuncts once but
-    // copies its list at each place, and `settle`, `pick` and `witness` read the k disjuncts
-    // once per place (tradeoff comment at `Parts::of`).
+    // 54.1 times the bytes (limit 24) on origin/main ae9b63e9. `Parts::of` now makes the
+    // disjunction once and skips it at each tier below the first that conjoined it: 9.7 times
+    // the instructions and 8.9 times the bytes.
     wide_scaling(
         "arms of any of k = d credit limits named once, required at each of d tiers",
         approval_any_limit,
+    );
+}
+
+/// The chain `a0 = x >= 0 && y >= 0`, `a1 = x >= 1 <join> a0` and `ai = x >= i <join> a(i-1)
+/// <join> a(i-2)`, each a name when `named` and written out in full when not, and the test
+/// `ad`. Written out it holds `a0` a number of times exponential in `d`; named, each name's
+/// formula is held once, so a reader that reads a shared part at each place it is reached
+/// from takes time exponential in `d`.
+fn chain(d: usize, join: fn(Term, Term) -> Term, named: bool) -> Term {
+    let name = |i: usize| format!("a{i}");
+    let mut defs: Vec<Term> = Vec::new();
+    for i in 0..=d {
+        let at = |j: usize| {
+            if named {
+                var(&name(j))
+            } else {
+                defs[j].clone()
+            }
+        };
+        let def = match i {
+            0 => all(vec![ge("x", 0), ge("y", 0)]),
+            1 => join(ge("x", 1), at(0)),
+            _ => join(join(ge("x", i as i64), at(i - 1)), at(i - 2)),
+        };
+        defs.push(def);
+    }
+    if !named {
+        return defs.pop().expect("the last name");
+    }
+    let mut body = var(&name(d));
+    for (i, def) in defs.into_iter().enumerate().rev() {
+        body = let_(&name(i), def, body);
+    }
+    body
+}
+
+fn and2(a: Term, b: Term) -> Term {
+    prim(Prim::And, vec![a, b])
+}
+
+#[test]
+fn a_chain_of_names_narrows_as_if_written_out() {
+    for d in [1, 2, 5, 10] {
+        let and = summary(&arms_of(chain(d, and2, true)));
+        assert_eq!(and, summary(&arms_of(chain(d, and2, false))), "d = {d}");
+        let x = format!("x=[{d}..]");
+        assert_eq!(and[0].1[..2], [x, "y=[0..]".to_string()], "d = {d}");
+        let or = summary(&arms_of(chain(d, either, true)));
+        assert_eq!(or, summary(&arms_of(chain(d, either, false))), "d = {d}");
+    }
+}
+
+/// Runs the scaling check of `arms` on `chain(d, join, true)` at d = 30 and 240.
+fn chain_scaling(what: &str, join: fn(Term, Term) -> Term) {
+    scaling::on_a_thread(1 << 29, || {
+        let tests: BTreeMap<usize, Term> = [30, 240]
+            .map(|d| (d, if_(chain(d, join, true), lit(1), lit(2))))
+            .into();
+        let scope = ints(&names());
+        scaling::check(what, 30, |d| {
+            std::hint::black_box(arms(&tests[&d], &scope));
+        });
+    });
+}
+
+#[test]
+fn arms_of_a_chain_of_named_conjunctions_take_time_near_linear_in_its_length() {
+    // With the named conjunctions kept whole, and `project_parts` and `Conjuncts::and` reading
+    // a shared part at each path to it, 82 s at d = 28 (the golden ratio to the d); read once,
+    // 10.6 times the instructions and 11.1 times the bytes from d = 30 to 240. Without the
+    // `project_parts` memo it did not finish in 100 s.
+    chain_scaling(
+        "arms of d names, each the conjunction of the two before it",
+        and2,
+    );
+}
+
+#[test]
+fn arms_of_a_chain_of_named_disjunctions_take_time_near_linear_in_its_length() {
+    // Read once per base and symbols in `project_parts`, 7.6 times the instructions and the
+    // bytes from d = 30 to 240. Without that memo it did not finish in 100 s, and on
+    // origin/main ae9b63e9 it did not finish in 150 s.
+    chain_scaling(
+        "arms of d names, each the disjunction of the two before it",
+        either,
     );
 }

@@ -32,6 +32,12 @@ impl Con {
 /// same part, so a part that two parents hold is found by either.
 pub(super) struct Id(Formula);
 
+impl Clone for Id {
+    fn clone(&self) -> Id {
+        Id(self.0.clone())
+    }
+}
+
 impl Id {
     /// The key of `f`, a compound part.
     fn any(f: &Formula) -> Id {
@@ -43,6 +49,39 @@ impl Id {
     /// `None` for a constraint or a part held by its parent alone.
     pub(super) fn of(f: &Formula) -> Option<Id> {
         f.is_shared().then(|| Id::any(f))
+    }
+
+    /// The key of `f` when `f` is one of `twice` ([`Id::reached_twice`]), or `None`.
+    pub(super) fn among(f: &Formula, twice: &HashSet<Id>) -> Option<Id> {
+        if matches!(f, Formula::Con(_)) {
+            return None;
+        }
+        let id = Id::any(f);
+        twice.contains(&id).then_some(id)
+    }
+
+    /// The compound parts of `f` that `f` reaches through more than one parent, found in one
+    /// walk with a visited set, so in time near the number of distinct parts. A pass that
+    /// treats these parts apart reads `f`'s own sharing, not the handles held outside it.
+    pub(super) fn reached_twice(f: &Formula) -> HashSet<Id> {
+        let mut seen: HashSet<Id> = HashSet::new();
+        let mut twice: HashSet<Id> = HashSet::new();
+        let mut stack = vec![f];
+        while let Some(g) = stack.pop() {
+            for h in g.kids() {
+                if matches!(h, Formula::Con(_)) {
+                    continue;
+                }
+                let id = Id::any(h);
+                if seen.contains(&id) {
+                    twice.insert(id);
+                } else {
+                    seen.insert(id);
+                    stack.push(h);
+                }
+            }
+        }
+        twice
     }
 
     /// Where the part is kept, which names it while the key holds it.
@@ -78,7 +117,56 @@ fn hole() -> Formula {
     })
 }
 
+/// The parts of a node read as if each conjunction directly in a conjunction, and each
+/// disjunction directly in a disjunction, were flattened into it, on a stack as deep as the
+/// nesting of the node's own kind.
+// Complexity tradeoff: a part of the node's own kind reached by several paths is read at each,
+// so that compare, hash and show agree with the formula written out (`l01_38_presburger::shared`
+// asserts it). Show writes the formula out, so a chain of names each conjoining the two before
+// it prints in size exponential in its length, as written out it would, and a comparison of
+// two such formulas that are not one node costs the number of paths. No answer is given up. The hash is a fold, linear in the distinct parts.
+// The tests of chains in `l01_39_reduced_product::named_test` do not print or compare such a
+// chain and pass at near-linear cost. A complete solution prints a named part by its name and
+// compares a node by its distinct parts.
+struct Flat<'a> {
+    /// The node's variant ([`Formula::rank`]).
+    kind: u8,
+    /// The parts left at each level of the node's own kind, the innermost last.
+    left: Vec<slice::Iter<'a, Formula>>,
+}
+
+impl<'a> Flat<'a> {
+    fn of(g: &'a Formula) -> Flat<'a> {
+        Flat {
+            kind: g.rank(),
+            left: vec![g.kids().iter()],
+        }
+    }
+}
+
+impl<'a> Iterator for Flat<'a> {
+    type Item = &'a Formula;
+
+    fn next(&mut self) -> Option<&'a Formula> {
+        loop {
+            match self.left.last_mut()?.next() {
+                Some(h) if h.flattens_into(self.kind) => self.left.push(h.kids().iter()),
+                Some(h) => return Some(h),
+                None => {
+                    self.left.pop();
+                }
+            }
+        }
+    }
+}
+
 impl Formula {
+    /// Whether `self` is a conjunction or disjunction of the variant `kind`, so that it is read
+    /// as flattened into a parent of that variant ([`Flat`]).
+    fn flattens_into(&self, kind: u8) -> bool {
+        matches!(self, Formula::And(_) | Formula::Or(_)) && self.rank() == kind
+    }
+
     /// The formulas directly under `self`, in order.
     fn kids(&self) -> &[Formula] {
         match self {
@@ -248,12 +336,18 @@ impl Formula {
     }
 
     /// Whether the formula has a disjunction or a negation, which pushed in may make one.
+    /// A shared part is read at its first place alone.
     pub(super) fn chooses(&self) -> bool {
+        let mut seen: HashSet<Id> = HashSet::new();
         let mut stack = vec![self];
         while let Some(g) = stack.pop() {
             match g {
                 Formula::Or(_) | Formula::Not(_) => return true,
-                Formula::Con(_) | Formula::And(_) => stack.extend(g.kids()),
+                Formula::Con(_) | Formula::And(_) => {
+                    if Id::of(g).is_none_or(|id| seen.insert(id)) {
+                        stack.extend(g.kids())
+                    }
+                }
             }
         }
         false
@@ -357,10 +451,13 @@ impl Clone for Formula {
 }
 
 impl Ord for Formula {
-    /// The order the derived one would give: the variants in the order they are declared,
-    /// then the constraints, or the parts in order with a prefix first. A part compared with
-    /// itself is equal at once (COMPLEXITY.md S31), and a pair of parts one of which is
-    /// shared is compared once per call: a pair found equal is kept.
+    /// The order the derived one would give on the formula with each conjunction directly in a
+    /// conjunction, and each disjunction directly in a disjunction, flattened into it
+    /// ([`Flat`]): the variants in the order they are declared, then the constraints, or the
+    /// parts in order with a prefix first. A conjunction that [`Formula::and`] keeps whole,
+    /// since it is shared, is then equal to the one written out. A part compared with itself is
+    /// equal at once (COMPLEXITY.md S31), and a pair of parts one of which is shared is
+    /// compared once per call: a pair found equal is kept.
     fn cmp(&self, other: &Formula) -> Ordering {
         match self.cmp_node(other) {
             Ordering::Equal => {}
@@ -372,12 +469,8 @@ impl Ord for Formula {
         let mut equal: HashSet<(Id, Id)> = HashSet::new();
         // The parts left at the level being read, with the key of the pair whose parts they
         // are when one of the two is shared, and above it those of the levels around it.
-        type Level<'a> = (
-            slice::Iter<'a, Formula>,
-            slice::Iter<'a, Formula>,
-            Option<(Id, Id)>,
-        );
-        let mut level: Level = (self.kids().iter(), other.kids().iter(), None);
+        type Level<'a> = (Flat<'a>, Flat<'a>, Option<(Id, Id)>);
+        let mut level: Level = (Flat::of(self), Flat::of(other), None);
         let mut above: Vec<Level> = Vec::new();
         loop {
             match (level.0.next(), level.1.next()) {
@@ -390,10 +483,7 @@ impl Ord for Formula {
                         if key.as_ref().is_some_and(|k| equal.contains(k)) {
                             continue;
                         }
-                        above.push(mem::replace(
-                            &mut level,
-                            (x.kids().iter(), y.kids().iter(), key),
-                        ));
+                        above.push(mem::replace(&mut level, (Flat::of(x), Flat::of(y), key)));
                     }
                     o => return o,
                 },
@@ -428,26 +518,42 @@ impl Eq for Formula {}
 
 impl Hash for Formula {
     /// Writes one number made from the tree bottom up: each node's number is the hash of its
-    /// variant and its constraint, or of its count of parts and their numbers, so that equal
-    /// formulas write equal numbers. A shared part's number is found once per call.
+    /// variant and its constraint, or of its parts' numbers read as flattened ([`Flat`]), so
+    /// that formulas equal under [`Ord`] write equal numbers. A shared part's number is found
+    /// once per call.
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let n = self.fold(
+        /// An odd multiplier, the 64-bit golden ratio.
+        const BASE: u64 = 0x9e37_79b9_7f4a_7c15;
+        // Each node's number, and for a conjunction or disjunction its parts' numbers as one
+        // polynomial in `BASE` and `BASE` to the count of its parts. A part of the node's own
+        // kind adds its polynomial in its place, so that it is hashed as flattened at the cost
+        // of its own parts.
+        let (n, _, _) = self.fold(
             (),
             |_, ()| (),
-            |g, (), parts: Vec<u64>| {
+            |g, (), parts: Vec<(u64, u64, u64)>| {
                 // A fixed hasher, so that the number of a formula does not change between runs.
                 let mut h = DefaultHasher::new();
                 h.write_u8(g.rank());
+                let (mut seq, mut pow) = (0u64, 1u64);
                 match g {
                     Formula::Con(c) => c.hash(&mut h),
-                    Formula::Not(_) | Formula::And(_) | Formula::Or(_) => {
-                        h.write_usize(parts.len());
-                        for p in parts {
-                            h.write_u64(p);
+                    Formula::Not(_) => h.write_u64(parts[0].0),
+                    Formula::And(_) | Formula::Or(_) => {
+                        for (k, (n, s, p)) in g.kids().iter().zip(parts) {
+                            if k.flattens_into(g.rank()) {
+                                seq = seq.wrapping_mul(p).wrapping_add(s);
+                                pow = pow.wrapping_mul(p);
+                            } else {
+                                seq = seq.wrapping_mul(BASE).wrapping_add(n);
+                                pow = pow.wrapping_mul(BASE);
+                            }
                         }
+                        h.write_u64(seq);
+                        h.write_u64(pow);
                     }
                 }
-                h.finish()
+                (h.finish(), seq, pow)
             },
         );
         state.write_u64(n);
@@ -480,14 +586,15 @@ fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool) -> fmt::Result 
                     f.write_str("Not(")?;
                     stack.extend([Piece::Text(")"), Piece::Formula(h)]);
                 }
-                Formula::And(gs) | Formula::Or(gs) => {
+                Formula::And(_) | Formula::Or(_) => {
                     f.write_str(if matches!(g, Formula::And(_)) {
                         "And(["
                     } else {
                         "Or(["
                     })?;
                     stack.push(Piece::Text("])"));
-                    for (i, h) in gs.iter().enumerate().rev() {
+                    let kids: Vec<&Formula> = Flat::of(g).collect();
+                    for (i, h) in kids.into_iter().enumerate().rev() {
                         stack.push(Piece::Formula(h));
                         if i > 0 {
                             stack.push(Piece::Text(", "));
@@ -509,18 +616,22 @@ fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool) -> fmt::Result 
                     Formula::Not(_) => stack.push(Piece::Formula(h)),
                 }
             }
-            Formula::And(gs) | Formula::Or(gs) if gs.is_empty() => {
+            Formula::And(_) | Formula::Or(_) if Flat::of(g).next().is_none() => {
                 write!(f, "{}", matches!(g, Formula::And(_)))?
             }
-            Formula::And(gs) | Formula::Or(gs) => {
+            Formula::And(_) | Formula::Or(_) => {
                 let sep = if matches!(g, Formula::And(_)) {
                     " && "
                 } else {
                     " || "
                 };
-                for (i, h) in gs.iter().enumerate().rev() {
+                // A conjunction directly in a conjunction, or a disjunction directly in a
+                // disjunction, is written as if flattened into it ([`Flat`]).
+                let kids: Vec<&Formula> = Flat::of(g).collect();
+                for (i, h) in kids.into_iter().enumerate().rev() {
                     // A conjunction or disjunction of two or more parts is in parentheses.
-                    let wrap = matches!(h, Formula::And(hs) | Formula::Or(hs) if hs.len() > 1);
+                    let wrap = matches!(h, Formula::And(_) | Formula::Or(_))
+                        && Flat::of(h).nth(1).is_some();
                     if wrap {
                         stack.push(Piece::Text(")"));
                     }
