@@ -80,7 +80,7 @@ step_pieces() {
       deep_values-* | deep_scaling-* | deep_heap-*)
         # Tests of many gigabytes at once slow each other through the lock on the address space
         # of their process: 59 s together against 17 s alone at load 50. Each gets a process.
-        # deep_heap also compiles a function of 150,000 nodes natively, about 20 s on its own.
+        # deep_heap also compiles functions of up to 20,000 concatenations natively.
         if tests=$("$p" --list --format terse); then
           for t in $(echo "$tests" | sed -n "s/: test$//p"); do
             echo "$t tests $p --exact $t"

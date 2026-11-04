@@ -61,9 +61,17 @@ impl Stack {
                 -1,
                 0,
             );
-            // Complexity tradeoff: a refused reservation (an address-space limit such as
-            // `ulimit -v`) refuses the run, even one that a smaller stack would hold; retrying
-            // smaller would make the size a switch, and no size short of memory holds every run.
+            // Complexity tradeoff: a process whose address space is limited below memory and swap
+            // together (`ulimit -v`, `RLIMIT_AS`) cannot reserve this stack, and every native run
+            // in it is refused with the error below, even one that a smaller stack would hold.
+            // Why: no size short of memory holds every run, and retrying smaller would make the
+            // size a switch, which changes which programs run with the limit. Trigger: the
+            // limit on the address space, not the program. Test: the unit test
+            // `tests::a_limited_address_space_refuses_the_reservation`; COMPLEXITY.md row R10. A
+            // complete solution is a stack that grows by segments: generated code compares the
+            // stack pointer with the segment's end at each function entry and, when a frame would
+            // not fit, calls the runtime to map a new segment and continue on it, so only the
+            // stack in use is reserved, at the cost of a compare and branch per call.
             if base == libc::MAP_FAILED {
                 return Err(format!(
                     "runtime: cannot reserve a stack of {} bytes for a run: {}",
@@ -158,6 +166,58 @@ mod tests {
         let bytes = (info.totalram + info.totalswap) * u64::from(info.mem_unit);
         assert!(s.len() as u64 >= bytes);
         assert!(!s.is_empty());
+    }
+
+    /// Set in the child process of `a_limited_address_space_refuses_the_reservation`.
+    const CHILD: &str = "ZED_RT_STACK_LIMITED_CHILD";
+
+    /// The address space the child may use: far below memory and swap on a machine that can run
+    /// the test suite, and room enough for the test binary.
+    const LIMIT: libc::rlim_t = 8 << 30;
+
+    #[test]
+    fn a_limited_address_space_refuses_the_reservation() {
+        if std::env::var_os(CHILD).is_some() {
+            let e = Stack::new().unwrap_err();
+            assert!(
+                e.starts_with("runtime: cannot reserve a stack of "),
+                "unexpected error: {e}"
+            );
+            return;
+        }
+        // The limit is set in a child process, since it holds for every thread of a process.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "stack::tests::a_limited_address_space_refuses_the_reservation",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1");
+        #[expect(unsafe_code, reason = "a hook run in the child is an unsafe call")]
+        // SAFETY: the hook runs in the child between fork and exec and calls only `setrlimit`,
+        // which is async-signal-safe and allocates nothing.
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            child.pre_exec(|| {
+                let r = libc::rlimit {
+                    rlim_cur: LIMIT,
+                    rlim_max: LIMIT,
+                };
+                if libc::setrlimit(libc::RLIMIT_AS, &r) == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            });
+        }
+        let out = child.output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && text.contains("1 passed"),
+            "the child under a limit of {LIMIT} bytes failed: {text}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]

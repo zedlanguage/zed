@@ -380,25 +380,61 @@ fn releasing_a_deep_value_scales() {
     });
 }
 
-/// A function of 150,000 concatenations, `(x -> (x ++ "0", x ++ "1", …))("a")`, whose results are
-/// all live until the tuple is built, as a generated report's lines are. Each result has a slot of
-/// 16 bytes in the frame, so the frame is larger than the 2 MiB stack of a test thread: before
-/// generated code had a stack of its own (COMPLEXITY.md R10), the run stopped at that stack's
-/// guard page. 100,000 concatenations make a frame close to 2 MiB, which overflowed the stack of
-/// a test thread but fitted that of a fresh thread, so the test takes half as many again.
-#[test]
-fn a_function_of_150000_concatenations_runs_on_the_stack_of_a_test_thread() {
-    let lines =
-        (0..150_000).map(|i| prim(Prim::Concat, vec![var("x"), lit(i.to_string().as_str())]));
-    let t = app(
+/// The width of the wide function of the scaling test; the test also runs 8 times as wide.
+const WIDE: usize = 2_500;
+
+/// A stack of 256 KiB for a test thread, smaller than the frame of `wide(FACTOR * WIDE)`.
+const SMALL_STACK: usize = 256 << 10;
+
+/// `(x -> (x ++ "0", x ++ "1", …))("a")` with `k` concatenations, whose results are all live
+/// until the tuple is built, as a generated report's lines are. Each result has a slot of 16
+/// bytes in the frame, so the frame grows with `k`.
+fn wide(k: usize) -> Term {
+    let lines = (0..k).map(|i| prim(Prim::Concat, vec![var("x"), lit(i.to_string().as_str())]));
+    app(
         lam(&["x"], prim(Prim::Tuple, lines.collect())),
         vec![lit("a")],
-    );
+    )
+}
+
+/// A function of 20,000 concatenations has a frame of more than 312 KiB, larger than the stack
+/// of 256 KiB its thread runs on: before generated code had a stack of its own (COMPLEXITY.md
+/// R10), the run stopped at that stack's guard page. A thread of 2 MiB would need about 150,000
+/// concatenations, which compile in about 20 s alone and over 120 s at a load of 180.
+#[test]
+fn a_function_of_20000_concatenations_runs_on_a_smaller_thread_stack() {
+    let t = wide(scaling::FACTOR * WIDE);
     let want = Evaluator::new(World::new()).run(&t).unwrap();
     let g = Arc::new(lower(&t).unwrap());
-    let got = zed_native::run(&g, &plan(&g, true), &mut Evaluator::new(World::new())).unwrap();
+    let p = plan(&g, true);
+    let got = scaling::on_a_thread(SMALL_STACK, || {
+        zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap()
+    });
     assert!(
         got.value == want,
         "the native value differs from the kernel's"
     );
+}
+
+/// Compiling and running the wide function natively, at 2,500 and 20,000 concatenations, on a
+/// thread of 256 KiB: the frame of the larger is larger than that thread's stack. The work is
+/// linear in the width: the code generator's passes, Cranelift's at `OptLevel::None`
+/// (COMPLEXITY.md Z15), and the stack probes, which touch each page of the frame once.
+#[test]
+fn a_wide_function_runs_in_time_linear_in_its_width() {
+    let programs = [WIDE, scaling::FACTOR * WIDE].map(|k| {
+        let g = Arc::new(lower(&wide(k)).unwrap());
+        let p = plan(&g, true);
+        (k, g, p)
+    });
+    scaling::on_a_thread(SMALL_STACK, || {
+        scaling::check(
+            "native compile and run of a function of n concatenations",
+            WIDE,
+            |k| {
+                let (_, g, p) = programs.iter().find(|(m, _, _)| *m == k).unwrap();
+                drop(zed_native::run(g, p, &mut Evaluator::new(World::new())).unwrap());
+            },
+        )
+    });
 }

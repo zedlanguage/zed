@@ -1079,6 +1079,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `psm::on_stack`, switching the machine stack for one call | `Stack::run` | Stack switching | Stays in the runtime; a Zed program has no access to the machine stack |
 | `catch_unwind` on the new stack and `resume_unwind` on the old one | `Stack::run` | Early exit (gap 12) | Errors are values in Zed; the runtime returns the run's error across the switch |
 | A raw pointer `*mut c_void` to the mapping | `Stack::base` | Identity (gap 1) | An address held by the runtime, not by Zed code |
+| `std::process::Command` with `pre_exec` calling `libc::setrlimit(RLIMIT_AS, …)`, running the test binary again as a child (R10-stack-notes) | test `stack::tests::a_limited_address_space_refuses_the_reservation` | Missing (process limits) | A test-harness facility, not the language |
 
 ## Entries from ST-arms-quad (`zedc/src/store/presburger.rs`, `preimage.rs`)
 

@@ -2,7 +2,7 @@
 //! (COMPLEXITY.md R10): a list built by 10,000 and by 80,000 nested calls gives the kernel's
 //! value. The generated code runs on a stack the runtime maps for the run, as large as the
 //! machine's memory, so no depth is refused before memory runs out. The wide function of the
-//! same row is in `deep_heap.rs`, a binary of its own, since it takes about 20 s to compile.
+//! same row is in `deep_heap.rs`, a binary of its own.
 
 use std::cmp::Ordering;
 use std::sync::Arc;
