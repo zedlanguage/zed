@@ -887,7 +887,7 @@ fn wider_overloads(n: usize) -> String {
     format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(""), ov(" | #z"))
 }
 
-/// Probe of the case `fits_in` leaves at n^2 comparisons (COMPLEXITY.md F77; open:
+/// Probe of the case `fits_in` leaves at n^2 comparisons (COMPLEXITY.md F82; open:
 /// AND-fns-fit): each arrow of the slot is compared with the arrows of the function before it.
 #[test]
 #[ignore = "n^2 comparisons, open: AND-fns-fit"]
@@ -907,4 +907,29 @@ fn passing_an_overload_to_a_slot_of_other_arrows_is_quadratic() {
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
+}
+
+/// A unit whose function `p` has a slot written as an overload of `n` arrows nested `n` deep
+/// in parentheses: resolve and the checker read each intersection once, with the one around
+/// it.
+fn nested_overload(n: usize) -> String {
+    let arrow = |i: usize| format!("((x: #a{i}) -> #b{i})");
+    let ov = (1..n).fold(arrow(0), |inner, i| format!("({inner}) & {}", arrow(i)));
+    format!("p(f: {ov}) = 0;\n")
+}
+
+#[test]
+fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
+    let n = 100;
+    let inputs = [(n, nested_overload(n)), (8 * n, nested_overload(8 * n))];
+    scaling::check("a slot of n arrows nested n deep in parentheses", n, |m| {
+        let text = &inputs
+            .iter()
+            .find(|(k, _)| *k == m)
+            .expect("a built size")
+            .1;
+        let (info, _) = info(text);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+        assert_eq!(info.sigs.len(), 1);
+    });
 }

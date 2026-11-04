@@ -321,6 +321,73 @@ fn an_intersection_of_function_types_with_different_parameters_is_an_error() {
     }
 }
 
+/// An overload in parentheses inside another is read with the other's arrows, in written
+/// order, and its parameter list is compared with theirs: `abs` on three carriers, written as
+/// an overload on two and one more.
+#[test]
+fn an_overload_in_parentheses_reads_back_with_the_other_arrows() {
+    let flat = "((x: int) -> int) & ((x: f64) -> f64) & ((x: rat) -> rat)";
+    for text in [
+        "(((x: int) -> int) & ((x: f64) -> f64)) & ((x: rat) -> rat)",
+        "((x: int) -> int) & (((x: f64) -> f64) & ((x: rat) -> rat))",
+        "((x: int) -> int) & ((((x: f64) -> f64)) & (((x: rat) -> rat)))",
+    ] {
+        let abs = back(text);
+        assert_eq!(abs.fns.len(), 1, "{text}");
+        assert_eq!(abs.fns[0].to_string(), flat, "{text}");
+    }
+    let text = "(((x: int) -> int) & ((x: f64) -> f64)) & ((y: rat) -> rat)";
+    assert_eq!(
+        parse_type(text).err(),
+        Some(format!(
+            "`{text}`: the arrows of an intersection of function types share one parameter \
+             list, but one takes (x) and another (y)"
+        ))
+    );
+    // A bounds clause around the inner overload would bound its variables on part of the
+    // function.
+    let text = "((((x: T) -> T) & ((x: int) -> int)) for T in f64) & ((x: rat) -> rat)";
+    assert_eq!(
+        parse_type(text).err(),
+        Some(format!(
+            "`{text}`: a bounds clause stands around an intersection of function types that is \
+             part of another; write the clause once, after the whole intersection"
+        ))
+    );
+}
+
+/// The arrows of one function share its bounds: two arrows may each bound a variable of one
+/// name by the same carriers, in any order, and not by different ones.
+#[test]
+fn arrows_that_bound_one_variable_bound_it_alike() {
+    let text = "(((x: T) -> T) for T in int | rat) & (((x: T) -> int) for T in rat | int)";
+    let t = back(text);
+    assert_eq!(t.fns.len(), 1);
+    assert_eq!(
+        t.fns[0].bounds,
+        [("T".into(), Carrier::Int.bit() | Carrier::Rat.bit())].into()
+    );
+    let text = "(((x: T) -> T) for T in int) & (((x: T) -> T) for T in f64)";
+    assert_eq!(
+        parse_type(text).err(),
+        Some(format!(
+            "`{text}`: the type variable `T` is bounded by int on one arrow of an intersection \
+             of function types and by f64 on another, but the arrows of one function share its \
+             bounds"
+        ))
+    );
+}
+
+/// A call passes a positional parameter by place, so its name is not compared: the arrows of
+/// `(+)` may name their positional operands differently.
+#[test]
+fn the_names_of_positional_parameters_are_not_compared() {
+    let t = back("((positional x: int) -> int) & ((positional y: f64) -> f64)");
+    assert_eq!(t.fns[0].to_string(), "((int) -> int) & ((f64) -> f64)");
+    let t = back("((positional x: int) -> int) & ((int) -> f64)");
+    assert_eq!(t.fns[0].to_string(), "((int) -> int) & ((int) -> f64)");
+}
+
 #[test]
 fn what_is_no_printed_type_is_an_error() {
     let cases = [
@@ -442,4 +509,35 @@ fn reading_an_overload_of_many_arrows_back_scales() {
         assert_eq!(ty.fns.len(), 1);
         assert_eq!(ty.fns[0].arrows.len(), size);
     });
+}
+
+/// Reading back an overload of `n` arrows nested `n` deep in parentheses, to the left and to
+/// the right: each intersection is read once, with the one around it, so the cost is linear
+/// and not a walk of the inner arrows at each depth.
+#[test]
+fn reading_an_overload_nested_in_parentheses_back_scales() {
+    let n = 100;
+    let arrow = |i: usize| format!("((x: #a{i}) -> #b{i})");
+    let left = |m: usize| (1..m).fold(arrow(0), |inner, i| format!("({inner}) & {}", arrow(i)));
+    let right = |m: usize| (1..m).fold(arrow(0), |inner, i| format!("{} & ({inner})", arrow(i)));
+    for (side, build) in [
+        ("left", &left as &dyn Fn(usize) -> String),
+        ("right", &right),
+    ] {
+        let inputs = [(n, build(n)), (8 * n, build(8 * n))];
+        scaling::check(
+            &format!("reading back an overload of n arrows nested n deep to the {side}"),
+            n,
+            |size| {
+                let text = &inputs
+                    .iter()
+                    .find(|(m, _)| *m == size)
+                    .expect("a built size")
+                    .1;
+                let ty = back(text);
+                assert_eq!(ty.fns.len(), 1);
+                assert_eq!(ty.fns[0].arrows.len(), size);
+            },
+        );
+    }
 }

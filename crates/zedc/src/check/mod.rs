@@ -5558,22 +5558,25 @@ impl<'a> Denote<'a> {
                 Ty::union_all(&ts)
             }
             // Function types that share a parameter list are one function's arrows, in written
-            // order; resolve rejects function types that do not.
-            TypeKind::And(ts) if Type::overload(ts) == Ok(true) => {
-                let mut sigs = ts.iter().map(|t| self.ty(t)).map(|mut t| {
-                    let s = t.fns.pop().expect("a function type denotes one signature");
-                    Arc::unwrap_or_clone(s)
-                });
-                let mut sig = sigs.next().expect("an intersection has operands");
-                for s in sigs {
-                    sig.arrows.extend(s.arrows);
-                    sig.bounds.extend(s.bounds);
-                    sig.own.extend(s.own);
-                    sig.held.extend(s.held);
-                }
-                Ty::func(Arc::new(sig))
-            }
+            // order, an intersection in parentheses among them included; resolve rejects
+            // function types that do not. Each operand is denoted once, so the arrows are
+            // gathered in one list.
             TypeKind::And(ts) => {
+                let ts = Type::and_operands(ts);
+                if Type::overload(&ts) == Ok(true) {
+                    let mut sigs = ts.iter().map(|t| self.ty(t)).map(|mut t| {
+                        let s = t.fns.pop().expect("a function type denotes one signature");
+                        Arc::unwrap_or_clone(s)
+                    });
+                    let mut sig = sigs.next().expect("an intersection has operands");
+                    for s in sigs {
+                        sig.arrows.extend(s.arrows);
+                        sig.bounds.extend(s.bounds);
+                        sig.own.extend(s.own);
+                        sig.held.extend(s.held);
+                    }
+                    return Ty::func(Arc::new(sig));
+                }
                 let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
                 // An intersection of function types of one arity is one function with each
                 // of their arrows, in order, as a signature of several arrows prints.

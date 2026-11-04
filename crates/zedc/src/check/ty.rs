@@ -1802,7 +1802,7 @@ fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
     // index this search could use; an overload of n arrows with n distinct parameter types
     // triggers it (probe l01_26_type_resolution::scaling::
     // passing_an_overload_to_a_slot_of_other_arrows_is_quadratic, #[ignore]; COMPLEXITY.md
-    // F77; open: AND-fns-fit). A complete solution needs an index of the arrows of `s`
+    // F82; open: AND-fns-fit). A complete solution needs an index of the arrows of `s`
     // by parameter type, as overload resolution at L2.6 needs one.
     let mut equal: HashMap<&Arrow, &Arrow> = HashMap::with_capacity(sas.len());
     for sa in &sas {

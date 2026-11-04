@@ -40,7 +40,8 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
             TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => stack.extend(ts),
             TypeKind::And(ts) => {
-                Type::overload(ts).map_err(|why| format!("`{text}`: {why}"))?;
+                let ts = Type::and_operands(ts);
+                Type::overload(&ts).map_err(|why| format!("`{text}`: {why}"))?;
                 stack.extend(ts);
             }
             TypeKind::AtomApply(_, ps) => stack.extend(ps.iter().map(|p| &p.ty)),

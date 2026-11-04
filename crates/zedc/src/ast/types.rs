@@ -80,16 +80,33 @@ pub enum TypeKind {
 }
 
 impl Type {
+    /// The operands of the intersection of `ts`, with each intersection in parentheses among
+    /// them replaced by its own operands, in written order: `(A & B) & C` has `A`, `B` and `C`.
+    /// The walk keeps its own stack, as parentheses nest as deep as the text.
+    pub fn and_operands(ts: &[Type]) -> Vec<&Type> {
+        let mut out = Vec::with_capacity(ts.len());
+        let mut stack: Vec<&Type> = ts.iter().rev().collect();
+        while let Some(t) = stack.pop() {
+            match &t.kind {
+                TypeKind::And(ts) => stack.extend(ts.iter().rev()),
+                _ => out.push(t),
+            }
+        }
+        out
+    }
+
     /// Its parameter list if it is a function type, a bounds clause around one included: `x`
     /// for a parameter named and not `positional`, and `_` for the others, which a call does
-    /// not name.
-    fn param_list(&self) -> Option<Vec<&str>> {
+    /// not name; and the clauses around it.
+    fn param_list(&self) -> Option<(Vec<&str>, Vec<&TypeBound>)> {
         let mut t = self;
-        while let TypeKind::For { ty, .. } = &t.kind {
+        let mut bounds = Vec::new();
+        while let TypeKind::For { ty, bounds: bs } = &t.kind {
+            bounds.extend(bs);
             t = ty;
         }
         match &t.kind {
-            TypeKind::Arrow { params, .. } => Some(
+            TypeKind::Arrow { params, .. } => Some((
                 params
                     .iter()
                     .map(|p| match &p.name {
@@ -97,39 +114,96 @@ impl Type {
                         _ => "_",
                     })
                     .collect(),
-            ),
-            TypeKind::Bounded { .. } => Some(vec!["_"]),
+                bounds,
+            )),
+            TypeKind::Bounded { .. } => Some((vec!["_"], bounds)),
             _ => None,
         }
     }
 
-    /// Of `ts`, the operands of an intersection: whether they are all function types, and so
-    /// one function's list of arrows, an overload (DESIGN.md sec:type_language, "Relation to
-    /// semantic subtyping"), or why they are no type, when they are function types that take
-    /// different parameter lists: the arrows of one function share its parameters.
-    pub fn overload(ts: &[Type]) -> Result<bool, String> {
-        let Some((first, rest)) = ts.split_first() else {
-            return Ok(false);
-        };
-        let Some(list) = first.param_list() else {
-            return Ok(false);
-        };
-        let mut lists = Vec::with_capacity(rest.len());
-        for t in rest {
+    /// Of `ts`, the operands of an intersection as [`Type::and_operands`] gives them: whether
+    /// they are all function types, and so one function's list of arrows, an overload
+    /// (DESIGN.md sec:type_language, "Relation to semantic subtyping" (2)), or why they are no
+    /// type. The arrows of one function share its parameter list and its bounds, so function
+    /// types that take different parameter lists are no type, as are two that bound one
+    /// variable by different carriers, and a bounds clause around an intersection that is
+    /// itself an operand, since its variables would be bounded on part of the function.
+    pub fn overload(ts: &[&Type]) -> Result<bool, String> {
+        let mut lists = Vec::with_capacity(ts.len());
+        let mut clause_around_and = false;
+        for t in ts {
             match t.param_list() {
                 Some(l) => lists.push(l),
+                None if t.is_clause_around_and() => clause_around_and = true,
                 None => return Ok(false),
             }
         }
-        match lists.into_iter().find(|l| *l != list) {
-            None => Ok(true),
-            Some(other) => Err(format!(
+        if clause_around_and {
+            return Err(
+                "a bounds clause stands around an intersection of function types that is \
+                        part of another; write the clause once, after the whole intersection"
+                    .to_string(),
+            );
+        }
+        let Some(((list, _), _)) = lists.split_first() else {
+            return Ok(false);
+        };
+        if let Some((other, _)) = lists.iter().find(|(l, _)| l != list) {
+            return Err(format!(
                 "the arrows of an intersection of function types share one parameter list, but \
                  one takes ({}) and another ({})",
                 list.join(", "),
                 other.join(", ")
-            )),
+            ));
         }
+        let mut carriers: HashMap<&str, Vec<&str>> = HashMap::new();
+        for b in lists.iter().flat_map(|(_, bs)| bs) {
+            let these = b.carriers.carrier_names();
+            match carriers.get(b.name.as_str()) {
+                Some(first) if *first != these => {
+                    return Err(format!(
+                        "the type variable `{}` is bounded by {} on one arrow of an intersection \
+                         of function types and by {} on another, but the arrows of one function \
+                         share its bounds",
+                        b.name,
+                        first.join(" | "),
+                        these.join(" | ")
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    carriers.insert(b.name.as_str(), these);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether it is a bounds clause around an intersection.
+    fn is_clause_around_and(&self) -> bool {
+        let mut t = self;
+        while let TypeKind::For { ty, .. } = &t.kind {
+            t = ty;
+        }
+        matches!(t.kind, TypeKind::And(_))
+    }
+
+    /// The carrier names of a bound, a union of them, sorted and each once, so two bounds
+    /// written in different orders compare equal.
+    fn carrier_names(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut stack = vec![self];
+        while let Some(t) = stack.pop() {
+            match &t.kind {
+                TypeKind::Union(ts) => stack.extend(ts),
+                TypeKind::Name(n) => out.push(n.as_str()),
+                // Resolve and the reader of printed types reject any other bound.
+                _ => {}
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 

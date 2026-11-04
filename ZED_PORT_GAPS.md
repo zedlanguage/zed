@@ -795,7 +795,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 ## Entries from AND-fns (`ast/types.rs`, `check/mod.rs`, `check/read.rs`, `check/ty.rs`, `resolve.rs`)
 
-- No new gap. `Arc::unwrap_or_clone` of a signature is a copy of a shared value, which in Zed is the value itself (gap 1 covers identity). `fits_in` keys a `HashMap<&Arrow, &Arrow>` by the arrows' content (`Hash`, `Eq`), which in Zed is a map keyed by the arrow value; the `entry().or_insert` loop is a fold that keeps the first arrow per key.
+- No new gap. `Arc::unwrap_or_clone` of a signature is a copy of a shared value, which in Zed is the value itself (gap 1 covers identity). `fits_in` keys a `HashMap<&Arrow, &Arrow>` by the arrows' content (`Hash`, `Eq`), which in Zed is a map keyed by the arrow value; the `entry().or_insert` loop is a fold that keeps the first arrow per key. `Type::and_operands` walks nested intersections with an explicit stack, which in Zed is a fold over the operand tree; `&dyn Fn` in a test is a function value.
 
 ## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 

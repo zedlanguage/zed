@@ -112,19 +112,67 @@ fn a_slot_written_as_an_intersection_of_function_types_takes_each_arrow() {
 #[test]
 fn an_intersection_of_function_types_with_different_parameters_is_an_error() {
     let text = "both(f: ((x: int) -> int) & ((y: f64) -> f64)) = f(x: 2);\n";
-    let tokens = lex_fence(text).unwrap();
-    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
-    let stmts = unit(text, &tokens, &tree).unwrap();
-    let errors: Vec<String> = resolve(&stmts)
-        .expect_err("refused")
-        .into_iter()
-        .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
-        .collect();
     assert_eq!(
-        errors,
+        resolve_errors(text),
         [
             "the arrows of an intersection of function types share one parameter list, but one \
              takes (x) and another (y) [((x: int) -> int) & ((y: f64) -> f64)]"
+        ]
+    );
+}
+
+/// The messages `resolve` gives `text`, each with the text it is at.
+fn resolve_errors(text: &str) -> Vec<String> {
+    let tokens = lex_fence(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    let stmts = unit(text, &tokens, &tree).unwrap();
+    resolve(&stmts)
+        .expect_err("refused")
+        .into_iter()
+        .map(|e| format!("{} [{}]", e.message, &text[e.span.start..e.span.end]))
+        .collect()
+}
+
+/// A slot written as an overload in parentheses and one more arrow expects all three arrows.
+#[test]
+fn a_slot_written_with_an_overload_in_parentheses_takes_every_arrow() {
+    let text = "three(f: (((x: int) -> int) & ((x: f64) -> f64)) & ((x: rat) -> rat)) = \
+                f(x: 1);\n";
+    assert_eq!(
+        sig(text, "three"),
+        "(f: (((x: int) -> int) & ((x: f64) -> f64) & ((x: rat) -> rat))) -> int"
+    );
+    let half = format!("{text}half(x: int) = x div 2;\ny = three(f: half);\n");
+    assert_eq!(
+        type_errors(&half),
+        [
+            "`half` is `(x: int) -> int`, not `((x: int) -> int) & ((x: f64) -> f64) & \
+             ((x: rat) -> rat)` [half]"
+        ]
+    );
+    let text = "three(f: (((x: int) -> int) & ((x: f64) -> f64)) & ((y: rat) -> rat)) = \
+                f(x: 1);\n";
+    assert_eq!(
+        resolve_errors(text),
+        [
+            "the arrows of an intersection of function types share one parameter list, but one \
+             takes (x) and another (y) [(((x: int) -> int) & ((x: f64) -> f64)) & ((y: rat) -> \
+             rat)]"
+        ]
+    );
+}
+
+/// Two arrows of a slot that bound one name by different carriers are no type, so the bound
+/// of neither is lost.
+#[test]
+fn a_slot_whose_arrows_bound_one_variable_differently_is_an_error() {
+    let text = "p(f: (((x: T) -> T) for T in int) & (((x: T) -> T) for T in f64)) = f(x: 1);\n";
+    assert_eq!(
+        resolve_errors(text),
+        [
+            "the type variable `T` is bounded by int on one arrow of an intersection of function \
+             types and by f64 on another, but the arrows of one function share its bounds \
+             [(((x: T) -> T) for T in int) & (((x: T) -> T) for T in f64)]"
         ]
     );
 }

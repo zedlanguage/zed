@@ -1040,8 +1040,11 @@ impl Resolver {
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => {
                 todo.extend(ts.iter().rev().map(Task::Ty));
             }
+            // An intersection in parentheses among the operands is read with them, not again
+            // on its own.
             TypeKind::And(ts) => {
-                if let Err(message) = Type::overload(ts) {
+                let ts = Type::and_operands(ts);
+                if let Err(message) = Type::overload(&ts) {
                     self.errors.push(Error {
                         row: None,
                         span: t.span,
@@ -1049,7 +1052,7 @@ impl Resolver {
                         notes: Vec::new(),
                     });
                 }
-                todo.extend(ts.iter().rev().map(Task::Ty));
+                todo.extend(ts.into_iter().rev().map(Task::Ty));
             }
             TypeKind::Diff(a, b) => {
                 todo.push(Task::Ty(b));
