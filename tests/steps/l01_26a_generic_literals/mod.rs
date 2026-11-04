@@ -209,6 +209,21 @@ fn a_sum_of_generic_literals_takes_the_carrier_it_meets() {
 }
 
 #[test]
+fn a_quotient_of_generic_literals_is_an_f64_where_nothing_decides() {
+    // `/` is not defined on int, so where nothing decides, `1n / 2n` is an f64, as `1 / 2` is.
+    let src = "half() = 1n / 2n;\nh = half();\nmain = 1n / 2n;\n";
+    assert_eq!(sig(src, "half"), "() -> f64");
+    assert_eq!(value(src, "h"), "0.5");
+    assert_eq!(value(src, "main"), "0.5");
+    assert_eq!(value("main = 1 / 2;\n", "main"), "0.5");
+    // Where it meets a class, it takes the class's carrier, of f64 and rat.
+    let src = "f(positional x) = x * (1n / 2n);\nr = f(3.0);\nq = f(3r);\n";
+    assert_eq!(sig(src, "f"), "(T) -> T for T in f64 | rat");
+    assert_eq!(value(src, "r"), "1.5");
+    assert_eq!(value(src, "q"), "3r/2r");
+}
+
+#[test]
 fn a_generic_literal_in_a_tuple_argument_joins_the_component_it_meets() {
     let src = "sumPair(positional p) = p[0] + p[1];\n\
                next(positional x) = sumPair((x, 1n));\n\
