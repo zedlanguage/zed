@@ -104,7 +104,7 @@ in docs/layout.md.
   corpus and step unit prints the same types alone, in a batch, checked again, with a line added
   and with its items reversed (`l01_29_diagnostics::stable`); `zedc test` prints a unit's
   warnings only when `testing::checks` finds it accepted, `run::program` included for a `main`
-  (`widen_test`) (COMPLEXITY.md F75).
+  (`widen_test`) (COMPLEXITY.md F81).
 - Done: **L1.30**, the compiler as queries (`zedc::query`): the front end keyed by the text,
   each table row keyed by the definitions its check reaches, so an edit reruns only the rows
   whose definitions changed; `zedc test` shares one database across its files.
@@ -145,7 +145,7 @@ in docs/layout.md.
   `check::Reason`, `Ck::said`): a binder's origin, a class reason and a call note are kept as
   data and put into words only when a reported derivation reaches them; a repair trial builds
   no derivation; counters `check::derivation_steps` and `store::preimage::exact_steps`
-  (COMPLEXITY.md F74).
+  (COMPLEXITY.md F80).
 - Done: **L1.39c**, code points and bytes (`zed_kernel::words`, `Ck::code_point_call`, the
   `codePoint` hook in `zed_native::hooks`): `codePoint` (`#notScalar` unless the string is one
   scalar), `scalar` (`#notScalar` for a surrogate, a negative int or one past `0x10FFFF`), `utf8`
