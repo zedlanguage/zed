@@ -372,3 +372,54 @@ fn a_chain_of_atoms_from_elsewhere_than_the_parameter_scales() {
         assert_eq!(info.sigs.values().next().unwrap().arrows.len(), 2);
     });
 }
+
+/// `n` functions, each handling the atoms of its undeclared parameter `x` with an `else` and
+/// passing `x` on to the one before it, the first trimming `x` or giving "empty".
+fn chain_of_handlers(n: usize) -> String {
+    let mut src = String::from(
+        "f0(positional x) = if (x else \"\") == \"\" { \"empty\" } else { trim(x) };\n",
+    );
+    for i in 1..n {
+        src.push_str(&format!(
+            "f{i}(positional x) = if (x else \"\") == \"{i}\" {{ \"d\" }} else {{ f{}(x) }};\n",
+            i - 1
+        ));
+    }
+    src
+}
+
+#[test]
+fn a_chain_of_functions_passing_a_handled_parameter_on_scales() {
+    // Each function's call of the one before it, with `x` holding no atom, takes that one's
+    // first arrow, which gives no atom; so each function's first arrow gives a `String` alone.
+    let (i, names) = info(&chain_of_handlers(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    for k in 0..3 {
+        let (_, s) = i
+            .sigs
+            .iter()
+            .find(|(id, _)| names[**id] == format!("f{k}"))
+            .unwrap();
+        let arrows = s.expand();
+        assert_eq!(arrows.len(), 2, "f{k}");
+        assert!(
+            arrows[0].result.atoms().is_empty(),
+            "f{k}: {}",
+            arrows[0].result
+        );
+        let other = Ty::set(KType::atom("notFound"));
+        assert!(
+            other.subtype(&arrows[1].params[0]),
+            "f{k}: {}",
+            arrows[1].params[0]
+        );
+    }
+    scaling::check(
+        "a chain of n functions passing a handled parameter on",
+        200,
+        |n| {
+            let (info, _) = info(&chain_of_handlers(n));
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}

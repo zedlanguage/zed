@@ -1034,7 +1034,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// name of such a parameter gives none; an `else` gives its default's only when its
     /// value may give an atom; an operator, a call of a declared function or a prelude word
     /// passes on its parts' and gives the atoms its arrows' results hold, and `#errs` only
-    /// when two of its parts give atoms; any other expression gives all its loose atoms.
+    /// when two of its parts give atoms; a call of a function of two arrows from
+    /// [`Self::handled_sig`] gives only those of the arrow [`Self::outside_arrow`] selects;
+    /// any other expression gives all its loose atoms.
     /// Each set is compared with the empty type as written, in `O(1)`, as in
     /// [`Self::unnamed_of`], so a chain of `n` expressions costs `O(n log² n)`.
     fn outside_of(&self, e: &Expr, t: &Ty, src: &Src<'_>) -> Option<KType> {
@@ -1087,7 +1089,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 made(&op_sig(op).arrows, flows(e))
             }
             (_, Src::Call(id, _)) => match self.env.get(id).and_then(only_fn) {
-                Some(sig) => made(&sig.arrows, flows(e)),
+                Some(sig) => match self.outside_arrow(&sig, e) {
+                    Some(k) => made(&sig.arrows[k..=k], flows(e)),
+                    None => made(&sig.arrows, flows(e)),
+                },
                 None => loose,
             },
             (_, Src::Name(id)) => match self.alias.get(id) {
@@ -1100,6 +1105,45 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => loose,
             },
         })
+    }
+
+    /// The arrow of `sig`, a signature of [`handled_shape`], that the call `e` takes when each
+    /// argument holds only the atoms that reach it from elsewhere than a parameter of
+    /// [`Self::widened`]: the one [`Self::first_taking`] selects for those atoms, so the first
+    /// when no argument holds any. A call that passes a handled parameter on to such a
+    /// function then gives, from outside, only what the first arrow's result holds, not the
+    /// atoms the second arrow gives back for that parameter. `None` for any other signature.
+    /// A positional argument fills the next parameter and a named one the first parameter of
+    /// its name, as the checker's `call_sig` places them; `O(a log a)` for `a`
+    /// arguments, the names looked up in a map.
+    fn outside_arrow(&self, sig: &Sig, e: &Expr) -> Option<usize> {
+        let ExprKind::Call {
+            positional, named, ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        if !handled_shape(sig) {
+            return None;
+        }
+        let o = |s: Span| self.outside.get(&s).cloned().unwrap_or_else(KType::empty);
+        let mut loose = vec![KType::empty(); sig.params.len()];
+        for (slot, a) in loose.iter_mut().zip(positional) {
+            *slot = o(a.span);
+        }
+        let at: HashMap<&str, usize> = sig
+            .params
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(j, p)| (&*p.name, j))
+            .collect();
+        for (name, a) in named {
+            if let Some(&j) = at.get(name.as_str()) {
+                loose[j] = o(a.span);
+            }
+        }
+        self.taking(sig, &loose)
     }
 
     /// The prelude word `e` applies to one argument, and the argument's span, when `e` is
@@ -3016,15 +3060,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// against the arrow selected. `None` leaves a signature of other arrows to
     /// [`Self::apply_many`], and when [`Self::apply`] passes every argument's atoms on.
     fn first_taking(&self, sig: &Sig, args: &[Option<Arg>], pass: bool) -> Option<usize> {
-        let [first, rest @ ..] = &sig.arrows[..] else {
-            return None;
-        };
-        if pass || rest.is_empty() {
-            return None;
-        }
-        let bare = |a: &Arrow| -> Vec<Ty> { a.params.iter().map(Ty::without_loose).collect() };
-        let shape = bare(first);
-        if rest.iter().any(|a| bare(a) != shape) {
+        if pass || !handled_shape(sig) {
             return None;
         }
         // An argument of a type variable of a signature around the call may hold any atom; a
@@ -3035,11 +3071,22 @@ impl<'t, 'a> Ck<'t, 'a> {
             let any = t.dynamic || t.vars.iter().any(|v| class_id(v).is_none());
             if any { atoms() } else { t.loose() }
         };
+        let loose: Vec<KType> = args
+            .iter()
+            .map(|a| a.as_ref().map(|a| may(&a.ty)).unwrap_or_else(KType::empty))
+            .collect();
+        self.taking(sig, &loose)
+    }
+
+    /// The first arrow of `sig` whose parameter `i` takes the atoms `loose[i]`, for each `i`
+    /// where they are not empty.
+    fn taking(&self, sig: &Sig, loose: &[KType]) -> Option<usize> {
         sig.arrows.iter().position(|arrow| {
-            arrow.params.iter().zip(args).all(|(p, a)| {
-                let loose = a.as_ref().map(|a| may(&a.ty)).unwrap_or_else(KType::empty);
-                loose == KType::empty() || !self.refused_at(sig, p, &loose)
-            })
+            arrow
+                .params
+                .iter()
+                .zip(loose)
+                .all(|(p, l)| *l == KType::empty() || !self.refused_at(sig, p, l))
         })
     }
 
@@ -3716,6 +3763,17 @@ fn passes_vars_on(arrow: &Arrow) -> bool {
         .vars
         .iter()
         .all(|v| arrow.params.iter().any(|p| p.vars.contains(v)))
+}
+
+/// Whether `sig` has more than one arrow and its arrows differ only in the loose atoms of
+/// their parameters, as [`Ck::handled_sig`] makes them.
+fn handled_shape(sig: &Sig) -> bool {
+    let [first, rest @ ..] = &sig.arrows[..] else {
+        return false;
+    };
+    let bare = |a: &Arrow| -> Vec<Ty> { a.params.iter().map(Ty::without_loose).collect() };
+    let shape = bare(first);
+    !rest.is_empty() && rest.iter().all(|a| bare(a) == shape)
 }
 
 /// The one function `t` is, when it is nothing else.

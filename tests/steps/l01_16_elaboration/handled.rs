@@ -153,3 +153,27 @@ fn a_function_that_calls_it_with_its_own_parameter_gives_a_string_for_a_string()
     );
     assert_eq!(output("wrapper", &src), "a,passed by\n");
 }
+
+#[test]
+fn a_function_that_handles_its_parameter_and_passes_it_to_one_that_does_too() {
+    // `g` handles the atoms of `x` and passes `x` on to `r`, which has two arrows. With no atom
+    // in `x`, `r(x)` gives what `r`'s first arrow gives, a string, so `g` too has a first arrow
+    // `(String) -> String`, and `g(" a ")` goes to a `Lines` port. A missing line takes both
+    // functions' second arrows: `g`'s `else` and then `r`'s map it to a string.
+    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n";
+    let main = "main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(stdin[2]) else \"gone\");\n}\n";
+    for (name, g, want) in [
+        (
+            "handles_then_passes_on",
+            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { r(x) };\n",
+            "a,dash,empty\n",
+        ),
+        (
+            "binds_then_passes_on",
+            "g(positional x) = { d = x else \"\"; r(x) };\n",
+            "a,-,empty\n",
+        ),
+    ] {
+        assert_eq!(output(name, &format!("{r}{g}{main}")), want, "{g}");
+    }
+}
