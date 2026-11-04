@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Surface, Type};
+use zed_kernel::types::{Surface, Type, Universe};
 use zed_kernel::value::Value;
 use zed_tests::scaling;
 use zedc::lex::lex_fence;
@@ -138,6 +138,10 @@ impl Reader<'_> {
 
     fn prim(&mut self) -> Type {
         if self.eat("(") {
+            if self.eat("..") {
+                self.expect(")");
+                return Type::universe(Universe::Tuple);
+            }
             let a = self.ty();
             if self.eat(")") {
                 return a;
@@ -152,10 +156,25 @@ impl Reader<'_> {
             self.at += 1;
             return lit(-n);
         }
+        if self.eat("{") {
+            self.expect("..");
+            self.expect("}");
+            return Type::universe(Universe::Struct);
+        }
         let w = self.peek().to_string();
         self.at += 1;
         match w.as_str() {
             "_" => Type::top(),
+            // Every atom: the scalars that are not of a carrier.
+            "#_" => [
+                Type::bool(),
+                Type::int(),
+                Type::rat(),
+                Type::f64(),
+                Type::string(),
+            ]
+            .iter()
+            .fold(Type::universe(Universe::Scalar), |a, c| &a - c),
             "true" => Type::lit(&Value::Bool(true)).unwrap(),
             "false" => Type::lit(&Value::Bool(false)).unwrap(),
             "bool" => Type::bool(),
@@ -177,9 +196,10 @@ impl Reader<'_> {
                 if !self.eat("(") {
                     return Type::atom(name);
                 }
-                // `#a(_)` is the atom with any payload; `#a(A, B)` with the payload `(A, B)`.
-                if self.peek() == "_" && self.tokens.get(self.at + 1).is_some_and(|t| t == ")") {
-                    self.at += 2;
+                // `#a(..)` is the atom with any payload; `#a(A, B)` with the payload `(A, B)`,
+                // so `#a(_)` is the one-tuple payload only.
+                if self.eat("..") {
+                    self.expect(")");
                     return Type::atom_with(name, &Type::top());
                 }
                 Type::atom_with(name, &Type::tuple(self.items()))
@@ -388,13 +408,60 @@ fn a_list_type_prints_as_a_definition_that_names_itself() {
 }
 
 #[test]
-fn a_type_with_every_tuple_or_every_struct_alone_is_marked_not_exact() {
-    // The surface syntax has no type for every tuple alone; DESIGN.md names none.
-    let s = (&Type::top() - &Type::int())
-        .part(zed_kernel::types::Universe::Tuple)
-        .surface();
-    assert!(!s.exact);
-    assert_eq!(s.to_string(), "tuple");
+fn every_atom_every_tuple_and_every_struct_print_as_the_kind_wide_types() {
+    // Step L1.40d: `#_`, `(..)`, `{..}` and `#a(..)` are user syntax, so each prints exactly.
+    let atoms = &Type::universe(Universe::Scalar)
+        - &Type::union_all([
+            Type::bool(),
+            Type::int(),
+            Type::rat(),
+            Type::f64(),
+            Type::string(),
+        ]);
+    let tuples = (&Type::top() - &Type::int()).part(Universe::Tuple);
+    let structs = Type::universe(Universe::Struct);
+    let pair = tuple(&[Type::int(), Type::int()]);
+    for (t, text) in [
+        (atoms.clone(), "#_"),
+        (tuples.clone(), "(..)"),
+        (structs.clone(), "{..}"),
+        (Type::atom_with("a", &Type::top()), "#a(..)"),
+        (Type::atom_with("a", &tuple(&[])), "#a()"),
+        (Type::atom_with("a", &tuple(&[Type::top()])), "#a(_)"),
+        (&atoms - &Type::atom("b"), r"#_ \ #b"),
+        (&tuples - &pair, r"(..) \ (int, int)"),
+        (&tuples | &structs, "(..) | {..}"),
+        (
+            &Type::atom_with("a", &Type::top()) - &Type::atom_with("a", &pair),
+            r"#a(..) \ #a(int, int)",
+        ),
+    ] {
+        let s = round_trip(&t);
+        assert_eq!(s.to_string(), text);
+    }
+    // `#a()` is the atom with the empty payload, not the bare atom `#a`.
+    assert!(!Type::atom("a").subtype(&Type::atom_with("a", &tuple(&[]))));
+    assert!(!Type::atom_with("a", &tuple(&[])).subtype(&Type::atom("a")));
+}
+
+#[test]
+fn a_payload_of_every_tuple_alone_or_every_struct_alone_is_marked_not_exact() {
+    // A payload holds tuples and structs; the surface syntax has no type for one kind of
+    // payload alone, as DESIGN.md names none.
+    for (t, text) in [
+        (
+            Type::atom_with("a", &Type::universe(Universe::Tuple)),
+            "#a(tuple)",
+        ),
+        (
+            Type::atom_with("a", &Type::universe(Universe::Struct)),
+            "#a(struct)",
+        ),
+    ] {
+        let s = t.surface();
+        assert!(!s.exact, "{s}");
+        assert_eq!(s.to_string(), text);
+    }
 }
 
 #[test]

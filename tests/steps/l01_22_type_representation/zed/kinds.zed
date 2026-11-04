@@ -1,0 +1,40 @@
+// Sorts a value by its kind with the kind-wide types (step L1.40d): `#_` holds every atom,
+// with or without a payload, and `(..)` every tuple, of every length.
+kind(v) = if v is #_ {
+  "atom"
+} else if v is (..) {
+  "tuple"
+} else {
+  "other"
+}
+test {
+  #a -> "atom",
+  #missing -> "atom",
+  (1, 2) -> "tuple",
+  (1, 2, 3) -> "tuple",
+  ("x", #a) -> "tuple",
+  ((1, 2), 3) -> "tuple",
+  1 -> "other",
+  2.5 -> "other",
+  "s" -> "other",
+  true -> "other",
+  (x -> x) -> "other",
+}
+
+// A difference within a kind: every tuple but the pairs of numbers.
+odd(v) = v is (..) \ (int, int)
+test {
+  (1, 2) -> false,
+  (1, "x") -> true,
+  (1, 2, 3) -> true,
+  1 -> false,
+  #a -> false,
+}
+
+// `is not` narrows by the kind-wide type: what is not a tuple.
+untupled(v) = v is not (..)
+test {
+  (1, 2) -> false,
+  #a -> true,
+  1 -> true,
+}

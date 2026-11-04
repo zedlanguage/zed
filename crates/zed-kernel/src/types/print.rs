@@ -11,10 +11,11 @@
 //! A diagram node over the tuple type `a`, with `hi` and `lo`, is `a & hi | (lo \ a)`, and
 //! the cases where `hi` or `lo` is a leaf drop the parts that are empty. A part kept as its
 //! operands prints its connective. A type with every other atom, every tuple length not listed
-//! and every struct prints as `_ \ c`, `c` its complement. The surface syntax has no type for
-//! every atom alone, every tuple alone or every struct alone; a type that holds one of these
-//! but not all three prints the word the kernel uses (`#_`, `tuple`, `struct`) and is marked
-//! not exact.
+//! and every struct prints as `_ \ c`, `c` its complement. Every atom, every tuple and every
+//! struct alone print as the kind-wide types `#_`, `(..)` and `{..}` (step L1.40d), and an atom
+//! `#a` with any payload as `#a(..)`, so `#a(_)` is only the one-tuple payload. An atom's
+//! payload of every tuple but not every struct, or the reverse, has no surface type: it prints
+//! as `#a(tuple)` or `#a(struct)` and is marked not exact.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -320,11 +321,11 @@ impl Printer {
             Some(a) => {
                 let all = Type::payloads();
                 if *t == all {
-                    return Text::word(format!("#{a}(_)"), Class::Prim);
+                    return Text::word(format!("#{a}(..)"), Class::Prim);
                 }
                 if p.tuples.rest && p.structs {
                     let c = self.refer(Item::Ty(ctx.clone(), &all - t));
-                    let mut segs = vec![Seg::Str(format!("#{a}(_) \\ "))];
+                    let mut segs = vec![Seg::Str(format!("#{a}(..) \\ "))];
                     put(&mut segs, c, At::Prim);
                     return Text {
                         segs,
@@ -356,7 +357,6 @@ impl Printer {
             lits(&mut items, name, l);
         }
         if p.atoms.cofinite {
-            self.exact = false;
             let mut except = Vec::new();
             for (name, part) in p.atoms.names.iter() {
                 self.atom(&mut except, name, &part.not());
@@ -375,8 +375,13 @@ impl Printer {
         }
         self.tuples(&mut items, ctx, &p.tuples);
         if p.structs {
-            self.exact = false;
-            items.push(Text::word("struct", Class::Prim));
+            items.push(match ctx {
+                None => Text::word("{..}", Class::Prim),
+                Some(a) => {
+                    self.exact = false;
+                    Text::word(format!("#{a}(struct)"), Class::Prim)
+                }
+            });
         }
         match p.morphisms.is_leaf() {
             Some(false) => {}
@@ -397,13 +402,19 @@ impl Printer {
 
     fn tuples(&mut self, items: &mut Vec<Text>, ctx: &Ctx, t: &Tuples) {
         if t.rest {
-            self.exact = false;
+            let word = match ctx {
+                None => "(..)".to_string(),
+                Some(a) => {
+                    self.exact = false;
+                    format!("#{a}(tuple)")
+                }
+            };
             let except = Type::with(|p| p.tuples = t.not());
             items.push(match except == Type::empty() {
-                true => Text::word("tuple", Class::Prim),
+                true => Text::word(word, Class::Prim),
                 false => {
                     let c = self.refer(Item::Ty(ctx.clone(), except));
-                    minus("tuple", c)
+                    minus(&word, c)
                 }
             });
             return;
@@ -424,9 +435,6 @@ impl Printer {
             None => "(".into(),
             Some(a) => format!("#{a}("),
         })];
-        if n == 0 {
-            self.exact = false;
-        }
         for i in 0..n {
             if i > 0 {
                 segs.push(Seg::Str(", ".into()));

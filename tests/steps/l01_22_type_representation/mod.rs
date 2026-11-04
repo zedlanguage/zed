@@ -5,6 +5,7 @@
 
 mod forms;
 mod is;
+mod kinds;
 mod laws;
 mod rat_literals;
 mod scaling;

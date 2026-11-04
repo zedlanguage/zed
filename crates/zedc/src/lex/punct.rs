@@ -4,7 +4,7 @@
 //! AtomLit  = '#' Name
 //! AnnotLit = '@' Name
 //! Keyword  = KeywordWord !XID_CONTINUE
-//! Operator = '->?' | '->' | '...' | '..<' | '..=' | '..' | … | [+\-*/<>=!&|\\:,;.?()\[\]{}]
+//! Operator = '->?' | '->' | '...' | '..<' | '..=' | '..' | … | '#_' | [+\-*/<>=!&|\\:,;.?()\[\]{}]
 //! ```
 //!
 //! `where` and `sep` are reserved only by position, so the lexer reads them as names and the
@@ -51,10 +51,10 @@ pub const KEYWORDS: [&str; 36] = [
 ];
 
 /// The operators, longest first where one is a prefix of another.
-pub const OPERATORS: [&str; 41] = [
+pub const OPERATORS: [&str; 42] = [
     "->?", "->", "...", "..<", "..=", "..", "?.", "*.", "**", "++", "<-", "<=", ">=", "><", "==",
-    "!=", "&&", "||", "::", "+", "-", "*", "/", "<", ">", "=", "!", "&", "|", "\\", ":", ",", ";",
-    ".", "?", "(", ")", "[", "]", "{", "}",
+    "!=", "&&", "||", "::", "#_", "+", "-", "*", "/", "<", ">", "=", "!", "&", "|", "\\", ":", ",",
+    ";", ".", "?", "(", ")", "[", "]", "{", "}",
 ];
 
 /// The keyword that is the whole of `word`, a name, if it is one.

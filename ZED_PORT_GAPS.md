@@ -1208,3 +1208,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `OnceCell<Vec<usize>>` of each node's parent, filled on the first rejection through `&self` by one walk from the root | `Builder::parents`, `Builder::body_of` | Lazy cells (gap 3) | The parent passed down while building, or the map made in one pass before building and threaded through as a state receiver |
+
+## Entries from T6-kinds (`zedc/src/check/ty.rs`, `parse/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `retain` over the tuple shapes whose closure also pushes, into a `rest: Vec<KType>` it borrows mutably, the part of a shape that the kind-wide part holds in part | `Ty::diff` | Mutation (gap 11) | A fold over the shapes whose state is the kept shapes and the parts for the set |
+| A loop over both orders of the two sides that writes `out.set` and pushes to `met` in place | `Ty::meet` | Mutation (gap 11) | A fold over the shapes with the set and the kept shapes in its state, kept in place by provable last use (L6.13) |
+| `Option<&'static str>` for a parse error's message, pointing at a constant | `parse::Error.message`, `parse::DOTS` | None | A `String` constant; values are shared |

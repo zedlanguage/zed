@@ -27,10 +27,10 @@ use imbl::Vector;
 
 use zed_kernel::num::{LiteralRounding, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
-use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Value};
+use zed_kernel::{Pattern as KPattern, Prim, Rat, Term, Universe, Value};
 
 use crate::ast::{
-    Error, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
+    Error, Every, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
     TypeKind,
 };
 use crate::check::{self, Fit, Info, Misfit};
@@ -897,6 +897,10 @@ fn kernel_form(
                 return None;
             }
         },
+        TypeKind::Every(Every::Atom) => crate::check::ty::atoms(),
+        TypeKind::Every(Every::Tuple) => KType::universe(Universe::Tuple),
+        TypeKind::Every(Every::Struct) => KType::universe(Universe::Struct),
+        TypeKind::AtomAny(a) => KType::atom_with(a, &KType::top()),
         TypeKind::Atom(a) => KType::atom(a),
         TypeKind::Tuple(_) => KType::tuple(parts.into_iter().collect::<Option<_>>()?),
         TypeKind::Union(_) => KType::union_all(parts.into_iter().collect::<Option<Vec<_>>>()?),
@@ -976,6 +980,8 @@ fn type_parts(t: &Type) -> Vec<&Type> {
         } => vec![lower, upper, result],
         TypeKind::Name(_)
         | TypeKind::Atom(_)
+        | TypeKind::Every(_)
+        | TypeKind::AtomAny(_)
         | TypeKind::Apply(..)
         | TypeKind::AtomApply(..)
         | TypeKind::Record(_)

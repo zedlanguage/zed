@@ -4,8 +4,8 @@
 use std::fmt;
 
 use super::{
-    Annot, BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param, Pattern,
-    Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
+    Annot, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
+    Pattern, Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
 };
 
 /// What is left to write.
@@ -518,6 +518,10 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
     match &t.kind {
         TypeKind::Name(n) => out.push(Text(n)),
         TypeKind::Atom(a) => out.extend([Text("#"), Text(a)]),
+        TypeKind::Every(Every::Atom) => out.push(Text("#_")),
+        TypeKind::Every(Every::Tuple) => out.push(Text("(..)")),
+        TypeKind::Every(Every::Struct) => out.push(Text("{..}")),
+        TypeKind::AtomAny(a) => out.extend([Text("(#"), Text(a), Text(" ..)")]),
         TypeKind::Tuple(ts) => list("(tuple", ts),
         TypeKind::Union(ts) => list("(|", ts),
         TypeKind::And(ts) => list("(&", ts),

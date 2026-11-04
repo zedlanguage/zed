@@ -415,3 +415,18 @@ Type ::: ((T) -> T for T in rat) -> U for U in bool ::: (((( (((( T )) -> T) (fo
 Type ::: A -> B for T int ::: ERROR
 Type ::: A -> B for T in int, ::: ERROR
 Type ::: A for T in int for U in f64 ::: ERROR
+Type ::: #_ ::: #_
+Type ::: (..) ::: ( .. )
+Type ::: {..} ::: { .. }
+Type ::: #a(..) ::: #a ( .. )
+Type ::: #a() ::: #a ( )
+Type ::: #a(_) ::: (#a ( _ ))
+Type ::: (..) \ (int, int) ::: (( .. ) \ (( int , int )))
+Type ::: #_ | (..) | {..} ::: ((#_ | ( .. )) | { .. })
+Type@1 ::: {..} ::: ERROR
+Type@1 ::: #a(..) ::: ERROR
+Type ::: (int, ..) ::: ERROR
+Type ::: (.., int) ::: ERROR
+Type ::: #a(int, ..) ::: ERROR
+Type ::: {x: int, ..} ::: ERROR
+Type ::: (.., ..) ::: ERROR

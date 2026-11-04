@@ -19,7 +19,9 @@ use crate::lex::Span;
 /// A type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ty {
-    /// The scalars and atoms, never a tuple or a function.
+    /// The scalars and atoms, and the kind-wide part: every tuple or every struct as `(..)`
+    /// and `{..}` write them (L1.40d), and what narrowing leaves of those. A tuple shape built
+    /// from values is in `tuples`, and a function in `fns`.
     pub set: KType,
     /// The tuple shapes, each with its components.
     pub tuples: Vec<Vec<Ty>>,
@@ -390,6 +392,19 @@ pub fn atoms() -> KType {
     KType::universe(Universe::Scalar) - &carriers
 }
 
+/// Every tuple and every struct, the kinds that `set` holds only as the kind-wide part.
+pub fn wide() -> KType {
+    &KType::universe(Universe::Tuple) | &KType::universe(Universe::Struct)
+}
+
+/// The kernel type of the tuple shape `cs`, when its components have kernel types.
+fn shape_kernel(cs: &[Ty]) -> Option<KType> {
+    cs.iter()
+        .map(Ty::kernel)
+        .collect::<Option<Vec<_>>>()
+        .map(KType::tuple)
+}
+
 /// The atom `#errs` that two distinct failures merge into, with any payload.
 pub fn errs() -> KType {
     KType::atom_with("errs", &KType::top())
@@ -561,7 +576,7 @@ impl Ty {
         }
     }
 
-    /// The scalars and atoms of `s`.
+    /// The values of `s`: scalars, atoms, and a kind-wide part.
     pub fn set(s: KType) -> Ty {
         Ty {
             set: s,
@@ -750,8 +765,8 @@ impl Ty {
         self.payloads.retain(|n, _| holds_payload(set, n));
     }
 
-    /// Its pieces: the scalars split by carrier, then the atoms and the other scalars, the
-    /// tuples, the functions, the variables and the unknown.
+    /// Its pieces: the scalars split by carrier, then the atoms, the other scalars, the
+    /// kind-wide part, the tuples, the functions, the variables and the unknown.
     pub fn pieces(&self) -> Vec<Piece> {
         let mut out = Vec::new();
         let mut rest = self.set.clone();
@@ -767,8 +782,15 @@ impl Ty {
             out.push(Piece::Set(a.clone()));
             rest = &rest - &a;
         }
+        let w = &rest & &wide();
+        if !w.is_empty() {
+            rest = &rest - &w;
+        }
         if !rest.is_empty() {
             out.push(Piece::Set(rest));
+        }
+        if !w.is_empty() {
+            out.push(Piece::Set(w));
         }
         out.extend(self.tuples.iter().cloned().map(Piece::Tuple));
         out.extend(self.fns.iter().cloned().map(Piece::Fn));
@@ -825,22 +847,20 @@ impl Ty {
             // kernel, which sees shapes that hold it only together. Trying each shape in turn
             // costs every shape times the components; the kernel splits the components once.
             // The rule of one shape is sound, so it is tried only when the kernel refused.
-            let decided = match p {
-                Piece::Tuple(cs) => cs
-                    .iter()
-                    .map(Ty::kernel)
-                    .collect::<Option<Vec<_>>>()
-                    .map(KType::tuple)
-                    .and_then(|a| {
-                        let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
-                        match a.subtype_verdict(b) {
-                            Verdict::Empty => Some(true),
-                            Verdict::Inhabited => Some(false),
-                            Verdict::Refused(_) => None,
-                        }
-                    }),
+            // So is a kind-wide part, which tuple shapes of `other` may hold only together.
+            let a = match p {
+                Piece::Tuple(cs) => shape_kernel(cs),
+                Piece::Set(s) if !(s & &wide()).is_empty() => Some(s.clone()),
                 _ => None,
             };
+            let decided = a.and_then(|a| {
+                let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
+                match a.subtype_verdict(b) {
+                    Verdict::Empty => Some(true),
+                    Verdict::Inhabited => Some(false),
+                    Verdict::Refused(_) => None,
+                }
+            });
             decided.unwrap_or_else(|| accepts(other, p, self, binds, cx))
         })
     }
@@ -922,6 +942,22 @@ impl Ty {
                 }
             }
         }
+        // A kind-wide part of one side keeps the other's shapes it holds whole; of a shape it
+        // holds in part, the part goes to the set, where the kernel holds it exactly. A shape
+        // with no kernel type is kept, which may be more than the meet.
+        for (a, b) in [(self, t), (t, self)] {
+            let w = &b.set & &wide();
+            if w.is_empty() {
+                continue;
+            }
+            for cs in &a.tuples {
+                match shape_kernel(cs) {
+                    Some(k) if k.subtype(&w) => met.push(cs.clone()),
+                    Some(k) => out.set = &out.set | &(&k & &w),
+                    None => met.push(cs.clone()),
+                }
+            }
+        }
         let mut have = HashSet::new();
         let first: Vec<bool> = met.iter().map(|cs| have.insert(cs)).collect();
         out.tuples.extend(
@@ -938,19 +974,35 @@ impl Ty {
         out
     }
 
-    /// What of `self` is not in `t`, as `is not` narrows: scalars are subtracted, tuples
-    /// wholly inside `t` dropped, and the rest kept.
+    /// What of `self` is not in `t`, as `is not` narrows: scalars are subtracted, and so is
+    /// all of `t` from the kind-wide part when `t` has a kernel type; tuples wholly inside `t`
+    /// are dropped, a tuple that `t`'s kind-wide part holds in part leaves its rest in the set,
+    /// and the other tuples are kept.
     pub fn diff(&self, t: &Ty) -> Ty {
+        let tk = t.kernel();
         let mut out = self.clone();
-        out.set = &self.set - &t.set;
+        out.set = &self.set - tk.as_ref().unwrap_or(&t.set);
         out.family = &self.family - &t.set;
         out.prune_payloads();
+        let w = &t.set & &wide();
+        let within = Ty {
+            set: w.clone(),
+            ..t.clone()
+        };
+        let mut rest = Vec::new();
         out.tuples.retain(|a| {
-            !Ty::tuple(a.clone()).subtype(&Ty {
-                set: KType::empty(),
-                ..t.clone()
-            })
+            if Ty::tuple(a.clone()).subtype(&within) {
+                return false;
+            }
+            match (&tk, shape_kernel(a)) {
+                (Some(tk), Some(k)) if !(&k & &w).is_empty() => {
+                    rest.push(&k - tk);
+                    false
+                }
+                _ => true,
+            }
         });
+        out.set = KType::union_all(std::iter::once(out.set).chain(rest));
         out
     }
 
@@ -1095,11 +1147,14 @@ impl Ty {
             return true;
         }
         match v {
-            Value::Tuple(items) => self.tuples.iter().any(|cs| {
-                cs.len() == items.len() && cs.iter().zip(items).all(|(c, x)| c.contains(x))
-            }),
+            Value::Tuple(items) => {
+                self.set.contains(v)
+                    || self.tuples.iter().any(|cs| {
+                        cs.len() == items.len() && cs.iter().zip(items).all(|(c, x)| c.contains(x))
+                    })
+            }
             Value::Family(_) => self.fns.iter().any(|s| s.data),
-            Value::Path(_) => !self.fns.is_empty(),
+            Value::Path(_) => !self.fns.is_empty() || self.set.contains(v),
             _ => self.set.contains(v),
         }
     }
@@ -1109,7 +1164,18 @@ impl Ty {
         if !self.closed() || !other.closed() {
             return true;
         }
+        // A shape meets the other side's kind-wide part when the kernel finds a common value;
+        // a shape with no kernel type may.
+        let wide_meets = |a: &Ty, b: &Ty| {
+            let w = &b.set & &wide();
+            !w.is_empty()
+                && a.tuples
+                    .iter()
+                    .any(|cs| shape_kernel(cs).is_none_or(|k| !(&k & &w).is_empty()))
+        };
         !(&self.set & &other.set).is_empty()
+            || wide_meets(self, other)
+            || wide_meets(other, self)
             || self.tuples.iter().any(|a| {
                 other
                     .tuples
@@ -1138,6 +1204,8 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
                     })
                 })
         }
+        // A kind-wide part that holds every tuple of the length holds it, whatever it holds.
+        Piece::Tuple(cs) if KType::tuple(vec![KType::top(); cs.len()]).subtype(&t.set) => true,
         Piece::Tuple(cs) => t.tuples.iter().any(|ds| {
             ds.len() == cs.len() && {
                 let mut b = binds.clone();

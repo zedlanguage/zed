@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::ast::{
-    Annot, Arm, BoundaryItem, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
+    Annot, Arm, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
     Pattern, Port, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
@@ -1412,6 +1412,10 @@ impl<'a> Formatter<'a> {
         match &t.kind {
             TypeKind::Name(n) => self.put(n.as_str()),
             TypeKind::Atom(a) => self.put(format!("#{a}")),
+            TypeKind::Every(Every::Atom) => self.put("#_"),
+            TypeKind::Every(Every::Tuple) => self.put("(..)"),
+            TypeKind::Every(Every::Struct) => self.put("{..}"),
+            TypeKind::AtomAny(a) => self.put(format!("#{a}(..)")),
             TypeKind::Tuple(ts) => {
                 self.put("(");
                 let close = if ts.len() == 1 { ",)" } else { ")" };

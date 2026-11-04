@@ -36,7 +36,7 @@ pub use stmts::{
     Annot, BoundaryItem, Field, Function, Import, ImportKind, IndexKey, IndexedDef, Method, Port,
     Stmt, StmtKind, Struct, Target, TypeDecl,
 };
-pub use types::{Param, Pattern, Type, TypeBound, TypeKind, TypeParam};
+pub use types::{Every, Param, Pattern, Type, TypeBound, TypeKind, TypeParam};
 
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};

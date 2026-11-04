@@ -40,11 +40,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::types::{Type as KType, Verdict};
-use zed_kernel::{Prim, Rat, Term, Value, eval};
+use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use crate::ast::{
-    Error, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
-    TypeKind,
+    Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
+    Type, TypeKind,
 };
 use crate::elab::Tables;
 use crate::lex::Span;
@@ -422,7 +422,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     // A bound is a union of carrier names, which holds no morphism type.
                     TypeKind::For { ty, .. } => stack.push(ty),
-                    TypeKind::Name(_) | TypeKind::Atom(_) => {}
+                    TypeKind::Name(_)
+                    | TypeKind::Atom(_)
+                    | TypeKind::Every(_)
+                    | TypeKind::AtomAny(_) => {}
                     TypeKind::Apply(..) | TypeKind::AtomApply(..) | TypeKind::Record(_) => {
                         unreachable!("resolve rejects the forms of layer L2")
                     }
@@ -4071,6 +4074,11 @@ impl<'a> Denote<'a> {
                 }
             },
             TypeKind::Atom(a) => Ty::set(KType::atom(a)),
+            TypeKind::Every(Every::Atom) => Ty::set(ty::atoms()),
+            TypeKind::Every(Every::Tuple) => Ty::set(KType::universe(Universe::Tuple)),
+            TypeKind::Every(Every::Struct) => Ty::set(KType::universe(Universe::Struct)),
+            // The kernel set holds the atom with any payload, and no shape is known.
+            TypeKind::AtomAny(a) => Ty::set(KType::atom_with(a, &KType::top())),
             TypeKind::Tuple(ts) => Ty::tuple(ts.iter().map(|t| self.ty(t)).collect()),
             TypeKind::Union(ts) => {
                 let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();

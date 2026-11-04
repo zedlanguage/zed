@@ -23,7 +23,7 @@ use imbl::Vector;
 use crate::ast::{
     Annot, Error, Expr, ExprKind, Param, Pattern, Port, Stmt, StmtKind, StrPart, Target,
 };
-use crate::ast::{Note, Type, TypeBound, TypeKind};
+use crate::ast::{Every, Note, Type, TypeBound, TypeKind};
 use crate::lex::Span;
 
 /// What binds a name.
@@ -831,7 +831,7 @@ impl Resolver {
                 todo.push(Task::ForEnd(ty, bounds));
                 todo.push(Task::Ty(ty));
             }
-            TypeKind::Atom(_) => {}
+            TypeKind::Atom(_) | TypeKind::Every(Every::Atom | Every::Tuple) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
                 todo.extend(ts.iter().rev().map(Task::Ty));
             }
@@ -856,6 +856,10 @@ impl Resolver {
             }
             TypeKind::Apply(..) => self.later(t.span, "an applied type", "L2.5"),
             TypeKind::AtomApply(..) => self.later(t.span, "an atom type with a payload", "L2.5"),
+            TypeKind::AtomAny(_) => self.later(t.span, "an atom type with any payload", "L2.5"),
+            TypeKind::Every(Every::Struct) => {
+                self.later(t.span, "the type of every struct", "L2.5")
+            }
             TypeKind::Record(_) => self.later(t.span, "a record type", "L2.5"),
             TypeKind::Array(_) => self.later(t.span, "a family type `[T]`", "L3.2"),
         }

@@ -78,16 +78,42 @@ impl Tree {
 /// Why a parse failed: the furthest token any alternative reached, and what it expected there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
-    /// The span of that token (empty at the end of the text).
+    /// The span of that token (empty at the end of the text), or of the `..` that [`DOTS`]
+    /// is about.
     pub span: Span,
     /// The literals (quoted) and token kinds expected there, sorted.
     pub expected: Vec<String>,
+    /// A message that says more than the expected tokens: [`DOTS`] for a `..` in a list.
+    pub message: Option<&'static str>,
 }
+
+/// The message for a `..` written in a list with other items, as `(int, ..)`, `#a(int, ..)` or
+/// `{x: int, ..}`: the kind-wide types hold `..` alone (DESIGN.md sec:type_language).
+pub const DOTS: &str = "`..` stands alone between its brackets: `(..)` is every tuple, `{..}` \
+                        every struct and `#a(..)` the atom `#a` with any payload, and no list \
+                        with other items holds `..`";
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "expected {}", self.expected.join(" or "))
+        match self.message {
+            Some(m) => f.write_str(m),
+            None => write!(f, "expected {}", self.expected.join(" or ")),
+        }
     }
+}
+
+/// The index of the `..` that a parse failing at token `far` of `toks` stopped at or just
+/// after, when it stands in a list with other items: after a `,` (`(int, ..)`), or alone after
+/// an opening bracket and followed by more than the closing one (`(.., int)`). No rule takes a
+/// `..` after a `,`, or after `(` or `{` but before a token other than the closing bracket.
+fn dots_in_list(toks: &[(Kind, &str)], far: usize) -> Option<usize> {
+    let text = |i: usize| toks.get(i).map(|t| t.1);
+    if text(far) == Some("..") && far > 0 && text(far - 1) == Some(",") {
+        return Some(far);
+    }
+    let d = far.checked_sub(1)?;
+    let opened = d > 0 && matches!(text(d - 1), Some("(" | "{"));
+    (text(d) == Some("..") && opened).then_some(d)
 }
 
 /// Parses `tokens`, lexed from `text`, as the rule `start` at `ring`, to the end of the tokens.
@@ -178,9 +204,11 @@ fn parse_one<'t>(
     let Some(root) = matched else {
         let mut expected: Vec<String> = p.expected.iter().map(shown).collect();
         expected.sort();
+        let dots = dots_in_list(&toks, p.far);
         return Err(Error {
-            span: span(p.far),
+            span: span(dots.unwrap_or(p.far)),
             expected,
+            message: dots.map(|_| DOTS),
         });
     };
     let mut holes = Vec::new();

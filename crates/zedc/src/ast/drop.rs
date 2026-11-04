@@ -216,7 +216,7 @@ impl Drop for Type {
 /// Moves the types directly in `kind` to `out`, and leaves a leaf in its place.
 fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
     match mem::replace(kind, TypeKind::Name(String::new())) {
-        TypeKind::Name(_) | TypeKind::Atom(_) => {}
+        TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
         TypeKind::Tuple(mut ts) | TypeKind::Union(mut ts) | TypeKind::And(mut ts) => {
             out.append(&mut ts);
         }

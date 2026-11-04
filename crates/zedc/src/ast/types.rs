@@ -27,6 +27,10 @@ pub enum TypeKind {
     Name(String),
     /// An atom, without its `#`.
     Atom(String),
+    /// Every member of one kind: `#_` every atom, `(..)` every tuple, `{..}` every struct.
+    Every(Every),
+    /// An atom with any payload, `#a(..)`: the atom, without its `#`.
+    AtomAny(String),
     /// A tuple type `(A, B)`.
     Tuple(Vec<Type>),
     /// A union `A | B | …`.
@@ -73,6 +77,17 @@ pub enum TypeKind {
         /// The variables, in written order.
         bounds: Vec<TypeBound>,
     },
+}
+
+/// The kind a kind-wide type `#_`, `(..)` or `{..}` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Every {
+    /// Every atom, `#_`.
+    Atom,
+    /// Every tuple, `(..)`.
+    Tuple,
+    /// Every struct, `{..}`.
+    Struct,
 }
 
 /// One variable of a bounds clause, `T in int | f64`.
@@ -263,12 +278,14 @@ impl Builder<'_, '_> {
                     .collect::<Vec<_>>()
                     .join("."),
             ),
+            "AtomType" if self.word(node.start) == "#_" => TypeKind::Every(Every::Atom),
             "AtomType" => {
                 let Tok::Atom(a) = &self.tokens[node.start].tok else {
                     unreachable!("an ATOM token")
                 };
                 TypeKind::Atom(a.clone())
             }
+            "TupleType" if self.dots(node.start + 1) => TypeKind::Every(Every::Tuple),
             "TupleType" => TypeKind::Tuple(self.types(kids)?),
             "TypeApply" => {
                 let path = &self.tree.nodes[kids[0]];
@@ -283,6 +300,12 @@ impl Builder<'_, '_> {
                     .collect::<Result<_, _>>()?;
                 TypeKind::Apply(name, args)
             }
+            "AtomApply" if self.dots(node.start + 2) => {
+                let Tok::Atom(a) = &self.tokens[node.start].tok else {
+                    unreachable!("an ATOM token")
+                };
+                TypeKind::AtomAny(a.clone())
+            }
             "AtomApply" => {
                 let Tok::Atom(a) = &self.tokens[node.start].tok else {
                     unreachable!("an ATOM token")
@@ -293,6 +316,7 @@ impl Builder<'_, '_> {
                     .collect::<Result<_, _>>()?;
                 TypeKind::AtomApply(a.clone(), args)
             }
+            "RecordType" if self.dots(node.start + 1) => TypeKind::Every(Every::Struct),
             "RecordType" => {
                 let mut fields = Vec::with_capacity(kids.len() / 2);
                 let mut seen = HashMap::new();
@@ -330,6 +354,11 @@ impl Builder<'_, '_> {
         };
         ts.push(self.ty(kids[1])?);
         Ok(ts)
+    }
+
+    /// Whether token `i` is the `..` of a kind-wide type, `(..)`, `{..}` or `#a(..)`.
+    fn dots(&self, i: usize) -> bool {
+        self.tokens.get(i).is_some_and(|t| t.tok == Tok::Op(".."))
     }
 
     fn types(&mut self, kids: &[usize]) -> Result<Vec<Type>, Error> {
