@@ -4160,7 +4160,8 @@ impl<'a> Ck<'_, 'a> {
     // rejects it ("`bitAnd` takes `a` in int[0..], and this `a` is int"). Why: as for C26, the
     // checker runs before the store's iteration, and following each call into the body it
     // returns would check that body once per call site, where reading the text is O(1) per
-    // node. Trigger: a `codePoint` result returned by a user function, as in
+    // node. A memo per function would make that linear, but it would cover only a result that
+    // is itself such a call, a special case of the result ranges of step L10. Trigger: a `codePoint` result returned by a user function, as in
     // `f(s) = codePoint(s); x = bitAnd(f(s: "a"), 1);`. Test:
     // `l01_39c_code_points::checks::a_code_point_returned_by_a_function_is_read_as_any_int`.
     // COMPLEXITY.md row C28. A complete solution needs int-range types on results (step L10,
