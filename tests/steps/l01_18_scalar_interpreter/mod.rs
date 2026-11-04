@@ -6,6 +6,7 @@ mod casts;
 mod failures;
 mod floats;
 mod literals;
+mod rat_text;
 mod scaling;
 mod words;
 

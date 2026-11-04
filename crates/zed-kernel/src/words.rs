@@ -9,11 +9,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
-use crate::num::{Exact, Rat, TooLarge, exact_f64, room, show_f64};
+use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, room, show_f64};
 use crate::term::Prim;
 use crate::value::Value;
 
@@ -270,31 +270,53 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
 
 /// An optional `-` and decimal digits.
 fn read_int(s: &str) -> Option<BigInt> {
-    let digits = s.strip_prefix('-').unwrap_or(s);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    let (sign, digits) = signed(s);
+    Some(BigInt::from_biguint(sign, read_decimal(digits)?))
+}
+
+/// The sign of a text and the rest of it after an optional `-`.
+fn signed(s: &str) -> (Sign, &str) {
+    match s.strip_prefix('-') {
+        Some(rest) => (Sign::Minus, rest),
+        None => (Sign::Plus, s),
     }
-    s.parse().ok()
 }
 
 /// What `String` writes for a `rat`, `3r` or `-1r/3r`, or the same without the `r`s, or a
-/// decimal such as `0.25`.
+/// decimal with digits on both sides of the point, such as `0.25` or `-0.5`.
+///
+/// `String` writes a `rat` in lowest terms, the sign on the numerator only, a denominator only
+/// when it is above 1, and no leading zero, so `1r/-3r`, `-0r`, `03r`, `2r/4r` and `3r/1r` are
+/// read as nothing, and so are `1r/3`, `1/3r`, where only one part drops its `r`. A zero
+/// denominator is not in lowest terms either. A decimal's digits are any digits.
 fn read_rat(s: &str) -> Option<Rat> {
-    let part = |t: &str| read_int(t.strip_suffix('r').unwrap_or(t));
-    if let Some((n, d)) = s.split_once('/') {
-        return Rat::new(part(n)?, part(d)?);
+    let (sign, body) = signed(s);
+    if let Some((whole, frac)) = body.split_once('.') {
+        if whole.is_empty() || frac.is_empty() {
+            return None;
+        }
+        read_decimal(whole)?;
+        read_decimal(frac)?;
+        return Rat::decimal(s);
     }
-    if let Some(n) = part(s) {
-        return Some(Rat::int(n));
-    }
-    let digits = s.strip_prefix('-').unwrap_or(s);
-    let well_formed = digits.split_once('.').is_some_and(|(w, f)| {
-        !w.is_empty() && !f.is_empty() && w.bytes().chain(f.bytes()).all(|b| b.is_ascii_digit())
-    });
-    if !well_formed {
+    let (num, den) = match body.split_once('/') {
+        None => (body.strip_suffix('r').unwrap_or(body), None),
+        Some((n, d)) => match (n.strip_suffix('r'), d.strip_suffix('r')) {
+            (Some(n), Some(d)) => (n, Some(d)),
+            (None, None) => (n, Some(d)),
+            _ => return None,
+        },
+    };
+    let printed = |t: &str| t == "0" || !t.starts_with('0');
+    if !printed(num) || sign == Sign::Minus && num == "0" {
         return None;
     }
-    Rat::decimal(s)
+    let num = BigInt::from_biguint(sign, read_decimal(num)?);
+    match den {
+        None => Some(Rat::int(num)),
+        Some(den) if printed(den) => Rat::in_lowest_terms(num, read_decimal(den)?.into()),
+        Some(_) => None,
+    }
 }
 
 /// What `String` writes for a float, correctly rounded: `-0.5`, `1.0e300`, `inf`, `nan`;

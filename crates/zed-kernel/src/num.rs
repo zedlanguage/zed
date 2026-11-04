@@ -50,6 +50,13 @@ impl Rat {
         Some(Rat::plain(num, den))
     }
 
+    /// `num / den` when it is already in lowest terms with `den` above 1, the form `String`
+    /// writes for a rational that is not an integer; `None` otherwise, so `0/5`, `2/4`, `3/1`
+    /// and a negative `den` are `None`. The test is one gcd and nothing is divided.
+    pub fn in_lowest_terms(num: BigInt, den: BigInt) -> Option<Self> {
+        (den > BigInt::one() && gcd(&num, &den).is_one()).then(|| Rat::plain(num, den))
+    }
+
     fn plain(num: BigInt, den: BigInt) -> Rat {
         Rat {
             num,
@@ -118,13 +125,15 @@ impl Rat {
             Some(i) => (&text[..i], Some(text[i + 1..].parse::<BigInt>().ok()?)),
             None => (text, None),
         };
+        let (sign, mantissa) = match (mantissa.strip_prefix('-'), mantissa.strip_prefix('+')) {
+            (Some(rest), _) => (Sign::Minus, rest),
+            (None, Some(rest)) => (Sign::Plus, rest),
+            (None, None) => (Sign::Plus, mantissa),
+        };
         let (whole, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-        let digits: BigInt = format!("{whole}{frac}").parse().ok()?;
+        let digits = BigInt::from_biguint(sign, read_decimal(&format!("{whole}{frac}"))?);
         match exp {
-            None => {
-                let scale = BigInt::from(10).pow(u32::try_from(frac.len()).ok()?);
-                Rat::new(digits, scale)
-            }
+            None => Some(Rat::over_ten_to(digits, u64::try_from(frac.len()).ok()?)),
             Some(e) => {
                 let e = e - frac.len();
                 Some(Rat::extract(
@@ -134,6 +143,23 @@ impl Rat {
                 ))
             }
         }
+    }
+
+    /// `digits / 10^k` as a plain reduced rational. `10^k` is `2^k 5^k`, so the common factor
+    /// is `2^min(v2, k) 5^min(v5, k)` for the valuations `v2` and `v5` of `digits`: a shift and
+    /// divisions by powers of 5 while they divide, which is one division by 5 for most digits,
+    /// where num-bigint's gcd of the two wide numbers is O(n^2).
+    fn over_ten_to(digits: BigInt, k: u64) -> Rat {
+        if digits.is_zero() {
+            return Rat::int(digits);
+        }
+        let (twos, rest) = valuation(digits, 2);
+        let (fives, rest) = valuation(rest, 5);
+        let (t, f) = (twos.min(k), fives.min(k));
+        let five = |e: u64| Pow::pow(BigUint::from(5u32), e);
+        let num = (rest * BigInt::from(five(fives - f))) << (twos - t);
+        let den = BigInt::from(five(k - f) << (k - t));
+        Rat::plain(num, den)
     }
 
     /// Whether it is zero.
@@ -724,17 +750,61 @@ fn pow_mod(p: u64, e: &BigUint) -> u64 {
 
 /// `num / den` reduced, with `den` positive.
 fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
+    let g = gcd(&num, &den);
+    let sign = if den.is_negative() { -1 } else { 1 };
+    (sign * (num / &g), sign * (den / g))
+}
+
+/// The greatest common divisor of `a` and `b`, not negative.
+fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
     // num-bigint's gcd, Stein's algorithm, costs the product of the two widths even when one is
     // a word, so the wider is first reduced modulo the narrower by one division, linear in the
     // wider when the narrower is a word, and the gcd then runs at the narrower width.
-    let (n, d) = (num.magnitude().bits(), den.magnitude().bits());
-    let g = match n.cmp(&d) {
-        Ordering::Greater => den.gcd(&(&num % &den)),
-        Ordering::Less if !num.is_zero() => num.gcd(&(&den % &num)),
-        _ => num.gcd(&den),
+    match a.magnitude().bits().cmp(&b.magnitude().bits()) {
+        Ordering::Greater => b.gcd(&(a % b)),
+        Ordering::Less if !a.is_zero() => a.gcd(&(b % a)),
+        _ => a.gcd(b),
+    }
+}
+
+/// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.
+const LEAF_DIGITS: usize = 512;
+
+/// The value of a text of ASCII decimal digits, `None` when it is empty or holds anything else.
+///
+/// num-bigint reads a text one machine word of digits at a time into the whole number read so
+/// far, O(n^2) for `n` digits. This reads the text in two parts, the low part `LEAF_DIGITS *
+/// 2^i` digits long and the high part no longer, and joins them as `high * 10^(LEAF_DIGITS *
+/// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring. The cost is
+/// that of the widest product, O(n^1.47) with num-bigint's Toom-3 multiplication, and the
+/// recursion is `log2(n / LEAF_DIGITS)` deep.
+pub fn read_decimal(digits: &str) -> Option<BigUint> {
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
+    if let Some(top) = split_depth(digits.len()) {
+        while tens.len() <= top {
+            let next = tens.last().expect("the first power is built").pow(2u32);
+            tens.push(next);
+        }
+    }
+    Some(read_parts(digits, &tens))
+}
+
+/// The `i` for which a text of `len` digits splits into a low part of `LEAF_DIGITS * 2^i`
+/// digits and a high part of at least one and at most as many; `None` when it is read whole.
+fn split_depth(len: usize) -> Option<usize> {
+    (len > LEAF_DIGITS).then(|| ((len - 1) / LEAF_DIGITS).ilog2() as usize)
+}
+
+/// [`read_decimal`] of checked digits, `tens[i]` being `10^(LEAF_DIGITS * 2^i)`.
+fn read_parts(digits: &str, tens: &[BigUint]) -> BigUint {
+    let Some(i) = split_depth(digits.len()) else {
+        return digits.parse().expect("ASCII decimal digits");
     };
-    let sign = if den.is_negative() { -1 } else { 1 };
-    (sign * (num / &g), sign * (den / g))
+    let (high, low) = digits.split_at(digits.len() - (LEAF_DIGITS << i));
+    read_parts(high, tens) * &tens[i] + read_parts(low, tens)
 }
 
 /// The power of the prime `p` in `n`, and `n` without it. Powers `p, p^2, p^4, ...` divide

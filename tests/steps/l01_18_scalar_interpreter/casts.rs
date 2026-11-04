@@ -44,7 +44,7 @@ fn a_float_is_an_exact_rational() {
 #[test]
 fn a_rational_reads_as_string_writes_it_or_as_a_decimal() {
     assert_eq!(x("rat(\"1r/3r\")"), "1r/3r");
-    assert_eq!(x("rat(\"2/4\")"), "1r/2r");
+    assert_eq!(x("rat(\"1/2\")"), "1r/2r");
     assert_eq!(x("rat(\"3r\")"), "3r");
     assert_eq!(x("rat(\"0.25\")"), "1r/4r");
     assert_eq!(x("rat(\"1/0\")"), "#invalid");
