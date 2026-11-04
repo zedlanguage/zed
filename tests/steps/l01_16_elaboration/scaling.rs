@@ -115,6 +115,37 @@ fn the_dependency_order_scales() {
     });
 }
 
+#[test]
+fn finding_every_cycle_scales() {
+    // `n` items: the first half one cycle, each item waiting on the next through a join of
+    // its own, so the search goes `n / 2` deep; the second half `n / 4` cycles of two, each
+    // with a join of both that the first item waits on. The graphs are built before timing.
+    let graph = |n: usize| {
+        let half = n / 2;
+        let mut deps: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for i in 0..half {
+            let join = deps.len();
+            deps[i].push(join);
+            deps.push(vec![(i + 1) % half]);
+        }
+        for i in (half..n).step_by(2) {
+            let join = deps.len();
+            deps[i].push(join);
+            deps.push(vec![i, i + 1]);
+            deps[i + 1].push(i);
+        }
+        deps
+    };
+    let n = 10_000;
+    let graphs: BTreeMap<usize, Vec<Vec<usize>>> =
+        [n, FACTOR * n].into_iter().map(|k| (k, graph(k))).collect();
+    zed_tests::scaling::check("every cycle of n items with joins", n, |k| {
+        let cycles = zedc::elab::topo_joined(&graphs[&k], k).unwrap_err();
+        assert_eq!(cycles.len(), 1 + k / 4);
+        assert_eq!(cycles[0].len(), k / 2);
+    });
+}
+
 /// Functions nested `n` deep, each declaring a local and the next function, which it calls.
 fn nested(n: usize) -> String {
     let mut src = String::new();

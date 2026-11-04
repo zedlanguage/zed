@@ -23,8 +23,11 @@ const SEED: u64 = 0x1_29b;
 
 /// A unit's text cut into its items. Item `i` is `text[cuts[i]..cuts[i + 1]]`: its leading
 /// comments, annotations and declaration, and the rest of its last line when that holds only
-/// white space and a `//` comment, such as a `// ✗` mark. The text before the first item goes
-/// with it, and the text after the last with that one.
+/// white space and a `//` comment other than a doc comment, such as a `// ✗` mark. The text
+/// before the first item goes with it. The text after the last item's line, `text[cuts[len]..]`,
+/// is the unit's tail, which stays at the end: a `///` block there documents no declaration
+/// in any order. A doc comment at the end of an item's line documents the next item, so it is
+/// cut with that one.
 struct Items<'t> {
     text: &'t str,
     cuts: Vec<usize>,
@@ -62,17 +65,18 @@ fn items(text: &str) -> Items<'_> {
         cuts.push(line_rest(text, tokens[node.end - 1].span.end));
         names.push(declared(text, &tokens, &tree, k));
     }
-    *cuts.last_mut().expect("an item") = text.len();
     Items { text, cuts, names }
 }
 
 /// The end of the line from byte `at` of `text`, its line break included, when the rest of the
-/// line is white space and at most a `//` comment; otherwise `at`.
+/// line is white space and at most a `//` comment that is not a doc comment (`///` and not
+/// `////`, as the lexer reads one); otherwise `at`.
 fn line_rest(text: &str, at: usize) -> usize {
     let rest = &text[at..];
     let blank = rest.trim_start_matches([' ', '\t']);
     let after = at + rest.len() - blank.len();
-    if blank.starts_with("//") || blank.starts_with('\n') || blank.is_empty() {
+    let doc = blank.starts_with("///") && !blank.starts_with("////");
+    if (blank.starts_with("//") && !doc) || blank.starts_with('\n') || blank.is_empty() {
         text[after..]
             .find('\n')
             .map_or(text.len(), |i| after + i + 1)
@@ -142,7 +146,8 @@ impl<'t> Items<'t> {
     }
 
     /// The text with its items in `order`, each followed by a line break when it ends without
-    /// one, and where each item starts in it. The written order gives the text unchanged.
+    /// one, then the tail, and where each item and the tail (numbered `len`) start in it. The
+    /// written order gives the text unchanged when its items end with line breaks.
     fn permuted(&self, order: &[usize]) -> Permuted {
         let mut text = String::with_capacity(self.text.len() + order.len());
         let mut starts = Vec::with_capacity(order.len());
@@ -153,11 +158,14 @@ impl<'t> Items<'t> {
                 text.push('\n');
             }
         }
+        starts.push((text.len(), self.len()));
+        text += &self.text[self.cuts[self.len()]..];
         Permuted { text, starts }
     }
 }
 
-/// A permuted text, and the start of each item in it, in increasing order, with the item.
+/// A permuted text, and the start of each item and of the tail in it, in increasing order,
+/// with the item.
 struct Permuted {
     text: String,
     starts: Vec<(usize, usize)>,
@@ -301,42 +309,55 @@ fn shown(root: &Path, path: &Path) -> String {
         .to_string()
 }
 
+/// Checks `text`, the unit `name`, in each of `orders` of its items `items` against its
+/// written order.
+fn check_unit(name: &str, text: &str, items: &Items, orders: &[(&str, Vec<usize>)]) {
+    let written = Permuted {
+        text: text.to_string(),
+        starts: items.cuts.iter().copied().zip(0..).collect(),
+    };
+    let want = across_items_by_verdict(written.answer(), name);
+    for (how, order) in orders {
+        let p = items.permuted(order);
+        let got = across_items_by_verdict(p.answer(), name);
+        assert_eq!(
+            want, got,
+            "{name}: the items {how}, in the order {order:?}:\n{}",
+            p.text
+        );
+    }
+}
+
 /// Checks the units of `units` whose index is `piece` modulo `pieces`, each as written,
-/// reversed and shuffled, and returns how many had more than one item.
-fn check_piece(units: &[(String, String)], piece: usize, pieces: usize) -> usize {
-    let mut moved = 0;
+/// reversed and shuffled.
+fn check_piece(units: &[(String, String)], piece: usize, pieces: usize) {
     for (name, text) in units.iter().skip(piece).step_by(pieces) {
         let items = items(text);
-        let written = Permuted {
-            text: text.clone(),
-            starts: items.cuts[..items.len()].iter().copied().zip(0..).collect(),
-        };
-        let want = across_items_by_verdict(written.answer(), name);
-        if items.len() > 1 {
-            moved += 1;
-        }
-        for (how, order) in ["reversed", "shuffled"].into_iter().zip(items.orders()) {
-            let p = items.permuted(&order);
-            let got = across_items_by_verdict(p.answer(), name);
-            assert_eq!(
-                want, got,
-                "{name}: the items {how}, in the order {order:?}:\n{}",
-                p.text
-            );
-        }
+        let orders = ["reversed", "shuffled"].into_iter().zip(items.orders());
+        check_unit(name, text, &items, &orders.collect::<Vec<_>>());
     }
-    moved
 }
 
 /// The pieces the units are checked in, each a test of its own, so each runs in parallel and
 /// within the time of one piece of the suite.
 const PIECES: usize = 4;
 
+/// The units of more than one item, which are moved, on 2026-11-03: 39 of 63. Of the other 24,
+/// 23 parse and declare one item, such as a lone `main` (01, 02, 04, 05, 06, 18, 20, 21/stats,
+/// 25, 26, five controls, the four variants, and config, retry, shape and narrowed of the steps),
+/// so they have no other order, and `controls/neg-parse-error.zed` does not parse, by design.
+/// The test fails when fewer are moved, as when a parser change stops a unit from parsing.
+const MOVED: usize = 39;
+
 fn piece(i: usize) {
     let units = units();
-    assert!(units.len() >= 60, "{} units", units.len());
-    let moved = check_piece(&units, i, PIECES);
-    assert!(moved > 0, "piece {i}: no unit of more than one item");
+    assert!(units.len() >= 63, "{} units", units.len());
+    let moved = units.iter().filter(|(_, t)| items(t).len() > 1).count();
+    assert!(
+        moved >= MOVED,
+        "{moved} units of more than one item, not {MOVED}"
+    );
+    check_piece(&units, i, PIECES);
 }
 
 #[test]
@@ -520,6 +541,113 @@ high(r: int[50..]) = r;
     );
 }
 
+/// Every order of the items `0..n`, the written one first, by Heap's algorithm with an
+/// explicit counter per place. For units of a few items: n! orders.
+fn every_order(n: usize) -> Vec<Vec<usize>> {
+    let mut order: Vec<usize> = (0..n).collect();
+    let mut out = vec![order.clone()];
+    let mut c = vec![0; n];
+    let mut i = 1;
+    while i < n {
+        if c[i] < i {
+            order.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
+            out.push(order.clone());
+            c[i] += 1;
+            i = 1;
+        } else {
+            c[i] = 0;
+            i += 1;
+        }
+    }
+    out
+}
+
+/// `unit` checked in every order of its items against its written order.
+fn agrees_in_every_order(name: &str, unit: &str) -> Answer {
+    let items = items(unit);
+    let orders: Vec<(&str, Vec<usize>)> = (every_order(items.len()).into_iter())
+        .map(|o| ("moved", o))
+        .collect();
+    check_unit(name, unit, &items, &orders);
+    items.permuted(&orders[0].1).answer()
+}
+
+/// Two functions defined in terms of each other are reported by name, at the first by name,
+/// whichever comes first in the unit. The checker reported them in source order at the first
+/// in the unit: "`odd`, `even`" at `odd` when `odd` came first.
+#[test]
+fn a_cycle_is_reported_alike_in_every_order() {
+    let unit = "\
+// Whether a count is even, counting down.
+even(positional n) = if n == 0 { true } else { odd(n - 1) };
+odd(positional n) = if n == 0 { false } else { even(n - 1) };
+";
+    let answer = agrees_in_every_order("even and odd", unit);
+    let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
+        .map(|d| (d.at, d.message.as_str()))
+        .collect();
+    let message = "`even`, `odd` are defined in terms of each other: recursion arrives at \
+                   layer L6";
+    assert_eq!(messages, [((0, 43), message)]);
+}
+
+/// Two separate cycles are both reported, in every order of the four items. The checker
+/// reported only the first cycle its search met, which depended on the order.
+#[test]
+fn every_cycle_is_reported_in_every_order() {
+    let unit = "a = b + 1;\nb = a + 1;\nc = d + 1;\nd = c + 1;\n";
+    let answer = agrees_in_every_order("two cycles", unit);
+    let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
+        .map(|d| (d.at, d.message.as_str()))
+        .collect();
+    let each = |names| {
+        format!("{names} are defined in terms of each other: recursion arrives at layer L6")
+    };
+    let (ab, cd) = (each("`a`, `b`"), each("`c`, `d`"));
+    assert_eq!(messages, [((0, 0), ab.as_str()), ((2, 0), cd.as_str())]);
+}
+
+/// A doc comment after the last item documents no declaration, so it stays at the end of the
+/// unit when the items move. Cut with the last item, it documented the next item once moved,
+/// and the unit was accepted.
+#[test]
+fn a_doc_comment_at_the_end_of_the_unit_stays_there() {
+    let unit = "\
+fee(positional balance) = balance - 2;
+tens(positional balance) = balance div 10 * 10;
+/// The balance after a year.
+";
+    let items = items(unit);
+    assert_eq!(&unit[items.cuts[2]..], "/// The balance after a year.\n");
+    let answer = agrees_in_every_order("a dangling doc comment", unit);
+    assert!(!answer.accepted);
+    let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
+        .map(|d| (d.at, d.message.as_str()))
+        .collect();
+    let message = "this doc comment documents no declaration; it is at the end of the unit";
+    assert_eq!(messages, [((2, 0), message)]);
+}
+
+/// A doc comment at the end of an item's line documents the item that follows, so it is cut
+/// with that item.
+#[test]
+fn a_doc_comment_at_the_end_of_a_line_goes_with_the_next_item() {
+    let unit = "low = 1; /// The highest reading.\nhigh = 9;\nspan = high - low;\n";
+    let items = items(unit);
+    let texts: Vec<&str> = (0..items.len())
+        .map(|i| &unit[items.cuts[i]..items.cuts[i + 1]])
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "low = 1;",
+            " /// The highest reading.\nhigh = 9;\n",
+            "span = high - low;\n"
+        ]
+    );
+    assert!(agrees_in_every_order("a doc comment after an item", unit).accepted);
+}
+
 /// `n` items: functions, each odd one calling the one before, a test table on every tenth
 /// odd one, and a `main`. No call goes deeper than two, so the tables cost O(n).
 fn chain(n: usize) -> String {
@@ -535,25 +663,34 @@ fn chain(n: usize) -> String {
     src + "main() = 0;\n"
 }
 
-/// Cutting a unit into items and moving them is O(i), measured apart from checking, whose cost
-/// would hide a quadratic permutation. Seven names each own every seventh item, so keeping each
-/// name's written order is exercised on every item. At 1000 items the parse still hid a quadratic
-/// permutation (23 times the work); at 2000 it shows (32 times).
+/// `n` items over seven names, each owning every seventh item, so keeping each name's written
+/// order is exercised on every item.
+fn rates(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("rate{}(positional x) = x + {i};\n", i % 7))
+        .collect()
+}
+
+/// Cutting a unit into items is O(i): the lex and parse, and one pass over the root's items.
 #[test]
-fn cutting_and_moving_the_items_of_a_unit_scales() {
+fn cutting_a_unit_into_items_scales() {
     let n = 2000;
-    let units: HashMap<usize, String> = [n, 8 * n]
-        .into_iter()
-        .map(|k| {
-            let text = (0..k)
-                .map(|i| format!("rate{}(positional x) = x + {i};\n", i % 7))
-                .collect();
-            (k, text)
-        })
-        .collect();
-    scaling::check("cutting and moving n items of seven names", n, |k| {
-        let items = items(&units[&k]);
-        assert_eq!(items.len(), k);
+    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, rates(k))).collect();
+    scaling::check("cutting n items of seven names", n, |k| {
+        assert_eq!(items(&units[&k]).len(), k);
+    });
+}
+
+/// Moving the items is O(i): the two orders, each name's written order kept, and the moved
+/// texts. The items are cut before timing, since the lex and parse would hide a quadratic
+/// permutation.
+#[test]
+fn moving_the_items_of_a_unit_scales() {
+    let n = 2000;
+    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, rates(k))).collect();
+    let cut: HashMap<usize, Items> = units.iter().map(|(&k, t)| (k, items(t))).collect();
+    scaling::check("moving n items of seven names", n, |k| {
+        let items = &cut[&k];
         for order in items.orders() {
             assert_eq!(items.permuted(&order).text.len(), units[&k].len());
         }

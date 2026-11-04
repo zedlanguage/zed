@@ -537,12 +537,12 @@ impl<'a> Tables<'a> {
     }
 
     /// The order the statements of one scope are bound in, each after those it uses, a
-    /// function's `test` tables aside; else the statements of one cycle. Each use of a
+    /// function's `test` tables aside; else the statements of each cycle. Each use of a
     /// binder of the scope is placed in its statement by a binary search, so the order
     /// reads the uses of the scope's own binders only, not those of the scopes inside it.
     /// A use of an overload set waits on one join node, which waits on the set's statements,
     /// so `U` uses of `K` overloads make `U + K` dependencies, not `U·K`.
-    pub(crate) fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<usize>> {
+    pub(crate) fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<Vec<usize>>> {
         let bound: Vec<(usize, usize)> = (items.iter().enumerate())
             .flat_map(|(i, s)| self.binders_of(s).into_iter().map(move |b| (b, i)))
             .collect();
@@ -1049,9 +1049,10 @@ fn what(s: &Stmt) -> String {
 }
 
 /// The order the top-level statements of `unit` other than its export are bound in, as
-/// indices among them; else the statements of one cycle. For tests of the dependency order.
+/// indices among them; else the statements of each cycle, as [`topo_joined`] gives them. For
+/// tests of the dependency order.
 #[doc(hidden)]
-pub fn top_order(unit: &[Stmt], res: &Resolution) -> Result<Vec<usize>, Vec<usize>> {
+pub fn top_order(unit: &[Stmt], res: &Resolution) -> Result<Vec<usize>, Vec<Vec<usize>>> {
     let items: Vec<&Stmt> = (unit.iter())
         .filter(|s| !matches!(s.kind, StmtKind::Return(_)))
         .collect();
@@ -1078,32 +1079,81 @@ pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
 /// [`topo`] of the items `0..items` of a graph whose nodes from `items` on are joins, each
 /// waiting on the items of its list: an item waiting on a join waits on each of them. The
 /// order is that of the graph with each join's items written into each list naming the join,
-/// at the cost of the graph as given; the cycle, of an unfinished order, walks to the least
-/// item left of each list, a join's items included.
+/// at the cost of the graph as given. Else every cycle of the graph: each strongly connected
+/// component that holds a cycle, as its items in increasing order, the components in order
+/// of their least item, so the set reported does not depend on where the search starts.
 #[doc(hidden)]
-pub fn topo_joined(deps: &[Vec<usize>], items: usize) -> Result<Vec<usize>, Vec<usize>> {
+pub fn topo_joined(deps: &[Vec<usize>], items: usize) -> Result<Vec<usize>, Vec<Vec<usize>>> {
     let (order, done) = place(deps, items);
     if order.len() < items {
-        // A join's least item left is found once; the walk reads each list once, since it
-        // stops at the first item it meets again.
-        let mut least: HashMap<usize, usize> = HashMap::new();
-        return Err(cycle(&done, |i| {
-            (deps[i].iter())
-                .filter(|&&d| !done[d])
-                .map(|&d| match d < items {
-                    true => d,
-                    false => *least.entry(d).or_insert_with(|| {
-                        *(deps[d].iter())
-                            .filter(|&&e| !done[e])
-                            .min()
-                            .expect("a join not passed has an item left")
-                    }),
-                })
-                .min()
-                .expect("a dependency left")
-        }));
+        return Err(cycles(deps, items, &done));
     }
     Ok(order)
+}
+
+/// The strongly connected components of the nodes not `done` that hold a cycle, each as its
+/// items, those below `items`, in increasing order, the components in order of their least
+/// item. Tarjan's algorithm with an explicit stack of (node, next dependency to read): each
+/// node and edge is visited once, then the components are sorted, `O(n + e + c log c)`.
+fn cycles(deps: &[Vec<usize>], items: usize, done: &[bool]) -> Vec<Vec<usize>> {
+    const UNSEEN: usize = usize::MAX;
+    let n = deps.len();
+    let (mut index, mut low) = (vec![UNSEEN; n], vec![0; n]);
+    let mut on_stack = vec![false; n];
+    let (mut stack, mut work): (Vec<usize>, Vec<(usize, usize)>) = (Vec::new(), Vec::new());
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    let mut next = 0;
+    for root in 0..n {
+        if done[root] || index[root] != UNSEEN {
+            continue;
+        }
+        work.push((root, 0));
+        while let Some(&(v, k)) = work.last() {
+            if k == 0 {
+                index[v] = next;
+                low[v] = next;
+                next += 1;
+                stack.push(v);
+                on_stack[v] = true;
+            }
+            if let Some(&w) = deps[v].get(k) {
+                work.last_mut().expect("the node read").1 = k + 1;
+                if done[w] {
+                    continue;
+                }
+                if index[w] == UNSEEN {
+                    work.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            work.pop();
+            if let Some(&(u, _)) = work.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let at = stack.len()
+                    - 1
+                    - (stack.iter().rev())
+                        .position(|&x| x == v)
+                        .expect("a component's root is on the stack");
+                let component = stack.split_off(at);
+                for &x in &component {
+                    on_stack[x] = false;
+                }
+                if component.len() > 1 || deps[v].contains(&v) {
+                    let mut its: Vec<usize> =
+                        (component.into_iter()).filter(|&x| x < items).collect();
+                    its.sort_unstable();
+                    out.push(its);
+                }
+            }
+        }
+    }
+    // A join waits only on items, so every cycle passes an item.
+    out.sort_unstable_by_key(|c| c[0]);
+    out
 }
 
 /// The items of `0..items` placed in order, and which nodes are placed or passed. A join is

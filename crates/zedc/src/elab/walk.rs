@@ -322,16 +322,24 @@ impl<'a> Elab<'a> {
         }
         let mut order = match self.t.order(&items) {
             Ok(order) => order,
-            Err(cycle) => {
-                let names: Vec<String> = cycle.iter().map(|&i| what(items[i])).collect();
-                let message = match &names[..] {
-                    [one] => format!("{one} is defined in terms of itself"),
-                    _ => format!("{} are defined in terms of each other", names.join(", ")),
-                };
-                self.error::<()>(
-                    items[cycle[0]].span,
-                    format!("{message}: recursion arrives at layer L6"),
-                );
+            Err(cycles) => {
+                // Each cycle names its statements by name, and is reported at the first by
+                // name; the declarations of one name keep their written order, so neither
+                // depends on where the items stand in the unit (DESIGN.md L1.29b).
+                for cycle in cycles {
+                    let mut named: Vec<(String, usize)> =
+                        cycle.into_iter().map(|i| (what(items[i]), i)).collect();
+                    named.sort_unstable();
+                    let names: Vec<&str> = named.iter().map(|(n, _)| n.as_str()).collect();
+                    let message = match &names[..] {
+                        [one] => format!("{one} is defined in terms of itself"),
+                        _ => format!("{} are defined in terms of each other", names.join(", ")),
+                    };
+                    self.error::<()>(
+                        items[named[0].1].span,
+                        format!("{message}: recursion arrives at layer L6"),
+                    );
+                }
                 m.ret = Ret::Scope(None);
                 return;
             }
