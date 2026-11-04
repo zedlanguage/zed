@@ -980,16 +980,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BINDER-type | impl attempt 1 | 2026-11-03 16:46 | docs rows written; clippy and full suite |
+| ADDR-cell | impl attempt 1 | 2026-11-03 16:28 | negative control (set() without visited set, not committed): loop summary 200->1600 took 62.4M->5800M instructions, 93.0x vs limit 24 (load 54); at 2000->16000  |
+| BINDER-type | repair attempt 1 | 2026-11-03 16:46 | rebased on main 2c3d97ac (COMPLEXITY conflict: kept KINDS and BINDER-type rows); l01_07 snapshots accepted, only digits changed (21 lines), 11/11 pass; full sui |
 | CHK-cost | impl attempt 1 | 2026-11-03 15:48 | negative control at b0a733ff (old code, new tests, sizes cut to fit 60 s): nested lambdas 54.2x bytes at 8n, nested tuples 212.8x, variable in nested tuples 201 |
-| ISSUE1-else-atoms | repair attempt 1 | 2026-11-03 16:04 | start; continuing wt/issue1-else-atoms at 9393be30; load 28.87 31.42 37.07 |
-| KEPT-neg-hash | impl attempt 1 | 2026-11-03 17:39 | start |
-| LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | control at base 29d86d1e: readings.zed rejected (0 passed, 3 failed), eqlit prints false true false true; with the fix 18 passed and true true true true |
+| ISSUE1-else-atoms | repair attempt 1 | 2026-11-03 16:04 | aliases followed: resolver records s = name bindings (Resolution::aliases), check::handled joins them in a union-find; alias probes print 'the body ran'; chain- |
+| KEPT-neg-hash | impl attempt 1 | 2026-11-03 17:39 | correctness control (Neg guard disabled, not committed): 3 of 5 boundary tests fail on the hash of -(kept 2^127), random walk included; load 53 |
+| LIT-adopt | impl attempt 1 | 2026-11-03 16:46 | negative control (ctl, base data() clone walk + base tuple_step): deep-tuple check_order fails, sizes 32/256 allocate 29.1 MB / 4118 MB, 141.7x > 24x; with the  |
+| MATCH-rewrite | repair attempt 3 | 2026-11-03 17:09 | done: L6.12b g calls now g(t, y: 2 * y) and g(t, y: 2 * y + 1); check parsed 154 failed 0 OK, fences 0, load 54; no Rust change (prereqs unmerged) |
 | NAME-ties | repair attempt 2 | 2026-11-03 09:30 | Refusal::Unordered + settle_as_sets built; names incl. disjunctions_whose_atoms_share_a_color: 25/25 pass (was 5/1000 name-dependent); full suite started / load |
-| PRINT-tyvars | impl attempt 1 | 2026-11-03 16:46 | scaling (instructions, 300 vs 2400, limit 24): wide signature 7.88x work 7.91x bytes; nested shadowing chain 8.01x work 8.00x bytes; negative control (fresh cou |
-| RAT-parse | impl attempt 1 | 2026-11-03 16:46 | negative control 2 (decimal reduced by Stein gcd, not committed): x.y decimal 20k->160k digits 56.6M->2,768.5M instr 48.9x fails; new over_ten_to 8.4M->168.1M 1 |
-| S22e-wide | verify attempt 2 | 2026-11-03 11:28 | fmt clean, clippy -D warnings exit 0; starting tools/run_tests.sh 4, load 26.05 30.19 36.24 |
-| WIDE-copies | verify attempt 2 | 2026-11-03 12:51 | fmt check, clippy -D warnings clean; tools/run_tests.sh 4 started (load5 29.59) |
+| NARROW-if | impl attempt 1 | 2026-11-03 16:46 | arms.rs: test nodes + lazy reduced-product scopes; pc.zed and the four ** repros pass |
+| PRINT-tyvars | repair attempt 2 | 2026-11-03 16:46 | start: continue wt/print-tyvars c13e06d6; rebase on main 2c3d97ac, fix named_calls pin, resolve fence drift |
+| RAT-parse | impl attempt 1 | 2026-11-03 16:46 | docs: COMPLEXITY K41, STATUS row; new item NUM-subquad in ledger (needs RAT-parse, feeds T12, L1.40); suite running |
+| S22e-wide | verify attempt 3 | 2026-11-03 11:28 | diff since aa0e3361 is the comment at split_residues only (preimage.rs:476-490), claims match s22.rs:922-924 and COMPLEXITY S22e-wide; fmt clean, clippy -D warn |
+| WIDE-copies | repair attempt 1 | 2026-11-03 12:51 | start: repair verify#2 findings on wt/wide-copies (tradeoff comments rem_built, exact_div, aligned; STATUS row) |
+| ZIR-canon-sort | impl attempt 1 | 2026-11-03 17:31 | negative control (old swap loop, not committed): new scaling test fails, 4895169 vs 2490169701 instructions at F=100/800, 508.7x (limit 24), load 56; Eq mutant  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
