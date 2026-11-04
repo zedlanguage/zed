@@ -8,7 +8,7 @@ use zed_kernel::Shared;
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{FixKind, GuardPos, Pattern, Prim, Term};
 use zed_tests::scaling::{self, FACTOR};
-use zedc::stage::ends;
+use zedc::stage::{ends, reading};
 
 use super::scaling::deep;
 
@@ -321,5 +321,123 @@ fn two_chains_of_calls_joined_at_every_level_are_read_in_time_near_their_size() 
         );
         assert!(!ends(&Term::Lam(vec!["b2".into()], Shared::new(joined(3)))));
         assert!(ends(&Term::Lam(vec!["b4".into()], Shared::new(joined(3)))));
+    });
+}
+
+/// `k` levels of shared `if` arms, each level's arm either `t + 1` or a call of a `let`
+/// function, a parameter or a match arm on it, built bottom up: `pad` runs before each part is
+/// allocated, so the caller decides where in memory the parts land. Returns the term and each
+/// level's shared part.
+fn mixed_levels(k: usize, pad: &mut dyn FnMut()) -> (Term, Vec<Shared>) {
+    let mut levels = Vec::new();
+    let mut t = {
+        pad();
+        Shared::new(var("n"))
+    };
+    for j in 1..=k as i64 {
+        levels.push(t.clone());
+        pad();
+        let arm = match j % 4 {
+            0 => Shared::new(prim(Prim::Add, vec![(*t).clone(), lit(j)])),
+            1 => Shared::new(app(var("step"), vec![(*t).clone()])),
+            2 => Shared::new(Term::Match(
+                t.clone(),
+                vec![
+                    (Pattern::Bind("g".into()), app(var("f"), vec![var("g")])),
+                    (Pattern::Wild, lit(j)),
+                ],
+            )),
+            _ => Shared::new(app(var("f"), vec![(*t).clone(), lit(j)])),
+        };
+        pad();
+        let guard = Shared::new(prim(Prim::Ge, vec![var("n"), lit(j)]));
+        pad();
+        t = Shared::new(Term::If(guard, t, arm));
+    }
+    pad();
+    let f = Shared::new(lam(&["x", "y"], var("x")));
+    pad();
+    let body = Shared::new(Term::Let("f".into(), f, t));
+    // Read where `step` is a `let` function and where it is a parameter.
+    let inc = lam(&["k"], prim(Prim::Add, vec![var("k"), lit(1i64)]));
+    pad();
+    let by_let = Shared::new(Term::Let("step".into(), Shared::new(inc), body.clone()));
+    pad();
+    let by_param = Shared::new(Term::Lam(vec!["step".into()], body));
+    (if_(var("c"), by_let, by_param), levels)
+}
+
+/// The permutation that sorts the parts by address.
+fn address_order(parts: &[Shared]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..parts.len()).collect();
+    order.sort_by_key(|&i| &*parts[i] as *const Term as usize);
+    order
+}
+
+#[test]
+fn three_allocation_orders_read_alike() {
+    // The reader knows a shared part by identity while the term is borrowed; the numbers it
+    // gives the parts and their answers must not depend on where the parts are in memory.
+    let k = 64;
+    // In order, with nothing between the parts.
+    let (plain, plain_levels) = mixed_levels(k, &mut || {});
+    // With blocks of growing size held between the parts, so each part lands further on.
+    let mut held: Vec<Vec<u8>> = Vec::new();
+    let (spaced, spaced_levels) = mixed_levels(k, &mut || held.push(vec![7; 24 + held.len()]));
+    // Into holes: parts of the same size are allocated and freed, last first, before each
+    // part, so the allocator hands back freed blocks in an order of its own.
+    let mut holes = || {
+        let blocks: Vec<Shared> = (0..9).map(|i| Shared::new(lit(i))).collect();
+        blocks.into_iter().rev().step_by(2).for_each(drop);
+    };
+    let (reused, reused_levels) = mixed_levels(k, &mut holes);
+    let orders = [
+        address_order(&plain_levels),
+        address_order(&spaced_levels),
+        address_order(&reused_levels),
+    ];
+    assert!(
+        orders[0] != orders[1] || orders[0] != orders[2] || orders[1] != orders[2],
+        "the three builds put the parts in the same order in memory, so the test reads one order"
+    );
+    let first = reading(&plain);
+    // Each distinct part is numbered once: a handful per level, not the 2^k places.
+    assert_eq!(first.len(), 460);
+    assert_eq!(reading(&spaced), first);
+    assert_eq!(reading(&reused), first);
+    for t in [&plain, &spaced, &reused] {
+        assert!(!ends(t), "`step` as a parameter is called");
+        let Term::If(_, by_let, _) = t else {
+            unreachable!("built as an if")
+        };
+        assert!(ends(by_let));
+    }
+    drop(held);
+}
+
+#[test]
+fn reading_a_term_built_into_freed_blocks_scales() {
+    deep(|| {
+        let n = 1000;
+        let holes = || {
+            let blocks: Vec<Shared> = (0..9).map(|i| Shared::new(lit(i))).collect();
+            blocks.into_iter().rev().step_by(2).for_each(drop);
+        };
+        let terms: BTreeMap<usize, Term> = [n, FACTOR * n]
+            .into_iter()
+            .map(|k| (k, mixed_levels(k, &mut { holes }).0))
+            .collect();
+        scaling::check(
+            "stage::ends on k mixed levels of shared if arms built into freed blocks",
+            n,
+            |k| {
+                let t = &terms[&k];
+                assert!(!ends(t));
+                let Term::If(_, by_let, _) = t else {
+                    unreachable!("built as an if")
+                };
+                assert!(ends(by_let));
+            },
+        );
     });
 }

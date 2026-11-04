@@ -215,28 +215,77 @@ type Name = u32;
 /// The reading of one term by [`ends`]: each distinct part numbered once, in an order that puts
 /// a part after its own parts, with what it needs.
 #[derive(Default)]
-struct Reader {
+struct Reader<'t> {
     /// What each part needs, by its number.
     needs: Vec<Needs>,
-    /// The number of each part read. A part is found by its address while the term is held
-    /// borrowed, so no address outlives the reading and none is reused within it; results are
-    /// kept by number.
-    ids: HashMap<*const Term, usize>,
+    /// The number of each part read, in the order the parts are read, which depends only on
+    /// the term's structure and sharing (test
+    /// `l01_28_staging::ends::three_allocation_orders_read_alike`).
+    ids: HashMap<Part<'t>, usize>,
     names: HashMap<Arc<str>, Name>,
     sets: Sets,
 }
 
-impl Reader {
+/// A part of the term a [`Reader`] reads, known by identity: two are equal when they are the
+/// same part, one `Arc` reached from two places. The key holds the borrow of the term, so the
+/// compiler checks that no part is freed, and no address reused, while the reading keeps it.
+/// The numbers and answers are kept by number and never by order of address.
+///
+/// Identity is the only way to see that a part is shared: occurrence ids from one walk, as
+/// `zir::lower::Places` gives, cannot tell a part shared by both arms of `k` nested `if`s from
+/// its unshared copy, which has `2^k` places, and on that copy every place must be read, since
+/// a `fix` at any one of them changes the answer. Measured (ADDR-stage, negative control): a
+/// reader keyed by occurrence ids took 1.0, 6.8, 23.7, 63.6, 256 and 1235 ms at k = 10 to 20,
+/// and the test at k = 1000 and 8000 was killed at 60 s. A key that is not an address needs
+/// an id carried by each shared term node, as `Items` and `Family` carry one (ledger TERM-id;
+/// ADDR-preimage adds such an id in `zed_kernel::Shared`); this key moves to it.
+#[derive(Clone, Copy)]
+struct Part<'t>(&'t Term);
+
+impl PartialEq for Part<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl Eq for Part<'_> {}
+
+impl std::hash::Hash for Part<'_> {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        std::ptr::hash(self.0, h)
+    }
+}
+
+/// Test hook: the reading of `t` by [`ends`], each part in the order of its number, with its
+/// answer (`None`, it never ends, or the number of the set of names it needs) and the numbers
+/// of the parts it reads, in the order [`each_part`] gives them.
+pub fn reading(t: &Term) -> Vec<(Option<u32>, Vec<usize>)> {
+    let mut r = Reader::default();
+    r.read(t);
+    let mut parts: Vec<(Part<'_>, usize)> = r.ids.iter().map(|(&p, &i)| (p, i)).collect();
+    parts.sort_unstable_by_key(|&(_, i)| i);
+    let mut todo = Vec::new();
+    parts
+        .into_iter()
+        .map(|(Part(p), i)| {
+            each_part(p, &mut todo);
+            let read = todo.drain(..).map(|(q, _)| r.ids[&Part(q)]).collect();
+            (r.needs[i], read)
+        })
+        .collect()
+}
+
+impl<'t> Reader<'t> {
     /// What `root` needs. The parts are read with an explicit stack, each after its own parts.
-    fn read(&mut self, root: &Term) -> Needs {
+    fn read(&mut self, root: &'t Term) -> Needs {
         let mut todo = vec![(root, false)];
         while let Some((t, parts_read)) = todo.pop() {
-            if self.ids.contains_key(&(t as *const Term)) {
+            if self.ids.contains_key(&Part(t)) {
                 continue;
             }
             if parts_read {
                 let needs = self.needs_of(t);
-                self.ids.insert(t, self.needs.len());
+                self.ids.insert(Part(t), self.needs.len());
                 self.needs.push(needs);
             } else {
                 todo.push((t, true));
@@ -247,8 +296,8 @@ impl Reader {
     }
 
     /// What the part `t`, already read, needs.
-    fn got(&self, t: &Term) -> Needs {
-        self.needs[self.ids[&(t as *const Term)]]
+    fn got(&self, t: &'t Term) -> Needs {
+        self.needs[self.ids[&Part(t)]]
     }
 
     fn name(&mut self, x: &Arc<str>) -> Name {
@@ -266,7 +315,7 @@ impl Reader {
     }
 
     /// What `t` needs, its parts read.
-    fn needs_of(&mut self, t: &Term) -> Needs {
+    fn needs_of(&mut self, t: &'t Term) -> Needs {
         match t {
             Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => Some(EMPTY),
             Term::Fix { .. } | Term::Gen { .. } => None,
@@ -343,7 +392,7 @@ impl Reader {
 
     /// What `f`, in the position of a function called, needs to be one that ends: a primitive
     /// ends, a lambda when its body does, a name when it is free or bound to one that ends.
-    fn callee(&mut self, f: &Term) -> Needs {
+    fn callee(&mut self, f: &'t Term) -> Needs {
         match f {
             Term::PrimFn(_) => Some(EMPTY),
             Term::Lam(..) => self.got(f),
@@ -357,7 +406,7 @@ impl Reader {
 
     /// What `body`, read, needs with `names` bound around it to values not known to be
     /// functions that end.
-    fn under(&mut self, names: &[Arc<str>], body: &Term) -> Needs {
+    fn under(&mut self, names: &[Arc<str>], body: &'t Term) -> Needs {
         let body = self.got(body)?;
         for x in names {
             let x = self.name(x);

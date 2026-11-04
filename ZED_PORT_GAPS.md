@@ -996,7 +996,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| Raw pointer `*const Term` as the key of the map from part to number while the term is read | `Reader::read`, `Reader::got` | Identity | Keyed by the content digest of gap 1; the address lives only during the reading and is never a memo key or an order |
+| A reference `Part<'t>(&'t Term)` compared and hashed by `std::ptr::eq` and `std::ptr::hash` as the key of the map from part to number while the term is read; it holds the borrow of the term (was `*const Term` until ADDR-stage) | `Reader::read`, `Reader::got`, `reading` | Identity (gap 1), lifetimes | Keyed by the content digest of gap 1, or by the id each shared term node carries (ledger TERM-id; `Shared::id` from ADDR-preimage); the identity lives only during the reading and is never an order |
 | An explicit stack `Vec<(&Term, bool)>` read in post-order, results pushed to a `Vec` by number | `Reader::read`, `each_part` | Mutation | A fold over a worklist list with the map from part to result as its state |
 | An arena of trie nodes (`Vec<SetNode>`) with a hash table from node to number (hash-consing) and a memo `HashMap<(Set, Set), Set>` of unions, all filled through `&mut self` | `Sets::make`, `Sets::union` | Shared memo (gap 2), Mutation | A state receiver holding the arena, the table and the memo, returned with each set made; or sets made identical by the content digest of gap 1 |
 | `u32::leading_zeros` and bit masks to find the highest differing bit of two names | `Sets::join`, `above` | Bit operations (gap 4) | As gap 4 |
