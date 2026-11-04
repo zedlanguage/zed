@@ -415,7 +415,7 @@ Confirmed against sec:grammar; counts in the appendix.
 | `format!`, `write!`, `.to_string()` | 490, 215, 105 | Interpolation and `String(…)` arrows; `Display` (42 impls) becomes overloads of `String` |
 | `#[derive]` | 223 | Equality, order, update are structural and free; `Default` becomes a written value |
 | `impl From` (14), `Deref` (2), `AsRef` (1), `IntoIterator` (1) | 18 | Named functions |
-| `impl Not`, `BitAnd`, `BitOr`, `Sub` on `Type`, `Neg` on `End` | 9 | Named `complement`, `meet`, `join`, `minus`: `&` and `|` are type operators only (line 2408); overloading `-` needs its axioms (line 2778) |
+| `impl Not`, `BitAnd`, `BitOr`, `Sub` on `Type`, `Neg` on `End` | 9 | Named `complement`, `meet`, `join`, `minus`: `&` and `\|` are type operators only (line 2408); overloading `-` needs its axioms (line 2778) |
 | Traits: `Lattice` (8 impls), `Lookup`, `Mark`, `Literal`, `Equations` | 5 traits | `interface` is L10, above Zed₀. Pass a record of functions. `L::bottom()`, dispatched on a return type, becomes a field. Single-parameter cases become overloads |
 | `dyn Fn`, `FnMut`, `impl Fn`, `fn` pointers | 37 `dyn` | Function values. `dyn Lookup`, `dyn Read`, `dyn Write` become ports |
 | Generics | 67 fns, 38 types | Implicit by inference (line 537), and `type N(X)` at L2 |
@@ -1301,7 +1301,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A stack of pairs of borrowed sides of `==` (`Side<'a>`, a tuple of references, with a `Vec<&Ty>` of the side's types, one per tuple shape) and an iterator borrowing a tuple's components across its shapes (`fn sides(...) -> Option<impl Iterator<Item = Side<'a>>>`) | `Ck::equal`, `sides` | None | Shared values in place of borrows; the components as a list mapped once |
 | `HashMap<Span, (Option<Ty>, Src)>` written in place at each expression, with `None` for a tuple whose type is rebuilt from its components on demand | `Ck::seen`, `walk::resume` (`Frame::Seen`) | Mutation (gap 11) | A persistent map threaded through the walk as a state receiver; a type held by a shared reference needs no `None` case, since a share costs O(1) (gap 1) |
 | `let … else` and `if let … && let …` chains, one on a slice pattern (`if let [t] = ts && let Some(k) = …`), choosing the follow shape of a `match`, a comparison of an int-typed operand, and the class a literal operand of `==` follows | `store::preimage::follow_own`, `store::product::plain_comparison`, `Ck::follow` | None | An `is` test on the term's shape, then a `match` |
-| A `Vec` stack rebuilding a condition through `&&`, `||`, `!` and `if`, with a nested `fn kids` in place of a closure, whose borrow the compiler could not tie to the term | `store::product::plain_test` | Mutation (gap 11) | A fold over the condition's tree with the rebuilt children as values |
+| A `Vec` stack rebuilding a condition through `&&`, `\|\|`, `!` and `if`, with a nested `fn kids` in place of a closure, whose borrow the compiler could not tie to the term | `store::product::plain_test` | Mutation (gap 11) | A fold over the condition's tree with the rebuilt children as values |
 
 ## Entries from FOOTPRINT-peak (`zedc/src/cost.rs`)
 
