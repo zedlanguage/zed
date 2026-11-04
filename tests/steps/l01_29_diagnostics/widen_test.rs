@@ -1,6 +1,6 @@
 //! `zedc test` prints the widening warnings of each unit it checks, as `zedc run` prints
 //! them: on standard error, each as `file:line:col: why` with its derivation, in order of
-//! place, before the unit's checks run.
+//! place, before the unit's outcomes, and only for a unit with no rejection.
 
 use std::path::PathBuf;
 
@@ -326,4 +326,28 @@ fn a_batch_of_rejected_and_repaired_units_scales() {
         assert_eq!(firsts(&err).len(), m / 2);
         assert_eq!(out.matches(":5:13: ").count(), m / 2);
     });
+}
+
+/// A unit whose front end accepts it and whose `main` has a port that `zedc run` refuses is
+/// rejected: `zedc test` reports the rejection alone, as `zedc run` does, and no notice.
+#[test]
+fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
+    let src = "half(positional x) = x div 2 test { 10 -> 5, 7 -> 3 }\n\
+               main(stdin: int) -> (stdout: Lines) {\n  side = 3037000500;\n  \
+               area = side * side;\n  stdout <- String(area);\n}\n";
+    let file = unit("ports", "ports.zed", src);
+    let why = zedc::run::load(src.as_bytes())
+        .err()
+        .expect("the port `stdin: int` is rejected");
+    assert!(!why.contains("widens"), "{why}");
+    let (status, out, err) = test(&[&file]);
+    assert_eq!(status, 1, "{out}");
+    assert!(
+        out.contains(&format!("{file}:2:1: port `stdin` of `main`")),
+        "{out}"
+    );
+    assert_eq!(err, "");
+    let (status, err) = run(&file);
+    assert_eq!(status, 1);
+    assert!(!err.contains("widens"), "{err}");
 }

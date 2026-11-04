@@ -42,19 +42,22 @@ pub fn test(text: &str) -> Vec<Outcome> {
 
 /// The checks of the unit `text`, in source order, reusing what `db` holds (step L1.30).
 pub fn test_in(db: &mut Db, text: &str) -> Vec<Outcome> {
-    checks(db, text, &run::direct)
+    checks(db, text, &run::direct).0
 }
 
 /// The checks of the unit `text`, each row's closed term run by `map` (steps L1.33, L1.34): a
 /// way to run the tables through another form of the program. Nothing is cached, since the
 /// outcomes depend on `map`.
 pub fn test_through(text: &str, map: &Through<'_>) -> Vec<Outcome> {
-    checks(&mut Db::new(), text, map)
+    checks(&mut Db::new(), text, map).0
 }
 
-fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
+/// The checks of the unit `text`, each row run by `map`, and whether the unit is accepted: its
+/// front end accepts it and, if it has a `main`, so does `run::program`, as `run::load` requires.
+fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
     let marked = fence::marks(text).lines;
     let mut out = Vec::new();
+    let mut accepted = false;
     match &*db.front(text) {
         Err(diagnostics) => {
             // The diagnostics on each line, and the marked lines, each found in a map.
@@ -118,6 +121,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
                     }
                 }
             }
+            accepted = main.is_none() || program.is_some();
             let main_def = unit.defs.iter().find(|d| d.name == "main");
             for t in unit.tests.iter() {
                 let (line, col) = lines.line_col(text.as_bytes(), t.span.start);
@@ -149,7 +153,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> Vec<Outcome> {
         }
     }
     out.sort_by_key(|o| (o.line, o.col));
-    out
+    (out, accepted)
 }
 
 /// Why a line marked ✗ fails, given its diagnostics `ds` and the row its comment names: it
@@ -383,10 +387,12 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         if !fence::marks(&text).lines.is_empty() {
             rejection += 1;
         }
-        if let Ok((_, _, warnings)) = &*db.front(&text) {
+        let (outcomes, accepted) = checks(&mut db, &text, &run::direct);
+        // A unit with a rejection reports no warning (DESIGN.md L1.29): the warnings are
+        // printed only when the front end and `run::program` accept it.
+        if accepted && let Ok((_, _, warnings)) = &*db.front(&text) {
             let _ = run::write_warnings(stderr, file, warnings);
         }
-        let outcomes = test_in(&mut db, &text);
         texts.push((file, text));
         if outcomes.is_empty() {
             let _ = writeln!(

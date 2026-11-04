@@ -159,25 +159,27 @@ fn check_piece(piece: usize) -> usize {
 
         let bound = with_binding(text);
         let mut got = shown(&bound);
-        // The bindings' own types are printed too when the unit reaches the checker, at their
-        // place among the others, as when they are checked alone; every other type is as
-        // before.
+        // The bindings' own types are printed too when the unit reaches the checker, as when
+        // they are checked alone, as one run; every other type is as before, in the same order.
         if BOUND.iter().any(|b| got.tops.contains_key(*b)) {
             for b in BOUND {
                 let own = got.tops.remove(b);
                 assert_eq!(own.as_ref(), added.tops.get(b), "{name}: `{b}`:\n{bound}");
             }
-            for t in &added.said {
-                let at = got.said.iter().position(|s| s == t);
-                got.said
-                    .remove(at.unwrap_or_else(|| panic!("{name}: `{t}` not printed:\n{bound}")));
-            }
+            let k = added.said.len();
+            let at = (0..=got.said.len().saturating_sub(k)).find(|&i| {
+                got.said.get(i..i + k) == Some(&added.said[..])
+                    && got.said[..i]
+                        .iter()
+                        .chain(&got.said[i + k..])
+                        .eq(&batch.said)
+            });
+            let at = at.unwrap_or_else(|| {
+                panic!("{name}: {:?} not printed as one run:\n{bound}", added.said)
+            });
+            got.said.drain(at..at + k);
         }
-        assert_eq!(
-            sorted(batch.clone()),
-            sorted(got),
-            "{name}: with a binding added:\n{bound}"
-        );
+        assert_eq!(batch, got, "{name}: with a binding added:\n{bound}");
 
         let items = items(text);
         let [reversed, _] = items.orders();
