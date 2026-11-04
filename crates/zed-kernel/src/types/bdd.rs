@@ -31,12 +31,13 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::Bound;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
-use super::{Morphism, Op, Row, mix};
+use super::{AtomPart, Morphism, Node, Op, Row, Type, mix};
 
 mod list;
 
@@ -70,6 +71,10 @@ pub(super) trait Literal: Ord + Clone + 'static {
     fn digest(&self) -> u64;
     /// Drops a part in the thread's loop of type parts (module `deep`).
     fn free(part: Part<Self>);
+    /// The step of [`order`] that compares two atoms.
+    fn atoms<'a>(a: &'a Self, b: &'a Self) -> Step<'a>;
+    /// The step of [`order`] that compares two diagrams, expressions or parts of the universe.
+    fn walk(w: Walk<'_, Self>) -> Step<'_>;
 }
 
 thread_local! {
@@ -88,6 +93,12 @@ impl Literal for Row {
     fn free(part: Part<Row>) {
         super::free(super::Freed::Tuples(part));
     }
+    fn atoms<'a>(a: &'a Row, b: &'a Row) -> Step<'a> {
+        Step::Rows(a, b)
+    }
+    fn walk(w: Walk<'_, Row>) -> Step<'_> {
+        Step::Tuples(w)
+    }
 }
 
 impl Literal for Morphism {
@@ -101,6 +112,12 @@ impl Literal for Morphism {
     }
     fn free(part: Part<Morphism>) {
         super::free(super::Freed::Morphisms(part));
+    }
+    fn atoms<'a>(a: &'a Morphism, b: &'a Morphism) -> Step<'a> {
+        Step::Morphisms(a, b)
+    }
+    fn walk(w: Walk<'_, Morphism>) -> Step<'_> {
+        Step::Arrows(w)
     }
 }
 
@@ -1430,80 +1447,328 @@ impl<A: Literal> Part<A> {
     }
 }
 
-/// Two diagrams, expressions or parts to compare, or two nodes or expressions whose contents
-/// compared equal.
-enum Step<'a, A: Literal> {
+/// Two diagrams, expressions or parts of one universe to compare in [`order`].
+pub(super) enum Walk<'a, A: Literal> {
     Bdds(&'a Bdd<A>, &'a Bdd<A>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
+}
+
+/// The atom names of a type with their parts.
+type AtomNames = imbl::OrdMap<Arc<str>, AtomPart>;
+
+/// The tuple lengths of a type with their parts.
+type Lens = BTreeMap<usize, Part<Row>>;
+
+/// A pair to compare in [`order`], the rest of two sequences compared in order, the order of two
+/// fields already compared, or two nodes or expressions whose contents compared equal.
+pub(super) enum Step<'a> {
+    Types(&'a Type, &'a Type),
+    Rows(&'a Row, &'a Row),
+    Morphisms(&'a Morphism, &'a Morphism),
+    Tuples(Walk<'a, Row>),
+    Arrows(Walk<'a, Morphism>),
+    /// The remaining components of two rows.
+    Items(std::slice::Iter<'a, Type>, std::slice::Iter<'a, Type>),
+    /// The atom names of two types after the bound, each with its part: the maps and the last
+    /// name read rather than two iterators, which would make every step five times the size.
+    Names(&'a AtomNames, &'a AtomNames, Bound<&'a Arc<str>>),
+    /// The tuple lengths of two types after the bound, each with its part.
+    Lens(&'a Lens, &'a Lens, Bound<usize>),
+    /// The order of two scalar fields, read when every field before them compared equal.
+    Is(Ordering),
     Equal(u64, u64),
 }
 
-/// The order of the pair in `first`: by digest, then by atom or connective, then by `hi` and
-/// `lo` or by operands, a diagram before an expression. Two nodes or expressions found equal are
-/// kept by node id and not compared again, so the cost is one step per pair of nodes compared,
-/// not one per path to them, and linear in the size when the two are equal. A loop with its own
-/// stack, as a part can be deeper than the call stack.
-fn order<A: Literal>(first: Step<'_, A>) -> Ordering {
+/// The order of the pair in `first`, the order of contents that `Ord` gives every type, row,
+/// morphism type, part, diagram and expression: two types by digest, then by their parts field
+/// by field (a recursive node after every other, two of them by id); two rows by digest, then
+/// component by component; two morphism types by guarantee, permission and value; two
+/// diagrams or expressions by digest, then by atom or connective, then by `hi` and `lo` or by
+/// operands, a diagram before an expression; sequences (rows, atom names, tuple lengths)
+/// lexicographically, a prefix first. Two nodes or expressions found equal are kept by node id
+/// and not compared again, so the cost is one step per pair of nodes compared, not one per path
+/// to them, and linear in the size when the two are equal. A loop with its own stack, as a type
+/// can be deeper than the call stack: a row's components are types, whose tuple parts are
+/// diagrams over rows, so where the digests tie (short-addresses build, step L1.37a, or a 64-bit
+/// collision) two types n deep are compared n levels down (SHORT-stack-l01_22).
+pub(super) fn order(first: Step<'_>) -> Ordering {
     let mut equal = HashSet::new();
-    let mut steps = vec![first];
-    while let Some(step) = steps.pop() {
+    // The first step is held apart, so that a comparison its digests decide allocates nothing.
+    let mut steps = Vec::new();
+    let mut next = Some(first);
+    while let Some(step) = next.take().or_else(|| steps.pop()) {
         let c = match step {
             Step::Equal(a, b) => {
                 equal.insert((a, b));
                 Ordering::Equal
             }
-            Step::Parts(Part::Bdd(a), Part::Bdd(b)) => {
-                steps.push(Step::Bdds(a, b));
-                Ordering::Equal
-            }
-            Step::Parts(Part::Expr(a), Part::Expr(b)) => {
-                steps.push(Step::Exprs(a, b));
-                Ordering::Equal
-            }
-            Step::Parts(Part::Bdd(_), Part::Expr(_)) => Ordering::Less,
-            Step::Parts(Part::Expr(_), Part::Bdd(_)) => Ordering::Greater,
-            Step::Bdds(Bdd::Leaf(a), Bdd::Leaf(b)) => a.cmp(b),
-            Step::Bdds(Bdd::Leaf(_), Bdd::Node(_)) => Ordering::Less,
-            Step::Bdds(Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
-            Step::Bdds(Bdd::Node(a), Bdd::Node(b)) => {
-                let key = (a.id, b.id);
-                if key.0 == key.1 || equal.contains(&key) {
+            Step::Is(c) => c,
+            Step::Tuples(w) => walk(w, &mut steps, &equal),
+            Step::Arrows(w) => walk(w, &mut steps, &equal),
+            Step::Types(a, b) => types(a, b, &mut steps, &equal),
+            Step::Rows(a, b) => {
+                if Arc::ptr_eq(&a.0, &b.0) {
                     continue;
                 }
-                let c = a.digest.cmp(&b.digest).then_with(|| a.atom.cmp(&b.atom));
-                if c == Ordering::Equal {
-                    // `hi` is pushed last, so it is compared first.
-                    steps.extend([
-                        Step::Equal(key.0, key.1),
-                        Step::Bdds(&a.lo, &b.lo),
-                        Step::Bdds(&a.hi, &b.hi),
-                    ]);
-                }
-                c
+                a.digest()
+                    .cmp(&b.digest())
+                    .then_with(|| items(a.iter(), b.iter(), &mut steps, &equal))
             }
-            Step::Exprs(a, b) => {
-                let key = (a.id, b.id);
-                if key.0 == key.1 || equal.contains(&key) {
-                    continue;
-                }
-                let (x, y) = (a.form.operands(), b.form.operands());
-                let c = a.digest.cmp(&b.digest).then_with(|| x.0.cmp(&y.0));
-                if c == Ordering::Equal {
-                    steps.push(Step::Equal(key.0, key.1));
-                    if let (Some(p), Some(q)) = (x.2, y.2) {
-                        steps.push(Step::Parts(p, q));
-                    }
-                    steps.push(Step::Parts(x.1, y.1));
-                }
-                c
+            Step::Morphisms(a, b) => {
+                steps.extend([
+                    Step::Types(&a.value, &b.value),
+                    Step::Types(&a.permission, &b.permission),
+                    Step::Types(&a.guarantee, &b.guarantee),
+                ]);
+                Ordering::Equal
             }
+            Step::Items(x, y) => items(x, y, &mut steps, &equal),
+            Step::Names(p, q, from) => atom_names((p, q), from, &mut steps),
+            Step::Lens(p, q, from) => tuple_lens((p, q), from, &mut steps, &equal),
         };
         if c != Ordering::Equal {
             return c;
         }
     }
     Ordering::Equal
+}
+
+/// One step of [`order`] on the remaining components of two rows: each pair of components is
+/// read at once by [`types`] where its fields decide it, so that two rows told apart without
+/// reading a nested type push nothing; at the first pair that needs one, the rest of the rows is
+/// pushed below what [`types`] pushed. [`types`] calls neither this nor itself, so the depth of
+/// the call stack is fixed.
+fn items<'a>(
+    mut x: std::slice::Iter<'a, Type>,
+    mut y: std::slice::Iter<'a, Type>,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    loop {
+        match (x.next(), y.next()) {
+            (Some(s), Some(t)) => {
+                let n = steps.len();
+                let c = types(s, t, steps, equal);
+                if c != Ordering::Equal {
+                    return c;
+                }
+                if steps.len() > n {
+                    steps.insert(n, Step::Items(x, y));
+                    return Ordering::Equal;
+                }
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
+}
+
+/// One step of [`order`] on two types: the fields in order, each read at once where it can be,
+/// so that two types told apart without reading a nested type push nothing; at the first field
+/// that needs a nested comparison (an atom's payload, a tuple length's part, the morphism part)
+/// the fields after it are pushed in reverse and the nested comparison above them, so that they
+/// are compared in order.
+fn types<'a>(
+    a: &'a Type,
+    b: &'a Type,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    if Arc::ptr_eq(&a.0, &b.0) {
+        return Ordering::Equal;
+    }
+    let c = a.digest().cmp(&b.digest());
+    if c != Ordering::Equal {
+        return c;
+    }
+    let (p, q) = match (&*a.0, &*b.0) {
+        (Node::Parts(p, _), Node::Parts(q, _)) => (p, q),
+        (Node::Parts(..), Node::Rec(_)) => return Ordering::Less,
+        (Node::Rec(_), Node::Parts(..)) => return Ordering::Greater,
+        (Node::Rec(r), Node::Rec(s)) => return r.id.cmp(&s.id),
+    };
+    let c = (p.digest.cmp(&q.digest))
+        .then(p.bools.cmp(&q.bools))
+        .then_with(|| p.ints.cmp(&q.ints))
+        .then_with(|| p.rats.cmp(&q.rats))
+        .then_with(|| p.floats.cmp(&q.floats))
+        .then_with(|| p.strings.cmp(&q.strings))
+        .then(p.atoms.cofinite.cmp(&q.atoms.cofinite));
+    if c != Ordering::Equal {
+        return c;
+    }
+    let n = steps.len();
+    let names = (&p.atoms.names, &q.atoms.names);
+    let c = atom_names(names, Bound::Unbounded, steps);
+    if c != Ordering::Equal {
+        return c;
+    }
+    let sum = (p.atoms.sum.cmp(&q.atoms.sum)).then(p.tuples.rest.cmp(&q.tuples.rest));
+    let lens = (&p.tuples.lens, &q.tuples.lens);
+    if steps.len() > n {
+        // A payload ties in digest: the fields after the atoms wait below its contents.
+        steps.splice(
+            n..n,
+            [
+                Step::Arrows(Walk::Parts(&p.morphisms, &q.morphisms)),
+                Step::Is(p.structs.cmp(&q.structs)),
+                Step::Lens(lens.0, lens.1, Bound::Unbounded),
+                Step::Is(sum),
+            ],
+        );
+        return Ordering::Equal;
+    }
+    if sum != Ordering::Equal {
+        return sum;
+    }
+    let c = tuple_lens(lens, Bound::Unbounded, steps, equal);
+    if c != Ordering::Equal {
+        return c;
+    }
+    if steps.len() > n {
+        // A part ties in digest: the fields after the tuples wait below its contents.
+        steps.splice(
+            n..n,
+            [
+                Step::Arrows(Walk::Parts(&p.morphisms, &q.morphisms)),
+                Step::Is(p.structs.cmp(&q.structs)),
+            ],
+        );
+        return Ordering::Equal;
+    }
+    p.structs
+        .cmp(&q.structs)
+        .then_with(|| walk(Walk::Parts(&p.morphisms, &q.morphisms), steps, equal))
+}
+
+/// One step of [`order`] on the atom names of two types after `from`, each with its part, read
+/// at once where the names, the bare atoms or the payloads' digests decide them; at the first
+/// payload that ties in digest, the rest of the names is pushed (as the last name read) and the
+/// two payloads above it. Resuming takes `O(log n)` in the names, read only after a nested
+/// comparison.
+fn atom_names<'a>(
+    (p, q): (&'a AtomNames, &'a AtomNames),
+    from: Bound<&'a Arc<str>>,
+    steps: &mut Vec<Step<'a>>,
+) -> Ordering {
+    // Complexity tradeoff: a step resumes by a search, O(log n) in the names, after a nested
+    // comparison of at least that cost, rather than holding two iterators, which made each step
+    // 208 bytes and the bytes a comparison allocates on ties more than 24x at 8n in the pinwheel
+    // tests of `l01_23` (short-addresses build).
+    let (mut x, mut y) = (
+        p.range::<_, Arc<str>>((from, Bound::Unbounded)),
+        q.range::<_, Arc<str>>((from, Bound::Unbounded)),
+    );
+    loop {
+        match (x.next(), y.next()) {
+            (Some((k, u)), Some((l, v))) => {
+                let c = k.cmp(l).then(u.bare.cmp(&v.bare));
+                if c != Ordering::Equal {
+                    return c;
+                }
+                if Arc::ptr_eq(&u.payload.0, &v.payload.0) {
+                    continue;
+                }
+                let c = u.payload.digest().cmp(&v.payload.digest());
+                if c == Ordering::Equal {
+                    steps.extend([
+                        Step::Names(p, q, Bound::Excluded(k)),
+                        Step::Types(&u.payload, &v.payload),
+                    ]);
+                }
+                return c;
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
+}
+
+/// One step of [`order`] on the tuple lengths of two types after `from`, each with its part,
+/// read at once where the lengths or the parts' digests decide them; at the first pair of parts
+/// that ties in digest, the rest of the lengths is pushed (as the last length read) below what
+/// [`walk`] pushed. Resuming takes `O(log n)` in the lengths, read only after a nested
+/// comparison.
+fn tuple_lens<'a>(
+    (p, q): (&'a Lens, &'a Lens),
+    from: Bound<usize>,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    // Complexity tradeoff: as in `atom_names`, O(log n) to resume against a step a fifth the size.
+    let (mut x, mut y) = (
+        p.range((from, Bound::Unbounded)),
+        q.range((from, Bound::Unbounded)),
+    );
+    loop {
+        match (x.next(), y.next()) {
+            (Some((k, s)), Some((l, t))) => {
+                let c = k.cmp(l);
+                if c != Ordering::Equal {
+                    return c;
+                }
+                let n = steps.len();
+                let c = walk(Walk::Parts(s, t), steps, equal);
+                if c != Ordering::Equal {
+                    return c;
+                }
+                if steps.len() > n {
+                    steps.insert(n, Step::Lens(p, q, Bound::Excluded(*k)));
+                    return Ordering::Equal;
+                }
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
+}
+
+/// One step of [`order`] on two diagrams, expressions or parts of one universe.
+fn walk<'a, A: Literal>(
+    w: Walk<'a, A>,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    match w {
+        Walk::Parts(Part::Bdd(a), Part::Bdd(b)) => walk(Walk::Bdds(a, b), steps, equal),
+        Walk::Parts(Part::Expr(a), Part::Expr(b)) => walk(Walk::Exprs(a, b), steps, equal),
+        Walk::Parts(Part::Bdd(_), Part::Expr(_)) => Ordering::Less,
+        Walk::Parts(Part::Expr(_), Part::Bdd(_)) => Ordering::Greater,
+        Walk::Bdds(Bdd::Leaf(a), Bdd::Leaf(b)) => a.cmp(b),
+        Walk::Bdds(Bdd::Leaf(_), Bdd::Node(_)) => Ordering::Less,
+        Walk::Bdds(Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
+        Walk::Bdds(Bdd::Node(a), Bdd::Node(b)) => {
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let c = a.digest.cmp(&b.digest);
+            if c == Ordering::Equal {
+                // The atoms are pushed last, so they are compared first, then `hi`.
+                steps.extend([
+                    Step::Equal(key.0, key.1),
+                    A::walk(Walk::Bdds(&a.lo, &b.lo)),
+                    A::walk(Walk::Bdds(&a.hi, &b.hi)),
+                    A::atoms(&a.atom, &b.atom),
+                ]);
+            }
+            c
+        }
+        Walk::Exprs(a, b) => {
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let (x, y) = (a.form.operands(), b.form.operands());
+            let c = a.digest.cmp(&b.digest).then_with(|| x.0.cmp(&y.0));
+            if c == Ordering::Equal {
+                steps.push(Step::Equal(key.0, key.1));
+                if let (Some(p), Some(q)) = (x.2, y.2) {
+                    steps.push(A::walk(Walk::Parts(p, q)));
+                }
+                steps.push(A::walk(Walk::Parts(x.1, y.1)));
+            }
+            c
+        }
+    }
 }
 
 impl<A: Literal> Form<A> {
@@ -1519,7 +1784,7 @@ impl<A: Literal> Form<A> {
 
 impl<A: Literal> Ord for Part<A> {
     fn cmp(&self, other: &Part<A>) -> Ordering {
-        order(Step::Parts(self, other))
+        order(A::walk(Walk::Parts(self, other)))
     }
 }
 
@@ -1539,7 +1804,7 @@ impl<A: Literal> Eq for Part<A> {}
 
 impl<A: Literal> Ord for Expr<A> {
     fn cmp(&self, other: &Expr<A>) -> Ordering {
-        order(Step::Exprs(self, other))
+        order(A::walk(Walk::Exprs(self, other)))
     }
 }
 
@@ -1565,7 +1830,7 @@ impl<A: Literal + fmt::Debug> fmt::Debug for Expr<A> {
 
 impl<A: Literal> Ord for Bdd<A> {
     fn cmp(&self, other: &Bdd<A>) -> Ordering {
-        order(Step::Bdds(self, other))
+        order(A::walk(Walk::Bdds(self, other)))
     }
 }
 
@@ -1985,6 +2250,80 @@ mod tests {
                 let l = built[&m].list();
                 assert_eq!(l.blocks.len(), m - 1);
                 assert_eq!(l.tail, Ok(false));
+            },
+        );
+    }
+
+    /// `depth` levels of the atom `#a` with a payload of the level below, over `bottom`, every
+    /// digest 0: comparing two of them reads every level, as two types whose digests tie at
+    /// every depth are read in the short-addresses build (SHORT-stack-l01_22).
+    fn tied(bottom: &str, depth: usize) -> Type {
+        let zeroed = |t: Type| {
+            let Node::Parts(p, _) = &*t.0 else {
+                unreachable!("an atom type is no recursive node")
+            };
+            let mut p = p.clone();
+            p.digest = 0;
+            Type(Arc::new(Node::Parts(p, super::super::Shown::default())))
+        };
+        let mut t = zeroed(Type::atom(bottom));
+        for _ in 0..depth {
+            let Node::Parts(p, _) = &*Type::atom("a").0 else {
+                unreachable!("an atom type is no recursive node")
+            };
+            let mut p = p.clone();
+            p.digest = 0;
+            p.atoms.names = p.atoms.names.update(
+                "a".into(),
+                AtomPart {
+                    bare: false,
+                    payload: t,
+                },
+            );
+            t = Type(Arc::new(Node::Parts(p, super::super::Shown::default())));
+        }
+        t
+    }
+
+    #[test]
+    fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
+        // The order reads such types n levels down. It was a recursion, which overflowed this
+        // 2 MiB stack a few thousand levels down; it is a loop with a stack of its own.
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(|| {
+                let depth = 100_000;
+                let (a, b, c) = (tied("z", depth), tied("z", depth), tied("y", depth));
+                assert_eq!(a.digest(), c.digest());
+                assert_eq!(a.cmp(&b), Ordering::Equal);
+                assert_eq!(a, b);
+                // The bottoms differ: `#y` before `#z`, read 100,000 levels down.
+                assert_eq!(a.cmp(&c), Ordering::Greater);
+                assert_eq!(c.cmp(&a), Ordering::Less);
+                // A chain that stops a level short has no payload where the other has one.
+                let d = tied("z", depth - 1);
+                assert_eq!(d.cmp(&a), a.cmp(&d).reverse());
+                assert_ne!(d.cmp(&a), Ordering::Equal);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn ordering_types_whose_digests_tie_at_every_depth_scales() {
+        // One step per level: the two chains are equal, so every level is read.
+        let n = 10_000;
+        let built: BTreeMap<usize, (Type, Type)> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, (tied("z", m), tied("z", m))))
+            .collect();
+        scaling::check(
+            "ordering two equal chains of tied digests, by depth",
+            n,
+            |m| {
+                let (a, b) = &built[&m];
+                assert_eq!(a.cmp(b), Ordering::Equal);
             },
         );
     }

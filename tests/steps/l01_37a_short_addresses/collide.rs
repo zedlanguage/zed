@@ -106,3 +106,33 @@ fn colliding_types_are_distinct_and_ordered_by_contents() {
         assert_eq!(&all | t, all);
     }
 }
+
+/// `depth` levels of a pair of the level below, over `base`.
+fn chain(base: Type, depth: usize) -> Type {
+    (0..depth).fold(base, |t, _| Type::tuple(vec![t.clone(), t]))
+}
+
+#[test]
+fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
+    // With 8-bit digests the levels of a chain tie in digest at every depth, so building one
+    // orders each new level against older ones level after level down, as ordering two chains
+    // over different bases does where their digests tie. That order was a recursion, which
+    // overflowed a 256 KiB stack 500 levels down, and a 2 MiB stack about 3,000 levels down
+    // (SHORT-stack-l01_22); it is a loop with a stack of its own. Each comparison still reads
+    // the levels on which the digests tie, so building the chain is quadratic in this build.
+    const DEPTH: usize = 1000;
+    const STACK: usize = 256 << 10;
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(STACK);
+        let run = thread.spawn_scoped(scope, || {
+            let a = chain(Type::atom("z"), DEPTH);
+            let b = chain(Type::atom("z"), DEPTH);
+            assert_eq!(a, b);
+            let c = chain(Type::atom("y"), DEPTH);
+            assert_ne!(a, c);
+            assert_ne!(a.cmp(&c), std::cmp::Ordering::Equal);
+            assert_eq!(a.cmp(&c), c.cmp(&a).reverse());
+        });
+        run.unwrap().join().unwrap();
+    });
+}

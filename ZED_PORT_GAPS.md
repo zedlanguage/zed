@@ -107,7 +107,12 @@ three ways, all confirmed:
 - **Hand-written equality and order.** 12 `Ord` and 12 `PartialEq` impls (`Type`, `Row`, `Rec`,
   `Bdd`, `Part`, `Expr`, `Text`, `Rope`, `Shown`, `Rat`, `F64`, `Value`, `Premises`), and 2 of
   `Hash`. Zed's `==` and natural order are structural and cannot be replaced by a program.
-  `Rec` compares by `id` (types.rs:152), and `Bdd` nodes by an interned number.
+  `Rec` compares by `id` (types.rs:152), and `Bdd` nodes by an interned number. Where two
+  digests tie, the order reads the contents as deep as they go, so it cannot use the call
+  stack: one loop with a stack of its own (`types/bdd.rs` `order`) orders types, rows,
+  morphism types, diagrams and expressions, as the derived order of `Parts` overflowed on
+  types tied a few thousand levels down (SHORT-stack-l01_22). A Zed port's structural order
+  on deep values needs the same, from the language or written by hand.
 
 This matters beyond style. Terms and types are DAGs with heavy sharing. A structural `==` or
 hash walks a DAG as a tree, so it takes exponential time on the depth without a shortcut (the

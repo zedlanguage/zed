@@ -44,7 +44,8 @@ use crate::value::{Items, Value};
 use bdd::{Form, Part};
 
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
-/// types are ordered without reading their contents unless their digests are equal.
+/// types are ordered without reading their contents unless their digests are equal, and then by
+/// the loop of `bdd::order`, which reads the contents with a stack of its own.
 #[derive(Clone, Debug)]
 pub struct Type(Arc<Node>);
 
@@ -55,7 +56,7 @@ impl Ord for Type {
         }
         self.digest()
             .cmp(&other.digest())
-            .then_with(|| self.0.cmp(&other.0))
+            .then_with(|| bdd::order(bdd::Step::Types(self, other)))
     }
 }
 
@@ -149,7 +150,7 @@ pub(crate) fn lit_text(v: &Value) -> String {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq)]
 enum Node {
     Parts(Parts, Shown),
     Rec(Rec),
@@ -226,18 +227,6 @@ impl PartialEq for Shown {
 
 impl Eq for Shown {}
 
-impl PartialOrd for Shown {
-    fn partial_cmp(&self, other: &Shown) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Shown {
-    fn cmp(&self, _: &Shown) -> std::cmp::Ordering {
-        std::cmp::Ordering::Equal
-    }
-}
-
 /// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts are
 /// `make()`, computed on first use. Two nodes are one type only when they are one node.
 struct Rec {
@@ -261,18 +250,6 @@ impl PartialEq for Rec {
 }
 
 impl Eq for Rec {}
-
-impl PartialOrd for Rec {
-    fn partial_cmp(&self, other: &Rec) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Rec {
-    fn cmp(&self, other: &Rec) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
-}
 
 impl fmt::Debug for Rec {
     /// The name, made apart from any text under way on this thread, in which a text not made yet
@@ -310,7 +287,7 @@ impl Universe {
 }
 
 /// A morphism type: `(guarantee ⊆ dom ⊆ permission) -> value`.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Morphism {
     /// The keys certainly present.
     pub guarantee: Type,
@@ -318,6 +295,19 @@ pub struct Morphism {
     pub permission: Type,
     /// The type of every present key's value.
     pub value: Type,
+}
+
+/// By guarantee, then permission, then value, in the loop of `bdd::order`.
+impl Ord for Morphism {
+    fn cmp(&self, other: &Morphism) -> std::cmp::Ordering {
+        bdd::order(bdd::Step::Morphisms(self, other))
+    }
+}
+
+impl PartialOrd for Morphism {
+    fn partial_cmp(&self, other: &Morphism) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// The component types of a tuple type, an atom of the tuple parts, kept with their hash in
@@ -360,7 +350,7 @@ impl Ord for Row {
         self.0
             .0
             .cmp(&other.0.0)
-            .then_with(|| self.0.1.cmp(&other.0.1))
+            .then_with(|| bdd::order(bdd::Step::Rows(self, other)))
     }
 }
 
@@ -384,7 +374,7 @@ impl fmt::Debug for Row {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct Parts {
     /// The hash of the other fields, set by [`Type::new`].
     digest: u64,
@@ -412,7 +402,7 @@ struct Lits {
 
 /// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
 /// The map is persistent, and `sum` is the wrapping sum of its entries' hashes.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Atoms {
     cofinite: bool,
     names: OrdMap<Arc<str>, AtomPart>,
@@ -421,7 +411,7 @@ struct Atoms {
 
 /// The atoms of one name in a type: the bare atom, and those whose payload is in `payload`, a
 /// type within the tuples and structs.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct AtomPart {
     bare: bool,
     payload: Type,
@@ -429,7 +419,7 @@ struct AtomPart {
 
 /// Per length, the tuples of that length, as a part over tuple types of it; a
 /// length not listed has every tuple when `rest`, else none. Tuples of two lengths are disjoint.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Tuples {
     rest: bool,
     lens: BTreeMap<usize, Part<Row>>,
