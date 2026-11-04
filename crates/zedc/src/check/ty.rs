@@ -2717,4 +2717,113 @@ mod tests {
         // Both verdicts occur often, so the comparison is not of one answer.
         assert!(fit > 200 && unfit > 200, "{fit} fit, {unfit} do not");
     }
+
+    /// A random member of the wider family: those of [`member`], and a cofinite set of atoms,
+    /// every atom, an atom whose payload type is empty, a `bool` literal, every `rat`
+    /// and `f64`, tuples of carriers and atoms, a kind-wide part, and, when `open`, a tuple
+    /// holding a variable.
+    fn wider_member(rng: &mut Rng, open: bool) -> Ty {
+        match rng.below(if open { 13 } else { 12 }) {
+            0..=1 => member(rng, open),
+            2 => Ty::set(&atoms() - &KType::atom(&format!("a{}", rng.below(8)))),
+            3 => Ty::set(atoms()),
+            4 => Ty::set(KType::atom_with("e", &KType::empty())),
+            5 => Ty::lit(&Value::Bool(rng.below(2) == 0)),
+            6 => Ty::carrier(Carrier::Rat),
+            7 => Ty::carrier(Carrier::F64),
+            8 => Ty::tuple(vec![
+                Ty::carrier(Carrier::Int),
+                Ty::set(KType::atom(&format!("a{}", rng.below(3)))),
+            ]),
+            9 => Ty::tuple(vec![
+                Ty::carrier(Carrier::Int).union(&Ty::carrier(Carrier::Str)),
+            ]),
+            10 => Ty::set(KType::tuple(vec![KType::top(); 2])),
+            11 => Ty::set(wide()),
+            _ => Ty::tuple(vec![Ty::var("T".into())]),
+        }
+    }
+
+    /// A union of one to three members of the wider family, sometimes with a member of the
+    /// first family.
+    fn wider_union(rng: &mut Rng, open: bool) -> Ty {
+        let k = 1 + rng.below(3);
+        (0..k).fold(Ty::empty(), |t, _| t.union(&wider_member(rng, open)))
+    }
+
+    /// [`near`] with the members of the wider family, a type of no piece kept as it is.
+    fn wider_near(rng: &mut Rng, sa: &Arrow) -> Arrow {
+        let mut vary = |t: &Ty| match (rng.below(3), t.pieces()) {
+            (1, _) => t.union(&wider_member(rng, false)),
+            (2, ps) if !ps.is_empty() => ps[rng.below(ps.len() as u64) as usize].ty(),
+            _ => t.clone(),
+        };
+        Arrow {
+            params: sa.params.iter().map(&mut vary).collect(),
+            result: vary(&sa.result),
+        }
+    }
+
+    /// [`sig`] with `B` bounded by `mask` when given.
+    fn sig_mask(arrows: Vec<Arrow>, width: usize, mask: Option<u8>) -> Sig {
+        let mut s = sig(arrows, width, false);
+        if let Some(m) = mask {
+            s.bounds.insert("B".into(), m);
+            s.note_held();
+        }
+        s
+    }
+
+    #[test]
+    fn the_index_of_arrows_gives_the_verdict_of_every_pair_on_wider_shapes() {
+        // As above, on cofinite and empty-payload atoms, tuples, kind-wide parts and literals,
+        // with `B` of each side bounded or not: `B` of `q` that a parameter holds is a rigid
+        // variable, a bound with OTHER reads `B` of `s` unheld as the unknown.
+        let masks = [None, Some(B_MASK), Some(0b1001), Some(OTHER | 0b1)];
+        let mut rng = Rng(0x00dd_5eed);
+        let (mut fit, mut unfit) = (0, 0);
+        for case in 0..120 {
+            let n = [1, 3, 8, 30, 90][case % 5];
+            let width = 1 + rng.below(2) as usize;
+            let open = case % 3 != 0;
+            let sas: Vec<Arrow> = (0..n)
+                .map(|_| {
+                    let params = (0..width).map(|_| wider_union(&mut rng, open)).collect();
+                    let wide = open && rng.below(4) == 0;
+                    Arrow {
+                        params,
+                        result: wider_union(&mut rng, wide),
+                    }
+                })
+                .collect();
+            let qas: Vec<Arrow> = (0..n.min(30))
+                .map(|_| match rng.below(4) {
+                    0 => Arrow {
+                        params: (0..width).map(|_| wider_union(&mut rng, open)).collect(),
+                        result: wider_union(&mut rng, false),
+                    },
+                    _ => {
+                        let sa = &sas[rng.below(n as u64) as usize];
+                        wider_near(&mut rng, sa)
+                    }
+                })
+                .collect();
+            let s = sig_mask(sas, width, masks[rng.below(4) as usize]);
+            let qm = masks[rng.below(4) as usize];
+            for qa in &qas {
+                let q = sig_mask(vec![qa.clone()], width, qm);
+                let (new, old) = both(&s, &q);
+                assert_eq!(new, old, "case {case}: {q} in {s}");
+                if new {
+                    fit += 1;
+                } else {
+                    unfit += 1;
+                }
+            }
+            let q = sig_mask(qas, width, qm);
+            let (new, old) = both(&s, &q);
+            assert_eq!(new, old, "case {case}: the whole of q");
+        }
+        assert!(fit > 200 && unfit > 200, "{fit} fit, {unfit} do not");
+    }
 }
