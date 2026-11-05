@@ -342,7 +342,7 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
         "bad(x) = x + \"a\" * 2;",
         "shout(s) = upper(s) ++ \"!\";",
         "loud = shout(s: \"hi\") ++ \"?\";",
-        "half(x) = x / 2;",
+        "half(x) = x / 2n;",
     ];
     let text = |order: &[usize]| {
         order

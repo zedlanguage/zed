@@ -113,11 +113,19 @@ fn a_call_that_does_not_fit_is_rejected() {
     assert!(out.contains("missing argument `width`"), "{out}");
     let out = rejected("x = bitAnd(1, b: 2);\n");
     assert!(out.contains("`b` of"), "{out}");
-    // An int literal at an `f64` parameter is the `f64` it names.
-    assert_eq!(x("f64Bits(1)"), x("f64Bits(1.0)"));
+    // A generic literal at an `f64` parameter is the `f64` it names; a plain int is rejected.
+    assert_eq!(x("f64Bits(1n)"), x("f64Bits(1.0)"));
+    let out = rejected("x = f64Bits(1);\n");
+    assert!(out.contains("write `1.0` or `1n`"), "{out}");
     let out = rejected("i = 3 + 4;\nx = f64Bits(i);\n");
     assert!(out.contains("f64Bits"), "{out}");
+    // A float literal is rejected at the literal, a float value at the call.
     let out = rejected("x = bitAnd(1.5, 1);\n");
+    assert!(
+        out.contains("`1.5` is an f64 where `int` is expected"),
+        "{out}"
+    );
+    let out = rejected("f = 1.5;\nx = bitAnd(f, 1);\n");
     assert!(out.contains("bitAnd"), "{out}");
 }
 

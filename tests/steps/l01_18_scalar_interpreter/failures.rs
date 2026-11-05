@@ -64,11 +64,19 @@ fn mixed_kinds_select_no_arrow() {
         errors("x = \"a\" ++ 1;\n"),
         ["`++` does not take (\"a\", 1) [\"a\" ++ 1]"]
     );
+    // A literal keeps its kind: `1.5` is no int, and no form of it is.
     assert_eq!(
         errors("n = 1;\nx = n + 1.5;\n"),
-        ["`+` does not take (1, 1.5) [n + 1.5]"]
+        ["`1.5` is an f64 where `int` is expected; a literal takes no other carrier [1.5]"]
     );
-    // A bare literal adopts the other operand's kind (step L1.26).
-    assert_eq!(x("1 + 1.0"), "2.0");
-    assert_eq!(x("1r/2r * 2"), "1r");
+    assert_eq!(
+        errors("x = 1r/2r * 2;\n"),
+        [
+            "`2` is an int where `rat` is expected; a literal takes no other carrier; write `2r` \
+          or `2n` [2]"
+        ]
+    );
+    // A generic literal takes the other operand's kind (step L1.26a).
+    assert_eq!(x("1n + 1.0"), "2.0");
+    assert_eq!(x("1r/2r * 2n"), "1r");
 }

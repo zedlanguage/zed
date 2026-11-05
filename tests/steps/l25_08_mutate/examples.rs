@@ -81,9 +81,9 @@ fn a_definition_no_table_reaches_has_its_mutants_undetected() {
 
 #[test]
 fn a_multiplication_becomes_a_division_only_where_division_is_defined() {
-    // On `rat` operands `/` is defined: `x / 0.5` gives 8.0, not 2.0. On `int` operands it is
+    // On `rat` operands `/` is defined: `x / 0.5r` gives 8r, not 2r. On `int` operands it is
     // not, so `n * 2` has only its constant's mutants.
-    let half = "half(positional x: rat) = x * 0.5 test { 4.0 -> 2.0 }\n";
+    let half = "half(positional x: rat) = x * 0.5r test { 4r -> 2r }\n";
     assert_eq!(
         report(half),
         ["1 mutants: 1 detected, 0 undetected, 0 skipped, 0 not run"]
@@ -97,10 +97,10 @@ fn a_multiplication_becomes_a_division_only_where_division_is_defined() {
 
 #[test]
 fn a_whole_number_on_rat_has_its_mutants_at_rat() {
-    // `2` adopts `rat`, so `price * 2` is a `rat` product, on which `/` is defined, and the
-    // constant's neighbors are the `rat` values 1 and 3. A table that tries only a price of
+    // The generic `2n` takes `rat`, so `price * 2n` is a `rat` product, on which `/` is defined,
+    // and the constant's neighbors are the `rat` values 1 and 3. A table that tries only a price of
     // zero detects none of them; one that tries 3 detects all three.
-    let only_zero = "doubled(positional price: rat) = price * 2 test { 0 -> 0 }\n";
+    let only_zero = "doubled(positional price: rat) = price * 2n test { 0r -> 0r }\n";
     assert_eq!(
         report(only_zero),
         [
@@ -113,13 +113,13 @@ fn a_whole_number_on_rat_has_its_mutants_at_rat() {
             "3 mutants: 0 detected, 3 undetected, 0 skipped, 0 not run",
         ]
     );
-    let three = "doubled(positional price: rat) = price * 2 test { 3 -> 6 }\n";
+    let three = "doubled(positional price: rat) = price * 2n test { 3r -> 6r }\n";
     assert_eq!(
         report(three),
         ["3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run"]
     );
-    // On `f64` too `/` is defined, and the constant adopts `f64`.
-    let scaled = "scaled(positional x: f64) = x * 4 test { 2.0 -> 8.0 }\n";
+    // On `f64` too `/` is defined, and the generic constant takes `f64`.
+    let scaled = "scaled(positional x: f64) = x * 4n test { 2.0 -> 8.0 }\n";
     assert_eq!(
         report(scaled),
         ["3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run"]

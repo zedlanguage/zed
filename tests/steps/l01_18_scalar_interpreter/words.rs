@@ -46,8 +46,16 @@ fn summing_an_order() {
     assert_eq!(x("sum((1.5, 2.25))"), "3.75");
     assert_eq!(x("sum((1r/2r, 1r/3r))"), "5r/6r");
     assert_eq!(x("sum((9, int(\"x\")))"), "#invalid");
-    // An integer literal beside an f64 is read as one (DESIGN.md L1.26); a string is no number.
-    assert_eq!(x("sum((1, 2.0))"), "3.0");
+    // A generic integer literal beside an f64 is read as one (DESIGN.md L1.26a), a plain one
+    // is rejected; a string is no number.
+    assert_eq!(x("sum((1n, 2.0))"), "3.0");
+    assert_eq!(
+        errors("x = sum((1, 2.0));\n"),
+        [
+            "`1` is an int where `f64` is expected; a literal takes no other carrier; write `1.0` \
+          or `1n` [1]"
+        ]
+    );
     assert_eq!(
         errors("x = sum((1, \"a\"));\n"),
         ["`sum` does not take (1, \"a\") [sum((1, \"a\"))]"]
@@ -63,8 +71,16 @@ fn min_and_max_of_each_number_kind() {
     assert_eq!(x("max(9223372036854775807 + 1, 0)"), "9223372036854775808");
     assert_eq!(x("min(min(4, 2), 3)"), "2");
     assert_eq!(x("3.max(7)"), "7");
-    // An integer literal beside an f64 is read as one (DESIGN.md L1.26).
-    assert_eq!(x("max(0, 2.5)"), "2.5");
+    // A generic integer literal beside an f64 is read as one (DESIGN.md L1.26a); a plain one
+    // is rejected.
+    assert_eq!(x("max(0n, 2.5)"), "2.5");
+    assert_eq!(
+        errors("x = max(0, 2.5);\n"),
+        [
+            "`0` is an int where `f64` is expected; a literal takes no other carrier; write `0.0` \
+          or `0n` [0]"
+        ]
+    );
     assert_eq!(
         crate::l01_16_elaboration::value("f = max;\nx = f(1, 2);\n", "x"),
         "2"

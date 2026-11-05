@@ -79,7 +79,7 @@ fn a_file_that_is_not_utf8_fails_and_a_missing_file_is_a_usage_error() {
 
 #[test]
 fn a_unit_with_no_tests_fails_so_a_run_that_finds_none_fails() {
-    let a = unit("none.zed", "vat(positional price: rat) = price * 1.2;\n");
+    let a = unit("none.zed", "vat(positional price: rat) = price * 1.2r;\n");
     assert_eq!(
         run(&[&a]),
         (

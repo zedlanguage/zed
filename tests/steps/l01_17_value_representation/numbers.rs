@@ -89,9 +89,30 @@ fn numbers_of_different_kinds_do_not_mix() {
         errors("x = 1r;\na = x + f64(1);\n"),
         ["`+` does not take (1r, f64) [x + f64(1)]"]
     );
-    // A bare literal adopts the kind the other side expects, exactly (step L1.26); `1r` is
-    // decorated and keeps its kind.
-    assert_eq!(value("a = 1r + 1;\n", "a"), "2r");
-    assert_eq!(value("b = 1r < 2.0;\n", "b"), "true");
-    assert_eq!(value("c = 1 == 1.0;\n", "c"), "true");
+    // A plain literal keeps its kind too, and is rejected with the forms to write; a generic
+    // literal `1n` takes the kind the other side expects, exactly (steps L1.26, L1.26a).
+    assert_eq!(
+        errors("a = 1r + 1;\n"),
+        [
+            "`1` is an int where `rat` is expected; a literal takes no other carrier; write `1r` \
+          or `1n` [1]"
+        ]
+    );
+    assert_eq!(
+        errors("b = 1r < 2.0;\n"),
+        [
+            "`2.0` is an f64 where `rat` is expected; a literal takes no other carrier; write \
+          `2.0r` [2.0]"
+        ]
+    );
+    assert_eq!(
+        errors("c = 1 == 1.0;\n"),
+        [
+            "`1` is an int where `f64` is expected; a literal takes no other carrier; write `1.0` \
+          or `1n` [1]"
+        ]
+    );
+    assert_eq!(value("a = 1r + 1n;\n", "a"), "2r");
+    assert_eq!(value("b = 1r < 2n;\n", "b"), "true");
+    assert_eq!(value("c = 1n == 1.0;\n", "c"), "true");
 }

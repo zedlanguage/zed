@@ -37,7 +37,7 @@ fn a_port_dependent_definition_is_run_stage() {
 
 #[test]
 fn a_definition_nothing_reads_is_never_evaluated() {
-    let src = format!("broken = 1 / 0;\nunused = broken + 1;\n{UPTIME}");
+    let src = format!("broken = 1 div 0;\nunused = broken + 1;\n{UPTIME}");
     let (p, s, report) = staged(&src);
     assert_eq!(report.unread, ["broken", "unused"]);
     assert!(report.left.is_empty());

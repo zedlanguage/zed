@@ -459,11 +459,11 @@ fn a_literal_compared_with_a_union() {
     let want = menu("1", "an int", "rat | f64", "`1.0` or `1r`", "1");
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x == 1;\n"),
-        [want.clone()]
+        [want.as_str()]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = 1 != x;\n"),
-        [want.clone()]
+        [want.as_str()]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x == 1n;\n"),
@@ -500,4 +500,80 @@ fn generic_literals_in_a_tuple_compared_with_a_union_of_tuple_shapes_take_across
         type_errors("isAt(positional p: (f64, f64) | (rat, rat)) = p == (1, 2.0);\n"),
         [menu("1", "an int", "rat | f64", "`1.0` or `1r`", "1")]
     );
+}
+
+#[test]
+fn a_plain_literal_is_rejected_at_each_kind_of_declared_type() {
+    // A typed parameter's default is checked against its type, as an argument is.
+    assert_eq!(
+        type_errors("scaled(x: f64, scale: f64 = 2) = x * scale;\n"),
+        [menu("2", "an int", "f64", "`2.0` or `2n`", "2")]
+    );
+    assert_eq!(
+        type_errors("scaled(x: f64, scale: f64 = \"x\") = x * scale;\n"),
+        ["the default of `scale` is \"x\", not f64 [\"x\"]"]
+    );
+    assert!(type_errors("scaled(x: f64, scale: f64 = 2n) = x * scale;\n").is_empty());
+    // A literal in another base has no decimal form: only its generic form is offered.
+    let f = "f(positional x: f64) = x;\n";
+    assert_eq!(
+        type_errors(&format!("{f}y = f(0xFF);\n")),
+        [menu("0xFF", "an int", "f64", "`0xFFn`", "0xFF")]
+    );
+    assert_eq!(value(&format!("{f}y = f(0xFFn);\n"), "y"), "255.0");
+    // A negative literal: the menu names the negation, and the span is the literal.
+    assert_eq!(
+        type_errors(&format!("{f}y = f(-3);\n")),
+        [menu("-3", "an int", "f64", "`-3.0` or `-3n`", "3")]
+    );
+    assert_eq!(value(&format!("{f}y = f(-3n);\n"), "y"), "-3.0");
+}
+
+/// `n` plain integers at an `f64` parameter, and `n` compared by `==` with a parameter whose
+/// class `0.5` fixed at f64: each is rejected with its menu, `2 n` errors in all.
+fn menus(n: usize) -> String {
+    let calls: String = (0..n).map(|i| format!("y{i} = f({i});\n")).collect();
+    let tests: Vec<String> = (0..n).map(|i| format!("x == {i}")).collect();
+    format!(
+        "f(positional x: f64) = x;\n{calls}g(positional x) = x == 0.5 || {};\n",
+        tests.join(" || ")
+    )
+}
+
+#[test]
+fn rejecting_plain_literals_with_their_menus_scales() {
+    assert_eq!(
+        type_errors(&menus(2)),
+        [
+            menu("0", "an int", "f64", "`0.0` or `0n`", "0"),
+            menu("1", "an int", "f64", "`1.0` or `1n`", "1"),
+            menu("0", "an int", "f64", "`0.0` or `0n`", "0"),
+            menu("1", "an int", "f64", "`1.0` or `1n`", "1"),
+        ]
+    );
+    // A copy of every earlier error at each menu takes 45.2 times the bytes from 256 to 2,048
+    // here, and fails; a scan of every earlier error's text at each menu does not, since the
+    // checker's own work at each rejected literal is far larger than the scan up to n = 8,192.
+    use zed_tests::deep::statements;
+    let n = 256;
+    let units: Vec<_> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let stmts = statements(&menus(m));
+            let res = zedc::resolve::resolve(&stmts).unwrap();
+            (m, stmts, res)
+        })
+        .collect();
+    scaling::on_a_thread(1 << 29, || {
+        scaling::check_order(
+            "rejecting n plain literals at a parameter and n compared with a class",
+            n,
+            1,
+            |m| {
+                let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
+                let info = zedc::check::check(stmts, res);
+                assert_eq!(info.errors.len(), 2 * m);
+            },
+        );
+    });
 }

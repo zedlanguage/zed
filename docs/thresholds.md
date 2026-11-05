@@ -69,7 +69,10 @@ describes, and it stops by the height of that lattice, not by a constant.
   list of arrows: `area(w, h) = w * h` is `(w: T, h: T) -> T` with `T` in int, f64, rat.
   The list of arrows is the product of the sets, and is printed only when asked for.
 - A class that holds a literal takes the first carrier of its set in the order int, f64,
-  rat, since the body elaborates once (this is what "the fewest adoptions" selects today).
+  rat, since the body elaborates once. *Changed 2026-11-05 (LIT-plain):* a plain literal
+  adopts no carrier, so a class it joins keeps only that literal's carrier; only a class
+  that holds generic literals `kn` alone, with no parameter of it in scope, still takes the
+  first of int, f64 and rat.
 - A call instantiates the classes. Where a class reaches one argument position, each part
   of a union argument is checked against its set separately; where it reaches several, the
   parts must all be one carrier. Both are linear in the parts, so no product is formed.
@@ -103,6 +106,9 @@ number of undeclared parameters before.
   linear in the parts.
 - A function's own recursive call (not yet reachable, L6) flows its arguments into its
   classes.
+- *2026-11-05 (LIT-plain):* a plain literal joins its class keeping only its own carrier, and
+  where a type does not hold that carrier it is rejected with the forms to write (`1.0`,
+  `1r`, `1n`); no plain literal is elaborated at a carrier other than its own.
 
 Mutants of `check/mod.rs`, each caught by a step test: a class emptied without an error,
 merged classes taking the union of their carriers, a literal not fixing its class's carrier,

@@ -124,7 +124,7 @@ fn a_rebinding_points_at_the_first_binding() {
 #[test]
 fn an_error_in_a_function_is_at_the_use_that_leaves_its_parameter_no_carrier() {
     let out = rejected(
-        "badge(positional x) = \"#\" ++ x * 2;
+        "badge(positional x) = \"#\" ++ x * 2n;
 main(stdin: Lines) -> (stdout: Lines) {
   stdout <- badge(3);
 }
@@ -136,7 +136,6 @@ main(stdin: Lines) -> (stdout: Lines) {
     for step in [
         "this `*` gives int | f64 | rat",
         "`x` is int | f64 | rat here",
-        "the literal 2 takes int | f64 | rat",
         "`++` takes (String, String) -> String",
     ] {
         assert!(s.contains(&step), "{step}\n{out}");

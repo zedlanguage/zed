@@ -41,16 +41,20 @@ fn units() -> Vec<(String, Vec<u8>)> {
         b"f(x: #a .. #b -> int) = 0;\nmain() = 0;\n".to_vec(),
     ));
     out.push((
-        "a literal at a union of two carriers it can adopt".into(),
+        "a generic literal at a union of two carriers it can adopt".into(),
+        b"f(positional x: f64 | rat) = x;\nmain() = f(1n);\n".to_vec(),
+    ));
+    out.push((
+        "a plain literal at a union of two carriers".into(),
         b"f(positional x: f64 | rat) = x;\nmain() = f(1);\n".to_vec(),
     ));
     out.push((
-        "literals in a tuple at a union of tuple shapes".into(),
-        b"tu(positional p: (f64, f64) | (String, f64)) = p;\nmain() = tu((1, 2));\n".to_vec(),
+        "generic literals in a tuple at a union of tuple shapes".into(),
+        b"tu(positional p: (f64, f64) | (String, f64)) = p;\nmain() = tu((1n, 2n));\n".to_vec(),
     ));
     out.push((
-        "a literal compared with a union of two carriers it can adopt".into(),
-        b"f(positional x: f64 | rat) = x == 1;\nmain() = f(1.0);\n".to_vec(),
+        "a generic literal compared with a union of two carriers it can adopt".into(),
+        b"f(positional x: f64 | rat) = x == 1n;\nmain() = f(1.0);\n".to_vec(),
     ));
     out.push((
         "literals in a tuple compared with a union of tuple shapes".into(),
@@ -102,12 +106,12 @@ fn batch_and_single_file_checking_agree() {
     // A literal at a type that names no one carrier is rejected the same way on both paths.
     let at = units
         .iter()
-        .position(|(name, _)| name == "a literal at a union of two carriers it can adopt")
+        .position(|(name, _)| name == "a generic literal at a union of two carriers it can adopt")
         .expect("the unit");
     assert_eq!(
         batch[at].as_deref(),
         Some(
-            "2:12: `1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and \
+            "2:12: `1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and \
              f64; write the one meant, as `1r` or `1.0`\n  \
              [1] 1:1: `f` is declared here, `(rat | f64) -> rat | f64`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
@@ -118,12 +122,12 @@ fn batch_and_single_file_checking_agree() {
     let at = units
         .iter()
         .position(|(name, _)| {
-            name == "a literal compared with a union of two carriers it can adopt"
+            name == "a generic literal compared with a union of two carriers it can adopt"
         })
         .expect("the unit");
     let answer = batch[at].as_deref().expect("a rejection");
     assert!(
-        answer.starts_with("1:35: `1` at `rat | f64` adopts no one carrier"),
+        answer.starts_with("1:35: `1n` at `rat | f64` adopts no one carrier"),
         "{answer}"
     );
 }
