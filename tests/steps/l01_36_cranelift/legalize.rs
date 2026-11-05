@@ -7,7 +7,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use zed_kernel::term::build::{if_, lit, prim};
+use zed_kernel::term::Shared;
+use zed_kernel::term::build::{app, if_, lam, let_, lit, prim};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_tests::scaling;
 use zedc::zir::legalize::{Expansion, Expansions, legalize};
@@ -20,11 +21,16 @@ use super::{float, kernel};
 /// `g`'s value natively, on the counting machine, and by the kernel on the term the machine's
 /// graph raises to; each back end gets `g` legalized by its own declaration.
 fn every_back_end(g: &Region) -> [Result<Value, String>; 3] {
-    let n = Arc::new(zed_native::legalize(g.clone()));
-    let native = zed_native::run(&n, &plan(&n, true), &mut Evaluator::new(World::new()));
+    let n = zed_native::legalize(g.clone());
+    let native = zed_native::run(
+        &n,
+        &plan(n.graph(), true),
+        &mut Evaluator::new(World::new()),
+    );
     let m = legalize(g.clone(), memory::EXPANSIONS);
-    let machine = memory::run(&m, &plan(&m, true), &mut Evaluator::new(World::new()));
-    let kernel = raise(&m).and_then(|t| super::kernel(&t));
+    let m = m.graph();
+    let machine = memory::run(m, &plan(m, true), &mut Evaluator::new(World::new()));
+    let kernel = raise(m).and_then(|t| super::kernel(&t));
     [native.map(|o| o.value), machine.map(|(v, _)| v), kernel]
 }
 
@@ -90,6 +96,140 @@ r results (r.0^0)
 ";
 
 #[test]
+fn a_refused_comparison_names_the_operator_and_operands_as_written() {
+    // A weight compared with a city's name: the refusal shows `>` or `>=` on its operands in
+    // the order the program wrote them, though the Cranelift back end computes `<` or `<=` on
+    // them swapped.
+    for (p, written) in [(Prim::Gt, "Gt"), (Prim::Ge, "Ge")] {
+        for weight_first in [true, false] {
+            let types = if weight_first {
+                "`int`, `String`"
+            } else {
+                "`String`, `int`"
+            };
+            let want = format!("type error: {written} applied to {types}");
+            for t in refused_comparisons(p, weight_first) {
+                assert_eq!(kernel(&t), Err(want.clone()), "{t:?}");
+                for got in every_back_end(&lower(&t).unwrap()) {
+                    assert_eq!(got, Err(want.clone()), "{t:?}");
+                }
+            }
+        }
+    }
+}
+
+/// The weight `1` compared by `p` with the city "Oslo", the weight first or second: alone; in
+/// the body of a `fam`, which the kernel runs whole, the weight being its key; and in a
+/// function the kernel is handed as a value and calls on the weight.
+fn refused_comparisons(p: Prim, weight_first: bool) -> [Term; 3] {
+    let compared = |w: Term| {
+        let city = lit("Oslo");
+        let args = if weight_first {
+            vec![w, city]
+        } else {
+            vec![city, w]
+        };
+        prim(p, args)
+    };
+    let weights = || lit(Value::Family(zed_kernel::Family::of([(1i64, 0i64)])));
+    let w = || Term::Var("w".into());
+    let fam = |body: Term| Term::Fam {
+        domain: Shared::new(weights()),
+        var: "w".into(),
+        body: Shared::new(body),
+    };
+    [
+        compared(lit(1i64)),
+        fam(compared(w())),
+        let_(
+            "check",
+            lam(&["x"], compared(Term::Var("x".into()))),
+            fam(app(Term::Var("check".into()), vec![w()])),
+        ),
+    ]
+}
+
+/// The bytes of the stack a native run maps (`zed_rt::Stack::new`): memory and swap together,
+/// to a page or two.
+fn native_stack() -> u64 {
+    let info = std::fs::read_to_string("/proc/meminfo").expect("Linux has /proc");
+    let kib = |key: &str| -> u64 {
+        info.lines()
+            .find_map(|l| l.strip_prefix(key))
+            .and_then(|v| v.trim().strip_suffix("kB"))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("/proc/meminfo has {key} in kB"))
+    };
+    (kib("MemTotal:") + kib("SwapTotal:") + 8) << 10
+}
+
+/// Two weights that agree in their first `2^30` bits, compared with `>` and `>=` when the
+/// system has too little memory left to tell them apart: each back end refuses with the
+/// operator the program wrote.
+#[test]
+fn an_order_refused_its_memory_names_the_operator_as_written() {
+    use super::super::l01_17_value_representation::memory_check::{
+        MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by,
+    };
+    if !in_child_at(
+        module_path!(),
+        "an_order_refused_its_memory_names_the_operator_as_written",
+    ) {
+        return;
+    }
+    let heavy = Value::integer(zed_kernel::Rat::int(
+        (num_bigint::BigInt::from(1u32) << WIDE) + 1u32,
+    ));
+    let light = Value::integer(
+        zed_kernel::Rat::int(num_bigint::BigInt::from(2))
+            .pow(&num_bigint::BigUint::from(WIDE))
+            .expect("a power of two is kept"),
+    );
+    // The graph is built here, not lowered: lowering gives each constant a content address
+    // from its decimal digits, which for a number of 2^30 bits takes minutes.
+    let cases = [(Prim::Gt, ">"), (Prim::Ge, ">=")].map(|(p, op)| {
+        let g = Region {
+            kind: RegionKind::Function,
+            args: Vec::new(),
+            nodes: vec![Node {
+                op: Op::Prim(p),
+                inputs: vec![Src::Const(heavy.clone()), Src::Const(light.clone())],
+                outputs: vec![Edge::value(zed_kernel::types::Type::bool())],
+                regions: Vec::new(),
+            }],
+            results: vec![Src::Out(0, 0)],
+        };
+        (
+            op,
+            zed_native::legalize(g.clone()),
+            legalize(g, memory::EXPANSIONS),
+        )
+    });
+    // A native run maps a stack as large as memory first, which leaves it the margin.
+    lower_limit_by(native_stack() + MARGIN);
+    let native: Vec<_> = cases
+        .iter()
+        .map(|(_, n, _)| {
+            let p = plan(n.graph(), true);
+            zed_native::run(n, &p, &mut Evaluator::new(World::new())).map(|o| o.value)
+        })
+        .collect();
+    lower_limit();
+    for ((op, _, m), native) in cases.iter().zip(native) {
+        let m = m.graph();
+        let machine = memory::run(m, &plan(m, true), &mut Evaluator::new(World::new()));
+        let kernel = raise(m).and_then(|t| super::kernel(&t));
+        let want = kernel.unwrap_err();
+        assert!(
+            want.starts_with(&format!("`{op}` must compare two numbers")),
+            "{want}"
+        );
+        assert_eq!(machine.map(|(v, _)| v), Err(want.clone()), "{op}: machine");
+        assert_eq!(native, Err(want.clone()), "{op}: native");
+    }
+}
+
+#[test]
 fn a_derived_node_runs_as_its_certificate_on_every_back_end() {
     let g = text::parse(PARCELS).unwrap();
     for got in every_back_end(&g) {
@@ -102,17 +242,20 @@ fn an_expansion_that_yields_another_is_expanded_too() {
     // The certificate's `>` is in the root region once the `scan` is expanded, and the
     // Cranelift back end, which declares `>` expanded, gets it as `<` on swapped inputs.
     let g = text::parse(PARCELS).unwrap();
+    let n = zed_native::legalize(g.clone());
     assert_eq!(
-        text::print(&zed_native::legalize(g.clone())),
+        text::print(n.graph()),
         "zir 1\n\
          r region function ()\n\
          r.0 prim + (1200, 450) -> (int)\n\
          r.1 prim < (1500, r.0^0) -> (bool)\n\
          r results (r.1^0)\n"
     );
+    // Of the two nodes left, the `<` is the one swapped.
+    assert!(!n.swapped().contains(0) && n.swapped().contains(1));
     // The machine expands the `scan` and keeps the `>`, which its kernel runs.
     assert_eq!(
-        text::print(&legalize(g, memory::EXPANSIONS)),
+        text::print(legalize(g, memory::EXPANSIONS).graph()),
         "zir 1\n\
          r region function ()\n\
          r.0 prim + (1200, 450) -> (int)\n\
@@ -132,7 +275,9 @@ fn greater_than_as_a_function_value_is_not_rewritten() {
          r results (r.0^0)\n",
     )
     .unwrap();
-    assert_eq!(zed_native::legalize(g.clone()), g);
+    let n = zed_native::legalize(g.clone());
+    assert_eq!(**n.graph(), g);
+    assert!(!n.swapped().contains(0));
 }
 
 #[test]
@@ -154,7 +299,7 @@ fn a_comparison_inside_a_lambda_and_a_branch_is_expanded() {
          r results (r.2^0)\n",
     )
     .unwrap();
-    let n = text::print(&zed_native::legalize(g.clone()));
+    let n = text::print(zed_native::legalize(g.clone()).graph());
     assert!(n.contains("r.0/0.0 prim <= (18, r.0/0^0)"), "{n}");
     assert!(n.contains("r.2/0.0 prim < (3, 7)"), "{n}");
     for got in every_back_end(&g) {
@@ -164,9 +309,15 @@ fn a_comparison_inside_a_lambda_and_a_branch_is_expanded() {
 
 #[test]
 fn each_back_end_refuses_what_it_declared_expanded_by_name() {
-    // Cranelift handed a `>` that legalization did not expand names it.
-    let g = Arc::new(lower(&prim(Prim::Gt, vec![lit(2i64), lit(1i64)])).unwrap());
-    let err = zed_native::run(&g, &plan(&g, true), &mut Evaluator::new(World::new()));
+    // Cranelift handed a `>` that legalization did not expand, the graph legalized for the
+    // machine, names it.
+    let t = prim(Prim::Gt, vec![lit(2i64), lit(1i64)]);
+    let g = legalize(lower(&t).unwrap(), memory::EXPANSIONS);
+    let err = zed_native::run(
+        &g,
+        &plan(g.graph(), true),
+        &mut Evaluator::new(World::new()),
+    );
     let err = err.map(|o| o.value).unwrap_err();
     assert!(
         err.contains("`prim >` has no lowering here") && err.contains("(gt)"),
@@ -243,8 +394,10 @@ fn legalization_is_linear_in_the_graph() {
     let pool = |k: usize, runs: usize| Mutex::new((0..runs).map(|_| parcel_checks(k)).collect());
     let (small, large): (Mutex<Vec<Region>>, Mutex<Vec<Region>>) =
         (pool(n, small_runs), pool(scaling::FACTOR * n, large_runs));
-    let g = zed_native::legalize(parcel_checks(3));
-    assert_eq!(g.nodes.len(), 6);
+    let l = zed_native::legalize(parcel_checks(3));
+    let g = l.graph();
+    assert_eq!((g.nodes.len(), l.nodes()), (6, 6));
+    assert!((0..6).all(|k| l.swapped().contains(k)));
     assert!(
         g.nodes
             .iter()

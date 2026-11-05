@@ -132,7 +132,7 @@ fn a_function_that_pushes_and_is_called_twice_runs_natively() {
         ),
     );
     let (g, p) = super::planned(&t);
-    assert_eq!(super::super::l01_33_lowering::count(&g, "lambda"), 1);
+    assert_eq!(super::super::l01_33_lowering::count(g.graph(), "lambda"), 1);
     let world = || World::new().output("stdout");
     let mut ev = Evaluator::new(world());
     let got = zed_native::run(&g, &p, &mut ev).unwrap();

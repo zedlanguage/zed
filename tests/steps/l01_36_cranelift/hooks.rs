@@ -44,7 +44,7 @@ fn refused(t: &Term, w: World) -> String {
     let (g, p) = planned(t);
     let n = zed_native::run(&g, &p, &mut Evaluator::new(w.clone())).map(|o| o.value);
     assert_eq!(n, Err(k.clone()), "{t}: native");
-    let m = memory::run(&g, &p, &mut Evaluator::new(w)).map(|(v, _)| v);
+    let m = memory::run(g.graph(), &p, &mut Evaluator::new(w)).map(|(v, _)| v);
     assert_eq!(m, Err(k.clone()), "{t}: machine");
     k
 }

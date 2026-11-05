@@ -22,11 +22,11 @@ use zed_tests::scaling::check_order;
 const CHILD: &str = "ZED_L1_17A_UNDER_LIMIT";
 
 /// The address space the child may take beyond what it holds once its operands are built.
-const MARGIN: u64 = 64 << 20;
+pub(crate) const MARGIN: u64 = 64 << 20;
 
 /// The width, in bits, of the operands in the child: 128 MiB, twice [`MARGIN`], so building
 /// any of them again is refused.
-pub(super) const WIDE: u64 = 1 << 30;
+pub(crate) const WIDE: u64 = 1 << 30;
 
 /// In the parent, runs the test `name` of this module again in a child process and returns
 /// `false` once it has passed there; in the child, returns `true`.
@@ -35,7 +35,7 @@ fn in_child(name: &str) -> bool {
 }
 
 /// [`in_child`] for the test `name` of the module `module`.
-pub(super) fn in_child_at(module: &str, name: &str) -> bool {
+pub(crate) fn in_child_at(module: &str, name: &str) -> bool {
     if std::env::var_os(CHILD).is_some() {
         return true;
     }
@@ -65,13 +65,13 @@ pub(super) fn in_child_at(module: &str, name: &str) -> bool {
 
 /// Lowers this process's address-space limit to what it uses now plus [`MARGIN`], and checks
 /// that a request of twice the margin is then refused.
-pub(super) fn lower_limit() {
+pub(crate) fn lower_limit() {
     lower_limit_by(MARGIN);
 }
 
 /// Lowers this process's address-space limit to what it uses now plus `margin` bytes, and
 /// checks that a request of twice the margin is then refused.
-pub(super) fn lower_limit_by(margin: u64) {
+pub(crate) fn lower_limit_by(margin: u64) {
     let status = std::fs::read_to_string("/proc/self/status").expect("Linux has /proc");
     let kib: u64 = status
         .lines()

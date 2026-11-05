@@ -9,12 +9,10 @@
 //! long, `LONG` characters for each operation and lines of `LINE`, that a scan or a copy of a
 //! whole string per operation would outweigh the compiling.
 
-use std::sync::Arc;
-
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_tests::scaling;
-use zedc::zir::Region;
+use zedc::zir::legalize::Legalized;
 use zedc::zir::memory::Plan;
 
 use super::planned;
@@ -101,7 +99,7 @@ fn on_big_stack(f: impl FnOnce() + Send) {
 }
 
 /// The program and world of each size, made before the timing.
-type Made = [(usize, Term, (Arc<Region>, Plan), World); 2];
+type Made = [(usize, Term, (Legalized, Plan), World); 2];
 
 fn made(n: usize, make: impl Fn(usize) -> Term, world: impl Fn(usize) -> World) -> Made {
     [n, scaling::FACTOR * n].map(|m| {

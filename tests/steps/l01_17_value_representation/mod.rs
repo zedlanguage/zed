@@ -8,7 +8,7 @@ mod asks;
 mod atoms;
 mod equality;
 mod in_place;
-mod memory_check;
+pub(crate) mod memory_check;
 mod numbers;
 mod order;
 mod powers;

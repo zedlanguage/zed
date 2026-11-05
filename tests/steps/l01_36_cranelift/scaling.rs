@@ -41,8 +41,8 @@ fn world(n: usize) -> World {
 /// `t` run by the counting machine and natively in `w`: both values, printed, which agree.
 fn both(t: &Term, w: &World) -> String {
     let (g, p) = planned(t);
-    let (v, _) =
-        memory::run(&g, &p, &mut Evaluator::new(w.clone())).unwrap_or_else(|e| panic!("{t}: {e}"));
+    let (v, _) = memory::run(g.graph(), &p, &mut Evaluator::new(w.clone()))
+        .unwrap_or_else(|e| panic!("{t}: {e}"));
     let o = zed_native::run(&g, &p, &mut Evaluator::new(w.clone()))
         .unwrap_or_else(|e| panic!("{t}: {e}"));
     assert_eq!(o.value, v);
@@ -188,8 +188,8 @@ fn counted(t: &Term) -> String {
 /// [`counted`], with the ports of `w`.
 pub(super) fn counted_in(t: &Term, w: World) -> String {
     let (g, p) = planned(t);
-    let (v, s) =
-        memory::run(&g, &p, &mut Evaluator::new(w.clone())).unwrap_or_else(|e| panic!("{t}: {e}"));
+    let (v, s) = memory::run(g.graph(), &p, &mut Evaluator::new(w.clone()))
+        .unwrap_or_else(|e| panic!("{t}: {e}"));
     let o = zed_native::run(&g, &p, &mut Evaluator::new(w)).unwrap_or_else(|e| panic!("{t}: {e}"));
     assert_eq!(o.value, v);
     let native = (o.stats.increments, o.stats.decrements, o.stats.allocations);
@@ -305,7 +305,7 @@ fn a_condition_that_is_a_cell_fails_as_the_machine_fails() {
     let once = with_cell(prim(Prim::Tuple, vec![if_(var("s"), lit(1i64), lit(2i64))]));
     for t in [t, once] {
         let (g, p) = planned(&t);
-        let machine = memory::run(&g, &p, &mut Evaluator::new(World::new()));
+        let machine = memory::run(g.graph(), &p, &mut Evaluator::new(World::new()));
         let native = zed_native::run(&g, &p, &mut Evaluator::new(World::new()));
         match (machine, native) {
             (Ok((v, s)), Ok(o)) => {
@@ -367,7 +367,7 @@ fn compiles_on_a_small_stack(t: Term) {
 fn runs_as_the_machine_does((t, want): (Term, String)) {
     on_big_stack(|| {
         let (g, p) = planned(&t);
-        let (v, s) = memory::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+        let (v, s) = memory::run(g.graph(), &p, &mut Evaluator::new(World::new())).unwrap();
         assert_eq!(v.to_string(), want);
         on_stack(1 << 24, || {
             let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();

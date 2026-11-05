@@ -3,7 +3,6 @@
 //! stops at the constant and writes no count, as the counting machine does; the kernel, the
 //! machine and native code agree with fusion and without it.
 
-use std::sync::Arc;
 use zed_kernel::Shared;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
@@ -55,9 +54,9 @@ fn below_a_constant_in_a_shared_cell() -> Term {
 fn agrees(t: &Term, want: Value) {
     assert_eq!(kernel(t).unwrap(), want);
     for fuse in [true, false] {
-        let g = Arc::new(zed_native::legalize(lower(t).unwrap()));
-        let p = plan(&g, fuse);
-        let (v, s) = run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+        let g = zed_native::legalize(lower(t).unwrap());
+        let p = plan(g.graph(), fuse);
+        let (v, s) = run(g.graph(), &p, &mut Evaluator::new(World::new())).unwrap();
         let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
         assert_eq!((&v, &o.value), (&want, &want), "fuse {fuse}");
         assert_eq!(

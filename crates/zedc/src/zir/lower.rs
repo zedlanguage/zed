@@ -49,6 +49,7 @@ use std::sync::Arc;
 use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
 use zed_kernel::types::Type;
 
+use super::legalize::{Swapped, written};
 use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name, validate};
 use crate::address::ContentAddress;
 use crate::canon::Facet;
@@ -1449,21 +1450,50 @@ pub fn raise(g: &Region) -> Result<Term, String> {
         ));
     }
     let units = vec![unit(); g.args.len()];
-    raise_from(Raising::region(g, units, Caps::Given(&[]), 0), "r")
+    raise_from(Raising::region(g, units, Caps::Given(&[]), 0), "r", None)
 }
 
 /// The term region `r` computes, its arguments being `args`: [`raise`] for a region that is
 /// not a root, such as a function's body with its captured values (step L1.34).
 pub fn raise_with(r: &Region, args: &[Term]) -> Result<Term, String> {
-    raise_from(Raising::region(r, Vec::new(), Caps::Given(args), 0), "r")
+    raise_from(
+        Raising::region(r, Vec::new(), Caps::Given(args), 0),
+        "r",
+        None,
+    )
 }
 
 /// The term `node` computes alone, its inputs being `ins`. It reads the node's regions and
 /// no copy of them, so a caller holding a node of any depth pays only for the node's own
 /// inputs and, when the term runs, what it raises.
-pub fn raise_node(node: &Node, ins: &[Term]) -> Result<Term, String> {
+///
+/// `node` is node `number` of a legalized graph whose swapped nodes are `swapped`
+/// ([`super::legalize::Legalized`]): a swapped node, `node` or one in its regions, is raised
+/// as the operator the program wrote on its inputs in written order, so the kernel's refusal
+/// names what the program wrote.
+pub fn raise_node(
+    node: &Node,
+    number: usize,
+    swapped: &Swapped,
+    ins: &[Term],
+) -> Result<Term, String> {
     let at = "r.0";
-    raise_from(Raising::node(node, Cow::Borrowed(ins), at, 0)?, at)
+    let first = swapped.contains(number);
+    let mut written = Written {
+        swapped,
+        next: number + 1,
+    };
+    raise_from(
+        Raising::node(node, Cow::Borrowed(ins), at, 0, first)?,
+        at,
+        Some(&mut written),
+    )
+}
+
+/// The swapped nodes of a legalized graph, and the number of the next node raised.
+struct Written<'s> {
+    swapped: &'s Swapped,
+    next: usize,
 }
 
 fn unit() -> Term {
@@ -1505,6 +1535,8 @@ enum Raising<'g> {
         names: Vec<Arc<str>>,
         /// The arms' patterns, their binders renamed, of a `match`.
         pats: Vec<Pattern>,
+        /// Whether legalization swapped the node: it is raised as the operator written.
+        swapped: bool,
         mark: usize,
     },
 }
@@ -1526,6 +1558,7 @@ impl<'g> Raising<'g> {
         ins: Cow<'g, [Term]>,
         at: &str,
         mark: usize,
+        swapped: bool,
     ) -> Result<Raising<'g>, String> {
         if let op @ (Op::Derived(_) | Op::Rec | Op::Wave) = &node.op {
             return Err(format!(
@@ -1539,6 +1572,7 @@ impl<'g> Raising<'g> {
             subs: Vec::new(),
             names: Vec::new(),
             pats: Vec::new(),
+            swapped,
             mark,
         })
     }
@@ -1558,7 +1592,13 @@ enum Raised<'g> {
 
 /// The term of `first`, at the path `path`. Fresh names are drawn in the order a recursive walk
 /// would draw them: a node's binders, then each of its regions in turn, then the node's `let`.
-fn raise_from<'g>(first: Raising<'g>, path: &str) -> Result<Term, String> {
+/// With `written`, nodes are numbered as they are entered, `first` being the one before
+/// `written.next`, and a swapped node is raised as the operator written.
+fn raise_from<'g>(
+    first: Raising<'g>,
+    path: &str,
+    mut written: Option<&mut Written<'_>>,
+) -> Result<Term, String> {
     let mut path = path.to_string();
     let mut fresh = 0;
     let mut stack = vec![first];
@@ -1592,7 +1632,12 @@ fn raise_from<'g>(first: Raising<'g>, path: &str) -> Result<Term, String> {
                         let ins: Vec<Term> = node.inputs.iter().map(|s| term_of(s, lets)).collect();
                         let mark = path.len();
                         write!(path, ".{k}").expect("a String takes any text");
-                        Raised::Enter(Raising::node(node, Cow::Owned(ins), &path, mark)?)
+                        let swapped = written.as_deref_mut().is_some_and(|w| {
+                            w.next += 1;
+                            w.swapped.contains(w.next - 1)
+                        });
+                        let raising = Raising::node(node, Cow::Owned(ins), &path, mark, swapped)?;
+                        Raised::Enter(raising)
                     }
                     None => {
                         let body = term_of(&r.results[0], lets);
@@ -1608,6 +1653,7 @@ fn raise_from<'g>(first: Raising<'g>, path: &str) -> Result<Term, String> {
                 subs,
                 names,
                 pats,
+                swapped,
                 ..
             } => {
                 let node: &'g Node = node;
@@ -1625,6 +1671,7 @@ fn raise_from<'g>(first: Raising<'g>, path: &str) -> Result<Term, String> {
                         mem::take(subs),
                         mem::take(names),
                         mem::take(pats),
+                        *swapped,
                     ))
                 }
             }
@@ -1707,13 +1754,15 @@ fn open(
 }
 
 /// The term `node` computes, its inputs being `ins` and its regions' terms `subs`: the inputs
-/// moved into the term when they are owned, copied only when the caller keeps them.
+/// moved into the term when they are owned, copied only when the caller keeps them. A node
+/// legalization `swapped` is the operator the program wrote on its inputs in written order.
 fn close(
     node: &Node,
     ins: Cow<'_, [Term]>,
     subs: Vec<Term>,
     names: Vec<Arc<str>>,
     pats: Vec<Pattern>,
+    swapped: bool,
 ) -> Term {
     let a = |i: usize| Shared::new(ins[i].clone());
     let mut subs = subs.into_iter();
@@ -1722,6 +1771,11 @@ fn close(
     let mut name = || names.next().expect("each binder named");
     match &node.op {
         Op::Prim(p) if ins.is_empty() && p.arity().is_some() => Term::PrimFn(*p),
+        Op::Prim(p) if swapped => {
+            let mut ins = ins.into_owned();
+            ins.reverse();
+            Term::Prim(written(*p), ins)
+        }
         Op::Prim(p) => Term::Prim(*p, ins.into_owned()),
         // A state edge has no term: the kernel orders effects by evaluation. The states
         // are the last inputs, one for each output after the value.

@@ -11,6 +11,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Value};
+use zedc::zir::legalize::{Legalized, Swapped, nodes_in};
 use zedc::zir::memory::{Mode, Plan, RegionPlan};
 use zedc::zir::{Node, Op, Region, Src};
 
@@ -36,6 +37,9 @@ pub(crate) struct NodeInfo {
     pub callee: Option<usize>,
     /// An error the node raises when it runs, known before it runs.
     pub error: Option<String>,
+    /// The node's number in the legalized graph, in preorder over every region at every depth
+    /// (`zedc::zir::legalize::Legalized`): what tells the kernel whether it was swapped.
+    pub number: usize,
 }
 
 impl NodeInfo {
@@ -87,6 +91,8 @@ pub(crate) struct Tables {
     const_at: BTreeMap<Value, usize>,
     /// Whether a `match` fuses its release.
     pub fuse: bool,
+    /// The nodes legalization swapped, by number.
+    pub swapped: Arc<Swapped>,
 }
 
 /// A region being numbered. Regions nest as deep as the term, so the regions in progress are
@@ -104,10 +110,7 @@ struct Visit<'g, 'p> {
 
 impl Tables {
     /// The tables of graph `g` under `plan`, and each region's plan by its number.
-    pub fn new<'p>(
-        g: &Arc<Region>,
-        plan: &'p Plan,
-    ) -> Result<(Tables, Vec<&'p RegionPlan>), String> {
+    pub fn new<'p>(g: &Legalized, plan: &'p Plan) -> Result<(Tables, Vec<&'p RegionPlan>), String> {
         let mut t = Tables {
             nodes: Vec::new(),
             regions: Vec::new(),
@@ -118,10 +121,16 @@ impl Tables {
             port_at: HashMap::new(),
             const_at: BTreeMap::new(),
             fuse: plan.fuse,
+            swapped: g.swapped().clone(),
         };
         let mut plans = Vec::new();
         let mut lambda_at = HashMap::new();
-        t.visit(g, plan, &mut plans, &mut lambda_at)?;
+        let numbered = t.visit(g.graph(), plan, &mut plans, &mut lambda_at)?;
+        debug_assert_eq!(
+            numbered,
+            g.nodes(),
+            "native numbers the nodes as legalization does"
+        );
         // An `apply` may call a lambda the generator visits after it.
         for id in 0..t.nodes.len() {
             t.resolve(id, &plans, &lambda_at)?;
@@ -129,14 +138,16 @@ impl Tables {
         Ok((t, plans))
     }
 
-    /// Numbers the nodes of `g` and its planned regions in preorder.
+    /// Numbers the nodes of `g` and its planned regions in preorder, and gives each its number
+    /// among all the nodes of `g`, those of regions it does not plan included; returns how many
+    /// nodes `g` holds.
     fn visit<'p>(
         &mut self,
         g: &Arc<Region>,
         plan: &'p Plan,
         plans: &mut Vec<&'p RegionPlan>,
         lambda_at: &mut HashMap<&'p str, usize>,
-    ) -> Result<(), String> {
+    ) -> Result<usize, String> {
         let (path, rp) = plan.regions.get_key_value("r").ok_or_else(|| {
             "native: region `r` has no plan; only the root, lambda bodies and arms do".to_string()
         })?;
@@ -153,6 +164,7 @@ impl Tables {
             k: 0,
         }];
         let mut sub = String::new();
+        let mut number = 0;
         while let Some(v) = stack.last_mut() {
             if v.k == 0 {
                 for s in &v.region.results {
@@ -181,7 +193,9 @@ impl Tables {
                 lambda: None,
                 callee: None,
                 error: None,
+                number,
             };
+            number += 1;
             match &node.op {
                 Op::Prim(p) if node.inputs.is_empty() && p.arity().is_some() => {
                     if !self.prims.contains(p) {
@@ -237,11 +251,12 @@ impl Tables {
                     }
                     stack[first..].reverse();
                 }
-                _ => {}
+                // A `fam`, `fix` or `gen` body is not planned: the kernel runs the node whole.
+                _ => number += nodes_in(&node.regions),
             }
             self.nodes.push(info);
         }
-        Ok(())
+        Ok(number)
     }
 
     /// Resolves node `id`'s callee, when it is an `apply` the plan resolves, and records the

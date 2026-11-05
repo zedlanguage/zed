@@ -25,7 +25,7 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use zed_kernel::{Evaluator, Term, Value, World};
 use zedc::zir::Region;
-use zedc::zir::legalize::{Expansion, Expansions};
+use zedc::zir::legalize::{Expansion, Expansions, Legalized};
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{Plan, plan};
 
@@ -111,16 +111,18 @@ impl Drop for Jit {
     }
 }
 
-/// Compiles graph `g`, legalized by [`legalize`], under `plan` by the JIT and runs it, the kernel in `ev` running the
-/// nodes the runtime does not.
-pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, String> {
+/// Compiles graph `g`, made by [`legalize`], under `plan` by the JIT and runs it, the kernel in
+/// `ev` running the nodes the runtime does not. Only a legalized graph is taken, so every node
+/// legalization expands is expanded or refused by name, and a node it swapped is run by the
+/// kernel as the program wrote it.
+pub fn run(g: &Legalized, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, String> {
     run_at(OptLevel::None, g, plan, ev)
 }
 
 /// [`run`] at Cranelift's `opt_level` `level`.
 pub fn run_at(
     level: OptLevel,
-    g: &Arc<Region>,
+    g: &Legalized,
     plan: &Plan,
     ev: &mut Evaluator,
 ) -> Result<Outcome, String> {
@@ -131,7 +133,7 @@ pub fn run_at(
 fn run_in(
     memory: Box<dyn JITMemoryProvider + Send>,
     level: OptLevel,
-    g: &Arc<Region>,
+    g: &Legalized,
     plan: &Plan,
     ev: &mut Evaluator,
 ) -> Result<Outcome, String> {
@@ -197,9 +199,9 @@ fn call(
     })
 }
 
-/// The object file of graph `g`, legalized by [`legalize`], under `plan`, for the host: `zed_root` exported, the
-/// runtime's hooks imported.
-pub fn object(g: &Arc<Region>, plan: &Plan) -> Result<Vec<u8>, String> {
+/// The object file of graph `g`, made by [`legalize`], under `plan`, for the host: `zed_root`
+/// exported, the runtime's hooks imported.
+pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
     codegen::define(&mut m, &t, &plans)?;
@@ -235,8 +237,8 @@ fn object_module() -> Result<ObjectModule, String> {
 pub const EXPANSIONS: Expansions =
     Expansions::of(&[Expansion::Derived, Expansion::Gt, Expansion::Ge]);
 
-/// `g` legalized for this back end: what [`run`] and [`object`] take, once planned.
-pub fn legalize(g: Region) -> Region {
+/// `g` legalized for this back end: what [`run`] and [`object`] take, with a plan of its graph.
+pub fn legalize(g: Region) -> Legalized {
     zedc::zir::legalize::legalize(g, EXPANSIONS)
 }
 
@@ -244,8 +246,8 @@ pub fn legalize(g: Region) -> Region {
 /// `zedc::testing::test_through` and `Program::run_through`.
 pub fn through(fuse: bool) -> impl Fn(&Term, &mut Evaluator) -> Result<Value, String> {
     move |t, ev| {
-        let g = Arc::new(legalize(lower(t)?));
-        run(&g, &plan(&g, fuse), ev).map(|o| o.value)
+        let g = legalize(lower(t)?);
+        run(&g, &plan(g.graph(), fuse), ev).map(|o| o.value)
     }
 }
 
@@ -515,8 +517,8 @@ mod placement {
     #[test]
     fn code_runs_with_its_functions_more_than_2_gib_apart() {
         let t = two_lambdas();
-        let g = Arc::new(legalize(lower(&t).unwrap()));
-        let p = plan(&g, true);
+        let g = legalize(lower(&t).unwrap());
+        let p = plan(g.graph(), true);
         let want = Evaluator::new(World::new()).run(&t).unwrap();
         for level in [OptLevel::None, OptLevel::Speed] {
             let used = Arc::new(AtomicUsize::new(0));

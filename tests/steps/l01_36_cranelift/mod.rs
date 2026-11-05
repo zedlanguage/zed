@@ -23,10 +23,8 @@ mod string_scaling;
 mod strings;
 mod table;
 
-use std::sync::Arc;
-
 use zed_kernel::{Evaluator, F64, Term, Value, World};
-use zedc::zir::Region;
+use zedc::zir::legalize::Legalized;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{self, Plan};
 
@@ -36,10 +34,10 @@ pub(crate) fn float(x: f64) -> Term {
 }
 
 /// `t` lowered, legalized for this back end and planned with fusion.
-pub(crate) fn planned(t: &Term) -> (Arc<Region>, Plan) {
+pub(crate) fn planned(t: &Term) -> (Legalized, Plan) {
     let g = zed_native::legalize(lower(t).unwrap_or_else(|e| panic!("{e}")));
-    let p = memory::plan(&g, true);
-    (Arc::new(g), p)
+    let p = memory::plan(g.graph(), true);
+    (g, p)
 }
 
 /// `t` run natively with no ports.

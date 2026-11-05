@@ -4,7 +4,6 @@
 
 use std::cell::Cell;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Term};
 use zedc::testing::{test, test_through};
@@ -29,12 +28,12 @@ fn every_row_passes_natively_with_the_machines_counts() {
     for fuse in [true, false] {
         let (runs, cells, writes) = (Cell::new(0), Cell::new(0), Cell::new(0));
         let through = |t: &Term, ev: &mut Evaluator| {
-            let g = Arc::new(zed_native::legalize(lower(t)?));
-            let p = plan(&g, fuse);
+            let g = zed_native::legalize(lower(t)?);
+            let p = plan(g.graph(), fuse);
             // The machine runs in a copy of the world as it was before the native run.
             let mut copy = Evaluator::new(ev.world.clone());
             let o = zed_native::run(&g, &p, ev)?;
-            let (v, s) = run(&g, &p, &mut copy)?;
+            let (v, s) = run(g.graph(), &p, &mut copy)?;
             assert_eq!(o.value, v, "{t:?}");
             let native = (o.stats.increments, o.stats.decrements, o.stats.allocations);
             assert_eq!(native, (s.increments, s.decrements, s.allocations), "{t:?}");

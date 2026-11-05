@@ -5,12 +5,11 @@
 //! same row is in `deep_heap.rs`, a binary of its own.
 
 use std::cmp::Ordering;
-use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Term, Value, World};
 use zed_tests::deep::{linked_list, on_main_sized_stack};
 use zed_tests::scaling;
-use zedc::zir::Region;
+use zedc::zir::legalize::Legalized;
 use zedc::zir::memory::Plan;
 
 use super::planned;
@@ -32,7 +31,7 @@ fn kernel(t: &Term) -> Value {
 }
 
 /// `g` under `p` run natively.
-fn native(g: &Arc<Region>, p: &Plan) -> Value {
+fn native(g: &Legalized, p: &Plan) -> Value {
     zed_native::run(g, p, &mut Evaluator::new(World::new()))
         .unwrap()
         .value

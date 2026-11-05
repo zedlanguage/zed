@@ -5,7 +5,6 @@
 //! agree with each other and with the interpreter.
 
 use std::cell::Cell;
-use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
@@ -56,8 +55,8 @@ test {
 fn opt_level_none_gives_the_values_opt_level_speed_gives() {
     let runs = Cell::new(0);
     let through = |t: &Term, ev: &mut Evaluator| {
-        let g = Arc::new(zed_native::legalize(lower(t)?));
-        let p = plan(&g, true);
+        let g = zed_native::legalize(lower(t)?);
+        let p = plan(g.graph(), true);
         let mut copy = Evaluator::new(ev.world.clone());
         let none = run_at(OptLevel::None, &g, &p, ev)?;
         let speed = run_at(OptLevel::Speed, &g, &p, &mut copy)?;
