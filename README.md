@@ -667,7 +667,7 @@ e = expand(p);          // x ** 2 + 2r * x + 1r
 d = derivative(p);      // 2r * x + 2r
 ```
 
-The source of a function is a value you can read, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the binders are the assumptions, so `(x * y) div y` simplifies to `x` only when `y` is known to be at least 1. `compile` turns the result back into a function.
+The source of a function is a value you can read, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the binders are the assumptions, so `(x * y) div y` simplifies to `x` when `y` is known to be at least 1, and not when `y` may be 0. `compile` turns the result back into a function.
 
 ## Tests, laws and proofs
 
