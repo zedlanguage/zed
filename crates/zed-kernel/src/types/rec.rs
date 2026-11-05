@@ -29,8 +29,10 @@ use super::bes::{Answer, Bes, Kind, decide};
 use super::{Piece, Rope, Type, Verdict, bytes, mix};
 use crate::deep;
 
-/// A type expression in a definition's body.
-#[derive(Clone, PartialEq, Eq, Debug)]
+mod walk;
+
+/// A type expression in a definition's body. Its `Clone`, `==` and `Debug` are written in
+/// module `walk`, each in a loop.
 pub enum Expr {
     /// The definition's parameter of this index.
     Param(usize),
@@ -60,25 +62,12 @@ impl Expr {
         Expr::Morphism(Box::new(key.clone()), Box::new(key), Box::new(value))
     }
 
-    /// Applies `f` to `self` and every expression in it.
+    /// Applies `f` to `self` and every expression in it, each before its parts, from a stack.
     fn walk(&self, f: &mut impl FnMut(&Expr)) {
-        f(self);
-        for e in self.children() {
-            e.walk(f);
-        }
-    }
-
-    fn children(&self) -> Vec<&Expr> {
-        match self {
-            Expr::Param(_) | Expr::Type(_) => Vec::new(),
-            Expr::Ref(_, xs)
-            | Expr::Union(xs)
-            | Expr::And(xs)
-            | Expr::Tuple(xs)
-            | Expr::Atom(_, xs) => xs.iter().collect(),
-            Expr::Not(a) => vec![a],
-            Expr::Diff(a, b) => vec![a, b],
-            Expr::Morphism(l, u, v) => vec![l, u, v],
+        let mut todo = vec![self];
+        while let Some(e) = todo.pop() {
+            f(e);
+            todo.extend(e.kids().rev());
         }
     }
 }
@@ -128,7 +117,6 @@ struct Checked {
 
 /// An expression as a shared tree, each node knowing whether it mentions the group, so that a
 /// part kept unevaluated is shared rather than copied, and no node's flag is computed twice.
-#[derive(PartialEq, Debug)]
 struct Node {
     /// A hash of the shape, from the children's: equal shapes hash alike.
     digest: u64,
@@ -138,7 +126,6 @@ struct Node {
     e: Shape,
 }
 
-#[derive(PartialEq, Debug)]
 enum Shape {
     Param(usize),
     Ref(usize, Vec<Arc<Node>>),
@@ -154,37 +141,60 @@ enum Shape {
 
 impl Node {
     /// The tree of `e`, given which definitions are plain; an index outside `plain` is not.
+    /// Each expression's node is built once its parts' are, from a stack.
     fn of(e: &Expr, plain: &[bool]) -> Arc<Node> {
-        let of = |x: &Expr| Node::of(x, plain);
-        let all = |xs: &[Expr]| xs.iter().map(of).collect::<Vec<_>>();
-        let e = match e {
-            Expr::Param(i) => Shape::Param(*i),
-            Expr::Ref(i, xs) => Shape::Ref(*i, all(xs)),
-            Expr::Type(t) => Shape::Type(t.clone()),
-            Expr::Union(xs) => Shape::Union(all(xs)),
-            Expr::And(xs) => Shape::And(all(xs)),
-            Expr::Not(a) => Shape::Not(of(a)),
-            Expr::Diff(a, b) => Shape::Diff(of(a), of(b)),
-            Expr::Tuple(xs) => Shape::Tuple(all(xs)),
-            Expr::Atom(name, xs) => Shape::Atom(name.clone(), all(xs)),
-            Expr::Morphism(l, u, v) => Shape::Morphism(of(l), of(u), of(v)),
-        };
-        let recursive =
-            matches!(e, Shape::Ref(..)) || e.children().into_iter().any(|c| c.recursive);
-        let open = match &e {
-            Shape::Ref(i, _) => !plain.get(*i).copied().unwrap_or(false),
-            _ => e.children().into_iter().any(|c| c.open),
-        };
-        let digest = e
-            .children()
-            .into_iter()
-            .fold(e.tag(), |h, c| mix(h, c.digest));
-        Arc::new(Node {
-            digest,
-            recursive,
-            open,
-            e,
-        })
+        enum Step<'a> {
+            Visit(&'a Expr),
+            Build(&'a Expr),
+        }
+        let mut todo = vec![Step::Visit(e)];
+        let mut done: Vec<Arc<Node>> = Vec::new();
+        while let Some(step) = todo.pop() {
+            let shape = match step {
+                Step::Visit(Expr::Param(i)) => Shape::Param(*i),
+                Step::Visit(Expr::Type(t)) => Shape::Type(t.clone()),
+                Step::Visit(e) => {
+                    todo.push(Step::Build(e));
+                    todo.extend(e.kids().rev().map(Step::Visit));
+                    continue;
+                }
+                Step::Build(e) => {
+                    let mut parts = done.split_off(done.len() - e.kids().count());
+                    let mut last = || parts.pop().expect("each part is built");
+                    match e {
+                        Expr::Not(_) => Shape::Not(last()),
+                        Expr::Diff(..) => {
+                            let b = last();
+                            Shape::Diff(last(), b)
+                        }
+                        Expr::Morphism(..) => {
+                            let v = last();
+                            let u = last();
+                            Shape::Morphism(last(), u, v)
+                        }
+                        Expr::Ref(i, _) => Shape::Ref(*i, parts),
+                        Expr::Union(_) => Shape::Union(parts),
+                        Expr::And(_) => Shape::And(parts),
+                        Expr::Tuple(_) => Shape::Tuple(parts),
+                        Expr::Atom(name, _) => Shape::Atom(name.clone(), parts),
+                        Expr::Param(_) | Expr::Type(_) => unreachable!("a leaf is not built"),
+                    }
+                }
+            };
+            let recursive = matches!(shape, Shape::Ref(..)) || shape.kids().any(|c| c.recursive);
+            let open = match &shape {
+                Shape::Ref(i, _) => !plain.get(*i).copied().unwrap_or(false),
+                _ => shape.kids().any(|c| c.open),
+            };
+            let digest = shape.kids().fold(shape.tag(), |h, c| mix(h, c.digest));
+            done.push(Arc::new(Node {
+                digest,
+                recursive,
+                open,
+                e: shape,
+            }));
+        }
+        done.pop().expect("the tree of the expression")
     }
 }
 
@@ -202,20 +212,6 @@ impl Shape {
             Shape::Tuple(_) => 8,
             Shape::Atom(name, _) => mix(9, bytes(name.as_bytes())),
             Shape::Morphism(..) => 10,
-        }
-    }
-
-    fn children(&self) -> Vec<&Arc<Node>> {
-        match self {
-            Shape::Param(_) | Shape::Type(_) => Vec::new(),
-            Shape::Ref(_, xs)
-            | Shape::Union(xs)
-            | Shape::And(xs)
-            | Shape::Tuple(xs)
-            | Shape::Atom(_, xs) => xs.iter().collect(),
-            Shape::Not(a) => vec![a],
-            Shape::Diff(a, b) => vec![a, b],
-            Shape::Morphism(l, u, v) => vec![l, u, v],
         }
     }
 }
@@ -436,8 +432,12 @@ impl Group {
     /// Where in `e` a recursive occurrence stands at a place that makes emptiness not
     /// monotone, if one does. `constrained` says whether `e` stands under `&`, `\`, a
     /// complement or differing domain bounds, here or where its definition is named.
+    /// The search is depth first from a stack, each node before its parts, so the place found
+    /// is the first in the order the body is written.
     fn flipped(&self, e: &Node, constrained: bool) -> Option<String> {
-        match &e.e {
+        let mut todo = vec![(e, constrained)];
+        while let Some((e, constrained)) = todo.pop() {
+            let why = match &e.e {
             Shape::Not(a) if a.recursive => {
                 Some("a recursive occurrence stands under a complement".into())
             }
@@ -464,14 +464,12 @@ impl Group {
             ),
             Shape::Morphism(l, u, v) => {
                 let inner = constrained || bounded(l, u);
-                self.flipped(l, inner)
-                    .or_else(|| self.flipped(u, inner))
-                    .or_else(|| self.flipped(v, constrained))
+                todo.extend([(&**v, constrained), (&**u, inner), (&**l, inner)]);
+                None
             }
             Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => {
-                e.e.children()
-                    .into_iter()
-                    .find_map(|c| self.flipped(c, true))
+                todo.extend(e.e.kids().rev().map(|c| (&**c, true)));
+                None
             }
             Shape::Param(_)
             | Shape::Ref(..)
@@ -479,11 +477,15 @@ impl Group {
             | Shape::Union(_)
             | Shape::Tuple(_)
             | Shape::Atom(..) => {
-                e.e.children()
-                    .into_iter()
-                    .find_map(|c| self.flipped(c, constrained))
+                todo.extend(e.e.kids().rev().map(|c| (&**c, constrained)));
+                None
+            }
+            };
+            if why.is_some() {
+                return why;
             }
         }
+        None
     }
 
     /// Whether `v`, which mentions no recursive occurrence, is empty at some arguments.
@@ -571,26 +573,27 @@ fn digest(defs: &[Def], bodies: &[Arc<Node>]) -> u64 {
 /// Records in `names` each definition `e` names, and in `out` each it names at a constrained
 /// place (`Group::flipped`); `constrained` says whether `e` itself stands at one.
 fn refs(e: &Node, constrained: bool, out: &mut [bool], names: &mut BTreeSet<usize>) {
-    let inner = match &e.e {
-        Shape::Ref(i, _) => {
-            names.insert(*i);
-            out[*i] |= constrained;
-            constrained
-        }
-        Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => true,
-        Shape::Morphism(l, u, v) => {
-            let dom = constrained || bounded(l, u);
-            refs(l, dom, out, names);
-            refs(u, dom, out, names);
-            refs(v, constrained, out, names);
-            return;
-        }
-        Shape::Param(_) | Shape::Type(_) | Shape::Union(_) | Shape::Tuple(_) | Shape::Atom(..) => {
-            constrained
-        }
-    };
-    for c in e.e.children() {
-        refs(c, inner, out, names);
+    let mut todo = vec![(e, constrained)];
+    while let Some((e, constrained)) = todo.pop() {
+        let inner = match &e.e {
+            Shape::Ref(i, _) => {
+                names.insert(*i);
+                out[*i] |= constrained;
+                constrained
+            }
+            Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => true,
+            Shape::Morphism(l, u, v) => {
+                let dom = constrained || bounded(l, u);
+                todo.extend([(&**l, dom), (&**u, dom), (&**v, constrained)]);
+                continue;
+            }
+            Shape::Param(_)
+            | Shape::Type(_)
+            | Shape::Union(_)
+            | Shape::Tuple(_)
+            | Shape::Atom(..) => constrained,
+        };
+        todo.extend(e.e.kids().map(|c| (&**c, inner)));
     }
 }
 
@@ -610,12 +613,16 @@ fn bounded(l: &Arc<Node>, u: &Arc<Node>) -> bool {
 /// Whether a parameter in `e` stands under a complement or to the right of `\\`, where a larger
 /// argument shrinks `e`; `under` says whether `e` itself does.
 fn shrinks(e: &Node, under: bool) -> bool {
-    match &e.e {
-        Shape::Param(_) => under,
-        Shape::Not(a) => shrinks(a, true),
-        Shape::Diff(a, b) => shrinks(a, under) || shrinks(b, true),
-        s => s.children().into_iter().any(|c| shrinks(c, under)),
+    let mut todo = vec![(e, under)];
+    while let Some((e, under)) = todo.pop() {
+        match &e.e {
+            Shape::Param(_) if under => return true,
+            Shape::Not(a) => todo.push((a, true)),
+            Shape::Diff(a, b) => todo.extend([(&**a, under), (&**b, true)]),
+            s => todo.extend(s.kids().map(|c| (&**c, under))),
+        }
     }
+    false
 }
 
 /// The lowest vertex of `edges` on a cycle, if one is.
@@ -725,15 +732,14 @@ fn plain(defs: &[Def]) -> (Vec<bool>, Vec<usize>) {
 
 /// The definitions `e` names outside every constructor.
 fn unguarded(e: &Expr, out: &mut BTreeSet<usize>) {
-    match e {
-        Expr::Ref(i, _) => {
-            out.insert(*i);
-        }
-        Expr::Tuple(_) | Expr::Atom(..) | Expr::Morphism(..) => {}
-        _ => {
-            for c in e.children() {
-                unguarded(c, out);
+    let mut todo = vec![e];
+    while let Some(e) = todo.pop() {
+        match e {
+            Expr::Ref(i, _) => {
+                out.insert(*i);
             }
+            Expr::Tuple(_) | Expr::Atom(..) | Expr::Morphism(..) => {}
+            _ => todo.extend(e.kids()),
         }
     }
 }
@@ -779,33 +785,80 @@ impl Env {
     }
 }
 
+/// The type `e` denotes in `env`. Each expression's type is built once its parts' are, from a
+/// stack; a part of a constructor is evaluated as [`component`] says.
 fn eval(e: &Node, env: &Arc<Env>) -> Type {
-    let all = |xs: &[Arc<Node>]| xs.iter().map(|x| eval(x, env)).collect::<Vec<_>>();
-    let parts = |xs: &[Arc<Node>]| Type::tuple(xs.iter().map(|x| component(x, env)).collect());
-    match &e.e {
-        Shape::Param(i) => env.args[*i].clone(),
-        Shape::Ref(i, _) => env.members[*i]
-            .get()
-            .expect("a member is set before use")
-            .clone(),
-        Shape::Type(t) => t.clone(),
-        Shape::Union(xs) => Type::union_all(all(xs)),
-        Shape::And(xs) => Type::meet_all(all(xs)),
-        Shape::Not(a) => !eval(a, env),
-        Shape::Diff(a, b) => eval(a, env) - &eval(b, env),
-        Shape::Tuple(xs) => parts(xs),
-        Shape::Atom(name, xs) => Type::atom_with(name, &parts(xs)),
-        Shape::Morphism(l, u, v) => {
-            Type::morphism(component(l, env), component(u, env), component(v, env))
-        }
+    enum Step<'a> {
+        Eval(&'a Node),
+        Component(&'a Arc<Node>),
+        Build(&'a Node),
     }
+    let mut todo = vec![Step::Eval(e)];
+    let mut done: Vec<Type> = Vec::new();
+    while let Some(step) = todo.pop() {
+        let t = match step {
+            Step::Component(e) if eager(e) => {
+                todo.push(Step::Eval(e));
+                continue;
+            }
+            Step::Component(e) => component(e, env),
+            Step::Eval(e) => match &e.e {
+                Shape::Param(i) => env.args[*i].clone(),
+                Shape::Ref(i, _) => env.members[*i]
+                    .get()
+                    .expect("a member is set before use")
+                    .clone(),
+                Shape::Type(t) => t.clone(),
+                Shape::Union(_) | Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => {
+                    todo.push(Step::Build(e));
+                    todo.extend(e.e.kids().rev().map(|c| Step::Eval(c)));
+                    continue;
+                }
+                Shape::Tuple(_) | Shape::Atom(..) | Shape::Morphism(..) => {
+                    todo.push(Step::Build(e));
+                    todo.extend(e.e.kids().rev().map(Step::Component));
+                    continue;
+                }
+            },
+            Step::Build(e) => {
+                let mut parts = done.split_off(done.len() - e.e.kids().count());
+                match &e.e {
+                    Shape::Union(_) => Type::union_all(parts),
+                    Shape::And(_) => Type::meet_all(parts),
+                    Shape::Tuple(_) => Type::tuple(parts),
+                    Shape::Atom(name, _) => Type::atom_with(name, &Type::tuple(parts)),
+                    Shape::Not(_) => !parts.pop().expect("the part"),
+                    Shape::Diff(..) => {
+                        let b = parts.pop().expect("the right part");
+                        parts.pop().expect("the left part") - &b
+                    }
+                    Shape::Morphism(..) => {
+                        let v = parts.pop().expect("the value type");
+                        let u = parts.pop().expect("the permission");
+                        Type::morphism(parts.pop().expect("the guarantee"), u, v)
+                    }
+                    Shape::Param(_) | Shape::Ref(..) | Shape::Type(_) => {
+                        unreachable!("a leaf is not built")
+                    }
+                }
+            }
+        };
+        done.push(t);
+    }
+    done.pop().expect("the type of the expression")
+}
+
+/// Whether `e`, in a constructor, is evaluated now: it names a definition, or names none that
+/// is not plain.
+fn eager(e: &Node) -> bool {
+    matches!(e.e, Shape::Ref(..)) || !e.open
 }
 
 /// `e` in a constructor: when it names a definition that is not plain and is more than one
 /// occurrence, it is kept as a node evaluated on first use, since evaluating it now could need
 /// the parts of the type being built.
 fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
-    if matches!(e.e, Shape::Ref(..)) || !e.open {
+    if eager(e) {
         return eval(e, env);
     }
     let (named, at) = (e.clone(), env.clone());
@@ -835,53 +888,86 @@ struct Show<'a> {
 impl Show<'_> {
     /// The text as a rope, which holds the texts of the types it names without copying them,
     /// so that the name of `Tree(Tree(..))` takes time linear in its text.
+    /// Each expression's rope is built once its parts' are, from a stack.
     fn rope(&self) -> Rope {
-        let sub = |e: &'_ Node| {
-            let r = Show { e, ..*self }.rope();
-            match e.e {
-                Shape::Union(_) | Shape::And(_) | Shape::Diff(..) | Shape::Morphism(..) => {
-                    Rope::joined("(", [r], "", ")")
-                }
-                _ => r,
-            }
-        };
-        let list = |head: &str, xs: &[Arc<Node>], sep: &str, tail: &str| {
-            Rope::joined(head, xs.iter().map(|x| sub(x)), sep, tail)
-        };
-        match &self.e.e {
-            Shape::Param(i) => match self.args {
-                Some(args) => args[*i].rope(),
-                None => Rope::cat([Piece::from(self.params[*i].as_str())]),
-            },
-            Shape::Ref(i, args) if args.is_empty() => {
-                Rope::cat([Piece::from(self.defs[*i].name.as_str())])
-            }
-            Shape::Ref(i, args) => Rope::joined(
-                &format!("{}(", self.defs[*i].name),
-                args.iter().map(|a| Show { e: a, ..*self }.rope()),
-                ", ",
-                ")",
-            ),
-            Shape::Type(t) => t.rope(),
-            Shape::Union(xs) => list("", xs, " | ", ""),
-            Shape::And(xs) => list("", xs, " & ", ""),
-            Shape::Not(a) => Rope::joined("!", [sub(a)], "", ""),
-            Shape::Diff(a, b) => Rope::joined("", [sub(a), sub(b)], " \\ ", ""),
-            Shape::Tuple(xs) => list("(", xs, ", ", ")"),
-            Shape::Atom(name, xs) => list(&format!("#{name}("), xs, ", ", ")"),
-            Shape::Morphism(l, u, v) if l == u => Rope::joined("(", [sub(l), sub(v)], ") -> ", ""),
-            Shape::Morphism(l, u, v) if l.e == Shape::Type(Type::empty()) => {
-                Rope::joined("", [sub(u), sub(v)], " ->? ", "")
-            }
-            Shape::Morphism(l, u, v) => Rope::cat([
-                Piece::from("("),
-                Piece::from(sub(l)),
-                Piece::from(" ⊆ dom ⊆ "),
-                Piece::from(sub(u)),
-                Piece::from(") -> "),
-                Piece::from(sub(v)),
-            ]),
+        enum Step<'a> {
+            Visit(&'a Node),
+            Build(&'a Node),
         }
+        let mut todo = vec![Step::Visit(self.e)];
+        let mut done: Vec<Rope> = Vec::new();
+        while let Some(step) = todo.pop() {
+            let r = match step {
+                Step::Visit(e) => match &e.e {
+                    Shape::Param(i) => match self.args {
+                        Some(args) => args[*i].rope(),
+                        None => Rope::cat([Piece::from(self.params[*i].as_str())]),
+                    },
+                    Shape::Ref(i, args) if args.is_empty() => {
+                        Rope::cat([Piece::from(self.defs[*i].name.as_str())])
+                    }
+                    Shape::Type(t) => t.rope(),
+                    _ => {
+                        todo.push(Step::Build(e));
+                        todo.extend(e.e.kids().rev().map(|c| Step::Visit(c)));
+                        continue;
+                    }
+                },
+                Step::Build(e) => {
+                    let parts = done.split_off(done.len() - e.e.kids().count());
+                    if let Shape::Ref(i, _) = &e.e {
+                        // An argument is written without parentheses.
+                        Rope::joined(&format!("{}(", self.defs[*i].name), parts, ", ", ")")
+                    } else {
+                        let mut parts: Vec<Rope> = parts
+                            .into_iter()
+                            .zip(e.e.kids())
+                            .map(|(r, c)| match c.e {
+                                Shape::Union(_)
+                                | Shape::And(_)
+                                | Shape::Diff(..)
+                                | Shape::Morphism(..) => Rope::joined("(", [r], "", ")"),
+                                _ => r,
+                            })
+                            .collect();
+                        match &e.e {
+                            Shape::Union(_) => Rope::joined("", parts, " | ", ""),
+                            Shape::And(_) => Rope::joined("", parts, " & ", ""),
+                            Shape::Not(_) => Rope::joined("!", parts, "", ""),
+                            Shape::Diff(..) => Rope::joined("", parts, " \\ ", ""),
+                            Shape::Tuple(_) => Rope::joined("(", parts, ", ", ")"),
+                            Shape::Atom(name, _) => {
+                                Rope::joined(&format!("#{name}("), parts, ", ", ")")
+                            }
+                            Shape::Morphism(l, u, _) => {
+                                let v = parts.pop().expect("the value type");
+                                let u_rope = parts.pop().expect("the permission");
+                                let l_rope = parts.pop().expect("the guarantee");
+                                if l == u {
+                                    Rope::joined("(", [l_rope, v], ") -> ", "")
+                                } else if l.e == Shape::Type(Type::empty()) {
+                                    Rope::joined("", [u_rope, v], " ->? ", "")
+                                } else {
+                                    Rope::cat([
+                                        Piece::from("("),
+                                        Piece::from(l_rope),
+                                        Piece::from(" ⊆ dom ⊆ "),
+                                        Piece::from(u_rope),
+                                        Piece::from(") -> "),
+                                        Piece::from(v),
+                                    ])
+                                }
+                            }
+                            Shape::Param(_) | Shape::Ref(..) | Shape::Type(_) => {
+                                unreachable!("a leaf is not built")
+                            }
+                        }
+                    }
+                }
+            };
+            done.push(r);
+        }
+        done.pop().expect("the rope of the expression")
     }
 }
 
