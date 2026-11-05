@@ -22,7 +22,7 @@ Zed is a programming language that looks like ordinary code, but has no variable
 
 ## Notation
 
-This section lists all the syntax, words and terms the examples on this page use, so you can look up anything you don't recognize. Each one comes back with an example in the tour. If you'd rather start with code, [skip to the first program](#a-first-program) and come back when you need to.
+This section lists all the syntax, words and terms the examples on this page use, so you can look up anything you don't recognize. Most of them come back with an example in the tour. If you'd rather start with code, [skip to the first program](#a-first-program) and come back when you need to.
 
 ### Conventions on this page
 
@@ -145,7 +145,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | `#none` | There is nothing here: an empty selection, or the missing side of a left join. |
 | `#empty` | A reduction with nothing to reduce. |
 | `#collision` | Two entries landed on one key, where a claim that the key is unique was wrong. |
-| `#divByZero` | An integer division by zero. |
+| `#divByZero` | A division by zero: `div` or `mod`, or `/` on `rat`. |
 | `#inexact` | A number conversion that can't keep the exact value. |
 | `#invalid` | A value failed a `refine` or a type check at run time. |
 | `#syntaxError`, `#parseError` | Text doesn't parse. |
@@ -1072,7 +1072,7 @@ before: xs    after: cur    after: state
 
 The first recurrence is maximum subarray. The compiler recognizes that its step composes in any grouping, so it runs as a parallel scan. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job usually done one character at a time splits across cores.
 
-### Loops and generations
+### Loops
 
 A loop describes one step, and the loop as a whole is a value holding the final state and the history.
 
@@ -1160,7 +1160,7 @@ Inside a method, `n'` means the same thing it means in a loop: the value of `n` 
 
 ### Only what's needed runs
 
-Nothing computes unless a result depends on it, so unused fields and unbounded ranges cost nothing extra.
+A value no result depends on doesn't have to be computed, so unused fields and unbounded ranges cost nothing extra.
 
 **Syntax:** `for i in n.. { ... }`, unused fields, `.first`
 
@@ -1206,7 +1206,7 @@ after:  resp carries answer(q1), then answer(q2)
 
 Ports are declared in `main`'s header or as stored collections: files, sockets, clocks, devices, databases and the like. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
 
-Runs repeat exactly, apart from a short list such as the order that messages arrive at a port and running out of a resource. Inputs and arrival order are recorded, so you can replay a failing run in a test.
+Runs repeat exactly, apart from a short list such as the order that messages arrive at a port and running out of a resource. Inputs and arrival order can be recorded, so you can replay a failing run in a test.
 
 ### Timeouts and retries
 
@@ -1404,7 +1404,7 @@ before: a call to Json.decode on a literal, in the source
 after:  a constant in the compiled program, and no decoder call at run time
 ```
 
-Zed has no macro language and no `comptime` keyword. An expression your program needs, whose inputs are known at build time, is evaluated at build time, by the same evaluator with the same meaning. The JSON decoder above is ordinary Zed. Given a literal, the whole call runs during the build. Given a value only known at run time, the decoder is specialized to `User`, with the generic field lookups already gone. A regular expression known at build time compiles to a matcher in the same way, with nothing left to interpret. If a program does arrive at run time as data, `compile` turns it into a function using the same machinery.
+Zed has no macro language and no `comptime` keyword. The build uses the same evaluator as a run, with the same meaning. The JSON decoder above is ordinary Zed. Given a literal, the whole call runs during the build. Given a value only known at run time, the decoder is specialized to `User`, with the generic field lookups already gone. A regular expression known at build time compiles to a matcher in the same way, with nothing left to interpret. If a program does arrive at run time as data, `compile` turns it into a function using the same machinery.
 
 ### Reflection
 
