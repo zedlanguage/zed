@@ -1124,7 +1124,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| README-tour | done (d58697f1) |  |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
