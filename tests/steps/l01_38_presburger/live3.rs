@@ -525,6 +525,35 @@ fn the_checkers_three_variable_question_has_a_point() {
 }
 
 #[test]
+fn a_point_on_a_tight_plane_with_large_coefficients_is_found() {
+    // From the xt round 2 review (wt/xt2/gemini/R2_ZED_IMPL.patch). The last four rows are the
+    // equalities 2x + 3y - z = 2 and x - 2y + 3z = 1, so z = 2x + 3y - 2, then 7x + 7y = 7:
+    // y = 1 - x and z = 1 - x. The first two rows become 97x >= 0 and -89x >= 0, so x = 0,
+    // and (0, 1, 1) is the one integer point, on the plane 97x + 37y - 37z = 0.
+    let rows = [
+        row([97, 37, -37], 0),
+        row([-89, -34, 34], 0),
+        row([2, 3, -1], -2),
+        row([-2, -3, 1], 2),
+        row([1, -2, 3], -1),
+        row([-1, 2, -3], 1),
+    ];
+    let witness = [0, 1, 1].map(int);
+    assert!(holds(&rows, &witness));
+    decided(&rows, true);
+    assert_eq!(solve(&rows), Some(witness.clone()));
+    let f = formula(&rows);
+    assert_eq!(zedc::store::presburger::decide(&f), Ok(true));
+    let m = satisfiable(&f).expect("decided").expect("a point");
+    let v = |n: &str| {
+        m.get(&zedc::store::presburger::Atom::Sym(n.into()))
+            .cloned()
+            .unwrap_or(Int::ZERO)
+    };
+    assert_eq!([v("x"), v("y"), v("z")], witness);
+}
+
+#[test]
 fn parity_slabs_are_decided() {
     // Cross-review XR3 (Gemini's control): 2z - 2x = 1 has real points and no integer point,
     // since the left side is even. Each row alone settles it, its coefficients having the

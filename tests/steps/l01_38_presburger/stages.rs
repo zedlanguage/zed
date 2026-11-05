@@ -312,6 +312,90 @@ fn unit_rows_around_cycles_are_decided() {
     assert!(!empty(n, &rows));
 }
 
+/// Five variables whose pairwise sums lie in `[-100, 100]`, with the cycle `x0 <= x2 <= x1 <=
+/// x3 <= x0`, so `x0 = x1 = x2 = x3`, and `x0 + x4 >= 0`, `x4 <= x1 - 1`, so `2·x0 >= 1` and,
+/// over the integers, `x0 >= 1`. With `obstruction`, also `x0 + x1 <= 1`, so `2·x0 <= 1`:
+/// the rows meet at `x0 = 1/2` and at no integer point. No row states the equalities; they come
+/// from a cycle of weight zero, odd through `x4`.
+fn octagon(obstruction: bool) -> Formula {
+    let mut rows = Vec::new();
+    for i in 0..5 {
+        for j in i + 1..5 {
+            rows.push(ge(&[(i, 1), (j, 1)], 100));
+            rows.push(ge(&[(i, -1), (j, -1)], 100));
+        }
+    }
+    if obstruction {
+        rows.push(ge(&[(0, -1), (1, -1)], 1));
+    }
+    for t in [
+        [(0, -1), (2, 1)],
+        [(2, -1), (1, 1)],
+        [(1, -1), (3, 1)],
+        [(3, -1), (0, 1)],
+        [(0, 1), (4, 1)],
+    ] {
+        rows.push(ge(&t, 0));
+    }
+    rows.push(ge(&[(4, -1), (1, 1)], -1));
+    Formula::and(rows)
+}
+
+#[test]
+fn a_dense_octagon_with_a_parity_obstruction_has_no_point() {
+    // From the xt round 1 review (wt/xt2/r1_codex_zed_impl.patch). `random_graphs_get_the_
+    // decisions_of_bellman_ford_moore` in utvpi.rs checks the searches against one another and
+    // the parity test against itself; this checks `decide` against an answer found by hand.
+    answers(&octagon(true), Ok(false));
+    answers(&octagon(false), Ok(true));
+    let rows: Vec<(Vec<(usize, i64)>, i64)> = vec![
+        (vec![(0, -1), (1, -1)], 1),
+        (vec![(0, -1), (2, 1)], 0),
+        (vec![(2, -1), (1, 1)], 0),
+        (vec![(1, -1), (3, 1)], 0),
+        (vec![(3, -1), (0, 1)], 0),
+        (vec![(0, 1), (4, 1)], 0),
+        (vec![(4, -1), (1, 1)], -1),
+    ];
+    assert!(!enumerate(&rows, 5, 6));
+}
+
+/// A cycle of `n` variables with `x[j+d] >= x[j] + d` for `d` in 1 to 3, indices mod `n`, the
+/// rows that wrap around loosened by `n + 3`: one strongly connected component whose shortest
+/// paths hold about `n` negative edges, ordered against the order of the variables. It has the
+/// point `x[j] = j`. From the xt round 2 synthesis (wt/xt2/synth/gemini-work/verify_gemini.rs),
+/// measured there at 12.8 times from 64 to 512 on the race of that time.
+fn negchain(n: usize) -> Formula {
+    let c = n as i64 + 3;
+    let mut rows = Vec::new();
+    for j in 0..n {
+        for d in 1..=3 {
+            let t = (j + d) % n;
+            let wrap = if j + d >= n { c } else { 0 };
+            rows.push(ge(&[(t, 1), (j, -1)], -(d as i64) + wrap));
+        }
+    }
+    Formula::and(rows)
+}
+
+#[test]
+fn a_cycle_of_negative_edges_scales() {
+    for n in [4, 5, 64] {
+        let f = negchain(n);
+        let m = satisfiable(&f).expect("decided").expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+        // With `x0 >= x[n-1] + n + 3` as well, the rows of `d = 1` give
+        // `x[n-1] >= x0 + n - 1`, so `x0 >= x0 + 2n + 2`: no point.
+        let c = n as i64 + 3;
+        let tight = Formula::and(vec![f, ge(&[(0, 1), (n - 1, -1)], -c)]);
+        answers(&tight, Ok(false));
+    }
+    // From 2048 variables (6144 rows), so that a quadratic step is caught however cheap the
+    // work per pair of rows: a scan of all rows per row comparing only their lengths gave
+    // 18.8 times from 512 and passed, and gives 43.5 times from 2048 (2026-11-05, load 78).
+    decides("a cycle of negative edges", 2048, Ok(true), negchain);
+}
+
 /// `x[i] + 1 <= x[i+1] <= x[i] + 2` for each `i < n - 1`.
 fn two_way_path(n: usize) -> Rows {
     let rows: Vec<(usize, usize, i64)> = (0..n - 1)
