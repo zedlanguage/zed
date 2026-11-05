@@ -34,11 +34,25 @@ fn a_mark_in_an_accepted_unit_fails() {
 }
 
 #[test]
-fn a_commented_variant_is_no_mark_and_a_rejected_unit_runs_no_row() {
+fn a_commented_variant_is_no_mark_and_a_rejected_unit_fails_each_row_it_cannot_run() {
     let src = "// y = 2;  ✗ a variant, checked by its own fixture\n\
                f(x) = x * 2 test { 1 -> 3 }\n\
                g(x) {\n  y = 1;\n  y = 2;  // ✗\n  y\n}\n";
-    assert_eq!(checks(src), ["5:3: ok"]);
+    assert_eq!(
+        checks(src),
+        [
+            "2:21: `1 -> 3` of `f`: not run, since the unit is rejected",
+            "5:3: ok"
+        ]
+    );
+    // The row fails whether or not its expected value is right: it is not run.
+    assert_eq!(
+        checks(&src.replace("1 -> 3", "1 -> 2")),
+        [
+            "2:21: `1 -> 2` of `f`: not run, since the unit is rejected",
+            "5:3: ok"
+        ]
+    );
     assert_eq!(
         checks(&src.replace("y = 2;  // ✗", "z = 2;")),
         ["2:21: `1 -> 3` of `f`: the result is 2"]

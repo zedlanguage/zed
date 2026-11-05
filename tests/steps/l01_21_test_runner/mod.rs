@@ -7,6 +7,7 @@ mod cones;
 mod fences;
 mod marks;
 mod rows;
+mod rows_are_calls;
 mod scaling;
 mod tables;
 mod zed;

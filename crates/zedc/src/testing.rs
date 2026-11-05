@@ -7,8 +7,9 @@
 //! `CommandLine` port as a `String` holding its arguments one per line, and the
 //! value gives the `String` each output port writes. A unit that is rejected passes when
 //! every diagnostic is on a line marked ✗ and every marked line has one, of the row of the
-//! rejection table its comment names if it names one (`// ✗ Missing argument: …`); its tables
-//! do not run. A wave that aborts fails its row: no form expects an abort at L1.
+//! rejection table its comment names if it names one (`// ✗ Missing argument: …`) and it has
+//! no table: its tables cannot run, so each of their rows fails. A wave that aborts fails its
+//! row: no form expects an abort at L1.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
@@ -92,6 +93,29 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                             .into(),
                     ),
                 });
+            }
+            // A rejected unit runs no table, and a row that does not run does not pass (DESIGN.md
+            // L1.21: no check passes on a fraction of its cases), so each row fails. A unit the
+            // parser rejects has no rows to show.
+            if let Ok((stmts, _)) = &*db.parse(text) {
+                let lines = source::Lines::new(text.as_bytes());
+                for s in stmts {
+                    let StmtKind::Function(f) = &s.kind else {
+                        continue;
+                    };
+                    for (input, expected) in &f.tests {
+                        let (line, col) = lines.line_col(text.as_bytes(), input.span.start);
+                        let case = &text[input.span.start..expected.span.end];
+                        out.push(Outcome {
+                            line,
+                            col,
+                            failure: Some(format!(
+                                "`{case}` of `{}`: not run, since the unit is rejected",
+                                f.name
+                            )),
+                        });
+                    }
+                }
             }
         }
         Ok((stmts, unit, _)) => {

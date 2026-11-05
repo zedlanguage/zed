@@ -514,17 +514,16 @@ impl<'a> Elab<'a> {
     /// The call a row of `f`'s table makes, `callee` applied to `args`, the row's key `input`
     /// elaborated, as a call expression makes it: an argument whose loose atoms the parameter
     /// does not take passes them by (rule 6 of sec:type_resolution), as the checker recorded
-    /// for the row at `case`.
+    /// for the row's call, which it checks at `input`'s span.
     fn row_call(
         &mut self,
         f: &Function,
         input: &Expr,
-        case: Span,
         callee: Shared,
         mut args: Vec<Term>,
     ) -> Term {
         let info = self.info;
-        let Some(at) = info.passes.get(&case) else {
+        let Some(at) = info.passes.get(&input.span) else {
             return Term::App(callee, args);
         };
         let at: HashMap<Span, &KType> = at.iter().map(|(s, k)| (*s, k)).collect();
@@ -1543,7 +1542,7 @@ impl<'a> Elab<'a> {
                             end: expected.span.end,
                         };
                         let callee = Shared::new(Term::Var(self.names[tf.id].clone()));
-                        let call = self.row_call(tf.f, input, case, callee, args.clone());
+                        let call = self.row_call(tf.f, input, callee, args.clone());
                         self.tests.push(Test {
                             function: tf.f.name.clone(),
                             check: Term::Prim(Prim::Eq, vec![call, want.clone()]),

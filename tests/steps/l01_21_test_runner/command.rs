@@ -135,6 +135,31 @@ fn a_rejection_unit_that_compiles_fails() {
 }
 
 #[test]
+fn a_rejection_unit_with_a_table_fails_each_row_and_exits_non_zero() {
+    // The rows cannot run, since the unit does not compile; two of them are wrong, and the
+    // file must not report success.
+    let a = unit(
+        "rows-rejected.zed",
+        "inc(positional x: int) = x + 1\n\
+         test { 1 -> 999, 2 -> 3, 5 -> \"wrong\" }\n\
+         bad = 1 + \"s\";    // ✗\n",
+    );
+    assert_eq!(
+        run(&[&a]),
+        (
+            1,
+            format!(
+                "{a}:2:8: `1 -> 999` of `inc`: not run, since the unit is rejected\n\
+                 {a}:2:18: `2 -> 3` of `inc`: not run, since the unit is rejected\n\
+                 {a}:2:26: `5 -> \"wrong\"` of `inc`: not run, since the unit is rejected\n\
+                 1 passed, 3 failed, 1 rejection unit\n"
+            ),
+            String::new()
+        )
+    );
+}
+
+#[test]
 fn a_unit_that_does_not_compile_and_a_row_that_aborts_fail() {
     let bad = unit("type.zed", "total = 3 + \"pounds\";\n");
     let (status, out, _) = run(&[&bad]);

@@ -1649,3 +1649,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `imbl::OrdSet::diff`, which steps over the nodes two sets share, run a step at a time in turn with the insertions of the smaller set into the larger, stopping when either ends | `check::ty::merge` | Missing | As for `OrdSet::diff` above: Zed's sets are values but have no structural difference; the port needs a `diff` word that the runtime answers in time proportional to the unshared part, and a lazy sequence to step it in turn with the insertions |
+
+## Entries from TEST-rows-rule6 (`zedc/src/elab/walk.rs`, `testing.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::mem::replace` of each argument that passes atoms with a variable, in place in the `Vec` of arguments, while its term moves into a `let` | `Elab::row_call` | Mutation (gap 11) | A map over the arguments zipped with their spans giving each argument or its variable, and a filter giving the `let`s |
+| `let ... else { continue }` over the statements to keep the functions | `testing::checks` | None | A `match` in a fold over the statements, or a filter on the function form |
