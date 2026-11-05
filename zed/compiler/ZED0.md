@@ -1,8 +1,11 @@
 # Zed₀: the bootstrap subset (step M0.8)
 
 Zed₀ is the part of the language the Rust-hosted compiler must run for the Zed compiler
-(row S) to be written in Zed. **The layer that completes it is L6**, so row S follows L6, as
-DESIGN.md already places it.
+(row S) to be written in Zed. By the author's order of 2026-11-05, **Zed₀ is the whole core, not
+the smallest subset that compiles**: L1–L18 in full, the language parts of L19–L24 and the
+back end ZIR → MLIR → LLVM IR → x86-64 of L28 (DESIGN.md step M0.8). Row S follows them. Parts
+A and B below record what the compiler needs at least; the audit found that L6 completes that
+much, and Zed₀ is larger because few rows should be written twice.
 
 The checklist has two parts. Part A is audited mechanically against corpus program 31, the
 typechecker shaped like the compiler. Part B lists what the compiler needs that program 31
@@ -20,9 +23,9 @@ different tree, without it, so the list is exact for the grammar of DESIGN.md se
 those `layer -v` reports. The indices follow the grammar: after a grammar change, rerun
 the audit and update the list.
 
-Negative controls: with the entry for alternative 0 of Loop deleted from this file, the audit
-exits 1 and names it; corpus program 17 (a stream program, label L7) audits to a word at L7,
-above Zed₀.
+Step S.1 reruns this audit over the current grammar. Negative controls: with the entry for
+alternative 0 of Loop deleted from this file, the audit exits 1 and names it; a synthetic program
+that uses a word of a layer after row S (L25 or above) audits to that word, above Zed₀.
 
 ## Part A: what program 31 needs
 
@@ -54,7 +57,7 @@ step that uses it.
 | identifier and normalization tables | XID_Start, XID_Continue, the scripts and the NFC data as sorted range tables, each lookup O(log n) by `upTo` | L5 | step S.1c, with step L5.8a |
 | content addresses (BLAKE3) | `bitAnd`, `bitOr`, `bitXor`, `shl` and the other bit words of step L1.39a, and `mod 2 ** 32` | L1 | step L1.39a; the `&` row of the glyph table |
 | syntax trees, ZIR nodes | structs, unions of atoms with fields, `match` | L2 | sec:grammar |
-| the types the checker's units share | `Ast` (the node kinds through L6), `Facet`, `Rejection`, `Interval`, `Congruence`, `Bound`, as plain types with no reads | L6 | step S.1b |
+| the types the checker's units share | `Ast` (the node kinds of every layer before row S), `Facet`, `Rejection`, `Interval`, `Congruence`, `Bound`, as plain types with no reads | L6 | step S.1b |
 | search a family | `.any`, `.all`, `.find`, short-circuiting in key order | L3 | step L3.15a |
 | symbol and bound tables | `group` with a `#collision` fold, `rekey` | L4 | as program 31 |
 | deterministic output order | `sort`, `rank` | L5 | as program 31 |
@@ -64,20 +67,13 @@ step that uses it.
 | union-find, dense tables, keyed updates in O(1) | reuse in place at count 1: `with`, a one-key `patch`, a `map` over a dying family, a `match` arm rebuilding its node | L6 | step L6.13, with the report of copies of step L6.13b |
 | hash-consing and the e-graph | the digest kept in each shared object and the `==` shortcut on it | L6 | step L6.13a; the e-graph itself is step S.3a |
 | deep lists and trees | release by a work list, constant stack | L6 | step L6.13c |
-| emitting code | the Cranelift port, a built-in output port the Rust-hosted compiler declares, as it declares `main`'s | L1 (port header) | step S.1a |
+| emitting code | the MLIR text port, a built-in output port the Rust-hosted compiler declares, as it declares `main`'s; the host runs `mlir-opt`, `mlir-translate` and `llc` | L1 (port header) | step S.1a |
+| computed output paths, bytes, exit status | a `U8String` input port, an output path computed at run time, the status from `main`'s failure member | L7 | step L7.3f (row FILE-bytes) |
+| the compiler's own later needs | every core row of L7–L24, each in `docs/plan_dag.md` before S.1, and the catalog of routines the Rust calls (row PORT-catalog) | L7–L24 | step S.1 |
 
-Not in Zed₀, with the reason:
-
-- streams, `@foreign` and the incremental engine (L7): the compiler reads whole files, and
-  reaches Cranelift through the built-in port of step S.1a, not through foreign signatures;
-  the port-fed `Seq` of step L5.1c moved to step L7.2a for this reason;
-- refinements, proofs and staging (L10 and above) and user facets (L12): the compiler's own
-  checks run as ordinary code, so it needs none of them to be written; the checker it
-  implements covers L1–L6 first (step S.3), and later layers add their procedures as prelude
-  source (G10);
-- a byte file port and output paths computed at run time (gaps 5 and 6 of `ZED_PORT_GAPS.md`):
-  the compiler reads its sources as text, writes its outputs to the ports its command line
-  binds, and needs bytes only as the UTF-8 of a string (step L1.39c).
+After row S, not in Zed₀: the breadth of the standard library beyond the seed (rows STD-seq,
+STD-text, STD-num, STD-blake3, then STD-full), other back ends (wasm, GPU, HDL, AArch64 and RV64),
+microcontrollers, the editor, the sketchbook, the libraries of L33 and OS portability.
 
 ## Gaps found
 
@@ -90,11 +86,15 @@ The audit of 2026-11-03 found these, each now a step before its first use:
 - key range queries (gap 9): step L5.8a;
 - updates in place, digests, the report of copies and iterative release (gaps 1 and 11):
   steps L6.13 to L6.13c;
-- the Cranelift port: step S.1a, before step S.4 uses it;
-- the shared checker types, fixed through L6: step S.1b;
+- the back-end port, now MLIR text: step S.1a, before step S.4 uses it;
+- the shared checker types, fixed for every layer before row S: step S.1b;
 - stopping at a broken invariant (gap 8): step S.1d, the member `#bug(message)` the author chose on 2026-11-04;
 - prelude units slower than their stated cost: step S.1e;
 - the file import cycles of the Rust compiler (gap 10): step S.1f;
-- the e-graph in Zed: step S.3a, which step L23.1 extends to ZIR.
+- the e-graph in Zed: step S.3a, which ports step L23.1's e-graph over ZIR, written first in Rust.
+
+The review of 2026-11-05 added: bytes, computed paths and exit status (gaps 5 and 6): step L7.3f;
+the runtime's value layout: step L6.13f; a build constant replacing `cfg!`: step L2.8d; prelude
+units that call words that do not exist: step S.1g.
 
 Gap 4 (the bit words) is built (step L1.39a).

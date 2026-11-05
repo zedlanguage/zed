@@ -150,7 +150,7 @@ fn row(t: &[(usize, i64)], k: i64, shifted: bool) -> Formula {
 }
 
 /// Three rows of three variables at each `i`, cyclically, shifted: the family on which Bland's
-/// rule alone took about 2^(0.7n) pivots. No elimination keeps the rows, so the answer is the
+/// rule alone took 453 to 3,132 pivots, not an exponential number. No elimination keeps the rows, so the answer is the
 /// refusal [`Refusal::Growth`], given once the box of the bounds shows no row empty and its
 /// five points (nearest zero, the corners, the midpoints) each miss a row.
 fn sparse(n: usize) -> Formula {

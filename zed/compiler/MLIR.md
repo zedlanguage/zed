@@ -40,7 +40,7 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
 4. **State edges become order, not values.** After the lowering, each `port` node is a call
    of a runtime function (`func.call`), which MLIR treats as having unknown effects and never
    reorders against another such call. The state edges have fixed that order before the
-   lowering (decision 2), so no token type is needed in sequential code. Where L4's scheduler
+   lowering (decision 2), so no token type is needed in sequential code. Where L7.5's scheduler
    runs a wave's independent regions concurrently, each region becomes an `async.execute`
    whose dependencies are the state edges between regions as `!async.token`s: "starts
    execution of the attached body region only when all tokens and values become ready", and
@@ -48,7 +48,7 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
    operations, one per region, and each state edge between two of them is one token.
 5. **Content addresses travel as locations.** MLIR has no content addresses. Each operation the
    lowering emits carries an MLIR location naming its ZIR node's address and path
-   (`loc("zir:<address>" at "r.3/0.2")`), so a crash, a profile or a sanitizer report maps back
+   (`loc("zir/<address>":<line>:<col>)`, the line indexing the node path in a table the emitter writes; every `mlir-opt` runs with `--mlir-print-debuginfo`, and `--ensure-debug-info-scope-on-llvm-func` runs after the conversion to the llvm dialect; line tables are always on for this path), so a crash, a profile or a sanitizer report maps back
    to the node, and the build cache stays keyed by the ZIR address, above MLIR: an unchanged
    address skips the lowering entirely.
 6. **Certificates stop at the lowering.** Every rewrite ZIR makes carries a certificate the
@@ -65,36 +65,38 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
    `mlir-opt` and `mlir-translate` to reach LLVM IR, then LLVM's code generator. The text form
    needs no C++ build in Zed's tree, and keeps the code generator testable by comparing text.
    MLIR's C API is adopted if measured compile time shows the process boundary matters.
-9. **The compact back end stays Cranelift.** Cranelift is a Rust crate with a JIT and an
-   object-file writer on one path, which is what L1.36 needs (JIT first, AOT the same path); it
-   compiles fast; it needs no C++ toolchain, so CI builds it from a clean checkout; and M0.8
-   fixed that the Zed₀ compiler reaches Cranelift through built-in ports (step S.4), so changing
-   the compact back end would change row S. What Cranelift lacks, loop optimization and
-   vectorization, is what L28 adds, and the two back ends then check each other under the
-   differential oracle.
+9. **The Rust-hosted compiler keeps Cranelift; the Zed compiler emits MLIR text.** Cranelift is a
+   Rust crate with a JIT and an object-file writer on one path, which is what L1.36 needs; it
+   compiles fast; it needs no C++ toolchain, so CI builds it from a clean checkout. So `zedc run`,
+   the tests, the differential oracle and the JIT stay on it. The compiler written in Zed reaches
+   LLVM through the MLIR text port of step S.1a, under the author's order of 2026-11-05 that ZIR →
+   MLIR → LLVM IR → x86-64 works before Zed₀. How run-time `compile` reaches a JIT from the Zed
+   compiler is an open question to the author; the plan's answer is a retained Cranelift JIT port.
+   What Cranelift lacks, loop optimization and vectorization, is what L28 adds, and the two back
+   ends check each other under the differential oracle.
 
 ## Operations
 
 | ZIR operation | MLIR lowering |
 |---|---|
-| `prim` | `arith` and `math` for scalars; an integer operation whose result the store's interval does not bound inside 64 bits is checked for overflow and takes the runtime's big-number path; strings and big numbers call the runtime with `func.call`. A `prim` with no inputs, a primitive as a value, is a `func.constant` of the runtime's function. |
+| `prim` | `arith` for scalars, and `math` only for what IEEE 754 fixes exactly, such as sqrt, with no contraction and no fast-math flags; each float result is canonicalized as the Cranelift path does (DESIGN.md sec:reduction); an elementary function calls the runtime's single implementation with `func.call`; an integer operation whose result the store's interval does not bound inside 64 bits is checked for overflow and takes the runtime's big-number path; strings and big numbers call the runtime with `func.call`. A `prim` with no inputs, a primitive as a value, is a `func.constant` of the runtime's function. |
 | `lambda` | closure conversion: a `func.func` taking its captures as an extra argument (a runtime cell, decision 7), and a pair of the function and that cell. Upstream MLIR has no closure type, so the pair is an `llvm.struct`. |
-| `apply` | `func.call` when the callee is known; `func.call_indirect` through the closure pair otherwise. |
-| `if` | `scf.if`, its arms' results returned by `scf.yield`. |
+| `apply` | `func.call` when the callee is known; `func.call_indirect` through the closure pair otherwise. A function that makes or receives a call in tail position is an `llvm.func` with the `tailcc` convention, and that call is `llvm.call tailcc musttail`, indirect calls included. |
+| `if` | `scf.if`, its arms' results returned by `scf.yield`. An `if` or `match` in tail position is `llvm.cond_br` or `llvm.switch` blocks with a return in each arm, since `musttail` must come just before a return. |
 | `match` | the decision tree on the scrutinee's tag and fields as `scf.index_switch` and nested `scf.if`, each arm yielding with `scf.yield`. |
-| `rec` | a group of mutually recursive `func.func`s in one module. |
-| `wave` | one `async.execute` per region of the wave, with the wave's state edges as `!async.token` dependencies (decision 4); sequential code before L4 emits the regions in order. |
+| `rec` | a group of mutually recursive functions in one module, each an `llvm.func` with `tailcc` where a call among them is in tail position. |
+| `wave` | one `async.execute` per region of the wave, with the wave's state edges as `!async.token` dependencies (decision 4); sequential code before L7.5 emits the regions in order. |
 | `port read` | `func.call` of the runtime's read for the port. |
 | `port push` | `func.call` of the runtime's push for the port. |
-| `reindex` | inside a fused nest, index arithmetic in `arith` and `affine` where affine; otherwise a runtime call building the rekeyed family. |
+| `reindex` | inside a fused nest, index arithmetic in `arith`; otherwise a runtime call building the rekeyed family. |
 | `discard` | the loop bound or guard that skips the dropped keys; a runtime call for a stored family. |
-| `fold` | `scf.for` with the accumulator as an iteration argument; `scf.parallel` with `scf.reduce` when the operator's evidence states it associative and commutative; the exact float sum keeps its accumulator as the loop-carried value. |
+| `fold` | `scf.for` with the accumulator as an iteration argument; `scf.parallel` with `scf.reduce` when the operator's evidence states it associative and commutative; the exact float sum keeps its accumulator as the loop-carried value; any other float fold follows the canonical tree of DESIGN.md sec:reduction. |
 | `fix` | `scf.while`, the before region testing whether the ascent changed. |
-| `gen` | `scf.while`, the guard in the before region or the after region as the node's guard position says. |
+| `gen` | `scf.while`, the guard in the before region or the after region as the node's guard position says. A window keeps the rule of step L6.14a: generated code never loads below storage, and a read at a static distance has no compare. |
 | `fam` | a runtime call building the family; in a fused nest, the loop that produces it. |
 | `group` | the planner's chosen plan, lowered as the kernel definition its certificate holds; MLIR sees only the resulting loops and calls. |
 | `rank` | as `group`. |
-| `scan` | `scf.for` with the running value as an iteration argument. |
+| `scan` | `scf.for` with the running value as an iteration argument; a float scan other than `+` follows the canonical tree of DESIGN.md sec:reduction. |
 | `join` | as `group`. |
 
 ## Region kinds
@@ -119,6 +121,6 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
 - The integer domain decides when an `arith` operation can drop its overflow check; the
   check's absence must be proven by the store's interval, never assumed.
 - The `match` decision tree is built in Zed before the lowering, so MLIR never sees patterns.
-- The text form's version is pinned with the LLVM release CI installs, and the lowering's
+- The text form's version is pinned by one constant in the lowering crate, compared with `mlir-opt --version` by a test in `tests/full`, and the lowering's
   tests compare emitted text, so an MLIR upgrade that changes syntax fails a test rather than
   a build on a user's machine.

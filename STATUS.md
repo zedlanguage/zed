@@ -6,6 +6,18 @@ in docs/layout.md.
 
 ## Current position
 
+**Zed₀ moved after the core (2026-11-05).** By the author's order, every core language feature goes
+before Zed₀. `docs/plan_dag.md` now has 826 items, 3131 edges and 92 levels; S.1, which confirms
+Zed₀, is at level 64 and S.6 at level 72. The merge took 938 findings from two audits of earlier
+reviews and the Zig, Hydra and push-value studies. The stages before row S now include L1–L18,
+the language parts of L19–L24 and the native path ZIR → MLIR → LLVM IR → x86-64. After row S come
+the standard library's breadth (STD-full), the other back ends, microcontrollers, the editor, the
+sketchbook, the libraries of L33 and OS portability. The Rust-hosted compiler keeps Cranelift; the
+compiler written in Zed emits MLIR text (`zed/compiler/MLIR.md`, decision 9). The rework changed
+plan, spec and docs only; no compiler code changed, and implementation stays held until the author
+says go. Records: `wt/zed0-review/pass2/PLACEMENT.md`, `wt/review-audit/pass2/REPORT.md`. The DESIGN
+fences changed, so test `l01_07` needs its expected output accepted at the next test build.
+
 - Two test suites: `tools/run_tests.sh` is the local suite, which CI runs; `tools/run_tests.sh --full`
   adds `tests/full/`, which needs outside tools and the files from `tools/fetch_test_deps.sh`.
 - Done: **M0.1** (repository scaffolding), **M0.4** (the corpus, in `zed/corpus/`), **M0.9**
@@ -20,8 +32,9 @@ in docs/layout.md.
 - Done: **M0.6a**, the device footprint as the peak of its schedule (`zedc::cost::Region.retained`,
   `per_device`, prelude `peak`; item FOOTPRINT-peak).
 - Done: **M0.7**, the canonicalizer (`zedc::canon`); values in DESIGN.md M0.7.
-- Done: **M0.8**, the Zed₀ checklist (`zed/compiler/ZED0.md`): L6 completes Zed₀, so row S
-  follows L6.
+- Done: **M0.8**, the Zed₀ checklist (`zed/compiler/ZED0.md`). The audit found that L6 completes
+  what the compiler needs; by the author's order of 2026-11-05, Zed₀ is the whole core and row S
+  follows it (see "Zed₀ moved after the core" below).
 - Done: **M0.11**, the built-in operator axioms (`zedc::axioms`, prelude unit `axioms`), unit
   addresses (`zedc::canon::unit_address`, prelude unit `unit`), and the minimum resource
   limits (`zed_kernel::eval::MIN_*`, prelude unit `limits`). M0 is complete.
@@ -995,7 +1008,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   Scaling: that test, 64 → 512 rows, 12.1 times the work (89.2M → 1,082M instructions);
   `hull3::the_shadow_scales`, 128 → 1,024, 13.1. Negative control, run once and not
   committed: all m² pairs fail the first at 68.2. Open: three live variables with no unit
-  side, and four or more, stay refused (HULL3-GEN, after XR3).
+  side, and four or more, stay refused (three live variables since covered by LIVE3; four or more stay refused by the author's ruling of 2026-11-03).
 - L1.38, Q1-ROWBOX and HUB-SCALE (cross-review XR3 Q1): the box test reads each wide row
   once and keeps, for each variable, the greatest lower and least upper rational bound the
   rows give it with their other terms at their largest; two that cross show the rows empty.

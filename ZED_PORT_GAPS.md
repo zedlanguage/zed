@@ -11,7 +11,7 @@ the entry then, in the same commit as the step that closes it.
 
 ## What the audit found
 
-The Rust is 32,508 non-blank code lines without comments or tests. No part of it needs a
+At the audit the Rust was 32,508 non-blank code lines without comments or tests; on 2026-11-05 it was about 75,800 (zedc 58,129, kernel 14,988, native 1,753, rt 959). Step S.1 recounts. No part of it needs a
 redesign of the language (inferred from the catalog below), and most constructs rewrite
 locally. Ten gaps need a decision, because Zed₀ as specified has no form for them or
 the form it has may not meet the cost the compiler needs:
@@ -22,12 +22,12 @@ the form it has may not meet the cost the compiler needs:
 | 2 | Shared memo and intern tables across pure calls | 52 | workaround | S.3 | Digests from gap 1; state receivers for the rest |
 | 3 | Lazy once-only cells and tied recursive types | 27 | workaround | S.3 | Table of definitions keyed by id |
 | 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
-| 5 | Bytes: spans, binary files, hashing input | 95 | partly planned (L1.39c: `utf8`; no byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
-| 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables planned (L1.36a); no computed paths | S.5 | `CommandLine` port; `Files` writes, an exit value |
+| 5 | Bytes: spans, binary files, hashing input | 95 | planned (L1.39c: `utf8`; step L7.3f, row FILE-bytes: byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
+| 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables planned (L1.36a); computed paths and exit status at step L7.3f (row FILE-bytes) | S.5 | `CommandLine` port; `Files` writes, an exit value |
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
-| 10 | File import cycles | 3 cycles, 5 parent/child groups | Rust must change (S.1f) | S.2 | Move definitions in five, merge files in three; no Zed change |
+| 10 | File import cycles | every cycle in the current import graph | Rust must change (S.1f) | S.2 | Move definitions in five, merge files in three; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
 (mutation, which depends on step L6.13 keeping updates in place, with the report of copies of
@@ -67,7 +67,7 @@ each low-count construct was read at every site and each large one sampled.
 
 The classes: **missing**, Zed₀ has no form and DESIGN.md needs one. **Workaround**, a form exists
 but with a different shape, or its cost depends on a named step. **Mechanical**, a local rewrite.
-**Retained**, stays in Rust by DESIGN.md. "Zed₀" means L1–L6, per zed/compiler/ZED0.md.
+**Retained**, stays in Rust by DESIGN.md. "Zed₀" is the whole core, as step M0.8 and zed/compiler/ZED0.md define it since 2026-11-05: L1–L18 in full, the language parts of L19–L24 and the MLIR path of L28. Where an entry below was written when Zed₀ meant L1–L6 and says a form is above Zed₀, step S.1 rereads it.
 
 ## What stays in Rust
 
@@ -78,9 +78,9 @@ Rust runtime's scheduler and allocator, and primitive operations stay built in. 
 function `run` (`zed-native/src/lib.rs:70`, a `transmute` of JIT code) stays too. Its one
 `#[repr(C)]` (`Word`, `zed-rt/src/heap.rs:25`) stays.
 
-`zed-native/src/codegen.rs` moves at S.4. It uses 28 distinct Cranelift instruction builders in
-72 calls, plus 8 Cranelift type paths: that is the size of the built-in port set, already
-planned at S.4.
+`zed-native/src/codegen.rs` stays in Rust with the Rust-hosted compiler. It uses 28 distinct
+Cranelift instruction builders in 72 calls, plus 8 Cranelift type paths. The compiler written in
+Zed emits MLIR text through the port of step S.1a (see zed/compiler/MLIR.md, decision 9).
 
 External crates: `num-bigint` goes, since `int` is unbounded, and `num-integer` and `num-traits`
 (`gcd`, `num.rs:34`; `Euclid`, `eval.rs:20`; `ToPrimitive`, `value.rs:15`) go with it. `imbl` goes: `OrdMap` and `Vector`
@@ -124,9 +124,9 @@ Candidates (nothing can be run, since Zed₀ is not complete; scores are by reas
 | Solution | Empirical result | Score | Reasoning |
 |---|---|--:|---|
 | Content digest field in each node (`Term`, `Type`, `Bdd`), built from children's digests with a strong hash; keys, memos and equality read the digest; runtime `==` also tests pointers first, invisibly | not run | 9 | Deterministic, matches the fact addresses of step L7.6, needs no threaded table, O(1) compare; invisible shortcut is legal since no program can observe it. Costs a hash per node; a false equal needs a hash collision, which content addressing already accepts |
-| Number each node by a threaded counter; state receiver owns the arena; keys are ints | not run | 7 | Exact, and is what `Bdd` does now, but every type operation becomes a state method, so all of `Type`'s pure algebra changes shape (gap 2) |
-| Key by provenance keypath | not run | 5 | The spec's own identity (line 190), right for "this place" memos like `preimage.rs`, but keypath length grows with depth, so a compare is not O(1) |
-| Language guarantee that `==` is O(1) on shared values, by global hash-consing in the runtime | not run | 4 | Cleanest source, but costs every program, and is a schedule-visible cost model promise |
+| Number each node by a threaded counter; state receiver owns the arena; keys are ints | not run | 7 | Exact, and is what `Bdd` does now, but every type operation becomes a state method, so all of `Type`'s pure algebra changes shape (gap 2); not taken for `Type`, because its algebra would become state methods; kept as a choice for the machine's own counters at lines 906 and 1379 |
+| Key by provenance keypath | adopted for place-keyed memos (L7.6), not for value keys | 5 | The spec's own identity (line 190), right for "this place" memos like `preimage.rs`, but keypath length grows with depth, so a compare is not O(1) |
+| Language guarantee that `==` is O(1) on shared values, by global hash-consing in the runtime | not taken: L6.13a keeps a digest per shared object, so `==` is not promised O(1) | 4 | Cleanest source, but costs every program, and is a schedule-visible cost model promise |
 | Add an `identity` word | not run | 0 | Contradicts line 190 and determinism |
 
 Recommendation: the first, with the place-keyed memos of `preimage.rs` using a number assigned
@@ -142,7 +142,7 @@ Confirmed: `RefCell` 52 matches, in `Memo` (preimage.rs:580 on) and the `thread_
 retained). Two `AtomicU64` counters issue fresh ids: `Type::rec` (types.rs:375), `Bdd::node`
 (bdd.rs:108). Neither has a form: Zed has no global state, and a closure captures values
 (line 1333). `@memoized` does not help: it is an assertion on the plan, "never a request that
-changes it" (step L18.2), and L18 is above Zed₀.
+changes it" (step L18.2).
 
 Workaround. A function that reads its own name is a definedness fix (sec:grammar, Function), so
 recursion memoizes within one fix: `define_on_demand` (`eval.rs:1129`) does this today. That
@@ -316,7 +316,7 @@ chooses between these and tests the choice.
 
 `catch_unwind` and `resume_unwind` (`Evaluator::run`, `eval.rs:362`, and `on_stack`) only restore a flag, and
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.
-Depth moves to the runtime: L6.7 tests a `.fold` over a 100,000-node chain, and compiled
+Depth moves to the runtime: L6.7 tests a `fix` term over a 100,000-node chain, and compiled
 recursion on input-sized depth needs a growable stack in the retained runtime (inferred; not in
 L6.13). The preimage transfer (`store/preimage.rs`, PRE-stack) recurses on term depth through
 `stacker::maybe_grow`, a stack that grows in segments on the heap; Zed has no such word, so a port
@@ -342,7 +342,7 @@ with `.first` and a `patch`.
 Zed forbids a cycle between files, while recursive types and definitions stay unrestricted within
 a unit (line 733). The repairs are to move what both sides use into a unit both import, or to
 merge the units (line 1244). The import graph, with re-exports resolved to the defining file, has
-8 strongly connected components: 3 cycles between modules and 5 parent/child groups. Each edge
+The table lists every strongly connected component in the current import graph: cycles between modules and parent/child groups. Each edge
 below was read at its citation. Paths are relative to `crates/`, with `src/` dropped.
 
 | Component | Edges | Fix in Rust |
@@ -434,7 +434,7 @@ Confirmed against sec:grammar; counts in the appendix.
 | `#[derive]` | 223 | Equality, order, update are structural and free; `Default` becomes a written value |
 | `impl From` (14), `Deref` (2), `AsRef` (1), `IntoIterator` (1) | 18 | Named functions |
 | `impl Not`, `BitAnd`, `BitOr`, `Sub` on `Type`, `Neg` on `End` | 9 | Named `complement`, `meet`, `join`, `minus`: `&` and `\|` are type operators only (line 2408); overloading `-` needs its axioms (line 2778) |
-| Traits: `Lattice` (8 impls), `Lookup`, `Mark`, `Literal`, `Equations` | 5 traits | `interface` is L10, above Zed₀. Pass a record of functions. `L::bottom()`, dispatched on a return type, becomes a field. Single-parameter cases become overloads |
+| Traits: `Lattice` (8 impls), `Lookup`, `Mark`, `Literal`, `Equations` | 5 traits | `interface` is L10, in Zed₀. Before it, a record of functions. `L::bottom()`, dispatched on a return type, becomes a field. Single-parameter cases become overloads |
 | `dyn Fn`, `FnMut`, `impl Fn`, `fn` pointers | 37 `dyn` | Function values. `dyn Lookup`, `dyn Read`, `dyn Write` become ports |
 | Generics | 67 fns, 38 types | Implicit by inference (line 537), and `type N(X)` at L2 |
 | Tuple structs | 20 | `#sym(String)` for a distinction: same-shape structs are one type (line 2774). `Sym`, `Key`, `ContentAddress`, `Card` need this |
@@ -730,7 +730,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A tree held as a ring of `next` and `prev` indices in preorder with a depth per node, relinked in place by index when a subtree is cut out | `utvpi::potential` | None | Removed by UTVPI-GOR: the search keeps no shortest-path tree |
 | `VecDeque` used as a FIFO queue, `push_back` and `pop_front`, with a `Vec<bool>` of what it holds | `utvpi::potential` (Kahn's order since UTVPI-GOR) | Mutation | A state receiver over a list and a set, or two lists swapped at each round |
-| `Iterator::partition` of borrowed rows into two `Vec<&Row>` | `presburger::search` | None | `partition` over a list of rows, which Zed shares rather than borrows |
+| `Iterator::partition` of borrowed rows into two `Vec<&Row>` | `presburger::search` | None | Two `where` calls or a `group` over the list of rows, which Zed shares rather than borrows |
 
 ## Entries from UTVPI-GOR (`zedc/src/store/utvpi.rs`)
 
@@ -766,7 +766,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `Arc<[Value]>`, a shared slice with a reference count, and `Arc::default()` for the static empty slice | `Items`, `Atom::fields` | None | Zed values are shared already; the type is a plain tuple |
 | `Arc::strong_count` to tell a shared sequence from one held once, and `Arc::get_mut` to move the parts out of one held once | `Items::is_shared`, `Items::pair`, `Items::into_vec` | Identity, mutation | Removed: the runtime reuses a value held once, and the walks key their read sets by a hash-consed id |
-| The id a sequence carries (`Items::id`, drawn by `fresh_id`, shared by copies) as a key in a `HashSet` or `HashMap`, since ADDR-keys | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity (gap 1) | A runtime that gives each shared value an id, or the content digest of gap 1 |
+| The id a sequence carries (`Items::id`, drawn by `fresh_id`, shared by copies) as a key in a `HashSet` or `HashMap`, since ADDR-keys | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
 ## Entries from T11-elab (`zedc/src/elab.rs`, `stage.rs`, `query.rs`)
 
@@ -1135,7 +1135,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `Vec<u32>` stamps and marks overwritten in place, reset by advancing a counter | `bes::Stamp`, `bes::Scratch` | Mutation | A persistent array per pass, or a map from node to the pass that marked it; the counter trick needs mutable arrays |
-| A closure `Box<dyn Fn() -> Option<bool> + Send + Sync>` stored in a recursive type node, computed once through `OnceLock` | `types::Rec::judge`, `rec::Env::judged` | Laziness | A lazy field of the group's instance, forced on first use |
+| A closure `Box<dyn Fn() -> Option<bool> + Send + Sync>` stored in a recursive type node, computed once through `OnceLock` | `types::Rec::judge`, `rec::Env::judged` | Laziness | An indexed definition `parts[id] = …`, evaluated on demand (gap 3) |
 | Explicit work stack of `(node id, &Arc<Node>)` pairs filling a graph allocated ahead | `rec::judge`, `rec::kids` | Mutation | A fold over the body tree that returns the nodes it adds |
 | `impl Iterator for Values` holding an odometer `Vec<usize>` advanced in place, and a `BTreeSet` of the tuples given | `types::Values::next` | Mutation, laziness | A lazy stream whose state (box, positions, tuples given) is passed from one value to the next |
 | `std::mem::take` of the lists out of one iterator into the next, in `each_value` | `Type::each_value` | Moves | The lists threaded through a fold over the types in order |
@@ -1152,8 +1152,8 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `Vec<bool>` window of steps marked in place by each negated class, the window doubled | `empty::least_length` (removed in T6 repair 6: `residue_length` picks the length by conditional expectations) | Mutation | A fold over the classes returning the set of held steps in the window, as a persistent bit set |
 | A list kept as its length, a `num_bigint::BigUint`, with `%` and `-` on it in the walk | `empty::Rep::List`, `residue_length`, `greedy_length`, `Search::list_member` | None | Zed's `int` is unbounded; the length is a plain `int` and the list a record of it |
 | A `BTreeMap<Type, BigUint>` of the rest types met, cleared in place after the length left is cut to its remainder modulo the steps between | `empty::Search::list_member` | Mutation | A loop whose state (type, length left, persistent map of types met) is passed to the next round, the map replaced by an empty one after the cut |
-| `Option<Option<KType>>` filled on first use inside an `all` closure (`get_or_insert_with`), so the kernel type of the target is built only when some piece needs it | `zedc` `check/ty.rs` `Ty::sub` | Laziness, mutation | A lazy local bound before the fold, forced on first use |
-| The id of a sequence (`Items::id`) with a type as the memo key of one membership test, never iterated (ADDR-keys) | `types::Type::contains` | Identity (gap 1) | A runtime that gives each shared value an id, as for `deep::walk`, or the content digest of gap 1 |
+| `Option<Option<KType>>` filled on first use inside an `all` closure (`get_or_insert_with`), so the kernel type of the target is built only when some piece needs it | `zedc` `check/ty.rs` `Ty::sub` | Laziness, mutation | A plain `let` before the fold, the plan choosing when it runs (DESIGN sec:semantics) |
+| The id of a sequence (`Items::id`) with a type as the memo key of one membership test, never iterated (ADDR-keys) | `types::Type::contains` | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
 ## Entries from OSP-neglit (`zedc/src/ast/neglit.rs`)
 
@@ -1198,7 +1198,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Cell<u64>` on `Parts`, the stamp of the last search that found the parts not to hold, set through `&self` during a walk of shared parts, with stamps from a global `AtomicU64` counter | `Parts::failed`, `Parts::witness`, `fresh_stamp`, `pick` | Mutation, identity, global state | A set of the hash-consed ids of the parts found not to hold, threaded through the search as a state receiver and emptied when the model changes |
 | `HashMap<(BTreeMap<Atom, Int>, Rel), usize>`, the index of the bound kept for each left-hand side and comparison, so that a bound written again replaces or is dropped against the one kept, in place | `Linked::meet`, `Linked.by_terms` | Mutation | A map from the terms and comparison to the bound, updated as a value, with the constraint list rebuilt from it |
 | An explicit stack of frames borrowing the parts (`Frame<'a>`), with the output vector truncated back to a frame's mark when the part fails | `Parts::witness` | Mutation | A fold over the parts returning the list of held parts or a failure, with the stack as a list value |
-| `Option<&Formula>` and `Option<Formula>` filled on first use (`get_or_insert_with`) for the summary of a level | `project_parts` | Lazy cells (gap 3) | The summary built before the loop when any hull has two finite bounds, or a lazy `let` |
+| `Option<&Formula>` and `Option<Formula>` filled on first use (`get_or_insert_with`) for the summary of a level | `project_parts` | Lazy cells (gap 3) | The summary built before the loop when any hull has two finite bounds, or a plain `let` |
 | `thread_local!` `Cell<u64>` counting the parts the search tests, read and reset by a test through `parts_tested` | `presburger::TESTED`, `Parts::witness`, `parts_tested` | Mutation, global state | The count returned with the search's answer, or a trace effect the test handles |
 | `thread_local!` `Cell<u64>` counting the parts of derivations built and the boxes `@exact` searches take, read and reset by a test through `derivation_steps` and `exact_steps` (L1.39b) | `check::DERIVED`, `built`, `Reason::note`, `Ck::said`, `Ck::also`, `Ck::derive_into`; `preimage::EXACT`, `branch` | Mutation, global state | The count returned with the check's or the search's answer, or a trace effect the test handles |
 | A closure that words a note only when it is used, `impl FnOnce() -> String` | `Ck::also` and its three callers | None | A Zed lambda; the note is computed when it is called |
@@ -1307,7 +1307,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `rustix::process::setrlimit(Resource::As, …)` in a test child process | `tests/.../memory_check.rs` | Missing (process limits) | A test-harness facility, not the language |
 | A `fmt::Write` sink that counts bytes, so `Display` and `Debug` give a leaf's length with nothing written | `words::Count`, `words::written` | Missing (no formatter trait) | A length function per printed kind, or printing into a counting port |
 | `String::try_reserve_exact` that keeps the reserved block and writes into it | `words::print` | Missing (no allocator query) | The runtime primitive above, returning the block |
-| A `HashMap` memo keyed by a sequence's id and a family's id, and a map keyed by a field list's id (`Fields::id`) and its length (ADDR-keys) | `words::room_to_print` | Identity (gap 1) | Stable ids from the runtime, as for `deep::walk` |
+| A `HashMap` memo keyed by a sequence's id and a family's id, and a map keyed by a field list's id (`Fields::id`) and its length (ADDR-keys) | `words::room_to_print` | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
 ## Entries from BIT-kept-ends (`zedc/src/store/int.rs`)
 
@@ -1376,7 +1376,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A premise-set node's id, drawn by `zed_kernel::family::fresh_id` (made `pub` for it) and shared by copies, as the key of a `HashSet` of the parts a walk has read and as the "one shared set" test in `extend` and `==` | `Premises::{one, extend, set, eq}`, `Node::id` | Identity (gap 1) | Stable ids from the runtime, as for `deep::walk`, or an id counter threaded as state |
+| A premise-set node's id, drawn by `zed_kernel::family::fresh_id` (made `pub` for it) and shared by copies, as the key of a `HashSet` of the parts a walk has read and as the "one shared set" test in `extend` and `==` | `Premises::{one, extend, set, eq}`, `Node::id` | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
 ## Entries from ADDR-memory (`zedc/src/zir/memory.rs`)
 

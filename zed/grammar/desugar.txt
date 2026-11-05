@@ -129,7 +129,7 @@ SortKey       : a rank by the key, ascending or descending
 JoinTerm      : a join region (sec:joins): `&&` inner, `||` outer, `&& ?` left, `&& !` difference, `==` an equality assertion; a discard over the union of the operands' keyspaces
 AndJoin       : `a && b`, `a && ?b`, `a && !b`: inner, left, difference; a chain joins from the left, so `a && !b && !c` is (a && !b) && !c
 KeyTerm       : a key, or a parenthesized join term
-JoinExpr      : a parenthesized boolean expression in key position, which is a key and not a region
+JoinExpr      : a lookahead only; no term; a group it matches in key position, with no postfix or arithmetic operator after it, is rejected
 Key           : a key expression over the source's level names; `_` the leaf value
 KeyOp         : a lookahead only; no term
 Type          : the set-theoretic type its arrow denotes (sec:type_language), with the facets attached, the `where` refinement applied and the type variables bounded
