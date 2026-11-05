@@ -331,10 +331,7 @@ type Rows = Vec<(Vec<(usize, Int)>, Int)>;
 /// Goldberg and Radzik's search (COMPLEXITY.md C24).
 fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
     let n = 2 * k + 1;
-    let mut edges: Vec<(usize, usize, i64)> = vec![(0, 1, -3 * k as i64), (0, k, -1)];
-    edges.extend((1..k - 1).map(|i| (i, i + 1, 1)));
-    edges.extend((1..=k).map(|i| (k, k + i, -1)));
-    edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
+    let mut edges = bad_gor_edges(k);
     let heavy = n as i64 + 1 + edges.iter().map(|e| e.2.abs()).sum::<i64>();
     let mut g = Rng::new(seed);
     for _ in 0..5 * edges.len() {
@@ -353,6 +350,46 @@ fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
         .map(|(u, v, w)| (name[u], name[v], w))
         .collect();
     (n, differences(&rows))
+}
+
+/// The edges `(u, v, w)` of BAD-GOR before it is augmented, over the nodes 0 to 2k: a path from
+/// 1 to k - 1 of weight 1 edges, an edge from 0 to 1 of weight -3k, an edge from each of 0 to
+/// k - 1 into k, and edges of weight -1 from k to the k leaves k + 1 to 2k. It has no cycle.
+fn bad_gor_edges(k: usize) -> Vec<(usize, usize, i64)> {
+    let mut edges = vec![(0, 1, -3 * k as i64), (0, k, -1)];
+    edges.extend((1..k - 1).map(|i| (i, i + 1, 1)));
+    edges.extend((1..=k).map(|i| (k, k + i, -1)));
+    edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
+    edges
+}
+
+/// The edges of the fan of [`bad_gor_and_fan`] on the `2k + 2` nodes from `a`: a path of `k`
+/// edges of weight -1 from `a`, an edge of weight 0 from each of its first `k` nodes into the hub
+/// `a + k + 1`, and edges of weight 0 from the hub to `k` leaves; with `back`, an edge of weight
+/// `k + 1 + back` from each leaf to `a`, and without, no cycle.
+fn fan_edges(a: usize, k: usize, back: Option<i64>) -> Vec<(usize, usize, i64)> {
+    let hub = a + k + 1;
+    let mut fan = Vec::new();
+    for i in 0..k {
+        fan.push((a + i, a + i + 1, -1));
+        fan.push((a + i, hub, 0));
+        fan.push((hub, hub + 1 + i, 0));
+        if let Some(back) = back {
+            fan.push((hub + 1 + i, a, k as i64 + 1 + back));
+        }
+    }
+    fan
+}
+
+/// BAD-GOR unaugmented over `2k + 1` variables and beside it the fan of [`bad_gor_and_fan`]
+/// without its edges back to `a`: a graph with no cycle, over `4k + 3` variables. Without the
+/// pass in topological order, Goldberg and Radzik's search takes passes in proportion to `k` on
+/// the first part, and BF-Dijkstra `k` rounds of `k` work on the second.
+fn acyclic_bad_gor_and_fan(k: usize) -> (usize, Rows) {
+    let a = 2 * k + 1;
+    let mut edges = bad_gor_edges(k);
+    edges.extend(fan_edges(a, k, None));
+    (a + 2 * k + 2, differences(&edges))
 }
 
 #[test]
@@ -389,17 +426,9 @@ fn bad_gor_scales() {
 /// With `back = -3` the fan has a cycle of weight -1.
 fn bad_gor_and_fan(k: usize, back: i64) -> (usize, Rows) {
     let (a, mut rows) = bad_gor(k, 1);
-    let hub = a + k + 1;
-    let mut fan = Vec::new();
-    for i in 0..k {
-        fan.push((a + i, a + i + 1, -1));
-        fan.push((a + i, hub, 0));
-        fan.push((hub, hub + 1 + i, 0));
-        fan.push((hub + 1 + i, a, k as i64 + 1 + back));
-    }
     // The row `x[v] <= x[u] + w` is `x[u] - x[v] + w >= 0`.
-    rows.extend(differences(&fan));
-    (hub + k + 1, rows)
+    rows.extend(differences(&fan_edges(a, k, Some(back))));
+    (a + 2 * k + 2, rows)
 }
 
 #[test]
@@ -432,6 +461,28 @@ fn bad_gor_and_a_fan_scale() {
     );
     assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
     scaling::check("BAD-GOR augmented and a fan, by k", 256, |k| {
+        let (n, rows) = if k == 256 { &small } else { &large };
+        std::hint::black_box(raced(*n, rows));
+    });
+}
+
+#[test]
+fn bad_gor_and_a_fan_with_no_cycle_scale() {
+    // The pass in topological order decides this graph; each of the three searches is slow on
+    // it. Measured on this branch, in instructions from k = 256 to k = 2,048, each search alone:
+    // the pass 3.13M to 25.1M (8.0 times), Goldberg and Radzik's search 20.7M to 1,093M (52.8
+    // times), BF-Dijkstra 44.4M to 2,878M (64.9 times), Duong's search 573M to 6,203M (10.8
+    // times, but the most work at both sizes). With the pass removed, the race took 141.3M to
+    // 9,142.5M instructions, 64.7 times, and 43.9 times the bytes (the negative control, run
+    // once and not committed), while `the_acyclic_hub_scales` still passed. Rerun that control
+    // when UTVPI-union changes the race; if the race passes here without the pass, compare the
+    // pass against `integer_empty_by(.., Search::BfDijkstra)` at one size instead.
+    let (small, large) = (
+        acyclic_bad_gor_and_fan(256),
+        acyclic_bad_gor_and_fan(scaling::FACTOR * 256),
+    );
+    assert!(!empty(small.0, &small.1));
+    scaling::check("BAD-GOR and a fan with no cycle, by k", 256, |k| {
         let (n, rows) = if k == 256 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
