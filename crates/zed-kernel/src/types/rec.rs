@@ -19,12 +19,14 @@
 //! possibly empty when it is empty with every parameter empty, or has a parameter under a
 //! complement or to the right of `\`, where a larger argument shrinks it.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use super::bes::{Answer, Bes, Kind, decide};
-use super::{Piece, Rope, Type, Verdict};
+use super::{Piece, Rope, Type, Verdict, bytes, mix};
 use crate::deep;
 
 /// A type expression in a definition's body.
@@ -82,7 +84,7 @@ impl Expr {
 }
 
 /// A definition `type name(params) = body`.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Def {
     /// Its name.
     pub name: String,
@@ -92,16 +94,16 @@ pub struct Def {
     pub body: Expr,
 }
 
-/// The instances made so far: one equal group at equal arguments gives one set of types, so that
-/// equal definitions meet as equal types however often they were written. The text of the
-/// definitions picks a bucket; `Def` equality, and the arguments' equality, pick the entry.
-static INSTANCES: LazyLock<Mutex<HashMap<String, Vec<Instance>>>> = LazyLock::new(Mutex::default);
+/// The accepted groups, one per distinct definition list, by the digest of the definitions
+/// ([`digest`]). `Def` equality picks the entry, so a digest only narrows the search: equal
+/// definitions get one group, and so one number, however often they were written.
+static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Group>>>> = LazyLock::new(Mutex::default);
 
-struct Instance {
-    group: Group,
-    args: Vec<Type>,
-    members: Vec<Type>,
-}
+/// The instances made so far, by the group's number and the arguments: one group at equal
+/// arguments gives one set of types, so that equal definitions meet as equal types. The arguments
+/// hash by their digests and compare exactly, so a call costs time in its arguments only.
+static INSTANCES: LazyLock<Mutex<HashMap<(u64, Vec<Type>), Vec<Type>>>> =
+    LazyLock::new(Mutex::default);
 
 /// A checked group of mutually recursive definitions.
 #[derive(Clone, Debug)]
@@ -109,6 +111,8 @@ pub struct Group(Arc<Checked>);
 
 #[derive(Debug)]
 struct Checked {
+    /// The group's number in [`INSTANCES`]: one per distinct definition list ([`GROUPS`]).
+    number: u64,
     defs: Vec<Def>,
     /// Each body as a shared tree.
     bodies: Vec<Arc<Node>>,
@@ -124,6 +128,8 @@ struct Checked {
 /// part kept unevaluated is shared rather than copied, and no node's flag is computed twice.
 #[derive(PartialEq, Debug)]
 struct Node {
+    /// A hash of the shape, from the children's: equal shapes hash alike.
+    digest: u64,
     recursive: bool,
     /// Whether the node names a definition that is not plain.
     open: bool,
@@ -167,11 +173,36 @@ impl Node {
             Shape::Ref(i, _) => !plain.get(*i).copied().unwrap_or(false),
             _ => e.children().into_iter().any(|c| c.open),
         };
-        Arc::new(Node { recursive, open, e })
+        let digest = e
+            .children()
+            .into_iter()
+            .fold(e.tag(), |h, c| mix(h, c.digest));
+        Arc::new(Node {
+            digest,
+            recursive,
+            open,
+            e,
+        })
     }
 }
 
 impl Shape {
+    /// A hash of the top of the shape, without its children.
+    fn tag(&self) -> u64 {
+        match self {
+            Shape::Param(i) => mix(1, *i as u64),
+            Shape::Ref(i, _) => mix(2, *i as u64),
+            Shape::Type(t) => mix(3, t.digest()),
+            Shape::Union(_) => 4,
+            Shape::And(_) => 5,
+            Shape::Not(_) => 6,
+            Shape::Diff(..) => 7,
+            Shape::Tuple(_) => 8,
+            Shape::Atom(name, _) => mix(9, bytes(name.as_bytes())),
+            Shape::Morphism(..) => 10,
+        }
+    }
+
     fn children(&self) -> Vec<&Arc<Node>> {
         match self {
             Shape::Param(_) | Shape::Type(_) => Vec::new(),
@@ -281,10 +312,14 @@ pub struct Rejection {
 
 impl Group {
     /// The group of `defs`, if it is contractive, regular and monotone in emptiness.
+    /// Equal definitions give one group: the one accepted first.
     pub fn new(defs: Vec<Def>) -> Result<Group, Rejection> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let (plain, order) = plain(&defs);
-        let bodies = defs.iter().map(|d| Node::of(&d.body, &plain)).collect();
+        let bodies: Vec<Arc<Node>> = defs.iter().map(|d| Node::of(&d.body, &plain)).collect();
+        let digest = digest(&defs, &bodies);
         let g = Group(Arc::new(Checked {
+            number: NEXT.fetch_add(1, Ordering::Relaxed),
             defs,
             bodies,
             plain,
@@ -293,6 +328,14 @@ impl Group {
         g.regular()?;
         g.contractive()?;
         g.monotone()?;
+        let mut groups = GROUPS
+            .lock()
+            .expect("no thread panics holding the groups");
+        let bucket = groups.entry(digest).or_default();
+        if let Some(first) = bucket.iter().find(|h| h.0.defs == g.0.defs) {
+            return Ok(first.clone());
+        }
+        bucket.push(g.clone());
         Ok(g)
     }
 
@@ -461,27 +504,16 @@ impl Group {
             self.0.defs[0].params.len(),
             "one argument per parameter"
         );
-        let same = |d: &[Def]| {
-            d.len() == self.0.defs.len()
-                && d.iter()
-                    .zip(&self.0.defs)
-                    .all(|(a, b)| a.name == b.name && a.params == b.params && a.body == b.body)
-        };
-        let key = format!("{:?}", self.0.defs);
         let mut table = INSTANCES
             .lock()
             .expect("no thread panics holding the table");
-        let bucket = table.entry(key).or_default();
-        if let Some(i) = bucket
-            .iter()
-            .find(|i| same(&i.group.0.defs) && i.args == args)
-        {
-            return i.members.clone();
-        }
-        let kept = args.clone();
+        let slot = match table.entry((self.0.number, args)) {
+            Entry::Occupied(o) => return o.get().clone(),
+            Entry::Vacant(v) => v,
+        };
         let env = Arc::new(Env {
             group: Some(self.clone()),
-            args,
+            args: slot.key().1.clone(),
             members: (0..self.0.defs.len()).map(|_| OnceLock::new()).collect(),
             judged: OnceLock::new(),
         });
@@ -507,12 +539,7 @@ impl Group {
             .iter()
             .map(|m| m.get().expect("every member is set").clone())
             .collect();
-        bucket.push(Instance {
-            group: self.clone(),
-            args: kept,
-            members: members.clone(),
-        });
-        members
+        slot.insert(members).clone()
     }
 
     /// `e`, an expression of definition `def`, in the surface syntax.
@@ -526,6 +553,21 @@ impl Group {
         .to_string()
     }
 }
+
+/// A hash of the definitions, from their names, parameters and bodies' digests: equal
+/// definition lists hash alike. Time linear in the names and parameters.
+fn digest(defs: &[Def], bodies: &[Arc<Node>]) -> u64 {
+    defs.iter().zip(bodies).fold(11, |h, (d, body)| {
+        let h = d
+            .params
+            .iter()
+            .fold(mix(h, bytes(d.name.as_bytes())), |h, p| {
+                mix(h, bytes(p.as_bytes()))
+            });
+        mix(mix(h, d.params.len() as u64), body.digest)
+    })
+}
+
 /// Records in `names` each definition `e` names, and in `out` each it names at a constrained
 /// place (`Group::flipped`); `constrained` says whether `e` itself stands at one.
 fn refs(e: &Node, constrained: bool, out: &mut [bool], names: &mut BTreeSet<usize>) {
