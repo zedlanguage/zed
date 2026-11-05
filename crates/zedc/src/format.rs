@@ -51,7 +51,7 @@ pub fn format(text: &str, tokens: &[Token], unit: &[Stmt]) -> String {
 /// The source file `bytes` in the formatter's layout, or why it could not be read, at its
 /// line and column.
 pub fn format_source(bytes: &[u8]) -> Result<String, String> {
-    let text = source::load(bytes).map_err(|e| e.to_string())?;
+    let text = source::load(bytes).map_err(|e| e.render(bytes))?;
     let at = |offset: usize, why: String| {
         let (line, col) = source::line_col(text.as_bytes(), offset);
         format!("{line}:{col}: {why}")

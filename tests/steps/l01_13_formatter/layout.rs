@@ -114,6 +114,28 @@ fn a_source_that_does_not_parse_is_reported_at_its_line_and_column() {
 }
 
 #[test]
+fn a_source_that_does_not_load_is_reported_at_its_line_and_column() {
+    // Saved as ISO-8859-1: `é` is the one byte E9.
+    let latin1 = b"price = 1;\nname = \"caf\xe9\";\n";
+    let e = zedc::format::format_source(latin1).unwrap_err();
+    assert_eq!(e, "2:12: not UTF-8: E9");
+    // Running the file reports the same position.
+    assert_eq!(zedc::run::load(latin1).err().as_deref(), Some(e.as_str()));
+    let bom = "\u{feff}total = 1;\n".as_bytes();
+    let e = zedc::format::format_source(bom).unwrap_err();
+    assert_eq!(e, "1:1: the file starts with a byte order mark");
+}
+
+#[test]
+fn a_comparison_of_a_comparison_keeps_its_parentheses() {
+    // `a == b == c` is a chain, which tests both pairs, so the parentheses change the meaning:
+    // `(a == b) == c` compares a truth value with `c`.
+    check("f(a,b,c)=(a==b)==c;\n", "f(a, b, c) = (a == b) == c;\n");
+    check("f(a,b,c)=a==(b==c);\n", "f(a, b, c) = a == (b == c);\n");
+    check("f(a,b,c)=(a<b)<c;\n", "f(a, b, c) = (a < b) < c;\n");
+}
+
+#[test]
 fn a_match_puts_each_arm_on_its_own_line() {
     // Step L2.2: a comment stays with its arm, and a guard is written after the pattern.
     check(

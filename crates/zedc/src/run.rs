@@ -77,7 +77,7 @@ pub struct Record {
 
 /// The program in `bytes`, or its errors, one per line as `line:col: why`.
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
-    let text = source::load(bytes).map_err(|e| e.to_string())?;
+    let text = source::load(bytes).map_err(|e| e.render(bytes))?;
     let (stmts, unit, warnings) = compile(&text).map_err(|ds| {
         let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
         lines.join("\n")

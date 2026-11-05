@@ -369,7 +369,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
     let mut texts = Vec::new();
     for file in args {
         let text = match std::fs::read(file) {
-            Ok(bytes) => source::load(&bytes).map_err(|e| e.to_string()),
+            Ok(bytes) => source::load(&bytes).map_err(|e| e.render(&bytes)),
             Err(e) => {
                 let _ = writeln!(stderr, "{file}: {e}");
                 return 2;
