@@ -6,6 +6,31 @@ license-file.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# The static library is the runtime `zedc build` links into an executable (step L1.36a).
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+# The `zedc` command. Its source stays with the compiler, in `zedc`, which cannot depend on this
+# package; here it can call the native code generator.
+[[bin]]
+name = "zedc"
+path = "../zedc/src/main.rs"
+
+# Runs the zedc executable itself, which only a test of this package can name.
+[[test]]
+name = "zedc_binary"
+path = "../../tests/steps/m0_09_kernel_evaluator/binary.rs"
+
+# The executable given command-line arguments (step L1.19a).
+[[test]]
+name = "command_line_binary"
+path = "../../tests/steps/l01_19a_command_line/binary.rs"
+
+# `zedc build` run as a user runs it (step L1.36a).
+[[test]]
+name = "build_binary"
+path = "../../tests/steps/l01_36a_executables/binary.rs"
+
 [dependencies]
 cranelift-codegen = "0.137.1"
 cranelift-frontend = "0.137.1"
@@ -33,3 +58,5 @@ all = { level = "warn", priority = -1 }
 
 [dev-dependencies]
 libc = "0.2.191"
+# Sets the stack limit the zedc_binary test's child inherits.
+rustix.workspace = true

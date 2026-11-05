@@ -1,7 +1,7 @@
 //! The zedc executable, run as a user runs it, given command-line arguments (DESIGN.md step
 //! L1.19a): the words reach `zedc run` as the system gives them, so an argument that is not
-//! UTF-8 is a usage error naming its position, not a crash. `crates/zedc/Cargo.toml` names this
-//! test, since only a test of that package can name the executable.
+//! UTF-8 is a usage error naming its position, not a crash. `crates/zed-native/Cargo.toml` names
+//! this test, since only a test of that package can name the executable.
 
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;

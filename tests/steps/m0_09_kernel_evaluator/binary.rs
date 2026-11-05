@@ -1,6 +1,6 @@
 //! The zedc executable, run as a user runs it, on a value deeper than the minimum of 20,000
-//! nested calls (DESIGN.md step M0.11). `crates/zedc/Cargo.toml` names this test, since only a
-//! test of that package can name the executable.
+//! nested calls (DESIGN.md step M0.11). `crates/zed-native/Cargo.toml` names this test, since
+//! only a test of that package can name the executable.
 
 use std::fs;
 use std::path::PathBuf;

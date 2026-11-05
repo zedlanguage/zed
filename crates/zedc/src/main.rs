@@ -1,13 +1,16 @@
 //! The `zedc` command: `zedc fmt <file>` writes the file in the formatter's layout to standard
-//! output; `zedc run` and `zedc replay` run a program ([`zedc::run::command`]); `zedc test`
-//! runs the tests of units ([`zedc::testing::command`]); with no arguments it prints its
-//! version.
+//! output; `zedc run` and `zedc replay` run a program ([`zedc::run::command`]); `zedc build`
+//! compiles one to an executable ([`zed_native::link::command`]); `zedc test` runs the tests of
+//! units ([`zedc::testing::command`]); with no arguments it prints its version.
+//!
+//! It is a target of the package `zed-native`, which `zedc build` needs and which depends on
+//! `zedc`.
 
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-const USAGE: &str =
-    "usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | test [--mutate] <file> …]";
+const USAGE: &str = "usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | build <file> -o <out> | \
+     test [--mutate] <file> …]";
 
 fn main() -> ExitCode {
     // The words stay as the system gives them: a `CommandLine` argument need not be UTF-8 to
@@ -45,6 +48,13 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
+        }
+        // The link names the system libraries of Linux; another host waits for PORTABLE-rt.
+        #[cfg(target_os = "linux")]
+        [cmd, rest @ ..] if cmd == "build" => {
+            let tools = zed_native::link::Toolchain::from_env();
+            let status = zed_native::link::command(rest, &tools, &mut std::io::stderr());
+            return ExitCode::from(status);
         }
         [cmd, files @ ..] if cmd == "test" => {
             let (mut stdout, mut stderr) = (std::io::stdout(), std::io::stderr());

@@ -23,7 +23,7 @@ the form it has may not meet the cost the compiler needs:
 | 3 | Lazy once-only cells and tied recursive types | 27 | workaround | S.3 | Table of definitions keyed by id |
 | 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
 | 5 | Bytes: spans, binary files, hashing input | 95 | planned (L1.39c: `utf8`; step L7.3f, row FILE-bytes: byte port) | S.2, S.4 | `utf8`, a byte file port, or drop the binary formats |
-| 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables planned (L1.36a); computed paths and exit status at step L7.3f (row FILE-bytes) | S.5 | `CommandLine` port; `Files` writes, an exit value |
+| 6 | Command line, computed output paths, exit status | 9 | closed for the command line (built, L1.19a); executables built (L1.36a); computed paths and exit status at step L7.3f (row FILE-bytes) | S.5 | `CommandLine` port; `Files` writes, an exit value |
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
@@ -253,8 +253,8 @@ Recommended: the ports.
 Closed for the command line (step L1.19a): an input of type `CommandLine` is the family of the
 words after `--`, keyed by position from 1 (`run::arguments`); `main.rs` now reads
 `std::env::args_os`, and a word that is not UTF-8 is a usage error. The compiler in Zed reads its
-arguments through this port from S.5 on. Still open: an executable that binds its ports from its own command
-line is step L1.36a; a write to a path computed at run time and an exit status from `main`'s
+arguments through this port from S.5 on. An executable that binds its ports from its own command
+line is built (step L1.36a, `zedc build`). Still open: a write to a path computed at run time and an exit status from `main`'s
 result have no step.
 
 ### Gap 7. Code points and text tables (code points built; text tables missing)
@@ -1570,3 +1570,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A thread-local placeholder `Arc` swapped into a shared field during `Drop`, so a subterm held several times by one node is released from the queue, not inside the drop of its last holder | `term.rs` `free_shared`, `HOLE`, `Freed::Shared` | Missing (the runtime frees values) | Removed |
 | A private trait (`Tree`) whose method returns `impl DoubleEndedIterator` (a slice chained with an array of `Option`s), so one generic loop compares and one prints two tree types | `types/rec/walk.rs` `Tree`, `equal`, `show`, `Expr::kids`, `Shape::kids` | None | A function from a value to the list of its parts, passed to one walk |
 | Post-order builds with an enum of steps borrowing the input (`Visit`, `Build`; `Eval`, `Component`, `Build`) on a `Vec` and a second `Vec` of results split off per node | `rec` `Node::of`, `eval`, `Show::rope`, `Expr::clone` | Mutation (gap 11) | A state receiver holding the two lists, as for `canon::binders::Levels::term` |
+
+## Entries from L1.36a (`zed-native/src/exe.rs`, `link.rs`, `hooks.rs`, `lib.rs`, `zedc/src/run.rs`, `main.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `#[unsafe(no_mangle)] pub extern "C" fn`, so a linked executable finds each hook and `zed_main` by its symbol | the 13 `rt_*` hooks, `exe::zed_main` | Foreign library | The runtime stays in Rust (What stays in Rust); the compiler in Zed names the same symbols in the code it emits |
+| C's `main(argc, argv)` read through raw pointers (`CStr::from_ptr`, `slice::from_raw_parts`) in an `unsafe` block, and standard output flushed by hand because Rust's `main` does not return | `exe::zed_main` | Foreign library | Inside the runtime, which stays in Rust |
+| A crate built as both `rlib` and `staticlib`, and a binary target whose source lives in another crate (`autobins = false`) | `crates/zed-native/Cargo.toml`, `crates/zedc/Cargo.toml` | none | Cargo only; the compiler in Zed is one package |
+| `std::process::Command` running the system linker and reading its status and standard error | `link::build` | Command line (gap 6) | A process port, which no step plans; until then the Rust driver links |
+| `OpenOptions::create_new` for the object file, removed after the link | `link::build` | Command line (gap 6): computed output paths | A `Files` write to a computed path (step L7.3f) |
+| `std::env::var_os` for `CC` and `ZED_RUNTIME`, `current_exe` for the default library | `link::Toolchain::from_env` | Command line (gap 6) | An environment input port, which no step plans |
+| A struct of options parsed once and shared by `zedc run` and an executable, its methods taking `&mut dyn Read`/`Write` | `run::Options`, `run::Ports::run`, `run::executable` | none | A record and functions over the `Lines` ports |
+| A length-prefixed byte layout (`u64::to_le_bytes`, `split_first_chunk`, `split_at_checked`) | `exe::data`, `exe::Program::decode` | Bytes (gap 5) | Bytes words of step L7.3f |

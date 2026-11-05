@@ -12,6 +12,9 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
   zedc/               the compiler: loading, lexer, parser, elaboration, checker,
                       interpreter, ZIR, code generation, and the `zedc` command
   zed-rt/             the runtime that native code links against
+  zed-native/         native code by Cranelift (step L1.36), `zedc build` (L1.36a), and the
+                      runtime library `libzed_native.a` an executable links; the `zedc` binary,
+                      whose source is in zedc/src/main.rs, is a target of this crate
   zed-cert/           the independent certificate checker; depends on zed-kernel only
   zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
   zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit, sync,

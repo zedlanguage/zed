@@ -49,10 +49,126 @@ pub struct Program {
     pub(crate) unit: Unit,
     /// `main` closed over the definitions it reaches, made at the first wave.
     main: std::sync::OnceLock<Term>,
-    inputs: Vec<(String, PortKind)>,
-    outputs: Vec<String>,
+    ports: Ports,
     /// The warnings, placed in the source: they do not stop the build.
     warnings: Arc<[Diagnostic]>,
+}
+
+/// `main`'s ports: what a wave reads and writes, and all an executable built by `zedc build`
+/// (step L1.36a) keeps of the program besides its code.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Ports {
+    /// The input ports, in header order.
+    pub inputs: Vec<(String, PortKind)>,
+    /// The output ports, in header order.
+    pub outputs: Vec<String>,
+}
+
+impl Ports {
+    /// The ports as text, one per line, `lines`, `files`, `args` or `out` and the name: what
+    /// an executable holds.
+    pub fn to_text(&self) -> String {
+        let mut text = String::new();
+        for (name, kind) in &self.inputs {
+            let word = match kind {
+                PortKind::Lines => "lines",
+                PortKind::Files => "files",
+                PortKind::CommandLine => "args",
+            };
+            text.push_str(&format!("{word} {name}\n"));
+        }
+        for name in &self.outputs {
+            text.push_str(&format!("out {name}\n"));
+        }
+        text
+    }
+
+    /// The ports `text` holds, as [`Ports::to_text`] writes them.
+    pub fn from_text(text: &str) -> Result<Ports, String> {
+        let mut ports = Ports {
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        };
+        for line in text.lines() {
+            let kind = match line.split_once(' ') {
+                Some(("lines", name)) => Some((name, PortKind::Lines)),
+                Some(("files", name)) => Some((name, PortKind::Files)),
+                Some(("args", name)) => Some((name, PortKind::CommandLine)),
+                Some(("out", name)) => {
+                    ports.outputs.push(name.to_string());
+                    continue;
+                }
+                _ => None,
+            };
+            let (name, kind) = kind.ok_or_else(|| format!("`{line}` is not a port"))?;
+            ports.inputs.push((name.to_string(), kind));
+        }
+        Ok(ports)
+    }
+
+    /// Runs one wave on these ports, as [`Program::run_args`] does, with the wave run by `run`
+    /// in an evaluator that holds the ports: an executable's way to run its own code.
+    pub fn run(
+        &self,
+        lines: &BTreeMap<String, Vec<u8>>,
+        args: &[String],
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+        run: impl FnOnce(&mut Evaluator) -> Result<Value, String>,
+    ) -> Result<Wave, String> {
+        Ok(self.wave(lines, args, files, false, run)?.0)
+    }
+
+    fn wave(
+        &self,
+        lines: &BTreeMap<String, Vec<u8>>,
+        args: &[String],
+        files: impl Fn(&str) -> Arc<dyn Lookup>,
+        trace: bool,
+        run: impl FnOnce(&mut Evaluator) -> Result<Value, String>,
+    ) -> Result<(Wave, Option<Provenance>), String> {
+        let mut world = World::new();
+        let mut record = Record::default();
+        for (name, kind) in &self.inputs {
+            match kind {
+                PortKind::Lines => {
+                    let Some(bytes) = lines.get(name) else {
+                        return Err(format!("no input for port `{name}`"));
+                    };
+                    world = world.input(name, split_lines(name, bytes));
+                    record.lines.insert(name.clone(), bytes.clone());
+                }
+                PortKind::Files => world = world.source(name, files(name)),
+                PortKind::CommandLine => {
+                    world = world.input(name, arguments(args));
+                    record.args = args.to_vec();
+                }
+            }
+        }
+        for name in &self.outputs {
+            world = world.output(name);
+        }
+        let mut ev = Evaluator::new(world);
+        if trace {
+            ev = ev.with_provenance(vec![Value::Int(0)]);
+        }
+        run(&mut ev)?;
+        let mut writes = Vec::new();
+        for name in &self.outputs {
+            match ev.world.log(name) {
+                [] => {}
+                [v] => writes.push((name.clone(), join_lines(name, v)?)),
+                pushes => {
+                    return Err(format!(
+                        "port `{name}` is pushed {} times in one wave; several pushes to one \
+                         port arrive at layer L7",
+                        pushes.len()
+                    ));
+                }
+            }
+        }
+        record.files = std::mem::take(&mut ev.world.reads);
+        Ok((Wave { writes, record }, ev.provenance()))
+    }
 }
 
 /// The outcome of one wave: the writes, by port in header order, and the inputs it read.
@@ -361,8 +477,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
     Ok(Program {
         unit,
         main: std::sync::OnceLock::new(),
-        inputs,
-        outputs,
+        ports: Ports { inputs, outputs },
         warnings: Arc::from([]),
     })
 }
@@ -370,7 +485,32 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
 impl Program {
     /// The input ports, in header order.
     pub fn inputs(&self) -> &[(String, PortKind)] {
-        &self.inputs
+        &self.ports.inputs
+    }
+
+    /// The ports.
+    pub fn ports(&self) -> &Ports {
+        &self.ports
+    }
+
+    /// The term a wave runs: `main` closed over the definitions it reaches, applied to a read
+    /// of each input port, under the prelude. What `zedc build` compiles (step L1.36a).
+    pub fn term(&self) -> Term {
+        let main = self
+            .main
+            .get_or_init(|| self.unit.get("main").expect("`main` was elaborated"));
+        self.term_of(main.clone())
+    }
+
+    /// `main` applied to a read of each input port, under the prelude.
+    fn term_of(&self, main: Term) -> Term {
+        let args = self
+            .ports
+            .inputs
+            .iter()
+            .map(|(name, _)| Term::Read(name.as_str().into()))
+            .collect();
+        interp::prelude(Term::App(Shared::new(main), args))
     }
 
     /// The warnings, placed in the source, in order of place.
@@ -390,8 +530,7 @@ impl Program {
         let program = Program {
             unit,
             main: std::sync::OnceLock::new(),
-            inputs: self.inputs.clone(),
-            outputs: self.outputs.clone(),
+            ports: self.ports.clone(),
             warnings: Arc::clone(&self.warnings),
         };
         (program, report)
@@ -399,7 +538,7 @@ impl Program {
 
     /// The output ports, in header order.
     pub fn outputs(&self) -> &[String] {
-        &self.outputs
+        &self.ports.outputs
     }
 
     /// Runs one wave with no command-line arguments: `lines` gives the bytes of each `Lines`
@@ -469,61 +608,12 @@ impl Program {
         map: &Through<'_>,
         main: Option<&Term>,
     ) -> Result<(Wave, Option<Provenance>), String> {
-        let mut world = World::new();
-        let mut record = Record::default();
-        for (name, kind) in &self.inputs {
-            match kind {
-                PortKind::Lines => {
-                    let Some(bytes) = lines.get(name) else {
-                        return Err(format!("no input for port `{name}`"));
-                    };
-                    world = world.input(name, split_lines(name, bytes));
-                    record.lines.insert(name.clone(), bytes.clone());
-                }
-                PortKind::Files => world = world.source(name, files(name)),
-                PortKind::CommandLine => {
-                    world = world.input(name, arguments(args));
-                    record.args = args.to_vec();
-                }
-            }
-        }
-        for name in &self.outputs {
-            world = world.output(name);
-        }
-        let main = match main {
-            Some(main) => main.clone(),
-            None => self
-                .main
-                .get_or_init(|| self.unit.get("main").expect("`main` was elaborated"))
-                .clone(),
+        let term = match main {
+            Some(main) => self.term_of(main.clone()),
+            None => self.term(),
         };
-        let args = self
-            .inputs
-            .iter()
-            .map(|(name, _)| Term::Read(name.as_str().into()))
-            .collect();
-        let term = interp::prelude(Term::App(Shared::new(main), args));
-        let mut ev = Evaluator::new(world);
-        if trace {
-            ev = ev.with_provenance(vec![Value::Int(0)]);
-        }
-        map(&term, &mut ev)?;
-        let mut writes = Vec::new();
-        for name in &self.outputs {
-            match ev.world.log(name) {
-                [] => {}
-                [v] => writes.push((name.clone(), join_lines(name, v)?)),
-                pushes => {
-                    return Err(format!(
-                        "port `{name}` is pushed {} times in one wave; several pushes to one \
-                         port arrive at layer L7",
-                        pushes.len()
-                    ));
-                }
-            }
-        }
-        record.files = std::mem::take(&mut ev.world.reads);
-        Ok((Wave { writes, record }, ev.provenance()))
+        self.ports
+            .wave(lines, args, files, trace, |ev| map(&term, ev))
     }
 
     /// Runs the wave `record` holds, reading nothing from the world.
@@ -819,27 +909,32 @@ fn command_inner(
                 .to_string(),
         )
     };
-    let (replay, file, mut rest) = match &words.command[..] {
+    let (replay, file, rest) = match &words.command[..] {
         [cmd, file, rest @ ..] if *cmd == "run" => (None, file, rest),
         [cmd, file, record, rest @ ..] if *cmd == "replay" => (Some(record), file, rest),
         _ => return Err(usage()),
     };
-    let mut record_to = None;
-    let mut binds = BTreeMap::new();
-    while let [word, more @ ..] = rest {
-        rest = more;
-        if *word == "--record" && replay.is_none() {
-            let [out, more @ ..] = rest else {
-                return Err(usage());
-            };
-            record_to = Some(out);
-            rest = more;
-        } else if let Some((port, path)) = word.split_once('=') {
-            binds.insert(port.to_string(), path.to_string());
-        } else {
-            return Err(usage());
+    let options = Options::parse(rest, replay.is_none()).ok_or_else(usage)?;
+    let program = load_file(file, stderr)?;
+    options.check(program.ports())?;
+    let wave = match replay {
+        Some(path) => {
+            let bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?;
+            let record = Record::from_bytes(&bytes).map_err(|e| (2, format!("{path}: {e}")))?;
+            program.replay(&record)
+        }
+        None => {
+            let lines = options.read_lines(program.ports(), stdin)?;
+            program.run_args(&lines, &words.args, |_| Arc::new(Disk))
         }
     }
+    .map_err(|e| (1, e))?;
+    options.finish(&wave, stdout, stderr)
+}
+
+/// The program in `file`, its warnings written to `stderr` as `zedc run` writes them, or the
+/// exit status and message: 2 when the file cannot be read, 1 when the program is rejected.
+pub fn load_file(file: &str, stderr: &mut dyn Write) -> Result<Program, (u8, String)> {
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
     // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
     // package (step L2.3); linking it to the units it imports is step L2.4.
@@ -853,83 +948,169 @@ fn command_inner(
     let program = load(&bytes).map_err(|e| (1, format!("{file}:{e}")))?;
     write_warnings(stderr, file, program.warnings())
         .map_err(|e| (2, format!("standard error: {e}")))?;
-    let known =
-        |p: &String| program.inputs.iter().any(|(n, _)| n == p) || program.outputs.contains(p);
-    if let Some(p) = binds.keys().find(|p| !known(p)) {
-        return Err((2, format!("`main` has no port `{p}`")));
+    Ok(program)
+}
+
+/// The words of a command line after the program: each port bound to a path, and the file
+/// `--record` names.
+struct Options<'a> {
+    binds: BTreeMap<String, String>,
+    record_to: Option<&'a str>,
+}
+
+impl<'a> Options<'a> {
+    /// The options `rest` holds, `--record <out>` among them only when `record`; `None` when a
+    /// word is neither.
+    fn parse(mut rest: &[&'a str], record: bool) -> Option<Options<'a>> {
+        let mut options = Options {
+            binds: BTreeMap::new(),
+            record_to: None,
+        };
+        while let [word, more @ ..] = rest {
+            rest = more;
+            if *word == "--record" && record {
+                let [out, more @ ..] = rest else {
+                    return None;
+                };
+                options.record_to = Some(out);
+                rest = more;
+            } else if let Some((port, path)) = word.split_once('=') {
+                options.binds.insert(port.to_string(), path.to_string());
+            } else {
+                return None;
+            }
+        }
+        Some(options)
     }
-    // A `Files` or `CommandLine` input reads no file, so a binding of one would be ignored.
-    if let Some((p, _)) = program
-        .inputs
-        .iter()
-        .find(|(n, k)| *k != PortKind::Lines && binds.contains_key(n))
-    {
-        return Err((
-            2,
-            format!("input port `{p}` reads no file: remove `{p}={}`", binds[p]),
-        ));
-    }
-    for name in &program.outputs {
-        if !binds.contains_key(name) && name != "stdout" && name != "stderr" {
+
+    /// Checks the bindings against `ports`: each names a port, binds no input that reads no
+    /// file, and leaves no output but `stdout` and `stderr` without a file.
+    fn check(&self, ports: &Ports) -> Result<(), (u8, String)> {
+        let binds = &self.binds;
+        let known =
+            |p: &String| ports.inputs.iter().any(|(n, _)| n == p) || ports.outputs.contains(p);
+        if let Some(p) = binds.keys().find(|p| !known(p)) {
+            return Err((2, format!("`main` has no port `{p}`")));
+        }
+        // A `Files` or `CommandLine` input reads no file, so a binding of one would be ignored.
+        if let Some((p, _)) = ports
+            .inputs
+            .iter()
+            .find(|(n, k)| *k != PortKind::Lines && binds.contains_key(n))
+        {
             return Err((
                 2,
-                format!("output port `{name}` needs a file: `{name}=path`"),
+                format!("input port `{p}` reads no file: remove `{p}={}`", binds[p]),
             ));
         }
-    }
-    let wave = match replay {
-        Some(path) => {
-            let bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?;
-            let record = Record::from_bytes(&bytes).map_err(|e| (2, format!("{path}: {e}")))?;
-            program.replay(&record)
-        }
-        None => {
-            let mut lines = BTreeMap::new();
-            for (name, kind) in &program.inputs {
-                if *kind != PortKind::Lines {
-                    continue;
-                }
-                let mut bytes = Vec::new();
-                match binds.get(name) {
-                    Some(path) => {
-                        bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?
-                    }
-                    None if name == "stdin" => {
-                        stdin
-                            .read_to_end(&mut bytes)
-                            .map_err(|e| (2, format!("standard input: {e}")))?;
-                    }
-                    None => {
-                        return Err((
-                            2,
-                            format!("input port `{name}` needs a file: `{name}=path`"),
-                        ));
-                    }
-                }
-                lines.insert(name.clone(), bytes);
+        for name in &ports.outputs {
+            if !binds.contains_key(name) && name != "stdout" && name != "stderr" {
+                return Err((
+                    2,
+                    format!("output port `{name}` needs a file: `{name}=path`"),
+                ));
             }
-            program.run_args(&lines, &words.args, |_| Arc::new(Disk))
         }
+        Ok(())
     }
-    .map_err(|e| (1, e))?;
-    if let Some(out) = record_to {
-        std::fs::write(out, wave.record.to_bytes()).map_err(|e| (1, format!("{out}: {e}")))?;
+
+    /// The bytes of each `Lines` input of `ports`: the file bound to it, or `stdin` for the
+    /// port `stdin`.
+    fn read_lines(
+        &self,
+        ports: &Ports,
+        stdin: &mut dyn Read,
+    ) -> Result<BTreeMap<String, Vec<u8>>, (u8, String)> {
+        let mut lines = BTreeMap::new();
+        for (name, kind) in &ports.inputs {
+            if *kind != PortKind::Lines {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            match self.binds.get(name) {
+                Some(path) => {
+                    bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?
+                }
+                None if name == "stdin" => {
+                    stdin
+                        .read_to_end(&mut bytes)
+                        .map_err(|e| (2, format!("standard input: {e}")))?;
+                }
+                None => {
+                    return Err((
+                        2,
+                        format!("input port `{name}` needs a file: `{name}=path`"),
+                    ));
+                }
+            }
+            lines.insert(name.clone(), bytes);
+        }
+        Ok(lines)
     }
-    let acks = commit(&wave.writes, |port, bytes| match binds.get(port) {
-        Some(path) => std::fs::write(path, bytes).map_err(|e| (path.clone(), e.to_string())),
-        None if port == "stdout" => stdout
-            .write_all(bytes)
-            .map_err(|e| ("stdout".into(), e.to_string())),
-        None => stderr
-            .write_all(bytes)
-            .map_err(|e| ("stderr".into(), e.to_string())),
+
+    /// Writes the record, when `--record` names a file, and commits the wave's writes.
+    fn finish(
+        &self,
+        wave: &Wave,
+        stdout: &mut dyn Write,
+        stderr: &mut dyn Write,
+    ) -> Result<(), (u8, String)> {
+        if let Some(out) = self.record_to {
+            std::fs::write(out, wave.record.to_bytes()).map_err(|e| (1, format!("{out}: {e}")))?;
+        }
+        let acks = commit(&wave.writes, |port, bytes| match self.binds.get(port) {
+            Some(path) => std::fs::write(path, bytes).map_err(|e| (path.clone(), e.to_string())),
+            None if port == "stdout" => stdout
+                .write_all(bytes)
+                .map_err(|e| ("stdout".into(), e.to_string())),
+            None => stderr
+                .write_all(bytes)
+                .map_err(|e| ("stderr".into(), e.to_string())),
+        });
+        for (port, ack) in acks {
+            if let Value::Atom(a) = &ack
+                && a.name.as_ref() == "ioError"
+            {
+                return Err((1, format!("writing port `{port}` failed: {ack}")));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The command line of an executable `zedc build` makes (step L1.36a), `name [port=path …]
+/// [--record <out>] [-- arg …]`, with `args` the words after `name`: the ports are bound and
+/// written as `zedc run` binds and writes them, and the wave is run by `run`, the
+/// executable's own code, in an evaluator that holds the ports. Returns the exit status, as
+/// [`command`] does.
+pub fn executable(
+    name: &str,
+    ports: &Ports,
+    args: &[impl AsRef<std::ffi::OsStr>],
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    run: impl FnOnce(&mut Evaluator) -> Result<Value, String>,
+) -> u8 {
+    let outcome = words(args).map_err(|why| (2, why)).and_then(|words| {
+        let options = Options::parse(&words.command, true).ok_or_else(|| {
+            (
+                2,
+                format!("usage: {name} [port=path …] [--record <out>] [-- arg …]"),
+            )
+        })?;
+        options.check(ports)?;
+        let lines = options.read_lines(ports, stdin)?;
+        let wave = ports
+            .run(&lines, &words.args, |_| Arc::new(Disk), run)
+            .map_err(|e| (1, e))?;
+        options.finish(&wave, stdout, stderr)
     });
-    for (port, ack) in acks {
-        if let Value::Atom(a) = &ack
-            && a.name.as_ref() == "ioError"
-        {
-            return Err((1, format!("writing port `{port}` failed: {ack}")));
+    match outcome {
+        Ok(()) => 0,
+        Err((status, why)) => {
+            let _ = writeln!(stderr, "{why}");
+            status
         }
     }
-    Ok(())
 }

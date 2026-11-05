@@ -3,9 +3,16 @@
 //! integer, float and boolean nodes inline and every other node through the runtime of
 //! `zed-rt`, which allocates and counts as the counting machine does, so a native run gives
 //! the interpreter's value and the machine's counts.
+//!
+//! `zedc build` ([`link`], step L1.36a) links that object file, with the program as data and a C
+//! `main`, against this crate built as a static library, the runtime of every executable.
 
 mod codegen;
+#[cfg(unix)]
+mod exe;
 mod hooks;
+#[cfg(target_os = "linux")]
+pub mod link;
 mod tables;
 
 use std::mem::ManuallyDrop;
@@ -150,12 +157,6 @@ fn run_in(
     m.0.finalize_definitions()
         .map_err(|e| format!("native: {e}"))?;
     let code = m.0.get_finalized_function(f.root);
-    // Generated code recurses on the machine stack once per Zed call and keeps a function's
-    // words in its frame, so it runs on a stack as large as memory (COMPLEXITY.md R10), mapped
-    // before the run's state is installed so that a failure leaves nothing to undo.
-    let stack = Stack::new()?;
-    let taken = std::mem::replace(ev, Evaluator::new(World::new()));
-    hooks::install(hooks::State::new(t, taken));
     // SAFETY: `code` is `zed_root`, which the generator defines with no parameters and two
     // `i64` results under the host's calling convention, as `Word` is laid out.
     #[expect(
@@ -163,12 +164,29 @@ fn run_in(
         reason = "calling generated code needs a function pointer from it"
     )]
     let root: extern "C" fn() -> Word = unsafe { std::mem::transmute(code) };
+    let o = call(t, root, ev);
+    drop(m);
+    o
+}
+
+/// Runs the generated code entered at `root`, made from the tables `t`, the kernel in `ev`
+/// running the nodes the runtime does not: the JIT's way and a linked executable's.
+fn call(
+    t: Arc<Tables>,
+    root: extern "C" fn() -> Word,
+    ev: &mut Evaluator,
+) -> Result<Outcome, String> {
+    // Generated code recurses on the machine stack once per Zed call and keeps a function's
+    // words in its frame, so it runs on a stack as large as memory (COMPLEXITY.md R10), mapped
+    // before the run's state is installed so that a failure leaves nothing to undo.
+    let stack = Stack::new()?;
+    let taken = std::mem::replace(ev, Evaluator::new(World::new()));
+    hooks::install(hooks::State::new(t, taken));
     let w = stack.run(|| root());
     drop(stack);
     let mut s = hooks::remove();
     let r = hooks::finish(&s.t, &mut s.run, w);
     *ev = s.run.ev;
-    drop(m);
     Ok(Outcome {
         value: r?,
         stats: s.run.heap.stats,
@@ -182,11 +200,32 @@ fn run_in(
 /// runtime's hooks imported.
 pub fn object(g: &Arc<Region>, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
-    let b = ObjectBuilder::new(isa(true, OptLevel::None)?, "zed", default_libcall_names())
-        .map_err(|e| format!("native: {e}"))?;
-    let mut m = ObjectModule::new(b);
+    let mut m = object_module()?;
     codegen::define(&mut m, &t, &plans)?;
     m.finish().emit().map_err(|e| format!("native: {e}"))
+}
+
+/// The object file of an executable that runs graph `g` under `plan` with `main`'s ports
+/// `ports` (step L1.36a): [`object`]'s code, the program as data, and a C `main` that passes
+/// both, with the command line, to the runtime library's start.
+#[cfg(unix)]
+pub fn executable_object(
+    g: &Arc<Region>,
+    plan: &Plan,
+    ports: &zedc::run::Ports,
+) -> Result<Vec<u8>, String> {
+    let (t, plans) = Tables::new(g, plan)?;
+    let mut m = object_module()?;
+    let f = codegen::define(&mut m, &t, &plans)?;
+    exe::define_main(&mut m, f.root, &exe::data(plan.fuse, ports, g))?;
+    m.finish().emit().map_err(|e| format!("native: {e}"))
+}
+
+/// An empty object module for the host, its code position-independent.
+fn object_module() -> Result<ObjectModule, String> {
+    let b = ObjectBuilder::new(isa(true, OptLevel::None)?, "zed", default_libcall_names())
+        .map_err(|e| format!("native: {e}"))?;
+    Ok(ObjectModule::new(b))
 }
 
 /// Lowers, plans with `fuse` and runs a closed term natively: a `through` for

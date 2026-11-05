@@ -161,10 +161,20 @@ pub(crate) fn addresses() -> Vec<*const u8> {
     ]
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_arg(tag: i64, bits: i64) {
     with(|_, s| s.args.push(Word { tag, bits }));
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_node(id: i64) -> Word {
     with_args(|t, s, ins| {
         s.heap.allocating(Some(id as usize));
@@ -175,6 +185,11 @@ extern "C" fn rt_node(id: i64) -> Word {
 
 /// An error is recorded here, as at every other hook: generated code does not check after an
 /// `inc`, and no `dec` need follow it.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_inc(tag: i64, bits: i64) {
     with(|_, s| {
         if let Err(e) = s.heap.inc(Word { tag, bits }) {
@@ -183,6 +198,11 @@ extern "C" fn rt_inc(tag: i64, bits: i64) {
     });
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_dec(tag: i64, bits: i64) {
     with(|_, s| {
         if let Err(e) = s.heap.dec(Word { tag, bits }) {
@@ -191,6 +211,11 @@ extern "C" fn rt_dec(tag: i64, bits: i64) {
     });
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_cap(tag: i64, bits: i64, i: i64) -> Word {
     with(|_, s| {
         let r = s.heap.capture(Word { tag, bits }, i as usize);
@@ -198,6 +223,11 @@ extern "C" fn rt_cap(tag: i64, bits: i64, i: i64) -> Word {
     })
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_callable(tag: i64, bits: i64, nargs: i64) -> i64 {
     with(|t, s| match s.heap.obj(Word { tag, bits }) {
         Ok(Some(Obj::Clo { lambda, .. })) if t.lambdas[*lambda].params == nargs as usize => {
@@ -207,14 +237,29 @@ extern "C" fn rt_callable(tag: i64, bits: i64, nargs: i64) -> i64 {
     })
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_entry(lambda: i64) -> i64 {
     with(|_, s| s.entries[lambda as usize])
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_register(lambda: i64, address: i64) {
     with(|_, s| s.entries[lambda as usize] = address);
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_branch(id: i64) -> i64 {
     with_args(|t, s, ins| {
         s.heap.allocating(Some(id as usize));
@@ -223,6 +268,11 @@ extern "C" fn rt_branch(id: i64) -> i64 {
     })
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_match(id: i64) -> i64 {
     with_args(|t, s, ins| {
         s.heap.allocating(Some(id as usize));
@@ -231,14 +281,29 @@ extern "C" fn rt_match(id: i64) -> i64 {
     })
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_out(k: i64) -> Word {
     with(|_, s| s.outs[k as usize])
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_pending() -> Word {
     with(|_, s| s.pending)
 }
 
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "a linked executable finds each hook by its symbol (step L1.36a)"
+)]
 extern "C" fn rt_error(id: i64) -> Word {
     with(|t, s| {
         let e = t.nodes[id as usize].error.clone();
