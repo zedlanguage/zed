@@ -74,3 +74,53 @@ fn a_loose_atom_passes_through_a_declared_function_whose_type_omits_it() {
     assert_eq!(value(&run, "a"), "#notFound");
     assert_eq!(value(&run, "b"), "3");
 }
+
+#[test]
+fn a_loose_atom_passes_through_a_generic_function_bounded_to_carriers() {
+    // Rule 6 at an inferred parameter: `add` is `(T, T) -> T for T in int | f64 | rat`, a
+    // bound that holds no atom, so `#nf` selects no arrow and is the call's value.
+    let t = "add(positional a, positional b) = a + b;\n\
+             h(positional y: int | #nf) = add(y, 1);\n";
+    assert!(type_errors(t).is_empty());
+    assert_eq!(sig(t, "h"), "(int | #nf) -> int | #nf");
+    let run = format!("{t}a = h(#nf);\nb = h(2);\n");
+    assert_eq!(value(&run, "a"), "#nf");
+    assert_eq!(value(&run, "b"), "3");
+}
+
+#[test]
+fn a_call_takes_the_arrow_of_a_generic_function_that_takes_its_atoms() {
+    // `r` handles the atoms of `x` and lets them reach its result, so it has two arrows; the
+    // first, whose `T` is bounded to carriers, takes no atom, and a call passing `#nf` takes
+    // the second.
+    let t = "r(positional x, positional d) = if (x else d) == d { d } else { x + d };\n\
+             h(positional y: int | #nf) = r(y, 1);\n";
+    assert!(type_errors(t).is_empty());
+    assert_eq!(
+        sig(t, "r"),
+        "((T, T) -> T) & ((#_ | T, T) -> #_ | T) for T in int | f64 | rat"
+    );
+    assert_eq!(sig(t, "h"), "(int | #nf) -> int | #_");
+    let run = format!("{t}a = h(#nf);\nb = h(2);\n");
+    assert_eq!(value(&run, "a"), "1");
+    assert_eq!(value(&run, "b"), "3");
+}
+
+#[test]
+fn a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values() {
+    // `k`'s parameter may take other values, so its type `_` holds every atom (DESIGN.md
+    // L1.26) and `#nf` is not passed by: it enters `k`, whose need `size(a)` refuses it.
+    let t = "size(positional v: int | (int, int)) = 1;\n\
+             k(positional a) = (size(a), a);\n";
+    let bad = format!("{t}h(positional y: int | #nf) = k(y);\n");
+    assert_eq!(
+        type_errors(&bad),
+        [
+            "`k` does not take (int | #nf) [k(y)]",
+            "`size` does not take #nf, which is not int | (int, int) [k(y)]"
+        ]
+    );
+    let ok = format!("{t}h(positional y: int) = k(y);\nb = h(2);\n");
+    assert!(type_errors(&ok).is_empty());
+    assert_eq!(value(&ok, "b"), "(1, 2)");
+}

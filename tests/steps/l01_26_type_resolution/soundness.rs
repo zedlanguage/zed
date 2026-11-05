@@ -385,3 +385,27 @@ fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
     assert_eq!(run(&program(PAIR, is), ""), "other\n");
     assert_eq!(runs(PAIR, r#""${f((1, "x"))}""#, ""), "1\n");
 }
+
+#[test]
+fn a_tuple_default_used_as_a_number_is_rejected() {
+    // The default `(x, 1)` flows a tuple into the class of `y`, which then takes no carrier
+    // `+` takes.
+    let f = "f(positional x, y = (x, 1)) = y + 1;";
+    assert_eq!(super::type_errors(f), ["`+` does not take (_, 1) [y + 1]"]);
+    rejected(f, r#"String(f(1)) else "atom""#);
+    let ok = "f(positional x, y = x) = y + 1;";
+    assert_eq!(runs(ok, r#"String(f(1)) else "atom""#, ""), "2\n");
+}
+
+#[test]
+fn a_tuple_default_of_a_nested_function_used_as_a_number_is_rejected() {
+    let outer =
+        "outer(positional x) = {\n  inner(positional y, w = (y, 1)) = w + 1;\n  inner(x)\n};";
+    assert_eq!(
+        super::type_errors(outer),
+        ["`+` does not take (_, 1) [w + 1]"]
+    );
+    rejected(outer, r#"String(outer(1)) else "atom""#);
+    let ok = "outer(positional x) = {\n  inner(positional y, w = y) = w + 1;\n  inner(x)\n};";
+    assert_eq!(runs(ok, r#"String(outer(1)) else "atom""#, ""), "2\n");
+}
