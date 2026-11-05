@@ -7,7 +7,7 @@ in docs/layout.md.
 ## Current position
 
 **Zed₀ moved after the core (2026-11-05).** By the author's order, every core language feature goes
-before Zed₀. `docs/plan_dag.md` had 826 items at that rework and has 808 items, 2685 edges and 89 levels after the later merges; S.1, which confirms
+before Zed₀. `docs/plan_dag.md` had 826 items at that rework and has 814 items, 2685 edges and 89 levels after the later merges; S.1, which confirms
 Zed₀, is at level 61. The merge took 938 findings from two audits of earlier
 reviews and the Zig, Hydra and push-value studies. The stages before row S now include L1–L18,
 the language parts of L19–L24 and the native path ZIR → MLIR → LLVM IR → x86-64. After row S come
