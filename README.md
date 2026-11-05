@@ -45,7 +45,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | `positional x` | A parameter passed by position. Other parameters are passed by name, as in `f(x: 1)`. |
 | `y = default` in a parameter list | A parameter that can be left out. |
 | `(T) -> U` | The type of a function from `T` to `U`. |
-| `x -> expression` | An unnamed function (a lambda). With a type: `(x: rat) -> x + 1r`. |
+| `x -> expression` | An unnamed function (a lambda). With a type: `(x: rat) -> x + 1r`, where `rat` is an exact rational number and `1r` is the rational 1. |
 | `a.f(b)`, `5.double` | A call with the dot: `a.f(b)` is `f(a, b)`, and `5.double` is `double(5)`. |
 | `f(x, ...)` | A call that leaves the remaining named parameters open, and gives back a function that takes them. |
 | `(+)` | An operator used as a function. |
@@ -58,13 +58,14 @@ This section lists all the syntax, words and terms the examples on this page use
 | `for x in a { ... }`, `for x in a, y in b where c { ... }` | Builds a map with one entry per element, or per combination the `where` lets through. |
 | `loop { ... }`, `loop t { ... }` | A repeated step, with `t` as its optional step counter. The loop is a value holding the final state and the history. |
 | `until c;`, `while c;` | Stop conditions of a loop: `until` is tested after each step, `while` before it. |
-| `x' = e` | The value of `x` in the next step of a loop or the next version of a struct. |
+| `x' = e` | The value of `x` in the next step of a loop or the next version of a struct. See [below](#less-familiar-forms). |
 | `x' = e with x = start` | The same, with the value of `x` before the first step. |
-| `x[i] = e with x[-1] = start;` | A recurrence: an array defined by an equation, with its boundary value at the index just below the first. |
+| `x[i] = e with x[-1] = start;` | A recurrence: an array defined by an equation, with its boundary value at the index just below the first. See [below](#less-familiar-forms). |
 | `i in 0..` inside `d[i in 0..]` | This entry is defined for every `i` in the range. |
-| `x*.method()` | A call in a loop body that also replaces `x` in the next step. |
+| `x*.method()` | A call in a loop body that also replaces `x` in the next step. See [below](#less-familiar-forms). |
+| `mutable x = e;` | A loop variable with the starting value `e`, which keeps its value in any step that doesn't write `x'`. |
 | `test { input -> output, ... }` | A table of test cases attached to a definition, run at build time. |
-| `law name(x: T) = expression;` | A claim that a `bool` expression holds for every `x`. |
+| `law name(x: T) = expression;` | A claim that a `bool` (true or false) expression holds for every `x`. |
 | `import a.b;`, `import a.b as c;`, `import a.b.{x, y};` | Imports a module whole, under another name, or by listing names. |
 | `local` | Keeps a definition private to its file. |
 | `main(input: T) -> (output: U) { ... }` | A program's entry point. Its parameters are input ports and its results are output ports. |
@@ -75,7 +76,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | Syntax | Meaning |
 |---|---|
 | `+ - *` | Arithmetic. `*` also scales a vector or matrix by a number. |
-| `/` | Division on `f64` and `rat`. It does not apply to `int`. |
+| `/` | Division on `f64` (a 64-bit floating-point number) and `rat` (an exact rational number). It does not apply to `int` (an integer). |
 | `a div b`, `a mod b` | Integer quotient and remainder. |
 | `**` | Power. |
 | `== != < <= > >=` | Comparison. `==` compares structure, by value. |
@@ -85,31 +86,160 @@ This section lists all the syntax, words and terms the examples on this page use
 | `x is T`, `x is not T` | Tests whether a value has a type. |
 | `m[k]`, `p.x`, `f(x)` | Lookups, in a map, a struct and a function. |
 | `x::word` | Reads a fact about `x`, such as its length or its type's fields. The facts are listed below. |
-| `x else d` | Gives `d` in place of a failure. `x else #a -> d` replaces only the atom `#a`. |
+| `x else d` | Gives `d` in place of a failure. `x else #a -> d` replaces only the atom `#a`, which is like an enum value. |
 | `x?.field` | Reads a field if there is one, and passes a failure along if there isn't. |
-| `m >< op` | *Reduces* the innermost level of `m` with the operator `op`. |
+| `m >< op` | *Reduces* the innermost level of `m` with the operator `op`. See [below](#less-familiar-forms). |
 | `m >< op else d` | The same, with `d` as the answer for an empty collection. |
 | `unordered` after `m >< op` | Gives up the fixed floating-point result in exchange for speed. |
-| `m as (pattern) into (pattern)` | A *remap*: names the shape `m` has and the shape you want. |
+| `m as (pattern) into (pattern)` | A *remap*: names the shape `m` has and the shape you want. See [below](#less-familiar-forms). |
 | `k >< op` inside a pattern | Collapses the level `k` with `op`. |
 | `desc k`, `asc k` | Orders by `k`, high to low or low to high. |
 | `_` in a pattern | Drops the value at that place. |
-| `name <- v`, `name[k] <- v` | Pushes a value out of a port, or into one key of a map. |
-| `e with name(args)` | Attaches a *facet* or a port setting to a value or type. They are listed below. |
+| `name <- v`, `name[k] <- v` | Pushes a value out of a port, or into one key of a map. See [below](#less-familiar-forms). |
+| `e with name(args)` | Attaches a *facet* or a port setting to a value or type. They are listed below, and facets are explained [here](#less-familiar-forms). |
 | `x with { field = value }` | A copy of a struct with some fields changed. |
+
+### Less familiar forms
+
+Most languages have nothing quite like these forms, so each one gets an example here and a comparison with the code you would write elsewhere.
+
+**`#name`: an atom.** An atom is like an enum value, except that it needs no declaration and belongs to no enum. Writing `#tooYoung` anywhere is enough. If a function can return an atom, the atom becomes part of the function's result type, in a union with whatever else it can return.
+
+```zed
+checkAge(positional age: int) = if age < 18 { #tooYoung } else { age };
+
+a = checkAge(30) else 18;
+b = checkAge(15) else 18;
+```
+
+```text
+before: 30, 15
+after:  checkAge(15) = #tooYoung, a = 30, b = 18
+```
+
+The result type of `checkAge` is `int | #tooYoung`, a value that is either an `int` or that atom, and you can write it out or let the compiler work it out. This is how Zed reports failure: where another language would throw an exception or return null, a Zed function returns an atom, and the type says so until the caller handles it, here with `else`. When you do want a fixed set of names, as with an enum, give the union a name: `type Light = #red | #amber | #green;`.
+
+**`x' = e`: the next value of a variable.** In a loop, `x` is the value from the previous step and `x'` is the value this step writes for the next one. `with x = start` gives the value before the first step.
+
+```zed
+fib = loop t {
+  while t < 5;
+  a' = b with a = 0;
+  b' = a + b with b = 1;
+};
+```
+
+```text
+before: a = 0, b = 1
+after:  fib.a = 5, fib.b = 8, fib::len = 5
+```
+
+In Python this is `a, b = b, a + b`, and in C it needs a temporary. In Zed, writing `a'` doesn't change `a`, so the second line still reads the old `a` and the two lines could be swapped. Each step writes each variable once. The loop is itself a value, and `fib.a` is the final `a`.
+
+**`x*.method()`: a call that also replaces `x`.** A method that writes primed fields returns a new struct and leaves the old one alone. In a loop, the `*` makes that new struct the value of `x` in the next step.
+
+```zed
+struct Counter { n: int }
+
+Counter.bump(positional by) -> int {
+  n' = n + by;
+  return n;
+}
+
+run = loop {
+  mutable c = Counter(n: 0);
+  prev = c*.bump(3);
+  until prev >= 6;
+};
+```
+
+```text
+before: c.n = 0
+step 0: prev = 0, next c.n = 3
+step 1: prev = 3, next c.n = 6
+step 2: prev = 6, next c.n = 9
+after:  run.c.n = 9, run::len = 3
+```
+
+`prev = c*.bump(3);` is short for `c', prev = c.bump(3);`. It has the same effect as `cNext, prev = c.bump(3);` followed by `c = cNext` at the end of the step, where `bump` has no side effects and returns a changed copy of `c` along with its result. So it reads like a mutating method call in Java or Python, with two differences. The rest of the step still reads the old `c`. And a step can write `c'` only once, so two calls in one step have to be one chain: `a, b = c*.bump(1).bump(2);`. Without the `*`, a call never changes anything: `c.bump(3);` alone is rejected because its result would be thrown away. Outside a loop, `c*.bump(3)` is rejected because there is no next step to write.
+
+**`x[i] = e with x[-1] = start`: an array defined by an equation.**
+
+```zed
+running[i] = running[i-1] + xs[i] with running[-1] = 0;
+```
+
+```text
+before: xs = [3, 1, 4]
+after:  running = [3, 4, 8]
+```
+
+Elsewhere this is a `for` loop that fills an array in order. Here it's a statement about every entry, and the compiler reads the dependencies and picks the order. `running[-1]` is the starting value that a read just below the first index finds, and it isn't an entry of the result. A boundary can cover many entries: `d[i in 0..][-1] = i + 1` defines `d[i][-1]` for every `i` from 0 up.
+
+**`m >< op`: reduce a level.**
+
+```zed
+readings = [2, 5, 3];
+total = readings >< (+);
+```
+
+```text
+before: readings = [2, 5, 3]
+after:  total = 10
+```
+
+This is `reduce` or `fold` elsewhere, but you give no direction, because the work can be split across cores in any grouping. That's why `op` has to be safe to regroup. On a nested map it collapses only the innermost level: with `sales: region -> sku -> amount`, `sales >< (+)` gives one total per region. Inside a remap pattern, `sku >< (+)` names the level to collapse.
+
+**`m as (pattern) into (pattern)`: a remap.**
+
+```zed
+transposed = matrix as (r -> c -> v) into (c -> r -> v);
+```
+
+```text
+before: matrix = [[1, 2, 3], [4, 5, 6]]
+after:  transposed = [[1, 4], [2, 5], [3, 6]]
+```
+
+Elsewhere this is a pair of nested loops that set `out[c][r] = matrix[r][c]`, or a pivot in a data frame library. `as` gives a name to each level of keys and to the value, and `into` draws the shape you want using those names. A remap can't overwrite a value: if two values would land on one key, the compiler rejects it until you say how they merge.
+
+**`name[k] <- v`: a push into a map.**
+
+```zed
+hist: int ->? int with reducer((+));
+for w in words { hist[w.len] <- 1; };
+```
+
+```text
+before: words = ["a", "to", "be", "not"]
+after:  hist = { 1 -> 1, 2 -> 2, 3 -> 1 }
+```
+
+This looks like `hist[k] += 1` on a dictionary, but nothing is read back or overwritten. `hist` has one value, which is all its pushes merged per key by the reducer, so pushes can come from anywhere in the program.
+
+**`e with units(...)`: a facet.**
+
+```zed
+v = 3.0 with units("m/s");
+t = 2.0 with units("s");
+d = v * t;                 // has units "m"
+// e = v + t;              // ✗ rejected: m/s + s
+```
+
+A wrapper type such as `Meters` in other languages is a new type you have to unwrap for arithmetic. A facet leaves the value an `f64`, and the compiler follows the label through each operation.
 
 ### Values and literals
 
 | Syntax | Meaning |
 |---|---|
-| `42`, `1.5`, `3r`, `2n` | An `int`, an `f64`, a `rat`, and a generic number that takes whichever number type is expected. |
-| `"text"`, `"${e}"` | A `Utf8String`, with `e` written into it. |
-| `#name`, `#name(args)` | An *atom*: a constant that is its own name, with or without a payload. |
+| `42`, `1.5`, `3r`, `2n` | An `int`, an `f64`, a `rat`, and a generic number that takes whichever number type its use needs, so `inc(x) = x + 1n;` works on all three. |
+| `"text"`, `"${e}"` | A `Utf8String` (a string of UTF-8 text), with `e` written into it. |
+| `#name`, `#name(args)` | An *atom*: like an enum value, but it needs no declaration and belongs to no enum. It can carry data, its payload. See [below](#less-familiar-forms). |
 | `[a, b, c]` | An array, whose keys are `0`, `1`, `2`. |
 | `{ k -> v, ... }` | A map, written out. |
 | `{ a, b }` | A set. |
 | `{ x: 1, y: 2 }`, `Name(x: 1)` | A struct value, without and with a declared name. |
-| `(a, b)` | A tuple. |
+| `(a, b)` | A tuple: a fixed number of values, possibly of different types. |
 | `a..<b`, `a..=b`, `a..` | Ranges: excluding `b`, including `b`, and with no upper end. |
 
 ### Types
@@ -117,9 +247,9 @@ This section lists all the syntax, words and terms the examples on this page use
 | Syntax | Meaning |
 |---|---|
 | `int` | A mathematical integer. It can't overflow. |
-| `char32` | A Unicode code point, distinct from an integer. `char32("Z")` constructs one. |
+| `char32` | A Unicode code point (the number Unicode assigns to a character), distinct from an integer. `char32("Z")` constructs one. |
 | `int[a..=b]`, `int[a..]` | An integer in a range. |
-| `f64`, `rat`, `bool`, `u8` | A 64-bit float, an exact rational, true or false, and an integer from 0 to 255. |
+| `f64`, `rat`, `bool`, `u8` | A 64-bit floating-point number, an exact rational number (a fraction of two integers, never rounded), true or false, and an integer from 0 to 255. |
 | `Utf8String`, `U8String`, `Utf16String`, `Utf32String` | String types. `Utf8String`, `Utf16String` and `Utf32String` hold checked text in that encoding, and `U8String` holds 8-bit units with no encoding checked. String literals are `Utf8String`. |
 | `K -> V` | A map with a value at every key of `K`. A function type too. |
 | `K ->? V` | A map that may lack some keys of `K`, so a lookup can give `#notFound`. |
@@ -191,7 +321,7 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 |---|---|
 | `x::len` | The number of entries, or of steps in a loop. |
 | `run::frames` | Every step of a loop. |
-| `text::codepoints`, `text::u8` | A string viewed by code point or by UTF-8 unit. |
+| `text::codepoints`, `text::u8` | A string viewed by code point or by UTF-8 unit, which is one byte of its encoding. |
 | `T::fields`, `T::shape`, `T::values` | A type's fields, its structure, and the members of a set of atoms. |
 | `x::constraints` | What the compiler knows about a value. |
 | `f::source` | A function's source, as a value. |
@@ -220,7 +350,7 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | `taint(#label)` | A label that follows a value through the program. |
 | `reducer(op)` | How values pushed to one key of a map merge. |
 | `store(...)`, `postgres(...)`, `kv(...)`, `sql(...)` | Makes a map a stored table: in Postgres, in a key-value store, with a schema read from an SQL file. |
-| `timeout(d)`, `retry(n, backoff: b)`, `bound(n, overflow: policy)` | A deadline, repeat attempts, and a queue's size limit with what happens when it is full. |
+| `timeout(d)`, `retry(n, backoff: b)`, `bound(n, overflow: policy)` | A deadline, repeat attempts with a wait `b` between them, and a queue's size limit with what happens when it is full. |
 | `bits(n)`, `endian(#big)`, `length(n)` | Binary layout in a grammar: a field's width, its byte order, its element count. |
 
 ### Terms
@@ -236,6 +366,11 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | failure | An atom in a value's type that says the operation didn't give a result. |
 | domain | The keys or inputs a map or function is defined on. |
 | bounds check | The run-time test that an index is in range. |
+| schema | The columns and types a database table declares. |
+| parser, serializer | A parser turns text into a value, and a serializer turns a value back into text. |
+| edit distance | The fewest single-character changes that turn one string into another. |
+| maximum subarray | The run of neighboring entries in an array with the largest sum. |
+| data race | Two threads using the same memory at once, with at least one of them writing. |
 | rope | A string or list stored as a tree of pieces, so joining two takes constant time. |
 | facet | An extra fact about a value, tracked through every operation at compile time. |
 | taint | A label for where a value came from, such as user input. |
@@ -332,7 +467,7 @@ totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount
 d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
 
-// A database table, checked against its SQL schema at build time.
+// A database table, checked against its SQL schema at build time. `rat` is an exact rational number.
 orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 ```
@@ -415,7 +550,7 @@ after:  big   = 1267650600228229401496703205376
         half  = 0.5, q = 3, ratio = 1.5
 ```
 
-An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. `r` marks an exact rational, so `0.1r + 0.2r == 0.3r` is true. Mixing `int` and `f64` is a compile error until you write `f64(n)`. That cast is checked, so its type also includes `#inexact` unless the compiler can show the value fits exactly.
+An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. A `rat` is an exact rational number, a fraction of two integers that is never rounded. The suffix `r` marks a `rat` literal, so `0.1r + 0.2r == 0.3r` is true. Mixing `int` and `f64` is a compile error until you write `f64(n)`. That cast is checked, so its type also includes `#inexact` unless the compiler can show the value fits exactly.
 
 ### Strings
 
@@ -467,7 +602,7 @@ Constructors take their arguments by name. `with` makes a copy with some fields 
 
 ### Atoms, unions and match
 
-An atom is a constant named by itself, a union is a choice of types, and `match` takes a union apart.
+An atom is like an enum value that needs no declaration, a union is a choice of types, and `match` takes a union apart.
 
 **Syntax:** `#name`, `#name(args)`, `type T = A | B`, `match x { pattern -> value, ... }`
 
