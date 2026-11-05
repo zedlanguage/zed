@@ -487,7 +487,7 @@ impl<'t> Lower<'t> {
             return Err(format!(
                 "the primitive `{}` takes any number of arguments, so with no inputs its node \
                  is a call, not the function; call it instead of passing it as a value",
-                super::text::spell(p)
+                p.written()
             ));
         }
         let Val::Src(s, _) = self.leaf(Op::Prim(p), Vec::new()) else {
@@ -617,7 +617,7 @@ impl<'t> Lower<'t> {
                 {
                     return Err(format!(
                         "the primitive `{}` takes {} and is given {}",
-                        super::text::spell(*p),
+                        p.written(),
                         plural(k, "argument"),
                         args.len()
                     ));

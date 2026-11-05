@@ -610,9 +610,9 @@ fn ill_typed_terms_are_reported() {
         ),
         (
             prim(Prim::Neg, vec![lit(1), lit(2)]),
-            "Neg takes 1 arguments, given 2",
+            "`-` takes 1 arguments, given 2",
         ),
-        (prim(Prim::Not, vec![lit(1)]), "Not applied to `int`"),
+        (prim(Prim::Not, vec![lit(1)]), "`!` applied to `int`"),
     ] {
         assert_eq!(eval(&t).unwrap_err(), KernelError::Type(msg.into()));
     }
@@ -822,7 +822,7 @@ fn a_step_or_guard_of_the_wrong_kind_is_reported() {
             if_(id.clone(), lit(1), lit(2)),
             "expected data, found a function",
         ),
-        (add(id, lit(1)), "Add applied to a function"),
+        (add(id, lit(1)), "`+` applied to a function"),
     ];
     for (t, msg) in cases {
         assert_eq!(eval(&t).unwrap_err(), KernelError::Type(msg.into()));

@@ -358,8 +358,8 @@ fn a_type_error_on_a_wide_number_names_its_type_when_memory_is_short() {
         Rat::new(BigInt::from(1), BigInt::from(2)).unwrap(),
     ));
     let cases = [
-        (bin(Prim::Lt, wide(), half), "Lt applied to `int`, `rat`"),
-        (prim(Prim::Not, vec![wide()]), "Not applied to `int`"),
+        (bin(Prim::Lt, wide(), half), "`<` applied to `int`, `rat`"),
+        (prim(Prim::Not, vec![wide()]), "`!` applied to `int`"),
         (
             prim(Prim::BitNot, vec![num(-above(WIDE)), num(8)]),
             "`bitNot` needs `x` in int[0..], and it is negative",
@@ -402,7 +402,7 @@ fn a_type_error_names_each_kind_of_operand_by_its_written_type() {
             let Err(KernelError::Type(m)) = eval(&t) else {
                 panic!("{want}")
             };
-            assert_eq!(m, format!("Not applied to `{want}`"));
+            assert_eq!(m, format!("`!` applied to `{want}`"));
         }
     }
 }

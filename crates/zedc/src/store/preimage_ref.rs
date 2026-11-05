@@ -147,7 +147,11 @@ pub struct Stop {
 impl fmt::Display for Stop {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            StopKind::String(p) => write!(f, "string operation {p:?} stops the transfer at ")?,
+            StopKind::String(p) => write!(
+                f,
+                "string operation `{}` stops the transfer at ",
+                p.written()
+            )?,
             StopKind::Foreign(n) => write!(f, "foreign name `{n}` stops the transfer at ")?,
             StopKind::Outside => write!(f, "no scalar catalog entry for ")?,
             StopKind::Recursion => write!(f, "a call of a function already being read at ")?,

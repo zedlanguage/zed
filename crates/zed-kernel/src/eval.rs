@@ -1350,7 +1350,11 @@ impl<'t> Machine<'_, 't> {
         if let Some(n) = p.arity()
             && args.len() != n
         {
-            return type_err(format!("{p:?} takes {n} arguments, given {}", args.len()));
+            return type_err(format!(
+                "`{}` takes {n} arguments, given {}",
+                p.written(),
+                args.len()
+            ));
         }
         // `f[k]` on the family a definedness fix is building.
         if p == Prim::Get && matches!(args[0], V::Partial(_)) {
@@ -1417,12 +1421,13 @@ impl<'t> Machine<'_, 't> {
             match a {
                 V::Data(v) => vals.push(v),
                 _ if matches!(p, Prim::Eq | Prim::Ne) => {
-                    return type_err(
-                        "`==` on functions compares them at every point of an enumerable \
+                    return type_err(format!(
+                        "`{}` on functions compares them at every point of an enumerable \
                          domain, which their types give (step L1.22)",
-                    );
+                        p.written()
+                    ));
                 }
-                _ => return type_err(format!("{p:?} applied to a function")),
+                _ => return type_err(format!("`{}` applied to a function", p.written())),
             }
         }
         // A tuple and an atom's payload hold atoms as data, and `==` has an arrow at every
@@ -2092,33 +2097,21 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
 
 /// The error for a number that `p` must build and the system has no memory for.
 fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
-    let op = match p {
-        Prim::Add => "+",
-        Prim::Sub | Prim::Neg => "-",
-        Prim::Mul => "*",
-        Prim::Div => "/",
-        Prim::IntDiv => "div",
-        Prim::Mod => "mod",
-        _ => "**",
-    };
-    KernelError::NumberTooLarge { op, bits: e.bits }
+    KernelError::NumberTooLarge {
+        op: p.written(),
+        bits: e.bits,
+    }
 }
 
 /// The error of a primitive during which a test of two numbers was refused its memory: a
 /// comparison operator's own, or that of the families a primitive builds or reads.
 fn order_too_large(p: Prim, t: Test, e: TooLarge) -> KernelError {
-    let op = match p {
-        Prim::Eq => "==",
-        Prim::Ne => "!=",
-        Prim::Lt => "<",
-        Prim::Le => "<=",
-        Prim::Gt => ">",
-        Prim::Ge => ">=",
-        Prim::Min => "min",
-        Prim::Max => "max",
-        _ => return test_too_large(None, t, e),
-    };
-    test_too_large(Some(op), t, e)
+    match p {
+        Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max => {
+            test_too_large(Some(p.written()), t, e)
+        }
+        _ => test_too_large(None, t, e),
+    }
 }
 
 /// The error for a test `t` of two numbers refused its memory, made by `op` (an operator or
@@ -2149,7 +2142,8 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             .map(|v| format!("`{}`", v.kind_type()))
             .collect();
         Err(KernelError::Type(format!(
-            "{p:?} applied to {}",
+            "`{}` applied to {}",
+            p.written(),
             shown.join(", ")
         )))
     };

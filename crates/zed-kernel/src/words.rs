@@ -184,7 +184,8 @@ fn from_utf8(f: &Family) -> Option<Value> {
 
 fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
     Err(KernelError::Type(format!(
-        "{p:?} applied to `{}`",
+        "`{}` applied to `{}`",
+        p.written(),
         x.kind_type()
     )))
 }

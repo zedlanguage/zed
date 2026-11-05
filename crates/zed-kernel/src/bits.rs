@@ -24,24 +24,6 @@ use crate::num::{Rat, TooLarge};
 use crate::term::Prim;
 use crate::value::Value;
 
-/// The surface name of a bit word.
-fn name(p: Prim) -> &'static str {
-    match p {
-        Prim::BitAnd => "bitAnd",
-        Prim::BitOr => "bitOr",
-        Prim::BitXor => "bitXor",
-        Prim::BitNot => "bitNot",
-        Prim::Shl => "shl",
-        Prim::Shr => "shr",
-        Prim::PopCount => "popCount",
-        Prim::LeadingZeros => "leadingZeros",
-        Prim::TrailingZeros => "trailingZeros",
-        Prim::Rotl => "rotl",
-        Prim::Rotr => "rotr",
-        _ => "f64Bits",
-    }
-}
-
 /// Whether `p` is a bit word.
 pub fn is_bit_word(p: Prim) -> bool {
     matches!(
@@ -80,14 +62,14 @@ pub fn word(p: Prim, args: &[Value]) -> Result<Value, KernelError> {
         None => {
             return Err(KernelError::Type(format!(
                 "`{}` takes ints, given {}",
-                name(p),
+                p.written(),
                 shown(args)
             )));
         }
     };
     domain(p, &ns)?;
     big(p, &ns).map_err(|e| KernelError::NumberTooLarge {
-        op: name(p),
+        op: p.written(),
         bits: e.bits,
     })
 }
@@ -105,7 +87,7 @@ fn shown(args: &[Value]) -> String {
 fn outside(p: Prim, param: &str, needs: &str, is: &str) -> KernelError {
     KernelError::Type(format!(
         "`{}` needs `{param}` in {needs}, and it is {is}",
-        name(p)
+        p.written()
     ))
 }
 
@@ -141,7 +123,7 @@ fn domain(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<(), KernelError> {
         let w = ns.last().expect("a word with a width has arguments");
         // `2^w` keeps its exponent, so this builds only the digits of `w`.
         let bound = two_pow(w).map_err(|e| KernelError::NumberTooLarge {
-            op: name(p),
+            op: p.written(),
             bits: e.bits,
         })?;
         if *ns[0] >= bound {

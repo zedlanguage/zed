@@ -126,6 +126,21 @@ fn name(p: Prim) -> &'static str {
     }
 }
 
+impl Prim {
+    /// How a message names the primitive: as a program writes it, the operator (`>`, `++`,
+    /// `-` for both `Sub` and `Neg`, `!` for `Not`) or the prelude word (`popCount`,
+    /// `String`). The primitives no program names, which elaboration builds from other forms
+    /// or which belong to later layers (`tuple`, `tupleGet`, `atom`, `get`, `count`,
+    /// `union`, `path`, `pathKey`, `pathLen`), are named as the printer writes them.
+    pub fn written(self) -> &'static str {
+        match self {
+            Prim::Neg => "-",
+            Prim::Not => "!",
+            p => name(p),
+        }
+    }
+}
+
 /// A field name stored as a string value, written bare.
 fn field(v: &Value) -> String {
     match v {

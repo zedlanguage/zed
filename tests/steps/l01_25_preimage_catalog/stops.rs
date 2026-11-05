@@ -23,7 +23,7 @@ fn holds(src: &str, ds: &[(&str, Option<i64>, Option<i64>)]) -> String {
 fn a_string_operation_stops_the_transfer() {
     assert_eq!(
         holds("ok(x) = String(x) == \"12\";\n", &[("x", None, None)]),
-        "x [..]; necessary; stop: string operation Show stops the transfer at String(x)"
+        "x [..]; necessary; stop: string operation `String` stops the transfer at String(x)"
     );
     // Below `len` the string stops it; a listed domain is then enumerated, and the stop is
     // still reported.
@@ -33,12 +33,12 @@ fn a_string_operation_stops_the_transfer() {
     check(&function(src).1, &ds, &Demand::Bool(true), &p, (-100, 100));
     assert_eq!(
         shown(&p),
-        "x [-9..=-9, 0..=0, 9..=10, 99..=99]; exact; enumerated; stop: string operation Show \
+        "x [-9..=-9, 0..=0, 9..=10, 99..=99]; exact; enumerated; stop: string operation `String` \
          stops the transfer at String(x)"
     );
     assert_eq!(
         holds("ok(x) = len(trim(String(x))) <= 2;\n", &[("x", None, None)]),
-        "x [..]; necessary; stop: string operation Trim stops the transfer at trim(String(x))"
+        "x [..]; necessary; stop: string operation `trim` stops the transfer at trim(String(x))"
     );
 }
 
@@ -95,7 +95,7 @@ fn a_term_outside_the_scalar_catalog_is_reported() {
 fn a_length_under_arithmetic_is_read_through_to_its_stop() {
     assert_eq!(
         holds("ok(x) = len(String(x)) + 1 <= 3;\n", &[("x", None, None)]),
-        "x [..]; necessary; stop: string operation Show stops the transfer at String(x)"
+        "x [..]; necessary; stop: string operation `String` stops the transfer at String(x)"
     );
 }
 

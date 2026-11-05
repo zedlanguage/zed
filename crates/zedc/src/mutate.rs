@@ -44,7 +44,7 @@ pub enum Change {
 impl std::fmt::Display for Change {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Change::Op(p) => f.write_str(op_text(*p)),
+            Change::Op(p) => f.write_str(p.written()),
             Change::Int(v) => write!(f, "{v}"),
         }
     }
@@ -77,23 +77,6 @@ pub enum Verdict {
     /// No row that ran fails, and a row that reaches the definition was not run because the
     /// form of the mutant's row does not show that it ends.
     NotRun,
-}
-
-/// The source text of operator `p`.
-fn op_text(p: Prim) -> &'static str {
-    match p {
-        Prim::Eq => "==",
-        Prim::Ne => "!=",
-        Prim::Lt => "<",
-        Prim::Le => "<=",
-        Prim::Gt => ">",
-        Prim::Ge => ">=",
-        Prim::Add => "+",
-        Prim::Sub => "-",
-        Prim::Mul => "*",
-        Prim::Div => "/",
-        _ => unreachable!("only the operators `elab::mutable` admits are marked"),
-    }
 }
 
 /// The operators that replace `p`; `quotient` says whether `/` is defined where `p` is `*`.
