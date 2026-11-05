@@ -524,21 +524,13 @@ fn bad_gor_and_a_fan_are_decided() {
 }
 
 #[test]
-#[ignore = "fails: the race takes 60.6 times the work; open in UTVPI-union (COMPLEXITY.md C24)"]
 fn bad_gor_and_a_fan_scale() {
-    // Measured on this branch, in instructions from k = 256 to k = 2,048: the race 201.9M to
-    // 12,236M (60.6 times); Goldberg and Radzik's search alone 80.8M to 4,699M (58.2 times);
-    // BF-Dijkstra alone 62.3M to 3,708M (59.5 times); Duong's search alone 1,176M to 14,070M
-    // (12.0 times). In units of work, the race's measure: Goldberg and Radzik 546k to 33.4M,
-    // BF-Dijkstra 344k to 19.3M, Duong 3.72M to 43.1M, and Duong 404M at k = 16,384 (9.4 times
-    // its count at 2,048). Both quadratic searches are cheaper than Duong's below k = 2,048, so
-    // the race grows with them; it falls back to Duong's growth only past that size.
-    // Main before UTVPI-NEAR, Goldberg and Radzik alone, takes 53.3M to 2,993M (56.2 times), and
-    // the race, measured with it in repair 2, 202.3M to 12,236M (60.5 times): about 4 times main
-    // at both sizes, with the same growth. Ruling (orchestrator, 2026-11-03, after verify 2):
-    // accepted for the merge, since main fails here too and the extra cost is a constant bounded
-    // by the number of racers, three; it buys BAD-GOR (`bad_gor_scales`, main 59.7 times). The
-    // fix is open in item UTVPI-union: a search near-linear in the worst case, small constant.
+    // BAD-GOR and the fan share no variable, so the split by strongly connected components
+    // searches each alone, and each is slow for only one of the searches. Measured in
+    // instructions from k = 256 to k = 2,048 (UTVPI-union): 36.1M to 301.2M, 8.3 times. The race
+    // over the whole graph, before the split, took 202M to 12,236M (60.6 times; 48.8 times the
+    // bytes in the negative control, run once and not committed), since both quadratic searches
+    // are cheaper than Duong's below k = 2,048 (COMPLEXITY.md C24).
     let (small, large) = (
         bad_gor_and_fan(256, 0),
         bad_gor_and_fan(scaling::FACTOR * 256, 0),
@@ -552,15 +544,16 @@ fn bad_gor_and_a_fan_scale() {
 
 #[test]
 fn bad_gor_and_a_fan_with_no_cycle_scale() {
-    // The pass in topological order decides this graph; each of the three searches is slow on
-    // it. Measured on this branch, in instructions from k = 256 to k = 2,048, each search alone:
-    // the pass 3.13M to 25.1M (8.0 times), Goldberg and Radzik's search 20.7M to 1,093M (52.8
-    // times), BF-Dijkstra 44.4M to 2,878M (64.9 times), Duong's search 573M to 6,203M (10.8
-    // times, but the most work at both sizes). With the pass removed, the race took 141.3M to
-    // 9,142.5M instructions, 64.7 times, and 43.9 times the bytes (the negative control, run
-    // once and not committed), while `the_acyclic_hub_scales` still passed. Rerun that control
-    // when UTVPI-union changes the race; if the race passes here without the pass, compare the
-    // pass against `integer_empty_by(.., Search::BfDijkstra)` at one size instead.
+    // The split by strongly connected components decides this graph in one pass in topological
+    // order, since every component is one node; each of the three searches alone is slow on it.
+    // Measured in instructions from k = 256 to k = 2,048: the split 5.29M to 42.3M (8.0 times);
+    // Goldberg and Radzik's search 20.7M to 1,093M (52.8 times); BF-Dijkstra 44.6M to 2,891M
+    // (64.8 times); Duong's search 573M to 6,203M (10.8 times, but the most work at both sizes).
+    // Before UTVPI-union, the race without the pass took 141.3M to 9,142.5M (64.7 times). Since
+    // UTVPI-union the race shares labels between its two quadratic searches, and without the
+    // split it passes here, 20.1M to 166.4M (8.3 times), as does `the_acyclic_hub_scales` (the
+    // control, run once and not committed); the split costs 8.4 times less than BF-Dijkstra
+    // alone at k = 256, and 3.8 times less than the race without it.
     let (small, large) = (
         acyclic_bad_gor_and_fan(256),
         acyclic_bad_gor_and_fan(scaling::FACTOR * 256),
@@ -570,6 +563,118 @@ fn bad_gor_and_a_fan_with_no_cycle_scale() {
         let (n, rows) = if k == 256 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
+}
+
+/// The rows `Σ c·x[i] + k >= 0` as a conjunction, for `decide`.
+fn formula(rows: &[(Vec<(usize, Int)>, Int)]) -> Formula {
+    Formula::and(
+        rows.iter()
+            .map(|(t, k)| {
+                let l = t.iter().fold(Lin::constant(k.clone()), |l, (i, c)| {
+                    l.plus(&x(*i).times(c.clone()))
+                });
+                Formula::Con(Con::ge(&l, &Lin::constant(0)))
+            })
+            .collect(),
+    )
+}
+
+/// [`bad_gor_and_fan`] with no negative cycle, and edges of a weight above every path's from
+/// each node of the fan to the next two around a ring of its `2k + 2` nodes. The ring lies on no
+/// shortest path, and leaves each variable of the fan in three rows or more each way, so that
+/// eliminating it adds rows (fill above 0) and `decide` passes the graph to the search whole.
+/// With `joined`, two more such edges, from variable 0 of BAD-GOR to the fan's first node and
+/// back, make the whole graph one strongly connected component. With `flipped`, every edge of
+/// the fan is reversed, which puts the half slow for BF-Dijkstra in the same sign of the literal
+/// graph as the half slow for Goldberg and Radzik's search; unflipped, they fall in opposite
+/// signs, so different components, even when joined.
+fn union_family(k: usize, joined: bool, flipped: bool) -> (usize, Rows) {
+    let (a, len) = (2 * k + 1, 2 * k + 2);
+    let (n, mut rows) = (a + len, bad_gor(k, 1).1);
+    let fan = fan_edges(a, k, Some(0));
+    let fan = if flipped {
+        fan.into_iter().map(|(u, v, w)| (v, u, w)).collect()
+    } else {
+        fan
+    };
+    rows.extend(differences(&fan));
+    let heavy = (n * n) as i64;
+    let mut edges: Vec<(usize, usize, i64)> = (0..len)
+        .flat_map(|i| [1, 2].map(|d| (a + i, a + (i + d) % len, heavy)))
+        .collect();
+    if joined {
+        edges.extend([(0, a, heavy), (a, 0, heavy)]);
+    }
+    rows.extend(differences(&edges));
+    (n, rows)
+}
+
+/// [`union_family`] not joined, and a row of three terms that joins its halves through a fresh
+/// variable `y` of coefficient 1: `y + x[0] - x[a] >= 0`. Since `y` is bounded on one side only,
+/// `decide` drops it and its row, and the halves reach the search apart: before UTVPI-union,
+/// `decide` took 421M to 3,852M instructions here, as on the family unjoined.
+fn wide_row_family(k: usize) -> Formula {
+    let (n, rows) = union_family(k, false, false);
+    let wide = ge(&[(n, 1), (0, 1), (2 * k + 1, -1)], 0);
+    Formula::and(vec![formula(&rows), wide])
+}
+
+#[test]
+fn the_union_family_is_decided() {
+    for (joined, flipped) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (n, rows) = union_family(64, joined, flipped);
+        assert!(!empty(n, &rows));
+    }
+    assert_eq!(decide(&wide_row_family(64)), Ok(true));
+}
+
+#[test]
+fn the_joined_union_family_scales() {
+    // Joined and flipped, both slow halves lie in one strongly connected component: the split
+    // by components leaves 459k to 25.9M units (56 times) to the old race. The race whose two
+    // quadratic searches share labels takes 38.1M to 332.8M instructions (8.7 times). The old
+    // code took 253M to 15,604M (47.6 times the bytes; negative control, not committed).
+    let (small, large) = (
+        union_family(256, true, true),
+        union_family(scaling::FACTOR * 256, true, true),
+    );
+    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
+    scaling::check("the joined union family, by k", 256, |k| {
+        let (n, rows) = if k == 256 { &small } else { &large };
+        std::hint::black_box(raced(*n, rows));
+    });
+}
+
+#[test]
+fn the_union_family_scales_through_decide() {
+    decides(
+        "the union family through decide, by k",
+        256,
+        Ok(true),
+        |k| formula(&union_family(k, false, false).1),
+    );
+}
+
+#[test]
+fn the_joined_union_family_scales_through_decide() {
+    // The old code took 618M to 18,351M instructions here (29.7 times). Unjoined, and joined by
+    // a wide row, `decide` splits the halves into parts before the search and passed before too.
+    decides(
+        "the joined union family through decide, by k",
+        256,
+        Ok(true),
+        |k| formula(&union_family(k, true, true).1),
+    );
+}
+
+#[test]
+fn the_wide_row_family_scales_through_decide() {
+    decides(
+        "the union family joined by a wide row, through decide, by k",
+        256,
+        Ok(true),
+        wide_row_family,
+    );
 }
 
 /// `2n` rows of up to three terms over `n` variables, as the tight family, each coefficient

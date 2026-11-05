@@ -33,8 +33,6 @@
 //! \[BFCT\]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
 //! Mathematical Programming 85 (1999), 277–311.
 
-use std::collections::VecDeque;
-
 use super::int::Int;
 use super::linear::Term;
 use super::negsssp;
@@ -107,7 +105,7 @@ fn odd_zero_cycle(n: usize, out: &[Vec<(usize, Int)>], p: &[Int]) -> bool {
                 .collect()
         })
         .collect();
-    let comp = components(&tight);
+    let comp = components(&tight, |v| *v);
     let two = Int::from(2);
     (0..n).any(|j| {
         comp[2 * j] == comp[2 * j + 1] && !(&p[2 * j + 1] - &p[2 * j]).mod_floor(&two).is_zero()
@@ -117,47 +115,80 @@ fn odd_zero_cycle(n: usize, out: &[Vec<(usize, Int)>], p: &[Int]) -> bool {
 /// A potential of the graph `out`, its edges `u → (v, w)`, or `None` when it has a negative
 /// cycle.
 fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
+    // Each strongly connected component is searched alone, and the components are then taken
+    // in topological order, each shifted by one offset so that every edge into it holds: a
+    // shortest-path pass over the condensation, from a source joined to each node by an edge of
+    // weight 0, in O(V + E). A component with no edge inside it needs no search, so a graph
+    // with no cycle is decided by this pass alone: on BAD-GOR and a fan with no cycle, 5.29M
+    // instructions at k = 256 against 20.1M for the race over the whole graph and 44.6M for
+    // BF-Dijkstra alone (`l01_38_presburger::stages::bad_gor_and_a_fan_with_no_cycle_scale`).
+    // The race's searches also each see a smaller graph, and a component slow for one search
+    // costs nothing in another component.
     let n = out.len();
-    // When the graph has no cycle, its nodes in topological order (Kahn) relax each edge once,
-    // whatever the signs of the weights, in O(V + E): the distances from a source joined to each
-    // node by an edge of weight 0. Whether there is a cycle depends only on the graph, so the
-    // searches below are taken exactly when one exists. Without this pass the race below is
-    // quadratic on BAD-GOR and a fan with no cycle, since Goldberg and Radzik's search and
-    // BF-Dijkstra are and finish before Duong's at the sizes measured
-    // (`l01_38_presburger::stages::bad_gor_and_a_fan_with_no_cycle_scale`).
-    let mut indegree = vec![0usize; n];
-    for edges in out {
-        for (v, _) in edges {
-            indegree[*v] += 1;
-        }
+    let comp = components(out, |(v, _)| *v);
+    let comps = comp.iter().max().map_or(0, |c| c + 1);
+    // The nodes grouped by component (counting sort), and each node's place in its group.
+    let mut start = vec![0usize; comps + 1];
+    for &c in &comp {
+        start[c + 1] += 1;
     }
-    let mut ready: VecDeque<usize> = indegree
-        .iter()
-        .enumerate()
-        .filter_map(|(v, &degree)| (degree == 0).then_some(v))
-        .collect();
-    let mut order = Vec::with_capacity(n);
-    while let Some(u) = ready.pop_front() {
-        order.push(u);
-        for (v, _) in &out[u] {
-            indegree[*v] -= 1;
-            if indegree[*v] == 0 {
-                ready.push_back(*v);
-            }
-        }
+    for c in 0..comps {
+        start[c + 1] += start[c];
     }
-    if order.len() == n {
-        let mut distance = vec![Int::ZERO; n];
-        for u in order {
-            for (v, weight) in &out[u] {
-                let candidate = &distance[u] + weight;
-                if candidate < distance[*v] {
-                    distance[*v] = candidate;
+    let (mut members, mut place) = (vec![0usize; n], vec![0usize; n]);
+    let mut next = start.clone();
+    for (v, &c) in comp.iter().enumerate() {
+        place[v] = next[c] - start[c];
+        members[next[c]] = v;
+        next[c] += 1;
+    }
+    // `bound[v]` is the least of 0 and `p[u] + w` over the edges `u → v` from earlier
+    // components; Tarjan numbers each component after every component it reaches, so the
+    // components in decreasing number are in topological order.
+    let mut bound = vec![Int::ZERO; n];
+    let mut p = vec![Int::ZERO; n];
+    for c in (0..comps).rev() {
+        let group = &members[start[c]..start[c + 1]];
+        let inside: Vec<Vec<(usize, Int)>> = group
+            .iter()
+            .map(|&u| {
+                out[u]
+                    .iter()
+                    .filter(|(v, _)| comp[*v] == c)
+                    .map(|(v, w)| (place[*v], w.clone()))
+                    .collect()
+            })
+            .collect();
+        let local = if inside.iter().all(Vec::is_empty) {
+            vec![Int::ZERO; group.len()]
+        } else {
+            race(&inside)?
+        };
+        let offset = group
+            .iter()
+            .zip(&local)
+            .map(|(&v, q)| &bound[v] - q)
+            .min()
+            .expect("a component has a node");
+        for (&v, q) in group.iter().zip(local) {
+            p[v] = &q + &offset;
+        }
+        for &u in group {
+            for (v, w) in &out[u] {
+                if comp[*v] != c {
+                    let candidate = &p[u] + w;
+                    if candidate < bound[*v] {
+                        bound[*v] = candidate;
+                    }
                 }
             }
         }
-        return Some(distance);
     }
+    Some(p)
+}
+
+/// A potential of the strongly connected graph `out`, or `None` when it has a negative cycle.
+fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // Complexity tradeoff: Goldberg and Radzik's search settles most graphs in a few passes (two
     // or three on the tests' hubs and paths at every size, XT3) but takes up to one pass per
     // node, O(V·E), when the topological order of the edges of negative reduced cost moves one
@@ -166,26 +197,29 @@ fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // (Dijkstra's search with Bellman–Ford rounds, `negsssp::Rounds`) takes O((E + V log V)·r)
     // for r the most negative edges on a shortest path, few on BAD-GOR. Duong's search
     // (`negsssp`) is O(E·log³V·log log V·log(V·W)) for the largest weight W, but its constant is
-    // large. The three run one unit of work each in turn and the first to finish decides, so the
-    // race takes at most three times the units of the cheapest: asymptotically Duong's bound
-    // holds. In the sizes the tests reach it does not: on BAD-GOR augmented joined with a fan
-    // (a path of weight -1 edges into a hub, which makes BF-Dijkstra take k rounds of k work)
-    // both quick searches are quadratic and still cheaper than Duong's below k = 2,048, so the
-    // race grows with them: 201.9M to 12,236M instructions from k = 256 to 2,048, 60.6 times
-    // (`l01_38_presburger::stages::bad_gor_and_a_fan_scale`, ignored, failing). In units:
-    // Goldberg and Radzik 546k to 33.4M, BF-Dijkstra 344k to 19.3M, Duong 3.72M to 43.1M and
-    // 404M at k = 16,384. To pass, Duong's search would need about 2.7 units per edge per scaling
-    // step at k = 2,048, against about 14 now and about 1 for its pass over the edges alone; a
-    // cut in this constant alone cannot reach that by this count; a near-linear search with a
-    // small constant is needed (open: item UTVPI-union). Main before UTVPI-NEAR, Goldberg and
-    // Radzik alone, takes 53.3M to 2,993M there, 56.2 times: the same order, about 4 times cheaper.
-    // The decisions agree, since every potential gives the same one (`odd_zero_cycle`). On
-    // BAD-GOR alone, from k = 256 to 2,048, the race takes 26.8M to 209M instructions, 7.8
-    // times, and Goldberg and Radzik alone 59.8 times. Tests: `bad_gor_scales`,
-    // `bad_gor_and_a_fan_scale` and `near::duong_scales_alone` in `l01_38_presburger`;
-    // COMPLEXITY.md C24.
-    let (mut gor, mut rounds) = (GoldbergRadzik::new(out), negsssp::Rounds::new(out));
-    let raced = negsssp::potential(out, || match gor.step().or_else(|| rounds.step()) {
+    // large. Goldberg and Radzik's search and BF-Dijkstra share their labels (`Shared`), and
+    // Duong's search races them: each of the three takes one unit of work in turn and the first
+    // to finish decides, so the race takes at most three times the units of the cheaper side, and
+    // asymptotically Duong's bound holds. Run apart, the two quick searches are each quadratic
+    // on a graph that holds both BAD-GOR augmented (slow for Goldberg and Radzik) and a fan, a
+    // path of weight -1 edges into a hub (k rounds of k work for BF-Dijkstra), and both stay
+    // cheaper than Duong's below k = 2,048: in one strongly connected component the old
+    // three-way race took 459k to 25.9M units from k = 256 to 2,048, 56 times. Sharing the
+    // labels lets each search take the other's progress: Goldberg and Radzik's search takes the
+    // labels BF-Dijkstra lowered at the start of each pass, BF-Dijkstra those Goldberg and
+    // Radzik lowered at the end of each round. Every label stays the weight of a walk from the
+    // source, and both searches' invariants (pass i at most the shortest path of i edges;
+    // round i at most the shortest walk with i negative edges) hold under extra decreases, so
+    // each search's own bound and its test for a negative cycle hold. The race now takes 38.1M
+    // to 332.8M instructions there (8.7 times; `the_joined_union_family_scales`), 36.1M to
+    // 301.2M on the family split in two (`bad_gor_and_a_fan_scale`; 202M to 12,236M before) and
+    // 25.1M to 209.3M on BAD-GOR alone (`bad_gor_scales`; Goldberg and Radzik alone 59.8 times).
+    // Open, inferred and not constructed: a graph slow for both along the same shortest paths;
+    // there Duong's search is the backstop. The decisions agree with each search alone, since
+    // every potential gives the same one (`odd_zero_cycle`). Tests in `l01_38_presburger`:
+    // `stages::*_scale*` and `near::duong_scales_alone`; COMPLEXITY.md C24.
+    let mut both = Shared::new(out);
+    let raced = negsssp::potential(out, || match both.step() {
         Some(found) => Err(found),
         None => Ok(()),
     });
@@ -211,6 +245,45 @@ fn goldberg_radzik(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
         if let Some(found) = gor.step() {
             return found;
         }
+    }
+}
+
+/// Goldberg and Radzik's search and BF-Dijkstra, one unit of work of each in turn, each taking
+/// at the start of its own pass or round the labels the other lowered. Every label either holds
+/// is the weight of a walk from the source, so each search's own tests stay sound, and each
+/// ends as soon as its labels are a potential.
+struct Shared<'a> {
+    gor: GoldbergRadzik<'a>,
+    rounds: negsssp::Rounds<'a>,
+}
+
+impl<'a> Shared<'a> {
+    fn new(out: &'a [Vec<(usize, Int)>]) -> Self {
+        Shared {
+            gor: GoldbergRadzik::new(out),
+            rounds: negsssp::Rounds::new(out),
+        }
+    }
+
+    /// Two units of work, one of each search, and the labels passed between them, at most one
+    /// per label lowered; the result once either search has one.
+    fn step(&mut self) -> Option<Option<Vec<Int>>> {
+        if matches!(self.gor.at, At::Pass) {
+            for v in self.rounds.take_lowered() {
+                self.gor.lower_to(v, &self.rounds.labels()[v]);
+            }
+        }
+        if let Some(found) = self.gor.step() {
+            return Some(found);
+        }
+        if self.rounds.ends_round() {
+            for &v in &self.gor.lowered {
+                self.gor.in_lowered[v] = false;
+                self.rounds.lower_to(v, &self.gor.d[v]);
+            }
+            self.gor.lowered.clear();
+        }
+        self.rounds.step()
     }
 }
 
@@ -245,6 +318,10 @@ struct GoldbergRadzik<'a> {
     postorder: Vec<usize>,
     pass: usize,
     at: At,
+    /// The nodes whose distance this search lowered since [`Shared`] last passed them on, and
+    /// their marks.
+    lowered: Vec<usize>,
+    in_lowered: Vec<bool>,
 }
 
 impl<'a> GoldbergRadzik<'a> {
@@ -261,6 +338,22 @@ impl<'a> GoldbergRadzik<'a> {
             postorder: Vec::with_capacity(n),
             pass: 0,
             at: At::Pass,
+            lowered: Vec::new(),
+            in_lowered: vec![false; n],
+        }
+    }
+
+    /// Lowers the distance of `v` to `to`, the weight of a walk from the source found by another
+    /// search, between passes; the next pass searches from it. The distances after pass `k`
+    /// are still at most those of the paths of `k` edges, so the bound of `n` passes still
+    /// shows a negative cycle.
+    fn lower_to(&mut self, v: usize, to: &Int) {
+        if *to < self.d[v] {
+            self.d[v] = to.clone();
+            if !self.in_fell[v] {
+                self.in_fell[v] = true;
+                self.fell.push(v);
+            }
         }
     }
 
@@ -363,6 +456,10 @@ impl<'a> GoldbergRadzik<'a> {
                         self.in_fell[*v] = true;
                         self.fell.push(*v);
                     }
+                    if !self.in_lowered[*v] {
+                        self.in_lowered[*v] = true;
+                        self.lowered.push(*v);
+                    }
                 }
             }
         }
@@ -371,7 +468,7 @@ impl<'a> GoldbergRadzik<'a> {
 }
 
 /// The strongly connected component of each node (Tarjan), with an explicit stack.
-fn components(out: &[Vec<usize>]) -> Vec<usize> {
+fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
     const NONE: usize = usize::MAX;
     let n = out.len();
     let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
@@ -389,7 +486,7 @@ fn components(out: &[Vec<usize>]) -> Vec<usize> {
         next += 1;
         held.push(root);
         while let Some(&mut (v, ref mut e)) = frames.last_mut() {
-            if let Some(&w) = out[v].get(*e) {
+            if let Some(w) = out[v].get(*e).map(&head) {
                 *e += 1;
                 if index[w] == NONE {
                     index[w] = next;

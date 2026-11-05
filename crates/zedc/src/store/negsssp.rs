@@ -1037,6 +1037,10 @@ pub struct Rounds<'a> {
     fell: bool,
     round: usize,
     phase: Phase,
+    /// The nodes whose label this search lowered since [`Rounds::take_lowered`], and their
+    /// marks.
+    lowered: Vec<usize>,
+    in_lowered: Vec<bool>,
 }
 
 impl<'a> Rounds<'a> {
@@ -1052,6 +1056,38 @@ impl<'a> Rounds<'a> {
             fell: false,
             round: 1,
             phase: Phase::Pop,
+            lowered: Vec::new(),
+            in_lowered: vec![false; n],
+        }
+    }
+
+    /// The labels, each the weight of a walk from the source.
+    pub fn labels(&self) -> &[Int] {
+        &self.label
+    }
+
+    /// The nodes whose label this search lowered since the last call.
+    pub fn take_lowered(&mut self) -> Vec<usize> {
+        for &v in &self.lowered {
+            self.in_lowered[v] = false;
+        }
+        std::mem::take(&mut self.lowered)
+    }
+
+    /// Whether the next step ends the round, where labels found by another search may enter.
+    pub fn ends_round(&self) -> bool {
+        matches!(self.phase, Phase::Negative { i, .. } if i == self.settled.len())
+    }
+
+    /// Lowers the label of `v` to `to`, the weight of a walk from the source found by another
+    /// search, at the end of a round ([`Rounds::ends_round`]); the next round starts from it.
+    /// Round `k` still gives each label at most the weight of every walk with `k` negative
+    /// edges, so the bound of `V` rounds still shows a negative cycle.
+    pub fn lower_to(&mut self, v: usize, to: &Int) {
+        if *to < self.label[v] {
+            self.label[v] = to.clone();
+            self.heap.push(Reverse((to.clone(), v)));
+            self.fell = true;
         }
     }
 
@@ -1113,6 +1149,10 @@ impl<'a> Rounds<'a> {
         if candidate < self.label[y] {
             self.label[y] = candidate.clone();
             self.heap.push(Reverse((candidate, y)));
+            if !self.in_lowered[y] {
+                self.in_lowered[y] = true;
+                self.lowered.push(y);
+            }
             return true;
         }
         false

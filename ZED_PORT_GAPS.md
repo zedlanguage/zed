@@ -752,6 +752,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BinaryHeap<Reverse<(Int, usize)>>` with stale entries skipped at the pop instead of a decrease-key | `negsssp::Search`, `bf_dijkstra`, `Rounds`, `Solver::run` | Mutation | A persistent priority queue (a pairing or leftist heap) in a state receiver |
 | Labels, stamps and ball membership in `Vec`s written in place and shared by every node of the recursion, each node marked with a fresh stamp so no set is cleared | `negsssp::Solver` | Mutation | A state receiver over maps from vertex to stamp and label |
 
+## Entries from UTVPI-union (`zedc/src/store/utvpi.rs`, `negsssp.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The nodes grouped by component with a counting sort into three `Vec<usize>` (start, members, place) filled in place through a cursor array | `utvpi::potential` | Mutation | A group-by into a map from component to its nodes, O(n log n), or the same arrays in a state receiver |
+| A `Vec<usize>` of lowered nodes with a `Vec<bool>` of membership, drained by `std::mem::take`, so two searches hand each other only what changed | `utvpi::GoldbergRadzik`, `negsssp::Rounds::take_lowered`, `utvpi::Shared::step` | Mutation | A persistent set of changed nodes passed between the two searches' states |
+| Two resumable searches in one struct, each `&mut` field borrowed apart while the other is read | `utvpi::Shared::step` | None | Two coroutines, or two states in one record updated together |
+
 ## Entries from T14-low (`zed-native/src/lib.rs`, `codegen.rs`)
 
 | Rust construct | Sites | Gap | At the port |
