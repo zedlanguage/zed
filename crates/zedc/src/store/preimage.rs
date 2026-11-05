@@ -1880,17 +1880,11 @@ impl<'t> Tx<'t> {
         true
     }
 
-    /// `f` with the lambda whose body is `body` on the stack of lambdas being read, given its
-    /// place; or `stopped`, with the stop reported, when it is already there, since that call
+    /// Puts the lambda whose body is `body` on the stack of lambdas being read and gives its
+    /// place, or, when it is already there, reports the stop and gives `None`, since that call
     /// would make the same call again. The stack holds distinct lambdas, so it is no higher
-    /// than the number of lambdas in the term.
-    fn through<V>(
-        &mut self,
-        t: Tid,
-        body: Tid,
-        stopped: V,
-        f: impl FnOnce(&mut Self, usize) -> V,
-    ) -> V {
+    /// than the number of lambdas in the term. [`Tx::leave`] ends the read.
+    fn enter(&mut self, t: Tid, body: Tid) -> Option<usize> {
         if let Some(&at) = self.run.active.get(&body) {
             // Complexity tradeoff: a call of a lambda already being read (recursion) is not
             // read again; the transfer stops there with `StopKind::Recursion`, and the inputs
@@ -1903,100 +1897,47 @@ impl<'t> Tx<'t> {
             // the function's summary with widening, as the forward iteration does for loops.
             self.cx.cut = self.cx.cut.min(at);
             self.stop(StopKind::Recursion, t);
-            return stopped;
+            return None;
         }
         let place = self.run.active.len();
         self.run.active.insert(body, place);
-        let v = f(self, place);
+        Some(place)
+    }
+
+    /// Takes the lambda whose body is `body`, at `place`, off the stack of lambdas being read.
+    fn leave(&mut self, body: Tid, place: usize) {
         self.run.active.remove(&body);
         let m = &mut self.run.memo;
         while let Some((_, unheld)) = m.held.pop_if(|(at, _)| *at > place) {
             unheld(m);
         }
+    }
+
+    /// `f` with the lambda whose body is `body` on the stack of lambdas being read, given its
+    /// place; or `stopped`, with the stop reported, when it is already there.
+    fn through<V>(
+        &mut self,
+        t: Tid,
+        body: Tid,
+        stopped: V,
+        f: impl FnOnce(&mut Self, usize) -> V,
+    ) -> V {
+        let Some(place) = self.enter(t, body) else {
+            return stopped;
+        };
+        let v = f(self, place);
+        self.leave(body, place);
         v
     }
 
-    /// The summary of a call of the lambda with parameters `ps` and body `body` in scope
-    /// `lam`, with `args` read in `env`, or `None` when an argument that reads an input may be
-    /// other than an integer, or reads a term the catalog does not follow.
+    /// [`Walk::summon`] on a new stack.
     fn summon(&mut self, ps: Span, body: Tid, lam: Eid, args: Span, env: Eid) -> Option<Call> {
-        // Each parameter's binding, or `None` for a parameter over an interval.
-        let (mut sig, mut binds, mut doms) = (Vec::new(), Vec::new(), Vec::new());
-        for i in 0..ps.len() {
-            let (p, a) = (self.param(ps, i), self.arg(args, i));
-            if self.mentions(a, env)? {
-                let f = self.fwd(a, env);
-                // An argument with no value has no parameter: a context's points are those
-                // of the transfer.
-                if !f.is_int() || f.ints.is_empty() {
-                    return None;
-                }
-                // Complexity tradeoff: the argument's interval is moved out to the landmarks
-                // before it keys the summary, so the summary is taken over a wider parameter
-                // and its preimage may be wider than the call's (not exact). Why: keyed by the
-                // exact interval, a chain of k functions each calling the one before twice
-                // makes a summary per distinct interval, up to 2^k; with landmarks the keys
-                // per lambda are bounded by the landmark pairs. Trigger: an input-reading
-                // integer argument whose ends are not landmarks. Tests:
-                // `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`,
-                // `l01_25_preimage_catalog::scaling::nested_calls_are_summarized`. COMPLEXITY.md
-                // rows S13 and S15. A complete solution would read each call in place (exact,
-                // exponential in the nesting) or key summaries by relational summaries that
-                // hold for every argument (a polyhedral or Presburger summary per function).
-                let dom = f.ints.snap(&self.run.marks);
-                sig.push(Arg::Ints(dom.clone()));
-                doms.push((i, dom));
-                binds.push((p, None));
-                continue;
-            }
-            match self.constant(a, env) {
-                Some(Value::Int(n)) => {
-                    binds.push((p, Some((self.terms.int(n), ROOT))));
-                    sig.push(Arg::Int(n));
-                }
-                Some(Value::Bool(b)) => {
-                    binds.push((p, Some((self.terms.bool(b), ROOT))));
-                    sig.push(Arg::Bool(b));
-                }
-                _ => {
-                    let (mut t, mut e) = (a, env);
-                    while let Node::Var(x) = self.node(t)
-                        && let Some(to) = self.lookup(e, x)
-                    {
-                        (t, e) = to;
-                    }
-                    sig.push(Arg::At((t, e)));
-                    binds.push((p, Some((t, e))));
-                }
-            }
-        }
-        let next = self.run.sums.len() as u32;
-        let sid = *self.run.sums.entry(((body, lam), sig)).or_insert(next);
-        let (mut doms, mut params) = (doms.into_iter(), Vec::new());
-        let mut bound = Vec::with_capacity(binds.len());
-        for (p, to) in binds {
-            let to = match to {
-                Some(to) => to,
-                None => {
-                    let (i, dom) = doms.next().expect("an interval for each parameter");
-                    // A name no source name can be, one for each summary.
-                    let name: Arc<str> = format!("\u{1}{i}.{sid}").into();
-                    let x = self.terms.name(&name);
-                    params.push((i, name, dom));
-                    (self.terms.var(x), ROOT)
-                }
-            };
-            bound.push((p, to));
-        }
-        Some(Call {
-            sid,
-            binds: bound,
-            params,
-        })
+        let w = Walk::new(self);
+        w.stack.run(w.summon(ps, body, lam, args, env))
     }
 
-    /// The context a summary is computed in: the inputs and the call's parameters, and the
-    /// lambda's scope with its parameters bound.
+    /// Enters the context a summary is computed in: the inputs and the call's parameters. Gives
+    /// the context left, for [`Tx::shut`], and the lambda's scope with its parameters bound.
     fn open(&mut self, call: &Call, lam: Eid) -> (Cx, Eid) {
         let mut inputs = self.cx.inputs.clone();
         for (_, n, d) in &call.params {
@@ -2006,20 +1947,17 @@ impl<'t> Tx<'t> {
         for &(p, to) in &call.binds {
             e = self.bind(e, p, to);
         }
-        let cx = Cx {
+        let sub = Cx {
             inputs,
             cut: usize::MAX,
         };
-        (cx, e)
+        (std::mem::replace(&mut self.cx, sub), e)
     }
 
-    /// `f` read in the context `sub`, and the lowest place a call in it stopped at.
-    fn within<V>(&mut self, sub: Cx, f: impl FnOnce(&mut Self) -> V) -> (V, usize) {
-        let outer = std::mem::replace(&mut self.cx, sub);
-        // Temporary: stacker through `deeper` until PRE-stack-explicit.
-        let v = deeper(|| f(self));
-        let sub = std::mem::replace(&mut self.cx, outer);
-        (v, sub.cut)
+    /// Returns to the context `outer`, and gives the lowest place a call in the one left
+    /// stopped at.
+    fn shut(&mut self, outer: Cx) -> usize {
+        std::mem::replace(&mut self.cx, outer).cut
     }
 
     /// Whether a summary computed in a context whose calls stopped no lower than `cut`, for
@@ -2027,19 +1965,6 @@ impl<'t> Tx<'t> {
     fn closes(&mut self, cut: usize, place: usize) -> bool {
         self.cx.cut = self.cx.cut.min(cut);
         cut >= place
-    }
-
-    /// The forward value of a summarized call.
-    fn call_fwd(&mut self, call: Call, body: Tid, lam: Eid, place: usize) -> Fwd {
-        if let Some(f) = self.run.fwds.get(&call.sid) {
-            return f.clone();
-        }
-        let (sub, e) = self.open(&call, lam);
-        let (f, cut) = self.within(sub, |s| s.fwd(body, e));
-        if self.closes(cut, place) {
-            self.run.fwds.insert(call.sid, f.clone());
-        }
-        f
     }
 
     /// The preimage of a summarized call: the summary's box over the inputs, met with each
@@ -2075,8 +2000,9 @@ impl<'t> Tx<'t> {
         let r = match self.run.backs.get(&k) {
             Some(r) => r.clone(),
             None => {
-                let (sub, e) = self.open(&call, lam);
-                let (r, cut) = self.within(sub, |s| s.back_at(body, e, &k.1));
+                let (outer, e) = self.open(&call, lam);
+                let r = deeper(|| self.back_at(body, e, &k.1));
+                let cut = self.shut(outer);
                 if self.closes(cut, place) {
                     self.run.backs.insert(k, r.clone());
                 }
@@ -2356,54 +2282,10 @@ impl<'t> Tx<'t> {
         w.stack.run(w.reads_mod(t, env))
     }
 
-    /// [`Walk::close`] with no name bound within the term.
-    fn close(&mut self, t: Tid, env: Eid) -> Option<Term> {
-        let w = Walk::new(self);
-        w.stack.run(w.close(t, env, Rc::new(Local::new())))
-    }
-
-    /// The value of a term that reads no input, when the evaluator can compute it.
+    /// [`Walk::constant`] on a new stack.
     fn constant(&mut self, t: Tid, env: Eid) -> Option<Value> {
-        self.cached(
-            |m| &mut m.constant,
-            (t, env),
-            |s| {
-                // A literal compared with a value that is no float or rational is its own term.
-                if let Node::Follow(v, own, _) = s.node(t)
-                    && !s.fwd(v, env).other
-                {
-                    return s.constant(own, env);
-                }
-                if s.mentions(t, env)? {
-                    return None;
-                }
-                // From the values of the parts where the catalog reads them, so that a part is
-                // run once; otherwise the closed term.
-                match s.node(t) {
-                    Node::Int(n) => Some(Value::Int(n)),
-                    Node::Bool(b) => Some(Value::Bool(b)),
-                    Node::Lit(v) => Some(v.clone()),
-                    Node::Var(x) if let Some((bt, be)) = s.lookup(env, x) => s.constant(bt, be),
-                    Node::Let(n, e, b) => {
-                        let inner = s.let_env(n, e, env);
-                        s.constant(b, inner)
-                    }
-                    Node::Prim(p, args) => {
-                        let mut vs = Vec::with_capacity(args.len());
-                        for i in 0..args.len() {
-                            vs.push(Term::Lit(s.constant(s.arg(args, i), env)?));
-                        }
-                        eval(&Term::Prim(p, vs)).ok()
-                    }
-                    Node::If(g, a, b) => match s.constant(g, env)? {
-                        Value::Bool(true) => s.constant(a, env),
-                        Value::Bool(false) => s.constant(b, env),
-                        _ => run_closed(&s.close(t, env)?),
-                    },
-                    _ => run_closed(&s.close(t, env)?),
-                }
-            },
-        )
+        let w = Walk::new(self);
+        w.stack.run(w.constant(t, env))
     }
 
     fn constant_int(&mut self, t: Tid, env: Eid) -> Option<i64> {
@@ -2844,222 +2726,16 @@ impl<'t> Tx<'t> {
         })
     }
 
-    // ---- Forward transfer -------------------------------------------------------------
-
+    /// [`Walk::fwd`] on a new stack.
     fn fwd(&mut self, t: Tid, env: Eid) -> Fwd {
-        self.cached(|m| &mut m.fwd, (t, env), |s| s.fwd_at(t, env))
+        let w = Walk::new(self);
+        w.stack.run(w.fwd(t, env))
     }
 
-    fn fwd_at(&mut self, t: Tid, env: Eid) -> Fwd {
-        match self.node(t) {
-            Node::Int(n) => Fwd::int(IntervalSet::single(n)),
-            Node::Lit(Value::Big(n)) => Fwd::int(IntervalSet::point(Num::from(&**n))),
-            Node::Bool(b) => Fwd::bools(b, !b),
-            Node::Lit(Value::Atom(_)) => Fwd {
-                fails: true,
-                ..Fwd::none()
-            },
-            Node::Lit(_) => Fwd {
-                other: true,
-                ..Fwd::none()
-            },
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.fwd(bt, be),
-                None => match self.cx.inputs.get(self.name(x)) {
-                    Some(dom) => Fwd::int((**dom).clone()),
-                    None => Fwd::top(),
-                },
-            },
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.fwd(b, inner)
-            }
-            Node::Follow(v, own, _) => {
-                // At a float or a rational the literal is one, a value of another kind.
-                let mut out = self.fwd(own, env);
-                out.other |= self.fwd(v, env).other;
-                out
-            }
-            Node::If(g, a, b) => {
-                let g = self.fwd(g, env);
-                // A guard that is not a test is a failure.
-                let mut out = Fwd {
-                    fails: !g.is_bool(),
-                    ..Fwd::none()
-                };
-                for (arm, live) in [(a, g.bools.0), (b, g.bools.1)] {
-                    if live {
-                        let f = self.fwd(arm, env);
-                        out.ints = out.ints.join(&f.ints);
-                        out.bools = (out.bools.0 || f.bools.0, out.bools.1 || f.bools.1);
-                        out.fails |= f.fails;
-                        out.other |= f.other;
-                    }
-                }
-                out
-            }
-            Node::App(f, args) => match self.callee(f, env) {
-                Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    self.through(t, body, Fwd::top(), |s, place| {
-                        match s.summon(ps, body, lam, args, env) {
-                            Some(call) => s.call_fwd(call, body, lam, place),
-                            None => {
-                                let inner = s.call_env(ps, args, lam, env);
-                                s.fwd(body, inner)
-                            }
-                        }
-                    })
-                }
-                Ok(Callee::Prim(p)) => {
-                    let c = self.terms.call(t, p, args);
-                    self.fwd(c, env)
-                }
-                _ => Fwd::top(),
-            },
-            Node::Prim(p, args) => self.fwd_prim(t, p, args, env),
-            _ => Fwd::top(),
-        }
-    }
-
-    fn fwd_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid) -> Fwd {
-        use Prim::*;
-        if p.arity().is_some_and(|n| n != args.len()) {
-            return Fwd::top();
-        }
-        if p == Mul
-            && let Some((base, be, k)) = self.power(t, env)
-        {
-            let b = self.fwd(base, be);
-            return self.arith(&Op::Pow(k), &b, &b, false);
-        }
-        let fwd = |s: &mut Self, i: usize| s.fwd(s.arg(args, i), env);
-        match p {
-            Neg | Abs => {
-                let a = fwd(self, 0);
-                self.arith(&op(p, None).expect("scalar"), &a, &a, false)
-            }
-            Pow => match self.exponent(self.arg(args, 1), env) {
-                Some(k) => {
-                    let a = fwd(self, 0);
-                    self.arith(&Op::Pow(k), &a, &a, false)
-                }
-                None => Fwd::top(),
-            },
-            Add | Sub | Mul | IntDiv | Mod | Min | Max => {
-                let a = fwd(self, 0);
-                let b = fwd(self, 1);
-                let by_zero = matches!(p, IntDiv | Mod) && b.ints.contains(0);
-                self.arith(&op(p, None).expect("scalar"), &a, &b, by_zero)
-            }
-            Lt | Le | Gt | Ge | Eq | Ne => {
-                let a = fwd(self, 0);
-                let b = fwd(self, 1);
-                if a.is_int() && b.is_int() {
-                    return compare(p, &a.ints, &b.ints);
-                }
-                // Values of other kinds compare as data under `==` and `!=`, and otherwise
-                // fail or compare in an order this transfer does not follow.
-                Fwd {
-                    bools: (true, true),
-                    fails: !matches!(p, Eq | Ne),
-                    ..Fwd::none()
-                }
-            }
-            Not => {
-                let a = fwd(self, 0);
-                Fwd {
-                    bools: (a.bools.1, a.bools.0),
-                    fails: !a.is_bool(),
-                    ..Fwd::none()
-                }
-            }
-            And | Or => {
-                let a = fwd(self, 0);
-                let b = fwd(self, 1);
-                let (t, f) = if p == And {
-                    (a.bools.0 && b.bools.0, a.bools.1 || b.bools.1)
-                } else {
-                    (a.bools.0 || b.bools.0, a.bools.1 && b.bools.1)
-                };
-                Fwd {
-                    bools: (t, f),
-                    fails: !a.is_bool() || !b.is_bool(),
-                    ..Fwd::none()
-                }
-            }
-            _ => Fwd::top(),
-        }
-    }
-
-    /// An integer operator over its operands' forward values.
-    fn arith(&self, o: &Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
-        Fwd {
-            ints: revision::forward(o, &a.ints, &b.ints),
-            fails: !a.is_int() || !b.is_int() || by_zero,
-            ..Fwd::none()
-        }
-    }
-
-    // ---- Clipping demands ---------------------------------------------------------------
-
-    /// An interval that holds every integer value of the term, for a term whose backward
-    /// result under an integer demand `z` is its result under `z` met with the interval:
-    /// an input, a literal, a name bound to such a term, a constant added to or subtracted
-    /// from one, a choice between two of them, and their `min` or `max`. `None` for any other
-    /// term.
+    /// [`Walk::clip`] on a new stack.
     fn clip(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
-        self.cached(|m| &mut m.clip, (t, env), |s| s.clip_at(t, env))
-    }
-
-    fn clip_at(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
-        if let Node::Var(x) = self.node(t) {
-            return match self.lookup(env, x) {
-                Some((bt, be)) => self.clip(bt, be),
-                None => self.cx.inputs.get(self.name(x)).map(|dom| dom.hull()),
-            };
-        }
-        // As in [`Tx::back_in`], a term that reads no input is decided by running it.
-        match self.constant(t, env) {
-            Some(Value::Int(n)) => return Some(IntervalSet::single(n)),
-            Some(_) => return None,
-            None => {}
-        }
-        match self.node(t) {
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.clip(b, inner)
-            }
-            Node::If(_, a, b) => {
-                let fa = self.clip(a, env)?;
-                let fb = self.clip(b, env)?;
-                Some(fa.join(&fb).hull())
-            }
-            Node::Prim(p @ (Prim::Add | Prim::Sub), args) if args.len() == 2 => {
-                let (a, b) = (self.arg(args, 0), self.arg(args, 1));
-                match (p, self.constant_int(a, env), self.constant_int(b, env)) {
-                    (Prim::Add, Some(c), None) => Some(shift(&self.clip(b, env)?, c as i128)),
-                    (Prim::Add, None, Some(c)) => Some(shift(&self.clip(a, env)?, c as i128)),
-                    (Prim::Sub, None, Some(c)) => Some(shift(&self.clip(a, env)?, -(c as i128))),
-                    (Prim::Sub, Some(c), None) => Some(reflect(&self.clip(b, env)?, c as i128)),
-                    _ => None,
-                }
-            }
-            // `min` and `max` are monotone in each operand, so their hull is the operator on
-            // the operands' ends.
-            Node::Prim(p @ (Prim::Min | Prim::Max), args) if args.len() == 2 => {
-                let (ca, cb) = (
-                    self.clip(self.arg(args, 0), env)?,
-                    self.clip(self.arg(args, 1), env)?,
-                );
-                let ((la, ha), (lb, hb)) = (ca.bounds()?, cb.bounds()?);
-                let pick = if p == Prim::Min { End::min } else { End::max };
-                Some(IntervalSet::range(
-                    pick(la.clone(), lb.clone()),
-                    pick(ha.clone(), hb.clone()),
-                ))
-            }
-            _ => None,
-        }
+        let w = Walk::new(self);
+        w.stack.run(w.clip(t, env))
     }
 
     // ---- Backward transfer ------------------------------------------------------------
@@ -3333,8 +3009,9 @@ impl<'t> Tx<'t> {
                         match s.summon(ps, body, lam, args, env) {
                             Some(call) => {
                                 if s.run.scanned.insert(call.sid) {
-                                    let (sub, e) = s.open(&call, lam);
-                                    let ((), cut) = s.within(sub, |s| s.scan(body, e));
+                                    let (outer, e) = s.open(&call, lam);
+                                    s.scan(body, e);
+                                    let cut = s.shut(outer);
                                     s.closes(cut, place);
                                 }
                             }
@@ -4332,6 +4009,398 @@ impl<'m, 't> Walk<'m, 't> {
             }
             Node::Other => return None,
         })
+    }
+
+    /// The summary of a call of the lambda with parameters `ps` and body `body` in scope
+    /// `lam`, with `args` read in `env`, or `None` when an argument that reads an input may be
+    /// other than an integer, or reads a term the catalog does not follow.
+    async fn summon(&'m self, ps: Span, body: Tid, lam: Eid, args: Span, env: Eid) -> Option<Call> {
+        // Each parameter's binding, or `None` for a parameter over an interval.
+        let (mut sig, mut binds, mut doms) = (Vec::new(), Vec::new(), Vec::new());
+        for i in 0..ps.len() {
+            let (p, a) = (self.param(ps, i), self.arg(args, i));
+            if self.mentions(a, env).await? {
+                let f = self.fwd(a, env).await;
+                // An argument with no value has no parameter: a context's points are those
+                // of the transfer.
+                if !f.is_int() || f.ints.is_empty() {
+                    return None;
+                }
+                // Complexity tradeoff: the argument's interval is moved out to the landmarks
+                // before it keys the summary, so the summary is taken over a wider parameter
+                // and its preimage may be wider than the call's (not exact). Why: keyed by the
+                // exact interval, a chain of k functions each calling the one before twice
+                // makes a summary per distinct interval, up to 2^k; with landmarks the keys
+                // per lambda are bounded by the landmark pairs. Trigger: an input-reading
+                // integer argument whose ends are not landmarks. Tests:
+                // `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`,
+                // `l01_25_preimage_catalog::scaling::nested_calls_are_summarized`. COMPLEXITY.md
+                // rows S13 and S15. A complete solution would read each call in place (exact,
+                // exponential in the nesting) or key summaries by relational summaries that
+                // hold for every argument (a polyhedral or Presburger summary per function).
+                let dom = self.with(|tx| f.ints.snap(&tx.run.marks));
+                sig.push(Arg::Ints(dom.clone()));
+                doms.push((i, dom));
+                binds.push((p, None));
+                continue;
+            }
+            match self.constant(a, env).await {
+                Some(Value::Int(n)) => {
+                    binds.push((p, Some((self.with(|tx| tx.terms.int(n)), ROOT))));
+                    sig.push(Arg::Int(n));
+                }
+                Some(Value::Bool(b)) => {
+                    binds.push((p, Some((self.with(|tx| tx.terms.bool(b)), ROOT))));
+                    sig.push(Arg::Bool(b));
+                }
+                _ => {
+                    let (t, e) = self.with(|tx| tx.followed(a, env));
+                    sig.push(Arg::At((t, e)));
+                    binds.push((p, Some((t, e))));
+                }
+            }
+        }
+        Some(self.with(|tx| {
+            let next = tx.run.sums.len() as u32;
+            let sid = *tx.run.sums.entry(((body, lam), sig)).or_insert(next);
+            let (mut doms, mut params) = (doms.into_iter(), Vec::new());
+            let mut bound = Vec::with_capacity(binds.len());
+            for (p, to) in binds {
+                let to = match to {
+                    Some(to) => to,
+                    None => {
+                        let (i, dom) = doms.next().expect("an interval for each parameter");
+                        // A name no source name can be, one for each summary.
+                        let name: Arc<str> = format!("\u{1}{i}.{sid}").into();
+                        let x = tx.terms.name(&name);
+                        params.push((i, name, dom));
+                        (tx.terms.var(x), ROOT)
+                    }
+                };
+                bound.push((p, to));
+            }
+            Call {
+                sid,
+                binds: bound,
+                params,
+            }
+        }))
+    }
+
+    /// The forward value of a summarized call.
+    async fn call_fwd(&'m self, call: Call, body: Tid, lam: Eid, place: usize) -> Fwd {
+        if let Some(f) = self.with(|tx| tx.run.fwds.get(&call.sid).cloned()) {
+            return f;
+        }
+        let (outer, e) = self.with(|tx| tx.open(&call, lam));
+        let f = self.fwd(body, e).await;
+        self.with(|tx| {
+            let cut = tx.shut(outer);
+            if tx.closes(cut, place) {
+                tx.run.fwds.insert(call.sid, f.clone());
+            }
+        });
+        f
+    }
+
+    /// The value of a term that reads no input, when the evaluator can compute it.
+    fn constant(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Value>> {
+        self.cached(
+            |m| &mut m.constant,
+            (t, env),
+            move || self.constant_at(t, env),
+        )
+    }
+
+    async fn constant_at(&'m self, t: Tid, env: Eid) -> Option<Value> {
+        // A literal compared with a value that is no float or rational is its own term.
+        if let Node::Follow(v, own, _) = self.node(t)
+            && !self.fwd(v, env).await.other
+        {
+            return self.constant(own, env).await;
+        }
+        if self.mentions(t, env).await? {
+            return None;
+        }
+        // From the values of the parts where the catalog reads them, so that a part is
+        // run once; otherwise the closed term.
+        match self.node(t) {
+            Node::Int(n) => Some(Value::Int(n)),
+            Node::Bool(b) => Some(Value::Bool(b)),
+            Node::Lit(v) => Some(v.clone()),
+            Node::Var(x) if let Some((bt, be)) = self.lookup(env, x) => {
+                self.constant(bt, be).await
+            }
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.constant(b, inner).await
+            }
+            Node::Prim(p, args) => {
+                let mut vs = Vec::with_capacity(args.len());
+                for i in 0..args.len() {
+                    vs.push(Term::Lit(self.constant(self.arg(args, i), env).await?));
+                }
+                eval(&Term::Prim(p, vs)).ok()
+            }
+            Node::If(g, a, b) => match self.constant(g, env).await? {
+                Value::Bool(true) => self.constant(a, env).await,
+                Value::Bool(false) => self.constant(b, env).await,
+                _ => run_closed(&self.close_all_bound(t, env).await?),
+            },
+            _ => run_closed(&self.close_all_bound(t, env).await?),
+        }
+    }
+
+    /// [`Walk::close`] with no name bound within the term.
+    fn close_all_bound(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Term>> {
+        self.close(t, env, Rc::new(Local::new()))
+    }
+
+    async fn constant_int(&'m self, t: Tid, env: Eid) -> Option<i64> {
+        match self.constant(t, env).await? {
+            Value::Int(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// The constant exponent `t` of a `**`, when it is an integer at least 0, of any size: a
+    /// kernel integer past the 64-bit range is kept as the kernel holds it, unbuilt.
+    async fn exponent(&'m self, t: Tid, env: Eid) -> Option<Exponent> {
+        match self.constant(t, env).await? {
+            Value::Int(n) if n >= 0 => Some(Int::from(n).into()),
+            Value::Big(k) if !k.is_negative() => Some(Num::from(&*k).into()),
+            _ => None,
+        }
+    }
+
+    // ---- Forward transfer -------------------------------------------------------------
+
+    fn fwd(&'m self, t: Tid, env: Eid) -> Deep<'m, Fwd> {
+        self.cached(|m| &mut m.fwd, (t, env), move || self.fwd_at(t, env))
+    }
+
+    async fn fwd_at(&'m self, t: Tid, env: Eid) -> Fwd {
+        match self.node(t) {
+            Node::Int(n) => Fwd::int(IntervalSet::single(n)),
+            Node::Lit(Value::Big(n)) => Fwd::int(IntervalSet::point(Num::from(&**n))),
+            Node::Bool(b) => Fwd::bools(b, !b),
+            Node::Lit(Value::Atom(_)) => Fwd {
+                fails: true,
+                ..Fwd::none()
+            },
+            Node::Lit(_) => Fwd {
+                other: true,
+                ..Fwd::none()
+            },
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.fwd(bt, be).await,
+                None => self.with(|tx| match tx.cx.inputs.get(tx.name(x)) {
+                    Some(dom) => Fwd::int((**dom).clone()),
+                    None => Fwd::top(),
+                }),
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.fwd(b, inner).await
+            }
+            Node::Follow(v, own, _) => {
+                // At a float or a rational the literal is one, a value of another kind.
+                let mut out = self.fwd(own, env).await;
+                out.other |= self.fwd(v, env).await.other;
+                out
+            }
+            Node::If(g, a, b) => {
+                let g = self.fwd(g, env).await;
+                // A guard that is not a test is a failure.
+                let mut out = Fwd {
+                    fails: !g.is_bool(),
+                    ..Fwd::none()
+                };
+                for (arm, live) in [(a, g.bools.0), (b, g.bools.1)] {
+                    if live {
+                        let f = self.fwd(arm, env).await;
+                        out.ints = out.ints.join(&f.ints);
+                        out.bools = (out.bools.0 || f.bools.0, out.bools.1 || f.bools.1);
+                        out.fails |= f.fails;
+                        out.other |= f.other;
+                    }
+                }
+                out
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
+                    let Some(place) = self.with(|tx| tx.enter(t, body)) else {
+                        return Fwd::top();
+                    };
+                    let v = match self.summon(ps, body, lam, args, env).await {
+                        Some(call) => self.call_fwd(call, body, lam, place).await,
+                        None => {
+                            let inner = self.call_env(ps, args, lam, env);
+                            self.fwd(body, inner).await
+                        }
+                    };
+                    self.with(|tx| tx.leave(body, place));
+                    v
+                }
+                Ok(Callee::Prim(p)) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.fwd(c, env).await
+                }
+                _ => Fwd::top(),
+            },
+            Node::Prim(p, args) => self.fwd_prim(t, p, args, env).await,
+            _ => Fwd::top(),
+        }
+    }
+
+    async fn fwd_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Fwd {
+        use Prim::*;
+        if p.arity().is_some_and(|n| n != args.len()) {
+            return Fwd::top();
+        }
+        if p == Mul
+            && let Some((base, be, k)) = self.with(|tx| tx.power(t, env))
+        {
+            let b = self.fwd(base, be).await;
+            return arith(&Op::Pow(k), &b, &b, false);
+        }
+        match p {
+            Neg | Abs => {
+                let a = self.fwd(self.arg(args, 0), env).await;
+                arith(&op(p, None).expect("scalar"), &a, &a, false)
+            }
+            Pow => match self.exponent(self.arg(args, 1), env).await {
+                Some(k) => {
+                    let a = self.fwd(self.arg(args, 0), env).await;
+                    arith(&Op::Pow(k), &a, &a, false)
+                }
+                None => Fwd::top(),
+            },
+            Add | Sub | Mul | IntDiv | Mod | Min | Max => {
+                let a = self.fwd(self.arg(args, 0), env).await;
+                let b = self.fwd(self.arg(args, 1), env).await;
+                let by_zero = matches!(p, IntDiv | Mod) && b.ints.contains(0);
+                arith(&op(p, None).expect("scalar"), &a, &b, by_zero)
+            }
+            Lt | Le | Gt | Ge | Eq | Ne => {
+                let a = self.fwd(self.arg(args, 0), env).await;
+                let b = self.fwd(self.arg(args, 1), env).await;
+                if a.is_int() && b.is_int() {
+                    return compare(p, &a.ints, &b.ints);
+                }
+                // Values of other kinds compare as data under `==` and `!=`, and otherwise
+                // fail or compare in an order this transfer does not follow.
+                Fwd {
+                    bools: (true, true),
+                    fails: !matches!(p, Eq | Ne),
+                    ..Fwd::none()
+                }
+            }
+            Not => {
+                let a = self.fwd(self.arg(args, 0), env).await;
+                Fwd {
+                    bools: (a.bools.1, a.bools.0),
+                    fails: !a.is_bool(),
+                    ..Fwd::none()
+                }
+            }
+            And | Or => {
+                let a = self.fwd(self.arg(args, 0), env).await;
+                let b = self.fwd(self.arg(args, 1), env).await;
+                let (t, f) = if p == And {
+                    (a.bools.0 && b.bools.0, a.bools.1 || b.bools.1)
+                } else {
+                    (a.bools.0 || b.bools.0, a.bools.1 && b.bools.1)
+                };
+                Fwd {
+                    bools: (t, f),
+                    fails: !a.is_bool() || !b.is_bool(),
+                    ..Fwd::none()
+                }
+            }
+            _ => Fwd::top(),
+        }
+    }
+
+    // ---- Clipping demands ---------------------------------------------------------------
+
+    /// An interval that holds every integer value of the term, for a term whose backward
+    /// result under an integer demand `z` is its result under `z` met with the interval:
+    /// an input, a literal, a name bound to such a term, a constant added to or subtracted
+    /// from one, a choice between two of them, and their `min` or `max`. `None` for any other
+    /// term.
+    fn clip(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<IntervalSet>> {
+        self.cached(|m| &mut m.clip, (t, env), move || self.clip_at(t, env))
+    }
+
+    async fn clip_at(&'m self, t: Tid, env: Eid) -> Option<IntervalSet> {
+        if let Node::Var(x) = self.node(t) {
+            return match self.lookup(env, x) {
+                Some((bt, be)) => self.clip(bt, be).await,
+                None => self.with(|tx| tx.cx.inputs.get(tx.name(x)).map(|dom| dom.hull())),
+            };
+        }
+        // As in [`Walk::back_in`], a term that reads no input is decided by running it.
+        match self.constant(t, env).await {
+            Some(Value::Int(n)) => return Some(IntervalSet::single(n)),
+            Some(_) => return None,
+            None => {}
+        }
+        match self.node(t) {
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.clip(b, inner).await
+            }
+            Node::If(_, a, b) => {
+                let fa = self.clip(a, env).await?;
+                let fb = self.clip(b, env).await?;
+                Some(fa.join(&fb).hull())
+            }
+            Node::Prim(p @ (Prim::Add | Prim::Sub), args) if args.len() == 2 => {
+                let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+                let (ca, cb) = (
+                    self.constant_int(a, env).await,
+                    self.constant_int(b, env).await,
+                );
+                match (p, ca, cb) {
+                    (Prim::Add, Some(c), None) => {
+                        Some(shift(&self.clip(b, env).await?, c as i128))
+                    }
+                    (Prim::Add, None, Some(c)) => {
+                        Some(shift(&self.clip(a, env).await?, c as i128))
+                    }
+                    (Prim::Sub, None, Some(c)) => {
+                        Some(shift(&self.clip(a, env).await?, -(c as i128)))
+                    }
+                    (Prim::Sub, Some(c), None) => {
+                        Some(reflect(&self.clip(b, env).await?, c as i128))
+                    }
+                    _ => None,
+                }
+            }
+            // `min` and `max` are monotone in each operand, so their hull is the operator on
+            // the operands' ends.
+            Node::Prim(p @ (Prim::Min | Prim::Max), args) if args.len() == 2 => {
+                let ca = self.clip(self.arg(args, 0), env).await?;
+                let cb = self.clip(self.arg(args, 1), env).await?;
+                let ((la, ha), (lb, hb)) = (ca.bounds()?, cb.bounds()?);
+                let pick = if p == Prim::Min { End::min } else { End::max };
+                Some(IntervalSet::range(
+                    pick(la.clone(), lb.clone()),
+                    pick(ha.clone(), hb.clone()),
+                ))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// An integer operator over its operands' forward values.
+fn arith(o: &Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
+    Fwd {
+        ints: revision::forward(o, &a.ints, &b.ints),
+        fails: !a.is_int() || !b.is_int() || by_zero,
+        ..Fwd::none()
     }
 }
 
