@@ -445,7 +445,7 @@ start = Counter(n: 0, peak: 0);
 after, was = start.bump(2);
 ```
 
-Inside a method, `n'` means the same thing it means in a loop: the value of `n` in the next version of this struct. The method doesn't change `start`: it returns a new `Counter` and its declared result, and you have to take both. In a loop body, a `*` makes a call look like mutation: `prev = c*.bump(3);` replaces `c` in the loop's next step. So no call changes anything unless the text shows a `*`.
+Inside a method, `n'` means the same thing it means in a loop: the value of `n` in the next version of this struct. The method doesn't change `start`: it returns a new `Counter` and its declared result, and you have to take both. In a loop body, a `*` makes a call look like mutation: `prev = c*.bump(3);` replaces `c` in the loop's next step. So no call changes a value you hold unless the text shows a `*`.
 
 ### Only what's needed runs
 
@@ -646,7 +646,7 @@ Number.eval = int(this) else 0;
 value = Sum.parse("2*(3+4)")?.eval;     // 14, or #syntaxError
 ```
 
-Binary formats work the same way, with the layout given by `bits`, `endian` and `length`. This is the layout of a PNG chunk:
+Binary formats work the same way, with the layout given by words such as `bits`, `endian` and `length`. This is the layout of a PNG chunk:
 
 ```zed
 struct Chunk grammar {
@@ -691,7 +691,7 @@ law addComm(a: int, b: int) = a + b == b + a;
 law sortTwice(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
 ```
 
-A law is a claim about your code. The compiler tries to prove it with a fixed ladder of methods. For a small domain it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved` or `--strict`.
+A law is a claim about your code. The compiler tries to prove it with a fixed ladder of methods. For a small domain it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
 
 The optimizer can use proved laws as rewrites. A `law` that was only tested is never used to rewrite your program. An `@associative` annotation that was only tested can still choose a fixed regrouping, and the report says so.
 
@@ -743,7 +743,7 @@ A foreign call is an operation on a port. The declared `-> f64` is the C result,
 
 ### Memory
 
-Memory has no syntax. Zed has no garbage collector, and there are no lifetimes or ownership annotations. Zed values can't form cycles, so exact reference counting is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas or id-indexed graphs, where a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no tracing pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
+Memory has no syntax. Zed has no garbage collector, and there are no lifetimes or ownership annotations. Zed values can't form cycles, so exact reference counting is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, whose nodes are freed with the arena, or in id-indexed graphs, where a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no tracing pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
 
 ### Parallelism and determinism
 
