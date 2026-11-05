@@ -6,324 +6,661 @@
   <img src="docs/assets/banner.svg" alt="Zed" width="512">
 </p>
 
-Zed is a programming language in which a program is a graph of values and the dependencies between them. The compiler reads that graph to get parallel scheduling, memory management, safety checks, and incremental recomputation. You write ordinary-looking code, and none of those words appear in it.
+Zed is a programming language that looks like ordinary code, but has no variables you overwrite and no statement order you have to get right. A Zed program is a set of definitions: each value says what it depends on, and the compiler works out the rest. Because the compiler can see that whole graph of dependencies, it can run your code in parallel, free memory without a garbage collector, recompute only what changed when an input changes, and reject many bugs before the program runs.
 
-## Why Zed exists
-
-- **All computation is already a graph.** A value cannot be computed before its operands exist. Spreadsheets, SSA form, Spark, build systems, reactive UI frameworks and out-of-order CPUs all rely on this graph or work to recover it.
-- **Mainstream languages throw the graph away.** They make you flatten it into a sequence of statements over mutable places. The usual problems follow from that step:
-  - The compiler and CPU work to recover parallelism that the program text destroyed.
-  - Threads and locks bring back concurrency by hand, along with races and deadlocks that the graph never contained.
-  - Memory management guesses at lifetimes that the graph states exactly.
-  - Incremental and reactive systems add dependency tracking that the language discarded.
-- **Queries and loops should not be two worlds.** The same computation written as SQL or as a loop has different tools, different performance, and no check that the two agree.
-- **Faults should be impossible to write, not merely caught.** A null, a bad index or a forgotten error case should be a compile error or an ordinary value, never a crash in production.
-- **Power should not cost ceremony.** A program with no annotations should already be typed, parallel and memory-managed. Anything more you write should be optional.
-
-## Core features
-
-### One idea
-
-- **Everything is a morphism**, a map from a tracked key domain to values: collections, functions, blocks, structs, loops, streams, variables, and the program itself.
-- **One structural operation** (remap), **one way to merge values** (reduction with checked algebra), **one treatment of failure** (typed values), and **one model of state** (generations).
-- **Familiar syntax.** The surface looks like Dart and fits on a short cheatsheet. A feature that adds a concept without removing one is not admitted.
-- **Optional layers.** Types, units, laws, proofs and placement can be added in any combination. A layer can reject a program, accept one, or speed it up. It never changes a result unless the change shows in a type.
-
-### Parallelism and determinism
-
-- **Automatic parallelism.** Nothing in a program says "in parallel". Data dependency is the only sequencing, and the schedule is read from the graph.
-- **Bit-identical results at any core count**, including floating-point reductions. A float sum is computed exactly and rounded once.
-- **Declared nondeterminism only.** The sources are a short, fixed list: arrival order at ports, a declared interleaving at an output port, foreign-call results whose order the program leaves open, resource exhaustion, and reductions written `unordered`, which carry that fact in their type.
-- **Algebra widens the schedule.** Associativity allows tree reduction and commutativity allows combining values as they arrive. Composing transition functions turns "inherently serial" loops into parallel scans.
-- **No races or deadlocks.** Every value has one writer and can be read only once complete. The one remaining wait cycle comes from bounded queues, and it is a checked obligation on their declared bounds.
-
-### Data, keys and queries
-
-- **Loops and queries are one object.** Both forms compile to the same kernel term, so a loop can run as a hash join and a join as a loop nest.
-- **Keys are tracked through every operation.** If two values could land on one key, the program does not compile until you say how to combine them.
-- **Joins are one typed decision per region of the key overlap**: keep, drop or assert empty, for each side and for the intersection.
-- **Data structures are plan choices.** An index exists only if keyed access demands it. A table that is only scanned compiles to a flat run.
-- **Cost is part of the type.** Every function has a derived work and depth bound (`f::cost`), and `@cost`, `@fused` and `@noalloc` can assert one.
-
-### Types and static checks
-
-- **Set-theoretic types.** Union, intersection and negation, with occurrence narrowing and full inference.
-- **Ranges are types.** `a[i]` either provably cannot miss, or its type says `T | #notFound`. An integer's machine representation is chosen from its domain, so it cannot overflow.
-- **Facets carry everything else** on the same definitions: units, taint, order, uniqueness, cost and operator algebra, plus facets you define yourself.
-- **No implicit conversions**, no implicit folds, and no last-write-wins at a collision.
-- **The checker decides rather than guesses.** It gives a fixed answer for every program, independent of how clever an analysis could have been. No compiler algorithm takes exponential time, and none is cut short by a budget.
-- **Diagnostics show their work.** A rejection shows each constraint, its site and the path it propagated along, and offers a repair you can write in the core language.
-
-### Failure
-
-- **No exceptions, no null, no traps.** Failures such as `#notFound`, `#divByZero` and `#ioError` are atoms in a union type.
-- **Handle it or carry it.** A partial operation's result type carries its failures until code disposes of them with `else`, `?.` or `match`.
-- **Exhaustive `match`.** An unhandled case does not compile.
-
-### Memory
-
-- **No garbage collector and no pauses.** Where the last use of a value is known statically, its release is unconditional and no count exists.
-- **Exact reference counting for the rest**, exact because the value graph is acyclic. No tracing collector or cycle collector is needed.
-- **Inferred storage.** Fusion removes most intermediates, and a recurrence keeps only the frames that are read.
-
-### State, time and reactivity
-
-- **Generations instead of mutation.** `x` is the value in this step, `x'` the next, `x[i-k]` a fixed distance back, and `x::frames` the whole history.
-- **Loops are values.** `sim.pos` is the final state, and undo and time travel are field reads.
-- **Incremental by default.** When an input changes, only the values that depend on it recompute, in waves that commit atomically, and the result matches a from-scratch run.
-- **Total provenance.** Every value's address and immediate inputs can be queried, which supports debugging, audit and taint tracking.
-- **Ports are the only outside world.** Files, sockets, stores and devices appear in a program's type. Timeouts, retries, hedging, circuit breakers and rate limits are declared on the port.
-
-### Compile-time programming
-
-- **Partial evaluation is the one staging mechanism.** Types, checks, serializers, reflection and metaprogramming all reduce to it, and any node whose inputs are static is evaluated at build with no annotation.
-- **Introspection.** `f::source`, `f::ast`, `T::shape` and `T::fields` read code and types as ordinary values.
-- **Formulas are values.** The syntax tree of a lambda can be expanded, differentiated, simplified and compiled back, with each rewrite checked by the kernel.
-- **Grammars in structs.** One declaration gives a type, a parser and a printer, with the round trip guaranteed.
-
-### Verification
-
-- **Tests, laws and proofs are one scale.** A `law` is boolean Zed, graded by its evidence: checked over a whole finite domain, proved with a certificate an independent checker accepts, checked up to a bound, covered by a test, or assumed.
-- **Model checking without a second language.** A loop is a state machine, `@invariant` is loop induction, and the reachable set is a value the compiler computes.
-- **Algebraic claims carry graded evidence.** What `@associative` may license depends on the grade of its evidence. A false claim that gets through gives a wrong result that is still deterministic, blamed at its declaration.
-- **Number algebras and matrices.** Exact `rat`, `complex`, `quat`, `oct`, and vectors and matrices with checked shapes.
-
-### Compiler and targets
-
-- **Self-hosted over a small core.** Type checking, decision procedures and optimizer rewrites are Zed source in the prelude, so you can read and extend them.
-- **An e-graph optimizer with certificates.** A plan choice can never change a value.
-- **One intermediate representation for every target**: native code through MLIR and LLVM, wasm, GPUs, distributed dataflow, hardware synthesis and microcontrollers.
-- **C FFI in both directions**, with foreign calls typed as port operations.
-
-## How the features work together
-
-The features above are one graph read in different ways. Its edges are the schedule, its keys are the data algebra, its lifetimes are the memory plan, and its time keys are the reactive engine. Here is how that plays out.
-
-**Keys, algebra and parallelism.** Reduction is the only place where values from different keys merge. The operator's tracked algebra decides how it may run: `+` on integers can combine as values arrive, while a float product takes one fixed tree, chosen so that the result is the same at any core count. Everything else moves values between distinct keys, so it needs no locks.
-
-**Single assignment, memory and safety.** One writer and no mutable places mean there is nothing for a race to be about. The same acyclic graph makes reference counting exact, and static last-use analysis removes most of the counts. Eliminating data races and eliminating the garbage collector come from one fact about the program.
-
-**Ranges, failures and partial evaluation.** A range in a type lets the checker delete a test, and a test it cannot delete shows up as a failure atom in the result type. So there is no hidden run-time check to reason about. A static input narrows the range to one value, and the whole call may then run at build. Checking and optimizing are one computation.
-
-**Duality, demand and cost.** Loops and queries share a kernel term and every function has a derived cost, so the planner chooses by arithmetic. An index is an ordinary derived value that is removed when nothing reads it, the same way dead code is. A choice that depends on sizes known only at run time stays in the program and is made then. Two plans swap only when their outputs are identical.
-
-**Generations, retention and reactivity.** Because a variable is its whole history, storage is a retention decision. If the program reads back two frames, the compiler keeps a two-slot ring. If it reads `::frames`, the history is kept and shared. Reactive recomputation is the same graph with its edges run in the push direction, which is why it needs no framework.
-
-**Laws, optimizer and compiler.** A proved law licenses a rewrite, and the optimizer's rewrites are themselves Zed with proved laws. Partial evaluation specializes the checks and rewrites to their rule tables, so writing the compiler as a library costs no speed, and extending it takes the same language as using it.
-
-## Zed in 24 examples
-
-Names not defined in a snippet are assumed inputs. A `✗` marks a line the compiler rejects.
-
-**1. A complete program.** The file port and the output are in the signature. There is no `void main`, no null check and no thread.
+Here is a complete program. It counts the words in a file and prints them, most common first.
 
 ```zed
 main(fs: Files) -> (stdout: Lines) {
-  text   = fs["input.txt"] else "";
+  text = fs["input.txt"] else "";
   counts = text.split(" ").group(w -> w.lower).count;
-  lines  = counts as (w -> n) into (desc n -> w -> "${w}: ${n}");
+  lines = counts as (w -> n) into (desc n -> w -> "${w}: ${n}");
   stdout <- lines.rank;
 }
 ```
 
-**2. Integers that cannot overflow.** Integers have no width, and division states when it can fail.
+Nothing in it mentions threads, locks or allocation, yet the grouping runs on all your cores. The output is the same, bit for bit, on one core or on sixty-four. A missing file can't crash the program either: the type of `fs["input.txt"]` says the read can fail, and the `else` says what to do when it does. Delete the `else` and the program no longer compiles.
+
+The rest of this page is a tour of the language. Each stop shows a piece of syntax, an example, and what the example means.
+
+- [The basics](#the-basics): bindings, functions, numbers, strings, structs, unions, methods
+- [Failure is a value](#failure-is-a-value)
+- [Collections](#collections): maps, grouping, remapping, reducing, joins
+- [Time and repetition](#time-and-repetition): recurrences, loops, history, laziness
+- [The outside world](#the-outside-world): ports, streams, retries, databases, incremental updates
+- [Checks at compile time](#checks-at-compile-time): ranges, units, taint, cost
+- [Code that runs at build time](#code-that-runs-at-build-time): grammars, reflection, symbolic math
+- [Tests, laws and proofs](#tests-laws-and-proofs)
+- [Under the hood](#under-the-hood): modules, interfaces, C, memory, targets, error messages
+
+## The basics
+
+### Bindings
+
+`name = value;` or `name: type = value;`
 
 ```zed
-big = 2 ** 100;                               // never overflows
-third = 1r / 3r;                              // an exact rational
-c: u8 = 256;                                  // ✗ a type error, not a wrap
-half(n) = n div 2;                            // int: 2 is known not to be zero
-ratio(positional a, positional b) = a div b;  // int | #divByZero: b might be zero
+total = price * quantity;
+price = 12;
+quantity = 3;
+port: int[1..=65535] = 8080;
 ```
 
-**3. Failures ride through a pipeline.** The type lists every way each entry can fail, and you choose what to do at the end.
+A binding gives a name to a value, once. It can't be reassigned, and it can be used above the line that defines it, as `price` is here: the order of definitions doesn't matter, only what depends on what. The type is optional, and it can be more exact than in most languages. `int[1..=65535]` means an integer in that range, and the compiler checks it.
+
+### Functions
+
+`f(positional x, y = default) = expression;` or `f(...) -> type { ... }`
 
 ```zed
-amounts   = files.map(f -> int(read(f)));          // int | #invalid | #ioError | #notFound
-sumKept   = amounts.where(a -> a is int) >< (+);   // skip the bad entries
-sumZeroed = amounts.map(a -> a else 0) >< (+);     // or count them as zero
-port      = parse(text)?.server?.port else 8080;
+double(positional x) = x * 2;
+
+clamp(positional v, positional lo, positional hi) -> int {
+  if v < lo { lo } else if v > hi { hi } else { v }
+}
+
+greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
+
+a = 5.double.clamp(0, 8);        // 8
+b = greet("Ann", punct: "?");    // "Hi, Ann?"
+hi = greet("Ann", ...);          // a function still waiting for punct
 ```
 
-**4. A parallel float sum with one answer.** It gives the same bits on 1 core or 1,000, and giving that up for speed is visible.
+Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Any function can be called with a dot, so `5.double` is `double(5)`, and pipelines read left to right. A `...` in a call leaves the remaining named parameters open and gives you back a function. Parameter types can usually be left out: `double` works on any type with `*` and an integer literal, and the compiler infers that.
+
+### Numbers
+
+`42`, `1.5`, `3r`, `a / b`, `a div b`, `f64(n)`
 
 ```zed
-total = readings >< (+);             // the exact sum, rounded once
-quick = samples >< (+) unordered;    // faster, and the type says it may vary
+big = 2 ** 100;              // no overflow; this is the exact integer
+third = 1r / 3r;             // an exact rational
+half = 1.0 / 2.0;            // f64
+q = 7 div 2;                 // 3
+ratio = f64(q) / 2.0;        // conversions are written out
 ```
 
-**5. Your own parallel monoid.** The compiler derives the claim, because `combine` is a tuple of `+` monoids, so the fold can combine values as they arrive.
+An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. `r` marks an exact rational, so `0.1r + 0.2r == 0.3r` is true. Zed never converts a number for you: mixing `int` and `f64` is a compile error until you write `f64(n)`.
+
+### Strings
+
+`"text"`, `"${expression}"`, `a ++ b`
 
 ```zed
-struct Moments { n: int, sum: rat, sumSq: rat }
-moment(positional x: rat) = Moments(n: 1, sum: x, sumSq: x * x);
+name = "Zed";
+line = "total: ${2 + 3}";            // "total: 5"
+title = "never" ++ "the" ++ "less";
+```
+
+String literals are UTF-8. Encodings are separate types (`U8String`, `Utf8String`, `Utf16String`, `Utf32String`), and you pick what you index by, such as code points or bytes, through a named view like `text::codepoints`. `++` builds a rope in O(1), so joining strings in a loop doesn't go quadratic.
+
+### Structs
+
+`struct Name { field: type, field: type = default }`, `Name(field: value)`, `x with { field = value }`
+
+```zed
+struct Point { x: f64, y: f64 }
+struct Circle { center: Point, radius: f64 = 1.0 }
+
+p = Point(x: 1.0, y: 2.0);
+moved = p with { x = 3.0 };
+unit = Circle(center: p);
+```
+
+Constructors take their arguments by name. `with` makes a copy with some fields changed, and when the compiler can see the original isn't used again, the copy is an update in place with no allocation. Structs compare by value. There are no classes, no inheritance and no object identity.
+
+### Atoms, unions and match
+
+`#name`, `#name(args)`, `type T = A | B`, `match x { pattern -> value, ... }`
+
+```zed
+struct Rect { lo: Point, hi: Point }
+type Shape = Circle | Rect;
+type Light = #red | #amber | #green;
+
+area(s: Shape) = match s {
+  Circle(radius:) -> pi * radius * radius,
+  Rect(lo:, hi:) -> (hi.x - lo.x) * (hi.y - lo.y),
+};
+
+next(positional l: Light) = match l {
+  #red -> #green,
+  #green -> #amber,
+  #amber -> #red,
+};
+```
+
+An atom is a constant that is its own name, with no declaration needed. A union says a value is one of several things. A `match` must cover every case: leave out an arm and the compiler rejects the program and shows you a value that no arm handles. An arm that can never run is also rejected.
+
+### Methods and the next value
+
+`Type.method() { field' = ...; }`, `x.method()`, `x*.method()`
+
+```zed
+struct Counter { n: int, peak: int }
+
+Counter.bump(positional by) -> int {
+  n' = n + by;
+  peak' = max(peak, n + by);
+  return n;
+}
+
+Counter.atPeak = n == peak;
+
+start = Counter(n: 0, peak: 0);
+after, was = start.bump(2);
+```
+
+A method is a function with an implicit first parameter whose fields are in scope. `n'` means "the value of `n` in the next version of this struct". The method doesn't change `start`: it returns a new `Counter` and its declared result, and you have to take both. The one way to write something that looks like mutation is a `*` in a loop body, as in `prev = c*.bump(3);`, which replaces `c` in the loop's next step. So no call changes anything unless the text shows a `*`.
+
+## Failure is a value
+
+### `else` and `?.`
+
+`T | #someFailure`, `x else fallback`, `x?.field`
+
+```zed
+parse: (Utf8String) -> Config | #syntaxError(pos: int);
+
+conf = parse(text) else defaultConfig;
+port = parse(text)?.server?.port else 8080;
+```
+
+There are no exceptions and no null. A function that can fail says so in its return type, by returning a union with an atom in it. `else` replaces any failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't. You can't use a `Config | #syntaxError` where a `Config` is needed, so it isn't possible to forget the error case.
+
+The compiler also adds failures only where they can really happen. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
+
+### Failures in a pipeline
+
+`r is T`, `r is not T`
+
+```zed
+results = files.map(f -> read(f)).map(b -> parse(b));
+
+good = results.where(r -> r is Config);
+bad = results.where(r -> r is not Config);
+```
+
+One bad file doesn't stop the run. A failure is an ordinary value, sitting in the collection next to the successes under the same key, so you can split them, count them or report them. Each one also carries where it came from (which file, which offset, which step), so you don't have to thread that information through by hand.
+
+What you can't do is ignore them by accident:
+
+```zed
+amounts = files.map(f -> int(read(f)));
+sum = amounts >< (+);                     // ✗ rejected: some amounts may be failures
+```
+
+You say what you mean instead:
+
+```zed
+sum1 = amounts.where(a -> a is int) >< (+);     // skip the failures
+sum2 = amounts.map(a -> a else 0) >< (+);       // count them as zero
+```
+
+## Collections
+
+### Everything is a map
+
+`[a, b, c]`, `{ k -> v }`, `{ a, b }`, `m[k]`
+
+```zed
+xs = [3, 1, 4, 1, 5];                  // int[0..<5] -> int
+ages = { "Ann" -> 36, "Bob" -> 41 };   // Utf8String -> int
+tags = { #red, #green };               // a set: a map from each member to itself
+
+first = xs[0];                         // 3: the index is known to be in range
+ann = ages["Ann"];
+carol = ages["Carol"] else 0;
+
+big = xs.map(x -> x * 10).where(x -> x > 20).sort(desc x -> x);
+```
+
+An array is a map whose keys are `0..<n`, a set is a map from each key to itself, a struct is a map from field names to values, and a function is a map too. So `xs[i]`, `f(x)` and `p.x` are the same idea, and one set of tools works on all of them. Nested maps are the normal way to hold tables: `Region -> Product -> rat` is a table of sales by region and product, stored in whichever layout suits the code that reads it.
+
+### Grouping
+
+`m.group(x -> key)`, `m.rekey(x -> key)`
+
+```zed
+byCity = users.group(u -> u.city);      // City -> UserId -> User
+byId = users.rekey(u -> u.id);          // ✗ rejected unless id is known to be unique
+```
+
+`group` adds a level, so nothing can be lost. `rekey` replaces the key, and that can make two entries land on one key, so the compiler demands evidence that the new key is unique, such as a declared key or a function it can see never collides. It rejects anything else and shows you the two entries that would collide. No value ever silently overwrites another in Zed.
+
+### Remapping
+
+`m as (pattern) into (pattern)`
+
+```zed
+transposed = matrix as (r -> c -> v) into (c -> r -> v);
+ranking = scores as (name -> s) into (desc s -> name -> s);
+```
+
+`as ... into ...` is a small picture of the shape you have and the shape you want. It is the second, more concise way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the second line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. If you ask it to, you get an error that lists the ways out:
+
+```text
+error: this remap would map one key to many values
+  the `(k1, k2)` keypaths collapse onto `k1`, but their values survive.
+  drop the values too:         into (k1 -> k2 -> _)         -- truncate to a set-leaf
+  or keep the discriminator:   into (k1 -> k2 -> v)         -- the residue written back (widen it if it must move)
+  or say how the values merge: into (k1 -> k2 >< op -> v)   -- explicit reduction; owes op's Boom obligations
+```
+
+### Reducing
+
+`m >< op`, `m >< op else fallback`, `(pattern >< op -> value)`, `m.foldl(init, op)`
+
+```zed
+total = readings >< (+);
+longest = words.map(w -> w.len) >< max else 0;
+pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
+```
+
+`><` is the only construct that merges values. It runs in parallel, so it needs an operator that is safe to regroup: `+` and `max` are known to be, and for your own operators you state the law.
+
+```zed
+struct Moments { n: int, sum: rat }
+
 @associative @commutative
 combine(positional a: Moments, positional b: Moments) =
-  Moments(n: a.n + b.n, sum: a.sum + b.sum, sumSq: a.sumSq + b.sumSq);
-m = xs.map(moment) >< combine else Moments(n: 0, sum: 0r, sumSq: 0r);
+  Moments(n: a.n + b.n, sum: a.sum + b.sum);
+
+m = xs.map(x -> Moments(n: 1, sum: x)) >< combine else Moments(n: 0, sum: 0r);
 ```
 
-**6. Lost data does not compile.** Rekeying by a non-unique field is an error, not a silent overwrite. Inverting a map groups, and the type says so.
+The compiler tests or proves an annotation like `@associative`. If an operator isn't associative, you say which way to fold with `foldl` or `foldr`, and that's fine too. A reduction over nothing can't be silently wrong: the `else` gives the answer for an empty collection, and without it the result type includes `#empty`, unless the operator has an identity. The `pivot` line builds the whole sales table in one expression, with a level for region, a level for product, and the amounts summed.
+
+Floating-point sums get special care. `samples >< (+)` computes the exact sum and rounds it once, so the result doesn't depend on how the work was split or how many cores ran it. If you'd rather have speed than that guarantee, you ask for it, and it shows in the type: `samples >< (+) unordered`.
+
+### Joins
+
+`a.join(b, on: #field, kind: #left)`, `a.diff(b, on: #field)`, `for x in a, y in b where ...`
 
 ```zed
-byId  = users.rekey(u -> u.id);    // ✗ Collision, unless u.id is known to be injective
-byId2 = users.group(u -> u.id);    // Id ->? (UserKey -> User)
-whoTeaches = teacherOf as (teacher -> course) into (course -> teacher -> _);
+paid = orders.join(payments, on: #orderId, kind: #left);
+// OrderId -> (Order, Payment | #none)
+
+unpaid = orders.diff(payments, on: #orderId);
+
+shipped = for o in orders, s in shipments where o.orderId == s.orderId { (o, s) };
+pairs = for i in 0..<n, j in i+1..<n { (i, j) };
 ```
 
-**7. A pivot table in one line.** The result's shape is written directly, and `><` marks the level that is summed away.
+A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. A `for` over several collections is a join as well, and the compiler can pick a hash join or a merge join for it instead of two nested loops. Queries and loops aren't two separate worlds here: they compile to the same terms and are optimized together.
+
+## Time and repetition
+
+### Recurrences
+
+`x[i] = f(x[i-1]) with x[-1] = start;`
 
 ```zed
-pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
-// Region ->? Product ->? rat
-```
+cdf[i] = cdf[i-1] + hist[i] with cdf[-1] = 0;
 
-**8. A join and a loop are the same program.** Both compile to one term, and the compiler picks the plan. Absence is a value, not a null row.
-
-```zed
-paid  = orders.join(payments, on: #orderId, kind: #left);
-paid2 = for o in orders { payment = payments[o.orderId] else #none; (o, payment) };
-```
-
-**9. Matrix multiplication as a query.** It is a join on the inner dimension with that dimension reduced away.
-
-```zed
-ab = (a, b) into (r -> k -> c >< (+) -> a[r][c] * b[c][k]);
-at = a as (r -> c -> v) into (c -> r -> v);     // transpose
-```
-
-**10. Edit distance, with no choice of algorithm.** Sparse demand runs it as memoized recursion and dense demand as a wavefront table, from the same source.
-
-```zed
 d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
 ```
 
-**11. Maximum subarray, parallelized.** The step is affine over `(max, +)`, so Kadane's serial loop becomes a parallel prefix scan.
+You write the equation and the boundary cases, as you would on a whiteboard. The first line is a running total. The second is edit distance, and it needs no explicit table and no choice of memoization or fill order. The compiler reads the dependencies and picks a plan: it fills the table wave by wave across your cores if you need most of it, and memoizes on demand if you only touch part of it.
+
+The algebra of the recurrence matters too. Some loops that look serial can be run in parallel, because the compiler recognizes them:
 
 ```zed
 cur[i] = max(xs[i], cur[i-1] + xs[i]) with cur[-1] = 0;
 best = cur >< max else 0;
-```
 
-**12. An "inherently serial" text scan, parallelized.** The state domain is finite, so the compiler turns `csvStep` into a transition table and runs a parallel scan.
-
-```zed
 state[i] = csvStep(state[i-1], text::codepoints[i]) with state[-1] = #outsideQuotes;
 ```
 
-**13. Search that cancels itself.** Higher candidates run speculatively and stop as soon as a lower one hits, because the code is pure.
+The first recurrence is maximum subarray, whose step is affine over max and plus, so it runs as a parallel scan. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job that every other tool does one byte at a time splits across cores.
+
+### Loops and generations
+
+`loop { x' = f(x) with x = start; until done; }`, `run.x`, `run::frames`
 
 ```zed
-firstPrime = (for i in n.. { i }).where(isPrime).first;
+sim = loop {
+  pos' = pos + vel * dt with pos = p0;
+  vel' = vel + accel(pos) * dt with vel = v0;
+  until pos'.x > bound;
+};
+
+final = sim.pos;
+history = sim::frames;
+steps = sim::len;
 ```
 
-**14. Binary search you don't write.** On a sorted view the plan is bisection in O(log n). Otherwise it is a scan with the same result. Here `i` is known to be in range, so `xs[i]` cannot miss.
+A loop describes one step: `pos'` is the next value of `pos`, written in terms of the current values. Both updates here read the old `pos`, so they don't race and their order doesn't matter. A data race can't even be written. After the loop, `sim.pos` is the final value.
+
+`sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps just the two slots it needs. If you do, you've got time travel for free. This is how you write undo:
 
 ```zed
-lowerBound(positional xs: [int], positional t: int) =
-  (0..<xs::len).where(i -> xs[i] >= t).first;
-find(xs: [int], t: int) =
-  match lowerBound(xs, t) { #none -> #none, i -> if xs[i] == t { i } else { #none } };
+run = loop t {
+  while t < edits::len;
+  doc' = doc.patch(edits[t]) with doc = empty;
+};
+
+previous = run::frames[run::len - 2].doc else empty;
 ```
 
-**15. Only what is asked for runs.** The record has two fields, each its own node in the graph, so a caller that reads one never pays for the other.
+The versions share structure, so reading an old one is cheap and keeping them all doesn't copy the document each time.
+
+### Only what's needed runs
+
+`for i in n.. { ... }`, unused fields, `.first`
 
 ```zed
 stats(positional data: [f64]) {
   n = f64(data::len);
   mean = data.sum / n;
-  sd   = (data.map(x -> (x - mean) ** 2).sum / n).sqrt;
+  sd = (data.map(x -> (x - mean) ** 2).sum / n).sqrt;
   return { mean:, sd: };
 }
-m = stats(xs).mean;      // sd's subgraph never runs
+
+m = stats(xs).mean;      // sd is never computed
+
+firstPrime = (for i in n.. { i }).where(isPrime).first;
 ```
 
-**16. History you declare, storage you don't.** The recurrence reads two frames back, so the compiler keeps a two-slot ring and no array exists.
+Work runs only if a result depends on it. A caller that reads `.mean` doesn't pay for `sd`, and you don't need two versions of the function or a flag. Zed isn't lazy in the Haskell sense, though, and there are no thunks to pile up: the compiler decides at build time what to compute eagerly and what on demand. The `firstPrime` search runs over an unbounded range. Candidates are tried in parallel, and the ones that can't win are canceled once a smaller prime is found.
+
+## The outside world
+
+### Ports
+
+`main(input: T) -> (output: U) { output <- value; }`
 
 ```zed
-pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] + accel(pos[i-1]) * dt ** 2
-  with pos[-1] = p0, pos[-2] = p0 - v0*dt;
-last = pos[n-1] else p0;
+main(req: Stream(Query)) -> (resp: Stream(Answer)) {
+  resp <- req.map(q -> lookup(db, q) else #unknown);
+}
 ```
 
-**17. Undo is a field read.** Asking for `::frames` is what keeps the history, and the frames share their structure.
+A program's whole interaction with the world goes through ports, which are listed in `main`'s header: files, sockets, clocks, devices and the like. Everything else is a pure value, and there is no effect system to learn, because there is nothing else that could have an effect. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
+
+Runs repeat exactly, apart from a short, explicit list of things like the order that messages arrive at a port, and those are recorded, so you can replay a failing run in a test.
+
+### Timeouts and retries
+
+`with timeout(d)`, `with retry(n, backoff: b)`, `with bound(n, overflow: policy)`
 
 ```zed
-run  = loop t { while t < edits::len && !closed; doc' = doc.patch(edits[t]) with doc = empty; };
-past = run::frames[run::len - 2].doc else empty;
+cache: Utf8String ->? [u8] with store(kv(endpoint)) with timeout(200 with units("ms"));
+
+hit = cache[key] else fetch(key);
 ```
 
-**18. A spreadsheet in one line.** Edit one row of `sales` and only the values that depend on it recompute, with provenance for every cell.
+Declaring a timeout changes the type. A read of `cache` is now `[u8] | #ioError | #timeout | #notFound`, and the program has to deal with that, here by treating anything other than a hit as a miss. Pure code never times out, because a computation's finishing time isn't a value.
+
+Retries, hedged requests, circuit breakers, rate limits and failover are declared on the port in the same way. The compiler won't let you retry an operation that isn't safe to repeat, such as a write that might already have landed. Queues declare what happens when they are full (`#block`, `#dropOldest` or `#full`), so unbounded growth can't happen by default.
+
+### Databases
+
+`name: K ->? V with store(...)`
 
 ```zed
-@memoized report = sales.join(costs, on: #sku)
+orders: OrderId ->? { total: rat, note: Utf8String | #none }
+  with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
+
+n = orders[id]?.note;     // Utf8String | #none | #notFound | #dbError
+```
+
+A stored table is a map like any other, and you read it with the same `[key]`. The compiler checks your declaration against the SQL schema at build time, without a live connection: a nullable column read as non-optional, or an unbounded string written to a `varchar(80)`, is a compile error at this line. At startup, the program compares the columns it uses with the real database. Writes made in one step of the program form one transaction, and you never write `begin` or `commit`.
+
+### Incremental updates
+
+`@memoized`
+
+```zed
+@memoized
+report = sales
+  .join(costs, on: #sku)
   .group(((s, c)) -> s.region)
   .map(rows -> rows.map(((s, c)) -> margin(s, c)).sum);
 ```
 
-**19. Preconditions the compiler infers.** A field's range can name another field. `@ensure` moves a check back to the callers, and no test remains at run time.
+When an input changes, the program handles the change as a new wave of values through the same graph, and recomputes only what the change affects. A change to one sale updates one region's total. If a recomputed value comes out the same, the update stops there. Spreadsheets, build systems and reactive user interfaces all need this, and they each build it by hand. In Zed it's the same machinery as everything else, and an incremental result always equals what a full recomputation would have given.
+
+This also powers live editing: a change to your source code is one more wave on one more port, so a running program can pick up the edit without a restart.
+
+## Checks at compile time
+
+### Ranges and refinements
+
+`int[lo..=hi]`, `x.refine(p)`, `@ensure`
 
 ```zed
 struct Span { lo: int, hi: int[lo..] }
+
 s = Span(lo: 2, hi: 5);
-w = s.hi - s.lo;                                             // int[0..]
-@ensure odd(positional x) = (x * 2 + 1).refine(v -> v < 100);    // inferred: x <= 49
-a = odd(12);                                                 // 25
-b = odd(60);                                                 // ✗ 60 is outside x <= 49
+width = s.hi - s.lo;                // inferred: int[0..]
+
+@ensure odd(positional x) = (x * 2 + 1).refine(v -> v < 100);
+                                    // inferred: x <= 49
+a = odd(12);
+b = odd(60);                        // ✗ rejected: 60 > 49
 ```
 
-**20. Wrong physics and SQL injection don't build.** Units and taint are facets, checked and propagated with the type.
+Types can carry ranges and relations between fields, and the compiler tracks them through arithmetic without any annotations from you. That is how it removes bounds checks and picks the smallest machine representation. `refine` checks a condition at run time, giving `#invalid` if it fails. `@ensure` forbids that check: the compiler has to push the condition back onto the inputs and reject any caller it can't prove safe, so the check moves to compile time.
+
+There are no dependent types and no SMT solver in this. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
+
+### Units and taint
+
+`with units("...")`, `with taint(#label)`
 
 ```zed
 v = 3.0 with units("m/s");
 t = 2.0 with units("s");
-d = v * t;                                  // f64 with units("m")
-bad = v + t;                                // ✗ m/s + s
-rows = exec(db, "SELECT * WHERE name = " ++ userName);  // ✗ taint #userInput reaches #clean sink
+d = v * t;                 // has units "m"
+e = v + t;                 // ✗ rejected: m/s + s
+
+rows = exec(db, "SELECT * WHERE name = " ++ userName);            // ✗ rejected
+rows = exec(db, "SELECT * WHERE name = " ++ sanitize(userName));  // accepted
 ```
 
-**21. A calculator: grammar, then meaning.** The structs are the parser, and the printer comes with them.
+These are *facets*: extra facts about a value, tracked through every operation at compile time and erased from the compiled code. Units catch physics mistakes. Taint follows untrusted input through your program, and a database's `exec` declares that it takes only clean text, so an SQL injection is a type error. Any program can define a facet of its own in the same way, such as a latency or a parity.
+
+### Cost
+
+`f::cost`, `@cost(b)`, `@noalloc`, `@fused`
 
 ```zed
-struct Sum   grammar { terms: Prod sep "+" }
-struct Prod  grammar { factors: Atom sep "*" }
-struct Paren grammar { "(" inner: Sum ")" }
-type Number = Utf8String matching grammar { digit digit* };
-type Atom   = Number | Paren;
-Sum.eval    = terms.map(t -> t.eval).sum;
-Prod.eval   = factors.map(f -> f.eval) >< (*);
-Paren.eval  = inner.eval;
-Number.eval = int(this) else 0;
-value = Sum.parse("2*(3+4)")?.eval;         // 14, or #syntaxError
+@cost(n * log(n))
+@noalloc
+sortedTop(positional xs: [int]) = xs.sort(desc x -> x);
 ```
 
-**22. A generic JSON decoder with no reflection and no code generator.** The type is known at build, so partial evaluation turns `decode` into a parser for just these two fields. On a literal input the whole call runs at build, and the program contains no parser at all.
+Every function has a computed upper bound on its work and its parallel depth, which you can read as `f::cost` and `f::depth`. Annotations like `@cost`, `@noalloc` and `@fused` are assertions about the plan the compiler chose. If one is false, the build fails. It doesn't silently get slower. A performance requirement can be part of the code, and a change that breaks it is caught in review, not in production.
+
+## Code that runs at build time
+
+### Partial evaluation
+
+Any expression with known inputs.
 
 ```zed
 struct User { id: int, name: Utf8String }
-u: User | #parseError(pos: int, msg: Utf8String) = Json.decode(text);
+
 ok: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
+// the constant User(id: 5, name: "John")
+
+bad: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": \"five\"}");
+// the constant #parseError(pos: 7, msg: "expected int for field 'id', got string")
 ```
 
-**23. Symbolic algebra on your own code.** A lambda's source is a value, the library is ordinary Zed, and each rewrite step is checked by the kernel.
+There's no separate macro language, no `comptime` keyword and no code generator. Whatever can be computed from what is known at build time is computed at build time, by the same evaluator with the same meaning. The JSON decoder above is ordinary Zed. Given a literal, the whole call runs during the build. Given a value only known at run time, the decoder is specialized to `User`, with the generic field lookups already gone. A regular expression known at build time compiles to a matcher in the same way, with nothing left to interpret. If a program does arrive at run time as data, `compile` turns it into a function using the same machinery.
+
+### Reflection
+
+`T::fields`, `T::shape`, `T::values`, `x::constraints`, `f::source`
+
+```zed
+type Size = #small | #medium | #large;
+
+sizes = Size::values;       // {#small, #medium, #large}
+names = User::fields;       // the fields of User, by name and type
+```
+
+Generic code can look at a type's structure. That's how `Json.decode` knows what `User` looks like, and every read is answered at build time, so reflection has no run-time cost.
+
+### Grammars
+
+`struct Name grammar { ... }`, `type T = Utf8String matching grammar { ... }`, `T.parse(s)`, `x.serialize`
+
+```zed
+struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
+
+v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0.0, y: 0.0, z: 0.0);
+s = v.serialize;       // "(1.0,2.0,3.0)"
+```
+
+Add `grammar` to a struct and its fields become a parser and a serializer for that format. You get one definition for both directions, so the two can't drift apart, and the compiler checks that the round trip gives you back the value. Grammars can be recursive, and the result is ordinary typed data. Here is a calculator, parser and evaluator together:
+
+```zed
+struct Sum grammar { terms: Prod sep "+" }
+struct Prod grammar { factors: Atom sep "*" }
+struct Paren grammar { "(" inner: Sum ")" }
+type Number = Utf8String matching grammar { digit digit* };
+type Atom = Number | Paren;
+
+Sum.eval = terms.map(t -> t.eval).sum;
+Prod.eval = factors.map(f -> f.eval) >< (*);
+Paren.eval = inner.eval;
+Number.eval = int(this) else 0;
+
+value = Sum.parse("2*(3+4)")?.eval;     // 14, or #syntaxError
+```
+
+Binary formats work the same way, with the layout given by `bits`, `endian` and `length`:
+
+```zed
+struct Chunk grammar {
+  n: int with bits(32) with endian(#big)
+  kind: u8* with length(4)
+  data: u8* with length(n)
+  crc: int with bits(32) with endian(#big)
+}
+```
+
+### Symbolic math
+
+`f::source`, `expand(e)`, `derivative(e)`
 
 ```zed
 p = ((x: rat) -> (x + 1r) ** 2)::source;
-e = expand(p);         // the tree of (x: rat) -> x ** 2 + 2r * x + 1r
-d = derivative(p);     // the tree of (x: rat) -> 2r * x + 2r
+e = expand(p);          // x ** 2 + 2r * x + 1r
+d = derivative(p);      // 2r * x + 2r
 ```
 
-**24. Tests, proofs and a model check in the same language.** The first law is decided without running anything. The reachable set is computed at build, and a counterexample would come back as a trace.
+The source of a function is a value you can read, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the binders are the assumptions, so `(x * y) div y` simplifies to `x` only when `y` is known to be at least 1. `compile` turns the result back into a function.
+
+## Tests, laws and proofs
+
+### Tests next to the code
+
+`f(...) = ... test { input -> output, ... }`
 
 ```zed
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
-law doubleIsSum(x: int) = double(x) == x + x;
-
-type Lamp = #green | #yellow | #red;
-type Cmd  = #tick | #fault;
-advance(positional l: Lamp, positional c: Cmd) =
-  if c == #fault { #red } else { match l { #green -> #yellow, #yellow -> #red, #red -> #green } };
-reachable = loop { R' = R.union(R.flatMap(l -> [advance(l, #tick), advance(l, #fault)]).image) with R = { #red }; };
-law faultStops(l: Lamp) = (l in reachable.R).implies(advance(l, #fault) == #red);
 ```
+
+Tests live on the definition and run at build time. With `@exhaustive` on a function over a small finite domain, every input is run.
+
+### Laws
+
+`law name(x: T) = expression;`
+
+```zed
+law doubleIsSum(x: int) = double(x) == x + x;
+law addComm(a: int, b: int) = a + b == b + a;
+law sortTwice(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
+```
+
+A law is a claim about your code. The compiler tries to prove it with a fixed ladder of methods. For a small domain it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved` or `--strict`.
+
+Proved laws aren't just documentation, because the optimizer can use them as rewrites. A law that was only tested licenses nothing, so it can never make your program wrong.
+
+### Model checking
+
+`loop` plus `law`
+
+```zed
+type Cmd = #tick | #fault;
+
+advance(positional l: Light, positional c: Cmd) =
+  if c == #fault { #red } else { next(l) };
+
+reachable = loop {
+  R' = R.union(R.flatMap(l -> [advance(l, #tick), advance(l, #fault)]).image) with R = { #red };
+};
+
+law faultStops(l: Light) = (l in reachable.R).implies(advance(l, #fault) == #red);
+```
+
+A loop is a state machine, so the set of states it can reach is a fixpoint you can write in a few lines, and for a finite state space the compiler computes it at build time. There's no separate specification language: this is what TLA+ gives you, written in the language the system is written in. A failed check reports the sequence of steps that reached the bad state, as a value you can replay.
+
+## Under the hood
+
+### Modules
+
+`import a.b;`, `import a.b as c;`, `import a.b.{x, y};`, `local`
+
+```zed
+import geometry.shapes.{Point, dist};
+
+far = dist(Point(x: 0.0, y: 0.0), Point(x: 3.0, y: 4.0));
+```
+
+A file is a module. Everything in it is exported unless marked `local`, and there are no wildcard imports, so you can always tell by reading where a name came from. An import can be pinned to the content hash of what it refers to with `@hash`.
+
+### Generics and interfaces
+
+`type Name(T) = ...`, `interface Name { ... }`
+
+```zed
+type Stack(T) = [T];
+push(s: Stack(T), x: T) = s ++ [x];
+top(s: Stack(T)) = s.last;                 // T | #none
+
+interface Named { name: Utf8String }
+hello(positional n: Named) = "Hi, ${n.name}";
+```
+
+A capitalized free name in a signature is a type variable, with nothing to declare. Interfaces are structural: any value with a `name` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra that `><` relies on, from `Monoid` to `CommRing`, is ordinary library code.
+
+### Calling C, and being called from C
+
+`@foreign("lib", "symbol")`, `@export("c", "symbol")`, `@stateless`
+
+```zed
+@foreign("m", "cbrt") @stateless cbrt: (x: f64) -> f64;
+
+@export("c", "zed_score")
+score(positional a: f64, positional b: f64) = a * 0.7 + b * 0.3;
+```
+
+A foreign call is an operation on a port, so it has a failure type and takes the same `timeout` and `retry` words as any other port. Foreign structs declare their memory layout field by field, and C memory is read in place through that layout. `@export` compiles a function into a shared library with a generated C header. On the LLVM back end, C code compiled by Clang can be inlined into Zed code and optimized along with it.
+
+### Memory
+
+There is no syntax for memory, and that's the point. Zed has no garbage collector, and there are no lifetimes or ownership annotations. Zed values can't form cycles, so exact reference counting is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas or id-indexed graphs, where a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no pauses. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
+
+### Parallelism and determinism
+
+There is no syntax for this either. Any two parts of a program with no dependency between them may run at once, so the compiler chooses where to split the work, using the dependency graph and the laws of each operator. The rule is that outputs are bit-identical at any core count, floating-point reductions included. The exceptions are a short, enumerated list (arrival order at ports, `unordered` reductions, and a few others), each visible in the program's text. There is no undefined behavior, except where a foreign library breaks a promise made about it.
+
+### Targets
+
+One intermediate representation sits under everything. The first back ends compile through MLIR and LLVM to native x86-64, and the compiler is written in Zed itself, on top of a small kernel. The design also covers WebAssembly, GPUs, distributed dataflow (where the keys of your data double as partition keys), hardware synthesis and microcontrollers. A program that needs a port its target doesn't have is rejected at build time, and the error names the port and how the program reached it.
+
+### Error messages
+
+A rejection is meant to teach you the fix. Every error gives the concrete evidence (the two keys that collide, or a value that no `match` arm covers), and the checker's whole chain of reasoning: each constraint, where it came from and how it reached this line. It then lists the repairs that would work, as in the [remap error](#remapping) above. Because the rules that reject programs are closed lists, not heuristics, a program's acceptance never depends on how strong the optimizer happens to be.
+
+## Why Zed exists
+
+Many systems recover a value graph after the fact, because it's what makes their job possible. Spreadsheets, SSA form in compilers, Spark, build systems, reactive UI frameworks and out-of-order CPUs all do this, each from scratch, by working backward from code or configuration. Zed's bet is that the graph should be the program. Then parallel scheduling, memory management, incremental updates and many correctness checks stop being separate tools with separate models, and become things one compiler reads from one structure.
+
+The other bet is that you shouldn't pay for this in ceremony. The word-count program at the top is about as short as it would be in Python. It still runs in parallel, has no way to crash on a missing file, and gives the same answer every time.
