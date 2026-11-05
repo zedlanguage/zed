@@ -671,6 +671,93 @@ fn pinwheels_of_nested_payloads_and_cofinite_ends_are_decided() {
     }
 }
 
+/// The ends of `k` pinwheels whose first two ends are the atoms `#e((b + 1,))` and
+/// `#f((b + 2,))` and whose third end is the integer `b + 3`, with the third end of the last
+/// pinwheel cofinite: its own integer and every integer no pinwheel uses.
+fn cofinite_scalar_ends(k: usize) -> Vec<[Type; 3]> {
+    let k = k as i64;
+    let scalar = |i: i64| lit_i(10 * i + 3);
+    let used = Type::union_all((0..k).map(scalar));
+    (0..k)
+        .map(|i| {
+            let b = 10 * i;
+            let third = match i == k - 1 {
+                true => &(&Type::int() - &used) | &scalar(i),
+                false => scalar(i),
+            };
+            [
+                Type::atom_with("e", &Type::tuple(vec![lit_i(b + 1)])),
+                Type::atom_with("f", &Type::tuple(vec![lit_i(b + 2)])),
+                third,
+            ]
+        })
+        .collect()
+}
+
+/// The union of the pinwheels on [`cofinite_scalar_ends`].
+fn cofinite_scalar_pinwheels(k: usize, full: bool) -> Type {
+    Type::union_all(
+        cofinite_scalar_ends(k)
+            .into_iter()
+            .map(|e| pinwheel(full, e)),
+    )
+}
+
+#[test]
+fn pinwheels_with_a_cofinite_scalar_end_beside_payload_ends_agree_with_the_model() {
+    for k in [1, 2, 3, 5] {
+        check_against_model(
+            &format!("a cofinite scalar end beside payload ends, k = {k}"),
+            &cofinite_scalar_ends(k),
+        );
+    }
+    // The open union holds each middle `(#f((b + 2,)), #f((b + 2,)))` and no pair of the
+    // cofinite end, whose integers no box leaves out.
+    let open = cofinite_scalar_pinwheels(3, false);
+    let pair = |x: Value, y: Value| Value::Tuple([x, y].into_iter().collect());
+    let f = |i: i64| Value::atom_with("f", vec![Value::Int(i)]);
+    for b in [0, 10, 20] {
+        assert!(open.contains(&pair(f(b + 2), f(b + 2))), "b = {b}");
+    }
+    assert!(!open.contains(&pair(Value::Int(1000), Value::Int(1000))));
+    assert!(!open.contains(&pair(Value::Int(23), f(22))));
+}
+
+#[test]
+fn pinwheels_with_a_cofinite_scalar_end_beside_payload_ends_scale() {
+    // The cofinite end lists the k - 1 integers of the other pinwheels' scalar ends, and each
+    // of those is a finite cell of the integers beside it. When every finite cell of integers
+    // joined a cofinite one, all k pinwheels fell in one class (COMPLEXITY K36, T6 repair 7); a
+    // finite cell now joins it only when it holds an integer the cofinite one leaves out. The
+    // atom ends are keyed by name and payload, apart from the integers. Inputs are built before
+    // timing. Measured from k = 16 to 128, empty: 106M to 891M instructions (8.4 times); with
+    // the old rule, 441M to 23,266M (52.8 times) and 46.4 times the bytes.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
+            for (full, want, how) in [
+                (true, Verdict::Empty, "empty"),
+                (false, Verdict::Inhabited, "with a middle"),
+            ] {
+                let built: std::collections::HashMap<usize, Type> = [64, 512]
+                    .into_iter()
+                    .map(|k| (k, cofinite_scalar_pinwheels(k, full)))
+                    .collect();
+                scaling::check(
+                    &format!("k pinwheels, a cofinite scalar end beside #e/#f ends, {how}, by k"),
+                    64,
+                    |k| {
+                        Type::forget_emptiness();
+                        assert_eq!(built[&k].verdict(), want);
+                    },
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 #[test]
 fn payload_and_one_tuple_pinwheels_scale() {
     // Each value sought in a class of pinwheels was sought on a box holding half of all the
