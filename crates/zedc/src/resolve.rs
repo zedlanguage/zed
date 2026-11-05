@@ -434,6 +434,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("peers", 21),
     ("ofNat", 22),
     ("additive", 22),
+    ("dual", 22),
     ("byStrongInduction", 22),
     ("byCollectionInduction", 22),
     ("evalPoly", 22),

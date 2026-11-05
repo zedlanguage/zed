@@ -77,7 +77,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | reversed = s «as» ( i -> ch ) «into» ( s :: len - 1₍10₎ - i -> ch ) ;
   5 | noSpaces = s . where ( ch -> ch != char32 ( str[" "] ) ) . rank ;
 == EXAMPLES.md [4. Strings] 4 L5
-  2 | sub = s . slice ( 0₍10₎ , 5₍10₎ ) ;
+  2 | sub = s . slice ( 0₍10₎ ..< 5₍10₎ ) ;
   3 | has = s . contains ( str["world"] ) ;
   4 | trim = str["  x "] . trim ;
   5 | ls = text . lines ;
@@ -156,7 +156,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | all = xs ++ ys ;
 == EXAMPLES.md [7. Sequences] 3 L5
   2 | srt = xs . sort ( «desc» x -> x ) ;
-  3 | top2 = srt . slice ( 0₍10₎ , 2₍10₎ ) ;
+  3 | top2 = srt . slice ( 0₍10₎ ..< 2₍10₎ ) ;
   4 | byLen = words . sort ( «asc» w -> w . len ) ;
 == EXAMPLES.md [7. Sequences] 4 L8
   2 | rev = xs «as» ( i -> x ) «into» ( xs :: len - 1₍10₎ - i -> x ) ;
@@ -190,7 +190,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | byLower = words . group ( w -> w . lower ) ;
   5 | counts = byLower . count ;
   6 | best = scores . maxBy ( v -> v ) ;
-  7 | one = best . first ;
+  7 | one = best ?. first ;
 == EXAMPLES.md [8. Maps and sets] 4 L7
   2 | «struct» Entry { score : int «with» order ( #desc ) , name : Utf8String «with» order ( collate : str["de"] ) , id : int }
   3 | board = entrySet . rank ;
@@ -478,11 +478,14 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) ;
   3 | config : Utf8String ->? Utf8String «with» store ( file ( str["app.cfg"] , KeyVal ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 6 L21
-  2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) «with» timeout ( 200₍10₎ «with» units ( str["ms"] ) ) ;
+  2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) «with» timeout ( 0.2r «with» units ( str["s"] ) ) ;
   3 | hit = cache [ key ] «else» fetch ( key ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 7 L7
-  2 | main ( args : [ Utf8String ] , env : Utf8String ->? Utf8String , clock : Stream ( Instant ) ) -> ( stdout : Lines , exit : int ) { … }
-  3 | page = http . get ( url ) ;
+  3 | main ( args : CommandLine , clock : Stream ( Instant ) «with» period ( 0.01r ) ) -> ( stdout : Lines ) { … }
+== EXAMPLES.md [18. Files, stores, and the world] 8 L1
+  2 | main ( env : Utf8String ->? Utf8String ) -> ( stdout : Lines ) { … }
+== EXAMPLES.md [18. Files, stores, and the world] 9 L1
+  2 | page = http . get ( url ) ;
 == EXAMPLES.md [19. Streams] 1 L5
   2 | sessions = events . chunkBy ( e -> e . userId ) ;
   3 | report = sessions . map ( s -> summarize ( s ) ) ;
@@ -496,8 +499,11 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | main ( req : Stream ( Query ) ) -> ( resp : Stream ( Answer ) ) {
   3 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
   4 | }
-== EXAMPLES.md [19. Streams] 5 L12
-  2 | perMinute = events . window ( 60₍10₎ «with» units ( str["s"] ) ) . map ( w -> w . count ) ;
+== EXAMPLES.md [19. Streams] 5 L7
+  3 | sessions = events . window ( gap : 3₍10₎ ) . map ( w -> w . count ) ;
+  4 | input = mouse . tag ( #mouse ) . merge ( keys . tag ( #key ) ) ;
+== EXAMPLES.md [19. Streams] 6 L12
+  2 | perMinute = events . window ( width : 60r «with» units ( str["s"] ) ) . map ( w -> w . count ) ;
 == EXAMPLES.md [20. Testing, properties, and proofs] 1 L18
   2 | double ( «positional» x ) = x * 2₍10₎ «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
   3 | clamp ( «positional» v , «positional» lo , «positional» hi ) -> int { «if» v < lo { lo } «else» «if» v > hi { hi } «else» { v } }
@@ -565,8 +571,8 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | seven = 7₍10₎ «with» parity ( #odd ) ;
 == EXAMPLES.md [22. Facets] 3 L15
   2 | squares = ( 0₍10₎ ..< 256₍10₎ ) . map ( i -> i * i ) ;
-  3 | @ensure line = format ( str["{} scored {}"] , [ name , score ] ) ;
-  4 | @ensure oops = format ( str["{} scored {}"] , [ name ] ) ;
+  3 | @ensure line = format ( spec : str["{} scored {}"] , args : [ name , score ] ) ;
+  4 | @ensure oops = format ( spec : str["{} scored {}"] , args : [ name ] ) ;
 == EXAMPLES.md [23. Grammars] 1 L20
   2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
@@ -671,4 +677,4 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [25. Algorithms] 8 L6
   3 | order = ( 0₍10₎ ..< xs :: len ) . sort ( «asc» i -> rnd [ i ] ) ;
   4 | shuffled = order . map ( i -> xs [ i ] ) ;
-  5 | sample = shuffled . slice ( 0₍10₎ , k ) ;
+  5 | sample = shuffled . slice ( 0₍10₎ ..< k ) ;

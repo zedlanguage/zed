@@ -33,12 +33,15 @@ rows! {
     MissingAlgebraicObligation => "Missing algebraic obligation",
     UndischargeableEnsure => "Undischargeable `@ensure`",
     UnsatisfiableConstraints => "Unsatisfiable declared constraints",
+    QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
         "Obligation below proof grade under `--strict` / `@proved` / `total` / `@decides`",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     FoldWithNone => "`.fold` on a type that has none",
     MapOutsideValues => "`.map` at a parameter outside the value positions",
+    PositionalMap =>
+        "Positional `.map`, or a name that is no parameter, on a value that is not a morphism",
     KeyOutsideBound => "Key outside the permission bound",
     UndischargedRegion => "Undischarged region assertion",
     ReadBelowDomain => "Read below the domain with no boundary entry",
@@ -49,6 +52,7 @@ rows! {
         "Two members of one name with different declarations in a struct or interface body",
     PathLeavesPackage =>
         "File read at the compile-time stage by a path that leaves the package root",
+    StalePin => "Pinned file whose content no longer matches its pin",
     ImportCycle => "Import cycle",
     OrderWithNone =>
         "Order read on a level with no natural order — origin keys outside their `Seq`",

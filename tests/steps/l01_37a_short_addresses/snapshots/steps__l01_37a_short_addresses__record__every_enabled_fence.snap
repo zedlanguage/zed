@@ -121,3 +121,34 @@ EXAMPLES.md [6. Functions] 3
     },
 ]
   checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined") }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined") }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined") }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined") }, Outcome { line: 7, col: 36, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 7, col: 51, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+
+EXAMPLES.md [18. Files, stores, and the world] 8
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 59,
+        message: "no token starts with '…' (U+2026)",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 59, failure: Some("no token starts with '…' (U+2026)") }]
+
+EXAMPLES.md [18. Files, stores, and the world] 9
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 8,
+        message: "`http` is not defined",
+        steps: [],
+        row: None,
+    },
+    Diagnostic {
+        line: 2,
+        col: 17,
+        message: "`url` is not defined",
+        steps: [],
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 8, failure: Some("`http` is not defined") }, Outcome { line: 2, col: 17, failure: Some("`url` is not defined") }]
