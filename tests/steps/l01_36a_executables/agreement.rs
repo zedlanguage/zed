@@ -1,7 +1,8 @@
-//! Each step program and each enabled corpus program, built twice, gives the same bytes, and
-//! its executable gives the interpreter's outputs and exit status on every corpus input, the
-//! inputs of the harness of step L1.37; a program reading the files its arguments name agrees
-//! on a present file, a missing one, a directory, a file that is not UTF-8 and such an argument.
+//! Each step program and each enabled fence and corpus program, built twice, gives the same
+//! bytes, and its executable gives the interpreter's outputs and exit status on every corpus
+//! input, the inputs of the harness of step L1.37; a program reading the files its arguments
+//! name agrees on a present file, a missing one, a directory, a file that is not UTF-8 and such
+//! an argument.
 
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt as _;
@@ -92,6 +93,25 @@ fn every_enabled_corpus_program_agrees() {
         assert_eq!(native, interpreter(&src, &[], &input), "{}", src.display());
         let out = std::fs::read_to_string(src.with_extension("out")).unwrap();
         assert_eq!((native.status, native.stdout), (0, out));
+    }
+}
+
+#[test]
+fn every_enabled_fence_program_agrees() {
+    // A fence with `main` is a program; the enabled fences at L1 are units with no ports.
+    let programs: Vec<_> = zed_tests::fences::all()
+        .into_iter()
+        .filter(|f| f.layer <= ENABLED && !f.notation)
+        .filter(|f| zedc::run::load(f.text.as_bytes()).is_ok())
+        .collect();
+    assert_eq!(programs.len(), 0);
+    let d = dir("fences");
+    for (k, f) in programs.iter().enumerate() {
+        let src = d.join(format!("fence{k}.zed"));
+        std::fs::write(&src, &f.text).unwrap();
+        let exe = built_twice(&format!("fence{k}"), &src);
+        let native = executable(&exe, &[], b"");
+        assert_eq!(native, interpreter(&src, &[], b""), "{}", f.at);
     }
 }
 
