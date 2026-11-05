@@ -136,6 +136,7 @@ main(stdin: Lines) -> (stdout: Lines) {
     for step in [
         "this `*` gives int | f64 | rat",
         "`x` is int | f64 | rat here",
+        "the literal 2n takes int | f64 | rat",
         "`++` takes (String, String) -> String",
     ] {
         assert!(s.contains(&step), "{step}\n{out}");
