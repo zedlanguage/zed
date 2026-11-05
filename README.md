@@ -565,7 +565,7 @@ before: text gives #syntaxError(pos: 3)
 after:  conf = defaultConfig, port = 8080
 ```
 
-There are no exceptions and no null. A function that can fail says so in its return type, by returning a union with an atom in it. `else` replaces a failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't. An atom of a named union, such as `Light`, is data and not a failure, so `else` keeps it unless you name it: `x else #red -> #green`.
+There are no exceptions and no null. `else` replaces a failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't. An atom of a named union, such as `Light`, is data and not a failure, so `else` keeps it unless you name it: `x else #red -> #green`.
 
 A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction is stricter: it is rejected if its operator might be applied to a failure it does not handle, since failures at many keys can't become one result unless you say how.
 
