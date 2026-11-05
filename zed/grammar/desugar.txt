@@ -110,7 +110,7 @@ Arm           : `p -> e` is the kernel arm; `p where g -> e` is `p -> if(⟦g⟧
 For           : fam(⟦D⟧, k -> ⟦body⟧) over the generator's levels, with `where g` a discard of the entries where g is false and an emission level for a body with emits; several generators nest left to right (L5)
 MoreGen       : an inner generator, nested in the previous one
 Generator     : binds the InPattern to the levels of ⟦D⟧: `k in D` its keys, `k -> v in D` its keys with v = get(⟦D⟧, k), deeper levels nested
-Loop          : gen(init, step, guard): init the window of boundary frames `x[-1]` … `x[-k]`, k the maximum distance the body reads back (sec:generations), step the λ from a window to the window shifted by the frame of primed values, the guard from `while`, `until` and `break`; a loop of monotone inflationary steps on a lattice of finite height is the lattice fix (sec:generations)
+Loop          : gen(init, step, guard): init the window of boundary frames `x[-1]` … `x[-k]`, k the maximum distance the body reads back, holding only the keys a read reaches, a slot no read reaches holding no value (sec:generations), step the λ from a window to the window shifted by the frame of primed values, the guard from `while`, `until` and `break`; a loop of monotone inflationary steps on a lattice of finite height is the lattice fix (sec:generations)
 Pattern       : the pattern of its alternative
 RangePat      : a Bind x with the guard a <= x && x < b
 WildPat       : the kernel wildcard pattern
