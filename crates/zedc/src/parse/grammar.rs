@@ -485,8 +485,11 @@ impl Reader<'_> {
     // line is written by the spec's author (sec:grammar and its copies in `zed/grammar/`),
     // whose deepest nest is a few levels, and the cost stays linear in the line. An explicit
     // stack of open groups, each with its alternatives, items and pending prefixes, would read
-    // any depth. Test: `l01_08_parser::grammar_read::a_nest_of_separators_is_read_in_linear_time`;
-    // COMPLEXITY.md F88.
+    // any depth; a complete solution also needs an iterative `Drop` for [`Expr`] and explicit
+    // stacks in the fuzzer's `Depths::of`, `refs` and `Gen::gen_of` (zed-tools), which recurse
+    // per level too. Test:
+    // `l01_08_parser::grammar_read::a_nest_of_separators_is_read_in_linear_time`; COMPLEXITY.md
+    // F88.
     fn within(&mut self, read: fn(&mut Self) -> Result<Expr, String>) -> Result<Expr, String> {
         self.depth += 1;
         let e = read(self);
