@@ -372,3 +372,37 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them() {
         }
     });
 }
+
+/// A morphism cycle is inhabited, `W = (W) -> int` by a closure, except when what the cycle
+/// returns is empty for another reason: in `V = int -> (V, bool -> empty)` the pair holds a
+/// `bool -> empty`, which has no value, so the pair and `V` are empty, and `V -> empty` then
+/// has a value, a closure that is never called. A decider that took every morphism cycle as
+/// inhabited would show a closure for `V` and call `V -> empty` empty.
+#[test]
+fn a_morphism_cycle_through_an_empty_part_is_empty() {
+    Type::forget_emptiness();
+    let w = single("W", Expr::exact(r(0), Expr::Type(Type::int())));
+    assert!(!w.is_empty(), "W = (W) -> int is inhabited");
+    assert_eq!(w.verdict(), Verdict::Inhabited);
+    assert!(w.subtype(&w), "W <: W");
+
+    Type::forget_emptiness();
+    let bool_to_empty = Type::morphism(Type::bool(), Type::bool(), Type::empty());
+    assert!(bool_to_empty.is_empty(), "bool -> empty");
+    let v = single(
+        "V",
+        Expr::exact(
+            Expr::Type(Type::int()),
+            Expr::Tuple(vec![r(0), Expr::Type(bool_to_empty)]),
+        ),
+    );
+    let n = Type::morphism(v.clone(), v.clone(), Type::empty());
+    assert!(v.is_empty(), "V = int -> (V, bool -> empty) is empty");
+    assert_eq!(v.verdict(), Verdict::Empty);
+    assert!(!n.is_empty(), "N = V -> empty is inhabited");
+    // The verdict builds a closure only when its value type has a value, so `N` is refused
+    // (`NoWitness`) rather than shown inhabited; a refusal claims nothing, but `Empty` is wrong.
+    assert_ne!(n.verdict(), Verdict::Empty, "N = V -> empty is not empty");
+    // The same answers with the kept results of the other type in place.
+    assert!(v.is_empty() && !n.is_empty() && !w.is_empty());
+}
