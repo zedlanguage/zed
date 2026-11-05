@@ -2049,6 +2049,116 @@ mod tests {
     }
 
     #[test]
+    fn forced_atoms_of_a_long_conjunction_scale() {
+        // `x_0 ∧ x_1 ∧ … ∧ x_m`, every third literal refused, kept as expressions: built one
+        // literal at a time, and as a balanced tree, whose meets join two large sets. A pass that
+        // copied the settings found so far at each conjunction took 12.5 ms at 512 literals and
+        // 760 ms at 4096 (cross-review XR3, R3_CODEX.md Q7).
+        let lit = |i: usize| {
+            let l = Part::literal(atom(i as u64));
+            if i % 3 == 2 { l.not() } else { l }
+        };
+        let and = |a: Part<Row>, b: Part<Row>| Part::expr(Form::And(a, b));
+        let deep = |m: usize| (1..m).fold(lit(0), |p, i| and(p, lit(i)));
+        let balanced = |m: usize| {
+            let mut level: Vec<Part<Row>> = (0..m).map(lit).collect();
+            while level.len() > 1 {
+                let mut next = Vec::with_capacity(level.len().div_ceil(2));
+                let mut it = level.into_iter();
+                while let Some(a) = it.next() {
+                    next.push(match it.next() {
+                        Some(b) => and(a, b),
+                        None => a,
+                    });
+                }
+                level = next;
+            }
+            level.pop().expect("one literal at least")
+        };
+        let expected = |m: usize| {
+            let (mut taken, mut refused): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
+            for i in 0..m {
+                if i % 3 == 2 { &mut refused } else { &mut taken }.push(atom(i as u64));
+            }
+            taken.sort();
+            refused.sort();
+            (taken, refused)
+        };
+        let sorted = |(mut t, mut r): (Vec<Row>, Vec<Row>)| {
+            t.sort();
+            r.sort();
+            (t, r)
+        };
+        assert_eq!(sorted(lit(0).forced()), expected(1), "one literal");
+        assert_eq!(
+            sorted(deep(7).forced()),
+            expected(7),
+            "seven, one at a time"
+        );
+        assert_eq!(sorted(balanced(7).forced()), expected(7), "seven, balanced");
+        // A conjunction holding an atom both ways holds nowhere: every atom is then forced.
+        let empty = and(deep(5), Part::literal(atom(0)).not());
+        let (t, r) = empty.forced();
+        assert_eq!(t.len() + r.len(), 5, "{empty:?}");
+        let n = 1 << 11;
+        let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, (deep(m), balanced(m))))
+            .collect();
+        for (&m, (deep, balanced)) in &built {
+            assert_eq!(sorted(deep.forced()), expected(m), "{m}, one at a time");
+            assert_eq!(sorted(balanced.forced()), expected(m), "{m}, balanced");
+        }
+        scaling::check(
+            "the forced atoms of a conjunction, by its literals",
+            n,
+            |m| {
+                let (deep, balanced) = &built[&m];
+                std::hint::black_box((deep.forced(), balanced.forced()));
+            },
+        );
+    }
+
+    #[test]
+    fn two_diagrams_on_disjoint_atoms_can_meet_in_a_larger_one() {
+        // With the atoms in the order `a < b < c < d`, `a xor c` and `b xor d` have three nodes
+        // each and no atom in common, and their meet has nine: disjoint atoms bound the meet by
+        // the sum of the sizes only when one diagram's atoms all come before the other's. So
+        // `Part::zip` meets two diagrams only when one is a chain (the decision-list bound in
+        // its comment), and keeps this meet as an expression (cross-review XR3, R3_CODEX.md Q1).
+        let mut rows: Vec<Row> = (0..4).map(atom).collect();
+        rows.sort();
+        let xs: Vec<Bdd<Row>> = rows.iter().cloned().map(Bdd::literal).collect();
+        let xor = |p: &Bdd<Row>, q: &Bdd<Row>| {
+            p.zip(&q.not(), Op::And)
+                .zip(&p.not().zip(q, Op::And), Op::Or)
+        };
+        let nodes = |b: &Bdd<Row>| {
+            let mut count = 0;
+            b.atoms(&mut |_| {
+                count += 1;
+                true
+            });
+            count
+        };
+        let (a, b) = (xor(&xs[0], &xs[2]), xor(&xs[1], &xs[3]));
+        let meet = a.zip(&b, Op::And);
+        assert_eq!((nodes(&a), nodes(&b), nodes(&meet)), (3, 3, 9));
+        for set in 0..16u32 {
+            let holds = |t: &Row| (0..4).any(|i| set & (1 << i) != 0 && *t == rows[i]);
+            let bit = |i: u32| set & (1 << i) != 0;
+            assert_eq!(meet.eval(holds), (bit(0) != bit(2)) && (bit(1) != bit(3)));
+        }
+        let (pa, pb) = (Part::Bdd(a), Part::Bdd(b));
+        let kept = pa.zip(&pb, Op::And);
+        assert!(matches!(kept, Part::Expr(_)), "{kept:?}");
+        for set in 0..16u32 {
+            let holds = |t: &Row| (0..4).any(|i| set & (1 << i) != 0 && *t == rows[i]);
+            assert_eq!(kept.eval(&holds), pa.eval(&holds) && pb.eval(&holds));
+        }
+    }
+
+    #[test]
     fn comparing_equal_expressions_built_apart_scales() {
         // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
         // below, so comparing operand by operand met the bottom `2^depth` times.

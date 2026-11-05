@@ -7,7 +7,7 @@ use std::sync::Arc;
 use zed_tests::{instances::Rng, scaling};
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
-    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, entails, project, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, decide, entails, project, satisfiable,
 };
 
 fn sym(s: &str) -> Atom {
@@ -590,4 +590,41 @@ fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
     scaling::check_order("a value below a tied sum", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
     });
+}
+
+#[test]
+fn a_box_around_the_origin_has_a_checked_point_or_a_stated_refusal() {
+    // Five rows `a·x + b·y + k >= 0` with `a`, `b` in -3..=3 and `k` in 1..=20 hold at the
+    // origin, so "no point" is wrong. Each answer is a point that the rows are checked to hold
+    // at, or a refusal with its own message (cross-review XR3, R3_CODEX.md Q9).
+    let mut rng = Rng::new(17);
+    let (mut points, mut refused) = (0, 0);
+    for _ in 0..1000 {
+        let f = Formula::and(
+            (0..5)
+                .map(|_| {
+                    let (a, b) = (rng.int(-3, 3) as i128, rng.int(-3, 3) as i128);
+                    ge(&[("x", a), ("y", b)], rng.int(1, 20) as i128)
+                })
+                .collect(),
+        );
+        assert!(f.holds(&Default::default()), "{f}");
+        match satisfiable(&f) {
+            Ok(Some(m)) => {
+                assert!(f.holds(&m), "{f} at {m:?}");
+                points += 1;
+            }
+            Ok(None) => panic!("{f} holds at the origin"),
+            Err(e) => {
+                assert!(!e.to_string().is_empty(), "{f}");
+                refused += 1;
+            }
+        }
+        match decide(&f) {
+            Ok(held) => assert!(held, "{f} holds at the origin"),
+            Err(e) => assert!(!e.to_string().is_empty(), "{f}"),
+        }
+    }
+    println!("boxes around the origin: {points} points, {refused} refused");
+    assert_eq!(points + refused, 1000);
 }
