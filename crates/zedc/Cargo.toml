@@ -18,6 +18,10 @@ unicode-script = "0.5.8"
 stacker.workspace = true
 zed-kernel.workspace = true
 
+[dev-dependencies]
+# Sets the stack limit the zedc_binary test's child inherits.
+rustix.workspace = true
+
 # Runs the zedc executable itself, which only a test of this package can name.
 [[test]]
 name = "zedc_binary"

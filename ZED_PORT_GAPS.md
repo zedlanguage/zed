@@ -1529,3 +1529,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `OnceCell<u64>` per definition for its number, given once through `&self` | `Cones::number`, `Db::cone` | Lazy cells (gap 3) | A table of numbers built once per unit, before the cones are read |
 | `min_by_key` on a tuple of the cost and borrowed slices of the plan | `cost::pick`, `cost::order` | none | `minBy` on the same tuple; slices are lists |
 | Each nest's sides and each level sorted in place by `sort_by_key` and `sort_by`, and ids written into a `Vec` by position | `store::product::Tree::of` | Mutation (gap 11) | `sort` of each level into a new list, ids by `zip` with the positions |
+
+## Entries from STACK-self-limit (`tests/steps/m0_09_kernel_evaluator/binary.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `rustix::process::setrlimit(Resource::Stack, …)` on the test process, so the child it runs inherits an 8 MiB stack | `limit_stack` in the `zedc_binary` test | Missing (process limits) | A test-harness facility, not the language |

@@ -24,25 +24,27 @@ main(stdin: Lines) -> (stdout: Lines) {
 }
 "#;
 
-/// The soft limit on this process's stack, which a child inherits; `None` when unlimited.
-fn stack_limit() -> Option<u64> {
-    let limits = fs::read_to_string("/proc/self/limits").expect("Linux reports its limits");
-    let line = limits
-        .lines()
-        .find(|l| l.starts_with("Max stack size"))
-        .expect("the stack has a limit line");
-    let soft = line.split_whitespace().nth(3).expect("a soft limit");
-    soft.parse().ok()
+/// Sets this process's soft stack limit, which a child inherits, to [`STACK_LIMIT`], or to the
+/// hard limit where that is lower, so that the test holds whatever limit it was started with
+/// (`ulimit -s unlimited` included). The test harness's threads have their own fixed stacks,
+/// and its main thread only waits, so the lower limit does not reach the tests themselves.
+fn limit_stack() {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    let Rlimit { maximum, .. } = getrlimit(Resource::Stack);
+    let current = maximum.map_or(STACK_LIMIT, |hard| hard.min(STACK_LIMIT));
+    setrlimit(
+        Resource::Stack,
+        Rlimit {
+            current: Some(current),
+            maximum,
+        },
+    )
+    .expect("a soft limit at most the hard limit is accepted");
 }
 
 #[test]
 fn zedc_compares_a_value_20000_deep_on_an_ordinary_stack() {
-    let limit = stack_limit();
-    assert!(
-        limit.is_some_and(|l| l <= STACK_LIMIT),
-        "this test needs a stack of at most {STACK_LIMIT} bytes and has {limit:?}: \
-         run it after `ulimit -s 8192`"
-    );
+    limit_stack();
     let name = format!("deep_value_{}.zed", std::process::id());
     let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
     fs::write(&file, PROGRAM).unwrap();

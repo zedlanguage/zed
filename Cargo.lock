@@ -1066,6 +1066,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "rustix",
  "stacker",
  "unicode-ident",
  "unicode-normalization",
