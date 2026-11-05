@@ -237,3 +237,31 @@ fn the_choice_chain_with_a_choice_swapped_scales() {
         })
     });
 }
+
+#[test]
+fn the_choice_forms_keep_their_meaning() {
+    // Each choice form, nested twice, against the Boolean formula it stands for, on every tuple
+    // of 0s and 1s of width 6. Column `k` is in `row(k, 6)` when it is 1. `f` and `g` are the
+    // two forms of `if c then x else y`, and `h` and `i` the two forms of `if f then z else u`.
+    let w = 6;
+    let (c, x, y, z, u) = (row(0, w), row(1, w), row(2, w), row(3, w), row(4, w));
+    let f = &(&c & &x) | &(&!&c & &y);
+    let g = &(&!&c | &x) & &(&c | &y);
+    let h = &(&f & &z) | &(&!&f & &u);
+    let i = &(&!&f | &z) & &(&f | &u);
+    for bits in 0..1usize << w {
+        let b = |k: usize| bits >> k & 1 == 1;
+        let v = Value::tuple((0..w).map(|k| Value::Int(i64::from(b(k)))).collect());
+        let f1 = if b(0) { b(1) } else { b(2) };
+        let h1 = if f1 { b(3) } else { b(4) };
+        assert_eq!(f.contains(&v), f1, "f at {bits:06b}");
+        assert_eq!(g.contains(&v), f1, "g at {bits:06b}");
+        assert_eq!(h.contains(&v), h1, "h at {bits:06b}");
+        assert_eq!(i.contains(&v), h1, "i at {bits:06b}");
+    }
+    // A tuple of another width, and a value that is not a tuple, are in none of them.
+    for t in [&f, &g, &h, &i] {
+        assert!(!t.contains(&Value::tuple(vec![Value::Int(1); w - 1])));
+        assert!(!t.contains(&Value::Int(1)));
+    }
+}

@@ -552,3 +552,55 @@ fn membership_of_a_value_whose_halves_share_scales() {
         },
     );
 }
+
+/// One tail read against two types: `[1, 2]` as a `#cons` whose tail is a list of ints or a
+/// list of strings. The tail `[2]` is tested against both list types, and a kept test must not
+/// give the answer for one to the other: the value is in `P | Q` and in `P \ Q`, and not in
+/// `Q \ P`. With the kept tests keyed by the sequence alone, not the type, the tail's answer
+/// under the list of ints is read for the list of strings too.
+#[test]
+fn membership_tells_two_types_of_one_tail_apart() {
+    let of = |t: Type| Type::atom_with("cons", &Type::tuple(vec![Type::int(), t]));
+    let (p, q) = (of(list(Type::int())), of(list(Type::string())));
+    let tail = Value::atom_with("cons", vec![Value::Int(2), Value::atom("nil")]);
+    let v = Value::atom_with("cons", vec![Value::Int(1), tail]);
+    assert!((&p | &q).contains(&v));
+    assert!((&p - &q).contains(&v));
+    assert!(!(&q - &p).contains(&v));
+    assert!(p.contains(&v) && !q.contains(&v));
+}
+
+/// `type X = #nil | #cons(int, X) | #cons(int, Y)`, and `Y` the same: each item of a list may
+/// be read under either definition, so a list of `l` ints has `2^l` readings. Each tail is
+/// tested once under each of the two definitions, so membership is of order `l`. A list of
+/// ints that ends in a string, not in `#nil`, is in neither, and every reading must be refuted.
+#[test]
+fn membership_in_two_mutual_definitions_scales() {
+    let body = || {
+        or(vec![
+            bare("nil"),
+            atom("cons", vec![ty(Type::int()), r(0, vec![])]),
+            atom("cons", vec![ty(Type::int()), r(1, vec![])]),
+        ])
+    };
+    let t = one(vec![def("X", &[], body()), def("Y", &[], body())]);
+    let ending = |l: usize, end: Value| {
+        (0..l).fold(end, |v, i| {
+            Value::atom_with("cons", vec![Value::Int(i as i64), v])
+        })
+    };
+    assert!(t.contains(&ending(5, Value::atom("nil"))));
+    assert!(!t.contains(&ending(5, Value::str("end"))));
+    assert!(!t.contains(&Value::str("end")));
+    let built: std::collections::HashMap<usize, Value> = [1000, 8000]
+        .into_iter()
+        .map(|l| (l, ending(l, Value::str("end"))))
+        .collect();
+    zed_tests::scaling::check(
+        "membership in two mutual definitions, by length",
+        1000,
+        |l| {
+            assert!(!t.contains(&built[&l]));
+        },
+    );
+}
