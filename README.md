@@ -147,7 +147,7 @@ fib.a = 5, fib.b = 8, fib::len = 5
 
 In Python this is `a, b = b, a + b`, and in C it needs a temporary. In Zed, writing `a'` doesn't change `a`, so the second line still reads the old `a` and the two lines could be swapped. Each step writes each variable once.
 
-**`x*.method()`: a call that also replaces `x`.** A method can write a primed field, such as `n' = n + by`, which gives that field's value in a new struct. It returns the new struct along with its result and leaves the old one alone. In a loop, the `*` makes that new struct the value of `x` in the next step.
+**`x*.method()`: a call that also replaces `x`.** A method can write a field with a `'`, such as `n' = n + by`, which gives that field's value in a new struct. It returns the new struct along with its result and leaves the old one alone. In a loop, the `*` makes that new struct the value of `x` in the next step.
 
 ```zed
 struct Counter { n: int }
@@ -210,7 +210,7 @@ input: matrix = [[1, 2, 3], [4, 5, 6]]
 transposed = [[1, 4], [2, 5], [3, 6]]
 ```
 
-Elsewhere this is a pair of nested loops that set `out[c][r] = matrix[r][c]`, or a pivot in a data frame library. `as` gives a name to each level of keys and to the value, and `into` draws the shape you want using those names. A remap can't overwrite a value: if two values would land on one key, the compiler rejects it until you say what should happen.
+Elsewhere this is a pair of nested loops that set `out[c][r] = matrix[r][c]`, or a pivot table (see [Remapping](#remapping)). `as` gives a name to each level of keys and to the value, and `into` draws the shape you want using those names. A remap can't overwrite a value: if two values would land on one key, the compiler rejects it until you say what should happen.
 
 **`name[k] <- v`: a push into a map.** `int ->? int` is a map from `int` to `int` that may lack some keys, `with reducer((+))` says that values pushed to one key are added, and `w.len` is the length of `w`.
 
@@ -332,7 +332,7 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | `x::len` | The number of entries, or of steps in a loop. |
 | `run::frames` | Every step of a loop. |
 | `text::codepoints`, `text::u8` | A string viewed by code point or by UTF-8 unit, which is one byte of its encoding. |
-| `T::fields`, `T::shape`, `T::values` | A type's fields, its structure, and the members of a set of atoms. |
+| `T::fields`, `T::shape`, `T::values` | A type's fields, one layer of its structure, and the set of its values. |
 | `x::constraints` | What the compiler knows about a value. |
 | `f::source` | A function's source, as a value. |
 | `f::cost`, `f::depth` | Upper bounds on a function's work (its total number of operations) and parallel depth (the longest chain of operations that must run one after another). |
@@ -412,7 +412,7 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 
 ## A first program
 
-Here is a complete program. It splits a file on spaces, counts each word, and prints the counts, most common first. `main`'s parameters and results are *ports*, channels to the outside world: here `fs` reads files and `stdout` prints, and `else` gives a fallback if the read fails. `group` collects the words by their lowercase form (`w -> w.lower` is an unnamed function), and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a second level of keys below it so equal counts don't collide, and each value becomes a line of text, with `"${w}: ${n}"` filling in `w` and `n`. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
+Here is a complete program. It splits a file on spaces, counts each word, and prints the counts, most common first. `main`'s parameters and results are *ports*, channels to the outside world. `Files` maps paths to UTF-8 text and `Lines` is a stream of text lines, so `fs` reads files and `stdout` prints, and `else` gives a fallback if the read fails. `group` collects the words by their lowercase form (`w -> w.lower` is an unnamed function), and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a second level of keys below it so equal counts don't collide, and each value becomes a line of text, with `"${w}: ${n}"` filling in `w` and `n`. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
 
 ```zed
 main(fs: Files) -> (stdout: Lines) {
@@ -425,37 +425,59 @@ main(fs: Files) -> (stdout: Lines) {
 
 These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. Where a table has several columns after its keys, they are parts of one value, or an input shown beside its result. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way.
 
-```text
-counts after .split(" ")    counts after .group(w -> w.lower)    counts after .count
-+---+-----+                 +---------+---+-----+                +-----+---+
-| i | w   |                 | w.lower | i | w   |                | w   | n |
-+===+=====+                 +=========+===+=====+                +=====+===+
-| 0 | to  |                 | be      | 1 | be  |                | be  | 2 |
-| 1 | be  |                 |         +---+-----+                | not | 1 |
-| 2 | or  |                 |         | 5 | be  |                | or  | 1 |
-| 3 | not |                 +---------+---+-----+                | to  | 2 |
-| 4 | to  |                 | not     | 3 | not |                +-----+---+
-| 5 | be  |                 +---------+---+-----+
-+---+-----+                 | or      | 2 | or  |
-                            +---------+---+-----+
-                            | to      | 0 | to  |
-                            |         +---+-----+
-                            |         | 4 | to  |
-                            +---------+---+-----+
+<table>
+<tr><th><code>counts</code> after <code>.split(" ")</code></th><th><code>counts</code> after <code>.group(w -&gt; w.lower)</code></th><th><code>counts</code> after <code>.count</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>w</code></th></tr>
+<tr><td><code>0</code></td><td><code>to</code></td></tr>
+<tr><td><code>1</code></td><td><code>be</code></td></tr>
+<tr><td><code>2</code></td><td><code>or</code></td></tr>
+<tr><td><code>3</code></td><td><code>not</code></td></tr>
+<tr><td><code>4</code></td><td><code>to</code></td></tr>
+<tr><td><code>5</code></td><td><code>be</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>w.lower</code></th><th><code>i</code></th><th><code>w</code></th></tr>
+<tr><td rowspan="2"><code>be</code></td><td><code>1</code></td><td><code>be</code></td></tr>
+<tr><td><code>5</code></td><td><code>be</code></td></tr>
+<tr><td><code>not</code></td><td><code>3</code></td><td><code>not</code></td></tr>
+<tr><td><code>or</code></td><td><code>2</code></td><td><code>or</code></td></tr>
+<tr><td rowspan="2"><code>to</code></td><td><code>0</code></td><td><code>to</code></td></tr>
+<tr><td><code>4</code></td><td><code>to</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>w</code></th><th><code>n</code></th></tr>
+<tr><td><code>be</code></td><td><code>2</code></td></tr>
+<tr><td><code>not</code></td><td><code>1</code></td></tr>
+<tr><td><code>or</code></td><td><code>1</code></td></tr>
+<tr><td><code>to</code></td><td><code>2</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-lines                      lines.rank
-+------+-----+--------+    +---+--------+
-| rank | w   | line   |    | i | line   |
-+======+=====+========+    +===+========+
-| 0    | be  | be: 2  |    | 0 | be: 2  |
-|      +-----+--------+    | 1 | to: 2  |
-|      | to  | to: 2  |    | 2 | not: 1 |
-+------+-----+--------+    | 3 | or: 1  |
-| 1    | not | not: 1 |    +---+--------+
-|      +-----+--------+
-|      | or  | or: 1  |
-+------+-----+--------+
-```
+<table>
+<tr><th><code>lines</code></th><th><code>lines.rank</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>rank</code></th><th><code>w</code></th><th><code>line</code></th></tr>
+<tr><td rowspan="2"><code>0</code></td><td><code>be</code></td><td><code>be: 2</code></td></tr>
+<tr><td><code>to</code></td><td><code>to: 2</code></td></tr>
+<tr><td rowspan="2"><code>1</code></td><td><code>not</code></td><td><code>not: 1</code></td></tr>
+<tr><td><code>or</code></td><td><code>or: 1</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>line</code></th></tr>
+<tr><td><code>0</code></td><td><code>be: 2</code></td></tr>
+<tr><td><code>1</code></td><td><code>to: 2</code></td></tr>
+<tr><td><code>2</code></td><td><code>not: 1</code></td></tr>
+<tr><td><code>3</code></td><td><code>or: 1</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 The program doesn't mention threads, locks or allocation. The compiler can run the grouping on all your cores, and the output is the same, bit for bit, on one core or on sixty-four. A missing file can't crash the program either: the type of `fs["input.txt"]` says the read can fail, and the `else` says what to do when it does.
 
@@ -500,13 +522,13 @@ port: int[1..=65535] = 8080;   // an integer from 1 through 65535, both included
 total = 36, port = 8080
 ```
 
-A name is bound once. It can't be reassigned, and it can be used above the line that defines it, as `price` is here: the order of definitions doesn't matter, only what depends on what. Because a name has one value, you never have to ask what it holds at this point in the program, and the compiler can read the dependency graph straight from the text. The type is optional, and it can be more exact than in most languages, as `port`'s is, and the compiler checks it.
+A name is bound once. It can't be reassigned, and it can be used above the line that defines it, as `price` is here: the order of definitions doesn't matter, only what depends on what. Because a name has one value, you never have to ask what it holds at this point in the program, and the compiler can read the dependency graph straight from the text. The type is optional. It can be more exact than in most languages: `port`'s type is a range, and the compiler checks that 8080 lies in it.
 
 ### Functions
 
 A function is a definition with parameters, and a call can name its arguments, chain with dots or leave some open.
 
-**Syntax:** `f(positional x, y = default) = expression;` or `f(...) -> type { ... }`. `positional` marks a parameter passed by position, `y = default` gives a default value, and `-> type` states the result type.
+**Syntax:** `f(positional x, y = default) = expression;` or `f(x) -> type { ... }`. `positional` marks a parameter passed by position, `y = default` gives a default value, and `-> type` states the result type. In the code, `a.f(b)` is the call `f(a, b)`, so `5.double` is `double(5)`, and `f(x, ...)` leaves the remaining named parameters open and gives back a function.
 
 ```zed
 double(positional x) = x * 2;
@@ -531,7 +553,7 @@ hi(punct: ".") = "Hi, Ann."
 hi() = "Hi, Ann!"
 ```
 
-Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Any function can be called with a dot, so `5.double` is `double(5)`, pipelines read left to right, and adding a step to a pipeline doesn't mean extending a class. A `...` in a call leaves the remaining named parameters open and gives you back a function. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes an `int`; `x * 2n`, with the generic number `2n`, would take any number type.
+Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Because any function can be called with a dot, pipelines read left to right, and adding a step to a pipeline doesn't mean extending a class. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes an `int`; `x * 2n`, with the generic number `2n`, would take any number type.
 
 ### Numbers
 
@@ -566,7 +588,7 @@ A string's type says how its text is stored, and you say what you index it by, s
 name = "Zed";
 line = "total: ${2 + 3}";            // "total: 5"
 title = "never" ++ "the" ++ "less";
-z = name::codepoints[0];             // the first code point
+z = name::codepoints[0];             // the first code point, a char32
 ```
 
 ```text
@@ -579,7 +601,7 @@ String literals are UTF-8. `Utf8String`, `Utf16String` and `Utf32String` are sep
 
 A struct is a record of named fields, compared by value and copied with changes.
 
-**Syntax:** `struct Name { field: type, field: type = default }`, `Name(field: value)`, `x with { field = value }`, `Name.method = expression;`. `Name(field: value)` builds a struct, naming each field, `x with { ... }` copies `x` with those fields changed, and `Name.method` defines a method.
+**Syntax:** `struct Name { field: type, field: type = default }`, `Name(field: value)`, `x with { field = value }`, `Name.method = expression;`. `Name(field: value)` builds a struct, naming each field, `x with { ... }` copies `x` with those fields changed, and `Name.method` defines a method: a function whose implicit first argument is the value it is called on, with that value's fields in scope by name.
 
 ```zed
 struct Point { x: f64, y: f64 }
@@ -600,7 +622,7 @@ unit = Circle(center: Point(x: 1.0, y: 2.0), radius: 1.0)
 size = the square root of 5.0, about 2.236
 ```
 
-When the compiler can see that the original of a `with` copy isn't used again, the copy is an update in place with no allocation. A method like `norm` is a function with an implicit first parameter whose fields are in scope. Two ordinary struct declarations with the same fields are the same type. There are no classes, no inheritance and no object identity. A struct is just a value, so nothing can change it behind your back, and the compiler is free to copy it or share it.
+When the compiler can see that the original of a `with` copy isn't used again, the copy is an update in place with no allocation. Two ordinary struct declarations with the same fields are the same type. There are no classes, no inheritance and no object identity. A struct is just a value, so nothing can change it behind your back, and the compiler is free to copy it or share it.
 
 ### Atoms, unions and match
 
@@ -609,6 +631,7 @@ An atom is like an enum value that needs no declaration, a union is a choice of 
 **Syntax:** `#name`, `#name(args)`, `type T = A | B`, `match x { pattern -> value, ... }`
 
 ```zed
+// Point and Circle are the structs from Structs above.
 struct Rect { lo: Point, hi: Point }
 type Shape = Circle | Rect;
 type Light = #red | #amber | #green;
@@ -715,30 +738,53 @@ Failures sit in collections as ordinary values, so you can test for them and cho
 **Syntax:** `r is T`, `r is not T`, `m.allOk`. `r is T` tests a value's type, and `m.allOk` is `m` when no value is a failure, and otherwise the failures. In the code, `.map` replaces each value and keeps its key, `.where` keeps the entries that pass a test, and `read` reads a file through a port.
 
 ```zed
-results = files.map(f -> read(f)).map(b -> parse(b));
+results = files.map(f -> read(f)).map(t -> parse(t));
 
 good = results.where(r -> r is Config);
 bad = results.where(r -> r is not Config);
 ```
 
-```text
-input: files     results after .map(f -> read(f))    results after .map(b -> parse(b))
-+---+-------+    +---+---------------+               +---+----------------------+
-| i | file  |    | i | value         |               | i | value                |
-+===+=======+    +===+===============+               +===+======================+
-| 0 | a.cfg |    | 0 | a.cfg's text  |               | 0 | Config               |
-| 1 | b.cfg |    | 1 | #ioError(...) |               | 1 | #ioError(...)        |
-| 2 | c.cfg |    | 2 | c.cfg's text  |               | 2 | #syntaxError(pos: 3) |
-+---+-------+    +---+---------------+               +---+----------------------+
+<table>
+<tr><th>input: <code>files</code></th><th><code>results</code> after <code>.map(f -&gt; read(f))</code></th><th><code>results</code> after <code>.map(t -&gt; parse(t))</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>file</code></th></tr>
+<tr><td><code>0</code></td><td><code>a.cfg</code></td></tr>
+<tr><td><code>1</code></td><td><code>b.cfg</code></td></tr>
+<tr><td><code>2</code></td><td><code>c.cfg</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>0</code></td><td>a.cfg's text</td></tr>
+<tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
+<tr><td><code>2</code></td><td>c.cfg's text</td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>0</code></td><td><code>Config</code></td></tr>
+<tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
+<tr><td><code>2</code></td><td><code>#syntaxError(pos: 3)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-good              bad
-+---+--------+    +---+----------------------+
-| i | value  |    | i | value                |
-+===+========+    +===+======================+
-| 0 | Config |    | 1 | #ioError(...)        |
-+---+--------+    | 2 | #syntaxError(pos: 3) |
-                  +---+----------------------+
-```
+<table>
+<tr><th><code>good</code></th><th><code>bad</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>0</code></td><td><code>Config</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
+<tr><td><code>2</code></td><td><code>#syntaxError(pos: 3)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 A file that fails to read or parse doesn't stop the others. Each failure stays under its file's key, next to the successes, so you can split them, count them or report them. The read puts details such as the path in the failure's own fields (`#ioError(op:, path:, why:)`), so you don't have to thread that information through by hand.
 
@@ -800,18 +846,35 @@ age = 36, then age = 0
 
 The last three lines, drawn the same way:
 
-```text
-tens           big           sorted
-+---+----+     +---+----+    +------+----+
-| i | x  |     | i | x  |    | rank | x  |
-+===+====+     +===+====+    +======+====+
-| 0 | 30 |     | 0 | 30 |    | 0    | 50 |
-| 1 | 10 |     | 2 | 40 |    | 1    | 40 |
-| 2 | 40 |     | 4 | 50 |    | 2    | 30 |
-| 3 | 10 |     +---+----+    | 3    | 10 |
-| 4 | 50 |                   | 4    | 10 |
-+---+----+                   +------+----+
-```
+<table>
+<tr><th><code>tens</code></th><th><code>big</code></th><th><code>sorted</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>x</code></th></tr>
+<tr><td><code>0</code></td><td><code>30</code></td></tr>
+<tr><td><code>1</code></td><td><code>10</code></td></tr>
+<tr><td><code>2</code></td><td><code>40</code></td></tr>
+<tr><td><code>3</code></td><td><code>10</code></td></tr>
+<tr><td><code>4</code></td><td><code>50</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>x</code></th></tr>
+<tr><td><code>0</code></td><td><code>30</code></td></tr>
+<tr><td><code>2</code></td><td><code>40</code></td></tr>
+<tr><td><code>4</code></td><td><code>50</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>rank</code></th><th><code>x</code></th></tr>
+<tr><td><code>0</code></td><td><code>50</code></td></tr>
+<tr><td><code>1</code></td><td><code>40</code></td></tr>
+<tr><td><code>2</code></td><td><code>30</code></td></tr>
+<tr><td><code>3</code></td><td><code>10</code></td></tr>
+<tr><td><code>4</code></td><td><code>10</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 An array is a map whose keys are `0..<n`, a set is a map from each key to itself, a struct is a map from field names to values, and a function is a map too. So `xs[i]`, `f(x)` and `p.x` are all lookups, and the same operations work on all of them, except that an operation that visits every key needs a finite set of keys: a function over all of `int` can be called, but `group` or `==` on it is rejected. `K -> V` has a value at every key of `K`, while `K ->? V` may lack some keys, so a lookup can give `#notFound`. A nested map is stored in whichever layout suits the code that reads it. Your code never names the layout, so the compiler may pick a different one without your code changing.
 
@@ -829,24 +892,32 @@ byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
 
 With three sample users, `group` adds the `city` level above the keys that were already there:
 
-```text
-input: users          byCity
-+----+-----------+    +------+----+-----------+
-| id | user      |    | city | id | user      |
-+====+===========+    +======+====+===========+
-| 1  | Ann, Oslo |    | Lima | 2  | Bob, Lima |
-| 2  | Bob, Lima |    +------+----+-----------+
-| 3  | Cid, Oslo |    | Oslo | 1  | Ann, Oslo |
-+----+-----------+    |      +----+-----------+
-                      |      | 3  | Cid, Oslo |
-                      +------+----+-----------+
-```
+<table>
+<tr><th>input: <code>users</code></th><th><code>byCity</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>id</code></th><th><code>user</code></th></tr>
+<tr><td><code>1</code></td><td><code>Ann, Oslo</code></td></tr>
+<tr><td><code>2</code></td><td><code>Bob, Lima</code></td></tr>
+<tr><td><code>3</code></td><td><code>Cid, Oslo</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>city</code></th><th><code>id</code></th><th><code>user</code></th></tr>
+<tr><td><code>Lima</code></td><td><code>2</code></td><td><code>Bob, Lima</code></td></tr>
+<tr><td rowspan="2"><code>Oslo</code></td><td><code>1</code></td><td><code>Ann, Oslo</code></td></tr>
+<tr><td><code>3</code></td><td><code>Cid, Oslo</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 `group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Where SQL's `GROUP BY` must aggregate right away, a group here is just a level of the map, which you can reduce, read or reshape later. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` (this function never gives two inputs one output) or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
 
 ### Remapping
 
 A remap states the shape a map has and the shape you want, and the compiler does the moving.
+
+If you know spreadsheets, a remap is close to a pivot table. Moving a field between the Rows and Columns areas shows the same data under a different arrangement of keys, as a remap moves the levels of keys, and a field in the Values area summed with Sum corresponds to a reduction such as `region >< (+)`. The difference is that a pivot table combines whatever lands in one cell whether or not you asked, while a remap merges nothing unless a `><` says how. A remap's result is also an ordinary map of any depth, not a two-axis report.
 
 **Syntax:** `m as (pattern) into (pattern)`
 
@@ -860,46 +931,67 @@ totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount
 
 On small sample tables, with `rank` the level that `desc s` adds:
 
-```text
-input: matrix     transposed
-+---+---+---+     +---+---+---+
-| r | c | v |     | c | r | v |
-+===+===+===+     +===+===+===+
-| 0 | 0 | 1 |     | 0 | 0 | 1 |
-|   +---+---+     |   +---+---+
-|   | 1 | 2 |     |   | 1 | 4 |
-|   +---+---+     +---+---+---+
-|   | 2 | 3 |     | 1 | 0 | 2 |
-+---+---+---+     |   +---+---+
-| 1 | 0 | 4 |     |   | 1 | 5 |
-|   +---+---+     +---+---+---+
-|   | 1 | 5 |     | 2 | 0 | 3 |
-|   +---+---+     |   +---+---+
-|   | 2 | 6 |     |   | 1 | 6 |
-+---+---+---+     +---+---+---+
+<table>
+<tr><th>input: <code>matrix</code></th><th><code>transposed</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>r</code></th><th><code>c</code></th><th><code>v</code></th></tr>
+<tr><td rowspan="3"><code>0</code></td><td><code>0</code></td><td><code>1</code></td></tr>
+<tr><td><code>1</code></td><td><code>2</code></td></tr>
+<tr><td><code>2</code></td><td><code>3</code></td></tr>
+<tr><td rowspan="3"><code>1</code></td><td><code>0</code></td><td><code>4</code></td></tr>
+<tr><td><code>1</code></td><td><code>5</code></td></tr>
+<tr><td><code>2</code></td><td><code>6</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>c</code></th><th><code>r</code></th><th><code>v</code></th></tr>
+<tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>1</code></td></tr>
+<tr><td><code>1</code></td><td><code>4</code></td></tr>
+<tr><td rowspan="2"><code>1</code></td><td><code>0</code></td><td><code>2</code></td></tr>
+<tr><td><code>1</code></td><td><code>5</code></td></tr>
+<tr><td rowspan="2"><code>2</code></td><td><code>0</code></td><td><code>3</code></td></tr>
+<tr><td><code>1</code></td><td><code>6</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-input: scores     ranking
-+------+----+     +------+------+----+
-| name | s  |     | rank | name | s  |
-+======+====+     +======+======+====+
-| Ann  | 90 |     | 0    | Ann  | 90 |
-| Bob  | 70 |     |      +------+----+
-| Cid  | 90 |     |      | Cid  | 90 |
-+------+----+     +------+------+----+
-                  | 1    | Bob  | 70 |
-                  +------+------+----+
+<table>
+<tr><th>input: <code>scores</code></th><th><code>ranking</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>name</code></th><th><code>s</code></th></tr>
+<tr><td><code>Ann</code></td><td><code>90</code></td></tr>
+<tr><td><code>Bob</code></td><td><code>70</code></td></tr>
+<tr><td><code>Cid</code></td><td><code>90</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>rank</code></th><th><code>name</code></th><th><code>s</code></th></tr>
+<tr><td rowspan="2"><code>0</code></td><td><code>Ann</code></td><td><code>90</code></td></tr>
+<tr><td><code>Cid</code></td><td><code>90</code></td></tr>
+<tr><td><code>1</code></td><td><code>Bob</code></td><td><code>70</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-input: sales                 totals
-+--------+-----+--------+    +--------+--------+
-| region | sku | amount |    | region | amount |
-+========+=====+========+    +========+========+
-| East   | A1  | 5      |    | East   | 8      |
-|        +-----+--------+    | West   | 2      |
-|        | B2  | 3      |    +--------+--------+
-+--------+-----+--------+
-| West   | A1  | 2      |
-+--------+-----+--------+
-```
+<table>
+<tr><th>input: <code>sales</code></th><th><code>totals</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>sku</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>A1</code></td><td><code>5</code></td></tr>
+<tr><td><code>B2</code></td><td><code>3</code></td></tr>
+<tr><td><code>West</code></td><td><code>A1</code></td><td><code>2</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>amount</code></th></tr>
+<tr><td><code>East</code></td><td><code>8</code></td></tr>
+<tr><td><code>West</code></td><td><code>2</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 In `transposed`, a value at row `r` and column `c` moves to row `c` and column `r`. A remap is another way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the `ranking` line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. If you ask it to, as in the rejected `totals` line, you get an error that lists the ways out, and the last `totals` line is one of them. A shortened version of the error:
 
@@ -924,59 +1016,72 @@ years = revenue as (region -> year -> sku -> amount) into (region -> year -> _);
 
 Each row is one keypath and its value. `bySku` has the same four values as `revenue`, reached by new keypaths. `perYear` first moves the levels, then collapses `region`, and `years` drops the values and keeps the keys down to `year`:
 
-```text
-input: revenue                        bySku
-+--------+------+-----+--------+      +-----+--------+------+--------+
-| region | year | sku | amount |      | sku | region | year | amount |
-+========+======+=====+========+      +=====+========+======+========+
-| East   | 2024 | A1  | 5      |      | A1  | East   | 2024 | 5      |
-|        |      +-----+--------+      |     |        +------+--------+
-|        |      | B2  | 3      |      |     |        | 2025 | 4      |
-|        +------+-----+--------+      |     +--------+------+--------+
-|        | 2025 | A1  | 4      |      |     | West   | 2025 | 2      |
-+--------+------+-----+--------+      +-----+--------+------+--------+
-| West   | 2025 | A1  | 2      |      | B2  | East   | 2024 | 3      |
-+--------+------+-----+--------+      +-----+--------+------+--------+
+<table>
+<tr><th>input: <code>revenue</code></th><th><code>bySku</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>year</code></th><th><code>sku</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>2024</code></td><td><code>A1</code></td><td><code>5</code></td></tr>
+<tr><td><code>B2</code></td><td><code>3</code></td></tr>
+<tr><td><code>2025</code></td><td><code>A1</code></td><td><code>4</code></td></tr>
+<tr><td><code>West</code></td><td><code>2025</code></td><td><code>A1</code></td><td><code>2</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>sku</code></th><th><code>region</code></th><th><code>year</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="3"><code>A1</code></td><td rowspan="2"><code>East</code></td><td><code>2024</code></td><td><code>5</code></td></tr>
+<tr><td><code>2025</code></td><td><code>4</code></td></tr>
+<tr><td><code>West</code></td><td><code>2025</code></td><td><code>2</code></td></tr>
+<tr><td><code>B2</code></td><td><code>East</code></td><td><code>2024</code></td><td><code>3</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-perYear before summing over region    perYear after summing over region
-+-----+------+--------+--------+      +-----+------+--------+
-| sku | year | region | amount |      | sku | year | amount |
-+=====+======+========+========+      +=====+======+========+
-| A1  | 2024 | East   | 5      |      | A1  | 2024 | 5      |
-|     +------+--------+--------+      |     +------+--------+
-|     | 2025 | East   | 4      |      |     | 2025 | 6      |
-|     |      +--------+--------+      +-----+------+--------+
-|     |      | West   | 2      |      | B2  | 2024 | 3      |
-+-----+------+--------+--------+      +-----+------+--------+
-| B2  | 2024 | East   | 3      |
-+-----+------+--------+--------+
+<table>
+<tr><th><code>perYear</code> before summing over <code>region</code></th><th><code>perYear</code> after summing over <code>region</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>sku</code></th><th><code>year</code></th><th><code>region</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="3"><code>A1</code></td><td><code>2024</code></td><td><code>East</code></td><td><code>5</code></td></tr>
+<tr><td rowspan="2"><code>2025</code></td><td><code>East</code></td><td><code>4</code></td></tr>
+<tr><td><code>West</code></td><td><code>2</code></td></tr>
+<tr><td><code>B2</code></td><td><code>2024</code></td><td><code>East</code></td><td><code>3</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>sku</code></th><th><code>year</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="2"><code>A1</code></td><td><code>2024</code></td><td><code>5</code></td></tr>
+<tr><td><code>2025</code></td><td><code>6</code></td></tr>
+<tr><td><code>B2</code></td><td><code>2024</code></td><td><code>3</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-years
-+--------+------+------+
-| region | year | year |
-+========+======+======+
-| East   | 2024 | 2024 |
-|        +------+------+
-|        | 2025 | 2025 |
-+--------+------+------+
-| West   | 2025 | 2025 |
-+--------+------+------+
-```
+<table>
+<tr><th><code>years</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>year</code></th><th><code>year</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>2024</code></td><td><code>2024</code></td></tr>
+<tr><td><code>2025</code></td><td><code>2025</code></td></tr>
+<tr><td><code>West</code></td><td><code>2025</code></td><td><code>2025</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-A set is a map from each item to itself, so each region's years form a set, and the value column of `years` repeats the key. What that means is set membership: a keypath either exists or it doesn't. This table shows it, with `✓` meaning "this keypath exists". The `exists` column is only an illustration on this page. `years` has no such column, and a program can't read one.
+A set is a map from each item to itself, so each region's years form a set, and the value column of `years` repeats the key. What that means is set membership: a keypath either exists or it doesn't. This table shows it, with `yes` meaning "this keypath exists". The `exists` column is only an illustration on this page. `years` has no such column, and a program can't read one.
 
-```text
-years, read as which keypaths exist
-+--------+------+--------+
-| region | year | exists |
-+========+======+========+
-| East   | 2024 | ✓      |
-|        +------+--------+
-|        | 2025 | ✓      |
-+--------+------+--------+
-| West   | 2025 | ✓      |
-+--------+------+--------+
-```
+<table>
+<tr><th><code>years</code>, read as which keypaths exist</th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>year</code></th><th><code>exists</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>2024</code></td><td><code>yes</code></td></tr>
+<tr><td><code>2025</code></td><td><code>yes</code></td></tr>
+<tr><td><code>West</code></td><td><code>2025</code></td><td><code>yes</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 The constraint on every remap is this: no two values may end up at the same keypath through the map. The rejected `bad` line breaks it, because `(A1, 2025)` would have to hold both 4 and 2. The compiler judges this from the pattern and not from the data, so it rejects a dropped level even for an input that happens to have one entry under each key. What that leaves is:
 
@@ -1001,38 +1106,74 @@ pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
 
 On small sample data:
 
-```text
-input: readings     total
-+---+-------+       +-------+
-| i | value |       | total |
-+===+=======+       +=======+
-| 0 | 2     |       | 10    |
-| 1 | 5     |       +-------+
-| 2 | 3     |
-+---+-------+
+<table>
+<tr><th>input: <code>readings</code></th><th><code>total</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>0</code></td><td><code>2</code></td></tr>
+<tr><td><code>1</code></td><td><code>5</code></td></tr>
+<tr><td><code>2</code></td><td><code>3</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>total</code></th></tr>
+<tr><td><code>10</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-input: words    longest before >< max    longest after >< max
-+---+-----+     +---+-----+              +---------+
-| i | w   |     | i | len |              | longest |
-+===+=====+     +===+=====+              +=========+
-| 0 | to  |     | 0 | 2   |              | 3       |
-| 1 | be  |     | 1 | 2   |              +---------+
-| 2 | not |     | 2 | 3   |
-+---+-----+     +---+-----+
+<table>
+<tr><th>input: <code>words</code></th><th><code>longest</code> before <code>&gt;&lt; max</code></th><th><code>longest</code> after <code>&gt;&lt; max</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>w</code></th></tr>
+<tr><td><code>0</code></td><td><code>to</code></td></tr>
+<tr><td><code>1</code></td><td><code>be</code></td></tr>
+<tr><td><code>2</code></td><td><code>not</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>len</code></th></tr>
+<tr><td><code>0</code></td><td><code>2</code></td></tr>
+<tr><td><code>1</code></td><td><code>2</code></td></tr>
+<tr><td><code>2</code></td><td><code>3</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>longest</code></th></tr>
+<tr><td><code>3</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-input: sales            pivot before summing over i          pivot after summing over i
-+---+--------------+    +--------+---------+---+--------+    +--------+---------+--------+
-| i | sale         |    | region | product | i | amount |    | region | product | amount |
-+===+==============+    +========+=========+===+========+    +========+=========+========+
-| 0 | East, pen, 5 |    | East   | ink     | 2 | 3      |    | East   | ink     | 3      |
-| 1 | West, pen, 2 |    |        +---------+---+--------+    |        +---------+--------+
-| 2 | East, ink, 3 |    |        | pen     | 0 | 5      |    |        | pen     | 9      |
-| 3 | East, pen, 4 |    |        |         +---+--------+    +--------+---------+--------+
-+---+--------------+    |        |         | 3 | 4      |    | West   | pen     | 2      |
-                        +--------+---------+---+--------+    +--------+---------+--------+
-                        | West   | pen     | 1 | 2      |
-                        +--------+---------+---+--------+
-```
+<table>
+<tr><th>input: <code>sales</code></th><th><code>pivot</code> before summing over <code>i</code></th><th><code>pivot</code> after summing over <code>i</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>sale</code></th></tr>
+<tr><td><code>0</code></td><td><code>East, pen, 5</code></td></tr>
+<tr><td><code>1</code></td><td><code>West, pen, 2</code></td></tr>
+<tr><td><code>2</code></td><td><code>East, ink, 3</code></td></tr>
+<tr><td><code>3</code></td><td><code>East, pen, 4</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>product</code></th><th><code>i</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="3"><code>East</code></td><td><code>ink</code></td><td><code>2</code></td><td><code>3</code></td></tr>
+<tr><td rowspan="2"><code>pen</code></td><td><code>0</code></td><td><code>5</code></td></tr>
+<tr><td><code>3</code></td><td><code>4</code></td></tr>
+<tr><td><code>West</code></td><td><code>pen</code></td><td><code>1</code></td><td><code>2</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>product</code></th><th><code>amount</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>ink</code></td><td><code>3</code></td></tr>
+<tr><td><code>pen</code></td><td><code>9</code></td></tr>
+<tr><td><code>West</code></td><td><code>pen</code></td><td><code>2</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 The `pivot` line builds a table of sales by region and product. `i >< (+)` collapses the level `i`, adding the amounts that land on the same region and product.
 
@@ -1051,23 +1192,34 @@ m = values.map(x -> Moments(n: 1, sum: x)) >< combine else Moments(n: 0, sum: 0r
 
 With three values:
 
-```text
-input: values    m before >< combine
-+---+----+       +---+------------------------+
-| i | x  |       | i | value                  |
-+===+====+       +===+========================+
-| 0 | 1r |       | 0 | Moments(n: 1, sum: 1r) |
-| 1 | 2r |       | 1 | Moments(n: 1, sum: 2r) |
-| 2 | 3r |       | 2 | Moments(n: 1, sum: 3r) |
-+---+----+       +---+------------------------+
+<table>
+<tr><th>input: values</th><th><code>m</code> before <code>&gt;&lt; combine</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>x</code></th></tr>
+<tr><td><code>0</code></td><td><code>1r</code></td></tr>
+<tr><td><code>1</code></td><td><code>2r</code></td></tr>
+<tr><td><code>2</code></td><td><code>3r</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>0</code></td><td><code>Moments(n: 1, sum: 1r)</code></td></tr>
+<tr><td><code>1</code></td><td><code>Moments(n: 1, sum: 2r)</code></td></tr>
+<tr><td><code>2</code></td><td><code>Moments(n: 1, sum: 3r)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-m after >< combine
-+------------------------+
-| m                      |
-+========================+
-| Moments(n: 3, sum: 6r) |
-+------------------------+
-```
+<table>
+<tr><th><code>m</code> after <code>&gt;&lt; combine</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>m</code></th></tr>
+<tr><td><code>Moments(n: 3, sum: 6r)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 For `combine`, the compiler derives both laws from `+` on the fields. In general, a proved law lets the compiler regroup freely, while a claim that was only tested permits one fixed grouping and can still be wrong, and the report says which you have. If an operator isn't associative, use `foldl` or `foldr` to say which way to fold. A reduction over nothing can't be silently wrong: the `else` gives the answer for an empty collection, and without it the result type includes `#empty`, unless the operator has an identity or the collection is known not to be empty.
 
@@ -1088,30 +1240,53 @@ same = words.group(w -> w.len).count;   // the same table, written as a pull
 
 With four words, `hist` gets one push per word, and `same` reaches the same table through a group:
 
-```text
-input: words    pushes into hist     hist
-+---+-----+     +---+-----------+    +-----+---+
-| i | w   |     | i | push      |    | len | n |
-+===+=====+     +===+===========+    +=====+===+
-| 0 | a   |     | 0 | [1] <- 1  |    | 1   | 1 |
-| 1 | to  |     | 1 | [2] <- 1  |    | 2   | 2 |
-| 2 | be  |     | 2 | [2] <- 1  |    | 3   | 1 |
-| 3 | not |     | 3 | [3] <- 1  |    +-----+---+
-+---+-----+     +---+-----------+
+<table>
+<tr><th>input: <code>words</code></th><th><code>hist</code> pushes</th><th><code>hist</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>w</code></th></tr>
+<tr><td><code>0</code></td><td><code>a</code></td></tr>
+<tr><td><code>1</code></td><td><code>to</code></td></tr>
+<tr><td><code>2</code></td><td><code>be</code></td></tr>
+<tr><td><code>3</code></td><td><code>not</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>push</code></th></tr>
+<tr><td><code>0</code></td><td><code>[1] &lt;- 1</code></td></tr>
+<tr><td><code>1</code></td><td><code>[2] &lt;- 1</code></td></tr>
+<tr><td><code>2</code></td><td><code>[2] &lt;- 1</code></td></tr>
+<tr><td><code>3</code></td><td><code>[3] &lt;- 1</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>len</code></th><th><code>n</code></th></tr>
+<tr><td><code>1</code></td><td><code>1</code></td></tr>
+<tr><td><code>2</code></td><td><code>2</code></td></tr>
+<tr><td><code>3</code></td><td><code>1</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-same before .count    same after .count
-+-----+---+-----+     +-----+---+
-| len | i | w   |     | len | n |
-+=====+===+=====+     +=====+===+
-| 1   | 0 | a   |     | 1   | 1 |
-+-----+---+-----+     | 2   | 2 |
-| 2   | 1 | to  |     | 3   | 1 |
-|     +---+-----+     +-----+---+
-|     | 2 | be  |
-+-----+---+-----+
-| 3   | 3 | not |
-+-----+---+-----+
-```
+<table>
+<tr><th><code>same</code> before <code>.count</code></th><th><code>same</code> after <code>.count</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>len</code></th><th><code>i</code></th><th><code>w</code></th></tr>
+<tr><td><code>1</code></td><td><code>0</code></td><td><code>a</code></td></tr>
+<tr><td rowspan="2"><code>2</code></td><td><code>1</code></td><td><code>to</code></td></tr>
+<tr><td><code>2</code></td><td><code>be</code></td></tr>
+<tr><td><code>3</code></td><td><code>3</code></td><td><code>not</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>len</code></th><th><code>n</code></th></tr>
+<tr><td><code>1</code></td><td><code>1</code></td></tr>
+<tr><td><code>2</code></td><td><code>2</code></td></tr>
+<tr><td><code>3</code></td><td><code>1</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 Sometimes it's clearer to say where each value goes (a push) than where each value comes from (a pull). `hist` can take pushes from many places, and `reducer((+))` adds up the values that land on one key. Because a push only contributes a value and never reads or overwrites one, parallel code can push with no locks. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same thing, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
 
@@ -1134,44 +1309,71 @@ pairs = for i in 0..<n, j in i+1..<n { (i, j) };
 
 On small sample data, where `o1` stands for the order with key 1, and `p1` and `s10` likewise:
 
-```text
-input: orders          input: payments
-+---------+-------+    +---------+---------+
-| orderId | order |    | orderId | payment |
-+=========+=======+    +=========+=========+
-| 1       | o1    |    | 1       | p1      |
-| 2       | o2    |    | 3       | p3      |
-| 3       | o3    |    +---------+---------+
-+---------+-------+
+<table>
+<tr><th>input: <code>orders</code></th><th>input: <code>payments</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>orderId</code></th><th><code>order</code></th></tr>
+<tr><td><code>1</code></td><td><code>o1</code></td></tr>
+<tr><td><code>2</code></td><td><code>o2</code></td></tr>
+<tr><td><code>3</code></td><td><code>o3</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>orderId</code></th><th><code>payment</code></th></tr>
+<tr><td><code>1</code></td><td><code>p1</code></td></tr>
+<tr><td><code>3</code></td><td><code>p3</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-paid                         unpaid
-+---------+-------------+    +---------+-------+
-| orderId | value       |    | orderId | order |
-+=========+=============+    +=========+=======+
-| 1       | (o1, p1)    |    | 2       | o2    |
-| 2       | (o2, #none) |    +---------+-------+
-| 3       | (o3, p3)    |
-+---------+-------------+
+<table>
+<tr><th><code>paid</code></th><th><code>unpaid</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>orderId</code></th><th><code>value</code></th></tr>
+<tr><td><code>1</code></td><td><code>(o1, p1)</code></td></tr>
+<tr><td><code>2</code></td><td><code>(o2, #none)</code></td></tr>
+<tr><td><code>3</code></td><td><code>(o3, p3)</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>orderId</code></th><th><code>order</code></th></tr>
+<tr><td><code>2</code></td><td><code>o2</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-input: shipments                 shipped
-+------------+--------------+    +-----------------------+-----------+
-| shipmentId | shipment     |    | (orderId, shipmentId) | value     |
-+============+==============+    +=======================+===========+
-| 10         | s10, order 1 |    | (1, 10)               | (o1, s10) |
-| 11         | s11, order 1 |    | (1, 11)               | (o1, s11) |
-| 12         | s12, order 3 |    | (3, 12)               | (o3, s12) |
-+------------+--------------+    +-----------------------+-----------+
+<table>
+<tr><th>input: <code>shipments</code></th><th><code>shipped</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>shipmentId</code></th><th><code>shipment</code></th></tr>
+<tr><td><code>10</code></td><td><code>s10, order 1</code></td></tr>
+<tr><td><code>11</code></td><td><code>s11, order 1</code></td></tr>
+<tr><td><code>12</code></td><td><code>s12, order 3</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>(orderId, shipmentId)</code></th><th><code>value</code></th></tr>
+<tr><td><code>(1, 10)</code></td><td><code>(o1, s10)</code></td></tr>
+<tr><td><code>(1, 11)</code></td><td><code>(o1, s11)</code></td></tr>
+<tr><td><code>(3, 12)</code></td><td><code>(o3, s12)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-input: n = 3
-pairs
-+--------+--------+
-| (i, j) | value  |
-+========+========+
-| (0, 1) | (0, 1) |
-| (0, 2) | (0, 2) |
-| (1, 2) | (1, 2) |
-+--------+--------+
-```
+<table>
+<tr><th><code>pairs</code> for <code>input n = 3</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>(i, j)</code></th><th><code>value</code></th></tr>
+<tr><td><code>(0, 1)</code></td><td><code>(0, 1)</code></td></tr>
+<tr><td><code>(0, 2)</code></td><td><code>(0, 2)</code></td></tr>
+<tr><td><code>(1, 2)</code></td><td><code>(1, 2)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. For a `for` over several collections, the compiler can pick a hash join or a merge join, two standard ways to avoid comparing every pair, instead of two nested loops. Queries and loops compile to the same internal form, so they are optimized together.
 
@@ -1191,29 +1393,38 @@ sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, c
 
 With four clicks in time order, `ann`'s clicks at `i` = 1 and `i` = 3 land in different chunks because `bob` clicked between them:
 
-```text
-input: clicks        sessions before .map
-+---+-----------+    +-----+---+-----------+
-| i | click     |    | run | i | click     |
-+===+===========+    +=====+===+===========+
-| 0 | ann, t=10 |    | 0   | 0 | ann, t=10 |
-| 1 | ann, t=12 |    |     +---+-----------+
-| 2 | bob, t=15 |    |     | 1 | ann, t=12 |
-| 3 | ann, t=20 |    +-----+---+-----------+
-+---+-----------+    | 1   | 2 | bob, t=15 |
-                     +-----+---+-----------+
-                     | 2   | 3 | ann, t=20 |
-                     +-----+---+-----------+
+<table>
+<tr><th>input: <code>clicks</code></th><th><code>sessions</code> before <code>.map</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>click</code></th></tr>
+<tr><td><code>0</code></td><td><code>ann, t=10</code></td></tr>
+<tr><td><code>1</code></td><td><code>ann, t=12</code></td></tr>
+<tr><td><code>2</code></td><td><code>bob, t=15</code></td></tr>
+<tr><td><code>3</code></td><td><code>ann, t=20</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>run</code></th><th><code>i</code></th><th><code>click</code></th></tr>
+<tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>ann, t=10</code></td></tr>
+<tr><td><code>1</code></td><td><code>ann, t=12</code></td></tr>
+<tr><td><code>1</code></td><td><code>2</code></td><td><code>bob, t=15</code></td></tr>
+<tr><td><code>2</code></td><td><code>3</code></td><td><code>ann, t=20</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-sessions after .map
-+-----+------------------------------+
-| run | session                      |
-+=====+==============================+
-| 0   | Session(start: 10, count: 2) |
-| 1   | Session(start: 15, count: 1) |
-| 2   | Session(start: 20, count: 1) |
-+-----+------------------------------+
-```
+<table>
+<tr><th><code>sessions</code> after <code>.map</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>run</code></th><th><code>session</code></th></tr>
+<tr><td><code>0</code></td><td><code>Session(start: 10, count: 2)</code></td></tr>
+<tr><td><code>1</code></td><td><code>Session(start: 15, count: 1)</code></td></tr>
+<tr><td><code>2</code></td><td><code>Session(start: 20, count: 1)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 If you have ever split a list into runs by hand, you know the easy mistake is forgetting to flush the last group. Here that can't happen, because the last chunk is included. And since a chunk exists only because a click fell into it, `s.first` always has a value, with no `#none` case to handle.
 
@@ -1237,22 +1448,20 @@ input: s = 2.0, v = [1.0, 2.0]
 scale(2.0, [1.0, 2.0]) = [2.0, 4.0]
 ```
 
-The product, drawn as a map of rows to columns to values:
+The product, drawn as a map from rows `r` to columns `k` to values `v`:
 
-```text
-c
-+---+---+------+
-| r | k | v    |
-+===+===+======+
-| 0 | 0 | 4.0  |
-|   +---+------+
-|   | 1 | 5.0  |
-+---+---+------+
-| 1 | 0 | 10.0 |
-|   +---+------+
-|   | 1 | 11.0 |
-+---+---+------+
-```
+<table>
+<tr><th><code>c</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>r</code></th><th><code>k</code></th><th><code>v</code></th></tr>
+<tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>4.0</code></td></tr>
+<tr><td><code>1</code></td><td><code>5.0</code></td></tr>
+<tr><td rowspan="2"><code>1</code></td><td><code>0</code></td><td><code>10.0</code></td></tr>
+<tr><td><code>1</code></td><td><code>11.0</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 A name in a shape that isn't bound to an integer is a size variable of the signature, so `[T; n, n]` is a square matrix. Dimension checks are ordinary type checks. Between two vectors or matrices `*` is an error, because it could mean several products: you write `matmul`, `dot` or `cross`. `matmul` isn't built in: it's a one-line remap with a reduction, in the same style as the `pivot` above.
 
@@ -1273,26 +1482,44 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
 
 With `xs` = 3, 1, 4, with `a` and `b` arrays of the code points of "ab" and "ac", and with a `cost` of 0 for equal characters and 1 otherwise, `d[1][1]` is the edit distance, 1. The last table shows `d` as a grid with its boundary values, which are read but aren't entries of the result:
 
-```text
-input: xs     running           d
-+---+---+     +---+---+         +---+---+---+
-| i | x |     | i | v |         | i | j | v |
-+===+===+     +===+===+         +===+===+===+
-| 0 | 3 |     | 0 | 3 |         | 0 | 0 | 0 |
-| 1 | 1 |     | 1 | 4 |         |   +---+---+
-| 2 | 4 |     | 2 | 8 |         |   | 1 | 1 |
-+---+---+     +---+---+         +---+---+---+
-                                | 1 | 0 | 1 |
-                                |   +---+---+
-                                |   | 1 | 1 |
-                                +---+---+---+
+<table>
+<tr><th>input: <code>xs</code></th><th><code>running</code></th><th><code>d</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>x</code></th></tr>
+<tr><td><code>0</code></td><td><code>3</code></td></tr>
+<tr><td><code>1</code></td><td><code>1</code></td></tr>
+<tr><td><code>2</code></td><td><code>4</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>v</code></th></tr>
+<tr><td><code>0</code></td><td><code>3</code></td></tr>
+<tr><td><code>1</code></td><td><code>4</code></td></tr>
+<tr><td><code>2</code></td><td><code>8</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>j</code></th><th><code>v</code></th></tr>
+<tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>0</code></td></tr>
+<tr><td><code>1</code></td><td><code>1</code></td></tr>
+<tr><td rowspan="2"><code>1</code></td><td><code>0</code></td><td><code>1</code></td></tr>
+<tr><td><code>1</code></td><td><code>1</code></td></tr>
+</table>
+</td></tr>
+</table>
 
-d as a grid, with its boundary values
-      j = -1   0   1
-i = -1     0   1   2
-i =  0     1   0   1
-i =  1     2   1   1
-```
+<table>
+<tr><th><code>d</code> as a grid, with its boundary values</th></tr>
+<tr><td valign="top">
+<table>
+<tr><th></th><th><code>j = -1</code></th><th><code>j = 0</code></th><th><code>j = 1</code></th></tr>
+<tr><th><code>i = -1</code></th><td><code>0</code></td><td><code>1</code></td><td><code>2</code></td></tr>
+<tr><th><code>i = 0</code></th><td><code>1</code></td><td><code>0</code></td><td><code>1</code></td></tr>
+<tr><th><code>i = 1</code></th><td><code>2</code></td><td><code>1</code></td><td><code>1</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 The code reads as it would on a whiteboard. The first line is a running total. The second is edit distance, the fewest single-character changes that turn one string into another, and it needs no explicit table and no choice of memoization (keeping each result for reuse) or fill order. The `with` clauses give the edges of the table: `d[-1][j]` is `j + 1` and `d[i][-1]` is `i + 1` for every `i` from 0 up, the costs against an empty string. The compiler reads the dependencies and picks a plan: it fills the table across your cores in dependency order if you need most of it, and memoizes on demand if you only touch part of it. In most languages, moving between those two plans means rewriting the code.
 
@@ -1307,18 +1534,36 @@ state[i] = csvStep(state[i-1], text::codepoints[i]) with state[-1] = #outsideQuo
 
 With `xs` = 2, -3, 4, -1, 2, `best` is 5. For the text `a"b"`, if `csvStep` switches state at each quote character:
 
-```text
-input: xs     cur           state
-+---+----+    +---+----+    +---+------+----------------+
-| i | x  |    | i | v  |    | i | char | state          |
-+===+====+    +===+====+    +===+======+================+
-| 0 | 2  |    | 0 | 2  |    | 0 | a    | #outsideQuotes |
-| 1 | -3 |    | 1 | -1 |    | 1 | "    | #insideQuotes  |
-| 2 | 4  |    | 2 | 4  |    | 2 | b    | #insideQuotes  |
-| 3 | -1 |    | 3 | 3  |    | 3 | "    | #outsideQuotes |
-| 4 | 2  |    | 4 | 5  |    +---+------+----------------+
-+---+----+    +---+----+
-```
+<table>
+<tr><th>input: <code>xs</code></th><th><code>cur</code></th><th><code>state</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>x</code></th></tr>
+<tr><td><code>0</code></td><td><code>2</code></td></tr>
+<tr><td><code>1</code></td><td><code>-3</code></td></tr>
+<tr><td><code>2</code></td><td><code>4</code></td></tr>
+<tr><td><code>3</code></td><td><code>-1</code></td></tr>
+<tr><td><code>4</code></td><td><code>2</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>v</code></th></tr>
+<tr><td><code>0</code></td><td><code>2</code></td></tr>
+<tr><td><code>1</code></td><td><code>-1</code></td></tr>
+<tr><td><code>2</code></td><td><code>4</code></td></tr>
+<tr><td><code>3</code></td><td><code>3</code></td></tr>
+<tr><td><code>4</code></td><td><code>5</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>i</code></th><th><code>char</code></th><th><code>state</code></th></tr>
+<tr><td><code>0</code></td><td><code>a</code></td><td><code>#outsideQuotes</code></td></tr>
+<tr><td><code>1</code></td><td><code>"</code></td><td><code>#insideQuotes</code></td></tr>
+<tr><td><code>2</code></td><td><code>b</code></td><td><code>#insideQuotes</code></td></tr>
+<tr><td><code>3</code></td><td><code>"</code></td><td><code>#outsideQuotes</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 The first recurrence is maximum subarray, the largest sum of neighboring entries. The compiler recognizes that its step composes in any grouping, so it runs as a parallel scan, which computes all the running results across many cores. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job usually done one character at a time splits across cores.
 
@@ -1342,15 +1587,16 @@ steps = sim::len;
 
 Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `accel` always 1 and `bound` = 2, `final.x` is 3 and `steps` is 2. The starting values aren't part of `sim::frames`:
 
-```text
-sim::frames
-+---+-------+-------+
-| t | pos.x | vel.x |
-+===+=======+=======+
-| 0 | 1     | 2     |
-| 1 | 3     | 3     |
-+---+-------+-------+
-```
+<table>
+<tr><th><code>sim::frames</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>t</code></th><th><code>pos.x</code></th><th><code>vel.x</code></th></tr>
+<tr><td><code>0</code></td><td><code>1</code></td><td><code>2</code></td></tr>
+<tr><td><code>1</code></td><td><code>3</code></td><td><code>3</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 Both updates here read the old `pos`, so they don't race and their order doesn't matter. Each step writes each variable once, so a data race can't be written. Every read in a step sees the same snapshot of the previous step, so you need no temporary variables to keep a simultaneous update straight.
 
@@ -1367,15 +1613,22 @@ previous = run::frames[run::len - 2]?.doc else empty;
 
 With two edits `e1` and `e2`, and with `empty` the empty document:
 
-```text
-input: edits     run::frames
-+---+------+     +---+-----------------+
-| t | edit |     | t | doc             |
-+===+======+     +===+=================+
-| 0 | e1   |     | 0 | empty.patch(e1) |
-| 1 | e2   |     | 1 | that.patch(e2)  |
-+---+------+     +---+-----------------+
-```
+<table>
+<tr><th>input: <code>edits</code></th><th><code>run::frames</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>t</code></th><th><code>edit</code></th></tr>
+<tr><td><code>0</code></td><td><code>e1</code></td></tr>
+<tr><td><code>1</code></td><td><code>e2</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>t</code></th><th><code>doc</code></th></tr>
+<tr><td><code>0</code></td><td><code>empty.patch(e1)</code></td></tr>
+<tr><td><code>1</code></td><td><code>that.patch(e2)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 `previous` is the document after `e1`. With no edits, or just one, the lookup finds no frame and `previous` is `empty`.
 
@@ -1411,7 +1664,7 @@ Here `n'` is the value of `n` in the next version of this struct. The method doe
 
 A value no result depends on doesn't have to be computed, so unused fields and unbounded ranges cost nothing extra.
 
-**Syntax:** `for i in n.. { ... }`, unused fields, `.first`. `n..` counts up from `n` with no end, and `.first` is the first value.
+**Syntax:** `for i in n.. { ... }`, `.first`. `n..` counts up from `n` with no end, and `.first` is the first value.
 
 ```zed
 stats(positional data: [f64]) {
@@ -1430,8 +1683,8 @@ firstPrime = (for i in 2.. { i }).where(isPrime).first;
 stats([1.0, 2.0, 3.0]): n = 3.0, mean = 6.0 / 3.0 = 2.0
 m = 2.0, and sd has not run
 
-for i in 2.. = 2, 3, 4, 5, ...
-.where(isPrime) = 2, 3, 5, ...
+firstPrime before .where = 2, 3, 4, 5, ...
+firstPrime before .first = 2, 3, 5, ...
 firstPrime = 2
 ```
 
@@ -1500,16 +1753,23 @@ orders: OrderId ->? { total: rat, note: Utf8String | #none }
 n = orders[id]?.note;     // Utf8String | #none | #notFound | #dbError
 ```
 
-```text
-input: orders              n, for each id
-+----+-------+--------+    +----+-----------+
-| id | total | note   |    | id | n         |
-+====+=======+========+    +====+===========+
-| 1  | 9r    | "gift" |    | 1  | "gift"    |
-| 2  | 4r    | NULL   |    | 2  | #none     |
-+----+-------+--------+    | 3  | #notFound |
-                           +----+-----------+
-```
+<table>
+<tr><th>input: <code>orders</code></th><th><code>n</code>, for each <code>id</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>id</code></th><th><code>total</code></th><th><code>note</code></th></tr>
+<tr><td><code>1</code></td><td><code>9r</code></td><td><code>"gift"</code></td></tr>
+<tr><td><code>2</code></td><td><code>4r</code></td><td><code>NULL</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>id</code></th><th><code>n</code></th></tr>
+<tr><td><code>1</code></td><td><code>"gift"</code></td></tr>
+<tr><td><code>2</code></td><td><code>#none</code></td></tr>
+<tr><td><code>3</code></td><td><code>#notFound</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 If the database can't answer, `n` is `#dbError` for any `id`.
 
@@ -1531,18 +1791,30 @@ report = sales
 
 Here are three sales, shown as region and amount. If sale 7 then changes from 5 to 6, East's total becomes 9 and West's stays 2:
 
-```text
-input: sales            report before .map               report after .map
-+--------+---------+    +--------+--------+---------+    +--------+-----+
-| saleId | sale    |    | region | saleId | sale    |    | region | sum |
-+========+=========+    +========+========+=========+    +========+=====+
-| 7      | East, 5 |    | East   | 7      | East, 5 |    | East   | 8   |
-| 8      | West, 2 |    |        +--------+---------+    | West   | 2   |
-| 9      | East, 3 |    |        | 9      | East, 3 |    +--------+-----+
-+--------+---------+    +--------+--------+---------+
-                        | West   | 8      | West, 2 |
-                        +--------+--------+---------+
-```
+<table>
+<tr><th>input: <code>sales</code></th><th><code>report</code> before <code>.map</code></th><th><code>report</code> after <code>.map</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>saleId</code></th><th><code>sale</code></th></tr>
+<tr><td><code>7</code></td><td><code>East, 5</code></td></tr>
+<tr><td><code>8</code></td><td><code>West, 2</code></td></tr>
+<tr><td><code>9</code></td><td><code>East, 3</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>saleId</code></th><th><code>sale</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>7</code></td><td><code>East, 5</code></td></tr>
+<tr><td><code>9</code></td><td><code>East, 3</code></td></tr>
+<tr><td><code>West</code></td><td><code>8</code></td><td><code>West, 2</code></td></tr>
+</table>
+</td><td valign="top">
+<table>
+<tr><th><code>region</code></th><th><code>sum</code></th></tr>
+<tr><td><code>East</code></td><td><code>8</code></td></tr>
+<tr><td><code>West</code></td><td><code>2</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 Inside the `.map`, East's `rows.map(s -> s.amount)` is `{ 7 -> 5, 9 -> 3 }`, whose `.sum` is 8.
 
@@ -1634,7 +1906,7 @@ These are the values. This page doesn't work out the bound that f::cost reads
 for these functions, beyond what the @cost lines state.
 ```
 
-Every function has a computed upper bound on its work and its parallel depth (the longest chain of operations that must run one after another), which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. These annotations are assertions about the plan the compiler chose. If one is false, the build fails, so a slowdown in a hot path shows up on the commit that caused it, and not later in production.
+Every function has a computed upper bound on its work and its parallel depth (the longest chain of operations that must run one after another), which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. `@cost`, `@fused` and `@noalloc` are assertions about the plan the compiler chose. If one is false, the build fails, so a slowdown in a hot path shows up on the commit that caused it, and not later in production.
 
 ## Code that runs at build time
 
@@ -1786,6 +2058,7 @@ A `law` states a property of your code for the compiler to prove or test.
 **Syntax:** `law name(x: T) = expression;`
 
 ```zed
+// double is the function from Tests next to the code above.
 law doubleIsSum(x: int) = double(x) == x + x;
 law addComm(a: int, b: int) = a + b == b + a;
 law sortTwice(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
@@ -1831,16 +2104,17 @@ reachable = loop {
 law neverBothGreen(ns: Signal, ew: Signal) = (Junction(ns: ns, ew: ew) in reachable.R).implies(ns == #red || ew == #red);
 ```
 
-```text
-reachable.R
-+--------------------------------+--------------------------------+
-| state                          | state                          |
-+================================+================================+
-| Junction(ns: #green, ew: #red) | Junction(ns: #green, ew: #red) |
-| Junction(ns: #red, ew: #green) | Junction(ns: #red, ew: #green) |
-| Junction(ns: #red, ew: #red)   | Junction(ns: #red, ew: #red)   |
-+--------------------------------+--------------------------------+
-```
+<table>
+<tr><th><code>reachable.R</code></th></tr>
+<tr><td valign="top">
+<table>
+<tr><th><code>state</code></th><th><code>state</code></th></tr>
+<tr><td><code>Junction(ns: #green, ew: #red)</code></td><td><code>Junction(ns: #green, ew: #red)</code></td></tr>
+<tr><td><code>Junction(ns: #red, ew: #green)</code></td><td><code>Junction(ns: #red, ew: #green)</code></td></tr>
+<tr><td><code>Junction(ns: #red, ew: #red)</code></td><td><code>Junction(ns: #red, ew: #red)</code></td></tr>
+</table>
+</td></tr>
+</table>
 
 Each row is one state, a `Junction` in the set `R`. A set is a map from each member to itself, so the value column repeats the key. The loop reaches these three states in one step, and the next step adds none. None has both lights green, so the law holds.
 
@@ -1885,7 +2159,7 @@ The compiler places all allocation and freeing.
 
 **Syntax:** `@noalloc`, `@preallocated`. `@noalloc` says the code uses no memory beyond registers, and `@preallocated` says its memory is reserved once, on entry.
 
-Most intermediate collections are never allocated at all, as [Joins](#joins) explains, and this stop is about the rest. Zed has no garbage collector and no lifetimes, and ownership annotations appear only on foreign signatures. Zed values can't form cycles, so exact reference counting (freeing a value when a count of its users reaches zero) is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, blocks of memory whose nodes are freed together, or in id-indexed graphs, whose nodes refer to each other by key, so a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no garbage-collection pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
+Most intermediate collections are never allocated at all, as [Joins](#joins) explains, and this stop is about the rest. Zed has no garbage collector and no lifetimes, and ownership annotations appear only on foreign signatures. Zed values can't form cycles, so exact reference counting (freeing a value when a count of its users reaches zero) is enough, and the compiler removes most of it: where a last use is known statically, the free is placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, blocks of memory whose nodes are freed together, or in id-indexed graphs, whose nodes refer to each other by key, so a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no garbage-collection pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
 
 ### Parallelism and determinism
 
