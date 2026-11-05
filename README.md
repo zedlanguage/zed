@@ -1,4 +1,4 @@
-> [!WARNING]
+> [!NOTE]
 > **Zed is still under construction and is not yet ready for use, but it is coming soon.**
 > Releases will be announced at [x.com/zedlang](https://x.com/zedlang). This page describes the language as it will be when finished.
 
