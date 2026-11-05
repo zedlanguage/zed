@@ -16,6 +16,7 @@ mod judgments;
 mod listing;
 mod oracle;
 mod rec;
+mod rec_order;
 mod refusals;
 mod scaling;
 mod witnesses;

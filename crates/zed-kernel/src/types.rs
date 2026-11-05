@@ -35,7 +35,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::deep;
@@ -158,7 +157,6 @@ pub(crate) fn lit_text(v: &Value) -> String {
     }
 }
 
-#[derive(PartialEq, Eq)]
 enum Node {
     Parts(Parts, Shown),
     Rec(Rec),
@@ -236,9 +234,10 @@ impl PartialEq for Shown {
 impl Eq for Shown {}
 
 /// A recursive type, or a part of a recursive definition's body kept unevaluated: its parts are
-/// `make()`, computed on first use. Two nodes are one type only when they are one node.
+/// `make()`, computed on first use. Two nodes are one type when their keys are equal.
 struct Rec {
-    id: u64,
+    /// What the node stands for, by its group's definitions and arguments: its digest and order.
+    key: rec::Key,
     /// The name, made when first printed: a name spells out its part of the definition, so
     /// making every part's name at once cost the product of the definition's size and depth.
     /// It is a rope holding the texts of the argument types, which [`Type::rope`] makes in its
@@ -250,14 +249,6 @@ struct Rec {
     /// The emptiness its group decides for it, if the group is decided (module `bes`).
     judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
 }
-
-impl PartialEq for Rec {
-    fn eq(&self, other: &Rec) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for Rec {}
 
 impl fmt::Debug for Rec {
     /// The name, made apart from any text under way on this thread, in which a text not made yet
@@ -478,32 +469,33 @@ impl Type {
     }
 
     /// The hash of the contents, computed when the type was made; a recursive node's is its
-    /// identity's, since two such nodes are one type only when they are one node.
+    /// key's, made of its group's definitions and arguments.
     pub(crate) fn digest(&self) -> u64 {
         match &*self.0 {
             Node::Parts(p, _) => p.digest,
-            Node::Rec(r) => mix(4, r.id),
+            Node::Rec(r) => r.key.digest(),
         }
     }
 
     /// The node named `naming()` whose parts are `make()`'s, each computed when first needed.
     /// `make` must not need this node's parts, which a contractive definition ensures.
     fn rec(
+        key: rec::Key,
         naming: impl Fn() -> Rope + Send + Sync + 'static,
         make: impl Fn() -> Type + Send + Sync + 'static,
     ) -> Type {
-        Type::rec_with(Box::new(naming), Box::new(make), None)
+        Type::rec_with(key, Box::new(naming), Box::new(make), None)
     }
 
     /// The node of [`Type::rec`], with its emptiness given by `judge` when there is one.
     fn rec_with(
+        key: rec::Key,
         naming: Box<dyn Fn() -> Rope + Send + Sync>,
         make: Box<dyn Fn() -> Type + Send + Sync>,
         judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
     ) -> Type {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
         Type(Arc::new(Node::Rec(Rec {
-            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            key,
             name: OnceLock::new(),
             naming,
             body: OnceLock::new(),
@@ -514,11 +506,12 @@ impl Type {
 
     /// [`Type::rec`], with `judge()` giving its emptiness when its group decides it.
     fn rec_judged(
+        key: rec::Key,
         naming: impl Fn() -> Rope + Send + Sync + 'static,
         make: impl Fn() -> Type + Send + Sync + 'static,
         judge: impl Fn() -> Option<bool> + Send + Sync + 'static,
     ) -> Type {
-        Type::rec_with(Box::new(naming), Box::new(make), Some(Box::new(judge)))
+        Type::rec_with(key, Box::new(naming), Box::new(make), Some(Box::new(judge)))
     }
 
     /// The emptiness the group of a recursive node decides for it, if any.

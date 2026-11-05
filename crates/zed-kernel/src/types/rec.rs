@@ -102,8 +102,12 @@ pub struct Group(Arc<Checked>);
 
 #[derive(Debug)]
 struct Checked {
-    /// The group's number in [`INSTANCES`]: one per distinct definition list ([`GROUPS`]).
+    /// The group's number in [`INSTANCES`]: one per distinct definition list ([`GROUPS`]). It
+    /// counts the groups the process made before, so it only finds a table entry: no digest
+    /// and no order reads it (deterministic checking, repair REC-id-order).
     number: u64,
+    /// The hash of the definitions ([`digest`]), from which its types' digests are made.
+    digest: u64,
     defs: Vec<Def>,
     /// Each body as a shared tree.
     bodies: Vec<Arc<Node>>,
@@ -123,6 +127,9 @@ struct Node {
     recursive: bool,
     /// Whether the node names a definition that is not plain.
     open: bool,
+    /// The node's place in its group: its number in the order the bodies' nodes are left,
+    /// children first, the bodies in order. A part kept unevaluated is known by it ([`Key`]).
+    at: u32,
     e: Shape,
 }
 
@@ -141,8 +148,9 @@ enum Shape {
 
 impl Node {
     /// The tree of `e`, given which definitions are plain; an index outside `plain` is not.
-    /// Each expression's node is built once its parts' are, from a stack.
-    fn of(e: &Expr, plain: &[bool]) -> Arc<Node> {
+    /// Each expression's node is built once its parts' are, from a stack. Its nodes are
+    /// numbered from `next` on, in the order they are built, children first.
+    fn of(e: &Expr, plain: &[bool], next: &mut u32) -> Arc<Node> {
         enum Step<'a> {
             Visit(&'a Expr),
             Build(&'a Expr),
@@ -187,10 +195,13 @@ impl Node {
                 _ => shape.kids().any(|c| c.open),
             };
             let digest = shape.kids().fold(shape.tag(), |h, c| mix(h, c.digest));
+            let at = *next;
+            *next += 1;
             done.push(Arc::new(Node {
                 digest,
                 recursive,
                 open,
+                at,
                 e: shape,
             }));
         }
@@ -212,6 +223,23 @@ impl Shape {
             Shape::Tuple(_) => 8,
             Shape::Atom(name, _) => mix(9, bytes(name.as_bytes())),
             Shape::Morphism(..) => 10,
+        }
+    }
+
+    /// The top of the shape, without its children or type, for [`Checked::order`]: the kind, the
+    /// index of a parameter or definition, and an atom's name.
+    fn head(&self) -> (u8, usize, &str) {
+        match self {
+            Shape::Param(i) => (1, *i, ""),
+            Shape::Ref(i, _) => (2, *i, ""),
+            Shape::Type(_) => (3, 0, ""),
+            Shape::Union(_) => (4, 0, ""),
+            Shape::And(_) => (5, 0, ""),
+            Shape::Not(_) => (6, 0, ""),
+            Shape::Diff(..) => (7, 0, ""),
+            Shape::Tuple(_) => (8, 0, ""),
+            Shape::Atom(name, _) => (9, 0, name),
+            Shape::Morphism(..) => (10, 0, ""),
         }
     }
 }
@@ -314,10 +342,15 @@ impl Group {
     pub fn new(defs: Vec<Def>) -> Result<Group, Rejection> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let (plain, order) = plain(&defs);
-        let bodies: Vec<Arc<Node>> = defs.iter().map(|d| Node::of(&d.body, &plain)).collect();
+        let mut next = 0;
+        let bodies: Vec<Arc<Node>> = defs
+            .iter()
+            .map(|d| Node::of(&d.body, &plain, &mut next))
+            .collect();
         let digest = digest(&defs, &bodies);
         let g = Group(Arc::new(Checked {
             number: NEXT.fetch_add(1, Ordering::Relaxed),
+            digest,
             defs,
             bodies,
             plain,
@@ -513,9 +546,13 @@ impl Group {
             Entry::Occupied(o) => return o.get().clone(),
             Entry::Vacant(v) => v,
         };
+        let args = slot.key().1.clone();
         let env = Arc::new(Env {
             group: Some(self.clone()),
-            args: slot.key().1.clone(),
+            digest: args
+                .iter()
+                .fold(mix(12, self.0.digest), |h, t| mix(h, t.digest())),
+            args,
             members: (0..self.0.defs.len()).map(|_| OnceLock::new()).collect(),
             judged: OnceLock::new(),
         });
@@ -525,6 +562,7 @@ impl Group {
             let named = e.clone();
             let j = e.clone();
             let t = Type::rec_judged(
+                Key::new(env.clone(), At::Member(i)),
                 move || named.name(i),
                 move || eval(&e.group().0.bodies[i], &e),
                 move || j.judged.get_or_init(|| judge(&j))[i],
@@ -550,7 +588,7 @@ impl Group {
             defs: &self.0.defs,
             params: &self.0.defs[def].params,
             args: None,
-            e: &Node::of(e, &[]),
+            e: &Node::of(e, &[], &mut 0),
         }
         .to_string()
     }
@@ -747,6 +785,8 @@ fn unguarded(e: &Expr, out: &mut BTreeSet<usize>) {
 /// What an expression is evaluated in: the arguments, and the group's types at them.
 struct Env {
     group: Option<Group>,
+    /// A hash of the group's definitions and the arguments' digests.
+    digest: u64,
     args: Vec<Type>,
     /// Each member's type, set when the group is instantiated.
     members: Vec<OnceLock<Type>>,
@@ -758,6 +798,7 @@ impl Env {
     fn ground(args: Vec<Type>) -> Env {
         Env {
             group: None,
+            digest: 0,
             args,
             members: Vec::new(),
             judged: OnceLock::new(),
@@ -782,6 +823,114 @@ impl Env {
                 ")",
             ),
         }
+    }
+}
+
+/// What a recursive node stands for, by which it is hashed and ordered: a member of a group, or
+/// a part of a body kept unevaluated (by its node's place, `Node::at`), at the group's
+/// arguments. It is made of the definitions and the arguments alone, so a type's digest and its
+/// place in every order do not depend on what the process built before it, and checking a
+/// program alone or after another agrees (deterministic checking, repair REC-id-order). Two
+/// nodes with equal keys denote one type: one group at equal arguments is one instance
+/// ([`INSTANCES`]), and a part evaluates alike wherever it is made.
+pub(super) struct Key {
+    digest: u64,
+    env: Arc<Env>,
+    at: At,
+}
+
+/// Which type of an instance a key names.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum At {
+    /// The member of this index.
+    Member(usize),
+    /// The part kept unevaluated at the body node of this number.
+    Part(u32),
+}
+
+impl Key {
+    fn new(env: Arc<Env>, at: At) -> Key {
+        let digest = match at {
+            At::Member(i) => mix(mix(4, env.digest), i as u64),
+            At::Part(n) => mix(mix(13, env.digest), u64::from(n)),
+        };
+        Key { digest, env, at }
+    }
+
+    pub(super) fn digest(&self) -> u64 {
+        self.digest
+    }
+
+    /// The order of two keys: by digest, place, the groups' definitions and the arguments. What
+    /// the definitions' shapes decide is decided here; the pairs of types inside them that tie
+    /// in digest, then the arguments, are pushed to `types` in the order they are to be compared
+    /// when the rest ties, by the caller's loop (`bdd::order`), so that no type is compared by
+    /// recursion here. Time linear in the definitions where the groups differ and tie in
+    /// digest, and constant otherwise.
+    pub(super) fn order<'a>(
+        &'a self,
+        other: &'a Key,
+        types: &mut Vec<(&'a Type, &'a Type)>,
+    ) -> std::cmp::Ordering {
+        let c = self.digest.cmp(&other.digest).then(self.at.cmp(&other.at));
+        if c.is_ne() || Arc::ptr_eq(&self.env, &other.env) {
+            return c;
+        }
+        let (a, b) = (&self.env.group().0, &other.env.group().0);
+        if !Arc::ptr_eq(a, b) {
+            let c = a.order(b, types);
+            if c.is_ne() {
+                return c;
+            }
+        }
+        types.extend(self.env.args.iter().zip(&other.env.args));
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl Checked {
+    /// The order of two groups' definitions, after their digests: names, parameters, then the
+    /// bodies node by node in a loop of its own, each type in them by digest; the pairs of types
+    /// that tie in digest are pushed to `types` ([`Key::order`]).
+    fn order<'a>(
+        &'a self,
+        other: &'a Checked,
+        types: &mut Vec<(&'a Type, &'a Type)>,
+    ) -> std::cmp::Ordering {
+        let c = self
+            .digest
+            .cmp(&other.digest)
+            .then(self.defs.len().cmp(&other.defs.len()));
+        if c.is_ne() {
+            return c;
+        }
+        for (d, e) in self.defs.iter().zip(&other.defs) {
+            let c = d.name.cmp(&e.name).then_with(|| d.params.cmp(&e.params));
+            if c.is_ne() {
+                return c;
+            }
+        }
+        let mut stack: Vec<(&Node, &Node)> = (self.bodies.iter().zip(&other.bodies).rev())
+            .map(|(x, y)| (&**x, &**y))
+            .collect();
+        while let Some((x, y)) = stack.pop() {
+            let (p, q) = (x.e.kids(), y.e.kids());
+            let c = (x.digest.cmp(&y.digest))
+                .then_with(|| x.e.head().cmp(&y.e.head()))
+                .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
+            if c.is_ne() {
+                return c;
+            }
+            if let (Shape::Type(s), Shape::Type(t)) = (&x.e, &y.e) {
+                match s.digest().cmp(&t.digest()) {
+                    std::cmp::Ordering::Equal => types.push((s, t)),
+                    c => return c,
+                }
+            }
+            // The counts are equal, so the pairs from the ends are the pairs in reverse.
+            stack.extend(p.rev().zip(q.rev()).map(|(p, q)| (&**p, &**q)));
+        }
+        std::cmp::Ordering::Equal
     }
 }
 
@@ -862,8 +1011,10 @@ fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
         return eval(e, env);
     }
     let (named, at) = (e.clone(), env.clone());
+    let key = Key::new(env.clone(), At::Part(e.at));
     let (e, env) = (e.clone(), env.clone());
     Type::rec(
+        key,
         move || {
             Show {
                 defs: &at.group().0.defs,

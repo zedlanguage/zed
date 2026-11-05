@@ -270,8 +270,8 @@ fn group(items: Vec<Text>, sep: &'static str, at: At) -> Seg {
 /// A token of a text's contents, a node by its rank ([`Printer::canon`]).
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Tok<'a> {
-    /// A recursive type: its context, its name, and its number.
-    Rec(&'a str, &'a str, u64),
+    /// A recursive type: its context, its name, and the type, whose order breaks a tie of names.
+    Rec(&'a str, &'a str, &'a Type),
     /// Whether the node is named, and the class it has.
     Head(bool, Class),
     Str(&'a str),
@@ -361,9 +361,9 @@ struct Printer {
     index: BTreeMap<Key, usize>,
     texts: Vec<Option<Text>>,
     uses: Vec<u32>,
-    /// A recursive type, named however often it is used: its context, its name and its
-    /// number, which rank it ([`Printer::canon`]).
-    forced: Vec<Option<(String, String, u64)>>,
+    /// A recursive type, named however often it is used: its context, its name and the
+    /// type, by whose order (its key) names alike are ranked ([`Printer::canon`]).
+    forced: Vec<Option<(String, String, Type)>>,
     /// The nodes in the order the walk leaves them.
     post: Vec<usize>,
     /// Each node's item, until visited.
@@ -521,8 +521,8 @@ impl Printer {
 
     /// The tokens of node `i`, its children by `rank`.
     fn sig<'a>(&'a self, i: usize, rank: &[u32]) -> Vec<Tok<'a>> {
-        if let Some((ctx, name, id)) = &self.forced[i] {
-            return vec![Tok::Rec(ctx, name, *id)];
+        if let Some((ctx, name, t)) = &self.forced[i] {
+            return vec![Tok::Rec(ctx, name, t)];
         }
         let text = self.texts[i].as_ref().expect("visited");
         let class = match text.class {
@@ -556,7 +556,7 @@ impl Printer {
         if let Node::Rec(r) = &*t.0 {
             let i = self.index[&Key::Ty(ctx.clone(), t.clone())];
             let ctx_name = ctx.as_deref().unwrap_or("").to_string();
-            self.forced[i] = Some((ctx_name, t.to_string(), r.id));
+            self.forced[i] = Some((ctx_name, t.to_string(), t.clone()));
             let body = r.body.get_or_init(|| (r.make)()).clone();
             return self.refer(Item::Ty(ctx.clone(), body));
         }

@@ -1591,6 +1591,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A private trait (`Tree`) whose method returns `impl DoubleEndedIterator` (a slice chained with an array of `Option`s), so one generic loop compares and one prints two tree types | `types/rec/walk.rs` `Tree`, `equal`, `show`, `Expr::kids`, `Shape::kids` | None | A function from a value to the list of its parts, passed to one walk |
 | Post-order builds with an enum of steps borrowing the input (`Visit`, `Build`; `Eval`, `Component`, `Build`) on a `Vec` and a second `Vec` of results split off per node | `rec` `Node::of`, `eval`, `Show::rope`, `Expr::clone` | Mutation (gap 11) | A state receiver holding the two lists, as for `canon::binders::Levels::term` |
 
+## Entries from REC-id-order (`zed-kernel/src/types.rs`, `types/rec.rs`, `types/bdd.rs`, `types/print.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An order over a key holding an `Arc` to a shared environment, decided at once by `Arc::ptr_eq` when both keys hold one environment or one group, else by contents | `rec::Key::order`, `Checked::order` | Identity (gap 1) | The content digest and an `==` shortcut of the runtime; without them, the comparison of contents alone, O(size of the definitions) per tie |
+| An order that pushes the pairs of nested types it leaves undecided into a caller's `Vec` of borrowed pairs, so the caller's loop compares them without recursion | `rec::Key::order`, `bdd::types` | none (a list of pairs returned) | Return the pairs as a list |
+
 ## Entries from L1.36a (`zed-native/src/exe.rs`, `link.rs`, `hooks.rs`, `lib.rs`, `zedc/src/run.rs`, `main.rs`)
 
 | Rust construct | Sites | Gap | At the port |

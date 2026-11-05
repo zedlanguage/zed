@@ -1482,11 +1482,11 @@ pub(super) enum Step<'a> {
 
 /// The order of the pair in `first`, the order of contents that `Ord` gives every type, row,
 /// morphism type, part, diagram and expression: two types by digest, then by their parts field
-/// by field (a recursive node after every other, two of them by id); two rows by digest, then
-/// component by component; two morphism types by guarantee, permission and value; two
-/// diagrams or expressions by digest, then by atom or connective, then by `hi` and `lo` or by
-/// operands, a diagram before an expression; sequences (rows, atom names, tuple lengths)
-/// lexicographically, a prefix first. Two nodes or expressions found equal are kept by node id
+/// by field (a recursive node after every other, two of them by key, `rec::Key::order`); two
+/// rows by digest, then component by component; two morphism types by guarantee, permission and
+/// value; two diagrams or expressions by digest, then by atom or connective, then by `hi` and
+/// `lo` or by operands, a diagram before an expression; sequences (rows, atom names, tuple
+/// lengths) lexicographically, a prefix first. Two nodes or expressions found equal are kept by node id
 /// and not compared again, so the cost is one step per pair of nodes compared, not one per path
 /// to them, and linear in the size when the two are equal. A loop with its own stack, as a type
 /// can be deeper than the call stack: a row's components are types, whose tuple parts are
@@ -1585,7 +1585,15 @@ fn types<'a>(
         (Node::Parts(p, _), Node::Parts(q, _)) => (p, q),
         (Node::Parts(..), Node::Rec(_)) => return Ordering::Less,
         (Node::Rec(_), Node::Parts(..)) => return Ordering::Greater,
-        (Node::Rec(r), Node::Rec(s)) => return r.id.cmp(&s.id),
+        (Node::Rec(r), Node::Rec(s)) => {
+            // The types inside the keys that tie in digest wait on the stack, in order.
+            let mut ties = Vec::new();
+            let c = r.key.order(&s.key, &mut ties);
+            if c.is_eq() {
+                steps.extend(ties.into_iter().rev().map(|(x, y)| Step::Types(x, y)));
+            }
+            return c;
+        }
     };
     let c = (p.digest.cmp(&q.digest))
         .then(p.bools.cmp(&q.bools))
