@@ -2050,7 +2050,7 @@ mod tests {
 
     #[test]
     fn forced_atoms_of_a_long_conjunction_scale() {
-        // `x_0 ∧ x_1 ∧ … ∧ x_m`, every third literal refused, kept as expressions: built one
+        // `x_0 ∧ x_1 ∧ … ∧ x_{m-1}`, every third literal refused, kept as expressions: built one
         // literal at a time, and as a balanced tree, whose meets join two large sets. A pass that
         // copied the settings found so far at each conjunction took 12.5 ms at 512 literals and
         // 760 ms at 4096 (cross-review XR3, R3_CODEX.md Q7).
