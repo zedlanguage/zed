@@ -26,9 +26,9 @@ fn searching_the_signatures_of_many_functions_scales() {
     // what the unit has found is large beside the searches.
     let units = resolved(25, |n| {
         let mut text: String = (0..20 * n)
-            .map(|j| format!("k{j} = 0.5 + {j};\n"))
+            .map(|j| format!("k{j} = 0.5 + {j}n;\n"))
             .collect();
-        text.extend((0..n).map(|i| format!("h{i}(x) = x / {};\n", i + 1)));
+        text.extend((0..n).map(|i| format!("h{i}(x) = x / {}.0;\n", i + 1)));
         text
     });
     scaling::check(
@@ -38,7 +38,7 @@ fn searching_the_signatures_of_many_functions_scales() {
             let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
             assert_eq!(info.sigs.len(), n);
-            assert_eq!(info.adopt.len(), 21 * n);
+            assert_eq!(info.adopt.len(), 20 * n);
         },
     );
 }

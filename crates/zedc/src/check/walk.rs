@@ -1351,7 +1351,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 s.i += 1;
                 continue;
             };
-            if self.t.uses_in(d.span, &[]).is_empty() {
+            // A closed default of an undeclared parameter gave the parameter its type; one of
+            // a declared parameter is checked at that type, as `scale: f64 = 2` is rejected.
+            if p.ty.is_none() && self.t.uses_in(d.span, &[]).is_empty() {
                 s.i += 1;
                 continue;
             }
@@ -1389,7 +1391,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `e`'s type where `want` is wanted: a lambda or a declared function in a slot of one
-    /// function type is fitted to it, and a numeric literal adopts its one carrier.
+    /// function type is fitted to it, and a generic literal takes its one numeric carrier,
+    /// where a plain literal of another carrier is rejected.
     fn expr_at(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
         if let Some(sig) = want.fun {
             if let ExprKind::Lambda { params, body } = &e.kind {
@@ -1401,7 +1404,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         if let (Some(l), Some(c)) = (literal(e), want.num) {
+            let from = self.info.errors.len();
             let t = self.adopt_to(&l, c);
+            // A rejected literal is its own error: read at the carrier wanted, it causes no
+            // second one where its type is checked.
+            let t = match self.info.errors.len() > from {
+                true => Ty::carrier(c),
+                false => t,
+            };
             return m.ty(t);
         }
         m.job(Job::Expr(e));

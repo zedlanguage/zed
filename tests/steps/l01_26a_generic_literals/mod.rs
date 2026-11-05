@@ -210,12 +210,19 @@ fn a_sum_of_generic_literals_takes_the_carrier_it_meets() {
 
 #[test]
 fn a_quotient_of_generic_literals_is_an_f64_where_nothing_decides() {
-    // `/` is not defined on int, so where nothing decides, `1n / 2n` is an f64, as `1 / 2` is.
+    // `/` is not defined on int, so where nothing decides, `1n / 2n` is an f64. A plain
+    // `1 / 2` is rejected: its literals are ints, and take no other carrier.
     let src = "half() = 1n / 2n;\nh = half();\nmain = 1n / 2n;\n";
     assert_eq!(sig(src, "half"), "() -> f64");
     assert_eq!(value(src, "h"), "0.5");
     assert_eq!(value(src, "main"), "0.5");
-    assert_eq!(value("main = 1 / 2;\n", "main"), "0.5");
+    assert_eq!(
+        type_errors("main = 1 / 2;\n"),
+        [
+            "`1` is an int where `f64` is expected; a literal takes no other carrier; write \
+             `1.0` or `1n` [1]"
+        ]
+    );
     // Where it meets a class, it takes the class's carrier, of f64 and rat.
     let src = "f(positional x) = x * (1n / 2n);\nr = f(3.0);\nq = f(3r);\n";
     assert_eq!(sig(src, "f"), "(T) -> T for T in f64 | rat");

@@ -28,11 +28,15 @@ fn an_operator_with_one_carrier_fixes_it() {
         sig("both(a, b) = a && b;\n", "both"),
         "(a: bool, b: bool) -> bool"
     );
-    // `/` divides f64 and rat only, and the literal `2` adopts f64.
-    assert_eq!(sig("half(x) = x / 2;\n", "half"), "(x: f64) -> f64");
+    // `/` divides f64 and rat only: the literal `2.0` fixes f64, and `2n` leaves both.
+    assert_eq!(sig("half(x) = x / 2.0;\n", "half"), "(x: f64) -> f64");
     assert_eq!(
-        sig("avg(a, b) = (a + b) / 2;\n", "avg"),
+        sig("avg(a, b) = (a + b) / 2.0;\n", "avg"),
         "(a: f64, b: f64) -> f64"
+    );
+    assert_eq!(
+        sig("half(x) = x / 2n;\n", "half"),
+        "(x: T) -> T for T in f64 | rat"
     );
 }
 
@@ -151,13 +155,25 @@ fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
 }
 
 #[test]
-fn a_literal_compared_for_equality_does_not_bound_a_parameter() {
-    // `==` takes any two values, so the literal follows the class and leaves it every
+fn a_generic_literal_compared_for_equality_does_not_bound_a_parameter() {
+    // `==` takes any two values, so the generic literal follows the class and leaves it every
     // carrier: `eq1("a")` is false, not an error.
-    let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
+    let src = "eq1(positional x) = x == 1n;\nmain() = eq1(\"a\");\n";
     let s = sig_of(src, "eq1");
     assert_eq!(s.to_string(), "(_) -> bool");
     assert!(s.bounds.is_empty());
     assert_eq!(s.own.len(), 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
+}
+
+#[test]
+fn a_plain_literal_compared_for_equality_fixes_its_carrier() {
+    // A plain literal narrows the class as an operand does (DESIGN.md L1.26): `x == 1` makes
+    // `x` an int, so `eq1("a")` is rejected.
+    let src = "eq1(positional x) = x == 1;\nmain() = eq1(\"a\");\n";
+    assert_eq!(sig(src, "eq1"), "(int) -> bool");
+    assert_eq!(
+        type_errors(src),
+        ["`eq1` does not take (\"a\") [eq1(\"a\")]"]
+    );
 }

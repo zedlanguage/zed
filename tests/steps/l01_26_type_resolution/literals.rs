@@ -1,7 +1,8 @@
-//! A bare literal adopts the carrier its context expects wherever the context gives one: an
-//! operand of `==` against a parameter whose carrier is inferred, a parameter declared as a
-//! union with one numeric member, and a component of a tuple, at any depth (DESIGN.md
-//! L1.26, sec:domains). The repairs of LIT-adopt.
+//! A generic literal `kn` takes the carrier its context expects wherever the context gives
+//! one: an operand of `==` against a parameter whose carrier is inferred, a parameter declared
+//! as a union with one numeric member, and a component of a tuple, at any depth (DESIGN.md
+//! L1.26, L1.26a, sec:domains). A plain literal keeps its own carrier in each of these places,
+//! and where that carrier is not expected it is rejected with the forms to write.
 
 use std::path::PathBuf;
 
@@ -24,6 +25,18 @@ fn f64(x: f64) -> Value {
     Value::Float(F64::new(x))
 }
 
+/// The menu for the plain literal `lit` where `want` is expected, at the expression `at`.
+fn menu(lit: &str, carrier: &str, want: &str, forms: &str, at: &str) -> String {
+    let forms = match forms {
+        "" => String::new(),
+        f => format!("; write {f}"),
+    };
+    format!(
+        "`{lit}` is {carrier} where `{want}` is expected; a literal takes no other carrier\
+         {forms} [{at}]"
+    )
+}
+
 #[test]
 fn the_readings_unit_passes_every_row() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -35,30 +48,47 @@ fn the_readings_unit_passes_every_row() {
 }
 
 #[test]
-fn a_literal_compared_with_an_inferred_parameter_follows_its_carrier() {
-    let one = "isOne(positional x) = x == 1;\n";
+fn a_generic_literal_compared_with_an_inferred_parameter_follows_its_carrier() {
+    let one = "isOne(positional x) = x == 1n;\n";
     assert_eq!(value(&format!("{one}y = isOne(1.0);\n"), "y"), "true");
     assert_eq!(value(&format!("{one}y = isOne(1r);\n"), "y"), "true");
     assert_eq!(value(&format!("{one}y = isOne(1);\n"), "y"), "true");
     assert_eq!(value(&format!("{one}y = isOne(2.0);\n"), "y"), "false");
     // On either side, and under `-` and `!=`.
-    let left = "isOne(positional x) = 1 == x;\ny = isOne(1.0);\n";
+    let left = "isOne(positional x) = 1n == x;\ny = isOne(1.0);\n";
     assert_eq!(value(left, "y"), "true");
-    let neg = "isMinus(positional x) = x == -1;\ny = isMinus(-1r);\n";
+    let neg = "isMinus(positional x) = x == -1n;\ny = isMinus(-1r);\n";
     assert_eq!(value(neg, "y"), "true");
-    let ne = "notOne(positional x) = x != 1;\ny = notOne(1.0);\n";
+    let ne = "notOne(positional x) = x != 1n;\ny = notOne(1.0);\n";
     assert_eq!(value(ne, "y"), "false");
-    // A decimal literal follows a rat; it never follows an int.
-    let half = "isHalf(positional x) = x == 0.5;\n";
-    assert_eq!(value(&format!("{half}y = isHalf(1r / 2r);\n"), "y"), "true");
-    assert_eq!(value(&format!("{half}y = isHalf(1);\n"), "y"), "false");
 }
 
 #[test]
-fn a_literal_that_is_no_value_of_the_carrier_it_follows_is_unequal() {
-    // 9007199254740993 is no f64: compared with one it keeps its own carrier, and no f64
-    // equals it.
-    let big = "isBig(positional x) = x == 9007199254740993;\n";
+fn a_plain_literal_compared_with_an_inferred_parameter_fixes_its_carrier() {
+    // `x == 1` makes `isOne` take an int, so a call at an f64 is rejected at its argument.
+    let one = "isOne(positional x) = x == 1;\n";
+    assert_eq!(value(&format!("{one}y = isOne(1);\n"), "y"), "true");
+    assert_eq!(
+        type_errors(&format!("{one}y = isOne(1.0);\n")),
+        [menu("1.0", "an f64", "int", "", "1.0")]
+    );
+    // A decimal fixes f64, and no rat is one; a decimal takes no `n`.
+    let half = "isHalf(positional x) = x == 0.5;\n";
+    assert_eq!(value(&format!("{half}y = isHalf(0.5);\n"), "y"), "true");
+    assert_eq!(
+        type_errors(&format!("{half}y = isHalf(0.5r);\n")),
+        ["`isHalf` does not take (5e-1r) [isHalf(0.5r)]"]
+    );
+    assert_eq!(
+        type_errors(&format!("{half}y = isHalf(1);\n")),
+        [menu("1", "an int", "f64", "`1.0` or `1n`", "1")]
+    );
+}
+
+#[test]
+fn a_generic_literal_that_is_no_value_of_the_carrier_it_follows_is_unequal() {
+    // 9007199254740993 is no f64: compared with one at run time, no f64 equals it.
+    let big = "isBig(positional x) = x == 9007199254740993n;\n";
     assert_eq!(
         value(&format!("{big}y = isBig(9007199254740993);\n"), "y"),
         "true"
@@ -80,90 +110,127 @@ fn a_literal_argument_at_an_open_type_variable_keeps_its_own_carrier() {
 }
 
 #[test]
-fn a_literal_adopts_the_one_numeric_member_of_a_union() {
-    let text = "f(positional x: f64 | String) = x is f64;\ny = f(1);\n";
+fn a_literal_at_a_union_with_one_numeric_member() {
+    // The generic literal takes it; the plain one of another carrier is rejected.
+    let text = "f(positional x: f64 | String) = x is f64;\ny = f(1n);\n";
     assert_eq!(adopted(text), [f64(1.0)]);
     assert_eq!(value(text, "y"), "true");
-    let text = "f(positional x: f64 | bool) = x == 1.0;\ny = f(1);\n";
+    assert_eq!(
+        type_errors("f(positional x: f64 | String) = x is f64;\ny = f(1);\n"),
+        [menu("1", "an int", "f64", "`1.0` or `1n`", "1")]
+    );
+    let text = "f(positional x: f64 | bool) = x == 1.0;\ny = f(1n);\n";
     assert_eq!(value(text, "y"), "true");
-    let text = "f(positional x: rat | #none) = x is rat;\ny = f(-2);\n";
+    let text = "f(positional x: rat | #none) = x is rat;\ny = f(-2n);\n";
     assert_eq!(value(text, "y"), "true");
-    // A decimal literal at a union whose one carrier it can adopt is rat.
-    let text = "f(positional x: int | rat) = x is rat;\ny = f(0.5);\n";
+    // A decimal at a union holding int and rat: its `r` form is the one offered.
+    assert_eq!(
+        type_errors("f(positional x: int | rat) = x is rat;\ny = f(0.5);\n"),
+        [menu("0.5", "an f64", "int | rat", "`0.5r`", "0.5")]
+    );
+    let text = "f(positional x: int | rat) = x is rat;\ny = f(0.5r);\n";
     assert_eq!(value(text, "y"), "true");
 }
 
 #[test]
-fn a_literal_keeps_its_carrier_at_a_union_of_two_it_can_adopt() {
+fn a_literal_at_a_union_of_two_carriers() {
     // Its own carrier among them: kept, nothing adopted.
     let text = "f(positional x: int | f64) = x is int;\ny = f(1);\n";
     assert!(adopted(text).is_empty());
     assert_eq!(value(text, "y"), "true");
     let text = "f(positional x: int | f64) = x is f64;\ny = f(0.5);\n";
     assert_eq!(value(text, "y"), "true");
-    // Not among them: the type names no one carrier, which is its own error.
+    // Not among them: a plain literal is rejected with both forms.
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
+        [menu("1", "an int", "rat | f64", "`1.0` or `1r`", "1")]
+    );
+    // A generic literal there names no one carrier, which is its own error.
+    assert_eq!(
+        type_errors("f(positional x: f64 | rat) = x;\ny = f(1n);\n"),
         [
-            "`1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
-             write the one meant, as `1r` or `1.0` [1]"
+            "`1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
+             write the one meant, as `1r` or `1.0` [1n]"
         ]
     );
     assert_eq!(
-        type_errors("f(positional x: f64 | rat) = x;\ny = f(-1);\n"),
+        type_errors("f(positional x: f64 | rat) = x;\ny = f(-1n);\n"),
         [
-            "`-1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
-             write the one meant, as `-1r` or `-1.0` [1]"
+            "`-1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
+             write the one meant, as `-1r` or `-1.0` [1n]"
         ]
     );
 }
 
 #[test]
-fn literals_in_a_tuple_adopt_its_components_carriers() {
-    let text = "f(positional p: (f64, f64)) = p == (1.0, 2.0);\ny = f((1, 2));\n";
+fn generic_literals_in_a_tuple_take_its_components_carriers() {
+    let text = "f(positional p: (f64, f64)) = p == (1.0, 2.0);\ny = f((1n, 2n));\n";
     assert_eq!(adopted(text), [f64(1.0), f64(2.0)]);
     assert_eq!(value(text, "y"), "true");
     // At any depth, beside components that are not literals.
     let text = "f(positional p: ((f64, String), rat)) = p == ((3.0, \"a\"), 1r / 2r);\n\
-                y = f(((3, \"a\"), 0.5));\n";
+                y = f(((3n, \"a\"), 0.5r));\n";
     assert_eq!(value(text, "y"), "true");
     // An inexact component is an error at that literal.
     assert_eq!(
-        type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993, 1));\n"),
-        ["`9007199254740993` is not an f64 [9007199254740993]"]
+        type_errors("f(positional p: (f64, f64)) = p;\ny = f((9007199254740993n, 1n));\n"),
+        ["`9007199254740993n` is not an f64 [9007199254740993n]"]
     );
 }
 
 #[test]
-fn literals_in_a_tuple_adopt_the_carrier_every_shape_of_its_length_holds_there() {
+fn plain_literals_in_a_tuple_keep_their_carriers() {
+    // `(1, 2)` at `(f64, f64)` is rejected, at its first integer.
+    assert_eq!(
+        type_errors("f(positional p: (f64, f64)) = p;\ny = f((1, 2));\n"),
+        [menu("1", "an int", "f64", "`1.0` or `1n`", "1")]
+    );
+    assert_eq!(
+        type_errors("f(positional p: (f64, f64)) = p;\ny = f((1.0, 2));\n"),
+        [menu("2", "an int", "f64", "`2.0` or `2n`", "2")]
+    );
+    assert_eq!(
+        value(
+            "f(positional p: (f64, f64)) = p == (1.0, 2.0);\ny = f((1.0, 2.0));\n",
+            "y"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn generic_literals_in_a_tuple_take_the_carrier_every_shape_of_its_length_holds_there() {
     // A position is a point or a named place with a distance from it: at the second
     // component both shapes hold f64, at the first only one holds a number.
     let ty = "(f64, f64) | (String, f64)";
-    let text = format!("tu(positional p: {ty}) = p == (1.0, 2.0);\ny = tu((1, 2));\n");
+    let text = format!("tu(positional p: {ty}) = p == (1.0, 2.0);\ny = tu((1n, 2n));\n");
     assert_eq!(adopted(&text), [f64(1.0), f64(2.0)]);
     assert_eq!(value(&text, "y"), "true");
-    let text = format!("tu(positional p: {ty}) = p == (\"a\", 2.0);\ny = tu((\"a\", 2));\n");
+    let text = format!("tu(positional p: {ty}) = p == (\"a\", 2.0);\ny = tu((\"a\", 2n));\n");
     assert_eq!(adopted(&text), [f64(2.0)]);
     assert_eq!(value(&text, "y"), "true");
     // A shape of another length does not count.
     let text = "tu(positional p: (f64, f64) | (rat, rat, rat)) = p == (1.0, 2.0);\n\
-                y = tu((1, 2));\n";
+                y = tu((1n, 2n));\n";
     assert_eq!(value(text, "y"), "true");
     // Nested: the inner shapes are those of every outer shape at that component.
     let text = "tu(positional p: ((f64, String), int) | ((String, f64), int)) = \
-                p == ((1.0, \"a\"), 3);\ny = tu(((1, \"a\"), 3));\n";
+                p == ((1.0, \"a\"), 3);\ny = tu(((1n, \"a\"), 3));\n";
     assert_eq!(adopted(text), [f64(1.0)]);
     assert_eq!(value(text, "y"), "true");
-    // Numbers of two carriers at a component across the shapes, neither int: no one carrier,
-    // the same error as for a bare literal.
+    // Numbers of two carriers at a component across the shapes: no one carrier, the same
+    // error as for a lone literal.
     assert_eq!(
-        type_errors("tu(positional p: (f64, String) | (rat, String)) = p;\ny = tu((1, \"a\"));\n"),
+        type_errors("tu(positional p: (f64, String) | (rat, String)) = p;\ny = tu((1n, \"a\"));\n"),
         [
-            "`1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
-             write the one meant, as `1r` or `1.0` [1]"
+            "`1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
+             write the one meant, as `1r` or `1.0` [1n]"
         ]
     );
-    // Two carriers, int among them: the literal keeps int.
+    // Two carriers, int among them: the generic literal is int, as the plain one is.
+    let text = "tu(positional p: (int, String) | (f64, String)) = p == (1, \"a\");\n\
+                y = tu((1n, \"a\"));\n";
+    assert_eq!(value(text, "y"), "true");
     let text = "tu(positional p: (int, String) | (f64, String)) = p == (1, \"a\");\n\
                 y = tu((1, \"a\"));\n";
     assert!(adopted(text).is_empty());
@@ -171,8 +238,8 @@ fn literals_in_a_tuple_adopt_the_carrier_every_shape_of_its_length_holds_there()
 }
 
 /// `tu` at a union of `w` tuple shapes of length 2, all but the last with a string first,
-/// called on `(1, 2)`, on a tuple of `(1, 2)` nested 2 deep at the same shapes inside, and
-/// compared by `==` with `(1, 2)`.
+/// called on `(1n, 2n)`, on a tuple of `(1n, 2n)` nested 2 deep at the same shapes inside, and
+/// compared by `==` with `(1n, 2n)`.
 fn shapes(w: usize) -> String {
     let mut ty: Vec<String> = (0..w - 1)
         .map(|i| format!("(String, f64) | (#a{i}, f64)"))
@@ -180,9 +247,9 @@ fn shapes(w: usize) -> String {
     ty.push("(f64, f64)".into());
     let one = ty.join(" | ");
     format!(
-        "tu(positional p: {one}) = 0;\ny = tu((1, 2));\n\
-         tv(positional p: ({one}, {one})) = 0;\nz = tv(((1, 2), (3, 4)));\n\
-         tw(positional p: {one}) = p == (1, 2);\n"
+        "tu(positional p: {one}) = 0;\ny = tu((1n, 2n));\n\
+         tv(positional p: ({one}, {one})) = 0;\nz = tv(((1n, 2n), (3n, 4n)));\n\
+         tw(positional p: {one}) = p == (1n, 2n);\n"
     )
 }
 
@@ -201,30 +268,57 @@ fn adopting_at_a_union_of_many_tuple_shapes_scales() {
 }
 
 #[test]
-fn literals_in_a_tuple_compared_with_a_tuple_adopt_its_components() {
-    let text = "isOrigin(positional p: (f64, f64)) = p == (0, 0);\n\
+fn literals_in_a_tuple_compared_with_a_tuple() {
+    let text = "isOrigin(positional p: (f64, f64)) = p == (0n, 0n);\n\
                 a = isOrigin((0.0, 0.0));\nb = isOrigin((0.0, 0.5));\n";
     assert_eq!(value(text, "a"), "true");
     assert_eq!(value(text, "b"), "false");
-    // Two literal tuples: the integers adopt the other side's carriers.
-    assert_eq!(value("y = (1, (2, 3)) == (1.0, (2r, 3));\n", "y"), "true");
+    // Two literal tuples: the generic integers take the other side's carriers.
+    assert_eq!(
+        value("y = (1n, (2n, 3n)) == (1.0, (2r, 3));\n", "y"),
+        "true"
+    );
+    // Plain ones are rejected where the other side's carrier is not theirs.
+    assert_eq!(
+        type_errors("y = (1, (2, 3)) == (1.0, (2r, 3));\n"),
+        [
+            menu("1", "an int", "f64", "`1.0` or `1n`", "1"),
+            menu("2", "an int", "rat", "`2r` or `2n`", "2"),
+        ]
+    );
+    // A plain literal beside a value in a tuple: `(x, 1) == (y, z)` with `z: f64`.
+    assert_eq!(
+        type_errors(
+            "f(positional x: f64, positional y: f64, positional z: f64) = (x, 1) == (y, z);\n"
+        ),
+        [menu("1", "an int", "f64", "`1.0` or `1n`", "1")]
+    );
 }
 
 #[test]
-fn sum_reads_literals_at_the_other_components_carrier() {
-    let text = "f(positional x: f64) = sum((x, 2));\ny = f(1.0);\n";
+fn sum_reads_generic_literals_at_the_other_components_carrier() {
+    let text = "f(positional x: f64) = sum((x, 2n));\ny = f(1.0);\n";
     assert_eq!(value(text, "y"), "3.0");
-    let text = "f(positional x: f64) = sum((2, x, 3));\ny = f(1.0);\n";
+    let text = "f(positional x: f64) = sum((2n, x, 3n));\ny = f(1.0);\n";
     assert_eq!(value(text, "y"), "6.0");
-    assert_eq!(value("y = sum((1, 2.5));\n", "y"), "3.5");
     assert_eq!(value("y = sum((1, 2));\n", "y"), "3");
+    // A plain literal of another carrier is rejected, and only once: `sum` adds no error of
+    // its own after the `+` it applies.
+    assert_eq!(
+        type_errors("f(positional x: f64) = sum((x, 2));\n"),
+        [menu("2", "an int", "f64", "`2.0` or `2n`", "2")]
+    );
+    assert_eq!(
+        type_errors("y = sum((1, 2.5));\n"),
+        [menu("1", "an int", "f64", "`1.0` or `1n`", "1")]
+    );
 }
 
-/// `isAt((0, 0, …))` of `w` components, compared with a tuple of `w` literals, and `sum` of
-/// `w` literals beside a parameter.
+/// `isAt((0n, 1n, …))` of `w` components, compared with a tuple of `w` generic literals, and
+/// `sum` of `w` generic literals beside a parameter.
 fn wide(w: usize) -> String {
     let fs = vec!["f64"; w].join(", ");
-    let zs: Vec<String> = (0..w).map(|i| i.to_string()).collect();
+    let zs: Vec<String> = (0..w).map(|i| format!("{i}n")).collect();
     let zs = zs.join(", ");
     format!(
         "isAt(positional p: ({fs})) = p == ({zs});\ny = isAt(({zs}));\n\
@@ -232,13 +326,13 @@ fn wide(w: usize) -> String {
     )
 }
 
-/// `isAt` of a tuple nested `d` deep, `((…(0, 0)…, 0), 0)`, at f64 components, called on the
-/// same tuple of literals and compared with it.
+/// `isAt` of a tuple nested `d` deep, `((…(0n, 0n)…, 0n), 0n)`, at f64 components, called on
+/// the same tuple of generic literals and compared with it.
 fn deep(d: usize) -> String {
-    let (mut ty, mut lit) = ("f64".to_string(), "0".to_string());
+    let (mut ty, mut lit) = ("f64".to_string(), "0n".to_string());
     for _ in 0..d {
         ty = format!("({ty}, f64)");
-        lit = format!("({lit}, 0)");
+        lit = format!("({lit}, 0n)");
     }
     format!("isAt(positional p: {ty}) = p == {lit};\ny = isAt({lit});\n")
 }
@@ -293,7 +387,7 @@ fn adopting_the_literals_of_a_deep_tuple_scales() {
         .unwrap();
 }
 
-/// The operands of `p == ((…(0, 0)…, 0), 0)`, the tuple nested `d` deep, with `p` at f64
+/// The operands of `p == ((…(0n, 0n)…, 0n), 0n)`, the tuple nested `d` deep, with `p` at f64
 /// components, as in [`deep`].
 fn deep_operands(d: usize) -> zedc::check::Operands {
     use zedc::check::ty::{Carrier, Ty};
@@ -304,9 +398,9 @@ fn deep_operands(d: usize) -> zedc::check::Operands {
         }
         t
     };
-    let mut lit = "0".to_string();
+    let mut lit = "0n".to_string();
     for _ in 0..d {
-        lit = format!("({lit}, 0)");
+        lit = format!("({lit}, 0n)");
     }
     let stmts = zed_tests::deep::statements(&format!("y = {lit};\n"));
     let Some(zedc::ast::StmtKind::Bind { value, .. }) = stmts.into_iter().next().map(|s| s.kind)
@@ -345,50 +439,65 @@ fn pairing_the_sides_of_a_deep_comparison_scales() {
 }
 
 #[test]
-fn a_literal_compared_with_a_union_follows_the_one_carrier_it_can_adopt() {
-    // One numeric member: the literal adopts it.
-    let text = "f(positional x: f64 | String) = x == 1;\ny = f(1.0);\n";
+fn a_literal_compared_with_a_union() {
+    // One numeric member: the generic literal takes it, the plain one of another carrier is
+    // rejected.
+    let text = "f(positional x: f64 | String) = x == 1n;\ny = f(1.0);\n";
     assert_eq!(adopted(text), [f64(1.0)]);
     assert_eq!(value(text, "y"), "true");
+    assert_eq!(
+        type_errors("f(positional x: f64 | String) = x == 1;\n"),
+        [menu("1", "an int", "f64", "`1.0` or `1n`", "1")]
+    );
     // Two, its own among them: it keeps its own, and an f64 is not an int.
     let text = "f(positional x: int | f64) = x == 1;\na = f(1);\nb = f(1.0);\n";
     assert!(adopted(text).is_empty());
     assert_eq!(value(text, "a"), "true");
     assert_eq!(value(text, "b"), "false");
-    // Two, its own not among them: the same error as at a parameter, on either side.
-    let want = "`1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
-                write the one meant, as `1r` or `1.0` [1]";
+    // Two, its own not among them: the plain literal is rejected, on either side, and the
+    // generic one names no one carrier.
+    let want = menu("1", "an int", "rat | f64", "`1.0` or `1r`", "1");
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = x == 1;\n"),
-        [want]
+        [want.clone()]
     );
     assert_eq!(
         type_errors("f(positional x: f64 | rat) = 1 != x;\n"),
-        [want]
+        [want.clone()]
+    );
+    assert_eq!(
+        type_errors("f(positional x: f64 | rat) = x == 1n;\n"),
+        [
+            "`1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
+             write the one meant, as `1r` or `1.0` [1n]"
+        ]
+    );
+    // A class that `++` has narrowed to String holds no number.
+    assert_eq!(
+        type_errors("f(positional x) = (x ++ \"a\" == \"a\") && x == 1;\n"),
+        ["`1` is an int, compared with a value of `String`, which holds no number [1]"]
     );
 }
 
 #[test]
-fn literals_in_a_tuple_compared_with_a_union_of_tuple_shapes_adopt_across_the_shapes() {
+fn generic_literals_in_a_tuple_compared_with_a_union_of_tuple_shapes_take_across_the_shapes() {
     let ty = "(f64, f64) | (String, f64)";
     let text = format!(
-        "isAt(positional p: {ty}) = p == (1, 2);\na = isAt((1.0, 2.0));\nb = isAt((\"a\", 2.0));\n"
+        "isAt(positional p: {ty}) = p == (1n, 2n);\na = isAt((1.0, 2.0));\n\
+         b = isAt((\"a\", 2.0));\n"
     );
     assert_eq!(adopted(&text), [f64(1.0), f64(2.0)]);
     assert_eq!(value(&text, "a"), "true");
     assert_eq!(value(&text, "b"), "false");
-    let text = format!("isAt(positional p: {ty}) = (\"a\", 2) == p;\ny = isAt((\"a\", 2.0));\n");
+    let text = format!("isAt(positional p: {ty}) = (\"a\", 2n) == p;\ny = isAt((\"a\", 2.0));\n");
     assert_eq!(value(&text, "y"), "true");
     // Nested, and beside a shape of another length.
     let text = "isAt(positional p: ((f64, String), int) | ((String, f64), int) | (rat, rat, rat)) = \
-                p == ((1, \"a\"), 3);\ny = isAt(((1.0, \"a\"), 3));\n";
+                p == ((1n, \"a\"), 3);\ny = isAt(((1.0, \"a\"), 3));\n";
     assert_eq!(value(text, "y"), "true");
     // Numbers of two carriers at a component across the shapes, neither the literal's own.
     assert_eq!(
         type_errors("isAt(positional p: (f64, f64) | (rat, rat)) = p == (1, 2.0);\n"),
-        [
-            "`1` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
-             write the one meant, as `1r` or `1.0` [1]"
-        ]
+        [menu("1", "an int", "rat | f64", "`1.0` or `1r`", "1")]
     );
 }

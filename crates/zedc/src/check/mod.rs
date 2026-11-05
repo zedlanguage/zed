@@ -2244,25 +2244,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
-    /// Gives class `r` its type: the first of int, f64 and rat it may take if a literal that
-    /// neither follows nor is generic joined it, or a generic one with no other operand and no
-    /// parameter of the class in scope at it ([`Info::witness`]), every literal adopting it;
-    /// a type variable if it may take any value; its carrier if one; a type variable bounded
-    /// by its carriers if several; else the unknown.
-    ///
-    /// Complexity tradeoff: a class that a literal joined takes one carrier, the first of int,
-    /// f64 and rat, so a function such as `f(x) = x * 2` takes int only, and a call at f64 is
-    /// rejected ("`f` does not take (1.5)") though the body would check there. Why: the body
-    /// elaborates once; keeping each carrier a literal may adopt would elaborate the body once
-    /// per combination of carriers over its classes, 3^k for k such classes. Trigger: a
-    /// parameter's class joined by a literal that does not follow another operand's carrier.
-    /// Test: `l01_26_type_resolution::adoption::a_body_keeps_the_arrows_with_the_fewest_adoptions`.
-    /// COMPLEXITY.md Kept row "undeclared parameters (check), `apply`"; docs/thresholds.md
-    /// replacement 1. A complete solution would give the class a type variable bounded by its
-    /// numeric carriers and elaborate the literal at each carrier the calls use (one
-    /// elaboration per carrier used, not per combination). The written way out is a generic
-    /// literal (step L1.26a): `f(x) = x * 2n` takes int, f64 and rat, its `2n` taking the
-    /// carrier of `x` by one `match` at run time.
+    /// Gives class `r` its type: its numeric carrier if a plain literal joined it, which keeps
+    /// only the literal's own carrier (`f(x) = x * 2` takes int, as `2` is one), or a generic
+    /// one with no other operand and no parameter of the class in scope at it
+    /// ([`Info::witness`]), which takes the first of int, f64 and rat the class may take,
+    /// every literal adopting it; a type variable if it may take any value; its carrier if
+    /// one; a type variable bounded by its carriers if several; else the unknown. A function
+    /// meant for every carrier writes the generic literal (step L1.26a): `f(x) = x * 2n` takes
+    /// int, f64 and rat, its `2n` taking the carrier of `x` by one `match` at run time.
     fn resolve(&mut self, r: usize) {
         let (mask, lits) = (self.classes[r].mask, self.classes[r].lits.clone());
         // A generic literal with no other operand takes the carrier from a parameter of the
@@ -2887,11 +2876,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// `==` and `!=`: any two values; a literal adopts the carrier the other side's type gives
-    /// it by the rule of a parameter ([`carriers_in`]), and of two literals the integer adopts
-    /// the other's. Two tuples of one length are paired component by component, at any depth,
-    /// across every tuple shape of that length a side's type holds, as [`adopted`] pairs them:
-    /// `p == (1, 2)` with `p: (f64, f64) | (String, f64)` reads both literals at `f64`.
+    /// `==` and `!=`: any two values; a literal meets the other side's type by the rule of a
+    /// parameter ([`Ck::follow`], [`expected`]), so `x == 1` with `x: f64` is rejected and
+    /// `x == 1n` is true at `1.0`; of two literals a generic one takes the other's carrier, and
+    /// two plain ones of two carriers are rejected (`1 == 1.0`). Two tuples of one length are
+    /// paired component by component, at any depth, across every tuple shape of that length a
+    /// side's type holds, as [`adopted`] pairs them: `p == (1n, 2n)` with
+    /// `p: (f64, f64) | (String, f64)` reads both literals at `f64`.
     ///
     /// The tuples nest as deep as the text, so the pairs wait on a stack, each with whether it
     /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
@@ -2907,10 +2898,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             match (xl, yl) {
                 (Some(l), Some(m)) => {
                     let (lc, mc) = (lit_carrier(&l.value), lit_carrier(&m.value));
-                    if rank(lc) < rank(mc) {
-                        self.adopt_to(l, mc);
-                    } else if rank(mc) < rank(lc) {
-                        self.adopt_to(m, lc);
+                    // A generic literal takes the other's carrier; of two plain ones of two
+                    // carriers, the integer, or else the decimal, is rejected at the other's.
+                    let m_takes = match (l.n, m.n) {
+                        (_, true) => true,
+                        (true, false) => false,
+                        _ => mc == Carrier::Int || mc == Carrier::F64 && lc != Carrier::Int,
+                    };
+                    match (lc == mc, m_takes) {
+                        (true, _) => {}
+                        (false, true) => {
+                            self.adopt_to(m, lc);
+                        }
+                        (false, false) => {
+                            self.adopt_to(l, mc);
+                        }
                     }
                 }
                 (Some(l), None) => self.follow(l, &yt, inner),
@@ -2927,32 +2929,48 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The literal `l` compared with a value of one of the types `ts`: it follows the class
-    /// of a lone `ts`, outside a tuple, and otherwise adopts the one carrier [`carriers_in`]
-    /// finds; at two or more it keeps its own carrier when one of them is that, and is an
-    /// error otherwise, as at a parameter.
-    // A literal in a tuple compared with a class's component keeps its own carrier, because
-    // the elaborator's rewrite that follows the class's carrier at run time (`Info::follows`)
-    // is built for an operand of `==` only; follow-up LIT-follow-tuple.
+    /// The literal `l` compared with a value of one of the types `ts`, as at a parameter
+    /// ([`expected`]). With a lone `ts` that is a class, a plain literal joins it as an operand
+    /// does, keeping only the literal's carrier; a generic one outside a tuple follows the
+    /// class's carrier without narrowing it, and one in a tuple joins it as a plain one does,
+    /// since the elaborator's rewrite that follows the class's carrier at run time
+    /// (`Info::follows`) is built for an operand of `==` only.
     fn follow(&mut self, l: &Lit, ts: &[&Ty], inner: bool) {
         if let [t] = ts
             && let Some(k) = self.class_of_ty(t)
         {
-            if !inner {
-                self.join(k, l, true);
+            if !self.join(k, l, l.n && !inner) {
+                let mask = self.classes[self.find(k)].mask;
+                let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64]
+                    .into_iter()
+                    .filter(|c| mask & c.bit() != 0)
+                    .collect();
+                let m = match held.is_empty() {
+                    false => menu(l, &held),
+                    true => {
+                        let own = lit_carrier(&l.value);
+                        let sign = if l.neg { "-" } else { "" };
+                        let names: Vec<&str> = Carrier::of_mask(mask).map(|c| c.name()).collect();
+                        format!(
+                            "`{sign}{}` is {} {}, compared with a value of `{}`, which holds no \
+                             number",
+                            l.text,
+                            article(own),
+                            own.name(),
+                            names.join(" | ")
+                        )
+                    }
+                };
+                self.error(l.span, m);
             }
             return;
         }
-        let cs = carriers_in(l, ts);
-        match cs[..] {
-            [c] => {
+        match expected(l, ts) {
+            Ok(Some(c)) => {
                 self.adopt_to(l, c);
             }
-            [_, _, ..] if !cs.contains(&lit_carrier(&l.value)) => {
-                let want = Ty::union_all(ts.iter().copied());
-                self.error(l.span, no_one_carrier(l, &want, &cs));
-            }
-            _ => {}
+            Ok(None) => {}
+            Err(m) => self.error(l.span, m),
         }
     }
 
@@ -4151,7 +4169,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             None => match self.fewest(what, sig, args)? {
                 Some(kept) => kept,
-                None => return Ok((Ty::dynamic(), Vec::new())),
+                // Reported: no value, as a rejected application gives, so that no operator
+                // around it reports it again.
+                None => return Ok((Ty::empty(), Vec::new())),
             },
         };
         // The states: the arrows alive, whether a piece was unknown, and the first pieces
@@ -4286,6 +4306,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut need = Adoptions::new();
             let mut retyped = Vec::new();
             let mut ok = true;
+            let mut error = None;
             for (i, (a, p)) in args.iter().zip(&arrow.params).enumerate() {
                 let Some(a) = a else {
                     continue;
@@ -4303,13 +4324,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                         need.extend(ads);
                         retyped.push((i, t));
                     }
-                    Err((s, m)) => {
-                        adopt_error.get_or_insert((s, m));
-                        ok = false;
+                    Err(e) => {
+                        error.get_or_insert(e);
                     }
                     // Kept as it is, the argument is checked as any argument is.
                     _ => ok &= a.ty.meets(p),
                 }
+            }
+            // The message names a literal's rejection at an arrow the other arguments fit:
+            // `x + 0.1` with `x: rat` at rat, not at int; and of two literals of two
+            // carriers, as at `==`, the integer's, or else the decimal's: `1 + 0.5` at `1`.
+            if let Some(e) = error {
+                let rank = |s: Span| {
+                    args.iter()
+                        .flatten()
+                        .filter_map(|a| a.lit.as_ref())
+                        .find(|l| l.span == s)
+                        .map_or(3, |l| match lit_carrier(&l.value) {
+                            Carrier::Int => 0,
+                            Carrier::F64 => 1,
+                            _ => 2,
+                        })
+                };
+                if ok
+                    && adopt_error
+                        .as_ref()
+                        .is_none_or(|(t, _)| rank(e.0) < rank(*t))
+                {
+                    adopt_error = Some(e);
+                }
+                continue;
             }
             if !ok {
                 continue;
@@ -4788,14 +4832,14 @@ fn components(a: &Arg, n: usize) -> Option<Vec<Arg>> {
 /// expected: by span, the value each literal takes.
 type Adoptions = Vec<(Span, Value)>;
 
-/// `a` where a value of `p` is expected: a literal adopts `p`'s numeric carrier
-/// ([`Ty::numeric_carrier`]), and a literal in a tuple the one carrier its component holds
-/// across `p`'s tuple shapes of that length, at any depth (DESIGN.md L1.26, sec:domains):
-/// `(1, 2)` at `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. This is the one place an expected
-/// type decides a literal's carrier. Gives `a`'s type with the adoptions and the adoptions,
-/// `None` when no literal adopts, and the first literal that is not exactly a value of its
-/// carrier, or that meets numbers of two or more carriers none of which is its own
-/// ([`no_one_carrier`]), with the message.
+/// `a` where a value of `p` is expected: a generic literal `kn` takes `p`'s one numeric
+/// carrier, and one in a tuple the one carrier its component holds across `p`'s tuple shapes
+/// of that length, at any depth (DESIGN.md L1.26, sec:domains): `(1n, 2n)` at
+/// `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. A plain literal takes no carrier, and where
+/// the expected type holds numbers but not its own carrier is rejected ([`expected`]): `(1, 2)`
+/// at `(f64, f64)`. This is the one place an expected type decides a literal's carrier. Gives
+/// `a`'s type with the adoptions and the adoptions, `None` when no literal adopts, and the
+/// first literal that is rejected or is not exactly a value of its carrier, with the message.
 ///
 /// The tuples nest as deep as the text, so the walk keeps its own stack: each open tuple's
 /// parts, the argument's components, the expected shapes there, and the types so far. The
@@ -4803,14 +4847,8 @@ type Adoptions = Vec<(Span, Value)>;
 fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
     let mut ads = Adoptions::new();
     let lit = |l: &Lit, want: &[&Ty], ads: &mut Adoptions| {
-        let cs = carriers_in(l, want);
-        let c = match cs[..] {
-            [c] => c,
-            [_, _, ..] if !cs.contains(&lit_carrier(&l.value)) => {
-                let at = Ty::union_all(want.iter().copied());
-                return Err((l.span, no_one_carrier(l, &at, &cs)));
-            }
-            _ => return Ok(None),
+        let Some(c) = expected(l, want).map_err(|m| (l.span, m))? else {
+            return Ok(None);
         };
         match adopt(l, c) {
             Ok(Some(v)) => {
@@ -4922,19 +4960,15 @@ fn lit_carrier(v: &Value) -> Carrier {
     }
 }
 
-/// The order two literals adopt in: an integer the other's carrier.
-fn rank(c: Carrier) -> u8 {
-    match c {
-        Carrier::Int => 0,
-        _ => 1,
-    }
-}
-
-/// The literal `l` as a `c`: `None` when it is one already, an error when it is not exactly
-/// one.
+/// The literal `l` as a `c`: `None` when it is one already or `c` is not a number, an error
+/// when it is a plain literal, which takes no other carrier ([`menu`]), or is not exactly a
+/// `c`.
 fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
-    if lit_carrier(&l.value) == c || !adoptable(l, c) {
+    if lit_carrier(&l.value) == c || !c.numeric() {
         return Ok(None);
+    }
+    if !adoptable(l, c) {
+        return Err(menu(l, &[c]));
     }
     let exact = match &l.value {
         Value::Float(_) => Rat::decimal(&l.text).map(Value::rat),
@@ -4956,10 +4990,93 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
     }
 }
 
-/// Whether `l` may adopt `c`: an integer literal any numeric carrier, a decimal one `f64`
-/// and `rat`, which it denotes exactly, and not `int`.
+/// Whether `l` may take the carrier `c`: a generic literal `kn` any numeric carrier, and a
+/// plain literal only its own, since a plain literal adopts no carrier (DESIGN.md
+/// sec:domains, L1.26: a plain integer literal is `int` and a decimal one `f64`, whatever
+/// is expected).
 fn adoptable(l: &Lit, c: Carrier) -> bool {
-    c.numeric() && !(matches!(l.value, Value::Float(_)) && c == Carrier::Int)
+    c.numeric() && (l.n || c == lit_carrier(&l.value))
+}
+
+/// The literal `l` where a value of one of the types `want` is expected: the carrier it
+/// takes there, `None` when it keeps its own, or the rejection. A plain literal keeps its
+/// own carrier and is rejected with a menu of the forms to write ([`menu`]) where the types
+/// hold numbers but none of its carrier; a generic literal `kn` takes the one numeric carrier
+/// they hold, and at two or more that are not `int` is rejected ([`no_one_carrier`]). A type
+/// that holds a variable or the unknown could stand for any number, and decides nothing.
+fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, String> {
+    if want.iter().any(|w| !w.vars.is_empty() || w.dynamic) {
+        return Ok(None);
+    }
+    let held: Vec<Carrier> = [Carrier::Int, Carrier::Rat, Carrier::F64]
+        .into_iter()
+        .filter(|&c| want.iter().any(|w| !(&w.set & &c.ty()).is_empty()))
+        .collect();
+    let own = lit_carrier(&l.value);
+    match held[..] {
+        [] => Ok(None),
+        _ if held.contains(&own) && !(l.n && held.len() == 1) => Ok(None),
+        _ if !l.n => Err(menu(l, &held)),
+        [c] => Ok(Some(c)),
+        _ => Err(no_one_carrier(
+            l,
+            &Ty::union_all(want.iter().copied()),
+            &held,
+        )),
+    }
+}
+
+/// The message for the plain literal `l` where a number of one of the carriers `held` is
+/// expected, one or more, none of them the literal's own: Zed converts no value, so the
+/// literal is rejected, with the forms to write of those carriers, in the order `1.0`, `1r`,
+/// `1n` (DESIGN.md sec:domains). A form is offered only where it is the same number exactly:
+/// `1.0` and `1n` where the literal is exactly an `f64`; `1n` only at one carrier, since at
+/// two it takes neither; and of a literal written in another radix, which has no `.0` or `r`
+/// form, only `kn`.
+fn menu(l: &Lit, held: &[Carrier]) -> String {
+    let own = lit_carrier(&l.value);
+    let sign = if l.neg { "-" } else { "" };
+    let names: Vec<&str> = held.iter().map(|c| c.name()).collect();
+    let mut m = format!(
+        "`{sign}{}` is {} {} where `{}` is expected; a literal takes no other carrier",
+        l.text,
+        article(own),
+        own.name(),
+        names.join(" | ")
+    );
+    let decimal = l.text.chars().all(|c| c.is_ascii_digit() || c == '_');
+    let exact = |c: Carrier| {
+        let n = Lit {
+            n: true,
+            ..l.clone()
+        };
+        adopt(&n, c).is_ok()
+    };
+    let has = |c: Carrier| held.contains(&c);
+    let mut forms = Vec::new();
+    match own {
+        Carrier::Int => {
+            if decimal && has(Carrier::F64) && exact(Carrier::F64) {
+                forms.push(format!("`{sign}{}.0`", l.text));
+            }
+            if decimal && has(Carrier::Rat) {
+                forms.push(format!("`{sign}{}r`", l.text));
+            }
+            if let [c] = held
+                && exact(*c)
+            {
+                forms.push(format!("`{sign}{}n`", l.text));
+            }
+        }
+        _ if has(Carrier::Rat) => forms.push(format!("`{sign}{}r`", l.text)),
+        _ => {}
+    }
+    match &forms[..] {
+        [] => {}
+        [one] => m += &format!("; write {one}"),
+        [init @ .., last] => m += &format!("; write {} or {last}", init.join(", ")),
+    }
+    m
 }
 
 /// The message for the literal `l` where `want` holds numbers of the carriers `cs`, two or
@@ -4989,22 +5106,6 @@ fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> String {
         m += &format!("; write the one meant, as {}", forms.join(" or "));
     }
     m
-}
-
-/// The numeric carriers the literal `l` can adopt that one of the types `want` holds, in the
-/// order a type prints them: int, rat, f64. None when one of them holds a variable or the
-/// unknown, which could stand for any. The literal adopts the one carrier when there is one
-/// (DESIGN.md L1.26: the carrier "an operator or a parameter expects"); at two, as `1` at
-/// `f64 | rat`, the expected type names no one carrier and the literal keeps its own. Several
-/// types are the component of each tuple shape of one length (`adopted`).
-fn carriers_in(l: &Lit, want: &[&Ty]) -> Vec<Carrier> {
-    if want.iter().any(|w| !w.vars.is_empty() || w.dynamic) {
-        return Vec::new();
-    }
-    [Carrier::Int, Carrier::Rat, Carrier::F64]
-        .into_iter()
-        .filter(|&c| adoptable(l, c) && want.iter().any(|w| !(&w.set & &c.ty()).is_empty()))
-        .collect()
 }
 
 fn article(c: Carrier) -> &'static str {

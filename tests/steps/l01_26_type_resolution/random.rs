@@ -14,7 +14,14 @@ fn body(rng: &mut Rng, d: u32) -> String {
         return match rng.below(7) {
             0 | 1 => "x".into(),
             2 | 3 => "y".into(),
-            4 => rng.int(-3, 3).to_string(),
+            // A plain integer is an int; a generic one takes the carrier it meets.
+            4 => {
+                let k = rng.int(-3, 3);
+                match rng.below(2) {
+                    0 => k.to_string(),
+                    _ => format!("{k}n"),
+                }
+            }
             5 => format!("{}.5", rng.int(-2, 2)),
             _ => "\"s\"".into(),
         };
