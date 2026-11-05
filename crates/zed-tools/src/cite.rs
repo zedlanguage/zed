@@ -62,8 +62,8 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
 /// `files`, also gives the steps that plan items will add. Every exempt path of [`FIXTURES`]
 /// must be among `files`, so that the list cannot outlive the files it names.
 pub fn check_citations(design: &str, files: &[(String, String)], out: &mut String) -> Outcome {
-    // Complexity tradeoff: the labels and steps go into hash sets, so each citation costs one
-    // lookup and the check is linear in the length of the files.
+    // The labels and steps go into hash sets, so each citation costs one lookup and the check
+    // is linear in the length of the files (COMPLEXITY F90).
     let labels: HashSet<&str> = design.lines().filter_map(label_of_heading).collect();
     let mut steps: HashSet<&str> = plan(design)?
         .into_iter()
