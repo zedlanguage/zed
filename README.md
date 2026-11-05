@@ -423,11 +423,10 @@ main(fs: Files) -> (stdout: Lines) {
 }
 ```
 
-These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. Where a table has several columns after its keys, they are parts of one value, or an input shown beside its result. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way.
+These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. Where a table has several columns after its keys, they are parts of one value, or an input shown beside its result. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way, with the line above each table naming the value it shows.
 
-<table>
-<tr><th><code>counts</code> after <code>.split(" ")</code></th><th><code>counts</code> after <code>.group(w -&gt; w.lower)</code></th><th><code>counts</code> after <code>.count</code></th></tr>
-<tr><td valign="top">
+**`counts` after `.split(" ")`**
+
 <table>
 <tr><th><code>i</code></th><th><code>w</code></th></tr>
 <tr><td><code>0</code></td><td><code>to</code></td></tr>
@@ -437,7 +436,9 @@ These tables show the data after each step, for a file whose whole text is `to b
 <tr><td><code>4</code></td><td><code>to</code></td></tr>
 <tr><td><code>5</code></td><td><code>be</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`counts` after `.group(w -> w.lower)`**
+
 <table>
 <tr><th><code>w.lower</code></th><th><code>i</code></th><th><code>w</code></th></tr>
 <tr><td rowspan="2"><code>be</code></td><td><code>1</code></td><td><code>be</code></td></tr>
@@ -447,7 +448,9 @@ These tables show the data after each step, for a file whose whole text is `to b
 <tr><td rowspan="2"><code>to</code></td><td><code>0</code></td><td><code>to</code></td></tr>
 <tr><td><code>4</code></td><td><code>to</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`counts` after `.count`**
+
 <table>
 <tr><th><code>w</code></th><th><code>n</code></th></tr>
 <tr><td><code>be</code></td><td><code>2</code></td></tr>
@@ -455,12 +458,9 @@ These tables show the data after each step, for a file whose whole text is `to b
 <tr><td><code>or</code></td><td><code>1</code></td></tr>
 <tr><td><code>to</code></td><td><code>2</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>lines</code></th><th><code>lines.rank</code></th></tr>
-<tr><td valign="top">
+**`lines`**
+
 <table>
 <tr><th><code>rank</code></th><th><code>w</code></th><th><code>line</code></th></tr>
 <tr><td rowspan="2"><code>0</code></td><td><code>be</code></td><td><code>be: 2</code></td></tr>
@@ -468,15 +468,15 @@ These tables show the data after each step, for a file whose whole text is `to b
 <tr><td rowspan="2"><code>1</code></td><td><code>not</code></td><td><code>not: 1</code></td></tr>
 <tr><td><code>or</code></td><td><code>or: 1</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`lines.rank`**
+
 <table>
 <tr><th><code>i</code></th><th><code>line</code></th></tr>
 <tr><td><code>0</code></td><td><code>be: 2</code></td></tr>
 <tr><td><code>1</code></td><td><code>to: 2</code></td></tr>
 <tr><td><code>2</code></td><td><code>not: 1</code></td></tr>
 <tr><td><code>3</code></td><td><code>or: 1</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 The program doesn't mention threads, locks or allocation. The compiler can run the grouping on all your cores, and the output is the same, bit for bit, on one core or on sixty-four. A missing file can't crash the program either: the type of `fs["input.txt"]` says the read can fail, and the `else` says what to do when it does.
@@ -489,7 +489,8 @@ Three more short examples from the tour below. A name a snippet doesn't define i
 // Say how they merge: add the amounts for each region.
 totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount);
 
-// Edit distance, the fewest single-character changes between two strings: the equation and its boundary.
+// Edit distance, the fewest single-character changes between two strings:
+// the equation and its boundary.
 // The compiler picks the table and the fill order.
 d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
@@ -744,46 +745,46 @@ good = results.where(r -> r is Config);
 bad = results.where(r -> r is not Config);
 ```
 
-<table>
-<tr><th>input: <code>files</code></th><th><code>results</code> after <code>.map(f -&gt; read(f))</code></th><th><code>results</code> after <code>.map(t -&gt; parse(t))</code></th></tr>
-<tr><td valign="top">
+**input: `files`**
+
 <table>
 <tr><th><code>i</code></th><th><code>file</code></th></tr>
 <tr><td><code>0</code></td><td><code>a.cfg</code></td></tr>
 <tr><td><code>1</code></td><td><code>b.cfg</code></td></tr>
 <tr><td><code>2</code></td><td><code>c.cfg</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`results` after `.map(f -> read(f))`**
+
 <table>
 <tr><th><code>i</code></th><th><code>value</code></th></tr>
 <tr><td><code>0</code></td><td>a.cfg's text</td></tr>
 <tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
 <tr><td><code>2</code></td><td>c.cfg's text</td></tr>
 </table>
-</td><td valign="top">
-<table>
-<tr><th><code>i</code></th><th><code>value</code></th></tr>
-<tr><td><code>0</code></td><td><code>Config</code></td></tr>
-<tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
-<tr><td><code>2</code></td><td><code>#syntaxError(pos: 3)</code></td></tr>
-</table>
-</td></tr>
-</table>
+
+**`results` after `.map(t -> parse(t))`**
 
 <table>
-<tr><th><code>good</code></th><th><code>bad</code></th></tr>
-<tr><td valign="top">
+<tr><th><code>i</code></th><th><code>value</code></th></tr>
+<tr><td><code>0</code></td><td><code>Config</code></td></tr>
+<tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
+<tr><td><code>2</code></td><td><code>#syntaxError(pos: 3)</code></td></tr>
+</table>
+
+**`good`**
+
 <table>
 <tr><th><code>i</code></th><th><code>value</code></th></tr>
 <tr><td><code>0</code></td><td><code>Config</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`bad`**
+
 <table>
 <tr><th><code>i</code></th><th><code>value</code></th></tr>
 <tr><td><code>1</code></td><td><code>#ioError(...)</code></td></tr>
 <tr><td><code>2</code></td><td><code>#syntaxError(pos: 3)</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 A file that fails to read or parse doesn't stop the others. Each failure stays under its file's key, next to the successes, so you can split them, count them or report them. The read puts details such as the path in the failure's own fields (`#ioError(op:, path:, why:)`), so you don't have to thread that information through by hand.
@@ -846,9 +847,8 @@ age = 36, then age = 0
 
 The last three lines, drawn the same way:
 
-<table>
-<tr><th><code>tens</code></th><th><code>big</code></th><th><code>sorted</code></th></tr>
-<tr><td valign="top">
+**`tens`**
+
 <table>
 <tr><th><code>i</code></th><th><code>x</code></th></tr>
 <tr><td><code>0</code></td><td><code>30</code></td></tr>
@@ -857,14 +857,18 @@ The last three lines, drawn the same way:
 <tr><td><code>3</code></td><td><code>10</code></td></tr>
 <tr><td><code>4</code></td><td><code>50</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`big`**
+
 <table>
 <tr><th><code>i</code></th><th><code>x</code></th></tr>
 <tr><td><code>0</code></td><td><code>30</code></td></tr>
 <tr><td><code>2</code></td><td><code>40</code></td></tr>
 <tr><td><code>4</code></td><td><code>50</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`sorted`**
+
 <table>
 <tr><th><code>rank</code></th><th><code>x</code></th></tr>
 <tr><td><code>0</code></td><td><code>50</code></td></tr>
@@ -872,8 +876,6 @@ The last three lines, drawn the same way:
 <tr><td><code>2</code></td><td><code>30</code></td></tr>
 <tr><td><code>3</code></td><td><code>10</code></td></tr>
 <tr><td><code>4</code></td><td><code>10</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 An array is a map whose keys are `0..<n`, a set is a map from each key to itself, a struct is a map from field names to values, and a function is a map too. So `xs[i]`, `f(x)` and `p.x` are all lookups, and the same operations work on all of them, except that an operation that visits every key needs a finite set of keys: a function over all of `int` can be called, but `group` or `==` on it is rejected. `K -> V` has a value at every key of `K`, while `K ->? V` may lack some keys, so a lookup can give `#notFound`. A nested map is stored in whichever layout suits the code that reads it. Your code never names the layout, so the compiler may pick a different one without your code changing.
@@ -892,23 +894,22 @@ byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
 
 With three sample users, `group` adds the `city` level above the keys that were already there:
 
-<table>
-<tr><th>input: <code>users</code></th><th><code>byCity</code></th></tr>
-<tr><td valign="top">
+**input: `users`**
+
 <table>
 <tr><th><code>id</code></th><th><code>user</code></th></tr>
 <tr><td><code>1</code></td><td><code>Ann, Oslo</code></td></tr>
 <tr><td><code>2</code></td><td><code>Bob, Lima</code></td></tr>
 <tr><td><code>3</code></td><td><code>Cid, Oslo</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`byCity`**
+
 <table>
 <tr><th><code>city</code></th><th><code>id</code></th><th><code>user</code></th></tr>
 <tr><td><code>Lima</code></td><td><code>2</code></td><td><code>Bob, Lima</code></td></tr>
 <tr><td rowspan="2"><code>Oslo</code></td><td><code>1</code></td><td><code>Ann, Oslo</code></td></tr>
 <tr><td><code>3</code></td><td><code>Cid, Oslo</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 `group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Where SQL's `GROUP BY` must aggregate right away, a group here is just a level of the map, which you can reduce, read or reshape later. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` (this function never gives two inputs one output) or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
@@ -931,9 +932,8 @@ totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount
 
 On small sample tables, with `rank` the level that `desc s` adds:
 
-<table>
-<tr><th>input: <code>matrix</code></th><th><code>transposed</code></th></tr>
-<tr><td valign="top">
+**input: `matrix`**
+
 <table>
 <tr><th><code>r</code></th><th><code>c</code></th><th><code>v</code></th></tr>
 <tr><td rowspan="3"><code>0</code></td><td><code>0</code></td><td><code>1</code></td></tr>
@@ -943,7 +943,9 @@ On small sample tables, with `rank` the level that `desc s` adds:
 <tr><td><code>1</code></td><td><code>5</code></td></tr>
 <tr><td><code>2</code></td><td><code>6</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`transposed`**
+
 <table>
 <tr><th><code>c</code></th><th><code>r</code></th><th><code>v</code></th></tr>
 <tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>1</code></td></tr>
@@ -953,44 +955,40 @@ On small sample tables, with `rank` the level that `desc s` adds:
 <tr><td rowspan="2"><code>2</code></td><td><code>0</code></td><td><code>3</code></td></tr>
 <tr><td><code>1</code></td><td><code>6</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th>input: <code>scores</code></th><th><code>ranking</code></th></tr>
-<tr><td valign="top">
+**input: `scores`**
+
 <table>
 <tr><th><code>name</code></th><th><code>s</code></th></tr>
 <tr><td><code>Ann</code></td><td><code>90</code></td></tr>
 <tr><td><code>Bob</code></td><td><code>70</code></td></tr>
 <tr><td><code>Cid</code></td><td><code>90</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`ranking`**
+
 <table>
 <tr><th><code>rank</code></th><th><code>name</code></th><th><code>s</code></th></tr>
 <tr><td rowspan="2"><code>0</code></td><td><code>Ann</code></td><td><code>90</code></td></tr>
 <tr><td><code>Cid</code></td><td><code>90</code></td></tr>
 <tr><td><code>1</code></td><td><code>Bob</code></td><td><code>70</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th>input: <code>sales</code></th><th><code>totals</code></th></tr>
-<tr><td valign="top">
+**input: `sales`**
+
 <table>
 <tr><th><code>region</code></th><th><code>sku</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="2"><code>East</code></td><td><code>A1</code></td><td><code>5</code></td></tr>
 <tr><td><code>B2</code></td><td><code>3</code></td></tr>
 <tr><td><code>West</code></td><td><code>A1</code></td><td><code>2</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`totals`**
+
 <table>
 <tr><th><code>region</code></th><th><code>amount</code></th></tr>
 <tr><td><code>East</code></td><td><code>8</code></td></tr>
 <tr><td><code>West</code></td><td><code>2</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 In `transposed`, a value at row `r` and column `c` moves to row `c` and column `r`. A remap is another way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the `ranking` line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. If you ask it to, as in the rejected `totals` line, you get an error that lists the ways out, and the last `totals` line is one of them. A shortened version of the error:
@@ -1016,9 +1014,8 @@ years = revenue as (region -> year -> sku -> amount) into (region -> year -> _);
 
 Each row is one keypath and its value. `bySku` has the same four values as `revenue`, reached by new keypaths. `perYear` first moves the levels, then collapses `region`, and `years` drops the values and keeps the keys down to `year`:
 
-<table>
-<tr><th>input: <code>revenue</code></th><th><code>bySku</code></th></tr>
-<tr><td valign="top">
+**input: `revenue`**
+
 <table>
 <tr><th><code>region</code></th><th><code>year</code></th><th><code>sku</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>2024</code></td><td><code>A1</code></td><td><code>5</code></td></tr>
@@ -1026,7 +1023,9 @@ Each row is one keypath and its value. `bySku` has the same four values as `reve
 <tr><td><code>2025</code></td><td><code>A1</code></td><td><code>4</code></td></tr>
 <tr><td><code>West</code></td><td><code>2025</code></td><td><code>A1</code></td><td><code>2</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`bySku`**
+
 <table>
 <tr><th><code>sku</code></th><th><code>region</code></th><th><code>year</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="3"><code>A1</code></td><td rowspan="2"><code>East</code></td><td><code>2024</code></td><td><code>5</code></td></tr>
@@ -1034,12 +1033,9 @@ Each row is one keypath and its value. `bySku` has the same four values as `reve
 <tr><td><code>West</code></td><td><code>2025</code></td><td><code>2</code></td></tr>
 <tr><td><code>B2</code></td><td><code>East</code></td><td><code>2024</code></td><td><code>3</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>perYear</code> before summing over <code>region</code></th><th><code>perYear</code> after summing over <code>region</code></th></tr>
-<tr><td valign="top">
+**`perYear` before summing over `region`**
+
 <table>
 <tr><th><code>sku</code></th><th><code>year</code></th><th><code>region</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="3"><code>A1</code></td><td><code>2024</code></td><td><code>East</code></td><td><code>5</code></td></tr>
@@ -1047,40 +1043,34 @@ Each row is one keypath and its value. `bySku` has the same four values as `reve
 <tr><td><code>West</code></td><td><code>2</code></td></tr>
 <tr><td><code>B2</code></td><td><code>2024</code></td><td><code>East</code></td><td><code>3</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`perYear` after summing over `region`**
+
 <table>
 <tr><th><code>sku</code></th><th><code>year</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="2"><code>A1</code></td><td><code>2024</code></td><td><code>5</code></td></tr>
 <tr><td><code>2025</code></td><td><code>6</code></td></tr>
 <tr><td><code>B2</code></td><td><code>2024</code></td><td><code>3</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>years</code></th></tr>
-<tr><td valign="top">
+**`years`**
+
 <table>
 <tr><th><code>region</code></th><th><code>year</code></th><th><code>year</code></th></tr>
 <tr><td rowspan="2"><code>East</code></td><td><code>2024</code></td><td><code>2024</code></td></tr>
 <tr><td><code>2025</code></td><td><code>2025</code></td></tr>
 <tr><td><code>West</code></td><td><code>2025</code></td><td><code>2025</code></td></tr>
 </table>
-</td></tr>
-</table>
 
 A set is a map from each item to itself, so each region's years form a set, and the value column of `years` repeats the key. What that means is set membership: a keypath either exists or it doesn't. This table shows it, with `yes` meaning "this keypath exists". The `exists` column is only an illustration on this page. `years` has no such column, and a program can't read one.
 
-<table>
-<tr><th><code>years</code>, read as which keypaths exist</th></tr>
-<tr><td valign="top">
+**`years`, read as which keypaths exist**
+
 <table>
 <tr><th><code>region</code></th><th><code>year</code></th><th><code>exists</code></th></tr>
 <tr><td rowspan="2"><code>East</code></td><td><code>2024</code></td><td><code>yes</code></td></tr>
 <tr><td><code>2025</code></td><td><code>yes</code></td></tr>
 <tr><td><code>West</code></td><td><code>2025</code></td><td><code>yes</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 The constraint on every remap is this: no two values may end up at the same keypath through the map. The rejected `bad` line breaks it, because `(A1, 2025)` would have to hold both 4 and 2. The compiler judges this from the pattern and not from the data, so it rejects a dropped level even for an input that happens to have one entry under each key. What that leaves is:
@@ -1106,50 +1096,49 @@ pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
 
 On small sample data:
 
-<table>
-<tr><th>input: <code>readings</code></th><th><code>total</code></th></tr>
-<tr><td valign="top">
+**input: `readings`**
+
 <table>
 <tr><th><code>i</code></th><th><code>value</code></th></tr>
 <tr><td><code>0</code></td><td><code>2</code></td></tr>
 <tr><td><code>1</code></td><td><code>5</code></td></tr>
 <tr><td><code>2</code></td><td><code>3</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`total`**
+
 <table>
 <tr><th><code>total</code></th></tr>
 <tr><td><code>10</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th>input: <code>words</code></th><th><code>longest</code> before <code>&gt;&lt; max</code></th><th><code>longest</code> after <code>&gt;&lt; max</code></th></tr>
-<tr><td valign="top">
+**input: `words`**
+
 <table>
 <tr><th><code>i</code></th><th><code>w</code></th></tr>
 <tr><td><code>0</code></td><td><code>to</code></td></tr>
 <tr><td><code>1</code></td><td><code>be</code></td></tr>
 <tr><td><code>2</code></td><td><code>not</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`longest` before `>< max`**
+
 <table>
 <tr><th><code>i</code></th><th><code>len</code></th></tr>
 <tr><td><code>0</code></td><td><code>2</code></td></tr>
 <tr><td><code>1</code></td><td><code>2</code></td></tr>
 <tr><td><code>2</code></td><td><code>3</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`longest` after `>< max`**
+
 <table>
 <tr><th><code>longest</code></th></tr>
 <tr><td><code>3</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th>input: <code>sales</code></th><th><code>pivot</code> before summing over <code>i</code></th><th><code>pivot</code> after summing over <code>i</code></th></tr>
-<tr><td valign="top">
+**input: `sales`**
+
 <table>
 <tr><th><code>i</code></th><th><code>sale</code></th></tr>
 <tr><td><code>0</code></td><td><code>East, pen, 5</code></td></tr>
@@ -1157,7 +1146,9 @@ On small sample data:
 <tr><td><code>2</code></td><td><code>East, ink, 3</code></td></tr>
 <tr><td><code>3</code></td><td><code>East, pen, 4</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`pivot` before summing over `i`**
+
 <table>
 <tr><th><code>region</code></th><th><code>product</code></th><th><code>i</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="3"><code>East</code></td><td><code>ink</code></td><td><code>2</code></td><td><code>3</code></td></tr>
@@ -1165,14 +1156,14 @@ On small sample data:
 <tr><td><code>3</code></td><td><code>4</code></td></tr>
 <tr><td><code>West</code></td><td><code>pen</code></td><td><code>1</code></td><td><code>2</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`pivot` after summing over `i`**
+
 <table>
 <tr><th><code>region</code></th><th><code>product</code></th><th><code>amount</code></th></tr>
 <tr><td rowspan="2"><code>East</code></td><td><code>ink</code></td><td><code>3</code></td></tr>
 <tr><td><code>pen</code></td><td><code>9</code></td></tr>
 <tr><td><code>West</code></td><td><code>pen</code></td><td><code>2</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 The `pivot` line builds a table of sales by region and product. `i >< (+)` collapses the level `i`, adding the amounts that land on the same region and product.
@@ -1192,33 +1183,29 @@ m = values.map(x -> Moments(n: 1, sum: x)) >< combine else Moments(n: 0, sum: 0r
 
 With three values:
 
-<table>
-<tr><th>input: values</th><th><code>m</code> before <code>&gt;&lt; combine</code></th></tr>
-<tr><td valign="top">
+**input: `values`**
+
 <table>
 <tr><th><code>i</code></th><th><code>x</code></th></tr>
 <tr><td><code>0</code></td><td><code>1r</code></td></tr>
 <tr><td><code>1</code></td><td><code>2r</code></td></tr>
 <tr><td><code>2</code></td><td><code>3r</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`m` before `>< combine`**
+
 <table>
 <tr><th><code>i</code></th><th><code>value</code></th></tr>
 <tr><td><code>0</code></td><td><code>Moments(n: 1, sum: 1r)</code></td></tr>
 <tr><td><code>1</code></td><td><code>Moments(n: 1, sum: 2r)</code></td></tr>
 <tr><td><code>2</code></td><td><code>Moments(n: 1, sum: 3r)</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>m</code> after <code>&gt;&lt; combine</code></th></tr>
-<tr><td valign="top">
+**`m` after `>< combine`**
+
 <table>
 <tr><th><code>m</code></th></tr>
 <tr><td><code>Moments(n: 3, sum: 6r)</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 For `combine`, the compiler derives both laws from `+` on the fields. In general, a proved law lets the compiler regroup freely, while a claim that was only tested permits one fixed grouping and can still be wrong, and the report says which you have. If an operator isn't associative, use `foldl` or `foldr` to say which way to fold. A reduction over nothing can't be silently wrong: the `else` gives the answer for an empty collection, and without it the result type includes `#empty`, unless the operator has an identity or the collection is known not to be empty.
@@ -1240,9 +1227,8 @@ same = words.group(w -> w.len).count;   // the same table, written as a pull
 
 With four words, `hist` gets one push per word, and `same` reaches the same table through a group:
 
-<table>
-<tr><th>input: <code>words</code></th><th><code>hist</code> pushes</th><th><code>hist</code></th></tr>
-<tr><td valign="top">
+**input: `words`**
+
 <table>
 <tr><th><code>i</code></th><th><code>w</code></th></tr>
 <tr><td><code>0</code></td><td><code>a</code></td></tr>
@@ -1250,7 +1236,9 @@ With four words, `hist` gets one push per word, and `same` reaches the same tabl
 <tr><td><code>2</code></td><td><code>be</code></td></tr>
 <tr><td><code>3</code></td><td><code>not</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`hist` pushes**
+
 <table>
 <tr><th><code>i</code></th><th><code>push</code></th></tr>
 <tr><td><code>0</code></td><td><code>[1] &lt;- 1</code></td></tr>
@@ -1258,19 +1246,18 @@ With four words, `hist` gets one push per word, and `same` reaches the same tabl
 <tr><td><code>2</code></td><td><code>[2] &lt;- 1</code></td></tr>
 <tr><td><code>3</code></td><td><code>[3] &lt;- 1</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`hist`**
+
 <table>
 <tr><th><code>len</code></th><th><code>n</code></th></tr>
 <tr><td><code>1</code></td><td><code>1</code></td></tr>
 <tr><td><code>2</code></td><td><code>2</code></td></tr>
 <tr><td><code>3</code></td><td><code>1</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>same</code> before <code>.count</code></th><th><code>same</code> after <code>.count</code></th></tr>
-<tr><td valign="top">
+**`same` before `.count`**
+
 <table>
 <tr><th><code>len</code></th><th><code>i</code></th><th><code>w</code></th></tr>
 <tr><td><code>1</code></td><td><code>0</code></td><td><code>a</code></td></tr>
@@ -1278,14 +1265,14 @@ With four words, `hist` gets one push per word, and `same` reaches the same tabl
 <tr><td><code>2</code></td><td><code>be</code></td></tr>
 <tr><td><code>3</code></td><td><code>3</code></td><td><code>not</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`same` after `.count`**
+
 <table>
 <tr><th><code>len</code></th><th><code>n</code></th></tr>
 <tr><td><code>1</code></td><td><code>1</code></td></tr>
 <tr><td><code>2</code></td><td><code>2</code></td></tr>
 <tr><td><code>3</code></td><td><code>1</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 Sometimes it's clearer to say where each value goes (a push) than where each value comes from (a pull). `hist` can take pushes from many places, and `reducer((+))` adds up the values that land on one key. Because a push only contributes a value and never reads or overwrites one, parallel code can push with no locks. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same thing, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
@@ -1309,70 +1296,64 @@ pairs = for i in 0..<n, j in i+1..<n { (i, j) };
 
 On small sample data, where `o1` stands for the order with key 1, and `p1` and `s10` likewise:
 
-<table>
-<tr><th>input: <code>orders</code></th><th>input: <code>payments</code></th></tr>
-<tr><td valign="top">
+**input: `orders`**
+
 <table>
 <tr><th><code>orderId</code></th><th><code>order</code></th></tr>
 <tr><td><code>1</code></td><td><code>o1</code></td></tr>
 <tr><td><code>2</code></td><td><code>o2</code></td></tr>
 <tr><td><code>3</code></td><td><code>o3</code></td></tr>
 </table>
-</td><td valign="top">
+
+**input: `payments`**
+
 <table>
 <tr><th><code>orderId</code></th><th><code>payment</code></th></tr>
 <tr><td><code>1</code></td><td><code>p1</code></td></tr>
 <tr><td><code>3</code></td><td><code>p3</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>paid</code></th><th><code>unpaid</code></th></tr>
-<tr><td valign="top">
+**`paid`**
+
 <table>
 <tr><th><code>orderId</code></th><th><code>value</code></th></tr>
 <tr><td><code>1</code></td><td><code>(o1, p1)</code></td></tr>
 <tr><td><code>2</code></td><td><code>(o2, #none)</code></td></tr>
 <tr><td><code>3</code></td><td><code>(o3, p3)</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`unpaid`**
+
 <table>
 <tr><th><code>orderId</code></th><th><code>order</code></th></tr>
 <tr><td><code>2</code></td><td><code>o2</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th>input: <code>shipments</code></th><th><code>shipped</code></th></tr>
-<tr><td valign="top">
+**input: `shipments`**
+
 <table>
 <tr><th><code>shipmentId</code></th><th><code>shipment</code></th></tr>
 <tr><td><code>10</code></td><td><code>s10, order 1</code></td></tr>
 <tr><td><code>11</code></td><td><code>s11, order 1</code></td></tr>
 <tr><td><code>12</code></td><td><code>s12, order 3</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`shipped`**
+
 <table>
 <tr><th><code>(orderId, shipmentId)</code></th><th><code>value</code></th></tr>
 <tr><td><code>(1, 10)</code></td><td><code>(o1, s10)</code></td></tr>
 <tr><td><code>(1, 11)</code></td><td><code>(o1, s11)</code></td></tr>
 <tr><td><code>(3, 12)</code></td><td><code>(o3, s12)</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>pairs</code> for <code>input n = 3</code></th></tr>
-<tr><td valign="top">
+**`pairs`, for input `n = 3`**
+
 <table>
 <tr><th><code>(i, j)</code></th><th><code>value</code></th></tr>
 <tr><td><code>(0, 1)</code></td><td><code>(0, 1)</code></td></tr>
 <tr><td><code>(0, 2)</code></td><td><code>(0, 2)</code></td></tr>
 <tr><td><code>(1, 2)</code></td><td><code>(1, 2)</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. For a `for` over several collections, the compiler can pick a hash join or a merge join, two standard ways to avoid comparing every pair, instead of two nested loops. Queries and loops compile to the same internal form, so they are optimized together.
@@ -1393,9 +1374,8 @@ sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, c
 
 With four clicks in time order, `ann`'s clicks at `i` = 1 and `i` = 3 land in different chunks because `bob` clicked between them:
 
-<table>
-<tr><th>input: <code>clicks</code></th><th><code>sessions</code> before <code>.map</code></th></tr>
-<tr><td valign="top">
+**input: `clicks`**
+
 <table>
 <tr><th><code>i</code></th><th><code>click</code></th></tr>
 <tr><td><code>0</code></td><td><code>ann, t=10</code></td></tr>
@@ -1403,7 +1383,9 @@ With four clicks in time order, `ann`'s clicks at `i` = 1 and `i` = 3 land in di
 <tr><td><code>2</code></td><td><code>bob, t=15</code></td></tr>
 <tr><td><code>3</code></td><td><code>ann, t=20</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`sessions` before `.map`**
+
 <table>
 <tr><th><code>run</code></th><th><code>i</code></th><th><code>click</code></th></tr>
 <tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>ann, t=10</code></td></tr>
@@ -1411,19 +1393,14 @@ With four clicks in time order, `ann`'s clicks at `i` = 1 and `i` = 3 land in di
 <tr><td><code>1</code></td><td><code>2</code></td><td><code>bob, t=15</code></td></tr>
 <tr><td><code>2</code></td><td><code>3</code></td><td><code>ann, t=20</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>sessions</code> after <code>.map</code></th></tr>
-<tr><td valign="top">
+**`sessions` after `.map`**
+
 <table>
 <tr><th><code>run</code></th><th><code>session</code></th></tr>
 <tr><td><code>0</code></td><td><code>Session(start: 10, count: 2)</code></td></tr>
 <tr><td><code>1</code></td><td><code>Session(start: 15, count: 1)</code></td></tr>
 <tr><td><code>2</code></td><td><code>Session(start: 20, count: 1)</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 If you have ever split a list into runs by hand, you know the easy mistake is forgetting to flush the last group. Here that can't happen, because the last chunk is included. And since a chunk exists only because a click fell into it, `s.first` always has a value, with no `#none` case to handle.
@@ -1448,19 +1425,16 @@ input: s = 2.0, v = [1.0, 2.0]
 scale(2.0, [1.0, 2.0]) = [2.0, 4.0]
 ```
 
-The product, drawn as a map from rows `r` to columns `k` to values `v`:
+The product, drawn as a map from rows `r` to columns `j` to values `v`:
+
+**`c`**
 
 <table>
-<tr><th><code>c</code></th></tr>
-<tr><td valign="top">
-<table>
-<tr><th><code>r</code></th><th><code>k</code></th><th><code>v</code></th></tr>
+<tr><th><code>r</code></th><th><code>j</code></th><th><code>v</code></th></tr>
 <tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>4.0</code></td></tr>
 <tr><td><code>1</code></td><td><code>5.0</code></td></tr>
 <tr><td rowspan="2"><code>1</code></td><td><code>0</code></td><td><code>10.0</code></td></tr>
 <tr><td><code>1</code></td><td><code>11.0</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 A name in a shape that isn't bound to an integer is a size variable of the signature, so `[T; n, n]` is a square matrix. Dimension checks are ordinary type checks. Between two vectors or matrices `*` is an error, because it could mean several products: you write `matmul`, `dot` or `cross`. `matmul` isn't built in: it's a one-line remap with a reduction, in the same style as the `pivot` above.
@@ -1482,23 +1456,26 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
 
 With `xs` = 3, 1, 4, with `a` and `b` arrays of the code points of "ab" and "ac", and with a `cost` of 0 for equal characters and 1 otherwise, `d[1][1]` is the edit distance, 1. The last table shows `d` as a grid with its boundary values, which are read but aren't entries of the result:
 
-<table>
-<tr><th>input: <code>xs</code></th><th><code>running</code></th><th><code>d</code></th></tr>
-<tr><td valign="top">
+**input: `xs`**
+
 <table>
 <tr><th><code>i</code></th><th><code>x</code></th></tr>
 <tr><td><code>0</code></td><td><code>3</code></td></tr>
 <tr><td><code>1</code></td><td><code>1</code></td></tr>
 <tr><td><code>2</code></td><td><code>4</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`running`**
+
 <table>
 <tr><th><code>i</code></th><th><code>v</code></th></tr>
 <tr><td><code>0</code></td><td><code>3</code></td></tr>
 <tr><td><code>1</code></td><td><code>4</code></td></tr>
 <tr><td><code>2</code></td><td><code>8</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`d`**
+
 <table>
 <tr><th><code>i</code></th><th><code>j</code></th><th><code>v</code></th></tr>
 <tr><td rowspan="2"><code>0</code></td><td><code>0</code></td><td><code>0</code></td></tr>
@@ -1506,19 +1483,14 @@ With `xs` = 3, 1, 4, with `a` and `b` arrays of the code points of "ab" and "ac"
 <tr><td rowspan="2"><code>1</code></td><td><code>0</code></td><td><code>1</code></td></tr>
 <tr><td><code>1</code></td><td><code>1</code></td></tr>
 </table>
-</td></tr>
-</table>
 
-<table>
-<tr><th><code>d</code> as a grid, with its boundary values</th></tr>
-<tr><td valign="top">
+**`d` as a grid, with its boundary values**
+
 <table>
 <tr><th></th><th><code>j = -1</code></th><th><code>j = 0</code></th><th><code>j = 1</code></th></tr>
 <tr><th><code>i = -1</code></th><td><code>0</code></td><td><code>1</code></td><td><code>2</code></td></tr>
 <tr><th><code>i = 0</code></th><td><code>1</code></td><td><code>0</code></td><td><code>1</code></td></tr>
 <tr><th><code>i = 1</code></th><td><code>2</code></td><td><code>1</code></td><td><code>1</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 The code reads as it would on a whiteboard. The first line is a running total. The second is edit distance, the fewest single-character changes that turn one string into another, and it needs no explicit table and no choice of memoization (keeping each result for reuse) or fill order. The `with` clauses give the edges of the table: `d[-1][j]` is `j + 1` and `d[i][-1]` is `i + 1` for every `i` from 0 up, the costs against an empty string. The compiler reads the dependencies and picks a plan: it fills the table across your cores in dependency order if you need most of it, and memoizes on demand if you only touch part of it. In most languages, moving between those two plans means rewriting the code.
@@ -1534,9 +1506,8 @@ state[i] = csvStep(state[i-1], text::codepoints[i]) with state[-1] = #outsideQuo
 
 With `xs` = 2, -3, 4, -1, 2, `best` is 5. For the text `a"b"`, if `csvStep` switches state at each quote character:
 
-<table>
-<tr><th>input: <code>xs</code></th><th><code>cur</code></th><th><code>state</code></th></tr>
-<tr><td valign="top">
+**input: `xs`**
+
 <table>
 <tr><th><code>i</code></th><th><code>x</code></th></tr>
 <tr><td><code>0</code></td><td><code>2</code></td></tr>
@@ -1545,7 +1516,9 @@ With `xs` = 2, -3, 4, -1, 2, `best` is 5. For the text `a"b"`, if `csvStep` swit
 <tr><td><code>3</code></td><td><code>-1</code></td></tr>
 <tr><td><code>4</code></td><td><code>2</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`cur`**
+
 <table>
 <tr><th><code>i</code></th><th><code>v</code></th></tr>
 <tr><td><code>0</code></td><td><code>2</code></td></tr>
@@ -1554,15 +1527,15 @@ With `xs` = 2, -3, 4, -1, 2, `best` is 5. For the text `a"b"`, if `csvStep` swit
 <tr><td><code>3</code></td><td><code>3</code></td></tr>
 <tr><td><code>4</code></td><td><code>5</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`state`**
+
 <table>
 <tr><th><code>i</code></th><th><code>char</code></th><th><code>state</code></th></tr>
 <tr><td><code>0</code></td><td><code>a</code></td><td><code>#outsideQuotes</code></td></tr>
 <tr><td><code>1</code></td><td><code>"</code></td><td><code>#insideQuotes</code></td></tr>
 <tr><td><code>2</code></td><td><code>b</code></td><td><code>#insideQuotes</code></td></tr>
 <tr><td><code>3</code></td><td><code>"</code></td><td><code>#outsideQuotes</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 The first recurrence is maximum subarray, the largest sum of neighboring entries. The compiler recognizes that its step composes in any grouping, so it runs as a parallel scan, which computes all the running results across many cores. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job usually done one character at a time splits across cores.
@@ -1587,15 +1560,12 @@ steps = sim::len;
 
 Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `accel` always 1 and `bound` = 2, `final.x` is 3 and `steps` is 2. The starting values aren't part of `sim::frames`:
 
-<table>
-<tr><th><code>sim::frames</code></th></tr>
-<tr><td valign="top">
+**`sim::frames`**
+
 <table>
 <tr><th><code>t</code></th><th><code>pos.x</code></th><th><code>vel.x</code></th></tr>
 <tr><td><code>0</code></td><td><code>1</code></td><td><code>2</code></td></tr>
 <tr><td><code>1</code></td><td><code>3</code></td><td><code>3</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 Both updates here read the old `pos`, so they don't race and their order doesn't matter. Each step writes each variable once, so a data race can't be written. Every read in a step sees the same snapshot of the previous step, so you need no temporary variables to keep a simultaneous update straight.
@@ -1613,21 +1583,20 @@ previous = run::frames[run::len - 2]?.doc else empty;
 
 With two edits `e1` and `e2`, and with `empty` the empty document:
 
-<table>
-<tr><th>input: <code>edits</code></th><th><code>run::frames</code></th></tr>
-<tr><td valign="top">
+**input: `edits`**
+
 <table>
 <tr><th><code>t</code></th><th><code>edit</code></th></tr>
 <tr><td><code>0</code></td><td><code>e1</code></td></tr>
 <tr><td><code>1</code></td><td><code>e2</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`run::frames`**
+
 <table>
 <tr><th><code>t</code></th><th><code>doc</code></th></tr>
 <tr><td><code>0</code></td><td><code>empty.patch(e1)</code></td></tr>
 <tr><td><code>1</code></td><td><code>that.patch(e2)</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 `previous` is the document after `e1`. With no edits, or just one, the lookup finds no frame and `previous` is `empty`.
@@ -1753,22 +1722,21 @@ orders: OrderId ->? { total: rat, note: Utf8String | #none }
 n = orders[id]?.note;     // Utf8String | #none | #notFound | #dbError
 ```
 
-<table>
-<tr><th>input: <code>orders</code></th><th><code>n</code>, for each <code>id</code></th></tr>
-<tr><td valign="top">
+**input: `orders`**
+
 <table>
 <tr><th><code>id</code></th><th><code>total</code></th><th><code>note</code></th></tr>
 <tr><td><code>1</code></td><td><code>9r</code></td><td><code>"gift"</code></td></tr>
 <tr><td><code>2</code></td><td><code>4r</code></td><td><code>NULL</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`n`, for each `id`**
+
 <table>
 <tr><th><code>id</code></th><th><code>n</code></th></tr>
 <tr><td><code>1</code></td><td><code>"gift"</code></td></tr>
 <tr><td><code>2</code></td><td><code>#none</code></td></tr>
 <tr><td><code>3</code></td><td><code>#notFound</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 If the database can't answer, `n` is `#dbError` for any `id`.
@@ -1791,29 +1759,30 @@ report = sales
 
 Here are three sales, shown as region and amount. If sale 7 then changes from 5 to 6, East's total becomes 9 and West's stays 2:
 
-<table>
-<tr><th>input: <code>sales</code></th><th><code>report</code> before <code>.map</code></th><th><code>report</code> after <code>.map</code></th></tr>
-<tr><td valign="top">
+**input: `sales`**
+
 <table>
 <tr><th><code>saleId</code></th><th><code>sale</code></th></tr>
 <tr><td><code>7</code></td><td><code>East, 5</code></td></tr>
 <tr><td><code>8</code></td><td><code>West, 2</code></td></tr>
 <tr><td><code>9</code></td><td><code>East, 3</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`report` before `.map`**
+
 <table>
 <tr><th><code>region</code></th><th><code>saleId</code></th><th><code>sale</code></th></tr>
 <tr><td rowspan="2"><code>East</code></td><td><code>7</code></td><td><code>East, 5</code></td></tr>
 <tr><td><code>9</code></td><td><code>East, 3</code></td></tr>
 <tr><td><code>West</code></td><td><code>8</code></td><td><code>West, 2</code></td></tr>
 </table>
-</td><td valign="top">
+
+**`report` after `.map`**
+
 <table>
 <tr><th><code>region</code></th><th><code>sum</code></th></tr>
 <tr><td><code>East</code></td><td><code>8</code></td></tr>
 <tr><td><code>West</code></td><td><code>2</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 Inside the `.map`, East's `rows.map(s -> s.amount)` is `{ 7 -> 5, 9 -> 3 }`, whose `.sum` is 8.
@@ -2101,19 +2070,17 @@ reachable = loop {
     with R = { Junction(ns: #red, ew: #red) };
 };
 
-law neverBothGreen(ns: Signal, ew: Signal) = (Junction(ns: ns, ew: ew) in reachable.R).implies(ns == #red || ew == #red);
+law neverBothGreen(ns: Signal, ew: Signal) =
+  (Junction(ns: ns, ew: ew) in reachable.R).implies(ns == #red || ew == #red);
 ```
 
-<table>
-<tr><th><code>reachable.R</code></th></tr>
-<tr><td valign="top">
+**`reachable.R`**
+
 <table>
 <tr><th><code>state</code></th><th><code>state</code></th></tr>
 <tr><td><code>Junction(ns: #green, ew: #red)</code></td><td><code>Junction(ns: #green, ew: #red)</code></td></tr>
 <tr><td><code>Junction(ns: #red, ew: #green)</code></td><td><code>Junction(ns: #red, ew: #green)</code></td></tr>
 <tr><td><code>Junction(ns: #red, ew: #red)</code></td><td><code>Junction(ns: #red, ew: #red)</code></td></tr>
-</table>
-</td></tr>
 </table>
 
 Each row is one state, a `Junction` in the set `R`. A set is a map from each member to itself, so the value column repeats the key. The loop reaches these three states in one step, and the next step adds none. None has both lights green, so the law holds.
