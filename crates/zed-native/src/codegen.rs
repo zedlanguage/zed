@@ -22,7 +22,9 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 
 use zed_kernel::Prim;
+use zedc::zir::legalize::Expansion;
 use zedc::zir::memory::{Mode, RegionPlan};
+use zedc::zir::text::spell;
 use zedc::zir::{Op, Src, binds};
 
 use zed_rt::Word;
@@ -486,6 +488,19 @@ impl<M: Module> Gen<'_, M> {
                 );
                 self.states(fx, w, n)
             }
+            Op::Prim(p @ (Prim::Gt | Prim::Ge)) if ins.len() == 2 => {
+                let x = if *p == Prim::Gt {
+                    Expansion::Gt
+                } else {
+                    Expansion::Ge
+                };
+                return Err(format!(
+                    "native: `prim {}` has no lowering here; legalization expands it ({}), and \
+                     this back end does not declare that expansion",
+                    spell(*p),
+                    x.name()
+                ));
+            }
             Op::Prim(p) if inline(*p, ins.len()) => {
                 let w = self.inline(fx, *p, id, ins);
                 self.states(fx, w, n)
@@ -827,8 +842,6 @@ fn int_cmp(p: Prim) -> Option<IntCC> {
     Some(match p {
         Prim::Lt => IntCC::SignedLessThan,
         Prim::Le => IntCC::SignedLessThanOrEqual,
-        Prim::Gt => IntCC::SignedGreaterThan,
-        Prim::Ge => IntCC::SignedGreaterThanOrEqual,
         Prim::Eq => IntCC::Equal,
         Prim::Ne => IntCC::NotEqual,
         _ => return None,
@@ -839,14 +852,12 @@ fn float_op(p: Prim) -> bool {
     matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Div)
 }
 
-/// The float comparisons, ordered, so a NaN compares false as the kernel's do; `==` and
+/// The float comparisons, ordered (`>` and `>=` are legalized to `<` and `<=`), so a NaN compares false as the kernel's do; `==` and
 /// `!=` on floats are the kernel's surface equality and are not inline.
 fn float_cmp(p: Prim) -> Option<FloatCC> {
     Some(match p {
         Prim::Lt => FloatCC::LessThan,
         Prim::Le => FloatCC::LessThanOrEqual,
-        Prim::Gt => FloatCC::GreaterThan,
-        Prim::Ge => FloatCC::GreaterThanOrEqual,
         _ => return None,
     })
 }

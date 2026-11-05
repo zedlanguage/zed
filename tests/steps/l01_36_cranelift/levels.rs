@@ -56,7 +56,7 @@ test {
 fn opt_level_none_gives_the_values_opt_level_speed_gives() {
     let runs = Cell::new(0);
     let through = |t: &Term, ev: &mut Evaluator| {
-        let g = Arc::new(lower(t)?);
+        let g = Arc::new(zed_native::legalize(lower(t)?));
         let p = plan(&g, true);
         let mut copy = Evaluator::new(ev.world.clone());
         let none = run_at(OptLevel::None, &g, &p, ev)?;

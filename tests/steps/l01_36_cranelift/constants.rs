@@ -55,7 +55,7 @@ fn below_a_constant_in_a_shared_cell() -> Term {
 fn agrees(t: &Term, want: Value) {
     assert_eq!(kernel(t).unwrap(), want);
     for fuse in [true, false] {
-        let g = Arc::new(lower(t).unwrap());
+        let g = Arc::new(zed_native::legalize(lower(t).unwrap()));
         let p = plan(&g, fuse);
         let (v, s) = run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
         let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();

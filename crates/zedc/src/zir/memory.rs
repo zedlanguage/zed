@@ -58,6 +58,7 @@ use zed_kernel::term::{Pattern, Prim, Shared, Term};
 use zed_kernel::value::Value;
 use zed_kernel::{Evaluator, KernelError};
 
+use super::legalize::{Expansion, Expansions};
 use super::lower::raise_with;
 use super::{Node, Op, Region, RegionKind, Src, binds};
 
@@ -131,6 +132,11 @@ impl Stats {
         self.increments + self.decrements
     }
 }
+
+/// The expansions the counting machine asks of legalization (DESIGN.md sec:ir,
+/// "Legalization"): it runs a derived node only through its certificate, and runs every
+/// primitive through the kernel.
+pub const EXPANSIONS: Expansions = Expansions::of(&[Expansion::Derived]);
 
 /// The memory plan of graph `g`.
 ///

@@ -48,6 +48,7 @@
 
 pub mod binary;
 pub mod canon;
+pub mod legalize;
 pub mod lower;
 pub mod memory;
 pub mod text;

@@ -1678,3 +1678,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 ## Entries from OMEGA-cycle-growth (`zedc/src/store/presburger.rs`)
 
 - No new gap. `Omega::cycles` reads a row of one or two unit terms with a `match` on slice patterns with guards (`[t] if t.1.is_positive()`, `[s, t] if s.1 == -&t.1`), a row of the appendix (slice patterns) with the rewrite already listed: test the length, then index.
+
+## Entries from LOWER-legalize (`zedc/src/zir/legalize.rs`, `zed-native/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Arc::unwrap_or_clone` to move a region out of its node when it is held once, copying it only when shared | `legalize::legalize` | Identity (gap 1: the reference count) | A region is a value; the pass returns the new region and the old one is no longer read, which step L6.13 keeps in place |
+| `mem::take` of a region's and a node's fields, and a `vec::IntoIter` of nodes kept in each frame of a heap stack and advanced in place | `Frame::new`, `Frame::finish`, `Frame::inline`, `Frame::region` | Mutation (gap 11) | A fold over the nodes with the frame as its state; the stack a list of frames |
+| A `const fn` set built by `1 << x as u8` over an enum's discriminants, read by a mask | `Expansions::of`, `Expansions::contains`, `memory::EXPANSIONS`, `zed_native::EXPANSIONS` | Bit operations (gap 4, built) | A set of atoms (`{#derived, #gt, #ge}`) and `in`, a constant at the top level |

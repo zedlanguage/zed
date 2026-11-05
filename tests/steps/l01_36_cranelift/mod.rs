@@ -12,6 +12,7 @@ mod drops;
 mod hooks;
 mod kernel_inputs;
 mod kinds;
+mod legalize;
 mod levels;
 mod ports;
 mod reuse;
@@ -34,9 +35,9 @@ pub(crate) fn float(x: f64) -> Term {
     Term::Lit(Value::Float(F64::new(x)))
 }
 
-/// `t` lowered and planned with fusion.
+/// `t` lowered, legalized for this back end and planned with fusion.
 pub(crate) fn planned(t: &Term) -> (Arc<Region>, Plan) {
-    let g = lower(t).unwrap_or_else(|e| panic!("{e}"));
+    let g = zed_native::legalize(lower(t).unwrap_or_else(|e| panic!("{e}")));
     let p = memory::plan(&g, true);
     (Arc::new(g), p)
 }

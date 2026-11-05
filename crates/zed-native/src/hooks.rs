@@ -842,7 +842,9 @@ mod tests {
     #[test]
     fn a_chain_of_closures_becomes_a_term() {
         // `(x) -> (y) -> x`, whose inner lambda captures one value.
-        let g = Arc::new(lower(&lam(&["x"], lam(&["y"], var("x")))).unwrap());
+        let g = Arc::new(crate::legalize(
+            lower(&lam(&["x"], lam(&["y"], var("x")))).unwrap(),
+        ));
         let (t, _) = Tables::new(&g, &plan(&g, false)).unwrap();
         let captures = |l: &&crate::tables::LambdaInfo| !t.nodes[l.node].node().inputs.is_empty();
         let inner = t.lambdas.iter().position(|l| captures(&l)).unwrap();
@@ -867,7 +869,7 @@ mod tests {
     /// A run of the program `0` installed, with a string cell already freed: a word of it kept
     /// past its free, as a wrong plan would keep it, and a live string.
     fn with_a_freed_cell() -> (Word, Word) {
-        let g = Arc::new(lower(&Term::Lit(Value::Int(0))).unwrap());
+        let g = Arc::new(crate::legalize(lower(&Term::Lit(Value::Int(0))).unwrap()));
         let (t, _) = Tables::new(&g, &plan(&g, false)).unwrap();
         install(State::new(Arc::new(t), Evaluator::new(World::new())));
         with(|_, s| {

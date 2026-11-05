@@ -76,7 +76,7 @@ fn a_deep_list_read_from_a_port_runs_natively() {
     let port: Arc<dyn Lookup> = Arc::new(Same(list.clone()));
     w.sources.insert("db".into(), port);
     let t = app(Term::Read("db".into()), vec![lit(0i64)]);
-    let g = Arc::new(lower(&t).unwrap());
+    let g = Arc::new(zed_native::legalize(lower(&t).unwrap()));
     let o = zed_native::run(&g, &plan(&g, true), &mut Evaluator::new(w)).unwrap();
     assert_eq!(o.value, list);
     assert_eq!(o.stats.allocations, DEPTH as u64);
@@ -418,7 +418,7 @@ fn wide(k: usize) -> Term {
 fn a_function_of_20000_concatenations_runs_on_a_smaller_thread_stack() {
     let t = wide(scaling::FACTOR * WIDE);
     let want = Evaluator::new(World::new()).run(&t).unwrap();
-    let g = Arc::new(lower(&t).unwrap());
+    let g = Arc::new(zed_native::legalize(lower(&t).unwrap()));
     let p = plan(&g, true);
     let got = scaling::on_a_thread(SMALL_STACK, || {
         zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap()
@@ -436,7 +436,7 @@ fn a_function_of_20000_concatenations_runs_on_a_smaller_thread_stack() {
 #[test]
 fn a_wide_function_runs_in_time_linear_in_its_width() {
     let programs = [WIDE, scaling::FACTOR * WIDE].map(|k| {
-        let g = Arc::new(lower(&wide(k)).unwrap());
+        let g = Arc::new(zed_native::legalize(lower(&wide(k)).unwrap()));
         let p = plan(&g, true);
         (k, g, p)
     });

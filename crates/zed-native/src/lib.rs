@@ -25,6 +25,7 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use zed_kernel::{Evaluator, Term, Value, World};
 use zedc::zir::Region;
+use zedc::zir::legalize::{Expansion, Expansions};
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{Plan, plan};
 
@@ -110,7 +111,7 @@ impl Drop for Jit {
     }
 }
 
-/// Compiles graph `g` under `plan` by the JIT and runs it, the kernel in `ev` running the
+/// Compiles graph `g`, legalized by [`legalize`], under `plan` by the JIT and runs it, the kernel in `ev` running the
 /// nodes the runtime does not.
 pub fn run(g: &Arc<Region>, plan: &Plan, ev: &mut Evaluator) -> Result<Outcome, String> {
     run_at(OptLevel::None, g, plan, ev)
@@ -196,7 +197,7 @@ fn call(
     })
 }
 
-/// The object file of graph `g` under `plan`, for the host: `zed_root` exported, the
+/// The object file of graph `g`, legalized by [`legalize`], under `plan`, for the host: `zed_root` exported, the
 /// runtime's hooks imported.
 pub fn object(g: &Arc<Region>, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
@@ -228,11 +229,22 @@ fn object_module() -> Result<ObjectModule, String> {
     Ok(ObjectModule::new(b))
 }
 
-/// Lowers, plans with `fuse` and runs a closed term natively: a `through` for
+/// The expansions this back end asks of legalization (DESIGN.md sec:ir, "Legalization"): a
+/// derived node runs through its certificate, and `>` and `>=` are compiled as `<` and `<=`
+/// on their inputs swapped, so the code generator compiles only the latter two.
+pub const EXPANSIONS: Expansions =
+    Expansions::of(&[Expansion::Derived, Expansion::Gt, Expansion::Ge]);
+
+/// `g` legalized for this back end: what [`run`] and [`object`] take, once planned.
+pub fn legalize(g: Region) -> Region {
+    zedc::zir::legalize::legalize(g, EXPANSIONS)
+}
+
+/// Lowers, legalizes, plans with `fuse` and runs a closed term natively: a `through` for
 /// `zedc::testing::test_through` and `Program::run_through`.
 pub fn through(fuse: bool) -> impl Fn(&Term, &mut Evaluator) -> Result<Value, String> {
     move |t, ev| {
-        let g = Arc::new(lower(t)?);
+        let g = Arc::new(legalize(lower(t)?));
         run(&g, &plan(&g, fuse), ev).map(|o| o.value)
     }
 }
@@ -503,7 +515,7 @@ mod placement {
     #[test]
     fn code_runs_with_its_functions_more_than_2_gib_apart() {
         let t = two_lambdas();
-        let g = Arc::new(lower(&t).unwrap());
+        let g = Arc::new(legalize(lower(&t).unwrap()));
         let p = plan(&g, true);
         let want = Evaluator::new(World::new()).run(&t).unwrap();
         for level in [OptLevel::None, OptLevel::Speed] {
