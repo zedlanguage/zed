@@ -62,6 +62,9 @@ struct RowData {
     /// The first function, not a family, that a component holds at any depth and no tuple
     /// expression has checked as data: none for a row that [`Self::checked`] says was.
     unchecked: Option<Arc<Sig>>,
+    /// Whether no component holds a type variable, a function or a payload, at any depth:
+    /// replacing variables keeps the row whole.
+    fixed: bool,
     /// Whether every type variable it holds outside functions, at any depth, was checked as
     /// data when the row was made: set only for the row of a tuple expression, whose
     /// components are each checked as data first.
@@ -110,6 +113,12 @@ impl Row {
         };
         let mut vars = VarFacts::default();
         cs.iter().for_each(|c| vars.ty(c));
+        let fixed = cs.iter().all(|c| {
+            c.vars.is_empty()
+                && c.fns.is_empty()
+                && c.payloads.is_empty()
+                && c.tuples.iter().all(|r| r.0.fixed)
+        });
         Row(Arc::new(RowData {
             cs,
             digest,
@@ -117,6 +126,7 @@ impl Row {
             dynamic,
             held,
             unchecked,
+            fixed,
             data,
             checked,
             vars,
@@ -512,6 +522,13 @@ pub enum NeedKind {
     },
     /// `v[k]` with a key of this type: an application.
     Index(Ty),
+    /// `a, b, ... = v` into `n` names: component `i` of a tuple of exactly `n`.
+    Destructure {
+        /// The component.
+        i: usize,
+        /// The number of names, the tuple's length.
+        n: usize,
+    },
     /// A call of `v`, named `what`, with arguments of these types.
     Call {
         /// The value's name in the call.
@@ -572,6 +589,7 @@ impl Need {
                     key: key.clone(),
                 },
                 NeedKind::Index(k) => NeedKind::Index(f(k)),
+                NeedKind::Destructure { i, n } => NeedKind::Destructure { i: *i, n: *n },
                 NeedKind::Call {
                     what,
                     positional,
@@ -607,6 +625,7 @@ impl Need {
     pub fn tys(&self) -> impl Iterator<Item = &Ty> {
         let (index, positional, named): (_, &[Ty], &[(Arc<str>, Ty)]) = match &self.kind {
             NeedKind::Component { .. }
+            | NeedKind::Destructure { .. }
             | NeedKind::Data(_)
             | NeedKind::Into { .. }
             | NeedKind::Payload { .. } => (None, &[], &[]),
@@ -1538,6 +1557,7 @@ impl Ty {
                 .tuples
                 .iter()
                 .map(|cs| match mode {
+                    _ if cs.0.fixed => cs.clone(),
                     Mode::Outside if !cs.open() => cs.clone(),
                     _ if !cs.holds_any(binds) => cs.clone(),
                     _ => cs.replaced(cs.iter().map(|c| c.replace_in(binds, mode)).collect()),
@@ -1659,7 +1679,7 @@ impl Ty {
                     out.order.push(v.clone());
                 }
             }
-            stack.extend(t.tuples.iter().map(Walk::Row));
+            stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(Walk::Row));
             for s in t.payloads.values().flatten().flatten() {
                 stack.extend(s.items.iter().map(Walk::Ty));
                 stack.extend(s.fields.values().map(Walk::Ty));

@@ -1179,3 +1179,50 @@ fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
         assert!(meets[&m].within());
     });
 }
+
+/// `f`, which destructures its parameter into `n` names and gives the last and the first, and
+/// a call of it on a tuple of `n`: `n` needs of one class, each checked at the call.
+fn wide_destructuring(n: usize) -> String {
+    let names: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
+    let items: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+    format!(
+        "f(positional p) {{\n  {} = p;\n  return (a{}, a0);\n}}\ny = f(({}));\n",
+        names.join(", "),
+        n - 1,
+        items.join(", ")
+    )
+}
+
+/// `n` functions, each destructuring its parameter into a pair, each called on a pair.
+fn many_destructurings(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "swap{i}(positional p) {{\n  a, b = p;\n  return (b, a);\n}}\ny{i} = swap{i}(({i}, 0));\n"
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn destructured_parameters_check_in_linear_time() {
+    let (info, _) = info(&wide_destructuring(3));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.tops["y"].to_string(), "(2, 0)");
+    scales(
+        "a parameter destructured into n names",
+        200,
+        wide_destructuring,
+        |unit| {
+            assert_eq!(unit.type_errors(), Vec::<String>::new());
+        },
+    );
+    scales(
+        "n parameters each destructured into two names",
+        100,
+        many_destructurings,
+        |unit| {
+            assert_eq!(unit.type_errors(), Vec::<String>::new());
+        },
+    );
+}

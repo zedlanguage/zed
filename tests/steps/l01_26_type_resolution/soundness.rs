@@ -334,3 +334,54 @@ fn a_self_application_takes_the_least_settled_result() {
     let grows = "w(positional f) = if true { 1 } else { f(f) ++ \"a\" };\nspin = w(w);";
     refused(&program(grows, r#"stdout <- "x";"#));
 }
+
+/// `f` takes a pair and gives its first component; `g` passes its argument on to `f`; `pick`
+/// gives a pair or `5`.
+const PAIR: &str = "f(positional p) {\n  a, b = p;\n  return a;\n}\n\
+                    g(positional x) = f(x);\n\
+                    pick(positional c: bool) = if c { (1, 2) } else { 5 };";
+
+/// The error that rejects the program with `PAIR` whose `stdout` is `"int"` or `"other"` as
+/// the value of `call` is an `int` or not. The `is` test takes a value of any type, so only the
+/// destructuring can reject the program.
+fn kind_refused(call: &str) -> String {
+    let src = program(
+        PAIR,
+        &format!(r#"stdout <- if {call} is int {{ "int" }} else {{ "other" }};"#),
+    );
+    match load(src.as_bytes()) {
+        Ok(_) => panic!(
+            "accepted, and on input 7 it gives {:?}:\n{src}",
+            run(&src, "7")
+        ),
+        Err(e) => e.to_string(),
+    }
+}
+
+#[test]
+fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
+    // Each was accepted, and failed at run time: `type error: TupleGet applied to int, int`.
+    for (call, given) in [
+        ("f(5)", "5"),
+        ("f((1, 2, 3))", "(1, 2, 3)"),
+        ("f(pick(true))", "5"),
+    ] {
+        let e = kind_refused(call);
+        assert!(
+            e.contains(&format!("this value is {given}, not a tuple of 2")),
+            "{e}"
+        );
+        assert!(e.contains("`f` needs this of its argument here"), "{e}");
+        assert!(e.contains("a, b = p;"), "{e}");
+    }
+    // Through a function that passes its argument on, the need is `g`'s.
+    let e = kind_refused("g(5)");
+    assert!(e.contains("this value is 5, not a tuple of 2"), "{e}");
+    assert!(e.contains("`g` needs this of its argument here"), "{e}");
+    // A pair passes, of any component types, and gives its first component's type.
+    let is = r#"stdout <- if f((1, 2)) is int { "int" } else { "other" };"#;
+    assert_eq!(run(&program(PAIR, is), ""), "int\n");
+    let is = r#"stdout <- if g(("x", 2)) is int { "int" } else { "other" };"#;
+    assert_eq!(run(&program(PAIR, is), ""), "other\n");
+    assert_eq!(runs(PAIR, r#""${f((1, "x"))}""#, ""), "1\n");
+}

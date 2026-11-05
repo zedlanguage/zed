@@ -487,6 +487,11 @@ struct Class {
     name: Option<Arc<str>>,
     /// What uses of its values need of them, each numbered in the order of all needs.
     uses: Vec<(usize, Need)>,
+    /// The result of each use in `uses` by its kind and whether it gives a value, the first
+    /// recorded of equal ones, so a repeated use is found without a scan of `uses`.
+    known: HashMap<(NeedKind, bool), Ty>,
+    /// Whether `uses` holds a `NeedKind::Data` use.
+    data: bool,
     /// The tuples and functions that flowed into it, each with where: every use is checked
     /// on each.
     flowed: Vec<(Ty, Span)>,
@@ -1028,7 +1033,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Component `i` of `v`, destructured into `n` names: of each tuple shape, with `v`'s
-    /// atoms, which `TupleGet` passes.
+    /// atoms, which `TupleGet` passes. A value of a class needs a tuple of `n` of each type
+    /// the class meets.
     fn component(&mut self, v: &Ty, i: usize, n: usize, span: Span) -> Ty {
         let mut out = self.passing(v, "a tuple", span);
         for p in v.pieces() {
@@ -1038,6 +1044,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if i == 0 {
                         self.any("destructuring", span);
                     }
+                }
+                Piece::Var(_) if let Some(k) = self.class_of(&p) => {
+                    let kind = NeedKind::Destructure { i, n };
+                    out = out.union(&self.need(k, kind, true, span));
                 }
                 Piece::Var(_) => out = out.union(&Ty::dynamic()),
                 p if p.is_atoms() => {}
@@ -1520,6 +1530,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut now = Vec::new();
         for &r in &own {
             let uses = std::mem::take(&mut self.classes[r].uses);
+            self.classes[r].known.clear();
+            self.classes[r].data = false;
             match self.classes[r].resolved.clone() {
                 Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(uses),
                 Some(t) => now.extend(uses.into_iter().map(|(_, n)| (n, t.clone()))),
@@ -1621,6 +1633,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             resolved: None,
             name: None,
             uses: Vec::new(),
+            known: HashMap::new(),
+            data: false,
             flowed: Vec::new(),
             binder: None,
             generic: false,
@@ -1701,6 +1715,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut lits = std::mem::take(&mut self.classes[child].lits);
         let mut reasons = std::mem::take(&mut self.classes[child].reasons);
         let mut uses = std::mem::take(&mut self.classes[child].uses);
+        let mut known = std::mem::take(&mut self.classes[child].known);
+        let data = self.classes[child].data;
         let mut flowed = std::mem::take(&mut self.classes[child].flowed);
         let level = self.classes[child].level;
         let binder = self.classes[child].binder;
@@ -1714,8 +1730,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         if c.uses.len() < uses.len() {
             std::mem::swap(&mut c.uses, &mut uses);
+            std::mem::swap(&mut c.known, &mut known);
         }
         c.uses.extend(uses);
+        // The uses kept first keep their results, as a scan of the joined `uses` finds them.
+        for (key, result) in known {
+            c.known.entry(key).or_insert(result);
+        }
+        c.data |= data;
         if c.flowed.len() < flowed.len() {
             std::mem::swap(&mut c.flowed, &mut flowed);
         }
@@ -1780,17 +1802,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// made of; so a call met twice checks its needs once.
     fn need(&mut self, k: usize, kind: NeedKind, gives: bool, span: Span) -> Ty {
         let r = self.find(k);
-        let data = |n: &NeedKind| matches!(n, NeedKind::Data(_));
-        if data(&kind) && self.classes[r].uses.iter().any(|(_, n)| data(&n.kind)) {
+        let data = matches!(kind, NeedKind::Data(_));
+        if data && self.classes[r].data {
             return Ty::empty();
         }
-        if let Some((_, n)) = self.classes[r]
-            .uses
-            .iter()
-            .find(|(_, n)| n.kind == kind && n.result.is_some() == gives)
-        {
-            return n.result.clone().unwrap_or_else(Ty::empty);
+        let key = (kind, gives);
+        if let Some(result) = self.classes[r].known.get(&key) {
+            return result.clone();
         }
+        let (kind, _) = key;
         let level = self.classes[r].level;
         let result = gives.then(|| {
             let j = self.class();
@@ -1810,7 +1830,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.touch(r);
         self.needs += 1;
         let seq = self.needs;
-        self.classes[r].uses.push((seq, need.clone()));
+        let class = &mut self.classes[r];
+        class.uses.push((seq, need.clone()));
+        let given = result.clone().unwrap_or_else(Ty::empty);
+        class.known.insert((need.kind.clone(), gives), given);
+        class.data |= data;
         for (t, at) in &flowed {
             self.check_on(&need, t, *at);
         }
@@ -1863,6 +1887,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let out = match &n.kind {
             NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span),
             NeedKind::Index(k) => self.at_key(&on, Arg::of(b(self, k)), span),
+            NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
             NeedKind::Call {
                 what,
                 positional,
@@ -2027,7 +2052,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Ty::empty()
                 }
                 None => {
-                    let before = binds.clone();
+                    // `meet` reads `binds` and does not change them, so the second run starts
+                    // from the same ones.
                     let errors = self.info.errors.len();
                     self.open.push(Open {
                         span: n.span,
@@ -2039,7 +2065,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let mut got = self.meet(n, &on, binds, span);
                     let used = self.open.last().is_some_and(|o| o.used);
                     if used && !got.is_empty() {
-                        *binds = before;
                         self.info.errors.truncate(errors);
                         self.need_passed.truncate(passing);
                         let o = self.open.last_mut().expect("the need just pushed");
@@ -5592,14 +5617,19 @@ fn is_solved(t: &Ty) -> bool {
 }
 
 /// `t` with its variables replaced by `binds`, and each that is not a class and `binds`
-/// leaves unbound by the unknown.
+/// leaves unbound by the unknown. `binds` is copied only when such a variable is added to
+/// it, so a call whose needs leave none costs the size of `t`, not of `binds`, at each need.
 fn bound(t: &Ty, binds: &Binds, is_class: impl Fn(&str) -> bool) -> Ty {
     let vars = t.var_facts();
+    let add: Vec<_> = (vars.classes.iter().chain(&vars.names))
+        .filter(|v| !is_class(v) && !binds.contains_key(*v))
+        .collect();
+    if add.is_empty() {
+        return t.replace(binds);
+    }
     let mut b = binds.clone();
-    for v in vars.classes.iter().chain(&vars.names) {
-        if !is_class(v) && !b.contains_key(v) {
-            b.insert(v.clone(), Ty::dynamic());
-        }
+    for v in add {
+        b.insert(v.clone(), Ty::dynamic());
     }
     t.replace(&b)
 }

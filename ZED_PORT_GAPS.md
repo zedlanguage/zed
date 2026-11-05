@@ -1593,3 +1593,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::env::var_os` for `CC` and `ZED_RUNTIME`, `current_exe` for the default library | `link::Toolchain::from_env` | Command line (gap 6) | An environment input port, which no step plans |
 | A struct of options parsed once and shared by `zedc run` and an executable, its methods taking `&mut dyn Read`/`Write` | `run::Options`, `run::Ports::run`, `run::executable` | none | A record and functions over the `Lines` ports |
 | A length-prefixed byte layout (`u64::to_le_bytes`, `split_first_chunk`, `split_at_checked`) | `exe::data`, `exe::Program::decode` | Bytes (gap 5) | Bytes words of step L7.3f |
+
+## Entries from CHK-need-uses (`zedc/src/check/mod.rs`, `check/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `match` arm guarded by `if let` on the class of a variable piece, `Piece::Var(_) if let Some(k) = self.class_of(&p)` | `Ck::component` | None | An `is` test on `class_of` inside the `Var` arm, falling to the unknown when it has none |
+| `Vec::retain` in place on the variables of a type, keeping those that are no class and that `binds` leaves unbound | `check::bound` | Mutation (gap 11) | `where` over the variables into a new list |
+| A `bool` field of the shared row, set at construction from the components' own and their rows' fields | `check::ty::Row` (`fixed`) | None | A field computed at construction, as the row's other facts |
+| A `HashMap<(NeedKind, bool), Ty>` per class from a use's kind to its result, kept beside the list of uses, with the two swapped together and the smaller merged into the larger by `entry(..).or_insert` | `Ck::need`, `Ck::merge` (`Class::known`) | Mutation (gap 11) | A persistent map in the class record, merged smaller into larger with the first value kept |
