@@ -1405,9 +1405,26 @@ impl OpenValue<'_> {
             }
             OpenValue::Items { path: false, items } => Ok(Value::tuple(items)),
             OpenValue::Items { path: true, items } => Ok(Value::path(items)),
-            OpenValue::Family { entries, .. } => Ok(Value::Family(Family::of(entries))),
+            OpenValue::Family { entries, .. } => family(entries).map(Value::Family),
         }
     }
+}
+
+/// The family a literal's `entries` write, read from text or binary data. Each key is
+/// written once: the printer never repeats one, so data that does is damaged, and is refused
+/// naming the least key it repeats. Keys are compared as keys, so `-0.0` repeats `0.0`.
+/// O(n log n) comparisons for n entries.
+pub(super) fn family(mut entries: Vec<(Value, Value)>) -> Result<Family, String> {
+    for (k, _) in &mut entries {
+        if !k.is_key() {
+            *k = k.key();
+        }
+    }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    if let Some(w) = entries.windows(2).find(|w| w[0].0 == w[1].0) {
+        return Err(format!("the family writes the key {} twice", w[0].0));
+    }
+    Family::from_leaves(entries.into_iter().map(|(k, v)| (vec![k], v))).map_err(|e| e.to_string())
 }
 
 /// An atom, fields or tuple pattern whose parts are being read; a fields pattern holds the

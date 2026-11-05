@@ -321,3 +321,47 @@ fn printing_a_deep_graph_for_debugging_is_linear_in_its_depth() {
         );
     });
 }
+
+/// A family literal of `n` entries `{k -> k, ...}`, its keys written from the largest down, and
+/// with the key 0 written a second time when `repeat` is set.
+fn wide_family(n: usize, repeat: bool) -> String {
+    let mut entries: Vec<String> = (0..n).rev().map(|k| format!("{k} -> {k}")).collect();
+    if repeat {
+        entries.push("0 -> 1".into());
+    }
+    format!("{{{}}}", entries.join(", "))
+}
+
+#[test]
+fn reading_a_wide_family_and_refusing_a_repeated_key_is_n_log_n_in_its_entries() {
+    let (n, large) = (2_000, 16_000);
+    let pick = |k: usize, a, b| if k == n { a } else { b };
+    let (ok_small, ok_large) = (wide_family(n, false), wide_family(large, false));
+    let (bad_small, bad_large) = (wide_family(n, true), wide_family(large, true));
+    assert_eq!(
+        text::parse_value(&bad_small),
+        Err(format!(
+            "column {}: the family writes the key 0 twice",
+            bad_small.len() + 1
+        ))
+    );
+    check_order("reading a family of n entries as text", n, 1, |k| {
+        text::parse_value(pick(k, &ok_small, &ok_large)).unwrap();
+    });
+    check_order(
+        "refusing a family of n entries that repeats a key",
+        n,
+        1,
+        |k| {
+            text::parse_value(pick(k, &bad_small, &bad_large)).unwrap_err();
+        },
+    );
+    let graph = |family: &str| {
+        let src = format!("zir 1\nr region function ()\nr results ({family})\n");
+        binary::encode(&text::parse(&src).expect("a graph"))
+    };
+    let (bin_small, bin_large) = (graph(&ok_small), graph(&ok_large));
+    check_order("reading a family of n entries in binary", n, 1, |k| {
+        binary::decode(if k == n { &bin_small } else { &bin_large }).unwrap();
+    });
+}

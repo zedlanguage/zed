@@ -1545,3 +1545,9 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Box<[Expr; 2]>`, a boxed array of two expressions read as the sequence `sep e`, and the pattern `let [sep, x] = &**items` | `Expr::Sep`, `Reader::postfix`, `check::inner` | None | A pair `(sep, e)`, with a list of its two items made where a loop needs one |
 | A frame holding a slice `&'g [Expr]` borrowed from the grammar, and `std::slice::from_ref` to see one expression as a list of one | `engine::Frame::Loop`, `Frame::Sep`, `engine::iteration`, `fuzz::Gen::repeat` | None | Zed shares values, so the frame holds the list itself; a list of one |
 | `Iterator::try_for_each` to stop at the first item whose derivation fails | `fuzz::Gen::repeat` | None | A fold that carries the first failure |
+
+## Entries from ZIR-family-key (`zedc/src/zir/text.rs`, `zir/binary.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A literal's entries rewritten in place to their keys (`*k = k.key()` through `&mut`), sorted in place by `sort_unstable_by`, and a repeat found by `windows(2).find` | `zir::text::family` | Mutation (gap 11), Early exit (gap 12) | `sort` of the entries mapped to their keys into a new list, then `zip` with its `drop(1)` and a search for the first equal pair |

@@ -1,7 +1,7 @@
 //! Graphs the reader or the validator rejects, each with its message, and damaged binary data.
 
 use super::rejected;
-use zedc::zir::binary;
+use zedc::zir::{binary, text};
 
 /// Each case: what is wrong, the text, and the message.
 const CASES: &[(&str, &str, &str)] = &[
@@ -228,5 +228,102 @@ fn binary_atom_fields_in_order() {
     assert_eq!(
         binary::decode(&bytes),
         Err("byte 34: atom `#e` has its fields out of order or repeated".to_string())
+    );
+}
+
+/// Each case: what is wrong, a constant written as text, and the message. The printer writes
+/// each key of a family once, so a literal that repeats one is damaged data, refused naming
+/// the least key it repeats, never merged and never a panic.
+const REPEATED_KEYS: &[(&str, &str, &str)] = &[
+    (
+        "a price list naming one item twice",
+        "{\"tea\" -> 3, \"tea\" -> 4}",
+        "column 25: the family writes the key \"tea\" twice",
+    ),
+    (
+        "two equal entries",
+        "{1 -> 2, 1 -> 2}",
+        "column 17: the family writes the key 1 twice",
+    ),
+    (
+        "the least of two repeated keys is named",
+        "{5 -> 0, 2 -> 0, 5 -> 1, 2 -> 1}",
+        "column 33: the family writes the key 2 twice",
+    ),
+    (
+        "a key repeated below the top",
+        "{\"ann\" -> {1 -> 2, 1 -> 3}}",
+        "column 27: the family writes the key 1 twice",
+    ),
+    (
+        "two levels under one key, which a literal does not merge",
+        "{1 -> {\"a\" -> 1}, 1 -> {\"b\" -> 2}}",
+        "column 35: the family writes the key 1 twice",
+    ),
+    (
+        "a set naming one member twice",
+        "{(1, \"x\"), (1, \"x\")}",
+        "column 21: the family writes the key (1, \"x\") twice",
+    ),
+    (
+        "the two zeros are one key",
+        "{-0.0 -> 1, 0.0 -> 2}",
+        "column 22: the family writes the key 0.0 twice",
+    ),
+];
+
+#[test]
+fn a_family_literal_that_repeats_a_key_is_refused_as_text() {
+    for (what, src, want) in REPEATED_KEYS {
+        assert_eq!(text::parse_value(src), Err(want.to_string()), "{what}");
+    }
+    // In a graph, the message gives the line too.
+    assert_eq!(
+        rejected("zir 1\nr region function ()\nr results ({1 -> 2, 1 -> 3})\n"),
+        "line 3: column 28: the family writes the key 1 twice"
+    );
+    // Distinct keys, at every level, read back as written.
+    for ok in [
+        "{1 -> 2, 3 -> 4}",
+        "{\"ann\" -> {1 -> 2, 3 -> 4}, \"bob\" -> {1 -> 5}}",
+    ] {
+        assert_eq!(
+            text::parse_value(ok).map(|v| v.to_string()),
+            Ok(ok.to_string())
+        );
+    }
+}
+
+/// The binary form of a graph whose one result is the constant written `value`.
+fn constant(value: &str) -> Vec<u8> {
+    let src = format!("zir 1\nr region function ()\nr results ({value})\n");
+    binary::encode(&text::parse(&src).expect("a graph"))
+}
+
+/// `bytes` with the integer `from`, written as its tag 1 and eight bytes, made `to`.
+fn rewrite_int(mut bytes: Vec<u8>, from: u64, to: u64) -> Vec<u8> {
+    let want = [&[1u8][..], &from.to_le_bytes()].concat();
+    let at = bytes
+        .windows(9)
+        .position(|w| w == want)
+        .expect("the integer")
+        + 1;
+    bytes[at..at + 8].copy_from_slice(&to.to_le_bytes());
+    bytes
+}
+
+#[test]
+fn a_family_literal_that_repeats_a_key_is_refused_in_binary() {
+    let top = constant("{1 -> 20, 3 -> 40}");
+    assert!(binary::decode(&top).is_ok());
+    assert_eq!(
+        binary::decode(&rewrite_int(top, 3, 1)),
+        Err("byte 34: the family writes the key 1 twice".to_string())
+    );
+    let below = constant("{5 -> {1 -> 20, 3 -> 40}}");
+    assert!(binary::decode(&below).is_ok());
+    assert_eq!(
+        binary::decode(&rewrite_int(below, 3, 1)),
+        Err("byte 52: the family writes the key 1 twice".to_string())
     );
 }

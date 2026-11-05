@@ -12,7 +12,6 @@
 use std::sync::Arc;
 
 use num_bigint::BigInt;
-use zed_kernel::family::Family;
 use zed_kernel::num::Rat;
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Witness};
 use zed_kernel::value::{Atom, Value};
@@ -569,7 +568,12 @@ impl<'a> R<'a> {
             }
             _ => {
                 let left = self.len()?;
-                return Ok(Err(OpenValue::Family(Vec::with_capacity(left), None, left)));
+                return Ok(Err(OpenValue::Family(
+                    at,
+                    Vec::with_capacity(left),
+                    None,
+                    left,
+                )));
             }
         }))
     }
@@ -608,7 +612,10 @@ impl<'a> R<'a> {
             }
             OpenValue::Items(false, vs, _) => Value::tuple(vs),
             OpenValue::Items(true, vs, _) => Value::path(vs),
-            OpenValue::Family(entries, _, _) => Value::Family(Family::of(entries)),
+            OpenValue::Family(at, entries, _, _) => match text::family(entries) {
+                Ok(f) => Value::Family(f),
+                Err(e) => return self.err(at, e),
+            },
         })
     }
 
@@ -736,15 +743,15 @@ enum OpenValue {
         left: usize,
     },
     Items(bool, Vec<Value>, usize),
-    /// The entries read, and the key of the entry being read.
-    Family(Vec<(Value, Value)>, Option<Value>, usize),
+    /// The byte it starts at, the entries read, and the key of the entry being read.
+    Family(usize, Vec<(Value, Value)>, Option<Value>, usize),
 }
 
 impl OpenValue {
     fn left(&self) -> usize {
         match self {
             OpenValue::Atom { left, .. } | OpenValue::Items(_, _, left) => *left,
-            OpenValue::Family(_, _, left) => *left,
+            OpenValue::Family(_, _, _, left) => *left,
         }
     }
 
@@ -754,7 +761,7 @@ impl OpenValue {
                 args.push(v);
                 *left -= 1;
             }
-            OpenValue::Family(entries, key, left) => match key.take() {
+            OpenValue::Family(_, entries, key, left) => match key.take() {
                 None => *key = Some(v),
                 Some(k) => {
                     entries.push((k, v));
