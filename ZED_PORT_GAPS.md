@@ -318,9 +318,11 @@ chooses between these and tests the choice.
 `on_stack` (`eval.rs:290`) exists only to run with a 1 GiB stack (the marker `Stack`). Both vanish.
 Depth moves to the runtime: L6.7 tests a `fix` term over a 100,000-node chain, and compiled
 recursion on input-sized depth needs a growable stack in the retained runtime (inferred; not in
-L6.13). The preimage transfer (`store/preimage.rs`, PRE-stack) recurses on term depth through
-`stacker::maybe_grow`, a stack that grows in segments on the heap; Zed has no such word, so a port
-needs either it in the retained runtime or each analysis rewritten with its own stack. `Drop` for `text::Node` and `Premises` exists to avoid deep recursion in release,
+L6.13). The preimage transfer (`store/preimage.rs`, PRE-stack-explicit) keeps its frames on the
+heap: each analysis is an `async fn` whose recursive calls the loop in `store/frames.rs` runs from a
+`Vec` of suspended state machines; Zed has no `async` or state machines written by the compiler,
+so a port writes each analysis's frames as a sum type with an explicit stack (see the entries from
+PRE-stack-explicit). `Drop` for `text::Node` and `Premises` exists to avoid deep recursion in release,
 so compiled reference counting must also release iteratively.
 
 ### Gap 9. Key range queries (missing)
@@ -793,8 +795,8 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Terms numbered in an arena (`Vec` of nodes with `u32` children), filled by an explicit stack | `Terms::add` | Mutation | A state receiver over a map from number to node, or the content digest of gap 1, which makes the numbering unneeded |
 | The id of a shared subterm (`Shared::id`, drawn by `fresh_id`, shared by copies) as the key of the visited set while the arena is filled; an argument held inline is numbered with no lookup (ADDR-preimage; was `*const Term`) | `Terms::id` in `preimage.rs` and `preimage_ref.rs` | Identity (gap 1) | Keyed by the content digest of gap 1; the id is only looked up, never ordered or printed |
 | `std::mem::discriminant` of `Prim` as part of a hash key, since `Prim` has no `Hash` | `Made::Call` | None | `Prim` is an enumeration, so its value is the key |
-| `fn(&mut Memo) -> &mut HashMap<K, V>` choosing the table a generic memo helper fills | `Tx::cached`, `Tx::translated` | None | A function over the memo record returning the updated record |
-| `std::mem::replace` of the context field around a sub-transfer | `Tx::within`, `Tx::cached` | Mutation | The context passed as an argument and returned with the result |
+| `fn(&mut Memo) -> &mut HashMap<K, V>` choosing the table a generic memo helper fills | `Walk::cached`, `Walk::translated` (the type `Table`) | None | A function over the memo record returning the updated record |
+| `std::mem::replace` of the context field around a sub-transfer | `Tx::open` and `Tx::shut` around a call, `Walk::made` | Mutation | The context passed as an argument and returned with the result |
 | `imbl::HashMap` scopes numbered once by `(scope, name, binding)` | `Tx::bind` | None | Zed's maps are values; the numbering is a map from that triple to a number, in a state receiver |
 | A trait with a default method, passed as `&mut dyn Search`, implemented by local structs (`First`, `Met`, `Any`) | `branch`, `witness`, `exact_search` | Interfaces (L10) | A record of two functions over a search state, the state returned with the result |
 
@@ -1603,3 +1605,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Whether a signature holds a variable the binds bind, read from the smaller of the binds and the signature's variable sets | `check::ty::holds_bound` | None | The same test over the smaller collection, as `Row::holds_any` does |
 | A `bool` field of the shared row, set at construction from the components' own and their rows' fields | `check::ty::Row` (`fixed`) | None | A field computed at construction, as the row's other facts |
 | A `HashMap<(NeedKind, bool), Ty>` per class from a use's kind to its result, kept beside the list of uses, with the two swapped together and the smaller merged into the larger by `entry(..).or_insert` | `Ck::need`, `Ck::merge` (`Class::known`) | Mutation (gap 11) | A persistent map in the class record, merged smaller into larger with the first value kept |
+
+## Entries from PRE-stack-explicit (`zedc/src/store/frames.rs`, `store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `async fn` and `async move` blocks as frames: the compiler writes each analysis's resume points and saved locals as a state machine, and `.await` on a recursive call suspends the caller | every analysis of `Walk` (`close`, `mentions`, `reads_mod`, `constant`, `fwd`, `clip`, `summon`, `back`, `scan`, `pa`, `by_class`, `lin`, `formula` and their helpers) | Missing (no `async`, no state machines written by the compiler) | Each analysis's frames written as a sum type, one variant per resume point holding the locals live there, and a loop over an explicit stack of them, as `presburger.rs` does by hand |
+| `Pin<Box<dyn Future<Output = ()>>>` as a frame, so that frames of different analyses share one `Vec` | `frames::Frame`, `Stack::run` | Missing (no trait objects, no pinning) | One sum type over the frames of all analyses that call each other, kept in one list |
+| A poll loop with `Waker::noop` and `Context`, and a `Future` implemented by hand for `Deep` | `Stack::run`, `Deep::poll` | Missing | The loop of the explicit stack itself: pop a frame, step it, push what it calls |
+| `Rc<Cell<Option<V>>>` where a frame leaves its answer for its caller | `frames::frame`, `Deep` | Mutation (gap 11), identity | The callee's answer passed to the caller's frame when the callee is popped |
+| `Cell<ManuallyDrop<Option<Frame>>>`, the slot where a suspending call leaves its callee for the loop; `ManuallyDrop` gives `Stack` no destructor, so that it may be borrowed for the lifetime its own frames hold | `Stack::next` | Mutation, ownership | The step function returns the frame to push as its result |
+| `RefCell<&mut Tx>` borrowed by `Walk::with` between two suspension points, and `&'m self` shared by every frame | `Walk::with`, `Walk::tr`, every analysis of `Walk` | Mutation (gap 11), shared tables (gap 2) | The tables threaded through the step function as a state record, as gap 2 proposes |
