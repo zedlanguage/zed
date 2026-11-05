@@ -8,6 +8,18 @@
 
 Zed is a programming language that looks like ordinary code, but has no variables you overwrite and no statement order you have to get right. A Zed program is a set of definitions: each value says what it depends on, and the compiler works out the rest. Because the compiler can see that whole graph of dependencies, it can run your code in parallel, free memory without a garbage collector, recompute only what changed when an input changes and reject many bugs before the program runs.
 
+- [Notation](#notation): the syntax, words and terms used on this page
+- [A first program](#a-first-program)
+- [The basics](#the-basics): bindings, functions, numbers, strings, structs, unions, generics, modules
+- [Failure is a value](#failure-is-a-value)
+- [Collections](#collections): maps, grouping, remapping, reducing, pushing, joins, chunks, matrices
+- [Time and repetition](#time-and-repetition): recurrences, loops, methods, running only what's needed
+- [The outside world](#the-outside-world): ports, retries, databases, incremental updates
+- [Checks at compile time](#checks-at-compile-time): ranges, units, taint, cost
+- [Code that runs at build time](#code-that-runs-at-build-time): partial evaluation, reflection, grammars, symbolic math
+- [Tests, laws and proofs](#tests-laws-and-proofs)
+- [Under the hood](#under-the-hood): error messages, C, memory, parallelism, targets
+
 ## Notation
 
 This section lists all the syntax, words and terms the examples on this page use, so you can look up anything you don't recognize. Each one comes back with an example in the tour. If you'd rather start with code, [skip to the first program](#a-first-program) and come back when you need to.
@@ -27,8 +39,9 @@ This section lists all the syntax, words and terms the examples on this page use
 |---|---|
 | `name = value;` | A *binding*: gives a name to a value, once. Definitions can come in any order. |
 | `name: T = value;` | A binding with a stated type. |
+| `name: T;` | Declares a name and its type, with the value given elsewhere: an input, a foreign function, or a map filled by pushes. |
 | `f(x) = expression;` | A function whose body is one expression. |
-| `f(x) -> T { ... }` | A function with a stated result type and a block body. The last expression, or `return`, gives the result. |
+| `f(x) -> T { ... }`, `f(x) { ... }`, `f(x) -> T = expression;` | A function with a stated result type, a block body or both. The last expression, or `return`, gives the result. |
 | `positional x` | A parameter passed by position. Other parameters are passed by name, as in `f(x: 1)`. |
 | `y = default` in a parameter list | A parameter that can be left out. |
 | `(T) -> U` | The type of a function from `T` to `U`. |
@@ -46,6 +59,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | `loop { ... }`, `loop t { ... }` | A repeated step, with `t` as its optional step counter. The loop is a value holding the final state and the history. |
 | `until c;`, `while c;` | Stop conditions of a loop: `until` is tested after each step, `while` before it. |
 | `x' = e` | The value of `x` in the next step of a loop or the next version of a struct. |
+| `x' = e with x = start` | The same, with the value of `x` before the first step. |
 | `x[i] = e with x[-1] = start;` | A recurrence: an array defined by an equation, with its boundary value at the index just below the first. |
 | `i in 0..` inside `d[i in 0..]` | This entry is defined for every `i` in the range. |
 | `x*.method()` | A call in a loop body that also replaces `x` in the next step. |
@@ -103,6 +117,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | Syntax | Meaning |
 |---|---|
 | `int` | A mathematical integer. It can't overflow. |
+| `char32` | A Unicode code point, distinct from an integer. `char32("Z")` constructs one. |
 | `int[a..=b]`, `int[a..]` | An integer in a range. |
 | `f64`, `rat`, `bool`, `u8` | A 64-bit float, an exact rational, true or false, and an integer from 0 to 255. |
 | `Utf8String`, `U8String`, `Utf16String`, `Utf32String` | String types, one per encoding. String literals are `Utf8String`. |
@@ -112,7 +127,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | `[T]` | An array of `T`. |
 | `[T; n]`, `[T; r, c]` | A vector of length `n` and a matrix of `r` rows and `c` columns. |
 | `A \| B` | A *union*: a value that is either an `A` or a `B`. Its *members* are `A` and `B`. |
-| `T` (capitalized and otherwise undefined) | A type variable, when used at least twice in a signature. |
+| `T` (capitalized and otherwise undefined) | A type variable, when used at least twice in a signature, or in the signature and the body. |
 | `struct Name { field: T, field: T = default }` | A record type. Its fields can have defaults. |
 | `Name.method = e;`, `Name.method() { ... }` | A method: a function with an implicit first parameter, whose fields are in scope. |
 | `type Name = T;`, `type Name(T) = ...;` | A name for a type, with or without type parameters. |
@@ -153,7 +168,7 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | `a.join(b, on: #field, kind: #left)` | Pairs entries of `a` and `b` on a field. |
 | `a.diff(b, on: #field)` | The entries of `a` that have no match in `b`. |
 | `.count`, `.sum` | Reduces the innermost level to its number of entries, or to their sum. |
-| `.first`, `.last` | The entry at the lowest or highest key, in the collection's order. |
+| `.first`, `.last` | The value at the lowest or highest key, in the collection's order. |
 | `.foldl(init, op)`, `.foldr` | A fold from the left or the right, for an operator that can't be regrouped. |
 | `m.allOk` | `m` if no entry holds a failure, and otherwise the failures. |
 | `.image`, `.union` | The set of a map's values, and the union of two sets. |
@@ -164,6 +179,8 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | `.split`, `.lower`, `.len` | Splits a string on a separator, lowers its case, and gives a length. |
 | `a.matmul(b)`, `dot`, `cross` | Matrix product, dot product and cross product. |
 | `f64(n)`, `int(s)`, `char32("Z")` | Checked conversions between types. |
+| `stdout` | The port for standard output. `<-` writes to it. |
+| `x.patch(edit)` | Applies an edit to a map or document and gives the new version. |
 | `T.parse(s)`, `x.serialize` | A grammar's parser and serializer. |
 | `Json.decode(s)` | Decodes JSON into the type expected at the call. |
 | `expand`, `derivative`, `compile` | Rewrites a function's source, differentiates it, and turns source back into a function. |
@@ -188,7 +205,7 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | `@ensure` | Forbids a run-time check in this definition: the condition has to be proved instead. |
 | `@injective` | Claims that a function never gives two inputs the same result. |
 | `@memoized` | The build fails if this value isn't kept for reuse. |
-| `@cost(b)`, `@fused`, `@noalloc`, `@preallocated` | Performance claims the build checks: a work bound, no intermediate collection, no allocation, a bounded footprint. |
+| `@cost(b)`, `@fused`, `@noalloc`, `@preallocated` | Performance claims the build checks: a work bound, no intermediate collection, no memory beyond registers, a bounded footprint reserved at entry. |
 | `@exhaustive` | Run the tests on every input of a finite domain. |
 | `@proved`, `@strict`, `--strict` | Make the build fail on a law that isn't proved. `--strict` is a compiler flag. |
 | `@foreign("lib", "symbol")`, `@export("c", "symbol")` | Calls a C function, and makes a Zed function callable from C. |
@@ -224,12 +241,17 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | taint | A label for where a value came from, such as user input. |
 | port | A declared channel to the outside world: a file, socket, clock or database. |
 | wave | A batch of new input values passing through the program's graph. |
+| work, parallel depth | *Work* is the total number of operations. *Parallel depth* is the longest chain of them that must run one after another. |
+| effect system | Type annotations that record a function's side effects. |
 | memoize | Keep a result so that later uses don't compute it again. |
 | law | A claim about your code, which the compiler tries to prove and otherwise tests. |
 | associative, commutative | `(a op b) op c == a op (b op c)`; and `a op b == b op a`. |
+| identity | A value that leaves the other operand unchanged, such as 0 for addition or 1 for multiplication. |
 | `Monoid`, `CommRing` | Interfaces from the library for algebraic structures: an associative operator with an identity; and addition with multiplication, where multiplication commutes. |
+| grade | How far the compiler got with a law: for example proved, tested or assumed. |
 | partial evaluation | Running the parts of a program whose inputs are known at build time. |
 | specialize | Produce a version of a function for known types or values, with the generic steps gone. |
+| proof checker | A small program that validates a proof step by step. |
 | decidable | Answerable by an algorithm that always finishes. |
 | linear arithmetic | Sums of variables times constants, with comparisons. |
 | SMT solver | A general automated theorem prover, as used by many verification tools. |
@@ -238,9 +260,14 @@ Other atoms on the page, such as `#red` or `#goNs`, are data the examples define
 | liveness, fairness | *Liveness*: something good eventually happens. *Fairness*: an assumption that no ready action is put off forever. |
 | safe to repeat, idempotence | Doing it twice has the same effect as doing it once. |
 | hedged request, circuit breaker, failover | Sending a second copy of a slow request; refusing calls for a while after repeated failures; switching to a replacement server. |
+| scan, parallel scan | A computation that gives each running result, such as the running totals of a list. A parallel scan does this on many cores at once. |
 | hash join, merge join | Two standard ways to compute a join without comparing every pair. |
 | exact reference counting | Freeing a value when a count of its users reaches zero, with no count left too high by cycles. |
 | arena | A block of memory whose contents are all freed together. |
+| id-indexed graph | A graph whose nodes are stored in a table and refer to each other by key. |
+| intermediate representation | The form a compiler holds a program in, between source code and machine code. |
+| kernel | The small core that the rest of a compiler is built on. |
+| distributed dataflow | Running a program across many machines, with data sent between them along its dependency graph. |
 | back end | The part of a compiler that produces code for one target. |
 | MLIR, LLVM, Clang | Standard compiler infrastructure, and the C compiler built on LLVM. |
 | WebAssembly | A portable binary format that runs in browsers and elsewhere. |
@@ -261,7 +288,7 @@ main(fs: Files) -> (stdout: Lines) {
 
 `group` collects the words by their lowercase form, and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a level below it so equal counts don't collide, and each value becomes a line of text. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
 
-These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way.
+These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. Where a table has several columns after its keys, they are parts of one value, or an input shown beside its result. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way.
 
 ```text
 after text.split(" ")    after .group(w -> w.lower)    after .count
@@ -312,18 +339,7 @@ orders: OrderId ->? { total: rat, note: Utf8String | #none }
 
 Zed exists because many systems already recover a graph of values from ordinary code: spreadsheets, optimizing compilers, Spark, build systems, reactive UI frameworks and out-of-order CPUs. In Zed the graph is the program, so one compiler handles parallel scheduling, memory management, incremental updates and many correctness checks from one structure. This doesn't have to make programs longer: the word-count program above is about as long as the same program in Python.
 
-The rest of this page is a tour of the language. Each stop opens with a line saying what the feature does, lists its syntax, gives an example, and then explains the example and shows its inputs and results. Snippets stand alone unless they say otherwise, and a name a snippet doesn't define is an input you can assume. A commented-out line marked ✗ is one the compiler rejects.
-
-- [Notation](#notation): the syntax, words and terms used on this page
-- [The basics](#the-basics): bindings, functions, numbers, strings, structs, unions, generics, modules
-- [Failure is a value](#failure-is-a-value)
-- [Collections](#collections): maps, grouping, remapping, reducing, pushing, joins, chunks, matrices
-- [Time and repetition](#time-and-repetition): recurrences, loops, methods, running only what's needed
-- [The outside world](#the-outside-world): ports, retries, databases, incremental updates
-- [Checks at compile time](#checks-at-compile-time): ranges, units, taint, cost
-- [Code that runs at build time](#code-that-runs-at-build-time): partial evaluation, reflection, grammars, symbolic math
-- [Tests, laws and proofs](#tests-laws-and-proofs)
-- [Under the hood](#under-the-hood): error messages, C, memory, parallelism, targets
+The rest of this page is a tour of the language. Each stop opens with a line saying what the feature does and lists its syntax. Most then give an example, explain it and show its inputs and results. Snippets stand alone unless they say otherwise, and a name a snippet doesn't define is an input you can assume. A commented-out line marked ✗ is one the compiler rejects.
 
 ## The basics
 
@@ -372,6 +388,7 @@ before: 5, "Ann", "?"
 after:  a = 8, because 5.double is 10 and clamp(0, 8) caps it
         b = "Hi, Ann?"
         hi(punct: ".") = "Hi, Ann."
+        hi() = "Hi, Ann!"
 ```
 
 Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Any function can be called with a dot, so `5.double` is `double(5)`, and pipelines read left to right. A `...` in a call leaves the remaining named parameters open and gives you back a function. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes an `int`; `x * 2n` would take any number type.
@@ -739,7 +756,7 @@ before: sales                after: totals
 +--------+-----+--------+
 ```
 
-`as ... into ...` states the shape you have and the shape you want. It is another way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the `ranking` line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. If you ask it to, as in the rejected `totals` line, you get an error that lists the ways out, and the last `totals` line is one of them. A shortened version of the error, where a keypath is the chain of keys that leads to a value:
+In `transposed`, a value at row `r` and column `c` moves to row `c` and column `r`. A remap is another way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the `ranking` line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. If you ask it to, as in the rejected `totals` line, you get an error that lists the ways out, and the last `totals` line is one of them. A shortened version of the error, where a keypath is the chain of keys that leads to a value:
 
 ```text
 error: this remap would map one key to many values
@@ -955,7 +972,7 @@ after: sessions
 +-----+------------------------------+
 ```
 
-`chunkBy` splits an ordered collection wherever the key changes. If you have ever written this by hand, you know the easy mistake is forgetting to flush the last group. Here that can't happen, because the last chunk is included. And since a chunk exists only because a click fell into it, `s.first` is exact, with no `#none` case to handle.
+If you have ever split a list into runs by hand, you know the easy mistake is forgetting to flush the last group. Here that can't happen, because the last chunk is included. And since a chunk exists only because a click fell into it, `s.first` is exact, with no `#none` case to handle.
 
 ### Vectors and matrices
 
@@ -1012,7 +1029,7 @@ d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
 ```
 
-With `xs` = 3, 1, 4, and with `a` = "ab", `b` = "ac" and a `cost` of 0 for equal characters and 1 otherwise, `d[1][1]` is the edit distance, 1:
+With `xs` = 3, 1, 4, with `a` and `b` arrays of the code points of "ab" and "ac", and with a `cost` of 0 for equal characters and 1 otherwise, `d[1][1]` is the edit distance, 1:
 
 ```text
 before: xs    after: running    after: d
@@ -1187,7 +1204,7 @@ before: req delivers q1, then q2
 after:  resp carries answer(q1), then answer(q2)
 ```
 
-A program's whole interaction with the world goes through ports, which are declared in `main`'s header or as stored collections: files, sockets, clocks, devices, databases and the like. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
+Ports are declared in `main`'s header or as stored collections: files, sockets, clocks, devices, databases and the like. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
 
 Runs repeat exactly, apart from a short list such as the order that messages arrive at a port and running out of a resource. Inputs and arrival order are recorded, so you can replay a failing run in a test.
 
@@ -1248,7 +1265,7 @@ A stored table is a map like any other, and you read it with the same `[key]`. T
 
 ### Incremental updates
 
-When an input changes, only what depends on the change is recomputed, and `@memoized` asserts that a value is kept for this.
+When an input changes, the compiler can update the affected results or recompute them in full, and `@memoized` asserts that a value is kept for reuse.
 
 **Syntax:** `@memoized`
 
@@ -1368,9 +1385,9 @@ Every function has a computed upper bound on its work and its parallel depth, wh
 
 ### Partial evaluation
 
-An expression whose inputs are known at build time is computed at build time, with no special syntax.
+An expression the program needs is computed at build time when its inputs are known then.
 
-**Syntax:** none. It applies to any expression with known inputs.
+**Syntax:** none. It applies to any needed expression with known inputs.
 
 ```zed
 struct User { id: int, name: Utf8String }
@@ -1391,7 +1408,7 @@ Zed has no macro language and no `comptime` keyword. An expression your program 
 
 ### Reflection
 
-`::` reads the structure of a type or value, and the read happens at build time.
+`::` reads the structure of a type or a declaration, and that read happens at build time.
 
 **Syntax:** `T::fields`, `T::shape`, `T::values`, `x::constraints`, `f::source`
 
@@ -1408,7 +1425,7 @@ after:  sizes = { #large, #medium, #small }
         names = id, an int, and name, a Utf8String
 ```
 
-Generic code can look at a type's structure. That's how `Json.decode` knows what `User` looks like, and every read is answered at build time, so reflection has no run-time cost.
+Generic code can look at a type's structure. That's how `Json.decode` knows what `User` looks like, and each read of a type's structure is answered at build time, so reflection has no run-time cost.
 
 ### Grammars
 
@@ -1490,7 +1507,7 @@ after:  e = x ** 2 + 2r * x + 1r
         d = 2r * x + 2r
 ```
 
-The source of a function is a value you can read, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the binders are the assumptions, so `(x * y) div y` simplifies to `x` when `y` is known to be at least 1, and not when `y` may be 0. `compile` turns the result back into a function.
+The source of a function is a value you can read, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the function's parameters are the assumptions, so `(x * y) div y` simplifies to `x` when `y` is known to be at least 1, and not when `y` may be 0. `compile` turns the result back into a function.
 
 ## Tests, laws and proofs
 
@@ -1533,7 +1550,7 @@ These are single cases. Which grade the build reports for each of these three
 laws isn't worked out here, since it depends on the compiler's rewrites.
 ```
 
-The compiler tries to prove it with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
+The compiler tries to prove a law with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
 
 The optimizer can use proved laws as rewrites. A `law` that was only tested is never used to rewrite your program. An `@associative` annotation that was only tested can still choose a fixed regrouping, and the report says so.
 
@@ -1559,7 +1576,7 @@ reachable = loop {
     with R = { Junction(ns: #red, ew: #red) };
 };
 
-law neverBothGreen(j: Junction) = (j in reachable.R).implies(j.ns == #red || j.ew == #red);
+law neverBothGreen(ns: Signal, ew: Signal) = (Junction(ns: ns, ew: ew) in reachable.R).implies(ns == #red || ew == #red);
 ```
 
 ```text
@@ -1585,7 +1602,7 @@ A compile error says what failed, why, and what would fix it.
 
 **Syntax:** none.
 
-Every error gives the rule that failed and the checker's whole chain of reasoning: each constraint, where it came from and how it reached this line. When the compiler has concrete evidence, such as two keys that collide or a value no `match` arm covers, it shows it. When a proof is missing, it names the expression or region it couldn't resolve. It then lists the repairs that would work, as in the [remap error](#remapping) above. The rules that reject a program are fixed lists, so whether a program is accepted never depends on how strong the optimizer is.
+Every error gives the rule that failed and the checker's whole chain of reasoning: each constraint, where it came from and how it reached this line. When the compiler has concrete evidence, such as two keys that collide or a value no `match` arm covers, it shows it. When a proof is missing, it names the expression or region it couldn't resolve. It then lists the repairs that would work, as in the [remap error](#remapping) above. The rules that reject a program are fixed lists, so whether a program is accepted never depends on how strong the optimizer is. The one exception is an assertion you write about the plan, such as `@cost` or `@fused`, which checks the plan the compiler chose.
 
 ### Calling C, and being called from C
 
@@ -1614,7 +1631,7 @@ A foreign call is an operation on a port. The declared `-> f64` is the C result,
 
 The compiler places all allocation and freeing.
 
-**Syntax:** none.
+**Syntax:** `@noalloc`, `@preallocated`
 
 Zed has no garbage collector, and there are no lifetimes or ownership annotations. Zed values can't form cycles, so exact reference counting is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, whose nodes are freed with the arena, or in id-indexed graphs, where a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no tracing pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
 
