@@ -60,10 +60,9 @@ fn a_file_that_is_not_utf8_fails_and_a_missing_file_is_a_usage_error() {
     std::fs::write(&bad, [0xffu8, 0xfe]).unwrap();
     let (status, out, _) = run(&[&bad]);
     assert_eq!(status, 1);
-    assert!(
-        out.starts_with(&format!("{bad}: "))
-            && out.ends_with("0 passed, 1 failed, 0 rejection units\n"),
-        "{out}"
+    assert_eq!(
+        out,
+        format!("{bad}: 1:1: not UTF-8: FF\n0 passed, 1 failed, 0 rejection units\n")
     );
     let (status, _, err) = run(&["/nonexistent/zed-l01-21.zed"]);
     assert_eq!(status, 2);
