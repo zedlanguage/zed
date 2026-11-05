@@ -1,7 +1,7 @@
 //! Step M0.1: repository scaffolding.
 //!
 //! The step folders are the index the user documentation is built from, so their names and
-//! their declaration in `main.rs` are checked here, and the list itself is a golden snapshot.
+//! their declaration in `main.rs` are checked here, and the list itself is an expected-output snapshot.
 
 use std::fs;
 use zed_tests::{is_step_name, steps_dir};

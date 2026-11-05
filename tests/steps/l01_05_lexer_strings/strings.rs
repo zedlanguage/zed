@@ -60,7 +60,7 @@ fn blank_lines_and_deeper_lines_inside_a_stripped_string() {
 }
 
 #[test]
-fn golden_malformed_strings() {
+fn expected_malformed_strings() {
     let cases = [
         "\"unclosed",
         "\"two\nlines\"",

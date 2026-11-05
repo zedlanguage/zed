@@ -76,7 +76,7 @@ fn integers_are_unchanged() {
 }
 
 #[test]
-fn golden_malformed_floats_and_rationals() {
+fn expected_malformed_floats_and_rationals() {
     let cases = [
         "1e", "1e+", "1.5e", "1.5f", "3R", "0x10r", "1.5_", "2.5ms", "1e3x", "1rr",
     ];

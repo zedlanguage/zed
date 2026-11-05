@@ -17,7 +17,7 @@ sumZeroed = amounts.map(a -> a else 0) >< (+);
 "#;
 
 #[test]
-fn golden_example_program() {
+fn expected_example_program() {
     let tokens = lex(TOUR_FAILURE).unwrap();
     insta::assert_snapshot!(render_lines(TOUR_FAILURE, &tokens));
 }

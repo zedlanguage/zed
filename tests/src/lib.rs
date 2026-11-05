@@ -1,7 +1,7 @@
 //! Shared helpers for the step tests in `tests/steps/`.
 //!
 //! Each step of DESIGN.md Part G has one folder, `tests/steps/<step>/`, holding that step's
-//! tests and the Zed fixtures they read; golden outputs are `insta` snapshots in the folder's
+//! tests and the Zed fixtures they read; expected outputs are `insta` snapshots in the folder's
 //! `snapshots/` directory, accepted with `cargo insta review` (docs/layout.md).
 
 use std::path::PathBuf;

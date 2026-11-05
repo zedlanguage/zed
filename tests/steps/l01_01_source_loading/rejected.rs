@@ -1,4 +1,4 @@
-//! Files that are rejected, each as an editor or a tool would write it, with the golden
+//! Files that are rejected, each as an editor or a tool would write it, with the expected
 //! rejection: position, message and span.
 
 use unicode_normalization::char::canonical_combining_class;
@@ -56,7 +56,7 @@ fn show(name: &str, bytes: &[u8]) -> String {
 }
 
 #[test]
-fn golden_rejections() {
+fn expected_rejections() {
     let out: Vec<String> = FILES.iter().map(|(n, b)| show(n, b)).collect();
     insta::assert_snapshot!(out.join("\n"));
 }

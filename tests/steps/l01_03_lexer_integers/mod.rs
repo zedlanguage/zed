@@ -57,7 +57,7 @@ fn leading_zeros_are_decimal_digits_and_hex_digits_keep_their_case() {
 }
 
 #[test]
-fn golden_malformed_numbers() {
+fn expected_malformed_numbers() {
     let cases = [
         "timeout 200ms",
         "count 1__000",

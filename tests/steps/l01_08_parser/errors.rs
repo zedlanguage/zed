@@ -15,7 +15,7 @@ fn report(text: &str) -> String {
 }
 
 #[test]
-fn golden_errors() {
+fn expected_errors() {
     let out = [
         "total = price * ;",
         "discount = if member { 0.1 }; // `if` needs its `else`",

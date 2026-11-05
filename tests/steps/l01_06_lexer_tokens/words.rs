@@ -86,7 +86,7 @@ fn atoms_and_annotations() {
 }
 
 #[test]
-fn golden_lexical_errors() {
+fn expected_lexical_errors() {
     let cases = [
         "# none",
         "x = @",

@@ -55,7 +55,7 @@ fn a_hole_in_a_triple_quoted_string_may_span_lines_and_is_not_stripped() {
 }
 
 #[test]
-fn golden_malformed_holes() {
+fn expected_malformed_holes() {
     let cases = [
         r#""${name""#,
         r#""${x // c}""#,
