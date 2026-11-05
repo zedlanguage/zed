@@ -763,12 +763,19 @@ fn tops_pairs(d: usize) -> Vec<(Formula, Formula, bool)> {
 
 #[test]
 fn tops_sharing_parts_compare_as_written_out() {
+    // Equal pairs are one sequence written out, and unequal pairs differ in a constraint that
+    // occurs nowhere else, so they are equal or unequal under every answer of Q55; the order of
+    // an unequal pair depends on the answer, so only equality, the hash of equal formulas and
+    // antisymmetry are asserted.
     for d in 1..=9 {
         for (a, b, equal) in tops_pairs(d) {
-            let o = written(&a).cmp(&written(&b));
-            assert_eq!(o == Ordering::Equal, equal, "d = {d}: {a} against {b}");
-            assert_eq!(a.cmp(&b), o, "d = {d}: {a} against {b}");
-            assert_eq!(b.cmp(&a), o.reverse(), "d = {d}: {b} against {a}");
+            assert_eq!(
+                written(&a) == written(&b),
+                equal,
+                "d = {d}: {a} against {b}"
+            );
+            assert_eq!(a == b, equal, "d = {d}: {a} against {b}");
+            assert_eq!(b.cmp(&a), a.cmp(&b).reverse(), "d = {d}: {b} against {a}");
             if equal {
                 assert_eq!(hash(&a), hash(&b), "d = {d}: {a}");
             }
@@ -777,9 +784,12 @@ fn tops_sharing_parts_compare_as_written_out() {
     for k in 2..=6 {
         for last in [0, 1] {
             let (a, b) = (pairs(k, 9, 0), pairs(k, 9, last));
-            let o = written(&a).cmp(&written(&b));
-            assert_eq!(o == Ordering::Equal, last == 0, "k = {k}");
-            assert_eq!(a.cmp(&b), o, "k = {k}: {a} against {b}");
+            assert_eq!(written(&a) == written(&b), last == 0, "k = {k}");
+            assert_eq!(a == b, last == 0, "k = {k}: {a} against {b}");
+            assert_eq!(b.cmp(&a), a.cmp(&b).reverse(), "k = {k}: {b} against {a}");
+            if last == 0 {
+                assert_eq!(hash(&a), hash(&b), "k = {k}: {a}");
+            }
         }
     }
 }
