@@ -27,6 +27,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use unicode_ident::is_xid_continue;
 use zed_kernel::family::Family;
 use zed_kernel::num::Rat;
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
@@ -669,8 +670,11 @@ struct P<'a> {
     i: usize,
 }
 
-fn ident(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+/// The length in bytes of the word at the start of `s`: its `XID_Continue` characters and one
+/// prime after them, so that every name the lexer accepts (lex/name.rs) reads back.
+fn word_len(s: &str) -> usize {
+    let n = s.find(|c| !is_xid_continue(c)).unwrap_or(s.len());
+    n + usize::from(n > 0 && s[n..].starts_with('\''))
 }
 
 impl<'a> P<'a> {
@@ -703,7 +707,8 @@ impl<'a> P<'a> {
     fn eat_word(&mut self, w: &str) -> bool {
         self.ws();
         let r = self.rest();
-        if r.starts_with(w) && !r[w.len()..].starts_with(ident) {
+        if r.starts_with(w) && !r[w.len()..].starts_with(|c: char| is_xid_continue(c) || c == '\'')
+        {
             self.i += w.len();
             true
         } else {
@@ -726,10 +731,10 @@ impl<'a> P<'a> {
         }
     }
 
-    /// A run of letters, digits and `_`.
+    /// A name: a run of `XID_Continue` characters, then at most one prime.
     fn word(&mut self) -> Result<&'a str, String> {
         self.ws();
-        let n = self.rest().find(|c| !ident(c)).unwrap_or(self.rest().len());
+        let n = word_len(self.rest());
         if n == 0 {
             return Err(format!("expected a name, found {}", self.found()));
         }
@@ -1057,7 +1062,7 @@ impl<'a> P<'a> {
                 self.i = start;
                 return lit(self.value()?);
             }
-            w if w.len() > 1 && w.starts_with('#') && w[1..].chars().all(ident) => {
+            w if w.len() > 1 && w.starts_with('#') && word_len(&w[1..]) == w.len() - 1 => {
                 Type::atom(&w[1..])
             }
             w => {

@@ -2,6 +2,7 @@
 
 use zed_kernel::Value;
 use zed_kernel::term::Pattern;
+use zed_kernel::types::Type;
 use zedc::zir::text::{edge, parse_edge, parse_pattern, parse_type, parse_value, pattern};
 
 #[test]
@@ -93,6 +94,47 @@ fn named_payload_fields_sort() {
         parse_value("#err(code: 3, code: 4)"),
         Err("column 23: atom `#err` names a field twice".into())
     );
+}
+
+#[test]
+fn names_the_lexer_accepts_read_back() {
+    // A name is what the lexer takes (lex/name.rs): `XID_Continue` characters, a combining
+    // mark among them, and one trailing prime.
+    let one = Value::str("1");
+    for v in [
+        Value::atom("ok'"),
+        // `क्ष`: the virama U+094D joins two consonants and is a mark, not a letter.
+        Value::atom("क्ष"),
+        Value::atom_with("क्ष", vec![one.clone()]),
+        Value::atom_named("point", vec![("x'".into(), one.clone()), ("x".into(), one)])
+            .expect("distinct fields"),
+    ] {
+        let text = v.to_string();
+        assert_eq!(parse_value(&text), Ok(v), "{text}");
+    }
+    for p in [
+        Pattern::Bind("x'".into()),
+        Pattern::Bind("क्ष".into()),
+        Pattern::Atom("ok'".into(), vec![Pattern::Bind("x'".into())]),
+        Pattern::Fields(
+            "point".into(),
+            vec![("x'".into(), Pattern::Bind("y'".into()))],
+        ),
+        // `is'` is a binder, not the start of `(is T)`.
+        Pattern::Tuple(vec![Pattern::Bind("is'".into()), Pattern::Wild]),
+    ] {
+        let text = pattern(&p);
+        assert_eq!(parse_pattern(&text), Ok(p), "{text}");
+    }
+    for (name, t) in [
+        ("ok'", Type::atom("ok'")),
+        ("क्ष", Type::atom("क्ष")),
+        ("क्ष", Type::atom_with("क्ष", &Type::tuple(vec![Type::int()]))),
+    ] {
+        let text = t.to_string();
+        assert!(text.contains(name), "{text} names {name}");
+        assert_eq!(parse_type(&text), Ok(t), "{text}");
+    }
 }
 
 #[test]
