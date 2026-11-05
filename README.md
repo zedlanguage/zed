@@ -6,7 +6,14 @@
   <img src="docs/assets/banner.svg" alt="Zed" width="512">
 </p>
 
-Zed is a programming language that looks like ordinary code, but has no variables you overwrite and no statement order you have to get right. A Zed program is a set of definitions: each value says what it depends on, and the compiler works out the rest. Because the compiler can see that whole graph of dependencies, it can run your code in parallel, free memory without a garbage collector, recompute only what changed when an input changes and reject many bugs before the program runs.
+Zed is a dataflow programming language. A program is a set of definitions, each value is defined once in terms of the values it depends on, and the compiler orders the computation from that graph of dependencies. From the same graph, the compiler:
+
+- runs code in parallel, with no threads or locks in the source, and gives the same result bit for bit on any number of cores;
+- frees memory without a garbage collector, and often never allocates intermediate collections at all;
+- recomputes only what a changed input affects;
+- rejects whole classes of runtime error at compile time, including null dereference, unhandled failure, out-of-bounds indexing and data races.
+
+Its central data structure is the multi-level map, and the same code works on maps held in memory, in files or in a database.
 
 - [Notation](#notation): the syntax, words and terms used on this page
 - [A first program](#a-first-program)
