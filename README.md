@@ -200,7 +200,7 @@ port = parse(text)?.server?.port else 8080;
 
 There are no exceptions and no null. A function that can fail says so in its return type, by returning a union with an atom in it. `else` replaces any failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't.
 
-A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction is stricter: it is rejected if its operator might be applied to a failure it does not handle, since many failures can't become one result unless you say how.
+A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction is stricter: it is rejected if its operator might be applied to a failure it does not handle, since failures at many keys can't become one result unless you say how.
 
 The compiler also adds failures only where they can really happen. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
 
@@ -263,7 +263,7 @@ byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
 // byId = users.rekey(u -> u.id);       // ✗ rejected unless id is known to be unique
 ```
 
-`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys. Its keys are exactly that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. `rekey` replaces the key, and that can make two entries land on one key, so the compiler demands evidence that the new key is unique, such as a declared key or a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
+`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. `rekey` replaces the key, and that can make two entries land on one key, so the compiler demands evidence that the new key is unique, such as a declared key or a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
 
 ### Remapping
 
