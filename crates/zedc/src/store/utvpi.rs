@@ -121,8 +121,9 @@ fn potential(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // When the graph has no cycle, its nodes in topological order (Kahn) relax each edge once,
     // whatever the signs of the weights, in O(V + E): the distances from a source joined to each
     // node by an edge of weight 0. Whether there is a cycle depends only on the graph, so the
-    // searches below are taken exactly when one exists. Without this pass every search below is
-    // quadratic on BAD-GOR and a fan with no cycle
+    // searches below are taken exactly when one exists. Without this pass the race below is
+    // quadratic on BAD-GOR and a fan with no cycle, since Goldberg and Radzik's search and
+    // BF-Dijkstra are and finish before Duong's at the sizes measured
     // (`l01_38_presburger::stages::bad_gor_and_a_fan_with_no_cycle_scale`).
     let mut indegree = vec![0usize; n];
     for edges in out {
