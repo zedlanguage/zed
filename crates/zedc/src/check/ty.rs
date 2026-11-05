@@ -1632,30 +1632,44 @@ impl Ty {
     /// Every variable in it, in order of first appearance.
     ///
     /// A type nests as deep as the program, so the walk keeps its own stack; rows are shared,
-    /// so it enters each once. The address of a row only tells whether it was entered: rows
-    /// entered once more would add no variable, so the order does not depend on it.
+    /// so it enters each once. The address of a row only tells whether it was entered, and a
+    /// row is marked when it is entered, in the order a recursive walk would enter it: a row
+    /// entered once more adds no variable, so the order does not depend on the sharing.
     pub fn vars_in(&self, out: &mut Vars) {
+        enum Walk<'a> {
+            Ty(&'a Ty),
+            Row(&'a Row),
+        }
         let mut rows = HashSet::new();
-        let mut stack = vec![self];
-        while let Some(t) = stack.pop() {
+        let mut stack = vec![Walk::Ty(self)];
+        while let Some(w) = stack.pop() {
+            let from = stack.len();
+            let t = match w {
+                Walk::Row(r) => {
+                    if rows.insert(Arc::as_ptr(&r.0)) {
+                        stack.extend(r.iter().map(Walk::Ty));
+                        stack[from..].reverse();
+                    }
+                    continue;
+                }
+                Walk::Ty(t) => t,
+            };
             for v in &t.vars {
                 if out.seen.insert(v.clone()) {
                     out.order.push(v.clone());
                 }
             }
-            let from = stack.len();
-            let rows = (t.tuples.iter()).filter(|r| rows.insert(Arc::as_ptr(&r.0)));
-            stack.extend(rows.flatten());
+            stack.extend(t.tuples.iter().map(Walk::Row));
             for s in t.payloads.values().flatten().flatten() {
-                stack.extend(&s.items);
-                stack.extend(s.fields.values());
+                stack.extend(s.items.iter().map(Walk::Ty));
+                stack.extend(s.fields.values().map(Walk::Ty));
             }
             for s in &t.fns {
                 for a in &s.arrows {
-                    stack.extend(&a.params);
-                    stack.push(&a.result);
+                    stack.extend(a.params.iter().map(Walk::Ty));
+                    stack.push(Walk::Ty(&a.result));
                 }
-                stack.extend(s.needs.iter().flat_map(Need::tys));
+                stack.extend(s.needs.iter().flat_map(Need::tys).map(Walk::Ty));
             }
             stack[from..].reverse();
         }
@@ -4430,5 +4444,21 @@ mod tests {
             "{fit} fit by one arrow, {cover} together, {by_fns} together with functions in \
              the results, {refused} refused, {neither} no cover"
         );
+    }
+
+    /// A row shared by two shapes of a union, and nested inside the first, gives its variables
+    /// where a recursive walk first meets it, inside the first shape, not after it.
+    #[test]
+    fn vars_in_gives_a_shared_row_s_variables_where_it_first_appears() {
+        let shared = Row::new(vec![Ty::var("$5".into())]);
+        let first = Ty::tuple(vec![
+            Ty::tuple(vec![Ty::of_row(shared.clone())]),
+            Ty::var("$7".into()),
+        ]);
+        let t = first.union(&Ty::of_row(shared));
+        let mut vars = Vars::default();
+        t.vars_in(&mut vars);
+        let order: Vec<&str> = vars.order.iter().map(|v| &**v).collect();
+        assert_eq!(order, ["$5", "$7"]);
     }
 }
