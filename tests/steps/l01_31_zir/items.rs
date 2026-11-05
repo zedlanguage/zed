@@ -3,7 +3,7 @@
 use zed_kernel::Value;
 use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
-use zedc::zir::text::{edge, parse_edge, parse_pattern, parse_type, parse_value, pattern};
+use zedc::zir::text::{edge, parse, parse_edge, parse_pattern, parse_type, parse_value, pattern};
 
 #[test]
 fn types_read_back() {
@@ -148,6 +148,82 @@ fn an_atom_type_form_with_a_head_that_is_no_name_is_rejected() {
     assert_eq!(
         parse_type("(#ok'' (tuple))"),
         Err("column 16: `(#ok'' …)`: `ok''` is not a name".into())
+    );
+}
+
+/// Each form that reads a name, written with `{}` where the name goes, and the reader that
+/// reads it; the error of a graph line names its line, here line 3.
+const NAME_FORMS: &[(&str, &str)] = &[
+    ("value", "#{}"),
+    ("value", "#{}(1)"),
+    ("value", "#p({}: 1)"),
+    ("value", "#p(_0: 1, {}: 2)"),
+    ("pattern", "{}"),
+    ("pattern", "#{}"),
+    ("pattern", "#{}(a)"),
+    ("pattern", "#p({}: a)"),
+    ("pattern", "#p(_0: b, {}: c)"),
+    ("type", "#{}"),
+    ("edge", "state {}"),
+    ("edge", "String facet {} \"m\""),
+    ("graph", "r.0 port read {} (r^0) -> (String; state out)"),
+    ("graph", "r.0 port push {} (r^0, 1) -> (_; state out)"),
+    ("graph", "r.0 fold 1 {{}: proved} (r^0, r^1) -> (int)"),
+];
+
+/// `form` with `name` in it, read by its reader; the text of what was read, or the error.
+fn read_name_form(reader: &str, form: &str, name: &str) -> Result<String, String> {
+    let text = form.replacen("{}", name, 1);
+    match reader {
+        "value" => parse_value(&text).map(|v| v.to_string()),
+        "pattern" => parse_pattern(&text).map(|p| pattern(&p)),
+        "type" => parse_type(&text).map(|t| t.to_string()),
+        "edge" => parse_edge(&text).map(|e| edge(&e)),
+        _ => parse(&format!(
+            "zir 1\nr region port (state out)\n{text}\nr results ()\n"
+        ))
+        .map(|_| text),
+    }
+}
+
+#[test]
+fn a_name_starts_as_the_lexer_starts_one() {
+    // lex/name.rs: a name starts with an `XID_Start` character, or with `_` before an
+    // `XID_Continue` character. `é` and `面` are `XID_Start`; `1` is only `XID_Continue`.
+    for (reader, form) in NAME_FORMS {
+        for name in ["élan", "面積", "_1"] {
+            let want = form.replacen("{}", name, 1);
+            assert_eq!(
+                read_name_form(reader, form, name),
+                Ok(want),
+                "{form} {name}"
+            );
+        }
+        let column = form.find("{}").expect("a place for the name") + 1;
+        let why = "`1x` is not a name: a name starts with a letter or `_`";
+        let want = match *reader {
+            "graph" => format!("line 3: column {column}: {why}"),
+            _ => format!("column {column}: {why}"),
+        };
+        assert_eq!(read_name_form(reader, form, "1x"), Err(want), "{form}");
+    }
+    // The head of a type form is read up to a space or a bracket, and checked when it ends.
+    assert_eq!(
+        parse_type("(#1x (tuple int))"),
+        Err("column 18: `(#1x …)`: `1x` is not a name".into())
+    );
+    assert_eq!(
+        parse_type("(#面積 (tuple int))").map(|t| t.to_string()),
+        Ok("(#面積 (tuple int))".into())
+    );
+    // A bare `_` is the wildcard: a binder pattern, never the name of an atom or a field.
+    assert_eq!(parse_pattern("_"), Ok(Pattern::Wild));
+    let why = "`_` is not a name: a name that starts with `_` has a letter, a digit or `_` next";
+    assert_eq!(parse_value("#_"), Err(format!("column 2: {why}")));
+    assert_eq!(parse_pattern("#p(_: a)"), Err(format!("column 4: {why}")));
+    assert_eq!(
+        parse_pattern("(a, _')"),
+        Err("column 5: `_'` is not a name: a name that starts with `_` has a letter, a digit or `_` next".into())
     );
 }
 

@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use unicode_ident::is_xid_continue;
+use unicode_ident::{is_xid_continue, is_xid_start};
 use zed_kernel::family::Family;
 use zed_kernel::num::Rat;
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
@@ -677,6 +677,22 @@ fn word_len(s: &str) -> usize {
     n + usize::from(n > 0 && s[n..].starts_with('\''))
 }
 
+/// Why `w` is not a name by the lexer's rule (lex/name.rs: an `XID_Start` character, or `_`
+/// before an `XID_Continue` character, then `XID_Continue` characters and one prime at most),
+/// or `None` when it is one.
+fn not_a_name(w: &str) -> Option<String> {
+    let mut cs = w.chars();
+    let why = match cs.next() {
+        Some('_') if !cs.next().is_some_and(is_xid_continue) => {
+            ": a name that starts with `_` has a letter, a digit or `_` next"
+        }
+        Some(c) if c != '_' && !is_xid_start(c) => ": a name starts with a letter or `_`",
+        Some(_) if word_len(w) == w.len() => return None,
+        _ => "",
+    };
+    Some(format!("`{w}` is not a name{why}"))
+}
+
 impl<'a> P<'a> {
     fn rest(&self) -> &'a str {
         &self.s[self.i..]
@@ -731,7 +747,8 @@ impl<'a> P<'a> {
         }
     }
 
-    /// A name: a run of `XID_Continue` characters, then at most one prime.
+    /// A word: a run of `XID_Continue` characters, then at most one prime. A keyword is read
+    /// so; a name is read by [`P::name`], which also checks how it starts.
     fn word(&mut self) -> Result<&'a str, String> {
         self.ws();
         let n = word_len(self.rest());
@@ -741,6 +758,20 @@ impl<'a> P<'a> {
         let w = &self.rest()[..n];
         self.i += n;
         Ok(w)
+    }
+
+    /// A name, by the lexer's rule; an error points at its start.
+    fn name(&mut self) -> Result<&'a str, String> {
+        self.ws();
+        let start = self.i;
+        let w = self.word()?;
+        match not_a_name(w) {
+            None => Ok(w),
+            Some(e) => {
+                self.i = start;
+                Err(e)
+            }
+        }
     }
 
     /// A run of characters up to a space or a bracket.
@@ -902,8 +933,8 @@ impl<'a> P<'a> {
                 }
             }),
             "port" => match self.word()? {
-                "read" => Op::Read(self.word()?.into()),
-                "push" => Op::Push(self.word()?.into()),
+                "read" => Op::Read(self.name()?.into()),
+                "push" => Op::Push(self.name()?.into()),
                 w => return Err(format!("`port` is `read` or `push`, not `{w}`")),
             },
             "fam" => Op::Fam,
@@ -932,7 +963,7 @@ impl<'a> P<'a> {
 
     fn evidence(&mut self) -> Result<Evidence, String> {
         let items = self.list("{", "}", ",", |p| {
-            let k = p.word()?;
+            let k = p.name()?;
             p.expect(":")?;
             let g = p.word()?;
             let g = GRADES
@@ -947,7 +978,7 @@ impl<'a> P<'a> {
 
     fn edge(&mut self) -> Result<Edge, String> {
         if self.eat_word("state") {
-            return Ok(Edge::State(self.word()?.into()));
+            return Ok(Edge::State(self.name()?.into()));
         }
         let ty = self.ty()?;
         let mut domain = any_domain();
@@ -962,7 +993,7 @@ impl<'a> P<'a> {
                 domain.finite = FiniteSet::Set(vs.into_iter().collect::<BTreeSet<_>>());
             } else if self.eat_word("facet") || self.eat_word("hint") {
                 let hint = self.s[..self.i].ends_with("hint");
-                let kind = self.word()?.into();
+                let kind = self.name()?.into();
                 facets.push(Facet {
                     hint,
                     kind,
@@ -1062,9 +1093,13 @@ impl<'a> P<'a> {
                 self.i = start;
                 return lit(self.value()?);
             }
-            w if w.len() > 1 && w.starts_with('#') && word_len(&w[1..]) == w.len() - 1 => {
-                Type::atom(&w[1..])
-            }
+            w if w.len() > 1 && w.starts_with('#') => match not_a_name(&w[1..]) {
+                None => Type::atom(&w[1..]),
+                Some(e) => {
+                    self.i = start + 1;
+                    return Err(e);
+                }
+            },
             w => {
                 self.i = start;
                 return Err(format!(
@@ -1104,7 +1139,7 @@ impl<'a> P<'a> {
             Some('"') => Value::str(&self.string()?),
             Some('#') => {
                 self.i += 1;
-                let name = self.word()?;
+                let name = self.name()?;
                 if self.peek() != Some('(') {
                     return Ok(Some(Value::atom(name)));
                 }
@@ -1113,7 +1148,7 @@ impl<'a> P<'a> {
                     return Ok(Some(Value::atom_with(name, Vec::new())));
                 }
                 let mut fields = Vec::new();
-                self.field(&mut fields);
+                self.field(&mut fields)?;
                 open.push(OpenValue::Atom {
                     name,
                     fields,
@@ -1155,18 +1190,24 @@ impl<'a> P<'a> {
         }))
     }
 
-    /// The name of an atom's next part, `f: `, when it has one, pushed on `fields`.
-    fn field(&mut self, fields: &mut Vec<Arc<str>>) {
+    /// The name of an atom's next part, `f: `, when it has one, pushed on `fields`; an error
+    /// when the word before `: ` is not a name.
+    fn field(&mut self, fields: &mut Vec<Arc<str>>) -> Result<(), String> {
         self.ws();
         let save = self.i;
         if let Ok(f) = self.word()
             && self.rest().starts_with(": ")
         {
+            if let Some(e) = not_a_name(f) {
+                self.i = save;
+                return Err(e);
+            }
             self.i += 1;
             fields.push(f.into());
-            return;
+            return Ok(());
         }
         self.i = save;
+        Ok(())
     }
 
     /// Puts part `v` in `top` and reads what follows it: true when `top` ends there.
@@ -1178,7 +1219,7 @@ impl<'a> P<'a> {
                     return Ok(true);
                 }
                 self.expect(",")?;
-                self.field(fields);
+                self.field(fields)?;
             }
             OpenValue::Items { path, items } => {
                 items.push(v);
@@ -1286,7 +1327,7 @@ impl<'a> P<'a> {
             return Ok(Some(Pattern::AnyAtom));
         }
         if self.eat("#") {
-            let name: Arc<str> = self.word()?.into();
+            let name: Arc<str> = self.name()?.into();
             if self.peek() != Some('(') {
                 return Ok(Some(Pattern::Atom(name, Vec::new())));
             }
@@ -1323,16 +1364,15 @@ impl<'a> P<'a> {
             open.push(OpenPattern::Tuple(Vec::new()));
             return Ok(None);
         }
-        let w = self.word()?;
-        Ok(Some(match w {
-            "_" => Pattern::Wild,
-            w => Pattern::Bind(w.into()),
-        }))
+        if self.eat_word("_") {
+            return Ok(Some(Pattern::Wild));
+        }
+        Ok(Some(Pattern::Bind(self.name()?.into())))
     }
 
     /// `f:`, the name of the next part of a fields pattern.
     fn field_name(&mut self) -> Result<Arc<str>, String> {
-        let f = self.word()?.into();
+        let f = self.name()?.into();
         self.expect(":")?;
         Ok(f)
     }
@@ -1474,7 +1514,7 @@ fn ty_form(head: &str, ts: Vec<Type>) -> Result<Type, String> {
             arity(2)?;
             Type::morphism(Type::empty(), ts[0].clone(), ts[1].clone())
         }
-        h if h.len() > 1 && h.starts_with('#') && word_len(&h[1..]) == h.len() - 1 => {
+        h if h.len() > 1 && h.starts_with('#') && not_a_name(&h[1..]).is_none() => {
             arity(1)?;
             Type::atom_with(&h[1..], &ts[0])
         }
