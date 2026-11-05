@@ -17,6 +17,7 @@ use crate::KernelError;
 use crate::family::Family;
 use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, room, show_f64};
 use crate::term::Prim;
+use crate::text::Text;
 use crate::value::Value;
 
 /// `p(x)` for one of the words above; a type error when `x` is not of a kind `p` takes.
@@ -38,19 +39,22 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         },
         // A tuple, keypath, atom or family prints each number inside it.
         (Prim::Show, _) => print(x)?,
-        (Prim::CastInt, Value::Str(s)) => match read_int(s) {
+        (Prim::CastInt, Value::Str(s)) => match read_int(&s.flat()) {
             Some(n) => Value::int(n),
             None => invalid(),
         },
-        (Prim::CastRat, Value::Str(s)) => match read_rat(s) {
+        (Prim::CastRat, Value::Str(s)) => match read_rat(&s.flat()) {
             Some(r) => Value::rat(r),
             None => invalid(),
         },
-        (Prim::CastF64, Value::Str(s)) => match read_f64(s) {
-            Some(f) if f.is_infinite() && !s.ends_with("inf") => inexact(),
-            Some(f) => Value::float(f),
-            None => invalid(),
-        },
+        (Prim::CastF64, Value::Str(s)) => {
+            let s = s.flat();
+            match read_f64(&s) {
+                Some(f) if f.is_infinite() && !s.ends_with("inf") => inexact(),
+                Some(f) => Value::float(f),
+                None => invalid(),
+            }
+        }
         (Prim::CastInt | Prim::CastRat | Prim::CastF64, _) => {
             if x.number_kind().is_none() {
                 return type_err(p, x);
@@ -109,9 +113,9 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             Ok(n) => Value::Int(n),
             Err(_) => Value::int(BigInt::from(s.char_count())),
         },
-        (Prim::Lower, Value::Str(s)) => Value::str(&s.to_lowercase()),
-        (Prim::Upper, Value::Str(s)) => Value::str(&s.to_uppercase()),
-        (Prim::Trim, Value::Str(s)) => Value::str(s.trim()),
+        (Prim::Lower, Value::Str(s)) => Value::str(&s.flat().to_lowercase()),
+        (Prim::Upper, Value::Str(s)) => Value::str(&s.flat().to_uppercase()),
+        (Prim::Trim, Value::Str(s)) => Value::str(s.flat().trim()),
         // A string of one scalar is read; a longer one is known by its count, never written out.
         (Prim::CodePoint, Value::Str(s)) => match s.char_count() {
             1 => Value::Int(i64::from(u32::from(first_char(s)))),
@@ -132,16 +136,19 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
     Ok(out)
 }
 
-/// The first character of the non-empty text `s`.
-fn first_char(s: &str) -> char {
-    s.chars().next().expect("a string of one scalar")
+/// The first character of the non-empty text `s`, read from its first block.
+fn first_char(s: &Text) -> char {
+    let first = s.chunks().next().and_then(|c| c.chars().next());
+    first.expect("a string of one scalar")
 }
 
 /// The family of the UTF-8 bytes of `s`, keyed by position from 1. The keys are made in
-/// increasing order, so the map is built in `O(n log n)` for `n` bytes.
-fn utf8(s: &str) -> Family {
+/// increasing order, so the map is built in `O(n log n)` for `n` bytes; the text is read by
+/// blocks.
+fn utf8(s: &Text) -> Family {
     Family::from_map(
-        s.bytes()
+        s.chunks()
+            .flat_map(str::bytes)
             .zip(1i64..)
             .map(|(b, i)| (Value::Int(i), Value::Int(i64::from(b))))
             .collect(),

@@ -272,6 +272,6 @@ fn a_string_joined_by_a_fold_scales() {
             panic!("not a string")
         };
         assert_eq!(s.len(), n);
-        assert_eq!(&*s, &want[..n]);
+        assert_eq!(s.flat(), &want[..n]);
     });
 }

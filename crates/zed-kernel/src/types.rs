@@ -111,9 +111,13 @@ fn salted(h: u64) -> u64 {
 
 /// FNV-1a over `b`.
 fn bytes(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &x| {
-        (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3)
-    })
+    more_bytes(0xcbf2_9ce4_8422_2325, b)
+}
+
+/// FNV-1a over `b`, after the bytes whose hash is `h`, so a text hashes alike in any blocks.
+fn more_bytes(h: u64, b: &[u8]) -> u64 {
+    b.iter()
+        .fold(h, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
 }
 
 /// What the top level of a value says of its membership in a type.
@@ -134,7 +138,11 @@ fn scalar(v: &Value) -> u64 {
     };
     match v {
         Value::Int(i) => mix(1, *i as u64),
-        Value::Str(s) => mix(2, bytes(s.as_bytes())),
+        Value::Str(s) => mix(
+            2,
+            s.chunks()
+                .fold(bytes(b""), |h, c| more_bytes(h, c.as_bytes())),
+        ),
         Value::Big(r) => exact(4, r),
         Value::Rat(r) => exact(5, r),
         other => mix(3, bytes(other.to_string().as_bytes())),

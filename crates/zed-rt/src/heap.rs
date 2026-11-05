@@ -228,8 +228,7 @@ struct Entry {
     parts: Option<usize>,
 }
 
-/// The counts of one run, the same measures as the counting machine of step L1.34 keeps,
-/// and the bytes strings copied when written out.
+/// The counts of one run, the same measures as the counting machine of step L1.34 keeps.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Stats {
     /// Count increments.
@@ -244,8 +243,6 @@ pub struct Stats {
     pub peak: u64,
     /// The cells whose count ever exceeded 1.
     pub shared: u64,
-    /// The bytes copied writing out a string that was a join, to compare it with a literal.
-    pub copied: u64,
     /// The words [`Heap::value`] read to make kernel values: one for a word whose value it had
     /// already made.
     pub converted: u64,
@@ -868,12 +865,8 @@ impl Heap {
                 Word::VAL => self.vals[w.bits as usize].value == *l,
                 Word::CELL => match obj_in(&self.cells, w)? {
                     Some(Obj::Str(r)) => match l {
-                        Value::Str(s) if r.len() == s.len() => {
-                            if !r.is_written_out() {
-                                self.stats.copied += r.len() as u64;
-                            }
-                            r == s
-                        }
+                        // A join is read block by block, to the first byte that differs.
+                        Value::Str(s) if r.len() == s.len() => r == s,
                         _ => false,
                     },
                     Some(Obj::Data(v)) => v == l,

@@ -17,7 +17,7 @@ impl Lookup for Disk {
         Ok(match key {
             Value::Str(k) => self
                 .0
-                .get(k.as_ref())
+                .get(&*k.flat())
                 .map_or(Value::atom("notFound"), |v| Value::str(v)),
             _ => Value::atom("notFound"),
         })

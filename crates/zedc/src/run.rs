@@ -686,7 +686,7 @@ pub fn join_lines(port: &str, v: &Value) -> Result<Vec<u8>, String> {
         let Value::Str(s) = line else {
             return Err(format!("port `{port}` takes strings; {line} was pushed"));
         };
-        out.extend_from_slice(s.as_bytes());
+        s.chunks().for_each(|c| out.extend_from_slice(c.as_bytes()));
         out.push(b'\n');
     }
     Ok(out)
@@ -701,13 +701,14 @@ impl Lookup for Disk {
         let Value::Str(path) = key else {
             return Err(format!("a path is a String, not {key}"));
         };
-        Ok(match std::fs::read(&**path) {
+        let path = path.flat();
+        Ok(match std::fs::read(&*path) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(s) => Value::str(&s),
-                Err(_) => Value::io_error("read", path, "the file is not UTF-8"),
+                Err(_) => Value::io_error("read", &path, "the file is not UTF-8"),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Value::atom("notFound"),
-            Err(e) => Value::io_error("read", path, &e.to_string()),
+            Err(e) => Value::io_error("read", &path, &e.to_string()),
         })
     }
 }
@@ -759,20 +760,23 @@ impl Record {
                 let Value::Str(path) = path else {
                     unreachable!("a read path is a String")
                 };
+                let path = path.flat();
                 let (p, k) = (port.as_bytes(), path.as_bytes());
                 match v {
-                    Value::Str(s) => entry("text", &[p, k, s.as_bytes()]),
+                    Value::Str(s) => entry("text", &[p, k, s.flat().as_bytes()]),
                     Value::Atom(a) if a.name.as_ref() == "notFound" => entry("missing", &[p, k]),
                     Value::Atom(a) if a.name.as_ref() == "ioError" => {
                         let field = |f: &str| match a.fields.binary_search_by(|x| (**x).cmp(f)) {
                             Ok(i) => match &a.args[i] {
-                                Value::Str(s) => Some(s.as_bytes()),
+                                Value::Str(s) => Some(s.flat()),
                                 _ => None,
                             },
                             Err(_) => None,
                         };
                         match (field("op"), field("why")) {
-                            (Some(o), Some(w)) => entry("error", &[p, k, o, w]),
+                            (Some(o), Some(w)) => {
+                                entry("error", &[p, k, o.as_bytes(), w.as_bytes()])
+                            }
                             _ => entry("error", &[p, k]),
                         }
                     }

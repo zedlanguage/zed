@@ -191,10 +191,8 @@ fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
     };
     assert!(!is(&mut h, Value::str("abc")));
     assert!(!is(&mut h, Value::Int(4)));
-    assert_eq!(h.stats.copied, 0, "neither literal needs the text");
     assert!(!is(&mut h, Value::str("abce")));
     assert!(is(&mut h, Value::str("abcd")));
-    assert_eq!(h.stats.copied, 4, "written out once");
 }
 
 #[test]

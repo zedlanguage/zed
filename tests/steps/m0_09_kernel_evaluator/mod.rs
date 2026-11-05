@@ -1105,10 +1105,10 @@ fn printing_a_number_too_large_to_build_is_an_error_naming_its_size() {
         panic!("a string")
     };
     assert_eq!(s.char_count(), 19729);
-    assert!(s.starts_with("2003529930406846464979"));
+    assert!(s.flat().starts_with("2003529930406846464979"));
     let Value::Str(s) = eval(&show(pow(lit(10), pow(lit(10), lit(6))))).unwrap() else {
         panic!("a string")
     };
     assert_eq!(s.char_count(), 1_000_001);
-    assert!(s.starts_with("10") && s[1..].bytes().all(|b| b == b'0'));
+    assert!(s.flat().starts_with("10") && s.flat()[1..].bytes().all(|b| b == b'0'));
 }

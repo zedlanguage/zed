@@ -1520,16 +1520,16 @@ fn run(t: Term) -> Result<Value, String> {
 /// Whether the value `v` is compared in time linear in the memory it holds, and, as the
 /// arguments of a call when `key`, told apart by the key a port is asked: each leaf is a
 /// boolean, a number (when `key`, other than a float zero, which a key reads as `0.0`
-/// whatever its sign) or a string already written out, in tuples and keypaths. A join of
-/// strings not yet written out may be exponentially longer than its nodes, and comparing it
-/// writes it out. A family's or an atom's parts are not walked.
+/// whatever its sign) or a string held as one block, in tuples and keypaths. A join of
+/// strings may be exponentially longer than its nodes, and comparing it reads every byte. A
+/// family's or an atom's parts are not walked.
 fn compared(v: &Value, key: bool) -> bool {
     let mut todo = vec![v];
     while let Some(v) = todo.pop() {
         match v {
             Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) => {}
             Value::Str(s) => {
-                if !s.is_written_out() {
+                if !s.is_flat() {
                     return false;
                 }
             }

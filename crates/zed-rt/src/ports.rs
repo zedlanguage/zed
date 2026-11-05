@@ -44,7 +44,7 @@ pub fn write(port: &str, v: &Value) -> Result<Vec<u8>, String> {
     for line in lines {
         match line {
             Value::Str(s) => {
-                out.extend_from_slice(s.as_bytes());
+                s.chunks().for_each(|c| out.extend_from_slice(c.as_bytes()));
                 out.push(b'\n');
             }
             other => return Err(format!("port `{port}` takes strings; {other} was pushed")),

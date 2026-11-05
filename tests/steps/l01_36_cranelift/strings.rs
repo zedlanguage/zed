@@ -1,8 +1,8 @@
-//! Strings are ropes, the kernel's `Text`: a concatenation of two strings links them in a new
-//! cell without copying, the length of a string is kept in each piece, in bytes and in
-//! characters, so `len` reads it without counting or copying, and the bytes are copied once,
-//! when the text is first read; a string handed to the kernel is shared, not copied
-//! (COMPLEXITY.md R4, R5).
+//! Strings are ropes, the kernel's `Text`: a concatenation of two strings shares both in a
+//! balanced tree, short ones copied into one block, the length of a string is kept in each
+//! piece, in bytes and in characters, so `len` reads it without counting or copying, and the
+//! text is read block by block, never written out and kept; a string handed to the kernel is
+//! shared, not copied (COMPLEXITY.md R4, R5, C29).
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
@@ -10,24 +10,22 @@ use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use super::{kernel, native};
 
 #[test]
-fn concatenation_links_ropes_and_copies_once_when_read() {
+fn concatenation_runs_natively_and_reads_as_its_parts() {
     // ((("ab" ++ "cd") ++ "ef") ++ "gh"), and its length.
     let mut s = lit("ab");
     for part in ["cd", "ef", "gh"] {
         s = prim(Prim::Concat, vec![s, lit(part)]);
     }
     let o = native(&s).unwrap();
-    assert_eq!((o.kernel_calls, o.stats.copied), (0, 0));
+    assert_eq!(o.kernel_calls, 0);
     let Value::Str(text) = &o.value else {
         panic!("{}", o.value)
     };
-    assert!(!text.is_written_out(), "the run never read the text");
-    assert_eq!(&**text, "abcdefgh");
-    assert!(text.is_written_out());
+    assert_eq!(text.flat(), "abcdefgh");
     assert_eq!(o.value, kernel(&s).unwrap());
     let n = native(&prim(Prim::Len, vec![s.clone()])).unwrap();
     assert_eq!(n.value.to_string(), "8");
-    assert_eq!((n.kernel_calls, n.stats.copied), (0, 0));
+    assert_eq!(n.kernel_calls, 0);
 }
 
 #[test]
@@ -162,12 +160,11 @@ fn a_string_handed_to_the_kernel_is_shared_not_copied() {
     let s = prim(Prim::Concat, vec![lit("ab"), lit("cd")]);
     let t = prim(Prim::Show, vec![prim(Prim::Concat, vec![s, lit("ef")])]);
     let o = native(&t).unwrap();
-    assert_eq!((o.kernel_calls, o.stats.copied), (1, 0));
+    assert_eq!(o.kernel_calls, 1);
     let Value::Str(text) = &o.value else {
         panic!("{}", o.value)
     };
-    assert!(!text.is_written_out());
-    assert_eq!(&**text, "abcdef");
+    assert_eq!(text.flat(), "abcdef");
     assert_eq!(o.value, kernel(&t).unwrap());
 }
 

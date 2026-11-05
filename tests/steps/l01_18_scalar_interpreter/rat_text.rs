@@ -61,9 +61,9 @@ fn every_printed_rat_reads_back_to_itself() {
         let Value::Str(shown) = eval(&prim(Prim::Show, vec![lit(v.clone())])).unwrap() else {
             panic!("String writes a string");
         };
-        assert_eq!(read_value(&shown), v, "rat(String({v}))");
+        assert_eq!(read_value(&shown.flat()), v, "rat(String({v}))");
         // The same without the `r`s reads the same value.
-        let plain = shown.replace('r', "");
+        let plain = shown.flat().replace('r', "");
         assert_eq!(read_value(&plain), v, "rat({plain:?})");
     }
 }

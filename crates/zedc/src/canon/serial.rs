@@ -129,7 +129,10 @@ impl Out<'_> {
             }
             Value::Str(s) => {
                 self.tag(3);
-                self.str(s);
+                // The text is written block by block, as `str` writes one block.
+                self.word(s.len() as u64);
+                s.chunks()
+                    .for_each(|c| self.bytes.extend_from_slice(c.as_bytes()));
             }
             Value::Atom(a) if a.fields.is_empty() => {
                 self.tag(4);

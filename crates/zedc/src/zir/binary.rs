@@ -173,7 +173,10 @@ impl W {
             }
             Value::Str(s) => {
                 self.tag(5);
-                self.s(s);
+                // The text is written block by block, as `s` writes one block.
+                self.n(s.len() as u64);
+                s.chunks()
+                    .for_each(|c| self.0.extend_from_slice(c.as_bytes()));
             }
             Value::Atom(a) => {
                 self.tag(6);

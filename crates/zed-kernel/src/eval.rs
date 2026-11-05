@@ -2228,7 +2228,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
-            Value::atom_with(name, args.to_vec())
+            Value::atom_with(&name.flat(), args.to_vec())
         }
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.len() == args.len() => {
             let fields: Option<Vec<(Arc<str>, Value)>> = names
@@ -2239,7 +2239,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                     _ => None,
                 })
                 .collect();
-            match fields.and_then(|fs| Value::atom_named(name, fs)) {
+            match fields.and_then(|fs| Value::atom_named(&name.flat(), fs)) {
                 Some(v) => v,
                 None => return ty(&vals),
             }

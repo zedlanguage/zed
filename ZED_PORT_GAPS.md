@@ -161,7 +161,7 @@ Confirmed: `OnceLock` or `OnceCell`, 27 matches. `Rec` (`zed-kernel/types.rs:142
 `body: OnceLock<Type>` and `make: Box<dyn Fn() -> Type>`, computes a recursive type's parts on
 first use (`Type::p`, line 392), and ties a cycle through closures. `Group::instance`
 (`types/rec.rs:296`), `Cones::free` (`zedc/elab.rs:93`), `Program::main` (`zedc/run.rs:49`),
-`Shown` (types.rs:118) and `Text::flat` (`text.rs:28`) cache in place inside a shared value. Since T14-rope the native runtime holds its strings as the same `Text` (`zed-rt/src/heap.rs`, `Obj::Str`); `zed-rt`'s own `Rope`, with a second `OnceLock`, is gone.
+`Shown` (types.rs:118) caches in place inside a shared value; `Text` did the same until WRITE-prefix-scale removed its cache. Since T14-rope the native runtime holds its strings as the same `Text` (`zed-rt/src/heap.rs`, `Obj::Str`); `zed-rt`'s own `Rope`, with a second `OnceLock`, is gone.
 
 Zed values are immutable with no cell, and a function field re-evaluates on each call. Cyclic
 data lives in two sanctioned forms, arenas or regions and id-indexed graphs `Id ->? Node`
@@ -889,6 +889,16 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `OnceLock<Arc<str>>` in each join node, the text written out on the first read through `&self` | `Text::flat`, `Deref for Text` | Lazy cells (gap 3) | `String` ropes in the standard library (L6.16): the text written out by a function, its result kept by the runtime, or no cache |
 | Byte and character counts kept in each node and added at a join | `Node::len`, `Node::chars` | None | Two integer fields of the rope node |
 | `Mutex<Option<(Text, Text)>>` for a join's parts, taken through `&self` once the text is written out | `Node::parts`, `Deref for Text` | Lazy cells (gap 3) | The rope's written-out form replaces the node in the runtime's cache, or no cache |
+
+The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `Deref for Text`.
+
+## Entries from WRITE-prefix-scale (`zed-kernel/src/text.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent AVL tree of `Arc` nodes, a join rebuilding the path it rebalances | `Text::join`, `concat`, `balance` | None | A recursive `enum` with shared parts; the recursion is O(log n) deep |
+| An iterator over the blocks with its own stack of `&Text`, capacity the height plus one | `Chunks`, `Text::chunks`, `compare` | Early exit (gap 12) | A walk over the tree; `compare` stops at the first byte that differs, a `loop` with `break`; depth O(log n) |
+| `Cow<str>` returned by `flat`, borrowed for one block and owned for a join | `Text::flat` | None | Returns a `String`; one block is shared, not copied |
 
 ## Entries from L3.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
 

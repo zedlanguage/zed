@@ -448,7 +448,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         Op::Prim(Prim::CodePoint) if ins.len() == 1 => {
             if let Some(r) = text(s, ins[0])?
                 && r.char_count() == 1
-                && let Some(c) = r.chars().next()
+                && let Some(c) = r.chunks().next().and_then(|b| b.chars().next())
             {
                 consume(s, ni, ins)?;
                 return Ok(Word::int(i64::from(u32::from(c))));

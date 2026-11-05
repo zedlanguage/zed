@@ -237,7 +237,7 @@ pub(crate) fn wave(
         match kind {
             PortKind::Lines => match value(cones, swap, arg, map)? {
                 Value::Str(s) => {
-                    lines.insert(name.clone(), s.as_bytes().to_vec());
+                    lines.insert(name.clone(), s.flat().into_owned().into_bytes());
                 }
                 v => {
                     return Err(format!(
@@ -253,7 +253,7 @@ pub(crate) fn wave(
             }
             PortKind::CommandLine => match value(cones, swap, arg, map)? {
                 Value::Str(s) => {
-                    let given = given_args(&s);
+                    let given = given_args(&s.flat());
                     match &args {
                         Some((first, a)) if *a != given => {
                             return Err(format!(
@@ -306,7 +306,7 @@ pub(crate) fn wave(
             ));
         };
         let got = written.get(&**name).copied().unwrap_or(&[]);
-        if got != want.as_bytes() {
+        if got != want.flat().as_bytes() {
             let got = Value::str(&String::from_utf8_lossy(got));
             return Err(format!("port `{name}` writes {got}"));
         }
