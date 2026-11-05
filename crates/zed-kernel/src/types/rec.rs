@@ -99,11 +99,13 @@ pub struct Def {
 /// definitions get one group, and so one number, however often they were written.
 static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Group>>>> = LazyLock::new(Mutex::default);
 
+/// The members of each instance, by the group's number and the arguments.
+type Instances = HashMap<(u64, Vec<Type>), Vec<Type>>;
+
 /// The instances made so far, by the group's number and the arguments: one group at equal
 /// arguments gives one set of types, so that equal definitions meet as equal types. The arguments
 /// hash by their digests and compare exactly, so a call costs time in its arguments only.
-static INSTANCES: LazyLock<Mutex<HashMap<(u64, Vec<Type>), Vec<Type>>>> =
-    LazyLock::new(Mutex::default);
+static INSTANCES: LazyLock<Mutex<Instances>> = LazyLock::new(Mutex::default);
 
 /// A checked group of mutually recursive definitions.
 #[derive(Clone, Debug)]
@@ -328,9 +330,7 @@ impl Group {
         g.regular()?;
         g.contractive()?;
         g.monotone()?;
-        let mut groups = GROUPS
-            .lock()
-            .expect("no thread panics holding the groups");
+        let mut groups = GROUPS.lock().expect("no thread panics holding the groups");
         let bucket = groups.entry(digest).or_default();
         if let Some(first) = bucket.iter().find(|h| h.0.defs == g.0.defs) {
             return Ok(first.clone());

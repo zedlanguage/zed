@@ -64,6 +64,55 @@ fn fork(l: Value, r: Value) -> Value {
 }
 
 #[test]
+fn definitions_written_alike_at_equal_arguments_are_one_type() {
+    // Two modules each write `type Tree(A) = #leaf(A) | #fork(Tree(A), Tree(A))` and use
+    // `Tree(int | String)`, one spelling the argument `String | int`: both name one type.
+    let int_or_string = &Type::int() | &Type::string();
+    let string_or_int = &Type::string() | &Type::int();
+    let a = tree().instance(vec![int_or_string.clone()]).remove(0);
+    let b = tree().instance(vec![string_or_int]).remove(0);
+    assert!(a == b, "{a} and {b}");
+    // Another argument is another type, and the same one asked again is the first.
+    let at_int = tree().instance(vec![Type::int()]).remove(0);
+    assert!(at_int != a);
+    assert!(at_int == tree().instance(vec![Type::int()]).remove(0));
+    // A type inside a body counts by its value, not by how it was built.
+    let pair = |t: Type| {
+        Group::new(vec![def(
+            "Pairs",
+            &[],
+            or(vec![bare("end"), atom("pair", vec![ty(t), r(0, vec![])])]),
+        )])
+        .unwrap()
+        .instance(vec![])
+        .remove(0)
+    };
+    assert!(pair(int_or_string.clone()) == pair(&Type::string() | &Type::int()));
+    assert!(pair(int_or_string) != pair(Type::int()));
+    // A definition renamed, or with its parameter renamed, is written otherwise: another type,
+    // with the same values.
+    let a_t = |name: &str, param: &str| {
+        let t = || r(0, vec![Expr::Param(0)]);
+        Group::new(vec![def(
+            name,
+            &[param],
+            or(vec![
+                atom("leaf", vec![Expr::Param(0)]),
+                atom("fork", vec![t(), t()]),
+            ]),
+        )])
+        .unwrap()
+        .instance(vec![Type::int()])
+        .remove(0)
+    };
+    for other in [a_t("Tree2", "A"), a_t("Tree", "B")] {
+        assert!(other != at_int);
+        assert!(other.subtype(&at_int) && at_int.subtype(&other));
+    }
+    assert!(a_t("Tree", "A") == at_int);
+}
+
+#[test]
 fn the_plans_definitions() {
     // `Tree` is guarded by its atoms and passes `A` unchanged.
     let t = tree().instance(vec![Type::int()]).remove(0);

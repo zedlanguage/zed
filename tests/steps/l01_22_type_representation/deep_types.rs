@@ -327,8 +327,7 @@ fn a_recursive_type_inside_a_type_is_named_with_its_arguments() {
     assert_eq!(pair.to_string(), "(tuple Tree((| 12345 String)) int)");
 }
 
-/// How deep [`trees`] nests: building it takes time quadratic in the depth (ledger INST-bucket),
-/// about 6 s at this depth.
+/// How deep [`trees`] nests.
 const TREES: usize = 10_000;
 
 /// `type Tree(A) = #leaf(A) | #fork(Tree(A), Tree(A))`, its parameter named `param` and the
@@ -376,6 +375,67 @@ fn printing_a_recursive_type_nested_deep_in_its_own_arguments_scales() {
             let text = t.to_string();
             assert!(text.len() > n);
             (t, text)
+        },
+    );
+}
+
+/// `type Big(A) = #nil | #cons(A, Big(A)) | #k0 | … | #k{s-1}`, a body of size `s`, named `name`.
+fn big(name: &str, s: usize) -> Group {
+    let mut arms = vec![
+        Expr::Type(Type::atom("nil")),
+        Expr::Atom(
+            "cons".into(),
+            vec![Expr::Param(0), Expr::Ref(0, vec![Expr::Param(0)])],
+        ),
+    ];
+    arms.extend((0..s).map(|k| Expr::Type(Type::atom(&format!("k{k}")))));
+    Group::new(vec![Def {
+        name: name.into(),
+        params: vec!["A".into()],
+        body: Expr::Union(arms),
+    }])
+    .unwrap()
+}
+
+#[test]
+fn instantiating_a_group_scales() {
+    // An instance was found by a scan of every instance made at definitions of the same text,
+    // keyed by the text of the definitions made anew at each call: nested instances took time
+    // quadratic in their depth, and a body of size s instantiated s times took s² (ledger
+    // INST-bucket). Each run has a group of its own, so no run finds another's instances.
+    scales_at(
+        "Tree(Tree(..)) n deep, instantiated",
+        1000,
+        |n, i| tree(&format!("N{i}x{n}"), "A"),
+        |n, g| trees(&g, Type::int(), n),
+    );
+    let lits = |s: usize| -> Vec<Type> {
+        (0..s)
+            .map(|k| Type::lit(&Value::Int(k as i64)).expect("an integer literal is a type"))
+            .collect()
+    };
+    scales_at(
+        "a body of size n at n different arguments",
+        500,
+        |n, i| (big(&format!("D{i}x{n}"), n), lits(n)),
+        |_, (g, args)| {
+            let made: Vec<Type> = args
+                .into_iter()
+                .map(|a| g.instance(vec![a]).remove(0))
+                .collect();
+            made
+        },
+    );
+    scales_at(
+        "a body of size n at one argument n times",
+        500,
+        |n, i| big(&format!("S{i}x{n}"), n),
+        |n, g| {
+            let first = g.instance(vec![Type::int()]).remove(0);
+            for _ in 1..n {
+                assert!(g.instance(vec![Type::int()])[0] == first);
+            }
+            first
         },
     );
 }
