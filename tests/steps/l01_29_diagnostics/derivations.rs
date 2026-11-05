@@ -294,3 +294,19 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
         |                 ^^^^^^^^^^^^^^^"#
     );
 }
+
+/// A use that leaves a class only values other than carriers, as a comparison with a tuple
+/// does, is listed with what it takes as type syntax: `_`, the type of every value, since
+/// `int | _` is `_` (DESIGN.md L1.26; BOUNDS-other).
+#[test]
+fn a_use_that_takes_other_values_is_listed_as_taking_every_value() {
+    let out = rejected(
+        "twice(positional p) = if p < (1, 2) { p * 2 } else { 0 };
+main(stdin: Lines) -> (stdout: Lines) {
+  stdout <- \"x\";
+}
+",
+    );
+    assert!(steps(&out).contains(&"`<` takes _"), "{out}");
+    assert!(!out.contains("other values"), "{out}");
+}

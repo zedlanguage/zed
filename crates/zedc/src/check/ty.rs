@@ -655,16 +655,18 @@ pub const OTHER: u8 = 1 << 5;
 /// The mask of every value.
 pub const EVERY: u8 = (1 << 6) - 1;
 
-/// The mask `m` as a type: its carriers joined by `|`, and "other values" for [`OTHER`].
+/// The mask `m` as a type, in type syntax: `_` when it holds [`OTHER`], since `int | _` is `_`
+/// (DESIGN.md L1.26); otherwise its carriers joined by `|`, and `!_`, the empty type, when it
+/// holds none.
 pub fn mask_text(m: u8) -> String {
-    let mut out: Vec<&str> = Carrier::of_mask(m).map(Carrier::name).collect();
     if m & OTHER != 0 {
-        out.push("other values");
+        return "_".into();
     }
-    match out.len() {
-        0 => "no type".into(),
-        _ => out.join(" | "),
+    if m == 0 {
+        return "!_".into();
     }
+    let names: Vec<&str> = Carrier::of_mask(m).map(Carrier::name).collect();
+    names.join(" | ")
 }
 
 /// Every atom.

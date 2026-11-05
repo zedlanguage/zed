@@ -10,7 +10,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Rat, Value};
 use zed_tests::scaling;
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Carrier, OTHER, Shape, Ty, Vars, printed};
+use zedc::check::ty::{Carrier, EVERY, OTHER, Shape, Ty, Vars, mask_text, printed};
 
 /// Each program the check reads: its place and text.
 fn programs() -> Vec<(String, String)> {
@@ -241,6 +241,29 @@ fn the_three_leaves_of_layer_l10_read_back() {
     assert_eq!(
         back("int \\ 0"),
         Ty::carrier(Carrier::Int).diff(&Ty::lit(&Value::int(0.into())))
+    );
+}
+
+/// Each set of carriers a class or a use can hold is printed as type syntax that reads back to
+/// it: a set that may take other values is `_`, since `int | _` is `_` (DESIGN.md L1.26), and
+/// the empty set is `!_` (BOUNDS-other).
+#[test]
+fn every_set_of_carriers_prints_as_a_type_that_reads_back() {
+    for m in 0..=EVERY {
+        let want = if m & OTHER != 0 {
+            Ty::dynamic()
+        } else {
+            let carriers: Vec<Ty> = Carrier::of_mask(m).map(Ty::carrier).collect();
+            Ty::union_all(&carriers)
+        };
+        let text = mask_text(m);
+        assert_eq!(back(&text), want, "mask {m:#08b} printed `{text}`");
+    }
+    assert_eq!(mask_text(0), "!_");
+    assert_eq!(mask_text(OTHER | Carrier::Int.bit()), "_");
+    assert_eq!(
+        mask_text(Carrier::Int.bit() | Carrier::F64.bit()),
+        "int | f64"
     );
 }
 
