@@ -290,7 +290,7 @@ fn many_inputs(k: usize) -> Domains {
 /// The sizes the rule of low complexity is about: a summary reads each name in `O(log n)`, and
 /// its result and context take the space of what its body reads, whatever encloses it. Sizes
 /// 6 and 48 did not show a growth of `n^1.8` that sizes 48 and 384 do. They run on a 2 MiB
-/// stack, which the transfer grows on the heap as it recurses (PRE-stack); the terms are
+/// stack, since the transfer keeps its frames on the heap (PRE-stack-explicit); the terms are
 /// built before the timing.
 fn long(what: &'static str, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
     long_at(what, 48, make, ds)

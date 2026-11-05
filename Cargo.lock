@@ -1067,7 +1067,6 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "stacker",
  "unicode-ident",
  "unicode-normalization",
  "unicode-script",

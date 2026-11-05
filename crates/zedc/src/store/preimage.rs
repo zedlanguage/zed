@@ -71,8 +71,8 @@ use std::sync::Arc;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
 
-use super::int::Int;
 use super::frames::{Deep, Stack};
+use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, Landmarks, Lattice};
 use super::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusal, Relation};
@@ -80,26 +80,10 @@ use super::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
 use crate::stage;
 use End::{Fin, NegInf, PosInf};
 
-/// Runs `f`, first moving to a new segment of stack on the heap when less than `RED_ZONE`
-/// bytes of the current one are left. Each analysis of the transfer recurses on the depth of
-/// the term, and every such recursion passes through [`Tx::cached`], [`Tx::within`],
-/// [`Tx::close`] or [`Tx::scan`], which call this: the depth is then limited by the
-/// machine's memory alone, not by the thread's stack (PRE-stack).
-// Complexity tradeoff: the analyses stay recursive, on a stack that grows in segments,
-// rather than each becoming a machine with its own stack on the heap; a check costs O(1) and
-// a new segment is made once per `SEGMENT` bytes of depth. The sizes only place the
-// segments; no result depends on them. Nothing is refused: what is given up is the rule that
-// recursion on input size uses an explicit stack. This is a temporary form (author decision
-// on PRE-stack, 2026-11-04) until item PRE-stack-explicit rewrites each analysis with its own
-// stack on the heap (about 15 mutually recursive analyses, about 200 recursive calls) and
-// removes `stacker` from this file. It is reached by any term deeper than the thread's stack
-// allows, at depth about 1,000 on a 2 MiB thread without it; tests
-// `l01_25_preimage_catalog::deep`, COMPLEXITY.md row PRE-stack.
-fn deeper<R>(f: impl FnOnce() -> R) -> R {
-    /// More than the frames between two calls of [`deeper`] take, in a debug build.
-    const RED_ZONE: usize = 1 << 20;
-    const SEGMENT: usize = 16 << 20;
-    stacker::maybe_grow(RED_ZONE, SEGMENT, f)
+/// The box of a term whose value `v` is known: every point when `v` meets the demand, none
+/// otherwise.
+fn decided(d: &Demand, v: &Value) -> Res {
+    if d.holds(v) { Res::all() } else { Res::none() }
 }
 
 /// An interval per input name.
@@ -251,7 +235,7 @@ fn preimage_in(
     // the box, run first otherwise, reads a guard on a remainder inexactly when its set spans
     // more than two periods (row C17), and then reads a chain of such guards once for each
     // demand the chain's arms shift, `O(k^2)` for `k` guards; in a class the chain is read
-    // once for all classes ([`Tx::by_class`]).
+    // once for all classes ([`Walk::by_class`]).
     //
     // Complexity tradeoff: the split before the first transfer is given up, and the transfer
     // runs first as without it, when the box holds the split input within two periods (the
@@ -262,7 +246,7 @@ fn preimage_in(
     // in `O(n)`. Given up: those inputs get the transfer's answer, and the split after it
     // when that is inexact, as before S22e-quad; at most one class's run is spent. Trigger:
     // the input's domain within two periods of the modulus, or a guard on the remainder that
-    // [`Tx::by_class`] does not read. Test:
+    // [`Walk::by_class`] does not read. Test:
     // `l01_25_preimage_catalog::s22::remainders_read_by_each_class_keep_the_transfer_first_scales`,
     // COMPLEXITY.md row S22e-quad. A complete solution would hold the congruence facet in
     // the backward transfer's sets, so that one transfer carries every class at once.
@@ -456,14 +440,14 @@ enum Split {
 /// The terms compare `x mod m` with constants for one input `x` and one modulus `m`; the
 /// constants cut `[0, m)` into classes in which each such comparison is true throughout or
 /// false throughout, so a backward transfer restricted to one class reads the comparisons
-/// exactly ([`Tx::back_arith`]). The preimage is the union over the classes `R` of the
+/// exactly ([`Walk::back_arith`]). The preimage is the union over the classes `R` of the
 /// transfer's set `S_R` for `x` within `R`: the members of every `S_R`, and the members of
 /// each `S_R` outside that common part whose remainder is in `R`. The other inputs must
 /// have the same sets in every class whose set is not empty, so that the union is a box.
 ///
 /// Design (COMPLEXITY.md rows S22e-quad and S22e-wide). (A) The runs of the classes share what
 /// they compute without reading the class ([`Kept`]), and a term is read once for every class
-/// as one summary over the classes ([`Tx::by_class`]): an `if` on the remainder takes its arms'
+/// as one summary over the classes ([`Walk::by_class`]): an `if` on the remainder takes its arms'
 /// summaries class by class, `O(log G)`; a term that reads no remainder has one transfer in
 /// every class, so it is summarized once, over the box, and that one summary stands in every
 /// class (`min` and `max` with a constant, an `if` on a test that reads no remainder, the
@@ -495,7 +479,7 @@ enum Split {
 /// Complexity tradeoff: a term the summary does not read is read by each class's run, `G`
 /// times the cost of one transfer of it for `G` classes, and `G` is at most `2d + 1` for `d`
 /// distinct constants compared: `O(G n log n)`, up to `O(n^2 log n)`, where that transfer is
-/// `O(n log n)`. Such terms are listed at [`Tx::by_class`] (an `if` whose arms differ by more
+/// `O(n log n)`. Such terms are listed at [`Walk::by_class`] (an `if` whose arms differ by more
 /// than a constant in some class, a test of a term that reads a remainder, `min` and `max`
 /// across their constant, values that may leave `i64`). The split is not tried when the terms
 /// compare remainders of two inputs or two moduli, and it is given up when a class's transfer
@@ -1300,7 +1284,7 @@ impl<'t> Terms<'t> {
 
     /// The first term numbered with the form of `t`: a term copied, which a given term is
     /// when it was cloned rather than shared, is one term here, so that what is kept by term
-    /// ([`Tx::by_class`]) is computed once for every copy. `O(1)` per term, each read once.
+    /// ([`Walk::by_class`]) is computed once for every copy. `O(1)` per term, each read once.
     fn form(&mut self, t: Tid) -> Tid {
         if let Some(&f) = self.forms.get(&t) {
             return f;
@@ -1403,15 +1387,15 @@ struct Residue {
     class: IntervalSet,
     index: usize,
     cuts: Rc<[i128]>,
-    /// Whether the run read a guard on the remainder by itself ([`Tx::back_arith`]), not from
-    /// the summary over every class ([`Tx::by_class`]).
+    /// Whether the run read a guard on the remainder by itself ([`Walk::back_arith`]), not from
+    /// the summary over every class ([`Walk::by_class`]).
     alone: bool,
 }
 
 /// What a run computes without reading its class of remainders, kept from one class's run to
 /// the next by [`split_residues`]: the forward values, constants, inputs read, clips and
 /// reaches, the summaries of calls by number with their forward values, and the summaries
-/// over every class ([`Tx::by_class`]).
+/// over every class ([`Walk::by_class`]).
 #[derive(Default)]
 struct Kept {
     sums: HashMap<Summary, u32>,
@@ -1593,14 +1577,14 @@ struct Memo {
     constant: HashMap<At, Entry<Option<Value>>>,
     fwd: HashMap<At, Entry<Fwd>>,
     back: HashMap<(At, Demand), Entry<Res>>,
-    /// The piecewise-affine summary of an integer term of one input ([`Tx::pa`]).
+    /// The piecewise-affine summary of an integer term of one input ([`Walk::pa`]).
     pa: HashMap<At, Entry<Option<Pa>>>,
     /// The interval an integer demand on a term is met with before it is read ([`Tx::clip`]).
     clip: HashMap<At, Entry<Option<IntervalSet>>>,
-    /// The summaries of a term in every class of remainders of a split ([`Tx::by_class`]).
+    /// The summaries of a term in every class of remainders of a split ([`Walk::by_class`]).
     by_class: HashMap<At, Entry<Option<ByClass>>>,
     /// Whether a term may read a remainder, so that its transfer may depend on a split's class
-    /// ([`Tx::reads_mod`]).
+    /// ([`Walk::reads_mod`]).
     reads_mod: HashMap<At, Entry<bool>>,
     scan: HashSet<At>,
     lin: HashMap<At, Entry<Option<Lin>>>,
@@ -1615,7 +1599,7 @@ struct Memo {
     log: Vec<Logged>,
     /// The entries that hold only where the stack of lambdas being read holds what it held
     /// when they began ([`Entry`]), each with that height and what removes it, in the order
-    /// they were made, so with heights that do not fall: [`Tx::through`] removes those above
+    /// they were made, so with heights that do not fall: [`Tx::leave`] removes those above
     /// the height it leaves the stack at.
     held: Vec<(usize, Unheld)>,
 }
@@ -1913,29 +1897,6 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// `f` with the lambda whose body is `body` on the stack of lambdas being read, given its
-    /// place; or `stopped`, with the stop reported, when it is already there.
-    fn through<V>(
-        &mut self,
-        t: Tid,
-        body: Tid,
-        stopped: V,
-        f: impl FnOnce(&mut Self, usize) -> V,
-    ) -> V {
-        let Some(place) = self.enter(t, body) else {
-            return stopped;
-        };
-        let v = f(self, place);
-        self.leave(body, place);
-        v
-    }
-
-    /// [`Walk::summon`] on a new stack.
-    fn summon(&mut self, ps: Span, body: Tid, lam: Eid, args: Span, env: Eid) -> Option<Call> {
-        let w = Walk::new(self);
-        w.stack.run(w.summon(ps, body, lam, args, env))
-    }
-
     /// Enters the context a summary is computed in: the inputs and the call's parameters. Gives
     /// the context left, for [`Tx::shut`], and the lambda's scope with its parameters bound.
     fn open(&mut self, call: &Call, lam: Eid) -> (Cx, Eid) {
@@ -1967,145 +1928,6 @@ impl<'t> Tx<'t> {
         cut >= place
     }
 
-    /// The preimage of a summarized call: the summary's box over the inputs, met with each
-    /// argument's preimage of the summary's interval for its parameter. Exact when the summary
-    /// is, the demand's ends are landmarks, and each argument's preimage is exact.
-    ///
-    /// A summary keeps only the inputs it narrows. Its context holds every input of the
-    /// context that first reached it, the parameters of enclosing summaries among them, and
-    /// another context reaching the same summary may give those other intervals. An input
-    /// the body reads has the same interval wherever the summary is reached: an input of the
-    /// transfer is the same in every context, and an enclosing parameter is read through the
-    /// lambda's scope, which the summary's key holds.
-    #[allow(clippy::too_many_arguments)]
-    fn call_back(
-        &mut self,
-        call: Call,
-        body: Tid,
-        lam: Eid,
-        args: Span,
-        env: Eid,
-        d: &Demand,
-        place: usize,
-    ) -> Res {
-        let (d, same) = match d {
-            Demand::Ints(z) => {
-                let s = z.snap(&self.run.marks);
-                let same = s == *z;
-                (Demand::Ints(s), same)
-            }
-            _ => (d.clone(), true),
-        };
-        let k = (call.sid, d);
-        let r = match self.run.backs.get(&k) {
-            Some(r) => r.clone(),
-            None => {
-                let (outer, e) = self.open(&call, lam);
-                let r = deeper(|| self.back_at(body, e, &k.1));
-                let cut = self.shut(outer);
-                if self.closes(cut, place) {
-                    self.run.backs.insert(k, r.clone());
-                }
-                r
-            }
-        };
-        if r.none {
-            return Res::none();
-        }
-        let mut out = Res::all();
-        out.exact = r.exact && same;
-        for (k, z) in &r.dom {
-            if self.cx.inputs.get(k).is_some_and(|w| w != z) {
-                out.dom.insert(k.clone(), z.clone());
-            }
-        }
-        for (i, n, dom) in &call.params {
-            if let Some(z) = r.dom.get(n)
-                && !dom.is_subset(z)
-            {
-                let ra = self.back_at(self.arg(args, *i), env, &Demand::Ints((**z).clone()));
-                out = self.meet(out, ra);
-            }
-        }
-        out
-    }
-
-    /// `f()`, remembered under `k` in `table`: wherever it is reached, or, when a call it reads
-    /// stopped at a lambda that was being read before it began, while the stack of lambdas
-    /// being read is no lower than it was then ([`Entry`]). Each read of such an entry passes
-    /// its stop on. Without the second kind, a term reached at many places under recursion was
-    /// read again at each: a chain of k operands named and read at r places took O(r k), and
-    /// an `if` d deep whose arms are one shared term took 2^d (ST-formula-k2-rec).
-    fn cached<K: Hash + Eq + Clone + 'static, V: Clone + 'static>(
-        &mut self,
-        table: Table<K, V>,
-        k: K,
-        f: impl FnOnce(&mut Self) -> V,
-    ) -> V {
-        #[cfg(test)]
-        tests::held_read(self, table, &k);
-        if let Some((v, cut)) = table(&mut self.run.memo).get(&k) {
-            let (v, cut) = (v.clone(), *cut);
-            #[cfg(test)]
-            let bypass = cut != usize::MAX && tests::BYPASS.get();
-            #[cfg(not(test))]
-            let bypass = false;
-            if !bypass {
-                #[cfg(test)]
-                if tests::RECHECK.get() && !tests::BYPASS.get() {
-                    tests::recheck(self, table, &k, &v, cut, f);
-                }
-                self.cx.cut = self.cx.cut.min(cut);
-                return v;
-            }
-        }
-        let base = self.run.active.len();
-        let outer = std::mem::replace(&mut self.cx.cut, usize::MAX);
-        // Temporary: stacker through `deeper` until PRE-stack-explicit.
-        let v = deeper(|| f(self));
-        let cut = self.cx.cut;
-        #[cfg(test)]
-        if cut < base && !none_held() {
-            tests::held_made(self, table, &k, base);
-        }
-        let m = &mut self.run.memo;
-        if cut >= base {
-            table(m).insert(k, (v.clone(), usize::MAX));
-        } else if none_held() {
-            // The memo before ST-formula-k2-rec, which the tests compare with.
-        } else {
-            let unheld = Box::new({
-                let k = k.clone();
-                move |m: &mut Memo| {
-                    if table(m).get(&k).is_some_and(|e| e.1 != usize::MAX) {
-                        table(m).remove(&k);
-                    }
-                }
-            });
-            table(m).insert(k, (v.clone(), cut));
-            m.held.push((base, unheld));
-        }
-        self.cx.cut = outer.min(cut);
-        v
-    }
-
-    /// [`Tx::cached`] for the translation into the linear-relation domain, whose entries a
-    /// translation that is undone removes; `logged` names an entry for the log.
-    fn translated<K: Hash + Eq + Clone + 'static, V: Clone + 'static>(
-        &mut self,
-        table: Table<K, V>,
-        k: K,
-        logged: impl FnOnce(K) -> Logged,
-        f: impl FnOnce(&mut Self) -> V,
-    ) -> V {
-        let known = table(&mut self.run.memo).contains_key(&k);
-        let v = self.cached(table, k.clone(), f);
-        if !known && table(&mut self.run.memo).contains_key(&k) {
-            self.run.memo.log.push(logged(k));
-        }
-        v
-    }
-
     /// Removes the translation's entries made after the first `mark`.
     fn forget(&mut self, mark: usize) {
         let m = &mut self.run.memo;
@@ -2117,31 +1939,6 @@ impl<'t> Tx<'t> {
                 Logged::FormulaCall(k) => _ = m.formula_calls.remove(&k),
             }
         }
-    }
-
-    /// The key a call of the lambda `body` in scope `lam` is translated under: `None`, with
-    /// what the attempt made undone, when an argument has no linear term.
-    fn call_key(
-        &mut self,
-        tr: &mut Tr,
-        body: Tid,
-        lam: Eid,
-        args: Span,
-        env: Eid,
-    ) -> Option<CallKey> {
-        let (mark, logged) = (tr.defs.len(), self.run.memo.log.len());
-        let mut lins = Vec::with_capacity(args.len());
-        for i in 0..args.len() {
-            match self.lin(tr, self.arg(args, i), env) {
-                Some(l) => lins.push(l),
-                None => {
-                    tr.defs.truncate(mark);
-                    self.forget(logged);
-                    return None;
-                }
-            }
-        }
-        Some(((body, lam), lins))
     }
 
     /// The scope of a `let` body.
@@ -2270,41 +2067,6 @@ impl<'t> Tx<'t> {
         }
     }
 
-    /// [`Walk::mentions`] on a new stack.
-    fn mentions(&mut self, t: Tid, env: Eid) -> Option<bool> {
-        let w = Walk::new(self);
-        w.stack.run(w.mentions(t, env))
-    }
-
-    /// [`Walk::reads_mod`] on a new stack.
-    fn reads_mod(&mut self, t: Tid, env: Eid) -> bool {
-        let w = Walk::new(self);
-        w.stack.run(w.reads_mod(t, env))
-    }
-
-    /// [`Walk::constant`] on a new stack.
-    fn constant(&mut self, t: Tid, env: Eid) -> Option<Value> {
-        let w = Walk::new(self);
-        w.stack.run(w.constant(t, env))
-    }
-
-    fn constant_int(&mut self, t: Tid, env: Eid) -> Option<i64> {
-        match self.constant(t, env)? {
-            Value::Int(n) => Some(n),
-            _ => None,
-        }
-    }
-
-    /// The constant exponent `t` of a `**`, when it is an integer at least 0, of any size: a
-    /// kernel integer past the 64-bit range is kept as the kernel holds it, unbuilt.
-    fn exponent(&mut self, t: Tid, env: Eid) -> Option<Exponent> {
-        match self.constant(t, env)? {
-            Value::Int(n) if n >= 0 => Some(Int::from(n).into()),
-            Value::Big(k) if !k.is_negative() => Some(Num::from(&*k).into()),
-            _ => None,
-        }
-    }
-
     /// The function a call reaches, with the scope its body is read in. Each name is looked
     /// up in the scope its binding was made in, which was built before that binding, so the
     /// walk ends.
@@ -2404,1270 +2166,40 @@ impl<'t> Tx<'t> {
         Some((s, se, j.add(k)))
     }
 
-    // ---- Into the linear-relation domain ------------------------------------------------
-
-    /// The linear term an integer term states over the inputs.
-    fn lin(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Lin> {
-        self.translated(
-            |m| &mut m.lin,
-            (t, env),
-            Logged::Lin,
-            |s| s.lin_at(tr, t, env),
-        )
-    }
-
-    fn lin_at(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Lin> {
-        use Prim::*;
-        if let Some(v) = self.constant(t, env) {
-            return match v {
-                Value::Int(n) => Some(Lin::constant(n)),
-                _ => None,
-            };
-        }
-        match self.node(t) {
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.lin(tr, bt, be),
-                None => {
-                    let x = self.name(x);
-                    (self.cx.inputs.contains_key(x))
-                        .then(|| Lin::atom(presburger::Atom::Sym(x.clone())))
-                }
-            },
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.lin(tr, b, inner)
-            }
-            Node::App(f, args) => match self.callee(f, env).ok()? {
-                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    let read = |s: &mut Self, tr: &mut Tr| {
-                        s.through(t, body, None, |s, _| {
-                            let inner = s.call_env(ps, args, lam, env);
-                            s.lin(tr, body, inner)
-                        })
-                    };
-                    match self.call_key(tr, body, lam, args, env) {
-                        Some(k) => self.translated(
-                            |m| &mut m.lin_calls,
-                            k,
-                            Logged::LinCall,
-                            |s| read(s, tr),
-                        ),
-                        None => read(self, tr),
-                    }
-                }
-                Callee::Prim(p) => {
-                    let c = self.terms.call(t, p, args);
-                    self.lin(tr, c, env)
-                }
-                Callee::Lam(..) => None,
-            },
-            Node::If(g, a, b) => {
-                let g = self.formula(tr, g, env)?;
-                let (la, lb) = (self.lin(tr, a, env)?, self.lin(tr, b, env)?);
-                // One level: the parts are shown by their linear forms, in which an auxiliary
-                // variable is its name, so the name costs the size of what it is made of.
-                let what = format!("if {g} then {la} else {lb}");
-                let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
-                let def = Formula::or(vec![
-                    Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
-                    Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),
-                ]);
-                tr.aux(what, def);
-                Some(x)
-            }
-            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
-                let arg = |s: &mut Self, tr: &mut Tr, i: usize| s.lin(tr, s.arg(args, i), env);
-                match p {
-                    Add => Some(arg(self, tr, 0)?.plus(&arg(self, tr, 1)?)),
-                    Sub => Some(arg(self, tr, 0)?.minus(&arg(self, tr, 1)?)),
-                    Neg => Some(arg(self, tr, 0)?.times(-1)),
-                    Mul => {
-                        let (a, b) = (arg(self, tr, 0)?, arg(self, tr, 1)?);
-                        if !tr.products && !a.terms.is_empty() && !b.terms.is_empty() {
-                            return None;
-                        }
-                        a.product(&b)
-                    }
-                    Pow => match self.constant_int(self.arg(args, 1), env)? {
-                        0 => Some(Lin::constant(1)),
-                        1 => arg(self, tr, 0),
-                        2 if tr.products => {
-                            let a = arg(self, tr, 0)?;
-                            a.product(&a)
-                        }
-                        _ => None,
-                    },
-                    IntDiv | Mod => {
-                        let c = (self.constant_int(self.arg(args, 1), env)).filter(|c| *c != 0)?;
-                        let a = arg(self, tr, 0)?;
-                        // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
-                        let n = tr.defs.len() as u32;
-                        let (q, r) = (
-                            Lin::atom(presburger::Atom::Aux(n)),
-                            Lin::atom(presburger::Atom::Aux(n + 1)),
-                        );
-                        let c = i128::from(c);
-                        let def = Formula::and(vec![
-                            Formula::Con(Con::eq(&a, &q.times(c).plus(&r))),
-                            Formula::Con(Con::ge(&r, &Lin::constant(0))),
-                            Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
-                        ]);
-                        let first = operand(&a);
-                        let shown = |op: &str| format!("{first} {op} {c}");
-                        tr.defs.push((n, shown("div"), def));
-                        tr.defs.push((n + 1, shown("mod"), Formula::top()));
-                        Some(if p == IntDiv { q } else { r })
-                    }
-                    Min | Max | Abs => {
-                        let a = arg(self, tr, 0)?;
-                        let b = if p == Abs {
-                            a.times(-1)
-                        } else {
-                            arg(self, tr, 1)?
-                        };
-                        let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
-                        // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
-                        let (lo, hi) = if p == Min { (&a, &b) } else { (&b, &a) };
-                        let first = Con::ge(hi, lo);
-                        let def = Formula::or(vec![
-                            Formula::and(vec![
-                                Formula::Con(first.clone()),
-                                Formula::Con(Con::eq(&x, &a)),
-                            ]),
-                            Formula::and(vec![
-                                Formula::negate(Formula::Con(first)),
-                                Formula::Con(Con::eq(&x, &b)),
-                            ]),
-                        ]);
-                        let what = match p {
-                            Abs => format!("abs({a})"),
-                            Min => format!("min({a}, {b})"),
-                            _ => format!("max({a}, {b})"),
-                        };
-                        tr.aux(what, def);
-                        Some(x)
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// The formula a test states over the inputs.
-    fn formula(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
-        self.translated(
-            |m| &mut m.formula,
-            (t, env),
-            Logged::Formula,
-            |s| s.formula_at(tr, t, env),
-        )
-    }
-
-    fn formula_at(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
-        use Prim::*;
-        if let Some(v) = self.constant(t, env) {
-            return match v {
-                Value::Bool(true) => Some(Formula::top()),
-                Value::Bool(false) => Some(Formula::bottom()),
-                _ => None,
-            };
-        }
-        match self.node(t) {
-            Node::Var(x) => {
-                let (bt, be) = self.lookup(env, x)?;
-                self.formula(tr, bt, be)
-            }
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.formula(tr, b, inner)
-            }
-            Node::App(f, args) => match self.callee(f, env).ok()? {
-                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    let read = |s: &mut Self, tr: &mut Tr| {
-                        s.through(t, body, None, |s, _| {
-                            let inner = s.call_env(ps, args, lam, env);
-                            s.formula(tr, body, inner)
-                        })
-                    };
-                    match self.call_key(tr, body, lam, args, env) {
-                        Some(k) => self.translated(
-                            |m| &mut m.formula_calls,
-                            k,
-                            Logged::FormulaCall,
-                            |s| read(s, tr),
-                        ),
-                        None => read(self, tr),
-                    }
-                }
-                Callee::Prim(p) => {
-                    let c = self.terms.call(t, p, args);
-                    self.formula(tr, c, env)
-                }
-                Callee::Lam(..) => None,
-            },
-            Node::If(g, a, b) => {
-                // The formula of a name is kept whole, as for `&&` below.
-                let named = [g, a, b].map(|t| matches!(self.node(t), Node::Var(_)));
-                let g = self.formula(tr, g, env)?;
-                let (fa, fb) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
-                Some(Formula::or(vec![
-                    Formula::and_keeping(vec![g.clone(), fa], |i| named[i]),
-                    Formula::and_keeping(vec![Formula::negate(g), fb], |i| i == 1 && named[2]),
-                ]))
-            }
-            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
-                let (a, b) = (
-                    self.arg(args, 0),
-                    (args.len() > 1).then(|| self.arg(args, 1)),
-                );
-                match p {
-                    Not => Some(Formula::negate(self.formula(tr, a, env)?)),
-                    And | Or => {
-                        let b = b.expect("two operands");
-                        #[cfg(test)]
-                        if presburger::TWO_AT_A_TIME.get() {
-                            return self.two_at_a_time(tr, p, a, b, env);
-                        }
-                        self.chain(tr, p, [a, b], env)
-                    }
-                    Lt | Le | Gt | Ge | Eq | Ne => {
-                        let b = b.expect("two operands");
-                        let (mark, logged) = (tr.defs.len(), self.run.memo.log.len());
-                        if let (Some(la), Some(lb)) = (self.lin(tr, a, env), self.lin(tr, b, env)) {
-                            let one = Lin::constant(1);
-                            let c = match p {
-                                Lt => Con::ge(&lb, &la.plus(&one)),
-                                Le => Con::ge(&lb, &la),
-                                Gt => Con::ge(&la, &lb.plus(&one)),
-                                Ge => Con::ge(&la, &lb),
-                                _ => Con::eq(&la, &lb),
-                            };
-                            let f = Formula::Con(c);
-                            return Some(if p == Ne { Formula::negate(f) } else { f });
-                        }
-                        tr.defs.truncate(mark);
-                        self.forget(logged);
-                        if !matches!(p, Eq | Ne) {
-                            return None;
-                        }
-                        // Two tests are equal where both hold or neither does.
-                        let (fa, fb) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
-                        let same = Formula::or(vec![
-                            Formula::and(vec![fa.clone(), fb.clone()]),
-                            Formula::and(vec![Formula::negate(fa), Formula::negate(fb)]),
-                        ]);
-                        Some(if p == Ne { Formula::negate(same) } else { same })
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// The formula of a `&&` (`p` is `And`) or a `||` with the given operands: the operands
-    /// of the chain of `p` it heads, each operand that is itself a `p` with no constant value
-    /// read through, joined as [`Formula::and_keeping`] or [`Formula::or_keeping`] would join
-    /// them two at a time, but in one [`Joining`], so a chain of k operands costs O(k log k)
-    /// and not O(k²) (ST-formula-k2). The formula of a name is kept whole, so a named part
-    /// used at many places is one node and not copied into each (COMPLEXITY.md S31b). The
-    /// operands are read in order, as the two-at-a-time translation reads them, and the
-    /// first that has no formula gives none for the whole. An operand of a primitive is held
-    /// in its parent alone ([`Terms::ids`]), so the chain is a tree, and each of its nodes is
-    /// met once without a visited set.
-    fn chain(&mut self, tr: &mut Tr, p: Prim, operands: [Tid; 2], env: Eid) -> Option<Formula> {
-        /// An operand to read, or the end of an inner `p`, with where the joining was before
-        /// its operands ([`Joining::close`]).
-        enum Step {
-            Operand(Tid),
-            Close(Mark),
-        }
-        let mut j = Joining::new(p == Prim::And);
-        let mut todo = vec![Step::Operand(operands[1]), Step::Operand(operands[0])];
-        while let Some(step) = todo.pop() {
-            let u = match step {
-                Step::Close(mark) => {
-                    j.close(mark);
-                    continue;
-                }
-                Step::Operand(u) => u,
-            };
-            match self.node(u) {
-                Node::Prim(q, args)
-                    if q == p
-                        && q.arity().is_none_or(|n| n == args.len())
-                        && self.constant(u, env).is_none() =>
-                {
-                    todo.push(Step::Close(j.mark()));
-                    todo.push(Step::Operand(self.arg(args, 1)));
-                    todo.push(Step::Operand(self.arg(args, 0)));
-                }
-                node => {
-                    let f = self.formula(tr, u, env)?;
-                    j.operand(f, matches!(node, Node::Var(_)));
-                }
-            }
-        }
-        Some(j.finish())
-    }
-
-    /// The formula of a `&&` or `||` as the translator made it before [`Tx::chain`]
-    /// (64781908): each operand by [`Tx::formula`], an inner `&&` with its own memo entry, and
-    /// the two joined at once; for the tests that compare the two (ST-formula-k2).
-    #[cfg(test)]
-    fn two_at_a_time(&mut self, tr: &mut Tr, p: Prim, a: Tid, b: Tid, env: Eid) -> Option<Formula> {
-        let named = [a, b].map(|t| matches!(self.node(t), Node::Var(_)));
-        let (a, b) = (self.formula(tr, a, env)?, self.formula(tr, b, env)?);
-        Some(if p == Prim::And {
-            Formula::and_keeping(vec![a, b], |i| named[i])
-        } else {
-            Formula::or_keeping(vec![a, b], |i| named[i])
-        })
-    }
-
     /// [`Walk::fwd`] on a new stack.
     fn fwd(&mut self, t: Tid, env: Eid) -> Fwd {
         let w = Walk::new(self);
         w.stack.run(w.fwd(t, env))
     }
 
-    /// [`Walk::clip`] on a new stack.
-    fn clip(&mut self, t: Tid, env: Eid) -> Option<IntervalSet> {
-        let w = Walk::new(self);
-        w.stack.run(w.clip(t, env))
-    }
-
-    // ---- Backward transfer ------------------------------------------------------------
-
+    /// [`Walk::back`] on a new stack.
     fn back(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
-        self.back_at(t, env, d)
+        let w = Walk::new(self);
+        w.stack.run(w.back(t, env, d.clone()))
     }
 
-    fn back_at(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
-        // An integer demand is read as its meet with the term's values, so that demands that
-        // differ only outside them are one.
-        let met;
-        let d = match d {
-            Demand::Ints(z) => {
-                let clip = self.clip(t, env);
-                match clip {
-                    Some(f) => {
-                        met = Demand::Ints(z.meet(&f));
-                        &met
-                    }
-                    None => d,
-                }
-            }
-            _ => d,
-        };
-        self.cached(
-            |m| &mut m.back,
-            ((t, env), d.clone()),
-            |s| s.back_in(t, env, d),
-        )
-    }
-
-    fn back_in(&mut self, t: Tid, env: Eid, d: &Demand) -> Res {
-        if let Demand::Ints(z) = d
-            && z.is_empty()
-        {
-            return Res::none();
-        }
-        // A term that reads no input is decided by running it.
-        if !matches!(self.node(t), Node::Var(_))
-            && let Some(v) = self.constant(t, env)
-        {
-            return if d.holds(&v) { Res::all() } else { Res::none() };
-        }
-        let holds = |v: &Value| if d.holds(v) { Res::all() } else { Res::none() };
-        match self.node(t) {
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.back_at(bt, be, d),
-                None => {
-                    let x = self.name(x);
-                    match (self.cx.inputs.get(x), d) {
-                        (Some(dom), Demand::Ints(z)) => {
-                            let met = dom.meet(z);
-                            if met.is_empty() {
-                                return Res::none();
-                            }
-                            let mut r = Res::all();
-                            if met != **dom {
-                                r.dom.insert(x.clone(), Rc::new(met));
-                            }
-                            r
-                        }
-                        (Some(_), Demand::Bool(_)) => Res::none(),
-                        (None, _) => {
-                            let kind = StopKind::Foreign(x.clone());
-                            self.stop(kind, t)
-                        }
-                    }
-                }
-            },
-            Node::Int(n) => holds(&Value::Int(n)),
-            Node::Bool(b) => holds(&Value::Bool(b)),
-            Node::Lit(v) => holds(v),
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.back_at(b, inner, d)
-            }
-            Node::If(g, a, b) => {
-                if let Demand::Ints(z) = d
-                    && let Some(r) = self.pa(t, env).and_then(|pa| self.invert_pa(&pa, z))
-                {
-                    return r;
-                }
-                if let Some(index) = self.run.residue.as_ref().map(|r| r.index) {
-                    // A test in a class of remainders: the summary over every class, 1 where
-                    // it holds and 0 where it fails.
-                    if let Demand::Bool(w) = *d
-                        && self.fwd(t, env).is_bool()
-                        && let Some(pa) = self.by_class(t, env).and_then(|c| c.get(index))
-                        && let Some(r) = self.invert_pa(&pa, &IntervalSet::of(w.into(), w.into()))
-                    {
-                        return r;
-                    }
-                    // A guard on the remainder takes one arm throughout the class.
-                    if let Some(yes) = self.residue_test(g, env) {
-                        let taken = yes.iter().any(|&(i, j)| i <= index && index <= j);
-                        return self.back_at(if taken { a } else { b }, env, d);
-                    }
-                }
-                let gt = self.back_at(g, env, &Demand::Bool(true));
-                let at = self.back_at(a, env, d);
-                let gf = self.back_at(g, env, &Demand::Bool(false));
-                let bf = self.back_at(b, env, d);
-                let yes = self.meet(gt, at);
-                let no = self.meet(gf, bf);
-                self.union(yes, no)
-            }
-            Node::App(f, args) => match self.callee(f, env) {
-                Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    self.through(t, body, Res::unknown(), |s, place| {
-                        match s.summon(ps, body, lam, args, env) {
-                            Some(call) => s.call_back(call, body, lam, args, env, d, place),
-                            None => {
-                                let inner = s.call_env(ps, args, lam, env);
-                                s.back_at(body, inner, d)
-                            }
-                        }
-                    })
-                }
-                Ok(Callee::Prim(p)) => {
-                    let c = self.terms.call(t, p, args);
-                    self.back_at(c, env, d)
-                }
-                Err(Some(name)) => self.stop(StopKind::Foreign(name), t),
-                _ => self.stop(StopKind::Outside, t),
-            },
-            Node::Prim(p, args) => {
-                if p.arity().is_some_and(|n| n != args.len()) {
-                    return self.stop(StopKind::Outside, t);
-                }
-                self.back_prim(t, p, args, env, d)
-            }
-            _ => self.stop(StopKind::Outside, t),
-        }
-    }
-
-    fn back_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid, d: &Demand) -> Res {
-        use Prim::*;
-        let ints_of = |d: &Demand| match d {
-            Demand::Ints(z) => Some(z.clone()),
-            Demand::Bool(_) => None,
-        };
-        match p {
-            Show | Lower | Upper | Trim | Concat => self.stop(StopKind::String(p), t),
-            // `len` moves the demand to the length facet, which is not an input here; the
-            // terms below it may still stop.
-            Len => {
-                self.scan(self.arg(args, 0), env);
-                Res::unknown()
-            }
-            Not | And | Or => match *d {
-                Demand::Ints(_) => Res::none(),
-                Demand::Bool(w) if p == Not => {
-                    self.back_at(self.arg(args, 0), env, &Demand::Bool(!w))
-                }
-                Demand::Bool(w) => {
-                    let (x, y) = (self.arg(args, 0), self.arg(args, 1));
-                    let a = self.back_at(x, env, d);
-                    let b = self.back_at(y, env, d);
-                    if (p == And) == w {
-                        return self.meet(a, b);
-                    }
-                    // `&&` and `||` here are strict: one side meeting the demand is enough
-                    // only when the other cannot fail.
-                    let strict = self.fwd(x, env).is_bool() && self.fwd(y, env).is_bool();
-                    let mut r = self.union(a, b);
-                    r.exact &= strict;
-                    r
-                }
-            },
-            Lt | Le | Gt | Ge | Eq | Ne => match *d {
-                Demand::Ints(_) => Res::none(),
-                Demand::Bool(w) => {
-                    let p = if w { p } else { negate(p) };
-                    self.back_compare(t, p, args, env)
-                }
-            },
-            Add | Sub | Mul | IntDiv | Mod | Neg | Abs | Pow => match ints_of(d) {
-                Some(z) => self.back_arith(t, p, args, env, &z),
-                None => Res::none(),
-            },
-            Min | Max => match ints_of(d) {
-                Some(z) => self.back_arith(t, p, args, env, &z),
-                // `min` and `max` of two tests are tests.
-                None => self.stop(StopKind::Outside, t),
-            },
-            _ => self.stop(StopKind::Outside, t),
-        }
-    }
-
-    /// The comparison `t` of its operands `args` by `p`, which may be `t`'s own comparison
-    /// negated.
-    fn back_compare(&mut self, t: Tid, p: Prim, args: Span, env: Eid) -> Res {
-        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
-        let (fa, fb) = (self.fwd(a, env), self.fwd(b, env));
-        // Two tests are equal where both are true or both false.
-        if matches!(p, Prim::Eq | Prim::Ne) && fa.is_bool() && fb.is_bool() {
-            let mut arms = Vec::new();
-            for w in [true, false] {
-                let ra = self.back_at(a, env, &Demand::Bool(w));
-                let rb = self.back_at(b, env, &Demand::Bool(w == (p == Prim::Eq)));
-                arms.push(self.meet(ra, rb));
-            }
-            let no = arms.pop().expect("two arms");
-            let yes = arms.pop().expect("two arms");
-            return self.union(yes, no);
-        }
-        // An operand that may fail meets an ordered comparison nowhere, since the comparison
-        // fails too, and `==` with an integer nowhere; it meets `!=` everywhere.
-        let ints = fa.is_int() && fb.is_int();
-        let ordered_or_eq = |f: &Fwd| !f.other && !f.has_bools() && p != Prim::Ne;
-        if let Some(c) = self.constant_int(b, env)
-            && (ints || ordered_or_eq(&fa))
-        {
-            return self.back_at(a, env, &Demand::Ints(ray(p, c)));
-        }
-        if let Some(c) = self.constant_int(a, env)
-            && (ints || ordered_or_eq(&fb))
-        {
-            return self.back_at(b, env, &Demand::Ints(ray(mirror(p), c)));
-        }
-        let one_int = fa.is_int() || fb.is_int();
-        if ints || (ordered_or_eq(&fa) && ordered_or_eq(&fb) && (p != Prim::Eq || one_int)) {
-            // Between two integers, `a op b` is `a - b op 0`.
-            let diff = self.terms.diff(t, args);
-            return self.back_at(diff, env, &Demand::Ints(ray(p, 0)));
-        }
-        // Operands of other kinds, or two that may both fail, which `==` finds equal.
-        self.scan(a, env);
-        self.scan(b, env);
-        Res::unknown()
-    }
-
-    /// Reports the stops in a term whose value the transfer does not follow.
-    fn scan(&mut self, t: Tid, env: Eid) {
-        // Temporary: stacker through `deeper` until PRE-stack-explicit.
-        deeper(|| self.scan_at(t, env))
-    }
-
-    fn scan_at(&mut self, t: Tid, env: Eid) {
-        // A term is scanned once in each scope: its stops are reported the first time.
-        if !self.run.memo.scan.insert((t, env)) {
-            return;
-        }
-        if self.mentions(t, env) == Some(false) {
-            return;
-        }
-        match self.node(t) {
-            Node::Var(x) => {
-                if let Some((bt, be)) = self.lookup(env, x) {
-                    self.scan(bt, be);
-                }
-            }
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.scan(b, inner)
-            }
-            Node::Follow(v, own, _) => {
-                for u in [v, own] {
-                    self.scan(u, env);
-                }
-            }
-            Node::If(g, a, b) => {
-                for u in [g, a, b] {
-                    self.scan(u, env);
-                }
-            }
-            Node::App(f, args) => match self.callee(f, env) {
-                Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
-                    self.through(t, body, (), |s, place| {
-                        match s.summon(ps, body, lam, args, env) {
-                            Some(call) => {
-                                if s.run.scanned.insert(call.sid) {
-                                    let (outer, e) = s.open(&call, lam);
-                                    s.scan(body, e);
-                                    let cut = s.shut(outer);
-                                    s.closes(cut, place);
-                                }
-                            }
-                            None => {
-                                let inner = s.call_env(ps, args, lam, env);
-                                s.scan(body, inner)
-                            }
-                        }
-                    })
-                }
-                Ok(Callee::Prim(p)) => {
-                    let c = self.terms.call(t, p, args);
-                    self.scan(c, env)
-                }
-                Err(Some(name)) => {
-                    self.stop(StopKind::Foreign(name), t);
-                }
-                _ => {
-                    self.stop(StopKind::Outside, t);
-                }
-            },
-            Node::Prim(
-                p @ (Prim::Show | Prim::Lower | Prim::Upper | Prim::Trim | Prim::Concat),
-                _,
-            ) => {
-                self.stop(StopKind::String(p), t);
-            }
-            Node::Prim(p, args) if scalar(p) => {
-                for i in 0..args.len() {
-                    self.scan(self.arg(args, i), env);
-                }
-            }
-            _ => {
-                self.stop(StopKind::Outside, t);
-            }
-        }
-    }
-
-    fn back_arith(&mut self, t: Tid, p: Prim, args: Span, env: Eid, z: &IntervalSet) -> Res {
-        use Prim::*;
-        let ints = |s: IntervalSet| Demand::Ints(s);
-        if p == Mul
-            && let Some((base, be, k)) = self.power(t, env)
-        {
-            return self.back_unary(&Op::Pow(k), base, be, z);
-        }
-        let a = self.arg(args, 0);
-        match p {
-            Neg | Abs => {
-                return self.back_unary(&op(p, None).expect("scalar"), a, env, z);
-            }
-            Pow => {
-                let b = self.arg(args, 1);
-                return match self.exponent(b, env) {
-                    Some(k) => self.back_unary(&Op::Pow(k), a, env, z),
-                    // A variable exponent: only the points where both operands are integers.
-                    _ => self.both_ints(a, b, env),
-                };
-            }
-            _ => {}
-        }
-        let b = self.arg(args, 1);
-        let ca = self.constant_int(a, env);
-        let cb = self.constant_int(b, env);
-        match (p, ca, cb) {
-            (Add, Some(c), _) => self.back_at(b, env, &ints(shift(z, -(c as i128)))),
-            (Add, _, Some(c)) | (Sub, _, Some(c)) => {
-                let c = if p == Add { -(c as i128) } else { c as i128 };
-                self.back_at(a, env, &ints(shift(z, c)))
-            }
-            (Sub, Some(c), _) => self.back_at(b, env, &ints(reflect(z, c as i128))),
-            (Mul, Some(c), _) => self.back_at(b, env, &ints(times_pre(z, c))),
-            (Mul, _, Some(c)) => self.back_at(a, env, &ints(times_pre(z, c))),
-            (IntDiv, _, Some(c)) => self.back_at(a, env, &ints(div_pre(z, c))),
-            (Mod, _, Some(c)) => {
-                // Within the run's class of remainders of the input `a`, every point is in `z`
-                // or none is.
-                let m = c.unsigned_abs() as i128;
-                let class = match self.node(a) {
-                    Node::Var(x) if self.lookup(env, x).is_none() => self
-                        .run
-                        .residue
-                        .as_mut()
-                        .filter(|r| r.x == x && r.m == m)
-                        .map(|r| {
-                            r.alone = true;
-                            (r.class.is_subset(z), r.class.meet(z).is_empty())
-                        }),
-                    _ => None,
-                };
-                match class {
-                    Some((true, _)) => return self.back_at(a, env, &ints(IntervalSet::top())),
-                    Some((_, true)) => return Res::none(),
-                    _ => {}
-                }
-                let fa = self.fwd(a, env).ints;
-                let (s, exact) = mod_pre(z, c, &fa);
-                let mut r = self.back_at(a, env, &ints(s));
-                r.exact &= exact;
-                r
-            }
-            (Min | Max, Some(c), _) => self.back_at(b, env, &ints(minmax_pre(p, z, c))),
-            (Min | Max, _, Some(c)) => self.back_at(a, env, &ints(minmax_pre(p, z, c))),
-            (Min | Max, None, None) => {
-                let f = self.fwd(t, env).ints;
-                let zf = z.meet(&f);
-                let (Some((flo, fhi)), Some((lo, hi))) = (f.bounds(), zf.bounds()) else {
-                    return Res::none();
-                };
-                let up = IntervalSet::range(lo.clone(), fhi.clone()).is_subset(z);
-                let down = IntervalSet::range(flo.clone(), hi.clone()).is_subset(z);
-                // min ≥ lo: both are; max ≤ hi: both are. The other rays: either is. When
-                // the demand holds the whole forward range, both rays apply; the upward one is
-                // taken.
-                let both = (p == Min && up) || (p == Max && down && !up);
-                let either = (p == Min && down && !up) || (p == Max && up);
-                if both || either {
-                    let r = if up {
-                        IntervalSet::range(lo.clone(), PosInf)
-                    } else {
-                        IntervalSet::range(NegInf, hi.clone())
-                    };
-                    let ra = self.back_at(a, env, &ints(r.clone()));
-                    let rb = self.back_at(b, env, &ints(r));
-                    return if both {
-                        self.meet(ra, rb)
-                    } else {
-                        self.union(ra, rb)
-                    };
-                }
-                self.project(p, a, b, env, z)
-            }
-            _ => self.project(p, a, b, env, z),
-        }
-    }
-
-    /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
-    /// interval of `c`.
-    fn back_unary(&mut self, o: &Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
-        if let Op::Pow(k) = o
-            && k.is_zero()
-        {
-            // `c ** 0` is 1 wherever `c` is an integer.
-            return if z.contains(1) {
-                self.back_at(c, env, &Demand::Ints(IntervalSet::top()))
-            } else {
-                Res::none()
-            };
-        }
-        let fc = self.fwd(c, env).ints;
-        let zc = revision::backward(o, 0, &fc, &fc, z);
-        self.back_at(c, env, &Demand::Ints(zc))
-    }
-
-    /// The HC4 projection onto each operand: necessary, not exact.
-    ///
-    /// Complexity tradeoff: each operand is narrowed alone against the other's forward
-    /// interval, so the relation between the operands is given up and the box can hold
-    /// points that fail the demand. Why: the exact preimage of a nonlinear operator is a
-    /// region that is not a box, and finding it costs the points of the box (or is
-    /// undecidable for polynomial tests over unbounded integers). Trigger: an operator with
-    /// no exact catalog entry (anything but shifts, scalings, `div` and `mod` by a constant,
-    /// `**`, and branches), or two operands that both read inputs. Test:
-    /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
-    /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
-    /// searches the box at a cost in its points.
-    fn project(&mut self, p: Prim, a: Tid, b: Tid, env: Eid, z: &IntervalSet) -> Res {
-        let o = op(p, None).expect("binary scalar operator");
-        let fa = self.fwd(a, env).ints;
-        let fb = self.fwd(b, env).ints;
-        let za = revision::backward(&o, 0, &fa, &fb, z);
-        let zb = revision::backward(&o, 1, &fa, &fb, z);
-        let ra = self.back_at(a, env, &Demand::Ints(za));
-        let rb = self.back_at(b, env, &Demand::Ints(zb));
-        let mut r = self.meet(ra, rb);
-        r.exact = self.empty(&r);
-        r
-    }
-
-    fn both_ints(&mut self, a: Tid, b: Tid, env: Eid) -> Res {
-        let top = Demand::Ints(IntervalSet::top());
-        let ra = self.back_at(a, env, &top);
-        let rb = self.back_at(b, env, &top);
-        let mut r = self.meet(ra, rb);
-        r.exact = self.empty(&r);
-        r
-    }
-
-    // ---- Piecewise-affine summaries -----------------------------------------------------
-
-    /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
-    /// when it is not one or when it reads more than one input. Its coefficients, constants
-    /// and values lie in `i128` ([`finite`]), and an infinite end of a piece is the limit of
-    /// its line there, so `t + 1` over all integers is a summary. Keyed on the term alone, so
-    /// an `if` chain whose arms read one shared term is summarized once, whatever demands
-    /// reach it.
+    /// [`Walk::pa`] on a new stack.
     fn pa(&mut self, t: Tid, env: Eid) -> Option<Pa> {
-        if self.run.void {
-            return None;
-        }
-        // In a class of remainders, an `if` the summary over every class reads is looked up
-        // there, so that the classes share one reading of the term.
-        if matches!(self.node(t), Node::If(..))
-            && !self.fwd(t, env).has_bools()
-            && let Some(index) = self.run.residue.as_ref().map(|r| r.index)
-            && let Some(p) = self.by_class(t, env).and_then(|b| b.get(index))
-        {
-            return Some(p);
-        }
-        self.cached(|m| &mut m.pa, (t, env), |s| s.pa_at(t, env))
+        let w = Walk::new(self);
+        w.stack.run(w.pa(t, env))
     }
 
-    fn pa_at(&mut self, t: Tid, env: Eid) -> Option<Pa> {
-        if !matches!(self.node(t), Node::Var(_))
-            && let Some(v) = self.constant(t, env)
-        {
-            return match v {
-                Value::Int(c) => Some(Pa::Const(c)),
-                _ => None,
-            };
-        }
-        match self.node(t) {
-            Node::Int(c) => Some(Pa::Const(c)),
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.pa(bt, be),
-                None => {
-                    let name = self.name(x);
-                    self.cx.inputs.contains_key(name).then(|| Pa::Linear {
-                        var: name.clone(),
-                        a: 1,
-                        b: 0,
-                    })
-                }
-            },
-            Node::Let(n, e, b) => {
-                let inner = self.let_env(n, e, env);
-                self.pa(b, inner)
-            }
-            Node::App(f, args) => match self.callee(f, env) {
-                Ok(Callee::Prim(p)) => {
-                    let c = self.terms.call(t, p, args);
-                    self.pa(c, env)
-                }
-                _ => None,
-            },
-            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
-                self.pa_prim(t, p, args, env)
-            }
-            Node::If(g, a, b) => self.pa_if(g, a, b, env),
-            _ => None,
-        }
+    /// [`Walk::lin`] on a new stack, adding to the translation `tr`.
+    fn lin(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Lin> {
+        let w = Walk::translating(self, tr);
+        w.stack.run(w.lin(t, env))
     }
 
-    /// An `if` whose guard narrows at most the one input its arms read: the arms' treaps
-    /// sliced to the inputs that take each arm, joined in order. Exact, since both guard
-    /// results must be.
-    fn pa_if(&mut self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<Pa> {
-        let gt = self.back_at(g, env, &Demand::Bool(true));
-        let gf = self.back_at(g, env, &Demand::Bool(false));
-        if !gt.exact || !gf.exact {
-            return None;
-        }
-        let pa = self.pa(a, env)?;
-        let pb = self.pa(b, env)?;
-        self.pa_select(g, env, &pa, &pb)
-    }
-
-    /// The summary that is `pa` on the inputs where the test `g` holds and `pb` where it
-    /// fails ([`Tx::pa_if`]).
-    fn pa_select(&mut self, g: Tid, env: Eid, pa: &Pa, pb: &Pa) -> Option<Pa> {
-        let gt = self.back_at(g, env, &Demand::Bool(true));
-        let gf = self.back_at(g, env, &Demand::Bool(false));
-        if !gt.exact || !gf.exact {
-            return None;
-        }
-        let (yes, no) = (!self.empty(&gt), !self.empty(&gf));
-        if gt.dom.len() > 1 || gf.dom.len() > 1 {
-            return None;
-        }
-        let mut var: Option<&Arc<str>> = None;
-        for name in gt
-            .dom
-            .keys()
-            .chain(gf.dom.keys())
-            .chain(pa.var())
-            .chain(pb.var())
-        {
-            match var {
-                Some(v) if v != name => return None,
-                _ => var = Some(name),
-            }
-        }
-        let Some(var) = var else {
-            // Neither the guard nor the arms read an input: one arm is taken everywhere.
-            return match (yes, no) {
-                (true, false) => Some(pa.clone()),
-                (false, true) => Some(pb.clone()),
-                _ => None,
-            };
-        };
-        let dom = self.cx.inputs.get(var)?;
-        let mut slices = Vec::new();
-        for (taken, r, arm) in [(yes, &gt, pa), (no, &gf, pb)] {
-            if !taken {
-                continue;
-            }
-            let set = r.dom.get(var).map_or(&**dom, |s| &**s);
-            let tree = arm.to_treap(dom)?;
-            if !in_range(set) {
-                return None;
-            }
-            for (lo, hi) in set.pieces() {
-                if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
-                    slices.push((key(lo), s));
-                }
-            }
-        }
-        slices.sort_by_key(|&(lo, _)| lo);
-        let mut root = None;
-        for (_, s) in slices {
-            root = join_treap(root, Some(s))?;
-        }
-        Some(Pa::Piecewise {
-            var: var.clone(),
-            root,
-        })
-    }
-
-    /// `-u`, `u + c`, `c + u`, `u - c`, `c - u` and `c * u` for a summarized `u` and a
-    /// constant `c`; the arity was checked by the caller.
-    fn pa_prim(&mut self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<Pa> {
-        let a = self.arg(args, 0);
-        match p {
-            Prim::Neg => self.pa(a, env)?.affine(-1, 0),
-            Prim::Add => {
-                let b = self.arg(args, 1);
-                if let Some(c) = self.constant_int(a, env) {
-                    return self.pa(b, env)?.affine(1, c.into());
-                }
-                let c = self.constant_int(b, env)?;
-                self.pa(a, env)?.affine(1, c.into())
-            }
-            Prim::Sub => {
-                let b = self.arg(args, 1);
-                if let Some(c) = self.constant_int(b, env) {
-                    return self.pa(a, env)?.affine(1, -i128::from(c));
-                }
-                let c = self.constant_int(a, env)?;
-                self.pa(b, env)?.affine(-1, c.into())
-            }
-            Prim::Mul => {
-                if self.power(t, env).is_some() {
-                    return None;
-                }
-                let b = self.arg(args, 1);
-                let (c, u) = match self.constant_int(a, env) {
-                    Some(c) => (c, b),
-                    None => (self.constant_int(b, env)?, a),
-                };
-                if c == 0 {
-                    return None;
-                }
-                self.pa(u, env)?.affine(c.into(), 0)
-            }
-            _ => None,
-        }
-    }
-
-    /// The summary ([`Tx::pa`]) of the term in every class of remainders of the run's split
-    /// ([`split_residues`]), built once for all classes, with a test's `false` and `true` read
-    /// as 0 and 1: `None` outside a split, and for a term other than those read here.
-    ///
-    /// - An `if` whose guard compares the split's remainder with a constant: in each class such
-    ///   a guard is true throughout or false throughout, so the `if` is the arm it takes, and
-    ///   the summaries of the classes are those of the `no` arm with the classes where the
-    ///   guard holds taken from the `yes` arm, `O(log G)` for `G` classes. Such a comparison
-    ///   as a value is read the same way, as an `if` with arms 1 and 0.
-    /// - A term that reads no remainder ([`Tx::reads_mod`]): its transfer is the same in every
-    ///   class, so its summary is read once, [`Tx::pa_at`], or for a test the one that is 1
-    ///   and 0 on the sets the transfer finds exactly where it holds and where it fails.
-    /// - An `if` on a test that reads no remainder: when both arms are one summary in every
-    ///   class, the summary of the `if` is too, sliced once ([`Tx::pa_select`]); when the arms
-    ///   add constants to one tree whose summaries are a base plus a constant in each class
-    ///   (`t` and `t + 1` for one `t`, [`ByClass`]), the tree is kept and its base is sliced
-    ///   once, `O(log n)`, since adding a constant commutes with slicing by the guard's sets.
-    /// - `-u`, `u + c`, `u - c`, `c - u` and `c * u`: every summary is mapped, `O(1)`; `not u`
-    ///   is `1 - u`; `min` and `max` of `u` and a constant `c` are `u` or `c` in every class
-    ///   when the forward values of `u`, the same in every class, lie on one side of `c`.
-    ///
-    /// Complexity tradeoff: a term this does not read is read in each class by its own run,
-    /// `O(G n log n)` for `G` classes, as before this summary (row S22e). Given up: an `if` on
-    /// a test that reads no remainder whose arms differ by more than a constant in some class,
-    /// or whose classes' summaries are not one base plus a constant (each class's summary is
-    /// then sliced in its own way, so the classes share no step); a test of a term that reads
-    /// a remainder (its set in each class is the inverse of that class's own summary); `min`
-    /// and `max` whose other argument's values cross the constant; and a term whose values or
-    /// coefficients may pass `i64::MAX` in magnitude (the summary checks them on the bounds of
-    /// every class at once, where the transfer checks each class). Trigger: such a term between
-    /// the root and the remainder guards, for example `if i >= 3 { t } else { -t }`, `t >= 0`
-    /// below an `if` on the remainder, `min(t, 5)` with `t` on both sides of 5, or a domain
-    /// unbounded on either side. Test:
-    /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`,
-    /// COMPLEXITY.md rows S22e-quad and S22e-wide. A complete solution would hold the
-    /// congruence facet in the backward transfer's sets (`x mod m` in a set of classes beside
-    /// the interval), so that one transfer carries every class at once.
-    fn by_class(&mut self, t: Tid, env: Eid) -> Option<ByClass> {
-        let t = self.terms.form(t);
-        self.cached(|m| &mut m.by_class, (t, env), |s| s.by_class_at(t, env))
-    }
-
-    fn by_class_at(&mut self, t: Tid, env: Eid) -> Option<ByClass> {
-        let n = self.run.residue.as_ref()?.cuts.len() - 1;
-        // As in [`Tx::pa_at`].
-        if !matches!(self.node(t), Node::Var(_))
-            && let Some(v) = self.constant(t, env)
-        {
-            return match v {
-                Value::Int(c) => ByClass::constant(c, n),
-                Value::Bool(b) => ByClass::constant(b.into(), n),
-                _ => None,
-            };
-        }
-        let read = self.by_class_node(t, env, n);
-        if read.is_some() || matches!(self.node(t), Node::Var(_)) || self.reads_mod(t, env) {
-            return read;
-        }
-        // The transfer of the term is the same in every class.
-        let pa = if self.fwd(t, env).is_bool() {
-            self.pa_select(t, env, &Pa::Const(1), &Pa::Const(0))?
-        } else {
-            self.pa_at(t, env)?
-        };
-        let var = pa.var().cloned();
-        let x = match &var {
-            Some(v) => self.magnitude(v)?,
-            None => 0,
-        };
-        let bound = Bound::of(&pa, x);
-        ByClass::based(pa, var, bound, n)
+    /// [`Walk::formula`] on a new stack, adding to the translation `tr`.
+    fn formula(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
+        let w = Walk::translating(self, tr);
+        w.stack.run(w.formula(t, env))
     }
 
     /// The largest magnitude of the domain of the input `var`, when it is bounded.
     fn magnitude(&self, var: &Arc<str>) -> Option<u128> {
         let (lo, hi) = self.cx.inputs.get(var)?.bounds()?;
         Some(input(lo)?.unsigned_abs().max(input(hi)?.unsigned_abs()))
-    }
-
-    /// [`Tx::by_class`] of the term by its kind.
-    fn by_class_node(&mut self, t: Tid, env: Eid, n: usize) -> Option<ByClass> {
-        match self.node(t) {
-            Node::Int(c) => ByClass::constant(c, n),
-            Node::Var(x) => match self.lookup(env, x) {
-                Some((bt, be)) => self.by_class(bt, be),
-                None => {
-                    let name = self.name(x).clone();
-                    let bound = Bound {
-                        a: 1,
-                        b: 0,
-                        x: self.magnitude(&name)?,
-                        mul: 1,
-                    };
-                    let pa = Pa::Linear {
-                        var: name.clone(),
-                        a: 1,
-                        b: 0,
-                    };
-                    ByClass::based(pa, Some(name), bound, n)
-                }
-            },
-            Node::Let(m, e, b) => {
-                let inner = self.let_env(m, e, env);
-                self.by_class(b, inner)
-            }
-            Node::App(f, args) => match self.callee(f, env) {
-                Ok(Callee::Prim(p)) => {
-                    let c = self.terms.call(t, p, args);
-                    self.by_class(c, env)
-                }
-                _ => None,
-            },
-            Node::Prim(p, args) if p.arity().is_none_or(|k| k == args.len()) => {
-                self.by_class_prim(t, p, args, env, n)
-            }
-            Node::If(g, a, b) => match self.residue_test(g, env) {
-                Some(yes) => {
-                    let ca = self.by_class(a, env)?;
-                    let cb = self.by_class(b, env)?;
-                    ByClass::choose(&ca, &cb, &yes)
-                }
-                None => self.by_class_if(g, a, b, env),
-            },
-            _ => None,
-        }
-    }
-
-    /// [`Tx::by_class`] of an `if` whose guard `g` is not on the split's remainder.
-    fn by_class_if(&mut self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<ByClass> {
-        if self.reads_mod(g, env) {
-            return None;
-        }
-        let ca = self.by_class(a, env)?;
-        let cb = self.by_class(b, env)?;
-        let bound = ca.bound.max(cb.bound);
-        if ca.adds
-            && cb.adds
-            && Rc::ptr_eq(&ca.root, &cb.root)
-            && let (Some(u), Some(v)) = (&ca.base, &cb.base)
-            && same_pa(u, v)
-        {
-            // In class `i` the arms are `u + d_i + ca.shift` and `u + d_i + cb.shift`.
-            let pa = u.affine(1, ca.shift)?;
-            let pb = u.affine(1, cb.shift)?;
-            let base = self.pa_select(g, env, &pa, &pb)?;
-            let var = base.var().cloned().or(ca.var.clone());
-            return bound.holds().then(|| ByClass {
-                root: ca.root.clone(),
-                n: ca.n,
-                var,
-                bound,
-                base: Some(base),
-                shift: 0,
-                adds: true,
-            });
-        }
-        let (pa, pb) = (ca.uniform()?, cb.uniform()?);
-        let pa = self.pa_select(g, env, &pa, &pb)?;
-        let var = pa.var().cloned().or(ca.var.clone());
-        ByClass::based(pa, var, bound, ca.n)
-    }
-
-    /// [`Tx::pa_prim`] over every class.
-    fn by_class_prim(
-        &mut self,
-        t: Tid,
-        p: Prim,
-        args: Span,
-        env: Eid,
-        n: usize,
-    ) -> Option<ByClass> {
-        let a = self.arg(args, 0);
-        match p {
-            Prim::Neg => self.by_class(a, env)?.affine((-1, 0)),
-            Prim::Not => self.by_class(a, env)?.affine((-1, 1)),
-            Prim::Add => {
-                let b = self.arg(args, 1);
-                if let Some(c) = self.constant_int(a, env) {
-                    return self.by_class(b, env)?.affine((1, c.into()));
-                }
-                let c = self.constant_int(b, env)?;
-                self.by_class(a, env)?.affine((1, c.into()))
-            }
-            Prim::Sub => {
-                let b = self.arg(args, 1);
-                if let Some(c) = self.constant_int(b, env) {
-                    return self.by_class(a, env)?.affine((1, -i128::from(c)));
-                }
-                let c = self.constant_int(a, env)?;
-                self.by_class(b, env)?.affine((-1, c.into()))
-            }
-            Prim::Mul => {
-                if self.power(t, env).is_some() {
-                    return None;
-                }
-                let b = self.arg(args, 1);
-                let (c, u) = match self.constant_int(a, env) {
-                    Some(c) => (c, b),
-                    None => (self.constant_int(b, env)?, a),
-                };
-                if c == 0 {
-                    return None;
-                }
-                self.by_class(u, env)?.affine((c.into(), 0))
-            }
-            Prim::Min | Prim::Max => {
-                let b = self.arg(args, 1);
-                let (c, u) = match self.constant_int(a, env) {
-                    Some(c) => (c, b),
-                    None => (self.constant_int(b, env)?, a),
-                };
-                // The forward values are read over the box, the same in every class.
-                let f = self.fwd(u, env);
-                let (Fin(lo), Fin(hi)) = f.ints.bounds()? else {
-                    return None;
-                };
-                let c_num = Num::from(c);
-                let (below, above) = (*hi <= c_num, *lo >= c_num);
-                match (p, below, above) {
-                    (Prim::Min, true, _) | (Prim::Max, _, true) => self.by_class(u, env),
-                    (Prim::Min, _, true) | (Prim::Max, true, _) => ByClass::constant(c, n),
-                    _ => None,
-                }
-            }
-            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne => {
-                let yes = self.residue_test(t, env)?;
-                ByClass::choose(&ByClass::constant(1, n)?, &ByClass::constant(0, n)?, &yes)
-            }
-            _ => None,
-        }
-    }
-
-    /// The classes of the run's split in which the test `g` is true, as ranges of class
-    /// numbers, when `g` compares the split's remainder `x mod c` with a constant in the way
-    /// [`Tx::back_compare`] reads as a demand on the remainder, so that in each class the
-    /// transfer finds the test true throughout or false throughout ([`Tx::back_arith`]).
-    fn residue_test(&mut self, g: Tid, env: Eid) -> Option<Vec<(usize, usize)>> {
-        let Node::Prim(p @ (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne), args) =
-            self.node(g)
-        else {
-            return None;
-        };
-        if args.len() != 2 {
-            return None;
-        }
-        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
-        if !self.fwd(a, env).is_int() || !self.fwd(b, env).is_int() {
-            return None;
-        }
-        let (r, z) = match self.constant_int(b, env) {
-            Some(v) => (a, ray(p, v)),
-            None => (b, ray(mirror(p), self.constant_int(a, env)?)),
-        };
-        let Node::Prim(Prim::Mod, margs) = self.node(r) else {
-            return None;
-        };
-        if margs.len() != 2 {
-            return None;
-        }
-        let Node::Var(x) = self.node(self.arg(margs, 0)) else {
-            return None;
-        };
-        if self.lookup(env, x).is_some() {
-            return None;
-        }
-        let c = self.constant_int(self.arg(margs, 1), env)?;
-        let res = self.run.residue.as_ref()?;
-        if res.x != x || res.m != c.unsigned_abs() as i128 {
-            return None;
-        }
-        let within = IntervalSet::range(End::of(0), End::from(res.m - 1));
-        let mut yes = Vec::new();
-        for (lo, hi) in z.meet(&within).pieces() {
-            let (Fin(lo), Fin(hi)) = (lo, hi) else {
-                return None;
-            };
-            let (Some(lo), Some(hi)) = (lo.to_i128(), hi.to_i128()) else {
-                return None;
-            };
-            let i = res.cuts.partition_point(|&e| e <= lo) - 1;
-            let j = res.cuts.partition_point(|&e| e <= hi) - 1;
-            // The cuts hold the ends of every such test's set ([`Tx::residue_cuts`]).
-            if res.cuts[i] != lo || res.cuts[j + 1] != hi + 1 {
-                return None;
-            }
-            yes.push((i, j));
-        }
-        Some(yes)
     }
 
     /// The inputs on which `pa` takes a value in `z`, or `None` when an intermediate value
@@ -3707,6 +2239,9 @@ impl<'t> Tx<'t> {
 /// [`Walk::with`], whose borrow ends before any call.
 struct Walk<'m, 't> {
     tx: RefCell<&'m mut Tx<'t>>,
+    /// The translation into the linear-relation domain, for a walk made by
+    /// [`Walk::translating`].
+    tr: Option<RefCell<&'m mut Tr>>,
     stack: Stack<'m>,
 }
 
@@ -3714,6 +2249,16 @@ impl<'m, 't> Walk<'m, 't> {
     fn new(tx: &'m mut Tx<'t>) -> Self {
         Walk {
             tx: RefCell::new(tx),
+            tr: None,
+            stack: Stack::default(),
+        }
+    }
+
+    /// A walk that translates into the linear-relation domain, adding to `tr`.
+    fn translating(tx: &'m mut Tx<'t>, tr: &'m mut Tr) -> Self {
+        Walk {
+            tx: RefCell::new(tx),
+            tr: Some(RefCell::new(tr)),
             stack: Stack::default(),
         }
     }
@@ -3788,7 +2333,7 @@ impl<'m, 't> Walk<'m, 't> {
                 #[cfg(test)]
                 if tests::RECHECK.get() && !tests::BYPASS.get() {
                     return self.stack.call(async move {
-                        tests::recheck_walk(self, table, &k, &v, cut, f).await;
+                        tests::recheck(self, table, &k, &v, cut, f).await;
                         self.with(|tx| tx.cx.cut = tx.cx.cut.min(cut));
                         v
                     });
@@ -3989,7 +2534,10 @@ impl<'m, 't> Walk<'m, 't> {
                     inner.insert(p, None);
                     names.push(self.name(p));
                 }
-                Term::Lam(names, Shared::new(self.close(b, env, Rc::new(inner)).await?))
+                Term::Lam(
+                    names,
+                    Shared::new(self.close(b, env, Rc::new(inner)).await?),
+                )
             }
             Node::App(f, args) => {
                 let f = self.close(f, env, local.clone()).await?;
@@ -4128,9 +2676,7 @@ impl<'m, 't> Walk<'m, 't> {
             Node::Int(n) => Some(Value::Int(n)),
             Node::Bool(b) => Some(Value::Bool(b)),
             Node::Lit(v) => Some(v.clone()),
-            Node::Var(x) if let Some((bt, be)) = self.lookup(env, x) => {
-                self.constant(bt, be).await
-            }
+            Node::Var(x) if let Some((bt, be)) = self.lookup(env, x) => self.constant(bt, be).await,
             Node::Let(n, e, b) => {
                 let inner = self.let_env(n, e, env);
                 self.constant(b, inner).await
@@ -4363,12 +2909,8 @@ impl<'m, 't> Walk<'m, 't> {
                     self.constant_int(b, env).await,
                 );
                 match (p, ca, cb) {
-                    (Prim::Add, Some(c), None) => {
-                        Some(shift(&self.clip(b, env).await?, c as i128))
-                    }
-                    (Prim::Add, None, Some(c)) => {
-                        Some(shift(&self.clip(a, env).await?, c as i128))
-                    }
+                    (Prim::Add, Some(c), None) => Some(shift(&self.clip(b, env).await?, c as i128)),
+                    (Prim::Add, None, Some(c)) => Some(shift(&self.clip(a, env).await?, c as i128)),
                     (Prim::Sub, None, Some(c)) => {
                         Some(shift(&self.clip(a, env).await?, -(c as i128)))
                     }
@@ -4392,6 +2934,1435 @@ impl<'m, 't> Walk<'m, 't> {
             }
             _ => None,
         }
+    }
+
+    // ---- Backward transfer ------------------------------------------------------------
+
+    fn stop(&self, kind: StopKind, t: Tid) -> Res {
+        self.with(|tx| tx.stop(kind, t))
+    }
+
+    fn meet(&self, a: Res, b: Res) -> Res {
+        self.with(|tx| tx.meet(a, b))
+    }
+
+    fn union(&self, a: Res, b: Res) -> Res {
+        self.with(|tx| tx.union(a, b))
+    }
+
+    fn empty(&self, r: &Res) -> bool {
+        self.with(|tx| tx.empty(r))
+    }
+
+    /// The box of the inputs at which the term meets the demand `d`. An integer demand is read
+    /// as its meet with the term's values, so that demands that differ only outside them are
+    /// one.
+    async fn back(&'m self, t: Tid, env: Eid, d: Demand) -> Res {
+        let d = match d {
+            Demand::Ints(z) => match self.clip(t, env).await {
+                Some(f) => Demand::Ints(z.meet(&f)),
+                None => Demand::Ints(z),
+            },
+            d => d,
+        };
+        let call = self.cached(
+            |m| &mut m.back,
+            ((t, env), d.clone()),
+            move || self.back_in(t, env, d),
+        );
+        call.await
+    }
+
+    async fn back_in(&'m self, t: Tid, env: Eid, d: Demand) -> Res {
+        if let Demand::Ints(z) = &d
+            && z.is_empty()
+        {
+            return Res::none();
+        }
+        // A term that reads no input is decided by running it.
+        if !matches!(self.node(t), Node::Var(_))
+            && let Some(v) = self.constant(t, env).await
+        {
+            return decided(&d, &v);
+        }
+        match self.node(t) {
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.back(bt, be, d).await,
+                None => self.with(|tx| {
+                    let x = tx.name(x);
+                    match (tx.cx.inputs.get(x), &d) {
+                        (Some(dom), Demand::Ints(z)) => {
+                            let met = dom.meet(z);
+                            if met.is_empty() {
+                                return Res::none();
+                            }
+                            let mut r = Res::all();
+                            if met != **dom {
+                                r.dom.insert(x.clone(), Rc::new(met));
+                            }
+                            r
+                        }
+                        (Some(_), Demand::Bool(_)) => Res::none(),
+                        (None, _) => {
+                            let kind = StopKind::Foreign(x.clone());
+                            tx.stop(kind, t)
+                        }
+                    }
+                }),
+            },
+            Node::Int(n) => decided(&d, &Value::Int(n)),
+            Node::Bool(b) => decided(&d, &Value::Bool(b)),
+            Node::Lit(v) => decided(&d, v),
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.back(b, inner, d).await
+            }
+            Node::If(g, a, b) => {
+                if let Demand::Ints(z) = &d
+                    && let Some(pa) = self.pa(t, env).await
+                    && let Some(r) = self.with(|tx| tx.invert_pa(&pa, z))
+                {
+                    return r;
+                }
+                if let Some(index) = self.with(|tx| tx.run.residue.as_ref().map(|r| r.index)) {
+                    // A test in a class of remainders: the summary over every class, 1 where
+                    // it holds and 0 where it fails.
+                    if let Demand::Bool(w) = d
+                        && self.fwd(t, env).await.is_bool()
+                        && let Some(pa) = self.by_class(t, env).await.and_then(|c| c.get(index))
+                        && let Some(r) =
+                            self.with(|tx| tx.invert_pa(&pa, &IntervalSet::of(w.into(), w.into())))
+                    {
+                        return r;
+                    }
+                    // A guard on the remainder takes one arm throughout the class.
+                    if let Some(yes) = self.residue_test(g, env).await {
+                        let taken = yes.iter().any(|&(i, j)| i <= index && index <= j);
+                        return self.back(if taken { a } else { b }, env, d).await;
+                    }
+                }
+                let gt = self.back(g, env, Demand::Bool(true)).await;
+                let at = self.back(a, env, d.clone()).await;
+                let gf = self.back(g, env, Demand::Bool(false)).await;
+                let bf = self.back(b, env, d).await;
+                let yes = self.meet(gt, at);
+                let no = self.meet(gf, bf);
+                self.union(yes, no)
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
+                    let Some(place) = self.with(|tx| tx.enter(t, body)) else {
+                        return Res::unknown();
+                    };
+                    let r = match self.summon(ps, body, lam, args, env).await {
+                        Some(call) => (self.call_back(call, body, lam, args, env, &d, place)).await,
+                        None => {
+                            let inner = self.call_env(ps, args, lam, env);
+                            self.back(body, inner, d).await
+                        }
+                    };
+                    self.with(|tx| tx.leave(body, place));
+                    r
+                }
+                Ok(Callee::Prim(p)) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.back(c, env, d).await
+                }
+                Err(Some(name)) => self.stop(StopKind::Foreign(name), t),
+                _ => self.stop(StopKind::Outside, t),
+            },
+            Node::Prim(p, args) => {
+                if p.arity().is_some_and(|n| n != args.len()) {
+                    return self.stop(StopKind::Outside, t);
+                }
+                self.back_prim(t, p, args, env, &d).await
+            }
+            _ => self.stop(StopKind::Outside, t),
+        }
+    }
+
+    /// The preimage of a summarized call: the summary's box over the inputs, met with each
+    /// argument's preimage of the summary's interval for its parameter. Exact when the summary
+    /// is, the demand's ends are landmarks, and each argument's preimage is exact.
+    ///
+    /// A summary keeps only the inputs it narrows. Its context holds every input of the
+    /// context that first reached it, the parameters of enclosing summaries among them, and
+    /// another context reaching the same summary may give those other intervals. An input
+    /// the body reads has the same interval wherever the summary is reached: an input of the
+    /// transfer is the same in every context, and an enclosing parameter is read through the
+    /// lambda's scope, which the summary's key holds.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call, its lambda and the caller's arguments, scope, demand and place are each read"
+    )]
+    async fn call_back(
+        &'m self,
+        call: Call,
+        body: Tid,
+        lam: Eid,
+        args: Span,
+        env: Eid,
+        d: &Demand,
+        place: usize,
+    ) -> Res {
+        let (d, same) = match d {
+            Demand::Ints(z) => {
+                let s = self.with(|tx| z.snap(&tx.run.marks));
+                let same = s == *z;
+                (Demand::Ints(s), same)
+            }
+            _ => (d.clone(), true),
+        };
+        let k = (call.sid, d);
+        let r = match self.with(|tx| tx.run.backs.get(&k).cloned()) {
+            Some(r) => r,
+            None => {
+                let (outer, e) = self.with(|tx| tx.open(&call, lam));
+                let r = self.back(body, e, k.1.clone()).await;
+                self.with(|tx| {
+                    let cut = tx.shut(outer);
+                    if tx.closes(cut, place) {
+                        tx.run.backs.insert(k, r.clone());
+                    }
+                });
+                r
+            }
+        };
+        if r.none {
+            return Res::none();
+        }
+        let mut out = Res::all();
+        out.exact = r.exact && same;
+        self.with(|tx| {
+            for (k, z) in &r.dom {
+                if tx.cx.inputs.get(k).is_some_and(|w| w != z) {
+                    out.dom.insert(k.clone(), z.clone());
+                }
+            }
+        });
+        for (i, n, dom) in &call.params {
+            if let Some(z) = r.dom.get(n)
+                && !dom.is_subset(z)
+            {
+                let ra = self
+                    .back(self.arg(args, *i), env, Demand::Ints((**z).clone()))
+                    .await;
+                out = self.meet(out, ra);
+            }
+        }
+        out
+    }
+
+    async fn back_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid, d: &Demand) -> Res {
+        use Prim::*;
+        match p {
+            Show | Lower | Upper | Trim | Concat => self.stop(StopKind::String(p), t),
+            // `len` moves the demand to the length facet, which is not an input here; the
+            // terms below it may still stop.
+            Len => {
+                self.scan(self.arg(args, 0), env).await;
+                Res::unknown()
+            }
+            Not | And | Or => match *d {
+                Demand::Ints(_) => Res::none(),
+                Demand::Bool(w) if p == Not => {
+                    self.back(self.arg(args, 0), env, Demand::Bool(!w)).await
+                }
+                Demand::Bool(w) => {
+                    let (x, y) = (self.arg(args, 0), self.arg(args, 1));
+                    let a = self.back(x, env, Demand::Bool(w)).await;
+                    let b = self.back(y, env, Demand::Bool(w)).await;
+                    if (p == And) == w {
+                        return self.meet(a, b);
+                    }
+                    // `&&` and `||` here are strict: one side meeting the demand is enough
+                    // only when the other cannot fail.
+                    let strict =
+                        self.fwd(x, env).await.is_bool() && self.fwd(y, env).await.is_bool();
+                    let mut r = self.union(a, b);
+                    r.exact &= strict;
+                    r
+                }
+            },
+            Lt | Le | Gt | Ge | Eq | Ne => match *d {
+                Demand::Ints(_) => Res::none(),
+                Demand::Bool(w) => {
+                    let p = if w { p } else { negate(p) };
+                    self.back_compare(t, p, args, env).await
+                }
+            },
+            Add | Sub | Mul | IntDiv | Mod | Neg | Abs | Pow => match d {
+                Demand::Ints(z) => self.back_arith(t, p, args, env, z).await,
+                Demand::Bool(_) => Res::none(),
+            },
+            Min | Max => match d {
+                Demand::Ints(z) => self.back_arith(t, p, args, env, z).await,
+                // `min` and `max` of two tests are tests.
+                Demand::Bool(_) => self.stop(StopKind::Outside, t),
+            },
+            _ => self.stop(StopKind::Outside, t),
+        }
+    }
+
+    /// The comparison `t` of its operands `args` by `p`, which may be `t`'s own comparison
+    /// negated.
+    async fn back_compare(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Res {
+        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+        let (fa, fb) = (self.fwd(a, env).await, self.fwd(b, env).await);
+        // Two tests are equal where both are true or both false.
+        if matches!(p, Prim::Eq | Prim::Ne) && fa.is_bool() && fb.is_bool() {
+            let mut arms = Vec::new();
+            for w in [true, false] {
+                let ra = self.back(a, env, Demand::Bool(w)).await;
+                let rb = self.back(b, env, Demand::Bool(w == (p == Prim::Eq))).await;
+                arms.push(self.meet(ra, rb));
+            }
+            let no = arms.pop().expect("two arms");
+            let yes = arms.pop().expect("two arms");
+            return self.union(yes, no);
+        }
+        // An operand that may fail meets an ordered comparison nowhere, since the comparison
+        // fails too, and `==` with an integer nowhere; it meets `!=` everywhere.
+        let ints = fa.is_int() && fb.is_int();
+        let ordered_or_eq = |f: &Fwd| !f.other && !f.has_bools() && p != Prim::Ne;
+        if let Some(c) = self.constant_int(b, env).await
+            && (ints || ordered_or_eq(&fa))
+        {
+            return self.back(a, env, Demand::Ints(ray(p, c))).await;
+        }
+        if let Some(c) = self.constant_int(a, env).await
+            && (ints || ordered_or_eq(&fb))
+        {
+            return self.back(b, env, Demand::Ints(ray(mirror(p), c))).await;
+        }
+        let one_int = fa.is_int() || fb.is_int();
+        if ints || (ordered_or_eq(&fa) && ordered_or_eq(&fb) && (p != Prim::Eq || one_int)) {
+            // Between two integers, `a op b` is `a - b op 0`.
+            let diff = self.with(|tx| tx.terms.diff(t, args));
+            return self.back(diff, env, Demand::Ints(ray(p, 0))).await;
+        }
+        // Operands of other kinds, or two that may both fail, which `==` finds equal.
+        self.scan(a, env).await;
+        self.scan(b, env).await;
+        Res::unknown()
+    }
+
+    /// Reports the stops in a term whose value the transfer does not follow. A term is
+    /// scanned once in each scope: its stops are reported the first time.
+    fn scan(&'m self, t: Tid, env: Eid) -> Deep<'m, ()> {
+        if !self.with(|tx| tx.run.memo.scan.insert((t, env))) {
+            return Stack::ready(());
+        }
+        self.stack.call(self.scan_at(t, env))
+    }
+
+    async fn scan_at(&'m self, t: Tid, env: Eid) {
+        if self.mentions(t, env).await == Some(false) {
+            return;
+        }
+        match self.node(t) {
+            Node::Var(x) => {
+                if let Some((bt, be)) = self.lookup(env, x) {
+                    self.scan(bt, be).await;
+                }
+            }
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.scan(b, inner).await
+            }
+            Node::Follow(v, own, _) => {
+                for u in [v, own] {
+                    self.scan(u, env).await;
+                }
+            }
+            Node::If(g, a, b) => {
+                for u in [g, a, b] {
+                    self.scan(u, env).await;
+                }
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Lam(ps, body, lam)) if ps.len() == args.len() => {
+                    let Some(place) = self.with(|tx| tx.enter(t, body)) else {
+                        return;
+                    };
+                    match self.summon(ps, body, lam, args, env).await {
+                        Some(call) => {
+                            if self.with(|tx| tx.run.scanned.insert(call.sid)) {
+                                let (outer, e) = self.with(|tx| tx.open(&call, lam));
+                                self.scan(body, e).await;
+                                self.with(|tx| {
+                                    let cut = tx.shut(outer);
+                                    tx.closes(cut, place);
+                                });
+                            }
+                        }
+                        None => {
+                            let inner = self.call_env(ps, args, lam, env);
+                            self.scan(body, inner).await
+                        }
+                    }
+                    self.with(|tx| tx.leave(body, place));
+                }
+                Ok(Callee::Prim(p)) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.scan(c, env).await
+                }
+                Err(Some(name)) => {
+                    self.stop(StopKind::Foreign(name), t);
+                }
+                _ => {
+                    self.stop(StopKind::Outside, t);
+                }
+            },
+            Node::Prim(
+                p @ (Prim::Show | Prim::Lower | Prim::Upper | Prim::Trim | Prim::Concat),
+                _,
+            ) => {
+                self.stop(StopKind::String(p), t);
+            }
+            Node::Prim(p, args) if scalar(p) => {
+                for i in 0..args.len() {
+                    self.scan(self.arg(args, i), env).await;
+                }
+            }
+            _ => {
+                self.stop(StopKind::Outside, t);
+            }
+        }
+    }
+
+    async fn back_arith(&'m self, t: Tid, p: Prim, args: Span, env: Eid, z: &IntervalSet) -> Res {
+        use Prim::*;
+        let ints = Demand::Ints;
+        if p == Mul
+            && let Some((base, be, k)) = self.with(|tx| tx.power(t, env))
+        {
+            return self.back_unary(&Op::Pow(k), base, be, z).await;
+        }
+        let a = self.arg(args, 0);
+        match p {
+            Neg | Abs => {
+                return self
+                    .back_unary(&op(p, None).expect("scalar"), a, env, z)
+                    .await;
+            }
+            Pow => {
+                let b = self.arg(args, 1);
+                return match self.exponent(b, env).await {
+                    Some(k) => self.back_unary(&Op::Pow(k), a, env, z).await,
+                    // A variable exponent: only the points where both operands are integers.
+                    _ => self.both_ints(a, b, env).await,
+                };
+            }
+            _ => {}
+        }
+        let b = self.arg(args, 1);
+        let ca = self.constant_int(a, env).await;
+        let cb = self.constant_int(b, env).await;
+        match (p, ca, cb) {
+            (Add, Some(c), _) => self.back(b, env, ints(shift(z, -(c as i128)))).await,
+            (Add, _, Some(c)) | (Sub, _, Some(c)) => {
+                let c = if p == Add { -(c as i128) } else { c as i128 };
+                self.back(a, env, ints(shift(z, c))).await
+            }
+            (Sub, Some(c), _) => self.back(b, env, ints(reflect(z, c as i128))).await,
+            (Mul, Some(c), _) => self.back(b, env, ints(times_pre(z, c))).await,
+            (Mul, _, Some(c)) => self.back(a, env, ints(times_pre(z, c))).await,
+            (IntDiv, _, Some(c)) => self.back(a, env, ints(div_pre(z, c))).await,
+            (Mod, _, Some(c)) => {
+                // Within the run's class of remainders of the input `a`, every point is in `z`
+                // or none is.
+                let m = c.unsigned_abs() as i128;
+                let class = self.with(|tx| match tx.node(a) {
+                    Node::Var(x) if tx.lookup(env, x).is_none() => tx
+                        .run
+                        .residue
+                        .as_mut()
+                        .filter(|r| r.x == x && r.m == m)
+                        .map(|r| {
+                            r.alone = true;
+                            (r.class.is_subset(z), r.class.meet(z).is_empty())
+                        }),
+                    _ => None,
+                });
+                match class {
+                    Some((true, _)) => return self.back(a, env, ints(IntervalSet::top())).await,
+                    Some((_, true)) => return Res::none(),
+                    _ => {}
+                }
+                let fa = self.fwd(a, env).await.ints;
+                let (s, exact) = mod_pre(z, c, &fa);
+                let mut r = self.back(a, env, ints(s)).await;
+                r.exact &= exact;
+                r
+            }
+            (Min | Max, Some(c), _) => self.back(b, env, ints(minmax_pre(p, z, c))).await,
+            (Min | Max, _, Some(c)) => self.back(a, env, ints(minmax_pre(p, z, c))).await,
+            (Min | Max, None, None) => {
+                let f = self.fwd(t, env).await.ints;
+                let zf = z.meet(&f);
+                let (Some((flo, fhi)), Some((lo, hi))) = (f.bounds(), zf.bounds()) else {
+                    return Res::none();
+                };
+                let up = IntervalSet::range(lo.clone(), fhi.clone()).is_subset(z);
+                let down = IntervalSet::range(flo.clone(), hi.clone()).is_subset(z);
+                // min ≥ lo: both are; max ≤ hi: both are. The other rays: either is. When
+                // the demand holds the whole forward range, both rays apply; the upward one is
+                // taken.
+                let both = (p == Min && up) || (p == Max && down && !up);
+                let either = (p == Min && down && !up) || (p == Max && up);
+                if both || either {
+                    let r = if up {
+                        IntervalSet::range(lo.clone(), PosInf)
+                    } else {
+                        IntervalSet::range(NegInf, hi.clone())
+                    };
+                    let ra = self.back(a, env, ints(r.clone())).await;
+                    let rb = self.back(b, env, ints(r)).await;
+                    return if both {
+                        self.meet(ra, rb)
+                    } else {
+                        self.union(ra, rb)
+                    };
+                }
+                self.project(p, a, b, env, z).await
+            }
+            _ => self.project(p, a, b, env, z).await,
+        }
+    }
+
+    /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
+    /// interval of `c`.
+    async fn back_unary(&'m self, o: &Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
+        if let Op::Pow(k) = o
+            && k.is_zero()
+        {
+            // `c ** 0` is 1 wherever `c` is an integer.
+            return if z.contains(1) {
+                self.back(c, env, Demand::Ints(IntervalSet::top())).await
+            } else {
+                Res::none()
+            };
+        }
+        let fc = self.fwd(c, env).await.ints;
+        let zc = revision::backward(o, 0, &fc, &fc, z);
+        self.back(c, env, Demand::Ints(zc)).await
+    }
+
+    /// The HC4 projection onto each operand: necessary, not exact.
+    ///
+    /// Complexity tradeoff: each operand is narrowed alone against the other's forward
+    /// interval, so the relation between the operands is given up and the box can hold
+    /// points that fail the demand. Why: the exact preimage of a nonlinear operator is a
+    /// region that is not a box, and finding it costs the points of the box (or is
+    /// undecidable for polynomial tests over unbounded integers). Trigger: an operator with
+    /// no exact catalog entry (anything but shifts, scalings, `div` and `mod` by a constant,
+    /// `**`, and branches), or two operands that both read inputs. Test:
+    /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
+    /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
+    /// searches the box at a cost in its points.
+    async fn project(&'m self, p: Prim, a: Tid, b: Tid, env: Eid, z: &IntervalSet) -> Res {
+        let o = op(p, None).expect("binary scalar operator");
+        let fa = self.fwd(a, env).await.ints;
+        let fb = self.fwd(b, env).await.ints;
+        let za = revision::backward(&o, 0, &fa, &fb, z);
+        let zb = revision::backward(&o, 1, &fa, &fb, z);
+        let ra = self.back(a, env, Demand::Ints(za)).await;
+        let rb = self.back(b, env, Demand::Ints(zb)).await;
+        let mut r = self.meet(ra, rb);
+        r.exact = self.empty(&r);
+        r
+    }
+
+    async fn both_ints(&'m self, a: Tid, b: Tid, env: Eid) -> Res {
+        let ra = self.back(a, env, Demand::Ints(IntervalSet::top())).await;
+        let rb = self.back(b, env, Demand::Ints(IntervalSet::top())).await;
+        let mut r = self.meet(ra, rb);
+        r.exact = self.empty(&r);
+        r
+    }
+
+    // ---- Piecewise-affine summaries -----------------------------------------------------
+
+    /// The value of the term as a piecewise-affine function of one input ([`Pa`]), or `None`
+    /// when it is not one or when it reads more than one input. Its coefficients, constants
+    /// and values lie in `i128` ([`finite`]), and an infinite end of a piece is the limit of
+    /// its line there, so `t + 1` over all integers is a summary. Keyed on the term alone, so
+    /// an `if` chain whose arms read one shared term is summarized once, whatever demands
+    /// reach it.
+    async fn pa(&'m self, t: Tid, env: Eid) -> Option<Pa> {
+        if self.with(|tx| tx.run.void) {
+            return None;
+        }
+        // In a class of remainders, an `if` the summary over every class reads is looked up
+        // there, so that the classes share one reading of the term.
+        if matches!(self.node(t), Node::If(..))
+            && !self.fwd(t, env).await.has_bools()
+            && let Some(index) = self.with(|tx| tx.run.residue.as_ref().map(|r| r.index))
+            && let Some(p) = self.by_class(t, env).await.and_then(|b| b.get(index))
+        {
+            return Some(p);
+        }
+        let call = self.cached(|m| &mut m.pa, (t, env), move || self.pa_at(t, env));
+        call.await
+    }
+
+    async fn pa_at(&'m self, t: Tid, env: Eid) -> Option<Pa> {
+        if !matches!(self.node(t), Node::Var(_))
+            && let Some(v) = self.constant(t, env).await
+        {
+            return match v {
+                Value::Int(c) => Some(Pa::Const(c)),
+                _ => None,
+            };
+        }
+        match self.node(t) {
+            Node::Int(c) => Some(Pa::Const(c)),
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.pa(bt, be).await,
+                None => self.with(|tx| {
+                    let name = tx.name(x);
+                    tx.cx.inputs.contains_key(name).then(|| Pa::Linear {
+                        var: name.clone(),
+                        a: 1,
+                        b: 0,
+                    })
+                }),
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.pa(b, inner).await
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Prim(p)) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.pa(c, env).await
+                }
+                _ => None,
+            },
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                self.pa_prim(t, p, args, env).await
+            }
+            Node::If(g, a, b) => self.pa_if(g, a, b, env).await,
+            _ => None,
+        }
+    }
+
+    /// An `if` whose guard narrows at most the one input its arms read: the arms' treaps
+    /// sliced to the inputs that take each arm, joined in order. Exact, since both guard
+    /// results must be.
+    async fn pa_if(&'m self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<Pa> {
+        let gt = self.back(g, env, Demand::Bool(true)).await;
+        let gf = self.back(g, env, Demand::Bool(false)).await;
+        if !gt.exact || !gf.exact {
+            return None;
+        }
+        let pa = self.pa(a, env).await?;
+        let pb = self.pa(b, env).await?;
+        self.pa_select(g, env, &pa, &pb).await
+    }
+
+    /// The summary that is `pa` on the inputs where the test `g` holds and `pb` where it
+    /// fails ([`Walk::pa_if`]).
+    async fn pa_select(&'m self, g: Tid, env: Eid, pa: &Pa, pb: &Pa) -> Option<Pa> {
+        let gt = self.back(g, env, Demand::Bool(true)).await;
+        let gf = self.back(g, env, Demand::Bool(false)).await;
+        if !gt.exact || !gf.exact {
+            return None;
+        }
+        self.with(|tx| {
+            let (yes, no) = (!tx.empty(&gt), !tx.empty(&gf));
+            if gt.dom.len() > 1 || gf.dom.len() > 1 {
+                return None;
+            }
+            let mut var: Option<&Arc<str>> = None;
+            for name in gt
+                .dom
+                .keys()
+                .chain(gf.dom.keys())
+                .chain(pa.var())
+                .chain(pb.var())
+            {
+                match var {
+                    Some(v) if v != name => return None,
+                    _ => var = Some(name),
+                }
+            }
+            let Some(var) = var else {
+                // Neither the guard nor the arms read an input: one arm is taken everywhere.
+                return match (yes, no) {
+                    (true, false) => Some(pa.clone()),
+                    (false, true) => Some(pb.clone()),
+                    _ => None,
+                };
+            };
+            let dom = tx.cx.inputs.get(var)?;
+            let mut slices = Vec::new();
+            for (taken, r, arm) in [(yes, &gt, pa), (no, &gf, pb)] {
+                if !taken {
+                    continue;
+                }
+                let set = r.dom.get(var).map_or(&**dom, |s| &**s);
+                let tree = arm.to_treap(dom)?;
+                if !in_range(set) {
+                    return None;
+                }
+                for (lo, hi) in set.pieces() {
+                    if let Some(s) = slice_treap(tree.clone(), lo, hi)? {
+                        slices.push((key(lo), s));
+                    }
+                }
+            }
+            slices.sort_by_key(|&(lo, _)| lo);
+            let mut root = None;
+            for (_, s) in slices {
+                root = join_treap(root, Some(s))?;
+            }
+            Some(Pa::Piecewise {
+                var: var.clone(),
+                root,
+            })
+        })
+    }
+
+    /// `-u`, `u + c`, `c + u`, `u - c`, `c - u` and `c * u` for a summarized `u` and a
+    /// constant `c`; the arity was checked by the caller.
+    async fn pa_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<Pa> {
+        let a = self.arg(args, 0);
+        match p {
+            Prim::Neg => self.pa(a, env).await?.affine(-1, 0),
+            Prim::Add => {
+                let b = self.arg(args, 1);
+                if let Some(c) = self.constant_int(a, env).await {
+                    return self.pa(b, env).await?.affine(1, c.into());
+                }
+                let c = self.constant_int(b, env).await?;
+                self.pa(a, env).await?.affine(1, c.into())
+            }
+            Prim::Sub => {
+                let b = self.arg(args, 1);
+                if let Some(c) = self.constant_int(b, env).await {
+                    return self.pa(a, env).await?.affine(1, -i128::from(c));
+                }
+                let c = self.constant_int(a, env).await?;
+                self.pa(b, env).await?.affine(-1, c.into())
+            }
+            Prim::Mul => {
+                if self.with(|tx| tx.power(t, env)).is_some() {
+                    return None;
+                }
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_int(a, env).await {
+                    Some(c) => (c, b),
+                    None => (self.constant_int(b, env).await?, a),
+                };
+                if c == 0 {
+                    return None;
+                }
+                self.pa(u, env).await?.affine(c.into(), 0)
+            }
+            _ => None,
+        }
+    }
+
+    /// The summary ([`Walk::pa`]) of the term in every class of remainders of the run's split
+    /// ([`split_residues`]), built once for all classes, with a test's `false` and `true` read
+    /// as 0 and 1: `None` outside a split, and for a term other than those read here.
+    ///
+    /// - An `if` whose guard compares the split's remainder with a constant: in each class such
+    ///   a guard is true throughout or false throughout, so the `if` is the arm it takes, and
+    ///   the summaries of the classes are those of the `no` arm with the classes where the
+    ///   guard holds taken from the `yes` arm, `O(log G)` for `G` classes. Such a comparison
+    ///   as a value is read the same way, as an `if` with arms 1 and 0.
+    /// - A term that reads no remainder ([`Walk::reads_mod`]): its transfer is the same in
+    ///   every class, so its summary is read once, [`Walk::pa_at`], or for a test the one that
+    ///   is 1 and 0 on the sets the transfer finds exactly where it holds and where it fails.
+    /// - An `if` on a test that reads no remainder: when both arms are one summary in every
+    ///   class, the summary of the `if` is too, sliced once ([`Walk::pa_select`]); when the
+    ///   arms add constants to one tree whose summaries are a base plus a constant in each
+    ///   class (`t` and `t + 1` for one `t`, [`ByClass`]), the tree is kept and its base is
+    ///   sliced once, `O(log n)`, since adding a constant commutes with slicing by the guard's
+    ///   sets.
+    /// - `-u`, `u + c`, `u - c`, `c - u` and `c * u`: every summary is mapped, `O(1)`; `not u`
+    ///   is `1 - u`; `min` and `max` of `u` and a constant `c` are `u` or `c` in every class
+    ///   when the forward values of `u`, the same in every class, lie on one side of `c`.
+    ///
+    /// Complexity tradeoff: a term this does not read is read in each class by its own run,
+    /// `O(G n log n)` for `G` classes, as before this summary (row S22e). Given up: an `if` on
+    /// a test that reads no remainder whose arms differ by more than a constant in some class,
+    /// or whose classes' summaries are not one base plus a constant (each class's summary is
+    /// then sliced in its own way, so the classes share no step); a test of a term that reads
+    /// a remainder (its set in each class is the inverse of that class's own summary); `min`
+    /// and `max` whose other argument's values cross the constant; and a term whose values or
+    /// coefficients may pass `i64::MAX` in magnitude (the summary checks them on the bounds of
+    /// every class at once, where the transfer checks each class). Trigger: such a term between
+    /// the root and the remainder guards, for example `if i >= 3 { t } else { -t }`, `t >= 0`
+    /// below an `if` on the remainder, `min(t, 5)` with `t` on both sides of 5, or a domain
+    /// unbounded on either side. Test:
+    /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`,
+    /// COMPLEXITY.md rows S22e-quad and S22e-wide. A complete solution would hold the
+    /// congruence facet in the backward transfer's sets (`x mod m` in a set of classes beside
+    /// the interval), so that one transfer carries every class at once.
+    fn by_class(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<ByClass>> {
+        let t = self.with(|tx| tx.terms.form(t));
+        self.cached(
+            |m| &mut m.by_class,
+            (t, env),
+            move || self.by_class_at(t, env),
+        )
+    }
+
+    async fn by_class_at(&'m self, t: Tid, env: Eid) -> Option<ByClass> {
+        let n = self.with(|tx| tx.run.residue.as_ref().map(|r| r.cuts.len() - 1))?;
+        // As in [`Walk::pa_at`].
+        if !matches!(self.node(t), Node::Var(_))
+            && let Some(v) = self.constant(t, env).await
+        {
+            return match v {
+                Value::Int(c) => ByClass::constant(c, n),
+                Value::Bool(b) => ByClass::constant(b.into(), n),
+                _ => None,
+            };
+        }
+        let read = self.by_class_node(t, env, n).await;
+        if read.is_some() || matches!(self.node(t), Node::Var(_)) || self.reads_mod(t, env).await {
+            return read;
+        }
+        // The transfer of the term is the same in every class.
+        let pa = if self.fwd(t, env).await.is_bool() {
+            self.pa_select(t, env, &Pa::Const(1), &Pa::Const(0)).await?
+        } else {
+            self.pa_at(t, env).await?
+        };
+        let var = pa.var().cloned();
+        let x = match &var {
+            Some(v) => self.with(|tx| tx.magnitude(v))?,
+            None => 0,
+        };
+        let bound = Bound::of(&pa, x);
+        ByClass::based(pa, var, bound, n)
+    }
+
+    /// [`Walk::by_class`] of the term by its kind.
+    async fn by_class_node(&'m self, t: Tid, env: Eid, n: usize) -> Option<ByClass> {
+        match self.node(t) {
+            Node::Int(c) => ByClass::constant(c, n),
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.by_class(bt, be).await,
+                None => {
+                    let name = self.name(x);
+                    let bound = Bound {
+                        a: 1,
+                        b: 0,
+                        x: self.with(|tx| tx.magnitude(&name))?,
+                        mul: 1,
+                    };
+                    let pa = Pa::Linear {
+                        var: name.clone(),
+                        a: 1,
+                        b: 0,
+                    };
+                    ByClass::based(pa, Some(name), bound, n)
+                }
+            },
+            Node::Let(m, e, b) => {
+                let inner = self.let_env(m, e, env);
+                self.by_class(b, inner).await
+            }
+            Node::App(f, args) => match self.callee(f, env) {
+                Ok(Callee::Prim(p)) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.by_class(c, env).await
+                }
+                _ => None,
+            },
+            Node::Prim(p, args) if p.arity().is_none_or(|k| k == args.len()) => {
+                self.by_class_prim(t, p, args, env, n).await
+            }
+            Node::If(g, a, b) => match self.residue_test(g, env).await {
+                Some(yes) => {
+                    let ca = self.by_class(a, env).await?;
+                    let cb = self.by_class(b, env).await?;
+                    ByClass::choose(&ca, &cb, &yes)
+                }
+                None => self.by_class_if(g, a, b, env).await,
+            },
+            _ => None,
+        }
+    }
+
+    /// [`Walk::by_class`] of an `if` whose guard `g` is not on the split's remainder.
+    async fn by_class_if(&'m self, g: Tid, a: Tid, b: Tid, env: Eid) -> Option<ByClass> {
+        if self.reads_mod(g, env).await {
+            return None;
+        }
+        let ca = self.by_class(a, env).await?;
+        let cb = self.by_class(b, env).await?;
+        let bound = ca.bound.max(cb.bound);
+        if ca.adds
+            && cb.adds
+            && Rc::ptr_eq(&ca.root, &cb.root)
+            && let (Some(u), Some(v)) = (&ca.base, &cb.base)
+            && same_pa(u, v)
+        {
+            // In class `i` the arms are `u + d_i + ca.shift` and `u + d_i + cb.shift`.
+            let pa = u.affine(1, ca.shift)?;
+            let pb = u.affine(1, cb.shift)?;
+            let base = self.pa_select(g, env, &pa, &pb).await?;
+            let var = base.var().cloned().or(ca.var.clone());
+            return bound.holds().then(|| ByClass {
+                root: ca.root.clone(),
+                n: ca.n,
+                var,
+                bound,
+                base: Some(base),
+                shift: 0,
+                adds: true,
+            });
+        }
+        let (pa, pb) = (ca.uniform()?, cb.uniform()?);
+        let pa = self.pa_select(g, env, &pa, &pb).await?;
+        let var = pa.var().cloned().or(ca.var.clone());
+        ByClass::based(pa, var, bound, ca.n)
+    }
+
+    /// [`Walk::pa_prim`] over every class.
+    async fn by_class_prim(
+        &'m self,
+        t: Tid,
+        p: Prim,
+        args: Span,
+        env: Eid,
+        n: usize,
+    ) -> Option<ByClass> {
+        let a = self.arg(args, 0);
+        match p {
+            Prim::Neg => self.by_class(a, env).await?.affine((-1, 0)),
+            Prim::Not => self.by_class(a, env).await?.affine((-1, 1)),
+            Prim::Add => {
+                let b = self.arg(args, 1);
+                if let Some(c) = self.constant_int(a, env).await {
+                    return self.by_class(b, env).await?.affine((1, c.into()));
+                }
+                let c = self.constant_int(b, env).await?;
+                self.by_class(a, env).await?.affine((1, c.into()))
+            }
+            Prim::Sub => {
+                let b = self.arg(args, 1);
+                if let Some(c) = self.constant_int(b, env).await {
+                    return self.by_class(a, env).await?.affine((1, -i128::from(c)));
+                }
+                let c = self.constant_int(a, env).await?;
+                self.by_class(b, env).await?.affine((-1, c.into()))
+            }
+            Prim::Mul => {
+                if self.with(|tx| tx.power(t, env)).is_some() {
+                    return None;
+                }
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_int(a, env).await {
+                    Some(c) => (c, b),
+                    None => (self.constant_int(b, env).await?, a),
+                };
+                if c == 0 {
+                    return None;
+                }
+                self.by_class(u, env).await?.affine((c.into(), 0))
+            }
+            Prim::Min | Prim::Max => {
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_int(a, env).await {
+                    Some(c) => (c, b),
+                    None => (self.constant_int(b, env).await?, a),
+                };
+                // The forward values are read over the box, the same in every class.
+                let f = self.fwd(u, env).await;
+                let (Fin(lo), Fin(hi)) = f.ints.bounds()? else {
+                    return None;
+                };
+                let c_num = Num::from(c);
+                let (below, above) = (*hi <= c_num, *lo >= c_num);
+                match (p, below, above) {
+                    (Prim::Min, true, _) | (Prim::Max, _, true) => self.by_class(u, env).await,
+                    (Prim::Min, _, true) | (Prim::Max, true, _) => ByClass::constant(c, n),
+                    _ => None,
+                }
+            }
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne => {
+                let yes = self.residue_test(t, env).await?;
+                ByClass::choose(&ByClass::constant(1, n)?, &ByClass::constant(0, n)?, &yes)
+            }
+            _ => None,
+        }
+    }
+
+    /// The classes of the run's split in which the test `g` is true, as ranges of class
+    /// numbers, when `g` compares the split's remainder `x mod c` with a constant in the way
+    /// [`Walk::back_compare`] reads as a demand on the remainder, so that in each class the
+    /// transfer finds the test true throughout or false throughout ([`Walk::back_arith`]).
+    async fn residue_test(&'m self, g: Tid, env: Eid) -> Option<Vec<(usize, usize)>> {
+        let Node::Prim(p @ (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne), args) =
+            self.node(g)
+        else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
+        }
+        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+        if !self.fwd(a, env).await.is_int() || !self.fwd(b, env).await.is_int() {
+            return None;
+        }
+        let (r, z) = match self.constant_int(b, env).await {
+            Some(v) => (a, ray(p, v)),
+            None => (b, ray(mirror(p), self.constant_int(a, env).await?)),
+        };
+        let Node::Prim(Prim::Mod, margs) = self.node(r) else {
+            return None;
+        };
+        if margs.len() != 2 {
+            return None;
+        }
+        let Node::Var(x) = self.node(self.arg(margs, 0)) else {
+            return None;
+        };
+        if self.lookup(env, x).is_some() {
+            return None;
+        }
+        let c = self.constant_int(self.arg(margs, 1), env).await?;
+        self.with(|tx| {
+            let res = tx.run.residue.as_ref()?;
+            if res.x != x || res.m != c.unsigned_abs() as i128 {
+                return None;
+            }
+            let within = IntervalSet::range(End::of(0), End::from(res.m - 1));
+            let mut yes = Vec::new();
+            for (lo, hi) in z.meet(&within).pieces() {
+                let (Fin(lo), Fin(hi)) = (lo, hi) else {
+                    return None;
+                };
+                let (Some(lo), Some(hi)) = (lo.to_i128(), hi.to_i128()) else {
+                    return None;
+                };
+                let i = res.cuts.partition_point(|&e| e <= lo) - 1;
+                let j = res.cuts.partition_point(|&e| e <= hi) - 1;
+                // The cuts hold the ends of every such test's set ([`Tx::residue_cuts`]).
+                if res.cuts[i] != lo || res.cuts[j + 1] != hi + 1 {
+                    return None;
+                }
+                yes.push((i, j));
+            }
+            Some(yes)
+        })
+    }
+
+    // ---- Into the linear-relation domain ------------------------------------------------
+
+    /// `f` on the translation, for a walk made by [`Walk::translating`].
+    fn tr<R>(&self, f: impl FnOnce(&mut Tr) -> R) -> R {
+        let tr = self
+            .tr
+            .as_ref()
+            .expect("a translation runs on a walk made with one");
+        f(&mut tr.borrow_mut())
+    }
+
+    /// [`Walk::cached`] for the translation into the linear-relation domain, whose entries a
+    /// translation that is undone removes; `logged` names an entry for the log.
+    fn translated<K, V, F>(
+        &'m self,
+        table: Table<K, V>,
+        k: K,
+        logged: fn(K) -> Logged,
+        f: impl FnOnce() -> F + 'm,
+    ) -> Deep<'m, V>
+    where
+        K: Hash + Eq + Clone + 'static,
+        V: Clone + Unpin + 'static,
+        F: Future<Output = V> + 'm,
+    {
+        if self.with(|tx| table(&mut tx.run.memo).contains_key(&k)) {
+            return self.cached(table, k, f);
+        }
+        self.stack.call(async move {
+            let v = self.cached(table, k.clone(), f).await;
+            self.with(|tx| {
+                if table(&mut tx.run.memo).contains_key(&k) {
+                    tx.run.memo.log.push(logged(k));
+                }
+            });
+            v
+        })
+    }
+
+    /// The key a call of the lambda `body` in scope `lam` is translated under: `None`, with
+    /// what the attempt made undone, when an argument has no linear term.
+    async fn call_key(&'m self, body: Tid, lam: Eid, args: Span, env: Eid) -> Option<CallKey> {
+        let mark = self.tr(|tr| tr.defs.len());
+        let logged = self.with(|tx| tx.run.memo.log.len());
+        let mut lins = Vec::with_capacity(args.len());
+        for i in 0..args.len() {
+            match self.lin(self.arg(args, i), env).await {
+                Some(l) => lins.push(l),
+                None => {
+                    self.tr(|tr| tr.defs.truncate(mark));
+                    self.with(|tx| tx.forget(logged));
+                    return None;
+                }
+            }
+        }
+        Some(((body, lam), lins))
+    }
+
+    /// The linear term an integer term states over the inputs.
+    fn lin(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Lin>> {
+        self.translated(
+            |m| &mut m.lin,
+            (t, env),
+            Logged::Lin,
+            move || self.lin_at(t, env),
+        )
+    }
+
+    /// The linear term of the body of a call at `t`, with its lambda on the stack of lambdas
+    /// being read; `None` when the lambda is already there.
+    async fn lin_call(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+    ) -> Option<Lin> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.call_env(ps, args, lam, env);
+        let l = self.lin(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        l
+    }
+
+    async fn lin_at(&'m self, t: Tid, env: Eid) -> Option<Lin> {
+        use Prim::*;
+        if let Some(v) = self.constant(t, env).await {
+            return match v {
+                Value::Int(n) => Some(Lin::constant(n)),
+                _ => None,
+            };
+        }
+        match self.node(t) {
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.lin(bt, be).await,
+                None => self.with(|tx| {
+                    let x = tx.name(x);
+                    (tx.cx.inputs.contains_key(x))
+                        .then(|| Lin::atom(presburger::Atom::Sym(x.clone())))
+                }),
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.lin(b, inner).await
+            }
+            Node::App(f, args) => match self.callee(f, env).ok()? {
+                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
+                    match self.call_key(body, lam, args, env).await {
+                        Some(k) => {
+                            let call = self.translated(
+                                |m| &mut m.lin_calls,
+                                k,
+                                Logged::LinCall,
+                                move || self.lin_call(t, ps, (body, lam), args, env),
+                            );
+                            call.await
+                        }
+                        None => self.lin_call(t, ps, (body, lam), args, env).await,
+                    }
+                }
+                Callee::Prim(p) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.lin(c, env).await
+                }
+                Callee::Lam(..) => None,
+            },
+            Node::If(g, a, b) => {
+                let g = self.formula(g, env).await?;
+                let (la, lb) = (self.lin(a, env).await?, self.lin(b, env).await?);
+                // One level: the parts are shown by their linear forms, in which an auxiliary
+                // variable is its name, so the name costs the size of what it is made of.
+                let what = format!("if {g} then {la} else {lb}");
+                self.tr(|tr| {
+                    let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                    let def = Formula::or(vec![
+                        Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
+                        Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),
+                    ]);
+                    tr.aux(what, def);
+                    Some(x)
+                })
+            }
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                let arg = |i: usize| self.lin(self.arg(args, i), env);
+                let products = self.tr(|tr| tr.products);
+                match p {
+                    Add => Some(arg(0).await?.plus(&arg(1).await?)),
+                    Sub => Some(arg(0).await?.minus(&arg(1).await?)),
+                    Neg => Some(arg(0).await?.times(-1)),
+                    Mul => {
+                        let (a, b) = (arg(0).await?, arg(1).await?);
+                        if !products && !a.terms.is_empty() && !b.terms.is_empty() {
+                            return None;
+                        }
+                        a.product(&b)
+                    }
+                    Pow => match self.constant_int(self.arg(args, 1), env).await? {
+                        0 => Some(Lin::constant(1)),
+                        1 => arg(0).await,
+                        2 if products => {
+                            let a = arg(0).await?;
+                            a.product(&a)
+                        }
+                        _ => None,
+                    },
+                    IntDiv | Mod => {
+                        let c = (self.constant_int(self.arg(args, 1), env).await)
+                            .filter(|c| *c != 0)?;
+                        let a = arg(0).await?;
+                        self.tr(|tr| {
+                            // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
+                            let n = tr.defs.len() as u32;
+                            let (q, r) = (
+                                Lin::atom(presburger::Atom::Aux(n)),
+                                Lin::atom(presburger::Atom::Aux(n + 1)),
+                            );
+                            let c = i128::from(c);
+                            let def = Formula::and(vec![
+                                Formula::Con(Con::eq(&a, &q.times(c).plus(&r))),
+                                Formula::Con(Con::ge(&r, &Lin::constant(0))),
+                                Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
+                            ]);
+                            let first = operand(&a);
+                            let shown = |op: &str| format!("{first} {op} {c}");
+                            tr.defs.push((n, shown("div"), def));
+                            tr.defs.push((n + 1, shown("mod"), Formula::top()));
+                            Some(if p == IntDiv { q } else { r })
+                        })
+                    }
+                    Min | Max | Abs => {
+                        let a = arg(0).await?;
+                        let b = if p == Abs { a.times(-1) } else { arg(1).await? };
+                        self.tr(|tr| {
+                            let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                            // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
+                            let (lo, hi) = if p == Min { (&a, &b) } else { (&b, &a) };
+                            let first = Con::ge(hi, lo);
+                            let def = Formula::or(vec![
+                                Formula::and(vec![
+                                    Formula::Con(first.clone()),
+                                    Formula::Con(Con::eq(&x, &a)),
+                                ]),
+                                Formula::and(vec![
+                                    Formula::negate(Formula::Con(first)),
+                                    Formula::Con(Con::eq(&x, &b)),
+                                ]),
+                            ]);
+                            let what = match p {
+                                Abs => format!("abs({a})"),
+                                Min => format!("min({a}, {b})"),
+                                _ => format!("max({a}, {b})"),
+                            };
+                            tr.aux(what, def);
+                            Some(x)
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The formula a test states over the inputs.
+    fn formula(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Formula>> {
+        self.translated(
+            |m| &mut m.formula,
+            (t, env),
+            Logged::Formula,
+            move || self.formula_at(t, env),
+        )
+    }
+
+    /// [`Walk::lin_call`] for a test.
+    async fn formula_call(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+    ) -> Option<Formula> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.call_env(ps, args, lam, env);
+        let f = self.formula(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        f
+    }
+
+    async fn formula_at(&'m self, t: Tid, env: Eid) -> Option<Formula> {
+        use Prim::*;
+        if let Some(v) = self.constant(t, env).await {
+            return match v {
+                Value::Bool(true) => Some(Formula::top()),
+                Value::Bool(false) => Some(Formula::bottom()),
+                _ => None,
+            };
+        }
+        match self.node(t) {
+            Node::Var(x) => {
+                let (bt, be) = self.lookup(env, x)?;
+                self.formula(bt, be).await
+            }
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.formula(b, inner).await
+            }
+            Node::App(f, args) => match self.callee(f, env).ok()? {
+                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
+                    match self.call_key(body, lam, args, env).await {
+                        Some(k) => {
+                            let call = self.translated(
+                                |m| &mut m.formula_calls,
+                                k,
+                                Logged::FormulaCall,
+                                move || self.formula_call(t, ps, (body, lam), args, env),
+                            );
+                            call.await
+                        }
+                        None => self.formula_call(t, ps, (body, lam), args, env).await,
+                    }
+                }
+                Callee::Prim(p) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.formula(c, env).await
+                }
+                Callee::Lam(..) => None,
+            },
+            Node::If(g, a, b) => {
+                // The formula of a name is kept whole, as for `&&` below.
+                let named = [g, a, b].map(|t| matches!(self.node(t), Node::Var(_)));
+                let g = self.formula(g, env).await?;
+                let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
+                Some(Formula::or(vec![
+                    Formula::and_keeping(vec![g.clone(), fa], |i| named[i]),
+                    Formula::and_keeping(vec![Formula::negate(g), fb], |i| i == 1 && named[2]),
+                ]))
+            }
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                let (a, b) = (
+                    self.arg(args, 0),
+                    (args.len() > 1).then(|| self.arg(args, 1)),
+                );
+                match p {
+                    Not => Some(Formula::negate(self.formula(a, env).await?)),
+                    And | Or => {
+                        let b = b.expect("two operands");
+                        #[cfg(test)]
+                        if presburger::TWO_AT_A_TIME.get() {
+                            return self.two_at_a_time(p, a, b, env).await;
+                        }
+                        self.chain(p, [a, b], env).await
+                    }
+                    Lt | Le | Gt | Ge | Eq | Ne => {
+                        let b = b.expect("two operands");
+                        let mark = self.tr(|tr| tr.defs.len());
+                        let logged = self.with(|tx| tx.run.memo.log.len());
+                        let (la, lb) = (self.lin(a, env).await, self.lin(b, env).await);
+                        if let (Some(la), Some(lb)) = (la, lb) {
+                            let one = Lin::constant(1);
+                            let c = match p {
+                                Lt => Con::ge(&lb, &la.plus(&one)),
+                                Le => Con::ge(&lb, &la),
+                                Gt => Con::ge(&la, &lb.plus(&one)),
+                                Ge => Con::ge(&la, &lb),
+                                _ => Con::eq(&la, &lb),
+                            };
+                            let f = Formula::Con(c);
+                            return Some(if p == Ne { Formula::negate(f) } else { f });
+                        }
+                        self.tr(|tr| tr.defs.truncate(mark));
+                        self.with(|tx| tx.forget(logged));
+                        if !matches!(p, Eq | Ne) {
+                            return None;
+                        }
+                        // Two tests are equal where both hold or neither does.
+                        let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
+                        let same = Formula::or(vec![
+                            Formula::and(vec![fa.clone(), fb.clone()]),
+                            Formula::and(vec![Formula::negate(fa), Formula::negate(fb)]),
+                        ]);
+                        Some(if p == Ne { Formula::negate(same) } else { same })
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The formula of a `&&` (`p` is `And`) or a `||` with the given operands: the operands
+    /// of the chain of `p` it heads, each operand that is itself a `p` with no constant value
+    /// read through, joined as [`Formula::and_keeping`] or [`Formula::or_keeping`] would join
+    /// them two at a time, but in one [`Joining`], so a chain of k operands costs O(k log k)
+    /// and not O(k²) (ST-formula-k2). The formula of a name is kept whole, so a named part
+    /// used at many places is one node and not copied into each (COMPLEXITY.md S31b). The
+    /// operands are read in order, as the two-at-a-time translation reads them, and the
+    /// first that has no formula gives none for the whole. An operand of a primitive is held
+    /// in its parent alone ([`Terms::ids`]), so the chain is a tree, and each of its nodes is
+    /// met once without a visited set.
+    async fn chain(&'m self, p: Prim, operands: [Tid; 2], env: Eid) -> Option<Formula> {
+        /// An operand to read, or the end of an inner `p`, with where the joining was before
+        /// its operands ([`Joining::close`]).
+        enum Step {
+            Operand(Tid),
+            Close(Mark),
+        }
+        let mut j = Joining::new(p == Prim::And);
+        let mut todo = vec![Step::Operand(operands[1]), Step::Operand(operands[0])];
+        while let Some(step) = todo.pop() {
+            let u = match step {
+                Step::Close(mark) => {
+                    j.close(mark);
+                    continue;
+                }
+                Step::Operand(u) => u,
+            };
+            let node = self.node(u);
+            if let Node::Prim(q, args) = node
+                && q == p
+                && q.arity().is_none_or(|n| n == args.len())
+                && self.constant(u, env).await.is_none()
+            {
+                todo.push(Step::Close(j.mark()));
+                todo.push(Step::Operand(self.arg(args, 1)));
+                todo.push(Step::Operand(self.arg(args, 0)));
+                continue;
+            }
+            let f = self.formula(u, env).await?;
+            j.operand(f, matches!(node, Node::Var(_)));
+        }
+        Some(j.finish())
+    }
+
+    /// The formula of a `&&` or `||` as the translator made it before [`Walk::chain`]
+    /// (64781908): each operand by [`Walk::formula`], an inner `&&` with its own memo entry,
+    /// and the two joined at once; for the tests that compare the two (ST-formula-k2).
+    #[cfg(test)]
+    async fn two_at_a_time(&'m self, p: Prim, a: Tid, b: Tid, env: Eid) -> Option<Formula> {
+        let named = [a, b].map(|t| matches!(self.node(t), Node::Var(_)));
+        let (a, b) = (self.formula(a, env).await?, self.formula(b, env).await?);
+        Some(if p == Prim::And {
+            Formula::and_keeping(vec![a, b], |i| named[i])
+        } else {
+            Formula::or_keeping(vec![a, b], |i| named[i])
+        })
     }
 }
 
@@ -4478,7 +4449,7 @@ impl Pa {
 }
 
 /// The summaries ([`Pa`]) of one term in each of the `n` classes of remainders of a split
-/// ([`Tx::by_class`]), as a persistent tree over the class numbers `0..n`: a node covers a
+/// ([`Walk::by_class`]), as a persistent tree over the class numbers `0..n`: a node covers a
 /// range of classes, halved at its middle, and either holds one summary for all of them or
 /// splits into two halves with an affine map still to be applied to both. A change of every
 /// summary by an affine map and a reading of one class take `O(log n)`, and taking a range
@@ -4525,7 +4496,7 @@ enum Leaf {
 /// Bounds over every class on the magnitudes of the summaries' leaves, `a * var + b` with
 /// `|var| <= x`, after the affine maps whose multipliers multiply to at most `mul`. While
 /// the values `a * x + b` and the maps lie in `i64`, no step in any class leaves `i64`, so
-/// that each class's summary is the one its own run computes ([`Tx::pa`]).
+/// that each class's summary is the one its own run computes ([`Walk::pa`]).
 #[derive(Clone, Copy)]
 struct Bound {
     a: u128,
@@ -5462,7 +5433,7 @@ fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
 /// any integer.
 pub type Classes = BTreeMap<Arc<str>, Congruence>;
 
-/// Whether [`Tx::cached`] remembers nothing a call stopped below, as before ST-formula-k2-rec,
+/// Whether [`Walk::cached`] remembers nothing a call stopped below, as before ST-formula-k2-rec,
 /// for the tests that compare the memo with the one before; never outside the tests.
 fn none_held() -> bool {
     #[cfg(test)]
@@ -5960,7 +5931,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     thread_local! {
-        /// Whether [`Tx::cached`] remembers nothing a call stopped below ([`none_held`]).
+        /// Whether [`Walk::cached`] remembers nothing a call stopped below ([`none_held`]).
         pub(super) static NONE_HELD: Cell<bool> = const { Cell::new(false) };
         /// Each entry made below a stop, by its table and key: the lambdas being read when it
         /// began, by their places, and the inputs of its context.
@@ -5968,11 +5939,11 @@ mod tests {
         /// Of the reads of entries made below a stop: all, those on a stack higher than where
         /// the entry began, and those in a context with other inputs (within another summary).
         static READS: Cell<[u64; 3]> = const { Cell::new([0; 3]) };
-        /// Whether [`Tx::cached`] reads the term again at each hit, an entry made below a stop
+        /// Whether [`Walk::cached`] reads the term again at each hit, an entry made below a stop
         /// on the stack it began on and any other entry on an empty stack, and checks the two
         /// agree ([`rechecked`]).
         pub(super) static RECHECK: Cell<bool> = const { Cell::new(false) };
-        /// Whether [`Tx::cached`] passes over entries made below a stop, while it reads a
+        /// Whether [`Walk::cached`] passes over entries made below a stop, while it reads a
         /// term again for [`RECHECK`].
         pub(super) static BYPASS: Cell<bool> = const { Cell::new(false) };
         /// Of the entries [`RECHECK`] read again: those compared, those of kinds not compared,
@@ -5998,7 +5969,7 @@ mod tests {
         s
     }
 
-    /// Records an entry [`Tx::cached`] makes below a stop, which began on a stack `base` high.
+    /// Records an entry [`Walk::cached`] makes below a stop, which began on a stack `base` high.
     pub(super) fn held_made<K: Hash, V>(tx: &Tx<'_>, table: Table<K, V>, k: &K, base: usize) {
         let s = stack(tx);
         assert_eq!(
@@ -6040,54 +6011,7 @@ mod tests {
     /// stack the entry began on: the lambdas read since are set aside while `f` runs, and the
     /// entries below a stop it makes are removed after, so that the memo holds no entry that
     /// began on that stack once they are back.
-    pub(super) fn recheck<'t, K: Hash, V: 'static>(
-        tx: &mut Tx<'t>,
-        table: Table<K, V>,
-        k: &K,
-        v: &V,
-        cut: usize,
-        f: impl FnOnce(&mut Tx<'t>) -> V,
-    ) {
-        // An entry that holds wherever it is reached is read again with no lambda being read.
-        let (base, inputs) = match cut {
-            usize::MAX => (0, false),
-            _ => MADE.with_borrow(|m| {
-                let (below, inputs) = &m[&made_key(table, k)];
-                (below.len(), *inputs != tx.cx.inputs)
-            }),
-        };
-        let above: Vec<(Tid, usize)> = (tx.run.active.iter())
-            .filter(|e| *e.1 >= base)
-            .map(|(&b, &at)| (b, at))
-            .collect();
-        for (b, _) in &above {
-            tx.run.active.remove(b);
-        }
-        // The entries made on the stack as it is are kept apart, out of reach of the lambdas
-        // read again, which are not the ones being read.
-        let held = std::mem::take(&mut tx.run.memo.held);
-        BYPASS.set(true);
-        let outer = std::mem::replace(&mut tx.cx.cut, usize::MAX);
-        let fresh = deeper(|| f(tx));
-        let again = std::mem::replace(&mut tx.cx.cut, outer);
-        BYPASS.set(false);
-        let m = &mut tx.run.memo;
-        while let Some((_, unheld)) = m.held.pop() {
-            unheld(m);
-        }
-        m.held = held;
-        tx.run.active.extend(above.iter().copied());
-        let mut c = CHECKED.get();
-        if cut != usize::MAX {
-            c[2] += u64::from(!above.is_empty());
-            c[3] += u64::from(inputs);
-        }
-        CHECKED.set(c);
-        rechecked(v, &fresh, cut, again);
-    }
-
-    /// [`recheck`] on a [`Walk`].
-    pub(super) async fn recheck_walk<'m, 't, K: Hash, V: 'static, F: Future<Output = V>>(
+    pub(super) async fn recheck<'m, 't, K: Hash, V: 'static, F: Future<Output = V>>(
         w: &Walk<'m, 't>,
         table: Table<K, V>,
         k: &K,

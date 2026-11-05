@@ -83,7 +83,6 @@ impl<'m> Stack<'m> {
 /// callee runs where the plain call would have.
 pub struct Deep<'m, V> {
     /// The stack and the frame, until the frame is handed over; or the answer known at the call.
-    #[allow(clippy::type_complexity)]
     call: Result<(&'m Stack<'m>, Option<Frame<'m>>), Option<V>>,
     /// Where the frame leaves its answer.
     out: Option<Rc<Cell<Option<V>>>>,
@@ -103,7 +102,10 @@ impl<V: Unpin> Future for Deep<'_, V> {
                 }
                 None => {
                     let out = this.out.take().expect("an answer is read once");
-                    Poll::Ready(out.take().expect("a frame runs to its end before its caller"))
+                    Poll::Ready(
+                        out.take()
+                            .expect("a frame runs to its end before its caller"),
+                    )
                 }
             },
         }
@@ -127,9 +129,11 @@ mod tests {
                 return Stack::ready(0);
             }
             self.stack.call(async move {
-                self.seen.set(self.seen.get().wrapping_mul(31).wrapping_add(n));
+                self.seen
+                    .set(self.seen.get().wrapping_mul(31).wrapping_add(n));
                 let below = self.sum(n - 1).await;
-                self.seen.set(self.seen.get().wrapping_mul(31).wrapping_add(n));
+                self.seen
+                    .set(self.seen.get().wrapping_mul(31).wrapping_add(n));
                 below + n
             })
         }

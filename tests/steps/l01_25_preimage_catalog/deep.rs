@@ -1,6 +1,7 @@
-//! Deep terms (PRE-stack): each analysis of the transfer recurses on the depth of the term,
-//! on a stack that grows on the heap, so a term nested 100,000 deep has its preimage on a
-//! 2 MiB thread stack. Before PRE-stack the transfer overflowed that stack at depth 3,000.
+//! Deep terms (PRE-stack, PRE-stack-explicit): each analysis of the transfer recurses on the
+//! depth of the term through frames kept on the heap, so a term nested 100,000 deep has its
+//! preimage on a 2 MiB thread stack. Before PRE-stack the transfer overflowed that stack at
+//! depth 3,000.
 
 use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
@@ -97,7 +98,7 @@ fn ifs_nested_100000_deep_have_their_preimage_on_a_2_mib_stack() {
     deep(ifs, "i [-50..=50]; exact");
 }
 
-/// The transfer of a deep term on the growing stack costs O(depth), at depths 12,500 and
+/// The transfer of a deep term, its frames on the heap, costs O(depth), at depths 12,500 and
 /// 100,000; the terms are built before the timing.
 fn scales(what: &'static str, make: fn(usize) -> Term) {
     on_small_stack(move || {
