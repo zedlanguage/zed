@@ -421,7 +421,7 @@ main(fs: Files) -> (stdout: Lines) {
 }
 ```
 
-`group` collects the words by their lowercase form, and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a level below it so equal counts don't collide, and each value becomes a line of text. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
+`main`'s parameters and results are *ports*, channels to the outside world: here `fs` reads files and `stdout` prints. `group` collects the words by their lowercase form (`w -> w.lower` is an unnamed function), and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a second level of keys below it so equal counts don't collide, and each value becomes a line of text. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
 
 These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. Where a table has several columns after its keys, they are parts of one value, or an input shown beside its result. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way.
 
@@ -526,7 +526,7 @@ after:  a = 8, because 5.double is 10 and clamp(0, 8) caps it
         hi() = "Hi, Ann!"
 ```
 
-Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Any function can be called with a dot, so `5.double` is `double(5)`, and pipelines read left to right. A `...` in a call leaves the remaining named parameters open and gives you back a function. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes an `int`; `x * 2n` would take any number type.
+Parameters are passed by name unless you mark them `positional`, so a call site says what its arguments mean. Any function can be called with a dot, so `5.double` is `double(5)`, and pipelines read left to right. A `...` in a call leaves the remaining named parameters open and gives you back a function. Parameter types can usually be left out, and the compiler infers them from how the body uses the parameter. `x * 2` takes an `int`; `x * 2n`, with the generic number `2n`, would take any number type.
 
 ### Numbers
 
@@ -550,7 +550,7 @@ after:  big   = 1267650600228229401496703205376
         half  = 0.5, q = 3, ratio = 1.5
 ```
 
-An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. A `rat` is an exact rational number, a fraction of two integers that is never rounded. The suffix `r` marks a `rat` literal, so `0.1r + 0.2r == 0.3r` is true. Mixing `int` and `f64` is a compile error until you write `f64(n)`. That cast is checked, so its type also includes `#inexact` unless the compiler can show the value fits exactly.
+An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. A `rat` is an exact rational number, a fraction of two integers that is never rounded. The suffix `r` marks a `rat` literal, so `0.1r + 0.2r == 0.3r` is true. Mixing `int` and `f64` is a compile error until you write `f64(n)`. That cast is checked, so its type also includes the failure value `#inexact` unless the compiler can show the value fits exactly.
 
 ### Strings
 
@@ -570,7 +570,7 @@ before: name = "Zed"
 after:  line = "total: 5", title = "nevertheless", z = char32("Z")
 ```
 
-String literals are UTF-8. `Utf8String`, `Utf16String` and `Utf32String` are separate types, one per encoding, and `U8String` holds 8-bit units with no encoding checked. You pick what you index by, such as code points or UTF-8 units, through a named view like `text::codepoints` or `text::u8`, and a `U8String` has no code point view. `++` builds a rope in O(1), so joining strings in a loop doesn't go quadratic.
+String literals are UTF-8. `Utf8String`, `Utf16String` and `Utf32String` are separate types, one per encoding, and `U8String` holds 8-bit units with no encoding checked. You pick what you index by, such as code points (the numbers Unicode assigns to characters) or UTF-8 units, through a named view like `text::codepoints` or `text::u8`, and a `U8String` has no code point view. `++` builds a rope (a tree of string pieces) in O(1), so joining strings in a loop doesn't go quadratic.
 
 ### Structs
 
@@ -630,7 +630,7 @@ after:  area of the Circle = 4 pi, about 12.566
         next(#red)         = #green
 ```
 
-An atom needs no declaration. Atoms with payloads, such as `#c(f64) | #f(f64)`, tell apart values of the same shape. A `match` must cover every case. If the compiler can't establish that, it shows a value no arm handles or the region it could not resolve. An arm that earlier arms already cover is also rejected.
+An atom needs no declaration, and if a function can return one, the function's result type includes it in a union. Atoms with payloads, such as `#c(f64) | #f(f64)`, tell apart values of the same shape. A `match` must cover every case. If the compiler can't establish that, it shows a value no arm handles or the region it could not resolve. An arm that earlier arms already cover is also rejected.
 
 ### Generics and interfaces
 
@@ -655,7 +655,7 @@ after:  push(s: [1, 2], x: 3) = [1, 2, 3]
         hello(n)              = "Hi, Ann"
 ```
 
-An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` to `CommRing`, is ordinary library code.
+An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, claims about its operations that the compiler proves or tests, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` (an associative operator with an identity) to `CommRing` (addition with a commutative multiplication), is ordinary library code.
 
 ### Modules
 
@@ -702,9 +702,9 @@ after:  conf = defaultConfig, port = 8080
 
 There are no exceptions and no null. `else` replaces a failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't. An atom of a named union, such as `Light`, is data and not a failure, so `else` keeps it unless you name it: `x else #red -> #green`.
 
-A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction is stricter: it is rejected if its operator might be applied to a failure it does not handle, since failures at many keys can't become one result unless you say how.
+A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction, which merges many values into one (covered below), is stricter: it is rejected if its operator might be applied to a failure it does not handle, since failures at many keys can't become one result unless you say how.
 
-The compiler also adds failures only where they can really happen. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
+The compiler also adds a failure only where it can't rule it out. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
 
 ### Failures in a pipeline
 
@@ -837,7 +837,7 @@ before: users         after: byCity
                       +------+----+-----------+
 ```
 
-`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
+`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` (this function never gives two inputs one output) or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
 
 ### Remapping
 
@@ -1070,7 +1070,7 @@ after: pairs, with n = 3
 +--------+--------+
 ```
 
-A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. For a `for` over several collections, the compiler can pick a hash join or a merge join instead of two nested loops. Queries and loops compile to the same terms, so they are optimized together.
+A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. For a `for` over several collections, the compiler can pick a hash join or a merge join, two standard ways to avoid comparing every pair, instead of two nested loops. Queries and loops compile to the same internal form, so they are optimized together.
 
 ### Chunks
 
@@ -1179,7 +1179,7 @@ before: xs    after: running    after: d
                                 +---+---+---+
 ```
 
-The code reads as it would on a whiteboard. The first line is a running total. The second is edit distance, and it needs no explicit table and no choice of memoization or fill order. The compiler reads the dependencies and picks a plan: it fills the table across your cores in dependency order if you need most of it, and memoizes on demand if you only touch part of it.
+The code reads as it would on a whiteboard. The first line is a running total. The second is edit distance, the fewest single-character changes that turn one string into another, and it needs no explicit table and no choice of memoization or fill order. The compiler reads the dependencies and picks a plan: it fills the table across your cores in dependency order if you need most of it, and memoizes on demand if you only touch part of it.
 
 The compiler also recognizes some loops that look serial and runs them in parallel:
 
@@ -1205,7 +1205,7 @@ before: xs    after: cur    after: state
 +---+----+    +---+----+
 ```
 
-The first recurrence is maximum subarray. The compiler recognizes that its step composes in any grouping, so it runs as a parallel scan. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job usually done one character at a time splits across cores.
+The first recurrence is maximum subarray, the largest sum of neighboring entries. The compiler recognizes that its step composes in any grouping, so it runs as a parallel scan, which computes all the running results across many cores. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job usually done one character at a time splits across cores.
 
 ### Loops
 
@@ -1239,7 +1239,7 @@ after: sim::frames
 
 `pos'` is the next value of `pos`, written in terms of the current values. Both updates here read the old `pos`, so they don't race and their order doesn't matter. Each step writes each variable once, so a data race can't be written. After the loop, `sim.pos` is the final value.
 
-`sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps only the steps the loop still reads. If you do, the whole history is there to read. This is how you write undo:
+`sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps only the steps the loop still reads. Reading it is how you write undo:
 
 ```zed
 run = loop t {
@@ -1318,7 +1318,7 @@ after:  m = 2.0, and sd has not run
         firstPrime = 2
 ```
 
-A caller that reads `.mean` doesn't pay for `sd`, and you don't need two versions of the function or a flag. Zed isn't lazy in the Haskell sense: any evaluation order that gives the same value is legal, and the compiler chooses by cost. The `firstPrime` search runs over an unbounded range. The compiler may try candidates in parallel, and once a prime is found and every smaller candidate has been ruled out, the larger ones can be canceled.
+A caller that reads `.mean` doesn't pay for `sd`, and you don't need two versions of the function or a flag. Zed isn't lazy in the Haskell sense, where a value is computed when first read: any evaluation order that gives the same value is legal, and the compiler chooses by cost. The `firstPrime` search runs over an unbounded range. The compiler may try candidates in parallel, and once a prime is found and every smaller candidate has been ruled out, the larger ones can be canceled.
 
 ## The outside world
 
@@ -1339,7 +1339,7 @@ before: req delivers q1, then q2
 after:  resp carries answer(q1), then answer(q2)
 ```
 
-Ports are declared in `main`'s header or as stored collections: files, sockets, clocks, devices, databases and the like. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system. Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
+Ports are declared in `main`'s header or as stored collections: files, sockets, clocks, devices, databases and the like. Foreign calls and logging go through ports too. Everything else is a pure value, so Zed needs no effect system (type annotations that record side effects). Reading a port gives you a value, and `<-` pushes one out. So a server, a batch job and a pipeline are all the same kind of thing: a function from input ports to output ports.
 
 Runs repeat exactly, apart from a short list such as the order that messages arrive at a port and running out of a resource. Inputs and arrival order can be recorded, so you can replay a failing run in a test.
 
@@ -1368,7 +1368,7 @@ after:  hit = fetch(key)
 
 Declaring a timeout changes the type. A read of `cache` is now `[u8] | #ioError | #timeout | #notFound`, and the program has to deal with that, here by treating anything other than a hit as a miss. `retry` adds no failure member, and the timeout covers all the attempts together. Pure code never times out, because a computation's finishing time isn't a value.
 
-Retries, hedged requests, circuit breakers, rate limits and failover are declared on the port in the same way. The compiler permits retries only for operations declared safe to repeat, so a write that may already have landed needs an idempotence guarantee before it can be retried. Queues declare what happens when they are full (`#block`, `#dropOldest` or `#full`), so every queue has a limit, and by default a writer waits when it is full.
+Retries, hedged requests (a second copy of a slow request), circuit breakers (refusing calls for a while after repeated failures), rate limits and failover (switching to a replacement server) are declared on the port in the same way. The compiler permits retries only for operations that are safe to repeat, so a write that may already have landed needs a guarantee that doing it twice has the effect of doing it once (idempotence) before it can be retried. Queues declare what happens when they are full (`#block`, `#dropOldest` or `#full`), so every queue has a limit, and by default a writer waits when it is full.
 
 ### Databases
 
@@ -1426,7 +1426,7 @@ before: sales           after .group(s -> s.region)      after: report
                         +--------+--------+---------+
 ```
 
-Incremental updates need no annotation. `@memoized` makes the build fail if this value isn't kept for reuse. When an input changes, the change goes through the same graph as a new batch of values (a *wave*), and only what it affects is recomputed, unless a full recomputation would cost less. Changing one sale's amount updates its region's total, and moving a sale to another region updates both. The update stops wherever nothing downstream can see a difference. Spreadsheets, build systems and reactive user interfaces each build this by hand. In Zed it needs no extra code, and an incremental result always equals what a full recomputation would give.
+Incremental updates need no annotation. `@memoized` makes the build fail if this value isn't kept for reuse. When an input changes, the change goes through the same graph as a new batch of values (a *wave*), and only what it affects is recomputed, unless a full recomputation would cost less. Changing one sale's amount updates its region's total, and moving a sale to another region updates both. The update stops wherever nothing downstream can see a difference. Spreadsheets, build systems and reactive user interfaces each build this by hand. In Zed the compiler does it, and an incremental result always equals what a full recomputation would give.
 
 This also powers live editing: a change to your source code is one more wave on one more port, so a running program can pick up the edit without a restart. By default the edited program reruns on the recorded inputs, so no extra code is needed. A run whose input history isn't kept, such as a server's, continues from its current loop values instead, and an edit that changes the type of a loop variable, or renames or removes one, must supply a migration.
 
@@ -1457,7 +1457,7 @@ after:  width(s) = 3, a = 25
 
 The compiler tracks ranges, and relations between fields, through arithmetic without any annotations from you. That is how it removes bounds checks and picks the smallest machine representation. `refine` checks a condition, at run time unless the compiler can settle it first, and gives `#invalid` if it fails. `@ensure` forbids a run-time check: the compiler has to push the condition back onto the inputs and reject the program if it can't prove them safe, so the check moves to compile time.
 
-A field's range may name another field. The compiler reasons about such bounds with linear arithmetic, and no SMT solver is involved. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
+A field's range may name another field. The compiler reasons about such bounds with linear arithmetic (sums of variables times constants), and no SMT solver, a general theorem prover, is involved. The checks come from a small set of procedures that always finish, so the compile time is predictable and the error message says exactly what stopped the proof.
 
 ### Units and taint
 
@@ -1514,7 +1514,7 @@ These are the values. This page doesn't work out the bound that f::cost reads
 for these functions, beyond what the @cost lines state.
 ```
 
-Every function has a computed upper bound on its work and its parallel depth, which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. Annotations like these are assertions about the plan the compiler chose: `@cost` states a bound, `@fused` says no intermediate collection is built, and `@noalloc` says the code uses no memory beyond registers. If one is false, the build fails.
+Every function has a computed upper bound on its work and its parallel depth (the longest chain of operations that must run one after another), which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. Annotations like these are assertions about the plan the compiler chose: `@cost` states a bound, `@fused` says no intermediate collection is built, and `@noalloc` says the code uses no memory beyond registers. If one is false, the build fails.
 
 ## Code that runs at build time
 
@@ -1685,7 +1685,7 @@ These are single cases. Which grade the build reports for each of these three
 laws isn't worked out here, since it depends on the compiler's rewrites.
 ```
 
-The compiler tries to prove a law with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
+The compiler tries to prove a law with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and automatic proof methods it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
 
 The optimizer can use proved laws as rewrites. A `law` that was only tested is never used to rewrite your program. An `@associative` annotation that was only tested can still choose a fixed regrouping, and the report says so.
 
@@ -1727,7 +1727,7 @@ before: R          after: reachable.R
 
 The loop reaches these three states in one step, and the next step adds none. None has both lights green, so the law holds.
 
-A loop is a state machine, so the set of states it can reach is a fixpoint you can write in a few lines, and for a finite state space the compiler computes it at build time. Here `.image` collects a list's values into a set, the loop stops when `R` stops growing, and `reachable.R` is the final set. A `Junction` with both lights green is a legal value, but no sequence of commands reaches it, and the law checks exactly that. This covers the safety checks you would use a model checker like TLC for, in the language the system is written in. Liveness must be stated as a bound or a decreasing measure, and properties that rely on fairness can't be expressed. A failed check reports the sequence of steps that reached the bad state, as a value you can replay.
+A loop is a state machine, so the set of states it can reach is a fixpoint (a value one more step doesn't change) you can write in a few lines, and for a finite state space the compiler computes it at build time. Here `.image` collects a list's values into a set, the loop stops when `R` stops growing, and `reachable.R` is the final set. A `Junction` with both lights green is a legal value, but no sequence of commands reaches it, and the law checks exactly that. This covers the safety checks you would use a model checker like TLC for, in the language the system is written in. Liveness (something good eventually happens) must be stated as a bound or a decreasing measure, and properties that rely on fairness (no ready action is put off forever) can't be expressed. A failed check reports the sequence of steps that reached the bad state, as a value you can replay.
 
 ## Under the hood
 
@@ -1768,7 +1768,7 @@ The compiler places all allocation and freeing.
 
 **Syntax:** `@noalloc`, `@preallocated`
 
-Zed has no garbage collector, and there are no lifetimes or ownership annotations. Zed values can't form cycles, so exact reference counting is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, whose nodes are freed with the arena, or in id-indexed graphs, where a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no tracing pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
+Zed has no garbage collector and no lifetimes, and ownership annotations appear only on foreign signatures. Zed values can't form cycles, so exact reference counting is enough, and the compiler removes most of it: where a last use is known statically, the free is simply placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, blocks of memory whose nodes are freed together, or in id-indexed graphs, whose nodes refer to each other by key, so a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no tracing pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
 
 ### Parallelism and determinism
 
@@ -1784,7 +1784,7 @@ The same program compiles to several kinds of hardware and platform.
 
 **Syntax:** none.
 
-One intermediate representation sits under everything. Back ends compile it to native multicore code through MLIR and LLVM, and to WebAssembly, GPUs, distributed dataflow (where the keys of your data double as partition keys), hardware synthesis and microcontrollers. The compiler is written in Zed itself, on top of a small kernel. A program that needs a port its target doesn't have is rejected at build time, and the error names the port and how the program reached it.
+One intermediate representation (the form a compiler holds a program in) sits under everything. Back ends compile it to native multicore code through MLIR and LLVM, and to WebAssembly, GPUs, distributed dataflow (where the keys of your data double as partition keys), hardware synthesis (circuit designs) and microcontrollers. The compiler is written in Zed itself, on top of a small kernel, the core everything else is built on. A program that needs a port its target doesn't have is rejected at build time, and the error names the port and how the program reached it.
 
 ## License
 
