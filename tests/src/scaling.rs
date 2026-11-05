@@ -210,7 +210,8 @@ impl Meter {
     }
 
     /// The work `f` does, in instructions or nanoseconds, and the bytes it allocates on this
-    /// thread and the threads that add their count to it; each never 0.
+    /// thread, the threads it starts and the threads those start; each never 0. Off Linux both
+    /// are of the whole process (see the module's documentation).
     pub fn work(&mut self, f: impl FnOnce()) -> Work {
         let bytes = zed_alloc_count::allocated();
         let start = (self.read)();

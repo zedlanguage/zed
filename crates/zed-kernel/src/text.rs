@@ -12,7 +12,9 @@
 //!
 //! A node written out lets go of its two parts, so it holds only its own text. Reading every
 //! step of a chain of joins, the accumulator each time, so holds the latest text only, not
-//! one copy per step, `O(n²)` bytes in all.
+//! one copy per step, when nothing else holds the steps before. Each read still writes its
+//! step out whole: reading every one of `n` steps copies `O(n²)` bytes in all, as reading
+//! each text whole does (the `Complexity tradeoff:` at `Text::write_out`).
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -95,6 +97,22 @@ impl Text {
 
     /// The text written out: the parts of a join from left to right, each part already written
     /// out read whole. The walk keeps its own stack, so a join nested a million deep is safe.
+    // Complexity tradeoff: every node is written out into a block of its own, so reading every
+    // prefix of a chain of `n` joins (each step read as text, as a log printed in full after
+    // every line is) copies the sum of the prefixes' lengths, `O(n²)` bytes and time for `n`
+    // pieces, and holding all those prefixes keeps `O(n²)` bytes. A reader of the whole text
+    // (printing, hashing, `lower`, a cast) costs its length anyway, so for it the copy is a
+    // constant factor; what is given up is the reader that stops early, `<` or `==` of equal
+    // byte lengths deciding at the first byte that differs, which pays each prefix's whole
+    // length, and the memory of prefixes all held at once. Why: every reader gets the text as
+    // one `&str`; for a prefix and its extension to share one block, the extension must write
+    // past the end of a block that readers of the prefix hold, which safe Rust cannot express,
+    // and text kept in pieces would make every reader walk them. Trigger: a join whose left
+    // part was read as text before it. Test:
+    // `text::tests::reading_every_prefix_costs_the_text_read` (COMPLEXITY.md C29). A complete
+    // solution: one growable block shared by a string and its extensions, as Go's `append`
+    // shares an array, the first extension of a prefix appending in place and any later one
+    // copying, with `unsafe` writes past every reader's end, checked under Miri.
     fn write_out(&self) -> Arc<str> {
         let mut out = String::with_capacity(self.0.len);
         let mut todo = vec![self.clone()];
@@ -391,6 +409,22 @@ mod tests {
         }
         assert!(!t.is_written_out());
         drop(t);
+    }
+
+    #[test]
+    fn reading_every_prefix_costs_the_text_read() {
+        // A log printed in full after every line: line `i` writes out `i` lines, so `n` lines
+        // read `n²/2` lines in all, and writing each out must cost in proportion to reading it
+        // (COMPLEXITY.md C29). The work is of order `n²`, so 8n may do 24 × 8 times that of n.
+        let line = long('l');
+        crate::scaling::check_order("a log of n lines printed after every line", 400, 2, |n| {
+            let mut log = Text::from("");
+            for i in 1..=n {
+                log = join(&log, &line);
+                let printed = log.bytes().filter(|&b| b == b'l').count();
+                assert_eq!(printed, PIECE * i);
+            }
+        });
     }
 
     #[test]
