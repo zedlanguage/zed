@@ -1,7 +1,7 @@
 //! Kernel values: scalars, atoms with their payloads, tuples, keypaths and families
 //! (step L1.17).
 //!
-//! Values are totally ordered by the natural order of DESIGN.md sec:keys: kinds in the order
+//! Values are totally ordered by the natural order of DESIGN.md sec:order: kinds in the order
 //! atoms, `bool`, numbers, strings, tuples, keypaths, families; numbers by value across
 //! `int`, `rat` and floats, an `int` before a `rat` before a float of equal value. Rust's `==`
 //! on values is the ties of that order: the bitwise identity that keys and the law catalog
@@ -69,7 +69,7 @@ impl fmt::Debug for F64 {
 
 /// An atom such as `#empty`, `#ioError("disk full")` or `#err(code: 3)`. Failure is data
 /// (sec:failure): an atom is an ordinary value that flows through the kernel like any other.
-/// A payload is a tuple, by position, or a struct, by name (sec:syntax, the `#name(args)`
+/// A payload is a tuple, by position, or a struct, by name (sec:lexical, the `#name(args)`
 /// row); a struct payload keeps its fields in the code point order of their names, so the
 /// written order of a construction is not part of the value.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

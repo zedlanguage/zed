@@ -31,7 +31,7 @@ fn ieee_equality_reaches_inside_tuples_and_atoms() {
 
 #[test]
 fn keys_still_tell_signed_zeros_apart_and_read_one_nan() {
-    // The identity keys and the law catalog read is bitwise (sec:keys), whatever `==` says.
+    // The identity keys and the law catalog read is bitwise (sec:type_resolution), whatever `==` says.
     assert_ne!(Value::float(0.0), Value::float(-0.0));
     assert_eq!(Value::float(f64::NAN), Value::float(-f64::NAN));
     assert!(!Value::float(0.0).surface_eq(&Value::float(f64::NAN)));

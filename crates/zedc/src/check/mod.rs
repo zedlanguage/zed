@@ -2970,7 +2970,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         out.union(&Ty::carrier(Carrier::Bool))
     }
 
-    /// Checks that each value of `a` compares with each of `b` (sec:keys): two numbers of one
+    /// Checks that each value of `a` compares with each of `b` (sec:order): two numbers of one
     /// carrier or two values of one other kind, the atoms as data, and two tuples component by
     /// component as far as the shorter goes, since a proper prefix comes first.
     fn components(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) {
@@ -5876,7 +5876,7 @@ impl<'a> Denote<'a> {
             }
             // Each variable is bounded on the outermost signature that names it, which resolve
             // found to hold its every use: a call of that function binds it to one carrier of
-            // the bound (DESIGN.md sec:type_language, sec:checking).
+            // the bound (DESIGN.md sec:type_language, sec:type_resolution).
             TypeKind::For { ty, bounds } => {
                 let depth = self.open.len();
                 let outer: Vec<(&'a str, Option<(u8, usize)>)> = bounds

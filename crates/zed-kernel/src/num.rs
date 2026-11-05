@@ -1,5 +1,5 @@
 //! Exact numbers (step L1.17): unbounded integers, rationals, and the order of numbers by
-//! value across `int`, `rat` and floats (DESIGN.md sec:keys, the natural order).
+//! value across `int`, `rat` and floats (DESIGN.md sec:order, the natural order).
 //!
 //! The semantic `int` and `rat` are unbounded (sec:domains), and the evaluator sets no size
 //! limit on them. An integer inside the 64-bit range is a [`Value::Int`](crate::Value::Int);
@@ -1418,7 +1418,7 @@ impl Exact<'_> {
     }
 }
 
-/// How `String` writes a float (DESIGN.md sec:numeric): the shortest digits that read back
+/// How `String` writes a float (DESIGN.md sec:reduction): the shortest digits that read back
 /// to it, in fixed notation when the decimal exponent is in -6..<21 and with an exponent
 /// otherwise, so `f64(String(x))` is `x`, bit for bit.
 pub fn show_f64(x: f64) -> String {

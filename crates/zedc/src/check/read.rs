@@ -4,7 +4,7 @@
 //! type, `#ioError(op: String, path: String, why: String)`, a form of layer L2 the checker builds
 //! from L1 on (L29-print), three leaves of layer L10, `_`, `!_` and a literal type, and after a
 //! signature whose type variables are bounded the clause `for T in int | f64 | rat` (DESIGN.md
-//! sec:checking); this reads those too.
+//! sec:type_resolution); this reads those too.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;

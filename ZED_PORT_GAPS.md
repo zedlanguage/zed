@@ -1616,3 +1616,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Rc<Cell<Option<V>>>` where a frame leaves its answer for its caller | `frames::frame`, `Deep` | Mutation (gap 11), identity | The callee's answer passed to the caller's frame when the callee is popped |
 | `Cell<ManuallyDrop<Option<Frame>>>`, the slot where a suspending call leaves its callee for the loop; `ManuallyDrop` gives `Stack` no destructor, so that it may be borrowed for the lifetime its own frames hold | `Stack::next` | Mutation, ownership | The step function returns the frame to push as its result |
 | `RefCell<&mut Tx>` borrowed by `Walk::with` between two suspension points, and `&'m self` shared by every frame | `Walk::with`, `Walk::tr`, every analysis of `Walk` | Mutation (gap 11), shared tables (gap 2) | The tables threaded through the step function as a state record, as gap 2 proposes |
+
+## Entries from CITE-check (`zed-tools/src/cite.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::process::Command` running `git ls-files -z` and reading its standard output and exit status | `cite::run` | Command line and exit status (gap 6): Zed has no port that runs another program | An input port of the tracked paths, or a port that runs a program and gives its output and exit status |
+| `std::fs::read` of a path built at run time, with `ErrorKind::NotFound` told apart from other errors, and `String::from_utf8` to skip a file that is not text | `cite::run` | Computed paths and bytes (gaps 5 and 6) | The byte file port of step L7.3f and `fromUtf8` |

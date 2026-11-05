@@ -9,7 +9,7 @@ use crate::{Outcome, arg, impl_root, say};
 
 /// The length of a step name at the start of `s`: `M0.n`, `Lk.n` or `S.n`, then an optional
 /// lower-case letter.
-fn step_name(s: &str) -> Option<usize> {
+pub(crate) fn step_name(s: &str) -> Option<usize> {
     let digits_from = |at: usize| {
         let rest = &s[at..];
         at + rest
@@ -93,7 +93,7 @@ fn title_of(text: &str) -> String {
 /// The layers of the plan in `design`: each one's heading and steps.
 type Layers<'a> = Vec<(&'a str, Vec<(&'a str, String)>)>;
 
-fn plan(design: &str) -> Result<Layers<'_>, String> {
+pub(crate) fn plan(design: &str) -> Result<Layers<'_>, String> {
     let mut lines = design
         .lines()
         .skip_while(|l| *l != "## (sec:steps) The steps, layer by layer");

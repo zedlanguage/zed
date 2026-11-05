@@ -1,4 +1,4 @@
-//! The natural order (DESIGN.md sec:keys): kinds in a fixed order, numbers by value across
+//! The natural order (DESIGN.md sec:order): kinds in a fixed order, numbers by value across
 //! `int`, `rat` and floats, an `int` before a `rat` before a float of equal value.
 
 use zed_kernel::{Family, Value};

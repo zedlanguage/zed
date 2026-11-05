@@ -1,5 +1,5 @@
 //! A float literal is correctly rounded to the nearest f64, ties to even (DESIGN.md
-//! sec:numeric). It is an error when it rounds to infinity, or to zero while its digits are
+//! sec:domains). It is an error when it rounds to infinity, or to zero while its digits are
 //! not all zero; a literal of zero digits is zero whatever its exponent.
 
 use std::collections::HashMap;

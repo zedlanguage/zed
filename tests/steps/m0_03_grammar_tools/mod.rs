@@ -5,6 +5,7 @@
 //! needs. A spec author runs these tools on the real spec; the tests here run the same `run`
 //! functions the commands call.
 
+mod cite;
 mod plan;
 mod scaling;
 

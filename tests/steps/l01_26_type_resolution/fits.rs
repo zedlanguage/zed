@@ -385,7 +385,7 @@ fn a_bounded_variable_bound_to_two_carriers_fits_only_at_one_place() {
 /// Case (4): an overload whose arrows overlap, `h(x: int | bool) = "a"; h(x: int) = 3`, is
 /// refused where an arrow is expected, by elaboration, since choosing among overloads arrives
 /// at step L2: by
-/// the order of sec:specificity `int` is the more specific, so `h` at `int` gives `3`, and the
+/// the order of sec:type_resolution `int` is the more specific, so `h` at `int` gives `3`, and the
 /// type L2 gives the name is `((x: bool) -> String) & ((x: int) -> int)`. That type is refused
 /// where `(x: int | bool) -> String` is expected, and fits where `String | int` is.
 #[test]
