@@ -121,6 +121,7 @@ impl Depths {
                 least.expect("a choice has alternatives")
             }
             Expr::Plus(x) | Expr::SetHead(x) | Expr::ClearHead(x) => self.of(x),
+            Expr::Sep(items) => self.of(&items[1]),
             Expr::Lit(_)
             | Expr::Kind(_)
             | Expr::Head
@@ -143,6 +144,7 @@ fn refs(e: &Expr, f: &mut impl FnMut(usize)) {
         Expr::Rule(r) => f(*r),
         Expr::Seq(xs) | Expr::Choice(xs) => xs.iter().for_each(|x| refs(x, f)),
         Expr::Plus(x) | Expr::SetHead(x) | Expr::ClearHead(x) => refs(x, f),
+        Expr::Sep(items) => refs(&items[1], f),
         Expr::Lit(_)
         | Expr::Kind(_)
         | Expr::Head
@@ -228,7 +230,14 @@ impl<'g> Gen<'g, '_> {
         self.gen_of(&a.expr, inner, head)
     }
 
-    fn repeat(&mut self, e: &'g Expr, body: &'g Expr, depth: u32, head: bool) -> Result<(), Stop> {
+    /// The repetitions of `e`, a `*`, `+`, `?` or the loop of a `%`, each the sequence `body`.
+    fn repeat(
+        &mut self,
+        e: &'g Expr,
+        body: &'g [Expr],
+        depth: u32,
+        head: bool,
+    ) -> Result<(), Stop> {
         let plus = matches!(e, Expr::Plus(_));
         let mut n = u32::from(plus);
         if depth <= MAX_DEPTH {
@@ -240,7 +249,7 @@ impl<'g> Gen<'g, '_> {
         }
         for i in 0..n {
             let mark = self.out.len();
-            match self.gen_of(body, depth, head) {
+            match body.iter().try_for_each(|x| self.gen_of(x, depth, head)) {
                 Ok(()) => {}
                 Err(Stop::Dead) => {
                     self.out.truncate(mark);
@@ -288,7 +297,14 @@ impl<'g> Gen<'g, '_> {
                 let x = self.pick(&opts);
                 self.gen_of(x, depth, head)?;
             }
-            Expr::Star(x) | Expr::Plus(x) | Expr::Opt(x) => self.repeat(e, x, depth, head)?,
+            Expr::Star(x) | Expr::Plus(x) | Expr::Opt(x) => {
+                let x: &'g Expr = x;
+                self.repeat(e, std::slice::from_ref(x), depth, head)?;
+            }
+            Expr::Sep(items) => {
+                self.gen_of(&items[1], depth, head)?;
+                self.repeat(e, &items[..], depth, head)?;
+            }
             Expr::And(x) => self.looks.push((self.out.len(), true, x, head)),
             Expr::Not(x) => self.looks.push((self.out.len(), false, x, head)),
             Expr::SetHead(x) => self.gen_of(x, depth, true)?,

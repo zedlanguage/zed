@@ -4,6 +4,7 @@
 mod cases;
 mod deep;
 mod errors;
+mod grammar_read;
 mod grammar_scaling;
 mod grammar_shape;
 mod left_recursion;

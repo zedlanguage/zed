@@ -62,6 +62,9 @@ pub enum Expr {
     Star(Box<Expr>),
     /// `e+`.
     Plus(Box<Expr>),
+    /// `e % sep`, which matches `e (sep e)*`, held as `[sep, e]` so that `e` is written once
+    /// and the two items are the sequence repeated.
+    Sep(Box<[Expr; 2]>),
     /// `e?`.
     Opt(Box<Expr>),
     /// `&e`.
@@ -475,6 +478,15 @@ impl Reader<'_> {
     }
 
     /// Reads with `read` inside a group or a lookahead.
+    // Complexity tradeoff: the reader recurses once per group and lookahead open around the
+    // place it reads (about six thread-stack frames per level), and the derived `Drop` and
+    // `Clone` of [`Expr`] recurse once per level of the expression read, so a grammar line
+    // nested thousands deep would overflow the thread stack instead of being read or refused. Every
+    // line is written by the spec's author (sec:grammar and its copies in `zed/grammar/`),
+    // whose deepest nest is a few levels, and the cost stays linear in the line. An explicit
+    // stack of open groups, each with its alternatives, items and pending prefixes, would read
+    // any depth. Test: `l01_08_parser::grammar_read::a_nest_of_separators_is_read_in_linear_time`;
+    // COMPLEXITY.md F88.
     fn within(&mut self, read: fn(&mut Self) -> Result<Expr, String>) -> Result<Expr, String> {
         self.depth += 1;
         let e = read(self);
@@ -513,11 +525,7 @@ impl Reader<'_> {
             } else if self.eat('?') {
                 Expr::Opt(Box::new(e))
             } else if self.eat('%') {
-                let sep = self.primary()?;
-                Expr::Seq(vec![
-                    e.clone(),
-                    Expr::Star(Box::new(Expr::Seq(vec![sep, e]))),
-                ])
+                Expr::Sep(Box::new([self.primary()?, e]))
             } else {
                 return Ok(e);
             }

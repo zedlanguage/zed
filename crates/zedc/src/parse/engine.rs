@@ -176,10 +176,18 @@ enum Frame<'g> {
         head: bool,
         mark: usize,
     },
-    /// A `*` or `+` at `at`. An iteration that matches nothing ends the loop, kept only if it is
-    /// the first; `some` says an iteration was kept, and `star` says none need be.
+    /// The first operand of `e % sep` at `pos`, matched before its loop over `sep e`; `body`
+    /// is that loop's body, and `mark` the height of the kids stack below the match.
+    Sep {
+        body: &'g [Expr],
+        head: bool,
+        mark: usize,
+    },
+    /// A `*`, `+` or the loop of a `%` at `at`, over the sequence `body`. An iteration that
+    /// matches nothing ends the loop, kept only if it is the first; `some` says an iteration was
+    /// kept, and `star` says none need be.
     Loop {
-        x: &'g Expr,
+        body: &'g [Expr],
         at: usize,
         mark: usize,
         some: bool,
@@ -489,8 +497,26 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                             }
                         }
                     }
+                    Frame::Sep { body, head, mark } => match done {
+                        None => {
+                            self.kids.truncate(*mark);
+                            stack.pop();
+                        }
+                        Some(at) => {
+                            let (body, head, mark) = (*body, *head, self.kids.len());
+                            *top = Frame::Loop {
+                                body,
+                                at,
+                                mark,
+                                some: false,
+                                star: true,
+                                head,
+                            };
+                            break (iteration(&mut stack, body, head, mark), at, head);
+                        }
+                    },
                     Frame::Loop {
-                        x,
+                        body,
                         at,
                         mark,
                         some,
@@ -504,7 +530,8 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                                 *some = true;
                                 *at = end;
                                 *mark = self.kids.len();
-                                break (*x, end, *head);
+                                let (body, head, mark) = (*body, *head, *mark);
+                                break (iteration(&mut stack, body, head, mark), end, head);
                             }
                             None => {}
                         }
@@ -565,8 +592,9 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                         e = x;
                     }
                     Expr::Star(x) | Expr::Plus(x) => {
+                        let x: &'g Expr = x;
                         stack.push(Frame::Loop {
-                            x,
+                            body: std::slice::from_ref(x),
                             at: pos,
                             mark: self.kids.len(),
                             some: false,
@@ -574,6 +602,14 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                             head,
                         });
                         e = x;
+                    }
+                    Expr::Sep(items) => {
+                        stack.push(Frame::Sep {
+                            body: &items[..],
+                            head,
+                            mark: self.kids.len(),
+                        });
+                        e = &items[1];
                     }
                     Expr::Opt(x) => {
                         stack.push(Frame::Opt { pos });
@@ -633,6 +669,22 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
             self.fail(pos, Expected::Name(name))
         }
     }
+}
+
+/// Opens an iteration of a loop over the sequence `body`, whose kids start at `mark`, and gives
+/// its first item: the rest wait in a [`Frame::Seq`], which drops the iteration's kids if it
+/// fails.
+fn iteration<'g>(
+    stack: &mut Vec<Frame<'g>>,
+    body: &'g [Expr],
+    head: bool,
+    mark: usize,
+) -> &'g Expr {
+    let (first, rest) = body.split_first().expect("a loop body is not empty");
+    if !rest.is_empty() {
+        stack.push(Frame::Seq { rest, head, mark });
+    }
+    first
 }
 
 /// The kids of a finished match: its child nodes, and for each inner choice how many child nodes

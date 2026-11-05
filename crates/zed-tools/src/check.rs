@@ -29,6 +29,10 @@ fn each<'g>(e: &'g Expr, descend: fn(&'g Expr) -> Vec<&'g Expr>, mut visit: impl
 fn inner(e: &Expr) -> Vec<&Expr> {
     match e {
         Expr::Seq(xs) | Expr::Choice(xs) => xs.iter().collect(),
+        Expr::Sep(items) => {
+            let [sep, x] = &**items;
+            vec![x, sep]
+        }
         Expr::Star(x)
         | Expr::Plus(x)
         | Expr::Opt(x)
@@ -53,6 +57,7 @@ fn required(e: &Expr) -> Vec<&Expr> {
     match e {
         Expr::Seq(xs) => xs.iter().collect(),
         Expr::Plus(x) | Expr::SetHead(x) | Expr::ClearHead(x) => vec![x],
+        Expr::Sep(items) => vec![&items[1]],
         Expr::Lit(_)
         | Expr::Rule(_)
         | Expr::Kind(_)

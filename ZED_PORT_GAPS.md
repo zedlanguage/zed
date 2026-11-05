@@ -1537,3 +1537,11 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `rustix::process::setrlimit(Resource::Stack, …)` on the test process, so the child it runs inherits an 8 MiB stack | `limit_stack` in the `zedc_binary` test | Missing (process limits) | A test-harness facility, not the language |
+
+## Entries from GRAMMAR-read-cost (`zedc/src/parse/grammar.rs`, `parse/engine.rs`, `zed-tools/src/check.rs`, `fuzz.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Box<[Expr; 2]>`, a boxed array of two expressions read as the sequence `sep e`, and the pattern `let [sep, x] = &**items` | `Expr::Sep`, `Reader::postfix`, `check::inner` | None | A pair `(sep, e)`, with a list of its two items made where a loop needs one |
+| A frame holding a slice `&'g [Expr]` borrowed from the grammar, and `std::slice::from_ref` to see one expression as a list of one | `engine::Frame::Loop`, `Frame::Sep`, `engine::iteration`, `fuzz::Gen::repeat` | None | Zed shares values, so the frame holds the list itself; a list of one |
+| `Iterator::try_for_each` to stop at the first item whose derivation fails | `fuzz::Gen::repeat` | None | A fold that carries the first failure |
