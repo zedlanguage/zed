@@ -1457,9 +1457,12 @@ fn ty_form(head: &str, ts: Vec<Type>) -> Result<Type, String> {
             arity(2)?;
             Type::morphism(Type::empty(), ts[0].clone(), ts[1].clone())
         }
-        h if h.len() > 1 && h.starts_with('#') => {
+        h if h.len() > 1 && h.starts_with('#') && word_len(&h[1..]) == h.len() - 1 => {
             arity(1)?;
             Type::atom_with(&h[1..], &ts[0])
+        }
+        h if h.len() > 1 && h.starts_with('#') => {
+            return Err(format!("`({h} …)`: `{}` is not a name", &h[1..]));
         }
         h => return Err(format!("`({h} …)` is not a type form")),
     })

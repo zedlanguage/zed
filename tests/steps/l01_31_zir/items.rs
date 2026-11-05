@@ -138,6 +138,20 @@ fn names_the_lexer_accepts_read_back() {
 }
 
 #[test]
+fn an_atom_type_form_with_a_head_that_is_no_name_is_rejected() {
+    // The head of `(#name t)` is read up to a space or a bracket, so it is checked as a name
+    // the lexer accepts, like the bare atom type `#name`.
+    assert_eq!(
+        parse_type("(#foo-bar (tuple))"),
+        Err("column 19: `(#foo-bar …)`: `foo-bar` is not a name".into())
+    );
+    assert_eq!(
+        parse_type("(#ok'' (tuple))"),
+        Err("column 16: `(#ok'' …)`: `ok''` is not a name".into())
+    );
+}
+
+#[test]
 fn floats_keep_their_bits() {
     let v = parse_value("-0.0").expect("a float");
     assert_eq!(v, Value::float(-0.0));
