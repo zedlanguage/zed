@@ -1150,14 +1150,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| SYNC-fallout (repair, no plan row) | committed on wt/sync-fallout, awaiting merge | 15:21 | fence copies synced to zed 67ae18b; rejection rows, fence totals, snapshots and the word `dual` follow |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
 
 ## Open points
 
-- Rejection rows added by the spec at ed78517 are listed in `crates/zedc/src/rejection.rs` with no diagnostic yet, as the other unbuilt rows are (SYNC-fallout, 2026-11-05): `QuantifierNotFinite` (laws are not parsed before L15.1; the rows of sec:verification go to L15.8, whose row does not name this one), `PositionalMap` (HKT-1, which names it; `.map` is an L3 word today) and `StalePin` (GLAM-pin). The word `dual` (L22 row of the table, DESIGN step L22.6) is held by the resolver at L22 like `additive`.
+- Rejection rows added by the spec at ed78517 are listed in `crates/zedc/src/rejection.rs` with no diagnostic yet, as the other unbuilt rows are (SYNC-fallout, 2026-11-05): `QuantifierNotFinite` (plan row QUANT-finite, added at the merge: needs L15.1, feeds L15.8), `PositionalMap` (HKT-1, which names it; `.map` is an L3 word today) and `StalePin` (GLAM-pin, whose row now names it). The word `dual` (L22 row of the table, DESIGN step L22.6) is held by the resolver at L22 like `additive`.
 
 - Needs reduced (2026-11-05), by the author's request: L1.40 from 90 to 2, L1.41 from 116 to 26, S.1 from 75 to 37, S.3 to 31. No need of these four is implied by another. Checker, store and kernel cost fixes that reached S.1 only through L1.41 now feed S.3, the rewrite of those functions in Zed; rows that only add tests, lints or docs have no later consumer. The reasons are in `docs/plan_dag.md`.
 
