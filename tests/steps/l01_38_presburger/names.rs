@@ -222,6 +222,118 @@ fn every_naming_gives_one_answer_on_the_regular_family_of_six_107_108() {
     one_answer_on_the_regular_family(6, &[(107, 3, 40), (108, 3, 40)]);
 }
 
+/// The rows of the orbits of `base` under the cyclic shift of the `n` variables, and under
+/// the reversal too when `dihedral`, each distinct row once, in the order first reached: a
+/// system the group maps onto itself, so that every variable has one color.
+fn orbit(base: &[Row], n: usize, dihedral: bool) -> Vec<Row> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for r in base {
+        for s in 0..n {
+            for flip in [false, true] {
+                if flip && !dihedral {
+                    continue;
+                }
+                let c: Vec<i64> = (0..n)
+                    .map(|i| r.c[((if flip { n - i } else { i }) + s) % n])
+                    .collect();
+                if seen.insert((c.clone(), r.k)) {
+                    out.push(ge(&c, r.k));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The systems of the orbit family at `seed`: one or two random rows (coefficients in
+/// `[-4, 4]`, constant in `[-6, 6]`) with their orbits, in the box `[-half, half]^n` for a
+/// random `half` from 1 to 3, each decided under all `n!` namings; the source is `q2_cyclic_*`
+/// of the cross-review XR3 (wt/xt4/claude/R3_ZED_IMPL.patch). Asserts one answer per system.
+///
+/// The tie rule is not what keeps these to one answer: with it disabled (the first tied
+/// candidate taken by place; run once 2026-11-05) all four families still gave one answer
+/// per system, while `the_five_variable_counterexample_has_one_answer` failed. Variables of
+/// one color here are also swapped by a symmetry of the system, so any choice among them
+/// leads to the same answer. The family checks the rest of the solver for a dependence on
+/// names; the regular family above is the one that checks the tie rule.
+fn one_answer_on_orbits(seed: u64, n: usize, count: usize, dihedral: bool) {
+    let mut rng = Rng::new(seed);
+    let (mut differ, mut refused, mut decided) = (Vec::new(), 0, 0);
+    for s in 0..count {
+        let half = 1 + rng.below(3) as i64;
+        let bases = 1 + rng.below(2);
+        let base: Vec<Row> = (0..bases)
+            .map(|_| {
+                let c: Vec<i64> = (0..n).map(|_| rng.int(-4, 4)).collect();
+                ge(&c, rng.int(-6, 6))
+            })
+            .collect();
+        let rows = with_box(&orbit(&base, n, dihedral), n, half);
+        let seen = namings(&rows, n);
+        if seen.len() > 1 {
+            differ.push((s, seen));
+            continue;
+        }
+        refused += usize::from(seen.keys().any(|a| a.starts_with("Err")));
+        decided += usize::from(seen.keys().any(|a| a.starts_with("Ok")));
+    }
+    eprintln!(
+        "n {n}, dihedral {dihedral}, seed {seed:#x}: {count} systems, {refused} refused, {decided} decided, {} name-dependent",
+        differ.len()
+    );
+    assert!(differ.is_empty(), "seed {seed:#x}, n {n}: {differ:?}");
+}
+
+#[test]
+fn the_orbit_of_a_row_under_a_rotation_or_a_reflection_is_closed() {
+    // `x0 - x1 >= 0` turned around four variables is the cycle `x0 >= x1 >= x2 >= x3 >= x0`;
+    // a reflection adds the reversed cycle, and a row the group fixes stays one row.
+    let cyclic = orbit(&[ge(&[1, -1, 0, 0], 0)], 4, false);
+    let cs: Vec<&[i64]> = cyclic.iter().map(|r| r.c.as_slice()).collect();
+    assert_eq!(
+        cs,
+        [[1, -1, 0, 0], [-1, 0, 0, 1], [0, 0, 1, -1], [0, 1, -1, 0]]
+    );
+    assert_eq!(orbit(&[ge(&[1, -1, 0, 0], 0)], 4, true).len(), 8);
+    assert_eq!(orbit(&[ge(&[1, 1, 1, 1], -2)], 4, true).len(), 1);
+    // The cycle forces all four equal, so the sum is a multiple of four in `[-4, 4]`.
+    let with_sum = |lo: i64, hi: i64| {
+        let mut rows = cyclic.clone();
+        rows.extend([ge(&[1, 1, 1, 1], -lo), ge(&[-1, -1, -1, -1], hi)]);
+        namings(&with_box(&rows, 4, 1), 4)
+    };
+    let keys = |seen: &BTreeMap<String, usize>| seen.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(keys(&with_sum(1, 4)), ["Ok(true)"]);
+    assert_eq!(keys(&with_sum(5, 8)), ["Ok(false)"]);
+    // Between the multiples there is no integer point but there are rational ones; the
+    // solver refuses it (`Growth`, 2026-11-05) rather than answer, under every naming alike.
+    // Open: OMEGA-cycle-growth finds the equalities first and makes this `Ok(false)`.
+    let seen = with_sum(1, 3);
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert!(!seen.contains_key("Ok(true)"), "{seen:?}");
+}
+
+#[test]
+fn every_naming_gives_one_answer_on_cyclic_orbits_of_four() {
+    one_answer_on_orbits(0x3_0004, 4, 1500, false);
+}
+
+#[test]
+fn every_naming_gives_one_answer_on_cyclic_orbits_of_five() {
+    one_answer_on_orbits(0x3_0005, 5, 240, false);
+}
+
+#[test]
+fn every_naming_gives_one_answer_on_cyclic_orbits_of_six() {
+    one_answer_on_orbits(0x3_0006, 6, 24, false);
+}
+
+#[test]
+fn every_naming_gives_one_answer_on_dihedral_orbits_of_six() {
+    one_answer_on_orbits(0x3_1006, 6, 20, true);
+}
+
 /// System 111 of the regular family at seed 103 with five variables, no box: rows
 /// `Σ c·x - 6 >= 0` (R3_CLAUDE.md 2.1). Before the rule 24 namings gave Growth and 96 gave
 /// no point.
