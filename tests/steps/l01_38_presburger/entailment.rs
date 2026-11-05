@@ -142,3 +142,69 @@ fn abs_and_branches_are_stated_through_their_cases() {
     let e = rung2("ok(a, b) = true;", "ok(a, b) = abs(a) == a;");
     assert_eq!(e.to_string(), "refuted: countermodel a = -1");
 }
+
+/// The inner level of a three-level index, `z * h + y` in bounds of `d * h`.
+const INNER: &str = "ok(z, d, y, h) = 0 <= z && z < d && 0 <= y && y < h;";
+/// The outer level, with `p` naming `z * h + y` and `dh` naming `d * h`.
+const NAMED: &str = "ok(p, dh, x, w) = p * w + x < dh * w;";
+/// The same index written flat.
+const FLAT: &str = "ok(z, d, y, h, x, w) = (z * h + y) * w + x < d * h * w;";
+
+#[test]
+fn a_product_of_three_factors_is_proved_by_naming_the_inner_level() {
+    // The inner level first: its bounds are the premises of the outer one.
+    for g in [
+        "ok(z, d, y, h) = 0 <= z * h + y;",
+        "ok(z, d, y, h) = z * h + y < d * h;",
+    ] {
+        let e = rung2(INNER, g);
+        assert!(matches!(e, Entailment::Proved(_)), "{g}: {e}");
+    }
+    // Then the outer level from those bounds, each product of two symbols.
+    let e = rung2(
+        "ok(p, dh, x, w) = 0 <= p && p < dh && 0 <= x && x < w;",
+        NAMED,
+    );
+    let Entailment::Proved(certificate) = &e else {
+        panic!("not proved: {e}")
+    };
+    // `(dh - 1 - p)·w >= 0`, the product of the premises on `p` and `w`.
+    let shown: Vec<String> = certificate.iter().map(|f| f.to_string()).collect();
+    assert!(
+        shown
+            .iter()
+            .any(|s| s == "dh + w + p * w <= p + dh * w + 1"),
+        "{shown:?}"
+    );
+    // The naming is the flat goal: the interpreter gives both the same value at every point
+    // of a window, with `p = z * h + y` and `dh = d * h`.
+    let (fs, flat) = function(FLAT);
+    let (ns, named) = function(NAMED);
+    let mut n = 0;
+    for z in -1..=2 {
+        for d in -1..=2 {
+            for y in -1..=2 {
+                for h in -1..=2 {
+                    for x in -1..=2 {
+                        for w in -1..=2 {
+                            let f = holds(&flat, &fs, &[z, d, y, h, x, w]);
+                            let g = holds(&named, &ns, &[z * h + y, d * h, x, w]);
+                            assert_eq!(f, g, "z={z} d={d} y={y} h={h} x={x} w={w}");
+                            n += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(n, 4096);
+}
+
+#[test]
+fn the_flat_product_of_three_factors_is_not_taken_by_rung_2() {
+    // `(z * h + y) * w` multiplies a sum by a symbol and `d * h * w` three symbols: a product
+    // factor must be a symbol (`Lin::product`), so the goal is outside the linear-relation
+    // domain and rung 2 proves nothing; naming the inner level is what proves it.
+    let (ps, g) = function(FLAT);
+    assert!(super::relations(&[&g], &ps, true).is_none());
+}
