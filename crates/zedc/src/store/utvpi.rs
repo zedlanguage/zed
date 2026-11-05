@@ -522,7 +522,9 @@ fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
 mod tests {
     use std::collections::VecDeque;
 
-    use super::{Int, bf_dijkstra, goldberg_radzik, negsssp, odd_zero_cycle, potential};
+    use super::{
+        At, Int, Shared, bf_dijkstra, goldberg_radzik, negsssp, odd_zero_cycle, potential, race,
+    };
 
     #[test]
     fn acyclic_signed_edges_have_an_exact_potential() {
@@ -652,6 +654,124 @@ mod tests {
         assert!(
             negative > 0 && odd > 0 && point > 0,
             "{negative} {odd} {point}"
+        );
+    }
+
+    /// Plain Bellman–Ford from a source joined to each node by an edge of weight 0: `n` passes
+    /// over every edge, and an edge still to relax after them shows a negative cycle.
+    fn bellman_ford(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
+        let mut d = vec![Int::ZERO; out.len()];
+        for _ in 0..out.len() {
+            let mut fell = false;
+            for (u, edges) in out.iter().enumerate() {
+                for (v, w) in edges {
+                    let to = &d[u] + w;
+                    if to < d[*v] {
+                        d[*v] = to;
+                        fell = true;
+                    }
+                }
+            }
+            if !fell {
+                return Some(d);
+            }
+        }
+        let holds = out
+            .iter()
+            .enumerate()
+            .all(|(u, edges)| edges.iter().all(|(v, w)| d[*v] <= &d[u] + w));
+        holds.then_some(d)
+    }
+
+    /// Whether `p` holds on every edge of `out`: `p(v) <= p(u) + w`.
+    fn holds(out: &[Vec<(usize, Int)>], p: &[Int]) -> bool {
+        out.iter()
+            .enumerate()
+            .all(|(u, edges)| edges.iter().all(|(v, w)| p[*v] <= &p[u] + w))
+    }
+
+    #[test]
+    fn shared_labels_keep_the_answers_of_bellman_ford() {
+        // 6,000 random directed graphs of 1 to 40 nodes, self loops allowed, weights -6 to 12,
+        // half of them with a ring of weights 0 to 30 through every node so that they are one
+        // strongly connected component. `Shared` run to its end (Goldberg and Radzik's search and
+        // BF-Dijkstra taking each other's labels), `race` (the same against Duong's search) and
+        // `potential` (split by components) must each find a negative cycle exactly when plain
+        // Bellman–Ford does, and otherwise give a potential that holds on every edge. The counts
+        // show that labels pass both ways and lower the receiving search's label, on graphs with
+        // and without a negative cycle.
+        let mut state = 7u64;
+        let (mut to_gor, mut to_rounds) = (0usize, 0usize);
+        let (mut negative_shared, mut feasible_shared, mut negative) = (0, 0, 0);
+        for graph in 0..6000 {
+            let n = 1 + (next(&mut state) % if graph % 4 == 0 { 40 } else { 12 }) as usize;
+            let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
+            if next(&mut state).is_multiple_of(2) {
+                for u in 0..n {
+                    let w = Int::from((next(&mut state) % 31) as i64);
+                    out[u].push(((u + 1) % n, w));
+                }
+            }
+            for _ in 0..next(&mut state) % (3 * n as u64 + 1) {
+                let (u, v) = (
+                    (next(&mut state) % n as u64) as usize,
+                    (next(&mut state) % n as u64) as usize,
+                );
+                out[u].push((v, Int::from((next(&mut state) % 19) as i64 - 6)));
+            }
+            let reference = bellman_ford(&out);
+            // `Shared` alone, counting the labels that pass and lower the receiver's label.
+            let mut both = Shared::new(&out);
+            let mut passed = 0;
+            let shared = loop {
+                // Goldberg and Radzik's search changes no label in the step that starts a pass,
+                // and BF-Dijkstra none in the step that ends a round, so a label lower after
+                // such a step came from the other search.
+                let gor_before = matches!(both.gor.at, At::Pass).then(|| both.gor.d.clone());
+                let rounds_before = both
+                    .rounds
+                    .ends_round()
+                    .then(|| both.rounds.labels().to_vec());
+                let found = both.step();
+                if let Some(before) = gor_before {
+                    let lowers = (0..n).filter(|&v| both.gor.d[v] < before[v]).count();
+                    passed += lowers;
+                    to_gor += lowers;
+                }
+                if let (Some(before), None) = (rounds_before, &found) {
+                    let labels = both.rounds.labels();
+                    let lowers = (0..n).filter(|&v| labels[v] < before[v]).count();
+                    passed += lowers;
+                    to_rounds += lowers;
+                }
+                if let Some(found) = found {
+                    break found;
+                }
+            };
+            for (name, found) in [
+                ("Shared", shared),
+                ("race", race(&out)),
+                ("potential", potential(&out)),
+            ] {
+                assert_eq!(
+                    found.is_some(),
+                    reference.is_some(),
+                    "{name} on graph {graph}: {out:?}"
+                );
+                if let Some(p) = found {
+                    assert!(holds(&out, &p), "{name} on graph {graph}: {out:?}");
+                }
+            }
+            match (reference.is_some(), passed > 0) {
+                (false, true) => negative_shared += 1,
+                (true, true) => feasible_shared += 1,
+                _ => {}
+            }
+            negative += usize::from(reference.is_none());
+        }
+        assert!(
+            to_gor > 0 && to_rounds > 0 && negative_shared > 0 && feasible_shared > 0,
+            "{to_gor} {to_rounds} {negative_shared} {feasible_shared} of {negative} negative"
         );
     }
 
