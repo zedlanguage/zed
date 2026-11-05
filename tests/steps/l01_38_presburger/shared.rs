@@ -679,3 +679,174 @@ fn formulas_shared_and_regrouped_at_random_at_several_depths_compare_and_hash_as
         }
     }
 }
+
+/// `d` tops `[ti || x >= -3y - i]`, each `ti` the conjunction `[t(i-1), t(i-1), x >= i]` from
+/// `t0 = [y >= 0]`; when `regroup`, each `ti` is grouped as in [`shifted_chains`], `[y >= 0,
+/// ri]`, so that the parts of each top read alike but begin and end at other places. The last
+/// top's constant has `last` added. Each top holds `2^(i+1) - 1` constraints written out.
+fn staircase(d: usize, regroup: bool, last: i64) -> Formula {
+    let c = con(0, 1, 0, false);
+    let (mut t, mut r) = (and(vec![c.clone()]), and(vec![]));
+    let mut tops = Vec::with_capacity(d);
+    for i in 1..=d as i64 {
+        let ci = con(1, 0, -i, false);
+        t = and(vec![t.clone(), t, ci.clone()]);
+        r = and(vec![r.clone(), c.clone(), r, ci]);
+        let ti = if regroup {
+            and(vec![c.clone(), r.clone()])
+        } else {
+            t.clone()
+        };
+        let k = i + if i == d as i64 { last } else { 0 };
+        tops.push(or(vec![ti, con(3, 1, k, false)]));
+    }
+    and(tops)
+}
+
+/// `d` tops as in [`staircase`], each `ti = [ta, tb, x >= i]` with `ta` and `tb` earlier
+/// conjunctions picked at random from `seed`, so that parts are shared at random depths.
+fn random_dag(d: usize, seed: u64, last: i64) -> Formula {
+    let mut rng = Rng::new(seed);
+    let mut ts = vec![and(vec![con(0, 1, 0, false)])];
+    let mut tops = Vec::with_capacity(d);
+    for i in 1..=d {
+        let (a, b) = (rng.below(i), rng.below(i));
+        let t = and(vec![
+            ts[a].clone(),
+            ts[b].clone(),
+            con(1, 0, -(i as i64), false),
+        ]);
+        let k = i as i64 + if i == d { last } else { 0 };
+        tops.push(or(vec![t.clone(), con(3, 1, k, false)]));
+        ts.push(t);
+    }
+    and(tops)
+}
+
+/// `k` sets of `k` constraints each, picked at random from `seed` among `k^2`, each a chain of
+/// conjunctions, and a top `[si && sj] || x >= -3y - (ik + j)` for each pair `i < j`: about
+/// `k^2` tops, each holding two of the sets. The last top's constant has `last` added.
+fn pairs(k: usize, seed: u64, last: i64) -> Formula {
+    let mut rng = Rng::new(seed);
+    let sets: Vec<Formula> = (0..k)
+        .map(|_| {
+            (0..k).fold(and(vec![]), |t, _| {
+                and(vec![t, con(1, 0, -(rng.below(k * k) as i64), false)])
+            })
+        })
+        .collect();
+    let mut tops = Vec::new();
+    for i in 0..k {
+        for j in i + 1..k {
+            let n = (i * k + j) as i64 + if (i, j) == (k - 2, k - 1) { last } else { 0 };
+            tops.push(or(vec![
+                and(vec![sets[i].clone(), sets[j].clone()]),
+                con(3, 1, n, false),
+            ]));
+        }
+    }
+    and(tops)
+}
+
+/// Pairs equal written out, and pairs that differ only at the last top, each built apart: a
+/// staircase against itself and against its regrouping, and a random DAG against itself.
+fn tops_pairs(d: usize) -> Vec<(Formula, Formula, bool)> {
+    let mut out = Vec::new();
+    for last in [0, 1] {
+        let equal = last == 0;
+        out.push((staircase(d, false, 0), staircase(d, false, last), equal));
+        out.push((staircase(d, false, 0), staircase(d, true, last), equal));
+        out.push((random_dag(d, 7, 0), random_dag(d, 7, last), equal));
+    }
+    out
+}
+
+#[test]
+fn tops_sharing_parts_compare_as_written_out() {
+    for d in 1..=9 {
+        for (a, b, equal) in tops_pairs(d) {
+            let o = written(&a).cmp(&written(&b));
+            assert_eq!(o == Ordering::Equal, equal, "d = {d}: {a} against {b}");
+            assert_eq!(a.cmp(&b), o, "d = {d}: {a} against {b}");
+            assert_eq!(b.cmp(&a), o.reverse(), "d = {d}: {b} against {a}");
+            if equal {
+                assert_eq!(hash(&a), hash(&b), "d = {d}: {a}");
+            }
+        }
+    }
+    for k in 2..=6 {
+        for last in [0, 1] {
+            let (a, b) = (pairs(k, 9, 0), pairs(k, 9, last));
+            let o = written(&a).cmp(&written(&b));
+            assert_eq!(o == Ordering::Equal, last == 0, "k = {k}");
+            assert_eq!(a.cmp(&b), o, "k = {k}: {a} against {b}");
+        }
+    }
+}
+
+#[test]
+fn tops_sharing_parts_compare_in_time_near_quadratic_in_the_depth() {
+    // Each side has n = O(d) distinct parts and up to 2^d constraints written out, so compare
+    // costs O(n log N) = O(d^2), as for [`shifted_chains`] (COMPLEXITY.md S31b). Equal pairs
+    // and pairs that differ at the last top are both read to the end.
+    let built: BTreeMap<usize, Vec<(Formula, Formula, bool)>> =
+        [30, 240].map(|d| (d, tops_pairs(d))).into();
+    scaling::check_order(
+        "staircases and random DAGs of d tops, equal or differing at the last top",
+        30,
+        2,
+        |d| {
+            for (a, b, equal) in &built[&d] {
+                assert_eq!(a == b, *equal);
+                assert_eq!(b.cmp(a), a.cmp(b).reverse());
+            }
+        },
+    );
+}
+
+#[test]
+fn pairs_of_shared_sets_compare_in_time_near_linear_in_the_parts() {
+    // k sets of k constraints and k^2 / 2 tops: n = O(k^2) distinct parts, so k to 8k is n to
+    // 64n, and power 2 in k is time near linear in n.
+    let built: BTreeMap<usize, [(Formula, Formula, bool); 2]> = [32, 256]
+        .map(|k| {
+            (
+                k,
+                [
+                    (pairs(k, 9, 0), pairs(k, 9, 0), true),
+                    (pairs(k, 9, 0), pairs(k, 9, 1), false),
+                ],
+            )
+        })
+        .into();
+    scaling::check_order(
+        "k^2 / 2 tops, each two of k sets of k constraints, equal or differing at the last top",
+        32,
+        2,
+        |k| {
+            for (a, b, equal) in &built[&k] {
+                assert_eq!(a == b, *equal);
+                assert_eq!(b.cmp(a), a.cmp(b).reverse());
+            }
+        },
+    );
+}
+
+#[test]
+fn a_deep_chain_of_single_parts_compares_without_running_out_of_stack() {
+    // Each level one conjunction around the level below: the depth is the number of parts.
+    let deep = |last: i64| {
+        (0..200_000).fold(con(0, 1, last, false), |f, i| {
+            if i % 2 == 0 {
+                and(vec![f])
+            } else {
+                or(vec![f])
+            }
+        })
+    };
+    let (a, b, c) = (deep(0), deep(0), deep(1));
+    assert!(a == b);
+    assert_eq!(a.cmp(&c), c.cmp(&a).reverse());
+    assert_ne!(a, c);
+    assert_eq!(hash(&a), hash(&b));
+}
