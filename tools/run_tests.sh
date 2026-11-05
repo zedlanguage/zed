@@ -53,10 +53,12 @@ short=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([
   "$out/build-short.log")
 # A step folder or module named here gets a piece for each of its modules and each of its own
 # tests instead of one piece; the rest get one piece each. Named because together they ran past
-# 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s); the
-# modules are those with a test over 10 s there, so each of those tests has a process of its own.
+# 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s; l01_23
+# 29 to 35 s at load 53, with tests of 36, 32 and 15 s); the modules are those with a test over
+# 10 s there, so each of those tests has a process of its own.
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
+  l01_23_subtyping l01_23_subtyping::scaling
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
   l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega

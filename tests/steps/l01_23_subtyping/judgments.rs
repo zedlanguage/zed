@@ -331,46 +331,65 @@ fn corpus(seed: u64, n: usize) -> Vec<Type> {
 /// cycles and Boolean combinations, 1500 queries `a <: b` are answered one at a time with the
 /// kept results dropped before each, in one batch keeping them, and in the batch reversed, and
 /// the three agree. A result kept that rested on an assumption, or that was read before the
-/// search finished, makes a later answer differ.
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them() {
+/// search finished, makes a later answer differ. One test per seed, so each runs on a thread of
+/// its own and none nears the 60 s limit; seeds 2 and 3 take 46 and 26 s and wait for
+/// SUB-corpus-slow.
+fn subtype_answers_agree(seed: u64) {
     scaling::on_a_thread(1 << 29, || {
-        for seed in [1, 4, 5, 6] {
-            let ts = corpus(seed, 150);
-            let mut x = seed + 5;
-            let mut next = || {
-                x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
-                (x >> 33) as usize % ts.len()
-            };
-            let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
-            let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
-            let alone: Vec<bool> = qs
-                .iter()
-                .map(|q| {
-                    Type::forget_emptiness();
-                    ask(q)
-                })
-                .collect();
-            Type::forget_emptiness();
-            let batch: Vec<bool> = qs.iter().map(ask).collect();
-            Type::forget_emptiness();
-            let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
-            back.reverse();
-            let held = alone.iter().filter(|&&b| b).count();
-            assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
-            for (i, &(a, b)) in qs.iter().enumerate() {
-                assert!(
-                    alone[i] == batch[i] && alone[i] == back[i],
-                    "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
-                    ts[a],
-                    ts[b],
-                    alone[i],
-                    batch[i],
-                    back[i]
-                );
-            }
+        let ts = corpus(seed, 150);
+        let mut x = seed + 5;
+        let mut next = || {
+            x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+            (x >> 33) as usize % ts.len()
+        };
+        let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
+        let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
+        let alone: Vec<bool> = qs
+            .iter()
+            .map(|q| {
+                Type::forget_emptiness();
+                ask(q)
+            })
+            .collect();
+        Type::forget_emptiness();
+        let batch: Vec<bool> = qs.iter().map(ask).collect();
+        Type::forget_emptiness();
+        let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
+        back.reverse();
+        let held = alone.iter().filter(|&&b| b).count();
+        assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
+        for (i, &(a, b)) in qs.iter().enumerate() {
+            assert!(
+                alone[i] == batch[i] && alone[i] == back[i],
+                "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
+                ts[a],
+                ts[b],
+                alone[i],
+                batch[i],
+                back[i]
+            );
         }
     });
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_1() {
+    subtype_answers_agree(1);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_4() {
+    subtype_answers_agree(4);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_5() {
+    subtype_answers_agree(5);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_6() {
+    subtype_answers_agree(6);
 }
 
 /// A morphism cycle is inhabited, `W = (W) -> int` by a closure, except when what the cycle
@@ -402,6 +421,9 @@ fn a_morphism_cycle_through_an_empty_part_is_empty() {
     assert!(!n.is_empty(), "N = V -> empty is inhabited");
     // The verdict builds a closure only when its value type has a value, so `N` is refused
     // (`NoWitness`) rather than shown inhabited; a refusal claims nothing, but `Empty` is wrong.
+    // This is weaker than the plan row's "N is inhabited": the ledger item EMPTY-key-closure
+    // lets `find_rep` build a closure whose key type is empty (it is never called) and then
+    // tightens this line to `assert_eq!(n.verdict(), Verdict::Inhabited)`.
     assert_ne!(n.verdict(), Verdict::Empty, "N = V -> empty is not empty");
     // The same answers with the kept results of the other type in place.
     assert!(v.is_empty() && !n.is_empty() && !w.is_empty());
