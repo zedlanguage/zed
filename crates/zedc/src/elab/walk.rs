@@ -511,6 +511,39 @@ impl<'a> Elab<'a> {
         m.ret = Ret::Tests(tf.ok);
     }
 
+    /// The call a row of `f`'s table makes, `callee` applied to `args`, the row's key `input`
+    /// elaborated, as a call expression makes it: an argument whose loose atoms the parameter
+    /// does not take passes them by (rule 6 of sec:type_resolution), as the checker recorded
+    /// for the row at `case`.
+    fn row_call(
+        &mut self,
+        f: &Function,
+        input: &Expr,
+        case: Span,
+        callee: Shared,
+        mut args: Vec<Term>,
+    ) -> Term {
+        let info = self.info;
+        let Some(at) = info.passes.get(&case) else {
+            return Term::App(callee, args);
+        };
+        let at: HashMap<Span, &KType> = at.iter().map(|(s, k)| (*s, k)).collect();
+        let spans: Vec<Span> = match (&input.kind, f.params.len()) {
+            (ExprKind::Tuple(items), n) if n != 1 => items.iter().map(|e| e.span).collect(),
+            _ => vec![input.span],
+        };
+        let mut lets = Vec::with_capacity(at.len());
+        let mut ks = Vec::with_capacity(at.len());
+        for (a, s) in args.iter_mut().zip(&spans) {
+            if let Some(&k) = at.get(s) {
+                let t = self.temp();
+                lets.push((t.clone(), std::mem::replace(a, Term::Var(t))));
+                ks.push(k);
+            }
+        }
+        self.guard(lets, ks.into_iter(), Term::App(callee, args))
+    }
+
     fn expr(&mut self, m: &mut M<'a>, e: &'a Expr) {
         if let Some(t) = self.passing.get(&e.span) {
             m.give(Some(Term::Var(t.clone())));
@@ -761,19 +794,31 @@ impl<'a> Elab<'a> {
         for (a, _) in &pf.args {
             self.passing.remove(&a.span);
         }
-        let mut call = call?;
+        let call = call?;
         let lets: Vec<(Arc<str>, Term)> = pf
             .lets
             .into_iter()
             .map(|(t, x)| x.map(|x| (t, x)))
             .collect::<Option<_>>()?;
+        Some(self.guard(lets, pf.args.iter().map(|&(_, k)| k), call))
+    }
+
+    /// `call`, whose arguments that pass atoms are bound as `lets`, each paired in order with
+    /// the atoms of `ks` that pass: an atom in any of them is the value, those of several
+    /// merged as a primitive merges them, and otherwise `call` runs.
+    fn guard<'k>(
+        &mut self,
+        lets: Vec<(Arc<str>, Term)>,
+        ks: impl Iterator<Item = &'k KType>,
+        mut call: Term,
+    ) -> Term {
         let v = |n: &Arc<str>| Term::Var(n.clone());
         // An argument whose atoms pass only in part (rule 6 treats each region apart): its
         // failure is the argument when it is one of those atoms, and otherwise `false`, which
         // no merge below takes for an atom.
         let mut merges = Vec::new();
         let mut fails = Vec::with_capacity(lets.len());
-        for ((t, _), &(_, k)) in lets.iter().zip(&pf.args) {
+        for ((t, _), k) in lets.iter().zip(ks) {
             if *k == check::ty::atoms() {
                 fails.push(t.clone());
                 continue;
@@ -819,14 +864,12 @@ impl<'a> Elab<'a> {
                 vec![(KPattern::AnyAtom, v(&f)), (KPattern::Wild, call)],
             );
         }
-        Some(
-            lets.into_iter()
-                .chain(merges)
-                .rev()
-                .fold(call, |body, (t, x)| {
-                    Term::Let(t, Shared::new(x), Shared::new(body))
-                }),
-        )
+        lets.into_iter()
+            .chain(merges)
+            .rev()
+            .fold(call, |body, (t, x)| {
+                Term::Let(t, Shared::new(x), Shared::new(body))
+            })
     }
 
     fn call(&mut self, m: &mut M<'a>, callee: &'a Expr, call: Call<'a>) {
@@ -1500,7 +1543,7 @@ impl<'a> Elab<'a> {
                             end: expected.span.end,
                         };
                         let callee = Shared::new(Term::Var(self.names[tf.id].clone()));
-                        let call = Term::App(callee, args.clone());
+                        let call = self.row_call(tf.f, input, case, callee, args.clone());
                         self.tests.push(Test {
                             function: tf.f.name.clone(),
                             check: Term::Prim(Prim::Eq, vec![call, want.clone()]),
