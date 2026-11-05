@@ -62,8 +62,8 @@ use crate::store::interval::{
 use crate::store::revision::{Op, forward};
 
 use ty::{
-    Arrow, Binds, Carrier, EVERY, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot, Ty,
-    VarFacts, Vars, atoms, errs, mask_text,
+    Arrow, Binds, Carrier, EVERY, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot,
+    Ty, VarFacts, Vars, atoms, errs, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -502,6 +502,11 @@ struct Class {
     /// Whether its values are those of generic literals only, as of `1n + 1n`: of a merged
     /// class, whether both were. An `if` merges it with the class of its other branch.
     generic: bool,
+    /// Whether it is what a use of another class's values gives, as `args[k]` is in the body
+    /// of `r(fs, args, k)`: at a call it may hold any atom, and a test narrows it by a need
+    /// ([`Ck::narrowed`]). Of a merged class, whether both were. A parameter's class is not:
+    /// it holds the atoms its uses handle beside it ([`Ck::param_ty`]).
+    given: bool,
 }
 
 struct Ck<'t, 'a> {
@@ -1638,6 +1643,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             flowed: Vec::new(),
             binder: None,
             generic: false,
+            given: false,
         });
         self.pending[self.level].push(id);
         id
@@ -1721,9 +1727,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let level = self.classes[child].level;
         let binder = self.classes[child].binder;
         let generic = self.classes[child].generic;
+        let given = self.classes[child].given;
         self.classes[child].parent = root;
         let c = &mut self.classes[root];
         c.generic &= generic;
+        c.given &= given;
         c.binder = match (c.binder, binder) {
             (Some(a), Some(b)) if b.1.start <= a.1.start && a.1.end <= b.1.end => Some(b),
             (a, b) => a.or(b),
@@ -1815,6 +1823,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let result = gives.then(|| {
             let j = self.class();
             self.classes[j].level = level;
+            self.classes[j].given = true;
             Ty::var(format!("${j}").into())
         });
         let need = Need {
@@ -1915,6 +1924,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty::empty()
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
+            NeedKind::Narrow(narrow) => self.narrowed(&on, narrow, span),
         };
         self.replaying -= 1;
         self.need_args = None;
@@ -2699,6 +2709,32 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => Ty::dynamic(),
             };
             out = out.union(&t);
+        }
+        out
+    }
+
+    /// What the test at `span` leaves of `v` where it fails, as `narrow` says. A type variable
+    /// of a class a need gave ([`Class::given`]) leaves what a need gives, so `args[k] else ""`
+    /// in the body of `r(fs, args, k)` holds no `#notFound` at a call that binds `args` to
+    /// `CommandLine` (rule 3 of sec:type_resolution); any other variable is kept whole.
+    fn narrowed(&mut self, v: &Ty, narrow: &Narrow, span: Span) -> Ty {
+        let mut out = match narrow {
+            Narrow::Loose => v.without_loose(),
+            Narrow::Atom(name) => {
+                let mut rest = v.diff(&Ty::set(any_payload(name)));
+                rest.payloads.remove(name.as_ref());
+                rest
+            }
+            Narrow::Not(t) => v.diff_with(t, &|w| self.stale(w)),
+        };
+        for x in &v.vars {
+            if let Some(k) = self.class_of(&Piece::Var(x.clone()))
+                && self.classes[k].given
+            {
+                out.vars.remove(x);
+                let left = self.need(k, NeedKind::Narrow(narrow.clone()), true, span);
+                out = out.union(&left);
+            }
         }
         out
     }

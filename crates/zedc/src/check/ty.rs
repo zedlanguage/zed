@@ -569,6 +569,20 @@ pub enum NeedKind {
         /// The place in its payload.
         slot: Slot,
     },
+    /// A test's narrowing: what is left of the value where the test fails.
+    Narrow(Narrow),
+}
+
+/// What a test leaves of a value where it fails (rule 3 of sec:type_resolution).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Narrow {
+    /// `e else d`: what is not a loose atom.
+    Loose,
+    /// `e else #a -> d`: what is not the atom `#a`, with any payload or none.
+    Atom(Arc<str>),
+    /// `e is t`, where it is false: what is not in `t`. Only the scalars, atoms and tuples
+    /// of `t` are subtracted, so its variables need no binding.
+    Not(Ty),
 }
 
 /// A place in an atom's payload.
@@ -623,6 +637,7 @@ impl Need {
                     atom: atom.clone(),
                     slot: slot.clone(),
                 },
+                NeedKind::Narrow(n) => NeedKind::Narrow(n.clone()),
             },
             result: self.result.as_ref().map(&f),
             span: self.span,
@@ -641,7 +656,8 @@ impl Need {
             | NeedKind::Destructure { .. }
             | NeedKind::Data(_)
             | NeedKind::Into { .. }
-            | NeedKind::Payload { .. } => (None, &[], &[]),
+            | NeedKind::Payload { .. }
+            | NeedKind::Narrow(_) => (None, &[], &[]),
             NeedKind::Index(k) => (Some(k), &[], &[]),
             NeedKind::Call {
                 positional, named, ..

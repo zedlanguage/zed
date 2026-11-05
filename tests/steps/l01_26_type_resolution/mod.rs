@@ -9,6 +9,7 @@ mod calls;
 mod curried_classes;
 mod docs;
 mod fits;
+mod given;
 mod handled;
 mod held_functions;
 mod literals;

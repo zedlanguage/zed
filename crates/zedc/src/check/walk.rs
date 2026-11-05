@@ -604,7 +604,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     unreachable!("an `else`")
                 };
                 let t = match pattern {
-                    None => v.without_loose().union(&d),
+                    None => self.narrowed(&v, &Narrow::Loose, e.span).union(&d),
                     Some(Pattern::Atom {
                         name,
                         fields,
@@ -612,9 +612,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         ..
                     }) if fields.is_empty() && items.is_empty() => {
                         // A bare pattern matches the atom with any payload or none.
-                        let mut rest = v.diff(&Ty::set(any_payload(name)));
-                        rest.payloads.remove(name.as_str());
-                        rest.union(&d)
+                        let narrow = Narrow::Atom(name.as_str().into());
+                        self.narrowed(&v, &narrow, e.span).union(&d)
                     }
                     Some(_) => v.union(&d),
                 };
@@ -699,8 +698,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 // The meet keeps the functions of `v` whole; the difference compares them with
                 // those of `t`, reading the classes solved inside them ([`Ck::stale`]).
-                let no = v.diff_with(&t, &|w| self.stale(w));
-                let (yes, no) = (vec![(b, v.meet(&t), e.span)], vec![(b, no, e.span)]);
+                let yes = v.meet(&t);
+                let no = self.narrowed(&v, &Narrow::Not(t), e.span);
+                let (yes, no) = (vec![(b, yes, e.span)], vec![(b, no, e.span)]);
                 m.ret = match negated {
                     false => Ret::Cond(bool_, yes, no),
                     true => Ret::Cond(bool_, no, yes),
