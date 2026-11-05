@@ -15,6 +15,7 @@ mod later_words;
 mod manifest;
 mod queries;
 pub(crate) mod scaling;
+mod source;
 mod units;
 
 use std::collections::HashMap;

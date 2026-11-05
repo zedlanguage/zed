@@ -45,16 +45,18 @@ pub trait Files {
     fn read(&self, name: &str) -> Option<Result<Arc<str>, String>>;
 }
 
-/// The files under a directory of the file system.
+/// The files under a directory of the file system, each loaded as source (DESIGN.md
+/// sec:lexical): one that is not UTF-8, starts with a byte order mark or is not NFC cannot be
+/// read, and why says where, as `line:col: why`.
 pub struct Dir(pub PathBuf);
 
 impl Files for Dir {
     fn read(&self, name: &str) -> Option<Result<Arc<str>, String>> {
         match std::fs::read(self.0.join(name)) {
             Ok(bytes) => Some(
-                String::from_utf8(bytes)
+                source::load(&bytes)
                     .map(Arc::from)
-                    .map_err(|_| "it is not UTF-8".to_string()),
+                    .map_err(|e| e.render(&bytes)),
             ),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => Some(Err(e.to_string())),
