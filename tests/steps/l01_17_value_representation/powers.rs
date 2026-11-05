@@ -27,7 +27,7 @@ fn dec(text: &str) -> Rat {
 fn two_to(k: i64) -> Rat {
     let p = int(2).pow(&k.unsigned_abs().into()).unwrap();
     if k < 0 {
-        int(1).div(&p).expect("2^k is not zero")
+        int(1).div(&p).unwrap().expect("2^k is not zero")
     } else {
         p
     }
@@ -48,8 +48,11 @@ fn random(rng: &mut Rng) -> Rat {
     match rng.below(4) {
         0 => d,
         1 => p,
-        2 => d.mul(&p),
-        _ => d.div(&p).expect("a power of a positive base is not zero"),
+        2 => d.mul(&p).unwrap(),
+        _ => d
+            .div(&p)
+            .unwrap()
+            .expect("a power of a positive base is not zero"),
     }
 }
 
@@ -70,10 +73,18 @@ fn kept_powers_agree_with_the_built_value() {
             ba.sub(&bb).unwrap(),
             "- of {at}"
         );
-        assert_eq!(built(&a.mul(&b)), ba.mul(&bb), "* of {at}");
+        assert_eq!(
+            built(&a.mul(&b).unwrap()),
+            ba.mul(&bb).unwrap(),
+            "* of {at}"
+        );
         if !b.is_zero() {
-            let q = a.div(&b).expect("b is not zero");
-            assert_eq!(built(&q), ba.div(&bb).expect("b is not zero"), "/ of {at}");
+            let q = a.div(&b).unwrap().expect("b is not zero");
+            assert_eq!(
+                built(&q),
+                ba.div(&bb).unwrap().expect("b is not zero"),
+                "/ of {at}"
+            );
         }
         assert_eq!(a.cmp(&b), ba.cmp(&bb), "order of {at}");
         assert_eq!(a == b, ba == bb, "== of {at}");
@@ -180,18 +191,21 @@ fn corner_cases_of_kept_powers() {
     assert_eq!(literal_f32("1e39"), Err(LiteralRounding::Infinite));
     assert_eq!(literal_f64("-1e-99999999999"), Err(LiteralRounding::Zero));
     // The largest f64 and the tie above it, which rounds to even: infinity.
-    let max = int((1 << 53) - 1).mul(&two_to(971));
+    let max = int((1 << 53) - 1).mul(&two_to(971)).unwrap();
     assert_eq!(max.to_f64(), Ok(f64::MAX));
-    let above = int((1 << 54) - 1).mul(&two_to(970));
+    let above = int((1 << 54) - 1).mul(&two_to(970)).unwrap();
     assert_eq!(above.to_f64(), Err(LiteralRounding::Infinite));
-    let below = int((1 << 55) - 3).mul(&two_to(969));
+    let below = int((1 << 55) - 3).mul(&two_to(969)).unwrap();
     assert_eq!(below.to_f64(), Ok(f64::MAX));
     // Subnormals: the least, half of it (a tie, to the even zero), and three quarters of it.
     let least = f64::from_bits(1);
     assert_eq!(two_to(-1074).to_f64(), Ok(least));
     assert_eq!(two_to(-1075).to_f64(), Err(LiteralRounding::Zero));
-    assert_eq!(int(3).mul(&two_to(-1076)).to_f64(), Ok(least));
-    assert_eq!(int(3).mul(&two_to(-1075)).to_f64(), Ok(2.0 * least));
+    assert_eq!(int(3).mul(&two_to(-1076)).unwrap().to_f64(), Ok(least));
+    assert_eq!(
+        int(3).mul(&two_to(-1075)).unwrap().to_f64(),
+        Ok(2.0 * least)
+    );
     assert_eq!(two_to(-149).to_f32(), Ok(f32::from_bits(1)));
     assert_eq!(two_to(-150).to_f32(), Err(LiteralRounding::Zero));
     // f32 ties at 2^24.
@@ -199,7 +213,9 @@ fn corner_cases_of_kept_powers() {
     assert_eq!(int((1 << 24) + 3).to_f32(), Ok(16_777_220.0));
     assert_eq!(dec("16777217e0").to_f32(), Ok(16_777_216.0));
     // Powers that cancel to an integer.
-    let one = dec("1e-5").mul(&int(10).pow(&5u32.into()).unwrap());
+    let one = dec("1e-5")
+        .mul(&int(10).pow(&5u32.into()).unwrap())
+        .unwrap();
     assert_eq!(one, int(1));
     assert!(one.is_integer());
     assert_eq!(
@@ -210,10 +226,11 @@ fn corner_cases_of_kept_powers() {
         .pow(&90u32.into())
         .unwrap()
         .div(&int(3).pow(&90u32.into()).unwrap())
+        .unwrap()
         .unwrap();
     assert!(q.is_integer());
     assert_eq!(q.to_integer().unwrap(), BigInt::from(2).pow(90u32));
-    assert_eq!(dec("2.5e1").mul(&dec("4e-1")), int(10));
+    assert_eq!(dec("2.5e1").mul(&dec("4e-1")).unwrap(), int(10));
     // One number in several forms is one number.
     assert_eq!(int(1000), dec("1e3"));
     assert_eq!(int(8), int(2).pow(&3u32.into()).unwrap());
@@ -227,15 +244,15 @@ fn corner_cases_of_kept_powers() {
 /// tells them apart, are built and compared.
 #[test]
 fn close_products_compare_exactly() {
-    let p = int(3).pow(&4000u32.into()).unwrap().mul(&int(7));
+    let p = int(3).pow(&4000u32.into()).unwrap().mul(&int(7)).unwrap();
     let q = p.add(&int(1)).unwrap();
     assert!(p < q && q > p && p != q);
     // A power of ten on both is cancelled before the comparison.
     let t = int(10).pow(&5000u32.into()).unwrap();
-    assert!(p.mul(&t) < q.mul(&t));
+    assert!(p.mul(&t).unwrap() < q.mul(&t).unwrap());
     // `2^84 < 3^53`, which differ in their third digit.
     assert!(int(2).pow(&84u32.into()).unwrap() < int(3).pow(&53u32.into()).unwrap());
-    assert!(dec("2e84").div(&dec("1e84")).unwrap() > dec("1.9e0"));
+    assert!(dec("2e84").div(&dec("1e84")).unwrap().unwrap() > dec("1.9e0"));
     // A negative product reverses the order.
     assert!(p.neg() > q.neg());
 }
@@ -262,17 +279,29 @@ fn plain_fast_paths_agree_with_the_general_path() {
         values.push(Rat::new(BigInt::from(n), BigInt::from(d)).unwrap());
     }
     let two = int(2).pow(&1u32.into()).unwrap();
-    let four = two.mul(&two);
+    let four = two.mul(&two).unwrap();
     let text = |r: &Rat| (r.numer_text(), r.denom_text());
     for a in &values {
         for b in &values {
-            let (a2, b2) = (a.mul(&two), b.mul(&two));
+            let (a2, b2) = (a.mul(&two).unwrap(), b.mul(&two).unwrap());
             let at = format!("{a} and {b}");
             let sum = a2.add(&b2).unwrap();
-            assert_eq!(text(&sum), text(&a.add(b).unwrap().mul(&two)), "+ of {at}");
+            assert_eq!(
+                text(&sum),
+                text(&a.add(b).unwrap().mul(&two).unwrap()),
+                "+ of {at}"
+            );
             let diff = a2.sub(&b2).unwrap();
-            assert_eq!(text(&diff), text(&a.sub(b).unwrap().mul(&two)), "- of {at}");
-            assert_eq!(text(&a2.mul(&b2)), text(&a.mul(b).mul(&four)), "* of {at}");
+            assert_eq!(
+                text(&diff),
+                text(&a.sub(b).unwrap().mul(&two).unwrap()),
+                "- of {at}"
+            );
+            assert_eq!(
+                text(&a2.mul(&b2).unwrap()),
+                text(&a.mul(b).unwrap().mul(&four).unwrap()),
+                "* of {at}"
+            );
             assert_eq!(a2.cmp(&b2), a.cmp(b), "order of {at}");
             assert_eq!(a2 == b2, a == b, "== of {at}");
             assert_eq!(
@@ -307,7 +336,7 @@ fn an_exact_division_by_a_huge_power_builds_nothing() {
     assert_eq!(int(-5).div_euclid(&two.neg()).unwrap(), int(1));
     // `2^(10^12) * 3` by `2^(10^12 - 1)` is exactly 6.
     let near = int(2).pow(&(e - 1).into()).unwrap();
-    assert_eq!(two.mul(&int(3)).div_euclid(&near).unwrap(), int(6));
+    assert_eq!(two.mul(&int(3)).unwrap().div_euclid(&near).unwrap(), int(6));
     assert!(ten.is_even() && !five.is_even() && !int(-3).is_even() && int(0).is_even());
 }
 
@@ -319,6 +348,7 @@ fn a_power_of_a_wide_base_is_built() {
     assert_eq!(r, Rat::int(wide.pow(7u32)));
     let mixed = Rat::int(wide.clone())
         .mul(&two_to(100))
+        .unwrap()
         .pow(&3u32.into())
         .unwrap();
     assert_eq!(built(&mixed), Rat::int(wide.pow(3u32) << 300));
@@ -336,9 +366,9 @@ fn ten_to_n_costs_its_exponent_and_not_its_digits() {
             let a = int(10).pow(&(n as u64).into()).unwrap();
             let b = dec(&format!("1.345e{n}"));
             assert!(a < b);
-            let c = a.mul(&b);
+            let c = a.mul(&b).unwrap();
             assert!(c > b);
-            assert_eq!(c.div(&a).expect("10^n is not zero"), b);
+            assert_eq!(c.div(&a).unwrap().expect("10^n is not zero"), b);
             assert_eq!(c.div_euclid(&a).unwrap(), b);
             assert_eq!(c.rem_euclid(&b).unwrap(), int(0));
             assert_eq!(a.to_f64(), Err(LiteralRounding::Infinite));

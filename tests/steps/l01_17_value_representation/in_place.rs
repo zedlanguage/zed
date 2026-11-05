@@ -158,7 +158,9 @@ fn dividing_a_wide_number_is_refused_when_memory_is_short() {
         return;
     }
     let wide = || num(above(WIDE));
-    let kept = lit(Value::integer(Rat::int(above(WIDE)).mul(&two_to(5))));
+    let kept = lit(Value::integer(
+        Rat::int(above(WIDE)).mul(&two_to(5)).unwrap(),
+    ));
     let by_word = bin(Prim::IntDiv, wide(), num(3));
     let by_two_words = bin(Prim::IntDiv, wide(), num(above(64)));
     let kept_by_word = bin(Prim::IntDiv, kept, num(3));
@@ -182,7 +184,9 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
     }
     let wide = || num(above(WIDE));
     let minus_wide = num(-above(WIDE));
-    let kept = lit(Value::integer(Rat::int(above(WIDE)).mul(&two_to(5))));
+    let kept = lit(Value::integer(
+        Rat::int(above(WIDE)).mul(&two_to(5)).unwrap(),
+    ));
     let mersenne = (1u64 << 61) - 1;
     // `2^3 = 1 (mod 7)`, `2^61 = 1 (mod 2^61 - 1)` and `2^64 = -1 (mod 2^64 + 1)`, and `n` is a multiple of 128.
     let cases = [
@@ -325,13 +329,16 @@ fn a_kept_power_modulo_a_wide_number_is_refused_below_its_ask() {
 
 /// A wide amount held as `3 (2^n + 1) 2^5`, split three ways exactly: the quotient keeps the
 /// power of 2 and asks for sixteen times the four coefficients' width before it is built
-/// (the Complexity tradeoff in `Rat::exact_div`), and is refused under the lowered limit.
+/// (the Complexity tradeoff in `Rat::scaled`, reached through `Rat::div`), and is refused under
+/// the lowered limit.
 #[test]
 fn an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short() {
     if !in_child("an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short") {
         return;
     }
-    let amount = Rat::int(BigInt::from(3) * above(WIDE)).mul(&two_to(5));
+    let amount = Rat::int(BigInt::from(3) * above(WIDE))
+        .mul(&two_to(5))
+        .unwrap();
     let t = bin(Prim::IntDiv, lit(Value::integer(amount)), num(3));
     lower_limit();
     // Coefficients of `n + 2`, 1, 2 and 1 bits.
@@ -458,7 +465,7 @@ fn kept_power_quotients_and_remainders_agree_with_the_built_value() {
     let divisors = [3i64, -3, 7, 64, -64, 96, (1 << 61) - 1, i64::MAX];
     for a in [above(70), -above(70), above(3), BigInt::from(5)] {
         for k in [1u64, 5, 64, 100] {
-            let kept = int(a.clone()).mul(&two_to(k));
+            let kept = int(a.clone()).mul(&two_to(k)).unwrap();
             let built: BigInt = &a << k;
             for m in divisors.iter().map(|m| BigInt::from(*m)).chain([
                 above(64),
@@ -508,7 +515,10 @@ fn rational_differences_agree_with_the_cross_product() {
         }
     }
     // The common factor 3 of the denominators is divided out of the difference.
-    let (x, y) = (int(1).div(&int(6)).unwrap(), int(1).div(&int(3)).unwrap());
+    let (x, y) = (
+        int(1).div(&int(6)).unwrap().unwrap(),
+        int(1).div(&int(3)).unwrap().unwrap(),
+    );
     assert_eq!(
         x.sub(&y).unwrap(),
         Rat::new(BigInt::from(-1), BigInt::from(6)).unwrap()

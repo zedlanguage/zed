@@ -70,18 +70,6 @@ impl Rat {
         Rat::plain(n, BigInt::one())
     }
 
-    /// `2^s`.
-    fn two_pow(s: BigInt) -> Rat {
-        if s.is_zero() {
-            return Rat::int(BigInt::one());
-        }
-        Rat {
-            num: BigInt::one(),
-            den: BigInt::one(),
-            pows: Box::new([(2, s)]),
-        }
-    }
-
     /// `num/den * prod pows`, `den` nonzero, `pows` by prime and in normal form.
     fn build(num: BigInt, den: BigInt, pows: Vec<(u64, BigInt)>) -> Rat {
         let (num, den) = if den.is_one() {
@@ -447,33 +435,65 @@ impl Rat {
         ))
     }
 
-    /// `a * b`.
-    pub fn mul(&self, b: &Rat) -> Rat {
-        if self.is_plain() && b.is_plain() {
-            if self.den.is_one() && b.den.is_one() {
-                return Rat::int(&self.num * &b.num);
-            }
-            return Rat::new(&self.num * &b.num, &self.den * &b.den).expect("den > 0");
+    /// `a * b`, or [`TooLarge`] when the system refuses the memory for the products of the
+    /// coefficients and their reduction, asked before anything is built. The kept powers add
+    /// their exponents and are not built.
+    pub fn mul(&self, b: &Rat) -> Result<Rat, TooLarge> {
+        if self.is_plain() && b.is_plain() && self.den.is_one() && b.den.is_one() {
+            // Complexity tradeoff: the memory asked for a product of two integers is eight
+            // times the product's width, a measured bound, not a proved one, on num-bigint's
+            // multiplication (Toom-3, whose parts and their products are held at once): the
+            // peak heap was at most 5.0 times the product's width over operands of 2^8 to 2^18
+            // words, balanced, unbalanced and all ones. So a product needing less is refused
+            // when the free memory lies between the two, and none aborts. Tested by
+            // `a_product_or_quotient_of_wide_numbers_is_refused_when_memory_is_short`
+            // (COMPLEXITY.md K30).
+            // A complete solution would be a multiplication whose scratch is allocated once,
+            // its size known by construction.
+            room(BigUint::from(self.num.bits() + b.num.bits()) << 3u32)?;
+            return Ok(Rat::int(&self.num * &b.num));
         }
-        Rat::build(
-            &self.num * &b.num,
-            &self.den * &b.den,
-            merge(&self.pows, &b.pows, |x, y| x + y),
-        )
+        self.scaled(&b.num, &b.den, &b.pows, |x, y| x + y)
     }
 
-    /// `a / b`; `None` when `b` is zero.
-    pub fn div(&self, b: &Rat) -> Option<Rat> {
+    /// `a / b`, by the rule of [`Rat::mul`]; `Ok(None)` when `b` is zero.
+    pub fn div(&self, b: &Rat) -> Result<Option<Rat>, TooLarge> {
         if b.is_zero() {
-            return None;
+            return Ok(None);
         }
-        if self.is_plain() && b.is_plain() {
-            return Rat::new(&self.num * &b.den, &self.den * &b.num);
-        }
-        Some(Rat::build(
-            &self.num * &b.den,
-            &self.den * &b.num,
-            merge(&self.pows, &b.pows, |x, y| x - y),
+        self.scaled(&b.den, &b.num, &b.pows, |x, y| x - y).map(Some)
+    }
+
+    /// `num * up / (den * down) * prod p^e`, the exponent of each prime `f` of this one's and
+    /// `pows`', a missing one zero; `down` is not zero. [`TooLarge`] when the system refuses
+    /// the memory for the two products and their reduction.
+    fn scaled(
+        &self,
+        up: &BigInt,
+        down: &BigInt,
+        pows: &[(u64, BigInt)],
+        f: impl Fn(&BigInt, &BigInt) -> BigInt,
+    ) -> Result<Rat, TooLarge> {
+        // Complexity tradeoff: the memory asked for is sixteen times the sum of the four
+        // coefficients' widths, a measured bound, not a proved one, on the two products, their
+        // reduction by the gcd (a Burnikel-Ziegler remainder of the wider by the narrower,
+        // Stein's gcd and two divisions by it) and the primes moved out into exponents
+        // (`valuation`): the peak heap was at most 7.5 times that width for products and
+        // quotients of rationals of 2^6 to 2^14 words, plain and with kept powers, at most 10.3
+        // times when a kept prime divides a coefficient of 2^8 to 2^16 words, and the
+        // reduction alone of an exact quotient at most 10.9 times (`exact_div`). So a product
+        // or quotient needing less is refused when the free memory lies between the two, and
+        // none aborts. Tested by
+        // `a_product_or_quotient_of_wide_numbers_is_refused_when_memory_is_short`
+        // and `an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short`
+        // (COMPLEXITY.md K30). A complete solution would ask each allocation of the reduction
+        // for its own memory, which needs a reduction written here rather than num-bigint's.
+        let bits = self.num.bits() + self.den.bits() + up.bits() + down.bits();
+        room(BigUint::from(bits) << 4u32)?;
+        Ok(Rat::build(
+            &self.num * up,
+            &self.den * down,
+            merge(&self.pows, pows, f),
         ))
     }
 
@@ -691,22 +711,11 @@ impl Rat {
     }
 
     /// `a / m` for an `m` that divides this integer, or [`TooLarge`] when the system refuses
-    /// the memory for it.
+    /// the memory for it, by the rule of [`Rat::div`]: the reduction's peak heap was at most
+    /// 10.9 times the coefficients' width, for products of 512 to 2^14 words reduced by
+    /// factors of 66 words to their own length.
     fn exact_div(&self, m: &Rat) -> Result<Rat, TooLarge> {
-        // Complexity tradeoff: the memory asked for an exact quotient is sixteen times the sum
-        // of the four coefficients' widths, a measured bound, not a proved one, on the two
-        // products the quotient is built from, their reduction (as for a sum of plain
-        // rationals) and the primes moved out into exponents: the reduction's peak heap was
-        // at most 10.9 times their width, for products of 512 to 2^14 words reduced by
-        // factors of 66 words to their own length. So an exact quotient that needs less is
-        // `TooLarge` when the free memory lies between the two, and none aborts. Tested by
-        // `an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short`
-        // (COMPLEXITY.md K30). A complete solution would ask each allocation of the products
-        // and the reduction for its own memory, which needs a reduction written here rather
-        // than num-bigint's.
-        let bits = self.num.bits() + self.den.bits() + m.num.bits() + m.den.bits();
-        room(BigUint::from(bits) << 4u32)?;
-        Ok(self.div(m).expect("the divisor is not zero"))
+        Ok(self.div(m)?.expect("the divisor is not zero"))
     }
 
     /// The same number, with each prime of `others` moved out of `num` and `den` too. When one
@@ -768,9 +777,10 @@ impl Rat {
             return Ok(None);
         }
         let (n, d) = self.split();
-        // `|self| * 2^s == w` is read as `self == ±w * 2^-s`: the side built is the small one.
+        // `|self| * 2^s == w` is read as `self == ±w * 2^-s`: the side built is the small one,
+        // and the power of 2 is kept.
         let is = |s: &BigInt, w: &BigUint| {
-            let w = Rat::int(BigInt::from(w.clone())).mul(&Rat::two_pow(-s));
+            let w = Rat::extract(BigInt::from(w.clone()), BigInt::one(), vec![(2, -s)]);
             match self.is_negative() {
                 true => *self == w.neg(),
                 false => *self == w,

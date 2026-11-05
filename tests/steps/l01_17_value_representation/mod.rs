@@ -11,3 +11,4 @@ mod memory_check;
 mod numbers;
 mod order;
 mod powers;
+mod products;

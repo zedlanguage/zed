@@ -270,7 +270,7 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
             let all = two_pow(&ns[1])?.sub(&Rat::int(BigInt::one()))?;
             Value::integer(all.sub(&ns[0])?)
         }
-        Prim::Shl => Value::integer(ns[0].mul(&two_pow(&ns[1])?)),
+        Prim::Shl => Value::integer(ns[0].mul(&two_pow(&ns[1])?)?),
         Prim::Shr => Value::integer(ns[0].div_euclid(&two_pow(&ns[1])?)?),
         _ => {
             let (x, k, w) = (&ns[0], &ns[1], &ns[2]);
@@ -286,7 +286,7 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
             // The `w - r` low digits move up `r` places; the `r` high digits move down to the
             // bottom.
             let low_width = two_pow(&w.sub(&r)?)?;
-            let low = x.rem_euclid(&low_width)?.mul(&two_pow(&r)?);
+            let low = x.rem_euclid(&low_width)?.mul(&two_pow(&r)?)?;
             let high = x.div_euclid(&low_width)?;
             Value::integer(low.add(&high)?)
         }

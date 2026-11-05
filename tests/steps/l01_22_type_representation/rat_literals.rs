@@ -178,17 +178,18 @@ fn a_computed_power_prints_its_digits() {
     let two = Rat::int(BigInt::from(2));
     let p = two.pow(&40u32.into()).unwrap();
     assert_eq!(lit(&Value::rat(p.clone())).to_string(), "1099511627776r");
-    let q = Rat::int(BigInt::from(1)).div(&p).unwrap();
+    let q = Rat::int(BigInt::from(1)).div(&p).unwrap().unwrap();
     assert_eq!(
         lit(&Value::rat(q)).to_string(),
         "9094947017729282379150390625e-40r"
     );
     let three = Rat::int(BigInt::from(3)).pow(&5u32.into()).unwrap();
-    let r = three.mul(&Rat::decimal("1e7").unwrap());
+    let r = three.mul(&Rat::decimal("1e7").unwrap()).unwrap();
     assert_eq!(lit(&Value::rat(r)).to_string(), "243e7r");
     // A quotient that is not a decimal has no literal; its type prints the quotient.
     let third = Rat::int(BigInt::from(-1))
         .div(&Rat::int(BigInt::from(3)))
+        .unwrap()
         .unwrap();
     assert_eq!(lit(&Value::rat(third)).to_string(), "-1r/3r");
 }
@@ -269,6 +270,7 @@ fn literals_of_equal_residues_are_different_types() {
             Value::rat(
                 Rat::int(BigInt::from(1))
                     .div(&two().pow(&62u32.into()).unwrap())
+                    .unwrap()
                     .unwrap(),
             ),
         ),

@@ -122,6 +122,7 @@ fn below_half_ulp(s: u64) -> Rat {
     let n = (BigInt::from(1u32) << s) + (BigInt::from(1u32) << (s - 53)) - 1u32;
     Rat::int(n)
         .div(&two_to(s))
+        .unwrap()
         .expect("a power of two is not zero")
 }
 
@@ -307,11 +308,78 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
         )
     );
     // `1.5` is a float exactly, and reads no more than its own bits.
-    let half = Rat::int(BigInt::from(3)).div(&int(2)).unwrap();
+    let half = Rat::int(BigInt::from(3)).div(&int(2)).unwrap().unwrap();
     assert_eq!(
         eval(&prim(Prim::CastF64, vec![lit(Value::rat(half))])).unwrap(),
         Value::float(1.5)
     );
+}
+
+/// A float literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53`
+/// less `10^-(54 + n)`: its digits to `...203124` and then `n = 2^22` nines. Rounding it must
+/// read about `3.3 n` bits of it to tell which side of the boundary it lies on, which the
+/// system refuses under a limit `margin` bytes above what the child holds, so the elaborator
+/// reports an error at the literal and does not abort. The text is parsed, resolved and checked
+/// before the limit is lowered, as each of those copies the literal's text; the message holds
+/// the literal, so it is read without copying it. Below about 24 MiB the reading of the digits
+/// (`Rat::decimal`), which asks for nothing, aborts first, and above about 64 MiB the literal
+/// rounds (COMPLEXITY.md K30).
+fn a_literal_near_a_boundary_is_refused_under(margin: u64) {
+    let literal = format!(
+        "1.00000000000000011102230246251565404236316680908203124{}",
+        "9".repeat(1 << 22)
+    );
+    let text = format!("x = {literal};\n");
+    let tokens = zedc::lex::lex_fence(&text).expect("the text lexes");
+    let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
+    let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
+    let res = zedc::resolve::resolve(&stmts).expect("it resolves");
+    let info = zedc::check::check(&stmts, &res);
+    assert!(info.errors.is_empty());
+    lower_limit_by(margin);
+    let Err(errs) = zedc::elab::elaborate_checked(&stmts, &res, &info) else {
+        panic!("elaborated without error")
+    };
+    assert_eq!(errs.len(), 1);
+    assert!(text[errs[0].span.start..errs[0].span.end] == *literal);
+    let rest = errs[0]
+        .message
+        .strip_prefix('`')
+        .and_then(|e| e.strip_prefix(literal.as_str()))
+        .and_then(|e| {
+            e.strip_prefix(
+                "` lies so near a rounding boundary of f64 that telling which side it is on \
+                 needs up to ",
+            )
+        })
+        .unwrap_or_else(|| panic!("another message: {}", &errs[0].message[..200]));
+    let (bits, rest) = rest.split_once(' ').expect("a size and the rest");
+    let bits: u64 = bits.parse().expect("a size in bits");
+    assert!(bits > 1 << 22, "{bits} bits");
+    assert_eq!(
+        rest,
+        "bits of it, and the system refused the memory for it; write fewer digits"
+    );
+}
+
+/// [`a_literal_near_a_boundary_is_refused_under`] 32 MiB, where a round of the rounding that
+/// asked for `16k` bits was given them, rose above them in num-bigint's division and aborted
+/// the child; it asks for `32k` and is refused (the Complexity tradeoff in `bound::round`).
+#[test]
+fn a_literal_near_a_rounding_boundary_is_a_compile_error_when_memory_is_short() {
+    if !in_child("a_literal_near_a_rounding_boundary_is_a_compile_error_when_memory_is_short") {
+        return;
+    }
+    a_literal_near_a_boundary_is_refused_under(32 << 20);
+}
+
+/// [`a_literal_near_a_boundary_is_refused_under`] 48 MiB, where the `16k` ask also aborted.
+#[test]
+fn a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round() {
+    if !in_child("a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round") {
+        return;
+    }
+    a_literal_near_a_boundary_is_refused_under(48 << 20);
 }
 
 /// With memory to spare the same operations give the exact answers.

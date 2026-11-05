@@ -2063,7 +2063,7 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
     let r = match p {
         Prim::Add => x.add(&y),
         Prim::Sub => x.sub(&y),
-        Prim::Mul => Ok(x.mul(&y)),
+        Prim::Mul => x.mul(&y),
         Prim::IntDiv => x.div_euclid(&y),
         Prim::Mod => x.rem_euclid(&y),
         _ if y.is_negative() => return Ok(None),
@@ -2095,6 +2095,8 @@ fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     let op = match p {
         Prim::Add => "+",
         Prim::Sub | Prim::Neg => "-",
+        Prim::Mul => "*",
+        Prim::Div => "/",
         Prim::IntDiv => "div",
         Prim::Mod => "mod",
         _ => "**",
@@ -2169,10 +2171,11 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             let r = match p {
                 Prim::Add => a.add(b),
                 Prim::Sub => a.sub(b),
-                Prim::Mul => Ok(a.mul(b)),
+                Prim::Mul => a.mul(b),
                 _ => match a.div(b) {
-                    Some(r) => Ok(r),
-                    None => return Ok(Value::atom("divByZero")),
+                    Ok(Some(r)) => Ok(r),
+                    Ok(None) => return Ok(Value::atom("divByZero")),
+                    Err(e) => Err(e),
                 },
             };
             Value::rat(r.map_err(|e| too_large(p, e))?)

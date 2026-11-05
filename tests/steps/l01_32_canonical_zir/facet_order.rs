@@ -58,7 +58,7 @@ fn values() -> Vec<Value> {
         rat(-1, 2),
         Value::rat(Rat::int(BigInt::from(3))),
         Value::rat(Rat::new(BigInt::from(1), two_to(100)).expect("2^100 is not 0")),
-        Value::rat(one.div(&two_pow(100)).expect("2^100 is not 0")),
+        Value::rat(one.div(&two_pow(100)).unwrap().expect("2^100 is not 0")),
         Value::rat(Rat::decimal("1e-30").expect("a decimal")),
         Value::rat(Rat::new(BigInt::from(1), BigInt::from(10).pow(30)).expect("10^30 is not 0")),
         // Floats: both zeros, both infinities, NaN by two bit patterns, the ends of the

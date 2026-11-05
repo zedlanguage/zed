@@ -290,10 +290,9 @@ impl Quotient {
 /// `n / d` rounded to `f`, to nearest with ties to even, as a significand `m` and the exponent
 /// `t` of its leading place, so the float is `m * 2^(t - prec + 1)`. `is` tests exactly whether
 /// `n / d * 2^s` is the integer `w`, which only a near-tie needs. The system is asked for the
-/// memory of each precision before it is tried, `16k` bits for what a round holds at once (at
-/// most `12k`: four `k`-bit bounds, a dividend of up to `3k` bits, the copy the division makes of
-/// it, and a `2k`-bit quotient), and for `n` and `d` in full before they are built;
-/// [`LiteralRounding::TooLarge`] when it refuses.
+/// memory of each precision before it is tried, `32k` bits for what a round holds at once (four
+/// `k`-bit bounds, a dividend of up to `3k` bits, and num-bigint's division of it), and for `n`
+/// and `d` in full before they are built; [`LiteralRounding::TooLarge`] when it refuses.
 pub(super) fn round(
     n: &Product<'_>,
     d: &Product<'_>,
@@ -315,7 +314,17 @@ pub(super) fn round(
                 d: d.materialize(),
             }
         } else {
-            room(BigUint::from(k) << 4u32).map_err(LiteralRounding::TooLarge)?;
+            // Complexity tradeoff: a round asks for `32k` bits, a measured bound, not a proved
+            // one: the peak heap of the rounds of a number just below a rounding boundary was
+            // 1.30 to 1.39 times `16k` for parts of 2^12 to 2^18 words, the rise from num-bigint's
+            // Burnikel-Ziegler division (`Bound::div`), which a sum of the parts, `12k`, missed;
+            // asking `16k` let a round start and abort the compiler on a literal of 2^24 digits
+            // under a limit 128 MiB above its holdings. So a round needing less is refused when
+            // the free memory lies between the two. Tested by
+            // `a_literal_near_a_rounding_boundary_is_a_compile_error_when_memory_is_short`
+            // (COMPLEXITY.md K30). A complete solution would be a division whose scratch is
+            // allocated once, its size known by construction.
+            room(BigUint::from(k) << 5u32).map_err(LiteralRounding::TooLarge)?;
             let (nl, nu) = (n.bound(k, false), n.bound(k, true));
             let (dl, du) = (d.bound(k, false), d.bound(k, true));
             Quotient::Bounds {

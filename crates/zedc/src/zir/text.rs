@@ -1150,7 +1150,7 @@ impl<'a> P<'a> {
             }
             _ => {
                 let t = self.token("()[]{},;^");
-                number(t).ok_or_else(|| format!("expected a value, found `{t}`"))?
+                number(t)?
             }
         }))
     }
@@ -1503,31 +1503,37 @@ fn all_atoms() -> Type {
     .fold(Type::universe(Universe::Scalar), |a, t| &a - t)
 }
 
-/// A number, as the kernel prints numbers: `3`, `-2r/3r`, `1.5`, `1.0e300`, `nan`, `-inf`.
-fn number(t: &str) -> Option<Value> {
+/// A number, as the kernel prints numbers: `3`, `-2r/3r`, `1.5`, `1.0e300`, `nan`, `-inf`;
+/// the message says why `t` is not one.
+fn number(t: &str) -> Result<Value, String> {
+    let not = || format!("expected a value, found `{t}`");
     match t {
-        "true" => return Some(Value::Bool(true)),
-        "false" => return Some(Value::Bool(false)),
-        "nan" | "inf" | "-inf" => return t.parse().ok().map(Value::float),
+        "true" => return Ok(Value::Bool(true)),
+        "false" => return Ok(Value::Bool(false)),
+        "nan" | "inf" | "-inf" => return t.parse().map(Value::float).map_err(|_| not()),
         _ => {}
     }
     if t.contains('r') {
         // A side is digits, or digits and an exponent as a type prints them (`1e400000r`),
         // read as a decimal literal so the power is kept and not built.
-        let side = |s: &str| -> Option<Rat> {
-            let s = s.strip_suffix('r')?;
-            if s.contains('.') {
-                return None;
-            }
-            Rat::decimal(s)
+        let side = |s: &str| -> Result<Rat, String> {
+            let s = s.strip_suffix('r').filter(|s| !s.contains('.'));
+            s.and_then(Rat::decimal).ok_or_else(not)
         };
-        return match t.split_once('/') {
-            Some((n, d)) => side(n)?.div(&side(d)?).map(Value::rat),
-            None => side(t).map(Value::rat),
+        let Some((n, d)) = t.split_once('/') else {
+            return side(t).map(Value::rat);
+        };
+        return match side(n)?.div(&side(d)?) {
+            Ok(Some(r)) => Ok(Value::rat(r)),
+            Ok(None) => Err(not()),
+            Err(e) => Err(format!(
+                "`{t}` needs up to {} bits, and the system refused the memory for it",
+                e.bits
+            )),
         };
     }
     if t.contains(['.', 'e']) {
-        return t.parse().ok().map(Value::float);
+        return t.parse().map(Value::float).map_err(|_| not());
     }
     if t.is_empty()
         || !t
@@ -1535,7 +1541,7 @@ fn number(t: &str) -> Option<Value> {
             .chars()
             .all(|c| c.is_ascii_digit())
     {
-        return None;
+        return Err(not());
     }
-    Value::int_text(t, 10)
+    Value::int_text(t, 10).ok_or_else(not)
 }
