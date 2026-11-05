@@ -299,7 +299,7 @@ pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
 
 The `pivot` line builds a table of sales by region and product. `i >< (+)` collapses the level `i`, adding the amounts that land on the same region and product.
 
-Merging is always written out, with `><` or a named form such as `.sum`, `.count` or `foldl`. `><` runs in parallel, so it needs an operator that is safe to regroup: `+` and `max` are known to be, and for your own operators you state the law.
+Merging is always written out, with `><` or a named form such as `.sum`, `.count` or `foldl`. `><` runs in parallel, so except on floating-point values, which have their own rule below, it needs an operator that is safe to regroup: `+` and `max` are known to be, and for your own operators you state the law.
 
 ```zed
 struct Moments { n: int, sum: rat }
@@ -314,7 +314,7 @@ m = values.map(x -> Moments(n: 1, sum: x)) >< combine else Moments(n: 0, sum: 0r
 
 For `combine`, the compiler derives both laws from `+` on the fields. In general, a proved law lets the compiler regroup freely, while a claim that was only tested permits one fixed grouping and can still be wrong, and the report says which you have. If an operator isn't associative, use `foldl` or `foldr` to say which way to fold. A reduction over nothing can't be silently wrong: the `else` gives the answer for an empty collection, and without it the result type includes `#empty`, unless the operator has an identity.
 
-Floating-point sums get special care. `samples >< (+)` computes the exact sum and rounds it once, so the result doesn't depend on how the work was split or how many cores ran it. If you'd rather have speed than that guarantee, you ask for it, and it shows in the type: `samples >< (+) unordered`.
+Floating-point sums get special care. `samples >< (+)` computes the exact sum and rounds it once, so the result doesn't depend on how the work was split or how many cores ran it. If you'd rather have speed than that guarantee, you ask for it, and it shows in the type: `samples >< (+) unordered`. Your own floating-point operator needs no law: with none, the reduction runs on one fixed tree over the collection's order, so it gives the same bits at any core count.
 
 ### Pushing into a map
 
@@ -524,9 +524,9 @@ report = sales
   .map(rows -> rows.map(s -> s.amount).sum);
 ```
 
-Incremental updates need no annotation. `@memoized` makes the build fail if this value isn't kept for reuse. When an input changes, the change goes through the same graph as a new batch of values (a *wave*), and only what it affects is recomputed. Changing one sale's amount updates its region's total, and moving a sale to another region updates both. The update stops wherever nothing downstream can see a difference. Spreadsheets, build systems and reactive user interfaces each build this by hand. In Zed it needs no extra code, and an incremental result always equals what a full recomputation would give.
+Incremental updates need no annotation. `@memoized` makes the build fail if this value isn't kept for reuse. When an input changes, the change goes through the same graph as a new batch of values (a *wave*), and only what it affects is recomputed, unless a full recomputation would cost less. Changing one sale's amount updates its region's total, and moving a sale to another region updates both. The update stops wherever nothing downstream can see a difference. Spreadsheets, build systems and reactive user interfaces each build this by hand. In Zed it needs no extra code, and an incremental result always equals what a full recomputation would give.
 
-This also powers live editing: a change to your source code is one more wave on one more port, so a running program can pick up the edit without a restart. If the edit changes the type of stored state, you supply a migration to the new type.
+This also powers live editing: a change to your source code is one more wave on one more port, so a running program can pick up the edit without a restart. By default the edited program reruns on the recorded inputs, so no extra code is needed. A run whose input history isn't kept, such as a server's, continues from its current loop values instead, and an edit that changes the type of a loop variable, or renames or removes one, must supply a migration.
 
 ## Checks at compile time
 
@@ -679,7 +679,7 @@ The source of a function is a value you can read, and rewriting it is an ordinar
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
 ```
 
-Tests live on the definition and run at build time. With `@exhaustive` on a function over a small finite domain, every input is run.
+Tests live on the definition and run at build time. A function whose domain the source lists member by member, such as `bool`, is run on every input, and `@exhaustive` asks for the same on any other finite domain, such as `int[1..=9]`.
 
 ### Laws
 
@@ -691,7 +691,7 @@ law addComm(a: int, b: int) = a + b == b + a;
 law sortTwice(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);
 ```
 
-A law is a claim about your code. The compiler tries to prove it with a fixed ladder of methods. For a small domain it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
+A law is a claim about your code. The compiler tries to prove it with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and decision procedures it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
 
 The optimizer can use proved laws as rewrites. A `law` that was only tested is never used to rewrite your program. An `@associative` annotation that was only tested can still choose a fixed regrouping, and the report says so.
 
