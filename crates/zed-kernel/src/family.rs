@@ -60,7 +60,7 @@ pub fn fresh_id() -> Id {
 /// a family one entry larger than another shares all but O(log n) of its nodes with it.
 ///
 /// The second field is the family's [`Id`]: a copy keeps it, and a change takes a new one, so
-/// the map is never changed in place except through [`Family::extend`]. The third is the id of
+/// the map is never changed in place except through `Family::extend`. The third is the id of
 /// the family this one was made from by adding entries to a copy of its map, 0 for none: the
 /// two share all but the nodes the change copied, which provenance reads (`Provenance::origins`).
 #[derive(Clone, Default)]

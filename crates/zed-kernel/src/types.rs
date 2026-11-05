@@ -755,7 +755,7 @@ impl Type {
     }
 
     /// Whether `self` is known to have finitely many values: it holds only bools, finite
-    /// literal sets, bare atoms, and tuples whose boxes ([`Type::boxes`]) hold only types known
+    /// literal sets, bare atoms, and tuples whose boxes (`Type::boxes`) hold only types known
     /// finite. A recursive type, a payload, a struct or a function is not known finite, and a
     /// box is read as written, so `(int, 0) - (int - 0, 0)` is not known finite although it has
     /// one value. No size is compared: the answer depends on the type alone, not on the order

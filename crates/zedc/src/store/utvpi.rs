@@ -1,5 +1,5 @@
 //! Integer feasibility of rows `±x ± y + k >= 0` and `±x + k >= 0` (DESIGN.md sec:domains, step
-//! L1.38), by the test of Lahiri and Musuvathi [UTVPI]: such rows have an integer point exactly
+//! L1.38), by the test of Lahiri and Musuvathi \[UTVPI\]: such rows have an integer point exactly
 //! when their constraint graph has no negative cycle and no zero-weight cycle through both
 //! literals of a variable whose part from `+x` to `-x` has odd weight.
 //!
@@ -17,8 +17,8 @@
 //! When the graph has no cycle the distances are taken in one pass over its nodes in topological
 //! order, in time linear in the nodes and edges. Otherwise three searches run one unit of work
 //! each in turn and the first to finish decides; every potential gives the same decision. The
-//! first is Goldberg and Radzik's [GR] (the algorithm GOR of [BFCT]): each pass orders the nodes
-//! reached from those whose distance fell in the last pass, along edges of negative reduced
+//! first is Goldberg and Radzik's \[GR\] (the algorithm GOR of \[BFCT\]): each pass orders the
+//! nodes reached from those whose distance fell in the last pass, along edges of negative reduced
 //! cost, topologically, and relaxes their edges in that order; a cycle of such edges is a
 //! negative cycle. It takes two or three passes on the tests' graphs at every size, and up to
 //! one per node. The second is Dijkstra's search with Bellman–Ford rounds (BF-Dijkstra,
@@ -26,11 +26,11 @@
 //! Duong's deterministic near-linear search ([`negsssp`]), which bounds the worst case
 //! (COMPLEXITY.md, C24).
 //!
-//! [UTVPI]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
+//! \[UTVPI\]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
 //! Constraints", FroCoS 2005.
-//! [GR]: A. V. Goldberg and T. Radzik, "A heuristic improvement of the Bellman-Ford
+//! \[GR\]: A. V. Goldberg and T. Radzik, "A heuristic improvement of the Bellman-Ford
 //! algorithm", Applied Mathematics Letters 6 (1993), 3–6.
-//! [BFCT]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
+//! \[BFCT\]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
 //! Mathematical Programming 85 (1999), 277–311.
 
 use std::collections::VecDeque;

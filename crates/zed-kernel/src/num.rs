@@ -11,7 +11,7 @@
 //! case of the primes 2 and 5, so `1.345e932` is `269 * 2^929 * 5^930` and costs its digits
 //! and the exponent's, not the value's 3100 bits; `2 ** 2 ** 40` is `2^(2^40)`. Products,
 //! quotients and powers add and multiply exponents. Order is decided by bounds on the two
-//! values ([`bound`]), equality by the normal form, and a sum builds only the part of the
+//! values (`bound`), equality by the normal form, and a sum builds only the part of the
 //! operands above their common powers. Printing builds the digits, at a cost proportional to
 //! them. A value with no prime powers is a plain reduced rational, whose arithmetic is what it
 //! was before the powers.
@@ -1241,7 +1241,7 @@ fn record(t: Test, e: TooLarge) {
 impl Rat {
     /// The order of the two by value, or [`TooLarge`] when they agree in so many leading bits
     /// that the system refuses the memory to tell them apart: each doubling of the precision
-    /// of the bounds ([`bound`]) asks for it first, as does building the two in full.
+    /// of the bounds (`bound`) asks for it first, as does building the two in full.
     pub fn try_cmp(&self, other: &Rat) -> Result<Ordering, TooLarge> {
         self.order(other, true)
     }
@@ -1313,8 +1313,8 @@ impl Rat {
 /// Equal exactly when the values are. Both sides are aligned to every prime either lists, and
 /// then the two are equal exactly when their coefficients and exponents are, by unique
 /// factorization. Aligning copies the coefficients when a prime the other lists divides one;
-/// under a [`Watch`], that copy asks the system for its memory first, and a refusal is
-/// recorded for [`refused`] and the two are compared by their normal forms, as [`Ord`] does.
+/// under a `Watch`, that copy asks the system for its memory first, and a refusal is
+/// recorded for `refused` and the two are compared by their normal forms, as [`Ord`] does.
 impl PartialEq for Rat {
     fn eq(&self, other: &Self) -> bool {
         if self.is_plain() && other.is_plain() {
@@ -1339,8 +1339,8 @@ impl PartialEq for Rat {
 
 impl Eq for Rat {}
 
-/// The order by value. Under a [`Watch`], a pair the system refuses the memory to order is
-/// recorded for [`refused`] and given the order of their normal forms, and the run stops at
+/// The order by value. Under a `Watch`, a pair the system refuses the memory to order is
+/// recorded for `refused` and given the order of their normal forms, and the run stops at
 /// its next step; with no watch, the build is not checked.
 impl Ord for Rat {
     fn cmp(&self, other: &Self) -> Ordering {

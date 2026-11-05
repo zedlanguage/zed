@@ -126,7 +126,7 @@ pub struct Meter {
 impl Meter {
     /// A meter of instructions where the hardware counts them, or else of the processor time of
     /// this thread and the threads it starts. With no counter at all a test cannot measure the
-    /// work, so it stops; see [`no_counter`].
+    /// work, so it stops; see `no_counter`.
     #[cfg(target_os = "linux")]
     pub fn new() -> Self {
         Self::open(Hardware::INSTRUCTIONS, "instructions", true)

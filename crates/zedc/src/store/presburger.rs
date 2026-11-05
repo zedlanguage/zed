@@ -8,7 +8,7 @@
 //! that defines an auxiliary variable is kept apart from the body, since it fixes the variable
 //! for each value of the symbols, so that negating the body never negates a definition.
 //!
-//! Satisfiability is decided by the Omega test [Omega] on the fragment it settles in a number
+//! Satisfiability is decided by the Omega test \[Omega\] on the fragment it settles in a number
 //! of steps polynomial in the rows, though not in the bit length of the coefficients, with no
 //! budget (docs/thresholds.md, replacement 4), in one loop over a
 //! system that holds each set of coefficients once and knows each variable's rows and bound
@@ -22,7 +22,7 @@
 //! exact when every lower or every upper coefficient of the variable is a unit.
 //!
 //! Before the parts are split, variables whose columns are multiples of one column are merged
-//! into one variable ([`quotient`]), a unimodular change of variables that keeps every
+//! into one variable (`quotient`), a unimodular change of variables that keeps every
 //! integer point. Two cases are then decided exactly whatever the eliminations would do. Rows
 //! over two variables or fewer are decided by counting the integer points under each piece of
 //! their upper and lower envelopes ([`super::twovar`]). Rows `±x ± y + k >= 0` are decided by
@@ -35,11 +35,11 @@
 //! [`super::hull3`] chooses, which cut out the same shadow as all pairs. Otherwise the box test
 //! decides what it can, in one pass over the terms and with no linear program: each
 //! variable's bounds are tightened once by every row from the bounds its bound rows give
-//! ([`bounds`]); the rows are empty when one of
+//! (`bounds`); the rows are empty when one of
 //! them is below zero at every point of that box, have a point when one of five points of the
 //! box holds every row (the point nearest zero, the lower and upper corners, and the two
-//! midpoints, [`box_point`]), and are refused otherwise. At the first inexact elimination
-//! the real shadow is tested once ([`relaxed_empty`]): real-shadow eliminations are taken
+//! midpoints, `box_point`), and are refused otherwise. At the first inexact elimination
+//! the real shadow is tested once (`relaxed_empty`): real-shadow eliminations are taken
 //! while each adds no terms, and the box test ends it; empty, it shows the problem empty. From
 //! there on the dark shadow is solved, whose points are points of the problem. When it has
 //! none, the splinters of each dark elimination are searched [Omega, sec. 2.3]: for each lower
@@ -513,10 +513,10 @@ impl Formula {
     /// whole, as one conjunct, and not flattened into this one. The translator keeps the
     /// formula of a name used as an operand of `&&` (`preimage::Tx::chain`), and the
     /// maps of a formula keep a conjunction that was kept in the node they rebuild
-    /// ([`Formula::rebuild`]), so whether a part is kept follows the program and never how
+    /// (`Formula::rebuild`), so whether a part is kept follows the program and never how
     /// many handles hold it. A kept conjunction is read as flattened by compare, hash
     /// and show (`deep::Flat`), and, each kept part at its first place alone, by
-    /// [`Formula::conjuncts`], by `Conjuncts::and` and by `Parts::of`.
+    /// `Formula::conjuncts`, by `Conjuncts::and` and by `Parts::of`.
     // Complexity tradeoff: a kept conjunction is not merged into this one, so the tightening
     // below (one constraint per left-hand side) does not reach the constraints inside it, and a
     // constraint written both inside it and beside it is kept twice. No point is given up and
@@ -712,7 +712,7 @@ impl Formula {
     }
 
     /// Each constraint, in order, the constraints of a part held in more than one place listed
-    /// at its first place alone ([`Formula::walk`]), so the list is at most the number of
+    /// at its first place alone (`Formula::walk`), so the list is at most the number of
     /// distinct parts and not the size of the formula written out. A caller that needs each
     /// place, for a count or a position, cannot use it. Its callers in the compiler read it as
     /// a set (`atoms`) or as a conjunction (`unbounded`), which a repeated constraint does not
@@ -893,7 +893,7 @@ impl Joining {
     }
 
     /// The conjunction or disjunction: its one part where it has one, and `true` for a
-    /// disjunction of two complementary parts ([`Formula::complementary`]).
+    /// disjunction of two complementary parts (`Formula::complementary`).
     pub fn finish(mut self) -> Formula {
         if self.decided {
             return if self.and {
@@ -5607,7 +5607,7 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 /// is read as no bound.
 ///
 /// Complexity tradeoff: with two or more disjunctions the answer is the meet of each
-/// disjunction's union of projections, with its two ends moved in by [`tighten`]; the gaps
+/// disjunction's union of projections, with its two ends moved in by `tighten`; the gaps
 /// that only a combination of disjuncts shows are given up, so the set can hold values no
 /// point takes. Why: the exact projection is the union over every combination of one disjunct
 /// per disjunction, which is exponential in the disjunctions. Trigger: more than one

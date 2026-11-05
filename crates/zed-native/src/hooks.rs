@@ -753,7 +753,7 @@ pub(crate) fn finish(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> 
 }
 
 /// The native runs of this thread, and what each run that left cells live left, as
-/// [`survivors`] names them (feature `counts`).
+/// `survivors` names them (feature `counts`).
 #[cfg(feature = "counts")]
 #[derive(Clone, Debug, Default)]
 pub struct Counted {

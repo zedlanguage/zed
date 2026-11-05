@@ -364,7 +364,7 @@ pub struct Sig {
     /// fixes their carriers. Worked out when it is built ([`Sig::note_held`]), so a comparison
     /// does not walk its parameters again at each depth.
     pub held: BTreeSet<Arc<str>>,
-    /// How many of the names [`super::var_name`] gives its own type variables and those of the
+    /// How many of the names `super::var_name` gives its own type variables and those of the
     /// functions it holds take: a function around it names its own from there on. The checker
     /// writes the own variables of a signature it solved `$k`, for the class `k` each was solved
     /// from, and gives them their names when it finishes, so a function around one does not
@@ -427,7 +427,7 @@ pub struct VarFacts {
     pub classes: imbl::OrdSet<Arc<str>>,
     /// The other variables, with its own, bounded and held ones.
     pub names: imbl::OrdSet<Arc<str>>,
-    /// The first `n` such that `names` lacks the `n`th variable name ([`super::var_name`]).
+    /// The first `n` such that `names` lacks the `n`th variable name (`super::var_name`).
     pub free: usize,
 }
 
@@ -1881,7 +1881,7 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
 
 /// Whether a function of signature `s` is a function of signature `q`: the same parameter
 /// names and kinds, and on each arrow of `q`, an arrow of `s` that takes its parameters and
-/// returns within its result, or arrows of `s` that do so together ([`covered`]).
+/// returns within its result, or arrows of `s` that do so together (`covered`).
 pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
     fits_in(s, &Env::new(), q, &Env::new(), &mut Cx::default())
 }
@@ -1989,7 +1989,7 @@ fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
 
 /// Why a function of signature `s` is not a function of signature `q`, when the cover of an
 /// arrow of `q` that rule 6 of sec:type_resolution may give is one the checker refuses
-/// ([`refused_cover`]): the clause a message adds after what it rejects. `None` when `s`
+/// (`refused_cover`): the clause a message adds after what it rejects. `None` when `s`
 /// fits, or does not for a plain reason, a value no arrow takes or a result outside.
 pub fn why_unfit(s: &Sig, q: &Sig) -> Option<String> {
     why_unfit_in(s, q, Cx::default())

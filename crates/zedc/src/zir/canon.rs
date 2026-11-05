@@ -233,7 +233,7 @@ impl Shape {
 impl Ord for Shape {
     /// The shells' bytes, then the number of regions, then the regions pair by pair. The
     /// regions are compared from a stack of the pairs left: each pair's node counts and
-    /// [`region_bytes`], then each pair of their nodes' region counts and [`shell_bytes`] in
+    /// `region_bytes`, then each pair of their nodes' region counts and `shell_bytes` in
     /// order, whose region pairs are pushed. Which pairs come next depends only on the
     /// contents compared equal so far, so this is the lexicographic order of one fixed
     /// sequence of counts and bytes per shape, a total order. It stops at the first pair that

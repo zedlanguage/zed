@@ -555,7 +555,7 @@ impl<'a> Level<'a> {
 impl Ord for Formula {
     /// The order the derived one would give on the formula with each conjunction directly in a
     /// conjunction, and each disjunction directly in a disjunction, flattened into it
-    /// ([`Flat`]): the variants in the order they are declared, then the constraints, or the
+    /// (`Flat`): the variants in the order they are declared, then the constraints, or the
     /// parts in order with a prefix first. A conjunction that [`Formula::and`] keeps whole,
     /// since it is shared, is then equal to the one written out. A part compared with itself is
     /// equal at once (COMPLEXITY.md S31), and a pair of parts one of which is shared is
@@ -564,7 +564,7 @@ impl Ord for Formula {
     /// equal when their parts run out together, so a pair met again is passed over. A shared
     /// part of the level's own kind entered a second time in one call, alone or with another
     /// partner, is not read through again: the parts the two sides have left at the level are
-    /// compared as sequences parsed the same way whatever their grouping ([`Canon`]).
+    /// compared as sequences parsed the same way whatever their grouping (`Canon`).
     // Complexity tradeoff: until a shared part is entered twice, the walk reads each part once
     // per parent read (a visited set of the shared parts entered), so its cost is linear in
     // the distinct parts and edges and it stops at the first difference; formulas whose kept
@@ -702,7 +702,7 @@ impl Eq for Formula {}
 
 impl Hash for Formula {
     /// Writes one number made from the tree bottom up: each node's number is the hash of its
-    /// variant and its constraint, or of its parts' numbers read as flattened ([`Flat`]), so
+    /// variant and its constraint, or of its parts' numbers read as flattened (`Flat`), so
     /// that formulas equal under [`Ord`] write equal numbers. A shared part's number is found
     /// once per call.
     fn hash<H: Hasher>(&self, state: &mut H) {

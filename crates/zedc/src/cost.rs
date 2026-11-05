@@ -105,7 +105,7 @@ pub fn brent(work: u64, depth: u64, cores: u64) -> u64 {
 }
 
 /// Whether the plan respects every device's capacity: the peak footprint of each device's
-/// schedule (see [`per_device`]) is at most its capacity. A plan that names a device the target
+/// schedule (see `per_device`) is at most its capacity. A plan that names a device the target
 /// lacks is infeasible.
 pub fn feasible(plan: &Plan, target: &Target) -> bool {
     let n = target.devices.len();
@@ -185,7 +185,7 @@ pub fn dominates(a: &[u64], b: &[u64]) -> bool {
 }
 
 /// The Pareto frontier of the feasible `plans` on `target`: the feasible plans no other
-/// feasible plan dominates, in content-address order ([`order`]). Plans with equal cost vectors are all
+/// feasible plan dominates, in content-address order (`order`). Plans with equal cost vectors are all
 /// kept.
 ///
 /// A plan's dominators all precede it in the lexicographic order of the vectors, and a
@@ -220,7 +220,7 @@ fn order(p: &Plan) -> (ContentAddress, &[Region], &[u64]) {
 }
 
 /// The plan the scalarization picks: on the frontier, the least scalar cost, then the least
-/// content address, and of equal addresses the first in [`order`]. `None` when no plan is
+/// content address, and of equal addresses the first in `order`. `None` when no plan is
 /// feasible, where the placement solver falls back to its list schedule (sec:runtime).
 pub fn pick(plans: &[Plan], target: &Target) -> Option<Plan> {
     let mut front = frontier(plans, target);

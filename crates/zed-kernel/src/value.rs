@@ -159,7 +159,7 @@ impl fmt::Debug for Fields {
 
 /// The values inside a tuple, a keypath or a payload, shared: a copy is a reference count, so
 /// reading a variable that holds a tuple of any size is O(1). It owns its drop, comparison and
-/// `Debug` form so that each runs on the heap, whatever the depth (see [`crate::deep`]).
+/// `Debug` form so that each runs on the heap, whatever the depth (see `crate::deep`).
 ///
 /// The second field is the sequence's [`Id`], drawn when the sequence is built: copies share
 /// it, no other sequence has it, and the sequence is never changed in place, so a walk that

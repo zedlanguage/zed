@@ -51,7 +51,7 @@ pub struct Report {
 }
 
 /// The names `t` reads and does not bind. The term is read as the graph of its distinct parts:
-/// a part held in one [`Shared`] node reached from two places is read once ([`Frees`]), and
+/// a part held in one [`Shared`] node reached from two places is read once (`Frees`), and
 /// the parts still to read wait on a heap stack, so a deep term does not grow the thread's
 /// stack.
 pub fn free(t: &Term) -> BTreeSet<Arc<str>> {
@@ -86,7 +86,7 @@ fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
 /// [`Shared`] node reached twice, known by its id) is read once, so the time is near the
 /// number of distinct parts, not the size of the term unshared (COMPLEXITY.md row ENDS). Each part is read once whatever
 /// names are bound around it: what it needs of them is the set of names it calls that must
-/// each be free or bound by `let` to a function that ends ([`Needs`]), and the binder of a
+/// each be free or bound by `let` to a function that ends (`Needs`), and the binder of a
 /// name reads that set. A part shared under two bindings of a name it calls so gives each
 /// place its own answer.
 // Complexity tradeoff: a term that ends but whose form does not show it (recursion, `fix`,
@@ -175,7 +175,7 @@ impl<'t> Part<'t> {
 
 /// Test hook: the reading of `t` by [`ends`], each part in the order of its number, with its
 /// answer (`None`, it never ends, or the number of the set of names it needs) and the numbers
-/// of the parts it reads, in the order [`each_part`] gives them.
+/// of the parts it reads, in the order `each_part` gives them.
 pub fn reading(t: &Term) -> Vec<(Option<u32>, Vec<usize>)> {
     let mut r = Reader {
         reads: Some(Vec::new()),

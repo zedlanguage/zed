@@ -1,12 +1,12 @@
 //! A potential of a graph with integer edge weights of any sign, or the report that it has a
-//! negative cycle, by the deterministic negative-weight shortest-path algorithm of Duong [D]:
+//! negative cycle, by the deterministic negative-weight shortest-path algorithm of Duong \[D\]:
 //! Goldberg's scaling, and in each scaling step a recursion that covers the vertices by padded
 //! balls, solves each ball, and merges the balls' potentials by an ordered merge that runs
 //! Dijkstra's search with Bellman–Ford rounds (BF-Dijkstra) on an auxiliary graph.
 //!
 //! The paper's decomposition has two branches; the second (peeling and residual covers) needs
 //! `L >= 256` for `L = ⌈log₂ M₀⌉` and the total mass `M₀ ≈ 2m + n log log n`, so `M₀ >= 2^256`,
-//! and below that the paper applies its local decomposition directly ([D] l.809, l.831). Only
+//! and below that the paper applies its local decomposition directly (\[D\] l.809, l.831). Only
 //! that branch is built: it is the paper's algorithm for every graph that fits in memory.
 //! Every real number of the paper is replaced by exact integers (radii by cross-multiplying
 //! with `d`, a power of two), Thorup's integer queue by a binary heap, and every choice is the
@@ -18,7 +18,7 @@
 //! Goldberg and Radzik's search and BF-Dijkstra ([`Rounds`]) one unit each after each unit of
 //! this one.
 //!
-//! [D]: T. Duong, "Deterministic negative-weight single-source shortest paths in near-linear
+//! \[D\]: T. Duong, "Deterministic negative-weight single-source shortest paths in near-linear
 //! time", arXiv 2609.05590 (2026).
 
 use std::cmp::Reverse;
@@ -78,7 +78,7 @@ struct Graph {
     start: Vec<usize>,
     rstart: Vec<usize>,
     redge: Vec<usize>,
-    /// The mass of each vertex, its edges in and out plus `λ` ([D] eq. mass, l.139).
+    /// The mass of each vertex, its edges in and out plus `λ` (\[D\] eq. mass, l.139).
     mass: Vec<u64>,
 }
 
@@ -302,12 +302,12 @@ enum Fed {
     Took,
     /// Left it: the core has mass at least `m / 8`.
     Heavy,
-    /// Left it: the core is light, and the pad's shell passes the test of [D] eq.
+    /// Left it: the core is light, and the pad's shell passes the test of \[D\] eq.
     /// adaptive-shell.
     Light,
 }
 
-/// A ball grown in steps of the radius `δ₀` ([D] Lemma 4.4): `core` is the ball of radius
+/// A ball grown in steps of the radius `δ₀` (\[D\] Lemma 4.4): `core` is the ball of radius
 /// `t·δ₀` once `closed`, and `shell` the vertices up to `(t + 1)·δ₀` met so far.
 #[derive(Default)]
 struct Ball {
@@ -373,7 +373,7 @@ type Cover = Vec<(Vec<usize>, bool)>;
 struct Solver<'g, H, F> {
     g: &'g Graph,
     tick: F,
-    /// This scaling step's weights shifted by `W / 2`, and clipped at 0 ([D] eq. scale).
+    /// This scaling step's weights shifted by `W / 2`, and clipped at 0 (\[D\] eq. scale).
     c: Vec<Int>,
     ell: Vec<Int>,
     /// This scaling step's `W`.
@@ -441,7 +441,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         id
     }
 
-    /// Goldberg's scaling ([D] Lemma 2.1) on the weights times `n + 1`, then one Dijkstra
+    /// Goldberg's scaling (\[D\] Lemma 2.1) on the weights times `n + 1`, then one Dijkstra
     /// search that reads off exact distances (design review, section 3.2).
     fn run(&mut self) -> Step<Vec<Int>, H> {
         let g = self.g;
@@ -523,7 +523,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         Ok(found)
     }
 
-    /// A potential valid for `c` on `G[x]`, in the order of `x` ([D] Algorithm 3). The depth of
+    /// A potential valid for `c` on `G[x]`, in the order of `x` (\[D\] Algorithm 3). The depth of
     /// the recursion is at most `log_{8/7} M₀ + log₂(d₀ / W) + 2`: each child has at most 7/8
     /// of its parent's mass or half its `d`.
     fn solve(&mut self, x: &[usize], d: Int) -> Step<Vec<Int>, H> {
@@ -557,7 +557,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         self.merge(x, &solved)
     }
 
-    /// The local decomposition of `x`, marked with `id` ([D] Lemma 4.4).
+    /// The local decomposition of `x`, marked with `id` (\[D\] Lemma 4.4).
     fn decompose(&mut self, x: &[usize], id: u64, d: &Int) -> Step<Cover, H> {
         let g = self.g;
         let m: u64 = x.iter().map(|&v| g.mass[v]).sum();
@@ -657,8 +657,8 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         Ok(cover)
     }
 
-    /// The heavy case of [D] Lemma 4.4 around the center `s`: the lightest shell of width `δ_h`
-    /// in `(Δ, 2Δ]` in each direction, and the split of [D] Lemma 4.5.
+    /// The heavy case of \[D\] Lemma 4.4 around the center `s`: the lightest shell of width `δ_h`
+    /// in `(Δ, 2Δ]` in each direction, and the split of \[D\] Lemma 4.5.
     fn heavy(&mut self, x: &[usize], id: u64, s: usize, d: &Int) -> Step<Cover, H> {
         let g = self.g;
         let epoch = self.next_id();
@@ -751,7 +751,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
     }
 
     /// A potential valid for `c` on `G[x]` from valid potentials on the children, in order, by
-    /// the ordered merge of [D] Theorem 3.1.
+    /// the ordered merge of \[D\] Theorem 3.1.
     fn merge(&mut self, x: &[usize], solved: &[(Vec<usize>, Vec<Int>)]) -> Step<Vec<Int>, H> {
         let g = self.g;
         let id = self.stamp(x);
@@ -913,11 +913,11 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
 
 /// Distances in the graph `start`, `to`, `w` in compressed rows from a source with an edge of
 /// weight `label[x]` to each node `x`, the first round started from `seeds`, by Dijkstra's
-/// search on the edges of weight at least 0 with a round of the negative edges after each ([D]
+/// search on the edges of weight at least 0 with a round of the negative edges after each (\[D\]
 /// Lemma l.129). After round `k` each label is at most the weight of every walk with `k`
 /// negative edges besides the source's, so a label
 /// that falls in round `eta` shows a walk shorter than all with `eta` negative edges, and the
-/// caller's negative cycle ([D] Theorem 3.1). A cycle of parent pointers is a negative cycle
+/// caller's negative cycle (\[D\] Theorem 3.1). A cycle of parent pointers is a negative cycle
 /// (the walk to the root of Cherkassky and Goldberg); it is looked for after each round, from
 /// the nodes whose label changed, each node visited once.
 fn bf_dijkstra<H>(
@@ -1020,7 +1020,7 @@ enum Phase {
     Negative { i: usize, e: usize },
 }
 
-/// BF-Dijkstra ([D] l.129) on a graph's own weights, from a source joined to each node by an
+/// BF-Dijkstra (\[D\] l.129) on a graph's own weights, from a source joined to each node by an
 /// edge of weight 0, one unit of work, a heap entry or an edge, per call of [`Rounds::step`].
 /// Round `k` gives each node a label at most the weight of every walk to it with `k` negative
 /// edges, so a graph whose shortest paths have few negative edges takes few rounds, each

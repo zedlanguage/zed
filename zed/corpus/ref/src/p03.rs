@@ -1,5 +1,5 @@
 //! 03 edit distance, top-down memoized and bottom-up; a line with one word gives b = ""
-//! (w[1] else ""); a line starting with a space gives a = "". Characters are code points.
+//! (`w[1] else ""`); a line starting with a space gives a = "". Characters are code points.
 
 fn step(a: &[char], b: &[char], up: usize, left: usize, diag: usize, i: usize, j: usize) -> usize {
     (up + 1)

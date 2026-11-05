@@ -31,7 +31,7 @@ pub enum Op {
     Mul,
     /// `x ** k` for a constant `k >= 0` of any size. Every entry reads `k` in O(1) time
     /// whatever its size: whether it is 0, its parity, and its value only when it fits in
-    /// `u32`; an endpoint is exact for such a `k`, and bounded outward past it ([`pow_end`]).
+    /// `u32`; an endpoint is exact for such a `k`, and bounded outward past it (`pow_end`).
     Pow(Exponent),
     /// `x div y`, Euclidean: the remainder is in `0..abs(y)`.
     Div,

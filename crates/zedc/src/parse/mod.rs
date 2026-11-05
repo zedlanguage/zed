@@ -126,7 +126,7 @@ pub fn parse(text: &str, tokens: &[Token], start: &str, ring: u32) -> Result<Tre
 }
 
 /// Parses as [`parse`] does, by the grammar `g`, which needs a rule `Expr` for a string's holes.
-/// [`Tree::name`] and [`Tree::layer`] read [`grammar`], so they do not apply to this tree; a
+/// [`Tree::name`] and [`Tree::layer`] read [`grammar()`], so they do not apply to this tree; a
 /// node's `rule` and `alt` index `g`.
 pub fn parse_with(
     g: &Grammar,

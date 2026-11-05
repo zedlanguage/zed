@@ -51,6 +51,13 @@ if ! CARGO_TARGET_DIR=$root/build/short cargo test -p zed-tests --features short
 fi
 short=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" \
   "$out/build-short.log")
+# The documentation of every crate, private items included, builds with no warning, so a link
+# in a doc comment that names no item, or a citation written as a link, fails the run.
+if ! RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items >"$out/doc.log" 2>&1; then
+  tail -40 "$out/doc.log"
+  echo "DOC FAILED"
+  exit 1
+fi
 # A step folder or module named here gets a piece for each of its modules and each of its own
 # tests instead of one piece; the rest get one piece each. Named because together they ran past
 # 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s; l01_23

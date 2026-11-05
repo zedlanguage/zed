@@ -663,7 +663,7 @@ impl Blocks {
     /// Removes the conjuncts `gs`, block by block. A block that loses its one conjunct, which
     /// shares at most one name and no other atom with the rest, is unlinked; a block that loses
     /// some of its conjuncts is split once by placing its other conjuncts again
-    /// ([`Blocks::split`]); if that fails, the blocks of every conjunct linked to one of `gs`
+    /// (`Blocks::split`); if that fails, the blocks of every conjunct linked to one of `gs`
     /// are built again. Each block is split once for all the conjuncts it loses, so a removal
     /// costs near the blocks it touches, not their size times the conjuncts removed.
     pub fn remove(&mut self, gs: &[Arc<Formula>]) {

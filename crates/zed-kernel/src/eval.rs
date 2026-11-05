@@ -5,7 +5,7 @@
 //! leaves to the reference semantics are recorded in DESIGN.md sec:kernel, "Reference
 //! semantics", and repeated on the item they govern here.
 //!
-//! It runs as a machine with a stack of its own: a [`Frame`] holds what is left to do when the
+//! It runs as a machine with a stack of its own: a `Frame` holds what is left to do when the
 //! term under evaluation gives its value, so nesting uses memory on the heap, not the thread's
 //! stack, and the depth of a program is limited by the machine's memory alone (DESIGN.md
 //! sec:verification, step M0.11). A call in tail position leaves no frame unless provenance is

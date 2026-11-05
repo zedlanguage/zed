@@ -32,7 +32,7 @@
 //!
 //! All of the above is the Linux build. On every other system there is one count, of the bytes
 //! every thread of the process allocates: Windows has no `pthread_create` to stand in for, and on
-//! macOS the counters of work (module [`os`]) are of the whole process too, so the scaling tests
+//! macOS the counters of work (module `os`) are of the whole process too, so the scaling tests
 //! there run one test at a time and a count of the whole process is what they need. The macOS and
 //! Windows builds are compiled here (on Linux, by `cargo check --target`) but have not been run.
 

@@ -1,4 +1,4 @@
-//! 24 weighted pick: least i with cumul[i] > q, by bisect_right on the prefix sums (the program's
+//! 24 weighted pick: least i with `cumul[i] > q`, by bisect_right on the prefix sums (the program's
 //! binary search must agree), or none when q >= total. bisect_right halves the range [lo, hi)
 //! while lo < hi, going right when q >= the middle prefix sum, so a negative weight gives a
 //! defined answer too.

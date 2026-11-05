@@ -14,7 +14,7 @@
 //!
 //! 1. The real points: a linear program in three variables decides whether the rows have
 //!    one, by Megiddo's prune-and-search [Megiddo 1984, sec. 4] in O(m), deterministic, with
-//!    exact rationals (see [`least`]).
+//!    exact rationals (see `least`).
 //! 2. A rounding with a fixed ratio: six linear programs give a simplex `S` of points of the
 //!    rows, each vertex the farthest along a direction normal to the edges before it, and the
 //!    rows lie within `g + 25·(S - g)` for `g` the center of `S`.
@@ -24,7 +24,7 @@
 //!    `75·√7 < 199` integer values.
 //! 4. Each integer value `t` of `u·x` over the rows is a slice: `u` is completed to a
 //!    unimodular matrix by Euclid's algorithm, and the slice is a system over two variables,
-//!    which [`twovar::point`] decides exactly.
+//!    which `twovar::point` decides exactly.
 //! 5. No slice has a point: the rows have none.
 //!
 //! The answer is complete, so it does not depend on the order of the variables; the point

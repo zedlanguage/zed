@@ -65,6 +65,10 @@
 //! only each input's projection is sought. A scope under `@exact` does not list the projection,
 //! which can have as many pieces as the box has points; it asks [`witness`] for one point
 //! that meets the demand, and the same search stops at the first.
+//!
+//! [`super::preimage`]: crate::store::preimage
+//! [`exact_preimage`]: crate::store::preimage_ref::exact_preimage
+//! [`witness`]: crate::store::preimage_ref::witness
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;

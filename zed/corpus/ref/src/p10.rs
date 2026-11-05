@@ -1,4 +1,4 @@
-//! 10 HH:MM matcher. The output is the language of ([01][0-9]|2[0-3]):[0-5][0-9], tested
+//! 10 HH:MM matcher. The output is the language of `([01][0-9]|2[0-3]):[0-5][0-9]`, tested
 //! directly, anchored at both ends; the program also runs the corpus program's own algorithm
 //! (Brzozowski derivatives, transcribed from 10-regex-matcher/regex.zed) and stops if the two
 //! disagree on any line.

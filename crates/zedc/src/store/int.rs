@@ -1849,7 +1849,7 @@ impl Num {
     }
 
     /// The number of binary digits of `abs(self)`: the least `b >= 0` with `abs(self) < 2^b`.
-    /// A kept value is not written out ([`Num::kept_bits`]).
+    /// A kept value is not written out (`Num::kept_bits`).
     pub fn bits(&self) -> Num {
         match &self.0 {
             Word::Small(v) => Num::from(i64::from(64 - v.unsigned_abs().leading_zeros())),
@@ -1894,7 +1894,7 @@ impl Num {
     }
 
     /// The number of trailing zero binary digits of a value other than 0. A kept value with
-    /// integer cores is not written out ([`Kept::trailing_zeros`]).
+    /// integer cores is not written out (`Kept::trailing_zeros`).
     pub fn trailing_zeros(&self) -> Num {
         match &self.0 {
             Word::Small(v) => Num::from(i64::from(v.trailing_zeros())),
@@ -2386,7 +2386,7 @@ impl Neg for &Num {
 impl Ord for Num {
     /// Values of one sign outside `i64` compare by the sign of their difference, a kept value
     /// whose terms are collected and folded, so equal cores cancel; a root against the power
-    /// it came from by [`root_power_cmp`]. The sign of a kept difference is found at 64 bits
+    /// it came from by `root_power_cmp`. The sign of a kept difference is found at 64 bits
     /// and then at twice as many until it is decided; for values that differ in their leading
     /// bits, as bounds nearly always do, the first pass decides. Equal values in forms that
     /// neither collecting nor folding relates are found equal only at the bits of the value

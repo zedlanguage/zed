@@ -142,7 +142,7 @@ fn operator_at(text: &str, gap: Span) -> usize {
 }
 
 /// The mutants of `unit`, the elaboration of `stmts`, whose text is `text`: definitions by
-/// source name, then nodes in preorder, then replacements in the order [`neighbors`] gives
+/// source name, then nodes in preorder, then replacements in the order `neighbors` gives
 /// (`n - 1` before `n + 1`). Finding them elaborates `stmts` once more, with marks
 /// ([`elab::elaborate_marked`]), and reads each node of each definition once; no mutant's
 /// term is built.
