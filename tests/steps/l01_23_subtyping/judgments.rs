@@ -228,3 +228,147 @@ fn answers_do_not_depend_on_order_or_numbering() {
     }
     assert!(checked > 0, "some family group is admitted");
 }
+
+/// The one type of a group of one definition, `name = body`.
+fn single(name: &str, body: Expr) -> Type {
+    group_named(vec![(name, body)]).remove(0)
+}
+
+fn group_named(defs: Vec<(&str, Expr)>) -> Vec<Type> {
+    let defs = defs
+        .into_iter()
+        .map(|(name, body)| Def {
+            name: name.into(),
+            params: vec![],
+            body,
+        })
+        .collect();
+    Group::new(defs)
+        .expect("the corpus's definitions are admitted")
+        .instance(vec![])
+}
+
+fn cons(head: Type, tail: Expr) -> Expr {
+    Expr::Atom("cons".into(), vec![Expr::Type(head), tail])
+}
+
+fn nil() -> Expr {
+    Expr::Type(Type::atom("nil"))
+}
+
+fn int_lit(i: i64) -> Type {
+    Type::lit(&zed_kernel::Value::Int(i)).expect("an integer has a literal type")
+}
+
+/// Lists of ints whose length is `offset` modulo `period`.
+fn residue(period: usize, offset: usize) -> Type {
+    let body = (0..period).rev().fold(r(0), |body, k| {
+        let link = cons(Type::int(), body);
+        if k == offset {
+            Expr::Union(vec![nil(), link])
+        } else {
+            link
+        }
+    });
+    single("L", body)
+}
+
+/// Lists of ints whose `n`th item from the end is 1.
+fn nth_from_end(n: usize) -> Type {
+    let mut defs = vec![("R0".to_string(), nil())];
+    for k in 1..n {
+        defs.push((format!("R{k}"), cons(Type::int(), r(k - 1))));
+    }
+    defs.push((
+        "G".to_string(),
+        Expr::Union(vec![cons(Type::int(), r(n)), cons(int_lit(1), r(n - 1))]),
+    ));
+    let defs = defs.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+    group_named(defs).pop().expect("G is the last definition")
+}
+
+/// `n` types: the seeds below, then each a union, meet, difference, pair or morphism type of
+/// two earlier ones, picked by a fixed pseudo-random sequence from `seed`.
+fn corpus(seed: u64, n: usize) -> Vec<Type> {
+    let mut x = seed;
+    let mut next = move |n: usize| {
+        x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+        (x >> 33) as usize % n
+    };
+    let int = || Expr::Type(Type::int());
+    let mut ts = vec![
+        Type::int(),
+        int_lit(0),
+        int_lit(1),
+        Type::atom("nil"),
+        residue(1, 0),
+        residue(2, 0),
+        residue(3, 0),
+        nth_from_end(1),
+        nth_from_end(2),
+        nth_from_end(3),
+        residue(2, 1),
+        residue(3, 2),
+        // `S = (int) -> S` and `W = (W) -> int`: cycles through a morphism, inhabited.
+        single("S", Expr::exact(int(), r(0))),
+        single("W", Expr::exact(r(0), int())),
+    ];
+    while ts.len() < n {
+        let (a, b) = (ts[next(ts.len())].clone(), ts[next(ts.len())].clone());
+        ts.push(match next(5) {
+            0 => &a | &b,
+            1 => &a & &b,
+            2 => &a - &b,
+            3 => Type::tuple(vec![a, b]),
+            _ => Type::morphism(a.clone(), a, b),
+        });
+    }
+    ts
+}
+
+/// No subtype answer depends on the questions asked before it (DESIGN.md sec:plan, standing
+/// rule of deterministic checking): on a corpus of 150 types with recursive lists, morphism
+/// cycles and Boolean combinations, 1500 queries `a <: b` are answered one at a time with the
+/// kept results dropped before each, in one batch keeping them, and in the batch reversed, and
+/// the three agree. A result kept that rested on an assumption, or that was read before the
+/// search finished, makes a later answer differ.
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them() {
+    scaling::on_a_thread(1 << 29, || {
+        for seed in [1, 4, 5, 6] {
+            let ts = corpus(seed, 150);
+            let mut x = seed + 5;
+            let mut next = || {
+                x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+                (x >> 33) as usize % ts.len()
+            };
+            let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
+            let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
+            let alone: Vec<bool> = qs
+                .iter()
+                .map(|q| {
+                    Type::forget_emptiness();
+                    ask(q)
+                })
+                .collect();
+            Type::forget_emptiness();
+            let batch: Vec<bool> = qs.iter().map(ask).collect();
+            Type::forget_emptiness();
+            let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
+            back.reverse();
+            let held = alone.iter().filter(|&&b| b).count();
+            assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
+            for (i, &(a, b)) in qs.iter().enumerate() {
+                assert!(
+                    alone[i] == batch[i] && alone[i] == back[i],
+                    "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
+                    ts[a],
+                    ts[b],
+                    alone[i],
+                    batch[i],
+                    back[i]
+                );
+            }
+        }
+    });
+}
