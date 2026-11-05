@@ -13,6 +13,7 @@ mod string;
 use std::fmt;
 
 pub use name::is_single_script;
+pub(crate) use name::name as name_end;
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
 

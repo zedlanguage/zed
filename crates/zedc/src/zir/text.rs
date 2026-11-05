@@ -36,6 +36,7 @@ use zed_kernel::value::Value;
 
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};
 use crate::canon::Facet;
+use crate::lex;
 use crate::store::interval::{End, IntervalSet, Num};
 use crate::store::lattice::{Congruence, FiniteSet, Lattice};
 
@@ -677,17 +678,20 @@ fn word_len(s: &str) -> usize {
     n + usize::from(n > 0 && s[n..].starts_with('\''))
 }
 
-/// Why `w` is not a name by the lexer's rule (lex/name.rs: an `XID_Start` character, or `_`
-/// before an `XID_Continue` character, then `XID_Continue` characters and one prime at most),
-/// or `None` when it is one.
+/// Why `w` is not a name by the lexer's rule ([`lex::name_end`]: an `XID_Start` character, or
+/// `_` before an `XID_Continue` character, then `XID_Continue` characters and one prime at
+/// most), or `None` when it is one. The rule is the lexer's own function; the first character
+/// is looked at again here only to say which part of the rule `w` breaks.
 fn not_a_name(w: &str) -> Option<String> {
+    if lex::name_end(w, 0) == Some(w.len()) {
+        return None;
+    }
     let mut cs = w.chars();
     let why = match cs.next() {
         Some('_') if !cs.next().is_some_and(is_xid_continue) => {
             ": a name that starts with `_` has a letter, a digit or `_` next"
         }
         Some(c) if c != '_' && !is_xid_start(c) => ": a name starts with a letter or `_`",
-        Some(_) if word_len(w) == w.len() => return None,
         _ => "",
     };
     Some(format!("`{w}` is not a name{why}"))
