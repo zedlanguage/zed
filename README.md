@@ -930,7 +930,7 @@ ranking = scores as (name -> s) into (desc s -> name -> s);
 totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount);
 ```
 
-On small sample tables, with `rank` the level that `desc s` adds:
+On small sample tables:
 
 **input: `matrix`**
 
@@ -965,7 +965,7 @@ On small sample tables, with `rank` the level that `desc s` adds:
 <tr><td><code>Cid</code></td><td><code>90</code></td></tr>
 </table>
 
-**`ranking`**
+**`ranking`**, with `rank` the level that `desc s` adds:
 
 <table>
 <tr><th><code>rank</code></th><th><code>name</code></th><th><code>s</code></th></tr>
