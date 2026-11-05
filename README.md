@@ -171,7 +171,7 @@ interface Named { name: Utf8String }
 hello(positional n: Named) = "Hi, ${n.name}";
 ```
 
-An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable, with nothing to declare. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra behind `><`, the parallel reduction covered below, from `Monoid` to `CommRing`, is ordinary library code.
+An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable, with nothing to declare. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` to `CommRing`, is ordinary library code.
 
 ### Modules
 
@@ -200,7 +200,7 @@ port = parse(text)?.server?.port else 8080;
 
 There are no exceptions and no null. A function that can fail says so in its return type, by returning a union with an atom in it. `else` replaces any failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't.
 
-A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it, and a reduction is rejected if its operator might be applied to a failure it does not handle.
+A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction is stricter: it is rejected if its operator might be applied to a failure it does not handle, since many failures can't become one result unless you say how.
 
 The compiler also adds failures only where they can really happen. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
 
@@ -263,7 +263,7 @@ byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
 // byId = users.rekey(u -> u.id);       // ✗ rejected unless id is known to be unique
 ```
 
-`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, only cities with users occur, and each group is nonempty. `rekey` replaces the key, and that can make two entries land on one key, so the compiler demands evidence that the new key is unique, such as a declared key or a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
+`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys. Its keys are exactly that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. `rekey` replaces the key, and that can make two entries land on one key, so the compiler demands evidence that the new key is unique, such as a declared key or a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
 
 ### Remapping
 
@@ -327,7 +327,7 @@ for w in words { hist[w.len] <- 1; };
 same = words.group(w -> w.len).count;   // the same table, written as a pull
 ```
 
-Sometimes it's clearer to say where each value goes than where each value comes from. `hist` is a map that many places can push to, and `reducer((+))` says how contributions to one key merge. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same term, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
+Sometimes it's clearer to say where each value goes than where each value comes from. `hist` is a map that many places can push to, and `reducer((+))` says how contributions to one key merge. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same thing, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
 
 ### Joins
 
@@ -548,7 +548,7 @@ a = odd(12);
 
 Types can carry ranges and relations between fields, and the compiler tracks them through arithmetic without any annotations from you. That is how it removes bounds checks and picks the smallest machine representation. `refine` checks a condition at run time, giving `#invalid` if it fails. `@ensure` forbids that check: the compiler has to push the condition back onto the inputs and reject any caller it can't prove safe, so the check moves to compile time.
 
-A field's range may name another field, but a range bound is a linear expression, not an arbitrary program, and no SMT solver is involved. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
+A field's range may name another field. The compiler reasons about such bounds with linear arithmetic, and no SMT solver is involved. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
 
 ### Units and taint
 
@@ -563,7 +563,7 @@ d = v * t;                 // has units "m"
 render: (Utf8String with taint(#clean)) -> Html;
 comment = input with taint(#userInput);
 
-// page = render("<p>" ++ comment ++ "</p>");   // ✗ rejected: user input reaches a clean sink
+// page = render("<p>" ++ comment ++ "</p>");   // ✗ rejected: user input reaches render
 page = render("<p>" ++ escapeHtml(comment) ++ "</p>");
 ```
 
