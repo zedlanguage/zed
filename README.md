@@ -19,15 +19,16 @@ main(fs: Files) -> (stdout: Lines) {
 }
 ```
 
-`group` collects the words by their lowercase form, and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a level below it so equal counts don't collide, and each value becomes a line of text. `.rank` numbers the result in order, and `<-` writes it out.
+`group` collects the words by their lowercase form, and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a level below it so equal counts don't collide, and each value becomes a line of text. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
 
 The program doesn't mention threads, locks or allocation. The compiler can run the grouping on all your cores, and the output is the same, bit for bit, on one core or on sixty-four. A missing file can't crash the program either: the type of `fs["input.txt"]` says the read can fail, and the `else` says what to do when it does.
 
-Three more short examples of what is different:
+Three more short examples from the tour below:
 
 ```zed
 // Two values landing on one key is a compile error, never a silent overwrite.
 // totals = sales as (region -> sku -> amount) into (region -> amount);   // ✗ rejected
+// Say how they merge: add the amounts for each region.
 totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount);
 
 // Edit distance: the equation and its boundary. The compiler picks the table and the fill order.
@@ -39,17 +40,17 @@ orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 ```
 
-Zed exists because many systems already recover a graph of values from ordinary code: spreadsheets, SSA form in compilers, Spark, build systems, reactive UI frameworks and out-of-order CPUs. In Zed the graph is the program, so one compiler handles parallel scheduling, memory management, incremental updates and many correctness checks from one structure. This doesn't have to make programs longer: the word-count program above is about as long as the same program in Python.
+Zed exists because many systems already recover a graph of values from ordinary code: spreadsheets, optimizing compilers, Spark, build systems, reactive UI frameworks and out-of-order CPUs. In Zed the graph is the program, so one compiler handles parallel scheduling, memory management, incremental updates and many correctness checks from one structure. This doesn't have to make programs longer: the word-count program above is about as long as the same program in Python.
 
 The rest of this page is a tour of the language. Each stop shows a piece of syntax, an example, and what the example means. Snippets stand alone unless they say otherwise, and a name a snippet doesn't define is an input you can assume. A commented-out line marked ✗ is one the compiler rejects.
 
 - [The basics](#the-basics): bindings, functions, numbers, strings, structs, unions, generics, modules
 - [Failure is a value](#failure-is-a-value)
 - [Collections](#collections): maps, grouping, remapping, reducing, pushing, joins, chunks, matrices
-- [Time and repetition](#time-and-repetition): recurrences, loops, history, methods, laziness
+- [Time and repetition](#time-and-repetition): recurrences, loops, methods, running only what's needed
 - [The outside world](#the-outside-world): ports, retries, databases, incremental updates
 - [Checks at compile time](#checks-at-compile-time): ranges, units, taint, cost
-- [Code that runs at build time](#code-that-runs-at-build-time): grammars, reflection, symbolic math
+- [Code that runs at build time](#code-that-runs-at-build-time): partial evaluation, reflection, grammars, symbolic math
 - [Tests, laws and proofs](#tests-laws-and-proofs)
 - [Under the hood](#under-the-hood): error messages, C, memory, parallelism, targets
 
@@ -170,7 +171,7 @@ interface Named { name: Utf8String }
 hello(positional n: Named) = "Hi, ${n.name}";
 ```
 
-A capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable, with nothing to declare. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra that `><` relies on, from `Monoid` to `CommRing`, is ordinary library code.
+An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable, with nothing to declare. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra behind `><`, the parallel reduction covered below, from `Monoid` to `CommRing`, is ordinary library code.
 
 ### Modules
 
@@ -199,7 +200,7 @@ port = parse(text)?.server?.port else 8080;
 
 There are no exceptions and no null. A function that can fail says so in its return type, by returning a union with an atom in it. `else` replaces any failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't.
 
-A `Config | #syntaxError` is not a `Config`: `conf: Config = parse(text);` is rejected. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it, and a reduction over values that may be failures is rejected.
+A `Config | #syntaxError` is not a `Config`. Arithmetic and calls on a failure pass it along, so `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it, and a reduction is rejected if its operator might be applied to a failure it does not handle.
 
 The compiler also adds failures only where they can really happen. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
 
@@ -214,7 +215,7 @@ good = results.where(r -> r is Config);
 bad = results.where(r -> r is not Config);
 ```
 
-A file that fails to read or parse doesn't stop the others. A failure is an ordinary value, sitting in the collection next to the successes under the same key, so you can split them, count them or report them. Each one stays under its file's key, and a port puts details such as the path in the failure's own fields (`#ioError(op:, path:, why:)`), so you don't have to thread that information through by hand.
+A file that fails to read or parse doesn't stop the others. A failure is an ordinary value, sitting in the collection next to the successes under the same key, so you can split them, count them or report them. Each one stays under its file's key, and the read puts details such as the path in the failure's own fields (`#ioError(op:, path:, why:)`), so you don't have to thread that information through by hand.
 
 What you can't do is ignore them by accident:
 
@@ -250,7 +251,7 @@ age = ages[name] else 0;               // name is known only at run time
 big = xs.map(x -> x * 10).where(x -> x > 20).sort(desc x -> x);   // 50, 40, 30
 ```
 
-An array is a map whose keys are `0..<n`, a set is a map from each key to itself, a struct is a map from field names to values, and a function is a map too. So `xs[i]`, `f(x)` and `p.x` are all lookups, and the same operations work on all of them. Nested maps are the normal way to hold tables: `Region -> Product -> rat` is a table of sales by region and product, stored in whichever layout suits the code that reads it.
+An array is a map whose keys are `0..<n`, a set is a map from each key to itself, a struct is a map from field names to values, and a function is a map too. So `xs[i]`, `f(x)` and `p.x` are all lookups, and the same operations work on all of them. `K -> V` has a value at every key of `K`, while `K ->? V` may lack some keys, so a lookup can give `#notFound`. Nested maps are the normal way to hold tables: `Region -> Product -> rat` is a table of sales by region and product, stored in whichever layout suits the code that reads it.
 
 ### Grouping
 
@@ -321,8 +322,9 @@ Floating-point sums get special care. `samples >< (+)` computes the exact sum an
 
 ```zed
 hist: int ->? int with reducer((+));
+for w in words { hist[w.len] <- 1; };
 
-for s in words { hist[s.len] <- 1; };
+same = words.group(w -> w.len).count;   // the same table, written as a pull
 ```
 
 Sometimes it's clearer to say where each value goes than where each value comes from. `hist` is a map that many places can push to, and `reducer((+))` says how contributions to one key merge. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same term, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
@@ -367,7 +369,7 @@ c = a.matmul(b);                                          // [f64; 2, 2]
 // d = a.matmul(a);                                       // ✗ rejected: 3 columns, 2 rows
 ```
 
-A name in a shape is a size variable of the signature, so `[T; n, n]` is a square matrix. Dimension checks are ordinary type checks, and the mismatch in the last line is a compile error. `*` scales a vector by a scalar, and using it between two vectors is an error. Say what you mean with `matmul`, which isn't built in: it's a one-line remap with a reduction, in the same style as the `pivot` above.
+A name in a shape that isn't bound to an integer is a size variable of the signature, so `[T; n, n]` is a square matrix. Dimension checks are ordinary type checks, and the mismatch in the last line is a compile error. `*` scales a vector or matrix by a number. Between two vectors or matrices it is an error, because it could mean several products: you write `matmul`, `dot` or `cross`. `matmul` isn't built in: it's a one-line remap with a reduction, in the same style as the `pivot` above.
 
 ## Time and repetition
 
@@ -376,7 +378,7 @@ A name in a shape is a size variable of the signature, so `[T; n, n]` is a squar
 `x[i] = f(x[i-1]) with x[-1] = start;`
 
 ```zed
-cdf[i] = cdf[i-1] + hist[i] with cdf[-1] = 0;
+running[i] = running[i-1] + xs[i] with running[-1] = 0;
 
 d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
   with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
@@ -546,7 +548,7 @@ a = odd(12);
 
 Types can carry ranges and relations between fields, and the compiler tracks them through arithmetic without any annotations from you. That is how it removes bounds checks and picks the smallest machine representation. `refine` checks a condition at run time, giving `#invalid` if it fails. `@ensure` forbids that check: the compiler has to push the condition back onto the inputs and reject any caller it can't prove safe, so the check moves to compile time.
 
-A field's range may name another field, but types can't contain arbitrary code, and no SMT solver is involved. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
+A field's range may name another field, but a range bound is a linear expression, not an arbitrary program, and no SMT solver is involved. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
 
 ### Units and taint
 
@@ -558,14 +560,14 @@ t = 2.0 with units("s");
 d = v * t;                 // has units "m"
 // e = v + t;              // ✗ rejected: m/s + s
 
-exec: (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;
-userName = input with taint(#userInput);
+render: (Utf8String with taint(#clean)) -> Html;
+comment = input with taint(#userInput);
 
-// exec(db, "SELECT * FROM users WHERE name = " ++ userName);   // ✗ rejected: user input reaches a clean sink
-rows = exec(db, "SELECT * FROM users WHERE name = " ++ sanitize(userName));
+// page = render("<p>" ++ comment ++ "</p>");   // ✗ rejected: user input reaches a clean sink
+page = render("<p>" ++ escapeHtml(comment) ++ "</p>");
 ```
 
-These are *facets*: extra facts about a value, tracked through every operation at compile time. Units and taint have no run-time cost. Units catch physics mistakes. Taint follows untrusted input through your program. Here `exec` declares that it takes only clean text and `sanitize` is the function that removes the taint, so passing user input straight through is a type error. Any program can define a facet of its own in the same way, such as a latency or a parity.
+These are *facets*: extra facts about a value, tracked through every operation at compile time. Units and taint have no run-time cost. Units catch physics mistakes. Taint follows untrusted input through your program. Here `render` declares that it takes only clean text and `escapeHtml` is the function that removes the taint, so passing user input straight through is a type error. Any program can define a facet of its own in the same way, such as a latency or a parity.
 
 ### Cost
 
@@ -580,7 +582,7 @@ sumSquares(positional xs: [f64]) = xs.map(x -> x * x) >< (+);
 ranked(positional xs: [int]) = xs.sort(desc x -> x);
 
 @noalloc
-mix(positional a: f64, positional b: f64, positional t: f64) = a * (1.0 - t) + b * t;
+lerp(positional a: f64, positional b: f64, positional t: f64) = a * (1.0 - t) + b * t;
 ```
 
 Every function has a computed upper bound on its work and its parallel depth, which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. Annotations like these are assertions about the plan the compiler chose: `@cost` states a bound, `@fused` says no intermediate collection is built, and `@noalloc` says the code uses no memory beyond registers. If one is false, the build fails. A performance requirement can be part of the code, and a change that breaks it fails the build.
@@ -716,7 +718,7 @@ reachable = loop {
 law neverBothGreen(j: Junction) = (j in reachable.R).implies(j.ns == #red || j.ew == #red);
 ```
 
-A loop is a state machine, so the set of states it can reach is a fixpoint you can write in a few lines, and for a finite state space the compiler computes it at build time. Here `.image` collects a list's values into a set, the loop stops when `R` stops growing, and `reachable.R` is the final set. A `Junction` with both lights green is a legal value, but no sequence of commands reaches it, and the law checks exactly that. This covers the safety checks you would use TLC for, in the language the system is written in. Liveness must be stated as a bound or a decreasing measure, and properties that rely on fairness can't be expressed. A failed check reports the sequence of steps that reached the bad state, as a value you can replay.
+A loop is a state machine, so the set of states it can reach is a fixpoint you can write in a few lines, and for a finite state space the compiler computes it at build time. Here `.image` collects a list's values into a set, the loop stops when `R` stops growing, and `reachable.R` is the final set. A `Junction` with both lights green is a legal value, but no sequence of commands reaches it, and the law checks exactly that. This covers the safety checks you would use a model checker like TLC for, in the language the system is written in. Liveness must be stated as a bound or a decreasing measure, and properties that rely on fairness can't be expressed. A failed check reports the sequence of steps that reached the bad state, as a value you can replay.
 
 ## Under the hood
 
@@ -737,7 +739,7 @@ root = cbrt(8.0) else 0.0;
 score(positional a: f64, positional b: f64) = a * 0.7 + b * 0.3;
 ```
 
-A foreign call is an operation on a port. The declared `-> f64` is the C result, and the call also has a failure type, which is why `root` needs its `else`. It takes the same `timeout` word as any other port, and `retry` if the function is marked `@stateless`, a promise about the library that the compiler can't check. Foreign structs declare their memory layout field by field, and C memory is read in place through that layout. `@export` compiles a function into a shared library with a generated C header. On the LLVM back end, C code compiled by Clang can be inlined into Zed code and optimized along with it.
+A foreign call is an operation on a port. The declared `-> f64` is the C result, and the call also has a failure type, which is why `root` has an `else`. It takes the same `timeout` word as any other port, and `retry` if the function is marked `@stateless`, a promise about the library that the compiler can't check. Foreign structs declare their memory layout field by field, and C memory is read in place through that layout. `@export` compiles a function into a shared library with a generated C header. On the LLVM back end, C code compiled by Clang can be inlined into Zed code and optimized along with it.
 
 ### Memory
 
