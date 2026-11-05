@@ -922,7 +922,7 @@ years = revenue as (region -> year -> sku -> amount) into (region -> year -> _);
 // bad = revenue as (region -> year -> sku -> amount) into (sku -> year -> amount);   // ✗ rejected
 ```
 
-Each row is one keypath and its value. `bySku` has the same four values as `revenue`, reached by new keypaths. `perYear` first moves the levels, then collapses `region`. In `years`, each region's years form a set, and a set is a map from each member to itself, so the value column repeats the key:
+Each row is one keypath and its value. `bySku` has the same four values as `revenue`, reached by new keypaths. `perYear` first moves the levels, then collapses `region`, and `years` drops the values and keeps the keys down to `year`:
 
 ```text
 input: revenue                        bySku
@@ -961,6 +961,21 @@ years
 +--------+------+------+
 | West   | 2025 | 2025 |
 +--------+------+------+
+```
+
+A set is a map from each item to itself, so each region's years form a set, and the value column of `years` repeats the key. What that means is set membership: a keypath either exists or it doesn't. This table shows it, with `✓` meaning "this keypath exists". The `exists` column is only an illustration on this page. `years` has no such column, and a program can't read one.
+
+```text
+years, read as which keypaths exist
++--------+------+--------+
+| region | year | exists |
++========+======+========+
+| East   | 2024 | ✓      |
+|        +------+--------+
+|        | 2025 | ✓      |
++--------+------+--------+
+| West   | 2025 | ✓      |
++--------+------+--------+
 ```
 
 The constraint on every remap is this: no two values may end up at the same keypath through the map. The rejected `bad` line breaks it, because `(A1, 2025)` would have to hold both 4 and 2. The compiler judges this from the pattern and not from the data, so it rejects a dropped level even for an input that happens to have one entry under each key. What that leaves is:
