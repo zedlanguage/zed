@@ -455,3 +455,205 @@ fn the_row_test_of_the_box_scales() {
         |n| rows_of(&blocks_with_a_hub_and_a_crossing(n)),
     );
 }
+
+/// `x[i] - x[j] <= (i + j) % 3 + 1` for every ordered pair `i != j` of `v` names: indices
+/// that lie pairwise within small distances, `v (v - 1)` rows.
+fn all_pairs(v: usize) -> Formula {
+    let mut cons = Vec::new();
+    for i in 0..v {
+        for j in 0..v {
+            if i != j {
+                let d = Lin::constant(((i + j) % 3 + 1) as i64);
+                cons.push(Formula::Con(Con::ge(&x(j).plus(&d), &x(i))));
+            }
+        }
+    }
+    Formula::and(cons)
+}
+
+/// `x[a] - x[b] <= 1` both ways between neighbors in a `v` by `v` grid of names, as the
+/// heights of neighboring cells: `4 v (v - 1)` rows.
+fn grid(v: usize) -> Formula {
+    let mut cons = Vec::new();
+    let one = Lin::constant(1);
+    let mut pair = |a: usize, b: usize| {
+        cons.push(Formula::Con(Con::ge(&x(b).plus(&one), &x(a))));
+        cons.push(Formula::Con(Con::ge(&x(a).plus(&one), &x(b))));
+    };
+    for i in 0..v {
+        for j in 0..v {
+            if i + 1 < v {
+                pair(i * v + j, (i + 1) * v + j);
+            }
+            if j + 1 < v {
+                pair(i * v + j, i * v + j + 1);
+            }
+        }
+    }
+    Formula::and(cons)
+}
+
+/// `0 <= x[0] <= x[1] <= … <= x[v-1] < n` for a symbolic `n`: `v` sorted indices into an
+/// array of length `n`, `3 v - 1` rows; with `strict`, `x[i] < x[i+1]` instead.
+fn sorted(v: usize, strict: bool) -> Formula {
+    let n = Lin::atom(Atom::Sym(Arc::from("n")));
+    let gap = Lin::constant(i64::from(strict));
+    let mut cons = Vec::new();
+    for i in 0..v {
+        cons.push(Formula::Con(Con::ge(&x(i), &Lin::constant(0))));
+        cons.push(Formula::Con(Con::ge(&n.minus(&Lin::constant(1)), &x(i))));
+        if i + 1 < v {
+            cons.push(Formula::Con(Con::ge(&x(i + 1), &x(i).plus(&gap))));
+        }
+    }
+    Formula::and(cons)
+}
+
+/// `0 <= x[i] + x[i+1] + x[i+2] <= 10` and `x[i] >= 0` for `i < v`: overlapping sums of three
+/// lengths, `3 v` rows.
+fn sums(v: usize) -> Formula {
+    let mut cons = Vec::new();
+    for i in 0..v {
+        let s = x(i).plus(&x(i + 1)).plus(&x(i + 2));
+        cons.push(Formula::Con(Con::ge(&s, &Lin::constant(0))));
+        cons.push(Formula::Con(Con::ge(&Lin::constant(10), &s)));
+        cons.push(Formula::Con(Con::ge(&x(i), &Lin::constant(0))));
+    }
+    Formula::and(cons)
+}
+
+/// `f` and `a >= b + k`.
+fn with_gap(f: Formula, a: usize, b: usize, k: i64) -> Formula {
+    Formula::and(vec![
+        f,
+        Formula::Con(Con::ge(&x(a), &x(b).plus(&Lin::constant(k)))),
+    ])
+}
+
+/// `f` and `n <= k` for the symbolic `n` of [`sorted`].
+fn with_length_at_most(f: Formula, k: i64) -> Formula {
+    let n = Lin::atom(Atom::Sym(Arc::from("n")));
+    Formula::and(vec![f, Formula::Con(Con::ge(&Lin::constant(k), &n))])
+}
+
+/// The point `satisfiable` finds, checked against `f`; a refusal or an empty answer fails.
+fn point_of(what: &str, f: &Formula) {
+    match satisfiable(f) {
+        Ok(Some(m)) => assert!(f.holds(&m), "{what}: {m:?}"),
+        other => panic!("{what}: a point exists, but {other:?}"),
+    }
+}
+
+#[test]
+fn shapes_of_programs_are_answered() {
+    // Each family is answered at every size here, none refused (2026-11-05). At f425b32 the
+    // ordered pairs were refused from four names on (cross-review xe round 2).
+    for v in [2, 3, 4, 5, 8] {
+        point_of(&format!("all ordered pairs of {v}"), &all_pairs(v));
+        point_of(&format!("a grid of {v} by {v}"), &grid(v));
+        point_of(&format!("{v} sorted indices"), &sorted(v, false));
+        point_of(&format!("{v} sorted distinct indices"), &sorted(v, true));
+        point_of(&format!("{v} overlapping sums"), &sums(v));
+        // `x0 - x1 <= 2`, so `x0 >= x1 + 100` is empty.
+        let far = with_gap(all_pairs(v), 0, 1, 100);
+        assert_eq!(satisfiable(&far), Ok(None), "all ordered pairs of {v}, far");
+        // Opposite corners of the grid are `2 (v - 1)` steps apart.
+        let corners = with_gap(grid(v), 0, v * v - 1, 2 * (v as i64 - 1));
+        point_of(&format!("a grid of {v}, corners at most apart"), &corners);
+        let corners = with_gap(grid(v), 0, v * v - 1, 2 * v as i64 - 1);
+        assert_eq!(satisfiable(&corners), Ok(None), "a grid of {v}, corners");
+        let far = with_gap(grid(v), 0, v * v - 1, 10 * v as i64);
+        assert_eq!(satisfiable(&far), Ok(None), "a grid of {v}, far");
+        // `v` distinct indices need an array of at least `v`.
+        let fits = with_length_at_most(sorted(v, true), v as i64);
+        point_of(&format!("{v} distinct indices into {v}"), &fits);
+        let short = with_length_at_most(sorted(v, true), v as i64 - 1);
+        assert_eq!(
+            satisfiable(&short),
+            Ok(None),
+            "{v} distinct indices into fewer"
+        );
+        // With `x1, x2 >= 0` (from three sums on), `x0 <= 10`, so `x0 >= x1 + 11` is empty;
+        // with two, `x2` may be negative and it is not.
+        let long = with_gap(sums(v), 0, 1, 11);
+        if v >= 3 {
+            assert_eq!(satisfiable(&long), Ok(None), "{v} overlapping sums, long");
+        } else {
+            point_of(&format!("{v} overlapping sums, long"), &long);
+        }
+    }
+}
+
+/// [`scales`] for a family whose rows grow as the square of its names: `v` names at the
+/// sizes `small` and `large`, whose rows are `rows(v)`, eight times as many at `large`.
+fn scales_by_rows(
+    what: &str,
+    (small, large): (usize, usize),
+    rows: impl Fn(usize) -> usize,
+    make: impl Fn(usize) -> Formula,
+) {
+    let n = rows(small);
+    assert_eq!(rows(large), scaling::FACTOR * n, "{what}");
+    let (fs, fl) = (make(small), make(large));
+    point_of(what, &fs);
+    point_of(what, &fl);
+    scaling::check(&format!("{what} (rows)"), n, |m| {
+        drop(satisfiable(if m == n { &fs } else { &fl }));
+    });
+}
+
+#[test]
+fn all_ordered_pairs_of_differences_scale() {
+    scales_by_rows(
+        "all ordered pairs of differences",
+        (12, 33),
+        |v| v * (v - 1),
+        all_pairs,
+    );
+}
+
+#[test]
+fn a_grid_of_differences_scales() {
+    scales_by_rows("a grid of differences", (12, 33), |v| 4 * v * (v - 1), grid);
+}
+
+#[test]
+fn sorted_indices_under_a_symbolic_length_scale() {
+    scales("sorted indices", 512, true, |v| sorted(v, false));
+}
+
+#[test]
+fn overlapping_sums_of_three_scale() {
+    scales("overlapping sums of three", 512, true, sums);
+}
+
+#[test]
+fn a_grid_of_differences_is_decided_in_scale() {
+    let (small, large) = (grid(12), grid(33));
+    for f in [&small, &large] {
+        assert_eq!(decide(f), Ok(true), "a grid of differences");
+    }
+    scaling::check("deciding a grid of differences (rows)", 528, |m| {
+        let _ = std::hint::black_box(decide(if m == 528 { &small } else { &large }));
+    });
+}
+
+/// The point of a grid of 33 and of 93 names, 4224 and 34224 rows (8.1 times). `decide`
+/// takes 9.3 times the instructions there and `satisfiable` on the empty grid 10.1 times, but
+/// placing the point takes 31.1 times (2026-11-05; 18.8 times from 12 to 33 names): once
+/// `utvpi::integer_empty` has shown a point, `Omega::run` places it by eliminating every
+/// variable with fill allowed. COMPLEXITY.md S38; open: UTVPI-model, whose fix runs this.
+#[test]
+#[ignore = "COMPLEXITY.md S38, open under UTVPI-model: fails now, 31.1 times"]
+fn the_point_of_a_larger_grid_of_differences_scales() {
+    let (small, large) = (grid(33), grid(93));
+    point_of("a grid of 33", &small);
+    point_of("a grid of 93", &large);
+    scaling::compare(
+        "the point of a grid of differences: 4224 and 34224 rows",
+        "8.1 times the rows; the rule of low complexity allows 24 times for 8 (DESIGN.md Part G)",
+        scaling::RATIO,
+        || drop(satisfiable(&small)),
+        || drop(satisfiable(&large)),
+    );
+}
