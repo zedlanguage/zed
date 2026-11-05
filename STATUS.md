@@ -1128,6 +1128,8 @@ Merged into local main and not yet pushed (0 commits); the push follows one full
 
 ## Open points
 
+- Needs of L1.40 and L1.41 reduced (2026-11-05), by the author's request: L1.40 from 90 to 2, L1.41 from 116 to 26. No need is implied by another. Checker, store and kernel cost fixes that reached S.1 only through L1.41 now feed S.3, the rewrite of those functions in Zed; rows that only add tests, lints or docs have no later consumer. The reasons are in `docs/plan_dag.md`.
+
 - Completed reviews left the plan graph on 2026-11-05 by the author's order: 46 review and study nodes, with 30 finished rows that were left with no edge to the rest of the graph. Their plan rows and reasons are at the end of `docs/plan_dag.md`, and their reports stay on disk. An open review stays in the graph until it finishes.
 - T12 was removed on 2026-11-05 by the author's order. The performance rule at the top of `docs/plan_dag.md` replaces it: every code agent passes an O(1), O(n) or O(n log n) performance test, and O(n²) or worse needs the author's approval. SCALE-cover holds T12's tool and its check of code already written.
 
