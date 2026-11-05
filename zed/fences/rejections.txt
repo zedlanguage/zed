@@ -3,11 +3,13 @@ Unlifted carrier
 Missing algebraic obligation
 Undischargeable `@ensure`
 Unsatisfiable declared constraints
+Quantifier in a law over a domain that is not finite
 Obligation below proof grade under `--strict` / `@proved` / `total` / `@decides`
 Non-exhaustive `match`
 Unreachable `match` arm
 `.fold` on a type that has none
 `.map` at a parameter outside the value positions
+Positional `.map`, or a name that is no parameter, on a value that is not a morphism
 Key outside the permission bound
 Undischarged region assertion
 Read below the domain with no boundary entry
@@ -16,6 +18,7 @@ Ambiguous imported name
 Need met only by an arrow in the caller's scope
 Two members of one name with different declarations in a struct or interface body
 File read at the compile-time stage by a path that leaves the package root
+Pinned file whose content no longer matches its pin
 Import cycle
 Order read on a level with no natural order — origin keys outside their `Seq`
 Two declared orders meet in one key type

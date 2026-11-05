@@ -304,7 +304,7 @@ byId2   = users.group(u -> u.id);          // Id ->? (UserKey -> User)
 byLower = words.group(w -> w.lower);       // Lower ->? (i -> w)
 counts  = byLower.count;                   // Lower ->? int
 best    = scores.maxBy(v -> v);            // (score ->? (name -> score)) | #none: the whole maximal class; #none only if scores is empty
-one     = best.first;
+one     = best?.first;
 ```
 
 <!-- EXAMPLES.md:343 layer L7: ring L7, word L7 (order), label none; section [8. Maps and sets] 4 -->
@@ -317,7 +317,7 @@ line  = ages.map(a -> "${a} ") >< (++);       // ++ is not: the ages in the code
 least = ages.first;                           // int | #none: the same order of the same map, so the same sorted view; a top-1 selection
 fsum2 = weights >< (+);                       // weights : Utf8String -> f64; a float + is an exact sum, so no sort
 fprod = weights >< (*);                       // a float * takes the canonical tree, which follows the key order, so it sorts, and unordered would not
-byLen2 = words.sort(by: (a, b) -> a.len <= b.len);  // a comparator: a total preorder; ties completed by the natural order
+byLen2 = words.sort(by: (a, b) -> a.len <= b.len);  // a comparator: a total preorder; ties by the source's rank where it has one, otherwise by key order
 ```
 
 <!-- EXAMPLES.md:355 layer L5: ring L3, word L5 (diff), label none; section [8. Maps and sets] 5 -->
@@ -799,7 +799,7 @@ config: Utf8String ->? Utf8String with store(file("app.cfg", KeyVal));   // the 
 <!-- EXAMPLES.md:827 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 6 -->
 ```zed
 // [d4] sec:ports, sec:staging — a timeout is declared on the port and adds #timeout to its failure member
-cache: Utf8String ->? [u8] with store(kv(endpoint)) with timeout(200 with units("ms"));   // lookup: [u8] | #ioError | #timeout | #notFound
+cache: Utf8String ->? [u8] with store(kv(endpoint)) with timeout(0.2r with units("s"));   // lookup: [u8] | #ioError | #timeout | #notFound
 hit = cache[key] else fetch(key);                                                   // else strips #timeout with the rest: a read that ran out of time is a miss
 ```
 
@@ -843,7 +843,7 @@ main(req: Stream(Query)) -> (resp: Stream(Answer)) {
 <!-- EXAMPLES.md:869 layer L12: ring L7, word L12 (units), label none; section [19. Streams] 5 -->
 ```zed
 // [prop] — windows and merge by arrival
-perMinute = events.window(60 with units("s")).map(w -> w.count);
+perMinute = events.window(60r with units("s")).map(w -> w.count);
 ```
 
 <!-- EXAMPLES.md:876 layer L18: ring L10, word L18 (@memoized), label none; section [20. Testing, properties, and proofs] 1 -->
