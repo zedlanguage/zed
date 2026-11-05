@@ -415,7 +415,7 @@ after:  big   = 1267650600228229401496703205376
         half  = 0.5, q = 3, ratio = 1.5
 ```
 
-An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. `r` marks an exact rational, so `0.1r + 0.2r == 0.3r` is true. Zed never converts a number for you: mixing `int` and `f64` is a compile error until you write `f64(n)`. That cast is checked, so its type also includes `#inexact` unless the compiler can show the value fits exactly.
+An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. `/` works on fractional types, and integers divide with `div` and `mod`. `r` marks an exact rational, so `0.1r + 0.2r == 0.3r` is true. Mixing `int` and `f64` is a compile error until you write `f64(n)`. That cast is checked, so its type also includes `#inexact` unless the compiler can show the value fits exactly.
 
 ### Strings
 
@@ -463,7 +463,7 @@ after:  p    = Point(x: 1.0, y: 2.0), unchanged
         size = the square root of 5.0, about 2.236
 ```
 
-Constructors take their arguments by name. `with` makes a copy with some fields changed, and when the compiler can see the original isn't used again, the copy is an update in place with no allocation. A method like `norm` is a function with an implicit first parameter whose fields are in scope. Structs compare by value, and two struct declarations with the same fields are the same type. There are no classes, no inheritance and no object identity.
+Constructors take their arguments by name. `with` makes a copy with some fields changed, and when the compiler can see the original isn't used again, the copy is an update in place with no allocation. A method like `norm` is a function with an implicit first parameter whose fields are in scope. Two struct declarations with the same fields are the same type. There are no classes, no inheritance and no object identity.
 
 ### Atoms, unions and match
 
@@ -603,7 +603,7 @@ after: good       after: bad
                   +---+----------------------+
 ```
 
-A file that fails to read or parse doesn't stop the others. A failure is an ordinary value, sitting in the collection next to the successes under the same key, so you can split them, count them or report them. Each one stays under its file's key, and the read puts details such as the path in the failure's own fields (`#ioError(op:, path:, why:)`), so you don't have to thread that information through by hand.
+A file that fails to read or parse doesn't stop the others. Each failure stays under its file's key, next to the successes, so you can split them, count them or report them. The read puts details such as the path in the failure's own fields (`#ioError(op:, path:, why:)`), so you don't have to thread that information through by hand.
 
 What you can't do is ignore them by accident:
 
@@ -876,7 +876,7 @@ before: words    after: hist, same
 +---+-----+
 ```
 
-Sometimes it's clearer to say where each value goes than where each value comes from. `hist` is a map that many places can push to, and `reducer((+))` says how contributions to one key merge. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same thing, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
+Sometimes it's clearer to say where each value goes than where each value comes from. `hist` can take pushes from many places, and `reducer((+))` adds up the values that land on one key. Without the reducer, the compiler has to prove that no two pushes land on one key, and otherwise rejects the program. Pushing and pulling compile to the same thing, so writing it this way doesn't choose the direction the data moves at run time. The compiler picks that for each edge of the graph.
 
 ### Joins
 
@@ -1012,7 +1012,7 @@ before: a          before: b          after: c
                    +---+---+-----+
 ```
 
-A name in a shape that isn't bound to an integer is a size variable of the signature, so `[T; n, n]` is a square matrix. Dimension checks are ordinary type checks, and the mismatch in the last line is a compile error. `*` scales a vector or matrix by a number. Between two vectors or matrices it is an error, because it could mean several products: you write `matmul`, `dot` or `cross`. `matmul` isn't built in: it's a one-line remap with a reduction, in the same style as the `pivot` above.
+A name in a shape that isn't bound to an integer is a size variable of the signature, so `[T; n, n]` is a square matrix. Dimension checks are ordinary type checks. `*` scales a vector or matrix by a number. Between two vectors or matrices it is an error, because it could mean several products: you write `matmul`, `dot` or `cross`. `matmul` isn't built in: it's a one-line remap with a reduction, in the same style as the `pivot` above.
 
 ## Time and repetition
 
@@ -1112,7 +1112,7 @@ run = loop t {
   doc' = doc.patch(edits[t]) with doc = empty;
 };
 
-previous = run::frames[run::len - 2].doc else empty;
+previous = run::frames[run::len - 2]?.doc else empty;
 ```
 
 With two edits `e1` and `e2`:
@@ -1156,7 +1156,7 @@ after:  after = Counter(n: 2, peak: 2), was = 0
         start = Counter(n: 0, peak: 0), unchanged
 ```
 
-Inside a method, `n'` means the same thing it means in a loop: the value of `n` in the next version of this struct. The method doesn't change `start`: it returns a new `Counter` and its declared result, and you have to take both. In a loop body, a `*` makes a call look like mutation: `prev = c*.bump(3);` replaces `c` in the loop's next step. So no call changes a value you hold unless the text shows a `*`.
+Here `n'` is the value of `n` in the next version of this struct. The method doesn't change `start`: it returns a new `Counter` and its declared result, and you have to take both. In a loop body, a `*` makes a call look like mutation: `prev = c*.bump(3);` replaces `c` in the loop's next step. So no call changes a value you hold unless the text shows a `*`.
 
 ### Only what's needed runs
 
@@ -1379,7 +1379,7 @@ These are the values. This page doesn't work out the bound that f::cost reads
 for these functions, beyond what the @cost lines state.
 ```
 
-Every function has a computed upper bound on its work and its parallel depth, which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. Annotations like these are assertions about the plan the compiler chose: `@cost` states a bound, `@fused` says no intermediate collection is built, and `@noalloc` says the code uses no memory beyond registers. If one is false, the build fails. A performance requirement can be part of the code, and a change that breaks it fails the build.
+Every function has a computed upper bound on its work and its parallel depth, which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. Annotations like these are assertions about the plan the compiler chose: `@cost` states a bound, `@fused` says no intermediate collection is built, and `@noalloc` says the code uses no memory beyond registers. If one is false, the build fails.
 
 ## Code that runs at build time
 
