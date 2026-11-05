@@ -326,6 +326,19 @@ fn holds_payload(set: &KType, n: &str) -> bool {
     !(set & &KType::atom_with(n, &KType::top())).is_empty()
 }
 
+/// Whether `s` holds, at any depth, a variable `binds` binds that is not one of its own: read
+/// from the smaller of the two, so a call that binds many variables pays at each signature it
+/// replaces in for the variables the signature holds, not for every one it binds.
+fn holds_bound(s: &Sig, binds: &Binds) -> bool {
+    let f = s.facts();
+    if binds.len() <= f.classes.len() + f.names.len() {
+        binds.keys().any(|v| !s.own.contains(v) && f.holds(v))
+    } else {
+        (f.classes.iter().chain(f.names.iter()))
+            .any(|v| !s.own.contains(v) && binds.contains_key(v))
+    }
+}
+
 /// A function's signature: its parameters' names and kinds, shared by its arrows, which
 /// together are an intersection, and the carriers each bounded type variable ranges over.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1570,12 +1583,7 @@ impl Ty {
                     _ if mode == Mode::Outside => s.clone(),
                     _ if mode == Mode::Rename => Arc::new(s.replace_in(binds, mode)),
                     // A signature that holds none of the variables replaced is kept whole.
-                    _ if !binds
-                        .keys()
-                        .any(|v| !s.own.contains(v) && s.facts().holds(v)) =>
-                    {
-                        s.clone()
-                    }
+                    _ if !holds_bound(s, binds) => s.clone(),
                     true => {
                         let free = binds
                             .iter()

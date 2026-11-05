@@ -1204,6 +1204,38 @@ fn many_destructurings(n: usize) -> String {
         .collect()
 }
 
+/// `app`, which applies its parameter `g` to each of its `n` other parameters, called with the
+/// generic `id` and `n` numbers: `n` needs of `g`'s class, each naming the type variable of
+/// `id` that the call leaves unbound, checked at a call that binds `2n` variables.
+fn generic_applied_to_many(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("positional a{i}")).collect();
+    let calls: Vec<String> = (0..n).map(|i| format!("g(a{i})")).collect();
+    let args: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+    format!(
+        "id(positional x) = x;\napp(positional g, {}) = ({});\ny = app(id, {});\n",
+        params.join(", "),
+        calls.join(", "),
+        args.join(", ")
+    )
+}
+
+#[test]
+fn needs_that_name_a_variable_the_call_leaves_unbound_check_in_linear_time() {
+    let (info, _) = info(&generic_applied_to_many(3));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.tops["y"].to_string(), "(0, 1, 2)");
+    // At n = 200 the scan of every bound variable at each signature (`Ty::replace_in`) gave
+    // 19.2 times the instructions, inside the limit; at n = 400 it gave 26.5 times.
+    scales(
+        "a generic function applied to n parameters",
+        400,
+        generic_applied_to_many,
+        |unit| {
+            assert_eq!(unit.type_errors(), Vec::<String>::new());
+        },
+    );
+}
+
 #[test]
 fn destructured_parameters_check_in_linear_time() {
     let (info, _) = info(&wide_destructuring(3));

@@ -1846,7 +1846,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn check_on(&mut self, n: &Need, t: &Ty, span: Span) {
         let from = self.info.errors.len();
         let start = self.need_passed.len();
-        let got = self.meet(n, t, &Binds::new(), span);
+        let got = self.meet(n, t, &mut Binds::new(), span);
         // A use checked on a value that flowed in has no call whose argument gave the atoms.
         let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
         for (inner, _, k) in passed {
@@ -1869,9 +1869,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The use `n`, of a value of `on`, checked at `span` where the variables of the
     /// signature that holds it are bound as `binds`; a variable left unbound is unknown.
-    /// Gives what the use gives.
-    fn meet(&mut self, n: &Need, on: &Ty, binds: &Binds, span: Span) -> Ty {
-        let b = |ck: &Self, t: &Ty| bound(t, binds, |v| ck.is_class(v));
+    /// Gives what the use gives; `binds` are as they were.
+    fn meet(&mut self, n: &Need, on: &Ty, binds: &mut Binds, span: Span) -> Ty {
+        let mut b = |ck: &Self, t: &Ty| bound(t, binds, |v| ck.is_class(v));
         let on = b(self, on);
         self.replaying += 1;
         let has_vars = |t: &Ty| {
@@ -2028,7 +2028,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let from = self.info.errors.len();
             let on = bound(&n.on, binds, |v| self.is_class(v));
-            let shape = bound(&on, &Binds::new(), |v| self.is_class(v));
+            let shape = bound(&on, &mut Binds::new(), |v| self.is_class(v));
             let got = match self.open.iter_mut().find(|o| o.span == n.span) {
                 _ if on.dynamic => {
                     self.any(&format!("{what}, which needs this of its argument,"), span);
@@ -2052,8 +2052,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Ty::empty()
                 }
                 None => {
-                    // `meet` reads `binds` and does not change them, so the second run starts
-                    // from the same ones.
+                    // `meet` gives `binds` back as they were, so the second run starts from
+                    // the same ones.
                     let errors = self.info.errors.len();
                     self.open.push(Open {
                         span: n.span,
@@ -5617,21 +5617,22 @@ fn is_solved(t: &Ty) -> bool {
 }
 
 /// `t` with its variables replaced by `binds`, and each that is not a class and `binds`
-/// leaves unbound by the unknown. `binds` is copied only when such a variable is added to
-/// it, so a call whose needs leave none costs the size of `t`, not of `binds`, at each need.
-fn bound(t: &Ty, binds: &Binds, is_class: impl Fn(&str) -> bool) -> Ty {
+/// leaves unbound by the unknown. Those are added to `binds` for the replacement and removed
+/// after it, so `binds` is as it was and each need costs the size of `t` and `log` of the
+/// size of `binds`, not a copy of `binds`.
+fn bound(t: &Ty, binds: &mut Binds, is_class: impl Fn(&str) -> bool) -> Ty {
     let vars = t.var_facts();
     let add: Vec<_> = (vars.classes.iter().chain(&vars.names))
         .filter(|v| !is_class(v) && !binds.contains_key(*v))
         .collect();
-    if add.is_empty() {
-        return t.replace(binds);
+    for v in &add {
+        binds.insert((*v).clone(), Ty::dynamic());
     }
-    let mut b = binds.clone();
+    let out = t.replace(binds);
     for v in add {
-        b.insert(v.clone(), Ty::dynamic());
+        binds.remove(v);
     }
-    t.replace(&b)
+    out
 }
 
 /// The carriers a value of `t` may be of, and [`OTHER`] if it may be a tuple, a function or
