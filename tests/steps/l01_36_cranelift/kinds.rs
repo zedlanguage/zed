@@ -46,16 +46,27 @@ fn a_tuple_in_cells_is_tested_by_its_kind() {
 
 #[test]
 fn a_string_in_cells_is_tested_without_flattening_it() {
+    // A block longer than the text's leaves, doubled 50 times: about 145 PB in 51 nodes. A
+    // test that read it would not finish.
+    let mut vast = Text::from("x".repeat(129).as_str());
+    for _ in 0..50 {
+        vast = Text::join(&vast, &vast).unwrap();
+    }
     let mut h = Heap::new();
-    let ab = Text::join(&"a".into(), &"b".into()).unwrap();
-    let w = h.alloc(Obj::Str(ab.clone()));
+    let w = h.alloc(Obj::Str(vast));
     assert!(is(&mut h, w, &Type::string()));
     assert!(is(&mut h, w, &Type::top()));
     assert!(!is(&mut h, w, &Type::int()));
     assert!(!is(&mut h, w, &Type::universe(Universe::Tuple)));
-    // A type holding some strings and not others reads the text.
-    assert!(is(&mut h, w, &Type::lit(&Value::str("ab")).unwrap()));
-    assert!(!is(&mut h, w, &Type::lit(&Value::str("ba")).unwrap()));
+    // A type holding some strings and not others reads the text, here a join of two pieces
+    // too long to merge.
+    let (a, b) = ("a".repeat(200), "b".repeat(200));
+    let ab = Text::join(&a.as_str().into(), &b.as_str().into()).unwrap();
+    assert!(!ab.is_flat());
+    let w = h.alloc(Obj::Str(ab));
+    let lit = |s: String| Type::lit(&Value::str(&s)).unwrap();
+    assert!(is(&mut h, w, &lit(format!("{a}{b}"))));
+    assert!(!is(&mut h, w, &lit(format!("{b}{a}"))));
 }
 
 #[test]

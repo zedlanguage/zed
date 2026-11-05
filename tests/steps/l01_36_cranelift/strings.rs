@@ -11,7 +11,7 @@ use super::{kernel, native};
 
 #[test]
 fn concatenation_runs_natively_and_reads_as_its_parts() {
-    // ((("ab" ++ "cd") ++ "ef") ++ "gh"), and its length.
+    // ((("ab" ++ "cd") ++ "ef") ++ "gh"), and its length: short parts, copied into one block.
     let mut s = lit("ab");
     for part in ["cd", "ef", "gh"] {
         s = prim(Prim::Concat, vec![s, lit(part)]);
@@ -26,6 +26,20 @@ fn concatenation_runs_natively_and_reads_as_its_parts() {
     let n = native(&prim(Prim::Len, vec![s.clone()])).unwrap();
     assert_eq!(n.value.to_string(), "8");
     assert_eq!(n.kernel_calls, 0);
+    // Parts too long to merge are linked, not copied: the result is a join of them.
+    let parts = ["a", "b", "c", "d"].map(|c| c.repeat(200));
+    let mut s = lit(parts[0].as_str());
+    for part in &parts[1..] {
+        s = prim(Prim::Concat, vec![s, lit(part.as_str())]);
+    }
+    let o = native(&s).unwrap();
+    assert_eq!(o.kernel_calls, 0);
+    let Value::Str(text) = &o.value else {
+        panic!("{}", o.value)
+    };
+    assert!(!text.is_flat(), "the parts are shared in a join");
+    assert_eq!(text.flat(), parts.concat());
+    assert_eq!(o.value, kernel(&s).unwrap());
 }
 
 #[test]
@@ -166,6 +180,24 @@ fn a_string_handed_to_the_kernel_is_shared_not_copied() {
     };
     assert_eq!(text.flat(), "abcdef");
     assert_eq!(o.value, kernel(&t).unwrap());
+    // `show` of a block doubled 50 times, about 145 PB in 51 nodes, natively: a copy on the
+    // way to the kernel or back would not finish.
+    let mut body = prim(Prim::Show, vec![var("s50")]);
+    for i in (1..=50).rev() {
+        let before = var(&format!("s{}", i - 1));
+        body = let_(
+            &format!("s{i}"),
+            prim(Prim::Concat, vec![before.clone(), before]),
+            body,
+        );
+    }
+    let t = let_("s0", lit("x".repeat(129).as_str()), body);
+    let o = native(&t).unwrap();
+    assert_eq!(o.kernel_calls, 1);
+    let Value::Str(text) = &o.value else {
+        panic!("{}", o.value)
+    };
+    assert_eq!(text.len(), 129 << 50);
 }
 
 /// `f`'s value, run on a thread whose stack holds the recursive passes over a term hundreds

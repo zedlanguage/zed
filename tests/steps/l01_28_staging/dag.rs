@@ -508,9 +508,9 @@ fn a_call_the_stubs_cannot_answer_is_mixed_as_written() {
     assert!(report.left.is_empty(), "{report:?}");
 }
 
-/// A call at a join of strings not yet written out is not answered by the function's stub:
-/// the join of `"a"` doubled 62 times is 62 nodes and `2^62` bytes long, and comparing it with
-/// a key asked before would write it out. The part is evaluated as written.
+/// A call at a string held in more than one block is not answered by the function's stub:
+/// `"a"` doubled 62 times is 56 nodes and `2^62` bytes long, and comparing it with a key asked
+/// before would read every byte. The part is evaluated as written.
 #[test]
 fn a_call_at_a_long_join_is_mixed_as_written() {
     let twice = lam(&["s"], prim(Prim::Concat, vec![var("s"), var("s")]));

@@ -180,19 +180,34 @@ fn a_word_kept_past_the_free_of_its_cell_is_reported_after_the_cell_is_taken_aga
     assert_eq!(h.live(), 0);
 }
 
+/// A block longer than the text's leaves, doubled 50 times: about 145 PB held in 51 nodes.
+/// Reading it would not finish, so a test that finishes on it read none of it.
+fn vast() -> Text {
+    let mut s = Text::from("x".repeat(129).as_str());
+    for _ in 0..50 {
+        s = Text::join(&s, &s).unwrap();
+    }
+    s
+}
+
 #[test]
 fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
     let mut h = Heap::new();
-    let r = Text::join(&"ab".into(), &"cd".into()).unwrap();
-    let s = h.alloc(Obj::Str(r));
-    let is = |h: &mut Heap, l: Value| {
+    let is = |h: &mut Heap, s: Word, l: Value| {
         h.matches(&Pattern::Lit(l), s, &mut Vec::new(), &mut Vec::new())
             .unwrap()
     };
-    assert!(!is(&mut h, Value::str("abc")));
-    assert!(!is(&mut h, Value::Int(4)));
-    assert!(!is(&mut h, Value::str("abce")));
-    assert!(is(&mut h, Value::str("abcd")));
+    // Lengths that differ: answered from the kept length, none of the text read.
+    let s = h.alloc(Obj::Str(vast()));
+    assert!(!is(&mut h, s, Value::str("abc")));
+    assert!(!is(&mut h, s, Value::Int(4)));
+    // Lengths that agree: a join of two pieces too long to merge is read in its parts.
+    let (a, b) = ("a".repeat(200), "b".repeat(200));
+    let r = Text::join(&a.as_str().into(), &b.as_str().into()).unwrap();
+    assert!(!r.is_flat());
+    let s = h.alloc(Obj::Str(r));
+    assert!(is(&mut h, s, Value::str(&format!("{a}{b}"))));
+    assert!(!is(&mut h, s, Value::str(&format!("{a}{}c", &b[1..]))));
 }
 
 #[test]

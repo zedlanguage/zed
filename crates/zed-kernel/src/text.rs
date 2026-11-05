@@ -55,8 +55,18 @@ enum Body {
 // `O(log n)` nodes. Given up: nothing in order; the result and every reader are the same. Why:
 // a string built a character at a time would otherwise hold a node of about 56 bytes and a
 // block of 16 bytes of counts for each character, and every read would walk that many leaves.
-// Trigger: a join whose parts' adjacent blocks are short. Test:
-// `text::tests::a_string_built_a_character_at_a_time_is_held_in_blocks`.
+// Measured (WRITE-prefix-scale merge, release, load 62 to 69, a `foldl` of 200,000 joins of
+// one piece, merging on against off): 1-byte pieces, 1,563 leaves of height 11 against
+// 200,000 of height 18, `==` of two such texts 0.2 ms against 34 to 40 ms, a hash 0.3 to 3.6
+// ms against 22 to 24 ms, printing 0.3 to 1.3 ms against 18 to 23 ms; 8-byte pieces, `==` 2 to
+// 5 ms against 11 to 39 ms; 128-byte pieces, which never merge, the same. One more effect: a
+// join of at most `LEAF` bytes is one block ([`Text::is_flat`]), so staging keys a call at it
+// by its answers (`zedc::stage::compared`) and a call at a longer join by the function's term;
+// the value is the same either way. Trigger: a join whose parts' adjacent blocks are short.
+// Test: `text::tests::a_string_built_a_character_at_a_time_is_held_in_blocks`; COMPLEXITY.md
+// C29. A solution with no constant would need leaves whose size follows the text's own pieces
+// with no per-piece node, which no structure here has; the amortized O(1) append of plan row
+// TEXT-append-O1 still needs a leaf size.
 const LEAF: usize = 128;
 
 impl Text {
@@ -703,6 +713,42 @@ mod tests {
                 assert_eq!(printed, PIECE * i);
             }
         });
+    }
+
+    #[test]
+    fn reading_every_prefix_held_keeps_no_copy_of_it() {
+        // A log of n lines whose every prefix is held, each printed, hashed and compared in
+        // full: a read walks the blocks and keeps nothing, so all the reads together allocate
+        // only each walk's stack, never the text (COMPLEXITY.md R5, C29). A read that wrote
+        // the text out, kept or not, would allocate `n²/2` lines.
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        use std::io::Write;
+        let line = long('l');
+        let n = 500;
+        let mut log = Text::from("");
+        let held: Vec<Text> = (0..n)
+            .map(|_| {
+                log = join(&log, &line);
+                log.clone()
+            })
+            .collect();
+        let mut sink = std::io::sink();
+        let hasher = BuildHasherDefault::<DefaultHasher>::default();
+        let before = zed_alloc_count::allocated();
+        for t in &held {
+            write!(sink, "{t}").unwrap();
+            hasher.hash_one(t);
+            assert!(*t <= log);
+        }
+        let read = zed_alloc_count::allocated() - before;
+        // Four walks per prefix (print, hash, both sides of `<=`), each a stack of at most
+        // the height plus one references.
+        let stacks = 4 * n * (usize::from(log.0.height) + 1) * size_of::<&Text>();
+        assert!(
+            read <= stacks as u64,
+            "{read} bytes allocated reading {} bytes of text, stacks {stacks}",
+            n * (n + 1) / 2 * PIECE
+        );
     }
 
     #[test]

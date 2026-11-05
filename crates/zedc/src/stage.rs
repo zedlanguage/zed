@@ -1991,7 +1991,7 @@ impl Mixer {
     // and the other bindings it reads are literals, primitives or names), when the calls are
     // made outside a family operation or a `fix` (a pure region, which reads no port), and
     // when each run succeeds with arguments that hold no float zero, no family, no atom and
-    // no string not yet written out ([`compared`]); otherwise the part is keyed by what the
+    // no string held in more than one block ([`compared`]); otherwise the part is keyed by what the
     // function is, its term and the bindings it reads, and is mixed once under each such
     // function, as before. A call whose answer is not yet known runs the function's term with
     // its own reads called through their stubs; a run that meets an answer not yet known
@@ -1999,7 +1999,7 @@ impl Mixer {
     // asks m new answers runs m + 1 times. Why: whether two functions compute the same values
     // is undecidable in general, so a part is keyed by the answers it took, which mixing can
     // compare; a key of `-0.0` reads as `0.0`, a family's entries are keys, and comparing a
-    // join of strings writes it out, which may take time exponential in its nodes. The runs
+    // join of strings reads every byte, which may take time exponential in its nodes. The runs
     // start again rather than nest, so the thread's stack does not grow with the depth of the
     // functions. Trigger: a part shared below `let`s of functions that differ on each path and
     // are called inside a family operation, through a parameter, or with such an argument;

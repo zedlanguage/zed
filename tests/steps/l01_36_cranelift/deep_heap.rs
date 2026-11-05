@@ -262,13 +262,32 @@ fn an_empty_tuple_and_a_bare_atom_are_uncounted_at_any_depth() {
 
 #[test]
 fn a_rope_inside_a_tuple_is_shared_not_copied_when_read() {
+    // A block longer than the text's leaves, doubled 50 times: about 145 PB in 51 nodes, which
+    // no copy would finish writing.
+    let mut r = Text::from("x".repeat(129).as_str());
+    for _ in 0..50 {
+        r = Text::join(&r, &r).unwrap();
+    }
     let mut h = Heap::new();
-    let r = Text::join(&"ab".into(), &"cd".into()).unwrap();
     let s = h.alloc(Obj::Str(r.clone()));
     let w = h.alloc(Obj::Tuple(vec![Word::int(1), s]));
-    let want = Value::tuple(vec![Value::Int(1), Value::str("abcd")]);
-    let v = h.value(w).unwrap();
-    assert_eq!(v, want);
+    for _ in 0..2 {
+        let Value::Tuple(parts) = h.value(w).unwrap() else {
+            panic!("not a tuple")
+        };
+        assert_eq!(parts[0], Value::Int(1));
+        let Value::Str(t) = &parts[1] else {
+            panic!("{}", parts[1])
+        };
+        assert_eq!(t.len(), r.len());
+    }
+    // A join of two pieces too long to merge reads as its parts.
+    let (a, b) = ("a".repeat(200), "b".repeat(200));
+    let r = Text::join(&a.as_str().into(), &b.as_str().into()).unwrap();
+    assert!(!r.is_flat());
+    let s = h.alloc(Obj::Str(r));
+    let w = h.alloc(Obj::Tuple(vec![Word::int(1), s]));
+    let want = Value::tuple(vec![Value::Int(1), Value::str(&format!("{a}{b}"))]);
     assert_eq!(h.value(w).unwrap(), want);
 }
 
