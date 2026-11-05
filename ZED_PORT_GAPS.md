@@ -1551,3 +1551,12 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A literal's entries rewritten in place to their keys (`*k = k.key()` through `&mut`), sorted in place by `sort_unstable_by`, and a repeat found by `windows(2).find` | `zir::text::family` | Mutation (gap 11), Early exit (gap 12) | `sort` of the entries mapped to their keys into a new list, then `zip` with its `drop(1)` and a search for the first equal pair |
+
+## Entries from CHK-held-cascade (`zedc/src/check/ty.rs`, `mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `impl Drop for RowData` that moves the components out with `std::mem::take` and frees the rows and signatures no other type holds (`Arc::into_inner`) on a stack of its own, so freeing a type a million tuples deep does not recurse | `check::ty::RowData::drop` | Missing (user-defined destructors) | None in the program: the runtime frees shared values, and its release of a deep value must itself keep its own stack (an L1.34 memory concern) |
+| A printer that pushes borrowed parts (`enum Print<'a> { Text, Ty, Sig, Vars, Bounds }`) onto an explicit `Vec` stack and pops them in order | `check::ty::{write_parts, between, Ty::parts, Sig::parts, Shape::parts}` | None | A recursive fold that returns the text; Zed has no borrowed references to distinguish, and the depth is the runtime's stack handling |
+| A visited set of row addresses (`HashSet<*const RowData>` from `Arc::as_ptr`) so that a walk enters a shared row once | `check::ty::Ty::vars_in` | Identity (gap 1) | The row's digest as the key, confirmed by contents, or the row's own variable set (`RowData::vars`) read in place of the walk |
+| A per-row `VarFacts` of persistent sets made when the row is built, read to keep whole a row that holds none of the variables replaced | `check::ty::{RowData::vars, Row::holds_any, Ty::var_facts}` | None | A field of the row record computed at construction, as `Row`'s other facts are |

@@ -1851,9 +1851,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let on = b(self, on);
         self.replaying += 1;
         let has_vars = |t: &Ty| {
-            let mut vars = Vars::default();
-            t.vars_in(&mut vars);
-            !vars.order.is_empty()
+            let f = t.var_facts();
+            !f.classes.is_empty() || !f.names.is_empty()
         };
         self.need_args = match &n.kind {
             NeedKind::Call { positional, .. } => Some(positional.iter().map(has_vars).collect()),
@@ -2373,9 +2372,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `t` with each class variable replaced by its root's type.
     fn solved(&self, t: &Ty) -> Ty {
-        let mut vars = Vars::default();
-        t.vars_in(&mut vars);
-        t.replace(&self.solving(&vars.order))
+        t.replace(&self.solving(&t.var_facts().classes))
     }
 
     /// The type the class of the variable `v` was solved to, if that holds no variable: a
@@ -2414,9 +2411,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // message with no memo across messages; a message prints the whole type anyway, so the
     // order is that of printing it.
     fn settled(&self, t: &Ty) -> Ty {
-        let mut vs = Vars::default();
-        t.vars_in(&mut vs);
-        let binds: Binds = (vs.order.into_iter())
+        let binds: Binds = (t.var_facts().classes.into_iter())
             .filter_map(|v| self.stale(&v).map(|t| (v, t)))
             .collect();
         t.replace(&binds)
@@ -2463,9 +2458,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `t` with each type variable of a function that ended given its name.
     fn shown(&self, t: &Ty) -> Ty {
-        let mut vars = Vars::default();
-        t.vars_in(&mut vars);
-        t.renamed(&self.names(vars.order))
+        t.renamed(&self.names(t.var_facts().classes))
     }
 
     /// `s` with each class variable replaced by its type, as [`Self::finish`] puts it: a
@@ -2763,7 +2756,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
     /// function at any depth.
     fn data(&mut self, t: &Ty, what: &str, span: Span) {
-        if let Some(s) = t.held_function() {
+        // A function held in the row of a tuple expression was reported at that tuple, with its
+        // derivation: one error for one function, however many tuples and uses it then flows
+        // through, each of which meets the same value, so that fixing the error fixes them all.
+        if let Some(s) = t.unchecked_function() {
             let s = self.sig_text(s);
             self.error(
                 span,
@@ -5598,12 +5594,11 @@ fn is_solved(t: &Ty) -> bool {
 /// `t` with its variables replaced by `binds`, and each that is not a class and `binds`
 /// leaves unbound by the unknown.
 fn bound(t: &Ty, binds: &Binds, is_class: impl Fn(&str) -> bool) -> Ty {
-    let mut vars = Vars::default();
-    t.vars_in(&mut vars);
+    let vars = t.var_facts();
     let mut b = binds.clone();
-    for v in vars.order {
-        if !is_class(&v) && !b.contains_key(&v) {
-            b.insert(v, Ty::dynamic());
+    for v in vars.classes.iter().chain(&vars.names) {
+        if !is_class(v) && !b.contains_key(v) {
+            b.insert(v.clone(), Ty::dynamic());
         }
     }
     t.replace(&b)

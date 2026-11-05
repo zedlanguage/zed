@@ -59,24 +59,42 @@ struct RowData {
     dynamic: bool,
     /// The first function, not a family, that a component holds at any depth.
     held: Option<Arc<Sig>>,
+    /// The first function, not a family, that a component holds at any depth and no tuple
+    /// expression has checked as data: none for a row that [`Self::checked`] says was.
+    unchecked: Option<Arc<Sig>>,
     /// Whether every type variable it holds outside functions, at any depth, was checked as
     /// data when the row was made: set only for the row of a tuple expression, whose
     /// components are each checked as data first.
     data: bool,
+    /// Whether this row, or the row it was made from by replacing variables, is the row of a
+    /// tuple expression: a function it held then was reported at that tuple, and a function
+    /// that took the place of a variable since is reported by the variable's data need.
+    checked: bool,
+    /// The variables a component holds at any depth, inside functions and payloads too: so
+    /// replacing variables keeps whole a row that holds none of them, and the variables of a
+    /// type are found at the cost of its outer level.
+    vars: VarFacts,
 }
 
 impl Row {
     /// The row of `cs`.
     pub fn new(cs: Vec<Ty>) -> Row {
-        Row::made(cs, false)
+        Row::made(cs, false, false)
     }
 
     /// The row of `cs`, each checked as data.
     pub(crate) fn of_data(cs: Vec<Ty>) -> Row {
-        Row::made(cs, true)
+        Row::made(cs, true, true)
     }
 
-    fn made(cs: Vec<Ty>, data: bool) -> Row {
+    /// The row of `cs`, which took the place of this row's components when variables were
+    /// replaced: its variables' data needs are met anew, and a function it holds is reported
+    /// as this row's would be.
+    fn replaced(&self, cs: Vec<Ty>) -> Row {
+        Row::made(cs, false, self.0.checked)
+    }
+
+    fn made(cs: Vec<Ty>, data: bool, checked: bool) -> Row {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one(&cs);
         let open = cs
@@ -86,14 +104,33 @@ impl Row {
             .iter()
             .any(|c| c.dynamic || c.tuples.iter().any(|r| r.0.dynamic));
         let held = cs.iter().find_map(|c| c.held_function().cloned());
+        let unchecked = match checked {
+            true => None,
+            false => cs.iter().find_map(|c| c.unchecked_function().cloned()),
+        };
+        let mut vars = VarFacts::default();
+        cs.iter().for_each(|c| vars.ty(c));
         Row(Arc::new(RowData {
             cs,
             digest,
             open,
             dynamic,
             held,
+            unchecked,
             data,
+            checked,
+            vars,
         }))
+    }
+
+    /// Whether a component holds one of the variables `binds` replaces, at any depth, inside
+    /// functions and payloads too.
+    fn holds_any(&self, binds: &Binds) -> bool {
+        let f = &self.0.vars;
+        match binds.len() <= f.classes.len() + f.names.len() {
+            true => binds.keys().any(|v| f.holds(v)),
+            false => (f.classes.iter().chain(&f.names)).any(|v| binds.contains_key(v)),
+        }
     }
 
     /// Whether a component holds a type variable or the unknown, outside functions, at any
@@ -149,6 +186,38 @@ impl PartialEq for Row {
 
 impl Eq for Row {}
 
+impl Drop for RowData {
+    /// Drops the components on a stack of its own: a type nests as deep as the program, and the
+    /// drop glue would recurse once per level, through tuples, functions and payloads. A row or
+    /// signature another type still holds is left to it.
+    fn drop(&mut self) {
+        let mut stack = std::mem::take(&mut self.cs);
+        while let Some(mut t) = stack.pop() {
+            for r in std::mem::take(&mut t.tuples) {
+                if let Some(mut d) = Arc::into_inner(r.0) {
+                    stack.append(&mut d.cs);
+                }
+            }
+            for s in std::mem::take(&mut t.fns) {
+                if let Some(s) = Arc::into_inner(s) {
+                    for a in s.arrows {
+                        stack.extend(a.params);
+                        stack.push(a.result);
+                    }
+                }
+            }
+            for s in std::mem::take(&mut t.payloads)
+                .into_values()
+                .flatten()
+                .flatten()
+            {
+                stack.extend(s.items);
+                stack.extend(s.fields.into_values());
+            }
+        }
+    }
+}
+
 impl std::hash::Hash for Row {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         h.write_u64(self.0.digest);
@@ -179,23 +248,24 @@ impl Shape {
         }
     }
 
-    /// Writes the type of the atom `#name` with this payload to `out`: `#name(int, f: String)`.
-    fn write(&self, name: &str, out: &mut String, scope: &mut Scope) {
-        out.push('#');
-        out.push_str(name);
-        out.push('(');
+    /// Pushes the parts of the text of the type of the atom `#name` with this payload to
+    /// `parts`, in order: `#name(int, f: String)`.
+    fn parts<'a>(&'a self, name: &'a str, parts: &mut Vec<Print<'a>>) {
+        parts.push(Print::Text("#"));
+        parts.push(Print::Text(name));
+        parts.push(Print::Text("("));
         let mut first = true;
         for t in &self.items {
-            separate(out, &mut first, ", ");
-            t.write(out, scope);
+            between(parts, &mut first, ", ");
+            parts.push(Print::Ty(t));
         }
         for (f, t) in &self.fields {
-            separate(out, &mut first, ", ");
-            out.push_str(f);
-            out.push_str(": ");
-            t.write(out, scope);
+            between(parts, &mut first, ", ");
+            parts.push(Print::Text(f));
+            parts.push(Print::Text(": "));
+            parts.push(Print::Ty(t));
         }
-        out.push(')');
+        parts.push(Print::Text(")"));
     }
 
     /// It with `f` applied to each component and field.
@@ -364,23 +434,27 @@ impl VarFacts {
         g
     }
 
-    /// Adds the variables of `t`.
+    /// Adds the variables of `t`: those of its rows and functions as each keeps them, so the
+    /// cost is that of its outer level and of its payloads, walked on a stack of their own.
     fn ty(&mut self, t: &Ty) {
-        for v in &t.vars {
-            match super::class_id(v) {
-                Some(_) => add(&mut self.classes, v),
-                None => add(&mut self.names, v),
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            for v in &t.vars {
+                match super::class_id(v) {
+                    Some(_) => add(&mut self.classes, v),
+                    None => add(&mut self.names, v),
+                }
             }
-        }
-        for c in t.tuples.iter().flatten() {
-            self.ty(c);
-        }
-        for s in t.payloads.values().flatten().flatten() {
-            s.items.iter().for_each(|t| self.ty(t));
-            s.fields.values().for_each(|t| self.ty(t));
-        }
-        for s in &t.fns {
-            self.held(s.facts());
+            for r in &t.tuples {
+                self.held(&r.0.vars);
+            }
+            for s in t.payloads.values().flatten().flatten() {
+                stack.extend(&s.items);
+                stack.extend(s.fields.values());
+            }
+            for s in &t.fns {
+                self.held(s.facts());
+            }
         }
     }
 
@@ -1172,6 +1246,15 @@ impl Ty {
             .or_else(|| self.tuples.iter().find_map(|r| r.0.held.as_ref()))
     }
 
+    /// A function it may hold, at any depth, that no tuple expression has checked as data, so
+    /// that no error has reported it yet.
+    pub(crate) fn unchecked_function(&self) -> Option<&Arc<Sig>> {
+        self.fns
+            .iter()
+            .find(|s| !s.data)
+            .or_else(|| self.tuples.iter().find_map(|r| r.0.unchecked.as_ref()))
+    }
+
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
         self.sub_in(other, binds, &mut Cx::default())
@@ -1234,6 +1317,11 @@ impl Ty {
     /// kernel decides that, or refuses with its cause.
     pub fn kernel(&self) -> Option<KType> {
         if !self.fns.is_empty() || !self.vars.is_empty() || self.dynamic {
+            return None;
+        }
+        // A row knows whether it holds a variable, the unknown or a function at any depth, so a
+        // type that does is refused at its outer level, not at the bottom of its tuples.
+        if (self.tuples.iter()).any(|r| r.open() || r.0.held.is_some()) {
             return None;
         }
         let shapes = self.tuples.iter().map(|cs| {
@@ -1393,7 +1481,10 @@ impl Ty {
             tuples: self
                 .tuples
                 .iter()
-                .map(|cs| cs.iter().map(|c| c.subst(binds)).collect())
+                .map(|cs| match cs.holds_any(binds) {
+                    true => cs.replaced(cs.iter().map(|c| c.subst(binds)).collect()),
+                    false => cs.clone(),
+                })
                 .collect(),
             fns: self.fns.clone(),
             vars: BTreeSet::new(),
@@ -1448,7 +1539,8 @@ impl Ty {
                 .iter()
                 .map(|cs| match mode {
                     Mode::Outside if !cs.open() => cs.clone(),
-                    _ => cs.iter().map(|c| c.replace_in(binds, mode)).collect(),
+                    _ if !cs.holds_any(binds) => cs.clone(),
+                    _ => cs.replaced(cs.iter().map(|c| c.replace_in(binds, mode)).collect()),
                 })
                 .collect(),
             fns: self
@@ -1529,26 +1621,43 @@ impl Ty {
         }
     }
 
+    /// Every variable in it at any depth, as sets: at the cost of its outer level and its
+    /// payloads, since each row and function keeps its own.
+    pub fn var_facts(&self) -> VarFacts {
+        let mut f = VarFacts::default();
+        f.ty(self);
+        f
+    }
+
     /// Every variable in it, in order of first appearance.
+    ///
+    /// A type nests as deep as the program, so the walk keeps its own stack; rows are shared,
+    /// so it enters each once. The address of a row only tells whether it was entered: rows
+    /// entered once more would add no variable, so the order does not depend on it.
     pub fn vars_in(&self, out: &mut Vars) {
-        for v in &self.vars {
-            if out.seen.insert(v.clone()) {
-                out.order.push(v.clone());
+        let mut rows = HashSet::new();
+        let mut stack = vec![self];
+        while let Some(t) = stack.pop() {
+            for v in &t.vars {
+                if out.seen.insert(v.clone()) {
+                    out.order.push(v.clone());
+                }
             }
-        }
-        for c in self.tuples.iter().flatten() {
-            c.vars_in(out);
-        }
-        for s in self.payloads.values().flatten().flatten() {
-            s.items.iter().for_each(|t| t.vars_in(out));
-            s.fields.values().for_each(|t| t.vars_in(out));
-        }
-        for s in &self.fns {
-            for a in &s.arrows {
-                a.params.iter().for_each(|p| p.vars_in(out));
-                a.result.vars_in(out);
+            let from = stack.len();
+            let rows = (t.tuples.iter()).filter(|r| rows.insert(Arc::as_ptr(&r.0)));
+            stack.extend(rows.flatten());
+            for s in t.payloads.values().flatten().flatten() {
+                stack.extend(&s.items);
+                stack.extend(s.fields.values());
             }
-            s.needs.iter().for_each(|n| n.vars_in(out));
+            for s in &t.fns {
+                for a in &s.arrows {
+                    stack.extend(&a.params);
+                    stack.push(&a.result);
+                }
+                stack.extend(s.needs.iter().flat_map(Need::tys));
+            }
+            stack[from..].reverse();
         }
     }
 
@@ -1560,7 +1669,7 @@ impl Ty {
             set: self.set.clone(),
             tuples: (self.tuples.iter())
                 .map(|r| match r.open() || r.0.held.is_some() {
-                    true => r.iter().map(|c| c.settle(solve)).collect(),
+                    true => r.replaced(r.iter().map(|c| c.settle(solve)).collect()),
                     false => r.clone(),
                 })
                 .collect(),
@@ -3195,6 +3304,12 @@ impl Ty {
     /// string and copied into the whole: copying cost the depth of each part, so O(n^2) for a
     /// function type n deep. A variable `scope` does not name is printed `_`, once.
     fn write(&self, out: &mut String, scope: &mut Scope) {
+        write_parts(Print::Ty(self), out, scope);
+    }
+
+    /// Writes the start of its text to `out`, and pushes the parts that follow to `parts`, in
+    /// order.
+    fn parts<'a>(&'a self, out: &mut String, parts: &mut Vec<Print<'a>>) {
         let mut first = true;
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
@@ -3212,34 +3327,38 @@ impl Ty {
         });
         let set = rest.as_ref().unwrap_or(&self.set);
         if !set.is_empty() {
-            separate(out, &mut first, " | ");
+            first = false;
             out.push_str(&set.surface_in_union().to_string());
         }
         for (n, ss) in shaped {
             for s in ss {
-                separate(out, &mut first, " | ");
-                s.write(n, out, scope);
+                between(parts, &mut first, " | ");
+                s.parts(n, parts);
             }
         }
         for cs in &self.tuples {
-            separate(out, &mut first, " | ");
-            out.push('(');
+            between(parts, &mut first, " | ");
+            parts.push(Print::Text("("));
             let mut one = true;
             for c in cs {
-                separate(out, &mut one, ", ");
-                c.write(out, scope);
+                between(parts, &mut one, ", ");
+                parts.push(Print::Ty(c));
             }
-            if cs.len() == 1 {
-                out.push(',');
-            }
-            out.push(')');
+            parts.push(Print::Text(if cs.len() == 1 { ",)" } else { ")" }));
         }
         for s in &self.fns {
-            separate(out, &mut first, " | ");
-            out.push('(');
-            s.write(out, scope);
-            out.push(')');
+            between(parts, &mut first, " | ");
+            parts.push(Print::Text("("));
+            parts.push(Print::Sig(s));
+            parts.push(Print::Text(")"));
         }
+        parts.push(Print::Vars(self, first));
+    }
+
+    /// Writes the end of its text to `out`: the variables `scope` names, then `_` for the
+    /// others and the unknown, or `!_` if `first` says nothing is written yet and nothing is
+    /// to be.
+    fn write_vars(&self, mut first: bool, out: &mut String, scope: &Scope) {
         let mut free = false;
         for v in &self.vars {
             match scope.name(v) {
@@ -3260,6 +3379,52 @@ impl Ty {
     }
 }
 
+/// A part of the text of a type still to be written, on the stack [`write_parts`] keeps.
+enum Print<'a> {
+    Text(&'a str),
+    Ty(&'a Ty),
+    Sig(&'a Sig),
+    /// The end of a type's text ([`Ty::write_vars`]), and whether nothing of it is written yet.
+    Vars(&'a Ty, bool),
+    /// The bounds clause of a signature, which closes the variables it opened.
+    Bounds(&'a Sig, Vec<(Arc<str>, u8)>),
+}
+
+/// Writes `start` to `out`. A type nests as deep as the program, so the writing keeps its own
+/// stack: each part expands to the parts it is made of, which are put on the stack so that they
+/// pop in order. The time is that of the text; a signature opens its variables when it is
+/// reached and closes them after its arrows, so `scope` is as a recursive walk would have it.
+fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
+    let mut stack = vec![start];
+    while let Some(part) = stack.pop() {
+        let from = stack.len();
+        match part {
+            Print::Text(text) => out.push_str(text),
+            Print::Ty(t) => t.parts(out, &mut stack),
+            Print::Sig(s) => s.parts(scope, &mut stack),
+            Print::Vars(t, first) => t.write_vars(first, out, scope),
+            Print::Bounds(s, bounds) => {
+                for (i, (v, m)) in bounds.iter().enumerate() {
+                    out.push_str(if i == 0 { " for " } else { ", " });
+                    out.push_str(v);
+                    out.push_str(" in ");
+                    out.push_str(&mask_text(*m));
+                }
+                scope.close(s);
+            }
+        }
+        stack[from..].reverse();
+    }
+}
+
+/// Pushes `sep` to `parts` before every item but the first, which `first` tells.
+fn between<'a>(parts: &mut Vec<Print<'a>>, first: &mut bool, sep: &'a str) {
+    if !*first {
+        parts.push(Print::Text(sep));
+    }
+    *first = false;
+}
+
 impl fmt::Display for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();
@@ -3274,37 +3439,33 @@ impl Sig {
     /// Writes its text, in type syntax, to `out`: its variables bounded by carriers by name, in
     /// a bounds clause after the arrows, and the others `_`.
     fn write(&self, out: &mut String, scope: &mut Scope) {
+        write_parts(Print::Sig(self), out, scope);
+    }
+
+    /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order.
+    fn parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
         let bounds = scope.open(self);
         let several = self.arrows.len() != 1;
         let mut first = true;
         for a in &self.arrows {
-            separate(out, &mut first, " & ");
-            if several {
-                out.push('(');
-            }
-            out.push('(');
+            between(parts, &mut first, " & ");
+            parts.push(Print::Text(if several { "((" } else { "(" }));
             let mut one = true;
             for (p, t) in self.params.iter().zip(&a.params) {
-                separate(out, &mut one, ", ");
+                between(parts, &mut one, ", ");
                 if !p.positional {
-                    out.push_str(&p.name);
-                    out.push_str(": ");
+                    parts.push(Print::Text(&p.name));
+                    parts.push(Print::Text(": "));
                 }
-                t.write(out, scope);
+                parts.push(Print::Ty(t));
             }
-            out.push_str(") -> ");
-            a.result.write(out, scope);
+            parts.push(Print::Text(") -> "));
+            parts.push(Print::Ty(&a.result));
             if several {
-                out.push(')');
+                parts.push(Print::Text(")"));
             }
         }
-        for (i, (v, m)) in bounds.iter().enumerate() {
-            out.push_str(if i == 0 { " for " } else { ", " });
-            out.push_str(v);
-            out.push_str(" in ");
-            out.push_str(&mask_text(*m));
-        }
-        scope.close(self);
+        parts.push(Print::Bounds(self, bounds));
     }
 }
 

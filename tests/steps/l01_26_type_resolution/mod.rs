@@ -10,6 +10,7 @@ mod curried_classes;
 mod docs;
 mod fits;
 mod handled;
+mod held_functions;
 mod literals;
 mod named_calls;
 mod narrowing;
