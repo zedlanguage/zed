@@ -15,8 +15,8 @@ Zed is a dataflow programming language. A program is a set of definitions, each 
 
 Its central data structure is the multi-level map, and the same code works on maps held in memory, in files or in a database.
 
-- [Notation](#notation): the syntax, words and terms used on this page
-- [A first program](#a-first-program)
+- [A worked example](#a-worked-example): sales by region, day and product, one step at a time
+- [A complete program](#a-complete-program): reading a file and printing a result
 - [The basics](#the-basics): bindings, functions, numbers, strings, structs, unions, generics, modules
 - [Failure is a value](#failure-is-a-value)
 - [Collections](#collections): maps, grouping, remapping, reducing, pushing, joins, chunks, matrices
@@ -27,399 +27,501 @@ Its central data structure is the multi-level map, and the same code works on ma
 - [Tests, laws and proofs](#tests-laws-and-proofs)
 - [Under the hood](#under-the-hood): error messages, C, memory, parallelism, targets
 
-## Notation
+## A worked example
 
-This section lists all the syntax, words and terms the examples on this page use, so you can look up anything you don't recognize. Most of them come back with an example in the tour. If you'd rather start with code, skip to [A first program](#a-first-program) and come back when you need to.
+This example follows one small data set from raw sales records to totals, a running sum, a stock count and a check of physical units. Each step shows its code, explains what is new in it, and shows the value it computes. Boxes like the ones below define each word and form the first time it appears.
 
-### Conventions on this page
+### Step 1: the data
 
-| Form | Meaning |
-|---|---|
-| `// text` | A comment. |
-| `// ✗ rejected` | A commented-out line that the compiler rejects, with the reason. |
-| `...` in a **Syntax** line, `x`, `T`, `op`, `pattern`, `fallback`, `#someFailure` | Placeholders for code you would write. In real code, `...` has the one meaning given below. |
-| `input:` | A value an example reads that its code doesn't show. The plain-text blocks and tables below an example start with these lines, if it has any, then give each thing it computes under that thing's name. They are not Zed code. |
-
-### Words used throughout
-
-| Term | Meaning |
-|---|---|
-| map, key, value, entry | A map sends each *key* to a *value*, and a key with its value is an *entry*. |
-| level | One layer of keys in a nested map. `a -> b -> v` has the two levels `a` and `b`. |
-| keypath | The chain of keys that leads to a value, such as `(a, b)`. |
-| struct, field, method | A *struct* is a record of named *fields*, built with `Name(x: 1)`. A *method* is a function you call on a struct with a dot, as in `p.norm`, and its body can read the fields by name. |
-| pattern | The part of a `match` arm (one case of a multi-way branch) or a remap (a reshaping of a map) that names the shape of a value. |
-| failure | An atom in a value's type that says the operation didn't give a result. An atom is a value written `#name`, like an enum value. |
-| port | A declared channel to the outside world: a file, socket, clock or database. |
-| facet | An extra fact about a value, tracked through every operation at compile time. |
-
-### Definitions and functions
-
-| Syntax | Meaning |
-|---|---|
-| `name = value;` | A *binding*: gives a name to a value, once. Definitions can come in any order. |
-| `name: T = value;` | A binding with a stated type. |
-| `name: T;` | Declares a name and its type, with the value given elsewhere: an input, a foreign function, or a map filled by pushes (`name[k] <- v`; see [Less familiar forms](#less-familiar-forms) below). |
-| `f(x) = expression;` | A function whose body is one expression. |
-| `f(x) -> T { ... }`, `f(x) { ... }`, `f(x) -> T = expression;` | A function with a stated result type, a block body or both. The last expression gives the result, or `return e;`, which ends the block body with the result `e`. |
-| `positional x` | A parameter passed by position. Other parameters are passed by name, as in `f(x: 1)`. |
-| `y = default` in a parameter list | A parameter that can be left out. |
-| `(T) -> U` | The type of a function from `T` to `U`. |
-| `x -> expression` | An unnamed function (a lambda). With a type: `(x: rat) -> x + 1r`, where `rat` is an exact rational number and `1r` is the rational 1. |
-| `a.f(b)`, `5.double` | A call with the dot: `a.f(b)` is `f(a, b)`, and `5.double` is `double(5)`. |
-| `f(x, ...)` | A call that leaves the remaining named parameters open, and gives back a function that takes them. |
-| `(+)` | An operator used as a function. |
-| `x, y = e;` | Binds each name to a part of a result that has several parts. |
-| `field:` in `{ mean:, sd: }` or `Circle(radius:)` | Short for `field: field`. In a pattern it reads the field into a name of the same spelling. |
-| `this` | Inside a method: the value the method was called on. |
-| `if c { a } else { b }` | A choice between two values. |
-| `match x { pattern -> value, ... }` | Picks the arm whose pattern fits `x`. The arms must cover every case. |
-| `for x in a { ... }`, `for x in a, y in b where c { ... }` | Builds a map with one entry per element, or per combination the `where` lets through. |
-| `loop { ... }`, `loop t { ... }` | A repeated step, with `t` as its optional step counter. The loop is a value holding the final state and the history. |
-| `until c;`, `while c;` | Stop conditions of a loop: `until` is tested after each step, `while` before it. |
-| `x' = e` | The value of `x` in the next step of a loop or the next version of a struct. See [Less familiar forms](#less-familiar-forms) below. |
-| `x' = e with x = start` | The same, with the value of `x` before the first step. |
-| `x[i] = e with x[-1] = start;` | A recurrence: an array defined by an equation, with its boundary value at the index just below the first. See [Less familiar forms](#less-familiar-forms) below. |
-| `i in 0..` inside `d[i in 0..]` | This entry is defined for every `i` in the range, here from 0 up. |
-| `x*.method()` | A call in a loop body that also replaces `x` in the next step. See [Less familiar forms](#less-familiar-forms) below. |
-| `mutable x = e;` | A loop variable with the starting value `e`, which keeps its value in any step that doesn't write `x'`. |
-| `test { input -> output, ... }` | A table of test cases attached to a definition, run at build time. |
-| `law name(x: T) = expression;` | A claim that a `bool` (true or false) expression holds for every `x`. |
-| `import a.b;`, `import a.b as c;`, `import a.b.{x, y};` | Imports a module (one source file) whole, under another name, or by listing names. |
-| `local` | Keeps a definition private to its file. |
-| `main(input: T) -> (output: U) { ... }` | A program's entry point. Its parameters are input ports and its results are output ports. |
-| `@name` | An annotation: a claim or request the compiler acts on or checks. They are listed below. |
-
-### Operators
-
-| Syntax | Meaning |
-|---|---|
-| `+ - *` | Arithmetic. `*` also scales a vector or matrix by a number. |
-| `/` | Division on `f64` (a 64-bit floating-point number) and `rat` (an exact rational number). It does not apply to `int` (an integer). |
-| `a div b`, `a mod b` | Integer quotient and remainder. |
-| `**` | Power. |
-| `== != < <= > >=` | Comparison. `==` compares structure, by value. |
-| `\|\|` | Logical or. |
-| `a ++ b` | Joins two strings or lists. |
-| `x in s` | True if `x` is a member of `s`. |
-| `x is T`, `x is not T` | Tests whether a value has a type. |
-| `m[k]`, `p.x`, `f(x)` | Lookups, in a map, a struct and a function. |
-| `x::word` | Reads a fact about `x`, such as its length or its type's fields. The facts are listed below. |
-| `x else d` | Gives `d` in place of a failure. `x else #a -> d` replaces only the atom `#a`, which is like an enum value. |
-| `x?.field` | Reads a field if there is one, and passes a failure along if there isn't. |
-| `m >< op` | *Reduces* the innermost level of `m` with the operator `op`. See [Less familiar forms](#less-familiar-forms) below. |
-| `m >< op else d` | The same, with `d` as the answer for an empty collection. |
-| `unordered` after `m >< op` | Gives up the floating-point result that's identical at any core count, in exchange for speed. |
-| `m as (pattern) into (pattern)` | A *remap*: names the shape `m` has and the shape you want. See [Less familiar forms](#less-familiar-forms) below. |
-| `k >< op` inside a pattern | Collapses the level `k` with `op`. |
-| `desc k`, `asc k` | Orders by `k`, high to low or low to high. In a remap's key position it adds a level keyed by rank, the position in that order, where equal values share one. |
-| `_` in a pattern | Drops the value at that place. |
-| `name <- v`, `name[k] <- v` | Pushes a value out of a port, or into one key of a map. See [Less familiar forms](#less-familiar-forms) below. |
-| `e with name(args)` | Attaches a *facet* or a port setting to a value or type. They are listed below, and facets are explained in [Less familiar forms](#less-familiar-forms) below. |
-| `x with { field = value }` | A copy of a struct with some fields changed. |
-
-### Less familiar forms
-
-Most languages have nothing quite like these forms, so each one gets an example here and a comparison with the code you would write elsewhere.
-
-**`#name`: an atom.** An atom is like an enum value that you can write without declaring an enum. Writing `#tooYoung` anywhere is enough. If a function can return an atom, the atom becomes part of the function's result type, in a union (a type that allows any of several kinds of value) with whatever else it can return.
+A shop records how many of each product it sold, per region and per day, and keeps its prices in a second table.
 
 ```zed
-// positional: callers pass age by position, as checkAge(30), and not by name, as checkAge(age: 30).
-checkAge(positional age: int) = if age < 18 { #tooYoung } else { age };
+// region -> day -> sku -> quantity sold
+sales: Utf8String ->? [Utf8String ->? int];
 
-a = checkAge(30) else 18;
-b = checkAge(15) else 18;
+// sku -> price in dollars
+prices: Utf8String ->? int;
 ```
+
+> [!NOTE]
+> **`name: T;`** declares a name and its type without giving the value. Here the values come from outside the code shown, so `sales` and `prices` are this example's inputs. Text from `//` to the end of the line is a comment.
+
+The types say what shape the data has.
+
+> [!NOTE]
+> **`K ->? V`** is the type of a *map* from keys of type `K` to values of type `V` that may lack some keys. A map sends each *key* to a *value*, and a key with its value is an *entry*. `K -> V`, with no `?`, has a value at every key of `K`.
+>
+> **`[T]`** is an array of `T`: a map whose keys are `0`, `1`, `2` and so on.
+>
+> **`int`** is a mathematical integer, which can't overflow, and **`Utf8String`** is text in UTF-8. A *sku* is a product code.
+
+So `sales` is a map from each region to an array with one entry per day, and each day maps a sku to the quantity sold. A map whose values are maps is a multi-level map, Zed's basic structure for data.
+
+> [!NOTE]
+> **Level**: one layer of keys in a multi-level map. `sales` has three levels: region, day and sku.
+>
+> **Keypath**: the chain of keys that leads to one value, such as `("East", 0, "pen")`. One rule holds for every map in Zed: a keypath leads to exactly one value.
+
+Here are the two inputs the rest of the example uses.
+
+> [!TIP]
+> **How this page shows data.** Each table has a bold line above it naming the value it shows. A line starting with `input:` names a value the code reads but doesn't show. Each column but the last is one level of keys, and the last column holds the values. A key is printed once and covers every row beside it, and rows are listed in key order. Where a table has several columns after its keys, they are parts of one value. The tables are not Zed code.
+
+**input: `sales`**
+
+<table>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>sku</code></th><th><code>quantity</code></th></tr>
+<tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>0</code></td><td><code>ink</code></td><td><code>2</code></td></tr>
+<tr><td><code>pen</code></td><td><code>5</code></td></tr>
+<tr><td><code>1</code></td><td><code>pen</code></td><td><code>3</code></td></tr>
+<tr><td rowspan="3"><code>West</code></td><td rowspan="2"><code>0</code></td><td><code>pad</code></td><td><code>1</code></td></tr>
+<tr><td><code>pen</code></td><td><code>4</code></td></tr>
+<tr><td><code>1</code></td><td><code>ink</code></td><td><code>6</code></td></tr>
+</table>
+
+**input: `prices`**
+
+<table>
+<tr><th><code>sku</code></th><th><code>price</code></th></tr>
+<tr><td><code>ink</code></td><td><code>7</code></td></tr>
+<tr><td><code>pen</code></td><td><code>2</code></td></tr>
+</table>
+
+The price list has no entry for `pad`. That gap comes back in step 3.
+
+### Step 2: looking up a keypath
+
+```zed
+northOrZero = northPens else 0;
+northPens = sales["North"][0]["pen"];
+eastPens = sales["East"][0]["pen"];
+```
+
+> [!NOTE]
+> **`name = value;`** is a *binding*: it gives a name to a value, once. A name can't be reassigned.
+>
+> **`m[k]`** looks up the key `k` in the map `m`. Each `[k]` goes one level down, so `sales["East"][0]["pen"]` follows the keypath `("East", 0, "pen")`.
+
+The first line uses `northPens` before the line that defines it. That is fine: definitions can come in any order, and the compiler computes each value from the values it depends on. Because each name has one value, you never have to ask what it holds at some point in the program.
+
+There is no region `"North"`, so that lookup finds nothing and gives an *atom*.
+
+> [!NOTE]
+> **`#name`** is an *atom*: a value that is just a name, like an enum value, that needs no declaration. Writing `#tooYoung` anywhere is enough. A lookup that finds no entry gives the atom **`#notFound`**.
+>
+> **`A | B`** is a *union*, the type of a value that is either an `A` or a `B`. `northPens` has the type `int | #notFound`, and the compiler works that out without being told.
+
+Zed uses atoms to report failure. A *failure* is an atom in a value's type that says an operation didn't give a result.
+
+> [!TIP]
+> Where another language would throw an exception or return null, a Zed operation returns an atom, and its type says so until the caller handles it. In Python, `sales["North"]` raises `KeyError`, and nothing in the code warns you. When you want a fixed set of names, as with an enum, you give the union a name with `type`: `type Light = #red | #amber | #green;`.
+
+`else` is one way to handle a failure.
+
+> [!NOTE]
+> **`x else d`** gives `x`, or `d` in place of a failure. `x else #a -> d` replaces only the atom `#a`.
+
+**`eastPens`, `northPens` and `northOrZero`**
+
+<table>
+<tr><th><code>eastPens</code></th><th><code>northPens</code></th><th><code>northOrZero</code></th></tr>
+<tr><td><code>5</code></td><td><code>#notFound</code></td><td><code>0</code></td></tr>
+</table>
+
+### Step 3: pricing each sale with a remap
+
+The revenue of each entry is its quantity times its price.
+
+```zed
+revenue = sales as (region -> day -> sku -> q) into (region -> day -> sku -> q * prices[sku]);
+```
+
+> [!NOTE]
+> **`m as (pattern) into (pattern)`** is a *remap*, which reshapes a map. A *pattern* names the shape of a value. The `as` pattern gives a name to each level of `m` and to its value, and the `into` pattern draws the shape of the result with those names, ending in an expression for each new value. Here the shape stays the same, and each quantity `q` becomes `q * prices[sku]`.
+
+**`revenue`**
+
+<table>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>sku</code></th><th><code>revenue</code></th></tr>
+<tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>0</code></td><td><code>ink</code></td><td><code>14</code></td></tr>
+<tr><td><code>pen</code></td><td><code>10</code></td></tr>
+<tr><td><code>1</code></td><td><code>pen</code></td><td><code>6</code></td></tr>
+<tr><td rowspan="3"><code>West</code></td><td rowspan="2"><code>0</code></td><td><code>pad</code></td><td><code>#notFound</code></td></tr>
+<tr><td><code>pen</code></td><td><code>8</code></td></tr>
+<tr><td><code>1</code></td><td><code>ink</code></td><td><code>42</code></td></tr>
+</table>
+
+`prices["pad"]` is `#notFound`, and so is `1 * #notFound`: a failure passes through arithmetic unchanged. It stays in the map at its own keypath, next to the good values, so one bad record doesn't stop the rest of the computation. The type of `revenue`'s values, `int | #notFound`, says that some may be failures.
+
+> [!TIP]
+> Elsewhere this remap is three nested loops that fill a new nested dictionary. A remap can also move levels: `matrix as (r -> c -> v) into (c -> r -> v)` transposes a matrix, where other languages set `out[c][r] = matrix[r][c]` in two nested loops. [Remapping](#remapping) below compares remaps with spreadsheet pivot tables.
+
+### Step 4: finding the failures
+
+To list the entries that have no price, flatten `revenue` to one level and keep the failures.
+
+```zed
+flat = revenue as (region -> day -> sku -> r) into ((region, day, sku) -> r);
+unpriced = flat.where(r -> r is not int);
+```
+
+> [!NOTE]
+> **`(a, b, c)`** is a *tuple*, a fixed number of values that may have different types. As a key, it packs three levels into one.
+>
+> **`x -> e`** is an unnamed function (a lambda) that gives `e` for the argument `x`.
+>
+> **`m.where(f)`** keeps the entries whose value passes the test `f`, with their keys. A call with a dot passes the value before the dot as the first argument, so `m.where(f)` is `where(m, f)`.
+>
+> **`x is T`** tests whether `x` has the type `T`, and **`x is not T`** tests that it doesn't.
+
+**`flat`**
+
+<table>
+<tr><th><code>(region, day, sku)</code></th><th><code>r</code></th></tr>
+<tr><td><code>("East", 0, "ink")</code></td><td><code>14</code></td></tr>
+<tr><td><code>("East", 0, "pen")</code></td><td><code>10</code></td></tr>
+<tr><td><code>("East", 1, "pen")</code></td><td><code>6</code></td></tr>
+<tr><td><code>("West", 0, "pad")</code></td><td><code>#notFound</code></td></tr>
+<tr><td><code>("West", 0, "pen")</code></td><td><code>8</code></td></tr>
+<tr><td><code>("West", 1, "ink")</code></td><td><code>42</code></td></tr>
+</table>
+
+**`unpriced`**
+
+<table>
+<tr><th><code>(region, day, sku)</code></th><th><code>r</code></th></tr>
+<tr><td><code>("West", 0, "pad")</code></td><td><code>#notFound</code></td></tr>
+</table>
+
+The failure keeps its keypath, so `unpriced` says exactly which record lacks a price.
+
+### Step 5: daily totals, and a remap the compiler rejects
+
+The daily total of a region adds up the revenue of its skus. Dropping the `sku` level from the pattern is the first thing to try:
+
+```zed
+// daily = revenue as (region -> day -> sku -> r) into (region -> day -> r);   // ✗ rejected
+```
+
+> [!TIP]
+> A line commented out and marked `// ✗ rejected` is one the compiler rejects. The text after it, if any, gives the reason.
+
+The compiler rejects this line with this error:
 
 ```text
-checkAge(15) = #tooYoung, a = 30, b = 18
+error: this remap would map one key to many values
+  the `(region, day, sku)` keypaths collapse onto `(region, day)`, but their values survive.
+  drop the values too:         into (region -> day -> sku -> _)
+  or keep the inner key:       into (region -> day -> sku -> r)
+  or say how the values merge: into (region -> day -> sku >< op -> r)
 ```
 
-The result type of `checkAge` is `int | #tooYoung`, a value that is either an `int` or that atom, and you can write it out or let the compiler work it out. This is how Zed reports failure: where another language would throw an exception or return null, a Zed function returns an atom, and the type says so until the caller handles it, here with `else`. When you do want a fixed set of names, as with an enum, give the union a name: `type Light = #red | #amber | #green;`.
+> [!IMPORTANT]
+> **A remap never merges values unless you say how.** No two values may end up at the same keypath. East's day 0 has two values, 14 for ink and 10 for pen, and without `sku` they would share the keypath `("East", 0)`. The compiler judges this from the pattern, not the data, so it rejects the line even for an input with one sku per day. A dictionary filled in a loop would quietly keep the last value written, and a database would raise a duplicate-key error while the program runs.
 
-**`x' = e`: the next value of a variable.** In a loop, `x` is the value from the previous step and `x'` is the value this step writes for the next one. `with x = start` gives the value before the first step. `loop t` names the step counter `t`, and `while` is tested before each step. The loop is itself a value: `fib.a` is the final `a`, and `fib::len` is the number of steps.
+The error lists the ways out. The first drops the values and keeps only the keys, the second keeps the `sku` level, and the third merges the values with an operator.
+
+> [!NOTE]
+> **`k >< op`** in an `into` pattern collapses the level `k`, merging the values that land on one keypath with the operator `op`.
+>
+> **`(+)`** is the operator `+` used as a function. **`_`** in the value position of a pattern drops the values.
+
+### Step 6: a sum can't skip a failure
+
+The third repair is the one that sums. It is also rejected, for a new reason:
 
 ```zed
-fib = loop t {
-  while t < 5;
-  a' = b with a = 0;
-  b' = a + b with b = 1;
+// daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);   // ✗ rejected: r may be #notFound
+daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else 0));
+```
+
+> [!IMPORTANT]
+> **A merge runs only on values its operator can take.** `+` has no meaning for `#notFound`, and the failures at many keys can't become one result unless you say how. So a merge over values that may be failures is rejected until you handle them: replace them with `else`, filter them out with `where`, or keep them apart, as step 4 did. A single value with a failure is fine, and carries it along; a merge has to decide.
+
+This version counts an unpriced sale as zero revenue, while `unpriced` from step 4 still lists it.
+
+**`daily` before summing over `sku`**
+
+<table>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>sku</code></th><th><code>r else 0</code></th></tr>
+<tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>0</code></td><td><code>ink</code></td><td><code>14</code></td></tr>
+<tr><td><code>pen</code></td><td><code>10</code></td></tr>
+<tr><td><code>1</code></td><td><code>pen</code></td><td><code>6</code></td></tr>
+<tr><td rowspan="3"><code>West</code></td><td rowspan="2"><code>0</code></td><td><code>pad</code></td><td><code>0</code></td></tr>
+<tr><td><code>pen</code></td><td><code>8</code></td></tr>
+<tr><td><code>1</code></td><td><code>ink</code></td><td><code>42</code></td></tr>
+</table>
+
+**`daily`**
+
+<table>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>total</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>0</code></td><td><code>24</code></td></tr>
+<tr><td><code>1</code></td><td><code>6</code></td></tr>
+<tr><td rowspan="2"><code>West</code></td><td><code>0</code></td><td><code>8</code></td></tr>
+<tr><td><code>1</code></td><td><code>42</code></td></tr>
+</table>
+
+### Step 7: totals per region with a reduction
+
+```zed
+regionTotals = daily >< (+);
+```
+
+> [!NOTE]
+> **`m >< op`** *reduces* the innermost level of `m`: it merges that level's values into one with the operator `op`. On `daily`, the innermost level is `day`, so the result has one total per region.
+
+**`regionTotals`**
+
+<table>
+<tr><th><code>region</code></th><th><code>total</code></th></tr>
+<tr><td><code>East</code></td><td><code>30</code></td></tr>
+<tr><td><code>West</code></td><td><code>50</code></td></tr>
+</table>
+
+> [!TIP]
+> This is `reduce` or `fold` in other languages, but you give no direction, because the work can be split across cores in any grouping. That's why `op` must be safe to regroup, as `+` is. Floating-point values have their own rule, in [Reducing](#reducing) below.
+
+### Step 8: units sold per product, by pushing into a map
+
+So far each value was computed from where its data comes from. Sometimes it's clearer to say where each value goes. This step counts the units sold of each sku by sending each sale's quantity to its sku.
+
+```zed
+lines = sales as (region -> day -> sku -> q) into ((region, day, sku) -> { sku:, q: });
+
+sold: Utf8String ->? int with reducer((+));
+for line in lines { sold[line.sku] <- line.q; };
+```
+
+> [!NOTE]
+> **`{ sku: s, q: n }`** is a *struct* value: a record of named *fields*. `{ sku:, q: }` is short for `{ sku: sku, q: q }`, and `line.sku` reads the field `sku`.
+>
+> **`for x in m { ... }`** runs its body once for each entry of `m`, with `x` bound to the entry's value.
+
+`lines` is `sales` flattened as in step 4, with each value a record of the sku and the quantity. The declaration of `sold` has no value: `sold` is filled by pushes.
+
+> [!NOTE]
+> **`name[k] <- v`** *pushes* the value `v` to the key `k` of the map `name`. **`with reducer(op)`** in the declaration says how values pushed to one key merge, here by adding them.
+
+**`lines`**
+
+<table>
+<tr><th><code>(region, day, sku)</code></th><th><code>line</code></th></tr>
+<tr><td><code>("East", 0, "ink")</code></td><td><code>{ sku: "ink", q: 2 }</code></td></tr>
+<tr><td><code>("East", 0, "pen")</code></td><td><code>{ sku: "pen", q: 5 }</code></td></tr>
+<tr><td><code>("East", 1, "pen")</code></td><td><code>{ sku: "pen", q: 3 }</code></td></tr>
+<tr><td><code>("West", 0, "pad")</code></td><td><code>{ sku: "pad", q: 1 }</code></td></tr>
+<tr><td><code>("West", 0, "pen")</code></td><td><code>{ sku: "pen", q: 4 }</code></td></tr>
+<tr><td><code>("West", 1, "ink")</code></td><td><code>{ sku: "ink", q: 6 }</code></td></tr>
+</table>
+
+**`sold`**
+
+<table>
+<tr><th><code>sku</code></th><th><code>units</code></th></tr>
+<tr><td><code>ink</code></td><td><code>8</code></td></tr>
+<tr><td><code>pad</code></td><td><code>1</code></td></tr>
+<tr><td><code>pen</code></td><td><code>12</code></td></tr>
+</table>
+
+> [!TIP]
+> This looks like `sold[k] += q` on a dictionary in Python, but nothing is read back or overwritten. `sold` has one value, all its pushes merged per key, so pushes can come from many places in a program and from many cores at once, with no locks.
+
+A push and the matching read compile to the same thing: the same table could be computed by a remap that moves `sku` to the top level and sums over region and day. Write whichever reads more clearly.
+
+### Step 9: a running total, defined by an equation
+
+East's daily revenue as an array, and its running total:
+
+```zed
+east = daily["East"] else [];
+running[i] = running[i-1] + east[i] with running[-1] = 0;
+```
+
+> [!NOTE]
+> **`x[i] = e with x[-1] = start;`** is a *recurrence*: it defines every entry of the array `x` by one equation, which may read earlier entries. The `with` part gives the *boundary* value, the one a read just below the first index finds. `running[-1]` is not an entry of the result.
+
+`daily["East"]` may be `#notFound`, so `else []` gives an empty array in its place, and `east` is an array of `int`.
+
+**`east`**
+
+<table>
+<tr><th><code>day</code></th><th><code>total</code></th></tr>
+<tr><td><code>0</code></td><td><code>24</code></td></tr>
+<tr><td><code>1</code></td><td><code>6</code></td></tr>
+</table>
+
+**`running`**
+
+<table>
+<tr><th><code>i</code></th><th><code>running</code></th></tr>
+<tr><td><code>0</code></td><td><code>24</code></td></tr>
+<tr><td><code>1</code></td><td><code>30</code></td></tr>
+</table>
+
+> [!TIP]
+> Elsewhere this is a `for` loop that fills an array in order. Here it's a statement about every entry, and the compiler reads the dependencies and picks the order. [Recurrences](#recurrences) below shows what else that allows, such as running a scan like this one on many cores.
+
+### Step 10: the change from the day before, in a loop
+
+A loop describes one step, and the loop as a whole is a value.
+
+```zed
+trend = loop t {
+  while t < east::len;
+  prev' = east[t] with prev = 0;
+  change' = east[t] - prev with change = 0;
 };
 ```
 
-```text
-fib.a = 5, fib.b = 8, fib::len = 5
-```
+> [!NOTE]
+> **`loop t { ... }`** repeats its body, with `t` as the step counter, counting from 0. **`while c;`** is tested before each step and ends the loop when `c` is false, and **`until c;`** is tested after each step and ends it when `c` is true. **`x::len`** is the number of entries in `x`. The loop is a value: `trend.prev` is the final `prev`, and `trend::len` is the number of steps.
+>
+> **`x' = e`** gives `x`'s value in the next step. In the step, `x` is the value from the previous step. **`with x = start`** gives the value before the first step.
 
-In Python this is `a, b = b, a + b`, and in C it needs a temporary. In Zed, writing `a'` doesn't change `a`, so the second line still reads the old `a` and the two lines could be swapped. Each step writes each variable once.
+**`trend`, one row per step**
 
-**`x*.method()`: a call that also replaces `x`.** A method can write a field with a `'`, such as `n' = n + by`, which gives that field's value in a new struct. It returns the new struct along with its result and leaves the old one alone. In a loop, the `*` makes that new struct the value of `x` in the next step.
+<table>
+<tr><th><code>t</code></th><th><code>prev</code></th><th><code>change</code></th></tr>
+<tr><td><code>0</code></td><td><code>24</code></td><td><code>24</code></td></tr>
+<tr><td><code>1</code></td><td><code>6</code></td><td><code>-18</code></td></tr>
+</table>
+
+**`trend.prev`, `trend.change` and `trend::len`**
+
+<table>
+<tr><th><code>trend.prev</code></th><th><code>trend.change</code></th><th><code>trend::len</code></th></tr>
+<tr><td><code>6</code></td><td><code>-18</code></td><td><code>2</code></td></tr>
+</table>
+
+> [!TIP]
+> In Python the body would be `prev, change = x, x - prev`, and in C it needs a temporary. In Zed, writing `prev'` doesn't change `prev`, so the `change'` line still reads the previous day's value, and the two lines could be swapped. Each step writes each variable once.
+
+### Step 11: a shelf of pens, with a method
+
+The East store starts the period with 20 pens on its shelf. This step follows the count as the pens sell.
 
 ```zed
-struct Counter { n: int }
+eastPenDays = (sales["East"] else []).map(day -> day["pen"] else 0);
 
-Counter.bump(positional by) -> int {
-  n' = n + by;
-  return n;
+struct Shelf { pens: int }
+
+Shelf.sell(positional n: int) -> int {
+  pens' = pens - n;
+  return pens;
 }
 
-run = loop {
-  mutable c = Counter(n: 0);
-  prev = c*.bump(3);
-  until prev >= 6;
+stock = loop t {
+  while t < eastPenDays::len;
+  mutable s = Shelf(pens: 20);
+  before = s*.sell(eastPenDays[t]);
 };
 ```
 
-```text
-step 0: prev = 0, next c.n = 3
-step 1: prev = 3, next c.n = 6
-step 2: prev = 6, next c.n = 9
-run.c.n = 9, run::len = 3
-```
+> [!NOTE]
+> **`m.map(f)`** replaces each value `v` with `f(v)` and keeps the keys. Here each day's map of skus becomes the number of pens sold that day.
+>
+> **`struct Name { field: T }`** declares a struct type, and **`Name(field: value)`** builds one.
 
-`prev = c*.bump(3);` is short for `c', prev = c.bump(3);`. It has the same effect as `cNext, prev = c.bump(3);` followed by `c = cNext` at the end of the step, where `bump` has no side effects and returns a changed copy of `c` along with its result. So it reads like a mutating method call in Java or Python, with two differences. The rest of the step still reads the old `c`. And a step can write `c'` only once, so two calls in one step have to be one chain: `a, b = c*.bump(1).bump(2);`. Without the `*`, a call never changes a value you hold: `c.bump(3);` alone is rejected because its result would be thrown away. On a value bound with `=`, `c*.bump(3)` is rejected because there is no next step to write.
+A method is a function you call on a struct with a dot.
 
-**`x[i] = e with x[-1] = start`: an array defined by an equation.**
+> [!NOTE]
+> **`Name.method(...) -> T { ... }`** defines a method of the struct `Name`, whose result has the type `T`. In the body, the struct's fields are in scope by name, and **`return e;`** ends the body with the result `e`. A parameter marked **`positional`** is passed by position, as in `s.sell(3)`. Other parameters are passed by name, as in `f(x: 1)`.
+>
+> A method can write a field with a `'`, such as `pens' = pens - n`, which gives the field's value in the struct's next version. The call returns that new struct along with its result and leaves the old one alone.
 
-```zed
-running[i] = running[i-1] + xs[i] with running[-1] = 0;
-```
+In a loop, `*.` makes the new struct the value of `s` in the next step.
 
-```text
-input: xs = [3, 1, 4]
-running = [3, 4, 8]
-```
+> [!NOTE]
+> **`mutable x = e;`** declares a loop variable that starts as `e` and keeps its value in any step that doesn't write `x'`. **`x*.method()`** calls the method and also makes the struct it returns the value of `x` in the next step: `before = s*.sell(3);` is short for `s', before = s.sell(3);`, where **`a, b = e;`** binds each name to one part of a result that has several parts.
 
-Elsewhere this is a `for` loop that fills an array in order. Here it's a statement about every entry, and the compiler reads the dependencies and picks the order. `running[-1]` is the starting value that a read just below the first index finds, and it isn't an entry of the result. A boundary can cover many entries: `d[i in 0..][-1] = i + 1` defines `d[i][-1]` for every `i` from 0 up.
+So each step of `stock` sells one day's pens, records the count before the sale in `before`, and hands the shelf with its new count to the next step.
 
-**`m >< op`: reduce a level.**
+> [!IMPORTANT]
+> **No call changes a value you hold unless the code shows a `*`.** `s.sell(3);` alone is rejected, because its result would be thrown away, and `s*.sell(3)` on a value bound with `=` is rejected, because there is no next step to write. So you can find every change of state by reading.
 
-```zed
-readings = [2, 5, 3];
-total = readings >< (+);
-```
+**`eastPenDays`**
 
-```text
-total = 10
-```
+<table>
+<tr><th><code>day</code></th><th><code>pens</code></th></tr>
+<tr><td><code>0</code></td><td><code>5</code></td></tr>
+<tr><td><code>1</code></td><td><code>3</code></td></tr>
+</table>
 
-This is `reduce` or `fold` elsewhere, but you give no direction, because the work can be split across cores in any grouping. That's why `op` has to be safe to regroup, except on floating-point values, which have their own rule (see [Reducing](#reducing) below). On a nested map it collapses only the innermost level: with `sales: region -> sku -> amount`, a map from each region to a map from each `sku` (a product code) to an amount, `sales >< (+)` gives one total per region. Inside a remap pattern, shown next, `sku >< (+)` names the level to collapse.
+**`stock`, one row per step**
 
-**`m as (pattern) into (pattern)`: a remap.**
+<table>
+<tr><th><code>t</code></th><th><code>before</code></th><th><code>s.pens</code> in the next step</th></tr>
+<tr><td><code>0</code></td><td><code>20</code></td><td><code>15</code></td></tr>
+<tr><td><code>1</code></td><td><code>15</code></td><td><code>12</code></td></tr>
+</table>
 
-```zed
-transposed = matrix as (r -> c -> v) into (c -> r -> v);
-```
+**`stock.s.pens` and `stock::len`**
 
-```text
-input: matrix = [[1, 2, 3], [4, 5, 6]]
-transposed = [[1, 4], [2, 5], [3, 6]]
-```
+<table>
+<tr><th><code>stock.s.pens</code></th><th><code>stock::len</code></th></tr>
+<tr><td><code>12</code></td><td><code>2</code></td></tr>
+</table>
 
-Elsewhere this is a pair of nested loops that set `out[c][r] = matrix[r][c]`, or a pivot table (see [Remapping](#remapping)). `as` gives a name to each level of keys and to the value, and `into` draws the shape you want using those names. A remap can't overwrite a value: if two values would land on one key, the compiler rejects it until you say what should happen.
+> [!TIP]
+> `s*.sell(n)` reads like a mutating method call in Java or Python, with two differences. The rest of the step still reads the old `s`. And a step can write `s'` only once, so two calls in one step have to be one chain: `a, b = s*.sell(1).sell(2);`.
 
-**`name[k] <- v`: a push into a map.** `int ->? int` is a map from `int` to `int` that may lack some keys, `with reducer((+))` says that values pushed to one key are added, and `w.len` is the length of `w`.
+### Step 12: the mass of what was shipped, with units
 
-```zed
-hist: int ->? int with reducer((+));
-for w in words { hist[w.len] <- 1; };
-```
-
-```text
-input: words = ["a", "to", "be", "not"]
-hist pushes: hist[1] <- 1, hist[2] <- 1, hist[2] <- 1, hist[3] <- 1
-hist = { 1 -> 1, 2 -> 2, 3 -> 1 }
-```
-
-This looks like `hist[k] += 1` on a dictionary, but nothing is read back or overwritten. `hist` has one value, which is all its pushes merged per key by the reducer, so pushes can come from many places in the program.
-
-**`e with units(...)`: a facet, an extra fact about a value that the compiler tracks.**
+The pens sold go out in one crate. A unit on each number lets the compiler check the arithmetic.
 
 ```zed
-v = 3.0 with units("m/s");
-t = 2.0 with units("s");
-d = v * t;                 // has units "m"
-// e = v + t;              // ✗ rejected: m/s + s
+penMass = 20 with units("g");          // one pen
+crateMass = 1 with units("kg");        // the crate they ship in
+shipped = (sold["pen"] else 0) * penMass;
+// load = shipped + crateMass;         // ✗ rejected: g + kg
+load = shipped + crateMass * (1000 with units("g/kg"));
 ```
 
-In other languages a unit usually takes a wrapper type such as `Meters`, with its arithmetic written by hand. A facet leaves the value an `f64`, and the compiler follows the label through each operation.
+> [!NOTE]
+> **`e with units("...")`** attaches a physical unit to a number. A unit is a *facet*: an extra fact about a value that the compiler tracks through every operation. Units multiply under `*`, so `shipped` is in grams, and must match under `+`. `sold["pen"] else 0` has parentheses because `else` applies to everything to its left.
 
-### Values and literals
+The commented-out line adds grams to kilograms.
 
-| Syntax | Meaning |
-|---|---|
-| `42`, `1.5`, `3r`, `2n` | An `int`, an `f64`, a `rat`, and a generic number that takes whichever number type its use needs, so `inc(x) = x + 1n;` works on all three. |
-| `"text"`, `"${e}"` | A `Utf8String` (a string of UTF-8 text), with `e` written into it. |
-| `#name`, `#name(args)` | An *atom*: like an enum value that needs no enum declaration. It can carry data, its payload. See [Less familiar forms](#less-familiar-forms) above. |
-| `[a, b, c]` | An array, whose keys are `0`, `1`, `2`. |
-| `{ k -> v, ... }` | A map, written out. |
-| `{ a, b }` | A set. |
-| `{ x: 1, y: 2 }`, `Name(x: 1)` | A struct value, without and with a declared name. |
-| `(a, b)` | A tuple: a fixed number of values, possibly of different types. |
-| `a..<b`, `a..=b`, `a..` | Ranges: excluding `b`, including `b`, and with no upper end. |
+> [!IMPORTANT]
+> **Adding values with different units is rejected.** `g` and `kg` are different units, and the compiler never converts between them on its own. A conversion factor, here `1000` grams per kilogram, makes the conversion visible in the code.
 
-### Types
+**`penMass`, `crateMass`, `shipped` and `load`**
 
-| Syntax | Meaning |
-|---|---|
-| `int` | A mathematical integer. It can't overflow. |
-| `char32` | A Unicode code point (the number Unicode assigns to a character), distinct from an integer. `char32("Z")` constructs one. |
-| `int[a..=b]`, `int[a..]` | An integer in a range. |
-| `f64`, `rat`, `bool`, `u8` | A 64-bit floating-point number, an exact rational number (a fraction of two integers, never rounded), true or false, and an integer from 0 to 255. |
-| `Utf8String`, `U8String`, `Utf16String`, `Utf32String` | String types. `Utf8String`, `Utf16String` and `Utf32String` hold checked text in that encoding, and `U8String` holds 8-bit units with no encoding checked. String literals are `Utf8String`. |
-| `K -> V` | A map with a value at every key of `K`. A function type too. |
-| `K ->? V` | A map that may lack some keys of `K`, so a lookup can give `#notFound`. |
-| `a -> b -> v` | A nested map: `a -> (b -> v)`. Each arrow adds one *level* of keys. |
-| `[T]` | An array of `T`. |
-| `[T; n]`, `[T; r, c]` | A vector of length `n` and a matrix of `r` rows and `c` columns. |
-| `A \| B` | A *union*: a value that is either an `A` or a `B`. Its *members* are `A` and `B`. |
-| `T` (capitalized and otherwise undefined) | A type variable, when used at least twice in a signature, or in the signature and the body. |
-| `struct Name { field: T, field: T = default }` | A record type. Its fields can have defaults. |
-| `Name.method = e;`, `Name.method() { ... }` | A method: a function with an implicit first parameter, whose fields are in scope. |
-| `type Name = T;`, `type Name(T) = ...;` | A name for a type, with or without type parameters. |
-| `interface Name { ... }` | A list of fields and laws. Any value that has them fits it. |
-| `grammar { ... }` | A parser and serializer in one definition, on a struct or after `matching`. |
-| `T matching grammar { ... }` | The values of `T` that a grammar accepts. |
-| `"("`, `x: T`, `a sep b`, `a*`, `digit` in a grammar | Literal text, a field, a list of `a` separated by `b`, zero or more of `a`, and one decimal digit. |
-| `Files`, `Lines`, `Stream(T)` | Port types: files by path, lines of text, and a sequence of values over time. |
+<table>
+<tr><th><code>penMass</code></th><th><code>crateMass</code></th><th><code>shipped</code></th><th><code>load</code></th></tr>
+<tr><td><code>20 g</code></td><td><code>1 kg</code></td><td><code>240 g</code></td><td><code>1240 g</code></td></tr>
+</table>
 
-### Failure atoms
+> [!TIP]
+> In other languages a unit usually takes a wrapper type such as `Grams`, with its arithmetic written by hand. A facet leaves the value an `int`, and the compiler follows the unit through each operation, at no cost when the program runs.
 
-| Atom | Meaning |
-|---|---|
-| `#notFound` | A lookup found no entry. |
-| `#none` | There is nothing here: an empty selection, the missing side of a left join (a join that keeps every entry of its left input), or a NULL column in a database. |
-| `#empty` | A reduction with nothing to reduce. |
-| `#collision` | Two entries landed on one key, where a claim that the key is unique was wrong. |
-| `#divByZero` | A division by zero: `div` or `mod`, or `/` on `rat`. |
-| `#inexact` | A number conversion that can't keep the exact value. |
-| `#invalid` | A value failed a condition or a type check at run time, as with `x.refine(p)`, listed below. |
-| `#syntaxError`, `#parseError` | Text doesn't parse. |
-| `#ioError`, `#dbError`, `#timeout` | A port failed, a database failed, or a deadline passed. |
+### Step 13: the whole calculation, in any order
 
-Other atoms on the page, such as `#red` or `#goNs`, are data the examples define. `#left`, `#orderId`, `#fixed`, `#big`, `#clean` and `#userInput` are arguments to the words they follow. `#block` (wait), `#dropOldest` (discard the oldest entry) and `#full` (report a failure) say what a full queue does, and `#unbounded` is what a cost reads when no bound could be proved.
+Here are the definitions behind `regionTotals`, written with the result first:
 
-### Words from the standard library
+```zed
+regionTotals = daily >< (+);
+daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else 0));
+revenue = sales as (region -> day -> sku -> q) into (region -> day -> sku -> q * prices[sku]);
 
-| Word | Meaning |
-|---|---|
-| `m.map(x -> e)` | Replaces each value and keeps the keys. |
-| `m.where(x -> c)` | Keeps the entries whose value passes, with their keys. |
-| `m.group(x -> key)` | Adds a level of keys above the existing ones. |
-| `m.rekey(x -> key)` | Replaces the key. The compiler needs evidence that the new key is unique. |
-| `m.sort(desc x -> x)` | Orders by the given key. |
-| `m.rank` | Flattens an ordered nested map into one list numbered in that order. |
-| `m.chunkBy(x -> key)` | Splits an ordered collection wherever the key changes. |
-| `m.flatMap(x -> list)` | Maps each value to a list, with the list's positions as a new level. |
-| `a.join(b, on: #field, kind: #left)` | Pairs entries of `a` and `b` on a field. |
-| `a.diff(b, on: #field)` | The entries of `a` that have no match in `b`. |
-| `.count`, `.sum` | Reduces the innermost level to its number of entries, or to their sum. |
-| `.first`, `.last` | The value at the lowest or highest key, in the collection's order. |
-| `.foldl(init, op)`, `.foldr` | A fold from the left or the right, for an operator that can't be regrouped. |
-| `m.allOk` | `m` if no entry holds a failure, and otherwise the failures. |
-| `.image`, `.union` | The set of a map's values, and the union of two sets. |
-| `p.implies(q)` | Logical implication. |
-| `x.refine(p)` | `x`, or `#invalid` if the condition `p` fails. |
-| `min`, `max`, `sqrt`, `log`, `pi` | The usual math functions and constant. `min` and `max` work as operators for `><`. |
-| `fs[path]`, `read(path)` | Reads a file from the port `fs`; `read` is short for that lookup. |
-| `.split`, `.lower`, `.len` | Splits a string on a separator, lowers its case, and gives a length. |
-| `a.matmul(b)`, `dot`, `cross` | Matrix product, dot product and cross product. |
-| `f64(n)`, `int(s)`, `char32("Z")` | Checked conversions between types. |
-| `stdout` | The port for standard output. `<-` writes to it. |
-| `x.patch(edit)` | Applies an edit to a map or document and gives the new version. |
-| `T.parse(s)`, `x.serialize` | A grammar's parser and serializer. |
-| `Json.decode(s)` | Decodes JSON into the type expected at the call. |
-| `expand`, `derivative`, `compile` | Rewrites a function's source, differentiates it, and turns source back into a function. |
+sales: Utf8String ->? [Utf8String ->? int];
+prices: Utf8String ->? int;
+```
 
-### Facts read with `::`
+**`regionTotals`**
 
-| Syntax | Meaning |
-|---|---|
-| `x::len` | The number of entries, or of steps in a loop. |
-| `run::frames` | Every step of a loop. |
-| `text::codepoints`, `text::u8` | A string viewed by code point or by UTF-8 unit, which is one byte of its encoding. |
-| `T::fields`, `T::shape`, `T::values` | A type's fields, one layer of its structure, and the set of its values. |
-| `x::constraints` | What the compiler knows about a value. |
-| `f::source` | A function's source, as a value. |
-| `f::cost`, `f::depth` | Upper bounds on a function's work (its total number of operations) and parallel depth (the longest chain of operations that must run one after another). |
+<table>
+<tr><th><code>region</code></th><th><code>total</code></th></tr>
+<tr><td><code>East</code></td><td><code>30</code></td></tr>
+<tr><td><code>West</code></td><td><code>50</code></td></tr>
+</table>
 
-### Annotations
+The order of the lines doesn't matter, only what depends on what, so you can write a calculation top-down, from the result to its parts, and the compiler reads the dependency graph straight from the text. The same graph lets it run the two regions, or the days within them, on different cores, and skip whatever no result needs: if a program reads only `regionTotals`, then `unpriced`, `sold` and the rest of the steps above are never computed.
 
-| Annotation | Meaning |
-|---|---|
-| `@associative`, `@commutative` | Claims that an operator can be regrouped or reordered. |
-| `@ensure` | Forbids a run-time check in this definition: the condition has to be proved instead. |
-| `@injective` | Claims that a function never gives two inputs the same result. |
-| `@memoized` | The build fails if this value isn't kept for reuse. |
-| `@cost(b)`, `@fused`, `@noalloc`, `@preallocated` | Performance claims the build checks: a work bound, no intermediate collection, no memory beyond registers, a bounded footprint reserved at entry. |
-| `@exhaustive` | Run the tests on every input of a finite domain. |
-| `@proved`, `@strict`, `--strict` | Make the build fail on a law that isn't proved. `--strict` is a compiler flag. |
-| `@foreign("lib", "symbol")`, `@export("c", "symbol")` | Calls a C function, and makes a Zed function callable from C. |
-| `@stateless` | A promise that a foreign function has no state, so it can be retried. |
-| `@hash` | The content hash that pins an import. |
+## A complete program
 
-### Facets and port settings, written with `with`
-
-| Word | Meaning |
-|---|---|
-| `units("m/s")` | A physical unit, checked through arithmetic. |
-| `taint(#label)` | A label that follows a value through the program. |
-| `reducer(op)` | How values pushed to one key of a map merge. |
-| `store(...)`, `postgres(...)`, `kv(...)`, `file(...)`, `sql(...)` | Makes a map a stored table: in Postgres, in a key-value store or in a file, with a schema read from an SQL file. |
-| `timeout(d)`, `retry(n, backoff: b)`, `bound(n, overflow: policy)` | A deadline, repeat attempts with a wait `b` between them, and a queue's size limit with what happens when it is full. |
-| `bits(n)`, `endian(#big)`, `length(n)` | Binary layout in a grammar: a field's width, its byte order, its element count. |
-
-### Terms
-
-| Term | Meaning |
-|---|---|
-| rank | A position in an order: a key `0`, `1`, `2`, and so on. Values that tie share a rank when `desc` or `asc` adds the level. |
-| remap | Changing a map's shape by moving, adding or dropping levels. |
-| reduce, reduction, fold | Merging the values of a level into one, with an operator. |
-| domain | The keys or inputs a map or function is defined on. |
-| bounds check | The run-time test that an index is in range. |
-| schema | The columns and types a database table declares. |
-| parser, serializer | A parser turns text into a value, and a serializer turns a value back into text. |
-| edit distance | The fewest single-character changes that turn one string into another. |
-| maximum subarray | The run of neighboring entries in an array with the largest sum. |
-| data race | Two threads using the same memory at once, with at least one of them writing. |
-| rope | A string or list stored as a tree of pieces, so joining two takes constant time. |
-| taint | A label for where a value came from, such as user input. |
-| wave | A batch of new input values passing through the program's graph. |
-| work, parallel depth | *Work* is the total number of operations. *Parallel depth* is the longest chain of them that must run one after another. |
-| effect system | Type annotations that record a function's side effects. |
-| memoize | Keep a result so that later uses don't compute it again. |
-| law | A claim about your code, which the compiler tries to prove and otherwise tests. |
-| associative, commutative | `(a op b) op c == a op (b op c)`; and `a op b == b op a`. |
-| identity | A value that leaves the other operand unchanged, such as 0 for addition or 1 for multiplication. |
-| `Monoid`, `CommRing` | Interfaces from the library for algebraic structures: an associative operator with an identity; and addition with multiplication, where multiplication commutes. |
-| grade | How far the compiler got with a law: for example proved, tested or assumed. |
-| partial evaluation | Running the parts of a program whose inputs are known at build time. |
-| specialize | Produce a version of a function for known types or values, with the generic steps gone. |
-| linear arithmetic | Sums of variables times constants, with comparisons. |
-| SMT solver | A general automated theorem prover, as used by many verification tools. |
-| fixpoint | A value that one more step doesn't change. |
-| model checking | Checking a property on every state a system can reach. TLC is a widely used model checker. |
-| liveness, fairness | *Liveness*: something good eventually happens. *Fairness*: an assumption that no ready action of the environment is put off forever. |
-| safe to repeat, idempotence | Doing it twice has the same effect as doing it once. |
-| hedged request, circuit breaker, failover | Sending a second copy of a slow request; refusing calls for a while after repeated failures; switching to a replacement server. |
-| scan, parallel scan | A computation that gives each running result, such as the running totals of a list. A parallel scan does this on many cores at once. |
-| hash join, merge join | Two standard ways to compute a join without comparing every pair. |
-| exact reference counting | Freeing a value when a count of its users reaches zero, with no count left too high by cycles. |
-| arena | A block of memory whose contents are all freed together. |
-| id-indexed graph | A graph whose nodes are stored in a table and refer to each other by key. |
-| intermediate representation | The form a compiler holds a program in, between source code and machine code. |
-| kernel | The small core that the rest of a compiler is built on. |
-| distributed dataflow | Running a program across many machines, with data sent between them along its dependency graph. |
-| back end | The part of a compiler that produces code for one target. |
-| MLIR, LLVM, Clang | Standard compiler infrastructure, and the C compiler built on LLVM. |
-| WebAssembly | A portable binary format that runs in browsers and elsewhere. |
-| hardware synthesis | Producing a circuit design in place of machine code. |
-
-## A first program
-
-Here is a complete program. It splits a file on spaces, counts each word, and prints the counts, most common first. `main`'s parameters and results are *ports*, channels to the outside world. `Files` maps paths to UTF-8 text and `Lines` is a stream of text lines, so `fs` reads files and `stdout` prints, and `else` gives a fallback if the read fails. `group` collects the words by their lowercase form (`w -> w.lower` is an unnamed function), and `.count` turns each group into its size. The `as ... into ...` line reshapes that table: `desc n` sorts by count, `w` stays as a second level of keys below it so equal counts don't collide, and each value becomes a line of text, with `"${w}: ${n}"` filling in `w` and `n`. `.rank` flattens the nested table into a list numbered in that order, and `<-` writes the lines out.
+The example above reads values it was given. A complete program also needs input and output. This one reads a file, counts each word, and prints the counts, most common first.
 
 ```zed
 main(fs: Files) -> (stdout: Lines) {
@@ -430,7 +532,26 @@ main(fs: Files) -> (stdout: Lines) {
 }
 ```
 
-These tables show the data after each step, for a file whose whole text is `to be or not to be`. Each column but the last is one level of keys, and the last column holds the values. Where a table has several columns after its keys, they are parts of one value, or an input shown beside its result. A key is printed once and covers every row inside its box, and rows are listed in key order. This page draws most of its data-shaping examples this way, with the line above each table naming the value it shows.
+> [!NOTE]
+> **`main(input: T) -> (output: U) { ... }`** is a program's entry point. Its parameters and results are *ports*: declared channels to the outside world, such as files, sockets, clocks and databases. A port is the only way a program reaches the outside world.
+>
+> **`Files`** is a port that maps each path to the text of that file, so `fs["input.txt"]` reads one file, and **`Lines`** is a port that takes lines of text, so `stdout` prints them. **`"text"`** is a string literal, a `Utf8String`.
+
+Reading a file can fail, and the `else` says what to do when it does: use the empty text. The next line counts the words.
+
+> [!NOTE]
+> **`s.split(sep)`** splits the string `s` at each `sep`, giving an array of the pieces. **`w.lower`** is `w` in lowercase.
+>
+> **`m.group(x -> key)`** adds a level of keys above the existing ones, computed from each value, so entries with the same key land in one group. **`.count`** reduces the innermost level to its number of entries.
+
+The `as ... into ...` line reshapes the counts, and the last line writes them out.
+
+> [!NOTE]
+> **`desc k`**, in the key position of an `into` pattern, orders by `k` from high to low and adds a level keyed by *rank*, the position in that order, where equal values share one rank. **`asc k`** orders from low to high.
+>
+> **`"${e}"`** writes the value of `e` into a string. **`m.rank`** flattens an ordered multi-level map into one array, numbered in that order. **`port <- v`** pushes the value `v` out of a port.
+
+Keeping `w` as a level below `desc n` means that two words with the same count don't collide. These tables show the data after each step, for a file whose whole text is `to be or not to be`.
 
 **`counts` after `.split(" ")`**
 
@@ -488,28 +609,12 @@ These tables show the data after each step, for a file whose whole text is `to b
 
 The program doesn't mention threads, locks or allocation. The compiler can run the grouping on all your cores, and the output is the same, bit for bit, on one core or on sixty-four. A missing file can't crash the program either: the type of `fs["input.txt"]` says the read can fail, and the `else` says what to do when it does.
 
-Three more short examples from the tour below. A name a snippet doesn't define is an input you can assume. In these, `><` merges the values at one key, `min` gives the smallest of its arguments, `b::len` is the length of `b`, the `with` after the equation gives the values at the edge of the table, `->?` says a key may be absent, `Utf8String` is UTF-8 text, the atom `#none` marks a missing note, and `with store(...)` keeps the map in a database. The tour covers each of them.
-
-```zed
-// Two values landing on one key is a compile error, never a silent overwrite.
-// totals = sales as (region -> sku -> amount) into (region -> amount);   // ✗ rejected
-// Say how they merge: add the amounts for each region.
-totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount);
-
-// Edit distance, the fewest single-character changes between two strings:
-// the equation and its boundary.
-// The compiler picks the table and the fill order.
-d[i][j] = min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + cost(a[i], b[j]))
-  with d[-1][j in -1..<b::len] = j + 1, d[i in 0..][-1] = i + 1;
-
-// A database table, checked against its SQL schema at build time. `rat` is an exact rational number.
-orders: OrderId ->? { total: rat, note: Utf8String | #none }
-  with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
-```
-
 Zed exists because many systems already recover a graph of values from ordinary code: spreadsheets, optimizing compilers, Spark, build systems, reactive UI frameworks and out-of-order CPUs. In Zed the graph is the program, so one compiler handles parallel scheduling, memory management, incremental updates and many correctness checks from one structure. This doesn't have to make programs longer: the word-count program above is about as long as the same program in Python.
 
-The rest of this page is a tour of the language. Each stop opens with a line saying what the feature does and lists its syntax. Most then give an example, explain it and show its inputs and results. Snippets stand alone unless they say otherwise. A commented-out line marked ✗ is one the compiler rejects.
+The rest of this page is a tour of the language, one feature at a time. Each stop opens with a line saying what the feature does and lists its syntax. Most then give an example, explain it and show its inputs and results.
+
+> [!TIP]
+> In a **Syntax** line, `x`, `T`, `op`, `pattern`, `fallback`, `#someFailure` and `...` stand for code you would write. Snippets stand alone unless they say otherwise, and a name a snippet doesn't define is an input you can assume.
 
 ## The basics
 
@@ -518,6 +623,9 @@ The rest of this page is a tour of the language. Each stop opens with a line say
 A binding gives a name to a value.
 
 **Syntax:** `name = value;` or `name: type = value;`
+
+> [!NOTE]
+> **`name: T = value;`** is a binding with a stated type. **`int[a..=b]`** is an integer in a range, and **`int[a..]`** one with no upper end. The same range forms work as values: **`a..<b`** excludes `b`, **`a..=b`** includes it, and **`a..`** has no upper end.
 
 ```zed
 total = price * quantity;
@@ -536,7 +644,12 @@ A name is bound once. It can't be reassigned, and it can be used above the line 
 
 A function is a definition with parameters, and a call can name its arguments, chain with dots or leave some open.
 
-**Syntax:** `f(positional x, y = default) = expression;` or `f(x) -> type { ... }`. `positional` marks a parameter passed by position, `y = default` gives a default value, and `-> type` states the result type. In the code, `a.f(b)` is the call `f(a, b)`, so `5.double` is `double(5)`, and `f(x, ...)` leaves the remaining named parameters open and gives back a function.
+**Syntax:** `f(positional x, y = default) = expression;` or `f(x) -> type { ... }`
+
+> [!NOTE]
+> **`f(x) = expression;`** defines a function whose body is one expression, and **`f(x) -> T { ... }`** one with a block body and a stated result type. A block gives its last expression, unless `return` ends it first. **`y = default`** in a parameter list gives a parameter that can be left out. **`f(x, ...)`** leaves the remaining named parameters open and gives back a function that takes them. **`(T) -> U`** is the type of a function from `T` to `U`. **`if c { a } else { b }`** is a choice between two values, and **`a ++ b`** joins two strings or lists.
+>
+> The dot call from [Step 4](#step-4-finding-the-failures) works with any function: `5.double` is `double(5)`.
 
 ```zed
 double(positional x) = x * 2;
@@ -567,7 +680,14 @@ Parameters are passed by name unless you mark them `positional`, so a call site 
 
 Zed has exact integers, rational numbers (fractions of two integers) and 64-bit floating-point numbers (`f64`), and it never converts between them on its own.
 
-**Syntax:** `42`, `1.5`, `3r`, `a / b`, `a div b`, `f64(n)`. The suffix `r` makes an exact rational literal, of type `rat`, `div` is integer division, and `f64(n)` converts `n` to `f64`.
+**Syntax:** `42`, `1.5`, `3r`, `2n`, `a / b`, `a div b`, `f64(n)`
+
+> [!NOTE]
+> **`42`** is an `int`, **`1.5`** an `f64` (a 64-bit floating-point number), and **`3r`** a `rat`, an exact rational number, a fraction of two integers that is never rounded. **`2n`** is a generic number, which takes whichever number type its use needs, so `inc(x) = x + 1n;` works on all three.
+>
+> **`a / b`** divides `f64` and `rat` values. **`a div b`** and **`a mod b`** are the integer quotient and remainder, and **`a ** b`** is a power. **`f64(n)`** converts `n` to `f64`, and **`int(s)`** converts a string to an `int`; such conversions are checked and can fail.
+>
+> **`==`**, **`!=`**, **`<`**, **`<=`**, **`>`** and **`>=`** compare, giving a **`bool`**, true or false, and `==` compares structure, by value. **`&&`** and **`||`** are logical and and or.
 
 ```zed
 big = 2 ** 100;              // 2 to the power 100, the exact integer, with no overflow
@@ -590,7 +710,10 @@ An `int` is a mathematical integer. It can't overflow, because the compiler pick
 
 A string's type says how its text is stored, and you say what you index it by, such as *code points*, the numbers Unicode assigns to characters.
 
-**Syntax:** `"text"`, `"${expression}"`, `a ++ b`, `text::codepoints[i]`. `${...}` fills in a value, `++` joins strings, and `text::codepoints` views the text as code points.
+**Syntax:** `"text"`, `"${expression}"`, `a ++ b`, `text::codepoints[i]`
+
+> [!NOTE]
+> **`x::word`** reads a fact about `x` that the compiler knows, such as `x::len` from [Step 10](#step-10-the-change-from-the-day-before-in-a-loop). **`text::codepoints`** and **`text::u8`** view a string by code point or by UTF-8 unit, which is one byte of its encoding. A **`char32`** is one code point, distinct from an integer, and `char32("Z")` constructs one.
 
 ```zed
 name = "Zed";
@@ -609,7 +732,10 @@ String literals are UTF-8. `Utf8String`, `Utf16String` and `Utf32String` are sep
 
 A struct is a record of named fields, compared by value and copied with changes.
 
-**Syntax:** `struct Name { field: type, field: type = default }`, `Name(field: value)`, `x with { field = value }`, `Name.method = expression;`. `Name(field: value)` builds a struct, naming each field, `x with { ... }` copies `x` with those fields changed, and `Name.method` defines a method: a function whose implicit first argument is the value it is called on, with that value's fields in scope by name.
+**Syntax:** `struct Name { field: type, field: type = default }`, `Name(field: value)`, `x with { field = value }`, `Name.method = expression;`
+
+> [!NOTE]
+> **`field: T = default`** in a struct declaration gives a field a default value. **`x with { field = value }`** copies `x` with those fields changed. **`Name.method = expression;`** defines a method whose body is one expression.
 
 ```zed
 struct Point { x: f64, y: f64 }
@@ -637,6 +763,9 @@ When the compiler can see that the original of a `with` copy isn't used again, t
 An atom is like an enum value that needs no declaration, a union is a choice of types, and `match` takes a union apart.
 
 **Syntax:** `#name`, `#name(args)`, `type T = A | B`, `match x { pattern -> value, ... }`
+
+> [!NOTE]
+> **`#name(args)`** is an atom that carries data, its *payload*. **`type Name = T;`** gives a name to a type. **`match x { pattern -> value, ... }`** picks the first arm whose pattern fits `x`. In a pattern, **`field:`** reads that field into a name of the same spelling, as it builds a field from one in a struct value. **`pi`** is the constant.
 
 ```zed
 // Point and Circle are the structs from Structs above.
@@ -670,7 +799,10 @@ If a function can return an atom, the function's result type includes it in a un
 
 Generic code uses type variables with no declaration, and an interface describes what a value must have.
 
-**Syntax:** `type Name(T) = ...`, `interface Name { ... }`. In the code, `[T]` is an array of `T`, `++` joins arrays as it joins strings, and `s.last` is the last element, or `#none` if there isn't one.
+**Syntax:** `type Name(T) = ...`, `interface Name { ... }`
+
+> [!NOTE]
+> **`type Name(T) = ...;`** names a type with a type parameter `T`. **`interface Name { ... }`** lists fields and laws, and any value that has them fits it. **`s.last`** is the value at the highest key, here the last element, and **`s.first`** the value at the lowest. Either gives the atom **`#none`**, which means there is nothing here, if `s` is empty.
 
 ```zed
 type Stack(T) = [T];
@@ -695,7 +827,10 @@ An unbound capitalized name that is used at least twice in a signature, or in th
 
 Each file is a module, and an import names what it brings in.
 
-**Syntax:** `import a.b;`, `import a.b as c;`, `import a.b.{x, y};`, `local`. `local` keeps a definition private to its module.
+**Syntax:** `import a.b;`, `import a.b as c;`, `import a.b.{x, y};`, `local`
+
+> [!NOTE]
+> **`import a.b;`** imports the module `a.b` whole, **`import a.b as c;`** under the name `c`, and **`import a.b.{x, y};`** only the names listed. **`local`** before a definition keeps it private to its module. **`@name`** is an *annotation*: a claim or request that the compiler acts on or checks, such as `@hash` below.
 
 ```zed
 import geometry.shapes.{Point, dist};
@@ -716,7 +851,10 @@ Everything in a file is exported unless marked `local`, and there are no wildcar
 
 A function that can fail returns a union with a failure atom in it, and these two forms handle that atom.
 
-**Syntax:** `T | #someFailure`, `x else fallback`, `x?.field`. `else` replaces a failure with a fallback, and `?.` reads a field if there is one and passes the failure along if there isn't. In the code, `parse: ...;` declares a function and its type, with the body elsewhere, and the `pos` in the atom says where the parse failed.
+**Syntax:** `T | #someFailure`, `x else fallback`, `x?.field`
+
+> [!NOTE]
+> **`x?.field`** reads a field if `x` has one, and passes the failure along if `x` is a failure. **`#syntaxError`** is the failure for text that doesn't parse. In the code, `parse: ...;` declares a function and its type, with the body elsewhere, and the `pos` in the atom's payload says where the parse failed.
 
 ```zed
 parse: (Utf8String) -> Config | #syntaxError(pos: int);
@@ -743,7 +881,10 @@ The compiler also adds a failure only where it can't rule it out. `a div b` has 
 
 Failures sit in collections as ordinary values, so you can test for them and choose what to do with them.
 
-**Syntax:** `r is T`, `r is not T`, `m.allOk`. `r is T` tests a value's type, and `m.allOk` is `m` when no value is a failure, and otherwise the failures. In the code, `.map` replaces each value and keeps its key, `.where` keeps the entries that pass a test, and `read` reads a file through a port.
+**Syntax:** `r is T`, `r is not T`, `m.allOk`
+
+> [!NOTE]
+> **`m.allOk`** is `m` when no value is a failure, and otherwise the failures. **`read(path)`** reads a file through the program's `Files` port; it is short for the lookup `fs[path]`. A failed read gives **`#ioError`**, a failed port.
 
 ```zed
 results = files.map(f -> read(f)).map(t -> parse(t));
@@ -831,6 +972,9 @@ Arrays, sets, structs and functions are all maps from keys to values, and you wr
 
 **Syntax:** `[a, b, c]`, `{ k -> v }`, `{ a, b }`, `m[k]`
 
+> [!NOTE]
+> **`[a, b, c]`** is an array, whose keys are `0`, `1`, `2`. **`{ k -> v, ... }`** is a map written out, and **`{ a, b }`** is a set. **`m.sort(desc x -> x)`** orders the entries by the key the function computes, here from high to low, and numbers them by rank.
+
 ```zed
 xs = [3, 1, 4, 1, 5];                  // int[0..<5] -> int: keys from 0 up to but not including 5
 ages = { "Ann" -> 36, "Bob" -> 41 };   // exact keys {"Ann", "Bob"}, int values
@@ -892,6 +1036,9 @@ An array is a map whose keys are `0..<n`, a set is a map from each key to itself
 `group` buckets the entries of a map by a key you compute, and `rekey` replaces the key.
 
 **Syntax:** `m.group(x -> key)`, `m.rekey(x -> key)`
+
+> [!NOTE]
+> **`m.rekey(x -> key)`** replaces each entry's key with one computed from its value. **`#collision`** is the failure for two entries that landed on one key where a claim that the key is unique was wrong.
 
 ```zed
 // users : UserId -> User
@@ -1095,6 +1242,9 @@ A reduction merges the values of one level into one value, using an operator you
 
 **Syntax:** `m >< op`, `m >< op else fallback`, `(pattern >< op -> value)`, `m.foldl(init, op)`
 
+> [!NOTE]
+> **`m >< op else d`** gives `d` as the answer for an empty collection; without it, the result type includes **`#empty`**, a reduction with nothing to reduce. **`min`** and **`max`** work as operators for `><`. **`.sum`** reduces the innermost level to its sum. **`m.foldl(init, op)`** and **`m.foldr(init, op)`** fold from the left or the right, for an operator that can't be regrouped. **`@associative`** and **`@commutative`** claim that an operator can be regrouped or reordered. **`unordered`** after `m >< op` gives up the floating-point result that is the same at any core count, in exchange for speed.
+
 ```zed
 total = readings >< (+);
 longest = words.map(w -> w.len) >< max else 0;
@@ -1223,7 +1373,7 @@ Floating-point sums get special care. `samples >< (+)` computes the exact sum an
 
 A map can be filled by pushing values to its keys, where a reducer says how values at one key merge.
 
-**Syntax:** `name: K ->? V with reducer(op)`, `name[k] <- v`. `->?` says a key may be absent, and `reducer(op)` names the operator that merges values pushed to one key. In the code, `for` visits each word and `w.len` is its length.
+**Syntax:** `name: K ->? V with reducer(op)`, `name[k] <- v`. In the code, `w.len` is the length of `w`.
 
 ```zed
 hist: int ->? int with reducer((+));
@@ -1288,7 +1438,10 @@ Sometimes it's clearer to say where each value goes (a push) than where each val
 
 A join combines two maps on a shared field, either with a word such as `join` or with a `for` over both.
 
-**Syntax:** `a.join(b, on: #field, kind: #left)`, `a.diff(b, on: #field)`, `for x in a, y in b where ...`. `on:` names the shared field with an atom, `kind: #left` keeps every entry of the left input, `diff` keeps the left entries that have no match, and a `for` builds a map with one entry per combination that passes `where`.
+**Syntax:** `a.join(b, on: #field, kind: #left)`, `a.diff(b, on: #field)`, `for x in a, y in b where ...`
+
+> [!NOTE]
+> **`a.join(b, on: #field, kind: #left)`** pairs the entries of `a` and `b` that agree on a field, named with an atom. `kind: #left` makes it a *left join*, which keeps every entry of the left input. **`a.diff(b, on: #field)`** keeps the entries of `a` that have no match in `b`. **`for x in a, y in b where c { e }`** builds a map with one entry `e` per combination that passes `c`.
 
 ```zed
 // Both inputs are uniquely keyed by OrderId; orderId is their join key.
@@ -1365,6 +1518,9 @@ On small sample data, where `o1` stands for the order with key 1, and `p1` and `
 
 A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. For a `for` over several collections, the compiler can pick a hash join or a merge join, two standard ways to avoid comparing every pair, instead of two nested loops. Queries and loops compile to the same internal form, so they are optimized together.
 
+> [!NOTE]
+> **`with store(...)`** on a map's declaration makes it a stored table: in a file with `store(file(path, format))`, in Postgres with `store(postgres(...))`, or in a key-value store with `store(kv(...))`. Like `reducer`, it is a setting written with `with`.
+
 The code that uses a map doesn't say where the map lives, so this code is the same whether `orders` is in memory, in a file (`with store(file(path, format))`) or in a database (`with store(postgres(...))`). You add that `with store(...)` annotation on the declaration and the join doesn't change, except that a stored map's type gains the failure its store can give, which you have to handle. A map that one function produces and another consumes may never be allocated at all. Where the consumer reads the values in order, each value passes straight to it as soon as it's computed, much as with `yield` in a generator or with a Unix pipe, and Zed needs no `yield` keyword to get this. Memory is needed where values really must be held, such as for a sort, an index built for lookups, a reduction's result, a value with several readers that can't share one pass, and a port or stored map.
 
 Those choices follow from two goals of the language: you shouldn't have to write memory allocation at all, so the compiler is free to decide how to allocate optimally, and allocation should disappear wherever it can. That's why the code above treats `orders` as a map, keyed by order id, and never says whether it is held as a list, a hash table or something else.
@@ -1373,7 +1529,10 @@ Those choices follow from two goals of the language: you shouldn't have to write
 
 `chunkBy` cuts an ordered collection into runs that share a key.
 
-**Syntax:** `m.chunkBy(x -> key)`. Each chunk is a map that keeps its source keys. In the code, `s.first` is a chunk's first value and `s.count` is its number of entries.
+**Syntax:** `m.chunkBy(x -> key)`
+
+> [!NOTE]
+> **`m.chunkBy(x -> key)`** splits an ordered collection wherever the computed key changes. Each chunk is a map that keeps its source keys. In the code, `s.first` is a chunk's first value and `s.count` is its number of entries.
 
 ```zed
 sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, count: s.count));
@@ -1416,7 +1575,10 @@ If you have ever split a list into runs by hand, you know the easy mistake is fo
 
 An array's type can state its size, so shape mismatches are compile-time errors, not run-time errors: Zed is designed to eliminate as many types of run-time error as possible.
 
-**Syntax:** `[T; n]`, `[T; r, c]`, `s * v`, `a.matmul(b)`. `[T; n]` is an array of `n` values of type `T`, `[T; r, c]` is a matrix of `r` rows and `c` columns, `s * v` scales by the number `s`, and `a.matmul(b)` is the matrix product.
+**Syntax:** `[T; n]`, `[T; r, c]`, `s * v`, `a.matmul(b)`
+
+> [!NOTE]
+> **`[T; n]`** is a vector of `n` values of type `T`, and **`[T; r, c]`** a matrix of `r` rows and `c` columns. **`s * v`** scales a vector or matrix by the number `s`. **`a.matmul(b)`** is the matrix product, and **`dot`** and **`cross`** are the dot and cross products.
 
 ```zed
 scale(positional s: T, positional v: [T; n]) = s * v;     // result: [T; n]
@@ -1453,6 +1615,9 @@ A name in a shape that isn't bound to an integer is a size variable of the signa
 A recurrence defines an array by an equation over earlier entries, plus its boundary values.
 
 **Syntax:** `x[i] = f(x[i-1]) with x[-1] = start;`
+
+> [!NOTE]
+> **`i in 0..`** inside an index, as in `d[i in 0..][-1] = i + 1`, defines that entry for every `i` in the range, here every `i` from 0 up. **`min(a, b, ...)`** is the smallest of its arguments.
 
 ```zed
 running[i] = running[i-1] + xs[i] with running[-1] = 0;
@@ -1551,7 +1716,10 @@ The first recurrence is maximum subarray, the largest sum of neighboring entries
 
 A loop describes one step, and the loop as a whole is a value holding the final state and the history.
 
-**Syntax:** `loop { x' = f(x) with x = start; until done; }`, `loop t { while c; ... }`, `run.x`, `run::frames`. `x'` is the next value of `x`, `with x = start` gives its value before the first step, `until` is tested after each step and `while` before it, `loop t` names the step counter `t`, `run.x` is the final `x`, `run::frames` is the steps, and `run::len` is their number.
+**Syntax:** `loop { x' = f(x) with x = start; until done; }`, `loop t { while c; ... }`, `run.x`, `run::frames`
+
+> [!NOTE]
+> **`loop { ... }`**, without a name after `loop`, is a loop with no step counter. **`run::frames`** is every step of the loop `run`, as a map from step number to that step's values. **`x.patch(edit)`** applies an edit to a map or document and gives the new version.
 
 ```zed
 sim = loop {
@@ -1577,7 +1745,7 @@ Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `ac
 
 Both updates here read the old `pos`, so they don't race and their order doesn't matter. Each step writes each variable once, so a data race can't be written. Every read in a step sees the same snapshot of the previous step, so you need no temporary variables to keep a simultaneous update straight.
 
-`sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps only the steps the loop still reads, so you never choose between a ring buffer and a full log by hand. Reading it is how you write undo, where `doc.patch(e)` applies one edit to the document:
+`sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps only the steps the loop still reads, so you never choose between a ring buffer and a full log by hand. Reading it is how you write undo:
 
 ```zed
 run = loop t {
@@ -1614,7 +1782,7 @@ The versions share structure, so keeping them all doesn't copy the document each
 
 A method is a function on a struct, and it can define the struct's next version with the same `'` that a loop uses.
 
-**Syntax:** `Type.method() { field' = ...; }`, `x.method()`, `x*.method()`. A method that writes `field'` returns the struct's next version along with its result, and in a loop, `x*.method()` also replaces `x` in the next step.
+**Syntax:** `Type.method() { field' = ...; }`, `x.method()`, `x*.method()`. [Step 11](#step-11-a-shelf-of-pens-with-a-method) of the worked example introduces all three.
 
 ```zed
 struct Counter { n: int, peak: int }
@@ -1640,7 +1808,7 @@ Here `n'` is the value of `n` in the next version of this struct. The method doe
 
 A value no result depends on doesn't have to be computed, so unused fields and unbounded ranges cost nothing extra.
 
-**Syntax:** `for i in n.. { ... }`, `.first`. `n..` counts up from `n` with no end, and `.first` is the first value.
+**Syntax:** `for i in n.. { ... }`, `.first`. `n..` counts up from `n` with no end.
 
 ```zed
 stats(positional data: [f64]) {
@@ -1672,7 +1840,10 @@ A caller that reads `.mean` doesn't pay for `sd`, and you don't need two version
 
 Ports are declared channels to the outside world, and they are the only way a program reaches it.
 
-**Syntax:** `main(input: T) -> (output: U) { output <- value; }`. In the code, a `Stream` is a sequence of values that arrive over time.
+**Syntax:** `main(input: T) -> (output: U) { output <- value; }`
+
+> [!NOTE]
+> **`Stream(T)`** is a port type: a sequence of values of type `T` that arrive over time.
 
 ```zed
 main(req: Stream(Query)) -> (resp: Stream(Answer)) {
@@ -1693,7 +1864,10 @@ Runs repeat exactly, apart from a short list such as the order that messages arr
 
 A port's reliability settings are declared on the port, and the ones that can fail show up in its type.
 
-**Syntax:** `with timeout(d)`, `with retry(n, backoff: b)`, `with bound(n, overflow: policy)`. `timeout` sets a deadline, `retry` adds attempts with a wait between them, and `bound` limits a queue and says what happens when it is full. In the code, `kv` is a key-value store, `[u8]` is an array of bytes, `0.2r with units("s")` is 0.2 seconds, and `#fixed(d)` waits up to `d` between attempts.
+**Syntax:** `with timeout(d)`, `with retry(n, backoff: b)`, `with bound(n, overflow: policy)`
+
+> [!NOTE]
+> **`with timeout(d)`** sets a deadline, and **`#timeout`** is the failure when it passes. **`with retry(n, backoff: b)`** adds `n` more attempts with a wait `b` between them, where `#fixed(d)` waits up to `d`. **`with bound(n, overflow: policy)`** limits a queue to `n` entries and says what happens when it is full: the writer waits (`#block`), the oldest entry is dropped (`#dropOldest`), or the write fails (`#full`). In the code, **`u8`** is an integer from 0 to 255, so `[u8]` is an array of bytes, and `0.2r with units("s")` is 0.2 seconds.
 
 ```zed
 cache: Utf8String ->? [u8]
@@ -1721,6 +1895,9 @@ Retries, hedged requests (a second copy of a slow request), circuit breakers (re
 A database table is declared as a map on a store, and its schema is checked at build time.
 
 **Syntax:** `name: K ->? V with store(...)`
+
+> [!NOTE]
+> **`sql(path)`** reads a table's schema, the columns and types it declares, from an SQL file. **`#none`** in a stored row's type stands for a NULL column, and **`#dbError`** is the failure when the database fails.
 
 ```zed
 orders: OrderId ->? { total: rat, note: Utf8String | #none }
@@ -1755,6 +1932,9 @@ You read a stored table with the same `[key]` as any other map, and the same `wh
 When an input changes, the compiler can update the affected results or recompute them in full, and `@memoized` asserts that a value is kept for reuse.
 
 **Syntax:** `@memoized`
+
+> [!NOTE]
+> **`@memoized`** makes the build fail if this value isn't kept for reuse (memoized).
 
 ```zed
 // sales is keyed by SaleId; each sale has a region and an amount.
@@ -1794,7 +1974,7 @@ Here are three sales, shown as region and amount. If sale 7 then changes from 5 
 
 Inside the `.map`, East's `rows.map(s -> s.amount)` is `{ 7 -> 5, 9 -> 3 }`, whose `.sum` is 8.
 
-Incremental updates need no annotation. `@memoized` makes the build fail if this value isn't kept for reuse. When an input changes, the change goes through the same graph as a new batch of values (a *wave*), and only what it affects is recomputed, unless a full recomputation would cost less. Changing one sale's amount updates its region's total, and moving a sale to another region updates both. The update stops wherever nothing downstream can see a difference. Spreadsheets, build systems and reactive user interfaces each build this by hand. In Zed the compiler does it, and an incremental result always equals what a full recomputation would give.
+Incremental updates need no annotation. When an input changes, the change goes through the same graph as a new batch of values (a *wave*), and only what it affects is recomputed, unless a full recomputation would cost less. Changing one sale's amount updates its region's total, and moving a sale to another region updates both. The update stops wherever nothing downstream can see a difference. Spreadsheets, build systems and reactive user interfaces each build this by hand. In Zed the compiler does it, and an incremental result always equals what a full recomputation would give.
 
 This also powers live editing: a change to your source code is one more wave on one more port, so a running program can pick up the edit without a restart. By default the edited program reruns on the recorded inputs, so no extra code is needed. A run whose input history isn't kept, such as a server's, continues from its current loop values instead, and an edit that changes the type of a loop variable, or renames or removes one, must supply a migration, code that converts the old values.
 
@@ -1804,7 +1984,10 @@ This also powers live editing: a change to your source code is one more wave on 
 
 A type can state a range or a condition on its values.
 
-**Syntax:** `int[lo..=hi]`, `x.refine(p)`, `@ensure`. `int[lo..=hi]` is an integer from `lo` through `hi`, `int[lo..]` has no upper limit, `refine` checks a condition, at run time unless the compiler can settle it first, and gives `#invalid` if it fails, and `@ensure` forbids a run-time check.
+**Syntax:** `int[lo..=hi]`, `x.refine(p)`, `@ensure`
+
+> [!NOTE]
+> **`x.refine(p)`** is `x`, or the failure **`#invalid`** if the condition `p` fails. The check runs at run time unless the compiler can settle it first. **`@ensure`** on a definition forbids run-time checks in it: each condition has to be proved instead.
 
 ```zed
 struct Span { lo: int, hi: int[lo..] }
@@ -1831,7 +2014,10 @@ A field's range may name another field. The compiler reasons about such bounds w
 
 Units and taint are labels you attach to a value with `with`.
 
-**Syntax:** `with units("...")`, `with taint(#label)`. `units` tracks physical units through arithmetic, and `taint` marks untrusted input until a function removes the mark.
+**Syntax:** `with units("...")`, `with taint(#label)`
+
+> [!NOTE]
+> **`with taint(#label)`** attaches a *taint*, a label for where a value came from, such as user input. It follows the value through the program until a function removes it. Like units, taint is a facet.
 
 ```zed
 v = 3.0 with units("m/s");
@@ -1858,7 +2044,10 @@ These are *facets*: extra facts about a value, tracked through every operation a
 
 Annotations turn performance requirements into build failures.
 
-**Syntax:** `f::cost`, `@cost(b)`, `@fused`, `@noalloc`. `f::cost` reads a function's computed bound on work, the total number of operations, `@cost(b)` states a bound, `@fused` says no intermediate collection is built, and `@noalloc` says the code uses no memory beyond registers.
+**Syntax:** `f::cost`, `@cost(b)`, `@fused`, `@noalloc`
+
+> [!NOTE]
+> **`f::cost`** reads a function's computed upper bound on *work*, its total number of operations, and **`f::depth`** its bound on *parallel depth*, the longest chain of operations that must run one after another. **`@cost(b)`** states a bound on work, **`@fused`** says no intermediate collection is built, and **`@noalloc`** says the code uses no memory beyond registers. **`log`** is the natural logarithm.
 
 ```zed
 @cost(xs::len)
@@ -1882,7 +2071,7 @@ These are the values. This page doesn't work out the bound that f::cost reads
 for these functions, beyond what the @cost lines state.
 ```
 
-Every function has a computed upper bound on its work and its parallel depth (the longest chain of operations that must run one after another), which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. `@cost`, `@fused` and `@noalloc` are assertions about the plan the compiler chose. If one is false, the build fails, so a slowdown in a hot path shows up on the commit that caused it, and not later in production.
+Every function has a computed upper bound on its work and its parallel depth, which you can read as `f::cost` and `f::depth`. Where no bound can be proved, they say `#unbounded`. `@cost`, `@fused` and `@noalloc` are assertions about the plan the compiler chose. If one is false, the build fails, so a slowdown in a hot path shows up on the commit that caused it, and not later in production.
 
 ## Code that runs at build time
 
@@ -1892,10 +2081,12 @@ An expression the program needs is computed at build time when its inputs are kn
 
 **Syntax:** none. It applies to any needed expression with known inputs.
 
+> [!NOTE]
+> **`Json.decode(s)`** decodes JSON text into the type expected at the call. **`#parseError`** is the failure for text that doesn't parse into that type. **`compile`**, mentioned below, turns source code held as a value back into a function.
+
 ```zed
 struct User { id: int, name: Utf8String }
 
-// Json.decode parses JSON into the type expected at the call.
 ok: User | #parseError(pos: int, msg: Utf8String) = Json.decode("{\"id\": 5, \"name\": \"John\"}");
 // the constant User(id: 5, name: "John")
 
@@ -1913,7 +2104,10 @@ Zed has no macro language and no `comptime` keyword. The build uses the same eva
 
 `::` reads the structure of a type or a declaration, and that read happens at build time.
 
-**Syntax:** `T::fields`, `T::shape`, `T::values`, `x::constraints`, `f::source`. `T::fields` gives a type's fields, by name and type, `T::shape` one layer of its structure and `T::values` the set of its values, `x::constraints` what the compiler knows about a value, and `f::source` a function's source as a value.
+**Syntax:** `T::fields`, `T::shape`, `T::values`, `x::constraints`, `f::source`
+
+> [!NOTE]
+> **`T::fields`** gives a type's fields, by name and type, **`T::shape`** one layer of its structure, and **`T::values`** the set of its values. **`x::constraints`** is what the compiler knows about a value, and **`f::source`** is a function's source code, as a value.
 
 ```zed
 type Size = #small | #medium | #large;
@@ -1933,7 +2127,10 @@ Generic code uses these reads: that's how `Json.decode` knows what `User` looks 
 
 A grammar describes a text or binary format.
 
-**Syntax:** `struct Name grammar { ... }`, `type T = Utf8String matching grammar { ... }`, `T.parse(s)`, `x.serialize`. `T.parse(s)` reads the format into a typed value, and `x.serialize` writes a value back out.
+**Syntax:** `struct Name grammar { ... }`, `type T = Utf8String matching grammar { ... }`, `T.parse(s)`, `x.serialize`
+
+> [!NOTE]
+> **`grammar { ... }`** after a struct's name makes its fields a *parser*, which turns text into a value, and a *serializer*, which turns the value back into text. In a grammar, **`"("`** is literal text and **`x: T`** a field. **`T.parse(s)`** reads `s` into a value of `T`, and **`x.serialize`** writes `x` back out.
 
 ```zed
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
@@ -1994,7 +2191,10 @@ Chunk.parse(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2
 
 Programs can read a function, rewrite it and compile it again.
 
-**Syntax:** `f::source`, `expand(e)`, `derivative(e)`. `f::source` reads a function's source as a value, `expand` multiplies out a formula, and `derivative` differentiates it.
+**Syntax:** `f::source`, `expand(e)`, `derivative(e)`
+
+> [!NOTE]
+> **`expand(e)`** multiplies out a formula held as source, and **`derivative(e)`** differentiates it. Here the function's parameter has a stated type: `(x: rat) -> ...`.
 
 ```zed
 p = ((x: rat) -> (x + 1r) ** 2)::source;
@@ -2017,6 +2217,9 @@ A `test` table lists inputs and expected outputs for a definition.
 
 **Syntax:** `f(...) = ... test { input -> output, ... }`
 
+> [!NOTE]
+> **`test { input -> output, ... }`** after a definition is a table of test cases, run at build time. **`@exhaustive`** asks for the tests to run on every input of a finite domain.
+
 ```zed
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
 ```
@@ -2033,6 +2236,9 @@ A `law` states a property of your code for the compiler to prove or test.
 
 **Syntax:** `law name(x: T) = expression;`
 
+> [!NOTE]
+> **`law name(x: T) = expression;`** claims that a `bool` expression holds for every `x`. The compiler tries to prove it and otherwise tests it, and reports its *grade*, how far it got. **`@proved`**, **`@strict`** and the compiler flag **`--strict`** make the build fail on a law that isn't proved.
+
 ```zed
 // double is the function from Tests next to the code above.
 law doubleIsSum(x: int) = double(x) == x + x;
@@ -2046,7 +2252,7 @@ doubleIsSum(3): double(3) == 3 + 3, 6 == 6
 addComm(1, 2): 1 + 2 == 2 + 1, 3 == 3
 sortTwice([3, 1, 2]): sorting twice and once both give [1, 2, 3]
 
-These are single cases. Which grade (how far the compiler got in checking a law)
+These are single cases. Which grade
 the build reports for each of these three laws isn't worked out here, since it
 depends on the compiler's rewrites.
 ```
@@ -2059,7 +2265,10 @@ The optimizer can use proved laws as rewrites. A `law` that was only tested is n
 
 A loop that collects every reachable state, together with a law over those states, checks a state machine at build time.
 
-**Syntax:** `loop` plus `law`. In the code, `.flatMap` gives each state a list of next states, with the list's positions as a new level, `.image` collects all the values of that map into a set, `.union` combines two sets, `.implies` is logical implication, and the loop stops when `R` stops growing.
+**Syntax:** `loop` plus `law`
+
+> [!NOTE]
+> **`m.flatMap(x -> list)`** maps each value to a list, with the list's positions as a new level. **`m.image`** is the set of a map's values, **`a.union(b)`** the union of two sets, and **`p.implies(q)`** logical implication. **`x in s`** is true if `x` is a member of `s`. In the code, the loop stops when `R` stops growing.
 
 ```zed
 type Signal = #red | #green;
@@ -2108,7 +2317,10 @@ Every error gives the rule that failed and the checker's whole chain of reasonin
 
 Annotations declare C functions to call and Zed functions to expose to C.
 
-**Syntax:** `@foreign("lib", "symbol")`, `@export("c", "symbol")`, `@stateless`. `@foreign` names a C function, `@export` exposes a Zed function to C, and `@stateless` promises that a foreign function is safe to retry.
+**Syntax:** `@foreign("lib", "symbol")`, `@export("c", "symbol")`, `@stateless`
+
+> [!NOTE]
+> **`@foreign("lib", "symbol")`** declares a C function from a library, **`@export("c", "symbol")`** makes a Zed function callable from C, and **`@stateless`** promises that a foreign function has no state, so a call to it can be retried.
 
 ```zed
 @foreign("m", "cbrt") @stateless cbrt: (positional x: f64) -> f64;
@@ -2131,7 +2343,10 @@ A foreign call is an operation on a port, because C code can do anything, and th
 
 The compiler places all allocation and freeing.
 
-**Syntax:** `@noalloc`, `@preallocated`. `@noalloc` says the code uses no memory beyond registers, and `@preallocated` says its memory is reserved once, on entry.
+**Syntax:** `@noalloc`, `@preallocated`
+
+> [!NOTE]
+> **`@preallocated`** says the code's memory has a bound and is reserved once, on entry. `@noalloc`, from [Cost](#cost) above, says it uses no memory beyond registers.
 
 Most intermediate collections are never allocated at all, as [Joins](#joins) explains, and this stop is about the rest. Zed has no garbage collector and no lifetimes, and ownership annotations appear only on foreign signatures. Zed values can't form cycles, so exact reference counting (freeing a value when a count of its users reaches zero) is enough, and the compiler removes most of it: where a last use is known statically, the free is placed there, with no count at all. A functional update of a value nothing else refers to happens in place. Cyclic data lives in arenas, blocks of memory whose nodes are freed together, or in id-indexed graphs, whose nodes refer to each other by key, so a stale lookup gives `#notFound` and not a dangling pointer. Freeing is spread out across the scheduler's work, so there are no garbage-collection pauses and no long chains of frees. `@noalloc` and `@preallocated` let you assert a bounded footprint and have the build fail if it doesn't hold.
 
