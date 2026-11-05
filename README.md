@@ -120,7 +120,7 @@ This section lists all the syntax, words and terms the examples on this page use
 | `char32` | A Unicode code point, distinct from an integer. `char32("Z")` constructs one. |
 | `int[a..=b]`, `int[a..]` | An integer in a range. |
 | `f64`, `rat`, `bool`, `u8` | A 64-bit float, an exact rational, true or false, and an integer from 0 to 255. |
-| `Utf8String`, `U8String`, `Utf16String`, `Utf32String` | String types, one per encoding. String literals are `Utf8String`. |
+| `Utf8String`, `U8String`, `Utf16String`, `Utf32String` | String types. `Utf8String`, `Utf16String` and `Utf32String` hold checked text in that encoding, and `U8String` holds 8-bit units with no encoding checked. String literals are `Utf8String`. |
 | `K -> V` | A map with a value at every key of `K`. A function type too. |
 | `K ->? V` | A map that may lack some keys of `K`, so a lookup can give `#notFound`. |
 | `a -> b -> v` | A nested map: `a -> (b -> v)`. Each arrow adds one *level* of keys. |
@@ -419,7 +419,7 @@ An `int` is a mathematical integer. It can't overflow, because the compiler pick
 
 ### Strings
 
-A string is a sequence in one stated encoding, and you say what you index it by.
+A string's type says how its text is stored, and you say what you index it by.
 
 **Syntax:** `"text"`, `"${expression}"`, `a ++ b`, `text::codepoints[i]`
 
@@ -435,7 +435,7 @@ before: name = "Zed"
 after:  line = "total: 5", title = "nevertheless", z = char32("Z")
 ```
 
-String literals are UTF-8. Encodings are separate types (`U8String`, `Utf8String`, `Utf16String`, `Utf32String`), and you pick what you index by, such as code points or UTF-8 units, through a named view like `text::codepoints` or `text::u8`. `++` builds a rope in O(1), so joining strings in a loop doesn't go quadratic.
+String literals are UTF-8. `Utf8String`, `Utf16String` and `Utf32String` are separate types, one per encoding, and `U8String` holds 8-bit units with no encoding checked. You pick what you index by, such as code points or UTF-8 units, through a named view like `text::codepoints` or `text::u8`, and a `U8String` has no code point view. `++` builds a rope in O(1), so joining strings in a loop doesn't go quadratic.
 
 ### Structs
 
@@ -495,7 +495,7 @@ after:  area of the Circle = 4 pi, about 12.566
         next(#red)         = #green
 ```
 
-An atom needs no declaration. A union says a value is one of several things, and atoms with payloads such as `#c(f64) | #f(f64)` tell apart values of the same shape. A `match` must cover every case. If the compiler can't establish that, it shows a value no arm handles or the region it could not resolve. An arm that earlier arms already cover is also rejected.
+An atom needs no declaration. Atoms with payloads, such as `#c(f64) | #f(f64)`, tell apart values of the same shape. A `match` must cover every case. If the compiler can't establish that, it shows a value no arm handles or the region it could not resolve. An arm that earlier arms already cover is also rejected.
 
 ### Generics and interfaces
 
@@ -520,7 +520,7 @@ after:  push(s: [1, 2], x: 3) = [1, 2, 3]
         hello(n)              = "Hi, Ann"
 ```
 
-An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable, with nothing to declare. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` to `CommRing`, is ordinary library code.
+An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause. An interface can also hold laws, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` to `CommRing`, is ordinary library code.
 
 ### Modules
 
@@ -702,7 +702,7 @@ before: users         after: byCity
                       +------+----+-----------+
 ```
 
-`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. `rekey` replaces the key, and that can make two entries land on one key, so the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
+`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
 
 ### Remapping
 
@@ -935,7 +935,7 @@ after: pairs, with n = 3
 +--------+--------+
 ```
 
-A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. A `for` over several collections is a join as well, and the compiler can pick a hash join or a merge join for it instead of two nested loops. Queries and loops compile to the same terms, so they are optimized together.
+A missing match in a left join is the atom `#none`, which the type shows, and not a row of nulls. For a `for` over several collections, the compiler can pick a hash join or a merge join instead of two nested loops. Queries and loops compile to the same terms, so they are optimized together.
 
 ### Chunks
 
@@ -1044,7 +1044,7 @@ before: xs    after: running    after: d
                                 +---+---+---+
 ```
 
-You write the equation and the boundary cases, as you would on a whiteboard. The first line is a running total. The second is edit distance, and it needs no explicit table and no choice of memoization or fill order. The compiler reads the dependencies and picks a plan: it fills the table across your cores in dependency order if you need most of it, and memoizes on demand if you only touch part of it.
+The code reads as it would on a whiteboard. The first line is a running total. The second is edit distance, and it needs no explicit table and no choice of memoization or fill order. The compiler reads the dependencies and picks a plan: it fills the table across your cores in dependency order if you need most of it, and memoizes on demand if you only touch part of it.
 
 The compiler also recognizes some loops that look serial and runs them in parallel:
 
@@ -1261,7 +1261,7 @@ before: orders             after: n, for each id
 
 If the database can't answer, `n` is `#dbError` for any `id`.
 
-A stored table is a map like any other, and you read it with the same `[key]`. The compiler checks your declaration against the SQL schema at build time, without a live connection: a nullable column read as non-optional, or an unbounded string written to a `varchar(80)`, is a compile error at this line. At startup, the program compares the columns it uses with the real database. On a port that supports transactions, such as Postgres, writes made in one step of the program form one transaction, and you never write `begin` or `commit`.
+You read a stored table with the same `[key]` as any other map. The schema check compares your declaration with the SQL schema and needs no live connection: a nullable column read as non-optional, or an unbounded string written to a `varchar(80)`, is a compile error at this line. At startup, the program compares the columns it uses with the real database. On a port that supports transactions, such as Postgres, writes made in one step of the program form one transaction, and you never write `begin` or `commit`.
 
 ### Incremental updates
 
@@ -1320,7 +1320,7 @@ before: s = Span(lo: 1, hi: 4), x = 12
 after:  width(s) = 3, a = 25
 ```
 
-Types can carry ranges and relations between fields, and the compiler tracks them through arithmetic without any annotations from you. That is how it removes bounds checks and picks the smallest machine representation. `refine` checks a condition, at run time unless the compiler can settle it first, and gives `#invalid` if it fails. `@ensure` forbids a run-time check: the compiler has to push the condition back onto the inputs and reject the program if it can't prove them safe, so the check moves to compile time.
+The compiler tracks ranges, and relations between fields, through arithmetic without any annotations from you. That is how it removes bounds checks and picks the smallest machine representation. `refine` checks a condition, at run time unless the compiler can settle it first, and gives `#invalid` if it fails. `@ensure` forbids a run-time check: the compiler has to push the condition back onto the inputs and reject the program if it can't prove them safe, so the check moves to compile time.
 
 A field's range may name another field. The compiler reasons about such bounds with linear arithmetic, and no SMT solver is involved. The checks come from a small set of decidable procedures, so the compile time is predictable and the error message says exactly what stopped the proof.
 
@@ -1425,7 +1425,7 @@ after:  sizes = { #large, #medium, #small }
         names = id, an int, and name, a Utf8String
 ```
 
-Generic code can look at a type's structure. That's how `Json.decode` knows what `User` looks like, and each read of a type's structure is answered at build time, so reflection has no run-time cost.
+Generic code uses these reads: that's how `Json.decode` knows what `User` looks like. Reflection has no run-time cost.
 
 ### Grammars
 
@@ -1507,7 +1507,7 @@ after:  e = x ** 2 + 2r * x + 1r
         d = 2r * x + 2r
 ```
 
-The source of a function is a value you can read, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the function's parameters are the assumptions, so `(x * y) div y` simplifies to `x` when `y` is known to be at least 1, and not when `y` may be 0. `compile` turns the result back into a function.
+The source of a function is a value, and rewriting it is an ordinary program. Each rewrite carries a reason that the compiler's proof checker validates, and the types of the function's parameters are the assumptions, so `(x * y) div y` simplifies to `x` when `y` is known to be at least 1, and not when `y` may be 0. `compile` turns the result back into a function.
 
 ## Tests, laws and proofs
 
@@ -1641,7 +1641,7 @@ The compiler decides what runs in parallel, and the output doesn't change with t
 
 **Syntax:** none.
 
-Any two parts of a program with no dependency between them may run at once, so the compiler chooses where to split the work, using the dependency graph and the laws of each operator. The rule is that outputs are bit-identical at any core count, floating-point reductions included. The exceptions are a short, enumerated list: arrival order at ports, the interleaving at an output port that declares one, foreign-call order the program leaves open, `unordered` reductions, and running out of a resource. There is no undefined behavior, except where a foreign library breaks a promise made about it.
+Any two parts of a program with no dependency between them may run at once, and the compiler splits the work using the dependency graph and the laws of each operator. Outputs are bit-identical at any core count, floating-point reductions included. The exceptions are a short, enumerated list: arrival order at ports, the interleaving at an output port that declares one, foreign-call order the program leaves open, `unordered` reductions, and running out of a resource. There is no undefined behavior, except where a foreign library breaks a promise made about it.
 
 ### Targets
 
