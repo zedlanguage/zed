@@ -10,6 +10,8 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::deep;
+
+mod walk;
 use crate::family::{Id, fresh_id};
 use crate::types::Type;
 use crate::value::Value;
@@ -156,7 +158,6 @@ impl Prim {
 }
 
 /// A pattern of a `match` arm.
-#[derive(Clone, PartialEq, Debug)]
 pub enum Pattern {
     /// `_`, matching anything.
     Wild,
@@ -344,7 +345,6 @@ impl fmt::Display for Shared {
 }
 
 /// A kernel term.
-#[derive(Clone, PartialEq, Debug)]
 pub enum Term {
     /// A literal value.
     Lit(Value),
@@ -493,6 +493,7 @@ pub mod build {
 #[expect(dead_code, reason = "a part is held only to be dropped")]
 enum Freed {
     Term(Term),
+    Shared(Shared),
     Terms(Vec<Term>),
     Arms(Vec<(Pattern, Term)>),
     Patterns(Vec<Pattern>),
@@ -502,16 +503,23 @@ enum Freed {
 thread_local! {
     /// The parts of terms and patterns waiting to be dropped.
     static FREED: deep::Queue<Freed> = const { deep::Queue::new() };
+    /// What a shared subterm still held elsewhere leaves in its place when it is queued.
+    static HOLE: Shared = Shared::new(Term::PrimFn(Prim::Tuple));
 }
 
 fn free(part: Freed) {
     deep::free_in(&FREED, part);
 }
 
-/// Queues the term `t` holds, when `t` is its last owner.
+/// Queues the term `t` holds, when `t` is its last owner, and otherwise `t` itself: a subterm
+/// that one term holds in several places, as a DAG does, or that another thread lets go of at
+/// the same moment, is freed by the queue when its last holder there lets go, not by this
+/// term's own drop recursing into it.
 fn free_shared(t: &mut Shared) {
     if let Some(t) = Shared::get_mut(t) {
         free(Freed::Term(std::mem::replace(t, Term::PrimFn(Prim::Tuple))));
+    } else if let Ok(hole) = HOLE.try_with(Shared::clone) {
+        free(Freed::Shared(std::mem::replace(t, hole)));
     }
 }
 
