@@ -1272,15 +1272,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DART-SCALE | merge attempt 1 | 2026-11-05 04:07 | merge agent running (started by orch) |
 | F70-rerun | merge attempt 1 | 2026-11-05 20:49 | merge agent running |
 | FLOAT-tie-read | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
-| LAYOUT-measure | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
 | LIVE3-lp-tangents | merge attempt 1 | 2026-11-05 19:39 | merge agent running |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | PASS-at-args | merge attempt 1 | 2026-11-04 00:20 | merge agent running |
-| RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | agent still running (timing asks.rs scaling tests), per orch |
-| RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | done: code 72ccaa06 on wt/rung2-mod-symbol (rebased on origin/main), spec 3a4a2e1 on wt/rung2-mod-symbol-spec; l01_38/l01_25/l01_39 groups pass on rebased build |
+| POW-kept-exp | impl attempt 1 | 2026-11-05 04:07 | started by orch |
+| RAT-asks-rest | merge attempt 1 | 2026-11-05 18:19 | started by orch |
+| RUNG2-mod-symbol | merge attempt 1 | 2026-11-05 04:07 | started; rebased 72ccaa06 on origin/main; load 33.97 44.51 48.89 |
 | S.1f | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/s1f on origin/main 0752a662 |
 | STEPS-split | impl attempt 1 | 2026-11-05 21:45 | started; worktree wt/steps-split on origin/main 0752a662 |
+| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | started by orch |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | verify attempt 1 | 2026-11-03 09:40 | part 3 verify+merge started: branch ac273df4 (5 commits on 654e453f), 63 behind origin/main; load 35.00 45.28 53.89 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
