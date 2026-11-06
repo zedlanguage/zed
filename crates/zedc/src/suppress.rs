@@ -107,8 +107,8 @@ const BASE: u64 = 1_000_003;
 /// and the occurrence count, so the two still get distinct addresses. Why: hashing each
 /// node's text whole costs the sum of the nodes' lengths, O(n · depth) for diagnostics at
 /// nested nodes; the prefix hashes cost O(n) once and O(1) per node. Test:
-/// `l01_29_diagnostics::suppress::addresses_scale`. A complete solution would hash each
-/// node's text with BLAKE3, at that cost.
+/// `l01_29_diagnostics::suppress::suppressing_every_warning_scales`. A complete solution would
+/// hash each node's text with BLAKE3, at that cost.
 struct Content {
     /// The hash of the first `i` bytes that are not white space, at `i` for each byte offset.
     prefix: Vec<u64>,

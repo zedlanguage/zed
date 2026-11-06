@@ -309,9 +309,11 @@ impl Package {
     /// file written under `root`; a file that cannot be read gives `file:line:col: message` at
     /// the place it was rejected, or `file: message` when the reason has no place.
     pub fn report(&self, root: &Path) -> Vec<String> {
-        let mut lines: HashMap<&str, (&str, source::Lines)> = HashMap::new();
-        let mut out = Vec::with_capacity(self.problems.len());
-        for p in &self.problems {
+        // The problems of each file with a text are placed together, in one pass over that
+        // text (the addresses read the whole of it), and then written in the problems' order.
+        let mut placed: HashMap<&str, (&str, Vec<usize>)> = HashMap::new();
+        let mut out = vec![String::new(); self.problems.len()];
+        for (i, p) in self.problems.iter().enumerate() {
             let file = root.join(&p.file);
             let text = if p.file == MANIFEST {
                 self.manifest.as_ref()
@@ -324,25 +326,27 @@ impl Package {
                     at: Some((line, col)),
                     ..
                 })) => {
-                    out.push(format!(
-                        "{}:{line}:{col}: {}",
-                        file.display(),
-                        p.error.message
-                    ));
+                    out[i] = format!("{}:{line}:{col}: {}", file.display(), p.error.message);
                     continue;
                 }
                 _ => {
-                    out.push(format!("{}: {}", file.display(), p.error.message));
+                    out[i] = format!("{}: {}", file.display(), p.error.message);
                     continue;
                 }
             };
-            let (text, l) = lines
+            placed
                 .entry(&p.file)
-                .or_insert_with(|| (text, source::Lines::new(text.as_bytes())));
-            let d: Vec<Diagnostic> =
-                run::placed(text, l, &[], Severity::Rejection, vec![p.error.clone()]);
-            for d in d {
-                out.push(format!("{}:{d}", file.display()));
+                .or_insert_with(|| (text, Vec::new()))
+                .1
+                .push(i);
+        }
+        for (name, (text, at)) in placed {
+            let file = root.join(name);
+            let errors = at.iter().map(|&i| self.problems[i].error.clone()).collect();
+            let lines = source::Lines::new(text.as_bytes());
+            let d: Vec<Diagnostic> = run::placed(text, &lines, &[], Severity::Rejection, errors);
+            for (i, d) in at.into_iter().zip(d) {
+                out[i] = format!("{}:{d}", file.display());
             }
         }
         out
