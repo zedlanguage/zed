@@ -97,8 +97,14 @@ fn read_f64(text: &str) -> f64 {
 /// `10^-j <= 2^-p`, and they are the shortest forms only if no multiple of `10^-(j-1)` reads
 /// back, which needs `2^-p < 10^-(j-1)`. So `j` is the least `j` with `10^j >= 2^p`, and
 /// `0 <= t <= 51` must hold. As `j` is about `0.301 p`, `t <= 51` fails for `p > 75`, and
-/// `j >= 1` with `t >= 0` needs `p >= 2`: ties exist only for `2^-23 <= |v| < 2^51`. A float
-/// at the bottom of its binade (`M = 2^52`) or subnormal has no tie: `t` would be at least 52.
+/// `j >= 1` with `t >= 0` needs `p >= 2`: inside a binade, ties exist only for
+/// `2^-23 <= |v| < 2^51`. A subnormal has no tie: `t` would be at least 52. At the bottom of a
+/// binade, `v = 2^e` (`M = 2^52`, `t = 52`), the float below is `2^-(p+1)` away, not `2^-p`,
+/// so the argument above does not apply. There `v` is halfway only for `j = -1 - e`, so
+/// `p = 53 + j`; both forms read back when `10^-j / 2 <= 2^-(p+2)`, that is `5^j >= 2^54`,
+/// `j >= 24`; a multiple of `10^-(j-1)`, 5 units below `v` since `5^j` is 5 more than a
+/// multiple of 20, reads back when `5^(j-1) >= 2^55`, `j >= 25`. So `2^-25` is the one tie at
+/// a binade's bottom, checked on its own at the end of the test.
 /// In units of `10^-j / 2`, `v` is `K * 5^j`, an odd multiple of 5, so the nearest multiple of
 /// `10^-(j-1)` (of 20 in these units) is always 5 units away, and it reads back exactly when
 /// `5 * 2^p < 10^j`. So a binade with `0 <= t <= 51` either has no tie or every `v` in it with
@@ -142,18 +148,20 @@ fn every_sampled_tie_prints_the_larger_magnitude() {
             let k = (low + splitmix64(&mut seed) % low) | 1;
             let m = k << t;
             let v = f64::from_bits((((e + 1023) as u64) << 52) | (m - (1 << 52)));
+            // M read back from v's bits, so the checks below are of the float under test.
+            let m = (v.to_bits() & ((1 << 52) - 1)) | (1 << 52);
+            assert_eq!(
+                m.trailing_zeros(),
+                t,
+                "{v:e} is halfway between two multiples of 10^-{j}"
+            );
             // In units of 10^-j / 2: v is K * 5^j, and a decimal reads back to v when its
             // distance from v, times 2^p, is below 10^j, or equal to it with M even.
-            let at = u128::from(k) * 5u128.pow(j);
+            let at = u128::from(m >> t) * 5u128.pow(j);
             let reads_back = |distance: u128| {
                 let scaled = distance << p;
                 scaled < ten_j || (scaled == ten_j && m.is_multiple_of(2))
             };
-            assert_eq!(
-                at % 2,
-                1,
-                "{v:e} is halfway between two multiples of 10^-{j}"
-            );
             assert!(reads_back(1), "{v:e}: both neighbors read back");
             let coarse = at / 20; // the multiples of 10^-(j-1) are the multiples of 20
             let coarser_reads_back =
@@ -189,6 +197,20 @@ fn every_sampled_tie_prints_the_larger_magnitude() {
     assert_eq!(binades_with_ties.first(), Some(&50));
     assert_eq!(binades_with_ties.last(), Some(&-23));
     assert_eq!(ties, 52 * PER_BINADE);
+
+    // The one tie at the bottom of a binade: 2^-25, 5 * 10^-25 from both forms.
+    let v = 2f64.powi(-25);
+    let lower = 29_802_322_387_695_312u128;
+    for text in [decimal_text(lower, 24), decimal_text(lower + 1, 24)] {
+        assert_eq!(read_f64(&text).to_bits(), v.to_bits(), "{text} reads back");
+    }
+    let printed = show(v);
+    assert_eq!(
+        decimal_value(&printed),
+        (lower + 1, -24),
+        "2^-25 printed {printed}"
+    );
+    assert_eq!(show(-v), format!("-{printed}"));
 }
 
 #[test]
