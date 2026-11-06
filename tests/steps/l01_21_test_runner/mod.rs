@@ -6,6 +6,7 @@ mod command;
 mod cones;
 mod fences;
 mod marks;
+mod predictions;
 mod rows;
 mod rows_are_calls;
 mod scaling;

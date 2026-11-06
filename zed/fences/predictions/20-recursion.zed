@@ -1,10 +1,10 @@
 // layer L6
 // Output fixed by DESIGN.md (at 843be85) line 2149 (step L6.4, general recursion): fib(20) = 6765, gcd(84, 36) = 12,
 // with `mod` Euclidean (line 640).
-fib(positional n: int) -> int {
+fib(positional n: int) {
   if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 }
-gcd(positional a: int, positional b: int) -> int {
+gcd(positional a: int, positional b: int) {
   if b == 0 { a } else { gcd(b, a mod b) }
 }
 main(stdin: Lines) -> (stdout: Lines) {

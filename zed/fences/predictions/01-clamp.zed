@@ -1,8 +1,10 @@
 // layer L1
 // Output fixed by DESIGN.md (at 843be85) line 3028: "y = 5.double.clamp(0, 8); // ≡ clamp(double(5), 0, 8); y == 8",
 // and line 2921: interpolation is `"…" ++ Utf8String(e)`.
+// The tour writes `clamp(...) -> int {`; a result type is grammar row ResultType, layer L10
+// (DESIGN.md line 3632), so this L1 program leaves it out. The expected output is unchanged.
 double(positional x) = x * 2;
-clamp(positional v, positional lo, positional hi) -> int {
+clamp(positional v, positional lo, positional hi) {
   if v < lo { lo } else if v > hi { hi } else { v }
 }
 main(stdin: Lines) -> (stdout: Lines) {

@@ -13,7 +13,7 @@
 //! and keys only; the facet arrives at layer L9, and with it that rule.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Lookup, Value, World};
@@ -168,8 +168,14 @@ pub fn corpus_dir() -> PathBuf {
 
 /// Each corpus program's path and the layer its first line labels, in name order.
 pub fn corpus() -> Vec<(PathBuf, u32)> {
-    let mut out: Vec<(PathBuf, u32)> = std::fs::read_dir(corpus_dir())
-        .expect("the corpus directory")
+    labeled(&corpus_dir())
+}
+
+/// Each `.zed` program in `dir`, with the layer its first line labels (`// layer L<n>`), in name
+/// order.
+pub fn labeled(dir: &Path) -> Vec<(PathBuf, u32)> {
+    let mut out: Vec<(PathBuf, u32)> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "zed"))
         .map(|p| {
