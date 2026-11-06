@@ -1734,3 +1734,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Edits whose texts are `&'a str` slices of the script, so a script of n bytes is read without copying its texts | `Edit`, `Step`, `parse` | None | Zed shares values; a slice is a range of the script's string |
 | `str::match_indices` to find a text and check it occurs once, and `split_inclusive('\n')` to read lines with their ends | `parse`, `apply` | Library: DESIGN.md uses `split`, and names no word that finds every place of a substring | A stdlib word (catalog of step L2.11) that lists the places of a substring, and `split("\n")` |
 | `#[should_panic(expected = …)]`, a test that passes when its body stops with a given message | `a_replace_of_text_the_file_lacks_stops_the_script`, `a_replace_without_its_with_stops_the_script` | Missing (test harness) | A test-harness facility, not the language: a row whose expected outcome is the failure's message |
+
+## Entries from LAYOUT-measure (`zed-alloc-count/src/lib.rs`, `tests/src/layout.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `thread_local!` `Cell` of the running measurement, read and written by the global allocator on each allocation and free | `TRACKED`, `track`, `Counting` | Mutation, global state; Missing (no allocator hook) | The runtime's allocator reports bytes to a measurement the test harness holds; Zed code does not replace the allocator |
+| A drop guard that puts the outer measurement back when the closure returns or unwinds | `live`, `Restore` | Missing (no destructors, no unwinding) | A failure returns through `live`, which restores the state on both paths |
+| Measuring a structure by the bytes its `drop` frees | `bytes_of` | Missing (no explicit drop) | The runtime's count of freed cells when the value's last reference goes |

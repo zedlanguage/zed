@@ -377,7 +377,8 @@ fn visit<'a>(s: &'a Shared, seen: &mut HashSet<u64>, work: &mut Vec<&'a Term>) {
     }
 }
 
-/// The nodes of the ZIR graph `g`, its nested regions' included.
+/// The nodes of the ZIR graph `g`, its nested regions' included. Lowering never shares a region
+/// between nodes (COMPLEXITY.md Z25), so the regions form a tree and each is walked once.
 pub fn zir_nodes(g: &Region) -> usize {
     let mut n = g.nodes.len();
     let mut work: Vec<&Arc<Region>> = g.nodes.iter().flat_map(|x| &x.regions).collect();
