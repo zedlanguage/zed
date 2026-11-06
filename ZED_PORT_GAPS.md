@@ -919,9 +919,17 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A persistent AVL tree of `Arc` nodes, a join rebuilding the path it rebalances | `Text::join`, `concat`, `balance` | None | A recursive `enum` with shared parts; the recursion is O(log n) deep |
-| An iterator over the blocks with its own stack of `&Text`, capacity the height plus one | `Chunks`, `Text::chunks`, `compare` | Early exit (gap 12) | A walk over the tree; `compare` stops at the first byte that differs, a `loop` with `break`; depth O(log n) |
+| A persistent AVL tree of `Arc` nodes, a join rebuilding the path it rebalances (replaced by TEXT-append-O1, below) | `Text::join`, `concat`, `balance` | None | A recursive `enum` with shared parts; the recursion is O(log n) deep |
+| An iterator over the blocks with its own stack of `&Text`, capacity the height plus one (since TEXT-append-O1, six times the depth plus nine) | `Chunks`, `Text::chunks`, `compare` | Early exit (gap 12) | A walk over the tree; `compare` stops at the first byte that differs, a `loop` with `break`; depth O(log n) |
 | `Cow<str>` returned by `flat`, borrowed for one block and owned for a join | `Text::flat` | None | Returns a `String`; one block is shared, not copied |
+
+## Entries from TEXT-append-O1 (`zed-kernel/src/text.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent 2-3 finger tree, every tree, node and block one `Arc<Tree>` enum, its digits fixed arrays `[Option<Text>; 4]` and its nodes `[Option<Text>; 3]` filled from the front | `Tree`, `Digit`, `push_back`, `push_front`, `concat`, `nodes` | None | A recursive union with shared parts; a digit and a node are tuples or short lists, matched by their length |
+| `std::array::from_fn` to fill a digit or node from a slice | `digit`, `node` | None | A tuple or list built from the parts |
+| `std::slice::from_ref` to pass one part as a slice | `push_back`, `push_front` | None | A list of one part |
 
 ## Entries from L3.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
 

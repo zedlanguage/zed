@@ -3,26 +3,35 @@
 //! ordered and printed by its text alone (DESIGN.md: "ropes are a representation and never
 //! enter identity").
 //!
-//! The tree is an AVL tree: the heights of a node's two parts differ by at most 1, so its
-//! height is at most `1.44 log2` of its number of leaves (at most 92 for a string of
-//! `usize::MAX` bytes), and every walk over it, reading or dropping, is that deep. A join builds
-//! `O(log n)` new nodes and shares the rest of both parts, so holding every prefix of a chain of
-//! `n` joins keeps `O(n log n)` memory, and joining `n` pieces one at a time, as a `foldl` of
-//! `++` does, costs `O(n log n)` (COMPLEXITY.md C29).
+//! The tree is a finger tree of blocks (Hinze and Paterson, "Finger trees: a simple
+//! general-purpose data structure", JFP 16(2), 2006), persistent and shared: a deep tree keeps
+//! one to four parts at each end and a tree of nodes of two or three parts between them, whose
+//! parts are one level higher. A join that adds a block at either end builds `O(1)` new nodes,
+//! amortized over a chain of joins each made on the result of the one before, as a `foldl` of
+//! `++` makes them (DESIGN.md: `++` is O(1)); a join of two longer texts builds `O(log m)`, `m`
+//! the number of blocks of the shorter. Holding every prefix of a chain of `n` joins keeps
+//! `O(n)` nodes (COMPLEXITY.md C29).
 //!
-//! Nothing is written out and kept: readers walk the leaves in order ([`Text::chunks`]), so a
+//! Every tree, node and block is itself a [`Text`], whose blocks in order are its text: a text
+//! held as one block is the part a join puts in a tree, with nothing added. A tree of `b`
+//! blocks is at most `log2(b/2 + 1)` levels deep (each level holds two parts or more, and a
+//! part at level `k` holds `2^k` blocks or more), so at most 63, and every walk over it, reading
+//! or dropping, keeps that bound.
+//!
+//! Nothing is written out and kept: readers walk the blocks in order ([`Text::chunks`]), so a
 //! comparison stops at the first byte that differs, in `O(log n)` plus the bytes it reads;
 //! hashing and printing cost the text's length. A reader that needs the text as one `&str`
 //! gets it from [`Text::flat`], which borrows a single block and writes a join into a new
 //! `String` at each call.
 //!
-//! Each node keeps its length in bytes and in characters, added when two are joined, so `len`
-//! is `O(1)` and reads no text (COMPLEXITY.md R4, R5).
+//! Each tree and node keeps its length in bytes and in characters, added when it is built, so
+//! `len` is `O(1)` and reads no text (COMPLEXITY.md R4, R5).
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::ops::Add;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -32,103 +41,133 @@ use crate::num::TooLarge;
 
 /// A string's text, shared.
 #[derive(Clone)]
-pub struct Text(Arc<Node>);
+pub struct Text(Arc<Tree>);
 
-struct Node {
-    /// The length of the text in bytes.
+/// A length in bytes and in characters (Unicode scalar values).
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+struct Size {
     len: usize,
-    /// The length of the text in characters (Unicode scalar values), what `len` gives.
     chars: usize,
-    /// The number of joins on the longest path to a leaf: 0 for a leaf.
-    height: u8,
-    body: Body,
 }
 
-enum Body {
-    /// A block of text; empty only in a text that is empty.
-    Leaf(Arc<str>),
-    /// A join of two texts, neither empty, whose heights differ by at most 1.
-    Join(Text, Text),
+impl Add for Size {
+    type Output = Size;
+
+    /// The size of two parts of one text: the join that made the text checked that its length
+    /// in bytes is representable, and it has no more characters than bytes.
+    fn add(self, other: Size) -> Size {
+        Size {
+            len: self.len + other.len,
+            chars: self.chars + other.chars,
+        }
+    }
+}
+
+/// One to four parts of one height, in order, the first `Some` and no `Some` after a `None`.
+type Digit = [Option<Text>; 4];
+
+enum Tree {
+    /// The empty text, and the middle of a deep tree that has nothing between its ends.
+    Empty,
+    /// A block of text, not empty, and its number of characters: a part of height 0.
+    Block { block: Arc<str>, chars: usize },
+    /// Two or three parts of one height `h`, in order, the third `None` when there are two: a
+    /// part of height `h + 1`.
+    Node {
+        size: Size,
+        parts: [Option<Text>; 3],
+    },
+    /// A tree of parts of height `h`: `front`, then the parts of the nodes of height `h + 1`
+    /// that `middle` holds, then `back`. A tree of one part is that part itself.
+    Deep {
+        size: Size,
+        front: Digit,
+        middle: Text,
+        back: Digit,
+    },
 }
 
 // Complexity tradeoff: a join of two texts whose bytes fit in `LEAF` together, or of a short
 // text to the end block of a longer one, copies them into one block of at most `LEAF` bytes,
 // `O(LEAF)` work and memory per join. Cost: a join that would otherwise only share its parts
 // copies up to `LEAF` bytes, so `n` prefixes held keep up to `LEAF` bytes each besides their
-// `O(log n)` nodes. Given up: nothing in order; the result and every reader are the same. Why:
-// a string built a character at a time would otherwise hold a node of about 56 bytes and a
-// block of 16 bytes of counts for each character, and every read would walk that many leaves.
-// Measured (WRITE-prefix-scale merge, release, load 62 to 69, a `foldl` of 200,000 joins of
-// one piece, merging on against off): 1-byte pieces, 1,563 leaves of height 11 against
-// 200,000 of height 18, `==` of two such texts 0.2 ms against 34 to 40 ms, a hash 0.3 to 3.6
-// ms against 22 to 24 ms, printing 0.3 to 1.3 ms against 18 to 23 ms; 8-byte pieces, `==` 2 to
-// 5 ms against 11 to 39 ms; 128-byte pieces, which never merge, the same. One more effect: a
-// join of at most `LEAF` bytes is one block ([`Text::is_flat`]), so staging keys a call at it
-// by its answers (`zedc::stage::compared`) and a call at a longer join by the function's term;
-// the value is the same either way. Trigger: a join whose parts' adjacent blocks are short.
-// Test: `text::tests::a_string_built_a_character_at_a_time_is_held_in_blocks`; COMPLEXITY.md
-// C29. A solution with no constant would need leaves whose size follows the text's own pieces
-// with no per-piece node, which no structure here has; the amortized O(1) append of plan row
-// TEXT-append-O1 still needs a leaf size.
+// `O(1)` nodes. Given up: nothing in order; the result and every reader are the same. Why:
+// a string built a character at a time would otherwise hold a node of about 112 bytes and a
+// block of 16 bytes of counts for each character, and every read would walk that many blocks.
+// Measured (WRITE-prefix-scale merge, on the AVL tree this tree replaced, release, load 62 to
+// 69, a `foldl` of 200,000 joins of one piece, merging on against off): 1-byte pieces, 1,563
+// leaves of height 11 against 200,000 of height 18, `==` of two such texts 0.2 ms against 34
+// to 40 ms, a hash 0.3 to 3.6 ms against 22 to 24 ms, printing 0.3 to 1.3 ms against 18 to 23
+// ms; 8-byte pieces, `==` 2 to 5 ms against 11 to 39 ms; 128-byte pieces, which never merge,
+// the same. One more effect: a join of at most `LEAF` bytes is one block ([`Text::is_flat`]),
+// so staging keys a call at it by its answers (`zedc::stage::compared`) and a call at a longer
+// join by the function's term; the value is the same either way. Trigger: a join whose parts'
+// adjacent blocks are short. Test:
+// `text::tests::a_string_built_a_character_at_a_time_is_held_in_blocks`; COMPLEXITY.md C29. A
+// solution with no constant would need blocks whose size follows the text's own pieces with
+// no node per piece, which no structure here has.
 const LEAF: usize = 128;
 
 impl Text {
-    /// The text `a` then `b`. A join shares both parts and builds `O(log n)` new nodes for a
-    /// text of `n` leaves; it copies no more than `LEAF` bytes. A join shares its parts, so a
-    /// string doubled 64 times is a few dozen nodes and `2^64` times as long as the first:
-    /// when the two lengths in bytes add up past `usize::MAX` the join's length is not
-    /// representable, and it is refused with [`KernelError::StringTooLong`].
+    /// The text `a` then `b`. A join shares both parts; it builds `O(1)` new nodes, amortized,
+    /// when either is one block, as a `foldl` of `++` joins, and `O(log m)` for two longer
+    /// texts, `m` the number of blocks of the shorter; it copies no more than `LEAF` bytes. A
+    /// join shares its parts, so a string doubled 64 times is a few thousand nodes and `2^64`
+    /// times as long as the first: when the two lengths in bytes add up past `usize::MAX` the
+    /// join's length is not representable, and it is refused with
+    /// [`KernelError::StringTooLong`].
     pub fn join(a: &Text, b: &Text) -> Result<Text, KernelError> {
-        if a.0.len == 0 {
+        if a.is_empty() {
             return Ok(b.clone());
         }
-        if b.0.len == 0 {
+        if b.is_empty() {
             return Ok(a.clone());
         }
-        if a.0.len.checked_add(b.0.len).is_none() {
+        if a.len().checked_add(b.len()).is_none() {
             return Err(KernelError::StringTooLong {
-                left: a.0.len,
-                right: b.0.len,
+                left: a.len(),
+                right: b.len(),
             });
         }
-        if let Body::Leaf(s) = &b.0.body
-            && let Some(t) = a.with_last(s, b.0.chars)
+        if let Tree::Block { block, chars } = &*b.0
+            && let Some(t) = a.with_last(block, *chars)
         {
             return Ok(t);
         }
-        if let Body::Leaf(s) = &a.0.body
-            && let Some(t) = b.with_first(s, a.0.chars)
+        if let Tree::Block { block, chars } = &*a.0
+            && let Some(t) = b.with_first(block, *chars)
         {
             return Ok(t);
         }
-        Ok(concat(a, b))
+        Ok(concat(a, &[], b))
     }
 
     /// The length in bytes, without reading the text.
     pub fn len(&self) -> usize {
-        self.0.len
+        self.size().len
     }
 
     /// Whether the text is empty.
     pub fn is_empty(&self) -> bool {
-        self.0.len == 0
+        self.len() == 0
     }
 
     /// The number of characters, Unicode scalar values, without reading the text.
     pub fn char_count(&self) -> usize {
-        self.0.chars
+        self.size().chars
     }
 
     /// Whether the text is held as one block, so [`Text::flat`] copies nothing and a reader
     /// walks no tree: a join, of any length, is held in parts and never written out.
     pub fn is_flat(&self) -> bool {
-        matches!(self.0.body, Body::Leaf(_))
+        matches!(*self.0, Tree::Empty | Tree::Block { .. })
     }
 
     /// The blocks of the text from left to right, none empty. The walk keeps its own stack,
-    /// as deep as the tree: `O(log n)` for the first block, and every block in `O(len)`.
+    /// of at most `6d + 9` parts for a tree `d` levels deep, allocated once: `O(log n)` for
+    /// the first block, and every block in `O(len)`.
     pub fn chunks(&self) -> Chunks<'_> {
-        let mut todo = Vec::with_capacity(usize::from(self.0.height) + 1);
+        let mut todo = Vec::with_capacity(6 * self.depth() + 9);
         todo.push(self);
         Chunks { todo }
     }
@@ -137,10 +176,11 @@ impl Text {
     /// new `String` at each call, `O(len)`, and not kept, so holding a text never holds a
     /// second copy of it. For readers that need one `&str`, as `lower` and a cast do.
     pub fn flat(&self) -> Cow<'_, str> {
-        match &self.0.body {
-            Body::Leaf(s) => Cow::Borrowed(s),
-            Body::Join(..) => {
-                let mut out = String::with_capacity(self.0.len);
+        match &*self.0 {
+            Tree::Empty => Cow::Borrowed(""),
+            Tree::Block { block, .. } => Cow::Borrowed(block),
+            Tree::Node { .. } | Tree::Deep { .. } => {
+                let mut out = String::with_capacity(self.len());
                 self.chunks().for_each(|c| out.push_str(c));
                 Cow::Owned(out)
             }
@@ -151,12 +191,13 @@ impl Text {
     /// system gives first for all of it; [`TooLarge`] when it refuses, naming that memory, so
     /// a reader of a text too long to copy, as a cast is, reports it and does not abort.
     pub fn try_flat(&self) -> Result<Cow<'_, str>, TooLarge> {
-        match &self.0.body {
-            Body::Leaf(s) => Ok(Cow::Borrowed(s)),
-            Body::Join(..) => {
+        match &*self.0 {
+            Tree::Empty => Ok(Cow::Borrowed("")),
+            Tree::Block { block, .. } => Ok(Cow::Borrowed(block)),
+            Tree::Node { .. } | Tree::Deep { .. } => {
                 let mut out = String::new();
-                out.try_reserve_exact(self.0.len).map_err(|_| TooLarge {
-                    bits: BigUint::from(self.0.len) << 3u32,
+                out.try_reserve_exact(self.len()).map_err(|_| TooLarge {
+                    bits: BigUint::from(self.len()) << 3u32,
                 })?;
                 self.chunks().for_each(|c| out.push_str(c));
                 Ok(Cow::Owned(out))
@@ -164,102 +205,281 @@ impl Text {
         }
     }
 
-    /// `self` with `s`, of `chars` characters, added to its last block, when the two fit in
-    /// one leaf; each node on the way is rebuilt with its height unchanged.
+    fn size(&self) -> Size {
+        match &*self.0 {
+            Tree::Empty => Size::default(),
+            Tree::Block { block, chars } => Size {
+                len: block.len(),
+                chars: *chars,
+            },
+            Tree::Node { size, .. } | Tree::Deep { size, .. } => *size,
+        }
+    }
+
+    /// The number of deep trees from this one down its middles: `O(log n)`.
+    fn depth(&self) -> usize {
+        let (mut d, mut t) = (0, self);
+        while let Tree::Deep { middle, .. } = &*t.0 {
+            (d, t) = (d + 1, middle);
+        }
+        d
+    }
+
+    /// `self`, a text's tree, with `s`, of `chars` characters, added to its last block, when
+    /// the two fit in one block: `O(LEAF)`, the deep tree at the top rebuilt.
     fn with_last(&self, s: &str, chars: usize) -> Option<Text> {
-        match &self.0.body {
-            Body::Leaf(last) => (last.len() + s.len() <= LEAF)
-                .then(|| leaf([&**last, s].concat().into(), self.0.chars + chars)),
-            Body::Join(a, b) => b.with_last(s, chars).map(|b| node(a.clone(), b)),
+        match &*self.0 {
+            Tree::Block { block, chars: c } => (block.len() + s.len() <= LEAF)
+                .then(|| block_of([&**block, s].concat().into(), c + chars)),
+            Tree::Deep {
+                front,
+                middle,
+                back,
+                ..
+            } => {
+                let i = count(back) - 1;
+                let last = back[i].as_ref()?.with_last(s, chars)?;
+                let mut back = back.clone();
+                back[i] = Some(last);
+                Some(deep(
+                    self.size()
+                        + Size {
+                            len: s.len(),
+                            chars,
+                        },
+                    front.clone(),
+                    middle.clone(),
+                    back,
+                ))
+            }
+            // A text's own tree holds blocks at the top, never a node.
+            Tree::Empty | Tree::Node { .. } => None,
         }
     }
 
-    /// `s`, of `chars` characters, added before the first block of `self`, when the two fit in
-    /// one leaf.
+    /// `s`, of `chars` characters, added before the first block of `self`, a text's tree, when
+    /// the two fit in one block.
     fn with_first(&self, s: &str, chars: usize) -> Option<Text> {
-        match &self.0.body {
-            Body::Leaf(first) => (s.len() + first.len() <= LEAF)
-                .then(|| leaf([s, &**first].concat().into(), chars + self.0.chars)),
-            Body::Join(a, b) => a.with_first(s, chars).map(|a| node(a, b.clone())),
-        }
-    }
-
-    /// The two parts of a join.
-    fn parts(&self) -> (&Text, &Text) {
-        match &self.0.body {
-            Body::Join(a, b) => (a, b),
-            Body::Leaf(_) => unreachable!("a node of height above 0 is a join"),
+        match &*self.0 {
+            Tree::Block { block, chars: c } => (s.len() + block.len() <= LEAF)
+                .then(|| block_of([s, &**block].concat().into(), chars + c)),
+            Tree::Deep {
+                front,
+                middle,
+                back,
+                ..
+            } => {
+                let first = front[0].as_ref()?.with_first(s, chars)?;
+                let mut front = front.clone();
+                front[0] = Some(first);
+                Some(deep(
+                    self.size()
+                        + Size {
+                            len: s.len(),
+                            chars,
+                        },
+                    front,
+                    middle.clone(),
+                    back.clone(),
+                ))
+            }
+            Tree::Empty | Tree::Node { .. } => None,
         }
     }
 }
 
-/// A leaf holding `s`, of `chars` characters.
-fn leaf(s: Arc<str>, chars: usize) -> Text {
-    Text(Arc::new(Node {
-        len: s.len(),
-        chars,
-        height: 0,
-        body: Body::Leaf(s),
+/// A block holding `s`, not empty, of `chars` characters.
+fn block_of(block: Arc<str>, chars: usize) -> Text {
+    Text(Arc::new(Tree::Block { block, chars }))
+}
+
+fn empty() -> Text {
+    Text(Arc::new(Tree::Empty))
+}
+
+/// The number of parts of a digit.
+fn count(d: &Digit) -> usize {
+    d.iter().take_while(|p| p.is_some()).count()
+}
+
+/// A digit of the given parts, one to four.
+fn digit(parts: &[Text]) -> Digit {
+    debug_assert!((1..=4).contains(&parts.len()));
+    std::array::from_fn(|i| parts.get(i).cloned())
+}
+
+/// The node of two or three parts of one height.
+fn node(parts: &[Text]) -> Text {
+    debug_assert!((2..=3).contains(&parts.len()));
+    let size = parts.iter().map(Text::size).fold(Size::default(), Add::add);
+    let parts = std::array::from_fn(|i| parts.get(i).cloned());
+    Text(Arc::new(Tree::Node { size, parts }))
+}
+
+/// The deep tree of the given ends and middle, whose sizes add up to `size`: the callers know
+/// it from the tree they extend, so a push reads no part but the one it adds.
+fn deep(size: Size, front: Digit, middle: Text, back: Digit) -> Text {
+    debug_assert_eq!(
+        size,
+        front
+            .iter()
+            .chain(&back)
+            .flatten()
+            .map(Text::size)
+            .fold(middle.size(), Add::add)
+    );
+    Text(Arc::new(Tree::Deep {
+        size,
+        front,
+        middle,
+        back,
     }))
 }
 
-/// The join of `a` and `b`, whose heights differ by at most 1.
-fn node(a: Text, b: Text) -> Text {
-    debug_assert!(a.0.height.abs_diff(b.0.height) <= 1);
-    Text(Arc::new(Node {
-        // The caller checked that the whole text's length is representable; a part's is less.
-        len: a.0.len + b.0.len,
-        chars: a.0.chars + b.0.chars,
-        height: a.0.height.max(b.0.height) + 1,
-        body: Body::Join(a, b),
-    }))
-}
-
-/// `a` then `b`, both balanced and not empty: the lower is joined into the side of the higher
-/// that faces it, down to a part of about its height, and each node on the way back up is
-/// rebalanced. `O(|height(a) - height(b)| + 1)` new nodes; the recursion is as deep, at most 92.
-fn concat(a: &Text, b: &Text) -> Text {
-    let (ha, hb) = (a.0.height, b.0.height);
-    if ha > hb + 1 {
-        let (l, r) = a.parts();
-        balance(l.clone(), concat(r, b))
-    } else if hb > ha + 1 {
-        let (l, r) = b.parts();
-        balance(concat(a, l), r.clone())
-    } else {
-        node(a.clone(), b.clone())
+// Complexity tradeoff: `push_back` and `push_front` are strict, so their `O(1)` is amortized
+// over a sequence of pushes each made on the result of the one before, as a `foldl` of `++`
+// makes them: a push onto a full end (four parts) moves three of them into the middle as a
+// node and leaves two, so the next two pushes at that end cannot carry. Given up: a program
+// that keeps one tree whose ends are full at every level and pushes onto that same tree again
+// and again pays `O(depth)` = `O(log n)` new nodes for each of those pushes, the cost of the
+// AVL tree this replaced; the text is the same. Why: an `O(1)` bound that holds under any
+// reuse of an old version needs the middle suspended and forced later (Hinze and Paterson's
+// lazy middle) or the regular digits of Kaplan and Tarjan's catenable deques, a cell written
+// after the node is shared or several times the code here. Trigger: pushes onto one version
+// whose ends are full down its middles. Test: `text::tests::a_chain_of_joins_allocates_a_
+// constant_per_join` (the chain), and `joins_in_any_order_keep_the_tree_balanced_and_the_
+// text_whole` (any reuse, the text); COMPLEXITY.md C29.
+/// `t` then the part `p`, of the height of `t`'s parts.
+fn push_back(t: &Text, p: Text) -> Text {
+    let size = t.size() + p.size();
+    match &*t.0 {
+        Tree::Empty => p,
+        Tree::Block { .. } | Tree::Node { .. } => {
+            deep(size, digit(std::slice::from_ref(t)), empty(), digit(&[p]))
+        }
+        Tree::Deep {
+            front,
+            middle,
+            back,
+            ..
+        } => match back {
+            [Some(a), Some(b), Some(c), Some(d)] => deep(
+                size,
+                front.clone(),
+                push_back(middle, node(&[a.clone(), b.clone(), c.clone()])),
+                digit(&[d.clone(), p]),
+            ),
+            _ => {
+                let mut back = back.clone();
+                back[count(&back)] = Some(p);
+                deep(size, front.clone(), middle.clone(), back)
+            }
+        },
     }
 }
 
-/// The join of `l` and `r`, balanced trees whose heights differ by at most 2, rotated once or
-/// twice when they differ by 2, as in an AVL tree.
-fn balance(l: Text, r: Text) -> Text {
-    let (hl, hr) = (l.0.height, r.0.height);
-    debug_assert!(hl.abs_diff(hr) <= 2);
-    if hl > hr + 1 {
-        let (ll, lr) = l.parts();
-        if ll.0.height >= lr.0.height {
-            node(ll.clone(), node(lr.clone(), r))
-        } else {
-            let (lrl, lrr) = lr.parts();
-            node(node(ll.clone(), lrl.clone()), node(lrr.clone(), r))
+/// The part `p` then `t`, `p` of the height of `t`'s parts.
+fn push_front(p: Text, t: &Text) -> Text {
+    let size = p.size() + t.size();
+    match &*t.0 {
+        Tree::Empty => p,
+        Tree::Block { .. } | Tree::Node { .. } => {
+            deep(size, digit(&[p]), empty(), digit(std::slice::from_ref(t)))
         }
-    } else if hr > hl + 1 {
-        let (rl, rr) = r.parts();
-        if rr.0.height >= rl.0.height {
-            node(node(l, rl.clone()), rr.clone())
-        } else {
-            let (rll, rlr) = rl.parts();
-            node(node(l, rll.clone()), node(rlr.clone(), rr.clone()))
-        }
-    } else {
-        node(l, r)
+        Tree::Deep {
+            front,
+            middle,
+            back,
+            ..
+        } => match front {
+            [Some(a), Some(b), Some(c), Some(d)] => deep(
+                size,
+                digit(&[p, a.clone()]),
+                push_front(node(&[b.clone(), c.clone(), d.clone()]), middle),
+                back.clone(),
+            ),
+            [a, b, c, _] => deep(
+                size,
+                [Some(p), a.clone(), b.clone(), c.clone()],
+                middle.clone(),
+                back.clone(),
+            ),
+        },
     }
+}
+
+/// `a`, the parts `between`, then `b`: trees of parts of one height, and at most four parts
+/// between. One level of the recursion per level of the shallower tree, each building `O(1)`
+/// nodes, so `O(log m)` in all, `m` the number of blocks of the shorter; the recursion is that
+/// deep, at most 63.
+fn concat(a: &Text, between: &[Text], b: &Text) -> Text {
+    match (&*a.0, &*b.0) {
+        (Tree::Empty, _) => between
+            .iter()
+            .rev()
+            .fold(b.clone(), |t, p| push_front(p.clone(), &t)),
+        (_, Tree::Empty) => between
+            .iter()
+            .fold(a.clone(), |t, p| push_back(&t, p.clone())),
+        (Tree::Block { .. } | Tree::Node { .. }, _) => {
+            let t = between
+                .iter()
+                .rev()
+                .fold(b.clone(), |t, p| push_front(p.clone(), &t));
+            push_front(a.clone(), &t)
+        }
+        (_, Tree::Block { .. } | Tree::Node { .. }) => {
+            let t = between
+                .iter()
+                .fold(a.clone(), |t, p| push_back(&t, p.clone()));
+            push_back(&t, b.clone())
+        }
+        (
+            Tree::Deep {
+                front,
+                middle: m1,
+                back: b1,
+                ..
+            },
+            Tree::Deep {
+                front: f2,
+                middle: m2,
+                back,
+                ..
+            },
+        ) => {
+            let parts: Vec<Text> = b1
+                .iter()
+                .flatten()
+                .chain(between)
+                .chain(f2.iter().flatten())
+                .cloned()
+                .collect();
+            let size = between.iter().map(Text::size).fold(a.size(), Add::add) + b.size();
+            deep(
+                size,
+                front.clone(),
+                concat(m1, &nodes(&parts), m2),
+                back.clone(),
+            )
+        }
+    }
+}
+
+/// Two to twelve parts of one height as nodes of two or three, in order: at most four.
+fn nodes(mut parts: &[Text]) -> Vec<Text> {
+    let mut out = Vec::with_capacity(parts.len().div_ceil(3));
+    while !parts.is_empty() {
+        let k = if matches!(parts.len(), 2 | 4) { 2 } else { 3 };
+        out.push(node(&parts[..k]));
+        parts = &parts[k..];
+    }
+    out
 }
 
 /// The blocks of a text from left to right ([`Text::chunks`]).
 pub struct Chunks<'a> {
-    /// The parts still to read, the next on top; one per level at most, besides the top.
+    /// The trees and parts still to read, the next on top.
     todo: Vec<&'a Text>,
 }
 
@@ -268,12 +488,19 @@ impl<'a> Iterator for Chunks<'a> {
 
     fn next(&mut self) -> Option<&'a str> {
         while let Some(t) = self.todo.pop() {
-            match &t.0.body {
-                Body::Leaf(s) if s.is_empty() => {}
-                Body::Leaf(s) => return Some(s),
-                Body::Join(a, b) => {
-                    self.todo.push(b);
-                    self.todo.push(a);
+            match &*t.0 {
+                Tree::Empty => {}
+                Tree::Block { block, .. } => return Some(block),
+                Tree::Node { parts, .. } => self.todo.extend(parts.iter().rev().flatten()),
+                Tree::Deep {
+                    front,
+                    middle,
+                    back,
+                    ..
+                } => {
+                    self.todo.extend(back.iter().rev().flatten());
+                    self.todo.push(middle);
+                    self.todo.extend(front.iter().rev().flatten());
                 }
             }
         }
@@ -309,8 +536,11 @@ fn compare(a: &Text, b: &Text) -> Ordering {
 
 impl From<Arc<str>> for Text {
     fn from(s: Arc<str>) -> Self {
+        if s.is_empty() {
+            return empty();
+        }
         let chars = s.chars().count();
-        leaf(s, chars)
+        block_of(s, chars)
     }
 }
 
@@ -335,9 +565,9 @@ impl From<&String> for Text {
 impl From<Text> for Arc<str> {
     /// A block shared, or a join written into a new block.
     fn from(t: Text) -> Self {
-        match &t.0.body {
-            Body::Leaf(s) => s.clone(),
-            Body::Join(..) => t.flat().into(),
+        match &*t.0 {
+            Tree::Block { block, .. } => block.clone(),
+            Tree::Empty | Tree::Node { .. } | Tree::Deep { .. } => t.flat().into(),
         }
     }
 }
@@ -345,9 +575,7 @@ impl From<Text> for Arc<str> {
 impl PartialEq for Text {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
-            || (self.0.len == other.0.len
-                && self.0.chars == other.0.chars
-                && compare(self, other) == Ordering::Equal)
+            || (self.size() == other.size() && compare(self, other) == Ordering::Equal)
     }
 }
 
@@ -442,27 +670,59 @@ mod tests {
         t.chunks().flat_map(str::bytes)
     }
 
-    /// Panics unless every node of `t` is balanced and its counts are its parts': `O(len)`.
+    /// Panics unless `t` is a well-formed text tree: every digit holds one to four parts, every
+    /// node two or three, every part at a level of the height of that level, no block empty,
+    /// and every count its parts': `O(len)`.
     fn assert_balanced(t: &Text) {
-        let mut todo = vec![t];
-        while let Some(t) = todo.pop() {
-            match &t.0.body {
-                Body::Leaf(s) => {
-                    assert_eq!((t.0.height, t.0.len), (0, s.len()));
-                    assert_eq!(t.0.chars, s.chars().count());
+        // A tree whose parts are of height `h` (`true`), or a part of height `h` (`false`).
+        let mut todo = vec![(t, 0usize, true)];
+        while let Some((t, h, tree)) = todo.pop() {
+            match &*t.0 {
+                Tree::Empty => assert!(tree, "an empty part"),
+                Tree::Block { block, chars } => {
+                    assert_eq!(h, 0, "a block among parts of height {h}");
+                    assert!(!block.is_empty(), "an empty block");
+                    assert_eq!(*chars, block.chars().count());
                 }
-                Body::Join(a, b) => {
-                    assert!(a.0.len > 0 && b.0.len > 0, "a join of an empty part");
-                    assert!(a.0.height.abs_diff(b.0.height) <= 1, "unbalanced");
-                    assert_eq!(t.0.height, a.0.height.max(b.0.height) + 1);
-                    assert_eq!(
-                        (t.0.len, t.0.chars),
-                        (a.0.len + b.0.len, a.0.chars + b.0.chars)
+                Tree::Node { size, parts } => {
+                    assert!(h > 0, "a node among blocks");
+                    assert!(
+                        parts[0].is_some() && parts[1].is_some(),
+                        "a node of one part"
                     );
-                    todo.extend([a, b]);
+                    let parts: Vec<&Text> = parts.iter().flatten().collect();
+                    let sum = parts
+                        .iter()
+                        .map(|p| p.size())
+                        .fold(Size::default(), Add::add);
+                    assert_eq!(*size, sum);
+                    todo.extend(parts.into_iter().map(|p| (p, h - 1, false)));
+                }
+                Tree::Deep {
+                    size,
+                    front,
+                    middle,
+                    back,
+                } => {
+                    assert!(tree, "a deep tree as a part");
+                    for d in [front, back] {
+                        let k = count(d);
+                        assert!((1..=4).contains(&k), "a digit of {k} parts");
+                        assert!(d[k..].iter().all(Option::is_none), "a gap in a digit");
+                    }
+                    let ends: Vec<&Text> = front.iter().chain(back).flatten().collect();
+                    let sum = ends.iter().map(|p| p.size()).fold(middle.size(), Add::add);
+                    assert_eq!(*size, sum);
+                    todo.extend(ends.into_iter().map(|p| (p, h, false)));
+                    todo.push((middle, h + 1, true));
                 }
             }
         }
+    }
+
+    /// The bound on the depth of a tree of `b` blocks: `log2(b/2 + 1)`, rounded down.
+    fn depth_bound(b: usize) -> usize {
+        (b / 2 + 1).ilog2() as usize
     }
 
     /// The number of leaves of `t`, counting a shared one each time it is reached.
@@ -555,7 +815,12 @@ mod tests {
         for k in [62, 63] {
             let s = doubled("a", k).unwrap();
             assert_eq!((s.len(), s.char_count()), (1 << k, 1 << k));
-            assert!(s.0.height <= 63);
+            // Blocks of `LEAF` = 2^7 bytes, shared: 2^(k - 7) of them.
+            assert!(
+                s.depth() <= depth_bound(1 << (k - 7)),
+                "depth {}",
+                s.depth()
+            );
         }
         // `ä` is one character in two bytes.
         let s = doubled("ä", 62).unwrap();
@@ -596,7 +861,11 @@ mod tests {
             }
         }
         assert_eq!((all.len(), all.char_count()), (usize::MAX, usize::MAX));
-        assert!(all.0.height <= 92, "the AVL bound for 2^64 leaves");
+        assert!(
+            all.depth() <= depth_bound(usize::MAX),
+            "depth {}",
+            all.depth()
+        );
         assert_eq!(
             Text::join(&all, &Text::from("b")).unwrap_err(),
             KernelError::StringTooLong {
@@ -612,7 +881,7 @@ mod tests {
     fn a_chain_a_million_long_either_way_is_balanced_read_and_dropped() {
         let piece = long('z');
         let n = 1_000_000;
-        // `n` leaves: the AVL bound is `1.44 log2(n + 2)`, under 29.
+        // `n` blocks: at most `log2(n/2 + 1)` levels, 18.
         for left in [true, false] {
             let mut t = Text::from("");
             for _ in 0..n {
@@ -623,7 +892,8 @@ mod tests {
                 };
             }
             assert_eq!((t.len(), t.char_count()), (PIECE * n, PIECE * n));
-            assert!(t.0.height <= 29, "height {}", t.0.height);
+            assert!(t.depth() <= depth_bound(n), "depth {}", t.depth());
+            assert_balanced(&t);
             assert_eq!(leaves(&t), n);
             assert_eq!(t.flat().len(), PIECE * n, "every piece is read");
             assert!(bytes(&t).all(|b| b == b'z'));
@@ -656,6 +926,11 @@ mod tests {
             let t = join(&pool[i].0, &pool[j].0);
             let s = format!("{}{}", pool[i].1, pool[j].1);
             assert_balanced(&t);
+            // The walk never needs more than the stack `chunks` allocates.
+            let mut walk = t.chunks();
+            let stack = walk.todo.capacity();
+            walk.by_ref().for_each(drop);
+            assert_eq!(walk.todo.capacity(), stack, "the walk's stack grew");
             assert_eq!(t.flat(), s);
             assert_eq!(t, Text::from(s.as_str()));
             pool.push((t, s));
@@ -762,8 +1037,8 @@ mod tests {
         }
         let read = zed_alloc_count::allocated() - before;
         // Four walks per prefix (print, hash, both sides of `<=`), each a stack of at most
-        // the height plus one references.
-        let stacks = 4 * n * (usize::from(log.0.height) + 1) * size_of::<&Text>();
+        // `6d + 9` references for a tree `d` levels deep.
+        let stacks = 4 * n * (6 * log.depth() + 9) * size_of::<&Text>();
         assert!(
             read <= stacks as u64,
             "{read} bytes allocated reading {} bytes of text, stacks {stacks}",
@@ -797,7 +1072,42 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_either_way_is_built_in_order_n_log_n() {
+    fn a_chain_of_joins_allocates_a_constant_per_join() {
+        // A join at an end builds one deep tree, and every third join at that end carries a
+        // node and a deep tree to the level below, every ninth one level further, and so on:
+        // `1 + 2 (1/3 + 1/9 + …) = 2` trees per join, amortized, whatever `n`, and one empty
+        // middle for each level made (COMPLEXITY.md C29). The AVL tree it replaced built
+        // `O(log n)` nodes per join, about 17 at the larger size here.
+        let piece = long('p');
+        // A tree in its `Arc`, with the two counts.
+        let tree = (size_of::<Tree>() + 2 * size_of::<usize>()) as u64;
+        for n in [1 << 10, 1 << 17] {
+            for left in [true, false] {
+                let before = zed_alloc_count::allocated();
+                let mut t = Text::from("");
+                for _ in 0..n {
+                    t = if left {
+                        join(&t, &piece)
+                    } else {
+                        join(&piece, &t)
+                    };
+                }
+                let bytes = zed_alloc_count::allocated() - before;
+                assert_eq!(t.len(), PIECE * n);
+                let most = (2 * n as u64 + 64) * tree;
+                assert!(
+                    bytes <= most,
+                    "{n} joins, left {left}: {bytes} bytes, {} per join, more than {most}",
+                    bytes / n as u64
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_chain_either_way_is_built_in_order_n() {
+        // The `foldl` of `++` of plan row TEXT-append-O1: order `n`, so 8n may do 24 times the
+        // work of n.
         let piece = long('p');
         for left in [true, false] {
             crate::scaling::check("a chain of n joins", 5000, |n| {
