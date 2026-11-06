@@ -1688,3 +1688,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `const fn` set built by `1 << x as u8` over an enum's discriminants, read by a mask | `Expansions::of`, `Expansions::contains`, `memory::EXPANSIONS`, `zed_native::EXPANSIONS` | Bit operations (gap 4, built) | A set of atoms (`{#derived, #gt, #ge}`) and `in`, a constant at the top level |
 | A `Vec<u64>` bit set of node numbers, grown and set in place as the walk swaps a node, then held in an `Arc` the native tables share | `Swapped::insert`, `Swapped::contains`, `legalize::legalize`, `Tables::new` | Mutation (gap 11); Identity (gap 1: the reference count) | The pass returns the set of swapped numbers as a value beside the region; the tables read it, shared as every value is |
 | A counter `next` threaded through a heap-stack walk by `&mut` to number nodes in preorder | `legalize::legalize`, `Tables::visit`, `lower::Written` in `raise_from` | Mutation (gap 11) | The counter is part of the fold's state, each node's number the state on entering it |
+
+## Entries from CONST-wide-addr (`zed-kernel/src/num.rs`, `zedc/src/zir/binary.rs`, `canon/serial.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Cow<'_, BigUint>`, a side of a rational borrowed when it has no kept powers, built otherwise | `Rat::built_parts` | None | Zed shares numbers, so it returns the side as a plain value |
+| `BigUint::iter_u64_digits`, the 64-bit limbs of a magnitude least significant first, and `BigUint::from_bytes_le` to read them back | `W::magnitude`, `R::magnitude` in `zir/binary.rs`, `Out::magnitude` in `canon/serial.rs` | Missing | A primitive giving an exact integer's limbs as a `U8String`, and its inverse |

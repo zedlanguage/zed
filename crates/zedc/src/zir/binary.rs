@@ -5,17 +5,18 @@
 //! string a count of bytes and then its UTF-8 bytes, and every choice a one-byte tag. A name
 //! (of an atom, a field, a port or an evidence key) is read by the rule the text form reads one
 //! by, and a pattern binder may also be one the compiler makes (`text::not_a_binder`); a
-//! catalog entry, a string value and the digits of a number are not names. A value is
-//! written by its structure, a number outside the 64-bit range and a rational by their
-//! decimal digits, and a float by its bits, so every value comes back bit for bit. An edge is
-//! written as its text form ([`super::text::edge`]): a type's representation is private to
-//! the kernel, and its printed form is its exact, canonical description; reading that text
-//! checks the names in it (a state edge's port, a facet's kind). A primitive is its
+//! catalog entry and a string value are not names. A value is written by its structure, a
+//! number outside the 64-bit range and a rational by their sign and the 64-bit limbs of their
+//! numerator and denominator in lowest terms (not their decimal digits, whose conversion costs
+//! more than linear time), and a float by its bits, so every value comes back bit for bit. An
+//! edge is written as its text form ([`super::text::edge`]): a type's representation is
+//! private to the kernel, and its printed form is its exact, canonical description; reading
+//! that text checks the names in it (a state edge's port, a facet's kind). A primitive is its
 //! index in [`PRIMS`]. A decoding error names the byte offset at which it was found.
 
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint, Sign};
 use zed_kernel::num::Rat;
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Witness};
 use zed_kernel::value::{Atom, Value};
@@ -79,6 +80,14 @@ impl W {
     fn s(&mut self, s: &str) {
         self.n(s.len() as u64);
         self.0.extend_from_slice(s.as_bytes());
+    }
+
+    /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
+    /// first, each a little-endian word. Linear in its bits, where decimal digits cost more
+    /// than linear time to convert.
+    fn magnitude(&mut self, m: &BigUint) {
+        self.n(m.iter_u64_digits().len() as u64);
+        m.iter_u64_digits().for_each(|d| self.n(d));
     }
 
     fn many<T>(&mut self, xs: &[T], mut f: impl FnMut(&mut Self, &T)) {
@@ -163,12 +172,15 @@ impl W {
             }
             Value::Big(b) => {
                 self.tag(2);
-                self.s(&b.numer_text());
+                self.tag(u8::from(b.is_negative()));
+                self.magnitude(&b.built_parts().0);
             }
             Value::Rat(r) => {
                 self.tag(3);
-                self.s(&r.numer_text());
-                self.s(&r.denom_text());
+                self.tag(u8::from(r.is_negative()));
+                let (num, den) = r.built_parts();
+                self.magnitude(&num);
+                self.magnitude(&den);
             }
             Value::Float(x) => {
                 self.tag(4);
@@ -410,7 +422,7 @@ impl<'a> R<'a> {
         usize::try_from(n).or_else(|_| self.err(at, format!("the index {n} is too large")))
     }
 
-    /// A string: a name, a string value, an edge or a type in its text form, or digits.
+    /// A string: a name, a string value, or an edge or a type in its text form.
     fn s(&mut self) -> Result<String, String> {
         let n = self.len()?;
         let at = self.i;
@@ -524,11 +536,24 @@ impl<'a> R<'a> {
         })
     }
 
+    /// A number's sign, as a tag, and its magnitude, as [`W::magnitude`] writes it.
     fn big(&mut self) -> Result<BigInt, String> {
+        let sign = match self.tag(1, "a sign")? {
+            0 => Sign::Plus,
+            _ => Sign::Minus,
+        };
+        Ok(BigInt::from_biguint(sign, self.magnitude()?))
+    }
+
+    /// A magnitude as [`W::magnitude`] writes it: its limbs in order are its little-endian
+    /// bytes.
+    fn magnitude(&mut self) -> Result<BigUint, String> {
         let at = self.i;
-        let s = self.s()?;
-        s.parse()
-            .or_else(|_| self.err(at, format!("`{s}` is not an integer")))
+        let n = self.len()?;
+        match n.checked_mul(8) {
+            Some(bytes) => Ok(BigUint::from_bytes_le(self.take(bytes)?)),
+            None => self.err(at, format!("the count {n} is more than the bytes left")),
+        }
     }
 
     /// Reads a value from a stack of the tuples, paths, atoms and families begun and not yet
@@ -569,7 +594,7 @@ impl<'a> R<'a> {
             1 => Value::Int(self.n()? as i64),
             2 => Value::int(self.big()?),
             3 => {
-                let (num, den) = (self.big()?, self.big()?);
+                let (num, den) = (self.big()?, BigInt::from(self.magnitude()?));
                 match Rat::new(num, den) {
                     Some(r) => Value::rat(r),
                     None => return self.err(at, "a rational with denominator 0"),

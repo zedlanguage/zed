@@ -39,8 +39,9 @@ use crate::address::ContentAddress;
 pub use domain::Domain;
 
 /// The version of the rule set and the serialization, hashed into every address. Version 3
-/// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name.
-pub const VERSION: u32 = 3;
+/// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name;
+/// version 4 writes an exact number past `i64` by its limbs, not its decimal digits.
+pub const VERSION: u32 = 4;
 
 /// A facet of a definition: a named fact about it, such as its units or a proved property.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

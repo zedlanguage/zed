@@ -152,10 +152,11 @@ fn the_normal_form() {
 #[test]
 fn the_address_is_pinned() {
     // The binary form fixes its own layout (little-endian 64-bit words, floats by their
-    // IEEE-754 bits, big numbers in decimal), so this hash is the same on every machine.
+    // IEEE-754 bits, big numbers by their 64-bit limbs), so this hash is the same on every
+    // machine.
     assert_eq!(
         address(&graph(DISCOUNT)).to_string(),
-        "791e272238d9f405d5ff1240684a43b7209c2cfcef6d0e260eb0bee9c052444f"
+        "d2e1a8db559c8bc1200419ed80ee91a852d506a89c17a7a313ea7e89a6e8f7fd"
     );
 }
 

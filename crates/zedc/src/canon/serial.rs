@@ -1,11 +1,14 @@
 //! The canonical serialization. Every node is a tag byte followed by its fields; a sequence
 //! is its length then its items, a string its length in bytes then its UTF-8, and lengths
-//! and integers are little-endian 64-bit words. Each tag fixes the fields that follow, so the
-//! encoding is self-delimiting and two different normal forms never share an encoding.
+//! and integers are little-endian 64-bit words. An exact number past `i64` is its sign as a
+//! tag, then the limbs of its numerator, and of a rational its denominator, in lowest terms.
+//! Each tag fixes the fields that follow, so the encoding is self-delimiting and two different
+//! normal forms never share an encoding.
 //!
 //! Binders are canonical by then, so a binder is written by its count alone (a lambda's
 //! parameters, a pattern's `Bind`), and a bound variable by its level.
 
+use num_bigint::BigUint;
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
 use zed_kernel::value::Value;
 
@@ -36,8 +39,16 @@ impl Out<'_> {
         self.bytes.extend_from_slice(s.as_bytes());
     }
 
+    /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
+    /// first, each a word. Linear in its bits, where decimal digits cost more than linear time
+    /// to convert.
+    fn magnitude(&mut self, m: &BigUint) {
+        self.word(m.iter_u64_digits().len() as u64);
+        m.iter_u64_digits().for_each(|d| self.word(d));
+    }
+
     /// An endpoint: an integer in `i64` is a word, as an `int` value is; one past it is its
-    /// decimal text under a tag of its own, as a `Value::Big` is.
+    /// decimal text under a tag of its own.
     fn end(&mut self, e: &End) {
         match e {
             End::NegInf => self.tag(0),
@@ -148,12 +159,15 @@ impl Out<'_> {
             }
             Value::Big(n) => {
                 self.tag(8);
-                self.str(&n.numer_text());
+                self.tag(u8::from(n.is_negative()));
+                self.magnitude(&n.built_parts().0);
             }
             Value::Rat(r) => {
                 self.tag(9);
-                self.str(&r.numer_text());
-                self.str(&r.denom_text());
+                self.tag(u8::from(r.is_negative()));
+                let (num, den) = r.built_parts();
+                self.magnitude(&num);
+                self.magnitude(&den);
             }
             Value::Tuple(vs) => {
                 self.tag(5);

@@ -295,6 +295,29 @@ impl Rat {
         digits(self.den.magnitude(), pows.collect())
     }
 
+    /// `|N|` and `D` for the value `±N/D` in lowest terms, built: the same two numbers for
+    /// every form of one value, as the digits are, so a content address can be taken over
+    /// their binary form, in time linear in their bits, where the digits cost more than linear
+    /// time to convert. A side with no powers is its coefficient, borrowed; a power of 2 is a
+    /// shift, and a power of another prime is built by squaring.
+    pub fn built_parts(&self) -> (Cow<'_, BigUint>, Cow<'_, BigUint>) {
+        fn side<'s>(coef: &'s BigInt, pows: &[(u64, BigInt)], sign: Sign) -> Cow<'s, BigUint> {
+            let pows: Vec<(u64, BigUint)> = pows
+                .iter()
+                .filter(|(_, e)| e.sign() == sign)
+                .map(|(p, e)| (*p, e.magnitude().clone()))
+                .collect();
+            match pows.is_empty() {
+                true => Cow::Borrowed(coef.magnitude()),
+                false => Cow::Owned(coef.magnitude() * built(&pows).magnitude()),
+            }
+        }
+        (
+            side(&self.num, &self.pows, Sign::Plus),
+            side(&self.den, &self.pows, Sign::Minus),
+        )
+    }
+
     /// The value's residues, the same for every form of it: whether it is negative, and
     /// `|N| mod M` and `D mod M` for the value `N/D` in lowest terms, `M = 2^61 - 1`. The
     /// form `num/den * prod p^e` is in lowest terms as it stands, since `num/den` is reduced,
@@ -1093,13 +1116,20 @@ fn zip_pows<'a>(
     })
 }
 
-/// `prod p^e`, built.
+/// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
+/// not the squarings of a multiplication.
 fn built(pows: &[(u64, BigUint)]) -> BigInt {
     let mut out = BigUint::one();
+    let mut twos = None;
     for (p, e) in pows {
-        if !e.is_zero() {
-            out *= Pow::pow(BigUint::from(*p), e);
+        match (p, e.is_zero()) {
+            (_, true) => {}
+            (2, false) => twos = Some(e),
+            _ => out *= Pow::pow(BigUint::from(*p), e),
         }
+    }
+    if let Some(e) = twos {
+        out <<= e.to_u64().expect("a power of 2 whose bits fit in memory");
     }
     BigInt::from(out)
 }

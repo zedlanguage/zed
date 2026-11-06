@@ -7,6 +7,7 @@ mod facet_order;
 mod fuzz;
 mod scaling;
 mod stability;
+mod wide_constants;
 
 use zedc::zir::{Region, text};
 
