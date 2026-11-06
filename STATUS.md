@@ -1246,12 +1246,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | started; worktree created from origin/main and seeded |
+| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | reproduced: #a(#a(..)) one expression 3.6-3.8x per 2x (n=400 94 ms, load 27); cause Ty::clone of by-value payload Shape at walk.rs:562 (perf, 65% clone + 31% dr |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | CAST-menu | impl attempt 1 | 2026-11-05 04:07 | probes: typed r + x already gets 'wrap this in f64(…)' repairs; untyped-class operands (h(a,b)=(a*1r,b*2.5,a+b)) and max(r, x) get no cast (repairs' trial drops |
-| DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/dart-scale on origin/main, seeded |
+| DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | ported 39 scaling cases into 12 groups (l01_01..l01_30); all pass, ratios 7.2-10.3 at limit 24, load1 61-68 before/after; found and fixed 2 quadratics: tests/sr |
 | FLOAT-minmax | merge attempt 1 | 2026-11-05 04:07 | started verify and merge of 5828d09b; load 67.86 56.00 53.48 |
-| INCR-script | impl attempt 1 | 2026-11-05 04:07 | started; worktree wt/incr-script created and seeded; load 44.36 48.98 51.29 |
+| INCR-script | impl attempt 1 | 2026-11-05 04:07 | script runner and 4 script tests + 2 malformed-script tests + scaling test in reuse.rs; l01_30_queries 15 pass; load 60.3 |
 | ISSUE1-passby-scale | merge attempt 1 | 2026-11-04 00:20 | rebased on 01272894 (STATUS conflict, both rows kept); real test pass 10.8 s load 60-63; control (clone of Info::passes per pass_at) timed out at 60 s, at 90 s  |
 | L1.35-inventory | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree l135-inventory |
 | LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | started; load 48.04 50.56 51.94 |
@@ -1259,12 +1259,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | started; worktree wt/live3-lp-tangents at 9eb0086a; load 56.42 55.51 53.52 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | done 3985196c on wt/native-build-id (not pushed): BUILD in section .zed_native.build (TypeId crate hash + RUSTFLAGS hash from build.rs); tests l01_36a_executabl |
-| orch | running | 2026-11-05 18:05 | S22-more-scales impl done d3a2aed3; merge started (plan note to name the summary and memo controls; clip control no longer fails rangeand) |
+| orch | running | 2026-11-05 18:05 | STUDY-linearlog started |
 | PROV-expected-index | impl attempt 1 | 2026-11-05 20:27 | started; load 61.38 53.27 52.53 |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/rat-asks-rest on origin/main; load 47.16 53.67 46.80 |
 | RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
 | S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | final: d3a2aed3 on wt/s22-more-scales (rebased twice; on origin/main, not pushed; replaces 9f5d1617 above); after the HULL3-subsumed presburger change all 47 s2 |
 | SLABS-count | merge attempt 1 | 2026-11-05 18:19 | started verify+merge of 3587dde9, load 51.81 51.37 52.25 |
+| STEPS-binary-orphan | impl attempt 1 | 2026-11-05 20:30 | started; worktree made and seeded; load 66.53 62.44 57.73 |
+| STUDY-linearlog | running | 2026-11-05 20:39 |  |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (e) shared Bdd nodes and Expr operands written once (#k=/#k#) committed; deep_types 20/20, l01_15 31/31, kernel types 21/21; xor chain old 2^n (183 MB, 1 s at n |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
