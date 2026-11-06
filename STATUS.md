@@ -1291,7 +1291,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-nested-sq | merge attempt 1 | 2026-11-05 19:20 | ready head 5aec54f9 on wt/atom-nested-sq (rebased, 0 behind origin/main); build, fmt, clippy -D warnings (zedc, zed-tests) pass; 18 groups pass (l01_26 237, l01 |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | BATCH | merge attempt 2 | 2026-11-05 22:07 | done: RUNG2-mod-symbol 7f0dc484, RAT-asks-rest 8fc378cc, PASS-at-args fdac94cb, BUILD-modes a694c9db, F70-rerun ee2650b8, CAST-menu e3c52406 pushed (3a60948d..b |
 | DIAG-suppress | impl attempt 1 | 2026-11-05 04:07 | done: impl e7ac6f7b+b18c1e59+be6b0461 on wt/diag-suppress, spec 91585dd on wt/diag-suppress-spec (from local zed main eb265c5); groups l01_29 142, l01_21 50, l0 |
