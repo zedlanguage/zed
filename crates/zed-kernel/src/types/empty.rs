@@ -2212,7 +2212,7 @@ impl<'m> Searching<'m> {
             };
             for (m, keyless) in &meets {
                 if *keyless {
-                    return Some(self.show(Rep::Closure));
+                    return Some(self.s().show(Rep::Closure));
                 }
                 let permitted = m.guarantee == m.permission
                     || m.guarantee == Type::empty()
