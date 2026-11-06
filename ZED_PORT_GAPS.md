@@ -1709,3 +1709,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 ## Entries from FLOAT-minmax (`zed-kernel/src/eval.rs`, `zedc/src/axioms.rs`, `zed-native/src/codegen.rs`)
 
 - No new gap. `ieee_min_max` is `if`s on `f64` comparisons and `is_sign_negative`, which Zed writes with `min` and `max` on `f64` themselves; the manual `PartialEq` on `Const` compares `to_bits`, the float bits word of gap 4 (built). Cranelift `fmin`/`fmax` is the back end's own instruction.
+
+## Entries from SLABS-count (`zedc/src/store/live3.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A cargo feature that adds a statement to a method, off in a release build | `Lin2::minus` under `counts` | No conditional compilation | A build mode of the unit, as for `printed-types`: the test build counts, the release build does not, both with one interface |
+| A `thread_local!` `Cell<u64>` that a method increments and a test reads before and after a call | `live3::counts::MINUS`, `live3::counts::minus` | Mutation (gap 11), global state | `solve2` returns the count of its subtractions beside its result, and the test reads it there |

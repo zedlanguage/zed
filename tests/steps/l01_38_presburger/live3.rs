@@ -8,7 +8,7 @@
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::int::Int;
-use zedc::store::live3::{Row3, point};
+use zedc::store::live3::{self, Row3, point};
 use zedc::store::presburger::{Con, Formula, Lin, satisfiable};
 
 use super::scaling::decides;
@@ -615,9 +615,13 @@ fn slabs_of_million_coefficients_scale() {
     // over the cube |x_i| <= 5, and m rows more with coefficients up to 50, each holding the
     // whole cube with slack 0 to 5, so no row bound settles it. Every stage runs over all the
     // rows: the linear programs, the rounding, LLL (the flat direction is c) and `twovar` on the
-    // one plane c·x = 1, which has no point in the cube. The work is O(m log m). From 512 rows,
-    // since at 256 an all-pairs pass of `Lin2::minus` in each round of `solve2` stays under the
-    // limit (COMPLEXITY.md S18).
+    // one plane c·x = 1, which has no point in the cube. The work is O(m log m). The linear
+    // programs make O(m) calls of `Lin2::minus` (each round of `solve2` pairs its pieces and drops
+    // a sixteenth or more), so their count is held to linear growth: measured 4,645 → 38,315 calls
+    // from 192 to 1,536 rows, 8.25 times. The count does not depend on the load, so the limit can
+    // be near 8: at 9, an extra factor of log m (8 · log 1,536 / log 192 = 11.2) fails, and so
+    // does an all-pairs pass of `Lin2::minus` in each round of `solve2`, which at this size stays
+    // under the limit of the instruction count (COMPLEXITY.md S18).
     let c = [1_000_001, 1_000_003, 1_000_005];
     let family = |m: usize| -> Vec<Row3> {
         let mut rng = Rng::new(11);
@@ -630,10 +634,19 @@ fn slabs_of_million_coefficients_scale() {
         }
         rows
     };
-    let (small, large) = (family(512), family(512 * scaling::FACTOR));
+    let n = 192;
+    let (small, large) = (family(n), family(n * scaling::FACTOR));
+    let (a, b) = (minus_calls(&small), minus_calls(&large));
+    let ratio = b as f64 / a as f64;
+    assert!(
+        ratio <= 9.0,
+        "`Lin2::minus` called {a} times at {n} rows and {b} at {} rows: {ratio:.2} times, \
+         above 9",
+        n * scaling::FACTOR
+    );
     scales(
         "rows over a slab of million coefficients",
-        512,
+        n,
         1,
         &small,
         &large,
@@ -843,4 +856,11 @@ fn a_lens_of_tangent_planes_scales_in_point() {
         let rows = if m == 128 { &small } else { &large };
         std::hint::black_box(point(rows));
     });
+}
+
+/// The calls of `Lin2::minus` that `point` makes on `rows`.
+fn minus_calls(rows: &[Row3]) -> u64 {
+    let before = live3::counts::minus();
+    std::hint::black_box(point(rows));
+    live3::counts::minus() - before
 }

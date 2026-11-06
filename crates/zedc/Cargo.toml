@@ -24,6 +24,10 @@ zed-kernel.workspace = true
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
 printed-types = []
+# Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
+# work of the linear programs by a count that does not depend on the load (SLABS-count). Off in a
+# release build.
+counts = []
 # Truncates content addresses so that they collide (step L1.37a); see zed-kernel src/address.rs.
 short-addresses = ["zed-kernel/short-addresses"]
 

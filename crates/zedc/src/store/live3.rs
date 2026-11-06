@@ -165,6 +165,8 @@ impl Lin2 {
     }
 
     fn minus(&self, o: &Lin2) -> Lin2 {
+        #[cfg(feature = "counts")]
+        counts::MINUS.set(counts::MINUS.get() + 1);
         Lin2 {
             g: [self.g[0].sub(&o.g[0]), self.g[1].sub(&o.g[1])],
             h: self.h.sub(&o.h),
@@ -180,6 +182,23 @@ impl Lin2 {
                 .add(&l.base[1].scale(&self.g[1]))
                 .add(&E::of(self.h.clone())),
         }
+    }
+}
+
+/// The calls of `Lin2::minus` on a thread (feature `counts`, SLABS-count). The linear programs
+/// call it a bounded number of times per piece, so a test holds the count to linear growth in the
+/// rows, a measure the load does not change.
+#[cfg(feature = "counts")]
+pub mod counts {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static MINUS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The calls of `Lin2::minus` on this thread since it started.
+    pub fn minus() -> u64 {
+        MINUS.get()
     }
 }
 
