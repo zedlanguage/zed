@@ -102,7 +102,7 @@ fn with_main(mut program: String) -> String {
 /// The work the checker does on each of `src`'s units, at sizes `n` and `8n`, on a stack that
 /// holds `8n` levels: the parser and the checker recurse once a level, as step L1.28's tests of
 /// deep bodies allow for. Each unit is loaded, then parsed and resolved, before the timing,
-/// which takes the checker alone (COMPLEXITY.md F85).
+/// which takes the checker alone (COMPLEXITY.md F85, its CHECK-scaling-share part).
 fn check_alone(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> String) {
     let srcs: HashMap<usize, String> = [n, scaling::FACTOR * n]
         .into_iter()
