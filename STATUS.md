@@ -1274,10 +1274,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | BUILD-modes | merge attempt 1 | 2026-11-05 04:07 | started by orch (batched procedure) |
 | CAST-menu | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
-| DART-SCALE | merge attempt 1 | 2026-11-05 04:07 | rebased on a9f0523c (doc conflicts COMPLEXITY/STATUS/ZED_PORT_GAPS with INCR-script, both kept); 12 new scaling modules pass (38 tests, load 35-37); check:: 6,  |
 | F70-rerun | merge attempt 1 | 2026-11-05 20:49 | reproduced arms on plain chain (dev profile): d=48 998M instr 248MB, d=128 14,832M 3.76GB, d=192 48,619M, d=256 112,443M (exp 2.91-2.92; instr/d^3 7073->6702),  |
-| FLOAT-tie-read | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
-| LIVE3-lp-tangents | merge attempt 1 | 2026-11-05 19:39 | merge agent running |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | ORACLE-cones | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/oracle-cones on origin/main |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
