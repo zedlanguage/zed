@@ -1291,11 +1291,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | committed 9f42df4a on wt/atom-nested-sq (Shape shared node with kept facts; F100); groups l01_26 225, l01_29 127, l01_17 86, l01_23 131, l01_22 41, l01_27 39, l |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | BATCH | merge attempt 2 | 2026-11-05 22:07 | started by orch: RUNG2-mod-symbol, RAT-asks-rest, PASS-at-args, BUILD-modes, F70-rerun, CAST-menu ready |
-| BUILD-modes | merge attempt 1 | 2026-11-05 04:07 | ready head 00308ce6, spec 45c6b88; l07_03 19/19 on spec branch (load 34.6 to 33.9); controls: release build line 4663, fast build line 525, Values cell all fail |
-| CAST-menu | merge attempt 1 | 2026-11-05 04:07 | ready head 57c286bf, spec 2a6b3a5; uncaught control was quadratic (seen is the whole unit's map; delta grows ~n^2, 8.8x at 1000/8000): added differential test,  |
 | DIAG-suppress | impl attempt 1 | 2026-11-05 04:07 | code written (suppress.rs, run/test/build --suppress); building; load 36.99 42.56 42.92 |
 | ERRS-precise | impl attempt 1 | 2026-11-05 22:12 | started; worktree wt/errs-precise from origin/main |
-| F70-rerun | merge attempt 1 | 2026-11-05 20:49 | ready 7b39222f on wt/f70-rerun: d^3 reproduced, counters confirm cause, option (a) scored vs union-find (0) and incremental (2), 18 conflict pairs added, L36.2  |
 | GROUP-oracle | impl attempt 1 | 2026-11-05 04:07 | started; load 37.57 37.76 42.84 |
 | HOOKS-term-dag | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/hooks-term-dag |
 | ISSUE1-tvar-else | impl attempt 1 | 2026-11-03 17:05 | started; worktree wt/issue1-tvar-else from origin/main |
@@ -1305,12 +1302,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | NUM-subquad | impl attempt 1 | 2026-11-03 17:42 | started; worktree /home/luke/Work/wt/num-subquad from origin/main; load 49.85 43.38 42.95 |
 | ORACLE-cones | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/oracle-cones on origin/main |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
-| PASS-at-args | merge attempt 1 | 2026-11-04 00:20 | ready head fe9b05a5 on wt/pass-at-args (rebased on a8c635ba, STATUS conflict kept both rows, no Rust conflict, no rebuild); added undo unit test (mutant droppin |
 | PORT-catalog | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/port-catalog |
 | POW-kept-exp | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/pow-kept-exp on origin/main 3df3943c |
-| RAT-asks-rest | merge attempt 1 | 2026-11-05 18:19 | ready head 442d8ad6 (rebased on a8c635ba; ZED_PORT_GAPS conflict kept both); 16 groups 852/0 + unit 173/0, load5 52-56; negative control on base 29c4a3b7: all 6 |
 | README-fences | impl attempt 1 | 2026-11-05 22:24 | started; load 37.01 37.66 42.84 |
-| RUNG2-mod-symbol | merge attempt 1 | 2026-11-05 04:07 | ready: rebased with git on 2 STATUS commits, head now fcec6484 (ledger line re-appended) |
 | S.1f | impl attempt 1 | 2026-11-05 04:07 | scaling imports on a ring of 400 and 3200 files: 8.1x instructions, 8.0x bytes (limit 24, load 38). Negative control (not committed): shortest cycle by BFS from |
 | STEPS-split | impl attempt 1 | 2026-11-05 21:45 | split built (63 step targets, step_helpers, step_targets tool); fmt, clippy clean; counts per binary 484 pieces, 63 groups equal to before except m0_01 (+5 new  |
 | ST-ladder | impl attempt 1 | 2026-11-03 02:59 | one shortest-path pass for difference groups in presburger::project_parts: one test on ladder k=80 2028M -> 24M; ladder k=40 6764M -> 477M (load 26) |
