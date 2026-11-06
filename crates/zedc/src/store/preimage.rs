@@ -834,10 +834,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         .collect();
     let mut tx = Tx::new();
     tx.start(&doms, Landmarks::none());
-    let mut tr = Tr {
-        defs: Vec::new(),
-        products,
-    };
+    let mut tr = Tr::new(products);
     let mut out = Vec::new();
     for t in terms {
         let root = tx.terms.add(t);
@@ -848,6 +845,8 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         m.lin_calls.clear();
         m.formula_calls.clear();
         m.log.clear();
+        tr.pairs.clear();
+        tr.made.clear();
         let first = tr.defs.len();
         let body = tx.formula(&mut tr, root, ROOT)?;
         out.push(Relation {
@@ -870,10 +869,7 @@ fn linear(
     demand: &Demand,
 ) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
     tx.start(dom, Landmarks::none());
-    let mut tr = Tr {
-        defs: Vec::new(),
-        products: false,
-    };
+    let mut tr = Tr::new(false);
     let body = match demand {
         Demand::Bool(w) => {
             let f = tx.formula(&mut tr, root, ROOT)?;
@@ -945,13 +941,85 @@ fn linear(
 struct Tr {
     defs: Vec<(u32, String, Formula)>,
     products: bool,
+    /// For each dividend and divisor that is not a constant, the number of the quotient of the
+    /// pair [`Tr::div_mod_by_term`] made for them, so that `a div n` and `a mod n` share it.
+    pairs: HashMap<(Lin, Lin), u32>,
+    /// The keys of `pairs`, in the order made, so that [`Tr::truncate`] removes the pairs it
+    /// undoes from the end.
+    made: Vec<(Lin, Lin)>,
 }
 
 impl Tr {
+    fn new(products: bool) -> Tr {
+        Tr {
+            defs: Vec::new(),
+            products,
+            pairs: HashMap::new(),
+            made: Vec::new(),
+        }
+    }
+
+    /// Undoes the definitions from `mark` on, and the pairs among them.
+    fn truncate(&mut self, mark: usize) {
+        self.defs.truncate(mark);
+        while let Some(key) = self.made.last()
+            && self.pairs[key] as usize >= mark
+        {
+            self.pairs.remove(key);
+            self.made.pop();
+        }
+    }
+
     fn aux(&mut self, what: String, def: Formula) -> presburger::Atom {
         let n = self.defs.len() as u32;
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
+    }
+
+    /// `a div n`, for `p` `IntDiv`, or `a mod n`, for a divisor `n` that is not a constant:
+    /// the quotient `q` and remainder `r` as auxiliary variables with `a == n * q + r` and
+    /// `0 <= r <= |n| - 1` (Euclidean), `n * q` expanded into product atoms ([`Lin::product`]).
+    /// The definition is one disjunct for each sign of `n`, so a premise that fixes the sign
+    /// leaves one; where `n` is 0 the operation fails, and `q` and `r` are left free, so no
+    /// fact about them is proved there. `a div n` and `a mod n` share the pair. `None` when `n`
+    /// is a constant or holds a product.
+    fn div_mod_by_term(&mut self, p: Prim, a: &Lin, n: &Lin) -> Option<Lin> {
+        use presburger::Atom::Aux;
+        if n.terms.is_empty() {
+            return None;
+        }
+        let key = (a.clone(), n.clone());
+        let pick = |k: u32| Lin::atom(Aux(if p == Prim::IntDiv { k } else { k + 1 }));
+        if let Some(&k) = self.pairs.get(&key) {
+            return Some(pick(k));
+        }
+        let k = self.defs.len() as u32;
+        let (q, r) = (Lin::atom(Aux(k)), Lin::atom(Aux(k + 1)));
+        // Complexity tradeoff: `n * q` is an atom, so a fact that needs it read as a product,
+        // beyond the products of premise pairs that `presburger::products` adds, is not
+        // proved. Why: integer arithmetic with products of variables is undecidable. Test:
+        // `l01_38_presburger::mod_symbol::from_a_divisor_that_may_be_zero_neither_is_proved`.
+        // COMPLEXITY.md row S39.
+        let split = Con::eq(a, &n.product(&q)?.plus(&r));
+        let zero = Lin::constant(0);
+        // `s·n >= 1`, the split, and `0 <= r <= s·n - 1`.
+        let sign = |s: i64| {
+            let m = n.times(s);
+            Formula::and(vec![
+                Formula::Con(Con::ge(&m, &Lin::constant(1))),
+                Formula::Con(split.clone()),
+                Formula::Con(Con::ge(&r, &zero)),
+                Formula::Con(Con::ge(&m.minus(&Lin::constant(1)), &r)),
+            ])
+        };
+        let def = Formula::or(vec![sign(1), sign(-1), Formula::Con(Con::eq(n, &zero))]);
+        let (first, second) = (operand(a), operand(n));
+        let shown = |op: &str| format!("{first} {op} {second}");
+        self.defs.push((k, shown("div"), def));
+        self.defs.push((k + 1, shown("mod"), Formula::top()));
+        self.pairs.insert(key.clone(), k);
+        self.made.push(key);
+        Some(pick(k))
     }
 }
 
@@ -4005,7 +4073,7 @@ impl<'m, 't> Walk<'m, 't> {
             match self.lin(self.arg(args, i), env).await {
                 Some(l) => lins.push(l),
                 None => {
-                    self.tr(|tr| tr.defs.truncate(mark));
+                    self.tr(|tr| tr.truncate(mark));
                     self.with(|tx| tx.forget(logged));
                     return None;
                 }
@@ -4123,8 +4191,15 @@ impl<'m, 't> Walk<'m, 't> {
                         _ => None,
                     },
                     IntDiv | Mod => {
-                        let c = (self.constant_int(self.arg(args, 1), env).await)
-                            .filter(|c| *c != 0)?;
+                        let c = self.constant_int(self.arg(args, 1), env).await;
+                        if c.is_none() && products {
+                            // A divisor that is not a constant: its product with the quotient
+                            // is an atom, which only rung 2's translation admits.
+                            let a = arg(0).await?;
+                            let n = arg(1).await?;
+                            return self.tr(|tr| tr.div_mod_by_term(p, &a, &n));
+                        }
+                        let c = c.filter(|c| *c != 0)?;
                         let a = arg(0).await?;
                         self.tr(|tr| {
                             // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
@@ -4287,7 +4362,7 @@ impl<'m, 't> Walk<'m, 't> {
                             let f = Formula::Con(c);
                             return Some(if p == Ne { Formula::negate(f) } else { f });
                         }
-                        self.tr(|tr| tr.defs.truncate(mark));
+                        self.tr(|tr| tr.truncate(mark));
                         self.with(|tx| tx.forget(logged));
                         if !matches!(p, Eq | Ne) {
                             return None;
@@ -6588,10 +6663,7 @@ mod tests {
         let mut tx = Tx::new();
         let root = tx.terms.add(t);
         tx.start(&domains(), Landmarks::none());
-        let mut tr = Tr {
-            defs: Vec::new(),
-            products: false,
-        };
+        let mut tr = Tr::new(false);
         let f = tx.formula(&mut tr, root, ROOT);
         TWO_AT_A_TIME.set(false);
         let chains: BTreeSet<Tid> = (0..tx.terms.nodes.len() as Tid)

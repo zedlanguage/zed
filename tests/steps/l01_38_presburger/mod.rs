@@ -16,6 +16,7 @@ mod controls;
 mod deep;
 mod entailment;
 mod live3;
+mod mod_symbol;
 mod names;
 mod near;
 mod omega;
@@ -37,18 +38,7 @@ use zed_kernel::{Term, Value, eval};
 use zedc::store::int::Int;
 use zedc::store::interval::IntervalSet;
 use zedc::store::preimage::relations;
-use zedc::store::presburger::{Atom, Model, Relation};
-
-use crate::l01_25_preimage_catalog::function;
-
-/// The parameters of `ok` in `src`, and the relation its body states, products of two
-/// symbols as atoms.
-fn relation(src: &str) -> (Vec<Arc<str>>, Relation) {
-    let (ps, body) = function(src);
-    let r = relations(&[&body], &ps, true)
-        .unwrap_or_else(|| panic!("{src}: outside the linear-relation domain"));
-    (ps, r.into_iter().next().expect("one relation"))
-}
+use zedc::store::presburger::{Atom, Model};
 
 /// The value of `t` with each of `names` bound to its value in `point`.
 fn at(t: &Term, names: &[Arc<str>], point: &[i64]) -> Option<Value> {

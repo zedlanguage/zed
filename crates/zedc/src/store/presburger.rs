@@ -103,19 +103,67 @@ use deep::Id;
 pub enum Atom {
     /// A symbol: an input, a parameter, a key.
     Sym(Arc<str>),
-    /// The product of two symbols, in name order.
-    Product(Arc<str>, Arc<str>),
+    /// The product of two factors, in order.
+    Product(Factor, Factor),
     /// An auxiliary variable, defined by the relation's definitions.
     Aux(u32),
+}
+
+/// A factor of a product atom: a symbol, or an auxiliary variable such as the quotient `q` of
+/// `x div n` in `x == n * q + r`.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum Factor {
+    /// A symbol.
+    Sym(Arc<str>),
+    /// An auxiliary variable.
+    Aux(u32),
+}
+
+impl Factor {
+    /// The factor as an atom of its own.
+    pub fn atom(&self) -> Atom {
+        match self {
+            Factor::Sym(s) => Atom::Sym(s.clone()),
+            Factor::Aux(n) => Atom::Aux(*n),
+        }
+    }
+
+    /// The atom `a` as a factor; `None` for a product.
+    pub fn of(a: &Atom) -> Option<Factor> {
+        match a {
+            Atom::Sym(s) => Some(Factor::Sym(s.clone())),
+            Atom::Aux(n) => Some(Factor::Aux(*n)),
+            Atom::Product(..) => None,
+        }
+    }
+
+    /// Whether the factor is the symbol `sym`.
+    pub fn is(&self, sym: &Arc<str>) -> bool {
+        matches!(self, Factor::Sym(s) if s == sym)
+    }
+}
+
+impl fmt::Display for Factor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Factor::Sym(s) => write!(f, "{s}"),
+            Factor::Aux(n) => write!(f, "q{n}"),
+        }
+    }
 }
 
 impl Atom {
     /// The product of two symbols.
     pub fn product(a: &Arc<str>, b: &Arc<str>) -> Atom {
+        Atom::product_of(Factor::Sym(a.clone()), Factor::Sym(b.clone()))
+    }
+
+    /// The product of two factors.
+    pub fn product_of(a: Factor, b: Factor) -> Atom {
         if a <= b {
-            Atom::Product(a.clone(), b.clone())
+            Atom::Product(a, b)
         } else {
-            Atom::Product(b.clone(), a.clone())
+            Atom::Product(b, a)
         }
     }
 }
@@ -301,8 +349,8 @@ impl Lin {
         !self.terms.keys().any(|a| matches!(a, Atom::Product(..)))
     }
 
-    /// The product of two terms, its products of two symbols as atoms; `None` when neither
-    /// is a constant and either holds an atom that is not a symbol.
+    /// The product of two terms, its products of two factors (symbols or auxiliary variables)
+    /// as atoms; `None` when neither is a constant and either holds a product atom.
     pub fn product(&self, other: &Lin) -> Option<Lin> {
         if self.terms.is_empty() {
             return Some(other.times(self.constant.clone()));
@@ -310,39 +358,26 @@ impl Lin {
         if other.terms.is_empty() {
             return Some(self.times(other.constant.clone()));
         }
-        let sym = |a: &Atom| match a {
-            Atom::Sym(x) => Some(x.clone()),
-            _ => None,
-        };
-        let xs: Vec<(Arc<str>, &Int)> = other
-            .terms
-            .iter()
-            .map(|(a, c)| Some((sym(a)?, c)))
-            .collect::<Option<_>>()?;
-        let ys: Vec<(Arc<str>, &Int)> = self
-            .terms
-            .iter()
-            .map(|(a, c)| Some((sym(a)?, c)))
-            .collect::<Option<_>>()?;
+        fn factors(l: &Lin) -> Option<Vec<(Factor, &Int)>> {
+            (l.terms.iter())
+                .map(|(a, c)| Some((Factor::of(a)?, c)))
+                .collect()
+        }
+        let (xs, ys) = (factors(other)?, factors(self)?);
         let mut out = self.times(other.constant.clone());
         for (x, c) in &xs {
-            out = out.plus(&Lin::atom(Atom::Sym(x.clone())).times(*c * &self.constant));
+            out = out.plus(&Lin::atom(x.atom()).times(*c * &self.constant));
             for (y, d) in &ys {
-                out = out.plus(&Lin::atom(Atom::product(x, y)).times(*c * *d));
+                out = out.plus(&Lin::atom(Atom::product_of(x.clone(), y.clone())).times(*c * *d));
             }
         }
         Some(out)
     }
 
     /// The value at `values`, each atom absent from it zero and each product atom read as the
-    /// product of its symbols' values.
+    /// product of its factors' values.
     fn eval(&self, values: &Model) -> Int {
-        let sym = |s: &Arc<str>| {
-            values
-                .get(&Atom::Sym(s.clone()))
-                .cloned()
-                .unwrap_or(Int::ZERO)
-        };
+        let sym = |s: &Factor| values.get(&s.atom()).cloned().unwrap_or(Int::ZERO);
         let mut v = self.constant.clone();
         for (a, c) in &self.terms {
             match a {
@@ -651,7 +686,7 @@ impl Formula {
                 Formula::Con(c) => {
                     let mentions = c.lin.terms.keys().any(|a| match a {
                         Atom::Sym(n) => n == sym,
-                        Atom::Product(x, y) => x == sym || y == sym,
+                        Atom::Product(x, y) => x.is(sym) || y.is(sym),
                         Atom::Aux(_) => false,
                     });
                     match (mentions, pos) {
@@ -731,7 +766,7 @@ impl Formula {
     }
 
     /// Whether the formula holds at `values`; an absent atom is zero, and a product atom is
-    /// read as the product of its symbols' values.
+    /// read as the product of its factors' values.
     /// Each product is read where it is met, so a disjunct that is decided by its first part is
     /// not walked through.
     pub fn holds(&self, values: &Model) -> bool {
@@ -1002,9 +1037,10 @@ fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
 /// The new name of `a` under the renaming `to` of [`Renamed`]; an atom not in it keeps its own,
 /// and a product its factors renamed.
 fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
-    let sym = |s: &Arc<str>| (to.get(&Atom::Sym(s.clone()))).map_or_else(|| s.clone(), Arc::clone);
+    let factor =
+        |f: &Factor| (to.get(&f.atom())).map_or_else(|| f.clone(), |s| Factor::Sym(s.clone()));
     match a {
-        Atom::Product(x, y) => Atom::product(&sym(x), &sym(y)),
+        Atom::Product(x, y) => Atom::product_of(factor(x), factor(y)),
         Atom::Sym(_) | Atom::Aux(_) => to
             .get(a)
             .map_or_else(|| a.clone(), |s| Atom::Sym(s.clone())),
@@ -1083,8 +1119,7 @@ impl Renamed {
         let joins: Vec<Con> = (atoms.iter())
             .filter_map(|a| match a {
                 Atom::Product(x, y) => {
-                    let factors =
-                        Lin::atom(Atom::Sym(x.clone())).plus(&Lin::atom(Atom::Sym(y.clone())));
+                    let factors = Lin::atom(x.atom()).plus(&Lin::atom(y.atom()));
                     Some(Con::eq(
                         &Lin::atom(a.clone()).plus(&factors),
                         &Lin::default(),
@@ -1149,11 +1184,11 @@ impl Renamed {
         match a {
             Atom::Sym(s) => of(s).map_or_else(|| a.clone(), Atom::clone),
             Atom::Product(x, y) => {
-                let factor = |s: &Arc<str>| match of(s) {
-                    Some(Atom::Sym(t)) => t.clone(),
-                    _ => s.clone(),
+                let factor = |f: &Factor| match f {
+                    Factor::Sym(s) => of(s).and_then(Factor::of).unwrap_or_else(|| f.clone()),
+                    Factor::Aux(_) => f.clone(),
                 };
-                Atom::product(&factor(x), &factor(y))
+                Atom::product_of(factor(x), factor(y))
             }
             Atom::Aux(_) => a.clone(),
         }
@@ -6333,7 +6368,9 @@ impl fmt::Display for Entailment {
     }
 }
 
-/// Whether `premises` entail `goal` (rung 2).
+/// Whether `premises` entail `goal` (rung 2). The two come from one call of
+/// `preimage::relations`, so that their auxiliary variables are numbered apart: the definitions
+/// of both are conjoined, and `q0` of one is otherwise `q0` of the other.
 pub fn entails(premises: &Relation, goal: &Relation) -> Entailment {
     entails_inner(premises, goal).unwrap_or_else(Entailment::Refused)
 }
@@ -6424,13 +6461,13 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
                 .collect(),
         ),
     ]);
-    let mut on: BTreeMap<Arc<str>, Vec<Lin>> = BTreeMap::new();
-    let syms: BTreeSet<Arc<str>> = wanted
+    let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
+    let factors: BTreeSet<Factor> = wanted
         .iter()
         .flat_map(|(x, y)| [x.clone(), y.clone()])
         .collect();
-    for s in syms {
-        let atom = Atom::Sym(s.clone());
+    for s in factors {
+        let atom = s.atom();
         let mut set: Vec<Lin> = linear
             .iter()
             .filter(|l| l.terms.contains_key(&atom))

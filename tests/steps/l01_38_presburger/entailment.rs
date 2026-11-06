@@ -3,14 +3,18 @@
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Entailment, entails};
 
-use super::{holds, point, relation};
+use zedc::store::preimage::relations;
+
+use super::{holds, point};
 use crate::l01_25_preimage_catalog::function;
 
-/// What rung 2 concludes from the body of `ok` in `premise` to the body of `ok` in `goal`.
-fn rung2(premise: &str, goal: &str) -> Entailment {
-    let (_, p) = relation(premise);
-    let (_, g) = relation(goal);
-    entails(&p, &g)
+/// What rung 2 concludes from the body of `ok` in `premise` to the body of `ok` in `goal`,
+/// the two translated in one call, so that their auxiliary variables are numbered apart.
+pub(super) fn rung2(premise: &str, goal: &str) -> Entailment {
+    let (ps, p) = function(premise);
+    let (_, g) = function(goal);
+    let rs = relations(&[&p, &g], &ps, true).expect("in the linear-relation domain");
+    entails(&rs[0], &rs[1])
 }
 
 const GOAL: &str = "ok(y, w, x, h) = y * w + x < h * w;";
@@ -122,6 +126,10 @@ fn euclidean_division_and_remainder_are_stated_exactly() {
     // `x mod 4 == 3` does not follow from `x` odd: `x = 1` is a countermodel.
     let e = rung2("ok(x) = x mod 2 == 1;", "ok(x) = x mod 4 == 3;");
     assert_eq!(e.to_string(), "refuted: countermodel x = 1");
+    // The remainders by 2 and by 4 are distinct auxiliary variables: `x = 3` is odd and `x mod 4`
+    // is 3 there.
+    let e = rung2("ok(x) = x mod 2 == 1;", "ok(x) = x mod 4 <= 1;");
+    assert!(!matches!(e, Entailment::Proved(_)), "{e}");
 }
 
 #[test]
@@ -203,7 +211,7 @@ fn a_product_of_three_factors_is_proved_by_naming_the_inner_level() {
 #[test]
 fn the_flat_product_of_three_factors_is_not_taken_by_rung_2() {
     // `(z * h + y) * w` multiplies a sum by a symbol and `d * h * w` three symbols: a product
-    // factor must be a symbol (`Lin::product`), so the goal is outside the linear-relation
+    // factor must be a symbol or an auxiliary variable (`Lin::product`), so the goal is outside the linear-relation
     // domain and rung 2 proves nothing; naming the inner level is what proves it.
     let (ps, g) = function(FLAT);
     assert!(super::relations(&[&g], &ps, true).is_none());

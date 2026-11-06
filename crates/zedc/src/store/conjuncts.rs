@@ -14,7 +14,7 @@ use std::sync::Arc;
 use imbl::{OrdMap, OrdSet};
 
 use super::int::Int;
-use super::presburger::{Atom, Con, Formula, Lin, Model, Rel};
+use super::presburger::{Atom, Con, Factor, Formula, Lin, Model, Rel};
 
 /// The values of a set kept for each name, in a persistent map.
 #[derive(Clone, PartialEq, Debug)]
@@ -87,8 +87,11 @@ pub fn names(f: &Formula) -> BTreeSet<Arc<str>> {
                 out.insert(n);
             }
             Atom::Product(x, y) => {
-                out.insert(x);
-                out.insert(y);
+                for f in [x, y] {
+                    if let Factor::Sym(n) = f {
+                        out.insert(n);
+                    }
+                }
             }
             Atom::Aux(_) => {}
         }

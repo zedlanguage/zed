@@ -1755,3 +1755,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 ## Entries from DART-SCALE (`zedc/src/check/ty.rs`, `check/mod.rs`)
 
 - No new gap. `Ty::shapes` now returns a borrowed `Option<&[Shape]>` (`Option::as_deref`) where it returned a copy; Zed shares values, so at the port it returns the list itself, and the copy that made the pattern quadratic (COMPLEXITY.md F100) does not arise. The other changes are in test code (`partition_point`, a `Mutex` around a held `Db`).
+
+## Entries from RUNG2-mod-symbol (`zedc/src/store/preimage.rs`, `presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `while let … && …` (a let chain) popping the pairs a truncation undoes from the end of a list | `preimage::Tr::truncate` | None | a loop with `match` and `is` |
+| A `HashMap` keyed by a pair of linear forms, `(Lin, Lin)`, so `a div n` and `a mod n` share one quotient and remainder | `preimage::Tr::div_mod_by_term` | None | a family keyed by the pair, the linear forms compared by content |
