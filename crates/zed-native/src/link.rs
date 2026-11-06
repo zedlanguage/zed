@@ -9,6 +9,7 @@
 //! The link records no time, build path or random value, so two builds of one program give
 //! the same bytes.
 
+use std::any::TypeId;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -94,8 +95,12 @@ pub fn build(
     // come from the same build of this crate; Cargo writes `libzed_native.a` beside `zedc`
     // only when it builds the library itself, so a later build of `zedc` alone (for a test,
     // or with other features) leaves an older library there.
+    // The build is read from this executable's file, not from `BUILD` in memory, since only
+    // its bytes in the file compare with the library's; reading `BUILD` here keeps the part of
+    // this crate that holds it in every executable that can build.
+    std::hint::black_box(&BUILD);
     let exe = std::env::current_exe().map_err(|e| (2, format!("this compiler's own path: {e}")))?;
-    if !holds(&tools.runtime, &build_symbol(&exe).map_err(|e| (2, e))?).map_err(|e| (2, e))? {
+    if !holds(&tools.runtime, &build_id(&exe).map_err(|e| (2, e))?).map_err(|e| (2, e))? {
         return Err((
             2,
             format!(
@@ -151,12 +156,11 @@ pub fn build(
 }
 
 /// The runtime library in `dir` that was built with the executable `exe`: of the files
-/// `libzed_native*.a` there, the first by name whose symbol table holds [`build`]'s symbol as
-/// `exe` names it. Cargo keeps one such library for each set of features and dependencies it
-/// has built this crate with, so the newest of them need not be `exe`'s; the symbol names
-/// this crate under a hash of exactly those, and so tells them apart.
+/// `libzed_native*.a` there, the first by name that holds `exe`'s [`BUILD`]. Cargo keeps one
+/// such library for each set of features, dependencies and compiler flags it has built this
+/// crate with, so the newest of them need not be `exe`'s.
 pub fn runtime_of(exe: &Path, dir: &Path) -> Result<PathBuf, String> {
-    let symbol = build_symbol(exe)?;
+    let id = build_id(exe)?;
     let mut libraries = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
         let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
@@ -167,7 +171,7 @@ pub fn runtime_of(exe: &Path, dir: &Path) -> Result<PathBuf, String> {
     }
     libraries.sort_unstable();
     for library in libraries {
-        if holds(&library, &symbol)? {
+        if holds(&library, &id)? {
             return Ok(library);
         }
     }
@@ -178,37 +182,67 @@ pub fn runtime_of(exe: &Path, dir: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-/// The name of [`build`]'s symbol in the executable or object file `exe`. Its mangled name
-/// holds a hash of this crate's build (its features and its dependencies' builds), in both of
-/// Rust's manglings: `_RNvNtCs<hash>_10zed_native4link5build` and
-/// `_ZN10zed_native4link5build17h<hash>E`. `RUSTFLAGS` are not in that hash (Cargo puts them
-/// in the file name only; measured with Cargo 1.99), so two builds that differ only in
-/// `RUSTFLAGS` are not told apart (NATIVE-build-id).
-pub fn build_symbol(exe: &Path) -> Result<Vec<u8>, String> {
-    use object::{Object as _, ObjectSymbol as _};
-    let file = std::fs::File::open(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
-    let cache = object::ReadCache::new(file);
-    let object = object::File::parse(&cache).map_err(|e| format!("{}: {e}", exe.display()))?;
-    object
-        .symbols()
-        .filter(|s| s.is_definition())
-        .filter_map(|s| s.name_bytes().ok())
-        .find(|name| {
-            (name.starts_with(b"_RNvNtCs") && name.ends_with(b"_10zed_native4link5build"))
-                || name.starts_with(b"_ZN10zed_native4link5build17h")
-        })
-        .map(<[u8]>::to_vec)
-        .ok_or_else(|| {
-            format!(
-                "{} has no symbol for zed_native::link::build, so the runtime library built \
-                 with it cannot be found: it was stripped, or it does not hold zed-native",
-                exe.display()
-            )
-        })
+/// The section of a file holding this crate that holds [`BUILD`].
+pub const SECTION: &str = ".zed_native.build";
+
+/// Which build of this crate a file holds: the runtime library, `zedc`, and any other
+/// executable linked with this crate hold it as the bytes of [`SECTION`], which `strip` keeps,
+/// unlike the symbol table. Two builds have equal bytes only if they agree in this crate's
+/// hash and in the compiler's flags.
+#[repr(C)]
+pub struct Build {
+    /// The identity of the type `Build`, which the compiler derives from this crate's hash:
+    /// Cargo's hash of its features, its dependencies' builds, the profile, the target and
+    /// the compiler.
+    crate_hash: TypeId,
+    /// A hash of the compiler's flags (`CARGO_ENCODED_RUSTFLAGS`), which the crate's hash
+    /// leaves out; written by `build.rs`.
+    rustflags: [u8; 8],
 }
 
-/// Whether the archive `library`'s symbol table names `symbol`.
-fn holds(library: &Path, symbol: &[u8]) -> Result<bool, String> {
+/// This build of the crate; see [`Build`].
+#[used]
+#[expect(
+    unsafe_code,
+    reason = "the build is read by its section's name from a stripped executable (NATIVE-build-id)"
+)]
+#[unsafe(link_section = ".zed_native.build")]
+pub static BUILD: Build = Build {
+    crate_hash: const { TypeId::of::<Build>() },
+    rustflags: include!(concat!(env!("OUT_DIR"), "/rustflags.rs")),
+};
+
+/// The bytes of [`SECTION`] in the executable or object file `exe`: the [`BUILD`] of the
+/// zed-native it holds.
+pub fn build_id(exe: &Path) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+    let cache = object::ReadCache::new(file);
+    section(&cache, exe)?.ok_or_else(|| {
+        format!(
+            "{} has no section {SECTION}, which names the build of zed-native it holds, so \
+             the runtime library built with it cannot be found: it does not hold zed-native",
+            exe.display()
+        )
+    })
+}
+
+/// The bytes of [`SECTION`] in the object file or executable `data` read from `file`, if it
+/// has that section.
+fn section<'a, R: object::ReadRef<'a>>(data: R, file: &Path) -> Result<Option<Vec<u8>>, String> {
+    use object::{Object as _, ObjectSection as _};
+    let at = |e: &dyn std::fmt::Display| format!("{}: {e}", file.display());
+    let object = object::File::parse(data).map_err(|e| at(&e))?;
+    object
+        .section_by_name(SECTION)
+        .map(|s| s.data().map(<[u8]>::to_vec).map_err(|e| at(&e)))
+        .transpose()
+}
+
+/// Whether the archive `library` holds the build `id`: whether a member that its symbol index
+/// names as defining [`BUILD`] has `id` in its [`SECTION`]. [`BUILD`]'s mangled name, in either
+/// of Rust's manglings, is `_RNvNtCs<hash>_10zed_native4link5BUILD` or
+/// `_ZN10zed_native4link5BUILD17h<hash>E`.
+fn holds(library: &Path, id: &[u8]) -> Result<bool, String> {
     let at = |e: &dyn std::fmt::Display| format!("{}: {e}", library.display());
     let file = std::fs::File::open(library).map_err(|e| at(&e))?;
     let cache = object::ReadCache::new(file);
@@ -217,8 +251,15 @@ fn holds(library: &Path, symbol: &[u8]) -> Result<bool, String> {
         return Ok(false);
     };
     for s in symbols {
-        if s.map_err(|e| at(&e))?.name() == symbol {
-            return Ok(true);
+        let s = s.map_err(|e| at(&e))?;
+        let name = s.name();
+        if (name.starts_with(b"_RNvNtCs") && name.ends_with(b"_10zed_native4link5BUILD"))
+            || name.starts_with(b"_ZN10zed_native4link5BUILD17h")
+        {
+            let (offset, size) = archive.member(s.offset()).map_err(|e| at(&e))?.file_range();
+            if section(cache.range(offset, size), library)?.as_deref() == Some(id) {
+                return Ok(true);
+            }
         }
     }
     Ok(false)

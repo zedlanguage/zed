@@ -1667,6 +1667,16 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | The `object` crate reading an executable's symbol table and an archive's symbol index through `ReadCache` (reads of the file on demand), and Rust's mangled symbol names, whose hash tells two builds of a crate apart | `link::runtime_of`, `link::build_symbol`, `link::holds` | Foreign library; Bytes (gap 5) | The linking driver stays in Rust until a process port exists (as for `std::process::Command` above); a Zed version reads the two tables as bytes once Bytes words exist (step L7.3f) |
 
+## Entries from NATIVE-build-id (`zed-native/src/link.rs`, `zed-native/build.rs`)
+
+`link::build_symbol` above is now `link::build_id`, which reads a section by its name in place of the symbol table; the row above holds for it.
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `#[used]` static placed in a named section (`#[unsafe(link_section)]`) holding `const { TypeId::of::<Build>() }`, the compiler's identity of a type, which it derives from the crate's hash | `link::BUILD`, `link::Build` | Foreign library (the object file's layout); no compile-time identity of a build | The compiler of a Zed runtime writes its build's identity into the object file itself, as a constant it knows; nothing in Zed source names a section |
+| A build script writing a Rust literal into `OUT_DIR` for `include!`, from an environment variable Cargo sets (`CARGO_ENCODED_RUSTFLAGS`) | `build.rs`, `link::BUILD` | None at the language level: a property of the build tool | The Zed build tool passes the compiler's flags to the build's identity directly |
+| `object::build::elf::Builder` removing the symbol table of a copy of `zedc`, as `strip` does | `build_binary::a_stripped_zedc_builds` (test) | Foreign library; Bytes (gap 5) | A test runs the platform's `strip`, from the full suite (tests/full), or rewrites the ELF file as bytes once Bytes words exist |
+
 ## Entries from PRIM-hidden-names (`zed-kernel/src/print.rs`, `term.rs`)
 
 | Rust construct | Sites | Gap | At the port |

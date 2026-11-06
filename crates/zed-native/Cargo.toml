@@ -59,5 +59,7 @@ all = { level = "warn", priority = -1 }
 
 [dev-dependencies]
 libc = "0.2.191"
+# Strips a copy of zedc in the build_binary test (NATIVE-build-id).
+object = { workspace = true, features = ["build"] }
 # Sets the stack limit the zedc_binary test's child inherits.
 rustix.workspace = true
