@@ -1213,26 +1213,23 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | started; worktree created from origin/main and seeded |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BIT-memo-test | merge attempt 1 | 2026-11-03 16:32 | l01_39a 43/43 pass (load 43); passing ratio 7.9x bytes both tests (load 84, bytes load-independent); negative control (self.known.clear() at top of Ck::known, n |
-| BREAK-cases | impl attempt 1 | 2026-11-05 04:07 | started; worktree wt/break-cases on origin/main |
+| BREAK-cases | merge attempt 1 | 2026-11-05 04:07 | started verify and merge of bca94497; load 41.90 50.15 51.93 |
 | CAST-menu | impl attempt 1 | 2026-11-05 04:07 | probes: typed r + x already gets 'wrap this in f64(…)' repairs; untyped-class operands (h(a,b)=(a*1r,b*2.5,a+b)) and max(r, x) get no cast (repairs' trial drops |
 | DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/dart-scale on origin/main, seeded |
 | FLOAT-minmax | impl attempt 1 | 2026-11-05 04:07 | edits in (kernel ieee min/max, Law::Selective + f64 laws, codegen fmin/fmax, tests); building, load 46.01 43.67 41.67 |
-| ISSUE1-passby-scale | impl attempt 1 | 2026-11-04 00:20 | started; worktree created from origin/main 3997ffc7 and seeded |
-| LIT-menu-minus | impl attempt 1 | 2026-11-05 18:21 | 6 new/changed tests red on old checker (site 2:8 not 2:7, unsigned 9007199254740993n, this literal, 3), green after fix; load 50.60 55.16 50.05 |
+| ISSUE1-passby-scale | merge attempt 1 | 2026-11-04 00:20 | started verify+merge of 9bcbf366, load 42.42 50.39 52.02 |
+| LIT-menu-minus | impl attempt 1 | 2026-11-05 18:21 | scaling test n=256/2048 negative literals: instructions and bytes <= 8.05x (bytes 8.0x), limit 24, load 47-51; negative control (copy of every earlier error per |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | started; worktree native-build-id from origin/main 2d8f2ee1 |
 | orch | running | 2026-11-05 18:05 | LIT-plain merged 4a610db6; PREIMAGE-timeout ed89e9d4 and M0.8-test-text e0b0e294 merged; QUESTIONS A14 (LIT-if-print) and A15 (LIT-eq-kind) added; queued L01-35 |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/rat-asks-rest on origin/main; load 47.16 53.67 46.80 |
-| S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | 11 families pass scales (256->2048, instr 7.49-10.29; mul 16->128 7.80, 256->2048 10.72; load 48-80); building negative control: clip removed in preimage back() |
-| SLABS-count | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/slabs-count from origin/main 3997ffc7 |
-| STATUS-cite | running | 2026-11-05 20:02 |  |
+| S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | negative controls (run, not committed): plan's control (clip off in back) does NOT fail rangeand (7.03x 16->128, 6.41x 32->256; min fails 42.7x so the edit was  |
+| SLABS-count | impl attempt 1 | 2026-11-05 18:19 | done: 3587dde9 on wt/slabs-count, rebased on origin/main 9e28986c (append conflicts in STATUS.md and ZED_PORT_GAPS.md, both sides kept); live3 16 pass, stages 3 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (b) Debug of Type/Bdd on a stack committed; deep_types 18/18, l01_15 31/31, kernel types 21/21; old code overflows 2 MiB at 2000 (list) / 1000 (numeral); load 5 |
+| T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (e) shared Bdd nodes and Expr operands written once (#k=/#k#) committed; deep_types 20/20, l01_15 31/31, kernel types 21/21; xor chain old 2^n (183 MB, 1 s at n |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
-| TUPLE-dyn-index | impl attempt 1 | 2026-11-05 19:29 | checker tuple_at + evaluator tuple apply/TupleGet #notFound written; building |
-| UTVPI-both-ways | impl attempt 1 | 2026-11-05 19:14 | started; worktree wt/utvpi-both-ways from origin/main, seeded |
-| VALUE-one-tuple | impl attempt 1 | 2026-11-05 04:07 | negative control (deep.rs, zir/text.rs at origin/main): l01_31 items 2 of 13 fail ((0) printed, (1,) unreadable); l01_20 a_failed_total fails identically with a |
+| TUPLE-dyn-index | impl attempt 1 | 2026-11-05 19:29 | scaling tuple_keys n=500/4000: 8.9x instructions, 8.1x bytes (limit 24), load 59; negative control (O(n^2) contains per position) 45.0x instructions, refused, l |
+| VALUE-one-tuple | impl attempt 1 | 2026-11-05 04:07 | done: d266ad56 on wt/value-one-tuple (rebased on origin/main 9e28986c, STATUS row conflict resolved keeping both); deep.rs Display writes (x,), zir/text.rs read |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
