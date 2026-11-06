@@ -171,6 +171,36 @@ fn a_bounded_variable_takes_the_atoms_beside_it() {
 }
 
 #[test]
+fn a_count_or_zero_plus_a_named_step_takes_the_step_s_carrier() {
+    // The `else` gives `0 | T`; the sum binds `T` to the step's carrier as `line + bump`
+    // would, so a string line is refused where it is passed, not at run time.
+    let text = "r(positional line, bump = 1) = (line else 0) + bump;\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    assert_eq!(sig(text, "r"), "(int | #_, bump: int) -> int");
+    for (call, want) in [("r(2)", "3"), ("r(#notFound)", "1"), ("r(2, bump: 5)", "7")] {
+        let p = format!("{text}y = {call};\n");
+        assert_eq!(value(&p, "y"), want, "{call}");
+    }
+    let e = type_errors(&format!("{text}y = r(\" a \");\n"));
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(e[0].contains("does not take"), "{e:?}");
+}
+
+#[test]
+fn a_count_or_zero_plus_another_parameter_shares_its_carrier() {
+    // Both parameters undeclared: the plain literal `0` is an int, which both take.
+    let text = "r(positional line, positional step) = (line else 0) + step;\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    assert_eq!(sig(text, "r"), "(int | #_, int) -> int");
+    for (call, want) in [("r(2, 3)", "5"), ("r(#notFound, 4)", "4")] {
+        let p = format!("{text}y = {call};\n");
+        assert_eq!(value(&p, "y"), want, "{call}");
+    }
+    let e = type_errors(&format!("{text}y = r(\" a \", 1);\n"));
+    assert_eq!(e.len(), 1, "{e:?}");
+}
+
+#[test]
 fn a_function_that_calls_itself_waits_for_layer_l6() {
     let text =
         "r(positional line) = if line is #again { r(\"x\") } else { trim(line else \"\") };\n";

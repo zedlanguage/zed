@@ -4251,7 +4251,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// since every arrow takes one carrier for all its parameters, and its literals join
     /// them; without a class, each literal adopts the carrier of its parameter on the
     /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
-    /// the arrows still alive: a state per set of arrows, not per combination of pieces.
+    /// the arrows still alive and the carriers they allow where the class stands
+    /// ([`ClassAt`]): a state per such pair, not per combination of pieces.
     fn apply_many(
         &mut self,
         what: &str,
@@ -4292,11 +4293,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => return Ok((Ty::empty(), Vec::new())),
             },
         };
-        // The states: the arrows alive, whether a piece was unknown, and the first pieces
-        // that reached it, by argument.
-        let n = args.len();
-        let mut states: Vec<(Vec<usize>, bool, Vec<Option<Piece>>)> =
-            vec![(kept.clone(), false, Vec::new())];
+        // The states: the arrows alive, whether a piece was unknown, the class's place, and
+        // the first pieces that reached it, by argument.
+        type State = (Vec<usize>, bool, ClassAt, Vec<Option<Piece>>);
+        let mut states: Vec<State> = vec![(kept.clone(), false, None, Vec::new())];
         for (i, a) in args.iter().enumerate() {
             let pieces: Vec<Option<Piece>> = match a {
                 None => vec![None],
@@ -4305,14 +4305,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Some(a) => a.ty.pieces().into_iter().map(Some).collect(),
             };
-            let mut next: Vec<(Vec<usize>, bool, Vec<Option<Piece>>)> = Vec::new();
-            for (alive, dyn_, path) in &states {
+            let mut next: Vec<State> = Vec::new();
+            for (alive, dyn_, at, path) in &states {
                 for p in &pieces {
+                    let mut at = at.clone();
                     let (alive, dyn_) = match p {
                         None => (alive.clone(), *dyn_),
                         // A class may still take any value its mask allows, so it keeps
                         // every arrow; the restriction after the arguments narrows it.
-                        Some(p) if self.class_of(p).is_some() => (alive.clone(), *dyn_),
+                        Some(p) if self.class_of(p).is_some() => {
+                            let m = at.get_or_insert_with(|| vec![EVERY; sig.arrows.len()]);
+                            for &j in alive {
+                                m[j] &= mask_of(&sig.arrows[j].params[i]);
+                            }
+                            (alive.clone(), *dyn_)
+                        }
                         Some(Piece::Var(_)) => (alive.clone(), true),
                         Some(p) => {
                             let alive = alive
@@ -4325,17 +4332,28 @@ impl<'t, 'a> Ck<'t, 'a> {
                             (alive, *dyn_)
                         }
                     };
-                    if !next.iter().any(|s| s.0 == alive && s.1 == dyn_) {
+                    // Two paths to one set of arrows are one state only when the class stands
+                    // where it meets the same carriers on each: `(line else 0) + bump` has the
+                    // paths `(int, int)` and `($k, int)`, and the second restricts the class.
+                    let same_at = |o: &ClassAt| match (o, &at) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => alive.iter().all(|&j| x[j] == y[j]),
+                        _ => false,
+                    };
+                    if !next
+                        .iter()
+                        .any(|s| s.0 == alive && s.1 == dyn_ && same_at(&s.2))
+                    {
                         let mut path = path.clone();
                         path.push(p.clone());
-                        next.push((alive, dyn_, path));
+                        next.push((alive, dyn_, at, path));
                     }
                 }
             }
             states = next;
         }
         let mut out = Ty::empty();
-        for (alive, dyn_, path) in &states {
+        for (alive, dyn_, at, path) in &states {
             let shown = |ck: &Self| {
                 let shown: Vec<String> = path
                     .iter()
@@ -4347,14 +4365,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let why = refused_among(sig, &kept, &pieces);
                 format!("{what} does not take ({}){why}", shown.join(", "))
             };
-            let at: Vec<usize> = (0..n)
-                .filter(|&i| path[i].as_ref().is_some_and(|p| self.class_of(p).is_some()))
-                .collect();
-            match class {
-                Some(k) if !at.is_empty() => {
-                    let mask_at =
-                        |a: &Arrow| at.iter().fold(EVERY, |m, &i| m & mask_of(&a.params[i]));
-                    let m = alive.iter().fold(0, |m, &j| m | mask_at(&sig.arrows[j]));
+            match (class, at) {
+                (Some(k), Some(at)) => {
+                    let m = alive.iter().fold(0, |m, &j| m | at[j]);
                     if alive.is_empty() || !self.restrict(k, m, what, span) {
                         return Err(shown(self));
                     }
@@ -4364,13 +4377,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     let r = self.find(k);
                     let km = self.classes[r].mask;
-                    let rel: Vec<&Arrow> = alive
+                    let rel: Vec<(&Arrow, u8)> = alive
                         .iter()
-                        .map(|&j| &sig.arrows[j])
-                        .filter(|a| mask_at(a) & km != 0)
+                        .map(|&j| (&sig.arrows[j], at[j]))
+                        .filter(|&(_, m)| m & km != 0)
                         .collect();
-                    let follows = rel.iter().all(|a| {
-                        let m = mask_at(a);
+                    let follows = rel.iter().all(|&(a, m)| {
                         m.count_ones() == 1
                             && Carrier::of_mask(m)
                                 .next()
@@ -4378,11 +4390,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     });
                     if follows {
                         out = out.union(&Ty::var(format!("${r}").into()));
-                        for a in &rel {
+                        for (a, _) in &rel {
                             out = out.union(&a.result.of_piece(&Piece::Set(a.result.atoms())));
                         }
                     } else {
-                        for a in &rel {
+                        for (a, _) in &rel {
                             out = out.union(&close(&a.result, sig, |v| self.is_class(v)));
                         }
                     }
@@ -4652,6 +4664,11 @@ fn passes_vars_on(arrow: &Arrow) -> bool {
         .iter()
         .all(|v| arrow.params.iter().any(|p| p.vars.contains(v)))
 }
+
+/// Where a path of [`Ck::apply_many`] puts the arguments' class: `None` where no piece of
+/// it is the class, else by arrow the carriers that arrow's parameters at the class's
+/// pieces all allow (read at the arrows alive).
+type ClassAt = Option<Vec<u8>>;
 
 /// Whether `sig` has more than one arrow and its arrows differ only in the loose atoms of
 /// their parameters, as [`Ck::handled_sig`] makes them.

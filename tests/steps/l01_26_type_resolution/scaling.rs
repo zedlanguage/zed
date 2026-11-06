@@ -993,3 +993,34 @@ fn rows_shared_on_many_paths_scale_as_n_squared() {
         });
     }
 }
+
+/// `r(positional line, bump = 1) = { a1 = (line else 0) + bump; a2 = (line else a1) + bump;
+/// … an }`: each sum meets the parameter's class beside an int on one path and an int alone
+/// on another, so each keeps two states where it kept one (ISSUE1-tvar-else).
+fn sums_of_a_line_or_a_count(n: usize) -> String {
+    let steps: String = (1..=n)
+        .map(|i| {
+            format!(
+                "a{i} = (line else {}) + bump; ",
+                if i == 1 {
+                    "0".into()
+                } else {
+                    format!("a{}", i - 1)
+                }
+            )
+        })
+        .collect();
+    format!("r(positional line, bump = 1) = {{ {steps}a{n} }};\n")
+}
+
+#[test]
+fn sums_of_a_line_or_a_count_check_in_linear_time() {
+    assert_eq!(
+        sig(&sums_of_a_line_or_a_count(3), "r"),
+        "(int | #_, bump: int) -> int"
+    );
+    let units = resolved(250, sums_of_a_line_or_a_count);
+    scaling::check_order("n sums of a line or a count", 250, 1, |m| {
+        assert_eq!(units[&m].type_errors(), Vec::<String>::new());
+    });
+}
