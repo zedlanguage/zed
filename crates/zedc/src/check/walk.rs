@@ -1802,7 +1802,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         } = *s;
         let mut t = Ty::set(KType::atom_with(name, &KType::top()));
         t.payloads
-            .insert(name.into(), Some(vec![Shape { items, fields }]));
+            .insert(name.into(), Some(vec![Shape::new(items, fields)]));
         m.ty(t);
     }
 

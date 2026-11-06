@@ -2845,6 +2845,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Of such a row only its unknown is reported, once, as each would be at this span.
         // A row shared by many paths is visited once.
         let mut rows = HashSet::new();
+        // A payload shape that holds no class or unknown is not entered either, and a shape is
+        // shared, so one met again by another path is not entered again.
+        let mut shapes = HashSet::new();
         let mut stack = vec![t];
         while let Some(t) = stack.pop() {
             for r in (t.tuples.iter()).filter(|r| r.open() && rows.insert(r.addr())) {
@@ -2864,7 +2867,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // An atom expression does not check its payload as data, since a payload may hold
             // a function (DESIGN.md, `#atom(t)`), so its classes and unknowns are met here.
-            for s in t.payloads.values().flatten().flatten() {
+            let open = t.payloads.values().flatten().flatten().filter(|s| s.open());
+            for s in open.filter(|s| shapes.insert(s.as_ptr())) {
                 stack.extend(&s.items);
                 stack.extend(s.fields.values());
             }
@@ -5928,13 +5932,8 @@ fn io_error() -> Ty {
         .map(|f| (Arc::from(f), Ty::carrier(Carrier::Str)))
         .collect();
     let mut t = Ty::set(KType::atom_with("ioError", &KType::top()));
-    t.payloads.insert(
-        "ioError".into(),
-        Some(vec![Shape {
-            items: Vec::new(),
-            fields,
-        }]),
-    );
+    t.payloads
+        .insert("ioError".into(), Some(vec![Shape::new(Vec::new(), fields)]));
     t
 }
 
@@ -6101,20 +6100,18 @@ impl<'a> Denote<'a> {
             // Resolve rejects a written one until L2.5; the reader of printed types reads one,
             // since the checker builds atoms with payloads from L1 on (L29-print).
             TypeKind::AtomApply(a, ps) => {
-                let mut shape = Shape {
-                    items: Vec::new(),
-                    fields: BTreeMap::new(),
-                };
+                let (mut items, mut fields) = (Vec::new(), BTreeMap::new());
                 for p in ps {
                     match &p.name {
                         Some(n) if !p.positional => {
-                            shape.fields.insert(n.as_str().into(), self.ty(&p.ty));
+                            fields.insert(n.as_str().into(), self.ty(&p.ty));
                         }
-                        _ => shape.items.push(self.ty(&p.ty)),
+                        _ => items.push(self.ty(&p.ty)),
                     }
                 }
                 let mut t = Ty::set(KType::atom_with(a, &KType::top()));
-                t.payloads.insert(a.as_str().into(), Some(vec![shape]));
+                t.payloads
+                    .insert(a.as_str().into(), Some(vec![Shape::new(items, fields)]));
                 t
             }
             TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),

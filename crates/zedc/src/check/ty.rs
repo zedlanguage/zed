@@ -136,11 +136,7 @@ impl Row {
     /// Whether a component holds one of the variables `binds` replaces, at any depth, inside
     /// functions and payloads too.
     fn holds_any(&self, binds: &Binds) -> bool {
-        let f = &self.0.vars;
-        match binds.len() <= f.classes.len() + f.names.len() {
-            true => binds.keys().any(|v| f.holds(v)),
-            false => (f.classes.iter().chain(&f.names)).any(|v| binds.contains_key(v)),
-        }
+        self.0.vars.holds_any(binds)
     }
 
     /// Whether a component holds a type variable or the unknown, outside functions, at any
@@ -206,30 +202,7 @@ impl Drop for RowData {
     /// drop glue would recurse once per level, through tuples, functions and payloads. A row or
     /// signature another type still holds is left to it.
     fn drop(&mut self) {
-        let mut stack = std::mem::take(&mut self.cs);
-        while let Some(mut t) = stack.pop() {
-            for r in std::mem::take(&mut t.tuples) {
-                if let Some(mut d) = Arc::into_inner(r.0) {
-                    stack.append(&mut d.cs);
-                }
-            }
-            for s in std::mem::take(&mut t.fns) {
-                if let Some(s) = Arc::into_inner(s) {
-                    for a in s.arrows {
-                        stack.extend(a.params);
-                        stack.push(a.result);
-                    }
-                }
-            }
-            for s in std::mem::take(&mut t.payloads)
-                .into_values()
-                .flatten()
-                .flatten()
-            {
-                stack.extend(s.items);
-                stack.extend(s.fields.into_values());
-            }
-        }
+        drop_types(std::mem::take(&mut self.cs));
     }
 }
 
@@ -245,16 +218,166 @@ impl fmt::Debug for Row {
     }
 }
 
-/// The payload an atom was built with: its components by position, and its fields by name.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Shape {
+/// The payload an atom was built with, kept in one shared node with what it holds at any depth,
+/// as a [`Row`] is: a shape is copied in constant time, so a type is copied in the time of its
+/// outer level; and a walk that would enter a payload reads what the shape keeps instead, so
+/// `n` atoms nested directly in atoms cost `O(n)` in all, not `O(n)` at each level
+/// (ATOM-nested-sq).
+#[derive(Clone)]
+pub struct Shape(Arc<ShapeData>);
+
+/// What a [`Shape`] holds.
+pub struct ShapeData {
     /// Its components, by position.
     pub items: Vec<Ty>,
     /// Its fields, by name.
     pub fields: BTreeMap<Arc<str>, Ty>,
+    /// The hash of the components and fields.
+    digest: u64,
+    /// Whether a component or field holds a type variable or the unknown, outside functions,
+    /// at any depth, in payloads too.
+    open: bool,
+    /// The first function, not a family, that a component or field holds at any depth.
+    held: Option<Arc<Sig>>,
+    /// The first function, not a family, that a component or field holds at any depth and no
+    /// tuple expression has checked as data.
+    unchecked: Option<Arc<Sig>>,
+    /// Whether no component or field holds a type variable or a function at any depth:
+    /// replacing variables, or settling them, keeps the shape whole.
+    fixed: bool,
+    /// The variables its components and fields hold at any depth, inside functions and
+    /// payloads too.
+    vars: VarFacts,
+}
+
+impl std::ops::Deref for Shape {
+    type Target = ShapeData;
+    fn deref(&self) -> &ShapeData {
+        &self.0
+    }
+}
+
+impl PartialEq for Shape {
+    fn eq(&self, other: &Shape) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+            || (self.0.digest == other.0.digest
+                && self.0.items == other.0.items
+                && self.0.fields == other.0.fields)
+    }
+}
+
+impl Eq for Shape {}
+
+impl std::hash::Hash for Shape {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        h.write_u64(self.0.digest);
+    }
+}
+
+impl fmt::Debug for Shape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Shape")
+            .field("items", &self.0.items)
+            .field("fields", &self.0.fields)
+            .finish()
+    }
+}
+
+impl Drop for ShapeData {
+    /// Drops the components and fields on a stack of their own, as a row does: payloads
+    /// nest as deep as the program.
+    fn drop(&mut self) {
+        let mut stack = std::mem::take(&mut self.items);
+        stack.extend(std::mem::take(&mut self.fields).into_values());
+        drop_types(stack);
+    }
+}
+
+/// Drops the types `stack` on that stack: the rows, signatures and payload shapes no other type
+/// holds are opened and their types pushed, so dropping a type nested `n` deep needs no
+/// recursion `n` deep.
+fn drop_types(mut stack: Vec<Ty>) {
+    while let Some(mut t) = stack.pop() {
+        for r in std::mem::take(&mut t.tuples) {
+            if let Some(mut d) = Arc::into_inner(r.0) {
+                stack.append(&mut d.cs);
+            }
+        }
+        for s in std::mem::take(&mut t.fns) {
+            if let Some(s) = Arc::into_inner(s) {
+                for a in s.arrows {
+                    stack.extend(a.params);
+                    stack.push(a.result);
+                }
+            }
+        }
+        for s in std::mem::take(&mut t.payloads)
+            .into_values()
+            .flatten()
+            .flatten()
+        {
+            if let Some(mut d) = Arc::into_inner(s.0) {
+                stack.append(&mut d.items);
+                stack.extend(std::mem::take(&mut d.fields).into_values());
+            }
+        }
+    }
 }
 
 impl Shape {
+    /// The payload of `items` by position and `fields` by name.
+    ///
+    /// What it keeps of its components and fields is read from their outer levels, and from
+    /// what their rows and shapes keep, so it costs the size of their outer levels.
+    pub fn new(items: Vec<Ty>, fields: BTreeMap<Arc<str>, Ty>) -> Shape {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one((&items, &fields));
+        let cs = || items.iter().chain(fields.values());
+        let open = cs().any(|c| {
+            !c.vars.is_empty()
+                || c.dynamic
+                || c.tuples.iter().any(|r| r.0.open)
+                || c.payload_shapes().any(|s| s.open)
+        });
+        let fixed = cs().all(|c| {
+            c.vars.is_empty()
+                && c.fns.is_empty()
+                && c.tuples.iter().all(|r| r.0.fixed)
+                && c.payload_shapes().all(|s| s.fixed)
+        });
+        let held = cs().find_map(|c| c.held_function().cloned());
+        let unchecked = cs().find_map(|c| c.unchecked_function().cloned());
+        let mut vars = VarFacts::default();
+        cs().for_each(|c| vars.ty(c));
+        Shape(Arc::new(ShapeData {
+            items,
+            fields,
+            digest,
+            held,
+            unchecked,
+            open,
+            fixed,
+            vars,
+        }))
+    }
+
+    /// Whether a component or field holds one of the variables `binds` replaces, at any depth,
+    /// inside functions and payloads too.
+    fn holds_any(&self, binds: &Binds) -> bool {
+        self.0.vars.holds_any(binds)
+    }
+
+    /// Whether a component or field holds a type variable or the unknown, outside functions,
+    /// at any depth.
+    pub fn open(&self) -> bool {
+        self.0.open
+    }
+
+    /// The address of what it holds, which only tells one shared shape from another.
+    pub fn as_ptr(&self) -> *const ShapeData {
+        Arc::as_ptr(&self.0)
+    }
+
     /// What it holds at `slot`, if it has that place.
     pub fn at(&self, slot: &Slot) -> Option<&Ty> {
         match slot {
@@ -285,10 +408,10 @@ impl Shape {
 
     /// It with `f` applied to each component and field.
     fn map(&self, mut f: impl FnMut(&Ty) -> Ty) -> Shape {
-        Shape {
-            items: self.items.iter().map(&mut f).collect(),
-            fields: self.fields.iter().map(|(n, t)| (n.clone(), f(t))).collect(),
-        }
+        Shape::new(
+            self.items.iter().map(&mut f).collect(),
+            self.fields.iter().map(|(n, t)| (n.clone(), f(t))).collect(),
+        )
     }
 }
 
@@ -333,11 +456,12 @@ fn holds_payload(set: &KType, n: &str) -> bool {
 
 /// One replacement of variables ([`Ty::replace_in`]) over a type, a signature or a need.
 ///
-/// Rows and signatures are shared, so a type of `n` rows may have `2^n` paths through them, as
-/// the result of `p(p(p(a0, a1), a2), ...)` with `p(s, v) = (s, (s, v))` has. The walk keeps
-/// what it made of each row and signature, by address, and gives that again where it meets
-/// one once more, so each is replaced once (REPLACE-shared-rows). The addresses are those of
-/// rows and signatures the input holds, which outlive the walk, so no two are the same.
+/// Rows, payload shapes and signatures are shared, so a type of `n` rows may have `2^n` paths
+/// through them, as the result of `p(p(p(a0, a1), a2), ...)` with `p(s, v) = (s, (s, v))` has.
+/// The walk keeps what it made of each row, shape and signature, by address, and gives that
+/// again where it meets one once more, so each is replaced once (REPLACE-shared-rows). The
+/// addresses are those of rows, shapes and signatures the input holds, which outlive the
+/// walk, so no two are the same.
 struct Replacer<'b> {
     binds: &'b Binds,
     mode: Mode,
@@ -355,27 +479,43 @@ struct Replacer<'b> {
     memos: Vec<Memo>,
 }
 
-/// The rows a walk that rebuilds a type met, by address, with what it made of each: a row is
-/// shared, so a walk without it would rebuild a row once per path to it, `2^n` times for `n`
-/// rows that each hold the one below twice. The addresses are those of rows the input holds,
-/// which outlive the walk.
-type Rows = HashMap<*const RowData, Row>;
-
-/// What `make` makes of the row `r`, made at the first meeting and kept in `rows`.
-fn once(rows: &mut Rows, r: &Row, make: impl FnOnce(&mut Rows) -> Row) -> Row {
-    if let Some(done) = rows.get(&Arc::as_ptr(&r.0)) {
-        return done.clone();
-    }
-    let out = make(rows);
-    rows.insert(Arc::as_ptr(&r.0), out.clone());
-    out
+/// The rows and payload shapes a walk that rebuilds a type met, by address, with what it made
+/// of each: both are shared, so a walk without it would rebuild one once per path to it,
+/// `2^n` times for `n` rows or shapes that each hold the one below twice. The addresses are
+/// those of rows and shapes the input holds, which outlive the walk.
+#[derive(Default)]
+struct Made {
+    rows: HashMap<*const RowData, Row>,
+    shapes: HashMap<*const ShapeData, Shape>,
 }
 
-/// The rows and signatures a [`Replacer`] met under one set of hidden variables, by address,
-/// with what it made of each.
+impl Made {
+    /// What `make` makes of the row `r`, made at the first meeting and kept.
+    fn row(&mut self, r: &Row, make: impl FnOnce(&mut Made) -> Row) -> Row {
+        if let Some(done) = self.rows.get(&Arc::as_ptr(&r.0)) {
+            return done.clone();
+        }
+        let out = make(self);
+        self.rows.insert(Arc::as_ptr(&r.0), out.clone());
+        out
+    }
+
+    /// What `make` makes of the payload shape `s`, made at the first meeting and kept.
+    fn shape(&mut self, s: &Shape, make: impl FnOnce(&mut Made) -> Shape) -> Shape {
+        if let Some(done) = self.shapes.get(&s.as_ptr()) {
+            return done.clone();
+        }
+        let out = make(self);
+        self.shapes.insert(s.as_ptr(), out.clone());
+        out
+    }
+}
+
+/// The rows, payload shapes and signatures a [`Replacer`] met under one set of hidden
+/// variables, by address, with what it made of each.
 #[derive(Default)]
 struct Memo {
-    rows: Rows,
+    made: Made,
     sigs: HashMap<*const Sig, Arc<Sig>>,
 }
 
@@ -428,7 +568,7 @@ impl<'b> Replacer<'b> {
             vars: BTreeSet::new(),
             dynamic: t.dynamic,
             family: t.family.clone(),
-            payloads: t.map_payloads(|c| self.ty(c)),
+            payloads: t.map_payloads(|s| self.shape(s)),
         };
         for v in &t.vars {
             match self.bound(v) {
@@ -442,7 +582,7 @@ impl<'b> Replacer<'b> {
     }
 
     fn row(&mut self, r: &Row) -> Row {
-        if let Some(done) = self.memo().rows.get(&Arc::as_ptr(&r.0)) {
+        if let Some(done) = self.memo().made.rows.get(&Arc::as_ptr(&r.0)) {
             return done.clone();
         }
         let out = match self.mode {
@@ -451,7 +591,22 @@ impl<'b> Replacer<'b> {
             _ if !self.holds(&r.0.vars, &BTreeSet::new()) => r.clone(),
             _ => r.replaced(r.iter().map(|c| self.ty(c)).collect()),
         };
-        self.memo().rows.insert(Arc::as_ptr(&r.0), out.clone());
+        self.memo().made.rows.insert(Arc::as_ptr(&r.0), out.clone());
+        out
+    }
+
+    /// A payload shape: kept whole where it holds none of the variables replaced here.
+    fn shape(&mut self, s: &Shape) -> Shape {
+        if let Some(done) = self.memo().made.shapes.get(&s.as_ptr()) {
+            return done.clone();
+        }
+        let out = match self.mode {
+            _ if s.fixed => s.clone(),
+            Mode::Outside if !s.open() => s.clone(),
+            _ if !self.holds(&s.vars, &BTreeSet::new()) => s.clone(),
+            _ => s.map(|c| self.ty(c)),
+        };
+        self.memo().made.shapes.insert(s.as_ptr(), out.clone());
         out
     }
 
@@ -635,6 +790,20 @@ impl VarFacts {
         self.classes.contains(v) || self.names.contains(v)
     }
 
+    /// Whether it holds no variable.
+    fn is_empty(&self) -> bool {
+        self.classes.is_empty() && self.names.is_empty()
+    }
+
+    /// Whether it holds one of the variables `binds` replaces: each bind looked up in it, or
+    /// each of its variables in `binds`, whichever has fewer.
+    fn holds_any(&self, binds: &Binds) -> bool {
+        match binds.len() <= self.classes.len() + self.names.len() {
+            true => binds.keys().any(|v| self.holds(v)),
+            false => (self.classes.iter().chain(&self.names)).any(|v| binds.contains_key(v)),
+        }
+    }
+
     /// The facts of the arrows and needs of `s`, worked out now; for a signature not yet
     /// held in a type, which may still change.
     pub fn of(s: &Sig) -> VarFacts {
@@ -655,27 +824,23 @@ impl VarFacts {
         g
     }
 
-    /// Adds the variables of `t`: those of its rows and functions as each keeps them, so the
-    /// cost is that of its outer level and of its payloads, walked on a stack of their own.
+    /// Adds the variables of `t`: those of its rows, payload shapes and functions as each
+    /// keeps them, so the cost is that of its outer level.
     fn ty(&mut self, t: &Ty) {
-        let mut stack = vec![t];
-        while let Some(t) = stack.pop() {
-            for v in &t.vars {
-                match super::class_id(v) {
-                    Some(_) => add(&mut self.classes, v),
-                    None => add(&mut self.names, v),
-                }
+        for v in &t.vars {
+            match super::class_id(v) {
+                Some(_) => add(&mut self.classes, v),
+                None => add(&mut self.names, v),
             }
-            for r in &t.tuples {
-                self.held(&r.0.vars);
-            }
-            for s in t.payloads.values().flatten().flatten() {
-                stack.extend(&s.items);
-                stack.extend(s.fields.values());
-            }
-            for s in &t.fns {
-                self.held(s.facts());
-            }
+        }
+        for r in &t.tuples {
+            self.held(&r.0.vars);
+        }
+        for s in t.payload_shapes() {
+            self.held(&s.vars);
+        }
+        for s in &t.fns {
+            self.held(s.facts());
         }
     }
 
@@ -1204,7 +1369,7 @@ impl Cx<'_> {
 #[derive(Default)]
 pub struct Vars {
     seen: HashSet<Arc<str>>,
-    /// The rows [`Ty::vars_outside`] entered: a shared row is entered once.
+    /// The rows and payload shapes [`Ty::vars_outside`] entered: a shared one is entered once.
     outside: HashSet<*const ()>,
     /// The variables, in order.
     pub order: Vec<Arc<str>>,
@@ -1506,42 +1671,30 @@ impl Ty {
     /// A function it may hold, at any depth, in its tuples and its atoms' payloads; a family
     /// is data, not a function.
     pub fn held_function(&self) -> Option<&Arc<Sig>> {
-        self.function_in(|r| r.0.held.as_ref())
+        self.function_in(|r| r.0.held.as_ref(), |s| s.held.as_ref())
     }
 
     /// A function it may hold, at any depth, that no tuple expression has checked as data, so
     /// that no error has reported it yet.
     pub(crate) fn unchecked_function(&self) -> Option<&Arc<Sig>> {
-        self.function_in(|r| r.0.unchecked.as_ref())
+        self.function_in(|r| r.0.unchecked.as_ref(), |s| s.unchecked.as_ref())
     }
 
     /// The first function, not a family, that it holds itself, that `row` gives of one of its
-    /// tuples, or that the payload of one of its atoms holds, at any depth (DESIGN.md,
-    /// `#atom(t)`: a payload may hold a function).
+    /// tuples, or that `shape` gives of the payload of one of its atoms (DESIGN.md, `#atom(t)`:
+    /// a payload may hold a function).
     ///
-    /// A row keeps what it holds at any depth, so the walk reads it and does not enter it; a
-    /// payload is owned by its type, not shared, so the walk enters each payload once and
-    /// needs no visited set: it costs the size of the type outside its rows. Payloads nest
-    /// as deep as the program, so the walk keeps its own stack.
+    /// A row and a payload shape each keep what they hold at any depth, so the walk reads them
+    /// and does not enter them: it costs the size of the outer level, however deep or shared
+    /// the payloads are.
     fn function_in<'a>(
         &'a self,
         row: impl Fn(&'a Row) -> Option<&'a Arc<Sig>>,
+        shape: impl Fn(&'a ShapeData) -> Option<&'a Arc<Sig>>,
     ) -> Option<&'a Arc<Sig>> {
-        let mut stack = vec![self];
-        while let Some(t) = stack.pop() {
-            let own = t.fns.iter().find(|s| !s.data);
-            if let Some(s) = own.or_else(|| t.tuples.iter().find_map(&row)) {
-                return Some(s);
-            }
-            // Pushed reversed, so the payloads are read in written order.
-            let from = stack.len();
-            for s in t.payloads.values().flatten().flatten() {
-                stack.extend(&s.items);
-                stack.extend(s.fields.values());
-            }
-            stack[from..].reverse();
-        }
-        None
+        let own = self.fns.iter().find(|s| !s.data);
+        own.or_else(|| self.tuples.iter().find_map(row))
+            .or_else(|| self.payload_shapes().find_map(|s| shape(&s.0)))
     }
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
@@ -1764,20 +1917,21 @@ impl Ty {
     pub fn subst(&self, binds: &Binds) -> Ty {
         match binds.is_empty() {
             true => self.clone(),
-            false => self.subst_in(binds, &mut Rows::new()),
+            false => self.subst_in(binds, &mut Made::default()),
         }
     }
 
-    /// [`Ty::subst`], each row met once more given as `rows` keeps what it was made into.
-    fn subst_in(&self, binds: &Binds, rows: &mut Rows) -> Ty {
+    /// [`Ty::subst`], each row and payload shape met once more given as `made` keeps
+    /// what it was made into.
+    fn subst_in(&self, binds: &Binds, made: &mut Made) -> Ty {
         let mut out = Ty {
             set: self.set.clone(),
             tuples: self
                 .tuples
                 .iter()
                 .map(|cs| match cs.holds_any(binds) {
-                    true => once(rows, cs, |rows| {
-                        cs.replaced(cs.iter().map(|c| c.subst_in(binds, rows)).collect())
+                    true => made.row(cs, |made| {
+                        cs.replaced(cs.iter().map(|c| c.subst_in(binds, made)).collect())
                     }),
                     false => cs.clone(),
                 })
@@ -1786,7 +1940,10 @@ impl Ty {
             vars: BTreeSet::new(),
             dynamic: self.dynamic,
             family: self.family.clone(),
-            payloads: self.map_payloads(|t| t.subst_in(binds, rows)),
+            payloads: self.map_payloads(|s| match s.holds_any(binds) {
+                true => made.shape(s, |made| s.map(|c| c.subst_in(binds, made))),
+                false => s.clone(),
+            }),
         };
         for v in &self.vars {
             match binds.get(v) {
@@ -1841,17 +1998,23 @@ impl Ty {
         out
     }
 
-    /// Its payloads with `f` applied to each component and field.
-    fn map_payloads(&self, mut f: impl FnMut(&Ty) -> Ty) -> BTreeMap<Arc<str>, Option<Vec<Shape>>> {
+    /// Its payloads with each shape replaced by what `f` makes of it.
+    fn map_payloads(
+        &self,
+        mut f: impl FnMut(&Shape) -> Shape,
+    ) -> BTreeMap<Arc<str>, Option<Vec<Shape>>> {
         self.payloads
             .iter()
             .map(|(n, ss)| {
-                let ss = ss
-                    .as_ref()
-                    .map(|ss| ss.iter().map(|s| s.map(&mut f)).collect());
+                let ss = ss.as_ref().map(|ss| ss.iter().map(&mut f).collect());
                 (n.clone(), ss)
             })
             .collect()
+    }
+
+    /// The shapes of its atoms' payloads.
+    fn payload_shapes(&self) -> impl Iterator<Item = &Shape> {
+        self.payloads.values().flatten().flatten()
     }
 
     /// What the payloads of its known atoms named `n` hold: their shapes, or `None` where that
@@ -1866,8 +2029,8 @@ impl Ty {
         }
     }
 
-    /// Every variable in it at any depth, as sets: at the cost of its outer level and its
-    /// payloads, since each row and function keeps its own.
+    /// Every variable in it at any depth, as sets: at the cost of its outer level, since each
+    /// row, payload shape and function keeps its own.
     pub fn var_facts(&self) -> VarFacts {
         let mut f = VarFacts::default();
         f.ty(self);
@@ -1876,16 +2039,19 @@ impl Ty {
 
     /// Every variable in it, in order of first appearance.
     ///
-    /// A type nests as deep as the program, so the walk keeps its own stack; rows are shared,
-    /// so it enters each once. The address of a row only tells whether it was entered, and a
-    /// row is marked when it is entered, in the order a recursive walk would enter it: a row
-    /// entered once more adds no variable, so the order does not depend on the sharing.
+    /// A type nests as deep as the program, so the walk keeps its own stack; rows and payload
+    /// shapes are shared, so it enters each once. The address of a row or shape only tells
+    /// whether it was entered, and each is marked when it is entered, in the order a recursive
+    /// walk would enter it: one entered once more adds no variable, so the order does not
+    /// depend on the sharing.
     pub fn vars_in(&self, out: &mut Vars) {
         enum Walk<'a> {
             Ty(&'a Ty),
             Row(&'a Row),
+            Shape(&'a Shape),
         }
         let mut rows = HashSet::new();
+        let mut shapes = HashSet::new();
         let mut stack = vec![Walk::Ty(self)];
         while let Some(w) = stack.pop() {
             let from = stack.len();
@@ -1893,6 +2059,13 @@ impl Ty {
                 Walk::Row(r) => {
                     if rows.insert(Arc::as_ptr(&r.0)) {
                         stack.extend(r.iter().map(Walk::Ty));
+                        stack[from..].reverse();
+                    }
+                    continue;
+                }
+                Walk::Shape(s) => {
+                    if shapes.insert(Arc::as_ptr(&s.0)) {
+                        stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
                         stack[from..].reverse();
                     }
                     continue;
@@ -1905,10 +2078,8 @@ impl Ty {
                 }
             }
             stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(Walk::Row));
-            for s in t.payloads.values().flatten().flatten() {
-                stack.extend(s.items.iter().map(Walk::Ty));
-                stack.extend(s.fields.values().map(Walk::Ty));
-            }
+            let open = t.payload_shapes().filter(|s| !s.vars.is_empty());
+            stack.extend(open.map(Walk::Shape));
             for s in &t.fns {
                 for a in &s.arrows {
                     stack.extend(a.params.iter().map(Walk::Ty));
@@ -1924,17 +2095,18 @@ impl Ty {
     /// each signature it holds settled once ([`Sig::settle`]). A tuple that holds no variable
     /// and no function is kept whole.
     pub fn settle(&self, solve: Solve) -> Ty {
-        self.settle_in(solve, &mut Rows::new())
+        self.settle_in(solve, &mut Made::default())
     }
 
-    /// [`Ty::settle`], each row met once more given as `rows` keeps what it was made into.
-    fn settle_in(&self, solve: Solve, rows: &mut Rows) -> Ty {
+    /// [`Ty::settle`], each row and payload shape met once more given as `made` keeps
+    /// what it was made into.
+    fn settle_in(&self, solve: Solve, made: &mut Made) -> Ty {
         let mut out = Ty {
             set: self.set.clone(),
             tuples: (self.tuples.iter())
                 .map(|r| match r.open() || r.0.held.is_some() {
-                    true => once(rows, r, |rows| {
-                        r.replaced(r.iter().map(|c| c.settle_in(solve, rows)).collect())
+                    true => made.row(r, |made| {
+                        r.replaced(r.iter().map(|c| c.settle_in(solve, made)).collect())
                     }),
                     false => r.clone(),
                 })
@@ -1943,7 +2115,10 @@ impl Ty {
             vars: BTreeSet::new(),
             dynamic: self.dynamic,
             family: self.family.clone(),
-            payloads: self.map_payloads(|t| t.settle_in(solve, rows)),
+            payloads: self.map_payloads(|s| match s.fixed {
+                true => s.clone(),
+                false => made.shape(s, |made| s.map(|c| c.settle_in(solve, made))),
+            }),
         };
         for v in &self.vars {
             match solve(v) {
@@ -1969,9 +2144,11 @@ impl Ty {
                 r.iter().for_each(|c| c.vars_outside(out));
             }
         }
-        for s in self.payloads.values().flatten().flatten() {
-            s.items.iter().for_each(|t| t.vars_outside(out));
-            s.fields.values().for_each(|t| t.vars_outside(out));
+        for s in self.payload_shapes().filter(|s| s.open) {
+            if out.outside.insert(s.as_ptr().cast()) {
+                s.items.iter().for_each(|t| t.vars_outside(out));
+                s.fields.values().for_each(|t| t.vars_outside(out));
+            }
         }
     }
 
@@ -3291,18 +3468,18 @@ impl Sig {
         // A variable `solve` gives a type is replaced, so no longer bounded, own or held.
         let open = |v: &&Arc<str>| solve(v).is_none();
         let made = || {
-            let rows = &mut Rows::new();
+            let kept = &mut Made::default();
             Arc::new(Sig {
                 arrows: (self.arrows.iter())
                     .map(|a| Arrow {
                         params: (a.params.iter())
-                            .map(|p| p.settle_in(solve, rows))
+                            .map(|p| p.settle_in(solve, kept))
                             .collect(),
-                        result: a.result.settle_in(solve, rows),
+                        result: a.result.settle_in(solve, kept),
                     })
                     .collect(),
                 needs: (self.needs.iter())
-                    .map(|n| n.map_tys(|t| t.settle_in(solve, rows)))
+                    .map(|n| n.map_tys(|t| t.settle_in(solve, kept)))
                     .collect(),
                 bounds: (self.bounds.iter())
                     .filter(|(v, _)| open(v))

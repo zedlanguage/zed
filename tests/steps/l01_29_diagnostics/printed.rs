@@ -69,11 +69,19 @@ fn stated_in(t: &Ty, scope: Arc<HashSet<Arc<str>>>) -> Ty {
         let free = t.vars.iter().any(|v| !scope.contains(v));
         t.vars.retain(|v| scope.contains(v));
         t.dynamic |= free;
+        // A payload shape and a row are shared and keep a hash of what they hold, so they are
+        // made again.
         for s in t.payloads.values_mut().flatten().flatten() {
-            stack.extend(s.items.iter_mut().map(|t| (t, scope.clone())));
-            stack.extend(s.fields.values_mut().map(|t| (t, scope.clone())));
+            *s = Shape::new(
+                s.items
+                    .iter()
+                    .map(|c| stated_in(c, scope.clone()))
+                    .collect(),
+                (s.fields.iter())
+                    .map(|(n, c)| (n.clone(), stated_in(c, scope.clone())))
+                    .collect(),
+            );
         }
-        // A row is shared and keeps what its components hold, so it is made again.
         for cs in t.tuples.iter_mut() {
             *cs = cs.iter().map(|c| stated_in(c, scope.clone())).collect();
         }
@@ -188,13 +196,8 @@ fn an_atom_with_a_payload_reads_back() {
         .map(|f| (f.into(), Ty::carrier(Carrier::Str)))
         .collect();
     let mut want = Ty::set(KType::atom_with("ioError", &KType::top()));
-    want.payloads.insert(
-        "ioError".into(),
-        Some(vec![Shape {
-            items: Vec::new(),
-            fields,
-        }]),
-    );
+    want.payloads
+        .insert("ioError".into(), Some(vec![Shape::new(Vec::new(), fields)]));
     assert_eq!(back(io), want);
     assert_eq!(back(io).to_string(), io);
     assert_ne!(back(io), back("#ioError"));

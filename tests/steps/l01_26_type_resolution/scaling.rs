@@ -168,12 +168,12 @@ fn payloads(n: usize, one_name: bool) -> Vec<zedc::check::ty::Ty> {
                 format!("e{i}")
             };
             let mut t = Ty::set(Type::atom_with(&name, &Type::top()));
-            let shape = Shape {
-                items: Vec::new(),
-                fields: [(format!("f{i}").into(), Ty::empty())]
+            let shape = Shape::new(
+                Vec::new(),
+                [(format!("f{i}").into(), Ty::empty())]
                     .into_iter()
                     .collect(),
-            };
+            );
             t.payloads.insert(name.into(), Some(vec![shape]));
             t
         })

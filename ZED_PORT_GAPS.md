@@ -1772,3 +1772,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Functions generic over `W: fmt::Write`, writing a list of forms to a counter, a reserved `String` or a plain one | `check::write_forms`, `check::or_forms` | Missing (no formatter trait) | One function over the text builder the port has |
 | `Cow<'_, str>` from `Text::try_flat`, a one-piece string borrowed and a joined one copied into memory asked first | `Text::try_flat`, `words` casts | None | Zed shares values; the copy is a runtime primitive returning the block or a refusal |
 | An `Option<TooLarge>` field holding the first refusal while an infallible writer or the lowering goes on, read once at the end | `zir::binary::W`, `canon::serial::Out`, `zir::lower::Lower` | Mutation | The writer returns the refusal through each call, as Zed has no mutable field |
+
+## Entries from ATOM-nested-sq (`zedc/src/check/ty.rs`, `mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A payload shape as a newtype over `Arc<ShapeData>` with `Deref` to its fields, so it is copied in constant time and read as before, and made only by `Shape::new`, which computes its facts | `check::ty::Shape` | Identity (gap 1); `Deref` has no Zed form | A record with the facts as fields, built by one function; Zed shares values, so a copy is free, and fields are read by name |
+| `impl Drop for ShapeData` that moves its components out and frees them with the rows' explicit stack (`drop_types`, `Arc::into_inner` on each shape no other type holds) | `check::ty::{ShapeData::drop, drop_types}` | Missing (user-defined destructors) | As for `RowData::drop`: the runtime frees shared values, on a stack of its own |
+| A visited set of shape addresses (`HashSet<*const ShapeData>` from `Arc::as_ptr`, `Shape::as_ptr`) so a walk enters a shared shape once | `check::ty::Ty::{vars_in, vars_outside}`, `check::Ck::data`; and a memo of what a rebuilding walk made of each shape (`Made::shapes`, `Memo`) | Identity (gap 1) | As for rows: the shape's digest as the key, confirmed by contents, or its kept facts read in place of the walk |
