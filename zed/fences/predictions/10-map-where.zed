@@ -1,0 +1,9 @@
+// layer L3
+// Output fixed by DESIGN.md (at 843be85) lines 3104-3107: `map` keeps the keys with new values,
+// `where` keeps the entries that pass, `sum` is the fold; line 642: `count` counts entries;
+// histogram corpus form: `>< max else 0`, `#empty` on no entries.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs = (stdin[1] else "").split(" ").map(w -> int(w) else 0);
+  big = xs.where(x -> x > 2);
+  stdout <- "${xs.map(x -> x * 10).sum} ${big.count} ${big.sum} ${(xs >< max) else 0}";
+}

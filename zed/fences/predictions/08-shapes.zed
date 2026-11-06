@@ -1,0 +1,16 @@
+// layer L2
+// Output fixed by DESIGN.md (at 843be85) lines 3036-3049: `area` by `match`, and `Circle(c: p)`
+// takes r's default 1.0; line 1979 (L2.10a): `Utf8String` of a family atom prints it as source
+// writes it; line 322: pi * 2.0 * 2.0 is exact, a doubling twice.
+struct Point { x: f64, y: f64 }
+struct Circle { c: Point, r: f64 = 1.0 }
+struct Rect { lo: Point, hi: Point }
+type Shape = Circle | Rect;
+area(s: Shape) = match s { Circle(r:) -> pi * r * r, Rect(lo:, hi:) -> (hi.x - lo.x) * (hi.y - lo.y) };
+size(positional a: f64) = if a > 10.0 { #big } else { #small };
+main(stdin: Lines) -> (stdout: Lines) {
+  r = f64(trim(stdin[1] else "")) else 1.0;
+  o = Point(x: 0.0, y: 0.0);
+  a2 = area(Circle(c: o, r: r));
+  stdout <- "${area(Circle(c: o))} ${a2} ${area(Rect(lo: o, hi: Point(x: 2.0, y: 3.5)))} ${size(a2)} ${size(1.0)}";
+}

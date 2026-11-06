@@ -1,0 +1,9 @@
+// layer L4
+// Output fixed by DESIGN.md (at 843be85) line 3125: `group` by a field; line 3104: `map` per class;
+// line 3101: a split is rank-keyed from 0; line 1819: one line per entry in key order.
+main(stdin: Lines) -> (stdout: Lines) {
+  rows = stdin.map(l -> l.split(" "));
+  g = rows.group(r -> r[0] else "");
+  tot = g.map(cls -> cls.map(r -> int(r[1] else "") else 0).sum);
+  stdout <- for t -> n in tot { "${t} ${n}" };
+}

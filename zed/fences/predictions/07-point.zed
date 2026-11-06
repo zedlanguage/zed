@@ -1,0 +1,11 @@
+// layer L2
+// Output fixed by DESIGN.md (at 843be85) lines 3048-3051: `p with { x = 3.0 }` is "a new value",
+// and "a struct is its constructor, curried by name: called onAxis(y: 1.0)"; line 322 prints floats.
+struct Point { x: f64, y: f64 }
+main(stdin: Lines) -> (stdout: Lines) {
+  dx = f64(trim(stdin[1] else "")) else 0.0;
+  p = Point(x: 1.0, y: 2.0);
+  p2 = p with { x = p.x + dx };
+  q = Point(x: 0.0, ...)(y: 1.5);
+  stdout <- "${p.x} ${p.y} ${p2.x} ${p2.y} ${q.x} ${q.y}";
+}

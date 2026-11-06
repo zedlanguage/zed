@@ -1,0 +1,8 @@
+// layer L4
+// Output fixed by DESIGN.md (at 843be85) line 3125: `group` adds a level keyed by the key function,
+// each class keeping its entries; line 640: `x mod 2` is 0 or 1; line 1819: key order.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs = (stdin[1] else "").split(" ").map(w -> int(w) else 0);
+  g = xs.group(x -> x mod 2);
+  stdout <- for k -> cls in g { "${k} ${cls.sum} ${cls.count}" };
+}

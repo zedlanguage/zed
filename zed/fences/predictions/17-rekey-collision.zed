@@ -1,0 +1,10 @@
+// layer L4
+// Rejected. Fixed by DESIGN.md (at 843be85) lines 3121-3123: `users.rekey(u -> u.id)` is
+// "✗ Collision: unless id-uniqueness is witnessed"; line 1690: from step L1.21 an M0(d)
+// prediction about which remaps are rejected that fails when run is a defect of the surface rule.
+struct User { id: int, name: Utf8String }
+main(stdin: Lines) -> (stdout: Lines) {
+  users = stdin.map(l -> User(id: int(trim(l)) else 0, name: l));
+  byId = users.rekey(u -> u.id);  // ✗ Collision
+  stdout <- "${byId::card}";
+}

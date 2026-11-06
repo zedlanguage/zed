@@ -1,0 +1,10 @@
+// layer L1
+// Output fixed by DESIGN.md (at 843be85) lines 3027-3030: `greet(positional name, punct = "!")`,
+// "positional arguments first, then named", and "currying leaves out named parameters:
+// called hiAnn(punct: "?") or hiAnn()".
+greet(positional name: Utf8String, punct = "!") = "Hi, " ++ name ++ punct;
+main(stdin: Lines) -> (stdout: Lines) {
+  who = trim(stdin[1] else "nobody");
+  hi = greet(who, ...);
+  stdout <- greet(who) ++ " " ++ greet(who, punct: "?") ++ " " ++ hi(punct: ".") ++ " " ++ hi();
+}

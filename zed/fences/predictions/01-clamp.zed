@@ -1,0 +1,11 @@
+// layer L1
+// Output fixed by DESIGN.md (at 843be85) line 3028: "y = 5.double.clamp(0, 8); // ≡ clamp(double(5), 0, 8); y == 8",
+// and line 2921: interpolation is `"…" ++ Utf8String(e)`.
+double(positional x) = x * 2;
+clamp(positional v, positional lo, positional hi) -> int {
+  if v < lo { lo } else if v > hi { hi } else { v }
+}
+main(stdin: Lines) -> (stdout: Lines) {
+  n = int(trim(stdin[1] else "")) else 0;
+  stdout <- "${n.double.clamp(0, 8)} ${5.double.clamp(0, 8)} ${(0 - 3).double.clamp(0, 8)}";
+}

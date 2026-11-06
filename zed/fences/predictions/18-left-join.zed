@@ -1,0 +1,11 @@
+// layer L5
+// Output fixed by DESIGN.md (at 843be85) lines 3141-3147: `orders.join(payments, on: #orderId,
+// kind: #left)` is `OrderId -> (Order, Payment | #none)`; line 3090: "a comma-list of targets binds its components by position".
+struct Order { orderId: int, item: Utf8String }
+struct Payment { amount: int }
+main(stdin: Lines) -> (stdout: Lines) {
+  orders = [Order(orderId: 1, item: "pen"), Order(orderId: 2, item: trim(stdin[1] else "")), Order(orderId: 3, item: "pad")];
+  payments = { 1 -> Payment(amount: 4), 3 -> Payment(amount: 9) };
+  paid = orders.join(payments, on: #orderId, kind: #left);
+  stdout <- for id -> pair in paid { o, p = pair; if p is #none { "${id} ${o.item} unpaid" } else { "${id} ${o.item} ${p.amount}" } };
+}

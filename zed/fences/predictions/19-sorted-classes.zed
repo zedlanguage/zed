@@ -1,0 +1,8 @@
+// layer L5
+// Output fixed by DESIGN.md (at 843be85) line 3105: "a ranked source sorts flat", so `sort` gives
+// a rank-keyed level; line 3125: `group` by `x mod 3`; line 1819: classes in key order.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs = (stdin[1] else "").split(" ").map(w -> int(w) else 0);
+  g = xs.group(x -> x mod 3);
+  stdout <- for k -> cls in g { "${k}: ${cls.sort(asc x -> x).map(x -> "${x}").concat(" ")}" };
+}

@@ -1,0 +1,7 @@
+// layer L4
+// Output fixed by DESIGN.md (at 843be85) line 3116: "the same program, symbolic register":
+// `text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+)`; line 1819 writes it in key order.
+main(stdin: Lines) -> (stdout: Lines) {
+  counts = (stdin[1] else "").split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);
+  stdout <- for w -> c in counts { "${w} ${c}" };
+}

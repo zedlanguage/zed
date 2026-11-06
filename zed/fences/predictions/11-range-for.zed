@@ -1,0 +1,9 @@
+// layer L3
+// Output fixed by DESIGN.md (at 843be85) line 2944: the one-generator `for` builds a family keyed
+// by the domain it ranges over, so `sq` is keyed 1..=n; line 1997: lookup outside the domain is
+// `#notFound`; line 4057: `::card` reads a family's number of entries.
+main(stdin: Lines) -> (stdout: Lines) {
+  n = int(trim(stdin[1] else "")) else 0;
+  sq = for i in 1..=n { i * i };
+  stdout <- "${sq.sum} ${sq[3] else 0} ${sq[11] else -1} ${sq::card}";
+}

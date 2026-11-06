@@ -1,0 +1,8 @@
+// layer L3
+// Output fixed by DESIGN.md (at 843be85) line 322: a float `+` reduction is the exact sum rounded
+// once, so [0.1, 0.2, 0.3] sums to 0.6 while (0.1 + 0.2) + 0.3 is 0.6000000000000001, and
+// [1e16, 1.0, -1e16] sums to 1.0; line 3107: `xs.sum` is `xs >< (+)`.
+main(stdin: Lines) -> (stdout: Lines) {
+  xs = stdin.map(l -> f64(trim(l)) else 0.0);
+  stdout <- "${xs.sum} ${[1e16, 1.0, -1e16].sum} ${(0.1 + 0.2) + 0.3}";
+}
