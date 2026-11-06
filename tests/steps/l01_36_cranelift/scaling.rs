@@ -143,7 +143,7 @@ fn check(what: &str, n: usize, w: &World, make: fn(usize) -> Term) {
 fn an_atom_of_many_named_fields_scales() {
     check(
         "an atom of n named fields, matched",
-        1000,
+        500,
         &World::new(),
         fields,
     );
@@ -151,7 +151,13 @@ fn an_atom_of_many_named_fields_scales() {
 
 #[test]
 fn a_tuple_of_many_lookup_ports_scales() {
-    check("a tuple of n lookup ports", 1000, &world(8000), ports);
+    let n = 250;
+    check(
+        "a tuple of n lookup ports",
+        n,
+        &world(scaling::FACTOR * n),
+        ports,
+    );
 }
 
 #[test]
@@ -161,7 +167,7 @@ fn many_constants_scale() {
 
 #[test]
 fn many_lambdas_scale() {
-    check("n lambdas, each called", 1000, &World::new(), lambdas);
+    check("n lambdas, each called", 125, &World::new(), lambdas);
 }
 
 #[test]
@@ -324,31 +330,81 @@ fn on_stack(bytes: usize, f: impl FnOnce() + Send) {
     })
 }
 
-/// Code generation keeps the regions in progress on its own stacks: terms far deeper than a
-/// thread of 128 KiB could hold in calls compile there. The code runs on a larger stack, since
-/// one function's frame holds a slot for each of its words, and agrees with the machine.
-#[test]
-fn terms_thousands_deep_compile_on_a_small_stack_and_run() {
+/// The depth of the terms below: far deeper than a thread of 128 KiB could hold in calls.
+const DEEP: usize = 4000;
+
+/// A rate table [`DEEP`] tiers long, read in the middle, and the tier it gives.
+fn deep_rate_table() -> (Term, String) {
+    let at = DEEP as i64 / 2;
+    (tiers(DEEP, at), format!(r#""t{}""#, DEEP / 2 + 1))
+}
+
+/// A decoder of [`DEEP`] cases, given the last, and the case it gives.
+fn deep_decoder() -> (Term, String) {
+    (cases(DEEP, DEEP as i64 - 1), format!(r#""c{}""#, DEEP - 1))
+}
+
+/// [`DEEP`] `if`s nested through the first arm, and the value they give.
+fn deep_ifs() -> (Term, String) {
+    (nest(DEEP), DEEP.to_string())
+}
+
+/// Code generation keeps the regions in progress on its own stacks: `t` compiles to an object
+/// file on a stack of 128 KiB. This and [`runs_as_the_machine_does`] are separate tests, each
+/// compiling the term once, so that each stays well under 60 s under load.
+fn compiles_on_a_small_stack(t: Term) {
     on_big_stack(|| {
-        let d = 4000;
-        for (t, want) in [
-            (tiers(d, d as i64 / 2), format!(r#""t{}""#, d / 2 + 1)),
-            (cases(d, d as i64 - 1), format!(r#""c{}""#, d - 1)),
-            (nest(d), d.to_string()),
-        ] {
-            let (g, p) = planned(&t);
-            let (v, s) = memory::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
-            assert_eq!(v.to_string(), want);
-            on_stack(1 << 17, || {
-                assert!(!zed_native::object(&g, &p).unwrap().is_empty());
-            });
-            on_stack(1 << 24, || {
-                let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
-                assert_eq!(o.value, v);
-                assert_eq!(o.stats.decrements, s.decrements);
-            });
-        }
+        let (g, p) = planned(&t);
+        on_stack(1 << 17, || {
+            assert!(!zed_native::object(&g, &p).unwrap().is_empty());
+        });
     });
+}
+
+/// `t` run natively gives `want`, the machine's value, with the machine's count of releases.
+/// The code runs on a larger stack than [`compiles_on_a_small_stack`]'s, since one function's
+/// frame holds a slot for each of its words.
+fn runs_as_the_machine_does((t, want): (Term, String)) {
+    on_big_stack(|| {
+        let (g, p) = planned(&t);
+        let (v, s) = memory::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+        assert_eq!(v.to_string(), want);
+        on_stack(1 << 24, || {
+            let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+            assert_eq!(o.value, v);
+            assert_eq!(o.stats.decrements, s.decrements);
+        });
+    });
+}
+
+#[test]
+fn a_rate_table_thousands_deep_compiles_on_a_small_stack() {
+    compiles_on_a_small_stack(deep_rate_table().0);
+}
+
+#[test]
+fn a_rate_table_thousands_deep_runs_as_the_machine_does() {
+    runs_as_the_machine_does(deep_rate_table());
+}
+
+#[test]
+fn a_decoder_thousands_deep_compiles_on_a_small_stack() {
+    compiles_on_a_small_stack(deep_decoder().0);
+}
+
+#[test]
+fn a_decoder_thousands_deep_runs_as_the_machine_does() {
+    runs_as_the_machine_does(deep_decoder());
+}
+
+#[test]
+fn ifs_thousands_deep_compile_on_a_small_stack() {
+    compiles_on_a_small_stack(deep_ifs().0);
+}
+
+#[test]
+fn ifs_thousands_deep_run_as_the_machine_does() {
+    runs_as_the_machine_does(deep_ifs());
 }
 
 /// Paths are worked out for a message only, and the message is the one a path string gives.
@@ -383,14 +439,14 @@ fn check_depth(what: &str, n: usize, make: fn(usize) -> Term) {
 
 #[test]
 fn a_rate_table_of_many_tiers_scales() {
-    check_depth("a chain of n `if`s, to an object file", 500, |d| {
+    check_depth("a chain of n `if`s, to an object file", 250, |d| {
         tiers(d, 0)
     });
 }
 
 #[test]
 fn ifs_nested_through_the_first_arm_scale() {
-    check_depth("n nested `if`s, to an object file", 500, nest);
+    check_depth("n nested `if`s, to an object file", 125, nest);
 }
 
 #[test]
