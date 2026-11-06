@@ -1780,3 +1780,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A payload shape as a newtype over `Arc<ShapeData>` with `Deref` to its fields, so it is copied in constant time and read as before, and made only by `Shape::new`, which computes its facts | `check::ty::Shape` | Identity (gap 1); `Deref` has no Zed form | A record with the facts as fields, built by one function; Zed shares values, so a copy is free, and fields are read by name |
 | `impl Drop for ShapeData` that moves its components out and frees them with the rows' explicit stack (`drop_types`, `Arc::into_inner` on each shape no other type holds) | `check::ty::{ShapeData::drop, drop_types}` | Missing (user-defined destructors) | As for `RowData::drop`: the runtime frees shared values, on a stack of its own |
 | A visited set of shape addresses (`HashSet<*const ShapeData>` from `Arc::as_ptr`, `Shape::as_ptr`) so a walk enters a shared shape once | `check::ty::Ty::{vars_in, vars_outside}`, `check::Ck::data`; and a memo of what a rebuilding walk made of each shape (`Made::shapes`, `Memo`) | Identity (gap 1) | As for rows: the shape's digest as the key, confirmed by contents, or its kept facts read in place of the walk |
+
+## Entries from ORACLE-cones (`tests/src/oracle.rs`, `tests/steps/l01_37_oracle/scaling.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `BTreeMap::range` from a prefix with `take_while(starts_with)`, to find the keys that begin with a text | `counterexamples` | Library: DESIGN.md names no ordered-map range word | A stdlib word (catalog of step L2.11) that walks an ordered map from a key |
