@@ -1264,21 +1264,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | negative control on old checker (Shape by value, no facts), sizes 100/800: one-expression 48.1x, bindings 61.2x, calls 53.7x instructions (limit 24); load 62.19 |
+| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | committed 9f42df4a on wt/atom-nested-sq (Shape shared node with kept facts; F100); groups l01_26 225, l01_29 127, l01_17 86, l01_23 131, l01_22 41, l01_27 39, l |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BUILD-modes | impl attempt 1 | 2026-11-05 04:07 | spec bullet 'Build modes' with table written on wt/build-modes-spec (uncommitted); author question A25 appended (debug-build optimization, test builds, oracle m |
+| BUILD-modes | impl attempt 1 | 2026-11-05 04:07 | l07_03 19/19 pass on spec branch (load 46.5); negative control: 'A release build' appended -> every_kind fails with 4664: "release build"; copy deleted |
 | CAST-menu | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
 | DART-SCALE | merge attempt 1 | 2026-11-05 04:07 | merge agent running (started by orch) |
-| DOC-zedc-collision | merge attempt 1 | 2026-11-05 21:26 | merge agent running (impl 02a07597) |
 | F70-rerun | merge attempt 1 | 2026-11-05 20:49 | merge agent running |
 | FLOAT-tie-read | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
 | LAYOUT-measure | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
 | LIVE3-lp-tangents | merge attempt 1 | 2026-11-05 19:39 | merge agent running |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| orch | running | 2026-11-05 18:05 | BUILD-opt-measure done: keep opt-level 2; worktree opt-measure removed |
+| orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | PASS-at-args | merge attempt 1 | 2026-11-04 00:20 | merge agent running |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | agent still running (timing asks.rs scaling tests), per orch |
-| RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | test runs under timeout rebuilt zedc and were killed, corrupting zedc's incremental cache (link errors); removed the six zedc incremental dirs touched today, re |
+| RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | done: code 72ccaa06 on wt/rung2-mod-symbol (rebased on origin/main), spec 3a4a2e1 on wt/rung2-mod-symbol-spec; l01_38/l01_25/l01_39 groups pass on rebased build |
 | S.1f | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/s1f on origin/main 0752a662 |
 | STEPS-split | impl attempt 1 | 2026-11-05 21:45 | started; worktree wt/steps-split on origin/main 0752a662 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
