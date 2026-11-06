@@ -1,0 +1,640 @@
+--- literals, width 20
+(
+  42,
+  -7,
+  "a \"quoted\" word",
+  true,
+  2.5,
+  (1, "b"),
+  #empty
+)
+--- literals, width 40
+(
+  42,
+  -7,
+  "a \"quoted\" word",
+  true,
+  2.5,
+  (1, "b"),
+  #empty
+)
+--- literals, width 80
+(42, -7, "a \"quoted\" word", true, 2.5, (1, "b"), #empty)
+--- literals, on one line
+(42, -7, "a \"quoted\" word", true, 2.5, (1, "b"), #empty)
+--- a one-parameter lambda, width 20
+order -> order[
+  "total"
+]
+--- a one-parameter lambda, width 40
+order -> order["total"]
+--- a one-parameter lambda, width 80
+order -> order["total"]
+--- a one-parameter lambda, on one line
+order -> order["total"]
+--- a two-parameter lambda, width 20
+(subtotal, rate) -> (
+  subtotal *
+  rate
+)
+--- a two-parameter lambda, width 40
+(subtotal, rate) -> (subtotal * rate)
+--- a two-parameter lambda, width 80
+(subtotal, rate) -> (subtotal * rate)
+--- a two-parameter lambda, on one line
+(subtotal, rate) -> (subtotal * rate)
+--- a call of a name, width 20
+discounted(
+  subtotal,
+  10,
+  customerTier
+)
+--- a call of a name, width 40
+discounted(subtotal, 10, customerTier)
+--- a call of a name, width 80
+discounted(subtotal, 10, customerTier)
+--- a call of a name, on one line
+discounted(subtotal, 10, customerTier)
+--- a call of an operator and of a primitive function, width 20
+(
+  (+)(left, right),
+  max(left, right)
+)
+--- a call of an operator and of a primitive function, width 40
+((+)(left, right), max(left, right))
+--- a call of an operator and of a primitive function, width 80
+((+)(left, right), max(left, right))
+--- a call of an operator and of a primitive function, on one line
+((+)(left, right), max(left, right))
+--- a call of a lambda, width 20
+(price -> (price * 2))(
+  basePrice
+)
+--- a call of a lambda, width 40
+(price -> (price * 2))(basePrice)
+--- a call of a lambda, width 80
+(price -> (price * 2))(basePrice)
+--- a call of a lambda, on one line
+(price -> (price * 2))(basePrice)
+--- a call of a call, width 20
+(curried(first))(
+  second
+)
+--- a call of a call, width 40
+(curried(first))(second)
+--- a call of a call, width 80
+(curried(first))(second)
+--- a call of a call, on one line
+(curried(first))(second)
+--- tuples of zero, one and three items, width 20
+(
+  (),
+  (single,),
+  (
+    first,
+    second,
+    third
+  )
+)
+--- tuples of zero, one and three items, width 40
+((), (single,), (first, second, third))
+--- tuples of zero, one and three items, width 80
+((), (single,), (first, second, third))
+--- tuples of zero, one and three items, on one line
+((), (single,), (first, second, third))
+--- atoms with fields, by position, with a computed name, and with no arguments, width 20
+(
+  #err(
+    code: 3,
+    line: lineNumber
+  ),
+  #ok(total),
+  #_(payload),
+  atom()
+)
+--- atoms with fields, by position, with a computed name, and with no arguments, width 40
+(
+  #err(code: 3, line: lineNumber),
+  #ok(total),
+  #_(payload),
+  atom()
+)
+--- atoms with fields, by position, with a computed name, and with no arguments, width 80
+(#err(code: 3, line: lineNumber), #ok(total), #_(payload), atom())
+--- atoms with fields, by position, with a computed name, and with no arguments, on one line
+(#err(code: 3, line: lineNumber), #ok(total), #_(payload), atom())
+--- negations and nots, width 20
+(
+  -balance,
+  -(debit + fee),
+  -(-3),
+  -(-x),
+  !(
+    status ==
+    "open"
+  ),
+  !(x -> x)
+)
+--- negations and nots, width 40
+(
+  -balance,
+  -(debit + fee),
+  -(-3),
+  -(-x),
+  !(status == "open"),
+  !(x -> x)
+)
+--- negations and nots, width 80
+(-balance, -(debit + fee), -(-3), -(-x), !(status == "open"), !(x -> x))
+--- negations and nots, on one line
+(-balance, -(debit + fee), -(-3), -(-x), !(status == "open"), !(x -> x))
+--- indices on a name, a chain and a block, width 20
+(
+  orders["alice"][
+    "total"
+  ],
+  matrix[2][3],
+  (if c {
+    a
+  } else {
+    b
+  })[key]
+)
+--- indices on a name, a chain and a block, width 40
+(
+  orders["alice"]["total"],
+  matrix[2][3],
+  (if c { a } else { b })[key]
+)
+--- indices on a name, a chain and a block, width 80
+(orders["alice"]["total"], matrix[2][3], (if c { a } else { b })[key])
+--- indices on a name, a chain and a block, on one line
+(orders["alice"]["total"], matrix[2][3], (if c { a } else { b })[key])
+--- infix operators, width 20
+(
+  (
+    (
+      total -
+      (
+        discount -
+        fee
+      )
+    ) <=
+    ((-base) ** 2)
+  ) &&
+  (prefix ++ suffix)
+)
+--- infix operators, width 40
+(
+  (
+    (total - (discount - fee)) <=
+    ((-base) ** 2)
+  ) &&
+  (prefix ++ suffix)
+)
+--- infix operators, width 80
+(((total - (discount - fee)) <= ((-base) ** 2)) && (prefix ++ suffix))
+--- infix operators, on one line
+(((total - (discount - fee)) <= ((-base) ** 2)) && (prefix ++ suffix))
+--- primitives written by name, width 20
+(
+  min(left, right),
+  count(orders),
+  String(amount),
+  +(a, b, c)
+)
+--- primitives written by name, width 40
+(
+  min(left, right),
+  count(orders),
+  String(amount),
+  +(a, b, c)
+)
+--- primitives written by name, width 80
+(min(left, right), count(orders), String(amount), +(a, b, c))
+--- primitives written by name, on one line
+(min(left, right), count(orders), String(amount), +(a, b, c))
+--- primitives as values, width 20
+(
+  (x -> -x),
+  (x -> !x),
+  ((t, i) -> t[i]),
+  ((f, k) -> f[k]),
+  (+),
+  min
+)
+--- primitives as values, width 40
+(
+  (x -> -x),
+  (x -> !x),
+  ((t, i) -> t[i]),
+  ((f, k) -> f[k]),
+  (+),
+  min
+)
+--- primitives as values, width 80
+((x -> -x), (x -> !x), ((t, i) -> t[i]), ((f, k) -> f[k]), (+), min)
+--- primitives as values, on one line
+((x -> -x), (x -> !x), ((t, i) -> t[i]), ((f, k) -> f[k]), (+), min)
+--- a block of bindings, width 20
+{
+  subtotal = (
+    quantity *
+    unitPrice
+  );
+  tax = (
+    subtotal *
+    rate
+  );
+  (subtotal + tax)
+}
+--- a block of bindings, width 40
+{
+  subtotal = (quantity * unitPrice);
+  tax = (subtotal * rate);
+  (subtotal + tax)
+}
+--- a block of bindings, width 80
+{ subtotal = (quantity * unitPrice); tax = (subtotal * rate); (subtotal + tax) }
+--- a block of bindings, on one line
+{ subtotal = (quantity * unitPrice); tax = (subtotal * rate); (subtotal + tax) }
+--- an if with an if in its else branch, width 20
+if (subtotal <= 100) {
+  subtotal
+} else {
+  if (
+    subtotal <=
+    1000
+  ) {
+    discounted(
+      subtotal,
+      5
+    )
+  } else {
+    discounted(
+      subtotal,
+      10
+    )
+  }
+}
+--- an if with an if in its else branch, width 40
+if (subtotal <= 100) {
+  subtotal
+} else {
+  if (subtotal <= 1000) {
+    discounted(subtotal, 5)
+  } else {
+    discounted(subtotal, 10)
+  }
+}
+--- an if with an if in its else branch, width 80
+if (subtotal <= 100) {
+  subtotal
+} else {
+  if (subtotal <= 1000) {
+    discounted(subtotal, 5)
+  } else {
+    discounted(subtotal, 10)
+  }
+}
+--- an if with an if in its else branch, on one line
+if (subtotal <= 100) { subtotal } else { if (subtotal <= 1000) { discounted(subtotal, 5) } else { discounted(subtotal, 10) } }
+--- a match with every pattern, width 20
+match value {
+  _ -> "anything",
+  amount -> amount,
+  0 -> "zero",
+  "none" -> "none",
+  #empty -> "empty",
+  #cons(head, _) -> head,
+  #err(code: c, line: 3) -> c,
+  (only,) -> only,
+  () -> "unit",
+  (x, (_, y)) -> (
+    x +
+    y
+  ),
+  #_ -> "failed",
+  (is int) -> "an integer"
+}
+--- a match with every pattern, width 40
+match value {
+  _ -> "anything",
+  amount -> amount,
+  0 -> "zero",
+  "none" -> "none",
+  #empty -> "empty",
+  #cons(head, _) -> head,
+  #err(code: c, line: 3) -> c,
+  (only,) -> only,
+  () -> "unit",
+  (x, (_, y)) -> (x + y),
+  #_ -> "failed",
+  (is int) -> "an integer"
+}
+--- a match with every pattern, width 80
+match value {
+  _ -> "anything",
+  amount -> amount,
+  0 -> "zero",
+  "none" -> "none",
+  #empty -> "empty",
+  #cons(head, _) -> head,
+  #err(code: c, line: 3) -> c,
+  (only,) -> only,
+  () -> "unit",
+  (x, (_, y)) -> (x + y),
+  #_ -> "failed",
+  (is int) -> "an integer"
+}
+--- a match with every pattern, on one line
+match value { _ -> "anything", amount -> amount, 0 -> "zero", "none" -> "none", #empty -> "empty", #cons(head, _) -> head, #err(code: c, line: 3) -> c, (only,) -> only, () -> "unit", (x, (_, y)) -> (x + y), #_ -> "failed", (is int) -> "an integer" }
+--- a family, width 20
+fam(
+  lines,
+  line -> (
+    quantity *
+    price
+  )
+)
+--- a family, width 40
+fam(lines, line -> (quantity * price))
+--- a family, width 80
+fam(lines, line -> (quantity * price))
+--- a family, on one line
+fam(lines, line -> (quantity * price))
+--- reindexes with each witness, width 20
+(
+  reindex(
+    orders,
+    (k, v) -> path(
+      v["customer"],
+      k
+    ),
+    (k, v) -> v,
+    witness: residue
+  ),
+  reindex(
+    pairs,
+    swap,
+    same,
+    witness: catalog("swap")
+  )
+)
+--- reindexes with each witness, width 40
+(
+  reindex(
+    orders,
+    (k, v) -> path(v["customer"], k),
+    (k, v) -> v,
+    witness: residue
+  ),
+  reindex(
+    pairs,
+    swap,
+    same,
+    witness: catalog("swap")
+  )
+)
+--- reindexes with each witness, width 80
+(
+  reindex(
+    orders,
+    (k, v) -> path(v["customer"], k),
+    (k, v) -> v,
+    witness: residue
+  ),
+  reindex(pairs, swap, same, witness: catalog("swap"))
+)
+--- reindexes with each witness, on one line
+(reindex(orders, (k, v) -> path(v["customer"], k), (k, v) -> v, witness: residue), reindex(pairs, swap, same, witness: catalog("swap")))
+--- a discard, width 20
+discard(
+  orders,
+  (k, o) -> (
+    o["open"] ==
+    true
+  )
+)
+--- a discard, width 40
+discard(
+  orders,
+  (k, o) -> (o["open"] == true)
+)
+--- a discard, width 80
+discard(orders, (k, o) -> (o["open"] == true))
+--- a discard, on one line
+discard(orders, (k, o) -> (o["open"] == true))
+--- folds with and without an identity, width 20
+(
+  fold(
+    lineTotals,
+    (+),
+    identity: 0,
+    depth: 2,
+    ev: {
+      associative: axiom,
+      commutative: proved
+    }
+  ),
+  fold(
+    prices,
+    max,
+    depth: 1,
+    ev: {}
+  )
+)
+--- folds with and without an identity, width 40
+(
+  fold(
+    lineTotals,
+    (+),
+    identity: 0,
+    depth: 2,
+    ev: {
+      associative: axiom,
+      commutative: proved
+    }
+  ),
+  fold(prices, max, depth: 1, ev: {})
+)
+--- folds with and without an identity, width 80
+(
+  fold(
+    lineTotals,
+    (+),
+    identity: 0,
+    depth: 2,
+    ev: { associative: axiom, commutative: proved }
+  ),
+  fold(prices, max, depth: 1, ev: {})
+)
+--- folds with and without an identity, on one line
+(fold(lineTotals, (+), identity: 0, depth: 2, ev: { associative: axiom, commutative: proved }), fold(prices, max, depth: 1, ev: {}))
+--- fixes of each kind, width 20
+(
+  fix(
+    start,
+    reachableStep,
+    join: union,
+    ev: {
+      associative: axiom,
+      commutative: proved
+    }
+  ),
+  fix(
+    indices,
+    (this, k) -> this(
+      (k - 1)
+    ),
+    definedness,
+    ev: {}
+  )
+)
+--- fixes of each kind, width 40
+(
+  fix(
+    start,
+    reachableStep,
+    join: union,
+    ev: {
+      associative: axiom,
+      commutative: proved
+    }
+  ),
+  fix(
+    indices,
+    (this, k) -> this((k - 1)),
+    definedness,
+    ev: {}
+  )
+)
+--- fixes of each kind, width 80
+(
+  fix(
+    start,
+    reachableStep,
+    join: union,
+    ev: { associative: axiom, commutative: proved }
+  ),
+  fix(indices, (this, k) -> this((k - 1)), definedness, ev: {})
+)
+--- fixes of each kind, on one line
+(fix(start, reachableStep, join: union, ev: { associative: axiom, commutative: proved }), fix(indices, (this, k) -> this((k - 1)), definedness, ev: {}))
+--- generators with each guard position, width 20
+(
+  gen(
+    10,
+    n -> (n - 1),
+    n -> (0 < n),
+    guard: before
+  ),
+  gen(
+    state,
+    advance,
+    running,
+    guard: after
+  )
+)
+--- generators with each guard position, width 40
+(
+  gen(
+    10,
+    n -> (n - 1),
+    n -> (0 < n),
+    guard: before
+  ),
+  gen(
+    state,
+    advance,
+    running,
+    guard: after
+  )
+)
+--- generators with each guard position, width 80
+(
+  gen(10, n -> (n - 1), n -> (0 < n), guard: before),
+  gen(state, advance, running, guard: after)
+)
+--- generators with each guard position, on one line
+(gen(10, n -> (n - 1), n -> (0 < n), guard: before), gen(state, advance, running, guard: after))
+--- reading and pushing ports, width 20
+port.push(
+  stdout,
+  report(
+    port.read(stdin)
+  )
+)
+--- reading and pushing ports, width 40
+port.push(
+  stdout,
+  report(port.read(stdin))
+)
+--- reading and pushing ports, width 80
+port.push(stdout, report(port.read(stdin)))
+--- reading and pushing ports, on one line
+port.push(stdout, report(port.read(stdin)))
+--- nested forms, width 20
+{
+  byRegion = reindex(
+    discard(
+      sales,
+      s -> (
+        s ==
+        week
+      )
+    ),
+    (k, s) -> path(
+      s["region"],
+      k
+    ),
+    (k, s) -> s,
+    witness: residue
+  );
+  match byRegion[
+    "north"
+  ] {
+    #_ -> 0,
+    f -> fold(
+      f,
+      (+),
+      identity: 0,
+      depth: 1,
+      ev: {}
+    )
+  }
+}
+--- nested forms, width 40
+{
+  byRegion = reindex(
+    discard(sales, s -> (s == week)),
+    (k, s) -> path(s["region"], k),
+    (k, s) -> s,
+    witness: residue
+  );
+  match byRegion["north"] {
+    #_ -> 0,
+    f -> fold(
+      f,
+      (+),
+      identity: 0,
+      depth: 1,
+      ev: {}
+    )
+  }
+}
+--- nested forms, width 80
+{
+  byRegion = reindex(
+    discard(sales, s -> (s == week)),
+    (k, s) -> path(s["region"], k),
+    (k, s) -> s,
+    witness: residue
+  );
+  match byRegion["north"] {
+    #_ -> 0,
+    f -> fold(f, (+), identity: 0, depth: 1, ev: {})
+  }
+}
+--- nested forms, on one line
+{ byRegion = reindex(discard(sales, s -> (s == week)), (k, s) -> path(s["region"], k), (k, s) -> s, witness: residue); match byRegion["north"] { #_ -> 0, f -> fold(f, (+), identity: 0, depth: 1, ev: {}) } }
