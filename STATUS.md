@@ -1203,21 +1203,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-nested-sq | orch attempt  | 2026-11-05 19:20 | queued: nested atoms O(n^2) in the checker, from the ATOM-payload-fn merge |
+| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | started; worktree created from origin/main and seeded |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BIT-memo-test | impl attempt 1 | 2026-11-03 16:32 | started; worktree /home/luke/Work/wt/bit-memo-test at origin/main ab40a46f |
+| BIT-memo-test | impl attempt 1 | 2026-11-03 16:32 | control (Ck::known memo cleared at each call) fails both checker-alone tests: nest 51.8x work/45.9x bytes at 80/640, chain 57.9x/53.5x (load 25); at old sizes c |
 | CASES-xr1 | impl attempt 1 | 2026-11-05 04:07 | done: 6a4b698f on wt/cases-xr1 (rebased on origin/main, clean); l01_08_parser 134 pass, m0_03 55 pass, cases tool 431 wrong 0, clippy clean; load 25.95 35.09 43 |
-| CONST-wide-addr | merge attempt  | 2026-11-05 18:05 | started; branch 6dc79562 is 14 behind origin/main (main canon::VERSION already 3, Z24 taken); rebasing |
+| CONST-wide-addr | merge attempt  | 2026-11-05 18:05 | rebased on 05f4d9f4 (conflicts: canon VERSION, pins, COMPLEXITY, STATUS); VERSION now 4 (main had 3 from PRIM-hidden-names), row Z25, pins recomputed d2e1a8db/c |
 | HULL3-subsumed | impl attempt 1 | 2026-11-03 12:22 | shifted tangent lens (unit side, box misses), decide, instructions n=64/256/1024: hull3 first 355M/2,198M/11,712M, live3 alone 941M/4,092M/7,163M; wall 66ms/1.6 |
 | LOWER-legalize | merge attempt 2 | 2026-11-05 04:07 | started: verify and merge repair 1 (4803fe19, spec 0157f5a); load 54.48 59.26 68.14 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| OMEGA-cycle-growth | impl attempt 1 | 2026-11-05 17:03 | done: commit a394f1d1 on wt/omega-cycle-growth (rebased on c3a09472, utvpi::components conflict resolved to the new generic signature); l01_38 names/live3/omega |
 | orch | running | 2026-11-05 18:05 | LIT-plain merged 4a610db6; PREIMAGE-timeout ed89e9d4 and M0.8-test-text e0b0e294 merged; QUESTIONS A14 (LIT-if-print) and A15 (LIT-eq-kind) added; queued L01-35 |
 | REPLACE-shared-rows | impl attempt 1 | 2026-11-05 17:26 | rebased again on main (PRIM-hidden-names took F96), row now F97, commit e4404192; docs-only upstream change, the four item tests rerun and pass; not pushed |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T2-types-rest | merge attempt 1 | 2026-11-03 09:40 | merged and pushed part 2(a) as 680389c6 (main 4602fb26..680389c6), MERGED FIRST before EMPTY-key-closure: that branch must rebase over the empty.rs rewrite (fin |
+| T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | started part 3 (b,e,c,d,f) in fresh worktree from origin/main 654e453f; load 26.06 31.51 40.98 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
-| TUPLE-dyn-index | orch attempt  | 2026-11-05 19:29 | queued: tuple index by a non-literal is refused by the evaluator |
+| TUPLE-dyn-index | impl attempt 1 | 2026-11-05 19:29 | started; worktree wt/tuple-dyn-index from origin/main |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
