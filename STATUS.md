@@ -1206,18 +1206,23 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | started; worktree created from origin/main and seeded |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BIT-memo-test | impl attempt 1 | 2026-11-03 16:32 | control (Ck::known memo cleared at each call) fails both checker-alone tests: nest 51.8x work/45.9x bytes at 80/640, chain 57.9x/53.5x (load 25); at old sizes c |
-| CASES-xr1 | impl attempt 1 | 2026-11-05 04:07 | done: 6a4b698f on wt/cases-xr1 (rebased on origin/main, clean); l01_08_parser 134 pass, m0_03 55 pass, cases tool 431 wrong 0, clippy clean; load 25.95 35.09 43 |
+| BIT-memo-test | merge attempt 1 | 2026-11-03 16:32 | started: verifying 13be9922 (tests only, l01_39a scaling sizes 80/640); branch current with origin/main 3997ffc7; plain cargo (no build/ZCARGO) |
+| CASES-xr1 | merge attempt  | 2026-11-05 04:07 | verified 6a4b698f: cases 431 wrong 0 against /home/luke/Work/zed; l01_08_parser 134 pass; m0_03 54 pass 1 fail (cite: STATUS.md:514 sec:operators, pre-existing  |
 | CONST-wide-addr | merge attempt  | 2026-11-05 18:05 | rebased on 05f4d9f4 (conflicts: canon VERSION, pins, COMPLEXITY, STATUS); VERSION now 4 (main had 3 from PRIM-hidden-names), row Z25, pins recomputed d2e1a8db/c |
-| HULL3-subsumed | impl attempt 1 | 2026-11-03 12:22 | shifted tangent lens (unit side, box misses), decide, instructions n=64/256/1024: hull3 first 355M/2,198M/11,712M, live3 alone 941M/4,092M/7,163M; wall 66ms/1.6 |
-| LOWER-legalize | merge attempt 2 | 2026-11-05 04:07 | started: verify and merge repair 1 (4803fe19, spec 0157f5a); load 54.48 59.26 68.14 |
+| FLOAT-minmax | impl attempt 1 | 2026-11-05 04:07 | edits in (kernel ieee min/max, Law::Selective + f64 laws, codegen fmin/fmax, tests); building, load 46.01 43.67 41.67 |
+| ISSUE1-passby-scale | impl attempt 1 | 2026-11-04 00:20 | started; worktree created from origin/main 3997ffc7 and seeded |
+| LIT-menu-minus | impl attempt 1 | 2026-11-05 18:21 | started; worktree created from origin/main and seeded |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | orch | running | 2026-11-05 18:05 | LIT-plain merged 4a610db6; PREIMAGE-timeout ed89e9d4 and M0.8-test-text e0b0e294 merged; QUESTIONS A14 (LIT-if-print) and A15 (LIT-eq-kind) added; queued L01-35 |
+| P14-dup-scale | impl attempt 1 | 2026-11-05 08:27 | started; creating worktree wt/p14-dup-scale from origin/main |
 | REPLACE-shared-rows | impl attempt 1 | 2026-11-05 17:26 | rebased again on main (PRIM-hidden-names took F96), row now F97, commit e4404192; docs-only upstream change, the four item tests rerun and pass; not pushed |
+| S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | started; worktree wt/s22-more-scales from origin/main, seeded |
+| SLABS-count | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/slabs-count from origin/main 3997ffc7 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | started part 3 (b,e,c,d,f) in fresh worktree from origin/main 654e453f; load 26.06 31.51 40.98 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
-| TUPLE-dyn-index | impl attempt 1 | 2026-11-05 19:29 | started; worktree wt/tuple-dyn-index from origin/main |
+| TUPLE-dyn-index | impl attempt 1 | 2026-11-05 19:29 | checker tuple_at + evaluator tuple apply/TupleGet #notFound written; building |
+| VALUE-one-tuple | impl attempt 1 | 2026-11-05 04:07 | started; worktree created from origin/main and seeded |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
