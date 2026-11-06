@@ -70,6 +70,53 @@ fn the_text_of_a_list_type_nested_deep_is_made() {
     assert!(t.surface().to_string().len() > DEPTH);
 }
 
+#[path = "debug_samples.rs"]
+mod debug_samples;
+
+#[test]
+fn debug_writes_the_derived_text() {
+    // debug_text.txt is the text the derived `Debug`s wrote, a recursion, for these types.
+    let expected = include_str!("debug_text.txt");
+    let samples = debug_samples::samples();
+    assert_eq!(samples.len(), expected.lines().count());
+    for (t, line) in samples.iter().zip(expected.lines()) {
+        assert_eq!(format!("{t:?}"), line);
+        // On one line under `{:#?}` too, as `Value`'s and `Term`'s `Debug` write it.
+        assert_eq!(format!("{t:#?}"), line);
+    }
+}
+
+/// How deep the types whose `Debug` text is made go: each level of a list type writes about
+/// 1,000 bytes. The recursion of the derived `Debug`s overflowed the 2 MiB stack at 2,000 levels of a list or a
+/// curried function and at 1,000 of a numeral.
+const DEBUG_DEPTH: usize = 20_000;
+
+#[test]
+fn the_debug_text_of_types_nested_deep_is_made() {
+    let text = format!("{:?}", list(DEBUG_DEPTH));
+    // Each level is a type with one tuple length, and the integers of each row are one more.
+    assert_eq!(text.matches("Type(").count(), 2 * DEBUG_DEPTH + 1);
+    assert!(text.ends_with("morphisms: Bdd(false) }))"));
+    let text = format!("{:?}", numeral(DEBUG_DEPTH));
+    assert_eq!(text.matches("\"succ\": AtomPart").count(), DEBUG_DEPTH);
+    let text = format!("{:?}", curried(DEBUG_DEPTH));
+    assert_eq!(text.matches("Morphism { guarantee: ").count(), DEBUG_DEPTH);
+}
+
+#[test]
+fn the_debug_text_of_a_deep_type_scales() {
+    scales_at(
+        "the Debug text of a list type n deep",
+        2_000,
+        |n, i| list_on(i, n),
+        |n, t| {
+            let text = format!("{t:?}");
+            assert!(text.len() > n);
+            (t, text.len())
+        },
+    );
+}
+
 #[test]
 fn a_numeral_type_nested_deep_is_built_compared_and_released() {
     let n = numeral(DEPTH);

@@ -23,6 +23,7 @@
 
 mod bdd;
 pub mod bes;
+mod debug;
 mod empty;
 pub use empty::{Refusal, Verdict};
 mod print;
@@ -45,7 +46,7 @@ use bdd::{Form, Part};
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
 /// types are ordered without reading their contents unless their digests are equal, and then by
 /// the loop of `bdd::order`, which reads the contents with a stack of its own.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Type(Arc<Node>);
 
 impl Ord for Type {
@@ -160,15 +161,6 @@ pub(crate) fn lit_text(v: &Value) -> String {
 enum Node {
     Parts(Parts, Shown),
     Rec(Rec),
-}
-
-impl fmt::Debug for Node {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Node::Parts(p, _) => f.debug_tuple("Parts").field(p).finish(),
-            Node::Rec(r) => f.debug_tuple("Rec").field(r).finish(),
-        }
-    }
 }
 
 /// A node's parts and text are freed in a loop (module `deep`), so a type nested deep is freed
@@ -286,7 +278,7 @@ impl Universe {
 }
 
 /// A morphism type: `(guarantee ⊆ dom ⊆ permission) -> value`.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Morphism {
     /// The keys certainly present.
     pub guarantee: Type,
@@ -366,12 +358,6 @@ impl PartialEq for Row {
 }
 
 impl Eq for Row {}
-
-impl fmt::Debug for Row {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.1.fmt(f)
-    }
-}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Parts {

@@ -65,7 +65,7 @@ type Table<A> = BTreeMap<(A, u64, u64), Arc<Branch<A>>>;
 pub(super) type NodeView<'a, A> = (u64, &'a A, &'a Bdd<A>, &'a Bdd<A>);
 
 /// The atoms of a universe, each kind with its thread's table of nodes.
-pub(super) trait Literal: Ord + Clone + 'static {
+pub(super) trait Literal: Ord + Clone + super::debug::Queue + 'static {
     fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R;
     /// A hash of the atom, equal for equal atoms.
     fn digest(&self) -> u64;
@@ -602,7 +602,7 @@ impl<A: Literal> Bdd<A> {
 
 /// A tuple part of one length, or the morphism part: a diagram, or, when a connective's diagram
 /// would have more nodes than its operands together, the connective applied to its operands.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) enum Part<A: Literal> {
     Bdd(Bdd<A>),
     Expr(Arc<Expr<A>>),
@@ -617,7 +617,6 @@ pub(super) struct Expr<A: Literal> {
     complement: std::sync::OnceLock<Part<A>>,
 }
 
-#[derive(Debug)]
 pub(super) enum Form<A: Literal> {
     Not(Part<A>),
     Or(Part<A>, Part<A>),
@@ -1830,7 +1829,7 @@ impl<A: Literal> PartialEq for Expr<A> {
 
 impl<A: Literal> Eq for Expr<A> {}
 
-impl<A: Literal + fmt::Debug> fmt::Debug for Expr<A> {
+impl<A: Literal> fmt::Debug for Expr<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.form.fmt(f)
     }
@@ -1855,20 +1854,6 @@ impl<A: Literal> PartialEq for Bdd<A> {
 }
 
 impl<A: Literal> Eq for Bdd<A> {}
-
-impl<A: Literal + fmt::Debug> fmt::Debug for Bdd<A> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Bdd::Leaf(b) => write!(f, "{b}"),
-            Bdd::Node(n) => f
-                .debug_tuple("Node")
-                .field(&n.atom)
-                .field(&n.hi)
-                .field(&n.lo)
-                .finish(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
