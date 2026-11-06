@@ -526,7 +526,6 @@ impl<'a> Elab<'a> {
         let Some(at) = info.passes.get(&input.span) else {
             return Term::App(callee, args);
         };
-        let at: HashMap<Span, &KType> = at.iter().map(|(s, k)| (*s, k)).collect();
         let spans: Vec<Span> = match (&input.kind, f.params.len()) {
             (ExprKind::Tuple(items), n) if n != 1 => items.iter().map(|e| e.span).collect(),
             _ => vec![input.span],
@@ -534,7 +533,7 @@ impl<'a> Elab<'a> {
         let mut lets = Vec::with_capacity(at.len());
         let mut ks = Vec::with_capacity(at.len());
         for (a, s) in args.iter_mut().zip(&spans) {
-            if let Some(&k) = at.get(s) {
+            if let Some(k) = at.get(s) {
                 let t = self.temp();
                 lets.push((t.clone(), std::mem::replace(a, Term::Var(t))));
                 ks.push(k);
@@ -746,7 +745,7 @@ impl<'a> Elab<'a> {
     /// The call `e`, some of whose arguments, at `at`, hold loose atoms their parameter does not
     /// take (rule 6 of sec:type_resolution): the arguments are bound first, and an atom in any
     /// of them is the call's value, those of several merged as a primitive merges them.
-    fn passes(&mut self, m: &mut M<'a>, e: &'a Expr, at: &'a [(Span, KType)]) {
+    fn passes(&mut self, m: &mut M<'a>, e: &'a Expr, at: &'a HashMap<Span, KType>) {
         let mut args: Vec<&'a Expr> = Vec::new();
         if let ExprKind::Call {
             callee,
@@ -763,7 +762,7 @@ impl<'a> Elab<'a> {
         }
         let args = args
             .into_iter()
-            .filter_map(|a| at.iter().find(|(s, _)| *s == a.span).map(|(_, k)| (a, k)))
+            .filter_map(|a| at.get(&a.span).map(|k| (a, k)))
             .collect();
         let pf = PassF {
             e,

@@ -311,6 +311,37 @@ fn a_call_through_a_value_naming_many_arguments_scales() {
     assert_eq!(e, ["`(d0: int, d1: int) -> int` has no parameter `d2` [1]"]);
 }
 
+/// A function of `n` parameters declared `String`, and `g` calling it once on `n` arguments
+/// that may each be a string, `#a` or `#b`, so that each passes its atoms by.
+fn passing_many_arguments(n: usize) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("positional x{i}: String")).collect();
+    format!(
+        "h({}) = x0;\n\
+         g(positional k) = {{ v = if k == 1 {{ #a }} else {{ if k == 2 {{ #b }} else {{ \"s\" }} }}; h({}) }};\n",
+        params.join(", "),
+        vec!["v"; n].join(", ")
+    )
+}
+
+#[test]
+fn a_call_passing_the_atoms_of_many_arguments_by_scales() {
+    // Each argument found its atoms by a search of the call's recorded entries; they are now a
+    // map by argument span (PASS-at-args). The search costs a few instructions an entry
+    // against about 26,000 an argument for elaboration, so it shows only from 4,000
+    // arguments: 35.9 times the work at 4,000 and 32,000, and 14.7 at 1,000 and 8,000.
+    elaboration_scales(
+        "a call of n arguments that each pass atoms by",
+        4000,
+        passing_many_arguments,
+        "g",
+    );
+    // An atom passes by at the call and is its value; a string reaches the body.
+    for (k, want) in [(1, "#a"), (2, "#b"), (3, "\"s\"")] {
+        let text = format!("{}y = g({k});\n", passing_many_arguments(3));
+        assert_eq!(value(&text, "y"), want);
+    }
+}
+
 #[test]
 fn ordering_a_function_with_many_rows_scales() {
     // Each use in a row was tested against every row of the function.

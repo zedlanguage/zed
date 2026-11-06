@@ -831,6 +831,50 @@ fn many_calls_passing_some_atoms_of_their_argument_by_scale() {
     }
 }
 
+/// A function of `n` parameters declared `String`, and one call of it whose arguments are
+/// `args(i)`; `v` may be a string, `#a` or `#b`.
+fn one_call_of_many_arguments(n: usize, args: impl Fn(usize) -> &'static str) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("positional x{i}: String")).collect();
+    let args: Vec<&str> = (0..n).map(args).collect();
+    format!(
+        "h({}) = x0;\n\
+         g(positional k) = {{ v = if k == 1 {{ #a }} else {{ if k == 2 {{ #b }} else {{ \"s\" }} }}; h({}) }};\n",
+        params.join(", "),
+        args.join(", ")
+    )
+}
+
+#[test]
+fn one_call_passing_the_atoms_of_many_arguments_by_scales() {
+    // No parameter takes an atom, so each argument `v` passes `#a` and `#b` by. `Ck::pass_at`
+    // copied the call's list of entries for each such argument and searched it, so one call of
+    // n arguments cost n^2 (PASS-at-args); the entries are now a map by argument span.
+    let passed = |text: &str| {
+        let (i, _) = info(text);
+        assert!(i.errors.is_empty(), "{:?}", i.errors);
+        i.passes.values().map(|at| at.len()).sum::<usize>()
+    };
+    assert_eq!(passed(&one_call_of_many_arguments(3, |_| "v")), 3);
+    // An argument with no atom passes nothing by.
+    let some = one_call_of_many_arguments(5, |i| if i % 2 == 0 { "v" } else { "\"s\"" });
+    assert_eq!(passed(&some), 3);
+    // A call with no arguments passes nothing by, and records no entry.
+    let (i, _) = info("h() = \"s\";\ng(positional k) = h();\n");
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    assert!(i.passes.is_empty());
+    let units = resolved(1000, |n| one_call_of_many_arguments(n, |_| "v"));
+    scaling::check(
+        "one call of n arguments that each pass atoms by",
+        1000,
+        |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+            assert_eq!(info.passes.len(), 1);
+            assert_eq!(info.passes.values().map(|at| at.len()).sum::<usize>(), n);
+        },
+    );
+}
+
 /// `curried_sums(n)` and `y = g(0)(1)…(n);`: a chain of n calls on one value, each through
 /// the function the call before gives.
 fn call_chain(n: usize) -> String {

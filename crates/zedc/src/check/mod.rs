@@ -168,8 +168,9 @@ pub struct Info {
     pub tops: HashMap<String, Ty>,
     /// For each call of a function, the arguments whose loose atoms its parameter does not
     /// take: an atom there selects no arrow and is the call's value (rule 6 of
-    /// sec:type_resolution), by the call's span and the arguments' spans.
-    pub passes: HashMap<Span, Vec<(Span, KType)>>,
+    /// sec:type_resolution), by the call's span and the arguments' spans. A call has an entry
+    /// only while one of its arguments passes atoms by.
+    pub passes: HashMap<Span, HashMap<Span, KType>>,
     /// For each `*`, whether `/` is defined wherever the checker typed it: each type it gave
     /// the product holds no `int` (step L25.8, the `*` to `/` mutant).
     pub quotients: HashMap<Span, bool>,
@@ -2010,13 +2011,12 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Records that the call at `span` passes by the atoms `k` of its argument at `at`.
     fn pass_at(&mut self, span: Span, at: Span, k: &KType) {
-        let mut v = self.info.passes.get(&span).cloned().unwrap_or_default();
-        match v.iter_mut().find(|(s, _)| *s == at) {
-            Some((_, old)) if (k - &*old).is_empty() => return,
-            Some((_, old)) => *old = &*old | k,
-            None => v.push((at, k.clone())),
-        }
-        self.put(Undo::Passes(span, Some(v)));
+        let k = match self.info.passes.get(&span).and_then(|m| m.get(&at)) {
+            Some(old) if (k - old).is_empty() => return,
+            Some(old) => old | k,
+            None => k.clone(),
+        };
+        self.put(Undo::Passes(span, at, Some(k)));
     }
 
     /// Checks the needs of `sig`, named `what`, at a call at `span` that binds its variables
@@ -4665,7 +4665,8 @@ enum Undo {
     Fit(Span, Option<Fit>),
     Sig(usize, Option<Arc<Sig>>),
     Top(String, Option<Ty>),
-    Passes(Span, Option<Vec<(Span, KType)>>),
+    /// The atoms the call at the first span passes by at its argument at the second.
+    Passes(Span, Span, Option<KType>),
     Follows(Span, Option<Vec<(Carrier, Value)>>),
     Witness(Span, Option<usize>),
     /// A class, while a repair is tried.
@@ -4713,7 +4714,16 @@ impl Ck<'_, '_> {
                 let old = set!(i.tops, k, v);
                 Undo::Top(k, old)
             }
-            Undo::Passes(k, v) => Undo::Passes(k, set!(i.passes, k, v)),
+            Undo::Passes(k, at, v) => {
+                // One argument's entry, so that a write costs one entry and not the call's
+                // whole list (PASS-at-args); a call whose last entry goes has none.
+                let call = i.passes.entry(k).or_default();
+                let old = set!(call, at, v);
+                if call.is_empty() {
+                    i.passes.remove(&k);
+                }
+                Undo::Passes(k, at, old)
+            }
             Undo::Follows(k, v) => Undo::Follows(k, set!(i.follows, k, v)),
             Undo::Witness(k, v) => Undo::Witness(k, set!(i.witness, k, v)),
             Undo::Class(..) => unreachable!("a class is set above"),
