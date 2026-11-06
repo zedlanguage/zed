@@ -738,7 +738,7 @@ fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
 
 /// The program's result: its value, after the result is dropped and no cell is left live.
 /// Under feature `counts`, a run that leaves cells live names them, and every run is counted
-/// for [`counted`], with what it left live, whichever way it ended.
+/// for `counted`, with what it left live, whichever way it ended.
 pub(crate) fn finish(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
     let r = result(t, s, w);
     #[cfg(feature = "counts")]

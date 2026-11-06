@@ -55,7 +55,7 @@ pub struct Outcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {
     /// `none`, with the `single_pass` register allocator: each pass is linear in the size of a
-    /// function. [`run`] and [`object`] use it.
+    /// function. [`run`] and [`object()`] use it.
     None,
     /// `speed`, with the `backtracking` register allocator: Cranelift's optimizing settings,
     /// whose passes grow faster than the size of a function. Tests compare it with `None`.
@@ -209,7 +209,7 @@ pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
 }
 
 /// The object file of an executable that runs the lowered graph `g`, planned with `fuse`, with
-/// `main`'s ports `ports` (step L1.36a): [`object`]'s code for `g` legalized, the program as
+/// `main`'s ports `ports` (step L1.36a): [`object()`]'s code for `g` legalized, the program as
 /// data, and a C `main` that passes both, with the command line, to the runtime library's
 /// start. The data holds `g` as lowered, since ZIR's binary form does not record which nodes
 /// legalization swapped; the start legalizes and plans it again, as this does.
@@ -242,7 +242,7 @@ fn object_module() -> Result<ObjectModule, String> {
 pub const EXPANSIONS: Expansions =
     Expansions::of(&[Expansion::Derived, Expansion::Gt, Expansion::Ge]);
 
-/// `g` legalized for this back end: what [`run`] and [`object`] take, with a plan of its graph.
+/// `g` legalized for this back end: what [`run`] and [`object()`] take, with a plan of its graph.
 pub fn legalize(g: Region) -> Legalized {
     zedc::zir::legalize::legalize(g, EXPANSIONS)
 }

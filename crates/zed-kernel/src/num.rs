@@ -251,7 +251,7 @@ impl Rat {
         format!("{sign}{}", digits(self.num.magnitude(), pows.collect()))
     }
 
-    /// `Ok` when the system gives the memory to write its digits ([`Rat::text_ask`]); else
+    /// `Ok` when the system gives the memory to write its digits (`Rat::text_ask`); else
     /// [`TooLarge`] naming that memory, before anything is built.
     pub fn text_room(&self) -> Result<(), TooLarge> {
         room(self.text_ask())
