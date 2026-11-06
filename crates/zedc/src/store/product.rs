@@ -1815,18 +1815,21 @@ impl Scope {
     /// fixed point the steps tend to, and the worklist stops. That is an event of the
     /// projection, not a count of steps or a size.
     fn project_block(&mut self, b: &Block) {
-        let at = self.snapshot(&b.names);
+        // Each part is compared with the snapshot of its own names, not the block's: a part
+        // new to the block, or a name of another part, leaves it as it was, so a new conjunct
+        // costs its own part and not the block's (the walk through a shared name).
+        let names: Vec<Vec<Arc<str>>> = b.parts.iter().map(|(_, g)| syms(g)).collect();
         let mut work: std::collections::VecDeque<usize> = b
             .parts
             .iter()
+            .zip(&names)
             .enumerate()
-            .filter(|(_, (key, _))| self.projected.get(key) != Some(&at))
+            .filter(|(_, ((key, _), ns))| self.projected.get(key) != Some(&self.snapshot(ns)))
             .map(|(i, _)| i)
             .collect();
         if work.is_empty() {
             return;
         }
-        let names: Vec<Vec<Arc<str>>> = b.parts.iter().map(|(_, g)| syms(g)).collect();
         let mut users: BTreeMap<&Arc<str>, Vec<usize>> = BTreeMap::new();
         for (i, ns) in names.iter().enumerate() {
             for n in ns {
@@ -1867,9 +1870,9 @@ impl Scope {
                 break;
             }
         }
-        let at = self.snapshot(&b.names);
-        for (key, _) in &b.parts {
-            self.projected.insert(key.clone(), at.clone());
+        for ((key, _), ns) in b.parts.iter().zip(&names) {
+            let at = self.snapshot(ns);
+            self.projected.insert(key.clone(), at);
         }
     }
 

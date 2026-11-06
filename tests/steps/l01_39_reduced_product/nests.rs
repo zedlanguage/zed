@@ -430,34 +430,40 @@ fn a_walk_through_a_shared_name_reaches_the_fixed_point_in_quadratic_time() {
             },
         );
         let s = ints(&names(&all)).assume(&bounds, true, &p);
-        let clauses = (0..n - 1)
+        let each: Vec<Term> = (0..n - 1)
             .map(|i| {
                 or(
                     prim(Prim::Le, prim(Prim::Add, var(&vs[i]), var("w")), int(0)),
                     diff_ge(&vs[i + 1], "w", 1),
                 )
             })
-            .reduce(and)
-            .expect("two names");
-        (s, clauses, vs[n - 1].clone())
+            .collect();
+        let clauses = each.iter().cloned().reduce(and).expect("two names");
+        let reversed = each.into_iter().rev().reduce(and).expect("two names");
+        (s, clauses, reversed, vs[n - 1].clone())
     };
     let start = diff_ge("v0", "w", 1);
     for n in [3, 8, 20] {
-        let (s, clauses, last) = build(n);
+        let (s, clauses, reversed, last) = build(n);
         let r = s.assume(&clauses, true, &p).assume(&start, true, &p);
         let mut f = r.clone();
         f.forget_projections();
         f.reduce();
         assert_eq!(r.get(&last), f.get(&last), "n = {n}");
+        // The clauses in the other order, and the start before them, give the same scope.
+        let back = s.assume(&reversed, true, &p).assume(&start, true, &p);
+        assert_eq!(back.get(&last), f.get(&last), "n = {n}, reversed");
+        let first = s.assume(&start, true, &p).assume(&clauses, true, &p);
+        assert_eq!(first.get(&last), f.get(&last), "n = {n}, start first");
         assert!(
             !r.bottom && !r.get(&last).contains(&Value::Int(0)),
             "n = {n}: {r}"
         );
     }
-    let built: BTreeMap<usize, (Scope, Term, String)> =
+    let built: BTreeMap<usize, (Scope, Term, Term, String)> =
         [5, 40].into_iter().map(|n| (n, build(n))).collect();
     scaling::check_order("a walk of n clauses through a shared name", 5, 2, |n| {
-        let (s, clauses, _) = &built[&n];
+        let (s, clauses, _, _) = &built[&n];
         s.assume(clauses, true, &p).assume(&start, true, &p);
     });
 }

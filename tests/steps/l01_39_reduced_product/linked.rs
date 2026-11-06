@@ -597,3 +597,58 @@ fn if_statements_on_skip_links_of_a_chain_take_time_near_their_number() {
         });
     });
 }
+
+/// The chain `x_i - x_(i+1) >= 1` with every rung `x_i - x_(i+2) >= 2`: one block of 2k
+/// difference constraints.
+fn ladder(k: usize, p: &Premises) -> Scope {
+    let (s, chain) = shape("chain", k);
+    let n = named(k + 1, "x");
+    let s = chain.iter().fold(s, |s, t| s.assume(t, true, p));
+    (0..k - 1).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 2], 2), true, p))
+}
+
+#[test]
+fn one_test_on_a_ladder_takes_time_near_its_size() {
+    // The block's bounds come from one shortest-path pass over its difference constraints
+    // (`presburger::difference_hulls`), not O(log d) solver questions per name, each over
+    // the whole block (COMPLEXITY.md S25: 19/80/359/1,680 M at k = 10/20/40/80).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Term)> = [10, 80]
+        .into_iter()
+        .map(|k| {
+            let n = named(k + 1, "x");
+            (k, (ladder(k, &p), ge(&n[0], &n[k], k as i64)))
+        })
+        .collect();
+    scaling::check("one test on a ladder of k rungs", 10, |k| {
+        let (s, t) = &built[&k];
+        s.assume(t, true, &p);
+    });
+}
+
+#[test]
+fn a_ladder_grown_by_k_if_statements_is_quadratic() {
+    // Each `if x_i - x_(i+2) >= 2` on the chain is implied, so its join keeps the true arm and
+    // the block grows by one rung; each projection reads the whole block, O(k), so k of them
+    // are O(k^2). Order 2 until the projection is incremental (COMPLEXITY.md S25); it was
+    // O(k^3) (16/89/608/4,869 M at k = 5/10/20/40).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [5, 40]
+        .into_iter()
+        .map(|k| {
+            let (s, chain) = shape("chain", k);
+            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+            let n = named(k + 1, "x");
+            let tests = (0..k - 1).map(|i| ge(&n[i], &n[i + 2], 2)).collect();
+            (k, (s, tests))
+        })
+        .collect();
+    scaling::check_order("a ladder grown by k if statements", 5, 2, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| {
+            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+            j.reduce();
+            j
+        });
+    });
+}

@@ -5835,10 +5835,28 @@ fn project_parts(
         .collect();
     let top = Formula::top();
     let base_of = |r: usize| bases.get(&r).unwrap_or(&top);
-    let mut out: Vec<Result<IntervalSet, Refusal>> = syms
-        .iter()
-        .map(|s| hull_from(base_of(group(s).expect("a symbol's group")), s, &model))
-        .collect();
+    // A group of difference constraints and bounds gives the hulls of all its atoms in one
+    // pass ([`difference_hulls`]); any other group, each hull by its own questions.
+    let mut differences: HashMap<usize, Option<HashMap<Atom, IntervalSet>>> = HashMap::new();
+    let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(syms.len());
+    for s in syms {
+        let g = group(s).expect("a symbol's group");
+        let found = match linked.held.get(g) {
+            Some(held) if !held.is_empty() => differences
+                .entry(g)
+                .or_insert_with(|| {
+                    let cs: Vec<&Con> = held.iter().map(|i| &linked.cons[*i]).collect();
+                    difference_hulls(&cs, &model)
+                })
+                .as_ref()
+                .and_then(|h| h.get(s).cloned()),
+            _ => None,
+        };
+        out.push(match found {
+            Some(h) => Ok(h),
+            None => hull_from(base_of(g), s, &model),
+        });
+    }
     // For each disjunction, its disjuncts with a point and their projections, each sorted by
     // symbol; read only to tighten a hull, so kept only with two disjunctions or more.
     let mut seen: Vec<Option<Vec<Projected>>> = Vec::new();
@@ -6236,6 +6254,110 @@ fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal>
         End::Fin(Num::from(&edge(&above, &at, &Int::ONE)?))
     };
     Ok(IntervalSet::range(lo, hi))
+}
+
+/// The hull of every atom of `cons`, constraints with a point `m`, when each is a difference
+/// constraint (`x - y + k >= 0`, `x - y + k == 0`) or a bound (`±x + k >= 0`, `x + k == 0`);
+/// `None` when one is not. Such rows are totally unimodular, so the integer points of the
+/// constraints with an atom fixed at any value between its least and greatest are found by the
+/// same constraints, and those two values are shortest paths: with a node `z` standing for 0,
+/// `y <= x + k` is an edge `x → y` of weight `k`, a bound is an edge to or from `z`, and an
+/// atom's greatest value is its distance from `z`, its least the negated distance to `z`
+/// (Shostak, "Deciding linear inequalities by computing loop residues", J. ACM 28, 1981).
+/// The point gives a potential under which no edge has a negative reduced weight, so each
+/// side is one Dijkstra search: O(m log n) for m constraints over n atoms, against
+/// [`hull_from`]'s O(log d) questions of the whole group for each atom. The bounds are those
+/// [`hull_from`] finds, exact at any magnitude.
+fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSet>> {
+    // Node 0 is `z`; the atoms follow in order of first use.
+    let mut node: HashMap<&Atom, usize> = HashMap::new();
+    let mut atoms: Vec<&Atom> = Vec::new();
+    let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new()];
+    for c in cons {
+        let mut ends: Vec<(usize, bool)> = Vec::with_capacity(2);
+        for (a, k) in &c.lin.terms {
+            if !k.is_unit() {
+                return None;
+            }
+            let i = *node.entry(a).or_insert_with(|| {
+                atoms.push(a);
+                out.push(Vec::new());
+                atoms.len()
+            });
+            ends.push((i, k.is_positive()));
+        }
+        // The term as `x - y + k` with `x` or `y` possibly `z`: the edge `x → y` of weight `k`.
+        let (x, y) = match ends[..] {
+            [(i, true)] => (i, 0),
+            [(i, false)] => (0, i),
+            [(i, true), (j, false)] => (i, j),
+            [(i, false), (j, true)] => (j, i),
+            _ => return None,
+        };
+        out[x].push((y, c.lin.constant.clone()));
+        if c.rel == Rel::Eq {
+            out[y].push((x, -&c.lin.constant));
+        }
+    }
+    let mut p: Vec<Int> = Vec::with_capacity(out.len());
+    p.push(Int::ZERO);
+    for a in &atoms {
+        p.push(m.get(*a)?.clone());
+    }
+    let mut back: Vec<Vec<(usize, Int)>> = vec![Vec::new(); out.len()];
+    for (u, es) in out.iter().enumerate() {
+        for (v, w) in es {
+            // The point meets every row, so no reduced weight is negative.
+            if (w + &p[u]) < p[*v] {
+                return None;
+            }
+            back[*v].push((u, w.clone()));
+        }
+    }
+    // The distances from `z` along `edges`, each edge `u → v` of reduced weight
+    // `w + sign·(p(u) - p(v))`, which is not negative; `None` where `z` does not reach.
+    let search = |edges: &[Vec<(usize, Int)>], sign: &Int| -> Vec<Option<Int>> {
+        let reduced = |u: usize, v: usize, w: &Int| w + &(sign * &(&p[u] - &p[v]));
+        let mut dist: Vec<Option<Int>> = vec![None; edges.len()];
+        let mut done = vec![false; edges.len()];
+        let mut heap = std::collections::BinaryHeap::new();
+        dist[0] = Some(Int::ZERO);
+        heap.push(std::cmp::Reverse((Int::ZERO, 0usize)));
+        while let Some(std::cmp::Reverse((d, u))) = heap.pop() {
+            if mem::replace(&mut done[u], true) {
+                continue;
+            }
+            for (v, w) in &edges[u] {
+                let nd = &d + &reduced(u, *v, w);
+                if dist[*v].as_ref().is_none_or(|old| nd < *old) {
+                    dist[*v] = Some(nd.clone());
+                    heap.push(std::cmp::Reverse((nd, *v)));
+                }
+            }
+        }
+        // Back from reduced distances: `d(v) = d'(v) + sign·(p(v) - p(z))`, `p(z)` being 0.
+        dist.into_iter()
+            .enumerate()
+            .map(|(v, d)| d.map(|d| &d + &(sign * &p[v])))
+            .collect()
+    };
+    let up = search(&out, &Int::ONE);
+    let down = search(&back, &Int::from(-1));
+    Some(
+        atoms
+            .iter()
+            .enumerate()
+            .map(|(k, a)| {
+                let lo = down[k + 1]
+                    .as_ref()
+                    .map_or(End::NegInf, |d| End::Fin(Num::from(&-d)));
+                let hi = up[k + 1]
+                    .as_ref()
+                    .map_or(End::PosInf, |d| End::Fin(Num::from(d)));
+                ((*a).clone(), IntervalSet::range(lo, hi))
+            })
+            .collect(),
+    )
 }
 
 /// Whether `sym` takes arbitrarily large values (`dir` 1) or arbitrarily small ones (`dir`
@@ -7126,5 +7248,74 @@ pub(super) mod tests {
         }
         // `true`, `false`, constraints, negations, conjunctions and disjunctions all occur.
         assert!(kinds.len() >= 5, "{kinds:?}");
+    }
+
+    /// The hulls of a system of difference constraints and bounds found by one shortest-path
+    /// pass are those found by asking the solver of each atom ([`hull_from`]), on random
+    /// systems of up to 8 rows over 5 names, some without a bound on a side; a row with a
+    /// coefficient of 2 or three atoms is not taken.
+    #[test]
+    fn difference_hulls_are_those_the_solver_finds() {
+        let names = ["a", "b", "c", "d", "e"];
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut compared = 0;
+        for _ in 0..1500 {
+            let rows = 1 + rng.below(8) as usize;
+            let cons: Vec<Con> = (0..rows)
+                .map(|_| {
+                    let x = names[rng.below(5) as usize];
+                    let k = rng.below(13) as i128 - 6;
+                    let terms: Vec<(&str, i128)> = match rng.below(4) {
+                        0 => vec![(x, 1)],
+                        1 => vec![(x, -1)],
+                        _ => {
+                            let y = names[rng.below(5) as usize];
+                            if x == y {
+                                vec![(x, 1)]
+                            } else {
+                                vec![(x, 1), (y, -1)]
+                            }
+                        }
+                    };
+                    let rel = if rng.below(5) == 0 { Rel::Eq } else { Rel::Ge };
+                    Con {
+                        lin: lin(&terms, k),
+                        rel,
+                    }
+                })
+                .collect();
+            let Ok(Some(model)) = solve(&cons, true) else {
+                continue;
+            };
+            let refs: Vec<&Con> = cons.iter().collect();
+            let hulls = difference_hulls(&refs, &model).expect("difference rows");
+            let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+            for (a, h) in &hulls {
+                assert_eq!(
+                    Ok(h.clone()),
+                    hull_from(&whole, a, &model),
+                    "{whole} onto {a}"
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > 1000, "{compared}");
+        let two = [Con {
+            lin: lin(&[("a", 2), ("b", -1)], 0),
+            rel: Rel::Ge,
+        }];
+        let three = [Con {
+            lin: lin(&[("a", 1), ("b", -1), ("c", 1)], 0),
+            rel: Rel::Ge,
+        }];
+        let m: Model = [
+            (sym("a"), Int::ZERO),
+            (sym("b"), Int::ZERO),
+            (sym("c"), Int::ZERO),
+        ]
+        .into_iter()
+        .collect();
+        assert!(difference_hulls(&[&two[0]], &m).is_none());
+        assert!(difference_hulls(&[&three[0]], &m).is_none());
     }
 }

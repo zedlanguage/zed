@@ -352,7 +352,7 @@ compiler recognizes it, which no step states.
 
 Fix: L5 words `m.upTo(k)` and `m.from(k)`, each an ordered restriction in O(log n), so that
 `.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab.rs:1533`; `IntervalSet::cap`,
-`interval.rs:266`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
+`interval.rs:266`; Dijkstra's search in `difference_hulls`, `presburger.rs`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
 with `.first` and a `patch`.
 
 ### Gap 10. File import cycles (Rust must change)
