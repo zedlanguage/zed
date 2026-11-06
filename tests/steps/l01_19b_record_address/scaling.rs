@@ -23,9 +23,9 @@ fn the_address_of_a_program_scales() {
     // Both programs are loaded before the runs are measured. The address is taken from the
     // ports and the term, as `Program::address` does, since that caches it after one run.
     let (small, large) = (chain(n), chain(FACTOR * n));
-    assert_ne!(small.address(), large.address());
+    assert_ne!(small.address().unwrap(), large.address().unwrap());
     scaling::check("the content address of a program of n functions", n, |m| {
         let p = if m == n { &small } else { &large };
-        std::hint::black_box(p.ports().address(p.term()));
+        std::hint::black_box(p.ports().address(p.term()).unwrap());
     });
 }

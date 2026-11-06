@@ -52,8 +52,9 @@ pub struct Program {
     pub(crate) unit: Unit,
     /// `main` closed over the definitions it reaches, made at the first wave.
     main: std::sync::OnceLock<Term>,
-    /// The program's content address, taken at the first wave or replay.
-    address: std::sync::OnceLock<ContentAddress>,
+    /// The program's content address, or why it could not be taken, at the first wave or
+    /// replay.
+    address: std::sync::OnceLock<Result<ContentAddress, String>>,
     ports: Ports,
     /// The warnings, placed in the source: they do not stop the build.
     warnings: Arc<[Diagnostic]>,
@@ -129,21 +130,29 @@ impl Ports {
     /// definition `main` (sec:ir, "Identity"), and the ports as [`Ports::to_text`] writes
     /// them, since the term reads each input by its name and not by its kind. Two programs
     /// that differ only in local names, layout or comments have one address. O(t log t) for a
-    /// term of size t, the canonicalizer's cost.
-    pub fn address(&self, term: Term) -> ContentAddress {
+    /// term of size t, the canonicalizer's cost. An error when the system refuses the memory
+    /// to write one of the term's exact numbers.
+    pub fn address(&self, term: Term) -> Result<ContentAddress, String> {
         let main = canon::Def {
             name: "main".into(),
             domain: None,
             facets: Vec::new(),
             body: term,
         };
+        let term = canon::address(&main, &|_| None).map_err(|e| {
+            format!(
+                "a constant is so large that the system refused the {} bytes of memory asked \
+                 to take the program's content address",
+                e.bytes()
+            )
+        })?;
         let ports = self.to_text();
         let mut h = blake3::Hasher::new();
         h.update(b"zed-program\0");
-        h.update(&canon::address(&main, &|_| None).0);
+        h.update(&term.0);
         h.update(&(ports.len() as u64).to_le_bytes());
         h.update(ports.as_bytes());
-        ContentAddress::hashed(&h)
+        Ok(ContentAddress::hashed(&h))
     }
 
     fn wave(
@@ -572,8 +581,10 @@ impl Program {
 
     /// The program's content address (step L1.19b), [`Ports::address`] of [`Program::term`].
     /// Taken once, at the first wave or replay.
-    pub fn address(&self) -> ContentAddress {
-        *self.address.get_or_init(|| self.ports.address(self.term()))
+    pub fn address(&self) -> Result<ContentAddress, String> {
+        self.address
+            .get_or_init(|| self.ports.address(self.term()))
+            .clone()
     }
 
     /// `main` applied to a read of each input port, under the prelude.
@@ -685,7 +696,7 @@ impl Program {
     ) -> Result<(Wave, Option<Provenance>), String> {
         let (term, program) = match main {
             Some(main) => (self.term_of(main.clone()), None),
-            None => (self.term(), Some(self.address())),
+            None => (self.term(), Some(self.address()?)),
         };
         let mut out = self
             .ports
@@ -697,7 +708,7 @@ impl Program {
     /// Checks that `record` is a record of this program: it names a content address, and the
     /// address is this program's.
     pub fn check_record(&self, record: &Record) -> Result<(), String> {
-        let ours = self.address();
+        let ours = self.address()?;
         match record.program {
             Some(a) if a == ours => Ok(()),
             Some(a) => Err(format!(

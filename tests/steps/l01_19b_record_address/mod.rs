@@ -63,9 +63,11 @@ fn a_record_replays_against_its_own_program() {
     let bytes = std::fs::read(&rec).unwrap();
     let record = Record::from_bytes(&bytes).unwrap();
     let p = load(DOUBLE.as_bytes()).unwrap();
-    assert_eq!(record.program, Some(p.address()));
+    assert_eq!(record.program, Some(p.address().unwrap()));
     assert!(
-        bytes.starts_with(format!("zed record 1\nprogram 64\n{}\n", p.address()).as_bytes()),
+        bytes.starts_with(
+            format!("zed record 1\nprogram 64\n{}\n", p.address().unwrap()).as_bytes()
+        ),
         "the address is the first entry"
     );
     assert_eq!(
@@ -79,8 +81,8 @@ fn local_names_and_layout_keep_the_address() {
     let (_, rec) = recorded("renamed", DOUBLE);
     let again = write("renamed", "again.zed", DOUBLE_AGAIN);
     assert_eq!(
-        load(DOUBLE.as_bytes()).unwrap().address(),
-        load(DOUBLE_AGAIN.as_bytes()).unwrap().address()
+        load(DOUBLE.as_bytes()).unwrap().address().unwrap(),
+        load(DOUBLE_AGAIN.as_bytes()).unwrap().address().unwrap()
     );
     assert_eq!(
         zedc(&["replay", &again, &rec], ""),
@@ -93,8 +95,8 @@ fn a_record_of_another_program_is_refused() {
     let (_, rec) = recorded("other", DOUBLE);
     let other = write("other", "triple.zed", TRIPLE);
     let (ours, theirs) = (
-        load(DOUBLE.as_bytes()).unwrap().address(),
-        load(TRIPLE.as_bytes()).unwrap().address(),
+        load(DOUBLE.as_bytes()).unwrap().address().unwrap(),
+        load(TRIPLE.as_bytes()).unwrap().address().unwrap(),
     );
     assert_ne!(ours, theirs);
     let (status, out, err) = zedc(&["replay", &other, &rec], "");
@@ -157,12 +159,12 @@ fn the_kind_of_a_port_is_part_of_the_address() {
         load(lines.as_bytes()).unwrap(),
         load(files.as_bytes()).unwrap(),
     );
-    assert_ne!(a.address(), b.address());
+    assert_ne!(a.address().unwrap(), b.address().unwrap());
 }
 
 #[test]
 fn a_program_entry_must_be_first_and_well_formed() {
-    let a = load(DOUBLE.as_bytes()).unwrap().address();
+    let a = load(DOUBLE.as_bytes()).unwrap().address().unwrap();
     let hex = a.to_string();
     let record = Record {
         program: Some(a),

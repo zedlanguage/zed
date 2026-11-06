@@ -56,7 +56,7 @@ fn the_record_holds_the_arguments_only_of_a_program_that_reads_them() {
         .run_args(&Default::default(), &args, |_| unreachable!())
         .unwrap();
     let only_the_program = Record {
-        program: Some(hello.address()),
+        program: Some(hello.address().unwrap()),
         ..Record::default()
     };
     assert_eq!(wave.record, only_the_program);

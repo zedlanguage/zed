@@ -123,7 +123,8 @@ pub fn build(
     }
     let program = zedc::run::load_file(file, suppress, stderr)?;
     let g = lower(&program.term()).map_err(|e| (1, format!("{file}: {e}")))?;
-    let object = crate::executable_object(g, true, program.ports(), program.address())
+    let address = program.address().map_err(|e| (1, format!("{file}: {e}")))?;
+    let object = crate::executable_object(g, true, program.ports(), address)
         .map_err(|e| (1, format!("{file}: {e}")))?;
     let mut at = out.as_os_str().to_owned();
     at.push(".zed.o");

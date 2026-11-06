@@ -37,7 +37,7 @@ fn a_read_the_record_lacks_stops_the_replay() {
         load(b"main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a.txt\"] else \"-\";\n}\n")
             .unwrap();
     let record = Record {
-        program: Some(p.address()),
+        program: Some(p.address().unwrap()),
         ..Record::default()
     };
     let e = p.replay(&record).err();
