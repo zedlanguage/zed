@@ -1333,6 +1333,14 @@ impl<'t> Machine<'_, 't> {
                 with_family.extend(args);
                 self.prim(Prim::Get, with_family)
             }
+            // `t[k]` with `k` no literal elaborates to an application too; a tuple applied to
+            // one key reads the component at it (DESIGN.md sec:types, the `m[k]` row).
+            V::Data(Value::Tuple(_)) if args.len() == 1 => {
+                let mut with_tuple = Vec::with_capacity(2);
+                with_tuple.push(f.clone());
+                with_tuple.extend(args);
+                self.prim(Prim::TupleGet, with_tuple)
+            }
             V::Partial(_) | V::Source(_) => type_err("a family is read with `[]`, not called"),
             V::Data(Value::Atom(a)) => Ok(Step::Give(V::Data(Value::Atom(a.clone())))),
             V::Data(other) => type_err(format!(
@@ -2270,12 +2278,14 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             .cloned()
             .unwrap_or_else(|| Value::atom("notFound")),
         (Prim::PathLen, [Value::Path(keys)]) => Int(keys.len() as i64),
-        (Prim::TupleGet, [Value::Tuple(items), Int(i)]) => {
-            match usize::try_from(*i).ok().and_then(|i| items.get(i)) {
-                Some(v) => v.clone(),
-                None => return ty(&vals),
-            }
-        }
+        // A tuple's keys are its positions `0..<n`; any other integer is a key outside the
+        // domain, `#notFound` (DESIGN.md sec:types, the `m[k]` row).
+        (Prim::TupleGet, [Value::Tuple(items), Int(i)]) => usize::try_from(*i)
+            .ok()
+            .and_then(|i| items.get(i))
+            .cloned()
+            .unwrap_or_else(|| Value::atom("notFound")),
+        (Prim::TupleGet, [Value::Tuple(_), _]) => Value::atom("notFound"),
         (
             Prim::Show
             | Prim::CastInt

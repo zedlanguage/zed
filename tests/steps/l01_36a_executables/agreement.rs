@@ -254,3 +254,30 @@ fn a_record_of_the_executable_replays_under_the_interpreter() {
         (0, native.stdout, native.stderr)
     );
 }
+
+#[test]
+fn a_tuple_indexed_by_a_computed_key_agrees() {
+    // DESIGN.md sec:types, the `m[k]` row: a position outside the tuple, past the end or
+    // negative, is `#notFound`.
+    let d = dir("column");
+    let src = d.join("column.zed");
+    std::fs::write(
+        &src,
+        "main(stdin: Lines) -> (stdout: Lines) {\n  \
+         person = (\"Ada\", 1815, \"London\");\n  \
+         column = int(stdin[1]) else 0;\n  \
+         stdout <- \"${person[column] else \"no such column\"}\";\n}\n",
+    )
+    .unwrap();
+    let exe = built_twice("column", &src);
+    for (line, want) in [
+        ("1\n", "1815\n"),
+        ("2\n", "London\n"),
+        ("3\n", "no such column\n"),
+        ("-1\n", "no such column\n"),
+    ] {
+        let native = executable(&exe, &[], line.as_bytes());
+        assert_eq!((native.status, native.stdout.as_str()), (0, want), "{line}");
+        assert_eq!(native, interpreter(&src, &[], line.as_bytes()), "{line}");
+    }
+}

@@ -3338,11 +3338,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ty::func(Arc::new(rest.replace(&binds)))
     }
 
-    /// `v[x]` with `x` no literal: an application of each function `v` may be.
+    /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
+    /// computed index of each tuple `v` may be.
     fn at_key(&mut self, v: &Ty, x: Arg, span: Span) -> Ty {
         let mut out = self.passing(v, "a call", span);
         for p in v.pieces() {
             match p {
+                Piece::Tuple(cs) => {
+                    let r = self.tuple_at(&cs, &x, span);
+                    out = out.union(&r);
+                }
                 Piece::Fn(sig) => {
                     let r = self
                         .apply("this function", &sig, vec![Some(x.clone())], false, span)
@@ -3361,6 +3366,63 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.error(span, format!("this value is {shown}, not a function"));
                 }
             }
+        }
+        out
+    }
+
+    /// The tuple `cs` at the computed key `x`, by the `m[k]` row of DESIGN.md sec:types: a
+    /// tuple's keys are the positions `0..<n`, each guaranteed (sec:types, the tuple/struct
+    /// distinction), so the result is the union of the components the key's integers select,
+    /// with `#notFound` when the key may lie outside `0..<n`; a key that selects no component
+    /// is an error, as a literal one is. The key's loose atoms pass. Listed integers are read
+    /// once each and a cofinite set is tested at each of the `n` positions, so this costs
+    /// `O((n + m) log m)` for a key of `m` listed integers.
+    fn tuple_at(&mut self, cs: &ty::Row, x: &Arg, span: Span) -> Ty {
+        let n = cs.len();
+        let ints = &x.ty.set & &KType::int();
+        let unknown = x.ty.dynamic || !x.ty.vars.is_empty();
+        let picked: Vec<usize> = if unknown {
+            (0..n).collect()
+        } else {
+            match ints.ints_listed() {
+                Some(vs) => {
+                    let mut js: Vec<usize> = vs
+                        .iter()
+                        .filter_map(|v| match v {
+                            Value::Int(i) => usize::try_from(*i).ok().filter(|j| *j < n),
+                            _ => None,
+                        })
+                        .collect();
+                    js.sort_unstable();
+                    js
+                }
+                None => (0..n)
+                    .filter(|j| i64::try_from(*j).is_ok_and(|j| ints.contains(&Value::Int(j))))
+                    .collect(),
+            }
+        };
+        let mut out = self.passing(&x.ty, "a tuple index", span);
+        let key = x.ty.without_atoms();
+        // A key that is only failures selects nothing and passes them.
+        if key.is_empty() {
+            return out;
+        }
+        if picked.is_empty() && !unknown {
+            let tuple = self.text(&Ty::of_row(cs.clone()));
+            let shown = self.text(&key);
+            self.error(span, format!("{tuple} has no component {shown}"));
+            return out;
+        }
+        let keys = KType::union_all(
+            picked
+                .iter()
+                .filter_map(|j| i64::try_from(*j).ok())
+                .filter_map(|j| KType::lit(&Value::Int(j))),
+        );
+        let outside = unknown || !self.subtype(&key, &Ty::set(keys));
+        out = out.union(&Ty::union_all(picked.iter().map(|j| &cs[*j])));
+        if outside {
+            out = out.union(&Ty::set(KType::atom("notFound")));
         }
         out
     }

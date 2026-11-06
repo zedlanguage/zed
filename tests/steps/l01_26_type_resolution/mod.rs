@@ -19,6 +19,7 @@ mod random;
 mod scaling;
 mod signatures;
 mod soundness;
+mod tuple_keys;
 
 use std::sync::Arc;
 

@@ -210,7 +210,16 @@ fn a_section_or_a_curried_call_checks_what_it_leaves_out_when_it_is_called() {
     let first = "first(positional t, positional u) = t[0];";
     refused(&program(first, r#"f = first[5]; stdout <- "${f(1)}";"#));
     let pick = "pick(positional t, positional i) = t[i];";
-    refused(&program(pick, r#"f = pick[(1, 2)]; stdout <- "${f(0)}";"#));
+    // A tuple takes a computed key (DESIGN.md sec:types, the `m[k]` row), so `f(0)` reads
+    // the first component; the key `5` selects none, which the call checks.
+    assert_eq!(
+        run(
+            &program(pick, r#"f = pick[(1, 2)]; stdout <- "${f(0)}";"#),
+            ""
+        ),
+        "1\n"
+    );
+    refused(&program(pick, r#"f = pick[(1, 2)]; stdout <- "${f(5)}";"#));
     let greet = r#"greet(positional name, punct = "!", lead = "hi") = "${lead}, ${name}${punct}";"#;
     let body = r#"h = greet("Al", lead: "yo", ...); stdout <- h(punct: "?");"#;
     assert_eq!(run(&program(greet, body), ""), "yo, Al?\n");
