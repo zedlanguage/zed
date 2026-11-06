@@ -15,6 +15,9 @@ crate-type = ["rlib", "staticlib"]
 [[bin]]
 name = "zedc"
 path = "../zedc/src/main.rs"
+# The library `zedc` is documented at the same path, build/cargo/doc/zedc; documenting this
+# target as well makes `cargo doc` warn of an output filename collision (DOC-zedc-collision).
+doc = false
 
 # Runs the zedc executable itself, which only a test of this package can name.
 [[test]]
