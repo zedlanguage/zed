@@ -1204,15 +1204,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | BIT-memo-test | impl attempt 1 | 2026-11-03 16:32 | started; worktree /home/luke/Work/wt/bit-memo-test at origin/main ab40a46f |
-| CASES-xr1 | impl attempt 1 | 2026-11-05 04:07 | started; load 38.85 44.88 50.79 |
-| CONST-wide-addr | impl attempt 1 | 2026-11-05 18:05 | negative control (decimal digits in binary.rs and serial.rs magnitude, not committed): instructions 8x bits 22.3x (23.8M to 532M at 2^17 to 2^20 bits), under ch |
-| HULL3-subsumed | impl attempt 1 | 2026-11-03 12:22 | measured decide() on the unit-side subclass (3 seeds each, m=64/512/4096, instructions): wide coefficients with a point, hull3 first 261M/3,705M/38,929M vs live |
+| CASES-xr1 | impl attempt 1 | 2026-11-05 04:07 | 7 cases added (424->431); l01_08_parser 134 pass; control (Trailer on Law, difference mixing allowed) failed law line + 2 new and 3 old no-mix lines, reverted;  |
+| CONST-wide-addr | merge attempt  | 2026-11-05 18:05 | started; branch 6dc79562 is 14 behind origin/main (main canon::VERSION already 3, Z24 taken); rebasing |
+| HULL3-subsumed | impl attempt 1 | 2026-11-03 12:22 | shifted tangent lens (unit side, box misses), decide, instructions n=64/256/1024: hull3 first 355M/2,198M/11,712M, live3 alone 941M/4,092M/7,163M; wall 66ms/1.6 |
 | LOWER-legalize | merge attempt 2 | 2026-11-05 04:07 | started: verify and merge repair 1 (4803fe19, spec 0157f5a); load 54.48 59.26 68.14 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | OMEGA-cycle-growth | impl attempt 1 | 2026-11-05 17:03 | done: commit a394f1d1 on wt/omega-cycle-growth (rebased on c3a09472, utvpi::components conflict resolved to the new generic signature); l01_38 names/live3/omega |
 | orch | running | 2026-11-05 18:05 | LIT-plain merged 4a610db6; PREIMAGE-timeout ed89e9d4 and M0.8-test-text e0b0e294 merged; QUESTIONS A14 (LIT-if-print) and A15 (LIT-eq-kind) added; queued L01-35 |
-| REPLACE-shared-rows | impl attempt 1 | 2026-11-05 17:26 | committed 9f5319a5 on wt/replace-shared-rows (rebased on f69efcd9, COMPLEXITY F95); affected groups pass at load 38-47; not pushed |
-| SUB-corpus-slow | impl attempt 1 | 2026-11-05 16:16 | done, committed on wt/sub-corpus-slow (not pushed): settles memo keyed by node (cuts), corpus seeds 2/3 back split in parts, pinwheel test split; 129 l01_23 tes |
+| REPLACE-shared-rows | impl attempt 1 | 2026-11-05 17:26 | rebased on ab40a46f, COMPLEXITY row renumbered F96 (F95 taken by ATOM-payload-fn), commit b989cba8; affected groups and 80 single scaling tests pass at load 37- |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 
