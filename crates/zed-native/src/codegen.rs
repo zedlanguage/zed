@@ -657,6 +657,8 @@ impl<M: Module> Gen<'_, M> {
                         Prim::Add => fx.b.ins().fadd(x, y),
                         Prim::Sub => fx.b.ins().fsub(x, y),
                         Prim::Mul => fx.b.ins().fmul(x, y),
+                        Prim::Min => fx.b.ins().fmin(x, y),
+                        Prim::Max => fx.b.ins().fmax(x, y),
                         _ => fx.b.ins().fdiv(x, y),
                     };
                     let w = self.float_word(fx, r);
@@ -847,8 +849,15 @@ fn int_cmp(p: Prim) -> Option<IntCC> {
     })
 }
 
+/// The float operations with a float result. `min` and `max` are Cranelift's `fmin` and `fmax`,
+/// whose WebAssembly rules are IEEE 754-2019 `minimum` and `maximum` up to the NaN's bits, which
+/// [`Gen::float_word`] makes canonical: a NaN in either position gives the NaN, and `-0.0` is
+/// below `0.0` (DESIGN.md sec:reduction, item 5). `min` and `max` on ints run in the kernel.
 fn float_op(p: Prim) -> bool {
-    matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Div)
+    matches!(
+        p,
+        Prim::Add | Prim::Sub | Prim::Mul | Prim::Div | Prim::Min | Prim::Max
+    )
 }
 
 /// The float comparisons, ordered (`>` and `>=` are legalized to `<` and `<=`), so a NaN compares false as the kernel's do; `==` and

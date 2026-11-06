@@ -20,8 +20,10 @@ pub enum Carrier {
     String,
 }
 
-/// A constant an axiom names, of the arrow's carrier.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A constant an axiom names, of the arrow's carrier. Two constants are equal as the kernel's
+/// values are, a float by its bits: `-0.0` is not `0.0`, and the NaN is equal to itself, so
+/// `Zero(Const::F64(f64::NAN))` is found in the table.
+#[derive(Clone, Copy, Debug)]
 pub enum Const {
     /// An integer.
     Int(i64),
@@ -31,6 +33,18 @@ pub enum Const {
     Bool(bool),
     /// A string.
     Str(&'static str),
+}
+
+impl PartialEq for Const {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Const::Int(a), Const::Int(b)) => a == b,
+            (Const::F64(a), Const::F64(b)) => a.to_bits() == b.to_bits(),
+            (Const::Bool(a), Const::Bool(b)) => a == b,
+            (Const::Str(a), Const::Str(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// How a function moves with one argument, in the carrier's order.
@@ -51,6 +65,8 @@ pub enum Law {
     Commutative,
     /// `op(a, a) == a`.
     Idempotent,
+    /// `op(a, b) == a` or `op(a, b) == b`: the result is one of the operands.
+    Selective,
     /// `op(e, a) == a` and `op(a, e) == a`.
     Identity(Const),
     /// `op(z, a) == z` and `op(a, z) == z`.
@@ -136,21 +152,33 @@ pub const AXIOMS: &[Axiom] = &[
     // `++`: associative, not commutative.
     ax("++", String, Associative),
     ax("++", String, Identity(Const::Str(""))),
-    // `min` and `max` in the total order of values: no identity on an unbounded carrier.
+    // `min` and `max`: at `int` in its order, with no identity on an unbounded carrier; at `f64`
+    // IEEE 754-2019 `minimum` and `maximum` (sec:reduction, item 5), where a NaN in either
+    // position gives the NaN and `-0.0` is below `0.0`. The NaN is the canonical one, so the
+    // result is an operand bit for bit and selectivity holds with a NaN too; the infinities are
+    // identities and the NaN a zero. No `Monotone` at `f64`: a NaN is in no order.
     ax("min", Int, Associative),
     ax("min", Int, Commutative),
     ax("min", Int, Idempotent),
+    ax("min", Int, Selective),
     ax("min", Int, Monotone(&[Up, Up])),
     ax("min", F64, Associative),
     ax("min", F64, Commutative),
     ax("min", F64, Idempotent),
+    ax("min", F64, Selective),
+    ax("min", F64, Identity(Const::F64(f64::INFINITY))),
+    ax("min", F64, Zero(Const::F64(f64::NAN))),
     ax("max", Int, Associative),
     ax("max", Int, Commutative),
     ax("max", Int, Idempotent),
+    ax("max", Int, Selective),
     ax("max", Int, Monotone(&[Up, Up])),
     ax("max", F64, Associative),
     ax("max", F64, Commutative),
     ax("max", F64, Idempotent),
+    ax("max", F64, Selective),
+    ax("max", F64, Identity(Const::F64(f64::NEG_INFINITY))),
+    ax("max", F64, Zero(Const::F64(f64::NAN))),
     ax("&&", Bool, Associative),
     ax("&&", Bool, Commutative),
     ax("&&", Bool, Idempotent),

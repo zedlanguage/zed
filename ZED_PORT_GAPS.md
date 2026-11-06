@@ -1705,3 +1705,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A set of row addresses as the visited set of a walk (`HashSet<*const ()>`, `Row::addr`) | `Ck::data`, `Ty::vars_outside` (`Vars::outside`) | Gap 1 | As above |
 | A stack of memo frames, pushed when the walk enters a signature that hides variables and popped when it leaves, with a counting map of the hidden variables | `Replacer::held`, `Replacer::hidden`, `Replacer::memos` | Expressible | A list of maps threaded as state, and a map from variable to count; no new form |
 | Closures that change captured state, passed as `impl FnMut` to `Shape::map`, `Ty::map_payloads` and `Need::map_tys`, so a walk's memo is shared by its calls | `check::ty` | Workaround (gap 2) | Thread the memo as an argument and result through the map, or a state receiver |
+
+## Entries from FLOAT-minmax (`zed-kernel/src/eval.rs`, `zedc/src/axioms.rs`, `zed-native/src/codegen.rs`)
+
+- No new gap. `ieee_min_max` is `if`s on `f64` comparisons and `is_sign_negative`, which Zed writes with `min` and `max` on `f64` themselves; the manual `PartialEq` on `Const` compares `to_bits`, the float bits word of gap 4 (built). Cranelift `fmin`/`fmax` is the back end's own instruction.

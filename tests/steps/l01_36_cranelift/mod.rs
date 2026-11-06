@@ -14,6 +14,7 @@ mod kernel_inputs;
 mod kinds;
 mod legalize;
 mod levels;
+mod minmax;
 mod ports;
 mod reuse;
 mod scalars;

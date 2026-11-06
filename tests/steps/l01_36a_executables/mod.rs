@@ -4,6 +4,7 @@
 //! executable's outputs and exit status equal the interpreter's.
 
 mod agreement;
+mod minmax;
 mod runtime;
 mod scaling;
 

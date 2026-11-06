@@ -41,21 +41,35 @@ axioms = [
   // `++`: associative, not commutative.
   Axiom(op: "++", carrier: #string, property: #associative),
   Axiom(op: "++", carrier: #string, property: #identity("")),
-  // `min` and `max` in the total order of values: no identity on an unbounded carrier.
+  // `min` and `max`: at `int` in its order, with no identity on an unbounded
+  // carrier; at `f64` IEEE 754-2019 `minimum` and `maximum` (sec:reduction,
+  // item 5), where a NaN in either position gives the NaN and `-0.0` is below
+  // `0.0`. The NaN is the canonical one, so the result is an operand bit for
+  // bit and selectivity holds with a NaN too; the infinities (`1.0 / 0.0`,
+  // `-1.0 / 0.0`) are identities and the NaN (`0.0 / 0.0`) a zero. No
+  // `#monotone` at `f64`: a NaN is in no order.
   Axiom(op: "min", carrier: #int, property: #associative),
   Axiom(op: "min", carrier: #int, property: #commutative),
   Axiom(op: "min", carrier: #int, property: #idempotent),
+  Axiom(op: "min", carrier: #int, property: #selective),
   Axiom(op: "min", carrier: #int, property: #monotone([#up, #up])),
   Axiom(op: "min", carrier: #f64, property: #associative),
   Axiom(op: "min", carrier: #f64, property: #commutative),
   Axiom(op: "min", carrier: #f64, property: #idempotent),
+  Axiom(op: "min", carrier: #f64, property: #selective),
+  Axiom(op: "min", carrier: #f64, property: #identity(1.0 / 0.0)),
+  Axiom(op: "min", carrier: #f64, property: #zero(0.0 / 0.0)),
   Axiom(op: "max", carrier: #int, property: #associative),
   Axiom(op: "max", carrier: #int, property: #commutative),
   Axiom(op: "max", carrier: #int, property: #idempotent),
+  Axiom(op: "max", carrier: #int, property: #selective),
   Axiom(op: "max", carrier: #int, property: #monotone([#up, #up])),
   Axiom(op: "max", carrier: #f64, property: #associative),
   Axiom(op: "max", carrier: #f64, property: #commutative),
   Axiom(op: "max", carrier: #f64, property: #idempotent),
+  Axiom(op: "max", carrier: #f64, property: #selective),
+  Axiom(op: "max", carrier: #f64, property: #identity(-1.0 / 0.0)),
+  Axiom(op: "max", carrier: #f64, property: #zero(0.0 / 0.0)),
   Axiom(op: "&&", carrier: #bool, property: #associative),
   Axiom(op: "&&", carrier: #bool, property: #commutative),
   Axiom(op: "&&", carrier: #bool, property: #idempotent),

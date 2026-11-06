@@ -36,8 +36,8 @@ fn constant(c: Const) -> Value {
     }
 }
 
-/// The kernel term of `op` applied to `args`. `square`, `quot` and `mulI64` are not operators:
-/// they are here so the controls can claim laws of functions that do not have them.
+/// The kernel term of `op` applied to `args`. `square`, `quot`, `mulI64` and `minsd` are not
+/// operators: they are here so the controls can claim laws of functions that do not have them.
 fn call(op: &str, args: Vec<Term>) -> Term {
     let p = match op {
         "+" => Prim::Add,
@@ -86,6 +86,12 @@ fn call(op: &str, args: Vec<Term>) -> Term {
             let shifted = prim(Prim::Add, vec![prim(Prim::Mul, args), half.clone()]);
             let word = prim(Prim::Mod, vec![shifted, lit(near_two_pow(64, 0))]);
             return prim(Prim::Sub, vec![word, half]);
+        }
+        // `minsd(a, b)` is `if a < b { a } else { b }`, the minimum x86's MINSD computes: the
+        // second operand on a NaN in either position and on two zeros.
+        "minsd" => {
+            let [a, b]: [Term; 2] = args.try_into().expect("`minsd` takes two arguments");
+            return if_(prim(Prim::Lt, vec![a.clone(), b.clone()]), a, b);
         }
         _ => panic!("no kernel primitive for `{op}`"),
     };
@@ -274,6 +280,15 @@ fn check_on(a: &Axiom, vs: &[Value]) -> Result<usize, String> {
                 eq(format!("{x}"), call(op, vec![v(x), v(x)]), v(x))?;
             }
         }
+        Law::Selective => {
+            for (x, y) in pairs() {
+                n += 1;
+                let out = eval(&call(op, vec![v(x), v(y)]));
+                if !matches!(&out, Ok(o) if o == x || o == y) {
+                    return Err(format!("{x}, {y}: {out:?} is neither"));
+                }
+            }
+        }
         Law::Identity(e) | Law::Zero(e) => {
             let e = constant(e);
             for x in vs {
@@ -431,7 +446,7 @@ fn every_axiom_holds_on_the_harness_instances() {
             Err(why) => panic!("{} at {:?}: {:?} fails on {why}", a.op, a.carrier, a.law),
         }
     }
-    assert_eq!(AXIOMS.len(), 129);
+    assert_eq!(AXIOMS.len(), 137);
     assert!(total > 50_000, "{total} instances");
 }
 
@@ -444,8 +459,10 @@ fn a_false_claim_of_each_kind_is_refuted() {
         claim("+", F64, Law::Associative), // 0.1 + 0.2 + 0.3
         claim("++", String, Law::Commutative),
         claim("+", Int, Law::Idempotent),
+        claim("+", Int, Law::Selective),                 // 1 + 1 is 2
+        claim("minsd", F64, Law::Commutative), // minsd(0.0, -0.0) is -0.0, the other order 0.0
         claim("+", F64, Law::Identity(Const::F64(0.0))), // -0.0 + 0.0 is 0.0
-        claim("*", F64, Law::Zero(Const::F64(0.0))),     // 0.0 * inf is NaN
+        claim("*", F64, Law::Zero(Const::F64(0.0))), // 0.0 * inf is NaN
         claim("square", Int, Law::Inverse("neg")),
         claim("+", Int, Law::LeftDistributesOver("*")),
         claim("-", Int, Law::RightDistributesOver("*")),
@@ -499,6 +516,9 @@ fn a_false_claim_of_each_kind_is_refuted() {
 fn zed_line(a: &Axiom) -> String {
     let c = |k: Const| match k {
         Const::Int(n) => n.to_string(),
+        // Zed has no literal of a NaN or an infinity, so the prelude writes the quotient.
+        Const::F64(x) if x.is_nan() => "0.0 / 0.0".to_string(),
+        Const::F64(x) if x.is_infinite() => format!("{}1.0 / 0.0", if x < 0.0 { "-" } else { "" }),
         Const::F64(x) => format!("{x:?}"),
         Const::Bool(b) => b.to_string(),
         Const::Str(s) => format!("{s:?}"),
@@ -750,4 +770,48 @@ fn false_shift_axioms_are_refuted_where_they_fail() {
     // `shr` is not `shl`'s law, nor `shl` `shr`'s.
     assert!(first(claim("shr", "*")).starts_with("-256, 1: "));
     assert!(first(claim("shl", "div")).starts_with("-256, 1: "));
+}
+
+/// `min` and `max` at `f64` are IEEE 754-2019 `minimum` and `maximum` (DESIGN.md sec:reduction,
+/// item 5, and M0.11): the table gives each its laws, and the minimum x86's MINSD computes,
+/// `if a < b { a } else { b }`, is refuted for commutativity on a NaN against a number, where it
+/// gives the second operand, as well as on the two zeros. The two-value instances make the NaN
+/// pair the first and only failing one.
+#[test]
+fn min_and_max_at_f64_have_the_ieee_laws_and_minsd_has_not() {
+    use zedc::axioms::of;
+    let laws = |op: &str| of(op, Carrier::F64).copied().collect::<Vec<Law>>();
+    let common = [
+        Law::Associative,
+        Law::Commutative,
+        Law::Idempotent,
+        Law::Selective,
+    ];
+    let with = |e: f64| {
+        let mut ls = common.to_vec();
+        ls.extend([
+            Law::Identity(Const::F64(e)),
+            Law::Zero(Const::F64(f64::NAN)),
+        ]);
+        ls
+    };
+    assert_eq!(laws("min"), with(f64::INFINITY));
+    assert_eq!(laws("max"), with(f64::NEG_INFINITY));
+    // The constants compare by bits: the identity of `min` is not that of `max`, nor `0.0` `-0.0`.
+    assert_ne!(Const::F64(f64::INFINITY), Const::F64(f64::NEG_INFINITY));
+    assert_ne!(Const::F64(0.0), Const::F64(-0.0));
+    let minsd = Axiom {
+        op: "minsd",
+        carrier: Carrier::F64,
+        law: Law::Commutative,
+    };
+    let (nan, one) = (Value::float(f64::NAN), Value::float(1.0));
+    let why = check_on(&minsd, &[nan.clone(), one.clone()]).expect_err("refuted");
+    assert!(why.starts_with(&format!("{nan}, {one}: ")), "{why}");
+    let zeros = [Value::float(0.0), Value::float(-0.0)];
+    assert!(check_on(&minsd, &zeros).is_err());
+    // `min` itself holds on the same instances.
+    let min = Axiom { op: "min", ..minsd };
+    assert_eq!(check_on(&min, &[nan, one]), Ok(4));
+    assert_eq!(check_on(&min, &zeros), Ok(4));
 }

@@ -2109,6 +2109,23 @@ fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     }
 }
 
+/// `minimum(a, b)` (`min` true) or `maximum(a, b)` of IEEE 754-2019 (DESIGN.md sec:reduction,
+/// item 5): a NaN in either position gives a NaN, and `-0.0` is below `0.0`, so
+/// `min(-0.0, 0.0)` is `-0.0` and `max(-0.0, 0.0)` is `0.0` in both orders. Rust's
+/// `f64::minimum` is not stable, and `f64::min` returns the other operand of a NaN.
+fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    // On equal values only the zeros differ, by sign: min takes the negative one.
+    let a_first = if a == b {
+        a.is_sign_negative() == min
+    } else {
+        (a < b) == min
+    };
+    if a_first { a } else { b }
+}
+
 /// The error of a primitive during which a test of two numbers was refused its memory: a
 /// comparison operator's own, or that of the families a primitive builds or reads.
 fn order_too_large(p: Prim, t: Test, e: TooLarge) -> KernelError {
@@ -2199,6 +2216,9 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                 Prim::Gt => a > b,
                 _ => a >= b,
             })
+        }
+        (Prim::Min | Prim::Max, [Float(a), Float(b)]) => {
+            Value::float(ieee_min_max(p == Prim::Min, a.get(), b.get()))
         }
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max, [a, b]) => {
             let same = match (a.number_kind(), b.number_kind()) {
