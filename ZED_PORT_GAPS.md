@@ -27,7 +27,7 @@ the form it has may not meet the cost the compiler needs:
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
-| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f); `zed-kernel`, `zed-native` open | S.2 | Move shared definitions to a file below both sides; no Zed change |
+| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f); `zed-kernel`, `zed-native` open (S.1f-rest) | S.2 | Move shared definitions to a file below both sides; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
 (mutation, which depends on step L6.13 keeping updates in place, with the report of copies of

@@ -22,7 +22,7 @@
 //! resolution one hash lookup per segment of a path, and the components are found by Tarjan's
 //! algorithm with an explicit stack in O(n + e), n the bytes of the files and e the imports between
 //! them. Sorting each file's imports, for the report and the citations, makes the whole
-//! O(n + e log e) (COMPLEXITY F101).
+//! O(n + e log e) (COMPLEXITY F103).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
