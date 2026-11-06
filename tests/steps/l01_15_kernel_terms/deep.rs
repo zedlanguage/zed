@@ -1,9 +1,10 @@
-//! `Clone`, `==` and `Debug` of kernel terms keep their own stacks on the heap (COMPLEXITY.md
-//! K39), so a term of any depth is copied, compared and written on a small stack, and `Debug`
-//! writes the text a derived `Debug` wrote.
+//! `Clone`, `==`, `Debug`, `Display` and the broken layout of kernel terms keep their own stacks
+//! on the heap (COMPLEXITY.md K39), so a term of any depth is copied, compared and written on a
+//! small stack, and `Debug` writes the text a derived `Debug` wrote.
 
 use std::collections::BTreeMap;
 
+use zed_kernel::print::pretty;
 use zed_kernel::term::{FixKind, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::Type;
 use zed_kernel::{Shared, Term, Value};
@@ -213,5 +214,83 @@ fn copying_comparing_and_printing_scale_with_size() {
             let (a, b) = if k == n { &small } else { &large };
             assert!(std::hint::black_box(a == b));
         });
+    });
+}
+
+/// Terms nested `n` deep through the other parts the printer nests through: `let` bodies, `else`
+/// branches, call heads, negations, indices and an atom pattern.
+fn printed(n: usize) -> Vec<(&'static str, Term)> {
+    let lets = (0..n).fold(var("x"), |b, _| Term::Let("y".into(), sh(var("v")), sh(b)));
+    let ifs = (0..n).fold(var("x"), |b, _| Term::If(sh(var("c")), sh(var("a")), sh(b)));
+    let heads = (0..n).fold(var("f"), |h, _| Term::App(sh(h), vec![var("a")]));
+    let negs = (0..n).fold(var("x"), |t, _| Term::Prim(Prim::Neg, vec![t]));
+    let index = (0..n).fold(var("x"), |t, _| {
+        Term::Prim(Prim::TupleGet, vec![t, Term::Lit(Value::Int(0))])
+    });
+    let atom = (0..n).fold(Pattern::Wild, |p, _| Pattern::Atom("ok".into(), vec![p]));
+    let atom = Term::Match(sh(var("v")), vec![(atom, var("x"))]);
+    vec![
+        ("nested `let` bodies", lets),
+        ("nested `else` branches", ifs),
+        ("calls in head position", heads),
+        ("nested negations", negs),
+        ("nested indices", index),
+        ("a nested atom pattern", atom),
+    ]
+}
+
+/// Whether `what`, broken to a width, puts level `i` at indentation `2i`: its text is quadratic
+/// in its depth, so it is broken only where that text is small.
+fn indents(what: &str) -> bool {
+    [
+        "a left-nested sum",
+        "nested `match` arms",
+        "nested `else` branches",
+    ]
+    .contains(&what)
+}
+
+#[test]
+fn a_term_far_deeper_than_the_stack_is_displayed_and_broken() {
+    // The printer recursed over a tree of its layout and overflowed a 2 MiB stack near 10,000
+    // levels.
+    let n = 100_000;
+    zed_tests::deep::on_small_stack(|| {
+        for (what, t) in nested(n).into_iter().chain(printed(n)) {
+            let flat = t.to_string();
+            assert!(flat.len() > n, "{what}: {} bytes", flat.len());
+            assert_eq!(pretty(&t, usize::MAX), flat, "{what}");
+            if !indents(what) {
+                let broken = pretty(&t, 80);
+                assert_eq!(
+                    broken.split_whitespace().collect::<String>(),
+                    flat.split_whitespace().collect::<String>(),
+                    "{what}"
+                );
+            }
+        }
+        let tuple = (0..n).fold(Pattern::Bind("p".into()), |p, _| {
+            Pattern::Tuple(vec![p, Pattern::Wild])
+        });
+        assert_eq!(tuple.to_string().len(), "p".len() + n * "(, _)".len());
+    });
+}
+
+#[test]
+fn displaying_and_breaking_scale_with_depth() {
+    let n = 20_000;
+    zed_tests::deep::on_small_stack(|| {
+        let built = |k: usize| nested(k).into_iter().chain(printed(k)).collect::<Vec<_>>();
+        let (small, large) = (built(n), built(8 * n));
+        let at = |k: usize| if k == n { &small } else { &large };
+        for (i, (what, _)) in small.iter().enumerate() {
+            scaling::check(&format!("displaying {what}"), n, |k| {
+                std::hint::black_box(at(k)[i].1.to_string());
+            });
+            let width = if indents(what) { usize::MAX } else { 80 };
+            scaling::check(&format!("breaking {what} to width {width}"), n, |k| {
+                std::hint::black_box(pretty(&at(k)[i].1, width));
+            });
+        }
     });
 }

@@ -30,35 +30,30 @@ const SHAPES: [&str; 3] = [
 fn the_printer_scales_with_depth() {
     // Every node a broken layout visited computed its subtree's one-line text, and each level
     // of the one-line text copied the text of the level inside it.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            for (k, what) in SHAPES.iter().enumerate() {
-                let one_line = format!("one line, nested {what}, by depth");
-                // A call's head was copied into the text of the call around it, a cost that
-                // shows only past a few thousand levels. Between 8,000 and 16,000 levels of
-                // heads the recursion leaves the cache, the cost per level stepping up from
-                // 0.4 to 1.1 µs and flat again after, so both sizes are past it.
-                let n = if k == 2 { 16_000 } else { 500 };
-                zed_tests::scaling::check(&one_line, n, |d| {
-                    std::hint::black_box(shape(k, d).to_string());
-                });
-                // Broken, calls nested in argument position put depth `i` at indentation `2i`,
-                // so their text is quadratic in the depth: they are measured by the text's
-                // length, the depth growing as its square root.
-                let (n, depth): (usize, fn(usize) -> usize) = match k {
-                    1 => (250_000, |m| m.isqrt()),
-                    _ => (500, |m| m),
-                };
-                let broken = format!("width 80, nested {what}, by text");
-                zed_tests::scaling::check(&broken, n, |m| {
-                    std::hint::black_box(pretty(&shape(k, depth(m)), 80));
-                });
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::deep::on_small_stack(|| {
+        for (k, what) in SHAPES.iter().enumerate() {
+            let one_line = format!("one line, nested {what}, by depth");
+            // A call's head was copied into the text of the call around it, a cost that
+            // shows only past a few thousand levels. Between 8,000 and 16,000 levels of
+            // heads the recursion leaves the cache, the cost per level stepping up from
+            // 0.4 to 1.1 µs and flat again after, so both sizes are past it.
+            let n = if k == 2 { 16_000 } else { 500 };
+            zed_tests::scaling::check(&one_line, n, |d| {
+                std::hint::black_box(shape(k, d).to_string());
+            });
+            // Broken, calls nested in argument position put depth `i` at indentation `2i`,
+            // so their text is quadratic in the depth: they are measured by the text's
+            // length, the depth growing as its square root.
+            let (n, depth): (usize, fn(usize) -> usize) = match k {
+                1 => (250_000, |m| m.isqrt()),
+                _ => (500, |m| m),
+            };
+            let broken = format!("width 80, nested {what}, by text");
+            zed_tests::scaling::check(&broken, n, |m| {
+                std::hint::black_box(pretty(&shape(k, depth(m)), 80));
+            });
+        }
+    });
 }
 
 #[test]
@@ -194,25 +189,20 @@ fn prefix_shape(k: usize, d: usize) -> Term {
 
 #[test]
 fn negations_and_indices_print_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            let n = 2_000;
-            for (k, what) in ["negations", "indices"].into_iter().enumerate() {
-                let (small, large) = (prefix_shape(k, n), prefix_shape(k, 8 * n));
-                scaling::check(&format!("one line, nested {what}, by depth"), n, |d| {
-                    let t = if d == n { &small } else { &large };
-                    std::hint::black_box(t.to_string());
-                });
-                scaling::check(&format!("width 80, nested {what}, by depth"), n, |d| {
-                    let t = if d == n { &small } else { &large };
-                    std::hint::black_box(pretty(t, 80));
-                });
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::deep::on_small_stack(|| {
+        let n = 2_000;
+        for (k, what) in ["negations", "indices"].into_iter().enumerate() {
+            let (small, large) = (prefix_shape(k, n), prefix_shape(k, 8 * n));
+            scaling::check(&format!("one line, nested {what}, by depth"), n, |d| {
+                let t = if d == n { &small } else { &large };
+                std::hint::black_box(t.to_string());
+            });
+            scaling::check(&format!("width 80, nested {what}, by depth"), n, |d| {
+                let t = if d == n { &small } else { &large };
+                std::hint::black_box(pretty(t, 80));
+            });
+        }
+    });
     assert_eq!(prefix_shape(0, 3).to_string(), "-(-(-x))");
     assert_eq!(prefix_shape(1, 3).to_string(), "x[0][0][0]");
 }

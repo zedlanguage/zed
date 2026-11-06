@@ -3,12 +3,16 @@
 //! as Zed writes it (`(x, y) -> e`, `f(a)`, `x = e; body`, `if c { a } else { b }`).
 //!
 //! [`Term`]'s `Display` writes a term on one line. [`pretty`] writes the same text, broken
-//! into lines of at most a given width where it can be: a term that does not fit puts each of
+//! into lines of at most a given width where it can: a term that does not fit puts each of
 //! its parts on its own line, indented two spaces, so the only difference from the one-line
 //! form is whitespace. Binary primitives are written infix and always parenthesized. Negation,
 //! `!`, an index and an atom are written as a program writes them (`-x`, `!x`, `t[0]`, `f[k]`,
 //! `#err(code: 3)`), their operands parenthesized wherever sec:grammar would read the text
 //! otherwise, so the text reads back as the same term.
+//!
+//! A term is laid out as a sequence of tokens, not a tree, and each pass over it (laying out,
+//! writing, measuring, breaking) is a loop with a stack of its own, so that a term of any depth
+//! prints on a small call stack (step T2-types-rest).
 
 use std::borrow::Cow;
 use std::fmt;
@@ -19,41 +23,20 @@ use crate::value::Value;
 /// `t` broken into lines of at most `width` columns where its parts allow.
 pub fn pretty(t: &Term, width: usize) -> String {
     let mut out = String::new();
-    doc(t).render(0, 0, width, &mut out);
+    Doc::of(Piece::Term(t)).render(width, &mut out);
     out
 }
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut out = String::new();
-        doc(self).write_flat(&mut out);
-        f.write_str(&out)
+        Doc::of(Piece::Term(self)).write_flat(f)
     }
 }
 
 impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Pattern::Wild => f.write_str("_"),
-            Pattern::Bind(x) => f.write_str(x),
-            Pattern::Lit(v) => write!(f, "{v}"),
-            Pattern::Atom(name, ps) if ps.is_empty() => write!(f, "#{name}"),
-            Pattern::Atom(name, ps) => write!(f, "#{name}({})", list(ps)),
-            Pattern::Fields(name, fs) => {
-                let fs: Vec<String> = fs.iter().map(|(k, p)| format!("{k}: {p}")).collect();
-                write!(f, "#{name}({})", fs.join(", "))
-            }
-            Pattern::Tuple(ps) if ps.len() == 1 => write!(f, "({},)", ps[0]),
-            Pattern::Tuple(ps) => write!(f, "({})", list(ps)),
-            Pattern::AnyAtom => f.write_str("#_"),
-            Pattern::Is(t) => write!(f, "(is {t})"),
-        }
+        Doc::of(Piece::Pattern(self)).write_flat(f)
     }
-}
-
-fn list<T: fmt::Display>(items: &[T]) -> String {
-    let items: Vec<String> = items.iter().map(|i| i.to_string()).collect();
-    items.join(", ")
 }
 
 /// How a binary primitive is written between its operands, with its spaces.
@@ -187,283 +170,440 @@ fn grade(g: Grade) -> &'static str {
     }
 }
 
-/// A term laid out: text, or parts that are written on one line when they fit and on lines
-/// of their own when they do not.
-enum Doc {
-    Text(String),
-    /// A doc always written on one line, as the head of a call.
-    Flat(Box<Doc>),
-    /// Docs written one after another, on the line where they start.
-    Cat(Vec<Doc>),
-    /// As `Cat`, but when it does not fit every list in it breaks, so the two branches of
-    /// an `if` break alike.
-    Together(Vec<Doc>),
-    /// `open`, the items separated by `sep`, `close`. Broken, each item goes on its own line
-    /// indented two spaces, `sep` with its trailing spaces removed ending all but the last.
+/// A term laid out: a sequence of tokens, in which a group is written on one line when it fits
+/// and its parts on lines of their own when it does not.
+struct Doc<'a> {
+    toks: Vec<Tok<'a>>,
+    /// For a `Start`, the index of its `End`; for a `Sep` or an `End`, that of its `Start`.
+    link: Vec<usize>,
+}
+
+enum Tok<'a> {
+    Text(Cow<'a, str>),
+    /// The start of a group, whose parts are the tokens and groups up to its `End`.
+    Start(Group<'a>),
+    /// Between two items of a `List`.
+    Sep,
+    End,
+}
+
+enum Group<'a> {
+    /// Always written on one line, as the head of a call.
+    Flat,
+    /// Its parts one after another, on the line where they start.
+    Cat,
+    /// As `Cat`, but when it does not fit every list among its parts breaks, so the two
+    /// branches of an `if` break alike.
+    Together,
+    /// `open`, the items separated by `sep`, `close`, each item one part. Broken, each item
+    /// goes on its own line indented two spaces, `sep` with its trailing spaces removed ending
+    /// all but the last.
     List {
-        open: String,
-        items: Vec<Doc>,
+        open: Cow<'a, str>,
         sep: &'static str,
         close: &'static str,
     },
 }
 
-fn text(s: impl Into<String>) -> Doc {
-    Doc::Text(s.into())
+/// What is left to lay out: a token, or a term, an operand or a pattern to lay out.
+enum Piece<'a> {
+    Tok(Tok<'a>),
+    Term(&'a Term),
+    /// A term as the operand of a prefix `-` or `!` or the receiver of `[k]`: parenthesized
+    /// unless it is written as a primary or a postfix expression (sec:grammar, Prefix and
+    /// Postfix).
+    Operand(&'a Term),
+    Pattern(&'a Pattern),
 }
 
-fn call(head: &str, items: Vec<Doc>) -> Doc {
-    Doc::List {
-        open: format!("{head}("),
-        items,
-        sep: ", ",
-        close: ")",
+/// The pieces one term or pattern is laid out as, in order.
+struct Pieces<'a>(Vec<Piece<'a>>);
+
+impl<'a> Pieces<'a> {
+    fn text(&mut self, s: impl Into<Cow<'a, str>>) -> &mut Self {
+        self.0.push(Piece::Tok(Tok::Text(s.into())));
+        self
+    }
+
+    fn term(&mut self, t: &'a Term) -> &mut Self {
+        self.0.push(Piece::Term(t));
+        self
+    }
+
+    fn operand(&mut self, t: &'a Term) -> &mut Self {
+        self.0.push(Piece::Operand(t));
+        self
+    }
+
+    fn pattern(&mut self, p: &'a Pattern) -> &mut Self {
+        self.0.push(Piece::Pattern(p));
+        self
+    }
+
+    fn start(&mut self, g: Group<'a>) -> &mut Self {
+        self.0.push(Piece::Tok(Tok::Start(g)));
+        self
+    }
+
+    fn cat(&mut self) -> &mut Self {
+        self.start(Group::Cat)
+    }
+
+    fn list(
+        &mut self,
+        open: impl Into<Cow<'a, str>>,
+        sep: &'static str,
+        close: &'static str,
+    ) -> &mut Self {
+        self.start(Group::List {
+            open: open.into(),
+            sep,
+            close,
+        })
+    }
+
+    /// `head(`, the start of a call's list of arguments.
+    fn call(&mut self, head: &str) -> &mut Self {
+        self.list(format!("{head}("), ", ", ")")
+    }
+
+    fn sep(&mut self) -> &mut Self {
+        self.0.push(Piece::Tok(Tok::Sep));
+        self
+    }
+
+    fn end(&mut self) -> &mut Self {
+        self.0.push(Piece::Tok(Tok::End));
+        self
+    }
+
+    /// The terms as the items of a list.
+    fn items(&mut self, ts: &'a [Term]) -> &mut Self {
+        for (i, t) in ts.iter().enumerate() {
+            if i > 0 {
+                self.sep();
+            }
+            self.term(t);
+        }
+        self
+    }
+
+    /// `key: `, before the value of a named part of a generator such as `depth: 2`.
+    fn named(&mut self, key: &str) -> &mut Self {
+        self.cat().text(format!("{key}: "))
+    }
+
+    /// `(x, y) -> body`, or `x -> body` for one parameter.
+    fn lambda(&mut self, params: &[&str], body: &'a Term) -> &mut Self {
+        let head = match params {
+            [p] => format!("{p} -> "),
+            _ => format!("({}) -> ", params.join(", ")),
+        };
+        self.cat().text(head).term(body).end()
+    }
+
+    fn evidence(&mut self, ev: &Evidence) -> &mut Self {
+        self.named("ev").list("{", ", ", "}");
+        for (i, (p, g)) in ev.iter().enumerate() {
+            if i > 0 {
+                self.sep();
+            }
+            self.text(format!("{p}: {}", grade(*g)));
+        }
+        self.end().end()
+    }
+
+    /// `{ e }`, an `if` branch in its braces.
+    fn block(&mut self, t: &'a Term) -> &mut Self {
+        self.list("{", " ", "}").term(t).end()
+    }
+
+    fn lay_out(&mut self, t: &'a Term) {
+        match t {
+            Term::Lit(v) => {
+                self.text(v.to_string());
+            }
+            Term::Var(x) => {
+                self.text(&**x);
+            }
+            Term::Lam(params, body) => {
+                let ps: Vec<&str> = params.iter().map(|p| &**p).collect();
+                self.lambda(&ps, body);
+            }
+            Term::App(f, args) => match &**f {
+                Term::Var(x) => {
+                    self.call(x).items(args).end();
+                }
+                Term::PrimFn(p) => {
+                    self.call(&prim_fn(*p)).items(args).end();
+                }
+                // The head is written on one line, as the list after it starts where it ends.
+                _ => {
+                    self.cat()
+                        .start(Group::Flat)
+                        .cat()
+                        .text("(")
+                        .term(f)
+                        .text(")")
+                        .end()
+                        .end();
+                    self.call("").items(args).end().end();
+                }
+            },
+            Term::Prim(Prim::Tuple, items) if items.len() == 1 => {
+                self.cat().text("(").term(&items[0]).text(",)").end();
+            }
+            Term::Prim(Prim::Tuple, items) => {
+                self.list("(", ", ", ")").items(items).end();
+            }
+            // An atom is written as Zed writes it: `#err(1)`, `#err(code: 3)`. Elaboration gives
+            // the name and the field names as literals; a term that gives them any other way has
+            // no written form, so its name is written `#_` and its payload positionally.
+            Term::Prim(Prim::Atom, args) if !args.is_empty() => {
+                let open = match &args[0] {
+                    Term::Lit(Value::Str(name)) => format!("#{name}("),
+                    _ => "#_(".into(),
+                };
+                let rest = args.get(2..).unwrap_or_default();
+                let fs: &[Value] = match args.get(1) {
+                    Some(Term::Lit(Value::Tuple(fs))) if fs.len() == rest.len() => fs,
+                    _ => &[],
+                };
+                self.list(open, ", ", ")");
+                for (i, a) in rest.iter().enumerate() {
+                    if i > 0 {
+                        self.sep();
+                    }
+                    match fs.get(i) {
+                        Some(f) => self.cat().text(format!("{}: ", field(f))).term(a).end(),
+                        None => self.term(a),
+                    };
+                }
+                self.end();
+            }
+            // `-x` and `!x`: the operator before its operand (sec:grammar, Prefix).
+            Term::Prim(p @ (Prim::Neg | Prim::Not), args) if args.len() == 1 => {
+                self.cat().text(p.written()).operand(&args[0]).end();
+            }
+            // `t[0]` and `f[k]`: the key in brackets after its receiver (sec:grammar, IndexSuffix).
+            // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop, so
+            // that `fits` meets the receiver's text first rather than after walking down the
+            // chain, which made a broken layout quadratic in the chain's length.
+            Term::Prim(Prim::TupleGet | Prim::Get, args) if args.len() == 2 => {
+                let mut keys = vec![&args[1]];
+                let mut receiver = &args[0];
+                while let Term::Prim(Prim::TupleGet | Prim::Get, inner) = receiver
+                    && inner.len() == 2
+                {
+                    keys.push(&inner[1]);
+                    receiver = &inner[0];
+                }
+                self.cat().operand(receiver);
+                for k in keys.into_iter().rev() {
+                    self.list("[", ", ", "]").term(k).end();
+                }
+                self.end();
+            }
+            Term::Prim(p, args) => match (infix(*p), &args[..]) {
+                // The left operand of `**` is a postfix expression (sec:grammar, Power), so
+                // `-x ** 2` would read as `-(x ** 2)`.
+                (Some(sep), [a, b]) => {
+                    self.list("(", sep, ")");
+                    if *p == Prim::Pow {
+                        self.operand(a)
+                    } else {
+                        self.term(a)
+                    };
+                    self.sep().term(b).end();
+                }
+                _ => {
+                    self.call(name(*p)).items(args).end();
+                }
+            },
+            Term::PrimFn(p) => {
+                self.text(prim_fn(*p));
+            }
+            Term::Let(..) => {
+                self.list("{", " ", "}");
+                let mut t = t;
+                while let Term::Let(x, e, body) = t {
+                    self.cat()
+                        .text(format!("{x} = "))
+                        .term(e)
+                        .text(";")
+                        .end()
+                        .sep();
+                    t = body;
+                }
+                self.term(t).end();
+            }
+            Term::If(c, a, b) => {
+                self.cat()
+                    .text("if ")
+                    .term(c)
+                    .text(" ")
+                    .start(Group::Together);
+                self.block(a).text(" else ").block(b).end().end();
+            }
+            Term::Match(e, arms) => {
+                self.cat()
+                    .text("match ")
+                    .term(e)
+                    .text(" ")
+                    .list("{", ", ", "}");
+                for (i, (p, t)) in arms.iter().enumerate() {
+                    if i > 0 {
+                        self.sep();
+                    }
+                    self.cat().pattern(p).text(" -> ").term(t).end();
+                }
+                self.end().end();
+            }
+            Term::Fam { domain, var, body } => {
+                self.call("fam")
+                    .term(domain)
+                    .sep()
+                    .lambda(&[&**var], body)
+                    .end();
+            }
+            Term::Reindex {
+                family,
+                kf,
+                vf,
+                witness,
+            } => {
+                let w = match witness {
+                    Witness::Residue => "residue".to_string(),
+                    Witness::Catalog(name) => format!("catalog({name:?})"),
+                };
+                self.call("reindex")
+                    .term(family)
+                    .sep()
+                    .term(kf)
+                    .sep()
+                    .term(vf)
+                    .sep();
+                self.named("witness").text(w).end().end();
+            }
+            Term::Discard { family, sel } => {
+                self.call("discard").term(family).sep().term(sel).end();
+            }
+            Term::Fold {
+                family,
+                op,
+                identity,
+                depth,
+                ev,
+            } => {
+                self.call("fold").term(family).sep().term(op).sep();
+                if let Some(i) = identity {
+                    self.named("identity").term(i).end().sep();
+                }
+                self.named("depth").text(depth.to_string()).end().sep();
+                self.evidence(ev).end();
+            }
+            Term::Fix {
+                init,
+                step,
+                this,
+                key,
+                kind,
+                ev,
+            } => {
+                self.call("fix").term(init).sep();
+                match kind {
+                    FixKind::Lattice { join } => {
+                        self.term(step).sep().named("join").term(join).end();
+                    }
+                    FixKind::Definedness => {
+                        self.lambda(&[&**this, &**key], step)
+                            .sep()
+                            .text("definedness");
+                    }
+                }
+                self.sep().evidence(ev).end();
+            }
+            Term::Gen {
+                init,
+                step,
+                guard,
+                pos,
+            } => {
+                let pos = match pos {
+                    GuardPos::Before => "before",
+                    GuardPos::After => "after",
+                };
+                self.call("gen")
+                    .term(init)
+                    .sep()
+                    .term(step)
+                    .sep()
+                    .term(guard)
+                    .sep();
+                self.named("guard").text(pos).end().end();
+            }
+            Term::Read(port) => {
+                self.call("port.read").text(&**port).end();
+            }
+            Term::Push(port, v) => {
+                self.call("port.push").text(&**port).sep().term(v).end();
+            }
+        }
+    }
+
+    /// The pattern as text, which never breaks.
+    fn pattern_out(&mut self, pat: &'a Pattern) {
+        match pat {
+            Pattern::Wild => self.text("_"),
+            Pattern::Bind(x) => self.text(&**x),
+            Pattern::Lit(v) => self.text(v.to_string()),
+            Pattern::Atom(name, ps) if ps.is_empty() => self.text(format!("#{name}")),
+            Pattern::Atom(name, ps) => self
+                .text(format!("#{name}("))
+                .patterns(ps.iter().map(|p| (None, p)))
+                .text(")"),
+            Pattern::Fields(name, fs) => self
+                .text(format!("#{name}("))
+                .patterns(fs.iter().map(|(k, p)| (Some(&**k), p)))
+                .text(")"),
+            Pattern::Tuple(ps) if ps.len() == 1 => self.text("(").pattern(&ps[0]).text(",)"),
+            Pattern::Tuple(ps) => self
+                .text("(")
+                .patterns(ps.iter().map(|p| (None, p)))
+                .text(")"),
+            Pattern::AnyAtom => self.text("#_"),
+            Pattern::Is(t) => self.text(format!("(is {t})")),
+        };
+    }
+
+    /// The patterns, each after its field name if it has one, separated by commas.
+    fn patterns(&mut self, ps: impl Iterator<Item = (Option<&'a str>, &'a Pattern)>) -> &mut Self {
+        for (i, (key, p)) in ps.enumerate() {
+            if i > 0 {
+                self.text(", ");
+            }
+            if let Some(k) = key {
+                self.text(format!("{k}: "));
+            }
+            self.pattern(p);
+        }
+        self
     }
 }
 
-/// `key: value`, a named part of a generator such as `depth: 2`.
-fn named(name: &str, value: Doc) -> Doc {
-    Doc::Cat(vec![text(format!("{name}: ")), value])
-}
-
-fn evidence(ev: &Evidence) -> Doc {
-    let items = ev
-        .iter()
-        .map(|(p, g)| text(format!("{p}: {}", grade(*g))))
-        .collect();
-    named(
-        "ev",
-        Doc::List {
-            open: "{".into(),
-            items,
-            sep: ", ",
-            close: "}",
+/// The text of a primitive written as a function, a call's head or an argument. A primitive with
+/// no operator function of its own is written as the lambda a program writes for it (DESIGN.md
+/// writes `neg: (a -> -a)`), parenthesized as `(+)` is, so that a call or an operator after it
+/// is not read as part of its body.
+fn prim_fn(p: Prim) -> Cow<'static, str> {
+    match p {
+        Prim::Neg | Prim::Not => format!("(x -> {}x)", p.written()).into(),
+        Prim::TupleGet => "((t, i) -> t[i])".into(),
+        Prim::Get => "((f, k) -> f[k])".into(),
+        _ => match infix(p) {
+            Some(op) => format!("({})", op.trim()).into(),
+            None => name(p).into(),
         },
-    )
-}
-
-/// `(x, y) -> body`, or `x -> body` for one parameter.
-fn lambda(params: &[impl AsRef<str>], body: Doc) -> Doc {
-    let ps: Vec<&str> = params.iter().map(|p| p.as_ref()).collect();
-    let head = match ps[..] {
-        [p] => format!("{p} -> "),
-        _ => format!("({}) -> ", ps.join(", ")),
-    };
-    Doc::Cat(vec![text(head), body])
-}
-
-fn doc(t: &Term) -> Doc {
-    match t {
-        Term::Lit(v) => text(v.to_string()),
-        Term::Var(x) => text(&**x),
-        Term::Lam(params, body) => lambda(params, doc(body)),
-        Term::App(f, args) => match &**f {
-            Term::Var(_) | Term::PrimFn(_) => call(&doc(f).flat(), args.iter().map(doc).collect()),
-            // The head is a doc of its own, not a copy of its text, so heads nested in heads
-            // stay linear; it is written on one line, as the list after it starts where it
-            // ends.
-            _ => Doc::Cat(vec![
-                Doc::Flat(Box::new(Doc::Cat(vec![text("("), doc(f), text(")")]))),
-                call("", args.iter().map(doc).collect()),
-            ]),
-        },
-        Term::Prim(Prim::Tuple, items) if items.len() == 1 => {
-            Doc::Cat(vec![text("("), doc(&items[0]), text(",)")])
-        }
-        Term::Prim(Prim::Tuple, items) => Doc::List {
-            open: "(".into(),
-            items: items.iter().map(doc).collect(),
-            sep: ", ",
-            close: ")",
-        },
-        // An atom is written as Zed writes it: `#err(1)`, `#err(code: 3)`. Elaboration gives
-        // the name and the field names as literals; a term that gives them any other way has
-        // no written form, so its name is written `#_` and its payload positionally.
-        Term::Prim(Prim::Atom, args) if !args.is_empty() => {
-            let open = match &args[0] {
-                Term::Lit(Value::Str(name)) => format!("#{name}("),
-                _ => "#_(".into(),
-            };
-            let rest = args.get(2..).unwrap_or_default();
-            let fs: &[Value] = match args.get(1) {
-                Some(Term::Lit(Value::Tuple(fs))) if fs.len() == rest.len() => fs,
-                _ => &[],
-            };
-            let items = rest
-                .iter()
-                .enumerate()
-                .map(|(i, a)| match fs.get(i) {
-                    Some(f) => Doc::Cat(vec![text(format!("{}: ", field(f))), doc(a)]),
-                    None => doc(a),
-                })
-                .collect();
-            Doc::List {
-                open,
-                items,
-                sep: ", ",
-                close: ")",
-            }
-        }
-        // `-x` and `!x`: the operator before its operand (sec:grammar, Prefix).
-        Term::Prim(p @ (Prim::Neg | Prim::Not), args) if args.len() == 1 => {
-            Doc::Cat(vec![text(p.written()), operand(&args[0])])
-        }
-        // `t[0]` and `f[k]`: the key in brackets after its receiver (sec:grammar, IndexSuffix).
-        // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop, so
-        // that `fits` meets the receiver's text first rather than after walking down the
-        // chain, which made a broken layout quadratic in the chain's length.
-        Term::Prim(Prim::TupleGet | Prim::Get, args) if args.len() == 2 => {
-            let mut parts = vec![index(doc(&args[1]))];
-            let mut receiver = &args[0];
-            while let Term::Prim(Prim::TupleGet | Prim::Get, inner) = receiver
-                && inner.len() == 2
-            {
-                parts.push(index(doc(&inner[1])));
-                receiver = &inner[0];
-            }
-            parts.push(operand(receiver));
-            parts.reverse();
-            Doc::Cat(parts)
-        }
-        Term::Prim(p, args) => match (infix(*p), &args[..]) {
-            // The left operand of `**` is a postfix expression (sec:grammar, Power), so
-            // `-x ** 2` would read as `-(x ** 2)`.
-            (Some(sep), [a, b]) => Doc::List {
-                open: "(".into(),
-                items: vec![if *p == Prim::Pow { operand(a) } else { doc(a) }, doc(b)],
-                sep,
-                close: ")",
-            },
-            _ => call(name(*p), args.iter().map(doc).collect()),
-        },
-        // A primitive with no operator function of its own is written as the lambda a program
-        // writes for it (DESIGN.md writes `neg: (a -> -a)`), parenthesized as `(+)` is, so
-        // that a call or an operator after it is not read as part of its body.
-        Term::PrimFn(p @ (Prim::Neg | Prim::Not)) => text(format!("(x -> {}x)", p.written())),
-        Term::PrimFn(Prim::TupleGet) => text("((t, i) -> t[i])"),
-        Term::PrimFn(Prim::Get) => text("((f, k) -> f[k])"),
-        Term::PrimFn(p) => match infix(*p) {
-            Some(op) => text(format!("({})", op.trim())),
-            None => text(name(*p)),
-        },
-        Term::Let(..) => {
-            let mut items = Vec::new();
-            let mut t = t;
-            while let Term::Let(x, e, body) = t {
-                items.push(Doc::Cat(vec![text(format!("{x} = ")), doc(e), text(";")]));
-                t = body;
-            }
-            items.push(doc(t));
-            Doc::List {
-                open: "{".into(),
-                items,
-                sep: " ",
-                close: "}",
-            }
-        }
-        Term::If(c, a, b) => Doc::Cat(vec![
-            text("if "),
-            doc(c),
-            text(" "),
-            Doc::Together(vec![block(doc(a)), text(" else "), block(doc(b))]),
-        ]),
-        Term::Match(e, arms) => Doc::Cat(vec![
-            text("match "),
-            doc(e),
-            text(" "),
-            Doc::List {
-                open: "{".into(),
-                items: arms
-                    .iter()
-                    .map(|(p, t)| Doc::Cat(vec![text(format!("{p} -> ")), doc(t)]))
-                    .collect(),
-                sep: ", ",
-                close: "}",
-            },
-        ]),
-        Term::Fam { domain, var, body } => {
-            call("fam", vec![doc(domain), lambda(&[&**var], doc(body))])
-        }
-        Term::Reindex {
-            family,
-            kf,
-            vf,
-            witness,
-        } => {
-            let w = match witness {
-                Witness::Residue => "residue".to_string(),
-                Witness::Catalog(name) => format!("catalog({name:?})"),
-            };
-            call(
-                "reindex",
-                vec![doc(family), doc(kf), doc(vf), named("witness", text(w))],
-            )
-        }
-        Term::Discard { family, sel } => call("discard", vec![doc(family), doc(sel)]),
-        Term::Fold {
-            family,
-            op,
-            identity,
-            depth,
-            ev,
-        } => {
-            let mut items = vec![doc(family), doc(op)];
-            if let Some(i) = identity {
-                items.push(named("identity", doc(i)));
-            }
-            items.push(named("depth", text(depth.to_string())));
-            items.push(evidence(ev));
-            call("fold", items)
-        }
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind,
-            ev,
-        } => {
-            let mut items = vec![doc(init)];
-            match kind {
-                FixKind::Lattice { join } => {
-                    items.push(doc(step));
-                    items.push(named("join", doc(join)));
-                }
-                FixKind::Definedness => {
-                    items.push(lambda(&[&**this, &**key], doc(step)));
-                    items.push(text("definedness"));
-                }
-            }
-            items.push(evidence(ev));
-            call("fix", items)
-        }
-        Term::Gen {
-            init,
-            step,
-            guard,
-            pos,
-        } => {
-            let pos = match pos {
-                GuardPos::Before => "before",
-                GuardPos::After => "after",
-            };
-            call(
-                "gen",
-                vec![doc(init), doc(step), doc(guard), named("guard", text(pos))],
-            )
-        }
-        Term::Read(port) => call("port.read", vec![text(&**port)]),
-        Term::Push(port, v) => call("port.push", vec![text(&**port), doc(v)]),
-    }
-}
-
-/// `t` as the operand of a prefix `-` or `!` or the receiver of `[k]`: parenthesized unless it
-/// is written as a primary or a postfix expression (sec:grammar, Prefix and Postfix).
-fn operand(t: &Term) -> Doc {
-    if primary(t) {
-        doc(t)
-    } else {
-        Doc::Cat(vec![text("("), doc(t), text(")")])
     }
 }
 
@@ -497,140 +637,218 @@ fn primary(t: &Term) -> bool {
     }
 }
 
-/// `[k]`, the brackets of an index.
-fn index(k: Doc) -> Doc {
-    Doc::List {
-        open: "[".into(),
-        items: vec![k],
-        sep: ", ",
-        close: "]",
-    }
+/// What is left of a group being broken: a `Cat` or `Together` whose parts from `at` are still to
+/// write, or a `List` whose items are.
+enum Frame {
+    Parts {
+        at: usize,
+        ind: usize,
+        together: bool,
+    },
+    Items {
+        at: usize,
+        ind: usize,
+    },
 }
 
-/// `{ e }`, the braces of an `if` branch.
-fn block(d: Doc) -> Doc {
-    Doc::List {
-        open: "{".into(),
-        items: vec![d],
-        sep: " ",
-        close: "}",
-    }
-}
-
-impl Doc {
-    /// The one-line text.
-    fn flat(&self) -> String {
-        let mut out = String::new();
-        self.write_flat(&mut out);
-        out
-    }
-
-    /// Writes the one-line text.
-    fn write_flat(&self, out: &mut String) {
-        match self {
-            Doc::Text(s) => *out += s,
-            Doc::Flat(d) => d.write_flat(out),
-            Doc::Cat(ds) | Doc::Together(ds) => ds.iter().for_each(|d| d.write_flat(out)),
-            Doc::List {
-                open,
-                items,
-                sep,
-                close,
-            } => {
-                let pad = Doc::pad(close, items);
-                *out += open;
-                *out += pad;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        *out += sep;
-                    }
-                    item.write_flat(out);
+impl<'a> Doc<'a> {
+    /// The doc of what `root` lays out, one group. Each term and pattern is laid out once, its
+    /// pieces taken from a stack.
+    fn of(root: Piece<'a>) -> Doc<'a> {
+        let mut toks = Vec::new();
+        let mut todo = vec![
+            Piece::Tok(Tok::End),
+            root,
+            Piece::Tok(Tok::Start(Group::Cat)),
+        ];
+        let mut out = Pieces(Vec::new());
+        while let Some(piece) = todo.pop() {
+            match piece {
+                Piece::Tok(t) => {
+                    toks.push(t);
+                    continue;
                 }
-                *out += pad;
-                *out += close;
+                Piece::Term(t) => out.lay_out(t),
+                Piece::Operand(t) if primary(t) => out.lay_out(t),
+                Piece::Operand(t) => {
+                    out.cat().text("(").term(t).text(")").end();
+                }
+                Piece::Pattern(p) => out.pattern_out(p),
             }
+            todo.extend(out.0.drain(..).rev());
+        }
+        let mut link: Vec<usize> = (0..toks.len()).collect();
+        let mut open = Vec::new();
+        for (i, t) in toks.iter().enumerate() {
+            match t {
+                Tok::Start(_) => open.push(i),
+                Tok::Sep => link[i] = *open.last().expect("a separator inside a list"),
+                Tok::End => {
+                    let s = open.pop().expect("each end after its start");
+                    link[i] = s;
+                    link[s] = i;
+                }
+                Tok::Text(_) => {}
+            }
+        }
+        Doc { toks, link }
+    }
+
+    /// The index after the token or group starting at `i`.
+    fn next(&self, i: usize) -> usize {
+        match self.toks[i] {
+            Tok::Start(_) => self.link[i] + 1,
+            _ => i + 1,
         }
     }
 
-    /// The space inside the braces of a nonempty `{ … }` written on one line.
-    fn pad(close: &str, items: &[Doc]) -> &'static str {
-        if close == "}" && !items.is_empty() {
+    /// The list a `Sep` or `End` at `i` is in, if it is in one.
+    fn list_of(&self, i: usize) -> Option<(&'static str, &'static str)> {
+        match &self.toks[self.link[i]] {
+            Tok::Start(Group::List { sep, close, .. }) => Some((sep, close)),
+            _ => None,
+        }
+    }
+
+    /// The space inside the braces of a nonempty `{ … }` written on one line, the list starting
+    /// at `s`.
+    fn pad(&self, s: usize, close: &str) -> &'static str {
+        if close == "}" && self.link[s] > s + 1 {
             " "
         } else {
             ""
         }
     }
 
-    /// The room left after the one-line text in `room` columns, or `None` when it does not
-    /// fit. It stops once the room runs out, so it reads at most `room` columns of text.
-    fn fits(&self, room: usize) -> Option<usize> {
-        let take = |room: usize, s: &str| room.checked_sub(s.len());
-        match self {
-            Doc::Text(s) => take(room, s),
-            Doc::Flat(d) => d.fits(room),
-            Doc::Cat(ds) | Doc::Together(ds) => ds.iter().try_fold(room, |room, d| d.fits(room)),
-            Doc::List {
-                open,
-                items,
-                sep,
-                close,
-            } => {
-                let pad = Doc::pad(close, items);
-                let room = take(take(room, open)?, pad)?;
-                let room = items.iter().enumerate().try_fold(room, |room, (i, item)| {
-                    item.fits(if i > 0 { take(room, sep)? } else { room })
-                })?;
-                take(take(room, pad)?, close)
+    /// Gives `f` the pieces of the one-line text of the token or group at `i`, in order, until
+    /// it returns `false`; returns whether every piece was given.
+    fn flat(&self, i: usize, mut f: impl FnMut(&str) -> bool) -> bool {
+        (i..self.next(i)).all(|k| match &self.toks[k] {
+            Tok::Text(s) => f(s),
+            Tok::Start(Group::List { open, close, .. }) => f(open) && f(self.pad(k, close)),
+            Tok::Start(_) => true,
+            Tok::Sep => f(self.list_of(k).expect("a separator inside a list").0),
+            Tok::End => match self.list_of(k) {
+                Some((_, close)) => f(self.pad(self.link[k], close)) && f(close),
+                None => true,
+            },
+        })
+    }
+
+    /// Writes the one-line text.
+    fn write_flat(&self, w: &mut impl fmt::Write) -> fmt::Result {
+        let mut r = Ok(());
+        self.flat(0, |s| {
+            r = w.write_str(s);
+            r.is_ok()
+        });
+        r
+    }
+
+    /// Whether the one-line text of the token or group at `i` fits in `room` columns. It stops
+    /// once the room runs out, so it reads at most `room` columns of text.
+    fn fits(&self, i: usize, mut room: usize) -> bool {
+        self.flat(i, |s| match room.checked_sub(s.len()) {
+            Some(r) => {
+                room = r;
+                true
             }
-        }
+            None => false,
+        })
     }
 
-    /// Writes the doc at column `col` of a line indented `ind`, in at most `width` columns
-    /// where it can; returns the column it ends at.
-    fn render(&self, ind: usize, col: usize, width: usize, out: &mut String) -> usize {
-        if matches!(self, Doc::Text(_) | Doc::Flat(_))
-            || self.fits(width.saturating_sub(col)).is_some()
-        {
-            let start = out.len();
-            self.write_flat(out);
-            return col + out.len() - start;
-        }
-        match self {
-            Doc::Text(_) | Doc::Flat(_) => unreachable!("written flat above"),
-            Doc::Cat(ds) => ds.iter().fold(col, |col, d| d.render(ind, col, width, out)),
-            Doc::Together(ds) => ds.iter().fold(col, |col, d| match d {
-                Doc::List { .. } => d.broken(ind, out, width),
-                _ => d.render(ind, col, width, out),
-            }),
-            Doc::List { .. } => self.broken(ind, out, width),
-        }
-    }
-
-    /// Writes a list with each item on its own line; returns the column it ends at.
-    fn broken(&self, ind: usize, out: &mut String, width: usize) -> usize {
-        match self {
-            Doc::List {
-                open,
-                items,
-                sep,
-                close,
-            } => {
-                *out += open;
-                let inner = ind + 2;
-                for (i, item) in items.iter().enumerate() {
-                    *out += "\n";
-                    *out += &" ".repeat(inner);
-                    item.render(inner, inner, width, out);
-                    if i + 1 < items.len() {
-                        *out += sep.trim_end();
+    /// Writes the doc in at most `width` columns where it can.
+    fn render(&self, width: usize, out: &mut String) {
+        let mut frames = Vec::new();
+        let mut col = 0;
+        self.enter(0, 0, width, &mut col, out, &mut frames);
+        while let Some(frame) = frames.last_mut() {
+            match frame {
+                Frame::Parts { at, ind, together } => {
+                    let (c, ind, together) = (*at, *ind, *together);
+                    if let Tok::End = self.toks[c] {
+                        frames.pop();
+                        continue;
+                    }
+                    *at = self.next(c);
+                    match &self.toks[c] {
+                        Tok::Start(Group::List { open, .. }) if together => {
+                            *out += open;
+                            frames.push(Frame::Items { at: c + 1, ind });
+                        }
+                        _ => self.enter(c, ind, width, &mut col, out, &mut frames),
                     }
                 }
-                *out += "\n";
-                *out += &" ".repeat(ind);
-                *out += close;
-                ind + close.len()
+                Frame::Items { at, ind } => {
+                    let (c, ind) = (*at, *ind);
+                    match &self.toks[c] {
+                        Tok::End => {
+                            let close = self.list_of(c).expect("items inside a list").1;
+                            *out += "\n";
+                            *out += &" ".repeat(ind);
+                            *out += close;
+                            col = ind + close.len();
+                            frames.pop();
+                        }
+                        Tok::Sep => {
+                            *at = c + 1;
+                            *out += self
+                                .list_of(c)
+                                .expect("a separator inside a list")
+                                .0
+                                .trim_end();
+                        }
+                        _ => {
+                            *at = self.next(c);
+                            let inner = ind + 2;
+                            *out += "\n";
+                            *out += &" ".repeat(inner);
+                            col = inner;
+                            self.enter(c, inner, width, &mut col, out, &mut frames);
+                        }
+                    }
+                }
             }
-            _ => unreachable!("only a list breaks into lines"),
+        }
+    }
+
+    /// Starts the token or group at `i`, at column `col` of a line indented `ind`: writes it
+    /// on one line when it fits, and otherwise pushes what is left of it to write.
+    fn enter(
+        &self,
+        i: usize,
+        ind: usize,
+        width: usize,
+        col: &mut usize,
+        out: &mut String,
+        frames: &mut Vec<Frame>,
+    ) {
+        let flat = matches!(self.toks[i], Tok::Text(_) | Tok::Start(Group::Flat))
+            || self.fits(i, width.saturating_sub(*col));
+        if flat {
+            self.flat(i, |s| {
+                *out += s;
+                *col += s.len();
+                true
+            });
+            return;
+        }
+        match &self.toks[i] {
+            Tok::Start(Group::Cat) => frames.push(Frame::Parts {
+                at: i + 1,
+                ind,
+                together: false,
+            }),
+            Tok::Start(Group::Together) => frames.push(Frame::Parts {
+                at: i + 1,
+                ind,
+                together: true,
+            }),
+            Tok::Start(Group::List { open, .. }) => {
+                *out += open;
+                frames.push(Frame::Items { at: i + 1, ind });
+            }
+            _ => unreachable!("a text, a flat group, a separator or an end is not entered broken"),
         }
     }
 }
