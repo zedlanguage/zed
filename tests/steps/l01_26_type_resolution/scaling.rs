@@ -1358,26 +1358,31 @@ fn replacing_in_rows_shared_on_many_paths_scales() {
         .into_iter()
         .map(|m| (m, binds(m)))
         .collect();
-    let shared = |m: usize| {
-        let vs = &vs[&m];
-        vs[1..].iter().fold(vs[0].clone(), |s, v| {
-            Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
+    // Built before timing, so the runs time the walks alone.
+    let shared: BTreeMap<_, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let vs = &vs[&m];
+            let t = vs[1..].iter().fold(vs[0].clone(), |s, v| {
+                Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
+            });
+            (m, t)
         })
-    };
+        .collect();
     let replaced = |t: &Ty, m: usize| {
         let f = t.var_facts();
         assert_eq!(f.names.len() + f.classes.len(), m);
         assert!(f.names.iter().chain(&f.classes).all(|v| v.starts_with('W')));
     };
     scaling::check("Ty::replace in n shared rows", n, |m| {
-        replaced(&shared(m).replace(&binds[&m]), m)
+        replaced(&shared[&m].replace(&binds[&m]), m)
     });
     scaling::check("Ty::subst in n shared rows", n, |m| {
-        replaced(&shared(m).subst(&binds[&m]), m)
+        replaced(&shared[&m].subst(&binds[&m]), m)
     });
     scaling::check("Ty::settle in n shared rows", n, |m| {
         let b = &binds[&m];
-        replaced(&shared(m).settle(&|v: &str| b.get(v).cloned()), m)
+        replaced(&shared[&m].settle(&|v: &str| b.get(v).cloned()), m)
     });
 }
 
@@ -1440,8 +1445,10 @@ fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
 
 /// The program family checks with no walk that follows each of its `2^n` paths; it is of
 /// order `n^2`, not `n`, because each call `p(s, v)` replays its data need on `s`, a type of
-/// `k` rows at the `k`th call (`Ck::data`): open, COMPLEXITY.md F97. Of order `n^2` it stays
-/// until then, so that the `2^n` paths do not return unseen.
+/// `k` rows at the `k`th call (`Ck::data`): open, COMPLEXITY.md F97. This O(n^2) awaits the
+/// author's approval, question A20; it is not approved. The test measures the cost as it is
+/// now, so that the `2^n` paths do not return unseen; power 2 here is not a claim that O(n^2)
+/// is acceptable, and the fix of A20 lowers it to 1.
 #[test]
 fn rows_shared_on_many_paths_scale_as_n_squared() {
     for (what, call) in [("a function of n shared rows", false), ("its call", true)] {
