@@ -901,6 +901,20 @@ fn widen(x: &G, v: usize, wide: usize, kind: &str) -> G {
     y
 }
 
+/// A random system of `n` nodes from `seed`: about `rate` in 20 nodes are morphisms, one in 20
+/// `Top`, one in 20 `Bot`, and the rest `Or` and `And` nodes of one to three children. Family
+/// `random` is seed `0x2545_F491_4F6C_DD1D` at rate 5. The generator is a xorshift, which
+/// stays at 0 from 0, so seed 0 is read as that seed.
+pub fn random(seed: u64, rate: u64, n: usize) -> G {
+    assert!(rate <= 18, "at most 18 in 20 nodes are morphisms");
+    let mut x = if seed == 0 {
+        0x2545_F491_4F6C_DD1D
+    } else {
+        seed
+    };
+    claude::random(&mut x, n, rate)
+}
+
 /// Family `f` at size `n`; `BASE:BASEN:NODE[:KIND]` is family `BASE` at size `BASEN` with node
 /// `NODE` widened by `n` children.
 pub fn family(f: &str, n: usize) -> G {

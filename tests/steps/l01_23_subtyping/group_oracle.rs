@@ -1,0 +1,1561 @@
+//! Verdicts on recursive type groups against values (plan item GROUP-oracle, DESIGN.md
+//! sec:type_language): random systems of mutually recursive definitions, with tuples,
+//! morphisms, `&` and `\`, are built as kernel groups, one per strongly connected component,
+//! and each member's `Type::verdict` and `Type::is_empty` are compared with what a finite pool
+//! of values shows. The oracle is the one of cross-review xs2 (Gemini, Q2Q3), ported to Rust.
+//!
+//! The pool holds the atoms of the system, 0 and 1, both booleans, finite tuples and closures.
+//! A closure is a stored domain type and a body: a constant (which may be the closure itself or
+//! a tuple holding it, as `f(x) = f`), the identity, the first or second component, divergence,
+//! `x(x)` or `x(v)`. A closure is a member of `L .. U -> V` when its domain is within the bounds
+//! and it terminates in `V` on every value of its domain. That reads the answer negatively, so
+//! the oracle takes the alternating three-valued fixed point: `lo`, the values surely members,
+//! and `hi`, the values possibly members; reads in a domain or on the right of `\` take the
+//! other bound, and positive reads take the greatest fixed point, which a finite tuple cannot
+//! sustain and a closure can. A definition is `I` when `lo` holds a value (a proof: the value
+//! is shown), `E` when `hi` holds none, and `U` otherwise.
+//!
+//! An `E` is a proof only when the pool was built from every choice of a union arm and of a
+//! divergent morphism, not from a sample: past the cap, a sample is drawn, and an `E` is rerun
+//! with a pool `RERUN` times larger (R2_CLAUDE records a false `E` at a cap of 600 that a cap
+//! of 2000 corrects). A kernel answer is wrong when it is `Empty` against an `I`, or `Inhabited`
+//! against an `E` of a pool built from every choice.
+
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+
+use super::bes_families::{self, reference};
+use super::judgments::{bodies, group};
+use zed_kernel::types::bes::{Answer, decide};
+use zed_kernel::types::rec::{Def, Expr, Group};
+use zed_kernel::types::{Type, Verdict};
+use zed_tests::instances::Rng;
+use zed_tests::scaling;
+
+// ---------------------------------------------------------------------------------------------
+// Systems
+// ---------------------------------------------------------------------------------------------
+
+/// A type of a system of definitions; `Ref(i)` is definition `i`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum E {
+    Atom(&'static str),
+    Int,
+    Bool,
+    Empty,
+    Top,
+    Ref(usize),
+    Tup(Vec<E>),
+    /// `Mor(l, u, v)`: guarantee `l`, permission `u`, value type `v`.
+    Mor(Box<E>, Box<E>, Box<E>),
+    Union(Vec<E>),
+    Diff(Box<E>, Box<E>),
+    And(Vec<E>),
+}
+
+impl fmt::Display for E {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let list = |f: &mut fmt::Formatter<'_>, xs: &[E], sep: &str| {
+            for (i, x) in xs.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(sep)?;
+                }
+                write!(f, "{x}")?;
+            }
+            Ok(())
+        };
+        match self {
+            E::Atom(a) => write!(f, "#{a}"),
+            E::Int => f.write_str("int"),
+            E::Bool => f.write_str("bool"),
+            E::Empty => f.write_str("empty"),
+            E::Top => f.write_str("top"),
+            E::Ref(i) => write!(f, "R{i}"),
+            E::Tup(xs) => {
+                f.write_str("(")?;
+                list(f, xs, ", ")?;
+                f.write_str(if xs.len() == 1 { ",)" } else { ")" })
+            }
+            E::Mor(l, u, v) if l == u => write!(f, "(({l}) -> {v})"),
+            E::Mor(l, u, v) => write!(f, "({l} .. {u} -> {v})"),
+            E::Union(xs) => {
+                f.write_str("(")?;
+                list(f, xs, " | ")?;
+                f.write_str(")")
+            }
+            E::Diff(a, b) => write!(f, "({a} \\ {b})"),
+            E::And(xs) => {
+                f.write_str("(")?;
+                list(f, xs, " & ")?;
+                f.write_str(")")
+            }
+        }
+    }
+}
+
+fn exact(k: E, v: E) -> E {
+    E::Mor(Box::new(k.clone()), Box::new(k), Box::new(v))
+}
+
+fn tup(xs: Vec<E>) -> E {
+    E::Tup(xs)
+}
+
+fn diff(a: E, b: E) -> E {
+    E::Diff(Box::new(a), Box::new(b))
+}
+
+/// The system as text, one definition after another.
+fn show_system(sys: &[E]) -> String {
+    let defs: Vec<String> = sys
+        .iter()
+        .enumerate()
+        .map(|(i, d)| format!("R{i} = {d}"))
+        .collect();
+    defs.join("; ")
+}
+
+/// The definitions `e` names.
+fn refs(e: &E, out: &mut Vec<usize>) {
+    let mut stack = vec![e];
+    while let Some(e) = stack.pop() {
+        match e {
+            E::Ref(i) => out.push(*i),
+            E::Tup(xs) | E::Union(xs) | E::And(xs) => stack.extend(xs),
+            E::Mor(l, u, v) => stack.extend([&**l, &**u, &**v]),
+            E::Diff(a, b) => stack.extend([&**a, &**b]),
+            E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top => {}
+        }
+    }
+}
+
+/// `e` as a kernel expression: a definition of the component `comp` is a reference into the
+/// group, any other one its type, which must have been built.
+fn expr(e: &E, comp: &[usize], built: &[Option<Type>]) -> Option<Expr> {
+    Some(match e {
+        E::Atom(a) => Expr::Type(Type::atom(a)),
+        E::Int => Expr::Type(Type::int()),
+        E::Bool => Expr::Type(Type::bool()),
+        E::Empty => Expr::Type(Type::empty()),
+        E::Top => Expr::Type(Type::top()),
+        E::Ref(i) => match comp.iter().position(|x| x == i) {
+            Some(k) => Expr::Ref(k, vec![]),
+            None => Expr::Type(built[*i].clone()?),
+        },
+        E::Tup(xs) => Expr::Tuple(
+            xs.iter()
+                .map(|x| expr(x, comp, built))
+                .collect::<Option<_>>()?,
+        ),
+        E::Union(xs) => Expr::Union(
+            xs.iter()
+                .map(|x| expr(x, comp, built))
+                .collect::<Option<_>>()?,
+        ),
+        E::And(xs) => Expr::And(
+            xs.iter()
+                .map(|x| expr(x, comp, built))
+                .collect::<Option<_>>()?,
+        ),
+        E::Diff(a, b) => Expr::Diff(
+            Box::new(expr(a, comp, built)?),
+            Box::new(expr(b, comp, built)?),
+        ),
+        E::Mor(l, u, v) => Expr::Morphism(
+            Box::new(expr(l, comp, built)?),
+            Box::new(expr(u, comp, built)?),
+            Box::new(expr(v, comp, built)?),
+        ),
+    })
+}
+
+/// The kernel type of each definition: one `Group` per strongly connected component, each
+/// after those it names, as a source file's mutually recursive `type` declarations are
+/// grouped. `None` for a definition its group's admission rejects, and for every definition
+/// that names one. Definition `i` is named `{tag}_{i}`, so systems do not share names.
+fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
+    let n = sys.len();
+    let edges: Vec<Vec<usize>> = sys
+        .iter()
+        .map(|d| {
+            let mut out = Vec::new();
+            refs(d, &mut out);
+            out
+        })
+        .collect();
+    // What each definition reaches, by a search from each: the systems have a few definitions.
+    let reach: Vec<Vec<bool>> = (0..n)
+        .map(|s| {
+            let mut seen = vec![false; n];
+            let mut stack = edges[s].clone();
+            while let Some(v) = stack.pop() {
+                if !std::mem::replace(&mut seen[v], true) {
+                    stack.extend(&edges[v]);
+                }
+            }
+            seen
+        })
+        .collect();
+    let mut built: Vec<Option<Type>> = vec![None; n];
+    let mut done = vec![false; n];
+    loop {
+        let mut progressed = false;
+        for i in 0..n {
+            if done[i] {
+                continue;
+            }
+            let comp: Vec<usize> = (0..n)
+                .filter(|&j| j == i || (reach[i][j] && reach[j][i]))
+                .collect();
+            if !(0..n).all(|j| !reach[i][j] || comp.contains(&j) || done[j]) {
+                continue;
+            }
+            let defs: Option<Vec<Def>> = comp
+                .iter()
+                .map(|&d| {
+                    expr(&sys[d], &comp, &built).map(|body| Def {
+                        name: format!("{tag}_{d}"),
+                        params: vec![],
+                        body,
+                    })
+                })
+                .collect();
+            if let Some(Ok(g)) = defs.map(Group::new) {
+                for (k, t) in g.instance(vec![]).into_iter().enumerate() {
+                    built[comp[k]] = Some(t);
+                }
+            }
+            for &d in &comp {
+                done[d] = true;
+            }
+            progressed = true;
+        }
+        if !progressed {
+            return built;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The oracle
+// ---------------------------------------------------------------------------------------------
+
+/// An interned type of the oracle; `Alias(x)` is a definition, whose body is `x`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Ty {
+    Atom(usize),
+    Int,
+    Bool,
+    Empty,
+    Top,
+    Alias(usize),
+    Tup(Vec<usize>),
+    Mor(usize, usize, usize),
+    Union(Vec<usize>),
+    Diff(usize, usize),
+    And(Vec<usize>),
+}
+
+struct Types {
+    tys: Vec<Ty>,
+    ix: HashMap<Ty, usize>,
+    /// The `Alias` of each definition.
+    defs: Vec<usize>,
+    atoms: Vec<&'static str>,
+}
+
+impl Types {
+    fn new(sys: &[E]) -> Types {
+        let mut ts = Types {
+            tys: Vec::new(),
+            ix: HashMap::new(),
+            defs: Vec::new(),
+            atoms: Vec::new(),
+        };
+        // The definitions' places come first, filled once their bodies are interned; they are
+        // not interned themselves, so two definitions are two types.
+        for _ in sys {
+            ts.defs.push(ts.tys.len());
+            ts.tys.push(Ty::Alias(usize::MAX));
+        }
+        for (i, e) in sys.iter().enumerate() {
+            let body = ts.of(e);
+            ts.tys[ts.defs[i]] = Ty::Alias(body);
+        }
+        ts
+    }
+
+    fn add(&mut self, t: Ty) -> usize {
+        if let Some(&i) = self.ix.get(&t) {
+            return i;
+        }
+        self.tys.push(t.clone());
+        self.ix.insert(t, self.tys.len() - 1);
+        self.tys.len() - 1
+    }
+
+    fn of(&mut self, e: &E) -> usize {
+        match e {
+            E::Atom(a) => {
+                let i = match self.atoms.iter().position(|x| x == a) {
+                    Some(i) => i,
+                    None => {
+                        self.atoms.push(a);
+                        self.atoms.len() - 1
+                    }
+                };
+                self.add(Ty::Atom(i))
+            }
+            E::Int => self.add(Ty::Int),
+            E::Bool => self.add(Ty::Bool),
+            E::Empty => self.add(Ty::Empty),
+            E::Top => self.add(Ty::Top),
+            E::Ref(i) => self.defs[*i],
+            E::Tup(xs) => {
+                let v = xs.iter().map(|x| self.of(x)).collect();
+                self.add(Ty::Tup(v))
+            }
+            E::Union(xs) => {
+                let v = xs.iter().map(|x| self.of(x)).collect();
+                self.add(Ty::Union(v))
+            }
+            E::And(xs) => {
+                let v = xs.iter().map(|x| self.of(x)).collect();
+                self.add(Ty::And(v))
+            }
+            E::Diff(a, b) => {
+                let (a, b) = (self.of(a), self.of(b));
+                self.add(Ty::Diff(a, b))
+            }
+            E::Mor(l, u, v) => {
+                let (l, u, v) = (self.of(l), self.of(u), self.of(v));
+                self.add(Ty::Mor(l, u, v))
+            }
+        }
+    }
+
+    /// `t` with its definitions' names followed, or `None` on a cycle of names.
+    fn resolve(&self, mut t: usize) -> Option<usize> {
+        let mut seen = HashSet::new();
+        while let Ty::Alias(x) = self.tys[t] {
+            if !seen.insert(t) {
+                return None;
+            }
+            t = x;
+        }
+        Some(t)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Body {
+    Const(usize),
+    Id,
+    Fst,
+    Snd,
+    Diverge,
+    SelfApp,
+    AppArg(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Node {
+    Atom(usize),
+    Int(i64),
+    Bool(bool),
+    Tup(Vec<usize>),
+    /// A closure: its domain type (`None` the empty domain) and body.
+    Fn(Option<usize>, Body),
+    /// A node being built.
+    Hole,
+}
+
+/// The pool: each value once, by its structure or, for a value with a cycle through a closure,
+/// by the text of its minimal graph (`seen`).
+#[derive(Default)]
+struct Pool {
+    n: Vec<Node>,
+    ix: HashMap<Node, usize>,
+    seen: HashMap<String, usize>,
+}
+
+impl Pool {
+    fn add(&mut self, x: Node) -> usize {
+        if let Some(&i) = self.ix.get(&x) {
+            return i;
+        }
+        self.n.push(x.clone());
+        self.ix.insert(x, self.n.len() - 1);
+        self.n.len() - 1
+    }
+
+    fn fresh(&mut self) -> usize {
+        self.n.push(Node::Hole);
+        self.n.len() - 1
+    }
+
+    fn show(&self, v: usize, depth: usize) -> String {
+        if depth == 0 {
+            return "…".into();
+        }
+        match &self.n[v] {
+            Node::Atom(a) => format!("atom {a}"),
+            Node::Int(i) => i.to_string(),
+            Node::Bool(b) => b.to_string(),
+            Node::Tup(xs) => {
+                let xs: Vec<String> = xs.iter().map(|&x| self.show(x, depth - 1)).collect();
+                format!("({})", xs.join(", "))
+            }
+            Node::Fn(d, b) => {
+                let d = d.map_or("empty".into(), |d| format!("type {d}"));
+                match b {
+                    Body::Const(c) => format!("fn[{d}] -> {}", self.show(*c, depth - 1)),
+                    Body::AppArg(c) => format!("fn[{d}] x({})", self.show(*c, depth - 1)),
+                    o => format!("fn[{d}] {o:?}"),
+                }
+            }
+            Node::Hole => "hole".into(),
+        }
+    }
+}
+
+/// Applies closures. The evaluator is deterministic, so meeting one application again before
+/// it ends is a loop: divergence. The results are kept in a table of every pair of pool values,
+/// read in each round of the fixed point.
+// Complexity tradeoff: the table is quadratic in the pool, and pools are deduplicated to
+// canonical values, so they stay near a thousand values at `CAP` and below two thousand at the
+// rerun (1,709 at `CAP * RERUN` on the slowest generated system, seed 20 of the X14 family):
+// some megabytes, against a hash map that made one system take 35 s.
+struct Machine {
+    nv: usize,
+    memo: Vec<u32>,
+}
+
+const UNKNOWN: u32 = u32::MAX;
+const DIVERGES: u32 = u32::MAX - 1;
+const ON_THE_PATH: u32 = u32::MAX - 2;
+
+impl Machine {
+    fn new(nv: usize) -> Machine {
+        assert!(
+            nv < ON_THE_PATH as usize,
+            "pool values are numbered below the markers"
+        );
+        Machine {
+            nv,
+            memo: vec![UNKNOWN; nv * nv],
+        }
+    }
+
+    /// `c(x)`: `Some` result, or `None` for divergence or a stuck term. `x(x)` and `x(v)` are
+    /// calls in tail position, so the application is a loop over the calls it makes.
+    fn app(&mut self, p: &Pool, mut c: usize, mut x: usize) -> Option<usize> {
+        let mut path = Vec::new();
+        let r = loop {
+            let at = c * self.nv + x;
+            match self.memo[at] {
+                UNKNOWN => {}
+                DIVERGES | ON_THE_PATH => break None,
+                r => break Some(r as usize),
+            }
+            self.memo[at] = ON_THE_PATH;
+            path.push(at);
+            let Node::Fn(_, b) = &p.n[c] else { break None };
+            match *b {
+                Body::Const(v) => break Some(v),
+                Body::Id => break Some(x),
+                Body::Fst => match &p.n[x] {
+                    Node::Tup(v) if !v.is_empty() => break Some(v[0]),
+                    _ => break None,
+                },
+                Body::Snd => match &p.n[x] {
+                    Node::Tup(v) if v.len() > 1 => break Some(v[1]),
+                    _ => break None,
+                },
+                Body::Diverge => break None,
+                Body::SelfApp => c = x,
+                Body::AppArg(v) => (c, x) = (x, v),
+            }
+        };
+        for at in path {
+            self.memo[at] = r.map_or(DIVERGES, |r| r as u32);
+        }
+        r
+    }
+}
+
+/// One bound of the fixed point: for each type, which pool values it holds.
+type Bound = Vec<Vec<bool>>;
+
+/// The next value of the bound `pos` (`lo` or `hi`), reading `neg`, the other bound, where the
+/// type is read negatively: in a domain, and on the right of `\`.
+fn step(ts: &Types, p: &Pool, m: &mut Machine, pos: &Bound, neg: &Bound) -> Bound {
+    let nv = p.n.len();
+    let mut lists: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut out = vec![vec![false; nv]; ts.tys.len()];
+    for (t, ty) in ts.tys.iter().enumerate() {
+        // Whether a closure of domain `d` is within the bounds, the same for every body.
+        let mut within: HashMap<Option<usize>, bool> = HashMap::new();
+        for v in 0..nv {
+            let node = &p.n[v];
+            out[t][v] = match ty {
+                Ty::Atom(a) => *node == Node::Atom(*a),
+                Ty::Int => matches!(node, Node::Int(_)),
+                Ty::Bool => matches!(node, Node::Bool(_)),
+                Ty::Empty => false,
+                Ty::Top => true,
+                Ty::Alias(x) => pos[*x][v],
+                Ty::Tup(c) => match node {
+                    Node::Tup(x) if x.len() == c.len() => c.iter().zip(x).all(|(c, x)| pos[*c][*x]),
+                    _ => false,
+                },
+                Ty::Union(c) => c.iter().any(|c| pos[*c][v]),
+                Ty::And(c) => c.iter().all(|c| pos[*c][v]),
+                Ty::Diff(a, b) => pos[*a][v] && !neg[*b][v],
+                Ty::Mor(gl, gu, val) => {
+                    let Node::Fn(d, _) = *node else {
+                        continue;
+                    };
+                    let ok = *within.entry(d).or_insert_with(|| {
+                        let in_d = |b: &Bound, x: usize| d.is_some_and(|d| b[d][x]);
+                        let empty_l = ts.resolve(*gl).is_some_and(|l| ts.tys[l] == Ty::Empty);
+                        let same_l = d == Some(*gl) || (d.is_none() && empty_l);
+                        let same_u = d == Some(*gu);
+                        (0..nv).all(|x| {
+                            (same_l || !neg[*gl][x] || in_d(pos, x))
+                                && (same_u || !in_d(neg, x) || pos[*gu][x])
+                        })
+                    });
+                    match d {
+                        Some(d) if ok => {
+                            let xs = lists
+                                .entry(d)
+                                .or_insert_with(|| (0..nv).filter(|&x| neg[d][x]).collect());
+                            xs.iter()
+                                .all(|&x| m.app(p, v, x).is_some_and(|r| pos[*val][r]))
+                        }
+                        _ => ok,
+                    }
+                }
+            };
+        }
+    }
+    out
+}
+
+/// The alternating fixed point: `(lo, hi)`.
+fn bounds(ts: &Types, p: &Pool) -> (Bound, Bound) {
+    let (nt, nv) = (ts.tys.len(), p.n.len());
+    let mut m = Machine::new(nv);
+    let gfp = |m: &mut Machine, neg: &Bound| {
+        let mut pos = vec![vec![true; nv]; nt];
+        loop {
+            let next = step(ts, p, m, &pos, neg);
+            if next == pos {
+                return pos;
+            }
+            pos = next;
+        }
+    };
+    let (mut lo, mut hi) = (vec![vec![false; nv]; nt], vec![vec![true; nv]; nt]);
+    loop {
+        let next_lo = gfp(&mut m, &hi);
+        let next_hi = gfp(&mut m, &next_lo);
+        if next_lo == lo && next_hi == hi {
+            return (lo, hi);
+        }
+        (lo, hi) = (next_lo, next_hi);
+    }
+}
+
+/// A node of a value being built for one choice: a pool value, or a new node.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum At {
+    Pool(usize),
+    New(usize),
+}
+
+#[derive(Clone, Debug)]
+enum Draft {
+    Hole,
+    Tup(Vec<At>),
+    /// A closure of the given domain returning the value.
+    Const(usize, At),
+    /// A closure of the given domain that diverges.
+    Diverge(usize),
+}
+
+fn draft_kids(d: &Draft) -> &[At] {
+    match d {
+        Draft::Tup(xs) => xs,
+        Draft::Const(_, x) => std::slice::from_ref(x),
+        Draft::Hole | Draft::Diverge(_) => &[],
+    }
+}
+
+/// Whether the new node `root` is a finite value: no hole under it and no cycle of tuples.
+fn finite(drafts: &[Draft], root: usize) -> bool {
+    let mut seen = vec![false; drafts.len()];
+    let mut stack = vec![root];
+    while let Some(x) = stack.pop() {
+        if std::mem::replace(&mut seen[x], true) {
+            continue;
+        }
+        if matches!(drafts[x], Draft::Hole) {
+            return false;
+        }
+        stack.extend(draft_kids(&drafts[x]).iter().filter_map(|k| match k {
+            At::New(k) => Some(*k),
+            At::Pool(_) => None,
+        }));
+    }
+    // A cycle of tuple edges, by a depth-first search with colors from an explicit stack.
+    let mut color = vec![0u8; drafts.len()];
+    for s in (0..drafts.len()).filter(|&s| seen[s]) {
+        if color[s] != 0 {
+            continue;
+        }
+        let mut stack = vec![(s, 0usize)];
+        color[s] = 1;
+        while let Some((x, i)) = stack.last_mut() {
+            let kids: &[At] = match &drafts[*x] {
+                Draft::Tup(xs) => xs,
+                _ => &[],
+            };
+            match kids.get(*i) {
+                None => {
+                    color[*x] = 2;
+                    stack.pop();
+                }
+                Some(k) => {
+                    *i += 1;
+                    if let At::New(k) = *k {
+                        match color[k] {
+                            0 => {
+                                color[k] = 1;
+                                stack.push((k, 0));
+                            }
+                            1 => return false,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The key of a draft node in a round of the partition: pool values are leaves; new nodes are
+/// named by their class.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Key {
+    Tup(usize, Vec<At>),
+    Const(usize, usize, At),
+    Diverge(usize, usize),
+}
+
+/// Copies the finite value at new node `root` into the pool, merging nodes of equal values by
+/// partition refinement (Moore), so the pool holds each value once.
+fn import(drafts: &[Draft], root: usize, p: &mut Pool) -> usize {
+    let mut reach = vec![root];
+    let mut pos: HashMap<usize, usize> = HashMap::from([(root, 0)]);
+    let mut i = 0;
+    while i < reach.len() {
+        for k in draft_kids(&drafts[reach[i]]) {
+            if let At::New(k) = *k
+                && !pos.contains_key(&k)
+            {
+                pos.insert(k, reach.len());
+                reach.push(k);
+            }
+        }
+        i += 1;
+    }
+    let n = reach.len();
+    let mut class = vec![0usize; n];
+    let named = |a: At, class: &[usize]| match a {
+        At::New(k) => At::New(class[pos[&k]]),
+        p => p,
+    };
+    loop {
+        let mut keys: HashMap<Key, usize> = HashMap::new();
+        let next: Vec<usize> = reach
+            .iter()
+            .enumerate()
+            .map(|(i, &x)| {
+                let key = match &drafts[x] {
+                    Draft::Tup(xs) => {
+                        Key::Tup(class[i], xs.iter().map(|&a| named(a, &class)).collect())
+                    }
+                    Draft::Const(d, a) => Key::Const(class[i], *d, named(*a, &class)),
+                    Draft::Diverge(d) => Key::Diverge(class[i], *d),
+                    Draft::Hole => unreachable!("a finite value has no hole"),
+                };
+                let fresh = keys.len();
+                *keys.entry(key).or_insert(fresh)
+            })
+            .collect();
+        if next == class {
+            break;
+        }
+        class = next;
+    }
+    // The text of the class graph from the root, classes named in the order first met.
+    let first: HashMap<usize, usize> = (0..n).rev().map(|i| (class[i], reach[i])).collect();
+    let mut order = vec![class[0]];
+    let mut name: HashMap<usize, usize> = HashMap::from([(class[0], 0)]);
+    let mut text = String::new();
+    let mut at = 0;
+    while at < order.len() {
+        let x = first[&order[at]];
+        let word = |a: At, name: &mut HashMap<usize, usize>, order: &mut Vec<usize>| match a {
+            At::Pool(v) => format!("p{v}"),
+            At::New(k) => {
+                let c = class[pos[&k]];
+                let fresh = name.len();
+                let e = *name.entry(c).or_insert(fresh);
+                if e == fresh {
+                    order.push(c);
+                }
+                format!("n{e}")
+            }
+        };
+        let item = match &drafts[x] {
+            Draft::Tup(xs) => {
+                let w: Vec<String> = xs.iter().map(|&a| word(a, &mut name, &mut order)).collect();
+                format!("T{};", w.join(","))
+            }
+            Draft::Const(d, a) => format!("C{d},{};", word(*a, &mut name, &mut order)),
+            Draft::Diverge(d) => format!("D{d};"),
+            Draft::Hole => unreachable!("a finite value has no hole"),
+        };
+        text.push_str(&item);
+        at += 1;
+    }
+    if let Some(&v) = p.seen.get(&text) {
+        return v;
+    }
+    let mut made: HashMap<usize, usize> = HashMap::new();
+    for (i, &x) in reach.iter().enumerate() {
+        made.entry(class[i]).or_insert_with(|| match drafts[x] {
+            Draft::Diverge(d) => p.add(Node::Fn(Some(d), Body::Diverge)),
+            _ => p.fresh(),
+        });
+    }
+    let to = |a: At, made: &HashMap<usize, usize>| match a {
+        At::Pool(v) => v,
+        At::New(k) => made[&class[pos[&k]]],
+    };
+    for (i, &x) in reach.iter().enumerate() {
+        let id = made[&class[i]];
+        if p.n[id] != Node::Hole {
+            continue;
+        }
+        p.n[id] = match &drafts[x] {
+            Draft::Tup(xs) => Node::Tup(xs.iter().map(|&a| to(a, &made)).collect()),
+            Draft::Const(d, a) => Node::Fn(Some(*d), Body::Const(to(*a, &made))),
+            Draft::Diverge(_) | Draft::Hole => unreachable!("filled above, or not finite"),
+        };
+        p.ix.entry(p.n[id].clone()).or_insert(id);
+    }
+    let r = made[&class[0]];
+    p.seen.insert(text, r);
+    r
+}
+
+/// The pool of candidate values: the scalars; closures with generic bodies at each domain; for
+/// each choice of a union arm per union type and of divergence per morphism type, one value per
+/// tuple and morphism type, whose cycles pass through closures; then rounds that add tuples and
+/// constant closures from the values surely in each type. The pool decides nothing: membership
+/// is computed by `bounds`. Returns the pool and whether every choice was taken (else `cap`
+/// choices are drawn from `seed`).
+fn build_pool(ts: &Types, cap: usize, seed: u64) -> (Pool, bool) {
+    let mut p = Pool::default();
+    for a in 0..ts.atoms.len() {
+        p.add(Node::Atom(a));
+    }
+    let i0 = p.add(Node::Int(0));
+    p.add(Node::Int(1));
+    let b0 = p.add(Node::Bool(true));
+    p.add(Node::Bool(false));
+    let base: Vec<usize> = (0..p.n.len()).collect();
+    let empty = ts.tys.iter().position(|t| *t == Ty::Empty);
+    let mut doms: Vec<Option<usize>> = vec![None];
+    for ty in &ts.tys {
+        if let Ty::Mor(l, u, _) = ty {
+            for d in [*l, *u] {
+                if Some(d) != empty && !doms.contains(&Some(d)) {
+                    doms.push(Some(d));
+                }
+            }
+        }
+    }
+    for &d in &doms {
+        for b in [Body::Id, Body::Fst, Body::Snd, Body::Diverge, Body::SelfApp] {
+            p.add(Node::Fn(d, b));
+        }
+        for &v in &base {
+            p.add(Node::Fn(d, Body::Const(v)));
+            p.add(Node::Fn(d, Body::AppArg(v)));
+        }
+    }
+    let nt = ts.tys.len();
+    let unions: Vec<usize> = (0..nt)
+        .filter(|&t| matches!(ts.tys[t], Ty::Union(_)))
+        .collect();
+    let mors: Vec<usize> = (0..nt)
+        .filter(|&t| matches!(ts.tys[t], Ty::Mor(..)))
+        .collect();
+    let arms = |u: usize| match &ts.tys[u] {
+        Ty::Union(c) => c.len(),
+        _ => unreachable!("listed as a union"),
+    };
+    // The number of choices, saturated: past `cap` only whether it is past matters.
+    let total = unions
+        .iter()
+        .map(|&u| arms(u))
+        .chain(mors.iter().map(|_| 2))
+        .try_fold(1usize, |a, k| a.checked_mul(k));
+    let exhaustive = total.is_some_and(|t| t <= cap);
+    let count = if exhaustive {
+        total.expect("checked above")
+    } else {
+        cap
+    };
+    let mut rng = Rng::new(seed);
+    let shaped: Vec<usize> = (0..nt)
+        .filter(|&t| matches!(ts.tys[t], Ty::Tup(_) | Ty::Mor(..)))
+        .collect();
+    for it in 0..count {
+        let mut pick = vec![0usize; nt];
+        let mut left = it;
+        for &u in &unions {
+            pick[u] = if exhaustive {
+                let k = left % arms(u);
+                left /= arms(u);
+                k
+            } else {
+                rng.below(arms(u))
+            };
+        }
+        for &m in &mors {
+            pick[m] = if exhaustive {
+                let k = left % 2;
+                left /= 2;
+                k
+            } else {
+                usize::from(rng.below(8) == 0)
+            };
+        }
+        // One new node per tuple and morphism type under this choice.
+        let mut node: Vec<Option<usize>> = vec![None; nt];
+        for (k, &t) in shaped.iter().enumerate() {
+            node[t] = Some(k);
+        }
+        // The node a type stands for under the choice: follow names, the chosen arm, the left of
+        // `\` and the first of `&` to a tuple, a morphism or a scalar; `None` for `empty` or a
+        // cycle of names and unions.
+        let target = |mut t: usize| -> Option<At> {
+            let mut seen = HashSet::new();
+            loop {
+                if !seen.insert(t) {
+                    return None;
+                }
+                match &ts.tys[t] {
+                    Ty::Alias(x) | Ty::Diff(x, _) => t = *x,
+                    Ty::Union(c) => t = c[pick[t]],
+                    Ty::And(c) => t = c[0],
+                    Ty::Tup(_) | Ty::Mor(..) => return node[t].map(At::New),
+                    Ty::Atom(a) => return Some(At::Pool(*a)),
+                    Ty::Int | Ty::Top => return Some(At::Pool(i0)),
+                    Ty::Bool => return Some(At::Pool(b0)),
+                    Ty::Empty => return None,
+                }
+            }
+        };
+        let drafts: Vec<Draft> = shaped
+            .iter()
+            .map(|&t| match &ts.tys[t] {
+                Ty::Tup(c) => c
+                    .iter()
+                    .map(|&x| target(x))
+                    .collect::<Option<Vec<At>>>()
+                    .map_or(Draft::Hole, Draft::Tup),
+                Ty::Mor(l, ..) if pick[t] == 1 => Draft::Diverge(*l),
+                Ty::Mor(l, _, v) => target(*v).map_or(Draft::Hole, |r| Draft::Const(*l, r)),
+                _ => unreachable!("only tuple and morphism types have a node"),
+            })
+            .collect();
+        for k in 0..drafts.len() {
+            if finite(&drafts, k) {
+                import(&drafts, k, &mut p);
+            }
+        }
+    }
+    // Rounds that add tuples and constants built from values surely in each type.
+    // Complexity tradeoff: each round takes the first 6 values per component and 36 tuples per
+    // tuple type, so the pool stays small enough to decide in the test's time; what is given up
+    // is values the choices did not build, so an `E` is a proof only of the pool. The choices
+    // (above) are what make an `E` from a pool of every choice the answer the tests rely on.
+    for _ in 0..4 {
+        let (lo, _) = bounds(ts, &p);
+        let before = p.n.len();
+        for ty in &ts.tys {
+            match ty {
+                Ty::Tup(c) => {
+                    let opts: Vec<Vec<usize>> = c
+                        .iter()
+                        .map(|&x| (0..before).filter(|&v| lo[x][v]).take(6).collect())
+                        .collect();
+                    if opts.iter().any(Vec::is_empty) {
+                        continue;
+                    }
+                    let mut combos: Vec<Vec<usize>> = vec![vec![]];
+                    for o in &opts {
+                        combos = combos
+                            .iter()
+                            .flat_map(|c| {
+                                o.iter().map(move |&x| {
+                                    let mut d = c.clone();
+                                    d.push(x);
+                                    d
+                                })
+                            })
+                            .collect();
+                    }
+                    for c in combos.into_iter().take(36) {
+                        p.add(Node::Tup(c));
+                    }
+                }
+                Ty::Mor(l, _, v) => {
+                    for r in (0..before).filter(|&x| lo[*v][x]).take(6) {
+                        p.add(Node::Fn(Some(*l), Body::Const(r)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if p.n.len() == before {
+            break;
+        }
+    }
+    (p, exhaustive)
+}
+
+/// What the pool shows about a definition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Seen {
+    /// A value surely in it, shown.
+    Member(String),
+    /// No value possibly in it.
+    None,
+    /// Values possibly in it, none surely.
+    Open,
+}
+
+struct Truth {
+    seen: Vec<Seen>,
+    /// Whether the pool was built from every choice, so that `Seen::None` is the answer.
+    exhaustive: bool,
+    pool: usize,
+}
+
+fn truth(sys: &[E], cap: usize) -> Truth {
+    let ts = Types::new(sys);
+    let (p, exhaustive) = build_pool(&ts, cap, 0x9E37_79B9_7F4A_7C15);
+    let (lo, hi) = bounds(&ts, &p);
+    let seen = ts
+        .defs
+        .iter()
+        .map(|&t| match (0..p.n.len()).find(|&v| lo[t][v]) {
+            Some(w) => Seen::Member(p.show(w, 5)),
+            None if hi[t].iter().any(|&h| h) => Seen::Open,
+            None => Seen::None,
+        })
+        .collect();
+    Truth {
+        seen,
+        exhaustive,
+        pool: p.n.len(),
+    }
+}
+
+/// The first cap, and how many times larger the pool of a rerun is.
+const CAP: usize = 100;
+const RERUN: usize = 16;
+
+// ---------------------------------------------------------------------------------------------
+// Generators
+// ---------------------------------------------------------------------------------------------
+
+/// Cross-review X14's family: unions of `#stop`, pairs and `(int) -> R`.
+fn gen_claude(g: &mut Rng) -> Vec<E> {
+    let n = 2 + g.below(5);
+    claude_of(g, n)
+}
+
+/// `n` definitions of the X14 family, each a union of up to three arms.
+fn claude_of(g: &mut Rng, n: usize) -> Vec<E> {
+    (0..n)
+        .map(|_| {
+            let alts: Vec<E> = (0..1 + g.below(3))
+                .map(|_| match g.below(8) {
+                    0 => E::Atom("stop"),
+                    1..=4 => tup(vec![E::Ref(g.below(n)), E::Ref(g.below(n))]),
+                    _ => exact(E::Int, E::Ref(g.below(n))),
+                })
+                .collect();
+            one_or_union(alts)
+        })
+        .collect()
+}
+
+fn one_or_union(mut alts: Vec<E>) -> E {
+    if alts.len() == 1 {
+        alts.remove(0)
+    } else {
+        E::Union(alts)
+    }
+}
+
+/// Partial morphisms, keys that are definitions, `\ #stop` and empty value types.
+fn gen_mixed(g: &mut Rng) -> Vec<E> {
+    let n = 2 + g.below(3);
+    let r = |g: &mut Rng| E::Ref(g.below(n));
+    let key = |g: &mut Rng| match g.below(7) {
+        0 | 1 => E::Int,
+        2 => E::Bool,
+        3 => E::Atom("a"),
+        4 => E::Empty,
+        _ => r(g),
+    };
+    let val = |g: &mut Rng| match g.below(9) {
+        0..=2 => r(g),
+        3 => E::Int,
+        4 => E::Empty,
+        5 => tup(vec![r(g), r(g)]),
+        6 => tup(vec![E::Int, r(g)]),
+        7 => exact(E::Bool, E::Empty),
+        _ => exact(E::Bool, r(g)),
+    };
+    (0..n)
+        .map(|_| {
+            let alts: Vec<E> = (0..1 + g.below(3))
+                .map(|_| match g.below(12) {
+                    0 => E::Atom("stop"),
+                    1 | 2 => tup(vec![r(g), r(g)]),
+                    3 => tup(vec![E::Int, r(g)]),
+                    4 => E::Empty,
+                    5 => {
+                        let (k, v) = (key(g), val(g));
+                        E::Mor(Box::new(E::Empty), Box::new(k), Box::new(v))
+                    }
+                    6 => diff(r(g), E::Atom("stop")),
+                    _ => {
+                        let (k, v) = (key(g), val(g));
+                        exact(k, v)
+                    }
+                })
+                .collect();
+            one_or_union(alts)
+        })
+        .collect()
+}
+
+/// Layered: domains and subtracted types name earlier definitions only, so most systems are
+/// admitted and negative reads cross groups.
+fn gen_layer(g: &mut Rng) -> Vec<E> {
+    let n = 3 + g.below(4);
+    (0..n)
+        .map(|i| {
+            let up = |g: &mut Rng| {
+                if i == 0 { E::Int } else { E::Ref(g.below(i)) }
+            };
+            let r = |g: &mut Rng| E::Ref(g.below(i + 1));
+            let val = |g: &mut Rng| match g.below(7) {
+                0 | 1 => r(g),
+                2 => tup(vec![r(g), r(g)]),
+                3 => tup(vec![r(g), up(g)]),
+                4 => tup(vec![r(g), exact(E::Bool, E::Empty)]),
+                5 if i > 0 => tup(vec![E::Ref(i), diff(up(g), up(g))]),
+                _ => E::Int,
+            };
+            let alts: Vec<E> = (0..1 + g.below(2))
+                .map(|_| match g.below(10) {
+                    0 => E::Atom("stop"),
+                    1..=3 => exact(up(g), E::Empty),
+                    4..=6 => exact(E::Int, val(g)),
+                    7 => {
+                        let (u, w) = (up(g), up(g));
+                        exact(u, w)
+                    }
+                    8 => {
+                        let (u, v) = (up(g), val(g));
+                        tup(vec![exact(u, E::Empty), v])
+                    }
+                    _ => tup(vec![E::Int, val(g)]),
+                })
+                .collect();
+            one_or_union(alts)
+        })
+        .collect()
+}
+
+/// Meets and differences: `&` of definitions and tuples, and a product of unions less tuples of
+/// atoms or earlier definitions, so that a member may lie only in a cell of the box that no one
+/// tuple type holds (`(#a | R, #b | R) \ ((#a, #b) | (#b, #a))`).
+fn gen_cells(g: &mut Rng) -> Vec<E> {
+    let n = 2 + g.below(4);
+    let atom = |g: &mut Rng| E::Atom(["a", "b"][g.below(2)]);
+    (0..n)
+        .map(|i| {
+            let r = |g: &mut Rng| E::Ref(g.below(n));
+            let up = |g: &mut Rng| {
+                if i == 0 || g.below(2) == 0 {
+                    atom(g)
+                } else {
+                    E::Ref(g.below(i))
+                }
+            };
+            let alts: Vec<E> = (0..1 + g.below(3))
+                .map(|_| match g.below(11) {
+                    0 => E::Atom("stop"),
+                    1 => tup(vec![r(g), r(g)]),
+                    2 => {
+                        let side = |g: &mut Rng| E::Union(vec![atom(g), r(g)]);
+                        let (x, y) = (side(g), side(g));
+                        let (a, b) = (up(g), up(g));
+                        diff(tup(vec![x, y]), tup(vec![a, b]))
+                    }
+                    3 => {
+                        let side = || E::Union(vec![E::Atom("a"), E::Atom("b")]);
+                        let rows = (0..1 + g.below(3))
+                            .map(|_| tup(vec![atom(g), atom(g)]))
+                            .collect();
+                        let base = tup(vec![side(), E::Union(vec![side(), r(g)])]);
+                        diff(base, E::Union(rows))
+                    }
+                    4 => E::And(vec![r(g), tup(vec![E::Union(vec![atom(g), r(g)]), E::Int])]),
+                    5 => E::And(vec![r(g), r(g)]),
+                    6 => exact(E::Int, r(g)),
+                    7 => diff(r(g), tup(vec![atom(g), up(g)])),
+                    8 => E::And(vec![r(g), exact(E::Int, r(g))]),
+                    9 => tup(vec![E::Int, r(g)]),
+                    _ => atom(g),
+                })
+                .collect();
+            one_or_union(alts)
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// The comparison
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Default, Debug)]
+struct Tally {
+    systems: usize,
+    members: usize,
+    rejected: usize,
+    empty: usize,
+    inhabited: usize,
+    refused: usize,
+    /// Kernel answers the pool leaves open.
+    open: usize,
+    /// `E` answers from a sampled pool, rerun at a larger one.
+    reruns: usize,
+    /// `Inhabited` against an `E` of a sampled pool at the larger cap too: not a proof either
+    /// way.
+    unsettled: usize,
+    /// `is_empty` answers inhabited for a type the pool proves empty: allowed, since it may
+    /// count an empty type as inhabited.
+    conservative: usize,
+    /// Refusals of a type the pool shows a member of: allowed, a verdict may refuse.
+    missed: usize,
+}
+
+/// Each member of system `sys` against the pool; panics on a wrong answer.
+fn compare(sys: &[E], tag: &str, tally: &mut Tally) {
+    let types = kernel(sys, tag);
+    let first = truth(sys, CAP);
+    let mut rerun: Option<Truth> = None;
+    tally.systems += 1;
+    for (i, t) in types.iter().enumerate() {
+        let Some(t) = t else {
+            tally.rejected += 1;
+            continue;
+        };
+        tally.members += 1;
+        Type::forget_emptiness();
+        let verdict = t.verdict();
+        Type::forget_emptiness();
+        let empty = t.is_empty();
+        let mut seen = &first;
+        if first.seen[i] == Seen::None && !first.exhaustive && verdict == Verdict::Inhabited {
+            tally.reruns += 1;
+            seen = rerun.get_or_insert_with(|| truth(sys, CAP * RERUN));
+        }
+        let at = || {
+            format!(
+                "{tag}: R{i} of {} (pool {}, every choice: {})",
+                show_system(sys),
+                seen.pool,
+                seen.exhaustive
+            )
+        };
+        match &seen.seen[i] {
+            Seen::Member(w) => {
+                assert!(verdict != Verdict::Empty, "{}: Empty, but holds {w}", at());
+                assert!(!empty, "{}: is_empty, but holds {w}", at());
+                if matches!(verdict, Verdict::Refused(_)) {
+                    tally.missed += 1;
+                }
+            }
+            Seen::None if seen.exhaustive => {
+                assert!(
+                    verdict != Verdict::Inhabited,
+                    "{}: Inhabited, but the pool shows no value",
+                    at()
+                );
+                if !empty {
+                    tally.conservative += 1;
+                }
+            }
+            Seen::None => {
+                if verdict == Verdict::Inhabited {
+                    tally.unsettled += 1;
+                    eprintln!("unsettled: {}", at());
+                }
+            }
+            Seen::Open => tally.open += 1,
+        }
+        match verdict {
+            Verdict::Empty => tally.empty += 1,
+            Verdict::Inhabited => tally.inhabited += 1,
+            Verdict::Refused(_) => tally.refused += 1,
+        }
+    }
+}
+
+fn sweep(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: std::ops::Range<u64>) -> Tally {
+    let mut tally = Tally::default();
+    for seed in seeds {
+        let sys = generate(&mut Rng::new(seed));
+        compare(&sys, &format!("{name}{seed}"), &mut tally);
+    }
+    eprintln!("{name}: {tally:?}");
+    assert!(
+        tally.members > 0 && tally.empty > 0 && tally.inhabited > 0,
+        "{name}: {tally:?}"
+    );
+    tally
+}
+
+/// Each sweep is a piece of the seeds, sized to finish well under 60 s.
+fn on_a_big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    scaling::on_a_thread(1 << 28, f)
+}
+
+#[test]
+fn x14_family_groups_agree_with_the_values_0() {
+    on_a_big_stack(|| sweep("claude", gen_claude, 0..150));
+}
+
+#[test]
+fn x14_family_groups_agree_with_the_values_1() {
+    on_a_big_stack(|| sweep("claude", gen_claude, 150..300));
+}
+
+#[test]
+fn partial_morphism_groups_agree_with_the_values_0() {
+    on_a_big_stack(|| sweep("mixed", gen_mixed, 0..150));
+}
+
+#[test]
+fn partial_morphism_groups_agree_with_the_values_1() {
+    on_a_big_stack(|| sweep("mixed", gen_mixed, 150..300));
+}
+
+#[test]
+fn layered_groups_agree_with_the_values_0() {
+    on_a_big_stack(|| sweep("layer", gen_layer, 0..100));
+}
+
+#[test]
+fn layered_groups_agree_with_the_values_1() {
+    on_a_big_stack(|| sweep("layer", gen_layer, 100..200));
+}
+
+#[test]
+fn meets_and_differences_agree_with_the_values_0() {
+    on_a_big_stack(|| sweep("cells", gen_cells, 0..150));
+}
+
+#[test]
+fn meets_and_differences_agree_with_the_values_1() {
+    on_a_big_stack(|| sweep("cells", gen_cells, 150..300));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fixed cases
+// ---------------------------------------------------------------------------------------------
+
+/// What the kernel and the pool say of each definition of `sys`: `None` where admission
+/// rejects it, else the verdict and the pool's letter (`I`, `E` or `U`).
+fn both(sys: &[E], tag: &str) -> Vec<Option<(Verdict, char)>> {
+    let mut tally = Tally::default();
+    compare(sys, tag, &mut tally);
+    let seen = truth(sys, CAP * RERUN);
+    kernel(sys, tag)
+        .iter()
+        .zip(&seen.seen)
+        .map(|(t, s)| {
+            t.as_ref().map(|t| {
+                Type::forget_emptiness();
+                let letter = match s {
+                    Seen::Member(_) => 'I',
+                    Seen::None => 'E',
+                    Seen::Open => 'U',
+                };
+                (t.verdict(), letter)
+            })
+        })
+        .collect()
+}
+
+fn r(i: usize) -> E {
+    E::Ref(i)
+}
+
+/// `W = (W) -> int` is inhabited (`fn w(x) = 0` on domain `W`). Its meet with `(empty) -> int`
+/// is empty: a closure has one domain, and `W` is not empty. Written in the group, as
+/// `W = ((W) -> int) & ((empty) -> int)`, the recursive occurrence is a guaranteed domain
+/// under `&`, a constrained place, so admission rejects it, as it rejects `W_andTop`
+/// (`admission.rs`); read with no admission, it has no fixed point.
+#[test]
+fn w_and_a_morphism_on_the_empty_domain() {
+    let empty_fn = exact(E::Empty, E::Int);
+    let apart = [exact(r(0), E::Int), E::And(vec![r(0), empty_fn.clone()])];
+    assert_eq!(
+        both(&apart, "wand"),
+        [Some((Verdict::Inhabited, 'I')), Some((Verdict::Empty, 'E'))]
+    );
+    let inside = [E::And(vec![exact(r(0), E::Int), empty_fn])];
+    assert_eq!(both(&inside, "wand_in"), [None]);
+    let defs = vec![Def {
+        name: "wand_in_check".into(),
+        params: vec![],
+        body: Expr::And(vec![
+            Expr::exact(Expr::Ref(0, vec![]), Expr::Type(Type::int())),
+            Expr::exact(Expr::Type(Type::empty()), Expr::Type(Type::int())),
+        ]),
+    }];
+    assert!(
+        Group::new(defs).is_err(),
+        "the meet in the group is rejected"
+    );
+    // `W_andTop`, `W = ((W) -> int) & top`, is rejected the same way.
+    assert_eq!(
+        both(&[E::And(vec![exact(r(0), E::Int), E::Top])], "wtop"),
+        [None]
+    );
+    // The definition has no fixed point: if `W` is empty, the closure on the empty domain is in
+    // both, so `W` is not empty; if `W` holds a value, a closure in `(W) -> int` has a domain
+    // that is not empty, so it is not in `(empty) -> int`, and `W` is empty. The pool shows
+    // this as a value possibly in `W` and none surely in it, which is why admission rejects it.
+    assert!(matches!(truth(&inside, CAP).seen[..], [Seen::Open]));
+}
+
+/// A morphism on a cycle: a cycle through a value type is inhabited (`f(x) = (f, 0)`), unless a
+/// tuple on it is empty; through a guarantee, `(W) -> int` is inhabited; a cycle of two
+/// morphisms through a pair is inhabited, and empty when the pair's other side is empty.
+#[test]
+fn a_morphism_on_a_cycle() {
+    let i = Some((Verdict::Inhabited, 'I'));
+    let e = Some((Verdict::Empty, 'E'));
+    // T = (int) -> (T, int)
+    assert_eq!(
+        both(&[exact(E::Int, tup(vec![r(0), E::Int]))], "cyc_a"),
+        [i]
+    );
+    // T = (int) -> (T, U), U = (int, U): U is empty, so T has no result to give.
+    let sys = [
+        exact(E::Int, tup(vec![r(0), r(1)])),
+        tup(vec![E::Int, r(1)]),
+    ];
+    assert_eq!(both(&sys, "cyc_b"), [e, e]);
+    // A = (int) -> B, B = (A, #stop | A): two members on one cycle through a morphism.
+    let sys = [
+        exact(E::Int, r(1)),
+        tup(vec![r(0), E::Union(vec![E::Atom("stop"), r(0)])]),
+    ];
+    assert_eq!(both(&sys, "cyc_c"), [i, i]);
+    // A = (int) -> B, B = (A, C), C = (C, A): the tuple cycle through C empties all three.
+    let sys = [
+        exact(E::Int, r(1)),
+        tup(vec![r(0), r(2)]),
+        tup(vec![r(2), r(0)]),
+    ];
+    assert_eq!(both(&sys, "cyc_d"), [e, e, e]);
+    // W = (W) -> int, and V = (int) -> (V | W): the cycle runs through a guarantee.
+    let sys = [
+        exact(r(0), E::Int),
+        exact(E::Int, E::Union(vec![r(1), r(0)])),
+    ];
+    assert_eq!(both(&sys, "cyc_e"), [i, i]);
+}
+
+/// A member split across box cells: the product `(#a | #b | L, #a | #b | L)` less the two
+/// tuples `(#a, #b)` and `(#b, #a)` holds `(#a, #a)`, which lies in one cell of each component;
+/// less every pair of atoms, it holds only pairs with a list `L`, and with `L` empty (a cycle
+/// through a tuple) it is empty.
+#[test]
+fn a_member_split_across_box_cells() {
+    let atoms = || E::Union(vec![E::Atom("a"), E::Atom("b")]);
+    let side = |l: usize| E::Union(vec![atoms(), r(l)]);
+    let pairs = |rows: &[(&'static str, &'static str)]| {
+        E::Union(
+            rows.iter()
+                .map(|&(x, y)| tup(vec![E::Atom(x), E::Atom(y)]))
+                .collect(),
+        )
+    };
+    let all = [("a", "a"), ("a", "b"), ("b", "a"), ("b", "b")];
+    let i = Some((Verdict::Inhabited, 'I'));
+    let e = Some((Verdict::Empty, 'E'));
+    // L = #stop | (int, L)
+    let list = E::Union(vec![E::Atom("stop"), tup(vec![E::Int, r(1)])]);
+    let sys = [
+        diff(tup(vec![side(1), side(1)]), pairs(&all[1..3])),
+        list.clone(),
+    ];
+    assert_eq!(both(&sys, "cells_a"), [i, i]);
+    let sys = [diff(tup(vec![side(1), side(1)]), pairs(&all)), list];
+    assert_eq!(both(&sys, "cells_b"), [i, i]);
+    // L = (int, L): empty, so the product less every pair of atoms is empty.
+    let sys = [
+        diff(tup(vec![side(1), side(1)]), pairs(&all)),
+        tup(vec![E::Int, r(1)]),
+    ];
+    assert_eq!(both(&sys, "cells_c"), [e, e]);
+    // The product names itself: P = (#a | #b | P, #a | #b) \ every pair of atoms. A member is
+    // a pair whose left is a member, so none is finite.
+    let sys = [diff(tup(vec![side(0), atoms()]), pairs(&all))];
+    assert_eq!(both(&sys, "cells_d"), [e]);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Seeded systems of the families against the classical solver
+// ---------------------------------------------------------------------------------------------
+
+/// `random(seed, rate, n)` over many seeds, rates and sizes: every answer `decide` gives agrees
+/// with the classical solver of the Büchi game, and so does every verdict of the group the
+/// definitions admit; `is_empty` never calls an inhabited member empty.
+fn seeded(seeds: std::ops::Range<u64>) {
+    let (mut decided, mut refused, mut groups, mut verdicts) = (0, 0, 0, 0);
+    for rate in [0, 2, 5, 9, 14, 18] {
+        for n in [2, 3, 5, 8, 13, 21] {
+            for seed in seeds.clone() {
+                let g = bes_families::random(seed, rate, n);
+                let at = format!("random({seed}, {rate}, {n})");
+                let want = reference::answers(&g);
+                for (v, a) in decide(&g.bes()).answers.iter().enumerate() {
+                    match a {
+                        Answer::Empty => assert!(!want[v], "{at}: node {v} decided empty"),
+                        Answer::Inhabited => assert!(want[v], "{at}: node {v} decided inhabited"),
+                        Answer::Refused => {
+                            refused += 1;
+                            continue;
+                        }
+                    }
+                    decided += 1;
+                }
+                let Ok(types) = group(bodies(&g)) else {
+                    continue;
+                };
+                groups += 1;
+                for (v, t) in types.iter().enumerate() {
+                    Type::forget_emptiness();
+                    match t.verdict() {
+                        Verdict::Empty => assert!(!want[v], "{at}: node {v} has verdict Empty"),
+                        Verdict::Inhabited => {
+                            assert!(want[v], "{at}: node {v} has verdict Inhabited")
+                        }
+                        Verdict::Refused(_) => {}
+                    }
+                    Type::forget_emptiness();
+                    assert!(!t.is_empty() || !want[v], "{at}: node {v} counted empty");
+                    verdicts += 1;
+                }
+            }
+        }
+    }
+    eprintln!("decided {decided}, refused {refused}; groups admitted {groups}, members {verdicts}");
+    assert!(decided > 0 && groups > 0);
+}
+
+#[test]
+fn seeded_random_systems_agree_with_the_reference_0() {
+    on_a_big_stack(|| seeded(0..40));
+}
+
+#[test]
+fn seeded_random_systems_agree_with_the_reference_1() {
+    on_a_big_stack(|| seeded(40..80));
+}
+
+/// `n` definitions in one group, `R_i = (R_j, R0) | (R_{i+1}, #stop)` with `j` random and
+/// `R_{n-1} = (R_j, R0) | #stop`: every definition is inhabited, by a chain as long as the
+/// group, so a search from `R0` reads every definition.
+fn chain_of(g: &mut Rng, n: usize) -> Vec<E> {
+    (0..n)
+        .map(|i| {
+            let back = tup(vec![E::Ref(g.below(n)), E::Ref(0)]);
+            let next = if i + 1 < n {
+                tup(vec![E::Ref(i + 1), E::Atom("stop")])
+            } else {
+                E::Atom("stop")
+            };
+            E::Union(vec![back, next])
+        })
+        .collect()
+}
+
+/// The verdicts of every member of `n` random groups of the X14 family, and the verdict of the
+/// first member of one group of `n` definitions that its search reads whole, at `n` and `8n`,
+/// the groups built before the runs. The verdicts of every member of one large group are not
+/// measured: each verdict is a search of its own, which reads no result kept from another
+/// (`Type::verdict`), so their sum is quadratic in the group by design.
+#[test]
+fn verdicts_of_random_groups_scale() {
+    let many = |n: usize| -> Vec<Type> {
+        (0..n as u64)
+            .flat_map(|seed| kernel(&gen_claude(&mut Rng::new(seed)), &format!("many{n}_{seed}")))
+            .map(|t| t.expect("every definition of the X14 family is admitted"))
+            .collect()
+    };
+    let chain = |n: usize| -> Vec<Type> {
+        kernel(&chain_of(&mut Rng::new(7), n), &format!("chain{n}"))
+            .into_iter()
+            .map(|t| t.expect("a chain group is admitted"))
+            .collect()
+    };
+    on_a_big_stack(|| {
+        let n = 64;
+        let (small, large) = (many(n), many(scaling::FACTOR * n));
+        scaling::check("verdicts of the members of n random groups", n, |m| {
+            Type::forget_emptiness();
+            for t in if m == n { &small } else { &large } {
+                std::hint::black_box(t.verdict());
+            }
+        });
+        let n = 128;
+        let (small, large) = (chain(n), chain(scaling::FACTOR * n));
+        scaling::check("the verdict of one member of a chain group of n", n, |m| {
+            Type::forget_emptiness();
+            std::hint::black_box((if m == n { &small } else { &large })[0].verdict());
+        });
+    });
+}

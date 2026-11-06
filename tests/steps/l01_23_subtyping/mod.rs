@@ -12,6 +12,7 @@ mod bound_paths;
 mod cases;
 mod cells;
 mod deep_rec;
+mod group_oracle;
 mod judgments;
 mod listing;
 mod oracle;

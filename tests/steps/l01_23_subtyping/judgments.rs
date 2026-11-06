@@ -15,7 +15,7 @@ fn r(i: usize) -> Expr {
     Expr::Ref(i, vec![])
 }
 
-fn group(bodies: Vec<Expr>) -> Result<Vec<Type>, String> {
+pub(super) fn group(bodies: Vec<Expr>) -> Result<Vec<Type>, String> {
     let defs = bodies
         .into_iter()
         .enumerate()
@@ -60,7 +60,7 @@ fn a_cycle_through_a_value_type_is_inhabited_and_one_through_a_tuple_is_empty() 
 
 /// Each node of a family as a definition: `Or` a union, `And` a tuple, `Mor` the morphism type
 /// `(int) -> child`, `Top` `int` and `Bot` `empty`.
-fn bodies(g: &G) -> Vec<Expr> {
+pub(super) fn bodies(g: &G) -> Vec<Expr> {
     (0..g.k.len())
         .map(|v| {
             let cs = || g.c[v].iter().map(|&w| r(w as usize)).collect();

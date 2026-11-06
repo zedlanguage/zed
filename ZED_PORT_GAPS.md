@@ -1835,3 +1835,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `HashMap<ContentAddress, bool>` whose flags are set as warnings match, then read for the addresses that matched nothing | `Suppress::hides`, `unmatched`, `refused` | Mutation | A fold over the warnings that returns the set of matched addresses beside the printed ones; the unmatched are the named set minus it |
 | `vec![String::new(); n]` filled by index, so problems placed per file come out in their first order | `Package::report` | Mutation | Each problem keyed by its index in a map, read back in key order |
 | `Option::get_or_insert_with` on a cloned `Option<Vec<u8>>` that makes the per-arrow carrier vector on the first class piece of a path, then masks entries in place (`m[j] &= …`) | `check::Ck::apply_many` (`ClassAt`) | Lazy cells (gap 3); Mutation | A path state that starts with `None` and is rebuilt as a new vector by one map over the arrows at each class piece |
+
+## Entries from GROUP-oracle (`tests/steps/l01_23_subtyping/group_oracle.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A table of `u32` over every pair of pool values, written in place, with three values above the pool's numbers as markers (unknown, divergent, on the path) | `Machine`, `Machine::app` | Mutation; Workaround (no mutable array in place) | A persistent map from the pair to an atom `#unknown`, `#diverges`, `#onPath` or a value number, threaded through the rounds; the markers become atoms, so no number is reserved |
+| A pool whose values are numbered in order of insertion, with a `HashMap` from a value's canonical text to its number for deduplication | `Pool::add`, `Pool::seen`, `import` | Gap 2 (shared tables) | A map from text to number threaded as state, as gap 2 proposes |
+| Closures inside the pool written as a small enum of body forms applied by a loop that replaces the closure and argument in place for calls in tail position | `Body`, `Machine::app` | None | A `match` on the body atom in a loop over `(c, x)` |
