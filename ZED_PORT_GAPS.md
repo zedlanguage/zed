@@ -1656,3 +1656,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `std::mem::replace` of each argument that passes atoms with a variable, in place in the `Vec` of arguments, while its term moves into a `let` | `Elab::row_call` | Mutation (gap 11) | A map over the arguments zipped with their spans giving each argument or its variable, and a filter giving the `let`s |
 | `let ... else { continue }` over the statements to keep the functions | `testing::checks` | None | A `match` in a fold over the statements, or a filter on the function form |
+
+## Entries from NATIVE-lib-pick (`zed-native/src/link.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The `object` crate reading an executable's symbol table and an archive's symbol index through `ReadCache` (reads of the file on demand), and Rust's mangled symbol names, whose hash tells two builds of a crate apart | `link::runtime_of`, `link::build_symbol`, `link::holds` | Foreign library; Bytes (gap 5) | The linking driver stays in Rust until a process port exists (as for `std::process::Command` above); a Zed version reads the two tables as bytes once Bytes words exist (step L7.3f) |

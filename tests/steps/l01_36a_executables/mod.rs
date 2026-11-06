@@ -4,6 +4,7 @@
 //! executable's outputs and exit status equal the interpreter's.
 
 mod agreement;
+mod runtime;
 mod scaling;
 
 use std::ffi::OsString;
@@ -11,7 +12,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use zed_native::link::{Toolchain, build};
+use zed_native::link::{Toolchain, build, runtime_of};
 
 /// A directory of its own for test `name`, under the test target's scratch directory; files
 /// in it are overwritten by each run, never deleted.
@@ -23,21 +24,13 @@ pub(crate) fn dir(name: &str) -> PathBuf {
     d
 }
 
-/// The system's C compiler driver and the runtime library this test was built with. Cargo
-/// writes the library of a dependency only beside this executable, under its hash, so the
-/// newest `libzed_native-*.a` there is the one built from the current source.
+/// The system's C compiler driver and the runtime library built with this test executable.
+/// Cargo keeps a `libzed_native-<hash>.a` beside it for each set of features it has built
+/// zed-native with, and the newest need not be this build's, so the library is picked by the
+/// symbol it shares with this executable (`runtime_of`), not by its time.
 pub(crate) fn toolchain() -> Toolchain {
     let exe = std::env::current_exe().unwrap();
-    let deps = exe.parent().unwrap();
-    let runtime = std::fs::read_dir(deps)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| {
-            let name = p.file_name().unwrap().to_string_lossy();
-            name.starts_with("libzed_native-") && name.ends_with(".a")
-        })
-        .max_by_key(|p| std::fs::metadata(p).unwrap().modified().unwrap())
-        .unwrap_or_else(|| panic!("no libzed_native-*.a in {}", deps.display()));
+    let runtime = runtime_of(&exe, exe.parent().unwrap()).unwrap_or_else(|e| panic!("{e}"));
     Toolchain {
         linker: "cc".into(),
         runtime,

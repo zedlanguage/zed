@@ -32,6 +32,8 @@ insta = "1.49.0"
 rustix = { version = "1.1.6", features = ["time", "process"] }
 perf-event2 = "0.7.4"
 stacker = "0.1.25"
+# Reads symbol tables: which runtime library a build of zed-native made (zed_native::link).
+object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "archive", "std"] }
 
 [workspace.lints.rust]
 missing_docs = "warn"

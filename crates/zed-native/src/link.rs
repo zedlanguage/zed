@@ -3,7 +3,9 @@
 //! its ports from its own command line as `zedc run` does.
 //!
 //! The runtime library is this crate built as a static library, `libzed_native.a`, which
-//! Cargo writes beside the `zedc` executable; the linker is the system's C compiler driver.
+//! Cargo writes beside the `zedc` executable; a library from another build of this crate is
+//! refused, since the code `zedc` generates is joined to its own build's runtime only (see
+//! [`runtime_of`]). The linker is the system's C compiler driver.
 //! The link records no time, build path or random value, so two builds of one program give
 //! the same bytes.
 
@@ -90,6 +92,22 @@ pub fn build(
             ),
         ));
     }
+    // The object file is this executable's code generator's output, so the runtime library must
+    // come from the same build of this crate; Cargo writes `libzed_native.a` beside `zedc`
+    // only when it builds the library itself, so a later build of `zedc` alone (for a test,
+    // or with other features) leaves an older library there.
+    let exe = std::env::current_exe().map_err(|e| (2, format!("this compiler's own path: {e}")))?;
+    if !holds(&tools.runtime, &build_symbol(&exe).map_err(|e| (2, e))?).map_err(|e| (2, e))? {
+        return Err((
+            2,
+            format!(
+                "the runtime library {} is from another build of zed-native than {}: build \
+                 both with `cargo build -p zed-native`, or name the matching one in ZED_RUNTIME",
+                tools.runtime.display(),
+                exe.display()
+            ),
+        ));
+    }
     let program = zedc::run::load_file(file, stderr)?;
     let g = Arc::new(lower(&program.term()).map_err(|e| (1, format!("{file}: {e}")))?);
     let object = crate::executable_object(&g, &plan(&g, true), program.ports())
@@ -132,4 +150,76 @@ pub fn build(
         )),
         Ok(_) => Ok(()),
     }
+}
+
+/// The runtime library in `dir` that was built with the executable `exe`: of the files
+/// `libzed_native*.a` there, the first by name whose symbol table holds [`build`]'s symbol as
+/// `exe` names it. Cargo keeps one such library for each set of features and dependencies it
+/// has built this crate with, so the newest of them need not be `exe`'s; the symbol names
+/// this crate under a hash of exactly those, and so tells them apart.
+pub fn runtime_of(exe: &Path, dir: &Path) -> Result<PathBuf, String> {
+    let symbol = build_symbol(exe)?;
+    let mut libraries = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.starts_with("libzed_native") && name.ends_with(".a") {
+            libraries.push(path);
+        }
+    }
+    libraries.sort_unstable();
+    for library in libraries {
+        if holds(&library, &symbol)? {
+            return Ok(library);
+        }
+    }
+    Err(format!(
+        "no runtime library in {} was built with {}: build it with `cargo build -p zed-native`",
+        dir.display(),
+        exe.display()
+    ))
+}
+
+/// The name of [`build`]'s symbol in the executable or object file `exe`. Its mangled name
+/// holds a hash of this crate's build (its features, its dependencies' builds and the
+/// compiler's flags), in both of Rust's manglings: `_RNvNtCs<hash>_10zed_native4link5build`
+/// and `_ZN10zed_native4link5build17h<hash>E`.
+pub fn build_symbol(exe: &Path) -> Result<Vec<u8>, String> {
+    use object::{Object as _, ObjectSymbol as _};
+    let file = std::fs::File::open(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+    let cache = object::ReadCache::new(file);
+    let object = object::File::parse(&cache).map_err(|e| format!("{}: {e}", exe.display()))?;
+    object
+        .symbols()
+        .filter(|s| s.is_definition())
+        .filter_map(|s| s.name_bytes().ok())
+        .find(|name| {
+            (name.starts_with(b"_RNvNtCs") && name.ends_with(b"_10zed_native4link5build"))
+                || name.starts_with(b"_ZN10zed_native4link5build17h")
+        })
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| {
+            format!(
+                "{} has no symbol for zed_native::link::build, so the runtime library built \
+                 with it cannot be found: it was stripped, or it does not hold zed-native",
+                exe.display()
+            )
+        })
+}
+
+/// Whether the archive `library`'s symbol table names `symbol`.
+fn holds(library: &Path, symbol: &[u8]) -> Result<bool, String> {
+    let at = |e: &dyn std::fmt::Display| format!("{}: {e}", library.display());
+    let file = std::fs::File::open(library).map_err(|e| at(&e))?;
+    let cache = object::ReadCache::new(file);
+    let archive = object::read::archive::ArchiveFile::parse(&cache).map_err(|e| at(&e))?;
+    let Some(symbols) = archive.symbols().map_err(|e| at(&e))? else {
+        return Ok(false);
+    };
+    for s in symbols {
+        if s.map_err(|e| at(&e))?.name() == symbol {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

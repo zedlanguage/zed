@@ -65,6 +65,8 @@ num-bigint = "0.4.8"
 num-integer = "0.1"
 num-traits = "0.2"
 blake3 = "1"
+# Writes the object files of the scaling test of zed_native::link::runtime_of.
+object = { workspace = true, features = ["write"] }
 
 # The scaling tests read perf_event_open on Linux; macOS and Windows have their own counters, in
 # zed-alloc-count (see tests/src/scaling.rs).
