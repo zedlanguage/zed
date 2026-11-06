@@ -59,6 +59,7 @@ rows! {
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
     BinderNamingType => "Binder naming a type",
+    NoCommonCarrier => "Two numeric values with no common carrier",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
     CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",
     RemapOutputName =>
