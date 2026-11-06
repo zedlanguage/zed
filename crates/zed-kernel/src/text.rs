@@ -1050,8 +1050,9 @@ mod tests {
     fn every_prefix_held_and_compared_costs_order_n_log_n() {
         // A log of n lines whose every prefix is kept, each compared, by `<` and by `==`, with
         // a log of the same length that differs in its first byte: each comparison stops
-        // there, and each prefix shares all but `O(log n)` nodes with the one before
-        // (COMPLEXITY.md C29). Order `n log n`, so 8n may do 24 times the work of n.
+        // there after setting up a walk of `O(log n)`, and each prefix shares all but `O(1)`
+        // nodes, amortized, with the one before (COMPLEXITY.md C29). Order `n log n`, so 8n
+        // may do 24 times the work of n.
         let line = long('l');
         let first = join(&Text::from("m"), &Text::from("l".repeat(PIECE - 1)));
         crate::scaling::check("n prefixes of a log held and compared", 2000, |n| {
