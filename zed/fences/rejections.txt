@@ -24,6 +24,7 @@ Order read on a level with no natural order — origin keys outside their `Seq`
 Two declared orders meet in one key type
 Emission-disjointness
 Binder naming a type
+Two numeric values with no common carrier
 Match binder unused in its guard and arm
 Capitalized free name used once in a signature and nowhere in the body
 Remap output name that names a source level and resolves to a value in scope
