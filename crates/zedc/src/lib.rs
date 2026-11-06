@@ -30,4 +30,5 @@ pub mod store;
 pub mod suppress;
 pub mod testing;
 pub mod unit;
+pub mod work;
 pub mod zir;

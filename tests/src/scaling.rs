@@ -223,6 +223,12 @@ impl Meter {
         }
     }
 
+    /// The count as it reads now, in the unit of [`Meter::unit`]: what the tests of
+    /// `zedc::work` read as instructions (TIME-report).
+    pub fn read(&mut self) -> u64 {
+        (self.read)()
+    }
+
     /// The name of the unit of [`Work::units`].
     pub fn unit(&self) -> &'static str {
         self.unit
@@ -524,6 +530,20 @@ mod tests {
 
     fn fails(run: impl FnOnce()) -> bool {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_err()
+    }
+
+    #[test]
+    fn a_reading_grows_by_the_work_between() {
+        let mut m = Meter::new();
+        let start = m.read();
+        spin(1_000_000);
+        let middle = m.read();
+        spin(10_000_000);
+        let end = m.read();
+        assert!(
+            end - middle > 5 * (middle - start),
+            "{start} {middle} {end}"
+        );
     }
 
     #[test]

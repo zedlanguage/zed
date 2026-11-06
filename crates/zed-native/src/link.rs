@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use zedc::suppress::Suppress;
+use zedc::work::{self, Stage};
 use zedc::zir::lower::lower;
 
 /// The system libraries the runtime library needs, as `rustc --print native-static-libs`
@@ -122,10 +123,13 @@ pub fn build(
         ));
     }
     let program = zedc::run::load_file(file, suppress, stderr)?;
-    let g = lower(&program.term()).map_err(|e| (1, format!("{file}: {e}")))?;
-    let address = program.address().map_err(|e| (1, format!("{file}: {e}")))?;
-    let object = crate::executable_object(g, true, program.ports(), address)
+    let g = work::stage(Stage::Lower, None, || lower(&program.term()))
         .map_err(|e| (1, format!("{file}: {e}")))?;
+    let address = program.address().map_err(|e| (1, format!("{file}: {e}")))?;
+    let object = work::stage(Stage::Codegen, None, || {
+        crate::executable_object(g, true, program.ports(), address)
+    })
+    .map_err(|e| (1, format!("{file}: {e}")))?;
     let mut at = out.as_os_str().to_owned();
     at.push(".zed.o");
     let at = PathBuf::from(at);
@@ -136,16 +140,18 @@ pub fn build(
         .open(&at)
         .and_then(|mut f| f.write_all(&object))
         .map_err(|e| (1, format!("{}: {e}", at.display())))?;
-    let linked = Command::new(&tools.linker)
-        .arg("-o")
-        .arg(out)
-        .arg(&at)
-        .arg(&tools.runtime)
-        .args(SYSTEM_LIBS)
-        // The runtime library holds the whole compiler; an executable needs a third of it.
-        // Without this, a link took twice as long and wrote 41 MB in place of 14 MB.
-        .arg("-Wl,--gc-sections")
-        .output();
+    let linked = work::stage(Stage::Link, None, || {
+        Command::new(&tools.linker)
+            .arg("-o")
+            .arg(out)
+            .arg(&at)
+            .arg(&tools.runtime)
+            .args(SYSTEM_LIBS)
+            // The runtime library holds the whole compiler; an executable needs a third of it.
+            // Without this, a link took twice as long and wrote 41 MB in place of 14 MB.
+            .arg("-Wl,--gc-sections")
+            .output()
+    });
     let _ = std::fs::remove_file(&at);
     let linker = tools.linker.to_string_lossy();
     match linked {

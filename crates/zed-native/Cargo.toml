@@ -34,6 +34,11 @@ path = "../../tests/steps/l01_19a_command_line/binary.rs"
 name = "build_binary"
 path = "../../tests/steps/l01_36a_executables/binary.rs"
 
+# `zedc --report` run as a user runs it (TIME-report).
+[[test]]
+name = "report_binary"
+path = "../../tests/steps/l01_30_queries/binary.rs"
+
 [dependencies]
 cranelift-codegen = "0.137.1"
 cranelift-frontend = "0.137.1"
@@ -45,6 +50,13 @@ object.workspace = true
 zed-kernel.workspace = true
 zed-rt.workspace = true
 zedc.workspace = true
+# The counters of `zedc --report` (TIME-report), used by the `zedc` executable only: the
+# library names neither, so the static library above links neither, and a program `zedc build`
+# makes keeps the system allocator.
+zed-alloc-count.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event2.workspace = true
 
 [features]
 # A test build: the runtime records the node that allocates each cell, a run that leaves

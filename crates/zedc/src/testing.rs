@@ -24,6 +24,7 @@ use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::run::{self, PortKind, Program, Through};
 use crate::suppress::Suppress;
+use crate::work::{self, Stage};
 use crate::{fence, interp, source};
 
 /// One check of a unit: a row of a table, a marked line, or a diagnostic on an unmarked line.
@@ -134,7 +135,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                 .find(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
             let mut program = None;
             if let Some(main) = main {
-                match run::program(stmts, unit.clone()) {
+                match work::stage(Stage::Program, None, || run::program(stmts, unit.clone())) {
                     Ok(p) => program = Some(p),
                     Err(why) => {
                         let (line, col) = lines.line_col(text.as_bytes(), main.span.start);
@@ -159,13 +160,16 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                         roots.extend(&t.args);
                         let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
                         let k = query::key("wave", &[&db.cone(&cones, &roots), ports.as_bytes()]);
-                        db.row(Query::Wave, k, || wave(&cones, None, p, t, map))
-                            .err()
+                        counted_row(db, Query::Wave, k, &t.function, || {
+                            wave(&cones, None, p, t, map)
+                        })
+                        .err()
                     }
                     (None, "main") => continue,
                     _ => {
                         let k = query::key("row", &[&db.cone(&cones, &[&t.check])]);
-                        db.row(Query::Row, k, || row(&cones, None, t, map)).err()
+                        counted_row(db, Query::Row, k, &t.function, || row(&cones, None, t, map))
+                            .err()
                     }
                 };
                 out.push(Outcome {
@@ -178,6 +182,27 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
     }
     out.sort_by_key(|o| (o.line, o.col));
     (out, accepted)
+}
+
+/// The row of `definition`'s table that `db` keeps under `k`, a key of `q`, computed by `check`
+/// when none is kept: counted as the work of [`Stage::Test`] on `definition` when computed, and
+/// as taken from the cache otherwise (TIME-report).
+fn counted_row(
+    db: &mut Db,
+    q: Query,
+    k: query::Key,
+    definition: &str,
+    check: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let mut computed = false;
+    let r = db.row(q, k, || {
+        computed = true;
+        work::stage(Stage::Test, Some(definition), check)
+    });
+    if !computed {
+        work::cached(Stage::Test, Some(definition));
+    }
+    r
 }
 
 /// Why a line marked ✗ fails, given its diagnostics `ds` and the row its comment names: it
@@ -410,8 +435,10 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
     let mut db = Db::new();
     let mut texts = Vec::new();
     for file in args {
+        work::unit(file);
         let text = match std::fs::read(file) {
-            Ok(bytes) => source::load(&bytes).map_err(|e| e.render(&bytes)),
+            Ok(bytes) => work::stage(Stage::Load, None, || source::load(&bytes))
+                .map_err(|e| e.render(&bytes)),
             Err(e) => {
                 let _ = writeln!(stderr, "{file}: {e}");
                 return 2;

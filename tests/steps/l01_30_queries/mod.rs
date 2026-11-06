@@ -3,6 +3,7 @@
 //! rows whose definitions changed, and every answer equals a fresh database's.
 
 mod keys;
+mod report;
 mod reuse;
 mod scaling;
 

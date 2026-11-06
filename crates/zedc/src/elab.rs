@@ -37,6 +37,7 @@ use crate::check::{self, Fit, Info, Misfit};
 use crate::lex::Span;
 use crate::rejection::Row;
 use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
+use crate::work::{self, Stage};
 
 mod walk;
 
@@ -249,8 +250,11 @@ fn elaborate_in(
     marks: Option<Vec<Mark>>,
 ) -> Result<(Unit, Option<Vec<Mark>>), Vec<Error>> {
     let t = Tables::new(unit, res);
-    let mut info = check::check_with(&t, unit);
-    let warnings = check::widen::warnings(&t, unit, &info);
+    let (mut info, warnings) = work::stage(Stage::Check, None, || {
+        let info = check::check_with(&t, unit);
+        let warnings = check::widen::warnings(&t, unit, &info);
+        (info, warnings)
+    });
     // The checker's errors first, so that where both report one error, as for an argument
     // that fills no parameter, the checker's, which carries its notes, is the one kept: the
     // sort is stable.

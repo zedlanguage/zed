@@ -24,6 +24,7 @@ use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
 use crate::parse::{TOP, parse};
 use crate::suppress::{self, Severity, Suppress};
+use crate::work::{self, Stage};
 use crate::{canon, docs, interp, lex, resolve, source, stage};
 
 /// The kinds of input port `main` declares at L1.
@@ -255,9 +256,11 @@ enum Unloaded {
 
 /// The program in `bytes`, or why it was not loaded.
 fn loaded(bytes: &[u8]) -> Result<Program, Unloaded> {
-    let text = source::load(bytes).map_err(|e| Unloaded::Refused(e.render(bytes)))?;
+    let text = work::stage(Stage::Load, None, || source::load(bytes))
+        .map_err(|e| Unloaded::Refused(e.render(bytes)))?;
     let (stmts, unit, warnings) = compile(&text).map_err(Unloaded::Rejected)?;
-    let mut program = program(&stmts, unit).map_err(Unloaded::Refused)?;
+    let mut program = work::stage(Stage::Program, None, || program(&stmts, unit))
+        .map_err(Unloaded::Refused)?;
     program.warnings = warnings.into();
     Ok(program)
 }
@@ -349,15 +352,22 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), 
         };
         placed(text, &lines, &[], Severity::Rejection, vec![e])
     };
-    let (tokens, docs) = lex::lex_with_docs(text).map_err(|e| at(e.span, e.to_string()))?;
-    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| at(e.span, e.to_string()))?;
-    let stmts = ast::unit_all_errors(text, &tokens, &tree)
-        .map_err(|es| placed(text, &lines, &[], Severity::Rejection, es))?;
+    let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
+        .map_err(|e| at(e.span, e.to_string()))?;
+    let tree = work::stage(Stage::Parse, None, || parse(text, &tokens, "Unit", TOP))
+        .map_err(|e| at(e.span, e.to_string()))?;
+    let stmts = work::stage(Stage::Syntax, None, || {
+        ast::unit_all_errors(text, &tokens, &tree)
+    })
+    .map_err(|es| placed(text, &lines, &[], Severity::Rejection, es))?;
     let all = |errors: Vec<ast::Error>| placed(text, &lines, &stmts, Severity::Rejection, errors);
-    let res = resolve::resolve(&stmts).map_err(all)?;
+    let res = work::stage(Stage::Resolve, None, || resolve::resolve(&stmts)).map_err(all)?;
     // Doc comments are checked after parsing; their errors join elaboration's.
-    let mut errors = docs::check(text, &tokens, &docs, &res);
-    let mut unit = match elaborate(&stmts, &res) {
+    let mut errors = work::stage(Stage::Docs, None, || {
+        docs::check(text, &tokens, &docs, &res)
+    });
+    let elaborated = work::stage(Stage::Elaborate, None, || elaborate(&stmts, &res));
+    let mut unit = match elaborated {
         Ok(unit) if errors.is_empty() => unit,
         Ok(_) => return Err(all(errors)),
         Err(es) => {
@@ -366,7 +376,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), 
             return Err(all(errors));
         }
     };
-    let refused = linear_questions(&stmts, &unit);
+    let refused = work::stage(Stage::Linear, None, || linear_questions(&stmts, &unit));
     if !refused.is_empty() {
         return Err(all(refused));
     }
@@ -437,29 +447,34 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
         let Some(Term::Lam(ps, body)) = defs.get(f.name.as_str()) else {
             continue;
         };
-        let body = interp::prelude(cones.close((**body).clone()));
-        let Some(rs) = preimage::relations(&[&body], ps, true) else {
-            continue;
-        };
-        for r in rs {
-            for (can, question) in [
-                ("hold", r.body.clone()),
-                ("fail", presburger::Formula::negate(r.body.clone())),
-            ] {
-                let q = presburger::Formula::and(vec![r.defined(), question]);
-                if let Err(why) = presburger::decide(&q) {
-                    out.push(ast::Error {
-                        row: Some(crate::rejection::Row::NonLinearQuestion),
-                        span: s.span,
-                        message: format!("whether `{}` can {can} is not decided: {why}", f.name),
-                        notes: vec![ast::Note {
-                            span: f.body.span,
-                            text: format!("the constraints: {r}"),
-                        }],
-                    });
+        work::stage(Stage::Linear, Some(&f.name), || {
+            let body = interp::prelude(cones.close((**body).clone()));
+            let Some(rs) = preimage::relations(&[&body], ps, true) else {
+                return;
+            };
+            for r in rs {
+                for (can, question) in [
+                    ("hold", r.body.clone()),
+                    ("fail", presburger::Formula::negate(r.body.clone())),
+                ] {
+                    let q = presburger::Formula::and(vec![r.defined(), question]);
+                    if let Err(why) = presburger::decide(&q) {
+                        out.push(ast::Error {
+                            row: Some(crate::rejection::Row::NonLinearQuestion),
+                            span: s.span,
+                            message: format!(
+                                "whether `{}` can {can} is not decided: {why}",
+                                f.name
+                            ),
+                            notes: vec![ast::Note {
+                                span: f.body.span,
+                                text: format!("the constraints: {r}"),
+                            }],
+                        });
+                    }
                 }
             }
-        }
+        });
     }
     out
 }
@@ -1051,11 +1066,13 @@ fn command_inner(
             program
                 .check_record(&record)
                 .map_err(|e| (2, format!("{path}: {e}")))?;
-            program.replay(&record)
+            work::stage(Stage::Run, Some("main"), || program.replay(&record))
         }
         None => {
             let lines = options.read_lines(program.ports(), stdin)?;
-            program.run_args(&lines, &words.args, |_| Arc::new(Disk))
+            work::stage(Stage::Run, Some("main"), || {
+                program.run_args(&lines, &words.args, |_| Arc::new(Disk))
+            })
         }
     }
     .map_err(|e| (1, e))?;
@@ -1072,6 +1089,7 @@ pub fn load_file(
     suppress: &mut Suppress,
     stderr: &mut dyn Write,
 ) -> Result<Program, (u8, String)> {
+    work::unit(file);
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
     // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
     // package (step L2.3); linking it to the units it imports is step L2.4.
