@@ -112,7 +112,8 @@ fn both_edge_kinds_have_a_form() {
 #[test]
 fn the_record_answers_the_four_questions() {
     // The decisions the plan names: no ZIR dialect in MLIR, the graph regions, the state edges,
-    // the content addresses, the certificates, and Cranelift as the compact back end.
+    // the content addresses, the certificates, and Cranelift kept in the Rust-hosted compiler
+    // while the Zed compiler emits MLIR text (the author's order of 2026-11-05, DESIGN step L1.35).
     let text = record();
     for decision in [
         "**ZIR is lowered into MLIR's existing dialects and is not written as an MLIR dialect.**",
@@ -120,7 +121,7 @@ fn the_record_answers_the_four_questions() {
         "**State edges become order, not values.**",
         "**Content addresses travel as locations.**",
         "**Certificates stop at the lowering.**",
-        "**The compact back end stays Cranelift.**",
+        "**The Rust-hosted compiler keeps Cranelift; the Zed compiler emits MLIR text.**",
     ] {
         assert!(text.contains(decision), "the record lacks {decision}");
     }
