@@ -800,6 +800,12 @@ fn many_calls_passing_some_atoms_of_their_argument_by_scale() {
     // `v` may be a string, `#a` or `#b`. `h` takes `#a` and omits `#b`, so each call `h(v)`
     // passes `#b` by and gives `#a` to the arrow that takes it; the lambda takes no atom, so
     // each call of `ap` passes both by, at that call, whose argument gave them.
+    //
+    // The sizes are those at which a cost per call in the number of calls fails: each call
+    // `h(v)` checks in about 500,000 instructions, so at 200 and 1,600 calls a copy of
+    // `Info::passes` at each pass-by (`Ck::pass_at`) still passed (`h(v)`: 18.6 times the
+    // instructions, 15.3 times the bytes); at 1,000 and 8,000 the same copy takes 38.4 and
+    // 32.4 times, and the code without it 8.0 and 8.0 (ISSUE1-passby-scale).
     let defs = "h(positional x) = if x is #a { \"a\" } else { trim(x) };\n\
                 ap(positional f, positional v) = f(v);\n";
     let calls = |n: usize, call: &str| {
@@ -812,13 +818,14 @@ fn many_calls_passing_some_atoms_of_their_argument_by_scale() {
         let (i, _) = info(&calls(3, call));
         assert!(i.errors.is_empty(), "{call}: {:?}", i.errors);
         assert_eq!(i.passes.len(), 3, "{call}");
-        let units = resolved(200, |n| calls(n, call));
+        let units = resolved(1000, |n| calls(n, call));
         scaling::check(
             &format!("one function calling `{call}` n times"),
-            200,
+            1000,
             |n| {
                 let info = units[&n].check();
                 assert!(info.errors.is_empty(), "{:?}", info.errors);
+                assert_eq!(info.passes.len(), n, "{call}");
             },
         );
     }
