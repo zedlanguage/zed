@@ -414,8 +414,11 @@ type Rows = Vec<(Vec<(usize, Int)>, Int)>;
 /// topological order of the edges of negative reduced cost moves one step per pass of
 /// Goldberg and Radzik's search (COMPLEXITY.md C24).
 fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
-    let n = 2 * k + 1;
-    let mut edges = bad_gor_edges(k);
+    augmented(2 * k + 1, bad_gor_edges(k), seed)
+}
+
+/// The edges over `n` nodes augmented as BAD-GOR is in [`bad_gor`], as rows.
+fn augmented(n: usize, mut edges: Vec<(usize, usize, i64)>, seed: u64) -> (usize, Rows) {
     let heavy = n as i64 + 1 + edges.iter().map(|e| e.2.abs()).sum::<i64>();
     let mut g = Rng::new(seed);
     for _ in 0..5 * edges.len() {
@@ -498,6 +501,50 @@ fn bad_gor_scales() {
     assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
     scaling::check("BAD-GOR augmented, by k", 256, |k| {
         let (n, rows) = if k == 256 { &small } else { &large };
+        std::hint::black_box(raced(*n, rows));
+    });
+}
+
+/// BAD-GOR augmented as in [`bad_gor`], with each weight 1 edge `i → i + 1` of its path split
+/// through a node of its own into an edge of weight -1 and one of weight 2, over `3k - 1`
+/// variables. The path's labels are BAD-GOR's, so Goldberg and Radzik's search still moves one
+/// step per pass (the weight 2 edge has reduced cost 1 at the start of the pass), and each step
+/// now holds a negative edge, so BF-Dijkstra takes a round per step, each lowering the hub `k`
+/// and its `k` leaves again: slow for both along the same shortest paths.
+fn split_bad_gor(k: usize, seed: u64) -> (usize, Rows) {
+    let mut edges = vec![(0, 1, -3 * k as i64), (0, k, -1)];
+    for i in 1..k - 1 {
+        let mid = 2 * k + i;
+        edges.extend([(i, mid, -1), (mid, i + 1, 2)]);
+    }
+    edges.extend((1..=k).map(|i| (k, k + i, -1)));
+    edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
+    augmented(3 * k - 1, edges, seed)
+}
+
+#[test]
+fn split_bad_gor_is_decided() {
+    let (n, rows) = split_bad_gor(64, 1);
+    assert!(!empty(n, &rows));
+}
+
+#[test]
+#[ignore = "UTVPI-both-slow: the race grows past the limit on this family"]
+fn split_bad_gor_scales() {
+    // Measured at load 65 to 73 (UTVPI-union verify), from k = 256 to k = 2,048 in time:
+    // Goldberg and Radzik's search alone 14.2 ms to 3.29 s (232 times), BF-Dijkstra alone
+    // 22.6 ms to 2.96 s (131 times), Duong's search alone 223 ms to 7.27 s, and the race
+    // 432 ms to 33.8 s (78 times). Here, from k = 128 to k = 1,024, the race allocates 18.1M
+    // to 606M bytes (33.5 times), and Duong's search alone passes. The race takes 1.9 and 4.6
+    // times Duong's time alone, so Duong's search ends it at both sizes, though Goldberg and
+    // Radzik's search alone takes a fifteenth of Duong's time at k = 256. Inferred, not
+    // measured: the labels BF-Dijkstra passes it slow it down (COMPLEXITY.md C24).
+    let (small, large) = (
+        split_bad_gor(128, 1),
+        split_bad_gor(scaling::FACTOR * 128, 1),
+    );
+    scaling::check("BAD-GOR with its path split, by k", 128, |k| {
+        let (n, rows) = if k == 128 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
 }

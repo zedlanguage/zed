@@ -65,6 +65,8 @@ fi
 # 10 s there, so each of those tests has a process of its own. l01_38 names ran past 60 s at
 # load 80 once the orbit tests (11 to 15 s each) joined it, and live3 at load 76 to 95, where
 # `slabs_of_million_coefficients_scale` takes 38 s alone (2026-11-05).
+# l01_38 shared and stages were added in UTVPI-union verify, where they took 49 and 36 s whole
+# at load 77 with the other modules running.
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -73,6 +75,7 @@ split="
   l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega
   l01_38_presburger::scaling l01_38_presburger::deep
   l01_38_presburger::names l01_38_presburger::live3
+  l01_38_presburger::shared l01_38_presburger::stages
 "
 step_pieces() {
   case " $(echo $split) " in

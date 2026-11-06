@@ -214,8 +214,9 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // to 332.8M instructions there (8.7 times; `the_joined_union_family_scales`), 36.1M to
     // 301.2M on the family split in two (`bad_gor_and_a_fan_scale`; 202M to 12,236M before) and
     // 25.1M to 209.3M on BAD-GOR alone (`bad_gor_scales`; Goldberg and Radzik alone 59.8 times).
-    // Open, inferred and not constructed: a graph slow for both along the same shortest paths;
-    // there Duong's search is the backstop. The decisions agree with each search alone, since
+    // On a graph slow for both along the same shortest paths (`stages::split_bad_gor_scales`,
+    // ignored until repair UTVPI-both-slow) Duong's search ends the race, but the race still
+    // grows past the limit from k = 128 to 1,024 (33.5 times the bytes). The decisions agree with each search alone, since
     // every potential gives the same one (`odd_zero_cycle`). Tests in `l01_38_presburger`:
     // `stages::*_scale*` and `near::duong_scales_alone`; COMPLEXITY.md C24.
     let mut both = Shared::new(out);
@@ -707,9 +708,9 @@ mod tests {
             let n = 1 + (next(&mut state) % if graph % 4 == 0 { 40 } else { 12 }) as usize;
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
             if next(&mut state).is_multiple_of(2) {
-                for u in 0..n {
+                for (u, edges) in out.iter_mut().enumerate() {
                     let w = Int::from((next(&mut state) % 31) as i64);
-                    out[u].push(((u + 1) % n, w));
+                    edges.push(((u + 1) % n, w));
                 }
             }
             for _ in 0..next(&mut state) % (3 * n as u64 + 1) {
