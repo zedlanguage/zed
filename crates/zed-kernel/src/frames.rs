@@ -9,6 +9,9 @@
 //! plain recursion would run them, so what a machine does between two calls happens in the same
 //! order too. `async` is used because it writes each frame's resume points and saved locals,
 //! which a hand-written machine would list by hand at each recursive call.
+//!
+//! The emptiness search of `types::empty` and zedc's preimage analysis (`store::preimage`) run
+//! on it.
 
 use std::cell::Cell;
 use std::mem::ManuallyDrop;

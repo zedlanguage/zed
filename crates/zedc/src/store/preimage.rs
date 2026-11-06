@@ -71,7 +71,7 @@ use std::sync::Arc;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
 
-use super::frames::{Deep, Stack};
+use zed_kernel::frames::{Deep, Stack};
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, Landmarks, Lattice};

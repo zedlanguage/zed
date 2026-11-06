@@ -40,6 +40,11 @@ path = "steps/l01_36_cranelift/deep_heap.rs"
 name = "deep_types"
 path = "steps/l01_22_type_representation/deep_types.rs"
 
+# Its own binary, so its deep searches do not lengthen the piece of step L1.23.
+[[test]]
+name = "deep_search"
+path = "steps/l01_23_subtyping/deep_search.rs"
+
 [features]
 full = []
 # The build whose content addresses collide, for the tests of step L1.37a.

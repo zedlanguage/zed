@@ -319,7 +319,7 @@ chooses between these and tests the choice.
 Depth moves to the runtime: L6.7 tests a `fix` term over a 100,000-node chain, and compiled
 recursion on input-sized depth needs a growable stack in the retained runtime (inferred; not in
 L6.13). The preimage transfer (`store/preimage.rs`, PRE-stack-explicit) keeps its frames on the
-heap: each analysis is an `async fn` whose recursive calls the loop in `store/frames.rs` runs from a
+heap: each analysis is an `async fn` whose recursive calls the loop in `zed-kernel/src/frames.rs` runs from a
 `Vec` of suspended state machines; Zed has no `async` or state machines written by the compiler,
 so a port writes each analysis's frames as a sum type with an explicit stack (see the entries from
 PRE-stack-explicit). `Drop` for `text::Node` and `Premises` exists to avoid deep recursion in release,
@@ -1581,7 +1581,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A visited set of row addresses (`HashSet<*const RowData>` from `Arc::as_ptr`) so that a walk enters a shared row once | `check::ty::Ty::vars_in` | Identity (gap 1) | The row's digest as the key, confirmed by contents, or the row's own variable set (`RowData::vars`) read in place of the walk |
 | A per-row `VarFacts` of persistent sets made when the row is built, read to keep whole a row that holds none of the variables replaced | `check::ty::{RowData::vars, Row::holds_any, Ty::var_facts}` | None | A field of the row record computed at construction, as `Row`'s other facts are |
 
-## Entries from T2-types-rest (`zed-kernel/src/term.rs`, `term/walk.rs`, `types/rec.rs`, `types/rec/walk.rs`)
+## Entries from T2-types-rest (`zed-kernel/src/term.rs`, `term/walk.rs`, `types/rec.rs`, `types/rec/walk.rs`, `types/empty.rs`, `frames.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1590,6 +1590,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A thread-local placeholder `Arc` swapped into a shared field during `Drop`, so a subterm held several times by one node is released from the queue, not inside the drop of its last holder | `term.rs` `free_shared`, `HOLE`, `Freed::Shared` | Missing (the runtime frees values) | Removed |
 | A private trait (`Tree`) whose method returns `impl DoubleEndedIterator` (a slice chained with an array of `Option`s), so one generic loop compares and one prints two tree types | `types/rec/walk.rs` `Tree`, `equal`, `show`, `Expr::kids`, `Shape::kids` | None | A function from a value to the list of its parts, passed to one walk |
 | Post-order builds with an enum of steps borrowing the input (`Visit`, `Build`; `Eval`, `Component`, `Build`) on a `Vec` and a second `Vec` of results split off per node | `rec` `Node::of`, `eval`, `Show::rope`, `Expr::clone` | Mutation (gap 11) | A state receiver holding the two lists, as for `canon::binders::Levels::term` |
+| `async fn` methods run by a hand-written executor (`frames::Stack`, `Deep`): each call that may recurse is a boxed future on the heap, polled from a loop, so the compiler writes the resume points of about thirty mutually recursive methods | `types/empty.rs` `Searching` (frames of their own: `empty`, `decide`, `rep`, `member_known`, `tuples`, `morphisms`) | Missing (no coroutines or `async`) | Removed: the port's runtime must not recurse on depth; without that, a state machine with one frame variant per resume point |
+| The search's state in a `RefCell`, moved in with `mem::take` for a run and back after it, borrowed one statement at a time and never across an `await` | `types/empty.rs` `Search::run`, `Searching::s` | Mutation, interior mutability | A state receiver threaded through the calls |
+| One `frames.rs` in the kernel, used by the emptiness search and by `zedc`'s preimage analysis (`zedc/src/store/frames.rs` removed at this merge) | `zed-kernel/src/frames.rs`, `zedc/src/store/preimage.rs` | None | One module in the port too |
+| Pairs to compare kept on a `Vec` (`Simulation::todo`) and drained after the pair is registered, failures spread once every pair is made | `types/empty.rs` `Simulation::pair`, `holds`, `compare` | Mutation (gap 11) | A fold over a list of pairs in a state receiver |
+| An explicit stack of index ranges for the halving split, with an enum (`Each`) holding a `&mut Option<usize>` the search writes its answer to | `types/empty.rs` `split_classes`, `Each` | Mutation | A fold returning the answer |
 
 ## Entries from REC-id-order (`zed-kernel/src/types.rs`, `types/rec.rs`, `types/bdd.rs`, `types/print.rs`)
 

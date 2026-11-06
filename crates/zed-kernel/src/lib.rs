@@ -14,6 +14,7 @@ pub mod error;
 pub mod eval;
 pub mod exact;
 pub mod family;
+pub mod frames;
 pub mod num;
 pub mod print;
 pub mod provenance;

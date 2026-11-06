@@ -65,14 +65,18 @@
 //! type count as inhabited too. Results are kept for the thread, until
 //! `Type::forget_emptiness`.
 
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::future::Future;
+use std::ops::{ControlFlow, Range};
+use std::pin::Pin;
 
 use num_bigint::BigUint;
 
 use super::bdd::Part;
 use super::{Lits, Morphism, Node, Parts, Row, Type};
+use crate::frames::{Deep, Stack};
 use crate::value::Value;
 
 thread_local! {
@@ -254,6 +258,11 @@ impl Type {
 struct Simulation {
     pairs: BTreeMap<(Type, Type), usize>,
     nodes: Vec<Pair>,
+    /// The pairs made and not yet compared row by row, with their number. They are compared
+    /// from this stack rather than when made, so a type nested to any depth takes no more of
+    /// the thread's stack than a shallow one; the answer does not depend on the order, since
+    /// failures are spread only once every pair reached is made.
+    todo: Vec<(usize, Type, Type)>,
 }
 
 #[derive(Default)]
@@ -270,6 +279,9 @@ struct Pair {
 impl Simulation {
     fn holds(mut self, a: &Type, b: &Type) -> bool {
         let root = self.pair(a, b);
+        while let Some((i, a, b)) = self.todo.pop() {
+            self.compare(i, &a, &b);
+        }
         let mut failed: Vec<usize> = (0..self.nodes.len())
             .filter(|&i| self.nodes[i].failed)
             .collect();
@@ -298,23 +310,29 @@ impl Simulation {
         self.nodes.push(Pair::default());
         self.pairs.insert(key, i);
         if a != b {
-            let Some(needs) = self.rows(a.p(), b.p()) else {
-                self.nodes[i].failed = true;
-                return i;
-            };
-            for (row, alts) in needs.iter().enumerate() {
-                for (alt, ks) in alts.iter().enumerate() {
-                    for &k in ks {
-                        self.nodes[k].readers.push((i, row, alt));
-                    }
-                }
-            }
-            let n = &mut self.nodes[i];
-            n.left = needs.iter().map(Vec::len).collect();
-            n.struck = needs.iter().map(|alts| vec![false; alts.len()]).collect();
-            n.failed = n.left.contains(&0);
+            self.todo.push((i, a.clone(), b.clone()));
         }
         i
+    }
+
+    /// Compares the pair numbered `i`, of `a` under `b`, row by row: what it needs of other
+    /// pairs, which are made, and whether it fails here.
+    fn compare(&mut self, i: usize, a: &Type, b: &Type) {
+        let Some(needs) = self.rows(a.p(), b.p()) else {
+            self.nodes[i].failed = true;
+            return;
+        };
+        for (row, alts) in needs.iter().enumerate() {
+            for (alt, ks) in alts.iter().enumerate() {
+                for &k in ks {
+                    self.nodes[k].readers.push((i, row, alt));
+                }
+            }
+        }
+        let n = &mut self.nodes[i];
+        n.left = needs.iter().map(Vec::len).collect();
+        n.struck = needs.iter().map(|alts| vec![false; alts.len()]).collect();
+        n.failed = n.left.contains(&0);
     }
 
     /// What `a` under `b` needs of pairs, or none if it fails here.
@@ -800,6 +818,7 @@ struct Cell {
 /// changed is tested again only against the cells open on it that have a tuple type still in
 /// the part, and only when they are next read. Each change is logged, so a piece of the box is
 /// tried and the box restored after.
+#[derive(Default)]
 struct Region {
     r: Vec<Type>,
     atoms: Vec<Row>,
@@ -944,96 +963,109 @@ enum Rep {
     Struct,
 }
 
+/// A [`Search`] running on an explicit stack on the heap (module [`crate::frames`]). The
+/// methods that may recurse through a type's parts are `async` here, so a type nested to any
+/// depth is decided with no more of the thread's stack than a shallow one; those that start a
+/// frame of their own return a [`Deep`]: `empty`, `decide`, `rep`, `member_known`, `tuples` and
+/// `morphisms`, through one of which every cycle of calls passes. The others are awaited in the
+/// frame that calls them. Calls are made in the order of the recursive form, so the answers and
+/// all that is recorded on the way are the same.
+///
+/// The async form, rather than an enum of frames per method, is used because the methods are
+/// about thirty, mutually recursive, with recursive calls inside loops, short-circuiting
+/// conditions and searches that restore the box after each piece: the compiler writes each
+/// resume point and its saved locals, which a hand-written machine would list by hand at each
+/// call, and the code keeps the shape of the recursion it replaces.
+///
+/// Complexity tradeoff: each frame is a boxed future and each borrow of the state a check of
+/// the `RefCell`, a constant factor over the recursive form (1.2 to 2.5 times the time on
+/// types 20,000 deep, measured against c277b594) for an O(depth) heap in place of the thread's
+/// stack; the order of the work is unchanged.
+struct Searching<'m> {
+    stack: Stack<'m>,
+    /// The search's state, borrowed by one statement at a time, never across an `await`, since
+    /// the call awaited borrows it too.
+    s: &'m RefCell<Search>,
+}
+
+/// What [`Searching::split_classes`] does with each piece of the box: decides it, or seeks a
+/// value in it, the tuple part of length `len` cut to the piece.
+enum Each<'a> {
+    Decide {
+        may_cover: bool,
+    },
+    Seek {
+        len: usize,
+        found: &'a mut Option<usize>,
+    },
+}
+
 impl Search {
-    /// Decides `root`: phases, in each of which an answer only goes from empty to inhabited;
-    /// at the end of a phase each inhabited answer is tried for a checked value, and if a new one
-    /// is found the answers without one start again from empty, so a wrong "inhabited" read by
-    /// another decision is undone. The last phase gives the answer.
-    fn solve(&mut self, root: &Type) -> bool {
-        // A value built from the tuple types as written answers at once, and no box is split.
-        // Answers read on the way are unfinished, so none is kept. A type with no atoms has no
-        // list to walk, and a row tested against every row would cost their square.
-        if !root.p().atoms.names.is_empty() {
-            self.seeding = true;
-            let seed = self.rep(root).is_some();
-            self.seeding = false;
-            if seed {
-                self.types.clear();
-                self.answer.clear();
-                return false;
-            }
-            self.reps.retain(|_, r| r.is_some());
-        }
-        self.walking = true;
-        let b = self.empty(root);
-        self.walking = false;
-        let Some(&r) = self.ids.get(root) else {
-            return b;
+    /// Runs `root` and the calls it makes on a stack of their own, on this search's state.
+    fn run<V: Unpin + 'static>(
+        &mut self,
+        root: impl for<'m> FnOnce(&'m Searching<'m>) -> Pin<Box<dyn Future<Output = V> + 'm>>,
+    ) -> V {
+        let s = RefCell::new(std::mem::take(self));
+        let v = {
+            let d = Searching {
+                stack: Stack::default(),
+                s: &s,
+            };
+            d.stack.run(root(&d))
         };
-        loop {
-            self.drain();
-            let open: Vec<usize> = (0..self.types.len())
-                .filter(|&t| !self.answer[t] && !self.witnessed.contains(&t))
-                .collect();
-            self.reps.retain(|_, r| r.is_some());
-            let mut new = false;
-            for &t in &open {
-                let x = self.types[t].clone();
-                if self.rep(&x).is_some() {
-                    self.witnessed.insert(t);
-                    new = true;
-                }
-            }
-            for k in std::mem::take(&mut self.keys) {
-                if self.rep(&k).is_some() {
-                    new = true;
-                } else {
-                    self.keys.insert(k);
-                }
-            }
-            if !self.again.is_empty() {
-                continue;
-            }
-            // Value types still empty with every morphism value read as inhabited are empty:
-            // read them so, and start again.
-            let fresh: Vec<usize> = (self.value_reads.iter().copied())
-                .filter(|&v| self.answer[v] && !self.dead.contains(&v))
-                .collect();
-            if !fresh.is_empty() || std::mem::take(&mut self.settled) {
-                self.dead.extend(fresh);
-                for t in 0..self.types.len() {
-                    if !self.witnessed.contains(&t) && !self.dead.contains(&t) {
-                        self.answer[t] = true;
-                        self.again.insert(t);
-                    }
-                }
-                self.reps.retain(|_, r| r.is_some());
-                continue;
-            }
-            if !new {
-                return self.answer[r];
-            }
-            for t in open {
-                if !self.witnessed.contains(&t) {
+        *self = s.into_inner();
+        v
+    }
+
+    /// Decides `root` ([`Searching::solve`]).
+    fn solve(&mut self, root: &Type) -> bool {
+        let root = root.clone();
+        self.run(|d| Box::pin(async move { d.solve(&root).await }))
+    }
+
+    /// A value in `t`, if one is found ([`Searching::rep`]).
+    fn rep(&mut self, t: &Type) -> Option<usize> {
+        let t = t.clone();
+        self.run(|d| Box::pin(d.rep(&t)))
+    }
+
+    /// The end of a phase of [`Searching::solve`], once each inhabited answer was tried for a
+    /// value, `new` when one was found: the answer for the root, numbered `r`, when the phases
+    /// are over, or none when another starts.
+    fn end_phase(&mut self, open: Vec<usize>, new: bool, r: usize) -> Option<bool> {
+        if !self.again.is_empty() {
+            return None;
+        }
+        // Value types still empty with every morphism value read as inhabited are empty:
+        // read them so, and start again.
+        let fresh: Vec<usize> = (self.value_reads.iter().copied())
+            .filter(|&v| self.answer[v] && !self.dead.contains(&v))
+            .collect();
+        if !fresh.is_empty() || std::mem::take(&mut self.settled) {
+            self.dead.extend(fresh);
+            for t in 0..self.types.len() {
+                if !self.witnessed.contains(&t) && !self.dead.contains(&t) {
                     self.answer[t] = true;
                     self.again.insert(t);
                 }
             }
-            if self.again.is_empty() {
-                return self.answer[r];
+            self.reps.retain(|_, r| r.is_some());
+            return None;
+        }
+        if !new {
+            return Some(self.answer[r]);
+        }
+        for t in open {
+            if !self.witnessed.contains(&t) {
+                self.answer[t] = true;
+                self.again.insert(t);
             }
         }
-    }
-
-    /// Decides again, in rounds, each type an answer it read has changed under.
-    fn drain(&mut self) {
-        while !self.again.is_empty() {
-            for t in std::mem::take(&mut self.again) {
-                if self.answer[t] {
-                    self.decide(t);
-                }
-            }
+        if self.again.is_empty() {
+            return Some(self.answer[r]);
         }
+        None
     }
 
     /// Notes the first place a part counted as inhabited with nothing shown.
@@ -1044,66 +1076,22 @@ impl Search {
         }
     }
 
-    fn decide(&mut self, t: usize) -> bool {
-        if self.refused.is_some() {
-            return true;
-        }
-        let outer = self.current.replace(t);
-        let ty = self.types[t].clone();
-        let b = match self.pure_cycles(&ty) {
-            Some(Lengths::None) => true,
-            Some(Lengths::Some) => {
-                self.witnessed.insert(t);
-                false
-            }
-            Some(Lengths::Refused) => {
-                // Complexity tradeoff: the lengths whose emptiness only a split on two or more
-                // primes at once decides are refused (counted inhabited by `is_empty`), so the
-                // work stays polynomial in the residue classes. Why: whether residue classes
-                // cover the lengths is the covering problem for residues, NP-hard. Trigger:
-                // `residues_meet` answers `Refused`. Tests:
-                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`erdos_cover`) and
-                // `covering_residues_are_decided_by_a_split_on_one_prime`. COMPLEXITY.md K34 and
-                // the Kept row "emptiness and subtyping of tuple and morphism parts". A complete
-                // solution needs a backtracking split over several primes at once, exponential in
-                // the primes, or a SAT encoding of the cover.
-                self.give_up(Refusal::Residues);
-                false
-            }
-            None => self.parts(ty.p()),
-        };
-        self.current = outer;
-        if !b {
-            self.answer[t] = false;
-            self.again.extend(self.readers[t].iter().copied());
-        }
-        b
-    }
-
-    fn empty(&mut self, t: &Type) -> bool {
-        // A member of a recursive group is answered by the group's decider (module `rec`).
-        if let Some(b) = t.judged() {
-            return b;
-        }
-        // A scalar in the type is a checked value, read off before the type is compared with
-        // those met.
-        let p = t.p();
-        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
-        if p.bools != 0 || lits.iter().any(|l| l.cofinite || !l.values.is_empty()) {
-            return false;
-        }
+    /// The answer for `t` when it is known: a type met before in this search, read by the type
+    /// being decided, or one kept from an earlier search. Otherwise `t` is numbered, read by the
+    /// type being decided and marked as being decided itself, and its number is given.
+    fn met(&mut self, t: &Type) -> ControlFlow<bool, usize> {
         if let Some(&i) = self.ids.get(t) {
             if let Some(c) = self.current
                 && self.readers[i].insert(c)
             {
                 self.reads[c].push(i);
             }
-            return self.answer[i];
+            return ControlFlow::Break(self.answer[i]);
         }
         if !self.strict
             && let Some(b) = MEMO.with(|m| m.borrow().get(t).copied())
         {
-            return b;
+            return ControlFlow::Break(b);
         }
         let i = self.types.len();
         self.ids.insert(t.clone(), i);
@@ -1115,9 +1103,7 @@ impl Search {
             self.reads[c].push(i);
         }
         self.deciding.insert(i);
-        let b = self.decide(i);
-        self.deciding.remove(&i);
-        b
+        ControlFlow::Continue(i)
     }
 
     /// Takes as dead the empty types `v` rests on, unless one rests on a type still being
@@ -1136,451 +1122,6 @@ impl Search {
         }
         self.dead.extend(seen);
         self.settled = true;
-    }
-
-    fn parts(&mut self, p: &Parts) -> bool {
-        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
-        p.bools == 0
-            && lits.iter().all(|l| !l.cofinite && l.values.is_empty())
-            && !p.atoms.cofinite
-            && p.atoms
-                .names
-                .values()
-                .all(|a| !a.bare && self.empty(&a.payload))
-            && !p.structs
-            && !p.tuples.rest
-            && p.tuples.lens.iter().all(|(len, b)| {
-                // A union of rows is empty when each row has an empty column, and only then.
-                if let Some(rows) = b.union_rows() {
-                    return rows.iter().all(|a| a.iter().any(|c| self.empty(c)));
-                }
-                let mut g = self.region(vec![Type::top(); *len], b);
-                self.tuples(&mut g, b.clone(), true)
-            })
-            && match p.morphisms.union_rows() {
-                // A union of morphism types is empty when each of them admits nothing.
-                Some(rows) => rows.iter().all(|a| self.no_morphism(a)),
-                None => self.morphisms(
-                    Morphism {
-                        guarantee: Type::empty(),
-                        permission: Type::top(),
-                        value: Type::top(),
-                    },
-                    p.morphisms.clone(),
-                    true,
-                ),
-            }
-    }
-
-    /// The region of the part `f` on the box `r`, each distinct type of each component tested
-    /// once.
-    fn region(&mut self, r: Vec<Type>, f: &Part<Row>) -> Region {
-        let atoms = f.distinct_atoms();
-        let n = r.len();
-        let mut g = Region {
-            cells: (0..n).map(|_| Vec::new()).collect(),
-            cell_of: vec![0; atoms.len() * n],
-            opens: vec![0; n],
-            changed: vec![false; n],
-            missed: vec![0; atoms.len()],
-            loose: vec![(0, 0); atoms.len()],
-            index: BTreeMap::new(),
-            atoms: Vec::new(),
-            log: Vec::new(),
-            r,
-        };
-        for j in 0..n {
-            let mut found: BTreeMap<&Type, usize> = BTreeMap::new();
-            for (k, a) in atoms.iter().enumerate() {
-                let cells = &mut g.cells[j];
-                let c = *found.entry(&a[j]).or_insert_with(|| {
-                    cells.push(Cell {
-                        ty: a[j].clone(),
-                        rows: Vec::new(),
-                        open: false,
-                    });
-                    cells.len() - 1
-                });
-                cells[c].rows.push(k);
-                g.cell_of[k * n + j] = c;
-            }
-            for c in 0..g.cells[j].len() {
-                let cell = &mut g.cells[j][c];
-                let missed = self.settles(&g.r[j], &cell.ty, true);
-                if !missed && self.settles(&g.r[j], &cell.ty, false) {
-                    continue;
-                }
-                cell.open = !missed;
-                if cell.open {
-                    g.opens[j] += cell.rows.len();
-                }
-                for &k in &cell.rows {
-                    g.missed[k] += usize::from(missed);
-                    g.loose[k].0 += 1;
-                    g.loose[k].1 += j;
-                }
-            }
-        }
-        for (k, a) in atoms.iter().enumerate() {
-            g.index.insert(a.clone(), k);
-        }
-        g.atoms = atoms;
-        g
-    }
-
-    /// Whether `x & y`, or `x - y` when `both` is false, is empty. Types of scalars alone are
-    /// compared directly, so no type is built for them.
-    fn settles(&mut self, x: &Type, y: &Type, both: bool) -> bool {
-        match x.scalar_cell(y, both) {
-            Some(b) => b,
-            None if both => self.empty(&(x & y)),
-            None => self.empty(&(x - y)),
-        }
-    }
-
-    /// Tests each changed component of the box against its open cells that have a tuple type
-    /// not yet known to miss the box, and closes those it settles. A tuple type that misses a
-    /// component is out of the part, so whether it holds the others is not tested: every
-    /// changed component is tested for cells that miss it before any is tested for cells that
-    /// hold it, and a cell only such tuple types have is not tested. Tuple types the part no
-    /// longer has are not looked up: that costs the size of the part at each call, more than
-    /// the tests it saves.
-    fn retest(&mut self, g: &mut Region) {
-        let changed: Vec<usize> = (0..g.r.len()).filter(|&j| g.changed[j]).collect();
-        if changed.is_empty() {
-            return;
-        }
-        for &j in &changed {
-            g.changed[j] = false;
-            g.log.push(Change::Tested(j));
-        }
-        for missed in [true, false] {
-            for &j in &changed {
-                for c in 0..g.cells[j].len() {
-                    let cell = &g.cells[j][c];
-                    if !cell.open || !cell.rows.iter().any(|&k| g.missed[k] == 0) {
-                        continue;
-                    }
-                    let settled = self.settles(&g.r[j], &cell.ty, missed);
-                    if settled {
-                        g.close(j, c, missed);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Narrows the box and the part `f` to what `f` forces on it: a tuple type in every value
-    /// of `f` meets the box, and a tuple type in none is taken out of the box when it holds the
-    /// box in every component but one. True when `f` is proved empty on the box.
-    fn narrow_tuples(&mut self, g: &mut Region, f: &mut Part<Row>) -> bool {
-        loop {
-            if g.r.iter().any(|t| self.empty(t)) {
-                return true;
-            }
-            self.retest(g);
-            // `f` stays exact. Its settled form holds every value of `f` and may hold more, so
-            // it proves `f` empty and shows what `f` forces, but its `true` shows no tuple in `f`.
-            *f = f.restrict(&|a| g.stand(a));
-            if let Some(b) = f.is_leaf() {
-                return !b;
-            }
-            let settled = f.settle();
-            if settled.is_leaf() == Some(false) {
-                return true;
-            }
-            let (taken, refused) = settled.forced();
-            // The components changed in this pass.
-            let mut shrunk = BTreeSet::new();
-            // A component narrowed to a tuple type's own holds it, and one that takes a tuple
-            // type out misses it, so its cell there is closed without a test.
-            for a in &taken {
-                let k = g.index[a];
-                for j in 0..g.r.len() {
-                    if g.is_open(k, j) {
-                        g.shrink(j, &g.r[j] & &a[j]);
-                        g.close(j, g.cell(k, j), false);
-                        shrunk.insert(j);
-                    }
-                }
-            }
-            // The changed components are tested again cell by cell, so where a refused tuple
-            // type stands is read off the table, not tested for each tuple type.
-            if !shrunk.is_empty() {
-                self.retest(g);
-            }
-            for a in &refused {
-                let k = g.index[a];
-                let (loose, at) = g.loose[k];
-                if g.missed[k] == 0 && loose == 1 {
-                    g.shrink(at, &g.r[at] - &a[at]);
-                    if g.is_open(k, at) {
-                        g.close(at, g.cell(k, at), true);
-                    }
-                    shrunk.insert(at);
-                }
-            }
-            if shrunk.is_empty() {
-                return false;
-            }
-        }
-    }
-
-    /// Whether no tuple in the box is in `f`: `f` is narrowed by what it forces; then, when every
-    /// open tuple type is open on a component whose cells fall into classes that share no value
-    /// (joined by literal, atom name and tuple length), the box is split by class: the values in
-    /// no class first, then the classes in halves, each half deciding `f` with the tuple types
-    /// of the other half taken as false, so `k` classes cost `O(k log k)` restrictions of `f`
-    /// and a value is sought in each piece the same way; else a component on which every open
-    /// tuple type is open, and whose pieces cut by them are
-    /// pairwise equal or disjoint, is split into them; else each such piece on which narrowing
-    /// alone proves `f` empty is taken out; else, once on each branch, when `f` holds nothing
-    /// outside the open tuple types, each of them is decided on its own. What is left counts as
-    /// inhabited. A split into disjoint pieces sends each open tuple type to one piece, and a
-    /// component split is never split again below, so the nodes are polynomial in the tuple
-    /// types. The components tried for a split are those on which the open tuple type open on
-    /// fewest is open, so a box most of whose components the tuple types hold is not searched.
-    /// Each piece is tried on the box and the box restored after.
-    fn tuples(&mut self, g: &mut Region, mut f: Part<Row>, may_cover: bool) -> bool {
-        loop {
-            if self.narrow_tuples(g, &mut f) {
-                return true;
-            }
-            if f.is_leaf().is_some() {
-                return false;
-            }
-            let open: Vec<usize> = f.distinct_atoms().iter().map(|a| g.index[a]).collect();
-            if self.refuse_forks && !self.seeding && (0..g.r.len()).any(|j| g.forks(&open, j)) {
-                // Complexity tradeoff: `verdict` refuses a part in which two open tuple types
-                // differ in a recursive component on one box, instead of following both. Why:
-                // following both is the subset construction, exponential in the recursive types;
-                // `is_empty` goes on and counts what it cannot settle as inhabited. Trigger: a
-                // component on which the open tuple types fork, outside seeding. Tests:
-                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`fork_empty`) and
-                // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
-                // row "emptiness and subtyping of tuple and morphism parts". A complete solution
-                // needs the subset construction over the forked rows (a tree automaton
-                // determinized on demand), exponential in the rows of the fork.
-                self.refused = Some(Refusal::Fork);
-                return true;
-            }
-            if let Some((j, classes)) = classes(g, &open) {
-                return self
-                    .split_classes(g, &f, j, &classes, &mut |s, r, f| s.piece(r, f, may_cover));
-            }
-            let fewest = *open
-                .iter()
-                .min_by_key(|&&k| g.loose[k].0)
-                .expect("an open part has a tuple type");
-            for j in 0..g.r.len() {
-                if !g.is_open(fewest, j)
-                    || g.opens[j] < open.len()
-                    || open.iter().any(|&k| !g.is_open(k, j))
-                {
-                    continue;
-                }
-                let mut cells = BTreeSet::new();
-                let mut union = Type::empty();
-                let ok = g.open_cells(j, &open).into_iter().all(|c| {
-                    let c = &g.cells[j][c].ty & &g.r[j];
-                    if cells.contains(&c) {
-                        return true;
-                    }
-                    if !self.empty(&(&c & &union)) {
-                        return false;
-                    }
-                    union = &union | &c;
-                    cells.insert(c);
-                    true
-                });
-                if !ok {
-                    continue;
-                }
-                let rest = &g.r[j] - &union;
-                if !self.empty(&rest) {
-                    cells.insert(rest);
-                }
-                return cells.into_iter().all(|c| {
-                    let mark = g.log.len();
-                    g.shrink(j, c);
-                    let b = self.tuples(g, f.clone(), may_cover);
-                    g.restore(mark);
-                    b
-                });
-            }
-            if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
-                return open.iter().all(|&k| {
-                    let mark = g.log.len();
-                    for j in 0..g.r.len() {
-                        if g.is_open(k, j) {
-                            let t = &g.r[j] & &g.atoms[k][j];
-                            g.shrink(j, t);
-                            g.close(j, g.cell(k, j), false);
-                        }
-                    }
-                    let b = self.tuples(g, f.clone(), false);
-                    g.restore(mark);
-                    b
-                });
-            }
-            let mut narrowed = false;
-            for j in 0..g.r.len() {
-                let mut tried = BTreeSet::new();
-                // A cell closed on the component misses or holds it, so its pieces are the
-                // component and nothing, and narrow nothing.
-                for cell in g.open_cells(j, &open) {
-                    let a = &g.cells[j][cell].ty;
-                    for c in [a & &g.r[j], &g.r[j] - a] {
-                        if tried.contains(&c) || self.empty(&c) || self.empty(&(&g.r[j] - &c)) {
-                            continue;
-                        }
-                        tried.insert(c.clone());
-                        let mark = g.log.len();
-                        g.shrink(j, c.clone());
-                        let hit = self.narrow_tuples(g, &mut f.clone());
-                        g.restore(mark);
-                        if hit {
-                            let t = &g.r[j] - &c;
-                            g.shrink(j, t);
-                            narrowed = true;
-                        }
-                    }
-                }
-            }
-            if narrowed {
-                continue;
-            }
-            // Complexity tradeoff: a tuple part that neither narrowing, nor the split by class,
-            // nor one split per branch into its open tuple types, nor one cut of a component
-            // decides counts as inhabited for `is_empty`, and `verdict` answers
-            // `Refused(TupleSplit)` unless `Search::refine` finds a value first; the checker
-            // adds the cause to the rejection. Why: emptiness of Boolean combinations of tuple
-            // types is coNP-hard (a cover of the box by tuple types is a DNF tautology), and one
-            // split per branch keeps the search polynomial. Trigger: a part that only a split of
-            // the box in two or more components at once proves empty. Tests:
-            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`box_cover`),
-            // `a_call_whose_check_was_refused_says_why` and
-            // `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key`. COMPLEXITY.md
-            // K2 and the Kept row "emptiness and subtyping of tuple and morphism parts". A
-            // complete solution needs a split of the box in every component (a DPLL search over
-            // the tuple types, exponential in them), or a SAT encoding.
-            self.give_up(Refusal::TupleSplit);
-            return false;
-        }
-    }
-
-    /// Whether no tuple in the box of `g` is in `f`, the box split on component `j` into the
-    /// piece of each class, the meet of the component with its cells, and the rest, which no
-    /// class's cells meet. On the piece of a class, a tuple type with a cell of another class
-    /// misses the box, and on the rest every tuple type of a class does, so they are taken out
-    /// of `f` before the piece is decided on a box of its own. The classes are halved at each
-    /// step and each half takes the other's tuple types out, so each tuple type stays in the
-    /// part of O(log k) of the k pieces, and the part is restricted O(log k) times over. Each
-    /// piece's box holds in component `j` only the values of its own class, so a test of a cell
-    /// against it costs the size of the class, not of the component. `each` is given the box and
-    /// the part of each piece whose part is not `false`, and answers whether to go on: `piece`
-    /// to decide it, or `class_rep` to seek a value in it.
-    fn split_classes(
-        &mut self,
-        g: &Region,
-        f: &Part<Row>,
-        j: usize,
-        classes: &[Class],
-        each: &mut impl FnMut(&mut Self, Vec<Type>, Part<Row>) -> bool,
-    ) -> bool {
-        let class_of: BTreeMap<usize, usize> = (classes.iter().enumerate())
-            .flat_map(|(i, (_, ks))| ks.iter().map(move |&k| (k, i)))
-            .collect();
-        let at = |a: &Row| class_of.get(&g.index[a]).copied();
-        let met = Type::union_all(classes.iter().map(|(c, _)| c.clone()));
-        let rest = &g.r[j] - &met;
-        if !self.empty(&rest) {
-            let f = f.restrict(&|a| at(a).map(|_| false));
-            let mut r = g.r.clone();
-            r[j] = rest;
-            if f.is_leaf() != Some(false) && !each(self, r, f) {
-                return false;
-            }
-        }
-        self.halves(&at, &g.r, f, j, classes, 0, each)
-    }
-
-    /// [`Search::split_classes`] on the classes `classes`, which start at index `from`; `f`
-    /// holds no tuple type of a class outside them.
-    #[allow(clippy::too_many_arguments)]
-    fn halves(
-        &mut self,
-        at: &impl Fn(&Row) -> Option<usize>,
-        r: &[Type],
-        f: &Part<Row>,
-        j: usize,
-        classes: &[Class],
-        from: usize,
-        each: &mut impl FnMut(&mut Self, Vec<Type>, Part<Row>) -> bool,
-    ) -> bool {
-        if let [(cells, _)] = classes {
-            let mut r = r.to_vec();
-            r[j] = &r[j] & cells;
-            return f.is_leaf() == Some(false) || each(self, r, f.clone());
-        }
-        let m = classes.len() / 2;
-        let (lo, hi) = (from..from + m, from + m..from + classes.len());
-        [(lo.clone(), hi.clone()), (hi, lo)]
-            .into_iter()
-            .all(|(this, other)| {
-                let f = f.restrict(&|a| at(a).filter(|i| other.contains(i)).map(|_| false));
-                let these = &classes[this.start - from..this.end - from];
-                f.is_leaf() == Some(false) || self.halves(at, r, &f, j, these, this.start, each)
-            })
-    }
-
-    /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
-    fn piece(&mut self, r: Vec<Type>, f: Part<Row>, may_cover: bool) -> bool {
-        if f.is_leaf() == Some(false) {
-            return true;
-        }
-        let mut h = self.region(r, &f);
-        self.tuples(&mut h, f, may_cover)
-    }
-
-    /// Whether `m` admits no morphism: a key is promised and not permitted, or promised and no
-    /// value can be its. A key is promised only when a value is shown in the type: a type not
-    /// proved empty may still be empty, and then the empty morphism is admitted.
-    fn no_morphism(&mut self, m: &Morphism) -> bool {
-        self.shown_key(&(&m.guarantee - &m.permission))
-            || (self.shown_key(&m.guarantee) && self.no_value(&m.value))
-    }
-
-    /// Whether a value is shown in `k`. A type with none yet is tried again after each
-    /// phase, since a value found later changes what was read.
-    fn shown_key(&mut self, k: &Type) -> bool {
-        let b = self.rep(k).is_some();
-        if !b {
-            self.keys.insert(k.clone());
-        }
-        b
-    }
-
-    /// Whether no value is in `v`, the value type of a morphism. A value is finite but a closure
-    /// may return itself, so a cycle through a morphism proves nothing: a value type counts as
-    /// inhabited here until it is empty with all such reads inhabited. That is the greatest
-    /// fixed point on these reads over the least on the others. A type whose decision read
-    /// nothing still being decided is settled at once, so a nest of morphisms takes one round.
-    fn no_value(&mut self, v: &Type) -> bool {
-        let b = self.empty(v);
-        let Some(&i) = self.ids.get(v) else {
-            return b;
-        };
-        if b && self.walking && !self.deciding.contains(&i) {
-            self.walking = false;
-            self.drain();
-            self.walking = true;
-            if self.answer[i] {
-                self.settle(i);
-            }
-        }
-        self.value_reads.insert(i);
-        self.dead.contains(&i)
     }
 
     /// The list type `t`, if it is a pure cycle of link atoms with one stop.
@@ -1647,9 +1188,711 @@ impl Search {
         })
     }
 
+    /// Keeps `v` among the values shown, and gives its number.
+    fn show(&mut self, v: Rep) -> usize {
+        self.shown.push(v);
+        self.shown.len() - 1
+    }
+
+    /// Component `i` of the tuple numbered `v` among the values shown.
+    fn tuple_item(&self, v: usize, i: usize) -> usize {
+        match &self.shown[v] {
+            Rep::Tuple(vs) => vs[i],
+            _ => unreachable!("the value numbered {v} is read as a tuple and is not one"),
+        }
+    }
+
+    /// The stop atom, link atom and length of the list numbered `v` among the values shown.
+    fn list_parts(&self, v: usize) -> (&std::sync::Arc<str>, &std::sync::Arc<str>, &BigUint) {
+        match &self.shown[v] {
+            Rep::List {
+                stop, link, len, ..
+            } => (stop, link, len),
+            _ => unreachable!("the value numbered {v} is read as a list and is not one"),
+        }
+    }
+}
+
+impl<'m> Searching<'m> {
+    /// The search's state, for one statement or a scope with no `await` in it.
+    fn s(&self) -> RefMut<'m, Search> {
+        self.s.borrow_mut()
+    }
+
+    /// Decides `root`: phases, in each of which an answer only goes from empty to inhabited;
+    /// at the end of a phase each inhabited answer is tried for a checked value, and if a new one
+    /// is found the answers without one start again from empty, so a wrong "inhabited" read by
+    /// another decision is undone. The last phase gives the answer.
+    async fn solve(&'m self, root: &Type) -> bool {
+        // A value built from the tuple types as written answers at once, and no box is split.
+        // Answers read on the way are unfinished, so none is kept. A type with no atoms has no
+        // list to walk, and a row tested against every row would cost their square.
+        if !root.p().atoms.names.is_empty() {
+            self.s().seeding = true;
+            let seed = self.rep(root).await.is_some();
+            let mut s = self.s();
+            s.seeding = false;
+            if seed {
+                s.types.clear();
+                s.answer.clear();
+                return false;
+            }
+            s.reps.retain(|_, r| r.is_some());
+        }
+        self.s().walking = true;
+        let b = self.empty(root).await;
+        self.s().walking = false;
+        let Some(r) = self.s().ids.get(root).copied() else {
+            return b;
+        };
+        loop {
+            self.drain().await;
+            let open: Vec<usize> = {
+                let mut s = self.s();
+                let open = (0..s.types.len())
+                    .filter(|&t| !s.answer[t] && !s.witnessed.contains(&t))
+                    .collect();
+                s.reps.retain(|_, r| r.is_some());
+                open
+            };
+            let mut new = false;
+            for &t in &open {
+                let x = self.s().types[t].clone();
+                if self.rep(&x).await.is_some() {
+                    self.s().witnessed.insert(t);
+                    new = true;
+                }
+            }
+            let keys = std::mem::take(&mut self.s().keys);
+            for k in keys {
+                if self.rep(&k).await.is_some() {
+                    new = true;
+                } else {
+                    self.s().keys.insert(k);
+                }
+            }
+            if let Some(b) = self.s().end_phase(open, new, r) {
+                return b;
+            }
+        }
+    }
+
+    /// Decides again, in rounds, each type an answer it read has changed under.
+    async fn drain(&'m self) {
+        loop {
+            let again = std::mem::take(&mut self.s().again);
+            if again.is_empty() {
+                return;
+            }
+            for t in again {
+                let open = self.s().answer[t];
+                if open {
+                    self.decide(t).await;
+                }
+            }
+        }
+    }
+
+    /// Decides the type numbered `t` on a frame of its own.
+    fn decide(&'m self, t: usize) -> Deep<'m, bool> {
+        self.stack.call(self.decided(t))
+    }
+
+    async fn decided(&'m self, t: usize) -> bool {
+        if self.s().refused.is_some() {
+            return true;
+        }
+        let (outer, ty) = {
+            let mut s = self.s();
+            (s.current.replace(t), s.types[t].clone())
+        };
+        let b = match self.pure_cycles(&ty).await {
+            Some(Lengths::None) => true,
+            Some(Lengths::Some) => {
+                self.s().witnessed.insert(t);
+                false
+            }
+            Some(Lengths::Refused) => {
+                // Complexity tradeoff: the lengths whose emptiness only a split on two or more
+                // primes at once decides are refused (counted inhabited by `is_empty`), so the
+                // work stays polynomial in the residue classes. Why: whether residue classes
+                // cover the lengths is the covering problem for residues, NP-hard. Trigger:
+                // `residues_meet` answers `Refused`. Tests:
+                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`erdos_cover`) and
+                // `covering_residues_are_decided_by_a_split_on_one_prime`. COMPLEXITY.md K34 and
+                // the Kept row "emptiness and subtyping of tuple and morphism parts". A complete
+                // solution needs a backtracking split over several primes at once, exponential in
+                // the primes, or a SAT encoding of the cover.
+                self.s().give_up(Refusal::Residues);
+                false
+            }
+            None => self.parts(ty.p()).await,
+        };
+        let mut guard = self.s();
+        let s = &mut *guard;
+        s.current = outer;
+        if !b {
+            s.answer[t] = false;
+            s.again.extend(s.readers[t].iter().copied());
+        }
+        b
+    }
+
+    fn empty(&'m self, t: &Type) -> Deep<'m, bool> {
+        // A member of a recursive group is answered by the group's decider (module `rec`).
+        if let Some(b) = t.judged() {
+            return Stack::ready(b);
+        }
+        // A scalar in the type is a checked value, read off before the type is compared with
+        // those met.
+        let p = t.p();
+        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+        if p.bools != 0 || lits.iter().any(|l| l.cofinite || !l.values.is_empty()) {
+            return Stack::ready(false);
+        }
+        let i = match self.s().met(t) {
+            ControlFlow::Break(b) => return Stack::ready(b),
+            ControlFlow::Continue(i) => i,
+        };
+        self.stack.call(async move {
+            let b = self.decided(i).await;
+            self.s().deciding.remove(&i);
+            b
+        })
+    }
+
+    /// Whether one of `ts` is empty, tried in order up to the first that is.
+    async fn any_empty(&'m self, ts: &[Type]) -> bool {
+        for t in ts {
+            if self.empty(t).await {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn parts(&'m self, p: &Parts) -> bool {
+        let lits = [&p.ints, &p.rats, &p.floats, &p.strings];
+        if p.bools != 0
+            || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
+            || p.atoms.cofinite
+        {
+            return false;
+        }
+        for a in p.atoms.names.values() {
+            if a.bare || !self.empty(&a.payload).await {
+                return false;
+            }
+        }
+        if p.structs || p.tuples.rest {
+            return false;
+        }
+        for (len, b) in &p.tuples.lens {
+            let empty = match b.union_rows() {
+                // A union of rows is empty when each row has an empty column, and only then.
+                Some(rows) => {
+                    let mut all = true;
+                    for a in &rows {
+                        if !self.any_empty(a).await {
+                            all = false;
+                            break;
+                        }
+                    }
+                    all
+                }
+                None => {
+                    let g = self.region(vec![Type::top(); *len], b).await;
+                    self.tuples(g, b.clone(), true).await.0
+                }
+            };
+            if !empty {
+                return false;
+            }
+        }
+        match p.morphisms.union_rows() {
+            // A union of morphism types is empty when each of them admits nothing.
+            Some(rows) => {
+                for a in &rows {
+                    if !self.no_morphism(a).await {
+                        return false;
+                    }
+                }
+                true
+            }
+            None => {
+                self.morphisms(
+                    Morphism {
+                        guarantee: Type::empty(),
+                        permission: Type::top(),
+                        value: Type::top(),
+                    },
+                    p.morphisms.clone(),
+                    true,
+                )
+                .await
+            }
+        }
+    }
+
+    /// The region of the part `f` on the box `r`, each distinct type of each component tested
+    /// once.
+    async fn region(&'m self, r: Vec<Type>, f: &Part<Row>) -> Region {
+        let atoms = f.distinct_atoms();
+        let n = r.len();
+        let mut g = Region {
+            cells: (0..n).map(|_| Vec::new()).collect(),
+            cell_of: vec![0; atoms.len() * n],
+            opens: vec![0; n],
+            changed: vec![false; n],
+            missed: vec![0; atoms.len()],
+            loose: vec![(0, 0); atoms.len()],
+            index: BTreeMap::new(),
+            atoms: Vec::new(),
+            log: Vec::new(),
+            r,
+        };
+        for j in 0..n {
+            let mut found: BTreeMap<&Type, usize> = BTreeMap::new();
+            for (k, a) in atoms.iter().enumerate() {
+                let cells = &mut g.cells[j];
+                let c = *found.entry(&a[j]).or_insert_with(|| {
+                    cells.push(Cell {
+                        ty: a[j].clone(),
+                        rows: Vec::new(),
+                        open: false,
+                    });
+                    cells.len() - 1
+                });
+                cells[c].rows.push(k);
+                g.cell_of[k * n + j] = c;
+            }
+            for c in 0..g.cells[j].len() {
+                let cell = &mut g.cells[j][c];
+                let missed = self.settles(&g.r[j], &cell.ty, true).await;
+                if !missed && self.settles(&g.r[j], &cell.ty, false).await {
+                    continue;
+                }
+                cell.open = !missed;
+                if cell.open {
+                    g.opens[j] += cell.rows.len();
+                }
+                for &k in &cell.rows {
+                    g.missed[k] += usize::from(missed);
+                    g.loose[k].0 += 1;
+                    g.loose[k].1 += j;
+                }
+            }
+        }
+        for (k, a) in atoms.iter().enumerate() {
+            g.index.insert(a.clone(), k);
+        }
+        g.atoms = atoms;
+        g
+    }
+
+    /// Whether `x & y`, or `x - y` when `both` is false, is empty. Types of scalars alone are
+    /// compared directly, so no type is built for them.
+    async fn settles(&'m self, x: &Type, y: &Type, both: bool) -> bool {
+        match x.scalar_cell(y, both) {
+            Some(b) => b,
+            None if both => self.empty(&(x & y)).await,
+            None => self.empty(&(x - y)).await,
+        }
+    }
+
+    /// Tests each changed component of the box against its open cells that have a tuple type
+    /// not yet known to miss the box, and closes those it settles. A tuple type that misses a
+    /// component is out of the part, so whether it holds the others is not tested: every
+    /// changed component is tested for cells that miss it before any is tested for cells that
+    /// hold it, and a cell only such tuple types have is not tested. Tuple types the part no
+    /// longer has are not looked up: that costs the size of the part at each call, more than
+    /// the tests it saves.
+    async fn retest(&'m self, g: &mut Region) {
+        let changed: Vec<usize> = (0..g.r.len()).filter(|&j| g.changed[j]).collect();
+        if changed.is_empty() {
+            return;
+        }
+        for &j in &changed {
+            g.changed[j] = false;
+            g.log.push(Change::Tested(j));
+        }
+        for missed in [true, false] {
+            for &j in &changed {
+                for c in 0..g.cells[j].len() {
+                    let cell = &g.cells[j][c];
+                    if !cell.open || !cell.rows.iter().any(|&k| g.missed[k] == 0) {
+                        continue;
+                    }
+                    let settled = self.settles(&g.r[j], &cell.ty, missed).await;
+                    if settled {
+                        g.close(j, c, missed);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Narrows the box and the part `f` to what `f` forces on it: a tuple type in every value
+    /// of `f` meets the box, and a tuple type in none is taken out of the box when it holds the
+    /// box in every component but one. True when `f` is proved empty on the box.
+    async fn narrow_tuples(&'m self, g: &mut Region, f: &mut Part<Row>) -> bool {
+        loop {
+            if self.any_empty(&g.r).await {
+                return true;
+            }
+            self.retest(g).await;
+            // `f` stays exact. Its settled form holds every value of `f` and may hold more, so
+            // it proves `f` empty and shows what `f` forces, but its `true` shows no tuple in `f`.
+            *f = f.restrict(&|a| g.stand(a));
+            if let Some(b) = f.is_leaf() {
+                return !b;
+            }
+            let settled = f.settle();
+            if settled.is_leaf() == Some(false) {
+                return true;
+            }
+            let (taken, refused) = settled.forced();
+            // The components changed in this pass.
+            let mut shrunk = BTreeSet::new();
+            // A component narrowed to a tuple type's own holds it, and one that takes a tuple
+            // type out misses it, so its cell there is closed without a test.
+            for a in &taken {
+                let k = g.index[a];
+                for j in 0..g.r.len() {
+                    if g.is_open(k, j) {
+                        g.shrink(j, &g.r[j] & &a[j]);
+                        g.close(j, g.cell(k, j), false);
+                        shrunk.insert(j);
+                    }
+                }
+            }
+            // The changed components are tested again cell by cell, so where a refused tuple
+            // type stands is read off the table, not tested for each tuple type.
+            if !shrunk.is_empty() {
+                self.retest(g).await;
+            }
+            for a in &refused {
+                let k = g.index[a];
+                let (loose, at) = g.loose[k];
+                if g.missed[k] == 0 && loose == 1 {
+                    g.shrink(at, &g.r[at] - &a[at]);
+                    if g.is_open(k, at) {
+                        g.close(at, g.cell(k, at), true);
+                    }
+                    shrunk.insert(at);
+                }
+            }
+            if shrunk.is_empty() {
+                return false;
+            }
+        }
+    }
+
+    /// Whether no tuple in the box is in `f`: `f` is narrowed by what it forces; then, when every
+    /// open tuple type is open on a component whose cells fall into classes that share no value
+    /// (joined by literal, atom name and tuple length), the box is split by class: the values in
+    /// no class first, then the classes in halves, each half deciding `f` with the tuple types
+    /// of the other half taken as false, so `k` classes cost `O(k log k)` restrictions of `f`
+    /// and a value is sought in each piece the same way; else a component on which every open
+    /// tuple type is open, and whose pieces cut by them are
+    /// pairwise equal or disjoint, is split into them; else each such piece on which narrowing
+    /// alone proves `f` empty is taken out; else, once on each branch, when `f` holds nothing
+    /// outside the open tuple types, each of them is decided on its own. What is left counts as
+    /// inhabited. A split into disjoint pieces sends each open tuple type to one piece, and a
+    /// component split is never split again below, so the nodes are polynomial in the tuple
+    /// types. The components tried for a split are those on which the open tuple type open on
+    /// fewest is open, so a box most of whose components the tuple types hold is not searched.
+    /// Each piece is tried on the box and the box restored after; the box is given back with the
+    /// answer.
+    fn tuples(&'m self, mut g: Region, f: Part<Row>, may_cover: bool) -> Deep<'m, (bool, Region)> {
+        self.stack.call(async move {
+            let b = self.tuples_on(&mut g, f, may_cover).await;
+            (b, g)
+        })
+    }
+
+    /// [`Searching::tuples`] on the box `g`, decided on a frame of its own for each piece.
+    async fn tuples_on(&'m self, g: &mut Region, mut f: Part<Row>, may_cover: bool) -> bool {
+        loop {
+            if self.narrow_tuples(g, &mut f).await {
+                return true;
+            }
+            if f.is_leaf().is_some() {
+                return false;
+            }
+            let open: Vec<usize> = f.distinct_atoms().iter().map(|a| g.index[a]).collect();
+            let forking = {
+                let s = self.s();
+                s.refuse_forks && !s.seeding
+            };
+            if forking && (0..g.r.len()).any(|j| g.forks(&open, j)) {
+                // Complexity tradeoff: `verdict` refuses a part in which two open tuple types
+                // differ in a recursive component on one box, instead of following both. Why:
+                // following both is the subset construction, exponential in the recursive types;
+                // `is_empty` goes on and counts what it cannot settle as inhabited. Trigger: a
+                // component on which the open tuple types fork, outside seeding. Tests:
+                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`fork_empty`) and
+                // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
+                // row "emptiness and subtyping of tuple and morphism parts". A complete solution
+                // needs the subset construction over the forked rows (a tree automaton
+                // determinized on demand), exponential in the rows of the fork.
+                self.s().refused = Some(Refusal::Fork);
+                return true;
+            }
+            if let Some((j, classes)) = classes(g, &open) {
+                let mut each = Each::Decide { may_cover };
+                return self.split_classes(g, &f, j, &classes, &mut each).await;
+            }
+            let fewest = *open
+                .iter()
+                .min_by_key(|&&k| g.loose[k].0)
+                .expect("an open part has a tuple type");
+            for j in 0..g.r.len() {
+                if !g.is_open(fewest, j)
+                    || g.opens[j] < open.len()
+                    || open.iter().any(|&k| !g.is_open(k, j))
+                {
+                    continue;
+                }
+                let mut cells = BTreeSet::new();
+                let mut union = Type::empty();
+                let mut ok = true;
+                for c in g.open_cells(j, &open) {
+                    let c = &g.cells[j][c].ty & &g.r[j];
+                    if cells.contains(&c) {
+                        continue;
+                    }
+                    if !self.empty(&(&c & &union)).await {
+                        ok = false;
+                        break;
+                    }
+                    union = &union | &c;
+                    cells.insert(c);
+                }
+                if !ok {
+                    continue;
+                }
+                let rest = &g.r[j] - &union;
+                if !self.empty(&rest).await {
+                    cells.insert(rest);
+                }
+                for c in cells {
+                    let mark = g.log.len();
+                    g.shrink(j, c);
+                    let (b, back) = self.tuples(std::mem::take(g), f.clone(), may_cover).await;
+                    *g = back;
+                    g.restore(mark);
+                    if !b {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
+                for &k in &open {
+                    let mark = g.log.len();
+                    for j in 0..g.r.len() {
+                        if g.is_open(k, j) {
+                            let t = &g.r[j] & &g.atoms[k][j];
+                            g.shrink(j, t);
+                            g.close(j, g.cell(k, j), false);
+                        }
+                    }
+                    let (b, back) = self.tuples(std::mem::take(g), f.clone(), false).await;
+                    *g = back;
+                    g.restore(mark);
+                    if !b {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            let mut narrowed = false;
+            for j in 0..g.r.len() {
+                let mut tried = BTreeSet::new();
+                // A cell closed on the component misses or holds it, so its pieces are the
+                // component and nothing, and narrow nothing.
+                for cell in g.open_cells(j, &open) {
+                    let a = &g.cells[j][cell].ty;
+                    for c in [a & &g.r[j], &g.r[j] - a] {
+                        if tried.contains(&c)
+                            || self.empty(&c).await
+                            || self.empty(&(&g.r[j] - &c)).await
+                        {
+                            continue;
+                        }
+                        tried.insert(c.clone());
+                        let mark = g.log.len();
+                        g.shrink(j, c.clone());
+                        let hit = self.narrow_tuples(g, &mut f.clone()).await;
+                        g.restore(mark);
+                        if hit {
+                            let t = &g.r[j] - &c;
+                            g.shrink(j, t);
+                            narrowed = true;
+                        }
+                    }
+                }
+            }
+            if narrowed {
+                continue;
+            }
+            // Complexity tradeoff: a tuple part that neither narrowing, nor the split by class,
+            // nor one split per branch into its open tuple types, nor one cut of a component
+            // decides counts as inhabited for `is_empty`, and `verdict` answers
+            // `Refused(TupleSplit)` unless `Searching::refine` finds a value first; the checker
+            // adds the cause to the rejection. Why: emptiness of Boolean combinations of tuple
+            // types is coNP-hard (a cover of the box by tuple types is a DNF tautology), and one
+            // split per branch keeps the search polynomial. Trigger: a part that only a split of
+            // the box in two or more components at once proves empty. Tests:
+            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`box_cover`),
+            // `a_call_whose_check_was_refused_says_why` and
+            // `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key`. COMPLEXITY.md
+            // K2 and the Kept row "emptiness and subtyping of tuple and morphism parts". A
+            // complete solution needs a split of the box in every component (a DPLL search over
+            // the tuple types, exponential in them), or a SAT encoding.
+            self.s().give_up(Refusal::TupleSplit);
+            return false;
+        }
+    }
+
+    /// Whether no tuple in the box of `g` is in `f`, the box split on component `j` into the
+    /// piece of each class, the meet of the component with its cells, and the rest, which no
+    /// class's cells meet. On the piece of a class, a tuple type with a cell of another class
+    /// misses the box, and on the rest every tuple type of a class does, so they are taken out
+    /// of `f` before the piece is decided on a box of its own. The classes are halved at each
+    /// step and each half takes the other's tuple types out, so each tuple type stays in the
+    /// part of O(log k) of the k pieces, and the part is restricted O(log k) times over. Each
+    /// piece's box holds in component `j` only the values of its own class, so a test of a cell
+    /// against it costs the size of the class, not of the component. `each` is done with the box
+    /// and the part of each piece whose part is not `false`, and answers whether to go on.
+    /// The halves are walked on a stack of their own, the lower half first, each restricted
+    /// when it is reached.
+    async fn split_classes(
+        &'m self,
+        g: &Region,
+        f: &Part<Row>,
+        j: usize,
+        classes: &[Class],
+        each: &mut Each<'_>,
+    ) -> bool {
+        let class_of: BTreeMap<usize, usize> = (classes.iter().enumerate())
+            .flat_map(|(i, (_, ks))| ks.iter().map(move |&k| (k, i)))
+            .collect();
+        let at = |a: &Row| class_of.get(&g.index[a]).copied();
+        let met = Type::union_all(classes.iter().map(|(c, _)| c.clone()));
+        let rest = &g.r[j] - &met;
+        if !self.empty(&rest).await {
+            let f = f.restrict(&|a| at(a).map(|_| false));
+            let mut r = g.r.clone();
+            r[j] = rest;
+            if f.is_leaf() != Some(false) && !self.each(each, r, f).await {
+                return false;
+            }
+        }
+        // Each entry: the part of the halves above, the classes of this half, and those of the
+        // other half, whose tuple types this half takes out of the part (none at the top).
+        let mut halves = vec![(f.clone(), 0..classes.len(), None::<Range<usize>>)];
+        while let Some((f, this, other)) = halves.pop() {
+            let f = match other {
+                None => f,
+                Some(other) => {
+                    let f = f.restrict(&|a| at(a).filter(|i| other.contains(i)).map(|_| false));
+                    if f.is_leaf() == Some(false) {
+                        continue;
+                    }
+                    f
+                }
+            };
+            if this.len() == 1 {
+                let mut r = g.r.clone();
+                r[j] = &r[j] & &classes[this.start].0;
+                if f.is_leaf() != Some(false) && !self.each(each, r, f).await {
+                    return false;
+                }
+                continue;
+            }
+            let m = this.start + this.len() / 2;
+            let (lo, hi) = (this.start..m, m..this.end);
+            halves.push((f.clone(), hi.clone(), Some(lo.clone())));
+            halves.push((f, lo, Some(hi)));
+        }
+        true
+    }
+
+    /// Does `each` with the piece of the box `r` and its part `f`, and answers whether to go on.
+    async fn each(&'m self, each: &mut Each<'_>, r: Vec<Type>, f: Part<Row>) -> bool {
+        match each {
+            Each::Decide { may_cover } => self.piece(r, f, *may_cover).await,
+            Each::Seek { len, found } => {
+                let piece = &Type::tuple(r)
+                    & &Type::with(|p| {
+                        p.tuples.lens.insert(*len, f);
+                    });
+                **found = self.rep(&piece).await;
+                found.is_none()
+            }
+        }
+    }
+
+    /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
+    async fn piece(&'m self, r: Vec<Type>, f: Part<Row>, may_cover: bool) -> bool {
+        if f.is_leaf() == Some(false) {
+            return true;
+        }
+        let h = self.region(r, &f).await;
+        self.tuples(h, f, may_cover).await.0
+    }
+
+    /// Whether `m` admits no morphism: a key is promised and not permitted, or promised and no
+    /// value can be its. A key is promised only when a value is shown in the type: a type not
+    /// proved empty may still be empty, and then the empty morphism is admitted.
+    async fn no_morphism(&'m self, m: &Morphism) -> bool {
+        self.shown_key(&(&m.guarantee - &m.permission)).await
+            || (self.shown_key(&m.guarantee).await && self.no_value(&m.value).await)
+    }
+
+    /// Whether a value is shown in `k`. A type with none yet is tried again after each
+    /// phase, since a value found later changes what was read.
+    async fn shown_key(&'m self, k: &Type) -> bool {
+        let b = self.rep(k).await.is_some();
+        if !b {
+            self.s().keys.insert(k.clone());
+        }
+        b
+    }
+
+    /// Whether no value is in `v`, the value type of a morphism. A value is finite but a closure
+    /// may return itself, so a cycle through a morphism proves nothing: a value type counts as
+    /// inhabited here until it is empty with all such reads inhabited. That is the greatest
+    /// fixed point on these reads over the least on the others. A type whose decision read
+    /// nothing still being decided is settled at once, so a nest of morphisms takes one round.
+    async fn no_value(&'m self, v: &Type) -> bool {
+        let b = self.empty(v).await;
+        let Some(i) = self.s().ids.get(v).copied() else {
+            return b;
+        };
+        let walking = {
+            let s = self.s();
+            b && s.walking && !s.deciding.contains(&i)
+        };
+        if walking {
+            self.s().walking = false;
+            self.drain().await;
+            let mut s = self.s();
+            s.walking = true;
+            if s.answer[i] {
+                s.settle(i);
+            }
+        }
+        let mut s = self.s();
+        s.value_reads.insert(i);
+        s.dead.contains(&i)
+    }
+
     /// The meet of pure cycles that `t` is, when `t` is a stop atom or not, and a link atom
     /// whose rest is the meet of pure cycles less at most one, all of one item.
-    fn cycle_meet(&mut self, t: &Type) -> Option<Meet> {
+    async fn cycle_meet(&'m self, t: &Type) -> Option<Meet> {
         let p = t.p();
         if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(p) {
             return None;
@@ -1682,22 +1925,25 @@ impl Search {
         }
         let mut stop: Option<std::sync::Arc<str>> = bare;
         let item = atoms[0][0].clone();
-        let mut read = |s: &mut Self, a: &Row| -> Option<(u64, u64)> {
-            let c = s.cycle(&a[1])?;
-            let fits = a[0] == item && c.item == item && c.link == name;
-            let same = stop.get_or_insert_with(|| c.stop.clone()) == &c.stop;
-            // A length one more than a length of the rest.
-            (fits && same).then_some((c.period, (c.at + 1) % c.period))
-        };
         let mut all = Vec::with_capacity(taken.len());
-        for a in &taken {
-            all.push(read(self, a)?);
-        }
         let mut none = Vec::with_capacity(refused.len());
-        for a in &refused {
-            none.push(read(self, a)?);
+        {
+            let mut s = self.s();
+            let mut read = |s: &mut Search, a: &Row| -> Option<(u64, u64)> {
+                let c = s.cycle(&a[1])?;
+                let fits = a[0] == item && c.item == item && c.link == name;
+                let same = stop.get_or_insert_with(|| c.stop.clone()) == &c.stop;
+                // A length one more than a length of the rest.
+                (fits && same).then_some((c.period, (c.at + 1) % c.period))
+            };
+            for a in &taken {
+                all.push(read(&mut s, a)?);
+            }
+            for a in &refused {
+                none.push(read(&mut s, a)?);
+            }
         }
-        if self.empty(&item) {
+        if self.empty(&item).await {
             return None;
         }
         Some(Meet {
@@ -1713,8 +1959,8 @@ impl Search {
     /// The answer for `t`, when `t` is a stop atom or not, and a link atom whose rest is the
     /// meet of pure cycles less at most one, all of one item: the lengths are then residues,
     /// and whether one survives is decided without walking their product.
-    fn pure_cycles(&mut self, t: &Type) -> Option<Lengths> {
-        let m = self.cycle_meet(t)?;
+    async fn pure_cycles(&'m self, t: &Type) -> Option<Lengths> {
+        let m = self.cycle_meet(t).await?;
         Some(match m.bare {
             true => Lengths::Some,
             false => residues_meet(&m.all, &m.none),
@@ -1723,10 +1969,10 @@ impl Search {
 
     /// A list of `m`, of the length `residue_length` gives, kept as that length: the work is
     /// that of the rule on residues, polynomial in the cycles, whatever the length.
-    fn cycle_rep(&mut self, m: &Meet) -> Option<usize> {
+    async fn cycle_rep(&'m self, m: &Meet) -> Option<usize> {
         let len = residue_length(&m.all, &m.none)?;
-        let item = self.rep(&m.item)?;
-        Some(self.show(Rep::List {
+        let item = self.rep(&m.item).await?;
+        Some(self.s().show(Rep::List {
             stop: m.stop.clone(),
             link: m.link.clone(),
             item,
@@ -1740,19 +1986,23 @@ impl Search {
     /// on residues answers at once, and a rest type met again cuts the length left to its
     /// remainder modulo the steps between, so no type is walked twice and the length is never
     /// walked.
-    fn list_member(&mut self, v: usize, item: usize, u: &Type) -> Option<bool> {
-        let (mut x, mut left) = (u.clone(), self.list_parts(v).2.clone());
+    async fn list_member(&'m self, v: usize, item: usize, u: &Type) -> Option<bool> {
+        let (mut x, mut left) = (u.clone(), self.s().list_parts(v).2.clone());
         let mut seen: BTreeMap<Type, BigUint> = BTreeMap::new();
         loop {
             if left == BigUint::ZERO {
-                return Some(x.contains(&Value::atom(self.list_parts(v).0)));
+                return Some(x.contains(&Value::atom(self.s().list_parts(v).0)));
             }
-            if let Some(m) = self.cycle_meet(&x) {
-                let (stop, link, _) = self.list_parts(v);
-                if m.link == *link && m.stop == *stop {
+            if let Some(m) = self.cycle_meet(&x).await {
+                let same = {
+                    let s = self.s();
+                    let (stop, link, _) = s.list_parts(v);
+                    m.link == *link && m.stop == *stop
+                };
+                if same {
                     let fits = m.all.iter().all(|&(p, at)| &left % p == BigUint::from(at))
                         && m.none.iter().all(|&(p, at)| &left % p != BigUint::from(at));
-                    return Some(fits && self.member(item, &m.item));
+                    return Some(fits && self.member(item, &m.item).await);
                 }
             }
             if let Some(before) = seen.insert(x.clone(), left.clone()) {
@@ -1763,7 +2013,7 @@ impl Search {
                 continue;
             }
             let p = x.p();
-            let Some(a) = p.atoms.names.get(self.list_parts(v).1) else {
+            let Some(a) = p.atoms.names.get(self.s().list_parts(v).1) else {
                 return Some(p.atoms.cofinite);
             };
             let f = a.payload.p().tuples.get(2);
@@ -1774,7 +2024,7 @@ impl Search {
             // exactly when it is in one of them.
             let mut next: Option<Type> = None;
             for row in f.union_rows()? {
-                if self.member(item, &row[0]) {
+                if self.member(item, &row[0]).await {
                     match &next {
                         None => next = Some(row[1].clone()),
                         Some(y) if *y == row[1] => {}
@@ -1809,52 +2059,66 @@ impl Search {
     /// that path, since a value is finite; none found means only that, never that `t` is
     /// empty. Each type is tried once and each test of a representative against a type is
     /// made once, so a value nested in shared types is never copied out.
-    fn rep(&mut self, t: &Type) -> Option<usize> {
-        if let Some(r) = self.reps.get(t) {
-            return *r;
+    fn rep(&'m self, t: &Type) -> Deep<'m, Option<usize>> {
+        if let Some(&r) = self.s().reps.get(t) {
+            return Stack::ready(r);
         }
-        self.reps.insert(t.clone(), None);
-        self.building.insert(t.clone());
-        let (mark, resting) = (self.built.len(), self.resting);
-        let r = self.find_rep(t);
-        self.building.remove(t);
-        self.reps.insert(t.clone(), r);
-        if r.is_some() {
-            self.built.push(t.clone());
-        } else if self.resting > resting {
-            // What was built here rests on a value that does not exist.
-            for x in self.built.split_off(mark) {
-                self.reps.remove(&x);
+        let t = t.clone();
+        self.stack.call(async move {
+            let (mark, resting) = {
+                let mut s = self.s();
+                s.reps.insert(t.clone(), None);
+                s.building.insert(t.clone());
+                (s.built.len(), s.resting)
+            };
+            let r = self.find_rep(&t).await;
+            let mut s = self.s();
+            s.building.remove(&t);
+            s.reps.insert(t.clone(), r);
+            if r.is_some() {
+                s.built.push(t);
+            } else if s.resting > resting {
+                // What was built here rests on a value that does not exist.
+                for x in s.built.split_off(mark) {
+                    s.reps.remove(&x);
+                }
             }
-        }
-        r
+            r
+        })
     }
 
-    /// Keeps `v` among the values shown, and gives its number.
-    fn show(&mut self, v: Rep) -> usize {
-        self.shown.push(v);
-        self.shown.len() - 1
+    /// The representatives of `ts`, if each has one, sought in order up to the first that has
+    /// none.
+    async fn reps(&'m self, ts: &[Type]) -> Option<Vec<usize>> {
+        let mut vs = Vec::with_capacity(ts.len());
+        for x in ts {
+            vs.push(self.rep(x).await?);
+        }
+        Some(vs)
     }
 
     /// Whether a closure can return a value of `v`.
-    fn returnable(&mut self, v: &Type) -> bool {
-        if self.building.contains(v) {
-            self.resting += 1;
-            return true;
+    async fn returnable(&'m self, v: &Type) -> bool {
+        {
+            let mut s = self.s();
+            if s.building.contains(v) {
+                s.resting += 1;
+                return true;
+            }
         }
-        self.rep(v).is_some()
+        self.rep(v).await.is_some()
     }
 
     /// The representatives of the row, if each component has one, when they make a tuple of `f`.
-    fn row_rep(&mut self, row: &[Type], f: &Part<Row>) -> Option<usize> {
-        let mut vs = Vec::with_capacity(row.len());
-        for x in row {
-            vs.push(self.rep(x)?);
+    async fn row_rep(&'m self, row: &[Type], f: &Part<Row>) -> Option<usize> {
+        let vs = self.reps(row).await?;
+        if !self.holds(&vs, f).await {
+            return None;
         }
-        self.holds(&vs, f).then(|| self.show(Rep::Tuple(vs)))
+        Some(self.s().show(Rep::Tuple(vs)))
     }
 
-    fn find_rep(&mut self, t: &Type) -> Option<usize> {
+    async fn find_rep(&'m self, t: &Type) -> Option<usize> {
         // A bare atom is a value: the empty list of a list type.
         if let Some(name) = t
             .p()
@@ -1863,15 +2127,15 @@ impl Search {
             .iter()
             .find_map(|(n, a)| a.bare.then_some(n))
         {
-            return Some(self.show(Rep::Value(Value::atom(name))));
+            return Some(self.s().show(Rep::Value(Value::atom(name))));
         }
         // A list of pure cycles with no stop in it: a list of it, kept as its length.
-        if let Some(m) = self.cycle_meet(t) {
-            return self.cycle_rep(&m);
+        if let Some(m) = self.cycle_meet(t).await {
+            return self.cycle_rep(&m).await;
         }
         let p = t.p();
         if p.bools != 0 {
-            return Some(self.show(Rep::Value(Value::Bool(p.bools & 1 == 0))));
+            return Some(self.s().show(Rep::Value(Value::Bool(p.bools & 1 == 0))));
         }
         // A cofinite set of a carrier holds one of the first values not listed in it.
         type Fresh = fn(i64) -> Value;
@@ -1888,27 +2152,29 @@ impl Search {
                 l.values.iter().next().cloned()
             };
             if let Some(v) = v {
-                return Some(self.show(Rep::Value(v)));
+                return Some(self.s().show(Rep::Value(v)));
             }
         }
         if p.atoms.cofinite {
             let name = (0..)
                 .map(|i| format!("a{i}"))
                 .find(|n| !p.atoms.names.contains_key(n.as_str()));
-            return Some(self.show(Rep::Value(Value::atom(&name.expect("a name is free")))));
+            let name = name.expect("a name is free");
+            return Some(self.s().show(Rep::Value(Value::atom(&name))));
         }
         for (name, a) in &p.atoms.names {
             if a.bare {
-                return Some(self.show(Rep::Value(Value::atom(name))));
+                return Some(self.s().show(Rep::Value(Value::atom(name))));
             }
-            if let Some(r) = self.rep(&a.payload)
-                && matches!(self.shown[r], Rep::Tuple(_))
-            {
-                return Some(self.show(Rep::Atom(name.clone(), r)));
+            if let Some(r) = self.rep(&a.payload).await {
+                let tuple = matches!(self.s().shown[r], Rep::Tuple(_));
+                if tuple {
+                    return Some(self.s().show(Rep::Atom(name.clone(), r)));
+                }
             }
         }
         if p.structs {
-            return Some(self.show(Rep::Struct));
+            return Some(self.s().show(Rep::Struct));
         }
         if p.morphisms.is_leaf() != Some(false) {
             let top = Morphism {
@@ -1934,16 +2200,21 @@ impl Search {
                     continue;
                 }
                 // What the closure returns may hold the closure, at any depth.
-                let mark = self.built.len();
-                self.shown.push(Rep::Closure);
-                self.reps.insert(t.clone(), Some(self.shown.len() - 1));
-                let returns = self.returnable(&m.value);
-                self.reps.insert(t.clone(), None);
+                let mark = {
+                    let mut s = self.s();
+                    let mark = s.built.len();
+                    let closure = s.show(Rep::Closure);
+                    s.reps.insert(t.clone(), Some(closure));
+                    mark
+                };
+                let returns = self.returnable(&m.value).await;
+                let mut s = self.s();
+                s.reps.insert(t.clone(), None);
                 if returns {
-                    return Some(self.show(Rep::Closure));
+                    return Some(s.show(Rep::Closure));
                 }
-                for x in self.built.split_off(mark) {
-                    self.reps.remove(&x);
+                for x in s.built.split_off(mark) {
+                    s.reps.remove(&x);
                 }
             }
         }
@@ -1951,25 +2222,20 @@ impl Search {
             let len = (0..)
                 .find(|n| !p.tuples.lens.contains_key(n))
                 .expect("a length is free");
-            let row = vec![Type::top(); len];
-            let mut vs = Vec::with_capacity(len);
-            for x in &row {
-                vs.push(self.rep(x)?);
-            }
-            return Some(self.show(Rep::Tuple(vs)));
+            let vs = self.reps(&vec![Type::top(); len]).await?;
+            return Some(self.s().show(Rep::Tuple(vs)));
         }
         for f in p.tuples.lens.values() {
             for row in f.union_rows().unwrap_or_default() {
-                let vs: Option<Vec<usize>> = row.iter().map(|x| self.rep(x)).collect();
-                if let Some(vs) = vs {
-                    return Some(self.show(Rep::Tuple(vs)));
+                if let Some(vs) = self.reps(&row).await {
+                    return Some(self.s().show(Rep::Tuple(vs)));
                 }
             }
         }
-        if self.seeding {
+        if self.s().seeding {
             for f in p.tuples.lens.values() {
                 for row in f.distinct_atoms() {
-                    if let Some(v) = self.row_rep(&row, f) {
+                    if let Some(v) = self.row_rep(&row, f).await {
                         return Some(v);
                     }
                 }
@@ -1980,14 +2246,14 @@ impl Search {
             if f.union_rows().is_some() {
                 continue;
             }
-            let (mut b, mut g) = (self.region(vec![Type::top(); *len], f), f.clone());
-            if self.narrow_tuples(&mut b, &mut g) {
+            let (mut b, mut g) = (self.region(vec![Type::top(); *len], f).await, f.clone());
+            if self.narrow_tuples(&mut b, &mut g).await {
                 continue;
             }
-            if let Some(v) = self.row_rep(&b.r, f) {
+            if let Some(v) = self.row_rep(&b.r, f).await {
                 return Some(v);
             }
-            if let Some(found) = self.class_rep(&b, &g, *len) {
+            if let Some(found) = self.class_rep(&b, &g, *len).await {
                 match found {
                     Some(v) => return Some(v),
                     None => continue,
@@ -2005,9 +2271,11 @@ impl Search {
                     }
                 }
                 let mut h = g.clone();
-                let row = (!self.narrow_tuples(&mut b, &mut h)).then(|| b.r.clone());
+                let row = (!self.narrow_tuples(&mut b, &mut h).await).then(|| b.r.clone());
                 b.restore(mark);
-                if let Some(v) = row.and_then(|r| self.row_rep(&r, f)) {
+                if let Some(r) = row
+                    && let Some(v) = self.row_rep(&r, f).await
+                {
                     return Some(v);
                 }
             }
@@ -2023,12 +2291,12 @@ impl Search {
                 }
                 let mut row = b.r.clone();
                 row[j] = out;
-                if let Some(v) = self.row_rep(&row, f) {
+                if let Some(v) = self.row_rep(&row, f).await {
                     return Some(v);
                 }
             }
-            if let Some(row) = self.refine(*len, f)
-                && let Some(v) = self.row_rep(&row, f)
+            if let Some(row) = self.refine(*len, f).await
+                && let Some(v) = self.row_rep(&row, f).await
             {
                 return Some(v);
             }
@@ -2038,21 +2306,18 @@ impl Search {
 
     /// A value of the tuple part `g` of length `len` on the box of `b`, sought piece by piece
     /// when the open tuple types fall into classes on a component: on the pieces of
-    /// [`Search::split_classes`], the rest, which no class meets, then one piece per class, each
-    /// a type of its own whose box holds only its class in that component. Nothing when there
-    /// are no such classes; `Some(None)` when no piece has a value found.
-    fn class_rep(&mut self, b: &Region, g: &Part<Row>, len: usize) -> Option<Option<usize>> {
+    /// [`Searching::split_classes`], the rest, which no class meets, then one piece per class,
+    /// each a type of its own whose box holds only its class in that component. Nothing when
+    /// there are no such classes; `Some(None)` when no piece has a value found.
+    async fn class_rep(&'m self, b: &Region, g: &Part<Row>, len: usize) -> Option<Option<usize>> {
         let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
         let (j, classes) = classes(b, &open)?;
         let mut found = None;
-        self.split_classes(b, g, j, &classes, &mut |s, row, part| {
-            let piece = &Type::tuple(row)
-                & &Type::with(|p| {
-                    p.tuples.lens.insert(len, part);
-                });
-            found = s.rep(&piece);
-            found.is_none()
-        });
+        let mut each = Each::Seek {
+            len,
+            found: &mut found,
+        };
+        self.split_classes(b, g, j, &classes, &mut each).await;
         Some(found)
     }
 
@@ -2062,11 +2327,11 @@ impl Search {
     /// step is at most two searches, so the searches are at most twice the tuple types times
     /// the components, and the box ends closed on every tuple type: the part then holds all of
     /// it or none.
-    fn refine(&mut self, len: usize, f: &Part<Row>) -> Option<Vec<Type>> {
-        let refuse_forks = std::mem::replace(&mut self.refuse_forks, false);
-        let mut g = self.region(vec![Type::top(); len], f);
+    async fn refine(&'m self, len: usize, f: &Part<Row>) -> Option<Vec<Type>> {
+        let refuse_forks = std::mem::replace(&mut self.s().refuse_forks, false);
+        let mut g = self.region(vec![Type::top(); len], f).await;
         let mut h = f.clone();
-        let mut empty = self.narrow_tuples(&mut g, &mut h);
+        let mut empty = self.narrow_tuples(&mut g, &mut h).await;
         for j in 0..len {
             for k in 0..g.atoms.len() {
                 if empty || !g.is_open(k, j) {
@@ -2074,181 +2339,201 @@ impl Search {
                 }
                 let inside = &g.r[j] & &g.atoms[k][j];
                 let outside = &g.r[j] - &g.atoms[k][j];
-                // Whether the search proves the piece empty, and whether it shows it inhabited.
-                let try_piece = |s: &mut Self, g: &mut Region, piece: &Type| {
-                    let (mark, give_ups) = (g.log.len(), s.give_ups);
-                    g.shrink(j, piece.clone());
-                    let none = s.tuples(g, h.clone(), true);
-                    g.restore(mark);
-                    (none, !none && s.give_ups == give_ups)
-                };
-                let piece = match try_piece(self, &mut g, &inside) {
+                let piece = match self.try_piece(&mut g, &h, j, &inside).await {
                     (true, _) => outside,
                     (_, true) => inside,
-                    _ => match try_piece(self, &mut g, &outside) {
+                    _ => match self.try_piece(&mut g, &h, j, &outside).await {
                         (false, true) => outside,
                         _ => inside,
                     },
                 };
                 g.shrink(j, piece);
-                empty = self.narrow_tuples(&mut g, &mut h);
+                empty = self.narrow_tuples(&mut g, &mut h).await;
             }
         }
-        self.refuse_forks = refuse_forks;
+        self.s().refuse_forks = refuse_forks;
         (!empty && h.is_leaf() == Some(true)).then_some(g.r)
     }
 
-    /// Whether the tuple `vs` is in `f`; false when that is not known.
-    fn holds(&mut self, vs: &[usize], f: &Part<Row>) -> bool {
-        self.holds_known(|_, i| vs[i], f) == Some(true)
+    /// For [`Searching::refine`]: whether the search proves the box `g` with component `j` cut
+    /// to `piece` empty for the part `h`, and whether it shows it inhabited.
+    async fn try_piece(
+        &'m self,
+        g: &mut Region,
+        h: &Part<Row>,
+        j: usize,
+        piece: &Type,
+    ) -> (bool, bool) {
+        let (mark, give_ups) = (g.log.len(), self.s().give_ups);
+        g.shrink(j, piece.clone());
+        let (none, back) = self.tuples(std::mem::take(g), h.clone(), true).await;
+        *g = back;
+        g.restore(mark);
+        (none, !none && self.s().give_ups == give_ups)
     }
 
-    /// Whether the tuple whose component `i` is the value numbered `item(self, i)` is in `f`;
+    /// Whether the tuple `vs` is in `f`; false when that is not known.
+    async fn holds(&'m self, vs: &[usize], f: &Part<Row>) -> bool {
+        self.holds_known(|_, i| vs[i], f).await == Some(true)
+    }
+
+    /// Whether the tuple whose component `i` is the value numbered `item(search, i)` is in `f`;
     /// `None` when the membership of a component in a tuple type is not known, since `f` may
     /// hold that tuple type negated. A component is read by number when it is tested, so a
     /// tuple among the values shown is read in place while the tests add to the search.
-    fn holds_known(&mut self, item: impl Fn(&Self, usize) -> usize, f: &Part<Row>) -> Option<bool> {
-        let outer = std::mem::take(&mut self.unsure);
+    async fn holds_known(
+        &'m self,
+        item: impl Fn(&Search, usize) -> usize,
+        f: &Part<Row>,
+    ) -> Option<bool> {
+        let outer = std::mem::take(&mut self.s().unsure);
         let mut fits = BTreeSet::new();
         for a in f.distinct_atoms() {
-            if a.iter().enumerate().all(|(i, y)| {
-                let v = item(self, i);
-                self.member(v, y)
-            }) {
+            let mut all = true;
+            for (i, y) in a.iter().enumerate() {
+                let v = item(&self.s(), i);
+                if !self.member(v, y).await {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
                 fits.insert(a);
             }
         }
         let b = f.eval(&|a| fits.contains(a));
-        let unsure = std::mem::replace(&mut self.unsure, outer);
+        let unsure = std::mem::replace(&mut self.s().unsure, outer);
         (!unsure).then_some(b)
     }
 
     /// Whether the value numbered `v` is in `u`; false, with `unsure` set, when that is not
     /// known.
-    fn member(&mut self, v: usize, u: &Type) -> bool {
-        let known = self.member_known(v, u);
-        self.unsure |= known.is_none();
+    async fn member(&'m self, v: usize, u: &Type) -> bool {
+        let known = self.member_known(v, u).await;
+        self.s().unsure |= known.is_none();
         known == Some(true)
     }
 
     /// Whether the value numbered `v` is in `u`, or `None` when that is not known. What is not
     /// known is kept as such, so a second test of the pair is not read as a sure "no".
-    fn member_known(&mut self, v: usize, u: &Type) -> Option<bool> {
-        if let Rep::Value(x) = &self.shown[v] {
-            return Some(u.contains(x));
+    fn member_known(&'m self, v: usize, u: &Type) -> Deep<'m, Option<bool>> {
+        {
+            let s = self.s();
+            if let Rep::Value(x) = &s.shown[v] {
+                return Stack::ready(Some(u.contains(x)));
+            }
         }
         let key = (v, u.clone());
-        if let Some(b) = self.members.get(&key) {
-            return *b;
+        if let Some(&b) = self.s().members.get(&key) {
+            return Stack::ready(b);
         }
-        let b = match &self.shown[v] {
-            Rep::Value(_) => unreachable!("a value was read above"),
-            Rep::Closure => u.p().morphisms.is_leaf(),
-            Rep::Struct => Some(u.p().structs),
-            Rep::Tuple(vs) => {
-                let f = u.p().tuples.get(vs.len());
-                self.holds_known(|s, i| s.tuple_item(v, i), &f)
-            }
-            Rep::Atom(name, payload) => {
-                let payload = *payload;
-                match u.p().atoms.names.get(name) {
-                    None => Some(u.p().atoms.cofinite),
-                    Some(a) => self.member_known(payload, &a.payload),
+        self.stack.call(async move {
+            let b = {
+                let u = &key.1;
+                // What the value is, read before any test that adds to the values shown.
+                enum Shape<'u> {
+                    Known(Option<bool>),
+                    Tuple(Part<Row>),
+                    Payload(usize, &'u Type),
+                    List(usize),
                 }
-            }
-            Rep::List { item, .. } => {
-                let item = *item;
-                self.list_member(v, item, u)
-            }
-        };
-        self.members.insert(key, b);
-        b
-    }
-
-    /// Component `i` of the tuple numbered `v` among the values shown.
-    fn tuple_item(&self, v: usize, i: usize) -> usize {
-        match &self.shown[v] {
-            Rep::Tuple(vs) => vs[i],
-            _ => unreachable!("the value numbered {v} is read as a tuple and is not one"),
-        }
-    }
-
-    /// The stop atom, link atom and length of the list numbered `v` among the values shown.
-    fn list_parts(&self, v: usize) -> (&std::sync::Arc<str>, &std::sync::Arc<str>, &BigUint) {
-        match &self.shown[v] {
-            Rep::List {
-                stop, link, len, ..
-            } => (stop, link, len),
-            _ => unreachable!("the value numbered {v} is read as a list and is not one"),
-        }
+                let shape = match &self.s().shown[v] {
+                    Rep::Value(_) => unreachable!("a value was read above"),
+                    Rep::Closure => Shape::Known(u.p().morphisms.is_leaf()),
+                    Rep::Struct => Shape::Known(Some(u.p().structs)),
+                    Rep::Tuple(vs) => Shape::Tuple(u.p().tuples.get(vs.len())),
+                    Rep::Atom(name, payload) => match u.p().atoms.names.get(name) {
+                        None => Shape::Known(Some(u.p().atoms.cofinite)),
+                        Some(a) => Shape::Payload(*payload, &a.payload),
+                    },
+                    Rep::List { item, .. } => Shape::List(*item),
+                };
+                match shape {
+                    Shape::Known(b) => b,
+                    Shape::Tuple(f) => self.holds_known(|s, i| s.tuple_item(v, i), &f).await,
+                    Shape::Payload(payload, a) => self.member_known(payload, a).await,
+                    Shape::List(item) => self.list_member(v, item, u).await,
+                }
+            };
+            self.s().members.insert(key, b);
+            b
+        })
     }
 
     /// Whether every morphism `m` admits is in `n`, by the variance law. With no value, the
     /// empty morphism is the only one, and its domain is the guarantee.
-    fn within(&mut self, m: &Morphism, n: &Morphism) -> bool {
-        let no_value = self.no_value(&m.value);
-        self.empty(&(&n.guarantee - &m.guarantee))
-            && (no_value || self.empty(&(&m.permission - &n.permission)))
-            && (no_value || self.empty(&m.permission) || self.empty(&(&m.value - &n.value)))
+    async fn within(&'m self, m: &Morphism, n: &Morphism) -> bool {
+        let no_value = self.no_value(&m.value).await;
+        self.empty(&(&n.guarantee - &m.guarantee)).await
+            && (no_value || self.empty(&(&m.permission - &n.permission)).await)
+            && (no_value
+                || self.empty(&m.permission).await
+                || self.empty(&(&m.value - &n.value)).await)
     }
 
     /// Whether no morphism `r` admits is in `f`, decided as for tuples: `r` meets the morphism
     /// types in every value of `f`, and, once on each branch, when `f` holds nothing outside
     /// the open morphism types, each is decided on its own. Morphism types are closed under
     /// meet but not under difference, so a type in no value of `f` narrows nothing.
-    fn morphisms(&mut self, mut r: Morphism, mut f: Part<Morphism>, may_cover: bool) -> bool {
-        loop {
-            if self.no_morphism(&r) {
-                return true;
-            }
-            let st: BTreeMap<Morphism, Option<bool>> = f
-                .distinct_atoms()
-                .into_iter()
-                .map(|a| {
-                    let s = if self.no_morphism(&meet(&r, &a)) {
+    fn morphisms(
+        &'m self,
+        mut r: Morphism,
+        mut f: Part<Morphism>,
+        may_cover: bool,
+    ) -> Deep<'m, bool> {
+        self.stack.call(async move {
+            loop {
+                if self.no_morphism(&r).await {
+                    return true;
+                }
+                let mut st: BTreeMap<Morphism, Option<bool>> = BTreeMap::new();
+                for a in f.distinct_atoms() {
+                    let s = if self.no_morphism(&meet(&r, &a)).await {
                         Some(false)
-                    } else if self.within(&r, &a) {
+                    } else if self.within(&r, &a).await {
                         Some(true)
                     } else {
                         None
                     };
-                    (a, s)
-                })
-                .collect();
-            // `f` stays exact, as in `narrow_tuples`: its settled form proves emptiness and
-            // what is forced, but its `true` shows no morphism in `f`.
-            f = f.restrict(&|a| st.get(a).copied().flatten());
-            if let Some(b) = f.is_leaf() {
-                return !b;
+                    st.insert(a, s);
+                }
+                // `f` stays exact, as in `narrow_tuples`: its settled form proves emptiness and
+                // what is forced, but its `true` shows no morphism in `f`.
+                f = f.restrict(&|a| st.get(a).copied().flatten());
+                if let Some(b) = f.is_leaf() {
+                    return !b;
+                }
+                let settled = f.settle();
+                if settled.is_leaf() == Some(false) {
+                    return true;
+                }
+                let (taken, _) = settled.forced();
+                if !taken.is_empty() {
+                    r = taken.iter().fold(r, |r, a| meet(&r, a));
+                    continue;
+                }
+                if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
+                    for a in f.distinct_atoms().iter() {
+                        if !self.morphisms(meet(&r, a), f.clone(), false).await {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                // Complexity tradeoff: a morphism part that neither the meets it forces nor one
+                // split into its morphism types decides is counted inhabited and refused by
+                // `verdict`. Why: emptiness of Boolean combinations of morphism types is
+                // coNP-hard, like that of tuple types, and one split per branch keeps the search
+                // polynomial. Trigger: no atom is forced and the split was spent or does not
+                // apply. Tests: `l01_23_subtyping::refusals::each_refusal_names_its_cause`
+                // (`morphism_split`) and `a_morphism_type_whose_bound_check_was_refused_says_why`.
+                // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
+                // complete solution needs a split of the guarantee, permission and value type in
+                // every combination (exponential in the morphism types), or a SAT encoding.
+                self.s().give_up(Refusal::MorphismSplit);
+                return false;
             }
-            let settled = f.settle();
-            if settled.is_leaf() == Some(false) {
-                return true;
-            }
-            let (taken, _) = settled.forced();
-            if !taken.is_empty() {
-                r = taken.iter().fold(r, |r, a| meet(&r, a));
-                continue;
-            }
-            if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
-                return f
-                    .distinct_atoms()
-                    .iter()
-                    .all(|a| self.morphisms(meet(&r, a), f.clone(), false));
-            }
-            // Complexity tradeoff: a morphism part that neither the meets it forces nor one split
-            // into its morphism types decides is counted inhabited and refused by `verdict`. Why:
-            // emptiness of Boolean combinations of morphism types is coNP-hard, like that of
-            // tuple types, and one split per branch keeps the search polynomial. Trigger: no atom
-            // is forced and the split was spent or does not apply. Tests:
-            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_split`) and
-            // `a_morphism_type_whose_bound_check_was_refused_says_why`. COMPLEXITY.md Kept row
-            // "emptiness and subtyping of tuple and morphism parts". A complete solution needs a
-            // split of the guarantee, permission and value type in every combination (exponential
-            // in the morphism types), or a SAT encoding.
-            self.give_up(Refusal::MorphismSplit);
-            return false;
-        }
+        })
     }
 }
 
@@ -2665,6 +2950,12 @@ fn meet(a: &Morphism, b: &Morphism) -> Morphism {
 mod tests {
     use super::*;
 
+    /// The region of the part `f` on the box `r`, made by a search of its own.
+    fn region(r: Vec<Type>, f: &Part<Row>) -> Region {
+        let f = f.clone();
+        Search::default().run(move |d| Box::pin(async move { d.region(r, &f).await }))
+    }
+
     /// The classes of `overlaps` on everyday types: a finite set and a cofinite one are joined
     /// exactly when they meet, at the top and inside an atom payload; two types of one atom
     /// name or tuple length are apart when they are disjoint inside it, a payload of a payload
@@ -2834,7 +3125,7 @@ mod tests {
             true
         });
         assert!(nodes >= 3);
-        let g = Search::default().region(vec![Type::top(); 2], f);
+        let g = region(vec![Type::top(); 2], f);
         assert_eq!((g.atoms.len(), g.missed.len()), (2, 2));
         assert_eq!(g.opens, [1, 1]);
     }
@@ -2850,7 +3141,7 @@ mod tests {
             .collect();
         let t = Type::union_all(rows);
         let f = &t.p().tuples.lens[&3];
-        let g = Search::default().region(vec![Type::top(); 3], f);
+        let g = region(vec![Type::top(); 3], f);
         let sizes: Vec<Vec<usize>> = g
             .cells
             .iter()
@@ -2858,14 +3149,19 @@ mod tests {
             .collect();
         assert_eq!(sizes, [vec![1, 1, 1, 1], vec![4], vec![2, 2]]);
         assert_eq!(g.opens, [4, 4, 4]);
-        let mut h = Search::default().region(vec![Type::top(), Type::int(), Type::top()], f);
+        let mut h = region(vec![Type::top(), Type::int(), Type::top()], f);
         assert_eq!(h.opens, [4, 0, 4]);
         assert!(h.loose.iter().all(|&(n, at)| (n, at) == (2, 2)));
         // Narrowing the last component to `0` closes the cell `1` as missed for both of its
         // tuple types at once, and leaves `0` to be tested again.
         h.shrink(2, lit(0));
-        let mut s = Search::default();
-        s.retest(&mut h);
+        let h = Search::default().run(move |d| {
+            Box::pin(async move {
+                let mut h = h;
+                d.retest(&mut h).await;
+                h
+            })
+        });
         for (k, a) in h.atoms.iter().enumerate() {
             assert_eq!(h.missed[k], usize::from(a[2] == lit(1)), "{k}");
         }
