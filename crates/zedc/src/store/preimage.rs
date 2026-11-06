@@ -1091,41 +1091,27 @@ type At = (Tid, Eid);
 /// one factor.
 type Power = Option<(Tid, Eid, Count)>;
 
-/// The number of factors of a power, held by what the revision table reads of an exponent
-/// ([`Exponent`]): its value while it fits in `u32`, and its parity. Nested squaring names
-/// double the count at each name, so an exact count would cost `d` bits at depth `d`.
-#[derive(Clone, Copy)]
-struct Count {
-    fits: Option<u32>,
-    odd: bool,
-}
+/// The number of factors of a power, held exactly. Nested squaring names double the count at
+/// each name, so the count at depth `d` has `d` bits.
+#[derive(Clone)]
+struct Count(Num);
 
 impl Count {
-    const ONE: Count = Count {
-        fits: Some(1),
-        odd: true,
-    };
-
-    fn add(self, other: Count) -> Count {
-        Count {
-            fits: self
-                .fits
-                .zip(other.fits)
-                .and_then(|(j, k)| j.checked_add(k)),
-            odd: self.odd != other.odd,
-        }
+    fn one() -> Count {
+        Count(Num::ONE)
     }
 
-    /// Two or more factors: a count past `u32::MAX` is.
-    fn is_several(self) -> bool {
-        self.fits.is_none_or(|k| k > 1)
+    fn add(&self, other: &Count) -> Count {
+        Count(&self.0 + &other.0)
     }
 
-    fn exponent(self) -> Exponent {
-        match self.fits {
-            Some(k) => k.into(),
-            None => Exponent::Past { odd: self.odd },
-        }
+    /// Two or more factors.
+    fn is_several(&self) -> bool {
+        self.0 > Num::ONE
+    }
+
+    fn exponent(&self) -> Exponent {
+        Exponent::Num(self.0.clone())
     }
 }
 
@@ -2159,8 +2145,8 @@ impl<'t> Tx<'t> {
     fn power(&mut self, t: Tid, env: Eid) -> Option<(Tid, Eid, Exponent)> {
         let at = self.followed(t, env);
         self.read_powers(at);
-        match self.powers[&at] {
-            Some((f, fe, k)) if k.is_several() => Some((f, fe, k.exponent())),
+        match &self.powers[&at] {
+            Some((f, fe, k)) if k.is_several() => Some((*f, *fe, k.exponent())),
             _ => None,
         }
     }
@@ -2193,7 +2179,7 @@ impl<'t> Tx<'t> {
                 Node::Prim(Prim::Mul, args) if args.len() == 2 => args,
                 _ => {
                     todo.pop();
-                    self.powers.insert(at, Some((t, env, Count::ONE)));
+                    self.powers.insert(at, Some((t, env, Count::one())));
                     continue;
                 }
             };
@@ -2202,7 +2188,7 @@ impl<'t> Tx<'t> {
             match (self.powers.get(&a), self.powers.get(&b)) {
                 (Some(pa), Some(pb)) => {
                     todo.pop();
-                    let p = self.joined(*pa, *pb);
+                    let p = self.joined(pa, pb);
                     self.powers.insert(at, p);
                 }
                 (pa, pb) => {
@@ -2221,17 +2207,18 @@ impl<'t> Tx<'t> {
     /// The product of two powers: one power when their factors are the same term. A free name
     /// is the same input in every scope; any other factor must also be read in the same scope.
     /// Shared operands double the count at each name: `x1 = i * i; x2 = x1 * x1; …` reaches
-    /// `2^64` factors at the 64th name, so the count is a [`Count`], O(1) to add.
-    fn joined(&self, a: Power, b: Power) -> Power {
-        let ((s, se, j), (u, ue, k)) = (a?, b?);
-        let alike = match (self.node(s), self.node(u)) {
+    /// `2^64` factors at the 64th name, and the count is exact, so it costs `d` bits to add at
+    /// depth `d`.
+    fn joined(&self, a: &Power, b: &Power) -> Power {
+        let ((s, se, j), (u, ue, k)) = (a.as_ref()?, b.as_ref()?);
+        let alike = match (self.node(*s), self.node(*u)) {
             (Node::Var(x), Node::Var(y)) if x == y => true,
-            _ => se == ue && self.same(s, u),
+            _ => se == ue && self.same(*s, *u),
         };
         if !alike {
             return None;
         }
-        Some((s, se, j.add(k)))
+        Some((*s, *se, j.add(k)))
     }
 
     /// [`Walk::fwd`] on a new stack.

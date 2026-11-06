@@ -29,9 +29,9 @@ pub enum Op {
     Neg,
     /// `x * y`.
     Mul,
-    /// `x ** k` for a constant `k >= 0` of any size. Every entry reads `k` in O(1) time
-    /// whatever its size: whether it is 0, its parity, and its value only when it fits in
-    /// `u32`; an endpoint is exact for such a `k`, and bounded outward past it (`pow_end`).
+    /// `x ** k` for a constant `k >= 0` of any size, held exactly. Every entry reads whether
+    /// `k` is 0 and its parity in O(1) time; an endpoint is exact for every `k` that is not
+    /// kept, and bounded outward otherwise (`pow_end`).
     Pow(Exponent),
     /// `x div y`, Euclidean: the remainder is in `0..abs(y)`.
     Div,
@@ -45,54 +45,36 @@ pub enum Op {
     Max,
 }
 
-/// The constant exponent `k >= 0` of `x ** k`, of any size: held exactly, except a count of
-/// factors past `u32::MAX`, held by its parity.
+/// The constant exponent `k >= 0` of `x ** k`, of any size, held exactly.
 #[derive(Clone, Debug)]
 pub enum Exponent {
-    /// A constant of any size, or the number of factors of a product of one value (S30) when
-    /// it fits in `u32`. A kernel integer past the 64-bit range is kept as the kernel holds
-    /// it, prime powers unbuilt: `10 ** 10 ** 9` is two kept powers, where it is 3.3·10^9
-    /// bits built.
+    /// A constant of any size, or the number of factors of a product of one value (S30),
+    /// which has `d` bits for a squaring name nested `d` deep. A kernel integer past the
+    /// 64-bit range is kept as the kernel holds it, prime powers unbuilt: `10 ** 10 ** 9` is
+    /// two kept powers, where it is 3.3·10^9 bits built.
     Num(Num),
-    /// The number of factors of a product of one value past `u32::MAX`, of which only the
-    /// parity is held: nested squaring names reach `2^d` factors at depth `d`, and an exact
-    /// count would cost `d` bits per name. Every entry reads no more of it (`Op::Pow`).
-    Past {
-        /// Whether the count is odd.
-        odd: bool,
-    },
 }
 
 impl Exponent {
     /// Whether `k` is 0.
     pub fn is_zero(&self) -> bool {
-        match self {
-            Exponent::Num(k) => k.is_zero(),
-            Exponent::Past { .. } => false,
-        }
+        self.num().is_zero()
     }
 
     /// Whether `k` is odd, in O(1) time for a value that is not kept.
     pub fn is_odd(&self) -> bool {
-        match self {
-            Exponent::Num(k) => k.is_odd(),
-            Exponent::Past { odd } => *odd,
-        }
+        self.num().is_odd()
     }
 
-    /// `k` when it fits in `u32`; a count past `u32::MAX` never does.
+    /// `k` when it fits in `u32`.
     pub fn to_u32(&self) -> Option<u32> {
-        match self {
-            Exponent::Num(k) => u32::try_from(k.to_i64()?).ok(),
-            Exponent::Past { .. } => None,
-        }
+        u32::try_from(self.num().to_i64()?).ok()
     }
 
-    /// `k`, when it is held exactly.
-    pub fn num(&self) -> Option<&Num> {
+    /// `k`.
+    pub fn num(&self) -> &Num {
         match self {
-            Exponent::Num(k) => Some(k),
-            Exponent::Past { .. } => None,
+            Exponent::Num(k) => k,
         }
     }
 }
@@ -500,12 +482,12 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
     // exact form.
     let floor_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
-        if let Some(r) = k.num().and_then(|k| v.floor_root_by(k)) {
+        if let Some(r) = v.floor_root_by(k.num()) {
             return Fin(r);
         }
-        // Complexity tradeoff: see `pow_end`. `r ** k` exceeds `v` for every `r >= 2` while
-        // `v < 2 ** u32::MAX`, so the root is then exact (0 or 1); past that the bound is the
-        // root for `u32::MAX`, which is at least the root for `k`.
+        // Complexity tradeoff: see `pow_end`, a kept `k` (past `2 ** 127`). `r ** k` exceeds `v`
+        // for every `r >= 2` while `v < 2 ** u32::MAX`, so the root is then exact (0 or 1); past
+        // that the bound is the root for `u32::MAX`, which is at least the root for `k`.
         Fin(if *v <= Num::ONE {
             v.clone()
         } else if *v < Num::from(2).pow(u32::MAX) {
@@ -518,11 +500,10 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
     // form.
     let ceil_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
-        // Complexity tradeoff: see `pow_end`. The root is `v` for `v <= 1` and at least 2 past
-        // it.
-        Fin(k
-            .num()
-            .and_then(|k| v.ceil_root_by(k))
+        // Complexity tradeoff: see `pow_end`, a kept `k`. The root is `v` for `v <= 1` and at
+        // least 2 past it.
+        Fin(v
+            .ceil_root_by(k.num())
             .unwrap_or_else(|| v.clone().min(Num::from(2))))
     };
     if k.is_odd() {
@@ -550,23 +531,24 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
     vec![(-&r_hi, -&r_lo), (r_lo, r_hi)]
 }
 
-/// `x ** k` at a finite end `x`, rounded outward in `dir`: exact for every `k` held as a
-/// [`Num`] that is not kept ([`Num::pow_by`]), with a kept power for a result past `i128`.
+/// `x ** k` at a finite end `x`, rounded outward in `dir`: exact for every `k` that is not
+/// kept ([`Num::pow_by`]), with a kept power for a result past `i128`. A count of factors is
+/// exact at any size (S30b), so a squaring name nested 33 deep is exact.
 ///
-/// Complexity tradeoff: three exponents have no exact form, and for them the end is bounded
+/// Complexity tradeoff: two exponents have no exact form, and for them the end is bounded
 /// by `2 ** u32::MAX` on the side toward 0 and is infinite on the side away from 0, for
-/// `abs(x) >= 2`: `Exponent::Past`, of which only the parity of a count of factors is held
-/// (an exact count costs `d` bits per name at squaring depth `d`); a kept exponent, such as
-/// the kernel's `10 ** 10 ** 9`, whose power would need a kept atom with a kept exponent; and
-/// a kept base that is not bare (a sum) with `k` past `u32`, whose expansion squares its
-/// terms about 32 times. Trigger: `x ** (2 ** 200)` on a base other than -1, 0 and 1, a
-/// squaring name nested 33 deep, or `(2 ** 200 + 1) ** (2 ** 40)`. Test:
-/// `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity` and
-/// `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
-/// COMPLEXITY.md S30b and S36. A complete solution would keep the exponent of a kept power as
-/// a kept value, and `s ** k` as an atom.
+/// `abs(x) >= 2`: a kept exponent, such as `2 ** 200` or the kernel's `10 ** 10 ** 9`, whose
+/// power would need a kept atom with a kept exponent; and a kept base that is not bare (a
+/// sum) with `k` past `u32`, whose expansion squares its terms about 32 times. Why: an atom
+/// with a kept exponent needs an approximation whose shift is itself kept (a tower), and
+/// how such values compare is not specified; the author decides (POW-kept-exp). Trigger:
+/// `x ** (2 ** 200)` on a base other than -1, 0 and 1, or `(2 ** 200 + 1) ** (2 ** 40)`.
+/// Test: `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity`
+/// and `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
+/// COMPLEXITY.md S36. A complete solution would keep the exponent of a kept power as a kept
+/// value, and `s ** k` as an atom.
 fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
-    if let Some(v) = k.num().and_then(|k| x.pow_by(k)) {
+    if let Some(v) = x.pow_by(k.num()) {
         return Fin(v);
     }
     match x.to_i64() {

@@ -249,6 +249,56 @@ fn a_shared_count_past_the_exponent_width_is_read_as_its_power() {
 }
 
 #[test]
+fn a_count_of_any_size_gives_an_exact_end() {
+    // `x<d> == 3 ** 2^d`: the count is held exactly, so the end `3 ** 2^d` is exact and the
+    // answer is `i = ±3` at every depth, as for the small form at depth 3. Corner: the counts
+    // 2^32 - 1, the largest in `u32`, and 2^32, one past it.
+    let ds = doms(&[("i", Some(-3), Some(3))]);
+    let three_to = |k: BigInt| power_of(&int(3), big(k));
+    for depth in [3, 32, 33, 64] {
+        let k = BigInt::from(1) << depth;
+        let t = squares(
+            depth,
+            prim(Prim::Eq, var(&format!("x{depth}")), three_to(k.clone())),
+        );
+        let p = pre(&t, &ds);
+        assert_eq!(shown(&p), "i [-3..=-3, 3..=3]; exact", "{depth}");
+        let direct = prim(Prim::Eq, power_of(&var("i"), big(k.clone())), three_to(k));
+        assert_eq!(p, pre(&direct, &ds), "{depth}");
+        // `x<d> - 1 == 3 ** 2^d`: one more than the end, no integer. The sum is formed by the
+        // preimage, kept; the kernel writes out a constant `3 ** 2^d + 1`.
+        let k = BigInt::from(1) << depth;
+        let t = squares(
+            depth,
+            prim(
+                Prim::Eq,
+                prim(Prim::Sub, var(&format!("x{depth}")), int(1)),
+                three_to(k),
+            ),
+        );
+        assert_eq!(shown(&pre(&t, &ds)), "i []; exact", "{depth} + 1");
+    }
+    // `p1 = i * x1; p2 = p1 * x2; …; p31 = p30 * x31`: 1 + 2 + … + 2^31 = 2^32 - 1 factors,
+    // an odd count, so `p31 == 3 ** (2^32 - 1)` is `i = 3`.
+    let k = (BigInt::from(1) << 32) - 1;
+    let mut body = prim(Prim::Eq, var("p31"), three_to(k));
+    for n in (1..=31).rev() {
+        let prev = if n == 1 {
+            "i".to_string()
+        } else {
+            format!("p{}", n - 1)
+        };
+        body = bind(
+            &format!("p{n}"),
+            prim(Prim::Mul, var(&prev), var(&format!("x{n}"))),
+            body,
+        );
+    }
+    let p = pre(&squares(31, body), &ds);
+    assert_eq!(shown(&p), "i [3..=3]; exact");
+}
+
+#[test]
 fn a_power_with_a_small_exponent_keeps_every_solution() {
     // `i ** k` against the interpreter at every point, for `k` from 0 to 70, and the same
     // count of factors written out as a product.
@@ -397,25 +447,64 @@ fn reading_a_product_as_a_power_is_linear_in_its_factors() {
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
-/// `x1 = i * i; …; x<d> <= 0` at depths 512 and 4096: the count at depth `d` is `2^d`, held
-/// by its value while it fits in `u32` and its parity, so each name costs O(1) to read. On a 2 MiB stack;
+/// `x1 = i * i; x2 = x1 * i; x3 = x2 * x1; …`: the count at depth `d` is the Fibonacci
+/// number `F(d + 2)`, a sum of two earlier counts at each name, as nested squares are.
+fn fibonacci(depth: usize, test: Term) -> Term {
+    let name = |k: usize| {
+        if k == 0 {
+            "i".to_string()
+        } else {
+            format!("x{k}")
+        }
+    };
+    let mut body = test;
+    for n in (1..=depth).rev() {
+        let other = name(n.saturating_sub(2));
+        body = bind(
+            &name(n),
+            prim(Prim::Mul, var(&name(n - 1)), var(&other)),
+            body,
+        );
+    }
+    body
+}
+
+/// `x1 = i * i; …; x<d> <= 0`, and the same over [`fibonacci`] counts, at depths 2048 and
+/// 16384: the count at depth `d` has about `d` bits and is held exactly (COMPLEXITY.md S30b),
+/// so the counts take `O(d^2)` bits in all, the `O(n log N)` of sec:constraints with `N` the
+/// largest count; its time stays within the linear limit at these depths. On a 2 MiB stack;
 /// the terms are built before the timing.
 #[test]
 fn reading_nested_squares_as_a_power_is_linear_in_their_depth() {
     let measure = || {
         let ds = doms(&[("i", Some(-3), Some(3))]);
-        let sizes = [512, scaling::FACTOR * 512];
-        let terms: Vec<Term> = sizes
+        let sizes = [2048, scaling::FACTOR * 2048];
+        let at = |d: usize| sizes.iter().position(|&s| s == d).expect("a built size");
+        let squared: Vec<Term> = sizes
             .iter()
             .map(|&d| squares(d, at_most(var(&format!("x{d}")), 0)))
             .collect();
-        for t in &terms {
+        for t in &squared {
             assert_eq!(shown(&pre(t, &ds)), "i [0..=0]; exact");
         }
-        let at = |d: usize| sizes.iter().position(|&s| s == d).expect("a built size");
         scaling::check_order("`x1 = i * i; …; x<n> <= 0`", sizes[0], 1, |d| {
-            pre(&terms[at(d)], &ds);
+            pre(&squared[at(d)], &ds);
         });
+        let chained: Vec<Term> = sizes
+            .iter()
+            .map(|&d| fibonacci(d, at_most(var(&format!("x{d}")), 0)))
+            .collect();
+        for t in &chained {
+            assert!(pre(t, &ds).exact);
+        }
+        scaling::check_order(
+            "`x1 = i * i; x2 = x1 * i; …; x<n> <= 0`",
+            sizes[0],
+            1,
+            |d| {
+                pre(&chained[at(d)], &ds);
+            },
+        );
     };
     let thread = std::thread::Builder::new().stack_size(2 << 20);
     thread.spawn(measure).unwrap().join().unwrap();
