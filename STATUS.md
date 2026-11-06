@@ -1253,16 +1253,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | ported 39 scaling cases into 12 groups (l01_01..l01_30); all pass, ratios 7.2-10.3 at limit 24, load1 61-68 before/after; found and fixed 2 quadratics: tests/sr |
 | FLOAT-minmax | merge attempt 1 | 2026-11-05 04:07 | started verify and merge of 5828d09b; load 67.86 56.00 53.48 |
 | INCR-script | impl attempt 1 | 2026-11-05 04:07 | script runner and 4 script tests + 2 malformed-script tests + scaling test in reuse.rs; l01_30_queries 15 pass; load 60.3 |
-| ISSUE1-passby-scale | merge attempt 1 | 2026-11-04 00:20 | rebased on 01272894 (STATUS conflict, both rows kept); real test pass 10.8 s load 60-63; control (clone of Info::passes per pass_at) timed out at 60 s, at 90 s  |
-| L1.35-inventory | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree l135-inventory |
+| L1.35-inventory | impl attempt 1 | 2026-11-05 04:07 | done: 7b1878a0 on wt/l135-inventory (rebased on origin/main); l01_35 5/5 pass, load 58-63; scaling 20000/160000 variants 8.05x instr 8.08x bytes (limit 24, load |
 | LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | started; load 48.04 50.56 51.94 |
-| LIT-menu-minus | impl attempt 1 | 2026-11-05 18:21 | done: 0ae945e1 on wt/lit-menu-minus (rebased on 656cabfd); l01_26 227 ok, l01_26a 19 ok, l01_29 133 ok (load 54-55); earlier l01_17 86, l01_18 49, l01_14 28, l0 |
+| LIT-menu-minus | merge attempt 1 | 2026-11-05 18:21 | verified f740de03 (rebased on 9eb0086a); fix: Lit.neg field removed, derived as site != span (it duplicated the two spans); build+fmt ok; l01_29 133, l01_26 227 |
 | LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | started; worktree wt/live3-lp-tangents at 9eb0086a; load 56.42 55.51 53.52 |
+| M0d-suite | impl attempt 1 | 2026-11-05 04:07 | started; load 56.11 62.18 58.97 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | done 3985196c on wt/native-build-id (not pushed): BUILD in section .zed_native.build (TypeId crate hash + RUSTFLAGS hash from build.rs); tests l01_36a_executabl |
-| orch | running | 2026-11-05 18:05 | STUDY-linearlog started |
+| orch | running | 2026-11-05 18:05 | L1.35-inventory impl done 7b1878a0; merge started |
 | PROV-expected-index | impl attempt 1 | 2026-11-05 20:27 | started; load 61.38 53.27 52.53 |
-| RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/rat-asks-rest on origin/main; load 47.16 53.67 46.80 |
+| RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | negative-control checkout /home/luke/Work/wt/rat-asks-rest-ctl at 17b7ceca, seeded |
 | RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
 | S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | final: d3a2aed3 on wt/s22-more-scales (rebased twice; on origin/main, not pushed; replaces 9f5d1617 above); after the HULL3-subsumed presburger change all 47 s2 |
 | SLABS-count | merge attempt 1 | 2026-11-05 18:19 | started verify+merge of 3587dde9, load 51.81 51.37 52.25 |
