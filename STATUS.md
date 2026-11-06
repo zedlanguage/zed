@@ -1290,7 +1290,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ST-ladder | impl attempt 1 | 2026-11-03 02:59 | started; worktree wt/st-ladder at 29c4a3b7; load 40.87 42.81 47.65 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T6-2sat | impl attempt 1 | 2026-11-05 04:07 | started; worktree t6-2sat from origin/main 29c4a3b7; load 44.43 44.89 46.94 |
-||||||| parent of 1129ad40 (T2-types-rest merge: test l01_15_kernel_terms::forms compares every form of Term and Pattern at widths 20, 40 and 80 and on one line with text written by the printer before the rewrite (654e453f); ZED_PORT_GAPS T2-mid row: Pattern's Clone and PartialEq are explicit-stack loops since part 1 (08f7809e); plan row Done, STATUS row done, what is left goes to ledger item T2-types-rest-4 (K39))
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
