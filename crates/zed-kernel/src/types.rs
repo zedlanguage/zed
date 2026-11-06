@@ -477,6 +477,12 @@ impl Type {
         }
     }
 
+    /// The address of this type's node: equal for two handles on one node, and not reused
+    /// while a handle on the node is held.
+    pub(crate) fn node_addr(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     /// The node named `naming()` whose parts are `make()`'s, each computed when first needed.
     /// `make` must not need this node's parts, which a contractive definition ensures.
     fn rec(

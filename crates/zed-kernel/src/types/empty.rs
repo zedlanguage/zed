@@ -468,6 +468,9 @@ struct Search {
     keys: BTreeSet<Type>,
     /// What is known of each list type met, by the rule on pure cycles.
     cycles: BTreeMap<Type, Option<Cycle>>,
+    /// The meet (`true`) or difference (`false`) of each pair of nodes `settles` tested, built
+    /// once, by the nodes' addresses; the operands are kept with it, so no address is reused.
+    cuts: BTreeMap<(usize, usize, bool), (Type, Type, Type)>,
 }
 
 /// A type of lists: `link` atoms holding (`item`, rest), and one `stop` atom, whose lengths
@@ -1497,13 +1500,33 @@ impl<'m> Searching<'m> {
     }
 
     /// Whether `x & y`, or `x - y` when `both` is false, is empty. Types of scalars alone are
-    /// compared directly, so no type is built for them.
+    /// compared directly, so no type is built for them. Each meet or difference is built once
+    /// per pair of nodes and kept in `cuts`: the regions of one search test the same cell against
+    /// the same component many times over, and a type built again is a node of its own, which
+    /// `empty` then compares in full with the one kept.
+    ///
+    /// Complexity tradeoff: `cuts` is keyed by the operands' nodes, not by their contents. Keyed
+    /// by contents, each hit on an operand equal to a kept one but built apart compared the two in
+    /// full, and `n` shapes held together cost order `n^2` (47.6 times the instructions from 64 to
+    /// 512 in `a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union`). Keyed
+    /// by node, such an operand misses and its type is built again, as before the memo; what is
+    /// given up is the hits on equal operands built apart. COMPLEXITY.md K51.
     async fn settles(&'m self, x: &Type, y: &Type, both: bool) -> bool {
-        match x.scalar_cell(y, both) {
-            Some(b) => b,
-            None if both => self.empty(&(x & y)).await,
-            None => self.empty(&(x - y)).await,
+        if let Some(b) = x.scalar_cell(y, both) {
+            return b;
         }
+        let key = (x.node_addr(), y.node_addr(), both);
+        let t = self
+            .s()
+            .cuts
+            .entry(key)
+            .or_insert_with(|| {
+                let t = if both { x & y } else { x - y };
+                (x.clone(), y.clone(), t)
+            })
+            .2
+            .clone();
+        self.empty(&t).await
     }
 
     /// Tests each changed component of the box against its open cells that have a tuple type

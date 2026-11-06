@@ -18,7 +18,7 @@ the form it has may not meet the cost the compiler needs:
 
 | Gap | Rust construct | Sites | Class | Blocks | Proposed fix |
 |---|---|--:|---|---|---|
-| 1 | Identity: address-keyed memos, pointer equality, cached digests | 33 | planned (L6.13a) | S.3, S.4 | Content digest as a field; `==` shortcut in the runtime |
+| 1 | Identity: address-keyed memos, pointer equality, cached digests | 34 | planned (L6.13a) | S.3, S.4 | Content digest as a field; `==` shortcut in the runtime |
 | 2 | Shared memo and intern tables across pure calls | 52 | workaround | S.3 | Digests from gap 1; state receivers for the rest |
 | 3 | Lazy once-only cells and tied recursive types | 27 | workaround | S.3 | Table of definitions keyed by id |
 | 4 | Bit operations, float bits | up to 192 | built (L1.39a) | S.2, S.3 | The bit words at L1, built by step L1.39a |
@@ -100,6 +100,10 @@ three ways, all confirmed:
   are deliberately different keys.
   T11-preimage removed this from `preimage.rs`: its memos are keyed by numbers a transfer gives
   its terms and scopes (see the T11-preimage entries below).
+  SUB-corpus-slow added one: `Search::cuts` (`zed-kernel/types/empty.rs`, `settles`) keys the
+  meet or difference of two types by their nodes' addresses (`Type::node_addr`), because a key
+  by contents compared equal types built apart in full and made a test quadratic. A port needs
+  the content digest with an equality that skips the full comparison, or interned types.
 - **Equality shortcuts.** `Arc::ptr_eq` or `Rc::ptr_eq`, 6 sites: `Text::eq`
   (`zed-kernel/text.rs:136`), `Type::cmp` (`zed-kernel/types.rs:45`), `Row::cmp`
   (`types.rs:253`), `Premises::extend` and `Premises::eq` (`zedc/store/cell.rs:90`, `:152`),

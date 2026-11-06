@@ -911,7 +911,8 @@ fn pinwheels_joined_in_one_class_are_decided_at_quadratic_cost() {
     // ends that share a first component share its key, so all k pinwheels fall in one class
     // and are decided together. Measured for the empty unions, order k^2: one end outside,
     // 1,478M, 19,555M and 78,974M instructions at k = 16, 64 and 128 (with middles 63M, 391M
-    // and 803M); one first component, 1,170M, 15,893M and 62,927M. COMPLEXITY.md K36.
+    // and 803M); one first component, 1,170M, 15,893M and 62,927M. COMPLEXITY.md K36. The
+    // family of one first component is the test below, so each test runs under 30 s.
     std::thread::Builder::new()
         .stack_size(1 << 28)
         .spawn(|| {
@@ -920,6 +921,18 @@ fn pinwheels_joined_in_one_class_are_decided_at_quadratic_cost() {
                 let t = Type::union_all(negated_ends(k).into_iter().map(|e| pinwheel(true, e)));
                 assert_eq!(t.verdict(), Verdict::Empty);
             });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn pinwheels_sharing_a_first_component_are_decided_at_quadratic_cost() {
+    // As above, for the family of one first component.
+    std::thread::Builder::new()
+        .stack_size(1 << 28)
+        .spawn(|| {
             scaling::check_order("k pinwheels, one first component, empty, by k", 8, 2, |k| {
                 Type::forget_emptiness();
                 let ends = first_component_ends(k).into_iter();

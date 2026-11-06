@@ -332,9 +332,10 @@ fn corpus(seed: u64, n: usize) -> Vec<Type> {
 /// kept results dropped before each, in one batch keeping them, and in the batch reversed, and
 /// the three agree. A result kept that rested on an assumption, or that was read before the
 /// search finished, makes a later answer differ. One test per seed, so each runs on a thread of
-/// its own and none nears the 60 s limit; seeds 2 and 3 take 46 and 26 s and wait for
-/// SUB-corpus-slow.
-fn subtype_answers_agree(seed: u64) {
+/// its own and none nears the 60 s limit. Answering each query alone is most of the work, so
+/// the slower seeds split it in `parts`: a test answers alone the queries whose index is `part`
+/// modulo `parts`, and checks them against both batches (COMPLEXITY.md K51).
+fn subtype_answers_agree(seed: u64, part: usize, parts: usize) {
     scaling::on_a_thread(1 << 29, || {
         let ts = corpus(seed, 150);
         let mut x = seed + 5;
@@ -344,11 +345,15 @@ fn subtype_answers_agree(seed: u64) {
         };
         let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
         let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
-        let alone: Vec<bool> = qs
+        let mine = |i: &usize| i % parts == part;
+        let alone: Vec<Option<bool>> = qs
             .iter()
-            .map(|q| {
-                Type::forget_emptiness();
-                ask(q)
+            .enumerate()
+            .map(|(i, q)| {
+                mine(&i).then(|| {
+                    Type::forget_emptiness();
+                    ask(q)
+                })
             })
             .collect();
         Type::forget_emptiness();
@@ -356,15 +361,16 @@ fn subtype_answers_agree(seed: u64) {
         Type::forget_emptiness();
         let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
         back.reverse();
-        let held = alone.iter().filter(|&&b| b).count();
+        let held = batch.iter().filter(|&&b| b).count();
         assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
-        for (i, &(a, b)) in qs.iter().enumerate() {
+        for (i, &(a, b)) in qs.iter().enumerate().filter(|(i, _)| mine(i)) {
+            let alone = alone[i] == Some(true);
             assert!(
-                alone[i] == batch[i] && alone[i] == back[i],
+                alone == batch[i] && alone == back[i],
                 "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
                 ts[a],
                 ts[b],
-                alone[i],
+                alone,
                 batch[i],
                 back[i]
             );
@@ -374,22 +380,57 @@ fn subtype_answers_agree(seed: u64) {
 
 #[test]
 fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_1() {
-    subtype_answers_agree(1);
+    subtype_answers_agree(1, 0, 1);
 }
 
 #[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_4() {
-    subtype_answers_agree(4);
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_2_part_0() {
+    subtype_answers_agree(2, 0, 3);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_2_part_1() {
+    subtype_answers_agree(2, 1, 3);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_2_part_2() {
+    subtype_answers_agree(2, 2, 3);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_3_part_0() {
+    subtype_answers_agree(3, 0, 3);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_3_part_1() {
+    subtype_answers_agree(3, 1, 3);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_3_part_2() {
+    subtype_answers_agree(3, 2, 3);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_4_part_0() {
+    subtype_answers_agree(4, 0, 2);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_4_part_1() {
+    subtype_answers_agree(4, 1, 2);
 }
 
 #[test]
 fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_5() {
-    subtype_answers_agree(5);
+    subtype_answers_agree(5, 0, 1);
 }
 
 #[test]
 fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_6() {
-    subtype_answers_agree(6);
+    subtype_answers_agree(6, 0, 1);
 }
 
 /// A morphism cycle is inhabited, `W = (W) -> int` by a closure, except when what the cycle
