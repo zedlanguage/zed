@@ -304,29 +304,46 @@ impl<A: Literal> Bdd<A> {
     }
 
     /// The diagram with each atom that `fix` decides replaced by its value, each node rebuilt
-    /// once.
+    /// once, after the children it keeps, from a stack.
     fn restrict(
         &self,
         fix: &impl Fn(&A) -> Option<bool>,
         memo: &mut HashMap<u64, Bdd<A>>,
     ) -> Bdd<A> {
-        let Bdd::Node(n) = self else {
+        let Bdd::Node(root) = self else {
             return self.clone();
         };
-        if let Some(r) = memo.get(&n.id) {
-            return r.clone();
+        // A node, and once its children are queued what `fix` decides of its atom.
+        let mut stack: Vec<(&Branch<A>, Option<Option<bool>>)> = vec![(root, None)];
+        while let Some((n, fixed)) = stack.pop() {
+            if memo.contains_key(&n.id) {
+                continue;
+            }
+            let Some(v) = fixed else {
+                let v = fix(&n.atom);
+                stack.push((n, Some(v)));
+                for (c, kept) in [(&n.lo, v != Some(true)), (&n.hi, v != Some(false))] {
+                    if let Bdd::Node(m) = c
+                        && kept
+                        && !memo.contains_key(&m.id)
+                    {
+                        stack.push((m, None));
+                    }
+                }
+                continue;
+            };
+            let get = |b: &Bdd<A>| match b {
+                Bdd::Leaf(_) => b.clone(),
+                Bdd::Node(m) => memo[&m.id].clone(),
+            };
+            let r = match v {
+                Some(true) => get(&n.hi),
+                Some(false) => get(&n.lo),
+                None => Bdd::node(n.atom.clone(), get(&n.hi), get(&n.lo)),
+            };
+            memo.insert(n.id, r);
         }
-        let r = match fix(&n.atom) {
-            Some(true) => n.hi.restrict(fix, memo),
-            Some(false) => n.lo.restrict(fix, memo),
-            None => Bdd::node(
-                n.atom.clone(),
-                n.hi.restrict(fix, memo),
-                n.lo.restrict(fix, memo),
-            ),
-        };
-        memo.insert(n.id, r.clone());
-        r
+        memo[&root.id].clone()
     }
 
     /// The atoms every value takes, and those every value refuses: [`Bdd::forced_to`] `true`.
@@ -445,19 +462,26 @@ impl<A: Literal> Bdd<A> {
         }
     }
 
-    /// Whether `f` holds of every atom, each node visited once.
-    pub(super) fn atoms<'a>(&'a self, f: &mut impl FnMut(&'a A) -> bool) -> bool {
-        fn go<'a, A: Literal>(
-            b: &'a Bdd<A>,
-            seen: &mut HashSet<u64>,
-            f: &mut impl FnMut(&'a A) -> bool,
-        ) -> bool {
-            let Bdd::Node(n) = b else {
-                return true;
-            };
-            !seen.insert(n.id) || (f(&n.atom) && go(&n.hi, seen, f) && go(&n.lo, seen, f))
+    /// Whether `f` holds of the atom of every node not in `seen`, each added to it; a node
+    /// before its `hi`, its `hi` before its `lo`, from a stack.
+    fn atoms_unseen<'a>(
+        &'a self,
+        seen: &mut HashSet<u64>,
+        f: &mut impl FnMut(&'a A) -> bool,
+    ) -> bool {
+        let mut stack = vec![self];
+        while let Some(b) = stack.pop() {
+            if let Bdd::Node(n) = b
+                && seen.insert(n.id)
+            {
+                if !f(&n.atom) {
+                    return false;
+                }
+                stack.push(&n.lo);
+                stack.push(&n.hi);
+            }
         }
-        go(self, &mut HashSet::new(), f)
+        true
     }
 
     /// Whether `f` holds of every path to the `true` leaf, given as the atoms it takes and those
@@ -894,28 +918,56 @@ impl<A: Literal> Part<A> {
     }
 
     /// Whether the value whose membership in each atom `holds` decides is in the part.
+    /// Each expression is evaluated once, from a stack, and the second operand of an `Or` or
+    /// `And` only when the first does not decide it.
     pub(super) fn eval(&self, holds: &impl Fn(&A) -> bool) -> bool {
-        fn go<A: Literal>(
-            p: &Part<A>,
-            holds: &impl Fn(&A) -> bool,
-            memo: &mut HashMap<u64, bool>,
-        ) -> bool {
-            let e = match p {
-                Part::Bdd(b) => return b.eval(holds),
-                Part::Expr(e) => e,
-            };
-            if let Some(v) = memo.get(&e.id) {
-                return *v;
-            }
-            let v = match &e.form {
-                Form::Not(a) => !go(a, holds, memo),
-                Form::Or(a, b) => go(a, holds, memo) || go(b, holds, memo),
-                Form::And(a, b) => go(a, holds, memo) && go(b, holds, memo),
-            };
-            memo.insert(e.id, v);
-            v
+        /// What is left to do: a part to evaluate, or an expression to finish once the value
+        /// of its first operand (`First`), or of the operand that decides it (`Last`), is on
+        /// the stack of values.
+        enum Job<'a, A: Literal> {
+            Part(&'a Part<A>),
+            First(&'a Expr<A>),
+            Last(&'a Expr<A>),
         }
-        go(self, holds, &mut HashMap::new())
+        let mut memo: HashMap<u64, bool> = HashMap::new();
+        let mut values: Vec<bool> = Vec::new();
+        let mut jobs = vec![Job::Part(self)];
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Part(Part::Bdd(b)) => values.push(b.eval(holds)),
+                Job::Part(Part::Expr(e)) => match memo.get(&e.id) {
+                    Some(v) => values.push(*v),
+                    None => {
+                        let (_, a, _) = e.form.operands();
+                        jobs.push(Job::First(e));
+                        jobs.push(Job::Part(a));
+                    }
+                },
+                Job::First(e) => {
+                    let v = values.pop().expect("the first operand's value");
+                    match &e.form {
+                        Form::Not(_) => {
+                            memo.insert(e.id, !v);
+                            values.push(!v);
+                        }
+                        Form::Or(_, b) | Form::And(_, b) => {
+                            if v == matches!(e.form, Form::Or(..)) {
+                                memo.insert(e.id, v);
+                                values.push(v);
+                            } else {
+                                jobs.push(Job::Last(e));
+                                jobs.push(Job::Part(b));
+                            }
+                        }
+                    }
+                }
+                Job::Last(e) => {
+                    let v = *values.last().expect("the second operand's value");
+                    memo.insert(e.id, v);
+                }
+            }
+        }
+        values.pop().expect("the part's value")
     }
 
     /// The part's value on a set of values where `holds` gives each atom's: in every value
@@ -932,32 +984,47 @@ impl<A: Literal> Part<A> {
         holds: &impl Fn(&A) -> Option<bool>,
         pins: &HashMap<u64, bool>,
     ) -> Option<bool> {
+        // Each node once, after the children its atom's value leads to, from a stack.
         fn bdd<A: Literal>(
             b: &Bdd<A>,
             holds: &impl Fn(&A) -> Option<bool>,
             memo: &mut HashMap<u64, Option<bool>>,
         ) -> Option<bool> {
-            let n = match b {
+            let root = match b {
                 Bdd::Leaf(v) => return Some(*v),
                 Bdd::Node(n) => n,
             };
-            if let Some(v) = memo.get(&n.id) {
-                return *v;
-            }
-            let v = match holds(&n.atom) {
-                Some(true) => bdd(&n.hi, holds, memo),
-                Some(false) => bdd(&n.lo, holds, memo),
-                None => {
-                    let hi = bdd(&n.hi, holds, memo);
-                    if hi.is_none() {
-                        None
-                    } else {
-                        bdd(&n.lo, holds, memo).filter(|lo| Some(*lo) == hi)
-                    }
+            // A node, and once its children are queued its atom's value.
+            let mut stack: Vec<(&Branch<A>, Option<Option<bool>>)> = vec![(root, None)];
+            while let Some((n, held)) = stack.pop() {
+                if memo.contains_key(&n.id) {
+                    continue;
                 }
-            };
-            memo.insert(n.id, v);
-            v
+                let Some(h) = held else {
+                    let h = holds(&n.atom);
+                    stack.push((n, Some(h)));
+                    for (c, read) in [(&n.lo, h != Some(true)), (&n.hi, h != Some(false))] {
+                        if let Bdd::Node(m) = c
+                            && read
+                            && !memo.contains_key(&m.id)
+                        {
+                            stack.push((m, None));
+                        }
+                    }
+                    continue;
+                };
+                let get = |c: &Bdd<A>| match c {
+                    Bdd::Leaf(v) => Some(*v),
+                    Bdd::Node(m) => memo[&m.id],
+                };
+                let v = match h {
+                    Some(true) => get(&n.hi),
+                    Some(false) => get(&n.lo),
+                    None => get(&n.hi).filter(|hi| get(&n.lo) == Some(*hi)),
+                };
+                memo.insert(n.id, v);
+            }
+            memo[&root.id]
         }
         let mut nodes = HashMap::new();
         let mut memo: HashMap<u64, Option<bool>> =
@@ -1213,57 +1280,69 @@ impl<A: Literal> Part<A> {
 
     /// The part with each expression in `pins` replaced by its value, each rebuilt once.
     fn substitute_all(&self, pins: &HashMap<u64, bool>) -> Part<A> {
-        fn go<A: Literal>(
-            p: &Part<A>,
-            pins: &HashMap<u64, bool>,
-            memo: &mut HashMap<u64, Part<A>>,
-        ) -> Part<A> {
-            let Part::Expr(e) = p else {
-                return p.clone();
-            };
-            let key = e.id;
-            if let Some(v) = pins.get(&key) {
-                return Part::leaf(*v);
-            }
-            if let Some(r) = memo.get(&key) {
-                return r.clone();
-            }
-            let r = match &e.form {
-                Form::Not(a) => go(a, pins, memo).not(),
-                Form::Or(a, b) => go(a, pins, memo).zip(&go(b, pins, memo), Op::Or),
-                Form::And(a, b) => go(a, pins, memo).zip(&go(b, pins, memo), Op::And),
-            };
-            memo.insert(key, r.clone());
-            r
-        }
-        go(self, pins, &mut HashMap::new())
+        self.rebuild(|p| match p {
+            Part::Bdd(_) => Some(p.clone()),
+            Part::Expr(e) => pins.get(&e.id).map(|v| Part::leaf(*v)),
+        })
     }
 
     /// The part with each atom that `fix` decides replaced by its value, each node and
     /// expression rebuilt once.
     pub(super) fn restrict(&self, fix: &impl Fn(&A) -> Option<bool>) -> Part<A> {
-        fn go<A: Literal>(
-            p: &Part<A>,
-            fix: &impl Fn(&A) -> Option<bool>,
-            nodes: &mut HashMap<u64, Bdd<A>>,
-            memo: &mut HashMap<u64, Part<A>>,
-        ) -> Part<A> {
-            let e = match p {
-                Part::Bdd(b) => return Part::Bdd(b.restrict(fix, nodes)),
-                Part::Expr(e) => e,
-            };
-            if let Some(r) = memo.get(&e.id) {
-                return r.clone();
-            }
-            let r = match &e.form {
-                Form::Not(a) => go(a, fix, nodes, memo).not(),
-                Form::Or(a, b) => go(a, fix, nodes, memo).zip(&go(b, fix, nodes, memo), Op::Or),
-                Form::And(a, b) => go(a, fix, nodes, memo).zip(&go(b, fix, nodes, memo), Op::And),
-            };
-            memo.insert(e.id, r.clone());
-            r
+        let mut nodes = HashMap::new();
+        self.rebuild(|p| match p {
+            Part::Bdd(b) => Some(Part::Bdd(b.restrict(fix, &mut nodes))),
+            Part::Expr(_) => None,
+        })
+    }
+
+    /// The part with each expression rebuilt from its rebuilt operands by its connective, each
+    /// once, after its operands, from a stack. `base` gives what a diagram becomes, and what an
+    /// expression it decides becomes; `None` for an expression to rebuild.
+    fn rebuild(&self, mut base: impl FnMut(&Part<A>) -> Option<Part<A>>) -> Part<A> {
+        if let Some(r) = base(self) {
+            return r;
         }
-        go(self, fix, &mut HashMap::new(), &mut HashMap::new())
+        let Part::Expr(root) = self else {
+            unreachable!("`base` decides every diagram")
+        };
+        let mut memo: HashMap<u64, Part<A>> = HashMap::new();
+        let mut stack: Vec<(&Expr<A>, bool)> = vec![(root, false)];
+        while let Some((e, ready)) = stack.pop() {
+            if memo.contains_key(&e.id) {
+                continue;
+            }
+            let (_, a, b) = e.form.operands();
+            if !ready {
+                stack.push((e, true));
+                // The first operand is pushed last, so it is rebuilt first.
+                for q in b.into_iter().chain([a]) {
+                    if let Part::Expr(x) = q
+                        && !memo.contains_key(&x.id)
+                    {
+                        match base(q) {
+                            Some(r) => {
+                                memo.insert(x.id, r);
+                            }
+                            None => stack.push((x, false)),
+                        }
+                    }
+                }
+                continue;
+            }
+            let mut get = |q: &Part<A>| match q {
+                Part::Expr(x) => memo[&x.id].clone(),
+                Part::Bdd(_) => base(q).expect("`base` decides every diagram"),
+            };
+            let (a, b) = (get(a), b.map(get));
+            let r = match (&e.form, b) {
+                (Form::Or(..), Some(b)) => a.zip(&b, Op::Or),
+                (Form::And(..), Some(b)) => a.zip(&b, Op::And),
+                _ => a.not(),
+            };
+            memo.insert(e.id, r);
+        }
+        memo[&root.id].clone()
     }
 
     /// The atoms in every value of the part (`.0`) and those in none (`.1`), among the atoms
@@ -1371,26 +1450,29 @@ impl<A: Literal> Part<A> {
         (taken, refused)
     }
 
-    /// Whether `f` holds of every atom, each node and expression visited once.
+    /// Whether `f` holds of every atom, each node and expression visited once, from a stack:
+    /// an expression's first operand before its second. Diagram nodes and expressions share one
+    /// set of ids seen, so a diagram under two expressions is visited once.
     pub(super) fn atoms<'a>(&'a self, f: &mut impl FnMut(&'a A) -> bool) -> bool {
-        fn go<'a, A: Literal>(
-            p: &'a Part<A>,
-            seen: &mut HashSet<u64>,
-            f: &mut impl FnMut(&'a A) -> bool,
-        ) -> bool {
-            let e = match p {
-                Part::Bdd(b) => return b.atoms(f),
-                Part::Expr(e) => e,
-            };
-            if !seen.insert(e.id) {
-                return true;
-            }
-            match &e.form {
-                Form::Not(a) => go(a, seen, f),
-                Form::Or(a, b) | Form::And(a, b) => go(a, seen, f) && go(b, seen, f),
+        let mut seen = HashSet::new();
+        let mut stack = vec![self];
+        while let Some(p) = stack.pop() {
+            match p {
+                Part::Bdd(b) => {
+                    if !b.atoms_unseen(&mut seen, f) {
+                        return false;
+                    }
+                }
+                Part::Expr(e) => {
+                    if seen.insert(e.id) {
+                        let (_, a, b) = e.form.operands();
+                        stack.extend(b);
+                        stack.push(a);
+                    }
+                }
             }
         }
-        go(self, &mut HashSet::new(), f)
+        true
     }
 
     /// Each distinct atom once, in the order first met. One atom can stand on several nodes,
@@ -1407,22 +1489,31 @@ impl<A: Literal> Part<A> {
     }
 
     /// The atoms, if the part is their union and nothing else.
+    /// Each expression is visited once, from a stack, its first operand before its second.
     pub(super) fn union_rows(&self) -> Option<Vec<A>> {
-        fn go<A: Literal>(p: &Part<A>, seen: &mut HashSet<u64>, out: &mut Vec<A>) -> bool {
+        let (mut seen, mut out) = (HashSet::new(), Vec::new());
+        let mut stack = vec![self];
+        while let Some(p) = stack.pop() {
             match p {
-                Part::Expr(e) => match &e.form {
-                    _ if !seen.insert(e.id) => true,
-                    Form::Or(a, b) => go(a, seen, out) && go(b, seen, out),
-                    _ => false,
-                },
+                Part::Expr(e) => {
+                    if !seen.insert(e.id) {
+                        continue;
+                    }
+                    let Form::Or(a, b) = &e.form else {
+                        return None;
+                    };
+                    stack.push(b);
+                    stack.push(a);
+                }
                 Part::Bdd(b) => {
                     let mut x = b;
                     loop {
                         match x {
-                            Bdd::Leaf(b) => return !b,
+                            Bdd::Leaf(false) => break,
+                            Bdd::Leaf(true) => return None,
                             Bdd::Node(n) => {
                                 if !matches!(n.hi, Bdd::Leaf(true)) {
-                                    return false;
+                                    return None;
                                 }
                                 out.push(n.atom.clone());
                                 x = &n.lo;
@@ -1432,8 +1523,7 @@ impl<A: Literal> Part<A> {
                 }
             }
         }
-        let mut out = Vec::new();
-        go(self, &mut HashSet::new(), &mut out).then_some(out)
+        Some(out)
     }
 
     /// The id of an expression; a diagram part has none of its own.
@@ -2010,7 +2100,6 @@ mod tests {
         // branches that dominate `true` took the nearest common dominator of `m` branches at
         // growing depths, walking up one step at a time: `O(m²)`.
         std::thread::Builder::new()
-            .stack_size(1 << 28)
             .spawn(|| {
                 // Built node by node, the atoms in their order: a union or intersection counts
                 // the nodes of its result. `w` is the first atom, `z` the last.
@@ -2129,7 +2218,7 @@ mod tests {
         };
         let nodes = |b: &Bdd<Row>| {
             let mut count = 0;
-            b.atoms(&mut |_| {
+            b.atoms_unseen(&mut HashSet::new(), &mut |_| {
                 count += 1;
                 true
             });
@@ -2157,7 +2246,6 @@ mod tests {
         // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
         // below, so comparing operand by operand met the bottom `2^depth` times.
         std::thread::Builder::new()
-            .stack_size(1 << 28)
             .spawn(|| {
                 let build = |depth: usize| {
                     let mut x = Part::literal(atom(0));
@@ -2430,5 +2518,118 @@ mod tests {
                 assert_eq!(a.cmp(b), Ordering::Equal);
             },
         );
+    }
+
+    /// `x_0 | x_1 | … | x_{m-1}` as expressions nested `m - 1` deep, the first operand the
+    /// deeper, each `x_k` the part `leaf` makes of the atom `base + k`.
+    fn ors(base: u64, m: usize, leaf: impl Fn(Row) -> Part<Row>) -> Part<Row> {
+        (1..m as u64).fold(leaf(atom(base)), |e, k| {
+            Part::expr(Form::Or(e, leaf(atom(base + k))))
+        })
+    }
+
+    /// `t | y_1 | … | y_{m-1}` as expressions nested `m - 1` deep, and `!t`: `t` is the
+    /// complement of the atom `base` kept as an expression, and `y_k` the diagram of the
+    /// atoms `base + 2k - 1` and `base + 2k`, which is no chain under `|`, so that no union
+    /// rebuilt from them merges into a diagram. [`Part::settle`] pins `t` to `false` and
+    /// rebuilds the `m - 1` expressions above it.
+    fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
+        let t = Part::expr(Form::Not(Part::literal(atom(base))));
+        let p = (1..m as u64).fold(t.clone(), |e, k| {
+            let [x, y] = [2 * k - 1, 2 * k].map(|i| Bdd::literal(atom(base + i)));
+            Part::expr(Form::Or(e, Part::Bdd(x.zip(&y, Op::And))))
+        });
+        Part::expr(Form::And(p, Part::expr(Form::Not(t))))
+    }
+
+    /// The diagram `x_0 & x_1 & … & x_{m-1}`, one node per atom, `m` deep, the atoms from
+    /// `base`, built from the bottom.
+    fn meet(base: u64, m: usize) -> Bdd<Row> {
+        let mut xs: Vec<Row> = (0..m as u64).map(|k| atom(base + k)).collect();
+        xs.sort();
+        xs.into_iter()
+            .rev()
+            .fold(Bdd::Leaf(true), |b, x| Bdd::node(x, b, Bdd::Leaf(false)))
+    }
+
+    /// The walks on expressions and diagrams nested this deep, on a 2 MiB stack.
+    const DEEP: usize = 100_000;
+
+    #[test]
+    fn the_walks_over_parts_nested_deep_run_on_a_small_stack() {
+        // Each walk was a recursion, which overflowed this stack (see the negative control in
+        // STATUS.md, T2-types-rest part 3); each is now a loop with a stack of its own.
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(|| {
+                let p = ors(0, DEEP, Part::literal);
+                assert_eq!(p.union_rows().map(|r| r.len()), Some(DEEP));
+                assert!(!p.eval(&|_| false));
+                assert!(p.eval(&|a| *a == atom(0)));
+                assert_eq!(p.eval3(&|_| None), None);
+                assert_eq!(p.eval3(&|a| Some(*a == atom(0))), Some(true));
+                assert_eq!(p.distinct_atoms().len(), DEEP);
+                assert_eq!(p.forced(), (Vec::new(), Vec::new()));
+                let only = |x: Row| move |a: &Row| (*a != x).then_some(false);
+                assert_eq!(p.restrict(&only(atom(0))), Part::literal(atom(0)));
+                let q = settled_by_one_pin(0, DEEP);
+                assert_eq!(q.settle().distinct_atoms().len(), 2 * (DEEP - 1));
+                let b = Part::Bdd(meet(0, DEEP));
+                assert_eq!(b.eval3(&|_| None), None);
+                assert_eq!(b.eval3(&|_| Some(true)), Some(true));
+                assert_eq!(b.distinct_atoms().len(), DEEP);
+                assert_eq!(b.restrict(&|_| None), b);
+                let all_but = |x: Row| move |a: &Row| (*a != x).then_some(true);
+                assert_eq!(b.restrict(&all_but(atom(0))), Part::literal(atom(0)));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn the_walks_over_parts_scale() {
+        let n = 1 << 12;
+        let sizes = [n, scaling::FACTOR * n];
+        let ors: BTreeMap<usize, Part<Row>> = sizes
+            .map(|m| (m, ors(10 * m as u64, m, Part::literal)))
+            .into();
+        let pins: BTreeMap<usize, Part<Row>> = sizes
+            .map(|m| (m, settled_by_one_pin(20 * m as u64, m)))
+            .into();
+        let meets: BTreeMap<usize, Part<Row>> =
+            sizes.map(|m| (m, Part::Bdd(meet(30 * m as u64, m)))).into();
+        scaling::check("eval of an expression, by depth", n, |m| {
+            assert!(!ors[&m].eval(&|_| false));
+        });
+        scaling::check("eval3 of an expression and a diagram, by depth", n, |m| {
+            assert_eq!(ors[&m].eval3(&|_| None), None);
+            assert_eq!(meets[&m].eval3(&|_| None), None);
+        });
+        scaling::check(
+            "the atoms of an expression and a diagram, by depth",
+            n,
+            |m| {
+                assert_eq!(ors[&m].distinct_atoms().len(), m);
+                assert_eq!(meets[&m].distinct_atoms().len(), m);
+            },
+        );
+        scaling::check("the union's rows, by depth", n, |m| {
+            assert_eq!(ors[&m].union_rows().map(|r| r.len()), Some(m));
+        });
+        scaling::check("the forced atoms of an expression, by depth", n, |m| {
+            assert_eq!(ors[&m].forced(), (Vec::new(), Vec::new()));
+        });
+        scaling::check(
+            "restricting an expression and a diagram, by depth",
+            n,
+            |m| {
+                assert_eq!(ors[&m].restrict(&|_| Some(false)), Part::leaf(false));
+                assert_eq!(meets[&m].restrict(&|_| None), meets[&m]);
+            },
+        );
+        scaling::check("settling on one pin, by depth", n, |m| {
+            assert_eq!(pins[&m].settle().distinct_atoms().len(), 2 * (m - 1));
+        });
     }
 }

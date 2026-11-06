@@ -115,7 +115,6 @@ fn swapped(d: usize) -> Type {
 fn big(f: impl FnOnce() + Send) {
     std::thread::scope(|s| {
         std::thread::Builder::new()
-            .stack_size(1 << 28)
             .spawn_scoped(s, f)
             .unwrap()
             .join()

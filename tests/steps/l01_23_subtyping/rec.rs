@@ -338,7 +338,6 @@ fn recursive_definitions_scale() {
             .collect()
     }
     std::thread::Builder::new()
-        .stack_size(1 << 29)
         .spawn(|| {
             scaling::check("chain of definitions", 100, |d| {
                 let t = one(chain(d));

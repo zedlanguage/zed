@@ -77,7 +77,6 @@ fn a_decision_tree_is_decided_in_time_linear_in_its_size() {
     // the columns reversed. The types are built before the runs, and each run forgets what was
     // decided, so it measures the decision alone.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             for reversed in [false, true] {
                 let built: BTreeMap<usize, Type> = [32, 256]

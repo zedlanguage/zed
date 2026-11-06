@@ -39,7 +39,6 @@ fn run(c: usize, atom: fn(usize) -> Type) {
 #[test]
 fn the_parts_scale() {
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             scaling::check("morphism differences, by count", 16, |c| run(c, morphism));
             scaling::check("tuple differences, by count", 16, |c| run(c, pair));
@@ -77,7 +76,6 @@ fn a_product_covered_by_its_cells_scales() {
     // another's results. Below about 512 cells fixed costs dominate building the grid, so
     // its ratio from 64 cells is near 15 alone and passed 24 under the full suite's load.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check("a grid and its cells, by cell count", 512, |c| {
@@ -131,7 +129,6 @@ fn passing_over_disjoint_negated_types_scales() {
     // pieces. Each
     // run takes a new `b`, so no run reads another's results.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             let bit = &lit(0) | &lit(1);
             let bits = |k: usize, i: usize| {
@@ -185,7 +182,6 @@ fn many_negated_types_passed_over_scale() {
     // kept in the order decided, and only those since the query began are dropped. Each run
     // takes a new `b`, so no run reads another's results.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check("a product less n tuples passed over, by n", 1000, |n| {
@@ -224,7 +220,6 @@ fn nested_tuples_scale() {
     // now ordered by a hash of their contents, kept in each when it is made. From depth 100
     // the small run took a millisecond, and the ratio under the full suite's load reached 43.
     std::thread::Builder::new()
-        .stack_size(1 << 29)
         .spawn(|| {
             let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check("a nested tuple and a query on it, by depth", 400, |d| {
@@ -373,7 +368,6 @@ fn a_decision_tree_is_decided_in_polynomial_time() {
     // components written: 2.1 s at `c = 128`. A split now tests again only the rows open on
     // the column it changed: `O(c²)`, linear in `N`.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             let fresh = std::sync::atomic::AtomicUsize::new(1);
             scaling::check_order("a decision tree, by column count", 16, 2, |c| {
@@ -733,7 +727,6 @@ fn pinwheels_with_a_cofinite_scalar_end_beside_payload_ends_scale() {
     // timing. Measured from k = 16 to 128, empty: 106M to 891M instructions (8.4 times); with
     // the old rule, 441M to 23,266M (52.8 times) and 46.4 times the bytes.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             for (full, want, how) in [
                 (true, Verdict::Empty, "empty"),
@@ -766,7 +759,6 @@ fn payload_and_one_tuple_pinwheels_scale() {
     // time, which is quadratic in the nodes of the diagram: with one-tuple ends and a middle,
     // 25.1 times the work from k = 64 to 512. It is built by halves.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             for end in [End::Payload, End::OneTuple] {
                 scaling::check(
@@ -840,7 +832,6 @@ fn pinwheels_whose_ends_repeat_an_integer_scale() {
     // With the two `b + 1` one shared type: 662M, 9,051M and 36,294M instructions at k = 16,
     // 64 and 128 for `#e((b + 1, b + 5))`; built apart, 145M, 598M and 1,235M.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             for (pair, shared) in [(false, true), (true, true), (true, false)] {
                 scaling::check(
@@ -914,7 +905,6 @@ fn pinwheels_joined_in_one_class_are_decided_at_quadratic_cost() {
     // and 803M); one first component, 1,170M, 15,893M and 62,927M. COMPLEXITY.md K36. The
     // family of one first component is the test below, so each test runs under 30 s.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             scaling::check_order("k pinwheels, one end outside, empty, by k", 8, 2, |k| {
                 Type::forget_emptiness();
@@ -931,7 +921,6 @@ fn pinwheels_joined_in_one_class_are_decided_at_quadratic_cost() {
 fn pinwheels_sharing_a_first_component_are_decided_at_quadratic_cost() {
     // As above, for the family of one first component.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             scaling::check_order("k pinwheels, one first component, empty, by k", 8, 2, |k| {
                 Type::forget_emptiness();
@@ -952,7 +941,6 @@ fn a_union_of_disjoint_pinwheels_is_decided_piece_by_piece() {
     // cells on the first component fall into one class per pinwheel, sharing no integer, and
     // the halves of the classes are decided and searched apart.
     std::thread::Builder::new()
-        .stack_size(1 << 28)
         .spawn(|| {
             scaling::check("k disjoint pinwheels, empty, by k", 64, |k| {
                 Type::forget_emptiness();
