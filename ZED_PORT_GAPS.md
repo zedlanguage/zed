@@ -1800,3 +1800,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `HashMap` memo filled during a walk, keyed by a cell's word (`i64`) or number (`usize`), whose values are terms that share their bodies through `Arc` | `Lets::closures`, `hooks::term`, `term_of`, `Machine::term` | Mutation; Identity (Gap 1) for the key | A map `Int ->? Term` threaded through the walk's state receiver; the key is the cell's number, which the runtime would expose as an identity |
+
+## Entries from README-fences (`tests/src/readme.rs`, `tests/steps/l01_07_fences/readme/`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An index loop over the line's bytes that finds the first `//` outside a string literal, a `Peekable<Chars>` scan of tags and entities, and `str::find` over the HTML of cells | `comment`, `text_of`, `cells` | None | A fold over the string's code points with the state in the accumulator |
+| `let … else { continue }` to skip a fence with no entry | `the_enabled_readme_fences_run_with_their_stated_results` | None | A `match` on the lookup's `#notFound` |

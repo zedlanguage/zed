@@ -4,8 +4,9 @@
 //! tests key it, so an edit in one section moves no other section's keys), and the syntactic
 //! grammar, the documentation notation, the lexical grammar and the desugaring rules into
 //! `zed/grammar` (step L1.8), and the row names of the rejection table into
-//! `zed/fences/rejections.txt`. With `--check` it writes nothing and fails if a copy is out of
-//! date.
+//! `zed/fences/rejections.txt`. It also copies the `zed` fences of this repository's `README.md`
+//! into `zed/fences/readme.md` the same way (item README-fences). With `--check` it writes
+//! nothing and fails if a copy is out of date.
 //!
 //! CI does not read the spec repository, so the copies are the fixtures; run this by hand after
 //! the spec changes. The layer is computed as the M0.4 layer checker computes a corpus
@@ -71,11 +72,12 @@ fn layer_of(text: &str, spec: &Spec, table: &WordTable) -> Result<FenceLayer, St
     })
 }
 
-/// The copy of the fences of the document at `path`.
-fn render(path: &str, spec: &Spec, table: &WordTable) -> Result<String, String> {
+/// The copy of the fences of the document at `path`, whose first line names the document as
+/// `whose` followed by its file name.
+fn render(path: &str, whose: &str, spec: &Spec, table: &WordTable) -> Result<String, String> {
     let name = base_name(path);
     let mut out = format!(
-        "<!-- The `zed` fences of the spec's {name}, copied by the sync tool: do not edit. -->\n"
+        "<!-- The `zed` fences of {whose}{name}, copied by the sync tool: do not edit. -->\n"
     );
     for f in zed_fences(path)? {
         let l = layer_of(&f.text, spec, table).map_err(|e| format!("{name}:{}: {e}", f.line))?;
@@ -105,7 +107,22 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     let check = args.iter().any(|a| a == "--check");
     let rest: Vec<&String> = args.iter().filter(|a| *a != "--check").collect();
     let spec = Spec::open(rest.first().ok_or("usage: sync SPEC_DIR [--check]")?)?;
-    sync_into(&spec, &format!("{}/zed", impl_root()), check, out)
+    let root = impl_root();
+    let spec_ok = sync_into(&spec, &format!("{root}/zed"), check, out)?;
+    let readme_ok = sync_readme(&spec, &root, check, out)?;
+    Ok(spec_ok && readme_ok)
+}
+
+/// Copies the fences of `README.md` under `root` into `zed/fences/readme.md` under `root`, each
+/// with its layer computed against `spec`.
+pub fn sync_readme(spec: &Spec, root: &str, check: bool, out: &mut String) -> Outcome {
+    let table = WordTable::read(&spec.design)?;
+    let copy = render(&format!("{root}/README.md"), "", spec, &table)?;
+    refresh(
+        vec![(format!("{root}/zed/fences/readme.md"), copy)],
+        check,
+        out,
+    )
 }
 
 /// The rows of the rejection table of DESIGN sec:diagnostics (step L1.29), one per line: each
@@ -131,14 +148,14 @@ fn rejections(design: &str) -> String {
 pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outcome {
     let table = WordTable::read(&spec.design)?;
     let root = &spec.root;
-    let copies = [
+    let copies = vec![
         (
             format!("{zed}/fences/design.md"),
-            render(&format!("{root}/DESIGN.md"), spec, &table)?,
+            render(&format!("{root}/DESIGN.md"), "the spec's ", spec, &table)?,
         ),
         (
             format!("{zed}/fences/examples.md"),
-            render(&format!("{root}/EXAMPLES.md"), spec, &table)?,
+            render(&format!("{root}/EXAMPLES.md"), "the spec's ", spec, &table)?,
         ),
         (
             format!("{zed}/grammar/syntax.peg"),
@@ -161,6 +178,12 @@ pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outco
             rejections(&read_text(&spec.design)?),
         ),
     ];
+    refresh(copies, check, out)
+}
+
+/// Writes each copy `(dest, want)` whose file does not already hold `want`, or with `check` only
+/// names it; fails with `check` if any is out of date.
+fn refresh(copies: Vec<(String, String)>, check: bool, out: &mut String) -> Outcome {
     let mut stale = false;
     for (dest, want) in copies {
         if read_text(&dest).ok().as_ref() == Some(&want) {

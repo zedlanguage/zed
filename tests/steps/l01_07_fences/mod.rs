@@ -5,4 +5,5 @@
 mod copies;
 mod extractor;
 mod keys;
+mod readme;
 mod scaling;

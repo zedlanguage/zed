@@ -1,0 +1,802 @@
+== README.md [Step 1: the data] 1
+table input: `sales`
+| region | day | sku | quantity |
+| East | 0 | ink | 2 |
+| East | 0 | pen | 5 |
+| East | 1 | pen | 3 |
+| West | 0 | pad | 1 |
+| West | 0 | pen | 4 |
+| West | 1 | ink | 6 |
+table input: `prices`
+| sku | price |
+| ink | 7 |
+| pen | 2 |
+
+== README.md [Step 2: looking up a keypath] 1
+runs from L7: it reads the input sales, declared in Step 1, whose fence is of layer L7
+table `eastPens`, `northPens` and `northOrZero`
+| eastPens | northPens | northOrZero |
+| 5 | #notFound | 0 |
+
+== README.md [Step 3: revenue per sale] 1
+table `revenue`
+| region | day | sku | revenue |
+| East | 0 | ink | 14 |
+| East | 0 | pen | 10 |
+| East | 1 | pen | 6 |
+| West | 0 | pad | #notFound |
+| West | 0 | pen | 8 |
+| West | 1 | ink | 42 |
+
+== README.md [Step 4: sales with no price] 1
+table `flat`
+| (region, day, sku) | r |
+| ("East", 0, "ink") | 14 |
+| ("East", 0, "pen") | 10 |
+| ("East", 1, "pen") | 6 |
+| ("West", 0, "pad") | #notFound |
+| ("West", 0, "pen") | 8 |
+| ("West", 1, "ink") | 42 |
+table `unpriced`
+| (region, day, sku) | r |
+| ("West", 0, "pad") | #notFound |
+
+== README.md [Step 5: daily totals] 1
+runs from L8: its variant reads revenue, defined in Step 3, whose fence is of layer L8
+table `revenue` with the `sku` level removed
+| region | day | r | sku it came from |
+| East | 0 | 14 ✗ | ink |
+| East | 0 | 10 ✗ | pen |
+| East | 1 | 6 | pen |
+| West | 0 | #notFound ✗ | pad |
+| West | 0 | 8 ✗ | pen |
+| West | 1 | 42 | ink |
+text
+> error: this remap would map one key to many values
+>   the `(region, day, sku)` keypaths collapse onto `(region, day)`, but their values survive.
+>   drop the values too:         into (region -> day -> sku -> _)
+>   or keep the inner key:       into (region -> day -> sku -> r)
+>   or say how the values merge: into (region -> day -> sku >< op -> r)
+table What each repair gives at `("East", 0)`
+| Repair | into pattern | Value at ("East", 0) |
+| drop the values | (region -> day -> sku -> _) | the skus ink and pen, with no revenue |
+| keep the sku level | (region -> day -> sku -> r) | ink → 14, pen → 10, as in revenue |
+| merge with + | (region -> day -> sku >< (+) -> r) | 24 |
+
+== README.md [Step 6: adding values that may be failures] 1
+runs from L8: its variant reads revenue, defined in Step 3, whose fence is of layer L8
+table `revenue["West"][0]`
+| sku | r |
+| pad | #notFound ✗ |
+| pen | 8 |
+
+== README.md [Step 6: adding values that may be failures] 2
+table `daily` before summing over `sku`
+| region | day | sku | r else 0 |
+| East | 0 | ink | 14 |
+| East | 0 | pen | 10 |
+| East | 1 | pen | 6 |
+| West | 0 | pad | 0 |
+| West | 0 | pen | 8 |
+| West | 1 | ink | 42 |
+table `daily`
+| region | day | total |
+| East | 0 | 24 |
+| East | 1 | 6 |
+| West | 0 | 8 |
+| West | 1 | 42 |
+
+== README.md [Step 7: totals per region] 1
+table `regionTotals`
+| region | total |
+| East | 30 |
+| West | 50 |
+
+== README.md [Step 8: units sold per product] 1
+table `lines`
+| (region, day, sku) | line |
+| ("East", 0, "ink") | { sku: "ink", q: 2 } |
+| ("East", 0, "pen") | { sku: "pen", q: 5 } |
+| ("East", 1, "pen") | { sku: "pen", q: 3 } |
+| ("West", 0, "pad") | { sku: "pad", q: 1 } |
+| ("West", 0, "pen") | { sku: "pen", q: 4 } |
+| ("West", 1, "ink") | { sku: "ink", q: 6 } |
+table `sold`
+| sku | units |
+| ink | 8 |
+| pad | 1 |
+| pen | 12 |
+
+== README.md [Step 9: a running total] 1
+table `east`
+| day | total |
+| 0 | 24 |
+| 1 | 6 |
+table `running`
+| i | running |
+| 0 | 24 |
+| 1 | 30 |
+
+== README.md [Step 10: the change from the day before] 1
+table `trend`, one row per step
+| t | prev | change |
+| 0 | 24 | 24 |
+| 1 | 6 | -18 |
+table `trend.prev`, `trend.change` and `trend::len`
+| trend.prev | trend.change | trend::len |
+| 6 | -18 | 2 |
+
+== README.md [Step 11: pens left on the shelf] 1
+table `eastPenDays`
+| day | pens |
+| 0 | 5 |
+| 1 | 3 |
+table `stock`, one row per step
+| t | before | s.pens in the next step |
+| 0 | 20 | 15 |
+| 1 | 15 | 12 |
+table `stock.s.pens` and `stock::len`
+| stock.s.pens | stock::len |
+| 12 | 2 |
+
+== README.md [Step 12: the mass of the shipment] 1
+comment penMass = 20 with units("g"); // one pen
+comment crateMass = 1 with units("kg"); // the crate they ship in
+table `penMass`, `crateMass`, `shipped` and `load`
+| penMass | crateMass | shipped | load |
+| 20 g | 1 kg | 240 g | 1240 g |
+
+== README.md [Step 13: the whole calculation] 1
+table `regionTotals`
+| region | total |
+| East | 30 |
+| West | 50 |
+
+== README.md [A complete program] 1
+table `counts` after `.split(" ")`
+| i | w |
+| 0 | to |
+| 1 | be |
+| 2 | or |
+| 3 | not |
+| 4 | to |
+| 5 | be |
+table `counts` after `.group(w -> w.lower)`
+| w.lower | i | w |
+| be | 1 | be |
+| be | 5 | be |
+| not | 3 | not |
+| or | 2 | or |
+| to | 0 | to |
+| to | 4 | to |
+table `counts` after `.count`
+| w | n |
+| be | 2 |
+| not | 1 |
+| or | 1 |
+| to | 2 |
+table `lines`
+| rank | w | line |
+| 0 | be | be: 2 |
+| 0 | to | to: 2 |
+| 1 | not | not: 1 |
+| 1 | or | or: 1 |
+table `lines.rank`
+| i | line |
+| 0 | be: 2 |
+| 1 | to: 2 |
+| 2 | not: 1 |
+| 3 | or: 1 |
+
+== README.md [Bindings] 1
+comment port: int[1..=65535] = 8080; // an integer from 1 through 65535, both included
+text
+> total = 36, port = 8080
+
+== README.md [Functions] 1
+comment a = 5.double.clamp(0, 8); // 8
+comment b = greet("Ann", punct: "?"); // "Hi, Ann?"
+comment hi = greet("Ann", ...); // a function still waiting for punct
+text
+> a = 8, because 5.double is 10 and clamp(0, 8) caps it
+> b = "Hi, Ann?"
+> hi(punct: ".") = "Hi, Ann."
+> hi() = "Hi, Ann!"
+
+== README.md [Numbers] 1
+comment big = 2 ** 100; // 2 to the power 100, the exact integer, with no overflow
+check big == 1267650600228229401496703205376
+comment third = 1r / 3r; // an exact rational
+check third * 3r == 1r
+comment half = 1.0 / 2.0; // f64
+check half == 0.5
+comment q = 7 div 2; // 3
+check q == 3
+comment ratio = f64(q) / 2.0; // conversions are written out
+no check: it explains the line and states no value
+text
+> big   = 1267650600228229401496703205376
+> third = exactly one third
+> half  = 0.5, q = 3, ratio = 1.5
+check big == 1267650600228229401496703205376
+check third * 3r == 1r
+check half == 0.5
+check q == 3
+check ratio == 1.5
+
+== README.md [Strings] 1
+comment line = "total: ${2 + 3}"; // "total: 5"
+comment z = name::codepoints[0]; // the first code point, a char32
+text
+> line = "total: 5", title = "nevertheless", z = char32("Z")
+
+== README.md [Structs] 1
+text
+> p = Point(x: 1.0, y: 2.0), unchanged
+> moved = Point(x: 3.0, y: 2.0)
+> unit = Circle(center: Point(x: 1.0, y: 2.0), radius: 1.0)
+> size = the square root of 5.0, about 2.236
+
+== README.md [Atoms, unions and match] 1
+text
+> input: Circle with radius 2.0, Rect from (0.0, 0.0) to (3.0, 2.0), #red
+> area of the Circle = 4 pi, about 12.566
+> area of the Rect   = 6.0
+> next(#red)         = #green
+
+== README.md [Generics and interfaces] 1
+text
+> input: s = [1, 2], x = 3, n = { name: "Ann" }
+> push(s: [1, 2], x: 3) = [1, 2, 3]
+> top(s: [1, 2, 3])     = 3
+> top(s: [])            = #none
+> hello(n)              = "Hi, Ann"
+
+== README.md [Modules] 1
+text
+> far = 5.0, if geometry.shapes defines dist as straight-line distance
+> (the snippet doesn't show that module)
+
+== README.md [`else` and `?.`] 1
+text
+> input: text parses, with server.port = 9000
+> conf = the parsed Config, port = 9000
+>
+> input: text gives #syntaxError(pos: 3)
+> conf = defaultConfig, port = 8080
+
+== README.md [Failures in a pipeline] 1
+table input: `files`
+| i | file |
+| 0 | a.cfg |
+| 1 | b.cfg |
+| 2 | c.cfg |
+table `results` after `.map(f -> read(f))`
+| i | value |
+| 0 | a.cfg's text |
+| 1 | #ioError(...) |
+| 2 | c.cfg's text |
+table `results` after `.map(t -> parse(t))`
+| i | value |
+| 0 | Config |
+| 1 | #ioError(...) |
+| 2 | #syntaxError(pos: 3) |
+table `good`
+| i | value |
+| 0 | Config |
+table `bad`
+| i | value |
+| 1 | #ioError(...) |
+| 2 | #syntaxError(pos: 3) |
+
+== README.md [Failures in a pipeline] 2
+comment amounts = files.map(f -> int(read(f))); // int(s) converts text to an int, and can fail
+
+== README.md [Failures in a pipeline] 3
+comment sum1 = amounts.where(a -> a is int) >< (+); // skip the failures
+comment sum2 = amounts.map(a -> a else 0) >< (+); // count them as zero
+comment sum3 = amounts.allOk >< (+); // the sum, or all the failures
+text
+> input: amounts = 3, #ioError(...), 4
+> sum1 = 7
+> sum2 = 7
+> sum3 = #ioError(...)
+>
+> input: amounts = 3, 5, 4
+> sum1 = sum2 = sum3 = 12
+
+== README.md [Everything is a map] 1
+comment xs = [3, 1, 4, 1, 5]; // int[0..<5] -> int: keys from 0 up to but not including 5
+comment ages = { "Ann" -> 36, "Bob" -> 41 }; // exact keys {"Ann", "Bob"}, int values
+comment tags = { #red, #green }; // a set: a map from each member to itself
+comment first = xs[0]; // 3: the index is known to be in range
+comment ann = ages["Ann"]; // 36: the key is known to be there
+comment age = ages[name] else 0; // name is known only at run time
+comment tens = xs.map(x -> x * 10); // the same keys, new values
+comment big = tens.where(x -> x > 20); // the keys that pass keep their values: 0, 2, 4
+comment sorted = tens.sort(desc x -> x); // new keys 0 to 4; equal values stay in their old order
+text
+> input: name = "Ann", then name = "Zed"
+> first = 3, ann = 36, tags = { #green, #red }
+> age = 36, then age = 0
+table `tens`
+| i | x |
+| 0 | 30 |
+| 1 | 10 |
+| 2 | 40 |
+| 3 | 10 |
+| 4 | 50 |
+table `big`
+| i | x |
+| 0 | 30 |
+| 2 | 40 |
+| 4 | 50 |
+table `sorted`
+| rank | x |
+| 0 | 50 |
+| 1 | 40 |
+| 2 | 30 |
+| 3 | 10 |
+| 4 | 10 |
+
+== README.md [Grouping] 1
+comment byCity = users.group(u -> u.city); // City ->? (UserId -> User)
+table input: `users`
+| id | user |
+| 1 | Ann, Oslo |
+| 2 | Bob, Lima |
+| 3 | Cid, Oslo |
+table `byCity`
+| city | id | user |
+| Lima | 2 | Bob, Lima |
+| Oslo | 1 | Ann, Oslo |
+| Oslo | 3 | Cid, Oslo |
+
+== README.md [Remapping] 1
+table input: `matrix`
+| r | c | v |
+| 0 | 0 | 1 |
+| 0 | 1 | 2 |
+| 0 | 2 | 3 |
+| 1 | 0 | 4 |
+| 1 | 1 | 5 |
+| 1 | 2 | 6 |
+table `transposed`
+| c | r | v |
+| 0 | 0 | 1 |
+| 0 | 1 | 4 |
+| 1 | 0 | 2 |
+| 1 | 1 | 5 |
+| 2 | 0 | 3 |
+| 2 | 1 | 6 |
+table input: `scores`
+| name | s |
+| Ann | 90 |
+| Bob | 70 |
+| Cid | 90 |
+table input: `sales`
+| region | sku | amount |
+| East | A1 | 5 |
+| East | B2 | 3 |
+| West | A1 | 2 |
+table `totals`
+| region | amount |
+| East | 8 |
+| West | 2 |
+table `sales` with the `sku` level removed
+| region | amount | sku it came from |
+| East | ✗ 5 | A1 |
+| East | ✗ 3 | B2 |
+| West | 2 | A1 |
+text
+> error: this remap would map one key to many values
+>   the `(region, sku)` keypaths collapse onto `region`, but their values survive.
+>   drop the values too:         into (region -> sku -> _)
+>   or keep the inner key:       into (region -> sku -> amount)
+>   or say how the values merge: into (region -> sku >< op -> amount)
+
+== README.md [Remapping] 2
+table input: `revenue`
+| region | year | sku | amount |
+| East | 2024 | A1 | 5 |
+| East | 2024 | B2 | 3 |
+| East | 2025 | A1 | 4 |
+| West | 2025 | A1 | 2 |
+table `bySku`
+| sku | region | year | amount |
+| A1 | East | 2024 | 5 |
+| A1 | East | 2025 | 4 |
+| A1 | West | 2025 | 2 |
+| B2 | East | 2024 | 3 |
+table `perYear` before summing over `region`
+| sku | year | region | amount |
+| A1 | 2024 | East | 5 |
+| A1 | 2025 | East | 4 |
+| A1 | 2025 | West | 2 |
+| B2 | 2024 | East | 3 |
+table `perYear` after summing over `region`
+| sku | year | amount |
+| A1 | 2024 | 5 |
+| A1 | 2025 | 6 |
+| B2 | 2024 | 3 |
+table `years`
+| region | year | year |
+| East | 2024 | 2024 |
+| East | 2025 | 2025 |
+| West | 2025 | 2025 |
+table `years`, read as which keypaths exist
+| region | year | exists |
+| East | 2024 | yes |
+| East | 2025 | yes |
+| West | 2025 | yes |
+table `bad`, the levels moved and `region` removed
+| sku | year | amount | region it came from |
+| A1 | 2024 | 5 | East |
+| A1 | 2025 | ✗ 4 | East |
+| A1 | 2025 | ✗ 2 | West |
+| B2 | 2024 | 3 | East |
+
+== README.md [Reducing] 1
+table input: `readings`
+| i | value |
+| 0 | 2 |
+| 1 | 5 |
+| 2 | 3 |
+table `total`
+| total |
+| 10 |
+table input: `words`
+| i | w |
+| 0 | to |
+| 1 | be |
+| 2 | not |
+table `longest` before `>< max`
+| i | len |
+| 0 | 2 |
+| 1 | 2 |
+| 2 | 3 |
+table `longest` after `>< max`
+| longest |
+| 3 |
+table input: `sales`
+| i | sale |
+| 0 | East, pen, 5 |
+| 1 | West, pen, 2 |
+| 2 | East, ink, 3 |
+| 3 | East, pen, 4 |
+table `pivot` before summing over `i`
+| region | product | i | amount |
+| East | ink | 2 | 3 |
+| East | pen | 0 | 5 |
+| East | pen | 3 | 4 |
+| West | pen | 1 | 2 |
+table `pivot` after summing over `i`
+| region | product | amount |
+| East | ink | 3 |
+| East | pen | 9 |
+| West | pen | 2 |
+
+== README.md [Reducing] 2
+table input: `values`
+| i | x |
+| 0 | 1r |
+| 1 | 2r |
+| 2 | 3r |
+table `m` before `>< combine`
+| i | value |
+| 0 | Moments(n: 1, sum: 1r) |
+| 1 | Moments(n: 1, sum: 2r) |
+| 2 | Moments(n: 1, sum: 3r) |
+table `m` after `>< combine`
+| m |
+| Moments(n: 3, sum: 6r) |
+
+== README.md [Pushing into a map] 1
+comment same = words.group(w -> w.len).count; // the same table, written as a pull
+table input: `words`
+| i | w |
+| 0 | a |
+| 1 | to |
+| 2 | be |
+| 3 | not |
+table `hist` pushes
+| i | push |
+| 0 | [1] <- 1 |
+| 1 | [2] <- 1 |
+| 2 | [2] <- 1 |
+| 3 | [3] <- 1 |
+table `hist`
+| len | n |
+| 1 | 1 |
+| 2 | 2 |
+| 3 | 1 |
+table `same` before `.count`
+| len | i | w |
+| 1 | 0 | a |
+| 2 | 1 | to |
+| 2 | 2 | be |
+| 3 | 3 | not |
+table `same` after `.count`
+| len | n |
+| 1 | 1 |
+| 2 | 2 |
+| 3 | 1 |
+
+== README.md [Joins] 1
+table input: `orders`
+| orderId | order |
+| 1 | o1 |
+| 2 | o2 |
+| 3 | o3 |
+table input: `payments`
+| orderId | payment |
+| 1 | p1 |
+| 3 | p3 |
+table `paid`
+| orderId | value |
+| 1 | (o1, p1) |
+| 2 | (o2, #none) |
+| 3 | (o3, p3) |
+table `unpaid`
+| orderId | order |
+| 2 | o2 |
+table input: `shipments`
+| shipmentId | shipment |
+| 10 | s10, order 1 |
+| 11 | s11, order 1 |
+| 12 | s12, order 3 |
+table `shipped`
+| (orderId, shipmentId) | value |
+| (1, 10) | (o1, s10) |
+| (1, 11) | (o1, s11) |
+| (3, 12) | (o3, s12) |
+table `pairs`, for input `n = 3`
+| (i, j) | value |
+| (0, 1) | (0, 1) |
+| (0, 2) | (0, 2) |
+| (1, 2) | (1, 2) |
+
+== README.md [Chunks] 1
+table input: `clicks`
+| i | click |
+| 0 | ann, t=10 |
+| 1 | ann, t=12 |
+| 2 | bob, t=15 |
+| 3 | ann, t=20 |
+table `sessions` before `.map`
+| run | i | click |
+| 0 | 0 | ann, t=10 |
+| 0 | 1 | ann, t=12 |
+| 1 | 2 | bob, t=15 |
+| 2 | 3 | ann, t=20 |
+table `sessions` after `.map`
+| run | session |
+| 0 | Session(start: 10, count: 2) |
+| 1 | Session(start: 15, count: 1) |
+| 2 | Session(start: 20, count: 1) |
+
+== README.md [Vectors and matrices] 1
+comment scale(positional s: T, positional v: [T; n]) = s * v; // result: [T; n]
+comment c = a.matmul(b); // [f64; 2, 2]
+text
+> input: s = 2.0, v = [1.0, 2.0]
+> scale(2.0, [1.0, 2.0]) = [2.0, 4.0]
+table `c`
+| r | j | v |
+| 0 | 0 | 4.0 |
+| 0 | 1 | 5.0 |
+| 1 | 0 | 10.0 |
+| 1 | 1 | 11.0 |
+
+== README.md [Recurrences] 1
+table input: `xs`
+| i | x |
+| 0 | 3 |
+| 1 | 1 |
+| 2 | 4 |
+table `running`
+| i | v |
+| 0 | 3 |
+| 1 | 4 |
+| 2 | 8 |
+table `d`
+| i | j | v |
+| 0 | 0 | 0 |
+| 0 | 1 | 1 |
+| 1 | 0 | 1 |
+| 1 | 1 | 1 |
+table `d` as a grid, with its boundary values
+|  | j = -1 | j = 0 | j = 1 |
+| i = -1 | 0 | 1 | 2 |
+| i = 0 | 1 | 0 | 1 |
+| i = 1 | 2 | 1 | 1 |
+
+== README.md [Recurrences] 2
+table input: `xs`
+| i | x |
+| 0 | 2 |
+| 1 | -3 |
+| 2 | 4 |
+| 3 | -1 |
+| 4 | 2 |
+table `cur`
+| i | v |
+| 0 | 2 |
+| 1 | -1 |
+| 2 | 4 |
+| 3 | 3 |
+| 4 | 5 |
+table `state`
+| i | char | state |
+| 0 | a | #outsideQuotes |
+| 1 | " | #insideQuotes |
+| 2 | b | #insideQuotes |
+| 3 | " | #outsideQuotes |
+
+== README.md [Loops] 1
+table `sim::frames`
+| t | pos.x | vel.x |
+| 0 | 1 | 2 |
+| 1 | 3 | 3 |
+
+== README.md [Loops] 2
+table input: `edits`
+| t | edit |
+| 0 | e1 |
+| 1 | e2 |
+table `run::frames`
+| t | doc |
+| 0 | empty.patch(e1) |
+| 1 | that.patch(e2) |
+
+== README.md [Methods and the next value] 1
+text
+> after = Counter(n: 2, peak: 2), was = 0
+> start = Counter(n: 0, peak: 0), unchanged
+
+== README.md [Only what's needed runs] 1
+comment return { mean:, sd: }; // short for { mean: mean, sd: sd }
+comment m = stats([1.0, 2.0, 3.0]).mean; // sd is never computed
+text
+> stats([1.0, 2.0, 3.0]): n = 3.0, mean = 6.0 / 3.0 = 2.0
+> m = 2.0, and sd has not run
+>
+> firstPrime before .where = 2, 3, 4, 5, ...
+> firstPrime before .first = 2, 3, 5, ...
+> firstPrime = 2
+
+== README.md [Ports] 1
+text
+> input: req delivers q1, then q2
+> resp carries answer(q1), then answer(q2)
+
+== README.md [Timeouts and retries] 1
+text
+> input: key is in the cache
+> hit = the cached bytes
+>
+> input: key isn't in the cache, or the read fails, or 0.2 seconds pass
+> hit = fetch(key)
+
+== README.md [Databases] 1
+comment n = orders[id]?.note; // Utf8String | #none | #notFound | #dbError
+table input: `orders`
+| id | total | note |
+| 1 | 9r | "gift" |
+| 2 | 4r | NULL |
+table `n`, for each `id`
+| id | n |
+| 1 | "gift" |
+| 2 | #none |
+| 3 | #notFound |
+
+== README.md [Incremental updates] 1
+table input: `sales`
+| saleId | sale |
+| 7 | East, 5 |
+| 8 | West, 2 |
+| 9 | East, 3 |
+table `report` before `.map`
+| region | saleId | sale |
+| East | 7 | East, 5 |
+| East | 9 | East, 3 |
+| West | 8 | West, 2 |
+table `report` after `.map`
+| region | sum |
+| East | 8 |
+| West | 2 |
+
+== README.md [Ranges and refinements] 1
+comment width(positional s: Span) = s.hi - s.lo; // inferred: int[0..]
+text
+> input: s = Span(lo: 1, hi: 4)
+> width(s) = 3, a = 25
+
+== README.md [Units and taint] 1
+comment d = v * t; // has units "m"
+text
+> input: input = "<b>"
+> d = 6.0 in m
+> page = render of "<p>&lt;b&gt;</p>", if escapeHtml escapes as usual
+
+== README.md [Cost] 1
+text
+> input: [1.0, 2.0, 3.0], [3, 1, 2], 0.0, 10.0, 0.5
+> sumSquares([1.0, 2.0, 3.0]) = 14.0
+> ranked([3, 1, 2])           = [3, 2, 1]
+> lerp(0.0, 10.0, 0.5)        = 5.0
+>
+> These are the values. This page doesn't work out the bound that f::cost reads
+> for these functions, beyond what the @cost lines state.
+
+== README.md [Partial evaluation] 1
+text
+> ok, bad = constants in the compiled program, with no decoder call at run time
+
+== README.md [Reflection] 1
+comment sizes = Size::values; // {#large, #medium, #small}: atoms sort by name
+comment names = User::fields; // the fields of the User struct above, by name and type
+text
+> sizes = { #large, #medium, #small }
+> names = id, an int, and name, a Utf8String
+
+== README.md [Grammars] 1
+comment s = v.serialize; // "(1.0,2.0,3.0)"
+text
+> v = Vec3(x: 1.0, y: 2.0, z: 3.0), s = "(1.0,2.0,3.0)"
+>
+> input: "(oops)" in place of the literal
+> v = Vec3(x: 0.0, y: 0.0, z: 0.0), s = "(0.0,0.0,0.0)"
+
+== README.md [Grammars] 2
+comment value = Sum.parse("2*(3+4)")?.eval; // 14, or #syntaxError
+text
+> Sum.parse("2*(3+4)") = a Sum holding one Prod, of 2 and a Paren of 3 + 4
+> value = 14
+>
+> input: "2*(" in place of the literal
+> value = #syntaxError
+
+== README.md [Grammars] 3
+text
+> input: the bytes 00 00 00 01  49 44 41 54  2A  00 00 00 07
+> Chunk.parse(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2A, crc: 7)
+
+== README.md [Symbolic math] 1
+comment e = expand(p); // x ** 2 + 2r * x + 1r
+comment d = derivative(p); // 2r * x + 2r
+text
+> e = x ** 2 + 2r * x + 1r
+> d = 2r * x + 2r
+
+== README.md [Tests next to the code] 1
+text
+> double(0), double(2), double(-3) = 0, 4, -6, which match the table
+check double(0) == 0
+check double(2) == 4
+check double(-3) == -6
+
+== README.md [Laws] 1
+text
+> input: x = 3; a = 1, b = 2; xs = [3, 1, 2]
+> doubleIsSum(3): double(3) == 3 + 3, 6 == 6
+> addComm(1, 2): 1 + 2 == 2 + 1, 3 == 3
+> sortTwice([3, 1, 2]): sorting twice and once both give [1, 2, 3]
+>
+> These are single cases. Which grade
+> the build reports for each of these three laws isn't worked out here, since it
+> depends on the compiler's rewrites.
+
+== README.md [Model checking] 1
+table `reachable.R`
+| state | state |
+| Junction(ns: #green, ew: #red) | Junction(ns: #green, ew: #red) |
+| Junction(ns: #red, ew: #green) | Junction(ns: #red, ew: #green) |
+| Junction(ns: #red, ew: #red) | Junction(ns: #red, ew: #red) |
+
+== README.md [Calling C, and being called from C] 1
+text
+> input: a = 1.0, b = 0.0
+> root = 2.0, or 0.0 if the foreign call fails
+> score(1.0, 0.0) = 0.7, and C's zed_score(1.0, 0.0) returns the same
+

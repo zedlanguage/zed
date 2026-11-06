@@ -40,7 +40,7 @@ pub fn dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../zed/fences")
 }
 
-/// The fences of the copy `file` (`design.md` or `examples.md`), in order.
+/// The fences of the copy `file` (`design.md`, `examples.md` or `readme.md`), in order.
 pub fn of(file: &str) -> Vec<DocFence> {
     let md = std::fs::read_to_string(dir().join(file)).expect("the fence copy is readable");
     parse(&md)
@@ -86,6 +86,12 @@ pub fn all() -> Vec<DocFence> {
     let mut out = of("design.md");
     out.extend(of("examples.md"));
     out
+}
+
+/// The fences of this repository's README.md (item README-fences), in order. They are not among
+/// [`all`]: the page states its own results, and its tests compare them with the run.
+pub fn readme() -> Vec<DocFence> {
+    of("readme.md")
 }
 
 /// Every variant fixture, by name.
