@@ -242,13 +242,13 @@ fn clustering_of_random_points() {
     });
 }
 
-/// Random points on an n/8 by n/8 square, so about one point in eight equals an earlier one.
+/// Point i is (i mod 3, i mod 2), which fixes i mod 6: six distinct points, each about n/6 times
+/// in turn, so all but six points equal an earlier one. Three clusters: the merges join every
+/// set of equal points at distance 0, then stop after three of the seven pairs at distance 1.
 #[test]
 fn clustering_of_many_equal_points() {
     clustering_scales("clustering equal points", 1000, |n| {
-        let m = (n / 8) as u64;
-        let point = |i: usize| format!("{} {}", hash(2 * i + 1) % m, hash(2 * i + 2) % m);
-        format!("{}\n{}", n / 16, lines(n, point))
+        format!("3\n{}", lines(n, |i| format!("{} {}", i % 3, i % 2)))
     });
 }
 
