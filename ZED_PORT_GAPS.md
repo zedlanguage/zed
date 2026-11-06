@@ -1726,3 +1726,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | A cargo feature that adds a statement to a method, off in a release build | `Lin2::minus` under `counts` | No conditional compilation | A build mode of the unit, as for `printed-types`: the test build counts, the release build does not, both with one interface |
 | A `thread_local!` `Cell<u64>` that a method increments and a test reads before and after a call | `live3::counts::MINUS`, `live3::counts::minus` | Mutation (gap 11), global state | `solve2` returns the count of its subtractions beside its result, and the test reads it there |
+
+## Entries from INCR-script (`tests/steps/l01_30_queries/reuse.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Edits whose texts are `&'a str` slices of the script, so a script of n bytes is read without copying its texts | `Edit`, `Step`, `parse` | None | Zed shares values; a slice is a range of the script's string |
+| `str::match_indices` to find a text and check it occurs once, and `split_inclusive('\n')` to read lines with their ends | `parse`, `apply` | Library: DESIGN.md uses `split`, and names no word that finds every place of a substring | A stdlib word (catalog of step L2.11) that lists the places of a substring, and `split("\n")` |
+| `#[should_panic(expected = …)]`, a test that passes when its body stops with a given message | `a_replace_of_text_the_file_lacks_stops_the_script`, `a_replace_without_its_with_stops_the_script` | Missing (test harness) | A test-harness facility, not the language: a row whose expected outcome is the failure's message |
