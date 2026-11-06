@@ -50,7 +50,7 @@ fn a_failed_total_names_the_bad_quantity_and_the_missing_price_file() {
         o,
         [
             ("fs(\"price.txt\")".into(), "#notFound".into()),
-            ("int(tupleGet(stdin, 1))".into(), "#invalid".into()),
+            ("int(stdin[1])".into(), "#invalid".into()),
         ]
     );
 }
