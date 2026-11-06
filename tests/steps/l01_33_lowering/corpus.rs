@@ -5,8 +5,9 @@ use std::cell::Cell;
 use std::path::PathBuf;
 
 use zedc::testing::{test, test_through};
+use zedc::zir::canon::canonicalize;
 use zedc::zir::lower::{lower, raise};
-use zedc::zir::{text, validate};
+use zedc::zir::{binary, text, validate};
 
 fn units() -> Vec<PathBuf> {
     let steps = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps");
@@ -39,6 +40,15 @@ fn every_row_passes_through_zir() {
                 unread.set(unread.get() + 1);
             }
         }
+        // The binary form reads every lowered graph back, and its canonical form, whose binders
+        // are levels (`\0` and a number): it reads the binders the compiler makes.
+        assert_eq!(
+            binary::decode(&binary::encode(&g)).as_ref(),
+            Ok(&g),
+            "{printed}"
+        );
+        let c = canonicalize(&g);
+        assert_eq!(binary::decode(&binary::encode(&c)), Ok(c), "{printed}");
         lowered.set(lowered.get() + 1);
         ported.set(ported.get() + usize::from(!g.args.is_empty()));
         ev.run(&raise(&g)?).map_err(|e| e.to_string())

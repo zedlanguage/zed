@@ -619,8 +619,9 @@ fn word_len(s: &str) -> usize {
 /// Why `w` is not a name by the lexer's rule ([`lex::name_end`]: an `XID_Start` character, or
 /// `_` before an `XID_Continue` character, then `XID_Continue` characters and one prime at
 /// most), or `None` when it is one. The rule is the lexer's own function; the first character
-/// is looked at again here only to say which part of the rule `w` breaks.
-fn not_a_name(w: &str) -> Option<String> {
+/// is looked at again here only to say which part of the rule `w` breaks. The binary form
+/// ([`super::binary`]) checks its names with this function too.
+pub(super) fn not_a_name(w: &str) -> Option<String> {
     if lex::name_end(w, 0) == Some(w.len()) {
         return None;
     }
@@ -633,6 +634,19 @@ fn not_a_name(w: &str) -> Option<String> {
         _ => "",
     };
     Some(format!("`{w}` is not a name{why}"))
+}
+
+/// Why `w` is not a pattern binder, or `None` when it is one: a name, or a binder the compiler
+/// makes, which no written name can equal. Those are the elaborator's `$N` (elab.rs `temp`)
+/// and the canonical `\0N` (canon/binders.rs `level_name`), `N` a decimal number with no
+/// leading zero. The binary form reads binders by this function. This is the one place that
+/// says which made binders a reader accepts; the text form does not yet print them in a form
+/// it reads back (item ZIR-text-binders).
+pub(super) fn not_a_binder(w: &str) -> Option<String> {
+    let made = w.strip_prefix(['$', '\0']).is_some_and(|n| {
+        !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && (n == "0" || !n.starts_with('0'))
+    });
+    if made { None } else { not_a_name(w) }
 }
 
 impl<'a> P<'a> {

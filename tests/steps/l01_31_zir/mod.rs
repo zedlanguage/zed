@@ -4,6 +4,7 @@
 
 mod graphs;
 mod items;
+mod names;
 mod rejections;
 pub(crate) mod scaling;
 

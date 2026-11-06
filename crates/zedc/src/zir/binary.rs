@@ -2,11 +2,15 @@
 //!
 //! It begins with the four bytes `ZIR\0` and the version as a 32-bit little-endian word; the
 //! root region follows. Every count, index and integer is a 64-bit little-endian word, every
-//! name a count of bytes and then its UTF-8 bytes, and every choice a one-byte tag. A value is
+//! string a count of bytes and then its UTF-8 bytes, and every choice a one-byte tag. A name
+//! (of an atom, a field, a port or an evidence key) is read by the rule the text form reads one
+//! by, and a pattern binder may also be one the compiler makes ([`text::not_a_binder`]); a
+//! catalog entry, a string value and the digits of a number are not names. A value is
 //! written by its structure, a number outside the 64-bit range and a rational by their
 //! decimal digits, and a float by its bits, so every value comes back bit for bit. An edge is
 //! written as its text form ([`super::text::edge`]): a type's representation is private to
-//! the kernel, and its printed form is its exact, canonical description. A primitive is its
+//! the kernel, and its printed form is its exact, canonical description; reading that text
+//! checks the names in it (a state edge's port, a facet's kind). A primitive is its
 //! index in [`PRIMS`]. A decoding error names the byte offset at which it was found.
 
 use std::sync::Arc;
@@ -406,12 +410,33 @@ impl<'a> R<'a> {
         usize::try_from(n).or_else(|_| self.err(at, format!("the index {n} is too large")))
     }
 
+    /// A string: a name, a string value, an edge or a type in its text form, or digits.
     fn s(&mut self) -> Result<String, String> {
         let n = self.len()?;
         let at = self.i;
         match std::str::from_utf8(self.take(n)?) {
             Ok(s) => Ok(s.into()),
-            Err(_) => self.err(at, "a name is not UTF-8"),
+            Err(_) => self.err(at, "a string is not UTF-8"),
+        }
+    }
+
+    /// A name (of an atom, a field, a port or an evidence key), by the rule the text form
+    /// reads one by ([`text::not_a_name`]); an error points at its count.
+    fn name(&mut self) -> Result<String, String> {
+        self.checked(text::not_a_name)
+    }
+
+    /// A pattern binder: a name, or a binder the compiler makes ([`text::not_a_binder`]).
+    fn binder(&mut self) -> Result<String, String> {
+        self.checked(text::not_a_binder)
+    }
+
+    fn checked(&mut self, why_not: fn(&str) -> Option<String>) -> Result<String, String> {
+        let at = self.i;
+        let s = self.s()?;
+        match why_not(&s) {
+            None => Ok(s),
+            Some(e) => self.err(at, e),
         }
     }
 
@@ -553,8 +578,8 @@ impl<'a> R<'a> {
             4 => Value::float(f64::from_bits(self.n()?)),
             5 => Value::str(&self.s()?),
             6 => {
-                let name = self.s()?;
-                let fields: Vec<String> = self.many(Self::s)?;
+                let name = self.name()?;
+                let fields: Vec<String> = self.many(Self::name)?;
                 let left = self.len()?;
                 return Ok(Err(OpenValue::Atom {
                     at,
@@ -624,7 +649,7 @@ impl<'a> R<'a> {
 
     fn evidence(&mut self) -> Result<Evidence, String> {
         let items = self.many(|r| {
-            let k = r.s()?;
+            let k = r.name()?;
             Ok((k.into(), GRADES[r.tag(5, "a grade")? as usize]))
         })?;
         Ok(items.into_iter().collect())
@@ -648,8 +673,8 @@ impl<'a> R<'a> {
                 0 => GuardPos::Before,
                 _ => GuardPos::After,
             }),
-            6 => Op::Read(self.s()?.into()),
-            7 => Op::Push(self.s()?.into()),
+            6 => Op::Read(self.name()?.into()),
+            7 => Op::Push(self.name()?.into()),
             8 => Op::Fam,
             9 => Op::Derived(DERIVED[self.tag(3, "a derived node")? as usize]),
             10 => Op::Prim(PRIMS[self.tag(PRIMS.len() as u8 - 1, "a primitive")? as usize]),
@@ -684,7 +709,7 @@ impl<'a> R<'a> {
                 if top.left() > 0 {
                     // A field pattern's part follows its name.
                     if let OpenPattern::Fields(_, _, key @ None, _) = top {
-                        *key = Some(self.s()?.into());
+                        *key = Some(self.name()?.into());
                     }
                     break;
                 }
@@ -698,11 +723,11 @@ impl<'a> R<'a> {
         let t = self.tag(7, "a pattern")?;
         Ok(Ok(match t {
             0 => Pattern::Wild,
-            1 => Pattern::Bind(self.s()?.into()),
+            1 => Pattern::Bind(self.binder()?.into()),
             2 => Pattern::Lit(self.value()?),
             3 | 5 => {
                 let name = match t {
-                    3 => Some(self.s()?.into()),
+                    3 => Some(self.name()?.into()),
                     _ => None,
                 };
                 let left = self.len()?;
@@ -713,7 +738,7 @@ impl<'a> R<'a> {
                 )));
             }
             4 => {
-                let name = self.s()?.into();
+                let name = self.name()?.into();
                 let left = self.len()?;
                 return Ok(Err(OpenPattern::Fields(
                     name,
