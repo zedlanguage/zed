@@ -3,6 +3,8 @@
 //! does and exits with the same statuses. Two builds of a program give the same bytes, and the
 //! executable's outputs and exit status equal the interpreter's.
 
+// binary.rs is not a module of `steps`: crates/zed-native/Cargo.toml builds it as the test
+// `build_binary`, since only a test of that package can name the zedc executable.
 mod agreement;
 mod minmax;
 mod runtime;

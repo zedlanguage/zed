@@ -3,6 +3,8 @@
 //! is not UTF-8 is a usage error naming its position; `--record` saves the arguments and
 //! `zedc replay` reads them from the record.
 
+// binary.rs is not a module of `steps`: crates/zed-native/Cargo.toml builds it as the test
+// `command_line_binary`, since only a test of that package can name the zedc executable.
 mod arguments;
 mod replay;
 mod scaling;

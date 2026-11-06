@@ -91,7 +91,10 @@ A step folder holds:
   the test; review it with `cargo insta review` and accept it there.
 
 All step folders compile into one test binary, `steps`, so adding a step adds a module, not a
-link step. To run one step: `cargo test -p zed-tests --test steps l01_07`.
+link step. To run one step: `cargo test -p zed-tests --test steps l01_07`. The exceptions are
+the files `binary.rs` that run the zedc executable (in m0_09, l01_19a and l01_36a): they are not
+modules of `steps` but tests of zed-native, named in `crates/zed-native/Cargo.toml`, since only
+a test of that package can name the executable.
 
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
 EXAMPLES.md is a test. The extractor copies them into checked-in fixture files under

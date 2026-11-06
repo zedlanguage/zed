@@ -14,6 +14,8 @@ use zed_kernel::{
 use zed_tests::kernel::*;
 use zed_tests::scaling::check_order;
 
+// binary.rs is not a module of `steps`: crates/zed-native/Cargo.toml builds it as the test
+// `zedc_binary`, since only a test of that package can name the zedc executable.
 mod deep;
 mod provenance;
 mod scaling;
