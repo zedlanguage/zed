@@ -2,6 +2,7 @@
 //! keywords: the lexical grammar whole.
 
 mod program;
+mod scaling;
 mod words;
 
 pub(crate) use zed_tests::tokens::render;

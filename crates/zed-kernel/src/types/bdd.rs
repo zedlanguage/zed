@@ -2117,10 +2117,7 @@ mod tests {
                     )
                 };
                 let n = 1 << 12;
-                let built: BTreeMap<usize, (Part<Row>, Row)> = [n, scaling::FACTOR * n]
-                    .into_iter()
-                    .map(|m| (m, chain(m)))
-                    .collect();
+                let built = scaling::inputs(n, chain);
                 scaling::check("the forced atoms of a chain, by its length", n, |m| {
                     let (p, w) = &built[&m];
                     assert_eq!(p.forced(), (vec![w.clone()], Vec::new()));

@@ -39,3 +39,16 @@ fn node(n: usize, tree: &Tree, words: &[&str]) -> String {
     parts.extend(words[pos..at.end].iter().map(|w| w.to_string()));
     format!("({})", parts.join(" "))
 }
+
+/// `text` lexed and parsed from the rule `start`, for a test to parse before it times the
+/// building of the syntax tree alone.
+pub fn parsed(text: String, start: &str) -> (String, Vec<Token>, Tree) {
+    let tokens = zedc::lex::lex(&text).unwrap();
+    let tree = zedc::parse::parse(&text, &tokens, start, zedc::parse::TOP).unwrap_or_else(|e| {
+        panic!(
+            "{}… does not parse: {e}",
+            text.chars().take(40).collect::<String>()
+        )
+    });
+    (text, tokens, tree)
+}

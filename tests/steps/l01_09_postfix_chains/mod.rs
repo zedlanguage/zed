@@ -4,6 +4,7 @@
 mod calls;
 mod chains;
 mod fences;
+mod scaling;
 
 use zedc::ast::{Error, Expr, build};
 use zedc::lex::lex;

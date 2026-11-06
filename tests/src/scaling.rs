@@ -386,6 +386,12 @@ fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (
     (out, bytes)
 }
 
+/// The inputs `make` gives at sizes `n` and `FACTOR * n`, built before any run is timed, so
+/// that a check times the pass and not the building of its input.
+pub fn inputs<T>(n: usize, make: impl Fn(usize) -> T) -> std::collections::HashMap<usize, T> {
+    [n, FACTOR * n].into_iter().map(|m| (m, make(m))).collect()
+}
+
 /// [`check_order`] for work of order `n` or `n log n`: every pass of the compiler and runtime.
 pub fn check(what: &str, n: usize, run: impl Fn(usize) + Sync) {
     check_order(what, n, 1, run)

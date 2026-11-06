@@ -1,5 +1,7 @@
 //! Step L1.3: integer literals in four bases, with `_` between digits.
 
+mod scaling;
+
 use zedc::lex::{Tok, lex};
 
 /// The integers of `text` as `(base, digits)`.

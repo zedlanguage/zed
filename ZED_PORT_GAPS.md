@@ -1751,3 +1751,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `thread_local!` `Cell` of the running measurement, read and written by the global allocator on each allocation and free | `TRACKED`, `track`, `Counting` | Mutation, global state; Missing (no allocator hook) | The runtime's allocator reports bytes to a measurement the test harness holds; Zed code does not replace the allocator |
 | A drop guard that puts the outer measurement back when the closure returns or unwinds | `live`, `Restore` | Missing (no destructors, no unwinding) | A failure returns through `live`, which restores the state on both paths |
 | Measuring a structure by the bytes its `drop` frees | `bytes_of` | Missing (no explicit drop) | The runtime's count of freed cells when the value's last reference goes |
+
+## Entries from DART-SCALE (`zedc/src/check/ty.rs`, `check/mod.rs`)
+
+- No new gap. `Ty::shapes` now returns a borrowed `Option<&[Shape]>` (`Option::as_deref`) where it returned a copy; Zed shares values, so at the port it returns the list itself, and the copy that made the pattern quadratic (COMPLEXITY.md F100) does not arise. The other changes are in test code (`partition_point`, a `Mutex` around a held `Db`).

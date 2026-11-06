@@ -2,4 +2,5 @@
 //! Restrictive").
 
 mod names;
+mod scaling;
 mod scripts;

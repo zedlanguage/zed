@@ -10,20 +10,21 @@ pub fn render(tokens: &[Token]) -> String {
 }
 
 /// `tokens` of `text`, one rendered line per line of `text` that starts a token, each after
-/// its line number; a token belongs to the line it starts on.
+/// its line number; a token belongs to the line it starts on. The tokens are in text order, as
+/// the lexer gives them, so each line takes the next of them in one pass.
 pub fn render_lines(text: &str, tokens: &[Token]) -> String {
     let mut out = Vec::new();
+    let mut rest = tokens;
     let mut start = 0;
     for (k, line) in text.split('\n').enumerate() {
         let end = start + line.len() + 1;
-        let on: Vec<String> = tokens
-            .iter()
-            .filter(|t| (start..end).contains(&t.span.start))
-            .map(|t| one(&t.tok))
-            .collect();
+        let here = rest.partition_point(|t| t.span.start < end);
+        let (on, after) = rest.split_at(here);
         if !on.is_empty() {
+            let on: Vec<String> = on.iter().map(|t| one(&t.tok)).collect();
             out.push(format!("{:>3} | {}", k + 1, on.join(" ")));
         }
+        rest = after;
         start = end;
     }
     out.join("\n")

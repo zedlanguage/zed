@@ -5,6 +5,7 @@ mod fences;
 mod functions;
 mod ifs;
 mod pushes;
+mod scaling;
 
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};

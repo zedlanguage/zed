@@ -5,6 +5,7 @@
 mod files;
 mod lines;
 mod replay;
+mod scaling;
 mod writes;
 
 use std::path::PathBuf;

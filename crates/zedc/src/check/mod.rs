@@ -2691,10 +2691,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// for a pattern at `span`: what the shapes they were built with hold there, what a need
     /// gives on a type variable's class, and the unknown where it is not known.
     fn payload(&mut self, v: &Ty, atom: &Arc<str>, slot: &Slot, span: Span) -> Ty {
-        let mut known = v.clone();
-        known.vars.clear();
-        known.dynamic = false;
-        let mut out = match known.shapes(atom) {
+        let mut out = match v.shapes(atom) {
             Some(ss) => Ty::union_all(ss.iter().filter_map(|s| s.at(slot))),
             None => Ty::dynamic(),
         };

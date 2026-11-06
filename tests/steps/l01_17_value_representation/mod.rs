@@ -7,6 +7,7 @@
 mod asks;
 mod atoms;
 mod equality;
+mod fields;
 mod in_place;
 pub(crate) mod memory_check;
 mod numbers;

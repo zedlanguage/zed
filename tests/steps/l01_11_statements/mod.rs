@@ -6,6 +6,7 @@ mod blocks;
 mod empty_family;
 mod fences;
 mod returns;
+mod scaling;
 
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};

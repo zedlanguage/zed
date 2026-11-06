@@ -4,6 +4,7 @@
 
 mod keys;
 mod reuse;
+mod scaling;
 
 use zedc::query::Db;
 use zedc::testing::test_in;

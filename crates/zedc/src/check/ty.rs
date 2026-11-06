@@ -1854,16 +1854,15 @@ impl Ty {
             .collect()
     }
 
-    /// What the payloads of its atoms named `n` hold: their shapes, or `None` where that is not
-    /// known.
-    pub fn shapes(&self, n: &str) -> Option<Vec<Shape>> {
-        if self.dynamic || !self.vars.is_empty() {
-            return None;
-        }
+    /// What the payloads of its known atoms named `n` hold: their shapes, or `None` where that
+    /// is not known. Its type variables and the unknown are not looked at, so the caller adds
+    /// what they hold. The shapes are borrowed: a pattern asks once for each of its fields, and
+    /// a copy of a payload with as many fields made the pattern quadratic in them.
+    pub fn shapes(&self, n: &str) -> Option<&[Shape]> {
         match self.payloads.get(n) {
-            Some(s) => s.clone(),
+            Some(s) => s.as_deref(),
             None if holds_payload(&self.set, n) => None,
-            None => Some(Vec::new()),
+            None => Some(&[]),
         }
     }
 
