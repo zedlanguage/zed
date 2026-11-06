@@ -2825,9 +2825,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // or unknown is not entered; nor is one whose classes were checked as data when it
         // was made, since a class keeps a data need once it has one and a second is nothing.
         // Of such a row only its unknown is reported, once, as each would be at this span.
+        // A row shared by many paths is visited once.
+        let mut rows = HashSet::new();
         let mut stack = vec![t];
         while let Some(t) = stack.pop() {
-            for r in t.tuples.iter().filter(|r| r.open()) {
+            for r in (t.tuples.iter()).filter(|r| r.open() && rows.insert(r.addr())) {
                 match r.data() {
                     true if r.dynamic() => self.any(what, span),
                     true => {}

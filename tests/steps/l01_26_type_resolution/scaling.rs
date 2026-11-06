@@ -1311,3 +1311,143 @@ fn rows_made_from_disjoint_variable_sets_scale() {
         assert_eq!(zs.last().map(|z| z.var_facts().names.len()), Some(2 * m));
     });
 }
+
+/// `p(s, v) = (s, (s, v))` applied `n` times, `f(a0, ..., an) = p(p(p(a0, a1), a2), ...)`, and,
+/// if `call`, `f` called on `0, ..., n`: the type of each `p` holds the row of the one inside
+/// twice, so the result's type has `2^n` paths through `n` rows (REPLACE-shared-rows).
+fn shared_rows(n: usize, call: bool) -> String {
+    let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}")).collect();
+    let body = (1..=n).fold("a0".to_string(), |s, i| format!("p({s}, a{i})"));
+    let mut text = format!(
+        "p(positional s, positional v) = (s, (s, v));\nf({}) = {body};\n",
+        params.join(", ")
+    );
+    if call {
+        let args: Vec<String> = (0..=n).map(|i| i.to_string()).collect();
+        text.push_str(&format!("y = f({});\n", args.join(", ")));
+    }
+    text
+}
+
+#[test]
+fn rows_shared_on_many_paths_are_replaced_once() {
+    let (info, _) = info(&shared_rows(2, true));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(
+        info.tops["y"].to_string(),
+        "((0, (0, 1)), ((0, (0, 1)), 2))"
+    );
+    assert_eq!(
+        sig(&shared_rows(2, false), "f"),
+        "(_, _, _) -> ((_, (_, _)), ((_, (_, _)), _))"
+    );
+}
+
+/// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`, `2^n` paths, with each `Vk` replaced by `Wk`:
+/// `Ty::replace`, `Ty::subst` and `Ty::settle` each make a row once, however many paths reach
+/// it (REPLACE-shared-rows, COMPLEXITY.md F97). Each walked every path before: 2^n.
+#[test]
+fn replacing_in_rows_shared_on_many_paths_scales() {
+    let n = 100;
+    let (vs, ws) = (variables("V", n), variables("W", n));
+    let binds = |m: usize| -> zedc::check::ty::Binds {
+        let pairs = vs[&m].iter().zip(&ws[&m]);
+        (pairs.map(|(v, w)| (v.vars.first().cloned().unwrap(), w.clone()))).collect()
+    };
+    let binds: BTreeMap<_, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, binds(m)))
+        .collect();
+    let shared = |m: usize| {
+        let vs = &vs[&m];
+        vs[1..].iter().fold(vs[0].clone(), |s, v| {
+            Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
+        })
+    };
+    let replaced = |t: &Ty, m: usize| {
+        let f = t.var_facts();
+        assert_eq!(f.names.len() + f.classes.len(), m);
+        assert!(f.names.iter().chain(&f.classes).all(|v| v.starts_with('W')));
+    };
+    scaling::check("Ty::replace in n shared rows", n, |m| {
+        replaced(&shared(m).replace(&binds[&m]), m)
+    });
+    scaling::check("Ty::subst in n shared rows", n, |m| {
+        replaced(&shared(m).subst(&binds[&m]), m)
+    });
+    scaling::check("Ty::settle in n shared rows", n, |m| {
+        let b = &binds[&m];
+        replaced(&shared(m).settle(&|v: &str| b.get(v).cloned()), m)
+    });
+}
+
+/// `n` functions `(Oi) -> (Oi, Hi)`, each holding the one variable `Hi` and owning `Oi`, with
+/// all `2n` variables bound: each function keeps its own `Oi` and replaces `Hi`, looked up for
+/// the variables it holds, not by a copy of the `2n` binds less its own (O(n^2) in all;
+/// REPLACE-shared-rows, COMPLEXITY.md F97).
+#[test]
+fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
+    use std::sync::Arc;
+    use zedc::check::ty::{Arrow, Facts, Sig};
+    let n = 250;
+    let (os, hs, ws) = (variables("O", n), variables("H", n), variables("W", n));
+    let name = |t: &Ty| t.vars.first().cloned().unwrap();
+    let made = |m: usize| {
+        let fns = (os[&m].iter().zip(&hs[&m])).map(|(o, h)| {
+            Arc::new(Sig {
+                arrows: vec![Arrow {
+                    params: vec![o.clone()],
+                    result: Ty::tuple(vec![o.clone(), h.clone()]),
+                }],
+                own: [name(o)].into(),
+                held: [name(h)].into(),
+                params: Vec::new(),
+                bounds: BTreeMap::new(),
+                data: false,
+                needs: Vec::new(),
+                named: 0,
+                facts: Facts::default(),
+            })
+        });
+        let binds: zedc::check::ty::Binds = (os[&m].iter().zip(&ws[&m]))
+            .chain(hs[&m].iter().zip(&ws[&m]))
+            .map(|(v, w)| (name(v), w.clone()))
+            .collect();
+        (
+            Ty {
+                fns: fns.collect(),
+                ..Ty::empty()
+            },
+            binds,
+        )
+    };
+    let made: BTreeMap<_, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, made(m)))
+        .collect();
+    scaling::check(
+        "n functions each holding one of 2n bound variables",
+        n,
+        |m| {
+            let (t, binds) = &made[&m];
+            let out = t.replace(binds);
+            for (s, (o, w)) in out.fns.iter().zip(os[&m].iter().zip(&ws[&m])) {
+                assert_eq!(s.arrows[0].result, Ty::tuple(vec![o.clone(), w.clone()]));
+            }
+        },
+    );
+}
+
+/// The program family checks with no walk that follows each of its `2^n` paths; it is of
+/// order `n^2`, not `n`, because each call `p(s, v)` replays its data need on `s`, a type of
+/// `k` rows at the `k`th call (`Ck::data`): open, COMPLEXITY.md F97. Of order `n^2` it stays
+/// until then, so that the `2^n` paths do not return unseen.
+#[test]
+fn rows_shared_on_many_paths_scale_as_n_squared() {
+    for (what, call) in [("a function of n shared rows", false), ("its call", true)] {
+        let units = resolved(25, |n| shared_rows(n, call));
+        scaling::check_order(what, 25, 2, |m| {
+            assert_eq!(units[&m].type_errors(), Vec::<String>::new());
+        });
+    }
+}

@@ -1695,3 +1695,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `Cow<'_, BigUint>`, a side of a rational borrowed when it has no kept powers, built otherwise | `Rat::built_parts` | None | Zed shares numbers, so it returns the side as a plain value |
 | `BigUint::iter_u64_digits`, the 64-bit limbs of a magnitude least significant first, and `BigUint::from_bytes_le` to read them back | `W::magnitude`, `R::magnitude` in `zir/binary.rs`, `Out::magnitude` in `canon/serial.rs` | Missing | A primitive giving an exact integer's limbs as a `U8String`, and its inverse |
+
+## Entries from REPLACE-shared-rows (`zedc/src/check/ty.rs`, `zedc/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo keyed by the address of a shared row (`HashMap<*const RowData, Row>`), valid because the input holds every row for the whole walk | `check::ty::Replacer::row`, `once`, `Ty::subst_in`, `Ty::settle_in`, `Sig::settle` | Gap 1 (identity) | The row's content digest as the key, which costs a hash of the outer level per row, or the identity the runtime gives (L6.13a) |
+| A memo keyed by the address of a signature (`HashMap<*const Sig, Arc<Sig>>`) | `Replacer::held` | Gap 1 | As above, with the signature's digest (`Facts`) |
+| A set of row addresses as the visited set of a walk (`HashSet<*const ()>`, `Row::addr`) | `Ck::data`, `Ty::vars_outside` (`Vars::outside`) | Gap 1 | As above |
+| A stack of memo frames, pushed when the walk enters a signature that hides variables and popped when it leaves, with a counting map of the hidden variables | `Replacer::held`, `Replacer::hidden`, `Replacer::memos` | Expressible | A list of maps threaded as state, and a map from variable to count; no new form |
+| Closures that change captured state, passed as `impl FnMut` to `Shape::map`, `Ty::map_payloads` and `Need::map_tys`, so a walk's memo is shared by its calls | `check::ty` | Workaround (gap 2) | Thread the memo as an argument and result through the map, or a state receiver |
