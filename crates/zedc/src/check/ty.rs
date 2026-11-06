@@ -77,6 +77,9 @@ struct RowData {
     /// replacing variables keeps whole a row that holds none of them, and the variables of a
     /// type are found at the cost of its outer level.
     vars: VarFacts,
+    /// The kernel type of the tuple shape ([`Row::kernel`]): none when a component holds a
+    /// function, a variable or the unknown at any depth.
+    kernel: Option<KType>,
 }
 
 impl Row {
@@ -119,6 +122,14 @@ impl Row {
                 && c.payloads.is_empty()
                 && c.tuples.iter().all(|r| r.0.fixed)
         });
+        // Each component's kernel type reads the kernel types its rows keep, so it costs the
+        // component's outer level. A row that holds a variable or the unknown has none.
+        let kernel = match open {
+            true => None,
+            false => (cs.iter().map(Ty::kernel))
+                .collect::<Option<Vec<_>>>()
+                .map(KType::tuple),
+        };
         Row(Arc::new(RowData {
             cs,
             digest,
@@ -130,7 +141,18 @@ impl Row {
             data,
             checked,
             vars,
+            kernel,
         }))
+    }
+
+    /// The kernel type of the tuple shape, `(t1, …, tn)` of its components' kernel types
+    /// ([`Ty::kernel`]), or none when a component holds a function, a variable or the unknown
+    /// at any depth. Made with the row, from the kernel types the components' rows keep, so
+    /// each row's is made once, whatever the paths to it: `d(positional x) = (x, x)` called
+    /// `n` times nested gives `n` rows each holding the one below twice, `2^n` paths, which a
+    /// walk into the components took `2^n` time for at each call (TUPLE-eq-dup).
+    fn kernel(&self) -> Option<KType> {
+        self.0.kernel.clone()
     }
 
     /// Whether a component holds one of the variables `binds` replaces, at any depth, inside
@@ -1188,14 +1210,6 @@ pub fn wide() -> KType {
     &KType::universe(Universe::Tuple) | &KType::universe(Universe::Struct)
 }
 
-/// The kernel type of the tuple shape `cs`, when its components have kernel types.
-fn shape_kernel(cs: &[Ty]) -> Option<KType> {
-    cs.iter()
-        .map(Ty::kernel)
-        .collect::<Option<Vec<_>>>()
-        .map(KType::tuple)
-}
-
 /// The atom `#errs` that two distinct failures merge into, with any payload.
 pub fn errs() -> KType {
     KType::atom_with("errs", &KType::top())
@@ -1729,7 +1743,7 @@ impl Ty {
             // The rule of one shape is sound, so it is tried only when the kernel refused.
             // So is a kind-wide part, which tuple shapes of `other` may hold only together.
             let a = match p {
-                Piece::Tuple(cs) => shape_kernel(cs),
+                Piece::Tuple(cs) => cs.kernel(),
                 Piece::Set(s) if !(s & &wide()).is_empty() => Some(s.clone()),
                 _ => None,
             };
@@ -1766,11 +1780,9 @@ impl Ty {
         if (self.tuples.iter()).any(|r| r.open() || r.0.held.is_some()) {
             return None;
         }
-        let shapes = self.tuples.iter().map(|cs| {
-            let cs = cs.iter().map(Ty::kernel).collect::<Option<Vec<_>>>()?;
-            Some(KType::tuple(cs))
-        });
+        // Each row's kernel type is made once and kept in the row ([`Row::kernel`]).
         // Joined in pairs: one at a time costs the size of the union so far for each shape.
+        let shapes = self.tuples.iter().map(Row::kernel);
         let shapes = shapes.collect::<Option<Vec<_>>>()?;
         Some(KType::union_all(
             std::iter::once(self.set.clone()).chain(shapes),
@@ -1842,7 +1854,7 @@ impl Ty {
                 continue;
             }
             for cs in &a.tuples {
-                match shape_kernel(cs) {
+                match cs.kernel() {
                     Some(k) if k.subtype(&w) => met.push(cs.clone()),
                     Some(k) => out.set = &out.set | &(&k & &w),
                     None => met.push(cs.clone()),
@@ -1901,7 +1913,7 @@ impl Ty {
             if inside {
                 return false;
             }
-            match (&tk, shape_kernel(a)) {
+            match (&tk, a.kernel()) {
                 (Some(tk), Some(k)) if !(&k & &w).is_empty() => {
                     rest.push(&k - tk);
                     false
@@ -2182,7 +2194,7 @@ impl Ty {
             !w.is_empty()
                 && a.tuples
                     .iter()
-                    .any(|cs| shape_kernel(cs).is_none_or(|k| !(&k & &w).is_empty()))
+                    .any(|cs| cs.kernel().is_none_or(|k| !(&k & &w).is_empty()))
         };
         !(&self.set & &other.set).is_empty()
             || wide_meets(self, other)

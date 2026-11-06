@@ -19,6 +19,7 @@ mod named_calls;
 mod narrowing;
 mod random;
 mod scaling;
+mod shared_tuples;
 mod signatures;
 mod soundness;
 mod tuple_keys;
