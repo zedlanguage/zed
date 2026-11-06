@@ -29,12 +29,12 @@ unpriced = flat.where(r -> r is not int);
 
 <!-- README.md:202 layer L1: ring L1, word none, label none; section [Step 5: daily totals] 1 -->
 ```zed
-// daily = revenue as (region -> day -> sku -> r) into (region -> day -> r);   // ✗ rejected
+// daily = revenue as (region -> day -> sku -> r) into (region -> day -> r);   // ✗ Collision: two skus land on one keypath
 ```
 
 <!-- README.md:267 layer L1: ring L1, word none, label none; section [Step 6: adding values that may be failures] 1 -->
 ```zed
-// daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);   // ✗ rejected: + is not defined on #notFound
+// daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);   // ✗ Unlifted carrier: + is not defined on #notFound
 ```
 
 <!-- README.md:298 layer L8: ring L8, word none, label none; section [Step 6: adding values that may be failures] 2 -->
@@ -93,7 +93,7 @@ stock = loop t {
 penMass = 20 with units("g");          // one pen
 crateMass = 1 with units("kg");        // the crate they ship in
 shipped = (sold["pen"] else 0) * penMass;
-// load = shipped + crateMass;         // ✗ rejected: g + kg
+// load = shipped + crateMass;         // ✗ Units that differ where an operation requires equal ones: g + kg
 load = shipped + crateMass * (1000 with units("g/kg"));
 ```
 
@@ -149,7 +149,7 @@ third = 1r / 3r;             // an exact rational
 half = 1.0 / 2.0;            // f64
 q = 7 div 2;                 // 3
 ratio = f64(q) / 2.0;        // conversions are written out
-// bad = q + 1.5;            // ✗ rejected: int + f64
+// bad = q + 1.5;            // ✗ Two numeric values with no common carrier: int + f64
 ```
 
 <!-- README.md:789 layer L3: ring L3, word none, label none; section [Strings] 1 -->
@@ -229,7 +229,7 @@ bad = results.where(r -> r is not Config);
 <!-- README.md:1013 layer L3: ring L1, word L3 (map), label none; section [Failures in a pipeline] 2 -->
 ```zed
 amounts = files.map(f -> int(read(f)));         // int(s) converts text to an int, and can fail
-// sum = amounts >< (+);                        // ✗ rejected: some amounts may be failures
+// sum = amounts >< (+);                        // ✗ Unlifted carrier: some amounts may be failures
 ```
 
 <!-- README.md:1020 layer L3: ring L3, word L3 (where), label none; section [Failures in a pipeline] 3 -->
@@ -247,7 +247,7 @@ tags = { #red, #green };               // a set: a map from each member to itsel
 
 first = xs[0];                         // 3: the index is known to be in range
 ann = ages["Ann"];                     // 36: the key is known to be there
-// carol = ages["Carol"];              // ✗ rejected: this key can't be there
+// carol = ages["Carol"];              // ✗ Key outside the permission bound: this key can't be there
 age = ages[name] else 0;               // name is known only at run time
 
 tens = xs.map(x -> x * 10);            // the same keys, new values
@@ -259,7 +259,7 @@ sorted = tens.sort(desc x -> x);       // new keys 0 to 4; equal values stay in 
 ```zed
 // users : UserId -> User
 byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
-// byId = users.rekey(u -> u.id);       // ✗ rejected unless id is known to be unique
+// byId = users.rekey(u -> u.id);       // ✗ Collision: id is not known to be unique
 ```
 
 <!-- README.md:1150 layer L8: ring L8, word none, label none; section [Remapping] 1 -->
@@ -267,7 +267,7 @@ byCity = users.group(u -> u.city);      // City ->? (UserId -> User)
 transposed = matrix as (r -> c -> v) into (c -> r -> v);
 ranking = scores as (name -> s) into (desc s -> name -> s);
 
-// totals = sales as (region -> sku -> amount) into (region -> amount);   // ✗ rejected
+// totals = sales as (region -> sku -> amount) into (region -> amount);   // ✗ Collision: two skus land on one region
 totals = sales as (region -> sku -> amount) into (region -> sku >< (+) -> amount);
 ```
 
@@ -278,7 +278,7 @@ bySku = revenue as (region -> year -> sku -> amount) into (sku -> region -> year
 perYear = revenue as (region -> year -> sku -> amount) into (sku -> year -> region >< (+) -> amount);
 years = revenue as (region -> year -> sku -> amount) into (region -> year -> _);
 
-// bad = revenue as (region -> year -> sku -> amount) into (sku -> year -> amount);   // ✗ rejected
+// bad = revenue as (region -> year -> sku -> amount) into (sku -> year -> amount);   // ✗ Collision: two regions land on one keypath
 ```
 
 <!-- README.md:1342 layer L8: ring L8, word L3 (map), label none; section [Reducing] 1 -->
@@ -332,7 +332,7 @@ scale(positional s: T, positional v: [T; n]) = s * v;     // result: [T; n]
 a: [f64; 2, 3] = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
 b: [f64; 3, 2] = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
 c = a.matmul(b);                                          // [f64; 2, 2]
-// d = a.matmul(a);                                       // ✗ rejected: 3 columns, 2 rows
+// d = a.matmul(a);                                       // ✗ Levels of one name with different domains: 3 columns, 2 rows
 ```
 
 <!-- README.md:1716 layer L6: ring L6, word none, label none; section [Recurrences] 1 -->
@@ -441,12 +441,12 @@ report = sales
 struct Span { lo: int, hi: int[lo..] }
 
 width(positional s: Span) = s.hi - s.lo;   // inferred: int[0..]
-// bad = Span(lo: 3, hi: 1);               // ✗ rejected: hi must be at least lo
+// bad = Span(lo: 3, hi: 1);               // ✗ Argument outside its parameter's refinement: hi must be at least lo
 
 @ensure odd(positional x) = (x * 2 + 1).refine(v -> v < 100);
                                            // inferred: x <= 49
 a = odd(12);
-// b = odd(60);                            // ✗ rejected: 60 > 49
+// b = odd(60);                            // ✗ Undischargeable `@ensure`: 60 > 49
 ```
 
 <!-- README.md:2124 layer L13: ring L7, word L13 (taint), label none; section [Units and taint] 1 -->
@@ -454,12 +454,12 @@ a = odd(12);
 v = 3.0 with units("m/s");
 t = 2.0 with units("s");
 d = v * t;                 // has units "m"
-// e = v + t;              // ✗ rejected: m/s + s
+// e = v + t;              // ✗ Units that differ where an operation requires equal ones: m/s + s
 
 render: (Utf8String with taint(#clean)) -> Html;
 comment = input with taint(#userInput);
 
-// page = render("<p>" ++ comment ++ "</p>");   // ✗ rejected: user input reaches render
+// page = render("<p>" ++ comment ++ "</p>");   // ✗ Taint at a sink whose parameter does not take it: user input reaches render
 page = render("<p>" ++ escapeHtml(comment) ++ "</p>");
 ```
 

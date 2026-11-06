@@ -54,3 +54,5 @@ Units that differ where an operation requires equal ones
 Taint at a sink whose parameter does not take it
 `*.` call on a receiver that is not a state variable
 Stored collection whose type and schema disagree
+Levels of one name with different domains
+Argument outside its parameter's refinement

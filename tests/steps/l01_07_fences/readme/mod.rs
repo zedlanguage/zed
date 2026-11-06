@@ -183,8 +183,8 @@ fn run_problems(at: &str, text: &str, checks: usize) -> Vec<String> {
 
 /// The variants of the fence `text`: each line that is wholly a comment with a ✗, made live by
 /// removing its leading `//`, so that the ✗ comment after it marks the line the checker must
-/// reject.
-fn variants(text: &str) -> Vec<String> {
+/// reject, with its line in the fence.
+fn variants(text: &str) -> Vec<(usize, String)> {
     let lines: Vec<&str> = text.split('\n').collect();
     fence::marks(text)
         .variants
@@ -196,7 +196,7 @@ fn variants(text: &str) -> Vec<String> {
                 .strip_prefix("//")
                 .expect("a variant line is a comment");
             v[n - 1] = live;
-            v.join("\n")
+            (n, v.join("\n"))
         })
         .collect()
 }
@@ -230,7 +230,13 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
         }
         let (text, checks) = unit(&f.text, entry, true);
         wrong.extend(run_problems(&f.at, &text, checks));
-        for v in variants(&f.text) {
+        for (n, v) in variants(&f.text) {
+            if RAISED_LATER
+                .iter()
+                .any(|&(at, line, _)| (at, line) == (f.at.as_str(), n))
+            {
+                continue;
+            }
             let (text, _) = unit(&v, entry, false);
             wrong.extend(run_problems(&format!("{} variant", f.at), &text, 0));
         }
@@ -244,4 +250,120 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
             "README.md [Tests next to the code] 1"
         ]
     );
+}
+
+/// The ✗ variants of enabled fences whose row the checker does not raise yet, by the fence's
+/// place and the variant's line in it, with the item that will raise it: the test of the
+/// enabled fences leaves them out, and `each_readme_variant_gives_its_pinned_outcome_at_l1`
+/// holds what each gives now.
+const RAISED_LATER: &[(&str, usize, &str)] = &[
+    // `bad = q + 1.5;` gives a diagnostic in no row; item CAST-menu-check makes the checker
+    // raise "Two numeric values with no common carrier", and this pin then becomes `pass`.
+    ("README.md:763", 6, "CAST-menu-check"),
+];
+
+/// What each ✗ variant of README.md gives at L1, by the fence's place and the variant's line
+/// in it: `pass`, or its first problem. Most need forms of later layers; the step that
+/// enables one changes its pin.
+const VARIANT_PINS: &[(&str, usize, &str)] = &[
+    (
+        "README.md:202",
+        1,
+        "line 1: the mark names the row \"Collision\", and the diagnostic is in no row of the rejection table: this form (ReduceTail) is built from layer L8",
+    ),
+    (
+        "README.md:267",
+        1,
+        "line 1: the mark names the row \"Unlifted carrier\", and the diagnostic is in no row of the rejection table: this form (ReduceTail) is built from layer L8",
+    ),
+    (
+        "README.md:544",
+        4,
+        "line 1: this form (ReduceTail) is built from layer L7",
+    ),
+    // Item CAST-menu-check makes the checker raise this row, and the pin becomes `pass`.
+    (
+        "README.md:763",
+        6,
+        "line 6: the mark names the row \"Two numeric values with no common carrier\", and the diagnostic is in no row of the rejection table: `1.5` is an f64 where `int` is expected; a literal takes no other carrier",
+    ),
+    ("README.md:1013", 2, "line 1: `files` is not defined"),
+    (
+        "README.md:1049",
+        7,
+        "line 1: an array display is compiled from step L3.2",
+    ),
+    ("README.md:1114", 3, "line 2: `users` is not defined"),
+    (
+        "README.md:1150",
+        4,
+        "line 1: this form (ReduceTail) is built from layer L8",
+    ),
+    (
+        "README.md:1242",
+        6,
+        "line 2: this form (ReduceTail) is built from layer L8",
+    ),
+    (
+        "README.md:1677",
+        6,
+        "line 1: this form (ArrayType) is built from layer L14",
+    ),
+    (
+        "README.md:2094",
+        4,
+        "line 1: this form (TypeSuffix) is built from layer L10",
+    ),
+    (
+        "README.md:2094",
+        9,
+        "line 1: this form (TypeSuffix) is built from layer L10",
+    ),
+    (
+        "README.md:2124",
+        4,
+        "line 1: this form (ReduceTail) is built from layer L7",
+    ),
+    (
+        "README.md:2124",
+        9,
+        "line 1: this form (ReduceTail) is built from layer L7",
+    ),
+];
+
+#[test]
+fn each_readme_variant_gives_its_pinned_outcome_at_l1() {
+    let table = table();
+    let by_key: HashMap<&str, &Entry> = table.iter().map(|e| (e.key.as_str(), e)).collect();
+    let mut got = Vec::new();
+    for f in fences::readme().iter().filter(|f| !f.notation) {
+        let entry = by_key[f.key.as_str()];
+        for (n, v) in variants(&f.text) {
+            let (text, _) = unit(&v, entry, false);
+            let first = run_problems("", &text, 0).into_iter().next();
+            let outcome = first.map_or("pass".to_string(), |p| {
+                p.trim_start_matches(", ").to_string()
+            });
+            got.push((f.at.clone(), n, outcome));
+        }
+    }
+    let want: Vec<(String, usize, String)> = VARIANT_PINS
+        .iter()
+        .map(|&(at, n, o)| (at.to_string(), n, o.to_string()))
+        .collect();
+    assert!(
+        got == want,
+        "{}",
+        got.iter()
+            .map(|(at, n, o)| format!("(\"{at}\", {n}, {o:?}),"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    for &(at, n, _) in RAISED_LATER {
+        assert!(
+            want.iter()
+                .any(|(a, m, o)| (a.as_str(), *m) == (at, n) && o != "pass"),
+            "{at} line {n} is left out of the enabled fences, and its pin is not a failure"
+        );
+    }
 }
