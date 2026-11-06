@@ -255,18 +255,17 @@ impl Operands {
 }
 
 /// A numeric literal: its span, without a `-`, which keys what it adopts; its site, the span
-/// of the literal with its `-`, where every message about it points; its value, whether a `-`
-/// is applied to it, its text, without the `-`, whether it is written with the suffix `n`,
-/// whether it is generic (step L1.26a): written `kn` where it joins a class other than under
-/// `==` and `!=`, and whether, generic, it has no other operand to take its carrier from at
-/// run time and takes it from a parameter of its class ([`Info::witness`]). Where it joins no
-/// class, a `kn` is read as `k`.
+/// of the literal with its `-`, where every message about it points, and which is longer than
+/// the span exactly when a `-` is applied to it ([`Lit::neg`]); its value, its text, without
+/// the `-`, whether it is written with the suffix `n`, whether it is generic (step L1.26a):
+/// written `kn` where it joins a class other than under `==` and `!=`, and whether, generic,
+/// it has no other operand to take its carrier from at run time and takes it from a parameter
+/// of its class ([`Info::witness`]). Where it joins no class, a `kn` is read as `k`.
 #[derive(Clone)]
 struct Lit {
     span: Span,
     site: Span,
     value: Value,
-    neg: bool,
     text: String,
     n: bool,
     generic: bool,
@@ -284,9 +283,14 @@ impl Lit {
         }
     }
 
+    /// Whether a `-` is applied to the literal.
+    fn neg(&self) -> bool {
+        self.site != self.span
+    }
+
     /// The literal as the program writes it, with its `-`.
     fn written(&self) -> String {
-        let sign = if self.neg { "-" } else { "" };
+        let sign = if self.neg() { "-" } else { "" };
         format!("{sign}{}", self.text)
     }
 }
@@ -938,7 +942,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             Some(l) => note(
                                 p.span,
                                 format!("this literal, {}, is {}", l.written(), {
-                                    lit_ty(&l.value, l.neg)
+                                    lit_ty(&l.value, l.neg())
                                 }),
                             ),
                             None => Work::Derive(p.span),
@@ -2305,7 +2309,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .into_iter()
                         .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
                         .filter_map(|c| match adopt(l, c) {
-                            Ok(Some(v)) => Some((c, neg_value(&v, l.neg))),
+                            Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
                             // A literal that is not exactly a value of `c`, as `9007199254740993`
                             // at `f64`, equals no value of `c`: it keeps its own carrier, and
                             // the comparison is false there, as it is in exact arithmetic.
@@ -2623,15 +2627,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The literal `l` adopting `c`, recorded; an error when it is not exactly a `c`.
     fn adopt_to(&mut self, l: &Lit, c: Carrier) -> Ty {
         match adopt(l, c) {
-            Ok(None) => lit_ty(&l.value, l.neg),
+            Ok(None) => lit_ty(&l.value, l.neg()),
             Ok(Some(v)) => {
-                let t = lit_ty(&v, l.neg);
+                let t = lit_ty(&v, l.neg());
                 self.put(Undo::Adopt(l.span, Some(v)));
                 t
             }
             Err(m) => {
                 self.error(l.site, m);
-                lit_ty(&l.value, l.neg)
+                lit_ty(&l.value, l.neg())
             }
         }
     }
@@ -2971,7 +2975,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     false => menu(l, &held),
                     true => {
                         let own = lit_carrier(&l.value);
-                        let sign = if l.neg { "-" } else { "" };
+                        let sign = if l.neg() { "-" } else { "" };
                         let names: Vec<&str> = Carrier::of_mask(mask).map(|c| c.name()).collect();
                         format!(
                             "`{sign}{}` is {} {}, compared with a value of `{}`, which holds no \
@@ -4729,9 +4733,9 @@ fn literal(e: &Expr) -> Option<Lit> {
 /// memory to read its digits or to copy its text. The lexer has removed the `_` from the
 /// digits, so they are read where they are, not copied.
 fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
-    let (inner, neg) = match &e.kind {
-        ExprKind::Unary("-", a) => (&**a, true),
-        _ => (e, false),
+    let inner = match &e.kind {
+        ExprKind::Unary("-", a) => &**a,
+        _ => e,
     };
     let (value, n) = match &inner.kind {
         ExprKind::Int {
@@ -4752,7 +4756,6 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
         span: inner.span,
         site: e.span,
         value,
-        neg,
         text: shown(inner)?,
         n,
         generic: false,
@@ -4888,7 +4891,7 @@ fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
         };
         match adopt(l, c) {
             Ok(Some(v)) => {
-                let t = lit_ty(&v, l.neg);
+                let t = lit_ty(&v, l.neg());
                 ads.push((l.span, v));
                 Ok(Some(t))
             }
@@ -5080,7 +5083,7 @@ fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, String> {
 /// form, only `kn`.
 fn menu(l: &Lit, held: &[Carrier]) -> String {
     let own = lit_carrier(&l.value);
-    let sign = if l.neg { "-" } else { "" };
+    let sign = if l.neg() { "-" } else { "" };
     let names: Vec<&str> = held.iter().map(|c| c.name()).collect();
     let mut m = format!(
         "`{sign}{}` is {} {} where `{}` is expected; a literal takes no other carrier",
@@ -5128,7 +5131,7 @@ fn menu(l: &Lit, held: &[Carrier]) -> String {
 /// more, none of them the literal's own.
 fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> String {
     let names: Vec<&str> = cs.iter().map(|c| c.name()).collect();
-    let sign = if l.neg { "-" } else { "" };
+    let sign = if l.neg() { "-" } else { "" };
     let mut m = format!(
         "`{sign}{}` at `{want}` adopts no one carrier: the type holds numbers of {}",
         l.text,

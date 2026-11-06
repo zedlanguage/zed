@@ -1379,7 +1379,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn arg(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
         if let Some(l) = literal(e) {
             m.ret = Ret::Arg(Arg {
-                ty: lit_ty(&l.value, l.neg),
+                ty: lit_ty(&l.value, l.neg()),
                 lit: Some(l),
                 at: Some(e.span),
                 parts: None,
@@ -1421,8 +1421,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         match read_literal(e) {
             Ok(Some(l)) => {
                 let t = match self.info.adopt.get(&l.span) {
-                    Some(v) => lit_ty(v, l.neg),
-                    None => lit_ty(&l.value, l.neg),
+                    Some(v) => lit_ty(v, l.neg()),
+                    None => lit_ty(&l.value, l.neg()),
                 };
                 return m.ty(t);
             }
