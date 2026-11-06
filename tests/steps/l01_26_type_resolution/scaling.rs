@@ -1258,3 +1258,56 @@ fn destructured_parameters_check_in_linear_time() {
         },
     );
 }
+
+/// The variables named `{prefix}0` to `{prefix}(m-1)`, for `m` of `n` and `FACTOR * n`, made
+/// before the timing.
+fn variables(prefix: &str, n: usize) -> BTreeMap<usize, Vec<Ty>> {
+    [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let vs = (0..m).map(|i| Ty::var(format!("{prefix}{i}").into()));
+            (m, vs.collect())
+        })
+        .collect()
+}
+
+/// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`: each row merges the variables of its two
+/// components, `k` and `k + 1` of them, the second set made from the first by adding `Vk`
+/// (ROW-made-cost). Inserting each variable of the smaller set cost `O(k log k)` a row, and
+/// took 70.6 times the instructions at 2,000 against 250; `Row::made` now also steps over the
+/// nodes the two sets share (`check::ty::merge`), 10.0 times (COMPLEXITY.md F93).
+#[test]
+fn rows_made_from_overlapping_variable_sets_scale() {
+    let n = 250;
+    let vars = variables("V", n);
+    scaling::check_order("n rows of overlapping variable sets", n, 1, |m| {
+        let vs = &vars[&m];
+        let t = vs[1..].iter().fold(vs[0].clone(), |s, v| {
+            Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
+        });
+        assert_eq!(t.var_facts().names.len(), m);
+    });
+}
+
+/// `n` rows `z(k) = (x(k), y(k))`, with `x(k) = (x(k-1), Ak)` and `y(k) = (y(k-1), Bk)`: each
+/// `z(k)` holds a set of `2k` variables no other row holds, made from two sets that share no
+/// node, so `Row::made` costs `O(n^2 log n)` here (71.2 times the instructions and 39.4 times
+/// the bytes at 2,000 against 250). Keeping a set for each row is the transitive closure of a
+/// DAG; open for the author, question A8 (COMPLEXITY.md F93).
+#[test]
+#[ignore = "O(n^2 log n), open until the author answers question A8: COMPLEXITY.md F93, ROW-made-cost"]
+fn rows_made_from_disjoint_variable_sets_scale() {
+    let n = 250;
+    let (xs, ys) = (variables("A", n), variables("B", n));
+    scaling::check_order("n rows of disjoint variable sets", n, 1, |m| {
+        let (a, b) = (&xs[&m], &ys[&m]);
+        let (mut x, mut y) = (a[0].clone(), b[0].clone());
+        let mut zs = Vec::with_capacity(m);
+        for (a, b) in a[1..].iter().zip(&b[1..]) {
+            x = Ty::tuple(vec![x, a.clone()]);
+            y = Ty::tuple(vec![y, b.clone()]);
+            zs.push(Ty::tuple(vec![x.clone(), y.clone()]));
+        }
+        assert_eq!(zs.last().map(|z| z.var_facts().names.len()), Some(2 * m));
+    });
+}

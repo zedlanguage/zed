@@ -490,15 +490,32 @@ impl VarFacts {
     }
 }
 
-/// Adds `other` to `set`, keeping the larger of the two and adding the smaller to it.
+/// Adds `other` to `set`, keeping the larger of the two and adding to it what the smaller
+/// holds and it lacks.
+///
+/// Two ways find that, run a step each in turn until either ends: inserting each variable of
+/// the smaller set, `O(m log n)` for sets of `m` and `n`, and the difference of the two
+/// (`imbl`'s `diff`), which steps over the nodes they share, so that a set made from the other
+/// by adding a few variables costs about the depth of the tree. Either alone fails a family:
+/// the insertions merge a set into one it was made from at its full size, `O(n^2 log n)` over
+/// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`, and the difference walks the larger set when the
+/// two share no node.
 fn merge(set: &mut imbl::OrdSet<Arc<str>>, other: &imbl::OrdSet<Arc<str>>) {
-    let small = match other.len() > set.len() {
-        true => std::mem::replace(set, other.clone()),
-        false => other.clone(),
+    let (large, small) = match other.len() > set.len() {
+        true => (other, &*set),
+        false => (&*set, other),
     };
-    for v in &small {
-        add(set, v);
+    let mut out = large.clone();
+    let mut lacks = large.diff(small);
+    for v in small {
+        add(&mut out, v);
+        match lacks.next() {
+            Some(imbl::ordset::DiffItem::Add(v)) => add(&mut out, v),
+            Some(imbl::ordset::DiffItem::Remove(_)) => {}
+            None => break,
+        }
     }
+    *set = out;
 }
 
 /// Adds `v` to `set`. A set shared with the facts of another signature is copied along the

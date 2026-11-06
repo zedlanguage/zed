@@ -1623,3 +1623,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `std::process::Command` running `git ls-files -z` and reading its standard output and exit status | `cite::run` | Command line and exit status (gap 6): Zed has no port that runs another program | An input port of the tracked paths, or a port that runs a program and gives its output and exit status |
 | `std::fs::read` of a path built at run time, with `ErrorKind::NotFound` told apart from other errors, and `String::from_utf8` to skip a file that is not text | `cite::run` | Computed paths and bytes (gaps 5 and 6) | The byte file port of step L7.3f and `fromUtf8` |
+
+## Entries from ROW-made-cost (`zedc/src/check/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `imbl::OrdSet::diff`, which steps over the nodes two sets share, run a step at a time in turn with the insertions of the smaller set into the larger, stopping when either ends | `check::ty::merge` | Missing | As for `OrdSet::diff` above: Zed's sets are values but have no structural difference; the port needs a `diff` word that the runtime answers in time proportional to the unshared part, and a lazy sequence to step it in turn with the insertions |
