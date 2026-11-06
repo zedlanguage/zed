@@ -298,7 +298,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 }
 ```
 
-<!-- DESIGN.md:1546 layer L7: ring L7, word L7 (terminated), label none; section [sec:ffi] 1 -->
+<!-- DESIGN.md:1552 layer L7: ring L7, word L7 (terminated), label none; section [sec:ffi] 1 -->
 ```zed
 @foreign struct SockAddr { family: int with bits(16), data: [u8] with length(14) }
 @foreign struct AddrInfo {
@@ -312,7 +312,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 @foreign("c", "getaddrinfo") getAddrInfo: (node: [u8] with terminated(0), service: [u8] with terminated(0), hints: Ptr(AddrInfo) | #none) -> {rc: i32, res: Ptr(AddrInfo) | #none with release(freeAddrInfo)};
 ```
 
-<!-- DESIGN.md:3041 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
+<!-- DESIGN.md:3047 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
 ```zed
 // bindings — immutable, inferred; domains where they carry intent
 x = 42;
@@ -351,7 +351,7 @@ onAxis = Point(x: 0.0, ...);            // a struct is its constructor, curried 
 struct Round { import Rect, r: f64 }     // composition-import, not inheritance
 ```
 
-<!-- DESIGN.md:3081 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
+<!-- DESIGN.md:3087 layer L10: ring L10, word none, label none; section [sec:tour_methods] 1 -->
 ```zed
 struct Counter { n: int, hi: int }
 
@@ -370,7 +370,7 @@ p       = Counter(n: 0, hi: 9);  // `.` is pure, so every spelling below is pure
 p2      = p.tick().tick();       //   T -> T chains by composition
 p3, was = p.bump(2);             //   two results, two targets — the non-OO spelling
 p4, w2  = bump(p, 2);            //   ≡ the same call, written without UFCS
-// p*.bump(3);                   // ✗ p is a value binding — no next generation to write
+// p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
 
 run = loop {
   mutable c = Counter(n: 0, hi: 9); // state receiver: carry-forward, boundary at t = -1
@@ -381,13 +381,13 @@ run = loop {
   // a, b = c*.bump(1).bump(2);     // a chain threads the receiver: ONE write of c' at the
                                     //   end, its value the links' returns, in order
   // c*.tick().tick();              // no returns ⇒ a statement, still exactly one write
-  // _ = c*.bump(1); _ = c*.bump(2); // ✗ two chains, two writers of c': the collision error
-  // c.bump(3);                     // ✗ `.` never mutates, so this writes nothing: dead
+  // _ = c*.bump(1); _ = c*.bump(2); // ✗ Collision: two chains, two writers of c'
+  // c.bump(3);                     // ✗ Statement that writes nothing, or drops a declared result: `.` never mutates, so this writes nothing
   // c', prev = c.bump(3);          // the explicit spelling; `*.` abbreviates it, both legal
 };
 ```
 
-<!-- DESIGN.md:3125 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
+<!-- DESIGN.md:3131 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
 ```zed
 xs   = [3, 1, 4, 1, 5];                 // [int]  ≡  int[0..<5] -> int
 m    = { "a" -> 1, "b" -> 2 };          // display: commas inside, `;` ends the statement;
@@ -405,13 +405,13 @@ counts = text.split(" ").group(w -> w.lower).count;
 // counts : Utf8String ->? int     (f() ≡ f — a unit morphism reads as its value)
 ```
 
-<!-- DESIGN.md:3142 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
+<!-- DESIGN.md:3148 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
 ```zed
 // the same program, symbolic register (what the optimizer reasons over):
 counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);
 ```
 
-<!-- DESIGN.md:3147 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
+<!-- DESIGN.md:3153 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
 ```zed
 // group vs rekey — the grouping decision is always a visible word:
 byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnessed:
@@ -419,7 +419,7 @@ byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnes
                                 //    or mark the key function @injective"
 ```
 
-<!-- DESIGN.md:3154 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
+<!-- DESIGN.md:3160 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
 ```zed
 byId = users.group(u -> u.id);  // ✓ type: Id ->? (UserKey -> User)  (the extra level, declared by the word)
 
@@ -429,7 +429,7 @@ one  = best?.first;             // #none carried; lexicographic: the max-score g
                                 // (first/last descend by each level's order — sec:corner_cases)
 ```
 
-<!-- DESIGN.md:3165 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
+<!-- DESIGN.md:3171 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
 ```zed
 // query projection      (payments : OrderId -> Payment — uniquely keyed,
 //                        which is what keeps the join flat, sec:joins;
@@ -438,7 +438,7 @@ paid = orders.join(payments, on: #orderId, kind: #left);
      // OrderId -> (Order, Payment | #none) — the pair of sec:joins; absence is a value, not a null row
 ```
 
-<!-- DESIGN.md:3173 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
+<!-- DESIGN.md:3179 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
 ```zed
 // iteration projection — the SAME kernel term; the compiler picks the plan
 paid = for o in orders {
@@ -447,13 +447,13 @@ paid = for o in orders {
 };
 ```
 
-<!-- DESIGN.md:3181 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
+<!-- DESIGN.md:3187 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
 ```zed
 // anti-join, both ways (same term again)
 unpaid = orders.diff(payments, on: #orderId);
 ```
 
-<!-- DESIGN.md:3186 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
+<!-- DESIGN.md:3192 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
 ```zed
 unpaid = orders.where(o -> payments[o.orderId] is #notFound);
 
@@ -474,7 +474,7 @@ matmul(positional a: (r -> c -> f64), positional b: (c -> k -> f64)) =
 prod = a.matmul(b);
 ```
 
-<!-- DESIGN.md:3208 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
+<!-- DESIGN.md:3214 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
 ```zed
 // comprehension — parallel by default
 sq = for i in 0..<n { i * i };
@@ -504,7 +504,7 @@ sessions = events.chunkBy(e -> e.userId);     // key-change splits; last chunk i
 report   = sessions.map(s -> summarize(s));
 ```
 
-<!-- DESIGN.md:3239 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
+<!-- DESIGN.md:3245 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
 ```zed
 parse : (Utf8String) -> Config | #syntaxError(pos: int)   // an assumed input, shown as a type — no ';' (sec:lexical)
 
@@ -528,7 +528,7 @@ badAmounts = amounts.where(a -> a is not int);     // 3: keep them — an ordina
 sumAll    = amounts.allOk >< (+);                  // 4: all or nothing: the sum, or the failures
 ```
 
-<!-- DESIGN.md:3264 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
+<!-- DESIGN.md:3270 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
 ```zed
 // one declaration: type + parser + serializer (round-trip canonical)
 struct KeyVal  grammar { key: Ident  ":"  value: Json }
@@ -568,32 +568,32 @@ orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
 n = orders[id]?.note;              // Utf8String | #none | #notFound | #dbError — NULL, no row, no db
-// note:  Utf8String                   // ✗ the column is nullable: #none missing from the field type
-// total: f64                      // ✗ NUMERIC is not a binary float
+// note:  Utf8String                   // ✗ Stored collection whose type and schema disagree: the column is nullable, and #none is missing from the field type
+// total: f64                      // ✗ Stored collection whose type and schema disagree: NUMERIC is not a binary float
 
 // facets: units and taint are checked like types
 v = 3.0 with units("m/s");
 t = 2.0 with units("s");
 d = v * t;                         // d::units == "m"
-// e = v + t;                      // ✗ compile error: unit mismatch
+// e = v + t;                      // ✗ Units that differ where an operation requires equal ones: m/s + s
 
 exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
-// exec(db, userInput);            // ✗ #userInput taint reaches a #clean sink
+// exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
 ```
 
-<!-- DESIGN.md:3370 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
+<!-- DESIGN.md:3376 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
 ```zed
 // layer L3
 priceOf(positional items, positional id) = items[id]?.price * (1 + taxRate);
 ```
 
-<!-- DESIGN.md:3377 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
+<!-- DESIGN.md:3383 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
 ```zed
 priceOf : (K ->? {price: f64}, K) -> f64 | #notFound
 ```
 
-<!-- DESIGN.md:3389 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
+<!-- DESIGN.md:3395 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
 ```zed
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);
@@ -637,12 +637,12 @@ past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), s
 // Edit one row of sales ⇒ exactly the dirty cone recomputes, with provenance for every cell.
 
 // 9 — SQL injection is a compile error, not a code-review hope.
-// rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ taint #userInput reaches #clean sink
+// rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink
 rows = exec(db, "SELECT * WHERE name = " ++ sanitize(userName));  // ✓ and the sanitizer is auditable
 
 // 10 — Wrong physics doesn't build.
 energy = 0.5 * m * v * v;         // energy::units == "kg m^2 s^-2"  (a joule)
-// e = energy + force;            // ✗ unit mismatch at compile time: kg m s^-2 is not kg m^2 s^-2
+// e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m s^-2 is not kg m^2 s^-2
 
 // 11 — One declaration = type + parser + printer, with round-trip guaranteed.
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }

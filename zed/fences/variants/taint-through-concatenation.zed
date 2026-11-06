@@ -1,4 +1,4 @@
-// variant: // rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ taint #userInput reaches #clean sink
+// variant: // rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);
 // Elsewhere: parallel float reduction is nondeterministic unless you build the tree yourself.
@@ -41,11 +41,11 @@ past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), s
 // Edit one row of sales ⇒ exactly the dirty cone recomputes, with provenance for every cell.
 
 // 9 — SQL injection is a compile error, not a code-review hope.
-rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ taint #userInput reaches #clean sink
+rows = exec(db, "SELECT * WHERE name = " ++ userName);      // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink
 
 // 10 — Wrong physics doesn't build.
 energy = 0.5 * m * v * v;         // energy::units == "kg m^2 s^-2"  (a joule)
-// e = energy + force;            // ✗ unit mismatch at compile time: kg m s^-2 is not kg m^2 s^-2
+// e = energy + force;            // ✗ Units that differ where an operation requires equal ones: kg m s^-2 is not kg m^2 s^-2
 
 // 11 — One declaration = type + parser + printer, with round-trip guaranteed.
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }

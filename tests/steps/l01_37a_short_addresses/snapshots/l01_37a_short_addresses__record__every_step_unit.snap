@@ -28,6 +28,20 @@ l01_21_test_runner/zed/labels.zed
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
+            Step {
+                line: 5,
+                col: 5,
+                text: "repair: supply `city`",
+                source: "a = label();                                // ✗ Missing argument: name has no default",
+                width: 7,
+            },
+            Step {
+                line: 5,
+                col: 5,
+                text: "repair: declare a default for `city`",
+                source: "a = label();                                // ✗ Missing argument: name has no default",
+                width: 7,
+            },
         ],
         row: Some(
             MissingArgument,
@@ -44,6 +58,20 @@ l01_21_test_runner/zed/labels.zed
                 text: "`label` is declared here, `(String, city: String, postcode: String) -> String`",
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
+            },
+            Step {
+                line: 5,
+                col: 5,
+                text: "repair: supply `name`",
+                source: "a = label();                                // ✗ Missing argument: name has no default",
+                width: 7,
+            },
+            Step {
+                line: 5,
+                col: 5,
+                text: "repair: declare a default for `name`",
+                source: "a = label();                                // ✗ Missing argument: name has no default",
+                width: 7,
             },
         ],
         row: Some(
@@ -62,6 +90,20 @@ l01_21_test_runner/zed/labels.zed
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
+            Step {
+                line: 6,
+                col: 17,
+                text: "repair: pass `name` by position",
+                source: "b = label(name: \"Ada\", city: \"Leeds\");      // ✗ Argument in the wrong form: name is positional",
+                width: 5,
+            },
+            Step {
+                line: 6,
+                col: 17,
+                text: "repair: remove `positional` from the declaration of `name`",
+                source: "b = label(name: \"Ada\", city: \"Leeds\");      // ✗ Argument in the wrong form: name is positional",
+                width: 5,
+            },
         ],
         row: Some(
             WrongForm,
@@ -79,6 +121,13 @@ l01_21_test_runner/zed/labels.zed
                 source: "label(positional name: String, city: String, postcode: String = \"\") = name ++ \", \" ++ city ++ \" \" ++ postcode;",
                 width: 110,
             },
+            Step {
+                line: 7,
+                col: 5,
+                text: "repair: remove the `...`",
+                source: "c = label(\"Ada\", city: \"Leeds\", postcode: \"LS1\", ...);  // ✗ `...` with no named parameter left out: all are given",
+                width: 49,
+            },
         ],
         row: Some(
             NothingLeftOut,
@@ -95,6 +144,13 @@ l01_21_test_runner/zed/labels.zed
                 text: "`stamp` is declared here, `(int, handler: ((grams: int) -> String)) -> String`",
                 source: "stamp(positional weight: int, handler: (grams: int) -> String) = handler(grams: weight);",
                 width: 88,
+            },
+            Step {
+                line: 8,
+                col: 25,
+                text: "repair: rename `g` to `grams`",
+                source: "d = stamp(120, handler: g -> \"x\");          // ✗ Function whose parameter kinds do not fit the expected function type: the type names grams",
+                width: 1,
             },
         ],
         row: Some(
@@ -120,25 +176,6 @@ l01_22_type_representation/zed/shape.zed
   warnings: []
   checks: [Outcome { line: 15, col: 3, failure: None }, Outcome { line: 16, col: 3, failure: None }, Outcome { line: 17, col: 3, failure: None }, Outcome { line: 18, col: 3, failure: None }, Outcome { line: 19, col: 3, failure: None }, Outcome { line: 20, col: 3, failure: None }, Outcome { line: 21, col: 3, failure: None }, Outcome { line: 22, col: 3, failure: None }, Outcome { line: 23, col: 3, failure: None }, Outcome { line: 24, col: 3, failure: None }, Outcome { line: 25, col: 3, failure: None }]
 
-l01_22_type_representation/zed/untestable.zed
-  rejected: [
-    Diagnostic {
-        line: 3,
-        col: 19,
-        message: "`is` cannot test a value against a function type at run time",
-        steps: [],
-        row: None,
-    },
-    Diagnostic {
-        line: 4,
-        col: 17,
-        message: "`Lines` is the type of a port, and no value has it",
-        steps: [],
-        row: None,
-    },
-]
-  checks: [Outcome { line: 3, col: 19, failure: None }, Outcome { line: 4, col: 17, failure: None }]
-
 l01_26_type_resolution/zed/readings.zed
   warnings: []
   checks: [Outcome { line: 4, col: 8, failure: None }, Outcome { line: 4, col: 19, failure: None }, Outcome { line: 4, col: 32, failure: None }, Outcome { line: 4, col: 44, failure: None }, Outcome { line: 4, col: 56, failure: None }, Outcome { line: 8, col: 8, failure: None }, Outcome { line: 8, col: 21, failure: None }, Outcome { line: 8, col: 38, failure: None }, Outcome { line: 12, col: 8, failure: None }, Outcome { line: 12, col: 19, failure: None }, Outcome { line: 12, col: 32, failure: None }, Outcome { line: 12, col: 44, failure: None }, Outcome { line: 18, col: 8, failure: None }, Outcome { line: 22, col: 8, failure: None }, Outcome { line: 22, col: 20, failure: None }, Outcome { line: 27, col: 8, failure: None }, Outcome { line: 27, col: 28, failure: None }, Outcome { line: 30, col: 8, failure: None }]
@@ -159,46 +196,48 @@ l01_29_diagnostics/zed/narrowed.zed
                 line: 3,
                 col: 22,
                 text: "`v` is int here",
-                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 1,
             },
             Step {
                 line: 3,
                 col: 11,
                 text: "`v` is narrowed to int where this test decides",
-                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 8,
             },
             Step {
                 line: 3,
                 col: 3,
                 text: "`v` has no declared type; its uses give it _",
-                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 1,
             },
             Step {
                 line: 3,
                 col: 27,
                 text: "this expression is \"x\"",
-                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 3,
             },
             Step {
                 line: 3,
                 col: 22,
                 text: "`++` takes (String, String) -> String",
-                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 8,
             },
             Step {
                 line: 3,
                 col: 22,
                 text: "repair: write `String(v)`; the checker accepts that",
-                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
+                source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 1,
             },
         ],
-        row: None,
+        row: Some(
+            NoArrowAtCarrier,
+        ),
     },
 ]
   checks: [Outcome { line: 3, col: 22, failure: None }]

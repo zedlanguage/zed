@@ -17,36 +17,43 @@ fn first(name: &str) -> String {
 
 #[test]
 fn each_variant_gives_its_pinned_diagnostic_at_l1() {
-    // The whole-line variants of the spec name no row: each marked line fails on that until
-    // the step that enables it names its row in the spec.
-    let no_row = |line: usize| {
-        format!(
-            "{line}: the line is marked ✗ and its comment names no row of the rejection table: \
-             write `// ✗ <row>: …` with the row's name"
-        )
-    };
+    // Each whole-line variant names its row; a marked line the checker does not reject yet
+    // has no diagnostic, and one it rejects for another reason gives a diagnostic in no row.
+    let none = |line: usize| format!("{line}: the line is marked ✗ and has no diagnostic");
     let cases = [
-        ("constructor-called-by-position", no_row(6)),
+        (
+            "constructor-called-by-position",
+            "6: the mark names the row \"Positional constructor call or pattern\", and the \
+             diagnostic is in no row of the rejection table: `Point` is not defined"
+                .into(),
+        ),
         (
             "dot-never-mutates",
             "8: this form (ResultType) is built from layer L10".into(),
         ),
-        ("nullable-column-missing-none", no_row(25)),
-        ("numeric-is-not-binary-float", no_row(25)),
+        ("nullable-column-missing-none", none(25)),
+        ("numeric-is-not-binary-float", none(25)),
         (
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which
             // comes before the marked line.
             "payload-built-by-position",
             "3: a type declaration is compiled from step L2.5".into(),
         ),
-        ("taint-reaches-clean-sink", no_row(39)),
-        ("taint-through-concatenation", no_row(44)),
+        (
+            "taint-reaches-clean-sink",
+            "39: the mark names the row \"Taint at a sink whose parameter does not take it\", \
+             and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' \
+             or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or \
+             'with' or '|'"
+                .into(),
+        ),
+        ("taint-through-concatenation", none(44)),
         (
             "two-writers-of-one-generation",
             "8: this form (ResultType) is built from layer L10".into(),
         ),
-        ("unit-mismatch-force-energy", no_row(49)),
-        ("unit-mismatch-in-sum", no_row(36)),
+        ("unit-mismatch-force-energy", none(49)),
+        ("unit-mismatch-in-sum", none(36)),
         (
             "value-binding-has-no-next-generation",
             "8: this form (ResultType) is built from layer L10".into(),

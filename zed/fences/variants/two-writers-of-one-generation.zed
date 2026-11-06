@@ -1,4 +1,4 @@
-// variant: // _ = c*.bump(1); _ = c*.bump(2); // ✗ two chains, two writers of c': the collision error
+// variant: // _ = c*.bump(1); _ = c*.bump(2); // ✗ Collision: two chains, two writers of c'
 struct Counter { n: int, hi: int }
 
 Counter.tick() {                 // no declared return ⇒ the next receiver is the whole result
@@ -16,7 +16,7 @@ p       = Counter(n: 0, hi: 9);  // `.` is pure, so every spelling below is pure
 p2      = p.tick().tick();       //   T -> T chains by composition
 p3, was = p.bump(2);             //   two results, two targets — the non-OO spelling
 p4, w2  = bump(p, 2);            //   ≡ the same call, written without UFCS
-// p*.bump(3);                   // ✗ p is a value binding — no next generation to write
+// p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
 
 run = loop {
   mutable c = Counter(n: 0, hi: 9); // state receiver: carry-forward, boundary at t = -1
@@ -26,7 +26,7 @@ run = loop {
   // a, b = c*.bump(1).bump(2);     // a chain threads the receiver: ONE write of c' at the
                                     //   end, its value the links' returns, in order
   // c*.tick().tick();              // no returns ⇒ a statement, still exactly one write
-  _ = c*.bump(1); _ = c*.bump(2);   // ✗ two chains, two writers of c': the collision error
-  // c.bump(3);                     // ✗ `.` never mutates, so this writes nothing: dead
+  _ = c*.bump(1); _ = c*.bump(2);   // ✗ Collision: two chains, two writers of c'
+  // c.bump(3);                     // ✗ Statement that writes nothing, or drops a declared result: `.` never mutates, so this writes nothing
   // c', prev = c.bump(3);          // the explicit spelling; `*.` abbreviates it, both legal
 };

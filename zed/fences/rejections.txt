@@ -52,3 +52,5 @@ Cycle through state and value edges
 Operator with no arrow at its operands' carrier
 Units that differ where an operation requires equal ones
 Taint at a sink whose parameter does not take it
+`*.` call on a receiver that is not a state variable
+Stored collection whose type and schema disagree

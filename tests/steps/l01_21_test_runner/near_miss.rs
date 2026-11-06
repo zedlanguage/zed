@@ -69,7 +69,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "s(positional n: int) = \"#\" ++ String(n);\n",
         "s(positional n: int) = \"#\" ++ n;\n",
         "1:24",
-        Some("wrap this in `String(…)`; the checker accepts that"),
+        Some("write `String(n)`; the checker accepts that"),
     ),
     (
         Row::NamedBeforePositional,

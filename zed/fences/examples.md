@@ -403,7 +403,7 @@ s2 = s with { hi = s.hi + 1 };           // still a Span: hi + 1 >= lo
 x = 3.0;
 y = 4.0;
 q = Point(x:, y:);                 // Point(x: x, y: y)
-// q = Point(3.0, 4.0);            // ✗ a constructor is called by name: Point(x: 3.0, y: 4.0)
+// q = Point(3.0, 4.0);            // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3.0, y: 4.0)
 ```
 
 <!-- EXAMPLES.md:441 layer L6: ring L6, word none, label none; section [10. Structs and updates] 4 -->
@@ -477,7 +477,7 @@ three = eval(#add(#num(1.0), #num(2.0)));
 // [d4] sec:failure — a payload is a struct, so it is built and matched like one
 type Fail = #syntaxError(pos: int, msg: Utf8String);
 e1 = #syntaxError(pos: 3, msg: "unexpected )");  // built by name, like a struct
-// e2 = #syntaxError(3, "unexpected )");         // ✗ a payload with named fields is built by name
+// e2 = #syntaxError(3, "unexpected )");         // ✗ Positional constructor call or pattern: a payload with named fields is built by name
 position(f: Fail) = match f { #syntaxError(pos:) -> pos };   // matched by name too; msg omitted
 ```
 

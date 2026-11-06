@@ -89,6 +89,8 @@ rows! {
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
     TaintAtSink => "Taint at a sink whose parameter does not take it",
+    MutatingCallOnValue => "`*.` call on a receiver that is not a state variable",
+    StoreSchemaMismatch => "Stored collection whose type and schema disagree",
 }
 
 impl Row {
