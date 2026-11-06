@@ -12,6 +12,7 @@
 
 pub mod audit;
 pub mod cases;
+pub mod catalog;
 pub mod check;
 pub mod cite;
 pub mod fences;

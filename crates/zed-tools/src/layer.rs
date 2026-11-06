@@ -98,6 +98,21 @@ pub struct WordTable {
 }
 
 impl WordTable {
+    /// The layer of the table word `w` (an annotation, a facet, a form, the word of a `::` read
+    /// or an atom), if the table lists it.
+    pub fn layer_of(&self, w: &str) -> Option<u32> {
+        [
+            &self.annots,
+            &self.facets,
+            &self.forms,
+            &self.reads,
+            &self.atoms,
+        ]
+        .into_iter()
+        .filter_map(|m| m.get(w).copied())
+        .min()
+    }
+
     /// Reads the table of the document at `design`.
     pub fn read(design: &str) -> Result<WordTable, String> {
         let text = read_text(design)?;

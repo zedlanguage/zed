@@ -76,6 +76,11 @@ fn stated(text: &str) -> Option<[usize; 4]> {
     Some(n)
 }
 
+/// The ids of the rows of the table "Items by level" in the plan `text`.
+pub fn row_ids(text: &str) -> Result<Vec<&str>, String> {
+    Ok(rows(text)?.into_iter().map(|r| r.id).collect())
+}
+
 /// Checks the plan `text`, writing one line per problem to `out`; true when there is none.
 ///
 /// Levels are checked against the levels written in the table, one row at a time: each row's

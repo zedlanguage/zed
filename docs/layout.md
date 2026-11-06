@@ -18,14 +18,15 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
   zed-cert/           the independent certificate checker; depends on zed-kernel only
   zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
   zed-tools/          the commands: check, cases, fences, fuzz, layer, ring, audit, sync,
-                      progress; each takes the spec directory, and shares `zedc::parse`
+                      progress, catalog; each takes the spec directory, and shares `zedc::parse`
 zed/                  Zed source code
   prelude/            the normative prelude (from step M0.5)
   corpus/             the 31 corpus programs (step M0.4): NN-name.zed with its .in and .out,
                       a folder NN-name/ for the other units of a multi-unit program,
                       ref/, the crate zed-corpus-ref computing each .out, variants/, controls/,
                       LEDGER.md
-  compiler/           the compiler written in Zed (row S); empty until then
+  compiler/           the compiler written in Zed (row S); for now ZED0.md and CATALOG.md, the
+                      routines the Rust calls (row PORT-catalog)
   grammar/            the syntactic grammar of sec:grammar and its bracketing cases (step
                       L1.8), written by the sync tool
   fences/             the spec's `zed` fences (step L1.7): design.md and examples.md, written

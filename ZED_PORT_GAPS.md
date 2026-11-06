@@ -42,6 +42,18 @@ and built (gap 4); the content-address row writes `mod 2 ** 32`, as the grammar 
 update on a compiler state struct. That rests on step L6.13, which is not built, so the claim
 is inferred. Everything in the class "workaround" that names L6.13 falls with it.
 
+**The routines the Rust calls** are listed in `zed/compiler/CATALOG.md` (row PORT-catalog,
+2026-11-05): 1,369 routines of the standard library and of dependencies, called 50,049 times by
+zedc, zed-kernel and zed-native outside unit tests, each with its Zed text, the plan row that
+provides it, or `missing` (393). The missing ones are gaps of the library, not of the language
+(inferred from their kinds, not checked row by row). The largest groups: conversions (`From`,
+`TryFrom`; 37), methods of `Option` and `Result` (37), signed truncating division and remainder (Zed's `div` and `mod` are Euclidean), the checked,
+wrapping and saturating fixed-width arithmetic (34), `Ordering` and `cmp` (30), hashing and
+formatting, `Cell`, `RefCell` and
+`OnceCell`, character classes, and the operating-system calls of `std::fs`, `std::io`,
+`std::env` and `std::process`. Rows STD-seq, STD-text and STD-num start from this list, and step
+S.1 regenerates it with the tool `catalog`.
+
 ## Method
 
 A scanner written for this audit (not committed; this item adds one file) blanked comments
