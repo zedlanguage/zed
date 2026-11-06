@@ -1303,21 +1303,45 @@ impl Ty {
         self.held_function().is_none()
     }
 
-    /// A function it may hold, at any depth; a family is data, not a function.
+    /// A function it may hold, at any depth, in its tuples and its atoms' payloads; a family
+    /// is data, not a function.
     pub fn held_function(&self) -> Option<&Arc<Sig>> {
-        self.fns
-            .iter()
-            .find(|s| !s.data)
-            .or_else(|| self.tuples.iter().find_map(|r| r.0.held.as_ref()))
+        self.function_in(|r| r.0.held.as_ref())
     }
 
     /// A function it may hold, at any depth, that no tuple expression has checked as data, so
     /// that no error has reported it yet.
     pub(crate) fn unchecked_function(&self) -> Option<&Arc<Sig>> {
-        self.fns
-            .iter()
-            .find(|s| !s.data)
-            .or_else(|| self.tuples.iter().find_map(|r| r.0.unchecked.as_ref()))
+        self.function_in(|r| r.0.unchecked.as_ref())
+    }
+
+    /// The first function, not a family, that it holds itself, that `row` gives of one of its
+    /// tuples, or that the payload of one of its atoms holds, at any depth (DESIGN.md,
+    /// `#atom(t)`: a payload may hold a function).
+    ///
+    /// A row keeps what it holds at any depth, so the walk reads it and does not enter it; a
+    /// payload is owned by its type, not shared, so the walk enters each payload once and
+    /// needs no visited set: it costs the size of the type outside its rows. Payloads nest
+    /// as deep as the program, so the walk keeps its own stack.
+    fn function_in<'a>(
+        &'a self,
+        row: impl Fn(&'a Row) -> Option<&'a Arc<Sig>>,
+    ) -> Option<&'a Arc<Sig>> {
+        let mut stack = vec![self];
+        while let Some(t) = stack.pop() {
+            let own = t.fns.iter().find(|s| !s.data);
+            if let Some(s) = own.or_else(|| t.tuples.iter().find_map(&row)) {
+                return Some(s);
+            }
+            // Pushed reversed, so the payloads are read in written order.
+            let from = stack.len();
+            for s in t.payloads.values().flatten().flatten() {
+                stack.extend(&s.items);
+                stack.extend(s.fields.values());
+            }
+            stack[from..].reverse();
+        }
+        None
     }
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.

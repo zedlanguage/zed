@@ -1550,7 +1550,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn str_step(&mut self, m: &mut M<'a>, mut s: Box<StrF<'a>>) {
         if let Some(h) = s.hole.take() {
             let t = m.take_ty();
-            self.data(&t, "interpolation", h.span);
+            self.data(&t, "interpolation", h.span, h.span);
             s.holes.push(t);
         }
         while let Some(p) = s.parts.get(s.i) {
@@ -1579,7 +1579,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // where they are; checking it again would walk each nested tuple once per level.
             let e = &s.es[s.out.len()];
             if s.data && !matches!(e.kind, ExprKind::Tuple(_)) {
-                self.data(&t, "a tuple", e.span);
+                self.data(&t, "a tuple", e.span, e.span);
             }
             s.out.push(t);
         }
@@ -1679,8 +1679,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         match op {
             "==" | "!=" => {
-                self.data(&x.ty, &format!("`{op}`"), span);
-                self.data(&y.ty, &format!("`{op}`"), span);
+                self.data(&x.ty, &format!("`{op}`"), span, x.at.unwrap_or(span));
+                self.data(&y.ty, &format!("`{op}`"), span, y.at.unwrap_or(span));
                 self.equal(&x, &y);
                 Ty::carrier(Carrier::Bool)
             }
@@ -1832,7 +1832,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return self.sum(x, span);
         }
         if w == "String" {
-            self.data(&x.ty, "`String`", span);
+            self.data(&x.ty, "`String`", span, x.at.unwrap_or(span));
         }
         let sig = word_sig(w);
         self.apply(&format!("`{w}`"), &sig, vec![Some(x)], true, span)

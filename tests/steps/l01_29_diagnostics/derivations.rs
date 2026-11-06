@@ -310,3 +310,28 @@ main(stdin: Lines) -> (stdout: Lines) {
     assert!(steps(&out).contains(&"`<` takes _"), "{out}");
     assert!(!out.contains("other values"), "{out}");
 }
+
+#[test]
+fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_came_from() {
+    // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads, so
+    // the refusal follows the value back through the atom to the function it holds.
+    let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
+    assert_eq!(
+        out,
+        "3:8: `==` takes data, and this value may hold a function, `(int) -> int`
+  [1] 3:8: `boxed` is #box(((int) -> int)) here
+      3 | same = boxed == boxed;
+        |        ^^^^^
+  [2] 2:9: `boxed` is defined as this expression, #box(((int) -> int))
+      2 | boxed = #box(inc);
+        |         ^^^^^^^^^
+  [3] 2:9: this atom `#box` with its payload gives #box(((int) -> int))
+  [4] 2:14: `inc` is ((int) -> int) here
+      2 | boxed = #box(inc);
+        |              ^^^
+  [5] 1:7: `inc` is defined as this expression, ((int) -> int)
+      1 | inc = x -> x + 1;
+        |       ^^^^^^^^^^
+  [6] 1:7: this expression is ((int) -> int)"
+    );
+}

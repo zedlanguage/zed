@@ -917,6 +917,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         ExprKind::Block(_) => "this block".into(),
                         ExprKind::Call { callee, .. } => match &callee.kind {
                             ExprKind::Name(n) => format!("this call of `{n}`"),
+                            ExprKind::Atom(a) => format!("this atom `#{a}` with its payload"),
                             _ => "this call".into(),
                         },
                         _ => "this expression".into(),
@@ -1917,7 +1918,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.call_found(&on, what, args, *curry, span)
             }
             NeedKind::Data(what) => {
-                self.data(&on, what, span);
+                self.data(&on, what, span, span);
                 Ty::empty()
             }
             NeedKind::Into { what, ty } => {
@@ -2805,16 +2806,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
-    /// function at any depth.
-    fn data(&mut self, t: &Ty, what: &str, span: Span) {
+    /// function at any depth. A function it holds is reported at `span` with the derivation of
+    /// the expression at `from`, which gave the value.
+    fn data(&mut self, t: &Ty, what: &str, span: Span, from: Span) {
         // A function held in the row of a tuple expression was reported at that tuple, with its
         // derivation: one error for one function, however many tuples and uses it then flows
         // through, each of which meets the same value, so that fixing the error fixes them all.
         if let Some(s) = t.unchecked_function() {
             let s = self.sig_text(s);
-            self.error(
+            let notes = self.derive(&[from]);
+            self.error_with(
                 span,
                 format!("{what} takes data, and this value may hold a function, `{s}`"),
+                notes,
             );
         }
         // A class, at any depth, needs data of each of its values. A row that holds no class
@@ -2837,6 +2841,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             if t.dynamic {
                 self.any(what, span);
+            }
+            // An atom expression does not check its payload as data, since a payload may hold
+            // a function (DESIGN.md, `#atom(t)`), so its classes and unknowns are met here.
+            for s in t.payloads.values().flatten().flatten() {
+                stack.extend(&s.items);
+                stack.extend(s.fields.values());
             }
         }
     }

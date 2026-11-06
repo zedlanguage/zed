@@ -131,3 +131,82 @@ fn a_type_a_million_tuples_deep_prints_and_drops_on_an_8_mib_stack() {
         assert!(text == format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
     });
 }
+
+/// `leaf` in an atom at the bottom of `n` levels of an atom around a tuple, compared with `==`.
+fn in_atoms_and_tuples(n: usize, leaf: &str) -> String {
+    format!(
+        "{SCALE}t = {}#a({leaf}){};\nsame = t == #b;\n",
+        "#a((".repeat(n),
+        ", 1))".repeat(n)
+    )
+}
+
+/// `leaf` after `n` integers in the payload of one atom, compared with `==`.
+fn in_a_wide_payload(n: usize, leaf: &str) -> String {
+    let items: String = (0..n).map(|i| format!("{i}, ")).collect();
+    format!("{SCALE}t = #a({items}{leaf});\nsame = t == #b;\n")
+}
+
+#[test]
+fn a_function_in_an_atom_s_payload_is_one_error() {
+    // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads: the
+    // function is reported once, at the tuple that holds the atom, or else at the `==`.
+    let at_tuple =
+        "a tuple takes data, and this value may hold a function, `(int) -> int` [#a(scale)]";
+    let at_eq = "`==` takes data, and this value may hold a function, `(int) -> int` [t == #b]";
+    assert_eq!(type_errors(&in_atoms_and_tuples(3, "scale")), [at_tuple]);
+    assert_eq!(type_errors(&in_a_wide_payload(3, "scale")), [at_eq]);
+    assert_eq!(
+        type_errors(&in_atoms_and_tuples(3, "1")),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        type_errors(&in_a_wide_payload(3, "1")),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_function_in_payloads_is_found_in_linear_time() {
+    // Each level makes a row, which reads the payload below it once; the payload walk reads
+    // a row and does not enter it. Atoms nested directly in atoms are left out: their types
+    // are copied whole at each level, O(n^2) before this walk (COMPLEXITY.md, ATOM-payload-fn).
+    type Family = fn(usize, &str) -> String;
+    for (what, text, leaf, errors) in [
+        (
+            "a function n atoms and tuples deep",
+            in_atoms_and_tuples as Family,
+            "scale",
+            1,
+        ),
+        (
+            "an integer n atoms and tuples deep",
+            in_atoms_and_tuples,
+            "1",
+            0,
+        ),
+        (
+            "a function after n integers in a payload",
+            in_a_wide_payload,
+            "scale",
+            1,
+        ),
+        (
+            "an integer after n integers in a payload",
+            in_a_wide_payload,
+            "1",
+            0,
+        ),
+    ] {
+        scaling::on_a_thread(1 << 29, || {
+            let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+                .into_iter()
+                .map(|n| (n, Resolved::new(&text(n, leaf))))
+                .collect();
+            scaling::check_order(what, 500, 1, |n| {
+                let info = units[&n].check();
+                assert_eq!(info.errors.len(), errors, "{what} at {n}");
+            });
+        });
+    }
+}

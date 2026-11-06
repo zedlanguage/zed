@@ -68,3 +68,53 @@ fn a_function_deep_in_a_tuple_is_reported_once_where_it_is_written() {
         ["a tuple takes data, and this value may hold a function, `(int) -> int` [inc]"]
     );
 }
+
+#[test]
+fn a_function_in_an_atom_s_payload_is_refused_by_equality() {
+    // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads, so
+    // `==` on such an atom compares functions whose domain is not enumerable (Soundness).
+    let src = "h = x -> x + 1;\nx = #a(h);\nsame = x == x;\n";
+    assert_eq!(
+        errors(src),
+        ["`==` takes data, and this value may hold a function, `(int) -> int` [x == x]"]
+    );
+    let named = "h = x -> x + 1;\nx = #a(f: h, n: 1);\nsame = x != x;\n";
+    assert_eq!(
+        errors(named),
+        ["`!=` takes data, and this value may hold a function, `(int) -> int` [x != x]"]
+    );
+}
+
+#[test]
+fn a_function_nested_in_payloads_and_tuples_is_refused() {
+    // Two atoms deep, the function is found by `==`; under a tuple, it is reported once, at the
+    // tuple expression that holds it, as a function in a tuple is (CHK-held-cascade).
+    let src = "h = x -> x + 1;\nx = #a(#b(h));\nsame = x == #c;\n";
+    assert_eq!(
+        errors(src),
+        ["`==` takes data, and this value may hold a function, `(int) -> int` [x == #c]"]
+    );
+    let src = "h = x -> x + 1;\nx = #a((1, #b(f: h)));\nsame = x == #c;\n";
+    assert_eq!(
+        errors(src),
+        ["a tuple takes data, and this value may hold a function, `(int) -> int` [#b(f: h)]"]
+    );
+}
+
+#[test]
+fn a_tuple_of_an_atom_whose_payload_holds_a_function_is_refused() {
+    // A tuple takes data (L1.17), and an atom component's payload is part of it.
+    let src = "h = x -> x + 1;\npair = (#a(h), 1);\n";
+    assert_eq!(
+        errors(src),
+        ["a tuple takes data, and this value may hold a function, `(int) -> int` [#a(h)]"]
+    );
+}
+
+#[test]
+fn atoms_whose_payloads_are_data_still_compare() {
+    let src = "x = #a(1, #b(n: 2.5), (3, \"s\"));\ny = #a(1, #b(n: 2.5), (3, \"t\"));\n\
+               same = x == x;\ndiffer = x == y;\n";
+    assert_eq!(value(src, "same"), "true");
+    assert_eq!(value(src, "differ"), "false");
+}
