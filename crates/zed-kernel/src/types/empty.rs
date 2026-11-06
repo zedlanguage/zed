@@ -1925,7 +1925,9 @@ impl<'m> Searching<'m> {
         // Complexity tradeoff: a part with a clause of three or more literals, or a tuple type
         // open on two components, is no 2-CNF and goes on to the search below, as before this
         // step; deciding it is NP-complete in general (pigeonhole is one), so no linear method
-        // covers it, and the search may refuse it.
+        // covers it, and the search may refuse it. Test:
+        // `l01_23_subtyping::two_sat::pigeonhole_is_left_to_the_search`; COMPLEXITY.md K54. A
+        // complete solution needs a SAT procedure, exponential in the variables in the worst case.
         let s = read_two_sat(f, cut.len(), &|a| literals[g.index[a]])?;
         let Some(values) = s.solve() else {
             return Some(None);
@@ -2691,8 +2693,8 @@ impl At<'_> {
     fn key(self, pos: bool) -> (u64, bool, u8) {
         match self {
             At::Part(p) => (p.id(), pos, 0),
-            At::Bdd(b) => (Part::Bdd(b.clone()).id(), pos, 0),
-            At::Arm(b, hi) => (Part::Bdd(b.clone()).id(), pos, 1 + u8::from(hi)),
+            At::Bdd(b) => (b.id(), pos, 0),
+            At::Arm(b, hi) => (b.id(), pos, 1 + u8::from(hi)),
         }
     }
 }

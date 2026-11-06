@@ -6,7 +6,7 @@
 use zed_kernel::Value;
 use zed_kernel::types::{Type, Verdict};
 use zed_tests::instances::Rng;
-use zed_tests::scaling::check_order;
+use zed_tests::scaling;
 
 fn lit(i: i64) -> Type {
     Type::lit(&Value::Int(i)).expect("an integer literal")
@@ -288,41 +288,74 @@ fn pigeonhole_is_left_to_the_search() {
     });
 }
 
-/// The cost of deciding a shape at `n` and `8n` variables, the types built before the runs.
-/// The type has `n` clauses of `n` components each, so its size is of order `n^2`, and the
-/// limit is that of work of order `n^2`: linear in the type. Before item T6-2sat the parity
-/// cycle cost about `n^3.5` (23 ms at 17 variables, 22.8 s at 129).
-fn scales(name: &str, n: usize) {
-    let types: std::collections::BTreeMap<usize, (Type, Verdict)> = [n, 8 * n]
-        .into_iter()
-        .map(|m| {
-            let clauses = shape(name, m, 0);
-            let expected = if by_propagation(m, &clauses) {
-                Verdict::Inhabited
-            } else {
-                Verdict::Empty
-            };
-            (m, (cnf_type(m, &clauses), expected))
-        })
-        .collect();
-    check_order(&format!("2-CNF {name}"), n, 2, |m| {
-        Type::forget_emptiness();
-        let (t, expected) = &types[&m];
-        assert_eq!(t.verdict(), *expected, "{name} {m}");
-    });
+/// The shape `name` on `m` variables as a type, the verdict the reference gives it, and the
+/// type's size, counted as clauses times components.
+fn instance(name: &str, m: usize) -> (Type, Verdict, usize) {
+    let clauses = shape(name, m, 0);
+    let expected = if by_propagation(m, &clauses) {
+        Verdict::Inhabited
+    } else {
+        Verdict::Empty
+    };
+    (cnf_type(m, &clauses), expected, clauses.len() * m)
+}
+
+/// Decides an instance built before the run, cold.
+fn decide(name: &str, m: usize, (t, expected, _): &(Type, Verdict, usize)) {
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), *expected, "{name} {m}");
+}
+
+/// The variable counts of [`scales`]. The input's size is that of the type: about one clause
+/// per variable, each a union of tuple types of one component per variable, so of order
+/// `vars^2`, and 45 and 128 variables give it 8 times over.
+const VARS: (usize, usize) = (45, 128);
+
+/// The cost of deciding a shape at the variable counts `VARS`, the types built before the runs,
+/// within the limit for work linear in the type (24 times at 8 times the size).
+fn scales(name: &str) {
+    let ((a, b), small, large) = (VARS, instance(name, VARS.0), instance(name, VARS.1));
+    let ratio = large.2 as f64 / small.2 as f64;
+    assert!((7.9..8.2).contains(&ratio), "{name}: size ratio {ratio}");
+    scaling::compare(
+        &format!(
+            "2-CNF {name}: {a} and {b} variables, sizes {} and {}",
+            small.2, large.2
+        ),
+        &format!(
+            "the type has {ratio:.2} times the size; for work linear in it the rule of low \
+             complexity allows at most 24 times (DESIGN.md Part G)"
+        ),
+        24.0,
+        || decide(name, a, &small),
+        || decide(name, b, &large),
+    );
 }
 
 #[test]
 fn a_chain_is_decided_in_the_size_of_its_type() {
-    scales("chain", 16);
+    scales("chain");
 }
 
 #[test]
 fn an_open_chain_is_decided_in_the_size_of_its_type() {
-    scales("chainsat", 16);
+    scales("chainsat");
 }
 
 #[test]
 fn a_parity_cycle_is_decided_in_the_size_of_its_type() {
-    scales("xorcycle", 17);
+    scales("xorcycle");
+}
+
+/// The parity cycle at 11 and 88 variables, within 24 times: linear in the clauses, a smaller
+/// measure than the type, whose size grows 64 times. The search before item T6-2sat costs about
+/// `vars^3` here, which is `n^1.5` in the type's size: 22 times at 8 times the size, inside the
+/// limit of [`scales`], so only this test tells it from the 2-CNF reading (it allocated 446
+/// times the bytes from 11 to 88 variables).
+#[test]
+fn a_parity_cycle_is_decided_in_time_linear_in_its_clauses() {
+    let types = scaling::inputs(11, |m| instance("xorcycle", m));
+    scaling::check("2-CNF xorcycle, by variables", 11, |m| {
+        decide("xorcycle", m, &types[&m]);
+    });
 }

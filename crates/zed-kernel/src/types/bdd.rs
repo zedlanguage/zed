@@ -155,7 +155,8 @@ impl<A: Literal> Bdd<A> {
         Bdd::node(a, Bdd::Leaf(true), Bdd::Leaf(false))
     }
 
-    fn id(&self) -> u64 {
+    /// The id of the diagram's node, unique among the nodes of the process; a leaf's is its value.
+    pub(super) fn id(&self) -> u64 {
         match self {
             Bdd::Leaf(b) => u64::from(*b),
             Bdd::Node(n) => n.id,
