@@ -84,7 +84,11 @@ fn a_usage_error_names_the_flag() {
     let (status, out, err) = run(&["--mutate"]);
     assert_eq!(
         (status, out.as_str(), err.as_str()),
-        (2, "", "usage: zedc test [--mutate] <file> …\n")
+        (
+            2,
+            "",
+            "usage: zedc test [--mutate] [--suppress <address> …] <file> …\n"
+        )
     );
 }
 

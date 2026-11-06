@@ -17,7 +17,7 @@ fn dir(name: &str) -> PathBuf {
 }
 
 /// Writes the unit `src` as `file` in test directory `name` and gives its path.
-fn unit(name: &str, file: &str, src: &str) -> String {
+pub(super) fn unit(name: &str, file: &str, src: &str) -> String {
     let path = dir(name).join(file);
     std::fs::write(&path, src).unwrap();
     path.display().to_string()
@@ -44,7 +44,7 @@ fn run(file: &str) -> (u8, String) {
 }
 
 /// A unit with a table that passes and a `main` whose body binds `lines` and prints `0`.
-fn checked_program(lines: &str) -> String {
+pub(super) fn checked_program(lines: &str) -> String {
     format!(
         "half(positional x) = x div 2 test {{ 10 -> 5, 7 -> 3 }}\n\
          main(stdin: Lines) -> (stdout: Lines) {{\n{lines}  stdout <- String(0);\n}}\n"
@@ -56,6 +56,7 @@ fn zedc_test_prints_the_warning_zedc_run_prints() {
     // The area of a square whose side fits in an i64 does not.
     let src = checked_program("  side = 3037000500;\n  area = side * side;\n");
     let file = unit("area", "area.zed", &src);
+    let address = zedc::run::load(src.as_bytes()).unwrap().warnings()[0].address;
     let (status, out, err) = test(&[&file]);
     assert_eq!(status, 0, "{out}");
     assert_eq!(out, "2 passed, 0 failed, 0 rejection units\n");
@@ -80,6 +81,7 @@ fn zedc_test_prints_the_warning_zedc_run_prints() {
   [6] 4:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2 ** k`, k at most 64
       4 |   area = side * side;
         |          ^^^^^^^^^^^
+  address: {address}
 "
         )
     );
@@ -198,7 +200,7 @@ fn a_batch_prints_what_each_file_prints_alone() {
 }
 
 /// A unit with a table and a `main` of `n` bindings, each squaring a large literal.
-fn many_squares(n: usize) -> String {
+pub(super) fn many_squares(n: usize) -> String {
     let lines: String = (0..n)
         .map(|i| format!("  a{i} = {} * 3037000500;\n", 3037000500 + i))
         .collect();

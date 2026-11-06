@@ -9,8 +9,8 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | build <file> -o <out> | \
-     test [--mutate] <file> …]";
+const USAGE: &str = "usage: zedc [fmt <file> | run <file> … | replay <file> <record> … | build <file> -o <out> … | \
+     test [--mutate] [--suppress <address> …] <file> …]";
 
 fn main() -> ExitCode {
     // The words stay as the system gives them: a `CommandLine` argument need not be UTF-8 to

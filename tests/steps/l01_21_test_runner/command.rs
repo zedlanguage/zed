@@ -72,7 +72,7 @@ fn a_file_that_is_not_utf8_fails_and_a_missing_file_is_a_usage_error() {
         (
             2,
             String::new(),
-            "usage: zedc test [--mutate] <file> …\n".into()
+            "usage: zedc test [--mutate] [--suppress <address> …] <file> …\n".into()
         )
     );
 }

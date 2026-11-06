@@ -23,6 +23,7 @@ use crate::mutate::{self, Verdict};
 use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::run::{self, PortKind, Program, Through};
+use crate::suppress::Suppress;
 use crate::{fence, interp, source};
 
 /// One check of a unit: a row of a table, a marked line, or a diagnostic on an unmarked line.
@@ -384,8 +385,19 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         [flag, rest @ ..] if flag == "--mutate" => (true, rest),
         _ => (false, args),
     };
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (mut suppress, args) = match Suppress::take(&words) {
+        Ok(taken) => taken,
+        Err(why) => {
+            let _ = writeln!(stderr, "{why}");
+            return 2;
+        }
+    };
     if args.is_empty() {
-        let _ = writeln!(stderr, "usage: zedc test [--mutate] <file> …");
+        let _ = writeln!(
+            stderr,
+            "usage: zedc test [--mutate] [--suppress <address> …] <file> …"
+        );
         return 2;
     }
     let (mut passed, mut failed, mut rejection) = (0, 0, 0);
@@ -413,8 +425,18 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         let (outcomes, accepted) = checks(&mut db, &text, &run::direct);
         // A unit with a rejection reports no warning (DESIGN.md L1.29): the warnings are
         // printed only when the front end and `run::program` accept it.
-        if accepted && let Ok((_, _, warnings)) = &*db.front(&text) {
-            let _ = run::write_warnings(stderr, file, warnings);
+        match &*db.front(&text) {
+            Ok((_, _, warnings)) if accepted => {
+                let _ = run::write_warnings(stderr, file, warnings, &mut suppress);
+            }
+            // A rejection cannot be suppressed: naming one fails the run.
+            Err(rejections) => {
+                for line in suppress.refused(file, rejections) {
+                    let _ = writeln!(stdout, "{line}");
+                    failed += 1;
+                }
+            }
+            Ok(_) => {}
         }
         texts.push((file, text));
         if outcomes.is_empty() {
@@ -434,6 +456,9 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
             }
         }
     }
+    for line in suppress.unmatched() {
+        let _ = writeln!(stderr, "{line}");
+    }
     let units = if rejection == 1 { "unit" } else { "units" };
     let _ = writeln!(
         stdout,
@@ -452,7 +477,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
 }
 
 /// Runs the mutants of each unit of `texts` that compiles, and writes the report.
-fn mutants(db: &mut Db, texts: &[(&String, String)], stdout: &mut dyn Write) -> u8 {
+fn mutants(db: &mut Db, texts: &[(&str, String)], stdout: &mut dyn Write) -> u8 {
     let (mut detected, mut undetected, mut skipped, mut not_run) = (0, 0, 0, 0);
     let mut status = 0;
     for (file, text) in texts {

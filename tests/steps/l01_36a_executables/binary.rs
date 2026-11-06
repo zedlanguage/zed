@@ -186,7 +186,10 @@ fn a_stripped_zedc_builds() {
 
 #[test]
 fn a_wrong_command_line_is_a_usage_error() {
-    let usage = (Some(2), "usage: zedc build <file> -o <out>\n".to_string());
+    let usage = (
+        Some(2),
+        "usage: zedc build <file> -o <out> [--suppress <address> …]\n".to_string(),
+    );
     for words in [
         &["build"][..],
         &["build", "a.zed"],

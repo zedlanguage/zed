@@ -34,6 +34,7 @@ use crate::query::{self, Db, Parsed};
 use crate::resolve::{self, Alone, Exports, Refused, Resolved, Units};
 use crate::run::{self, Diagnostic};
 use crate::source;
+use crate::suppress::Severity;
 
 /// The name of the manifest file, which marks the package root.
 pub const MANIFEST: &str = "zed.manifest";
@@ -338,7 +339,8 @@ impl Package {
             let (text, l) = lines
                 .entry(&p.file)
                 .or_insert_with(|| (text, source::Lines::new(text.as_bytes())));
-            let d: Vec<Diagnostic> = run::placed(text, l, vec![p.error.clone()]);
+            let d: Vec<Diagnostic> =
+                run::placed(text, l, &[], Severity::Rejection, vec![p.error.clone()]);
             for d in d {
                 out.push(format!("{}:{d}", file.display()));
             }

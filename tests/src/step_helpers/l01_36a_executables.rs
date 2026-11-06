@@ -32,7 +32,13 @@ pub fn toolchain() -> Toolchain {
 /// The program in `src` built into the executable `out`.
 pub fn built(src: &Path, out: &Path) {
     let mut warnings = Vec::new();
-    if let Err((status, why)) = build(src.to_str().unwrap(), out, &toolchain(), &mut warnings) {
+    if let Err((status, why)) = build(
+        src.to_str().unwrap(),
+        out,
+        &mut Default::default(),
+        &toolchain(),
+        &mut warnings,
+    ) {
         panic!("building {}: status {status}: {why}", src.display());
     }
 }

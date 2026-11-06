@@ -18,9 +18,11 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, World};
 
+use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
 use crate::parse::{TOP, parse};
+use crate::suppress::{self, Severity, Suppress};
 use crate::{docs, interp, lex, resolve, source, stage};
 
 /// The kinds of input port `main` declares at L1.
@@ -193,12 +195,29 @@ pub struct Record {
 
 /// The program in `bytes`, or its errors, one per line as `line:col: why`.
 pub fn load(bytes: &[u8]) -> Result<Program, String> {
-    let text = source::load(bytes).map_err(|e| e.render(bytes))?;
-    let (stmts, unit, warnings) = compile(&text).map_err(|ds| {
-        let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
-        lines.join("\n")
-    })?;
-    let mut program = program(&stmts, unit)?;
+    loaded(bytes).map_err(|why| match why {
+        Unloaded::Rejected(ds) => {
+            let lines: Vec<String> = ds.iter().map(Diagnostic::to_string).collect();
+            lines.join("\n")
+        }
+        Unloaded::Refused(why) => why,
+    })
+}
+
+/// Why a program was not loaded.
+enum Unloaded {
+    /// The diagnostics of the phase that rejected it.
+    Rejected(Vec<Diagnostic>),
+    /// Why it was refused where no diagnostic is placed: its bytes are not a source, or it is
+    /// not a program's unit.
+    Refused(String),
+}
+
+/// The program in `bytes`, or why it was not loaded.
+fn loaded(bytes: &[u8]) -> Result<Program, Unloaded> {
+    let text = source::load(bytes).map_err(|e| Unloaded::Refused(e.render(bytes)))?;
+    let (stmts, unit, warnings) = compile(&text).map_err(Unloaded::Rejected)?;
+    let mut program = program(&stmts, unit).map_err(Unloaded::Refused)?;
     program.warnings = warnings.into();
     Ok(program)
 }
@@ -217,6 +236,8 @@ pub struct Diagnostic {
     pub steps: Vec<Step>,
     /// The row of the rejection table (DESIGN.md sec:diagnostics) it is a case of, if any.
     pub row: Option<crate::rejection::Row>,
+    /// Its address, the same on every run of the same source ([`crate::suppress`]).
+    pub address: ContentAddress,
 }
 
 /// One step of a derivation, placed in the source.
@@ -279,22 +300,20 @@ impl std::fmt::Display for Diagnostic {
 /// elaboration and placed in the source, or the diagnostics of the first phase that rejects it.
 pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>> {
     let lines = source::Lines::new(text.as_bytes());
-    let at = |start: usize, message: String| {
-        let (line, col) = lines.line_col(text.as_bytes(), start);
-        Diagnostic {
-            line,
-            col,
+    let at = |span: lex::Span, message: String| {
+        let e = ast::Error {
+            span,
             message,
-            steps: Vec::new(),
+            notes: Vec::new(),
             row: None,
-        }
+        };
+        placed(text, &lines, &[], Severity::Rejection, vec![e])
     };
-    let all = |errors: Vec<ast::Error>| placed(text, &lines, errors);
-    let (tokens, docs) =
-        lex::lex_with_docs(text).map_err(|e| vec![at(e.span.start, e.to_string())])?;
-    let tree =
-        parse(text, &tokens, "Unit", TOP).map_err(|e| vec![at(e.span.start, e.to_string())])?;
-    let stmts = ast::unit_all_errors(text, &tokens, &tree).map_err(all)?;
+    let (tokens, docs) = lex::lex_with_docs(text).map_err(|e| at(e.span, e.to_string()))?;
+    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| at(e.span, e.to_string()))?;
+    let stmts = ast::unit_all_errors(text, &tokens, &tree)
+        .map_err(|es| placed(text, &lines, &[], Severity::Rejection, es))?;
+    let all = |errors: Vec<ast::Error>| placed(text, &lines, &stmts, Severity::Rejection, errors);
     let res = resolve::resolve(&stmts).map_err(all)?;
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = docs::check(text, &tokens, &docs, &res);
@@ -311,19 +330,29 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), 
     if !refused.is_empty() {
         return Err(all(refused));
     }
-    let warnings = all(std::mem::take(&mut unit.warnings));
+    let warnings = placed(
+        text,
+        &lines,
+        &stmts,
+        Severity::Warning,
+        std::mem::take(&mut unit.warnings),
+    );
     Ok((stmts, unit, warnings))
 }
 
-/// Writes each warning of `warnings`, of the unit read from `file`, to `out` as `file:` then
-/// the warning: what `zedc run` and `zedc test` print before they run the unit.
+/// Writes each warning of `warnings`, of the unit read from `file`, that `suppress` does not
+/// name to `out` as `file:` then the warning, then its address on a line of its own: what
+/// `zedc run` and `zedc test` print before they run the unit.
 pub(crate) fn write_warnings(
     out: &mut dyn Write,
     file: &str,
     warnings: &[Diagnostic],
+    suppress: &mut Suppress,
 ) -> std::io::Result<()> {
     for w in warnings {
-        writeln!(out, "{file}:{w}")?;
+        if !suppress.hides(w) {
+            writeln!(out, "{file}:{w}\n  address: {}", w.address)?;
+        }
     }
     Ok(())
 }
@@ -395,15 +424,21 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     out
 }
 
-/// The errors `errors` of `text` as diagnostics, each placed with its steps.
+/// The errors `errors` of `text`, of `severity`, as diagnostics, each placed with its steps and
+/// its address; `stmts` are the unit's top-level statements, empty when it was rejected before
+/// it had them.
 pub(crate) fn placed(
     text: &str,
     lines: &source::Lines,
+    stmts: &[Stmt],
+    severity: Severity,
     errors: Vec<ast::Error>,
 ) -> Vec<Diagnostic> {
+    let addresses = suppress::addresses(text, stmts, severity, &errors);
     errors
         .into_iter()
-        .map(|e| {
+        .zip(addresses)
+        .map(|(e, address)| {
             let (line, col) = lines.line_col(text.as_bytes(), e.span.start);
             Diagnostic {
                 line,
@@ -411,6 +446,7 @@ pub(crate) fn placed(
                 steps: e.notes.into_iter().map(|n| step(text, lines, n)).collect(),
                 message: e.message,
                 row: e.row,
+                address,
             }
         })
         .collect()
@@ -908,8 +944,9 @@ fn command_inner(
     let usage = || {
         (
             2,
-            "usage: zedc run <file> [port=path …] [--record <out>] [-- arg …]\n       \
-             zedc replay <file> <record> [port=path …] [-- arg …]"
+            "usage: zedc run <file> [port=path …] [--record <out>] [--suppress <address> …] \
+             [-- arg …]\n       \
+             zedc replay <file> <record> [port=path …] [--suppress <address> …] [-- arg …]"
                 .to_string(),
         )
     };
@@ -918,8 +955,9 @@ fn command_inner(
         [cmd, file, record, rest @ ..] if *cmd == "replay" => (Some(record), file, rest),
         _ => return Err(usage()),
     };
-    let options = Options::parse(rest, replay.is_none()).ok_or_else(usage)?;
-    let program = load_file(file, stderr)?;
+    let (mut suppress, rest) = Suppress::take(rest).map_err(|why| (2, why))?;
+    let options = Options::parse(&rest, replay.is_none()).ok_or_else(usage)?;
+    let program = load_file(file, &mut suppress, stderr)?;
     options.check(program.ports())?;
     let wave = match replay {
         Some(path) => {
@@ -936,9 +974,16 @@ fn command_inner(
     options.finish(&wave, stdout, stderr)
 }
 
-/// The program in `file`, its warnings written to `stderr` as `zedc run` writes them, or the
-/// exit status and message: 2 when the file cannot be read, 1 when the program is rejected.
-pub fn load_file(file: &str, stderr: &mut dyn Write) -> Result<Program, (u8, String)> {
+/// The program in `file`, its warnings that `suppress` does not name written to `stderr` as
+/// `zedc run` writes them, then a line for each address `suppress` names that no warning has;
+/// or the exit status and message: 2 when the file cannot be read, 1 when the program is
+/// rejected, each rejection followed by its address and a line for each rejection `suppress`
+/// names, since a rejection cannot be suppressed.
+pub fn load_file(
+    file: &str,
+    suppress: &mut Suppress,
+    stderr: &mut dyn Write,
+) -> Result<Program, (u8, String)> {
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
     // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
     // package (step L2.3); linking it to the units it imports is step L2.4.
@@ -949,9 +994,25 @@ pub fn load_file(file: &str, stderr: &mut dyn Write) -> Result<Program, (u8, Str
     {
         return Err((1, report.join("\n")));
     }
-    let program = load(&bytes).map_err(|e| (1, format!("{file}:{e}")))?;
-    write_warnings(stderr, file, program.warnings())
-        .map_err(|e| (2, format!("standard error: {e}")))?;
+    let program = match loaded(&bytes) {
+        Ok(program) => program,
+        Err(Unloaded::Refused(why)) => return Err((1, format!("{file}:{why}"))),
+        Err(Unloaded::Rejected(ds)) => {
+            let mut lines: Vec<String> = ds
+                .iter()
+                .map(|d| format!("{d}\n  address: {}", d.address))
+                .collect();
+            lines.extend(suppress.refused(file, &ds));
+            return Err((1, format!("{file}:{}", lines.join("\n"))));
+        }
+    };
+    let written = write_warnings(stderr, file, program.warnings(), suppress).and_then(|()| {
+        suppress
+            .unmatched()
+            .iter()
+            .try_for_each(|line| writeln!(stderr, "{file}: {line}"))
+    });
+    written.map_err(|e| (2, format!("standard error: {e}")))?;
     Ok(program)
 }
 

@@ -24,6 +24,7 @@ fn steps_are_numbered_to_one_width_and_places_shown_once_when_repeated() {
     }
     let d = Diagnostic {
         row: None,
+        address: zedc::address::ContentAddress([0; 32]),
         line: 12,
         col: 7,
         message: "`++` does not take (int, \"!\")".into(),
@@ -51,6 +52,7 @@ fn steps_are_numbered_to_one_width_and_places_shown_once_when_repeated() {
 fn a_diagnostic_without_steps_is_one_line() {
     let d = Diagnostic {
         row: None,
+        address: zedc::address::ContentAddress([0; 32]),
         line: 3,
         col: 1,
         message: "`Point` is not defined".into(),

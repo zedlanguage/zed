@@ -15,6 +15,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use zedc::suppress::Suppress;
 use zedc::zir::lower::lower;
 
 /// The system libraries the runtime library needs, as `rustc --print native-static-libs`
@@ -56,14 +57,21 @@ impl Toolchain {
     }
 }
 
-/// `zedc build <file> -o <out>`, with `args` the words after `build`. Returns the exit status:
-/// 0; 1 when the program is rejected, does not compile or does not link; 2 for a usage
-/// error, among them a missing linker or runtime library.
+/// `zedc build <file> -o <out> [--suppress <address> …]`, with `args` the words after
+/// `build`; a warning whose address is named is not printed (DESIGN.md sec:diagnostics).
+/// Returns the exit status: 0; 1 when the program is rejected, does not compile or does not
+/// link; 2 for a usage error, among them a missing linker or runtime library.
 pub fn command(args: &[String], tools: &Toolchain, stderr: &mut dyn Write) -> u8 {
-    let outcome = match args {
-        [file, o, out] if o == "-o" => build(file, Path::new(out), tools, stderr),
-        _ => Err((2, "usage: zedc build <file> -o <out>".to_string())),
-    };
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let outcome = Suppress::take(&words).map_err(|why| (2, why)).and_then(
+        |(mut suppress, rest)| match rest[..] {
+            [file, "-o", out] => build(file, Path::new(out), &mut suppress, tools, stderr),
+            _ => Err((
+                2,
+                "usage: zedc build <file> -o <out> [--suppress <address> …]".to_string(),
+            )),
+        },
+    );
     match outcome {
         Ok(()) => 0,
         Err((status, why)) => {
@@ -74,10 +82,12 @@ pub fn command(args: &[String], tools: &Toolchain, stderr: &mut dyn Write) -> u8
 }
 
 /// Builds the program in `file` into the executable `out` with `tools`, the program's
-/// warnings written to `stderr`; on failure, the exit status and the message.
+/// warnings that `suppress` does not name written to `stderr`; on failure, the exit status
+/// and the message.
 pub fn build(
     file: &str,
     out: &Path,
+    suppress: &mut Suppress,
     tools: &Toolchain,
     stderr: &mut dyn Write,
 ) -> Result<(), (u8, String)> {
@@ -111,7 +121,7 @@ pub fn build(
             ),
         ));
     }
-    let program = zedc::run::load_file(file, stderr)?;
+    let program = zedc::run::load_file(file, suppress, stderr)?;
     let g = lower(&program.term()).map_err(|e| (1, format!("{file}: {e}")))?;
     let object = crate::executable_object(g, true, program.ports())
         .map_err(|e| (1, format!("{file}: {e}")))?;
