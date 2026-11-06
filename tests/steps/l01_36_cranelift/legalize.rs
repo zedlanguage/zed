@@ -100,7 +100,7 @@ fn a_refused_comparison_names_the_operator_and_operands_as_written() {
     // A weight compared with a city's name: the refusal shows `>` or `>=` on its operands in
     // the order the program wrote them, though the Cranelift back end computes `<` or `<=` on
     // them swapped.
-    for (p, written) in [(Prim::Gt, "Gt"), (Prim::Ge, "Ge")] {
+    for (p, written) in [(Prim::Gt, "`>`"), (Prim::Ge, "`>=`")] {
         for weight_first in [true, false] {
             let types = if weight_first {
                 "`int`, `String`"

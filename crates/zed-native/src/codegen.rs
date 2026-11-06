@@ -24,7 +24,6 @@ use cranelift_module::{FuncId, Linkage, Module};
 use zed_kernel::Prim;
 use zedc::zir::legalize::Expansion;
 use zedc::zir::memory::{Mode, RegionPlan};
-use zedc::zir::text::spell;
 use zedc::zir::{Op, Src, binds};
 
 use zed_rt::Word;
@@ -497,7 +496,7 @@ impl<M: Module> Gen<'_, M> {
                 return Err(format!(
                     "native: `prim {}` has no lowering here; legalization expands it ({}), and \
                      this back end does not declare that expansion",
-                    spell(*p),
+                    p.printed(),
                     x.name()
                 ));
             }
