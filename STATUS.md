@@ -1288,31 +1288,32 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | committed 9f42df4a on wt/atom-nested-sq (Shape shared node with kept facts; F100); groups l01_26 225, l01_29 127, l01_17 86, l01_23 131, l01_22 41, l01_27 39, l |
+| ATOM-nested-sq | merge attempt 1 | 2026-11-05 19:20 | ready head 5aec54f9 on wt/atom-nested-sq (rebased, 0 behind origin/main); build, fmt, clippy -D warnings (zedc, zed-tests) pass; 18 groups pass (l01_26 237, l01 |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BATCH | merge attempt 2 | 2026-11-05 22:07 | started by orch: RUNG2-mod-symbol, RAT-asks-rest, PASS-at-args, BUILD-modes, F70-rerun, CAST-menu ready |
-| DIAG-suppress | impl attempt 1 | 2026-11-05 04:07 | code written (suppress.rs, run/test/build --suppress); building; load 36.99 42.56 42.92 |
-| ERRS-precise | impl attempt 1 | 2026-11-05 22:12 | started; worktree wt/errs-precise from origin/main |
-| GROUP-oracle | impl attempt 1 | 2026-11-05 04:07 | started; load 37.57 37.76 42.84 |
-| HOOKS-term-dag | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/hooks-term-dag |
-| ISSUE1-tvar-else | impl attempt 1 | 2026-11-03 17:05 | started; worktree wt/issue1-tvar-else from origin/main |
-| L1.19b | impl attempt 1 | 2026-11-05 04:07 | started in wt/l1-19b; load 49.85 43.38 42.95 |
-| MENU-linear | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/menu-linear; load 49.67 43.23 42.90 |
+| BATCH | merge attempt 2 | 2026-11-05 22:07 | done: RUNG2-mod-symbol 7f0dc484, RAT-asks-rest 8fc378cc, PASS-at-args fdac94cb, BUILD-modes a694c9db, F70-rerun ee2650b8, CAST-menu e3c52406 pushed (3a60948d..b |
+| DIAG-suppress | impl attempt 1 | 2026-11-05 04:07 | done: impl e7ac6f7b+b18c1e59+be6b0461 on wt/diag-suppress, spec 91585dd on wt/diag-suppress-spec (from local zed main eb265c5); groups l01_29 142, l01_21 50, l0 |
+| ERRS-precise | impl attempt 1 | 2026-11-05 22:12 | fix 2 done 757422a2 on wt/errs-precise; l01_27 48, l01_26 235, l01_18 50, l01_16 75, l01_20 20, l01_21 50, l01_28 63, l01_29 133, l01_30 15, l01_19 40, zedc che |
+| GROUP-oracle | impl attempt 1 | 2026-11-05 04:07 | sweeps pass: x14 0/1 4.2/2.9 s, mixed_1 4.4 s, layer_1 1.4 s, cells_1 2.4 s, seeded_1 0.24 s; no wrong answer, reruns 0, unsettled 0 (load 54 -> 52) |
+| HOOKS-term-dag | merge attempt 1 | 2026-11-05 04:07 | ready head 50035389 on wt/hooks-term-dag, rebased on origin/main ae38995a (doc-only conflicts STATUS, ZED_PORT_GAPS kept both, twice); build ok, fmt ok, clippy  |
+| ISSUE1-tvar-else | impl attempt 1 | 2026-11-03 17:05 | cause: apply_many merged the paths ($k,int) and (int,int) of (line else 0) + bump into one state, dropping the class restriction; fix keys states on the class's |
+| L1.19b | impl attempt 1 | 2026-11-05 04:07 | ready: c2d9936d on wt/l1-19b (rebased on origin/main), PROGRESS 02b0fa9 on wt/l1-19b-spec (zed); groups l01_19b 7, l01_19 28, l01_19a 16, l01_21 50, l01_36a 21, |
+| MENU-linear | impl attempt 2 | 2026-11-05 04:07 | L1 menu (equality, split) in run.rs; tests written; spec e9826c7 on wt/menu-linear-spec; plan rows MENU-linear-L10/L15 + ledger lines; first test run killed by  |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| NUM-subquad | impl attempt 1 | 2026-11-03 17:42 | started; worktree /home/luke/Work/wt/num-subquad from origin/main; load 49.85 43.38 42.95 |
-| ORACLE-cones | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/oracle-cones on origin/main |
+| NUM-subquad | impl attempt 1 | 2026-11-03 17:42 | stopped unfinished, WIP 58ee5b29 (rebased); probes load 55-75: mul crossover ~1024 words (NTT 52.6 ms vs bigint 370 ms at 65536), gcd 12 vs 30 ms at 1024 words, |
+| ORACLE-cones | merge attempt 1 | 2026-11-05 04:07 | ready head 5f204a91 on wt/oracle-cones (0 behind origin/main); groups l01_37a 17, l01_21 50, l01_29::printed 16, l01_35 11, l01_36a 21, l01_38::stages 33+1 ign, |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
-| PORT-catalog | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/port-catalog |
-| POW-kept-exp | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/pow-kept-exp on origin/main 3df3943c |
-| README-fences | impl attempt 1 | 2026-11-05 22:24 | started; load 37.01 37.66 42.84 |
-| S.1f | impl attempt 1 | 2026-11-05 04:07 | scaling imports on a ring of 400 and 3200 files: 8.1x instructions, 8.0x bytes (limit 24, load 38). Negative control (not committed): shortest cycle by BFS from |
-| STEPS-split | impl attempt 1 | 2026-11-05 21:45 | split built (63 step targets, step_helpers, step_targets tool); fmt, clippy clean; counts per binary 484 pieces, 63 groups equal to before except m0_01 (+5 new  |
-| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | one shortest-path pass for difference groups in presburger::project_parts: one test on ladder k=80 2028M -> 24M; ladder k=40 6764M -> 477M (load 26) |
+| PORT-catalog | impl attempt 1 | 2026-11-05 04:07 | rebased on origin/main without conflict, head 5bd87c7b; returning |
+| POW-kept-exp | merge attempt 1 | 2026-11-05 04:07 | correction to the line above: l01_25 run as one group did not finish in 60 s at load 70 (201 of 215 done); its other 14 tests passed run in pieces |
+| README-fences | impl attempt 1 | 2026-11-05 22:24 | done ffac0a58 on wt/readme-fences (not merged): 60 README fences in zed/fences/readme.md, expected.txt table, run of Numbers and Tests next to the code; tests 5 |
+| S.1f | merge attempt 1 | 2026-11-05 04:07 | ready (zedc part): head 9287cb68 on wt/s1f, spec db90136 on wt/s1f-spec; build, fmt, clippy -D warnings pass; s01f 10, l01_15 34, l01_16 75, l01_17 89, l01_21 5 |
+| STEPS-split | impl attempt 1 | 2026-11-05 21:45 | step_targets scaling at 2000/16000 folders: 8.3x instructions, 8.0x bytes (limit 24); negative control quadratic drift (Vec contains): 59.4x, fails as it should |
+| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | added difference_hulls random comparison unit test, walk reversed/start-first checks, ladder scaling tests (one test order 1, k ifs order 2); building |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T6-2sat | impl attempt 1 | 2026-11-05 04:07 | 2-CNF reader + iterative Tarjan in empty.rs, hooked in tuples_on and find_rep; two_sat.rs 8 tests pass; scaling n and 8n instructions: chain 16/128 43.6x, chain |
+| T6-2sat | merge attempt 1 | 2026-11-05 04:07 | started verify and prepare; load 58.72 62.43 60.27 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
-| TEXT-append-O1 | impl attempt 1 | 2026-11-05 16:59 | started in /home/luke/Work/wt/text-append-o1 on origin/main a8c635ba; load 49.85 43.38 42.95 |
-| TIME-report | impl attempt 1 | 2026-11-05 04:07 | instrumented stages; building |
+| TEXT-append-O1 | impl attempt 1 | 2026-11-05 16:59 | committed 1f41328b on wt/text-append-o1 (rebased on origin/main, no conflict); not pushed or merged; returning |
+| TIME-report | impl attempt 1 | 2026-11-05 04:07 | scaling l01_30_queries::report 40 vs 320 definitions: 7.90x instructions, 8.0x bytes, limit 24; load 107.50 73.05 64.18 / 51.96 69.39 65.90 |
+| TUPLE-eq-dup | impl attempt 1 | 2026-11-05 22:50 | started; load 62.15 73.97 67.05 |
 | XMARK-rows | impl attempt 1 | 2026-11-05 04:07 | started by orch (ready row, batch 2026-11-05) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
