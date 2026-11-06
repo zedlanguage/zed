@@ -1261,19 +1261,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | INCR-script | impl attempt 1 | 2026-11-05 04:07 | script runner and 4 script tests + 2 malformed-script tests + scaling test in reuse.rs; l01_30_queries 15 pass; load 60.3 |
 | L1.35-inventory | impl attempt 1 | 2026-11-05 04:07 | done: 7b1878a0 on wt/l135-inventory (rebased on origin/main); l01_35 5/5 pass, load 58-63; scaling 20000/160000 variants 8.05x instr 8.08x bytes (limit 24, load |
 | LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | started; load 48.04 50.56 51.94 |
-| LIT-menu-minus | merge attempt 1 | 2026-11-05 18:21 | verified f740de03 (rebased on 9eb0086a); fix: Lit.neg field removed, derived as site != span (it duplicated the two spans); build+fmt ok; l01_29 133, l01_26 227 |
-| LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | started; worktree wt/live3-lp-tangents at 9eb0086a; load 56.42 55.51 53.52 |
+| LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | reproduced 41.6x bytes 128->1024 (load 66). Cause found by counters: not growth in work. tangents(n,0): the rounded first LP vertex holds the rows at 128 (1 LP, |
 | M0d-suite | impl attempt 1 | 2026-11-05 04:07 | started; load 56.11 62.18 58.97 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | done 3985196c on wt/native-build-id (not pushed): BUILD in section .zed_native.build (TypeId crate hash + RUSTFLAGS hash from build.rs); tests l01_36a_executabl |
-| orch | running | 2026-11-05 18:05 | L1.35-inventory impl done 7b1878a0; merge started |
-| PROV-expected-index | impl attempt 1 | 2026-11-05 20:27 | started; load 61.38 53.27 52.53 |
+| orch | running | 2026-11-05 18:05 | STUDY-linearlog done; report written by orch (agent could not write); L1.40b-sparse open, F70-rerun queued |
+| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | started; creating worktree pass-at-args |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | negative-control checkout /home/luke/Work/wt/rat-asks-rest-ctl at 17b7ceca, seeded |
 | RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
 | S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | final: d3a2aed3 on wt/s22-more-scales (rebased twice; on origin/main, not pushed; replaces 9f5d1617 above); after the HULL3-subsumed presburger change all 47 s2 |
 | SLABS-count | merge attempt 1 | 2026-11-05 18:19 | started verify+merge of 3587dde9, load 51.81 51.37 52.25 |
 | STEPS-binary-orphan | impl attempt 1 | 2026-11-05 20:30 | started; worktree made and seeded; load 66.53 62.44 57.73 |
-| STUDY-linearlog | running | 2026-11-05 20:39 |  |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (e) shared Bdd nodes and Expr operands written once (#k=/#k#) committed; deep_types 20/20, l01_15 31/31, kernel types 21/21; xor chain old 2^n (183 MB, 1 s at n |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
