@@ -321,7 +321,9 @@ fn a_routine_listed_twice_is_a_problem() {
 }
 
 /// The committed catalog: rows sorted with no repeat, each Zed column a form the tool takes under
-/// the repository's grammars and plan, and its counts line the sum of its rows.
+/// the spec's grammars and words table and the plan, and each row surviving a rewrite. Where the
+/// spec repository is not read (`ZED_SPEC_DIR=none`), the repository's copies of the grammars and
+/// a table of two words stand in for it.
 #[test]
 fn the_committed_catalog_is_well_formed() {
     let root = zed_tools::impl_root();
@@ -334,7 +336,9 @@ fn the_committed_catalog_is_well_formed() {
         "rows sorted and unique"
     );
     let dir = spec_dir("catalog_committed");
-    let spec = Spec::open(&dir.root()).expect("the test spec");
+    let spec_root = zed_tests::spec::dir("the catalog's Zed texts against the words table")
+        .map_or_else(|| dir.root(), |p| p.display().to_string());
+    let spec = Spec::open(&spec_root).expect("the spec");
     let words = WordTable::read(&spec.design).expect("its table");
     let plan = std::fs::read_to_string(format!("{root}/docs/plan_dag.md")).expect("the plan");
     let plan_rows: HashSet<&str> = row_ids(&plan).expect("its rows").into_iter().collect();

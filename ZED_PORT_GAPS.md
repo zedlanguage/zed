@@ -45,9 +45,9 @@ is inferred. Everything in the class "workaround" that names L6.13 falls with it
 **The routines the Rust calls** are listed in `zed/compiler/CATALOG.md` (row PORT-catalog,
 2026-11-05): 1,369 routines of the standard library and of dependencies, called 50,049 times by
 zedc, zed-kernel and zed-native outside unit tests, each with its Zed text, the plan row that
-provides it, or `missing` (393). The missing ones are gaps of the library, not of the language
+provides it, or `missing` (398). The missing ones are gaps of the library, not of the language
 (inferred from their kinds, not checked row by row). The largest groups: conversions (`From`,
-`TryFrom`; 37), methods of `Option` and `Result` (37), signed truncating division and remainder (Zed's `div` and `mod` are Euclidean), the checked,
+`TryFrom`; 37), methods of `Option` and `Result` (39), signed truncating division and remainder (Zed's `div` and `mod` are Euclidean), the checked,
 wrapping and saturating fixed-width arithmetic (34), `Ordering` and `cmp` (30), hashing and
 formatting, `Cell`, `RefCell` and
 `OnceCell`, character classes, and the operating-system calls of `std::fs`, `std::io`,
