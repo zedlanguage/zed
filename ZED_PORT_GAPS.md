@@ -679,6 +679,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `thread_local!` record of the text being made, read by a recursive `show` that returns a placeholder for a missing text, and a drop guard that clears it on a panic | `Type::rope`, `make_rope`, `SHOWING`, `EndShowing`, `Rec::naming` (a recursive type's name, made as an item of the same loop) | Mutation, global state | A fold over the types in postorder that passes the map of texts along |
 | `OnceLock::set` from a loop outside the cell's own initializer | `make_rope` | Lazy cells (gap 3) | The map of texts from the row above |
 
+## Entries from T2-types-rest part 3 (`zed-kernel/src/types/debug.rs`, `types/bdd.rs`, `print.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A stack of items to write (`Show<'a>`) holding trait objects (`&dyn fmt::Debug`, `&dyn Queue`, `&dyn Vertex`), so that one loop writes types, rows, morphisms, parts and diagrams of different Rust types | `types/debug.rs` | Trait objects | A sum type of the things written, one case per kind, in a state receiver's list |
+| Shared nodes found by a pass with a `HashSet<u64>` of node ids, then numbered in the order written from a `HashMap<u64, Option<usize>>` filled while writing | `debug::Scope` | Identity (gap 1), mutation | The ids as digests (gap 1); the map passed along the fold that writes |
+| Post-order walks of a diagram or expression on a `Vec<(&node, bool)>`, with a `HashMap<u64, _>` memo keyed by node id | `Part::eval`, `eval3`, `rebuild` (`substitute_all`, `Part::restrict`), `Bdd::restrict`, atoms, `union_rows` | Identity (gap 1), mutation | A state receiver holding the stack and the memo, keyed by digest |
+| A term laid out as a `Vec` of tokens with a second `Vec<usize>` linking each `Start` to its `End`, written and broken by loops over indices with a stack of frames | `print::Doc`, `Doc::render` | Mutation | The tokens as a list; the links as a map from index to index built by a fold; the frames in a state receiver |
+
 ## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zir/`)
 
 | Rust construct | Sites | Gap | At the port |
