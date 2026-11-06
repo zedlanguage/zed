@@ -124,3 +124,28 @@ fn a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values() {
     assert!(type_errors(&ok).is_empty());
     assert_eq!(value(&ok, "b"), "(1, 2)");
 }
+
+#[test]
+fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values() {
+    // `x`'s atoms reach the result, so `r` has two arrows; `v` may take other values, so in
+    // both arrows its type holds every atom and `#nf` enters it, where `size` refuses it. The
+    // first arrow takes the call, as its other parameter takes the plain `1`.
+    let t = "size(positional v: int | (int, int)) = 1;\n\
+             r(positional x, positional v) = if (x else 0) == 0 { size(v) } else { x + size(v) };\n";
+    assert_eq!(
+        sig(t, "r"),
+        "((int, _) -> int) & ((int | #_, _) -> int | #_)"
+    );
+    let bad = format!("{t}h(positional y: int | #nf) = r(1, y);\n");
+    assert_eq!(
+        type_errors(&bad),
+        [
+            "`r` does not take (1, int | #nf) [r(1, y)]",
+            "`size` does not take #nf, which is not int | (int, int) [r(1, y)]"
+        ]
+    );
+    let ok = format!("{t}h(positional y: int | #nf) = r(y, 2);\na = h(#nf);\nb = h(2);\n");
+    assert!(type_errors(&ok).is_empty());
+    assert_eq!(value(&ok, "a"), "1");
+    assert_eq!(value(&ok, "b"), "3");
+}
