@@ -541,7 +541,7 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
 /// power would need a kept atom with a kept exponent; and a kept base that is not bare (a
 /// sum) with `k` past `u32`, whose expansion squares its terms about 32 times. Why: an atom
 /// with a kept exponent needs an approximation whose shift is itself kept (a tower), and
-/// how such values compare is not specified; the author decides (POW-kept-exp). Trigger:
+/// how such values compare is not specified (open: POW-tower). Trigger:
 /// `x ** (2 ** 200)` on a base other than -1, 0 and 1, or `(2 ** 200 + 1) ** (2 ** 40)`.
 /// Test: `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity`
 /// and `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
