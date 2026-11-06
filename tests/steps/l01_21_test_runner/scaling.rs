@@ -8,6 +8,8 @@ use zed_tests::scaling;
 use zedc::query::Db;
 use zedc::testing::test_in;
 
+use crate::l01_16_elaboration::{Checked, checked};
+
 /// `n` functions, each with one row, beside a constant each that no row reads.
 fn tables(n: usize) -> String {
     (0..n)
@@ -109,16 +111,28 @@ fn rows_whose_calls_pass_atoms_by_scale() {
 
 #[test]
 fn a_row_passing_the_atoms_of_many_arguments_scales() {
-    let n = 100;
-    let warm = warm(n, wide_row);
-    scaling::check("a row of n arguments that each pass an atom", n, |m| {
-        let (text, db) = &warm[&m];
-        let got = test_in(&mut db.clone(), text);
-        assert_eq!(got.len(), 1);
-        // The atoms of every argument merge, as at a call.
-        let why = got[0].failure.as_deref().unwrap_or("");
-        assert!(why.contains("the result is #errs("), "{why}");
-    });
+    // The atoms of every argument merge, as at a call.
+    let got = test_in(&mut Db::new(), &wide_row(8));
+    assert_eq!(got.len(), 1);
+    let why = got[0].failure.as_deref().unwrap_or("");
+    assert!(why.contains("the result is #errs("), "{why}");
+    // Elaboration alone, on units checked before the timing. `test_in` on a `Db` that holds
+    // the front end's result does not elaborate, so it never reaches `Elab::row_call`; and
+    // timing the whole front end lets checking, about 200,000 instructions an argument, hide a
+    // quadratic term in `row_call`. A span map rebuilt for each argument gives 56 times the
+    // work here.
+    let n = 400;
+    let units: BTreeMap<usize, Checked> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, checked(&wide_row(m))))
+        .collect();
+    scaling::check(
+        "elaborating a row of n arguments that each pass an atom",
+        n,
+        |m| {
+            assert_eq!(units[&m].elab().tests.len(), 1);
+        },
+    );
 }
 
 #[test]
