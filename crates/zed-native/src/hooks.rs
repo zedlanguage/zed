@@ -7,7 +7,7 @@
 //! into generated code, so the slot is never borrowed twice.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
@@ -510,7 +510,8 @@ fn run(s: &mut Run, q: &Term) -> Result<Value, String> {
     s.ev.run(q).map_err(|e| e.to_string())
 }
 
-/// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`.
+/// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`, and each
+/// closure's term is built once, in `lets.closures`.
 fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, String> {
     // Closures capture closures as deep as a program builds them, so the closures in progress
     // are on a stack, each with the terms of its captures so far.
@@ -528,14 +529,17 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
             Some(&c) => made = term_of(t, s, c, lets, &mut stack)?,
             None => {
                 let ni = &t.nodes[t.lambdas[*lambda].node];
-                made = Some(raise_node(ni.node(), ni.number, &t.swapped, terms)?);
-                stack.pop();
+                let q = raise_node(ni.node(), ni.number, &t.swapped, terms)?;
+                let (clo, _) = stack.pop().expect("the closure finished");
+                lets.closures.insert(clo.bits, q.clone());
+                made = Some(q);
             }
         }
     }
 }
 
-/// The term of `w` when it is not a closure; a closure is entered on `stack`.
+/// The term of `w` when it is not a closure or is a closure whose term is built; any other
+/// closure is entered on `stack`.
 fn term_of(
     t: &Tables,
     s: &mut Run,
@@ -553,10 +557,13 @@ fn term_of(
             }
             Term::Var(port_var(&p))
         }
-        Word::CELL if s.heap.is_function(w)? => {
-            stack.push((w, Vec::new()));
-            return Ok(None);
-        }
+        Word::CELL if s.heap.is_function(w)? => match lets.closures.get(&w.bits) {
+            Some(q) => q.clone(),
+            None => {
+                stack.push((w, Vec::new()));
+                return Ok(None);
+            }
+        },
         _ => Term::Lit(s.heap.value(w)?),
     }))
 }
@@ -572,11 +579,18 @@ fn wrap(ports: Lets, t: Term) -> Term {
     })
 }
 
-/// The lookup ports a kernel term reads, each once, in the order first met.
+/// The lookup ports a kernel term reads, each once, in the order first met, and the term of
+/// each closure it holds.
 #[derive(Default)]
 struct Lets {
     seen: HashSet<Arc<str>>,
     order: Vec<Arc<str>>,
+    /// The term of each closure met, by its cell word's bits: a closure captured on many paths
+    /// is built once, so the term is a graph the size of the closures, not a tree of every
+    /// path (COMPLEXITY.md R9). No cell is freed while a term is built, so each word names one
+    /// closure. A closure's term is a lambda whose body is shared, so a copy costs its
+    /// parameter names.
+    closures: HashMap<i64, Term>,
 }
 
 /// An `if` or `match` whose decision is failure value `v`: the owned inputs are dropped and
@@ -830,7 +844,7 @@ mod tests {
     use std::mem::ManuallyDrop;
 
     use zed_kernel::World;
-    use zed_kernel::term::build::{lam, var};
+    use zed_kernel::term::build::{app, if_, lam, lit, var};
     use zedc::zir::lower::lower;
     use zedc::zir::memory::plan;
 
@@ -862,6 +876,80 @@ mod tests {
         }
         assert_eq!(depth, DEPTH);
         assert_eq!(at.to_string(), "7");
+    }
+
+    /// A run of `(a, b) -> (y) -> if y < 1 { a } else { b(y - 1) }`, and the index of its inner
+    /// lambda, which captures two values.
+    fn two_captures() -> (State, usize) {
+        let lt = Term::Prim(Prim::Lt, vec![var("y"), lit(1i64)]);
+        let less = Term::Prim(Prim::Sub, vec![var("y"), lit(1i64)]);
+        let body = if_(lt, var("a"), app(var("b"), vec![less]));
+        let g = crate::legalize(lower(&lam(&["a", "b"], lam(&["y"], body))).unwrap());
+        let (t, _) = Tables::new(&g, &plan(g.graph(), false)).unwrap();
+        let captures = |l: &&crate::tables::LambdaInfo| t.nodes[l.node].node().inputs.len() == 2;
+        let inner = t.lambdas.iter().position(|l| captures(&l)).unwrap();
+        (State::new(Arc::new(t), Evaluator::new(World::new())), inner)
+    }
+
+    #[test]
+    fn a_closure_captured_twice_at_each_level_is_built_once() {
+        let (mut s, inner) = two_captures();
+        let mut w = Word::int(7);
+        for _ in 0..64 {
+            s.run.heap.inc(w).unwrap();
+            w = s.run.heap.alloc(Obj::Clo {
+                lambda: inner,
+                caps: vec![w, w],
+            });
+        }
+        // A tree of every path would hold 2^64 copies of the bottom closure.
+        let mut lets = Lets::default();
+        let made = term(&s.t, &mut s.run, w, &mut lets).unwrap();
+        assert_eq!(lets.closures.len(), 64);
+        // `(y) -> (c = y < 1; r = if c { a } else { z = y - 1; b(z) }; r)` with each capture's
+        // term in place of `a` and `b`: at every level the two are one body, shared.
+        let (mut at, mut levels) = (&made, 0);
+        while let Term::Lam(_, body) = at
+            && let Term::Let(_, _, rest) = &**body
+            && let Term::Let(_, r, _) = &**rest
+            && let Term::If(_, a, other) = &**r
+            && let Term::Let(_, _, call) = &**other
+            && let Term::Let(_, b, _) = &**call
+            && let (Term::Lam(_, a_body), Term::App(b, _)) = (&**a, &**b)
+            && let Term::Lam(_, b_body) = &**b
+        {
+            assert_eq!(a_body.id(), b_body.id());
+            (at, levels) = (&**a, levels + 1);
+        }
+        assert_eq!(levels, 63, "the bottom closure captures two numbers");
+        // The kernel runs the term as it is: 63 calls down through the second capture, each
+        // level once, to the bottom closure's first capture.
+        let ran = Evaluator::new(World::new()).run(&app(made, vec![lit(63i64)]));
+        assert_eq!(ran.unwrap(), Value::Int(7));
+    }
+
+    #[test]
+    fn a_closure_freed_and_its_cell_taken_again_gets_its_own_term() {
+        let (mut s, inner) = two_captures();
+        let clo = |a, b| Obj::Clo {
+            lambda: inner,
+            caps: vec![Word::int(a), Word::int(b)],
+        };
+        let mut lets = Lets::default();
+        let old = s.run.heap.alloc(clo(1, 2));
+        let was = term(&s.t, &mut s.run, old, &mut lets).unwrap().to_string();
+        s.run.heap.dec(old).unwrap();
+        let new = s.run.heap.alloc(clo(3, 4));
+        assert_eq!(
+            s.run.heap.cell_slots(),
+            1,
+            "the new closure takes the old cell"
+        );
+        assert_ne!(new, old, "the cell's word names its generation");
+        let got = term(&s.t, &mut s.run, new, &mut lets).unwrap().to_string();
+        let fresh = term(&s.t, &mut s.run, new, &mut Lets::default()).unwrap();
+        assert_eq!(got, fresh.to_string());
+        assert_ne!(got, was);
     }
 
     /// A run of the program `0` installed, with a string cell already freed: a word of it kept

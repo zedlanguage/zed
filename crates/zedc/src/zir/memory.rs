@@ -1488,14 +1488,15 @@ impl<'g> Machine<'g, '_> {
     /// The kernel term for `v`; a lookup port is read once, by a `let` in `lets`.
     ///
     /// Closures capture closures as deep as the program, so the closures entered wait on a
-    /// stack with the terms of their captures so far.
+    /// stack with the terms of their captures so far. Each closure's term is built once, in
+    /// `lets.closures`.
     fn term(&mut self, v: &Mv<'g>, lets: &mut Lets) -> Result<Term, String> {
         let mut stack: Vec<(Rc<Clo<'g>>, Vec<Term>)> = Vec::new();
         let mut got = match v {
-            Mv::Clo(c) => {
+            Mv::Clo(c) => lets.closures.get(&c.cell).cloned().or_else(|| {
                 stack.push((c.clone(), Vec::new()));
                 None
-            }
+            }),
             v => Some(flat_term(v, lets)),
         };
         loop {
@@ -1505,13 +1506,18 @@ impl<'g> Machine<'g, '_> {
             terms.extend(got.take());
             match c.caps.get(terms.len()) {
                 Some(Mv::Clo(d)) => {
-                    let d = d.clone();
-                    stack.push((d, Vec::new()));
+                    got = lets.closures.get(&d.cell).cloned();
+                    if got.is_none() {
+                        let d = d.clone();
+                        stack.push((d, Vec::new()));
+                    }
                 }
                 Some(v) => got = Some(flat_term(v, lets)),
                 None => {
                     let (c, terms) = stack.pop().expect("a closure");
-                    got = Some(raise_with(self.alone(c.node, c.id), &terms)?);
+                    let t = raise_with(self.alone(c.node, c.id), &terms)?;
+                    lets.closures.insert(c.cell, t.clone());
+                    got = Some(t);
                 }
             }
         }
@@ -1771,11 +1777,17 @@ fn wrap(ports: Lets, t: Term) -> Term {
     })
 }
 
-/// The lookup ports a kernel term reads, each once, in the order first met.
+/// The lookup ports a kernel term reads, each once, in the order first met, and the term of
+/// each closure it holds.
 #[derive(Default)]
 struct Lets {
     seen: HashSet<Arc<str>>,
     order: Vec<Arc<str>>,
+    /// The term of each closure met, by its cell (`Clo::cell`), which no other closure of the
+    /// run has: a closure captured on many paths is built once, so the term is a graph the
+    /// size of the closures, not a tree of every path (COMPLEXITY.md R9). A closure's term is
+    /// a `let` of its lambda, whose parts are shared, so a copy costs a few words.
+    closures: HashMap<usize, Term>,
 }
 
 /// The kernel term for `v`, which is not a closure; a lookup port is read once, by a `let`

@@ -1786,3 +1786,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `BTreeMap::range` from a prefix with `take_while(starts_with)`, to find the keys that begin with a text | `counterexamples` | Library: DESIGN.md names no ordered-map range word | A stdlib word (catalog of step L2.11) that walks an ordered map from a key |
+
+## Entries from HOOKS-term-dag (`zed-native/src/hooks.rs`, `zedc/src/zir/memory.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` memo filled during a walk, keyed by a cell's word (`i64`) or number (`usize`), whose values are terms that share their bodies through `Arc` | `Lets::closures`, `hooks::term`, `term_of`, `Machine::term` | Mutation; Identity (Gap 1) for the key | A map `Int ->? Term` threaded through the walk's state receiver; the key is the cell's number, which the runtime would expose as an identity |
