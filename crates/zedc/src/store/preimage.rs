@@ -2332,7 +2332,7 @@ impl<'m, 't> Walk<'m, 't> {
             if !bypass {
                 #[cfg(test)]
                 if tests::RECHECK.get() && !tests::BYPASS.get() {
-                    return self.stack.call(async move {
+                    return self.stack.call(move || async move {
                         tests::recheck(self, table, &k, &v, cut, f).await;
                         self.with(|tx| tx.cx.cut = tx.cx.cut.min(cut));
                         v
@@ -2342,7 +2342,7 @@ impl<'m, 't> Walk<'m, 't> {
                 return Stack::ready(v);
             }
         }
-        self.stack.call(self.made(table, k, f))
+        self.stack.call(move || self.made(table, k, f))
     }
 
     /// `f()` read and remembered, for [`Walk::cached`].
@@ -2498,7 +2498,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// that reads no input. `local` holds the names bound within the term being closed: to
     /// the closed term a `let` binds, or to `None` for a lambda's parameter, which stays.
     fn close(&'m self, t: Tid, env: Eid, local: Rc<Local>) -> Deep<'m, Option<Term>> {
-        self.stack.call(self.close_at(t, env, local))
+        self.stack.call(move || self.close_at(t, env, local))
     }
 
     async fn close_all(&'m self, args: Span, env: Eid, local: &Rc<Local>) -> Option<Vec<Term>> {
@@ -3253,7 +3253,7 @@ impl<'m, 't> Walk<'m, 't> {
         if !self.with(|tx| tx.run.memo.scan.insert((t, env))) {
             return Stack::ready(());
         }
-        self.stack.call(self.scan_at(t, env))
+        self.stack.call(move || self.scan_at(t, env))
     }
 
     async fn scan_at(&'m self, t: Tid, env: Eid) {
@@ -3984,7 +3984,7 @@ impl<'m, 't> Walk<'m, 't> {
         if self.with(|tx| table(&mut tx.run.memo).contains_key(&k)) {
             return self.cached(table, k, f);
         }
-        self.stack.call(async move {
+        self.stack.call(move || async move {
             let v = self.cached(table, k.clone(), f).await;
             self.with(|tx| {
                 if table(&mut tx.run.memo).contains_key(&k) {

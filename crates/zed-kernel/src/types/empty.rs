@@ -1301,7 +1301,7 @@ impl<'m> Searching<'m> {
 
     /// Decides the type numbered `t` on a frame of its own.
     fn decide(&'m self, t: usize) -> Deep<'m, bool> {
-        self.stack.call(self.decided(t))
+        self.stack.call(move || self.decided(t))
     }
 
     async fn decided(&'m self, t: usize) -> bool {
@@ -1360,7 +1360,7 @@ impl<'m> Searching<'m> {
             ControlFlow::Break(b) => return Stack::ready(b),
             ControlFlow::Continue(i) => i,
         };
-        self.stack.call(async move {
+        self.stack.call(move || async move {
             let b = self.decided(i).await;
             self.s().deciding.remove(&i);
             b
@@ -1611,7 +1611,7 @@ impl<'m> Searching<'m> {
     /// Each piece is tried on the box and the box restored after; the box is given back with the
     /// answer.
     fn tuples(&'m self, mut g: Region, f: Part<Row>, may_cover: bool) -> Deep<'m, (bool, Region)> {
-        self.stack.call(async move {
+        self.stack.call(move || async move {
             let b = self.tuples_on(&mut g, f, may_cover).await;
             (b, g)
         })
@@ -2070,7 +2070,7 @@ impl<'m> Searching<'m> {
             return Stack::ready(r);
         }
         let t = t.clone();
-        self.stack.call(async move {
+        self.stack.call(move || async move {
             let (mark, resting) = {
                 let mut s = self.s();
                 s.reps.insert(t.clone(), None);
@@ -2448,7 +2448,7 @@ impl<'m> Searching<'m> {
         if let Some(&b) = self.s().members.get(&key) {
             return Stack::ready(b);
         }
-        self.stack.call(async move {
+        self.stack.call(move || async move {
             let b = {
                 let u = &key.1;
                 // What the value is, read before any test that adds to the values shown.
@@ -2502,7 +2502,7 @@ impl<'m> Searching<'m> {
         mut f: Part<Morphism>,
         may_cover: bool,
     ) -> Deep<'m, bool> {
-        self.stack.call(async move {
+        self.stack.call(move || async move {
             loop {
                 if self.no_morphism(&r).await {
                     return true;

@@ -39,10 +39,16 @@ impl Default for Stack<'_> {
     }
 }
 
-/// A frame that writes the answer of `body` to `out`.
-fn frame<'m, V: 'm>(body: impl Future<Output = V> + 'm, out: &Rc<Cell<Option<V>>>) -> Frame<'m> {
+/// A frame that writes the answer of the call `body()` makes to `out`. The frame takes the
+/// function that makes the call rather than the call itself: an `async` block keeps a future it
+/// captures apart from the same future once awaited, so a captured call made the frame twice
+/// its callee's size (2,272 bytes for `back_in`'s 1,120).
+fn frame<'m, V: 'm, F: Future<Output = V> + 'm>(
+    body: impl FnOnce() -> F + 'm,
+    out: &Rc<Cell<Option<V>>>,
+) -> Frame<'m> {
     let out = out.clone();
-    Box::pin(async move { out.set(Some(body.await)) })
+    Box::pin(async move { out.set(Some(body().await)) })
 }
 
 impl<'m> Stack<'m> {
@@ -54,8 +60,11 @@ impl<'m> Stack<'m> {
         }
     }
 
-    /// A call of `body` on a frame of its own, whatever calls `body` makes.
-    pub fn call<V: 'm>(&'m self, body: impl Future<Output = V> + 'm) -> Deep<'m, V> {
+    /// The call `body()` makes, on a frame of its own, whatever calls it makes in turn.
+    pub fn call<V: 'm, F: Future<Output = V> + 'm>(
+        &'m self,
+        body: impl FnOnce() -> F + 'm,
+    ) -> Deep<'m, V> {
         let out = Rc::new(Cell::new(None));
         let f = frame(body, &out);
         Deep {
@@ -67,7 +76,7 @@ impl<'m> Stack<'m> {
     /// Runs `root` and the calls it makes to the end, each suspended caller on a `Vec`.
     pub fn run<V: 'm>(&'m self, root: impl Future<Output = V> + 'm) -> V {
         let out = Rc::new(Cell::new(None));
-        let mut frames = vec![frame(root, &out)];
+        let mut frames = vec![frame(|| root, &out)];
         let mut cx = Context::from_waker(Waker::noop());
         while let Some(top) = frames.last_mut() {
             match top.as_mut().poll(&mut cx) {
@@ -131,7 +140,7 @@ mod tests {
             if n == 0 {
                 return Stack::ready(0);
             }
-            self.stack.call(async move {
+            self.stack.call(move || async move {
                 self.seen
                     .set(self.seen.get().wrapping_mul(31).wrapping_add(n));
                 let below = self.sum(n - 1).await;
@@ -180,6 +189,30 @@ mod tests {
             };
             assert_eq!(t.stack.run(t.sum(1_000_000)), 500_000_500_000);
         });
+    }
+
+    /// A call that keeps 4 KiB of its own across a call it makes.
+    async fn wide(t: &Trace<'_>) -> u64 {
+        let keep = [t.seen.get(); 512];
+        Stack::<'_>::ready(0u64).await;
+        keep.iter().sum()
+    }
+
+    #[test]
+    fn a_frame_holds_its_call_once() {
+        let t = Trace {
+            stack: Stack::default(),
+            seen: Cell::new(0),
+        };
+        let callee = size_of_val(&wide(&t));
+        let f = frame(|| wide(&t), &Rc::new(Cell::new(None)));
+        // The frame holds the call and the cell of its answer; a frame that kept the call
+        // apart from the call awaited was twice the size.
+        assert!(
+            size_of_val(&*f) < callee + 64,
+            "{} for {callee}",
+            size_of_val(&*f)
+        );
     }
 
     #[test]
