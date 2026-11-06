@@ -24,7 +24,8 @@
 //! one per node. The second is Dijkstra's search with Bellman–Ford rounds (BF-Dijkstra,
 //! [`negsssp::Rounds`]), cheap when shortest paths hold few negative edges. The third is
 //! Duong's deterministic near-linear search ([`negsssp`]), which bounds the worst case
-//! (COMPLEXITY.md, C24).
+//! (COMPLEXITY.md, C24). The first two share their labels, and a second such pair searches the
+//! graph with every edge turned around, whose potential negated is one of the graph.
 //!
 //! \[UTVPI\]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
 //! Constraints", FroCoS 2005.
@@ -41,8 +42,8 @@ use super::negsssp;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Search {
     /// The pass in topological order when the graph has no cycle, otherwise Goldberg and
-    /// Radzik's search, BF-Dijkstra and Duong's one unit of work each in turn, the first to finish
-    /// deciding: what [`integer_empty`] uses.
+    /// Radzik's search, BF-Dijkstra and Duong's one unit of work each in turn, the first two also
+    /// on the reversed graph, the first to finish deciding: what [`integer_empty`] uses.
     First,
     /// Goldberg and Radzik's search alone, on every graph.
     GoldbergRadzik,
@@ -200,7 +201,8 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // large. Goldberg and Radzik's search and BF-Dijkstra share their labels (`Shared`), and
     // Duong's search races them: each of the three takes one unit of work in turn and the first
     // to finish decides, so the race takes at most three times the units of the cheaper side, and
-    // asymptotically Duong's bound holds. Run apart, the two quick searches are each quadratic
+    // asymptotically Duong's bound holds (five times since a second pair searches the reverse,
+    // below). Run apart, the two quick searches are each quadratic
     // on a graph that holds both BAD-GOR augmented (slow for Goldberg and Radzik) and a fan, a
     // path of weight -1 edges into a hub (k rounds of k work for BF-Dijkstra), and both stay
     // cheaper than Duong's below k = 2,048: in one strongly connected component the old
@@ -214,19 +216,58 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // to 332.8M instructions there (8.7 times; `the_joined_union_family_scales`), 36.1M to
     // 301.2M on the family split in two (`bad_gor_and_a_fan_scale`; 202M to 12,236M before) and
     // 25.1M to 209.3M on BAD-GOR alone (`bad_gor_scales`; Goldberg and Radzik alone 59.8 times).
-    // On a graph slow for both along the same shortest paths (`stages::split_bad_gor_scales`,
-    // ignored until repair UTVPI-both-slow) Duong's search ends the race, but the race still
-    // grows past the limit from k = 128 to 1,024 (33.5 times the bytes). The decisions agree with each search alone, since
-    // every potential gives the same one (`odd_zero_cycle`). Tests in `l01_38_presburger`:
-    // `stages::*_scale*` and `near::duong_scales_alone`; COMPLEXITY.md C24.
-    let mut both = Shared::new(out);
-    let raced = negsssp::potential(out, || match both.step() {
-        Some(found) => Err(found),
-        None => Ok(()),
+    // A graph can be slow for both along the same shortest paths: on BAD-GOR with its path
+    // split into edges of weight -1 and 2 (`stages::split_bad_gor_scales`), from k = 128 to
+    // 1,024, Goldberg and Radzik alone take 51.8 times the instructions, BF-Dijkstra alone 60.7,
+    // the pair sharing labels 60.5 (sharing one way only, 56 to 58), and Duong's search, 11.6
+    // times, costs 6.2G at k = 1,024, so the race grew 55.9 times (UTVPI-both-slow). Its reverse,
+    // every edge turned around, is quick for the pair: a potential `q` of the reverse gives the
+    // potential `-q` of the graph (`q(u) <= q(v) + w` is `-q(v) <= -q(u) + w`), and the two
+    // have the same cycles, so the same negative ones. A second shared pair therefore searches
+    // the reverse; each unit of Duong's search is followed by one step of each pair, so the race
+    // does at most a constant times the units of the search that finishes. On that family it
+    // takes 24.2M to 198M instructions (8.2 times), and the three families above stay at 7.8
+    // to 8.1 times. A graph that holds that family and its reverse in one component is slow in
+    // both directions, and the race on it grows 78.7 times from k = 128 to 1,024, past the limit
+    // (`stages::split_bad_gor_both_ways_scales`, ignored, open: item UTVPI-both-ways). Inferred
+    // from a model, quick searches quadratic and Duong's linear on a family, with Duong's
+    // search first to finish from k* on: the race grows about 8·k*/k times from k to 8k for
+    // k*/8 <= k <= k*, so past the limit of 24 for k < k*/3, whatever quick searches race; only
+    // a smaller constant in Duong's search, which lowers k*, moves such families under it. The
+    // decisions agree with each search alone, since every potential gives the same one
+    // (`odd_zero_cycle`). Tests in `l01_38_presburger`: `stages::*_scale*` and
+    // `near::duong_scales_alone`; COMPLEXITY.md C24.
+    let back_edges = reversed(out);
+    let mut ahead = Shared::new(out);
+    let mut back = Shared::new(&back_edges);
+    let raced = negsssp::potential(out, || {
+        if let Some(found) = ahead.step() {
+            return Err(found);
+        }
+        match back.step() {
+            Some(found) => Err(found.as_deref().map(negated)),
+            None => Ok(()),
+        }
     });
     match raced {
         Ok(found) | Err(found) => found,
     }
+}
+
+/// The graph `out` with every edge turned around: `v → (u, w)` for each `u → (v, w)`.
+fn reversed(out: &[Vec<(usize, Int)>]) -> Vec<Vec<(usize, Int)>> {
+    let mut back: Vec<Vec<(usize, Int)>> = vec![Vec::new(); out.len()];
+    for (u, edges) in out.iter().enumerate() {
+        for (v, w) in edges {
+            back[*v].push((u, w.clone()));
+        }
+    }
+    back
+}
+
+/// The potential of a graph given by the potential `q` of its reverse.
+fn negated(q: &[Int]) -> Vec<Int> {
+    q.iter().map(|x| -x).collect()
 }
 
 /// BF-Dijkstra run to its end.
@@ -524,7 +565,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::{
-        At, Int, Shared, bf_dijkstra, goldberg_radzik, negsssp, odd_zero_cycle, potential, race,
+        At, Int, Shared, bf_dijkstra, goldberg_radzik, negated, negsssp, odd_zero_cycle, potential,
+        race, reversed,
     };
 
     #[test]
@@ -696,9 +738,10 @@ mod tests {
         // 6,000 random directed graphs of 1 to 40 nodes, self loops allowed, weights -6 to 12,
         // half of them with a ring of weights 0 to 30 through every node so that they are one
         // strongly connected component. `Shared` run to its end (Goldberg and Radzik's search and
-        // BF-Dijkstra taking each other's labels), `race` (the same against Duong's search) and
-        // `potential` (split by components) must each find a negative cycle exactly when plain
-        // Bellman–Ford does, and otherwise give a potential that holds on every edge. The counts
+        // BF-Dijkstra taking each other's labels), the same on the reversed graph with its
+        // potential negated, `race` (both pairs against Duong's search) and `potential` (split by
+        // components) must each find a negative cycle exactly when plain Bellman–Ford does, and
+        // otherwise give a potential that holds on every edge. The counts
         // show that labels pass both ways and lower the receiving search's label, on graphs with
         // and without a negative cycle.
         let mut state = 7u64;
@@ -749,8 +792,17 @@ mod tests {
                     break found;
                 }
             };
+            // `Shared` on the reverse, whose potential negated is one of the graph.
+            let back_edges = reversed(&out);
+            let mut backward = Shared::new(&back_edges);
+            let reverse = loop {
+                if let Some(found) = backward.step() {
+                    break found.as_deref().map(negated);
+                }
+            };
             for (name, found) in [
                 ("Shared", shared),
+                ("Shared on the reverse", reverse),
                 ("race", race(&out)),
                 ("potential", potential(&out)),
             ] {

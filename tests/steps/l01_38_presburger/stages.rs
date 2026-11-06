@@ -512,6 +512,11 @@ fn bad_gor_scales() {
 /// now holds a negative edge, so BF-Dijkstra takes a round per step, each lowering the hub `k`
 /// and its `k` leaves again: slow for both along the same shortest paths.
 fn split_bad_gor(k: usize, seed: u64) -> (usize, Rows) {
+    augmented(3 * k - 1, split_bad_gor_edges(k), seed)
+}
+
+/// The edges of [`split_bad_gor`] before it is augmented, over the nodes 0 to 3k - 2.
+fn split_bad_gor_edges(k: usize) -> Vec<(usize, usize, i64)> {
     let mut edges = vec![(0, 1, -3 * k as i64), (0, k, -1)];
     for i in 1..k - 1 {
         let mid = 2 * k + i;
@@ -519,34 +524,73 @@ fn split_bad_gor(k: usize, seed: u64) -> (usize, Rows) {
     }
     edges.extend((1..=k).map(|i| (k, k + i, -1)));
     edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
-    augmented(3 * k - 1, edges, seed)
+    edges
+}
+
+/// [`split_bad_gor`] beside its reverse, every edge turned around, on `3k - 1` further
+/// variables, augmented together as in [`bad_gor`], so that the random rows join them in one
+/// strongly connected component: slow for Goldberg and Radzik's search and BF-Dijkstra on the
+/// graph and on its reverse.
+fn split_bad_gor_both_ways(k: usize) -> (usize, Rows) {
+    let half = 3 * k - 1;
+    let mut edges = split_bad_gor_edges(k);
+    let back: Vec<(usize, usize, i64)> = edges
+        .iter()
+        .map(|&(u, v, w)| (half + v, half + u, w))
+        .collect();
+    edges.extend(back);
+    augmented(2 * half, edges, 1)
 }
 
 #[test]
 fn split_bad_gor_is_decided() {
     let (n, rows) = split_bad_gor(64, 1);
     assert!(!empty(n, &rows));
+    let (n, rows) = split_bad_gor_both_ways(64);
+    assert!(!empty(n, &rows));
 }
 
 #[test]
-#[ignore = "UTVPI-both-slow: the race grows past the limit on this family"]
 fn split_bad_gor_scales() {
-    // Measured at load 65 to 73 (UTVPI-union verify), from k = 256 to k = 2,048 in time:
-    // Goldberg and Radzik's search alone 14.2 ms to 3.29 s (232 times), BF-Dijkstra alone
-    // 22.6 ms to 2.96 s (131 times), Duong's search alone 223 ms to 7.27 s, and the race
-    // 432 ms to 33.8 s (78 times). Here, from k = 128 to k = 1,024, the race allocates 18.1M
-    // to 606M bytes (33.5 times), and Duong's search alone passes. The race takes 1.9 and 4.6
-    // times Duong's time alone, so Duong's search ends it at both sizes, though Goldberg and
-    // Radzik's search alone takes a fifteenth of Duong's time at k = 256. Inferred, not
-    // measured: the labels BF-Dijkstra passes it slow it down (COMPLEXITY.md C24).
+    // Measured in instructions from k = 128 to k = 1,024 (UTVPI-both-slow, load 58 to 68):
+    // Goldberg and Radzik's search alone 32.7M to 1,694M (51.8 times), BF-Dijkstra alone 46.6M
+    // to 2,826M (60.7 times), the two sharing labels 98.2M to 5,943M (60.5 times; sharing one
+    // way only, 56 to 58 times), Duong's search alone 535M to 6,218M (11.6 times), and the race
+    // of the pair and Duong's search 175M to 9,778M (55.9 times; 33.5 times the bytes). On
+    // the reverse of the graph the pair is quick, and the race with a second pair searching
+    // it takes 24.2M to 198M (8.2 times; COMPLEXITY.md C24).
     let (small, large) = (
         split_bad_gor(128, 1),
         split_bad_gor(scaling::FACTOR * 128, 1),
     );
+    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
     scaling::check("BAD-GOR with its path split, by k", 128, |k| {
         let (n, rows) = if k == 128 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
+}
+
+#[test]
+#[ignore = "UTVPI-both-ways: the race grows past the limit on this family"]
+fn split_bad_gor_both_ways_scales() {
+    // Slow for both quick searches on the graph and on its reverse: from k = 128 to 1,024 the
+    // race takes 385M to 30,322M instructions (78.7 times; 51.2 times the bytes), and took 298M
+    // to 21,980M (73.6 times) before the pair on the reverse was added (UTVPI-both-slow, load 39
+    // to 54). COMPLEXITY.md C24 gives the model: a race of quadratic searches with
+    // Duong's passes such a family only from about a third of the size where Duong's search
+    // starts to finish first.
+    let (small, large) = (
+        split_bad_gor_both_ways(128),
+        split_bad_gor_both_ways(scaling::FACTOR * 128),
+    );
+    scaling::check(
+        "BAD-GOR with its path split, and its reverse, by k",
+        128,
+        |k| {
+            let (n, rows) = if k == 128 { &small } else { &large };
+            std::hint::black_box(raced(*n, rows));
+        },
+    );
 }
 
 /// BAD-GOR augmented over `2k + 1` variables, and beside it on `2k + 2` further variables a fan:
