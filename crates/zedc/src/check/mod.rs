@@ -6269,3 +6269,57 @@ impl<'a> Denote<'a> {
         Ty::func(Arc::new(sig))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(start: usize) -> Span {
+        Span {
+            start,
+            end: start + 1,
+        }
+    }
+
+    /// A branch the checker rolls back, as [`Ck::try_outside`] and [`Ck::repairs`] roll back a
+    /// trial, leaves [`Info::passes`] as it found it (PASS-at-args): a call whose entry held
+    /// fewer arguments before the branch keeps exactly those, with their atoms, including
+    /// those the branch did not write, and a call first recorded in the branch has no entry
+    /// after it.
+    #[test]
+    fn a_rolled_back_branch_restores_the_passed_atoms() {
+        let res = crate::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t);
+        let (a, b, c) = (KType::atom("a"), KType::atom("b"), KType::atom("c"));
+        let (call, other, fresh) = (span(100), span(200), span(300));
+        ck.pass_at(call, span(1), &a);
+        ck.pass_at(call, span(3), &c);
+        ck.pass_at(other, span(11), &b);
+        let before = ck.info.passes.clone();
+        let saved = ck.mark();
+        // The call's entry grows: one argument gains an atom, another is new; the same
+        // argument written twice logs twice and must come back to its first value.
+        ck.pass_at(call, span(1), &b);
+        ck.pass_at(call, span(2), &c);
+        ck.pass_at(call, span(2), &a);
+        // A write that adds nothing logs nothing.
+        let len = ck.log.len();
+        ck.pass_at(other, span(11), &b);
+        assert_eq!(ck.log.len(), len);
+        // A call first recorded in the branch.
+        ck.pass_at(fresh, span(21), &a);
+        ck.pass_at(fresh, span(22), &b);
+        assert_eq!(ck.info.passes[&call].len(), 3);
+        assert_eq!(ck.info.passes[&call][&span(1)], &a | &b);
+        ck.undo(&saved);
+        assert_eq!(ck.info.passes, before);
+        assert_eq!(ck.info.passes[&call].len(), 2);
+        assert_eq!(ck.info.passes[&call][&span(1)], a);
+        assert_eq!(ck.info.passes[&call][&span(3)], c);
+        assert!(!ck.info.passes.contains_key(&fresh));
+        // Rolling back to before the first write leaves no entry at all.
+        ck.undo(&Mark { log: 0, errors: 0 });
+        assert!(ck.info.passes.is_empty());
+    }
+}

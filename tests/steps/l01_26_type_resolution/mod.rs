@@ -4,9 +4,11 @@
 //! the function type its slot expects.
 
 mod adoption;
+mod atom_scaling;
 mod bounds;
 mod calls;
 mod curried_classes;
+mod deep_scaling;
 mod docs;
 mod fits;
 mod given;
