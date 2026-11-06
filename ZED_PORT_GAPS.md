@@ -374,7 +374,7 @@ component, with a shortest cycle and every import within it. Paths below are rel
 `crates/`, with `src/` dropped.
 
 **`zedc` has no cycle since S.1f** (`imports crates/zedc/src`: 87 files, 291 imports, exit 0;
-test `s01f_import_graph::the_compiler_has_no_import_cycle`). The tool found nine components
+test `s_01f_import_graph::the_compiler_has_no_import_cycle`). The tool found nine components
 when S.1f began, against the six `zedc` components of the first, uncommitted scanner. Each was broken by moving
 the shared items to a file below both sides; no file was merged and no re-export hides an edge:
 

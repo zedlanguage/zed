@@ -25,9 +25,7 @@ use zed_kernel::num::{LiteralRounding, bytes_of, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
-use crate::ast::{
-    Error, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPart, Target, Type,
-};
+use crate::ast::{Error, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPart, Target, Type};
 use crate::check::{self, Fit, Info, Misfit};
 use crate::lex::{Span, unread_literal};
 use crate::rejection::Row;
