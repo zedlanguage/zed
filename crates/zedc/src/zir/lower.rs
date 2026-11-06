@@ -46,6 +46,7 @@ use std::fmt::Write;
 use std::mem;
 use std::sync::Arc;
 
+use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
 use zed_kernel::types::Type;
 
@@ -140,6 +141,9 @@ struct Lower<'t> {
     /// The [`Uses`] of each lambda body met so far, by occurrence id.
     bodies: Bodies,
     places: Places,
+    /// The first refusal of the memory to write a constant for a key ([`canon::Shape::of`],
+    /// [`canon::region_key`]); after it no node is looked up, and [`lower`] reports it.
+    refused: Option<TooLarge>,
 }
 
 /// What a lambda body uses from outside it: a port it reads or pushes, or a name free in it.
@@ -227,9 +231,18 @@ pub fn lower(t: &Term) -> Result<Region, String> {
         uses,
         bodies: HashMap::new(),
         places,
+        refused: None,
     };
-    let v = l.term(At { t, id: 0 })?;
-    let out = l.src(v)?;
+    let out = l.term(At { t, id: 0 }).and_then(|v| l.src(v));
+    // A refused constant is the error, whatever lowering found after it.
+    if let Some(e) = l.refused {
+        return Err(format!(
+            "a constant is so large that the system refused the {} bytes of memory asked to \
+             build and write it for its content address",
+            bytes_of(&e.bits)
+        ));
+    }
+    let out = out?;
     let f = l.frames.pop().expect("the root frame");
     let mut root = f.region;
     root.results.push(out);
@@ -389,7 +402,20 @@ impl<'t> Lower<'t> {
     /// most the size of the smaller node: `k` is one but for a collision of 256-bit keys, and
     /// about n/256 for n nodes in the `short-addresses` build (8-bit keys).
     fn add(&mut self, node: Node, regions: Vec<ContentAddress>) -> usize {
-        let shape = canon::Shape::of(&node);
+        let shape = match (&self.refused, canon::Shape::of(&node)) {
+            (None, Ok(shape)) => shape,
+            (refused, shape) => {
+                // A constant was refused: the graph is not returned, so the node is kept
+                // without the lookup, which would write the refused constant again.
+                if let (None, Err(e)) = (refused, shape) {
+                    self.refused = Some(e);
+                }
+                let f = self.frame();
+                f.region.nodes.push(node);
+                f.keys.push(regions);
+                return f.region.nodes.len() - 1;
+            }
+        };
         let key = shape.key(&regions);
         let f = self.frame();
         match f.seen.entry(key).or_default().entry(shape) {
@@ -460,7 +486,14 @@ impl<'t> Lower<'t> {
                 };
                 r.results.push(fin);
             }
-            keys.push(canon::region_key(&r, &b.keys));
+            match canon::region_key(&r, &b.keys) {
+                Ok(k) => keys.push(k),
+                Err(e) => {
+                    // Any key will do: the graph is not returned after a refusal.
+                    self.refused.get_or_insert(e);
+                    keys.push(ContentAddress([0; 32]));
+                }
+            }
             regions.push(Arc::new(r));
         }
         let mut outputs = vec![top(); values];

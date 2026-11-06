@@ -44,7 +44,7 @@ fn graph(v: Value) -> Region {
 /// The kernel address of the definition `wide = v`.
 fn kernel_address(v: Value) -> ContentAddress {
     let none = |_: &str| None;
-    canon::address(&def(v), &none)
+    canon::address(&def(v), &none).expect("memory for the address")
 }
 
 /// The definition `wide = v`, with no domain and no facets.
@@ -62,8 +62,8 @@ fn a_wide_number_and_its_negation_have_different_addresses() {
     for bits in [64, 72, 128, 4096] {
         let (pos, neg) = (wide(bits, Sign::Plus), wide(bits, Sign::Minus));
         assert_ne!(
-            address(&graph(Value::int(pos.clone()))),
-            address(&graph(Value::int(neg.clone()))),
+            address(&graph(Value::int(pos.clone()))).expect("memory for the address"),
+            address(&graph(Value::int(neg.clone()))).expect("memory for the address"),
             "ZIR, {bits} bits"
         );
         assert_ne!(
@@ -85,8 +85,8 @@ fn a_wide_number_and_its_negation_have_different_addresses() {
         .expect("a rat"),
     );
     assert_ne!(
-        address(&graph(Value::rat(half.clone()))),
-        address(&graph(Value::rat(minus_half.clone())))
+        address(&graph(Value::rat(half.clone()))).expect("memory for the address"),
+        address(&graph(Value::rat(minus_half.clone()))).expect("memory for the address")
     );
     assert_ne!(
         kernel_address(Value::rat(half)),
@@ -103,8 +103,8 @@ fn numerator_and_denominator_are_not_confused() {
         Rat::new(big, three).expect("a rat"),
     );
     assert_ne!(
-        address(&graph(Value::rat(a.clone()))),
-        address(&graph(Value::rat(b.clone())))
+        address(&graph(Value::rat(a.clone()))).expect("memory for the address"),
+        address(&graph(Value::rat(b.clone()))).expect("memory for the address")
     );
     assert_ne!(kernel_address(Value::rat(a)), kernel_address(Value::rat(b)));
 }
@@ -115,8 +115,8 @@ fn a_power_kept_and_the_same_number_written_out_have_one_address() {
         let kept = Value::integer(two_to(bits));
         let written = Value::int(BigInt::from(1) << bits);
         assert_eq!(
-            address(&graph(kept.clone())),
-            address(&graph(written.clone()))
+            address(&graph(kept.clone())).expect("memory for the address"),
+            address(&graph(written.clone())).expect("memory for the address")
         );
         assert_eq!(kernel_address(kept), kernel_address(written));
     }
@@ -126,8 +126,8 @@ fn a_power_kept_and_the_same_number_written_out_have_one_address() {
         .expect("a nonzero divisor");
     let written = Rat::new(BigInt::from(3), BigInt::from(1) << 90).expect("a nonzero denominator");
     assert_eq!(
-        address(&graph(Value::rat(kept.clone()))),
-        address(&graph(Value::rat(written.clone())))
+        address(&graph(Value::rat(kept.clone()))).expect("memory for the address"),
+        address(&graph(Value::rat(written.clone()))).expect("memory for the address")
     );
     assert_eq!(
         kernel_address(Value::rat(kept)),
@@ -145,15 +145,20 @@ fn the_binary_form_of_a_wide_number_reads_back() {
     ];
     for v in values {
         let g = graph(v);
-        let back = binary::decode(&binary::encode(&g)).expect("a graph");
+        let back =
+            binary::decode(&binary::encode(&g).expect("memory for the bytes")).expect("a graph");
         assert_eq!(back, g);
-        assert_eq!(binary::encode(&back), binary::encode(&g));
+        assert_eq!(
+            binary::encode(&back).expect("memory for the bytes"),
+            binary::encode(&g).expect("memory for the bytes")
+        );
     }
 }
 
 #[test]
 fn a_cut_count_of_limbs_is_an_error() {
-    let bytes = binary::encode(&graph(Value::int(wide(256, Sign::Plus))));
+    let bytes =
+        binary::encode(&graph(Value::int(wide(256, Sign::Plus)))).expect("memory for the bytes");
     for cut in 1..=16 {
         assert!(
             binary::decode(&bytes[..bytes.len() - cut]).is_err(),
@@ -180,18 +185,18 @@ fn addressing_a_wide_constant_is_linear_in_its_bits() {
         &gs[usize::from(k != N)]
     }
     check_order("the ZIR address of a random number of n bits", N, 1, |k| {
-        address(pick(&random, k));
+        address(pick(&random, k)).expect("memory for the address");
     });
     check_order(
         "the ZIR address of a negative number of n bits",
         N,
         1,
         |k| {
-            address(pick(&negative, k));
+            address(pick(&negative, k)).expect("memory for the address");
         },
     );
     check_order("the ZIR address of 2^n kept as a power", N, 1, |k| {
-        address(pick(&powers, k));
+        address(pick(&powers, k)).expect("memory for the address");
     });
     let defs = [
         def(Value::int(wide(N, Sign::Plus))),
@@ -203,7 +208,7 @@ fn addressing_a_wide_constant_is_linear_in_its_bits() {
         N,
         1,
         |k| {
-            canon::address(&defs[usize::from(k != N)], &none);
+            canon::address(&defs[usize::from(k != N)], &none).expect("memory for the address");
         },
     );
 }
@@ -231,10 +236,10 @@ fn addressing_a_wide_constant_stays_linear_over_64_times_the_bits() {
         ),
         limit,
         || {
-            address(&small);
+            address(&small).expect("memory for the address");
         },
         || {
-            address(&large);
+            address(&large).expect("memory for the address");
         },
     );
 }

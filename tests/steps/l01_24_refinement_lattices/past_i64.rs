@@ -171,13 +171,22 @@ fn a_class_past_the_64_bit_range_has_one_address() {
     // 64-bit range have different ones, and a class inside it keeps its 64-bit encoding.
     let none = |_: &str| None;
     let m = &two(64) * &n(3);
-    let a = address(&def(class(&m, &n(5))), &none);
-    assert_eq!(a, address(&def(class(&m, &(&m + &n(5)))), &none));
-    assert_ne!(a, address(&def(class(&m, &n(6))), &none));
-    assert_ne!(a, address(&def(class(&two(64), &n(5))), &none));
+    let a = address(&def(class(&m, &n(5))), &none).expect("memory for the address");
+    assert_eq!(
+        a,
+        address(&def(class(&m, &(&m + &n(5)))), &none).expect("memory for the address")
+    );
     assert_ne!(
-        address(&def(class(&n(MAX), &n(5))), &none),
-        address(&def(class(&n(MAX + 1), &n(5))), &none)
+        a,
+        address(&def(class(&m, &n(6))), &none).expect("memory for the address")
+    );
+    assert_ne!(
+        a,
+        address(&def(class(&two(64), &n(5))), &none).expect("memory for the address")
+    );
+    assert_ne!(
+        address(&def(class(&n(MAX), &n(5))), &none).expect("memory for the address"),
+        address(&def(class(&n(MAX + 1), &n(5))), &none).expect("memory for the address")
     );
 }
 

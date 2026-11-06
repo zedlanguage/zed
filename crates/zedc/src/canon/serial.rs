@@ -9,6 +9,7 @@
 //! parameters, a pattern's `Bind`), and a bound variable by its level.
 
 use num_bigint::BigUint;
+use zed_kernel::num::{Rat, TooLarge};
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
 use zed_kernel::value::Value;
 
@@ -23,6 +24,8 @@ type Refs<'a> = &'a dyn Fn(&str) -> Option<ContentAddress>;
 struct Out<'a> {
     bytes: Vec<u8>,
     refs: Refs<'a>,
+    /// The first refusal of the memory for a number, after which the bytes are not used.
+    refused: Option<TooLarge>,
 }
 
 impl Out<'_> {
@@ -45,6 +48,33 @@ impl Out<'_> {
     fn magnitude(&mut self, m: &BigUint) {
         self.word(m.iter_u64_digits().len() as u64);
         m.iter_u64_digits().for_each(|d| self.word(d));
+    }
+
+    /// An exact number: its sign as a tag, then the magnitude of its numerator, and of a
+    /// rational its denominator. Both are built, and the bytes for them reserved, only after
+    /// the system gives the memory; a refusal is kept and nothing more of the number written.
+    fn number(&mut self, r: &Rat, rational: bool) {
+        if self.refused.is_some() {
+            return;
+        }
+        let parts = r.built_parts().and_then(|(num, den)| {
+            let limbs = num.iter_u64_digits().len() + den.iter_u64_digits().len();
+            let bytes = 8 * (limbs + 2);
+            self.bytes.try_reserve(bytes).map_err(|_| TooLarge {
+                bits: BigUint::from(bytes) << 3u32,
+            })?;
+            Ok((num, den))
+        });
+        match parts {
+            Ok((num, den)) => {
+                self.tag(u8::from(r.is_negative()));
+                self.magnitude(&num);
+                if rational {
+                    self.magnitude(&den);
+                }
+            }
+            Err(e) => self.refused = Some(e),
+        }
     }
 
     /// An endpoint: an integer in `i64` is a word, as an `int` value is; one past it is its
@@ -159,15 +189,11 @@ impl Out<'_> {
             }
             Value::Big(n) => {
                 self.tag(8);
-                self.tag(u8::from(n.is_negative()));
-                self.magnitude(&n.built_parts().0);
+                self.number(n, false);
             }
             Value::Rat(r) => {
                 self.tag(9);
-                self.tag(u8::from(r.is_negative()));
-                let (num, den) = r.built_parts();
-                self.magnitude(&num);
-                self.magnitude(&den);
+                self.number(r, true);
             }
             Value::Tuple(vs) => {
                 self.tag(5);
@@ -390,11 +416,13 @@ enum Job<'t> {
     Evidence(&'t Evidence),
 }
 
-/// The serialization of a definition in normal form.
-pub fn def(d: &Def, refs: Refs<'_>) -> Vec<u8> {
+/// The serialization of a definition in normal form, or [`TooLarge`] when the system refuses
+/// the memory to build or write one of its exact numbers ([`Rat::built_parts`]).
+pub fn def(d: &Def, refs: Refs<'_>) -> Result<Vec<u8>, TooLarge> {
     let mut out = Out {
         bytes: Vec::new(),
         refs,
+        refused: None,
     };
     out.str(&d.name);
     match &d.domain {
@@ -411,5 +439,8 @@ pub fn def(d: &Def, refs: Refs<'_>) -> Vec<u8> {
         out.value(&f.value);
     }
     out.term(&d.body);
-    out.bytes
+    match out.refused {
+        None => Ok(out.bytes),
+        Some(e) => Err(e),
+    }
 }

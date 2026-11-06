@@ -10,7 +10,7 @@ fn ints(text: &str) -> Vec<(u32, String)> {
         .unwrap_or_else(|e| panic!("{text:?}: {e}"))
         .into_iter()
         .map(|t| match t.tok {
-            Tok::Int { radix, digits } => (radix, digits),
+            Tok::Int { radix, digits } => (radix, digits.to_string()),
             other => panic!("{text:?}: {other:?}"),
         })
         .collect()

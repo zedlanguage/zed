@@ -45,10 +45,13 @@ fn a_graph_nested_100000_deep_is_canonicalized_on_a_2_mib_stack() {
     on_small_stack(|| {
         let mut g = deep_match(100_000, "x");
         assert_eq!(ranks(&g)[0], 1, "one written binder");
-        assert_eq!(address(&g), address(&deep_match(100_000, "y")));
         assert_eq!(
-            key(&canonicalize(&g)),
-            key(&canonicalize(&deep_match(100_000, "y")))
+            address(&g).expect("memory for the address"),
+            address(&deep_match(100_000, "y")).expect("memory for the address")
+        );
+        assert_eq!(
+            key(&canonicalize(&g)).expect("memory for the key"),
+            key(&canonicalize(&deep_match(100_000, "y"))).expect("memory for the key")
         );
         let normal = canonicalize(&g);
         while step(&mut g).is_some() {}
@@ -65,7 +68,7 @@ fn canonicalizing_a_deep_graph_is_linear_in_its_depth() {
             canonicalize(pick(k));
         });
         check_order("keying nested `if` regions", 12_500, 1, |k| {
-            key(pick(k));
+            key(pick(k)).expect("memory for the key");
         });
         check_order("ranking nested `if` regions", 12_500, 1, |k| {
             ranks(pick(k));
@@ -120,6 +123,6 @@ fn canonicalizing_an_edge_of_many_facets_is_n_log_n() {
         },
     );
     check_order("keying an edge of n facets in reverse order", 100, 1, |k| {
-        key(pick(k));
+        key(pick(k)).expect("memory for the key");
     });
 }

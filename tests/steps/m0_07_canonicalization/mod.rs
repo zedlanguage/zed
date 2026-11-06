@@ -40,5 +40,5 @@ fn facet(kind: &str, value: impl Into<zed_kernel::value::Value>) -> Facet {
 }
 
 fn addr(d: &Def) -> ContentAddress {
-    address(d, &none)
+    address(d, &none).expect("memory for the address")
 }

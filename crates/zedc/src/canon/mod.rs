@@ -32,6 +32,7 @@ mod serial;
 
 use std::sync::Arc;
 
+use zed_kernel::num::TooLarge;
 use zed_kernel::term::Term;
 use zed_kernel::value::Value;
 
@@ -185,7 +186,11 @@ pub fn canonicalize(d: &Def) -> Def {
 /// The content address of `d`. A free variable that `refs` resolves names another
 /// definition and is hashed as that definition's address, so a dependency's change changes
 /// its dependents' addresses; any other free variable, such as a built-in, is hashed by name.
-pub fn address(d: &Def, refs: &dyn Fn(&str) -> Option<ContentAddress>) -> ContentAddress {
+/// [`TooLarge`] when the system refuses the memory to write one of its exact numbers.
+pub fn address(
+    d: &Def,
+    refs: &dyn Fn(&str) -> Option<ContentAddress>,
+) -> Result<ContentAddress, TooLarge> {
     address_at(VERSION, d, refs)
 }
 
@@ -194,17 +199,21 @@ pub fn address_at(
     version: u32,
     d: &Def,
     refs: &dyn Fn(&str) -> Option<ContentAddress>,
-) -> ContentAddress {
+) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-canon\0");
     h.update(&version.to_le_bytes());
-    h.update(&serialize(&canonicalize(d), refs));
-    ContentAddress::hashed(&h)
+    h.update(&serialize(&canonicalize(d), refs)?);
+    Ok(ContentAddress::hashed(&h))
 }
 
 /// The serialization of a definition already in normal form: a self-delimiting byte string,
-/// so two normal forms with equal serializations are equal.
-pub fn serialize(d: &Def, refs: &dyn Fn(&str) -> Option<ContentAddress>) -> Vec<u8> {
+/// so two normal forms with equal serializations are equal. [`TooLarge`] when the system
+/// refuses the memory to write one of its exact numbers.
+pub fn serialize(
+    d: &Def,
+    refs: &dyn Fn(&str) -> Option<ContentAddress>,
+) -> Result<Vec<u8>, TooLarge> {
     serial::def(d, refs)
 }
 

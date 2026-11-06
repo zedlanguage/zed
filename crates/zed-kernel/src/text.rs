@@ -25,7 +25,10 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use num_bigint::BigUint;
+
 use crate::KernelError;
+use crate::num::TooLarge;
 
 /// A string's text, shared.
 #[derive(Clone)]
@@ -140,6 +143,23 @@ impl Text {
                 let mut out = String::with_capacity(self.0.len);
                 self.chunks().for_each(|c| out.push_str(c));
                 Cow::Owned(out)
+            }
+        }
+    }
+
+    /// The text as one `&str`, as [`Text::flat`] gives it, with a join written into memory the
+    /// system gives first for all of it; [`TooLarge`] when it refuses, naming that memory, so
+    /// a reader of a text too long to copy, as a cast is, reports it and does not abort.
+    pub fn try_flat(&self) -> Result<Cow<'_, str>, TooLarge> {
+        match &self.0.body {
+            Body::Leaf(s) => Ok(Cow::Borrowed(s)),
+            Body::Join(..) => {
+                let mut out = String::new();
+                out.try_reserve_exact(self.0.len).map_err(|_| TooLarge {
+                    bits: BigUint::from(self.0.len) << 3u32,
+                })?;
+                self.chunks().for_each(|c| out.push_str(c));
+                Ok(Cow::Owned(out))
             }
         }
     }

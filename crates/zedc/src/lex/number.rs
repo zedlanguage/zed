@@ -22,7 +22,11 @@
 //! every carrier, and a decimal does not (`0.1` in f64 is not one tenth), so `1.5n` and
 //! `1e3n` are errors that name `1.5` and `1.5r`.
 
+use std::sync::Arc;
+
+use num_bigint::BigUint;
 use unicode_ident::is_xid_continue;
+use zed_kernel::num::TooLarge;
 
 use super::{Error, ErrorKind, Span, Tok};
 
@@ -57,7 +61,18 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
     if text[after..].chars().next().is_some_and(is_xid_continue) {
         return Some(Err(run_on(text, pos, after, radix)));
     }
-    let digits = text[start..end].replace('_', "");
+    let digits = match without_separators(&text[start..end]) {
+        Ok(d) => Arc::new(d),
+        Err(r) => {
+            return Some(Err(Error {
+                kind: ErrorKind::Unread(r),
+                span: Span {
+                    start: pos,
+                    end: after,
+                },
+            }));
+        }
+    };
     let tok = if rational {
         Tok::Rat(digits)
     } else if generic {
@@ -68,6 +83,17 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
         Tok::Int { radix, digits }
     };
     Some(Ok((after, tok)))
+}
+
+/// `s` without its `_`, in memory the system gives first for all of `s`; [`TooLarge`] when it
+/// refuses, naming that memory, so a literal too long to copy is an error and not an abort.
+fn without_separators(s: &str) -> Result<String, TooLarge> {
+    let mut out = String::new();
+    out.try_reserve_exact(s.len()).map_err(|_| TooLarge {
+        bits: BigUint::from(s.len()) << 3u32,
+    })?;
+    s.split('_').for_each(|part| out.push_str(part));
+    Ok(out)
 }
 
 fn digit(d: u8, radix: u32) -> bool {

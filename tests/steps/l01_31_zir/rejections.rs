@@ -165,7 +165,7 @@ fn greeting() -> Vec<u8> {
         "zir 1\nr region port (state out)\nr.0 port push out (r^0, \"hi\") -> (_; state out)\nr results (r.0^1)\n",
     )
     .expect("a graph");
-    binary::encode(&g)
+    binary::encode(&g).expect("memory for the bytes")
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn damaged_binary_data() {
 fn binary_atom_fields_in_order() {
     let g = zedc::zir::text::parse("zir 1\nr region function ()\nr results (#e(a: 1, b: 2))\n")
         .expect("a graph");
-    let mut bytes = binary::encode(&g);
+    let mut bytes = binary::encode(&g).expect("memory for the bytes");
     // Swap the one-byte field names `a` and `b`, each written after its length 1.
     let len1 = 1u64.to_le_bytes();
     let at = |name: u8| {
@@ -297,7 +297,7 @@ fn a_family_literal_that_repeats_a_key_is_refused_as_text() {
 /// The binary form of a graph whose one result is the constant written `value`.
 fn constant(value: &str) -> Vec<u8> {
     let src = format!("zir 1\nr region function ()\nr results ({value})\n");
-    binary::encode(&text::parse(&src).expect("a graph"))
+    binary::encode(&text::parse(&src).expect("a graph")).expect("memory for the bytes")
 }
 
 /// `bytes` with the integer `from`, written as its tag 1 and eight bytes, made `to`.

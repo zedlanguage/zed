@@ -73,6 +73,9 @@ fences changed, so test `l01_07` needs its expected output accepted at the next 
   RAT-asks: the remaining number builds and the reading of literals and of `int(s)` and
   `rat(s)` ask above their measured peaks (the builds 8 times their size), and each refusal
   names the bytes asked.
+  RAT-asks-rest: the lexer's copy of a literal's digits, `int(s)` of a joined string, a
+  mutant's report, the compiler's serialization of a number and the checker's messages that
+  quote a literal ask first; the syntax tree and the checker share a literal's digits.
 - Done: **L1.18**, the interpreter's scalar tier: the L1 prelude words (`zedc::interp`,
   `zed_kernel::words`), the `#errs` merge, float printing with the exact round trip.
 - Done: **L1.19**, whole-file ports (`zedc::run`, `zedc run` and `zedc replay`): `Lines` and

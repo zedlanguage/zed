@@ -39,21 +39,24 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         },
         // A tuple, keypath, atom or family prints each number inside it.
         (Prim::Show, _) => print(x)?,
-        // Reading a number's digits asks the system for the memory first.
+        // Reading a number's digits asks the system for the memory first, and so does the copy
+        // of a string made by joins into one block to read.
         (Prim::CastInt, Value::Str(s)) => {
-            match read_int(&s.flat()).map_err(|e| refused("int", e))? {
+            let s = s.try_flat().map_err(|e| refused("int", e))?;
+            match read_int(&s).map_err(|e| refused("int", e))? {
                 Some(n) => Value::int(n),
                 None => invalid(),
             }
         }
         (Prim::CastRat, Value::Str(s)) => {
-            match read_rat(&s.flat()).map_err(|e| refused("rat", e))? {
+            let s = s.try_flat().map_err(|e| refused("rat", e))?;
+            match read_rat(&s).map_err(|e| refused("rat", e))? {
                 Some(r) => Value::rat(r),
                 None => invalid(),
             }
         }
         (Prim::CastF64, Value::Str(s)) => {
-            let s = s.flat();
+            let s = s.try_flat().map_err(|e| refused("f64", e))?;
             match read_f64(&s) {
                 Some(f) if f.is_infinite() && !s.ends_with("inf") => inexact(),
                 Some(f) => Value::float(f),

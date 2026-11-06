@@ -145,11 +145,19 @@ fn shuffles_and_renamings_keep_the_address() {
         // The same draws give the same graph; only the names differ.
         let a = graph(&random(&mut Lcg(seed), &|i| format!("v{i}")));
         let b = graph(&random(&mut Lcg(seed), &|i| format!("w{}", 100 - i)));
-        assert_eq!(address(&a), address(&b), "seed {seed}");
+        assert_eq!(
+            address(&a).expect("memory for the address"),
+            address(&b).expect("memory for the address"),
+            "seed {seed}"
+        );
         // Reversing every edge's facets leaves the address alone.
         let mut c = a.clone();
         reverse_facets(&mut c);
-        assert_eq!(address(&c), address(&a), "seed {seed}");
+        assert_eq!(
+            address(&c).expect("memory for the address"),
+            address(&a).expect("memory for the address"),
+            "seed {seed}"
+        );
     }
 }
 
@@ -216,7 +224,15 @@ fn the_key_agrees_with_the_address() {
         .collect();
     assert!(inner.len() > 100, "{} copies", inner.len());
     graphs.extend(inner);
-    let both: Vec<_> = graphs.iter().map(|g| (address(g), key(g))).collect();
+    let both: Vec<_> = graphs
+        .iter()
+        .map(|g| {
+            (
+                address(g).expect("memory for the address"),
+                key(g).expect("memory for the key"),
+            )
+        })
+        .collect();
     let (mut same, mut differ) = (0, 0);
     for a in &both {
         for b in &both {

@@ -13,11 +13,11 @@ fn toks(text: &str) -> Vec<Tok> {
 }
 
 fn float(s: &str) -> Tok {
-    Tok::Float(s.into())
+    Tok::Float(s.to_string().into())
 }
 
 fn rat(s: &str) -> Tok {
-    Tok::Rat(s.into())
+    Tok::Rat(s.to_string().into())
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn a_digit_must_follow_the_dot_so_member_access_and_ranges_start_with_the_intege
     // Each number ends before the `.`, an operator; `.5` is no float.
     let int = |d: &str| Tok::Int {
         radix: 10,
-        digits: d.into(),
+        digits: d.to_string().into(),
     };
     let name = |n: &str| Tok::Name(n.into());
     assert_eq!(toks("5.double"), [int("5"), Tok::Op("."), name("double")]);
@@ -67,11 +67,11 @@ fn integers_are_unchanged() {
         [
             Tok::Int {
                 radix: 10,
-                digits: "10".into()
+                digits: "10".to_string().into()
             },
             Tok::Int {
                 radix: 16,
-                digits: "1E".into()
+                digits: "1E".to_string().into()
             }
         ]
     );

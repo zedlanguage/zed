@@ -59,7 +59,7 @@ fn invoicing(rate: i64, line: &str) -> Vec<Def> {
 fn unit(defs: &[Def], exports: &[&str]) -> ContentAddress {
     let mut known: BTreeMap<String, ContentAddress> = BTreeMap::new();
     for d in defs {
-        let a = address(d, &|x| known.get(x).copied());
+        let a = address(d, &|x| known.get(x).copied()).expect("memory for the address");
         known.insert(d.name.to_string(), a);
     }
     let out: Vec<(&str, ContentAddress)> = exports.iter().map(|e| (*e, known[*e])).collect();
@@ -99,7 +99,9 @@ fn a_changed_local_helper_changes_it_through_the_export_that_uses_it() {
 
 #[test]
 fn the_arrows_of_an_overloaded_name_are_all_hashed() {
-    let show = |s: &str| address(&def("show", lam(&["x"], lit(s))), &|_| None);
+    let show = |s: &str| {
+        address(&def("show", lam(&["x"], lit(s))), &|_| None).expect("memory for the address")
+    };
     let (a, b) = (show("int"), show("bool"));
     let both = unit_address(&[("show", a), ("show", b)]);
     assert_eq!(both, unit_address(&[("show", b), ("show", a)]));

@@ -19,7 +19,7 @@ pub(crate) fn round(src: &str) -> Region {
     let mut lines: Vec<&str> = src.lines().collect();
     lines[1..].reverse();
     assert_eq!(text::parse(&lines.join("\n")).as_ref(), Ok(&g));
-    let bytes = binary::encode(&g);
+    let bytes = binary::encode(&g).expect("memory for the bytes");
     assert_eq!(binary::decode(&bytes).as_ref(), Ok(&g));
     g
 }

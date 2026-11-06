@@ -153,8 +153,8 @@ fn the_version_tag_separates_rule_sets() {
     let d = balance("deposits", "withdrawals");
     assert_eq!(VERSION, 4);
     assert_ne!(
-        address_at(VERSION, &d, &none),
-        address_at(VERSION + 1, &d, &none)
+        address_at(VERSION, &d, &none).expect("memory for the bytes"),
+        address_at(VERSION + 1, &d, &none).expect("memory for the bytes")
     );
     // The address of this definition under version 4. A change to a rule or to the
     // serialization changes it: increment VERSION, and pin the new address here.
@@ -173,7 +173,8 @@ fn two_normal_forms_share_a_serialization_only_when_equal() {
     let mut equal = 0;
     for a in &forms {
         for b in &forms {
-            let same = serialize(a, &none) == serialize(b, &none);
+            let same = serialize(a, &none).expect("memory for the bytes")
+                == serialize(b, &none).expect("memory for the bytes");
             assert_eq!(same, a == b, "{a:?}\n{b:?}");
             equal += usize::from(same);
         }

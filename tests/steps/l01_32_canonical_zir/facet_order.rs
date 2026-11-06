@@ -229,14 +229,16 @@ fn equal_facet_values_give_one_address_and_different_ones_two() {
         for b in &vs {
             let (one, two) = (with_facets(vec![units(a)]), with_facets(vec![units(b)]));
             assert_eq!(
-                address(&one) == address(&two),
+                address(&one).expect("memory for the address")
+                    == address(&two).expect("memory for the address"),
                 a == b,
                 "{a:?} against {b:?}"
             );
             // Two equal facets are one, whichever the sort leaves first.
             let both = with_facets(vec![units(a), units(b)]);
             assert_eq!(
-                address(&both) == address(&one),
+                address(&both).expect("memory for the address")
+                    == address(&one).expect("memory for the address"),
                 a == b,
                 "{a:?} against {b:?}"
             );

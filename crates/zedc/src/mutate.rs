@@ -104,8 +104,8 @@ fn beside(n: &Value) -> Result<[Value; 2], String> {
         let one = Rat::int(1.into());
         let refused = |e: TooLarge| {
             format!(
-                "the system refused the {} bytes of memory asked to build a neighbor of the \
-                 integer literal {n}",
+                "the system refused the {} bytes of memory asked to build a neighbor of an \
+                 integer literal",
                 bytes_of(&e.bits)
             )
         };
@@ -365,11 +365,28 @@ pub fn run(
     Ok(out)
 }
 
+/// The text a report gives for `c`. A wide number's digits are written only after the system
+/// gives the memory to build and write them ([`Rat::text_room`]); when it refuses, the report
+/// names the number by that memory instead of an abort.
+fn reported(c: &Change) -> String {
+    match c {
+        Change::Int(Value::Big(r) | Value::Rat(r)) => match r.text_room() {
+            Ok(()) => c.to_string(),
+            Err(e) => format!(
+                "an integer whose digits the system refused the {} bytes of memory asked to write",
+                bytes_of(&e.bits)
+            ),
+        },
+        _ => c.to_string(),
+    }
+}
+
 /// The report of a mutant whose verdict is not `Detected`: `line:col: verdict: …`, with
 /// `name` the definition's source name.
 pub fn describe(text: &str, name: &str, m: &Mutant, v: &Verdict) -> Option<String> {
     let (line, col) = source::line_col(text.as_bytes(), m.offset);
-    let what = format!("`{}` replaced by `{}` in `{name}` at {}", m.was, m.to, m.at);
+    let (was, to) = (reported(&m.was), reported(&m.to));
+    let what = format!("`{was}` replaced by `{to}` in `{name}` at {}", m.at);
     let says = match v {
         Verdict::Detected => return None,
         Verdict::Undetected(why) => format!("undetected: {what}: {why}"),

@@ -35,7 +35,11 @@ fn colliding_nodes_stay_distinct_in_the_lowering() {
     assert_eq!(count(&g, "prim"), 601);
     assert_eq!(round_trip(&t), eval(&t));
     // The planted site: one node per key, the key trusted alone.
-    let keys: HashSet<_> = g.nodes.iter().map(|n| canon::node_key(n, &[])).collect();
+    let keys: HashSet<_> = g
+        .nodes
+        .iter()
+        .map(|n| canon::node_key(n, &[]).expect("memory for the key"))
+        .collect();
     if SHORT {
         assert!(keys.len() <= 256, "{} keys of 8 bits", keys.len());
     } else {

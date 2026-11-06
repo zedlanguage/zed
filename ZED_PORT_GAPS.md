@@ -1762,3 +1762,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `while let … && …` (a let chain) popping the pairs a truncation undoes from the end of a list | `preimage::Tr::truncate` | None | a loop with `match` and `is` |
 | A `HashMap` keyed by a pair of linear forms, `(Lin, Lin)`, so `a div n` and `a mod n` share one quotient and remainder | `preimage::Tr::div_mod_by_term` | None | a family keyed by the pair, the linear forms compared by content |
+
+## Entries from RAT-asks-rest (`zedc/src/lex`, `ast`, `check/mod.rs`, `mutate.rs`, `zir/binary.rs`, `zir/canon.rs`, `zir/lower.rs`, `canon/serial.rs`, `zed-kernel/src/text.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Arc<String>` for a literal's digits, shared by the token and the syntax tree, and `Rc<String>` for the checker's literal text, shared by its clones | `lex::Digits`, `check::Lit::text` | None | Zed shares values, so the field holds the text itself |
+| `fmt::from_fn`, a closure that writes a message, measured by a counting `fmt::Write` and then written into memory asked first | `check::menu`, `check::no_one_carrier`, `check::quoting` | Missing (no formatter trait) | The length function per printed kind named for `words::written`, then one write into the block |
+| Functions generic over `W: fmt::Write`, writing a list of forms to a counter, a reserved `String` or a plain one | `check::write_forms`, `check::or_forms` | Missing (no formatter trait) | One function over the text builder the port has |
+| `Cow<'_, str>` from `Text::try_flat`, a one-piece string borrowed and a joined one copied into memory asked first | `Text::try_flat`, `words` casts | None | Zed shares values; the copy is a runtime primitive returning the block or a refusal |
+| An `Option<TooLarge>` field holding the first refusal while an infallible writer or the lowering goes on, read once at the end | `zir::binary::W`, `canon::serial::Out`, `zir::lower::Lower` | Mutation | The writer returns the refusal through each call, as Zed has no mutable field |

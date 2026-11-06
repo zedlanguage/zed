@@ -219,7 +219,7 @@ pub fn executable_object(
     fuse: bool,
     ports: &zedc::run::Ports,
 ) -> Result<Vec<u8>, String> {
-    let data = exe::data(fuse, ports, &g);
+    let data = exe::data(fuse, ports, &g)?;
     let g = legalize(g);
     let plan = plan(g.graph(), fuse);
     let (t, plans) = Tables::new(&g, &plan)?;

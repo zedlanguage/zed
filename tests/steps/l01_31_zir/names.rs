@@ -139,7 +139,7 @@ fn a_string_that_is_not_a_name_is_refused_where_a_name_belongs() {
         ),
     ];
     for (what, g, name, why) in cases {
-        let bytes = binary::encode(&g);
+        let bytes = binary::encode(&g).expect("memory for the bytes");
         let want = format!("byte {}: `{name}` is not a name{why}", at(&bytes, name));
         assert_eq!(binary::decode(&bytes), Err(want), "{what}");
     }
@@ -175,7 +175,10 @@ fn names_by_the_lexers_rule_and_the_binders_the_compiler_makes_read_back() {
         ),
     ];
     for g in graphs {
-        assert_eq!(binary::decode(&binary::encode(&g)).as_ref(), Ok(&g));
+        assert_eq!(
+            binary::decode(&binary::encode(&g).expect("memory for the bytes")).as_ref(),
+            Ok(&g)
+        );
     }
 }
 
@@ -201,7 +204,10 @@ fn names(n: usize) -> Region {
 #[test]
 fn reading_names_in_binary_is_linear_in_their_bytes() {
     let (n, large) = (40_000, 320_000);
-    let (small_bytes, large_bytes) = (binary::encode(&names(n)), binary::encode(&names(large)));
+    let (small_bytes, large_bytes) = (
+        binary::encode(&names(n)).expect("memory for the bytes"),
+        binary::encode(&names(large)).expect("memory for the bytes"),
+    );
     check_order("reading the names of a graph in binary", n, 1, |k| {
         binary::decode(if k == n { &small_bytes } else { &large_bytes }).unwrap();
     });

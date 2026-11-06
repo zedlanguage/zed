@@ -38,7 +38,7 @@ fn every_row_passes_through_zir() {
         // form, whose binders are levels (`\0` and a number, printed `$$` and the number):
         // both read the binders the compiler makes.
         assert_eq!(
-            binary::decode(&binary::encode(&g)).as_ref(),
+            binary::decode(&binary::encode(&g).expect("memory for the bytes")).as_ref(),
             Ok(&g),
             "{printed}"
         );
@@ -46,7 +46,11 @@ fn every_row_passes_through_zir() {
         let canonical = text::print(&c);
         let h = text::parse(&canonical).unwrap_or_else(|e| panic!("{e}\n{canonical}"));
         assert_eq!(h, c, "{canonical}");
-        assert_eq!(binary::decode(&binary::encode(&c)), Ok(c), "{printed}");
+        assert_eq!(
+            binary::decode(&binary::encode(&c).expect("memory for the bytes")),
+            Ok(c),
+            "{printed}"
+        );
         lowered.set(lowered.get() + 1);
         ported.set(ported.get() + usize::from(!g.args.is_empty()));
         ev.run(&raise(&g)?).map_err(|e| e.to_string())

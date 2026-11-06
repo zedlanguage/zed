@@ -40,6 +40,7 @@ mod walk;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::{self, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -266,7 +267,9 @@ struct Lit {
     span: Span,
     site: Span,
     value: Value,
-    text: String,
+    /// The literal as written, made in memory asked for first ([`shown`]) and shared by every
+    /// copy of the literal, so a clone copies none of its digits.
+    text: Rc<String>,
     n: bool,
     generic: bool,
     witness: bool,
@@ -288,10 +291,11 @@ impl Lit {
         self.site != self.span
     }
 
-    /// The literal as the program writes it, with its `-`.
-    fn written(&self) -> String {
+    /// The literal as the program writes it, with its `-`, written from the shared text when
+    /// displayed, so it copies none of the digits.
+    fn written(&self) -> impl fmt::Display + '_ {
         let sign = if self.neg() { "-" } else { "" };
-        format!("{sign}{}", self.text)
+        fmt::from_fn(move |f| write!(f, "{sign}{}", self.text))
     }
 }
 
@@ -939,12 +943,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     next.push(note(span, format!("{what} {verb} {ty}")));
                     for p in parts {
                         next.push(match literal(p) {
-                            Some(l) => note(
-                                p.span,
-                                format!("this literal, {}, is {}", l.written(), {
-                                    lit_ty(&l.value, l.neg())
-                                }),
-                            ),
+                            Some(l) => {
+                                note(p.span, literal_note(l.written(), lit_ty(&l.value, l.neg())))
+                            }
                             None => Work::Derive(p.span),
                         });
                     }
@@ -2216,7 +2217,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .into_iter()
                 .filter(|&c| adoptable(l, c) && (!l.generic || adopt(l, c).is_ok()))
                 .fold(0, |m, c| m | c.bit());
-            if !self.restrict(k, m, &format!("the literal {}", l.written()), l.site) {
+            if !self.restrict(
+                k,
+                m,
+                &quoting(&format_args!("the literal {}", l.written()), || {
+                    "this literal".into()
+                }),
+                l.site,
+            ) {
                 return false;
             }
         }
@@ -2974,13 +2982,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let own = lit_carrier(&l.value);
                         let sign = if l.neg() { "-" } else { "" };
                         let names: Vec<&str> = Carrier::of_mask(mask).map(|c| c.name()).collect();
-                        format!(
-                            "`{sign}{}` is {} {}, compared with a value of `{}`, which holds no \
-                             number",
-                            l.text,
-                            article(own),
-                            own.name(),
-                            names.join(" | ")
+                        let (what, carrier, names) = (article(own), own.name(), names.join(" | "));
+                        let text = &l.text;
+                        quoting(
+                            &format_args!(
+                                "`{sign}{text}` is {what} {carrier}, compared with a value of \
+                                 `{names}`, which holds no number"
+                            ),
+                            || {
+                                format!(
+                                    "this literal is {what} {carrier}, compared with a value of \
+                                     `{names}`, which holds no number"
+                                )
+                            },
                         )
                     }
                 };
@@ -3588,7 +3602,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             match (&a.lit, a.at) {
                 (Some(l), Some(at)) => out.push(Note {
                     span: at,
-                    text: format!("this literal, {}, is {}", l.written(), self.text(&a.ty)),
+                    text: literal_note(l.written(), self.text(&a.ty)),
                 }),
                 (None, Some(at)) => self.derive_into(&[at], &mut out),
                 _ => {}
@@ -4815,7 +4829,7 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
         span: inner.span,
         site: e.span,
         value,
-        text: shown(inner)?,
+        text: Rc::new(shown(inner)?),
         n,
         generic: false,
         witness: false,
@@ -5075,11 +5089,9 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
         v => run(Prim::CastRat, v),
     };
     let not = || {
-        Err(format!(
-            "`{}` is not {} {}",
-            l.written(),
-            article(c),
-            c.name()
+        Err(quoting(
+            &format_args!("`{}` is not {} {}", l.written(), article(c), c.name()),
+            || format!("this literal is not {} {}", article(c), c.name()),
         ))
     };
     let Some(exact) = exact else {
@@ -5143,15 +5155,13 @@ fn expected(l: &Lit, want: &[&Ty]) -> Result<Option<Carrier>, String> {
 fn menu(l: &Lit, held: &[Carrier]) -> String {
     let own = lit_carrier(&l.value);
     let sign = if l.neg() { "-" } else { "" };
-    let names: Vec<&str> = held.iter().map(|c| c.name()).collect();
-    let mut m = format!(
-        "`{sign}{}` is {} {} where `{}` is expected; a literal takes no other carrier",
-        l.text,
-        article(own),
-        own.name(),
-        names.join(" | ")
-    );
+    let names = held
+        .iter()
+        .map(|c| c.name())
+        .collect::<Vec<_>>()
+        .join(" | ");
     let decimal = l.text.chars().all(|c| c.is_ascii_digit() || c == '_');
+    // The clone shares the literal's text, so it copies none of its digits.
     let exact = |c: Carrier| {
         let n = Lit {
             n: true,
@@ -5160,59 +5170,158 @@ fn menu(l: &Lit, held: &[Carrier]) -> String {
         adopt(&n, c).is_ok()
     };
     let has = |c: Carrier| held.contains(&c);
+    // Each form is the literal followed by one of these, written into the message only.
     let mut forms = Vec::new();
     match own {
         Carrier::Int => {
             if decimal && has(Carrier::F64) && exact(Carrier::F64) {
-                forms.push(format!("`{sign}{}.0`", l.text));
+                forms.push(".0");
             }
             if decimal && has(Carrier::Rat) {
-                forms.push(format!("`{sign}{}r`", l.text));
+                forms.push("r");
             }
             if let [c] = held
                 && exact(*c)
             {
-                forms.push(format!("`{sign}{}n`", l.text));
+                forms.push("n");
             }
         }
-        _ if has(Carrier::Rat) => forms.push(format!("`{sign}{}r`", l.text)),
+        _ if has(Carrier::Rat) => forms.push("r"),
         _ => {}
     }
-    match &forms[..] {
-        [] => {}
-        [one] => m += &format!("; write {one}"),
-        [init @ .., last] => m += &format!("; write {} or {last}", init.join(", ")),
-    }
-    m
+    let (what, carrier) = (article(own), own.name());
+    let text = &l.text;
+    quoting(
+        &fmt::from_fn(|f| {
+            write!(
+                f,
+                "`{sign}{text}` is {what} {carrier} where `{names}` is expected; a literal takes \
+                 no other carrier"
+            )?;
+            write_forms(f, "; write ", &forms, |f, s| write!(f, "`{sign}{text}{s}`"))
+        }),
+        || {
+            let mut m = format!(
+                "this literal is {what} {carrier} where `{names}` is expected; a literal takes \
+                 no other carrier"
+            );
+            let _ = write_forms(&mut m, "; write it followed by ", &forms, |m, s| {
+                write!(m, "`{s}`")
+            });
+            m
+        },
+    )
 }
 
 /// The message for the literal `l` where `want` holds numbers of the carriers `cs`, two or
 /// more, none of them the literal's own.
 fn no_one_carrier(l: &Lit, want: &Ty, cs: &[Carrier]) -> String {
-    let names: Vec<&str> = cs.iter().map(|c| c.name()).collect();
+    let names = cs
+        .iter()
+        .map(|c| c.name())
+        .collect::<Vec<_>>()
+        .join(" and ");
     let sign = if l.neg() { "-" } else { "" };
-    let mut m = format!(
-        "`{sign}{}` at `{want}` adopts no one carrier: the type holds numbers of {}",
-        l.text,
-        names.join(" and ")
-    );
     // Only an integer literal reaches here, since a decimal one's own f64 or its one other
     // carrier, rat, would be taken; a written radix has no `.0` or `r` form. The forms of
     // `kn` are those of `k`.
     let digits = l.text.strip_suffix('n').filter(|_| l.n).unwrap_or(&l.text);
-    let text = format!("{sign}{digits}");
-    if digits.chars().all(|c| c.is_ascii_digit()) {
-        let forms: Vec<String> = cs
+    let forms: Vec<&str> = match digits.chars().all(|c| c.is_ascii_digit()) {
+        true => cs
             .iter()
             .filter_map(|c| match c {
-                Carrier::F64 => Some(format!("`{text}.0`")),
-                Carrier::Rat => Some(format!("`{text}r`")),
+                Carrier::F64 => Some(".0"),
+                Carrier::Rat => Some("r"),
                 _ => None,
             })
-            .collect();
-        m += &format!("; write the one meant, as {}", forms.join(" or "));
+            .collect(),
+        false => Vec::new(),
+    };
+    let text = &l.text;
+    quoting(
+        &fmt::from_fn(|f| {
+            write!(
+                f,
+                "`{sign}{text}` at `{want}` adopts no one carrier: the type holds numbers of \
+                 {names}"
+            )?;
+            or_forms(f, "; write the one meant, as ", &forms, |f, s| {
+                write!(f, "`{sign}{digits}{s}`")
+            })
+        }),
+        || {
+            let mut m = format!(
+                "this literal at `{want}` adopts no one carrier: the type holds numbers of {names}"
+            );
+            let _ = or_forms(
+                &mut m,
+                "; write the one meant, followed by ",
+                &forms,
+                |m, s| write!(m, "`{s}`"),
+            );
+            m
+        },
+    )
+}
+
+/// The note that the literal written `text` is `ty`, quoting the literal when the system gives
+/// the memory for it ([`quoting`]).
+fn literal_note(text: impl fmt::Display, ty: impl fmt::Display) -> String {
+    quoting(&format_args!("this literal, {text}, is {ty}"), || {
+        format!("this literal is {ty}")
+    })
+}
+
+/// The message `m`, which quotes a literal's text, written in memory the system gives first
+/// ([`shown`]); when it refuses, `instead`, which does not quote it. A literal has no length
+/// limit, and a message copied without asking would abort the checker on a long one.
+fn quoting(m: &impl fmt::Display, instead: impl FnOnce() -> String) -> String {
+    shown(m).unwrap_or_else(|_| instead())
+}
+
+/// Writes `lead` and the forms `forms`, each by `form`, as a list `a`, `a or b` or
+/// `a, b or c`; nothing when there are none.
+fn write_forms<W: fmt::Write>(
+    w: &mut W,
+    lead: &str,
+    forms: &[&str],
+    form: impl Fn(&mut W, &str) -> fmt::Result,
+) -> fmt::Result {
+    let Some((last, init)) = forms.split_last() else {
+        return Ok(());
+    };
+    w.write_str(lead)?;
+    for (i, s) in init.iter().enumerate() {
+        if i > 0 {
+            w.write_str(", ")?;
+        }
+        form(w, s)?;
     }
-    m
+    if !init.is_empty() {
+        w.write_str(" or ")?;
+    }
+    form(w, last)
+}
+
+/// Writes `lead` and the forms `forms`, each by `form`, joined by ` or `; nothing when there
+/// are none.
+fn or_forms<W: fmt::Write>(
+    w: &mut W,
+    lead: &str,
+    forms: &[&str],
+    form: impl Fn(&mut W, &str) -> fmt::Result,
+) -> fmt::Result {
+    if forms.is_empty() {
+        return Ok(());
+    }
+    w.write_str(lead)?;
+    for (i, s) in forms.iter().enumerate() {
+        if i > 0 {
+            w.write_str(" or ")?;
+        }
+        form(w, s)?;
+    }
+    Ok(())
 }
 
 fn article(c: Carrier) -> &'static str {

@@ -27,6 +27,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::term::{Pattern, Term};
 use zed_kernel::value::Value;
 
@@ -138,8 +139,9 @@ fn rename_all(p: &mut Pattern, index: &mut usize) {
 }
 
 /// The bytes [`node_key`] hashes for `n` besides its regions' keys: the binary form of the
-/// one-node region holding `n`'s operation, inputs and outputs in normal form.
-fn shell_bytes(n: &Node) -> Vec<u8> {
+/// one-node region holding `n`'s operation, inputs and outputs in normal form, or [`TooLarge`]
+/// when the system refuses the memory to write one of its exact numbers.
+fn shell_bytes(n: &Node) -> Result<Vec<u8>, TooLarge> {
     let mut shell = Node {
         op: n.op.clone(),
         inputs: n.inputs.clone(),
@@ -156,8 +158,8 @@ fn shell_bytes(n: &Node) -> Vec<u8> {
 }
 
 /// The bytes [`region_key`] hashes for `r` besides its nodes' keys: the binary form of its
-/// kind, its arguments in normal form and its results.
-fn region_bytes(r: &Region) -> Vec<u8> {
+/// kind, its arguments in normal form and its results, or [`TooLarge`] as at [`shell_bytes`].
+fn region_bytes(r: &Region) -> Result<Vec<u8>, TooLarge> {
     let mut shell = Region {
         kind: r.kind,
         args: r.args.clone(),
@@ -170,9 +172,9 @@ fn region_bytes(r: &Region) -> Vec<u8> {
 
 /// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
 /// forms of the one-node regions holding the nodes (up to the hash; [`Shape`] decides it
-/// without the hash).
-pub fn node_key(n: &Node, regions: &[ContentAddress]) -> ContentAddress {
-    key_of(&shell_bytes(n), regions)
+/// without the hash), or [`TooLarge`] as at [`shell_bytes`].
+pub fn node_key(n: &Node, regions: &[ContentAddress]) -> Result<ContentAddress, TooLarge> {
+    Ok(key_of(&shell_bytes(n)?, regions))
 }
 
 /// The key of a node whose [`shell_bytes`] are `shell` and whose regions have the keys
@@ -189,17 +191,18 @@ fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
     ContentAddress::hashed(&h)
 }
 
-/// The key of region `r` whose nodes' regions have the keys `inner`, one list per node.
-pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> ContentAddress {
+/// The key of region `r` whose nodes' regions have the keys `inner`, one list per node, or
+/// [`TooLarge`] as at [`shell_bytes`].
+pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir-region\0");
     h.update(&canon::VERSION.to_le_bytes());
-    h.update(&region_bytes(r));
+    h.update(&region_bytes(r)?);
     h.update(&(r.nodes.len() as u64).to_le_bytes());
     for (n, keys) in r.nodes.iter().zip(inner) {
-        h.update(&node_key(n, keys).0);
+        h.update(&node_key(n, keys)?.0);
     }
-    ContentAddress::hashed(&h)
+    Ok(ContentAddress::hashed(&h))
 }
 
 /// A node's normal form as an ordered key: the bytes [`node_key`] hashes for its operation,
@@ -215,12 +218,13 @@ pub struct Shape {
 }
 
 impl Shape {
-    /// The shape of `n`; its regions are shared, not copied.
-    pub fn of(n: &Node) -> Shape {
-        Shape {
-            shell: shell_bytes(n),
+    /// The shape of `n`; its regions are shared, not copied. [`TooLarge`] as at
+    /// [`shell_bytes`].
+    pub fn of(n: &Node) -> Result<Shape, TooLarge> {
+        Ok(Shape {
+            shell: shell_bytes(n)?,
             regions: n.regions.clone(),
-        }
+        })
     }
 
     /// The key of the node of this shape whose regions have the keys `regions`: what
@@ -257,7 +261,7 @@ impl Ord for Shape {
                 .nodes
                 .len()
                 .cmp(&s.nodes.len())
-                .then_with(|| region_bytes(r).cmp(&region_bytes(s)));
+                .then_with(|| rewritten(region_bytes(r)).cmp(&rewritten(region_bytes(s))));
             if o.is_ne() {
                 return o;
             }
@@ -266,7 +270,7 @@ impl Ord for Shape {
                     .regions
                     .len()
                     .cmp(&b.regions.len())
-                    .then_with(|| shell_bytes(a).cmp(&shell_bytes(b)));
+                    .then_with(|| rewritten(shell_bytes(a)).cmp(&rewritten(shell_bytes(b))));
                 if o.is_ne() {
                     return o;
                 }
@@ -275,6 +279,20 @@ impl Ord for Shape {
         }
         Ordering::Equal
     }
+}
+
+/// The bytes of a region or node that [`Shape::cmp`] writes again. Each was written once, when
+/// the key of the region holding it was taken ([`region_key`], which lowering calls on every
+/// region), so the system gave the memory for its numbers then; a refusal now, under memory
+/// taken since, stops the compiler with a message, since an order has no error to return.
+fn rewritten(bytes: Result<Vec<u8>, TooLarge>) -> Vec<u8> {
+    bytes.unwrap_or_else(|e| {
+        panic!(
+            "the system refused the {} bytes of memory asked to write a constant again to \
+             order two nodes, after it gave them once",
+            bytes_of(&e.bits)
+        )
+    })
 }
 
 impl PartialOrd for Shape {
@@ -291,8 +309,9 @@ impl PartialEq for Shape {
 
 impl Eq for Shape {}
 
-/// The key of `g` from the bottom up: what [`region_key`] gives with every region's key.
-pub fn key(g: &Region) -> ContentAddress {
+/// The key of `g` from the bottom up: what [`region_key`] gives with every region's key, or
+/// [`TooLarge`] as at [`shell_bytes`].
+pub fn key(g: &Region) -> Result<ContentAddress, TooLarge> {
     // Each open region with the keys of its nodes' regions found so far, one list per node
     // begun.
     let mut open: Vec<(&Region, Vec<Vec<ContentAddress>>)> = vec![(g, Vec::new())];
@@ -308,23 +327,23 @@ pub fn key(g: &Region) -> ContentAddress {
         } else if inner.len() < r.nodes.len() {
             inner.push(Vec::new());
         } else {
-            let k = region_key(r, inner);
+            let k = region_key(r, inner)?;
             open.pop();
             match open.last_mut() {
                 Some((_, up)) => up.last_mut().expect("a node is begun").push(k),
-                None => return k,
+                None => return Ok(k),
             }
         }
     }
 }
 
-/// The content address of `g`.
-pub fn address(g: &Region) -> ContentAddress {
+/// The content address of `g`, or [`TooLarge`] as at [`shell_bytes`].
+pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir\0");
     h.update(&canon::VERSION.to_le_bytes());
-    h.update(&binary::encode(&canonicalize(g)));
-    ContentAddress::hashed(&h)
+    h.update(&binary::encode(&canonicalize(g))?);
+    Ok(ContentAddress::hashed(&h))
 }
 
 /// An edge's facts as the M0.7 rules see a definition: no name and no body.

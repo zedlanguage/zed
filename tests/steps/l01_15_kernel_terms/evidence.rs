@@ -26,7 +26,7 @@ fn addr(body: Term) -> ContentAddress {
         facets: vec![],
         body,
     };
-    address(&d, &|_| None)
+    address(&d, &|_| None).expect("memory for the address")
 }
 
 #[test]

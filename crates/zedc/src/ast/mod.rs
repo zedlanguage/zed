@@ -30,7 +30,7 @@ mod types;
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use num_bigint::BigUint;
 use zed_kernel::num::{TooLarge, bytes_of};
@@ -41,7 +41,7 @@ pub use stmts::{
 };
 pub use types::{Every, Param, Pattern, Type, TypeBound, TypeKind, TypeParam};
 
-use crate::lex::{Part, Span, Tok, Token};
+use crate::lex::{Digits, Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
 use crate::rejection::Row;
 
@@ -60,16 +60,16 @@ pub enum ExprKind {
     Int {
         /// The base.
         radix: u32,
-        /// The digits.
-        digits: String,
+        /// The digits, shared with the token.
+        digits: Digits,
         /// Written with the suffix `n` (step L1.26a): the integer in whichever numeric carrier
         /// its use needs, counting toward no int default.
         generic: bool,
     },
-    /// A float, as its decimal text.
-    Float(String),
-    /// An exact rational, as its decimal text.
-    Rat(String),
+    /// A float, as its decimal text, shared with the token.
+    Float(Digits),
+    /// An exact rational, as its decimal text, shared with the token.
+    Rat(Digits),
     /// A string: its text and its holes.
     Str(Vec<StrPart>),
     /// `true` or `false`.
@@ -1271,16 +1271,16 @@ impl<'a, 's> Builder<'a, 's> {
         let kind = match &self.tokens[i].tok {
             Tok::Int { radix, digits } => ExprKind::Int {
                 radix: *radix,
-                digits: digits.clone(),
+                digits: Arc::clone(digits),
                 generic: false,
             },
             Tok::Generic { radix, digits } => ExprKind::Int {
                 radix: *radix,
-                digits: digits.clone(),
+                digits: Arc::clone(digits),
                 generic: true,
             },
-            Tok::Float(s) => ExprKind::Float(s.clone()),
-            Tok::Rat(s) => ExprKind::Rat(s.clone()),
+            Tok::Float(s) => ExprKind::Float(Arc::clone(s)),
+            Tok::Rat(s) => ExprKind::Rat(Arc::clone(s)),
             Tok::Keyword(k) => ExprKind::Bool(*k == "true"),
             Tok::Str(parts) => {
                 let mut out = Vec::with_capacity(parts.len());

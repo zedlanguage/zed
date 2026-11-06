@@ -299,8 +299,23 @@ impl Rat {
     /// every form of one value, as the digits are, so a content address can be taken over
     /// their binary form, in time linear in their bits, where the digits cost more than linear
     /// time to convert. A side with no powers is its coefficient, borrowed; a power of 2 is a
-    /// shift, and a power of another prime is built by squaring.
-    pub fn built_parts(&self) -> (Cow<'_, BigUint>, Cow<'_, BigUint>) {
+    /// shift, and a power of another prime is built by squaring. A side with powers is built
+    /// only after the system gives the memory for it; [`TooLarge`] names that memory when it
+    /// refuses.
+    pub fn built_parts(&self) -> Result<(Cow<'_, BigUint>, Cow<'_, BigUint>), TooLarge> {
+        if !self.is_plain() {
+            // Complexity tradeoff: the memory asked for is eight times the width of the two
+            // sides together, the factor `to_integer` asks for the same build (powers by
+            // squaring, the product by num-bigint's multiplication), whose peak it measured at
+            // 5.49 times the width; this build was not measured on its own, and a power of 2
+            // here is a shift, which needs less. So a number needing less is refused when the
+            // free memory lies between the two, and none aborts. Tested by
+            // `l01_17_value_representation::asks::addressing_a_wide_constant_is_refused_when_memory_is_short`
+            // (COMPLEXITY.md K30). A complete solution would ask each allocation of the build
+            // for its own memory.
+            let (bits, _) = self.text_size();
+            room(bits << 3u32)?;
+        }
         fn side<'s>(coef: &'s BigInt, pows: &[(u64, BigInt)], sign: Sign) -> Cow<'s, BigUint> {
             let pows: Vec<(u64, BigUint)> = pows
                 .iter()
@@ -312,10 +327,10 @@ impl Rat {
                 false => Cow::Owned(coef.magnitude() * built(&pows).magnitude()),
             }
         }
-        (
+        Ok((
             side(&self.num, &self.pows, Sign::Plus),
             side(&self.den, &self.pows, Sign::Minus),
-        )
+        ))
     }
 
     /// The value's residues, the same for every form of it: whether it is negative, and

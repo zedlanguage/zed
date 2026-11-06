@@ -392,7 +392,7 @@ fn the_text_and_binary_forms_read_the_same_generated_binders() {
     ] {
         let g = matching(x);
         let from_text = text::parse(&text::print(&g));
-        let from_binary = binary::decode(&binary::encode(&g));
+        let from_binary = binary::decode(&binary::encode(&g).expect("memory for the bytes"));
         assert_eq!(from_text.as_ref().ok(), made.then_some(&g), "text, {x:?}");
         assert_eq!(
             from_binary.as_ref().ok(),

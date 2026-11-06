@@ -11,11 +11,17 @@ mod punct;
 mod string;
 
 use std::fmt;
+use std::sync::Arc;
 
 pub use name::is_single_script;
 pub(crate) use name::name as name_end;
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
+use zed_kernel::num::TooLarge;
+
+/// A number literal's digits, without `_`: one copy of the source text, made in memory asked
+/// for first, and shared by the token and the syntax tree, which never copy it again.
+pub type Digits = Arc<String>;
 
 /// A byte range of the loaded text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -38,7 +44,7 @@ pub enum Tok {
         /// The base.
         radix: u32,
         /// The digits.
-        digits: String,
+        digits: Digits,
     },
     /// A generic integer `kn` (step L1.26a): its base and its digits, without `_` and the
     /// `n`. It is the exact integer k in any numeric carrier that holds k.
@@ -46,12 +52,12 @@ pub enum Tok {
         /// The base.
         radix: u32,
         /// The digits.
-        digits: String,
+        digits: Digits,
     },
     /// A float, as its decimal text without `_` (`1.5e-3`).
-    Float(String),
+    Float(Digits),
     /// An exact rational, as its decimal text without `_` and the `r` (`0.1`).
-    Rat(String),
+    Rat(Digits),
     /// A string: its text and its holes, in order, never two text parts in a row.
     Str(Vec<Part>),
     /// An atom `#name`, without the `#`.
@@ -108,6 +114,8 @@ pub enum ErrorKind {
     BadString(String),
     /// A block comment that is not closed.
     BadComment(String),
+    /// A number literal whose digits the system refused the memory to copy.
+    Unread(TooLarge),
 }
 
 /// A lexical error and its span.
@@ -128,6 +136,7 @@ impl fmt::Display for Error {
             ErrorKind::BadNumber(why) => write!(f, "malformed number: {why}"),
             ErrorKind::BadString(why) => write!(f, "malformed string: {why}"),
             ErrorKind::BadComment(why) => write!(f, "{why}"),
+            ErrorKind::Unread(r) => write!(f, "{}", crate::ast::unread_literal(r)),
             ErrorKind::MixedScript(name) => {
                 write!(
                     f,

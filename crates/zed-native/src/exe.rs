@@ -35,14 +35,22 @@ struct Program {
 }
 
 /// The bytes of the data: `fuse` as one byte, the length of the ports' text as 8 bytes, little
-/// end first, the text, then the graph.
-pub(crate) fn data(fuse: bool, ports: &Ports, graph: &Region) -> Vec<u8> {
+/// end first, the text, then the graph. An error when the system refuses the memory to write
+/// one of the graph's exact numbers.
+pub(crate) fn data(fuse: bool, ports: &Ports, graph: &Region) -> Result<Vec<u8>, String> {
     let text = ports.to_text();
     let mut out = vec![u8::from(fuse)];
     out.extend_from_slice(&(text.len() as u64).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
-    out.extend_from_slice(&zedc::zir::binary::encode(graph));
-    out
+    let zir = zedc::zir::binary::encode(graph).map_err(|e| {
+        format!(
+            "a constant is so large that the system refused the {} bytes of memory asked to \
+             write it into the executable",
+            zed_kernel::num::bytes_of(&e.bits)
+        )
+    })?;
+    out.extend_from_slice(&zir);
+    Ok(out)
 }
 
 impl Program {
@@ -190,14 +198,14 @@ mod tests {
             vec![lit("a"), lit("b")],
         ))
         .unwrap();
-        let p = Program::decode(&data(true, &ports, &graph)).unwrap();
+        let p = Program::decode(&data(true, &ports, &graph).unwrap()).unwrap();
         assert_eq!(p.ports, ports);
         let built = crate::legalize(graph.clone());
         assert_eq!(p.graph.graph(), built.graph());
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));
         assert!(p.plan.fuse);
-        let bytes = data(false, &ports, &graph);
+        let bytes = data(false, &ports, &graph).unwrap();
         assert!(!Program::decode(&bytes).unwrap().plan.fuse);
         for cut in [0, 1, 5, 9, 12] {
             assert_eq!(

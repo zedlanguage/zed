@@ -1,8 +1,14 @@
 //! Which changes to a graph keep its address, and which change it.
 
 use super::graph;
-use zedc::zir::canon::{address, canonicalize, ranks};
-use zedc::zir::{Edge, Op, binary};
+use zedc::address::ContentAddress;
+use zedc::zir::canon::{canonicalize, ranks};
+use zedc::zir::{Edge, Op, Region, binary};
+
+/// The address of `g`; these graphs are small, so the memory for it is given.
+fn address(g: &Region) -> ContentAddress {
+    zedc::zir::canon::address(g).expect("memory for the address")
+}
 
 /// An optional discount: the arm that has one subtracts it, the other passes the price on.
 const DISCOUNT: &str = "\
@@ -145,7 +151,10 @@ fn the_normal_form() {
     };
     assert!(v.facets.is_empty());
     // The normal form is what the binary form carries, and it reads back.
-    assert_eq!(binary::decode(&binary::encode(&n)), Ok(n));
+    assert_eq!(
+        binary::decode(&binary::encode(&n).expect("memory for the bytes")),
+        Ok(n)
+    );
     assert_eq!(address(&g).to_string().len(), 64, "64 lowercase hex digits");
 }
 
@@ -163,7 +172,7 @@ fn the_address_is_pinned() {
 #[test]
 fn every_nan_is_one_word() {
     // A NaN with another payload reads as the one NaN, and is written as the fixed word.
-    let mut bytes = zedc::zir::binary::encode(&graph(NAN_CONST));
+    let mut bytes = zedc::zir::binary::encode(&graph(NAN_CONST)).expect("memory for the bytes");
     let at = bytes
         .windows(8)
         .position(|w| w == zedc::zir::binary::NAN_BITS.to_le_bytes())
@@ -171,7 +180,7 @@ fn every_nan_is_one_word() {
     bytes[at] ^= 1;
     let g = zedc::zir::binary::decode(&bytes).expect("a graph");
     assert_eq!(
-        zedc::zir::binary::encode(&g)[at],
+        zedc::zir::binary::encode(&g).expect("memory for the bytes")[at],
         zedc::zir::binary::NAN_BITS.to_le_bytes()[0]
     );
     assert_eq!(address(&g), address(&graph(NAN_CONST)));

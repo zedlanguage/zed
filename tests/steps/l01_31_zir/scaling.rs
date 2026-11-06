@@ -92,7 +92,10 @@ fn checking_a_deep_graph_is_linear_in_its_depth() {
 fn a_graph_nested_100000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
     on_small_stack(|| {
         let g = nested_ifs(100_000);
-        assert_eq!(binary::decode(&binary::encode(&g)), Ok(g));
+        assert_eq!(
+            binary::decode(&binary::encode(&g).expect("memory for the bytes")),
+            Ok(g)
+        );
     });
 }
 
@@ -101,9 +104,13 @@ fn writing_and_reading_a_deep_graph_in_binary_is_linear_in_its_depth() {
     on_small_stack(|| {
         let (small, large) = (nested_ifs(12_500), nested_ifs(100_000));
         check_order("writing nested `if` regions in binary", 12_500, 1, |k| {
-            binary::encode(if k == 12_500 { &small } else { &large });
+            binary::encode(if k == 12_500 { &small } else { &large })
+                .expect("memory for the bytes");
         });
-        let (small, large) = (binary::encode(&small), binary::encode(&large));
+        let (small, large) = (
+            binary::encode(&small).expect("memory for the bytes"),
+            binary::encode(&large).expect("memory for the bytes"),
+        );
         check_order("reading nested `if` regions in binary", 12_500, 1, |k| {
             binary::decode(if k == 12_500 { &small } else { &large }).unwrap();
         });
@@ -179,7 +186,10 @@ fn holding(value: usize, pattern: usize) -> Region {
 fn a_value_100000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
     on_small_stack(|| {
         let g = holding(100_000, 1);
-        assert_eq!(binary::decode(&binary::encode(&g)).as_ref(), Ok(&g));
+        assert_eq!(
+            binary::decode(&binary::encode(&g).expect("memory for the bytes")).as_ref(),
+            Ok(&g)
+        );
         let Src::Const(v) = &g.nodes[0].inputs[0] else {
             unreachable!("a constant")
         };
@@ -195,8 +205,11 @@ fn a_value_100000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stac
 fn a_pattern_10000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
     on_small_stack(|| {
         let g = holding(1, 10_000);
-        let bytes = binary::encode(&g);
-        assert_eq!(binary::encode(&binary::decode(&bytes).unwrap()), bytes);
+        let bytes = binary::encode(&g).expect("memory for the bytes");
+        assert_eq!(
+            binary::encode(&binary::decode(&bytes).unwrap()).expect("memory for the bytes"),
+            bytes
+        );
         let Op::Match(ps) = &g.nodes[0].op else {
             unreachable!("a match")
         };
@@ -232,10 +245,13 @@ fn writing_and_reading_deep_values_patterns_and_types_is_linear_in_their_depth()
             12_500,
             1,
             |k| {
-                binary::encode(pick(k));
+                binary::encode(pick(k)).expect("memory for the bytes");
             },
         );
-        let (bs, bl) = (binary::encode(&small), binary::encode(&large));
+        let (bs, bl) = (
+            binary::encode(&small).expect("memory for the bytes"),
+            binary::encode(&large).expect("memory for the bytes"),
+        );
         check_order(
             "reading deep values and patterns in binary",
             12_500,
@@ -382,7 +398,7 @@ fn reading_a_wide_family_and_refusing_a_repeated_key_is_n_log_n_in_its_entries()
     );
     let graph = |family: &str| {
         let src = format!("zir 1\nr region function ()\nr results ({family})\n");
-        binary::encode(&text::parse(&src).expect("a graph"))
+        binary::encode(&text::parse(&src).expect("a graph")).expect("memory for the bytes")
     };
     let (bin_small, bin_large) = (graph(&ok_small), graph(&ok_large));
     check_order("reading a family of n entries in binary", n, 1, |k| {

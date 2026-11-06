@@ -172,7 +172,7 @@ fn a_dependency_change_changes_its_dependents_but_a_local_rename_does_not() {
         *identity = Some(Shared::new(lit(-5)));
     }
     let total_c = addr(&def("total", cheaper));
-    let at = |t| address(&due, &resolve(t));
+    let at = |t| address(&due, &resolve(t)).expect("memory for the address");
     assert_eq!(at(total_a), at(total_b));
     assert_ne!(at(total_a), at(total_c));
     assert_ne!(at(total_a), addr(&due));
