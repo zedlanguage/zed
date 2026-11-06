@@ -112,13 +112,14 @@ fn reading_an_int_of_n_digits_scales() {
     });
 }
 
-/// The check that a fraction of two wide parts is in lowest terms is num-bigint's Stein gcd,
-/// O(n^2) in the digits, since num-bigint has no subquadratic gcd (COMPLEXITY.md K30 and K41;
-/// open: NUM-subquad). The test fails now; it is kept so that the fix measures the same family.
+/// The check that a fraction of two wide parts is in lowest terms is one half gcd, O(n log^2 n)
+/// in the digits (`num::fast::gcd`, COMPLEXITY.md K30 and K41), where num-bigint's Stein gcd
+/// was O(n^2). At 80,000 digits, 4,153 words, both sizes are well above the gcd's leaf of 512
+/// words, num-bigint's gcd, so both run the half gcd; the ratio of the work, 22.4 at 20,000
+/// digits and 21.7 at 40,000, is 18.6 here as the leaf's share falls.
 #[test]
-#[ignore = "open: NUM-subquad, Stein's gcd of two wide parts is O(n^2)"]
 fn reading_a_rat_of_two_wide_parts_scales() {
-    check_reading("rat(s) of two parts of n digits each", 2_500, |n| {
+    check_reading("rat(s) of two parts of n digits each", 80_000, |n| {
         // A pair of random numbers is coprime with probability 6 / pi^2; seeds are tried in
         // order until one is.
         (0u64..)

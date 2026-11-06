@@ -165,8 +165,8 @@ fn printing_a_wide_number_is_refused_when_memory_is_short() {
     }
 }
 
-/// `int` of `n` nines and `rat` of `n/2` nines over `n/2` sevens ask four bytes a digit: at
-/// `n = 2^22`, 16 MiB, refused; reading them asked for nothing and rose to about 10 MiB.
+/// `int` of `n` nines and `rat` of `n/2` nines over `n/2` sevens ask six bytes a digit: at
+/// `n = 2^22`, 24 MiB, refused; reading them asked for nothing and rose to about 10 MiB.
 #[test]
 fn reading_a_long_number_from_a_string_is_refused_when_memory_is_short() {
     if !in_child("reading_a_long_number_from_a_string_is_refused_when_memory_is_short") {
@@ -180,7 +180,7 @@ fn reading_a_long_number_from_a_string_is_refused_when_memory_is_short() {
     });
     lower_limit_by(SHORT);
     for (n, nines, ratio) in all {
-        let want = BigUint::from(4 * n);
+        let want = BigUint::from(6 * n);
         assert_eq!(refused(Prim::CastInt, nines, "int"), want, "n = {n}");
         assert_eq!(refused(Prim::CastRat, ratio, "rat"), want, "n = {n}");
     }
@@ -207,7 +207,7 @@ fn kept_powers_sums_powers_texts_and_readings_are_exact_when_their_ask_is_given(
     let (c, big) = (kept(7, k), Value::integer(x));
     let ask: u64 = [9 * k + 1, 3 * k + 3, 7 * s, print_ask(s)]
         .into_iter()
-        .chain([4 * n as u64])
+        .chain([6 * n as u64])
         .max()
         .expect("five asks");
     lower_limit_by(ask + (64 << 20));
@@ -270,7 +270,7 @@ fn unread(bytes: usize) -> String {
     )
 }
 
-/// A decimal literal of `2^22` nines asks four bytes a digit, 16 MiB, and a hexadecimal one
+/// A decimal literal of `2^22` nines asks six bytes a digit, 24 MiB, and a hexadecimal one
 /// of `2^22` `f`s three, 12 MiB: under a limit 2 MiB above what the child holds, the
 /// elaborator reports each, where it copied the digits and read them with no ask and aborted.
 #[test]
@@ -285,7 +285,7 @@ fn a_long_integer_literal_is_refused_when_memory_is_short() {
     ];
     assert_eq!(
         literal_errors(&texts, 2 << 20, false),
-        [unread(4 * n), unread(3 * n)]
+        [unread(6 * n), unread(3 * n)]
     );
 }
 
@@ -301,7 +301,7 @@ fn checking_a_long_literal_is_refused_when_memory_is_short() {
     let text = format!("x = {};\ny = 0.{};\n", "9".repeat(n), "9".repeat(n));
     assert_eq!(
         literal_errors(&[text], 2 << 20, true),
-        [unread(4 * n), unread(n + 2)]
+        [unread(6 * n), unread(n + 2)]
     );
 }
 

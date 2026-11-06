@@ -18,6 +18,7 @@
 
 mod bound;
 mod factor;
+mod fast;
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -26,7 +27,7 @@ use std::fmt;
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
-use num_traits::{Euclid, One, Pow, Signed, ToPrimitive, Zero};
+use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
 
@@ -125,9 +126,11 @@ impl Rat {
         // Complexity tradeoff: the memory asked for is 64 bits for each digit of the text, a
         // measured bound, not a proved one, on the copy of the mantissa's digits, their reading
         // by halves, and the division by a power of ten in lowest terms or the powers of 2 and
-        // 5 moved out into exponents: the peak heap was at most 31.3 bits per digit (9.41 times
+        // 5 moved out into exponents: the peak heap was at most 42.7 bits per digit (12.8 times
         // the `3.32 n` bits of the number) over texts of 2^12 to 2^24 digits, all nines, a long
-        // fraction, a run of zeros and an exponent. So a literal needing less is refused when
+        // fraction, a run of zeros and an exponent, measured on 2026-11-06 with glibc's mmap
+        // threshold fixed at 128 KiB; with its default, which keeps freed blocks of up to 32 MiB
+        // on the heap, 49.1. So a literal needing less is refused when
         // the free memory lies between the two, and none aborts. Tested by
         // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the reading for its own memory.
@@ -195,9 +198,10 @@ impl Rat {
     pub fn to_integer(&self) -> Result<BigInt, TooLarge> {
         // Complexity tradeoff: the memory asked for is eight times the integer's width, a
         // measured bound, not a proved one, on building it power by power (each power by
-        // num-bigint's squaring and the running product by its Toom-3 multiplication): the
-        // peak heap was at most 5.49 times the width over integers of 2^14 to 2^24 bits, one
-        // prime, several primes, and a wide coefficient times a power. So an integer needing
+        // num-bigint's squaring and the running product by `num::fast::mul`): the peak heap
+        // was at most 3.85 times the width over integers of 2^14 to 2^24 bits, one prime,
+        // several primes, and a wide coefficient times a power (2026-11-06, glibc's mmap
+        // threshold fixed at 128 KiB). So an integer needing
         // less is refused when the free memory lies between the two, and none aborts. Tested by
         // `building_a_kept_power_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the build for its own memory.
@@ -261,11 +265,12 @@ impl Rat {
     pub(crate) fn text_ask(&self) -> BigUint {
         let (bits, text) = self.text_size();
         // Complexity tradeoff: the memory asked for is eight times the number's width and its
-        // text together, a measured bound, not a proved one, on building the number, num-
-        // bigint's conversion to decimal (by divide and conquer, its powers of ten and parts
-        // held at once), the zeros of a kept power of ten, and the copy of the text into the
-        // value: the peak heap was at most 4.52 times that over numbers of 2^12 to 2^20 bits,
-        // plain, kept powers and rationals. So a text needing less is refused when the free
+        // text together, a measured bound, not a proved one, on building the number, the
+        // conversion to decimal by halves (`num::fast::to_decimal`, its powers of ten and their
+        // reciprocals held at once), the zeros of a kept power of ten, and the copy of the text
+        // into the value: the peak heap was at most 4.53 times that over numbers of 2^12 to
+        // 2^20 bits, plain, kept powers and rationals (2026-11-06, glibc's mmap threshold
+        // fixed at 128 KiB). So a text needing less is refused when the free
         // memory lies between the two, and none aborts. Tested by
         // `printing_a_wide_number_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would write the digits by halves into memory reserved once.
@@ -408,7 +413,7 @@ impl Rat {
                     .expect("an exponent less its least is not negative"),
             )
         }));
-        let m = (num * built(&pows)).to_string();
+        let m = fast::to_decimal(&fast::mul(num.magnitude(), built(&pows).magnitude()));
         match tens.is_zero() {
             true => format!("{sign}{m}r"),
             false => format!("{sign}{m}e{tens}r"),
@@ -445,11 +450,12 @@ impl Rat {
             }
             // Complexity tradeoff: the memory asked for a sum of two plain rationals is
             // sixteen times the unreduced result's width, a measured bound, not a proved one,
-            // on the two cross products, their sum and the reduction by the gcd (a
-            // Burnikel-Ziegler remainder of the wider by the narrower, Stein's gcd and two
-            // divisions by it): the peak heap was at most 8.8 times that width over numerators
-            // and denominators of 3 to 2^16 words, and the reduction alone of an exact
-            // quotient at most 10.9 times (`exact_div`). So a sum needing less is refused when
+            // on the two cross products, their sum and the reduction by the gcd (a remainder of
+            // the wider by the narrower, the half gcd and two exact divisions by it, all in
+            // `num::fast`): the peak heap was at most 9.24 times that width over numerators
+            // and denominators of 3 to 2^16 words, and the gcd alone of two parts with a common
+            // factor at most 8.83 times their sum (2026-11-06, glibc's mmap threshold fixed at
+            // 128 KiB). So a sum needing less is refused when
             // the free memory lies between the two, and none aborts. Tested by `a_wide_
             // rational_difference_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
             // complete solution would ask each allocation of the reduction for its own memory,
@@ -739,13 +745,13 @@ impl Rat {
             // Complexity tradeoff: the memory asked for is the quotient's width for a divisor
             // of one word, which num-bigint divides into a single copy of the dividend, and
             // sixteen times the dividend's width for a wider divisor. Sixteen is measured, not
-            // proved: the peak heap of num-bigint's `div_euclid` by a divisor of two or more
-            // words (Burnikel-Ziegler division, which pads both operands to a power of two of
-            // words and copies them at each level) is at most 15.0 times the dividend's width
-            // over dividends of 2^8 to 2^20 words, divisors of 2 words to the dividend's
-            // length and all four signs, the worst a dividend of all ones just above a power of
-            // two of words. So a quotient by a wide divisor that needs less, often under eight
-            // times, is refused when the free memory lies between the two, and none aborts.
+            // proved: the peak heap of `num::fast::div_euclid` by a divisor of two or more
+            // words (Newton's reciprocal and two products, or long division over a sparse
+            // divisor's nonzero words) was at most 7.94 times the dividend's width over
+            // dividends of 2^8 to 2^20 words, divisors of 2 words to the dividend's length and
+            // all four signs (2026-11-06, glibc's mmap threshold fixed at 128 KiB); sixteen
+            // keeps the earlier ask, which tests depend on. So a quotient by a wide divisor that
+            // needs less is refused when the free memory lies between the two, and none aborts.
             // Tested by `dividing_a_wide_number_is_refused_when_memory_is_short` and
             // `dividing_by_a_wide_divisor_answers_when_its_peak_is_given` (COMPLEXITY.md K30).
             // A complete solution would be a division whose peak is known by construction:
@@ -755,7 +761,7 @@ impl Rat {
                 Some(_) => a,
                 None => a << 4u32,
             })?;
-            return Ok(Rat::int(Euclid::div_euclid(&self.num, &m.num)));
+            return Ok(Rat::int(fast::div_euclid(&self.num, &m.num)));
         }
         if self.divides_by(m)? {
             return self.exact_div(m);
@@ -965,19 +971,24 @@ fn pow_mod(p: u64, e: &BigUint) -> u64 {
 fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
     let g = gcd(&num, &den);
     let sign = if den.is_negative() { -1 } else { 1 };
-    (sign * (num / &g), sign * (den / g))
+    (
+        sign * fast::exact_quotient(&num, &g),
+        sign * fast::exact_quotient(&den, &g),
+    )
 }
 
 /// The greatest common divisor of `a` and `b`, not negative.
 fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
-    // num-bigint's gcd, Stein's algorithm, costs the product of the two widths even when one is
-    // a word, so the wider is first reduced modulo the narrower by one division, linear in the
-    // wider when the narrower is a word, and the gcd then runs at the narrower width.
-    match a.magnitude().bits().cmp(&b.magnitude().bits()) {
-        Ordering::Greater => b.gcd(&(a % b)),
-        Ordering::Less if !a.is_zero() => a.gcd(&(b % a)),
-        _ => a.gcd(b),
-    }
+    // The half gcd (`fast::gcd`) costs O(M(n) log n) in the wider width even when the other is
+    // a word, so the wider is first reduced modulo the narrower by one division, O(M(n)) and
+    // linear when the narrower is a word, and the gcd then runs at the narrower width.
+    let (a, b) = (a.magnitude(), b.magnitude());
+    let g = match a.bits().cmp(&b.bits()) {
+        Ordering::Greater => fast::gcd(b, &fast::div_rem(a, b).1),
+        Ordering::Less if !a.is_zero() => fast::gcd(a, &fast::div_rem(b, a).1),
+        _ => fast::gcd(a, b),
+    };
+    BigInt::from(g)
 }
 
 /// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.
@@ -999,14 +1010,16 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Ok(None);
     }
-    // Complexity tradeoff: the memory asked for is 32 bits for each digit, a measured bound,
+    // Complexity tradeoff: the memory asked for is 48 bits for each digit, a measured bound,
     // not a proved one, on the reading by halves (the powers of ten, the parts and their
-    // products held at once): the peak heap was at most 20.0 bits per digit (6.00 times the
-    // `3.32 n` bits of the number) over texts of 2^12 to 2^24 nines. So a text needing less is
+    // products by `num::fast::mul` held at once): the peak heap was at most 34.7 bits per digit
+    // (10.4 times the `3.32 n` bits of the number) over texts of 2^12 to 2^24 nines, and 45.3
+    // with glibc's default mmap threshold, which keeps freed blocks of up to 32 MiB on the
+    // heap (2026-11-06). So a text needing less is
     // refused when the free memory lies between the two, and none aborts. Tested by
     // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A complete
     // solution would ask each allocation of the reading for its own memory.
-    room(BigUint::from(digits.len()) << 5u32)?;
+    room(BigUint::from(digits.len()) * 48u32)?;
     Ok(Some(read_digits(digits)))
 }
 
@@ -1015,14 +1028,15 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
 /// num-bigint reads a text one machine word of digits at a time into the whole number read so
 /// far, O(n^2) for `n` digits. This reads the text in two parts, the low part `LEAF_DIGITS *
 /// 2^i` digits long and the high part no longer, and joins them as `high * 10^(LEAF_DIGITS *
-/// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring. The cost is
-/// that of the widest product, O(n^1.47) with num-bigint's Toom-3 multiplication, and the
-/// recursion is `log2(n / LEAF_DIGITS)` deep.
+/// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring. Each level
+/// of the recursion costs about one widest product, O(M(n)) = O(n log n) with `fast::mul`,
+/// and the recursion is `log2(n / LEAF_DIGITS)` deep, so the whole is O(n log^2 n).
 fn read_digits(digits: &str) -> BigUint {
     let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
     if let Some(top) = split_depth(digits.len()) {
         while tens.len() <= top {
-            let next = tens.last().expect("the first power is built").pow(2u32);
+            let last = tens.last().expect("the first power is built");
+            let next = fast::mul(last, last);
             tens.push(next);
         }
     }
@@ -1041,7 +1055,7 @@ fn read_parts(digits: &str, tens: &[BigUint]) -> BigUint {
         return digits.parse().expect("ASCII decimal digits");
     };
     let (high, low) = digits.split_at(digits.len() - (LEAF_DIGITS << i));
-    read_parts(high, tens) * &tens[i] + read_parts(low, tens)
+    fast::mul(&read_parts(high, tens), &tens[i]) + read_parts(low, tens)
 }
 
 /// The power of the prime `p` in `n`, and `n` without it. Powers `p, p^2, p^4, ...` divide
@@ -1060,19 +1074,19 @@ fn valuation(n: BigInt, p: u64) -> (u64, BigInt) {
     let mut v = 0u64;
     loop {
         let last = powers.last().expect("powers starts with p");
-        let (q, r) = n.div_rem(last);
+        let (q, r) = fast::div_rem(n.magnitude(), last.magnitude());
         if !r.is_zero() {
             break;
         }
-        n = q;
+        n = BigInt::from_biguint(n.sign(), q);
         v += 1 << (powers.len() - 1);
-        let next = last * last;
+        let next = fast::mul_int(last, last);
         powers.push(next);
     }
     for (i, pw) in powers.iter().enumerate().rev() {
-        let (q, r) = n.div_rem(pw);
+        let (q, r) = fast::div_rem(n.magnitude(), pw.magnitude());
         if r.is_zero() {
-            n = q;
+            n = BigInt::from_biguint(n.sign(), q);
             v += 1 << i;
         }
     }
@@ -1140,7 +1154,10 @@ fn built(pows: &[(u64, BigUint)]) -> BigInt {
         match (p, e.is_zero()) {
             (_, true) => {}
             (2, false) => twos = Some(e),
-            _ => out *= Pow::pow(BigUint::from(*p), e),
+            _ => {
+                let e = e.to_u64().expect("a power whose bits fit in memory");
+                out = fast::mul(&out, &fast::pow(BigUint::from(*p), e));
+            }
         }
     }
     if let Some(e) = twos {
@@ -1210,12 +1227,16 @@ fn divides(m: &BigUint, p: u64) -> bool {
 }
 
 /// The memory of one block step of [`rem`] by a divisor wider than a word, in multiples of the
-/// divisor's width: the remainder so far, the block, their shifted sum, and num-bigint's
-/// Burnikel-Ziegler division of it by the divisor, which pads to a power of two of words and
-/// copies at each level. The peak heap measured over divisors of 2^8 to 2^20 words, dividends
-/// of one to two blocks, lengths just above and below powers of two and all-ones dividends, is
-/// at most 21.3 times the divisor's width, the worst a divisor just above a power of two of
-/// words; 24 leaves an eighth to spare.
+/// divisor's width: the remainder so far, the block, their shifted sum, and its division by
+/// the divisor through `fast::Divisor` (the divisor's reciprocal, built once, and two
+/// transform products a step). The peak heap measured on 2026-11-06 over divisors of 2^8 to
+/// 2^20 words, dividends of one to two blocks, lengths just above and below powers of two and
+/// all-ones dividends, is at most 19.0 times the divisor's width (18.3 building the
+/// reciprocal, 14.9 a step) with glibc's mmap threshold fixed at 128 KiB, so that freed
+/// blocks go back to the system. With glibc's default threshold, which keeps freed blocks of
+/// up to 32 MiB on the heap, the measured peak reaches 26.9 at 380,000 words, a constant
+/// number of bytes retained rather than a share of the width; 24 leaves a fifth to spare over
+/// the algorithm's own peak.
 const REM_STEP: u32 = 24;
 
 /// `a mod m` for an `m` that is not zero, read from the top of `a` with no copy of it, so its
@@ -1240,6 +1261,8 @@ fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     // known by construction.
     room(BigUint::from(m.bits()) * REM_STEP)?;
     let len = m.iter_u64_digits().len();
+    // Each step divides a number below `m 2^(64 len)` by `m`, as `fast::Divisor` allows.
+    let divisor = fast::Divisor::new(Cow::Borrowed(m));
     let mut words = a.iter_u64_digits().rev();
     let mut left = words.len();
     let mut take = match left % len {
@@ -1255,7 +1278,9 @@ fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
             block.extend([(d >> 32) as u32, d as u32]);
         }
         block.reverse();
-        r = &((r << (64 * take)) + BigUint::from_slice(&block)) % m;
+        r = divisor
+            .div_rem(&((r << (64 * take)) + BigUint::from_slice(&block)))
+            .1;
         left -= take;
         take = len;
     }
@@ -1284,7 +1309,7 @@ fn times<'a>(x: &'a BigUint, y: &'a BigUint, check: bool) -> Result<Cow<'a, BigU
     if check {
         room(BigUint::from(x.bits() + y.bits()))?;
     }
-    Ok(Cow::Owned(x * y))
+    Ok(Cow::Owned(fast::mul(x, y)))
 }
 
 /// Whether the allocator gives `bits` bits at once, asked and freed at once.
@@ -1311,7 +1336,7 @@ fn digits(coef: &BigUint, pows: Vec<(u64, BigUint)>) -> String {
             _ => (*p, e.clone()),
         })
         .collect();
-    let mut out = (BigInt::from(coef.clone()) * built(&rest)).to_string();
+    let mut out = fast::to_decimal(&fast::mul(coef, built(&rest).magnitude()));
     if !coef.is_zero() {
         let zeros = tens
             .to_usize()

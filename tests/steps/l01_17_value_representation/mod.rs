@@ -14,3 +14,4 @@ mod numbers;
 mod order;
 mod powers;
 mod products;
+mod subquadratic;

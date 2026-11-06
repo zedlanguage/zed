@@ -395,15 +395,17 @@ fn read_rat(s: &str) -> Result<Option<Rat>, TooLarge> {
     if !printed(num) || sign == Sign::Minus && num == "0" || den.is_some_and(|d| !printed(d)) {
         return Ok(None);
     }
-    // Complexity tradeoff: the memory asked for is 32 bits for each digit of the two parts, a
+    // Complexity tradeoff: the memory asked for is 48 bits for each digit of the two parts, a
     // measured bound, not a proved one, on reading both and the gcd that checks lowest terms
-    // (Stein's, on copies of the two): the peak heap was at most 20.3 bits per digit (6.11
+    // (the half gcd, `num::fast::gcd`): the peak heap was at most 28.3 bits per digit (8.52
     // times the `3.32 n` bits of the two numbers) over texts of 2^12 to 2^18 digits on each
-    // side, nines over a one and sevens, and a power of 2 over a power of 3. So a text needing
+    // side, nines over a one and sevens, and a power of 2 over a power of 3, and 31.3 with
+    // glibc's default mmap threshold (2026-11-06). It matches the ask of reading an integer,
+    // whose reading by halves needs more. So a text needing
     // less is refused when the free memory lies between the two, and none aborts. Tested by
     // `reading_a_long_number_from_a_string_is_refused_when_memory_is_short` (COMPLEXITY.md
     // K30). A complete solution would ask each allocation of the reading for its own memory.
-    room(BigUint::from(num.len() + den.map_or(0, str::len)) << 5u32)?;
+    room(BigUint::from(num.len() + den.map_or(0, str::len)) * 48u32)?;
     let read = |t: &str| read_decimal(t).map(|n| n.expect("checked digits"));
     let num = BigInt::from_biguint(sign, read(num)?);
     Ok(match den {
