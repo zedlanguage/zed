@@ -42,24 +42,44 @@ pub const MANIFEST: &str = "zed.manifest";
 pub trait Files {
     /// The text of the file `name`, a path under the root with `/` between its parts: `None`
     /// when there is no such file, or why it cannot be read.
-    fn read(&self, name: &str) -> Option<Result<Arc<str>, String>>;
+    fn read(&self, name: &str) -> Option<Result<Arc<str>, Unreadable>>;
+}
+
+/// Why a file cannot be read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unreadable {
+    /// The line and column in the file where the rejection starts, when it has a place.
+    pub at: Option<(usize, usize)>,
+    /// Why, with no position.
+    pub why: String,
+}
+
+/// The file `file` cannot be read, for `u`: `file:line:col: the file cannot be read: why`, or
+/// ``the file `file` cannot be read: why`` when `u` has no place in it.
+fn unreadable(file: &str, u: &Unreadable) -> String {
+    match u.at {
+        Some((line, col)) => format!("{file}:{line}:{col}: the file cannot be read: {}", u.why),
+        None => format!("the file `{file}` cannot be read: {}", u.why),
+    }
 }
 
 /// The files under a directory of the file system, each loaded as source (DESIGN.md
 /// sec:lexical): one that is not UTF-8, starts with a byte order mark or is not NFC cannot be
-/// read, and why says where, as `line:col: why`.
+/// read, at the line and column of the rejection.
 pub struct Dir(pub PathBuf);
 
 impl Files for Dir {
-    fn read(&self, name: &str) -> Option<Result<Arc<str>, String>> {
+    fn read(&self, name: &str) -> Option<Result<Arc<str>, Unreadable>> {
         match std::fs::read(self.0.join(name)) {
-            Ok(bytes) => Some(
-                source::load(&bytes)
-                    .map(Arc::from)
-                    .map_err(|e| e.render(&bytes)),
-            ),
+            Ok(bytes) => Some(source::load(&bytes).map(Arc::from).map_err(|e| Unreadable {
+                at: Some(source::line_col(&bytes, e.span().start)),
+                why: e.message(&bytes),
+            })),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => Some(Err(e.to_string())),
+            Err(e) => Some(Err(Unreadable {
+                at: None,
+                why: e.to_string(),
+            })),
         }
     }
 }
@@ -69,7 +89,7 @@ impl Files for Dir {
 pub struct Memory(pub HashMap<String, Arc<str>>);
 
 impl Files for Memory {
-    fn read(&self, name: &str) -> Option<Result<Arc<str>, String>> {
+    fn read(&self, name: &str) -> Option<Result<Arc<str>, Unreadable>> {
         self.0.get(name).map(|t| Ok(t.clone()))
     }
 }
@@ -241,7 +261,7 @@ pub struct Loaded {
     /// Its file under the root.
     pub file: String,
     /// Its text, or `None` when there is no such file, or why it cannot be read.
-    pub text: Option<Result<Arc<str>, String>>,
+    pub text: Option<Result<Arc<str>, Unreadable>>,
     /// Its statements and imports, when its text parses.
     pub parsed: Option<Arc<Parsed>>,
     /// Its resolution, once it is resolved.
@@ -260,8 +280,8 @@ pub struct Problem {
 /// A package's units, in the order the loader found them, and its errors.
 #[derive(Debug, Default)]
 pub struct Package {
-    /// The manifest's text, if it could be read.
-    pub manifest: Option<Arc<str>>,
+    /// The manifest's text, or why it cannot be read; `None` when there is none.
+    pub manifest: Option<Result<Arc<str>, Unreadable>>,
     /// The units.
     pub units: Vec<Loaded>,
     /// Each unit's index in `units`, by path.
@@ -285,22 +305,35 @@ impl Package {
     }
 
     /// Each problem as `zedc` prints it, as `file:line:col: message` and its derivation, the
-    /// file written under `root`; a file with no text gives `file: message`.
+    /// file written under `root`; a file that cannot be read gives `file:line:col: message` at
+    /// the place it was rejected, or `file: message` when the reason has no place.
     pub fn report(&self, root: &Path) -> Vec<String> {
         let mut lines: HashMap<&str, (&str, source::Lines)> = HashMap::new();
         let mut out = Vec::with_capacity(self.problems.len());
         for p in &self.problems {
             let file = root.join(&p.file);
             let text = if p.file == MANIFEST {
-                self.manifest.as_deref()
+                self.manifest.as_ref()
             } else {
-                self.unit_of_file(&p.file)
-                    .and_then(|u| u.text.as_ref())
-                    .and_then(|t| t.as_deref().ok())
+                self.unit_of_file(&p.file).and_then(|u| u.text.as_ref())
             };
-            let Some(text) = text else {
-                out.push(format!("{}: {}", file.display(), p.error.message));
-                continue;
+            let text = match text {
+                Some(Ok(text)) => text,
+                Some(Err(Unreadable {
+                    at: Some((line, col)),
+                    ..
+                })) => {
+                    out.push(format!(
+                        "{}:{line}:{col}: {}",
+                        file.display(),
+                        p.error.message
+                    ));
+                    continue;
+                }
+                _ => {
+                    out.push(format!("{}: {}", file.display(), p.error.message));
+                    continue;
+                }
             };
             let (text, l) = lines
                 .entry(&p.file)
@@ -344,16 +377,17 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
     let mut pkg = Package::default();
     let manifest = match files.read(MANIFEST) {
         None => Manifest::default(),
-        Some(Err(why)) => {
+        Some(Err(u)) => {
             pkg.problems.push(Problem {
                 file: MANIFEST.into(),
-                error: error(NOWHERE, format!("the manifest cannot be read: {why}")),
+                error: error(NOWHERE, format!("the manifest cannot be read: {}", u.why)),
             });
+            pkg.manifest = Some(Err(u));
             return pkg;
         }
         Some(Ok(text)) => {
             let m = manifest(&text);
-            pkg.manifest = Some(text);
+            pkg.manifest = Some(Ok(text));
             match m {
                 Ok(m) => m,
                 Err(errors) => {
@@ -416,7 +450,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             }),
             Some(Err(why)) => pkg.problems.push(Problem {
                 file: u.file.clone(),
-                error: error(NOWHERE, format!("the file cannot be read: {why}")),
+                error: error(NOWHERE, format!("the file cannot be read: {}", why.why)),
             }),
             Some(Ok(_)) => {}
         }
@@ -427,7 +461,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         let u = &pkg.units[p];
         let why = match &u.text {
             None => format!("there is no file `{}` under the root", u.file),
-            Some(Err(why)) => format!("the file `{}` cannot be read: {why}", u.file),
+            Some(Err(why)) => unreadable(&u.file, why),
             Some(Ok(_)) => unreachable!("a unit with text is parsed"),
         };
         pkg.problems.push(Problem {
@@ -480,9 +514,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                 (None, None, _) => {
                     because(format!("there is no file `{}` under the root", dep.file))
                 }
-                (None, Some(Err(why)), _) => {
-                    because(format!("the file `{}` cannot be read: {why}", dep.file))
-                }
+                (None, Some(Err(why)), _) => because(unreadable(&dep.file, why)),
                 (None, Some(Ok(_)), Some(p)) if p.is_err() => because(format!(
                     "the file `{}` does not parse, so the names it defines are not known",
                     dep.file

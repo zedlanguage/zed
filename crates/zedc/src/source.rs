@@ -59,17 +59,23 @@ impl Reject {
     /// The rejection as `line:column: message`, with the position of its span's start in
     /// `bytes`, the file it was found in; a UTF-8 rejection shows the bytes in hexadecimal.
     pub fn render(&self, bytes: &[u8]) -> String {
+        let (line, col) = line_col(bytes, self.span().start);
+        format!("{line}:{col}: {}", self.message(bytes))
+    }
+
+    /// The rejection's message with no position, its bytes in `bytes`, the file it was found
+    /// in, shown in hexadecimal when they are not UTF-8.
+    pub fn message(&self, bytes: &[u8]) -> String {
         let Span { start, end } = self.span();
-        let (line, col) = line_col(bytes, start);
         match self {
             Reject::NotUtf8 { .. } => {
                 let hex: Vec<String> = bytes[start..end]
                     .iter()
                     .map(|b| format!("{b:02X}"))
                     .collect();
-                format!("{line}:{col}: {self}: {}", hex.join(" "))
+                format!("{self}: {}", hex.join(" "))
             }
-            _ => format!("{line}:{col}: {self}"),
+            _ => self.to_string(),
         }
     }
 }

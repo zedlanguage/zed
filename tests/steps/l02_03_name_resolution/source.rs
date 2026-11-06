@@ -1,7 +1,8 @@
 //! An imported unit, a root and the manifest are loaded as source (DESIGN.md sec:lexical):
 //! "Source is UTF-8 in Unicode Normalization Form C; a file that is not NFC is rejected rather
 //! than normalized ... a leading byte order mark is rejected for the same reason." A file so
-//! rejected cannot be read, and the error names it and the line and column of the rejection.
+//! rejected cannot be read, and the error names it with the line and column of the rejection, as
+//! `pricing.zed:2:7:`.
 
 use std::path::PathBuf;
 
@@ -59,8 +60,8 @@ fn an_imported_unit_that_is_not_utf8_is_refused_at_its_line_and_column() {
     assert_eq!(
         refused_import("utf8", b"net(g: f64) = g / 1.2;\n// caf\xE9 prices\n"),
         [
-            "app/main.zed:1:1: the unit `pricing` cannot be imported: the file `pricing.zed` \
-          cannot be read: 2:7: not UTF-8: E9"
+            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:2:7: the file \
+          cannot be read: not UTF-8: E9"
         ]
     );
 }
@@ -71,8 +72,8 @@ fn an_imported_unit_with_a_byte_order_mark_is_refused() {
     assert_eq!(
         refused_import("bom", b"\xEF\xBB\xBFnet(g: f64) = g / 1.2;\n"),
         [
-            "app/main.zed:1:1: the unit `pricing` cannot be imported: the file `pricing.zed` \
-          cannot be read: 1:1: the file starts with a byte order mark"
+            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:1:1: the file \
+          cannot be read: the file starts with a byte order mark"
         ]
     );
 }
@@ -86,8 +87,8 @@ fn an_imported_unit_not_in_nfc_is_refused_at_the_first_sequence_nfc_changes() {
             "net(g: f64) = g / 1.2;\n// cafe\u{301} prices\n".as_bytes()
         ),
         [
-            "app/main.zed:1:1: the unit `pricing` cannot be imported: the file `pricing.zed` \
-          cannot be read: 2:7: not in Unicode Normalization Form C; write U+00E9"
+            "app/main.zed:1:1: the unit `pricing` cannot be imported: pricing.zed:2:7: the file \
+          cannot be read: not in Unicode Normalization Form C; write U+00E9"
         ]
     );
 }
@@ -104,7 +105,7 @@ fn a_root_and_a_manifest_that_do_not_load_are_reported_with_their_position() {
     let p = load(&mut Db::new(), &Dir(d.clone()), &["main"]);
     assert_eq!(
         p.report(std::path::Path::new("")),
-        ["main.zed: the file cannot be read: 2:6: not UTF-8: FF"]
+        ["main.zed:2:6: the file cannot be read: not UTF-8: FF"]
     );
     let d = package_dir(
         "manifest",
@@ -117,7 +118,7 @@ fn a_root_and_a_manifest_that_do_not_load_are_reported_with_their_position() {
     assert_eq!(
         p.report(std::path::Path::new("")),
         [
-            "zed.manifest: the manifest cannot be read: 1:1: the file starts with a byte order \
+            "zed.manifest:1:1: the manifest cannot be read: the file starts with a byte order \
              mark"
         ]
     );
