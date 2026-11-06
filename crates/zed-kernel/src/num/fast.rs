@@ -10,6 +10,85 @@
 //! its operands to num-bigint, which is faster there; the value computed does not depend on
 //! the leaf sizes.
 //!
+//! # The methods
+//!
+//! A number is a list of 64-bit words, the coefficients of a polynomial in `2^64`. The design
+//! makes the product O(n log n) and builds division, gcd and printing from a bounded number of
+//! products at each level of a recursion that halves the width.
+//!
+//! **Multiplication** ([`mul`], [`transform_mul`]). The product of two numbers is the
+//! convolution of their word lists followed by carrying, O(n^2) done directly. A transform
+//! turns the convolution into pointwise products: evaluate both polynomials at the `n`-th
+//! roots of unity ([`Field::forward`], an FFT), multiply the values pairwise, interpolate back
+//! ([`Field::inverse`]), O(n log n). The arithmetic is modulo a prime `p = c 2^50 + 1`, so roots
+//! of unity of every order up to `2^50` exist and the values are exact; a coefficient of the
+//! convolution can reach `n 2^128`, more than one 62-bit prime holds, so the convolution is
+//! done modulo three primes ([`FIELDS`], product above `2^185`) and each coefficient rebuilt by
+//! the Chinese remainder theorem in Garner's form, then the carries propagated, in one pass.
+//! Products modulo `p` use Montgomery's form and Shoup's precomputed quotients for the
+//! twiddle factors. The length is padded to a power of two, so the time rises in steps:
+//! doubling the padded length doubles the time, and sizes between two powers cost the same. A
+//! square needs one forward transform fewer. A factor with few nonzero words (as `2^s + 1`,
+//! which the exact numbers keep) is multiplied by schoolbook over those words
+//! ([`sparse_mul`]); [`mul`] takes whichever of the two computed costs ([`transform_plan`]) is
+//! lower, with no size constant, and num-bigint's Toom-3 at or below [`MUL_LEAF`].
+//!
+//! **Division** ([`div_rem`], [`reciprocal`], [`settle`]). To divide by `b` of `k` bits, find
+//! `y = floor(2^2k / b)`, then `q = floor(a y / 2^2k)`: two products. `y` comes from Newton's
+//! iteration `y' = 2 y - b y^2 / 2^2k`, which doubles the correct bits: it starts from a
+//! reciprocal of a few words (num-bigint's division, at or below [`RECIP_LEAF`]) and doubles
+//! the precision each round, `k / 2^i`, ..., `k / 2`, `k`, so the total is `M(k) + M(k/2) + ...`
+//! = O(M(k)). Each estimate is at most a few units off, and [`settle`] makes it exact by
+//! computing `q b`, comparing with `a` and moving `q` by one or two. When the quotient has `k`
+//! bits and the divisor more, both operands are first shifted down until the divisor has `k`
+//! bits, so the reciprocal and both products are of `k` bits, not the divisor's width; the
+//! quotient of the shifted operands is at most two above the true one. A quotient wider than the divisor is found in blocks of the
+//! divisor's width ([`div_rem_blocks`]) with one reciprocal ([`Divisor`]) reused for every
+//! block. A divisor with few nonzero words is divided by long division over those words
+//! ([`sparse_div_rem`]), chosen by computed cost as for products.
+//!
+//! **Gcd** ([`gcd`], [`half`], [`step`], [`half_leaf`]). Euclid's algorithm takes O(n) steps of
+//! O(n) each. The half gcd avoids touching the full numbers at each step. It uses the binary
+//! step: with `a` odd and `b = 2^j b'`, `b'` odd, choose `q`, `|q| < 2^j`, with `a + q b'`
+//! divisible by `2^(j+1)` ([`inverse_mod_pow2`] gives `q`), and replace the pair by
+//! `(b', (a + q b') / 2^j)`. This keeps the gcd's odd part ([`gcd`] divides each number by its
+//! own power of two first and multiplies the result by the smaller power at the end), and is the 2 by 2 integer matrix `[[0, 2^j], [2^j, q]]` over `2^2j` ([`Mat`]).
+//! Because the steps work from the low end, the steps whose halvings total at most `k` depend
+//! only on `a` and `b` modulo `2^(2k+1)`: no carry from the high bits reaches them, which is
+//! why the binary form is used rather than the classical half gcd, which works from the high
+//! end and must correct for carries. So [`half`] finds the matrix of the first half of the
+//! steps from residues of half the width, applies it to the whole pair (a few products), takes
+//! one step, and recurses on the second half: `T(n) = 2 T(n/2) + O(M(n))`, O(M(n) log n). The
+//! recursion's leaf ([`half_leaf`], at or below [`HALF_LEAF`]) runs on 128-bit integers, which
+//! the residues and matrix entries provably never exceed. [`gcd`] repeats one half gcd and one
+//! step until the second number is zero, and hands what is left to num-bigint's Stein gcd at
+//! or below [`GCD_LEAF`]. Reference: Stehlé and Zimmermann, "A binary recursive gcd
+//! algorithm", ANTS 2004.
+//!
+//! **Printing** ([`to_decimal`], [`write_decimal`]). The powers `10^(L 2^i)`, `L` being
+//! [`PRINT_LEAF`], are built once by squaring, each with its reciprocal ([`Divisor`]). `x` is
+//! written as `high 10^(L 2^i) + low` by one division by the largest power at most `x`, and
+//! each half is printed by the next power down, the low half padded with zeros to its fixed
+//! width. Each level divides numbers of `n` bits in total, O(M(n)), over `log2(n / L)` levels:
+//! O(M(n) log n). The leaves are printed by num-bigint.
+//!
+//! **Where the constants lose** (measured 2026-11-06, COMPLEXITY.md section "Crossovers"). A
+//! transform product costs three convolutions and the recombination, so num-bigint's Toom-3 is
+//! faster up to about 4096 words. Newton division costs several full products per quotient,
+//! and is slower than num-bigint's Burnikel and Ziegler division at every size measured, up to
+//! 8192 words; printing, which divides at each level, is slower from about 1024 to 131072
+//! words. The gcd gains from about 300 words, since num-bigint's is quadratic. Open for the
+//! port: why division costs 2.6 to 3.8 times num-bigint's from 2048 to 8192 words (candidates:
+//! the full product `a2 y` of which only the high half is used, the product `q b` in
+//! [`settle`], a reciprocal built at each call), and whether printing's excess is division's.
+//!
+//! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
+//! unit tests compare at every leaf setting. What depends on measurement and is to be measured
+//! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
+//! [`PRINT_LEAF`] and the cost constants [`TRANSFORM_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`].
+//! [`HALF_LEAF`] is derived, not measured. The Rust constructs that need a Zed form are listed
+//! in ZED_PORT_GAPS.md, section "Entries from NUM-subquad".
+//!
 //! Each leaf is a crossover between two methods whose results are identical, set from timings
 //! rather than solved from the two methods' cost formulas. The author accepted this for now
 //! (2026-11-06) because nothing observable changes at a crossover, on the condition that each
@@ -991,7 +1070,8 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     // Complexity tradeoff: the half gcd costs O(M(n) log n) = O(n log^2 n), a log factor above
     // a product, accepted for NUM-subquad; num-bigint's Stein gcd below `GCD_LEAF` is O(n^2) in
     // a leaf of bounded width. Measured on 2026-11-06: 1.8 s at 32768 words, 11.0 s at 131072;
-    // num-bigint's gcd is faster below about 512 to 1024 words. Test
+    // num-bigint's gcd is faster below about 300 words at load 1 (2026-11-06), 512 to 1024 at
+    // load 45 to 75 (2026-11-05); see `GCD_LEAF`. Test
     // `a_gcd_of_wide_numbers_scales`.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
