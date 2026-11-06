@@ -128,7 +128,7 @@ Zed uses atoms to report failure. A *failure* is an atom in a value's type that 
 <tr><td><code>5</code></td><td><code>#notFound</code></td><td><code>0</code></td></tr>
 </table>
 
-### Step 3: pricing each sale with a remap
+### Step 3: revenue per sale
 
 The revenue of each entry is its quantity times its price.
 
@@ -156,7 +156,7 @@ revenue = sales as (region -> day -> sku -> q) into (region -> day -> sku -> q *
 > [!TIP]
 > Elsewhere this remap is three nested loops that fill a new nested dictionary. A remap can also move levels: `matrix as (r -> c -> v) into (c -> r -> v)` transposes a matrix, where other languages set `out[c][r] = matrix[r][c]` in two nested loops. [Remapping](#remapping) below compares remaps with spreadsheet pivot tables.
 
-### Step 4: finding the failures
+### Step 4: sales with no price
 
 To list the entries that have no price, flatten `revenue` to one level and keep the failures.
 
@@ -195,9 +195,9 @@ unpriced = flat.where(r -> r is not int);
 
 The failure keeps its keypath, so `unpriced` says exactly which record lacks a price.
 
-### Step 5: daily totals, and a remap the compiler rejects
+### Step 5: daily totals
 
-The daily total of a region adds up the revenue of its skus. Dropping the `sku` level from the pattern is the first thing to try:
+The daily total of a region adds up the revenue of its skus. The obvious first try leaves the `sku` level out of the `into` pattern:
 
 ```zed
 // daily = revenue as (region -> day -> sku -> r) into (region -> day -> r);   // ✗ rejected
@@ -206,7 +206,21 @@ The daily total of a region adds up the revenue of its skus. Dropping the `sku` 
 > [!TIP]
 > A line commented out and marked `// ✗ rejected` is one the compiler rejects. The text after it, if any, gives the reason.
 
-The compiler rejects this line with this error:
+This line keeps each row of `revenue` but removes its sku. Here is the result it asks for, with ✗ next to each value that shares its keypath with another:
+
+**`revenue` with the `sku` level removed**
+
+<table>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>r</code></th><th>sku it came from</th></tr>
+<tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>0</code></td><td><code>14</code> ✗</td><td><code>ink</code></td></tr>
+<tr><td><code>10</code> ✗</td><td><code>pen</code></td></tr>
+<tr><td><code>1</code></td><td><code>6</code></td><td><code>pen</code></td></tr>
+<tr><td rowspan="3"><code>West</code></td><td rowspan="2"><code>0</code></td><td><code>#notFound</code> ✗</td><td><code>pad</code></td></tr>
+<tr><td><code>8</code> ✗</td><td><code>pen</code></td></tr>
+<tr><td><code>1</code></td><td><code>42</code></td><td><code>ink</code></td></tr>
+</table>
+
+The keypath `("East", 0)` would lead to both 14 and 10, and `("West", 0)` to both `#notFound` and 8. A keypath leads to exactly one value (step 1), so this is not a map, and the compiler rejects the line:
 
 ```text
 error: this remap would map one key to many values
@@ -217,28 +231,75 @@ error: this remap would map one key to many values
 ```
 
 > [!IMPORTANT]
-> **A remap never merges values unless you say how.** No two values may end up at the same keypath. East's day 0 has two values, 14 for ink and 10 for pen, and without `sku` they would share the keypath `("East", 0)`. The compiler judges this from the pattern, not the data, so it rejects the line even for an input with one sku per day. A dictionary filled in a loop would quietly keep the last value written, and a database would raise a duplicate-key error while the program runs.
+> **A remap never merges values unless you say how.** The compiler reads this from the pattern, not the data: `(region -> day -> r)` drops a level and keeps the values beneath it, so the line is rejected even for an input with one sku per day.
 
-The error lists the ways out. The first drops the values and keeps only the keys, the second keeps the `sku` level, and the third merges the values with an operator.
+Other tools meet the same collision later, or not at all:
+
+<table>
+<tr><th>The same step written in</th><th>What happens at <code>("East", 0)</code></th></tr>
+<tr><td>Python, <code>daily[(region, day)] = r</code> in a loop</td><td>the value is <code>10</code>, ink's <code>14</code> is lost, and nothing reports it</td></tr>
+<tr><td>SQL, an insert into a table keyed by <code>(region, day)</code></td><td>a duplicate-key error while the program runs</td></tr>
+<tr><td>Zed</td><td>the error above, at compile time</td></tr>
+</table>
+
+The error lists three repairs. Two of them use forms not seen yet.
 
 > [!NOTE]
-> **`k >< op`** in an `into` pattern collapses the level `k`, merging the values that land on one keypath with the operator `op`.
+> **`_`** in the value position of a pattern drops the values.
 >
-> **`(+)`** is the operator `+` used as a function. **`_`** in the value position of a pattern drops the values.
+> **`k >< op`** in an `into` pattern collapses the level `k`, merging the values that land on one keypath with the operator `op`. **`(+)`** is the operator `+` used as a function.
 
-### Step 6: a sum can't skip a failure
+**What each repair gives at `("East", 0)`**
 
-The third repair is the one that sums. It is also rejected, for a new reason:
+<table>
+<tr><th>Repair</th><th><code>into</code> pattern</th><th>Value at <code>("East", 0)</code></th></tr>
+<tr><td>drop the values</td><td><code>(region -> day -> sku -> _)</code></td><td>the skus <code>ink</code> and <code>pen</code>, with no revenue</td></tr>
+<tr><td>keep the <code>sku</code> level</td><td><code>(region -> day -> sku -> r)</code></td><td><code>ink</code> → <code>14</code>, <code>pen</code> → <code>10</code>, as in <code>revenue</code></td></tr>
+<tr><td>merge with <code>+</code></td><td><code>(region -> day -> sku >< (+) -> r)</code></td><td><code>24</code></td></tr>
+</table>
+
+Only the third gives a daily total.
+
+### Step 6: adding values that may be failures
+
+Merging with `+` gives the right total at `("East", 0)`, but the compiler rejects this line too:
 
 ```zed
-// daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);   // ✗ rejected: r may be #notFound
+// daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);   // ✗ rejected: + is not defined on #notFound
+```
+
+The trouble is at `("West", 0)`, where `+` would have to add these two values:
+
+**`revenue["West"][0]`**
+
+<table>
+<tr><th><code>sku</code></th><th><code>r</code></th></tr>
+<tr><td><code>pad</code></td><td><code>#notFound</code> ✗</td></tr>
+<tr><td><code>pen</code></td><td><code>8</code></td></tr>
+</table>
+
+`+` is defined on integers. Whatever `#notFound + 8` gave, something would be lost without the code saying so: `#notFound` throws away pen's 8, and `8` hides that pad has no price. In step 3, `1 * #notFound` could pass its failure along because the result stays at pad's own keypath, which still says which record failed. A merge puts many keypaths' values at one keypath, so it could keep at most one of their failures, the same loss of information that step 5 ruled out.
+
+There is a second reason. The compiler may add one day's values in any order, splitting them across cores. Suppose a day held two different failures, `#notFound` and `#invalid` (a number that failed to parse), and a merge kept the first failure it met. The result would depend on the order:
+
+<table>
+<tr><th>Order of the additions</th><th>Result if the first failure wins</th></tr>
+<tr><td><code>(#notFound + 8) + #invalid</code></td><td><code>#notFound</code></td></tr>
+<tr><td><code>(#invalid + 8) + #notFound</code></td><td><code>#invalid</code></td></tr>
+</table>
+
+So the same program could give different totals on one core and on eight.
+
+> [!IMPORTANT]
+> **A merge runs only on values its operator is defined for.** A merge over values that may be failures is rejected until the code says what the failures mean: replace them with `else`, filter them out with `where`, or keep them apart, as step 4 did.
+
+This version counts an unpriced sale as zero revenue:
+
+```zed
 daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else 0));
 ```
 
-> [!IMPORTANT]
-> **A merge runs only on values its operator can take.** `+` has no meaning for `#notFound`, and the failures at many keys can't become one result unless you say how. So a merge over values that may be failures is rejected until you handle them: replace them with `else`, filter them out with `where`, or keep them apart, as step 4 did. A single value with a failure is fine, and carries it along; a merge has to decide.
-
-This version counts an unpriced sale as zero revenue, while `unpriced` from step 4 still lists it.
+`unpriced` from step 4 still lists the pad sale, so the zero hides nothing.
 
 **`daily` before summing over `sku`**
 
@@ -262,7 +323,7 @@ This version counts an unpriced sale as zero revenue, while `unpriced` from step
 <tr><td><code>1</code></td><td><code>42</code></td></tr>
 </table>
 
-### Step 7: totals per region with a reduction
+### Step 7: totals per region
 
 ```zed
 regionTotals = daily >< (+);
@@ -280,9 +341,19 @@ regionTotals = daily >< (+);
 </table>
 
 > [!TIP]
-> This is `reduce` or `fold` in other languages, but you give no direction, because the work can be split across cores in any grouping. That's why `op` must be safe to regroup, as `+` is. Floating-point values have their own rule, in [Reducing](#reducing) below.
+> This is `reduce` or `fold` in other languages, but you give no direction, because the work can be split across cores. So the reducer must be associative, and ideally also commutative.
 
-### Step 8: units sold per product, by pushing into a map
+Each property allows a different split of the work. With four values `a`, `b`, `c` and `d`:
+
+<table>
+<tr><th>Property of <code>op</code></th><th>Law</th><th>What the compiler may do</th></tr>
+<tr><td>associative</td><td><code>(a op b) op c == a op (b op c)</code></td><td>add <code>a + b</code> on one core and <code>c + d</code> on another, then add the two results</td></tr>
+<tr><td>commutative</td><td><code>a op b == b op a</code></td><td>also combine the values in whatever order they arrive, with no sort first</td></tr>
+</table>
+
+`+` on integers has both properties. `-` has neither: `(5 - 3) - 1` is 1, but `5 - (3 - 1)` is 3, so `daily >< (-)` is rejected. Joining strings is associative but not commutative, so its reduction keeps the order of the level. Floating-point values have their own rule, in [Reducing](#reducing) below.
+
+### Step 8: units sold per product
 
 So far each value was computed from where its data comes from. Sometimes it's clearer to say where each value goes. This step counts the units sold of each sku by sending each sale's quantity to its sku.
 
@@ -329,7 +400,7 @@ for line in lines { sold[line.sku] <- line.q; };
 
 A push and the matching read compile to the same thing: the same table could be computed by a remap that moves `sku` to the top level and sums over region and day. Write whichever reads more clearly.
 
-### Step 9: a running total, defined by an equation
+### Step 9: a running total
 
 East's daily revenue as an array, and its running total:
 
@@ -362,7 +433,7 @@ running[i] = running[i-1] + east[i] with running[-1] = 0;
 > [!TIP]
 > Elsewhere this is a `for` loop that fills an array in order. Here it's a statement about every entry, and the compiler reads the dependencies and picks the order. [Recurrences](#recurrences) below shows what else that allows, such as running a scan like this one on many cores.
 
-### Step 10: the change from the day before, in a loop
+### Step 10: the change from the day before
 
 A loop describes one step, and the loop as a whole is a value.
 
@@ -397,7 +468,7 @@ trend = loop t {
 > [!TIP]
 > In Python the body would be `prev, change = x, x - prev`, and in C it needs a temporary. In Zed, writing `prev'` doesn't change `prev`, so the `change'` line still reads the previous day's value, and the two lines could be swapped. Each step writes each variable once.
 
-### Step 11: a shelf of pens, with a method
+### Step 11: pens left on the shelf
 
 The East store starts the period with 20 pens on its shelf. This step follows the count as the pens sell.
 
@@ -466,7 +537,7 @@ So each step of `stock` sells one day's pens, records the count before the sale 
 > [!TIP]
 > `s*.sell(n)` reads like a mutating method call in Java or Python, with two differences. The rest of the step still reads the old `s`. And a step can write `s'` only once, so two calls in one step have to be one chain: `a, b = s*.sell(1).sell(2);`.
 
-### Step 12: the mass of what was shipped, with units
+### Step 12: the mass of the shipment
 
 The pens sold go out in one crate. A unit on each number lets the compiler check the arithmetic.
 
@@ -496,7 +567,7 @@ The commented-out line adds grams to kilograms.
 > [!TIP]
 > In other languages a unit usually takes a wrapper type such as `Grams`, with its arithmetic written by hand. A facet leaves the value an `int`, and the compiler follows the unit through each operation, at no cost when the program runs.
 
-### Step 13: the whole calculation, in any order
+### Step 13: the whole calculation
 
 Here are the definitions behind `regionTotals`, written with the result first:
 
@@ -649,7 +720,7 @@ A function is a definition with parameters, and a call can name its arguments, c
 > [!NOTE]
 > **`f(x) = expression;`** defines a function whose body is one expression, and **`f(x) -> T { ... }`** one with a block body and a stated result type. A block gives its last expression, unless `return` ends it first. **`y = default`** in a parameter list gives a parameter that can be left out. **`f(x, ...)`** leaves the remaining named parameters open and gives back a function that takes them. **`(T) -> U`** is the type of a function from `T` to `U`. **`if c { a } else { b }`** is a choice between two values, and **`a ++ b`** joins two strings or lists.
 >
-> The dot call from [Step 4](#step-4-finding-the-failures) works with any function: `5.double` is `double(5)`.
+> The dot call from [Step 4](#step-4-sales-with-no-price) works with any function: `5.double` is `double(5)`.
 
 ```zed
 double(positional x) = x * 2;
@@ -713,7 +784,7 @@ A string's type says how its text is stored, and you say what you index it by, s
 **Syntax:** `"text"`, `"${expression}"`, `a ++ b`, `text::codepoints[i]`
 
 > [!NOTE]
-> **`x::word`** reads a fact about `x` that the compiler knows, such as `x::len` from [Step 10](#step-10-the-change-from-the-day-before-in-a-loop). **`text::codepoints`** and **`text::u8`** view a string by code point or by UTF-8 unit, which is one byte of its encoding. A **`char32`** is one code point, distinct from an integer, and `char32("Z")` constructs one.
+> **`x::word`** reads a fact about `x` that the compiler knows, such as `x::len` from [Step 10](#step-10-the-change-from-the-day-before). **`text::codepoints`** and **`text::u8`** view a string by code point or by UTF-8 unit, which is one byte of its encoding. A **`char32`** is one code point, distinct from an integer, and `char32("Z")` constructs one.
 
 ```zed
 name = "Zed";
@@ -821,7 +892,7 @@ top(s: [])            = #none
 hello(n)              = "Hi, Ann"
 ```
 
-An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause, so a type can fit an interface its author never heard of. An interface can also hold laws, claims about its operations that the compiler proves or tests, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` (an operator that can be regrouped, with an identity value that leaves the other operand unchanged) to `CommRing` (rules for addition and multiplication, including `a * b == b * a`), is ordinary library code.
+An unbound capitalized name that is used at least twice in a signature, or in the signature and the body, is a type variable. Written only once, it is treated as a typo and rejected. Interfaces are structural: any value on which `name` resolves to a `Utf8String` fits `Named`, with no `implements` clause, so a type can fit an interface its author never heard of. An interface can also hold laws, claims about its operations that the compiler proves or tests, so the algebra behind `><` (the parallel reduction covered below), from `Monoid` (an associative operator with an identity value, one that leaves the other operand unchanged, as 0 does for `+`) to `CommRing` (rules for addition and multiplication, including `a * b == b * a`), is ordinary library code.
 
 ### Modules
 
@@ -873,7 +944,7 @@ conf = defaultConfig, port = 8080
 
 There are no exceptions and no null, because in most languages both are ways to fail that a function's type doesn't mention. In Zed the type lists every failure a call can give, and the compiler follows each one to where it is handled. An atom of a named union, such as `Light`, is data and not a failure, so `else` keeps it unless you name it: `x else #red -> #green`.
 
-A `Config | #syntaxError` is not a `Config`. A lookup's failure passes through arithmetic and calls, so if `m[k]` looks up a key that a map `m` may lack, `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction, which merges many values into one (covered below), is stricter: it is rejected if its operator might be applied to a failure it does not handle, since failures at many keys can't become one result unless you say how.
+A `Config | #syntaxError` is not a `Config`. A lookup's failure passes through arithmetic and calls, so if `m[k]` looks up a key that a map `m` may lack, `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction, which merges many values into one, is stricter: it is rejected if its operator might be applied to a failure, for the reasons [Step 6](#step-6-adding-values-that-may-be-failures) shows on the sales data.
 
 The compiler also adds a failure only where it can't rule it out. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
 
@@ -1145,7 +1216,18 @@ On small sample tables:
 <tr><td><code>West</code></td><td><code>2</code></td></tr>
 </table>
 
-In `transposed`, a value at row `r` and column `c` moves to row `c` and column `r`. A remap is another way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the `ranking` line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. If you ask it to, as in the rejected `totals` line, you get an error that lists the ways out, and the last `totals` line is one of them. A shortened version of the error:
+In `transposed`, a value at row `r` and column `c` moves to row `c` and column `r`. A remap is another way of writing what `group`, `rekey` and `sort` do, and both forms compile to the same thing. In the `ranking` line, putting `desc s` in key position sorts by score, and keeping `name` as a level below it means that two people with the same score can't collide. A remap can move keys around, add levels or drop whole entries, but it can't overwrite a value. The rejected `totals` line asks it to. Here is `sales` with the `sku` level removed, as that line would leave it:
+
+**`sales` with the `sku` level removed**
+
+<table>
+<tr><th><code>region</code></th><th><code>amount</code></th><th><code>sku</code> it came from</th></tr>
+<tr><td rowspan="2"><code>East</code></td><td>✗ <code>5</code></td><td><code>A1</code></td></tr>
+<tr><td>✗ <code>3</code></td><td><code>B2</code></td></tr>
+<tr><td><code>West</code></td><td><code>2</code></td><td><code>A1</code></td></tr>
+</table>
+
+The key `East` leads to two values, so the result is not a map. The error lists the ways out, and the last `totals` line is one of them. A shortened version of the error:
 
 ```text
 error: this remap would map one key to many values
@@ -1227,14 +1309,26 @@ A set is a map from each item to itself, so each region's years form a set, and 
 <tr><td><code>West</code></td><td><code>2025</code></td><td><code>yes</code></td></tr>
 </table>
 
-The constraint on every remap is this: no two values may end up at the same keypath through the map. The rejected `bad` line breaks it, because `(A1, 2025)` would have to hold both 4 and 2. The compiler judges this from the pattern and not from the data, so it rejects a dropped level even for an input that happens to have one entry under each key. What that leaves is:
+The constraint on every remap is this: no two values may end up at the same keypath through the map. The rejected `bad` line breaks it:
+
+**`bad`, the levels moved and `region` removed**
+
+<table>
+<tr><th><code>sku</code></th><th><code>year</code></th><th><code>amount</code></th><th><code>region</code> it came from</th></tr>
+<tr><td rowspan="3"><code>A1</code></td><td><code>2024</code></td><td><code>5</code></td><td><code>East</code></td></tr>
+<tr><td rowspan="2"><code>2025</code></td><td>✗ <code>4</code></td><td><code>East</code></td></tr>
+<tr><td>✗ <code>2</code></td><td><code>West</code></td></tr>
+<tr><td><code>B2</code></td><td><code>2024</code></td><td><code>3</code></td><td><code>East</code></td></tr>
+</table>
+
+The keypath `(A1, 2025)` leads to both 4 and 2. The other two keypaths lead to one value each, but the compiler judges from the pattern and not from the data, so it would reject the line even for an input with only those rows. What that leaves is:
 
 - **Moving levels**, or packing them into a tuple key, as in `into ((sku, year) -> region -> amount)`. Each value keeps a keypath of its own.
 - **Changing a key** in a way the compiler can see is one-to-one, as `k + 1` is, or **adding a level above a key**, as `desc s` does above, since the old key is still there below it.
 - **Dropping a level along with everything under it**, as `years` does. Nothing merges, because no value survives. This is the only way to drop a level without saying how to merge.
 - **Collapsing a level with `><`**, as `perYear` does, which is the one way to merge values.
 
-The rule exists because the alternatives are bad. A dictionary built in a loop quietly keeps the last value written to a key, and a database raises a duplicate-key error while the program runs. Here it's a compile error, and any merge is visible in the text. It also helps performance: since each value has a place of its own, threads can write results without locks, and merge code is needed only where a merge is written. And a rejected remap tells you something about your data: the key you tried to drop is what told those values apart.
+A dictionary built in a loop keeps the last value written to a key without a word, and a database raises a duplicate-key error while the program runs; [Step 5](#step-5-daily-totals) compares the three on the sales data. In Zed the collision is a compile error, and any merge is visible in the text. It also helps performance: since each value has a place of its own, threads can write results without locks, and merge code is needed only where a merge is written. And a rejected remap tells you something about your data: the key you tried to drop is what told those values apart.
 
 ### Reducing
 
@@ -1243,7 +1337,7 @@ A reduction merges the values of one level into one value, using an operator you
 **Syntax:** `m >< op`, `m >< op else fallback`, `(pattern >< op -> value)`, `m.foldl(init, op)`
 
 > [!NOTE]
-> **`m >< op else d`** gives `d` as the answer for an empty collection; without it, the result type includes **`#empty`**, a reduction with nothing to reduce. **`min`** and **`max`** work as operators for `><`. **`.sum`** reduces the innermost level to its sum. **`m.foldl(init, op)`** and **`m.foldr(init, op)`** fold from the left or the right, for an operator that can't be regrouped. **`@associative`** and **`@commutative`** claim that an operator can be regrouped or reordered. **`unordered`** after `m >< op` gives up the floating-point result that is the same at any core count, in exchange for speed.
+> **`m >< op else d`** gives `d` as the answer for an empty collection; without it, the result type includes **`#empty`**, a reduction with nothing to reduce. **`min`** and **`max`** work as operators for `><`. **`.sum`** reduces the innermost level to its sum. **`m.foldl(init, op)`** and **`m.foldr(init, op)`** fold from the left or the right, for an operator that is not associative. **`@associative`** and **`@commutative`** claim that an operator has that property. **`unordered`** after `m >< op` gives up the floating-point result that is the same at any core count, in exchange for speed.
 
 ```zed
 total = readings >< (+);
@@ -1325,7 +1419,7 @@ On small sample data:
 
 The `pivot` line builds a table of sales by region and product. `i >< (+)` collapses the level `i`, adding the amounts that land on the same region and product.
 
-Merging is always written out, with `><` or a named form such as `.sum`, `.count` or `foldl`. `><` runs in parallel, so except on floating-point values, which have their own rule below, it needs an operator that is safe to regroup: `+` and `max` are known to be, and for your own operators you state the law, as `@associative` (the grouping doesn't matter) and `@commutative` (the order doesn't matter) do below. The algebra decides how the reduction may run, so the same line can be a plain loop on one core or a tree across all of them.
+Merging is always written out, with `><` or a named form such as `.sum`, `.count` or `foldl`. `><` runs in parallel, so except on floating-point values, which have their own rule below, the operator must be associative, and commutative too if the level has no order of its own; [Step 7](#step-7-totals-per-region) shows both properties on numbers. `+` and `max` have both. For your own operators you state them with `@associative` and `@commutative`, as below. These properties decide how the reduction may run: the same line can be a plain loop on one core or a tree across all of them.
 
 ```zed
 struct Moments { n: int, sum: rat }
@@ -1710,7 +1804,15 @@ With `xs` = 2, -3, 4, -1, 2, `best` is 5. For the text `a"b"`, if `csvStep` swit
 <tr><td><code>3</code></td><td><code>"</code></td><td><code>#outsideQuotes</code></td></tr>
 </table>
 
-The first recurrence is maximum subarray, the largest sum of neighboring entries. The compiler recognizes that its step composes in any grouping, so it runs as a parallel scan, which computes all the running results across many cores. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can tabulate the transitions, and tables compose in any grouping, so a job usually done one character at a time splits across cores.
+The first recurrence is maximum subarray, the largest sum of neighboring entries. Its step has the form `max(x, c + x)`, and composing two such steps gives a step of the same form, so composition is associative and the compiler runs the recurrence as a parallel scan, which computes all the running results across many cores. The second walks a CSV file with a small state machine. Because the states are finite, the compiler can write each character's effect as a table from state to state. Composing tables is associative, so each core composes the tables for its part of the text, and the parts combine afterward:
+
+<table>
+<tr><th>start state</th><th>after <code>a"</code></th><th>after <code>b"</code></th><th>after <code>a"b"</code></th></tr>
+<tr><td><code>#outsideQuotes</code></td><td><code>#insideQuotes</code></td><td><code>#insideQuotes</code></td><td><code>#outsideQuotes</code></td></tr>
+<tr><td><code>#insideQuotes</code></td><td><code>#outsideQuotes</code></td><td><code>#outsideQuotes</code></td><td><code>#insideQuotes</code></td></tr>
+</table>
+
+One core computes the table for `a"` and another the table for `b"` without knowing the state at the start of its part. Reading the first table and then the second gives the table for the whole text, `#outsideQuotes` to `#outsideQuotes`, which agrees with the last row of `state`.
 
 ### Loops
 
@@ -1782,7 +1884,7 @@ The versions share structure, so keeping them all doesn't copy the document each
 
 A method is a function on a struct, and it can define the struct's next version with the same `'` that a loop uses.
 
-**Syntax:** `Type.method() { field' = ...; }`, `x.method()`, `x*.method()`. [Step 11](#step-11-a-shelf-of-pens-with-a-method) of the worked example introduces all three.
+**Syntax:** `Type.method() { field' = ...; }`, `x.method()`, `x*.method()`. [Step 11](#step-11-pens-left-on-the-shelf) of the worked example introduces all three.
 
 ```zed
 struct Counter { n: int, peak: int }
