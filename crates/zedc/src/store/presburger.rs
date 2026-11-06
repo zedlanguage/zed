@@ -14,7 +14,8 @@
 //! system that holds each set of coefficients once and knows each variable's rows and bound
 //! counts, so that a step touches only the rows of the variable it removes. Arithmetic is
 //! exact, over unbounded integers. Equalities are solved, with Pugh's symmetric remainder
-//! where no coefficient is a unit; two opposite rows that meet become an equality; a variable
+//! where no coefficient is a unit; two opposite rows that meet become an equality, and so,
+//! once, do the rows of a cycle of differences (`Omega::cycles`); a variable
 //! bounded on one side only is dropped with its rows. Otherwise the variable whose elimination
 //! adds the fewest rows, of those the one that writes the fewest terms, is eliminated, exact
 //! eliminations first, and only while the system holds no more terms than it was given: each
@@ -4888,6 +4889,9 @@ struct Omega {
     /// its steps can undo their reduction. They share no variable, as the batch they came
     /// from shares none and a step brings in only its own variables and a fresh one.
     working: Vec<usize>,
+    /// Whether the cycles of the rows have been searched for the equalities they imply
+    /// ([`Omega::cycles`]).
+    cycled: bool,
 }
 
 impl Omega {
@@ -4915,6 +4919,7 @@ impl Omega {
             fill_ok: false,
             loose_tie: None,
             working: Vec::new(),
+            cycled: false,
         }
     }
 
@@ -4968,6 +4973,14 @@ impl Omega {
                     self.es.push(r, &mut self.sys);
                 }
                 continue;
+            }
+            // Before the first step that is not an equality, the equalities that cycles of the
+            // rows imply are solved like those of the input.
+            if !self.cycled {
+                self.cycled = true;
+                if self.cycles() {
+                    continue;
+                }
             }
             if self.sys.rows.is_empty() {
                 break;
@@ -5463,6 +5476,75 @@ impl Omega {
             }
         }
         true
+    }
+
+    /// Turns into equalities the rows that a cycle of rows forces to hold with `==`, and says
+    /// whether it found any, or found the rows empty. A row `x - y + k >= 0` with `k <= 0`
+    /// says `x >= y + w` with `w = -k >= 0`: an edge `y → x` of weight `w` in a graph over
+    /// the variables and a node for zero, which the rows `x + k >= 0` (`x >= w`, an edge from
+    /// zero) and `-x + k >= 0` (`0 >= x + w`, an edge to zero) join. Every edge within a
+    /// strongly connected component lies on a cycle, along which the variables only rise,
+    /// each by at least its edge's weight, and come back to where they began; so an edge
+    /// of weight above zero there leaves no point, and every other holds with `==`. The
+    /// variables of a cycle of rows `x - y >= 0` are thus all equal, and so are two rows
+    /// `x - y >= 0` and `y - x >= 0`. The edges are chosen by the rows alone, so no name plays
+    /// a part. O(m log m + n) for m rows over n variables, by Tarjan's algorithm
+    /// ([`utvpi::components`]).
+    ///
+    /// Complexity tradeoff: two kinds of implied equality are not found here. A cycle whose
+    /// weights have both signs and sum to zero (`x - y + 1 >= 0`, `y - z - 1 >= 0`,
+    /// `z - x >= 0`) needs a potential of the whole graph, a shortest-path search with
+    /// negative weights; and a cycle that only forms after the definitions this search starts,
+    /// or after an elimination, would need the search again after every step, O(m) each, so
+    /// O(m·n) over a run. The search runs once, before the first step that is not an
+    /// equality. A system that has only such cycles goes on to the stages below as before, and
+    /// may be refused with `Refusal::Growth` though its cycles decide it. Trigger: a zero-sum
+    /// cycle of difference rows with a weight below zero on it, or one closed by a step; the
+    /// size of the system plays no part. Tests:
+    /// `l01_38_presburger::omega::a_cycle_of_rows_makes_its_variables_equal` and
+    /// `l01_38_presburger::scaling::a_cycle_of_rows_scales`. COMPLEXITY.md row
+    /// OMEGA-cycle-growth. A complete solution would find a potential with
+    /// [`utvpi::integer_empty`]'s search, take the zero-weight cycles among its tight edges,
+    /// and keep the components up to date as steps add rows (incremental strongly connected
+    /// components).
+    fn cycles(&mut self) -> bool {
+        // The node of `x[j]` is `j + 1`, and zero is node 0.
+        let mut out: Vec<Vec<usize>> = vec![Vec::new(); self.sys.vars.len() + 1];
+        let mut edges: Vec<(usize, usize, &Coefs, bool)> = Vec::new();
+        for (a, held) in &self.sys.rows {
+            if held.k.is_positive() || a.iter().any(|(_, c)| !c.is_unit()) {
+                continue;
+            }
+            let node = |(i, _): &Term| i + 1;
+            let (from, to) = match &a[..] {
+                [t] if t.1.is_positive() => (0, node(t)),
+                [t] => (node(t), 0),
+                [s, t] if s.1 == -&t.1 && s.1.is_positive() => (node(t), node(s)),
+                [s, t] if s.1 == -&t.1 => (node(s), node(t)),
+                _ => continue,
+            };
+            out[from].push(to);
+            edges.push((from, to, a, held.k.is_zero()));
+        }
+        let comp = utvpi::components(&out, |v| *v);
+        let mut tight: Vec<Coefs> = Vec::new();
+        for (from, to, a, zero) in edges {
+            if comp[from] != comp[to] {
+                continue;
+            }
+            if !zero {
+                self.sys.empty = true;
+                return true;
+            }
+            tight.push(a.clone());
+        }
+        let found = !tight.is_empty();
+        for a in tight {
+            let id = self.sys.rows[&a].id;
+            let r = self.sys.remove(id);
+            self.es.push(r, &mut self.sys);
+        }
+        found
     }
 
     /// Keeps the equalities in `slots`, which tie as `t` says, as pairs of opposite rows. Each

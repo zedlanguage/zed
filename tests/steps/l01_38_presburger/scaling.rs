@@ -119,6 +119,31 @@ fn a_rising_chain_scales() {
 // `Omega::run`: `if true {` for `if !self.tested {`, so that `relaxed_empty` runs before each
 // dark elimination.
 
+/// The cycle `x[0] >= x[1] >= ... >= x[k-1] >= x[0]`, each in `[-1, 1]`, with the sum in
+/// `[1, k - 1]`: the cycle makes the variables equal, so the sum is `-k`, 0 or `k` and there
+/// is no integer point; every elimination would add terms to the rows of the sum.
+fn cycle(k: usize) -> Formula {
+    let one = Lin::constant(1);
+    let mut cons = Vec::new();
+    let mut sum = Lin::constant(0);
+    for i in 0..k {
+        cons.push(Formula::Con(Con::ge(&x(i), &x((i + 1) % k))));
+        cons.push(Formula::Con(Con::ge(&x(i).plus(&one), &Lin::constant(0))));
+        cons.push(Formula::Con(Con::ge(&one, &x(i))));
+        sum = sum.plus(&x(i));
+    }
+    cons.push(Formula::Con(Con::ge(&sum, &one)));
+    cons.push(Formula::Con(Con::ge(&Lin::constant(k as i128 - 1), &sum)));
+    Formula::and(cons)
+}
+
+/// OMEGA-cycle-growth: the cycle's equalities are found as strongly connected components, in
+/// O(m log m), before any elimination.
+#[test]
+fn a_cycle_of_rows_scales() {
+    scales("a cycle of rows", 512, false, cycle);
+}
+
 #[test]
 fn a_long_chain_with_a_point_scales() {
     scales("the long chain with a point", 4096, true, |v| chain(v, 3));

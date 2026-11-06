@@ -1674,3 +1674,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Cow<'static, str>`, a primitive's fixed text borrowed, or `#err(..)` built when the message has the atom's name | `Prim::written_with` | None | Zed shares strings, so it returns a plain `String` |
 | `while let … && …` (a let chain) gathering an index chain `t[0][1]…` into one list | `print::doc` | None | a loop with `match` and `is` |
 | An exhaustive `match` giving each `Prim` variant a fixed number | `Prim::code` | None | a `match` on the atom of each primitive |
+
+## Entries from OMEGA-cycle-growth (`zedc/src/store/presburger.rs`)
+
+- No new gap. `Omega::cycles` reads a row of one or two unit terms with a `match` on slice patterns with guards (`[t] if t.1.is_positive()`, `[s, t] if s.1 == -&t.1`), a row of the appendix (slice patterns) with the rewrite already listed: test the length, then index.

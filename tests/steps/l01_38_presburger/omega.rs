@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use zed_tests::{instances::Rng, scaling};
+use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
     Atom, Con, Entailment, Formula, Lin, Refusal, Relation, decide, entails, project, satisfiable,
@@ -222,6 +223,69 @@ fn a_rational_point_with_no_integer_value_of_a_variable_is_empty() {
         ge(&[("a", 1), ("b", -1)], -1),
         ge(&[("b", 1), ("c", -1)], -1),
         ge(&[("c", 1), ("a", -1)], 1),
+    ]);
+    assert_eq!(satisfiable(&f), Ok(None));
+}
+
+/// A ring of `k` partners, each paying at least what the next pays and the last at least what
+/// the first pays, each payment in `[-half, half]`, and the total in `[lo, hi]`. The ring makes
+/// every payment equal, so the total is `k` times one payment; each elimination of a payment
+/// would add terms to the total's rows.
+fn ring(k: usize, half: i128, lo: i128, hi: i128) -> Formula {
+    let names: Vec<String> = (0..k).map(|i| format!("p{i}")).collect();
+    let mut fs = Vec::new();
+    for i in 0..k {
+        let (p, q) = (names[i].as_str(), names[(i + 1) % k].as_str());
+        fs.push(ge(&[(p, 1), (q, -1)], 0));
+        fs.push(ge(&[(p, 1)], half));
+        fs.push(ge(&[(p, -1)], half));
+    }
+    let total: Vec<(&str, i128)> = names.iter().map(|s| (s.as_str(), 1)).collect();
+    let less: Vec<(&str, i128)> = names.iter().map(|s| (s.as_str(), -1)).collect();
+    fs.push(ge(&total, -lo));
+    fs.push(ge(&less, hi));
+    Formula::and(fs)
+}
+
+#[test]
+fn a_cycle_of_rows_makes_its_variables_equal() {
+    // Four partners, each in [-1, 1], with a total in [1, 3]: the total is -4, 0 or 4, so
+    // there is no integer point, though there are rational ones (OMEGA-cycle-growth; this was
+    // refused `Growth`).
+    assert_eq!(satisfiable(&ring(4, 1, 1, 3)), Ok(None));
+    assert_eq!(decide(&ring(4, 1, 1, 3)), Ok(false));
+    // Seven partners in [-3, 3] with a total in [8, 13] have none either; with [8, 14] each pays 2.
+    assert_eq!(satisfiable(&ring(7, 3, 8, 13)), Ok(None));
+    let f = ring(7, 3, 8, 14);
+    let m = satisfiable(&f).unwrap().expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+    for i in 0..7 {
+        assert_eq!(m[&sym(&format!("p{i}"))], Int::from(2i64), "{m:?}");
+    }
+    // Two opposite rows are a cycle of two: `a >= b` and `b >= a`, with `a + b` odd.
+    let f = Formula::and(vec![
+        ge(&[("a", 1), ("b", -1)], 0),
+        ge(&[("b", 1), ("a", -1)], 0),
+        ge(&[("a", 1), ("b", 1), ("c", 2)], -1),
+        ge(&[("a", -1), ("b", -1), ("c", -2)], 1),
+    ]);
+    assert_eq!(satisfiable(&f), Ok(None));
+    // A cycle through zero: `x >= y >= 0 >= x`, so both are zero and `x + y + 2z == 1` is odd.
+    let f = Formula::and(vec![
+        ge(&[("x", 1), ("y", -1)], 0),
+        ge(&[("y", 1)], 0),
+        ge(&[("x", -1)], 0),
+        ge(&[("x", 1), ("y", 1), ("z", 2)], -1),
+        ge(&[("x", -1), ("y", -1), ("z", -2)], 1),
+    ]);
+    assert_eq!(satisfiable(&f), Ok(None));
+    // A cycle with a step of one on it, `a >= b + 1 >= c + 1 >= a + 1`, has no point at all.
+    let f = Formula::and(vec![
+        ge(&[("a", 1), ("b", -1)], -1),
+        ge(&[("b", 1), ("c", -1)], 0),
+        ge(&[("c", 1), ("a", -1)], 0),
+        ge(&[("a", 1), ("b", 1), ("c", 1)], 0),
+        ge(&[("a", -1), ("b", -1), ("c", -1)], 9),
     ]);
     assert_eq!(satisfiable(&f), Ok(None));
 }

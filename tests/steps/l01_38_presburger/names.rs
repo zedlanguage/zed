@@ -307,11 +307,9 @@ fn the_orbit_of_a_row_under_a_rotation_or_a_reflection_is_closed() {
     assert_eq!(keys(&with_sum(1, 4)), ["Ok(true)"]);
     assert_eq!(keys(&with_sum(5, 8)), ["Ok(false)"]);
     // Between the multiples there is no integer point but there are rational ones; the
-    // solver refuses it (`Growth`, 2026-11-05) rather than answer, under every naming alike.
-    // Open: OMEGA-cycle-growth finds the equalities first and makes this `Ok(false)`.
-    let seen = with_sum(1, 3);
-    assert_eq!(seen.len(), 1, "{seen:?}");
-    assert!(!seen.contains_key("Ok(true)"), "{seen:?}");
+    // equalities the cycle implies are solved before any elimination, so the sum is `4·x0`,
+    // which no value of `x0` puts in `[1, 3]` (OMEGA-cycle-growth; refused `Growth` before).
+    assert_eq!(keys(&with_sum(1, 3)), ["Ok(false)"]);
 }
 
 #[test]

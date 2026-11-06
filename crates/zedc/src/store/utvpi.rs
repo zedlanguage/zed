@@ -510,7 +510,7 @@ impl<'a> GoldbergRadzik<'a> {
 }
 
 /// The strongly connected component of each node (Tarjan), with an explicit stack.
-fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
+pub(super) fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
     const NONE: usize = usize::MAX;
     let n = out.len();
     let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
