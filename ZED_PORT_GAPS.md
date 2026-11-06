@@ -27,7 +27,7 @@ the form it has may not meet the cost the compiler needs:
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
-| 10 | File import cycles | every cycle in the current import graph | Rust must change (S.1f) | S.2 | Move definitions in five, merge files in three; no Zed change |
+| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f); `zed-kernel`, `zed-native` open | S.2 | Move shared definitions to a file below both sides; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
 (mutation, which depends on step L6.13 keeping updates in place, with the report of copies of
@@ -56,7 +56,7 @@ S.1 regenerates it with the tool `catalog`.
 
 ## Method
 
-A scanner written for this audit (not committed; this item adds one file) blanked comments
+A scanner written for this audit (not committed) blanked comments
 and string contents, removed `#[cfg(test)]` and `#[test]` items, and counted about 165 regular
 expressions on the rest of `crates/*/src`, recording file, line and enclosing function. Then
 each low-count construct was read at every site and each large one sampled.
@@ -71,10 +71,10 @@ each low-count construct was read at every site and each large one sampled.
 - Same-scope rebinding counts plain `let name` only, not names inside tuples.
 - `let_mut` is 871: 826 matches of `let mut`, plus 45 `let` tuple patterns holding a `mut`, each
   counted once however many `mut` names it holds.
-- Gap 10 comes from a second scanner (also not committed), which resolves each `use` and
-  each qualified path to the file defining the item, following `pub use`. It finds 8 strongly
-  connected components among 76 files. Since neither scanner is in the repository, the counts
-  cannot be reproduced from it; committing them is the author's call.
+- Gap 10 first came from a second scanner (not committed), which found 8 strongly connected
+  components among 76 files of `zedc` and `zed-kernel`. Step S.1f replaced it with the
+  checked-in tool `imports` (`crates/zed-tools/src/imports.rs`), whose counts gap 10 gives. The
+  first scanner is still not in the repository, so the other counts cannot be reproduced from it.
 - `crates/zed-cert` has no code (a 5-line stub). `tests/` is not ported and was not audited.
 
 The classes: **missing**, Zed₀ has no form and DESIGN.md needs one. **Workaround**, a form exists
@@ -358,31 +358,57 @@ compiler recognizes it, which no step states.
 Fix: L5 words `m.upTo(k)` and `m.from(k)`, each an ordered restriction in O(log n), so that
 `.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab.rs:1533`; `IntervalSet::cap`,
 `interval.rs:266`; Dijkstra's search in `difference_hulls`, `presburger.rs`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
+`.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab/topo.rs:10`; `IntervalSet::cap`,
+`interval.rs:266`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
 with `.first` and a `patch`.
 
 ### Gap 10. File import cycles (Rust must change)
 
 Zed forbids a cycle between files, while recursive types and definitions stay unrestricted within
-a unit (line 733). The repairs are to move what both sides use into a unit both import, or to
-merge the units (line 1244). The import graph, with re-exports resolved to the defining file, has
-The table lists every strongly connected component in the current import graph: cycles between modules and parent/child groups. Each edge
-below was read at its citation. Paths are relative to `crates/`, with `src/` dropped.
+a unit (DESIGN.md line 797). The repairs are to move what both sides use into a unit both import,
+or to merge the units (line 1329). The tool `imports` (`crates/zed-tools/src/imports.rs`, step
+S.1f) computes the import graph of a crate's sources: each `use` and each qualified path is
+resolved to the file defining the item, `pub use` is followed to the defining file, and a
+parent's re-export of a child is an edge from parent to child. It names every strongly connected
+component, with a shortest cycle and every import within it. Paths below are relative to
+`crates/`, with `src/` dropped.
 
-| Component | Edges | Fix in Rust |
+**`zedc` has no cycle since S.1f** (`imports crates/zedc/src`: 87 files, 291 imports, exit 0;
+test `s01f_import_graph::the_compiler_has_no_import_cycle`). The tool found nine components
+when S.1f began, against the six `zedc` components of the first, uncommitted scanner. Each was broken by moving
+the shared items to a file below both sides; no file was merged and no re-export hides an edge:
+
+| Component before S.1f | Fix in S.1f |
+|---|---|
+| `lex`, `lex/comment`, `lex/number`, `lex/string` | `Span`, `Tok`, `Part`, `Token`, `ErrorKind`, `Error` moved to `lex/token.rs`. The mutual recursion of `lex_from` and `string` was already gone: `string` returns at a hole (`string::Stop`) and `lex_from` goes on |
+| `ast`, `ast/neglit`, `ast/stmts`, `ast/types` | The data types, which are one recursive type (`Expr`, `ExprKind`, `Stmt`, `Type`, `Param`, `Pattern` and the rest), moved to `ast/node.rs`; `ast/mod.rs` re-exports them, so that edge goes down. `stmts.rs`, `types.rs`, `neglit.rs` and `body.rs` hold only `impl Builder` blocks, and `Bare` moved from `neglit.rs` to `ast/mod.rs` |
+| `canon`, `canon/serial` | `Def` and `Facet` moved to `canon/def.rs` |
+| `check`, `check/ty`, `check/walk`, `check/widen`, `elab`, `stage` | `class_id` and `var_name` moved to `check/ty.rs`; `Args` (its fields) and `Saved` to `check/mod.rs`, `impl Args` staying in `walk.rs`. `elab.rs` split: `Def`, `Test`, `Unit` to `elab/defs.rs`; `Tables`, `Uses`, the `collect_*` functions and `in_tests` to `elab/tables.rs`; `topo`, `topo_joined`, `cycles` to `elab/topo.rs`; `kernel_type` and its helpers to `elab/kernel_type.rs`. `impl Unit { close, get }` stays in `elab.rs` |
+| `mutate`, `testing` | Running one table row or wave (`row`, `wave`, `Swap`) moved to `rows.rs`, which both import |
+| `query`, `run`, `unit` | `Front`, `Parsed`, `Diagnostic`, `Step`, `compile`, `write_warnings`, `linear_questions`, `placed`, `step`, `error` and `parse_unit` moved to `front.rs`; `zedc::run::{Diagnostic, Step, linear_questions}` are now `zedc::front::...` |
+| `store/interval`, `store/lattice` | `Landmarks` and `Mark` moved to `store/landmarks.rs` |
+| `store/presburger`, `presburger/deep`, `presburger/deep/canon` | The formulas (`Atom`, `Lin`, `Con`, `Formula`, `Rel`, `Model`) and `Id` moved to `store/presburger/formula.rs` |
+| `zir`, `zir/text` | The validator moved from `zir/mod.rs` to `zir/validate.rs`, which imports `zir/text.rs` |
+
+Method calls are not imports, so a type whose `impl` blocks are split across files still
+recurses across them through its methods: `ast::Builder` (`ast/mod.rs`, `stmts.rs`, `types.rs`,
+`body.rs`) and `check::Ck` (`check/mod.rs`, `walk.rs`, `widen.rs`). A Zed unit cannot split a
+definition's methods across units, so the port merges each such group into one unit or turns
+the calls into functions over a shared type; the step S.2 port decides which.
+
+**Other crates.** DESIGN.md step S.1f states its test for `crates/`; S.1f made `zedc` acyclic.
+The tool finds these components in the rest (`zed-rt`, `zed-cert`, `zed-tools` and
+`zed-alloc-count` have none):
+
+| Component | Edges | Proposed fix (inferred from the edges, not built) |
 |---|---|---|
-| `zed-kernel`: `error`, `family`, `value` | `error.rs:9` `Keypath`, `:44` `Value`; `family.rs:14` `KernelError`, `:15` `Value`; `value.rs:17` `Family` | Merge. `Value` and `Family` (`family.rs:24`) are one recursive type, so they share a unit. `Keypath` (`family.rs:18`) is `Vec<Value>`, `KernelError` holds `Value`, and `Family`'s fallible methods (`union`, `family.rs:206`) return `KernelError`, so moving `Keypath` alone leaves a cycle; all three go in one file |
-| `zedc`: `store/interval`, `store/lattice` | `interval.rs:14` `Landmarks`; `lattice.rs:13` `End`, `IntervalSet` | Move `Landmarks` (`lattice.rs:21`) to its own file: it holds only `i64` and `Value`, and its methods use neither `End` nor `IntervalSet` |
-| `zedc`: `check`, `elab`, `stage` | `check/mod.rs:44` `Tables`; `elab.rs:31` `check`, `Fit`, `Info`, `:119`, `:124` `stage::free`; `stage.rs:26` `Unit`, `:336` `Def` | Move `Def`, `Test`, `Unit`, `Tables` (`elab.rs:37`, `:51`, `:66`, `:181`) and what `Tables` calls (`topo`, `in_tests`) to a file below all three. None holds a `check` type. `Unit::close` (`elab.rs:76`) stays above `stage` as a function, since it needs `Cones` |
-| `zed-kernel`: `types`, `types/bdd` | `types.rs:36` `Form`, `Part`, `:1297` `bdd::Literal`; `types/bdd.rs:39` `Morphism`, `Op`, `Row`, `mix` | Move `Op` and `mix` to a leaf file, and the `Literal` impls of `Row` and `Morphism` with the tables `TUPLES` and `MORPHISMS` (`bdd.rs:65`–`:78`) into `types`. `Bdd<A>` and `Part<A>` are generic in `A`, so no recursive type crosses the two files |
-| `zedc`: `canon`, `canon/serial` | `canon/mod.rs:206` `serial::def`; `canon/serial.rs:13` `Def` | Move `Def` and `Facet` (`canon/mod.rs:58`, `:46`) to a leaf file |
-| `zedc`: `zir`, `zir/text` | `zir/mod.rs:342`, `:414` and 11 more, `text::spell`, `text::edge`, `text::pattern`; `zir/text.rs:36` the node types, `any_domain`, `kind_name`, `:189` `op_name` | Move the node types and the three naming functions to a leaf file that `validate` (`zir/mod.rs:386`) and `zir/text.rs` both import |
-| `zedc`: `lex`, `lex/comment`, `lex/number`, `lex/string` | `lex/mod.rs:17` `Holes`, `:165`, `:194` `comment::comment`, `:204` `number::number`, `:208` `string::string`; `comment.rs:2`, `number.rs:21`, `string.rs:24` `Error`, `ErrorKind`, `Span` and others; `string.rs:24` `lex_from`, `comment` | Move `Span`, `Tok`, `Part`, `Token`, `ErrorKind`, `Error` (`lex/mod.rs:21`–`:107`) to a leaf file, which frees `comment` and `number`. Merge `lex_from` and `string`: `lex_from` (`lex/mod.rs:181`) calls `string::string`, which calls `lex_from` for a hole (`string.rs:99`), and mutual recursion stays within a unit |
-| `zedc`: `ast`, `ast/stmts`, `ast/types` | `ast/mod.rs:21`, `:22` the re-exports; `ast/stmts.rs:6` `Builder`, `Expr`, `Param`, `Type` and others; `ast/types.rs:6` `Builder`, `Error`, `Expr` | Merge all three. `ExprKind` holds `Param`, `Type`, `Pattern` and `Stmt` (`ast/mod.rs:80`, `:92`, `:101`, `:107`), while `Param` (`ast/types.rs:65`) and `StmtKind` (`ast/stmts.rs:26`) hold `Expr`, so these are recursive types. `Builder::node` (`ast/mod.rs:347`) and `Builder::block` (`ast/stmts.rs:91`) are mutually recursive too |
-| `zedc`: `run`, `unit`, `query` (from L2.3) | `run.rs:843` `unit::package_report` in `command_inner`; `unit.rs:27` `run::placed`, `Diagnostic`, `:25` `query::Db`; `query.rs:36` `run::compile`, `Diagnostic` | Move `Diagnostic`, `Step`, `placed` and `step` (`run.rs:93`–`:160`, `:278`–`:316`) to a leaf file, and `command` and `command_inner` to a file above `unit`, which then reads `run` only through `query` |
+| `zed-kernel`: `deep`, `error`, `family`, `text`, `value` | `deep.rs:18` `Family`, `:19` `Atom`; `error.rs:9` `Keypath`, `:40` `Value`; `family.rs:20` `Part`, `:21` `KernelError`, `:22` `Value`; `text.rs:28` `KernelError`; `value.rs:21` `Part`, `:22` `Family`, `:24` `Text` | Merge `value`, `family` and `deep`: `Value`, `Family` and `Part` are one recursive type. `Keypath` is `Vec<Value>` and `KernelError` holds `Value`, so `error` joins them, or `KernelError` stops holding a `Value` |
+| `zed-kernel`: `types`, `types/bdd`, `bdd/list`, `types/debug`, `types/empty`, `types/print`, `types/rec` | `types.rs:44` `bdd::Form`, `:28` `empty::Refusal`, `:32` `print::Surface`, `:232` `rec::Key`; `bdd.rs:39` `AtomPart`, `:2309` `list::List`, `:67` `debug::Queue`; `debug.rs:14` `Morphism`, `:13` `Bdd`; `list.rs:25` `Bdd`; `empty.rs:78` `Lits`, `:77` `bdd::Part`, `:3065` `rec::Def`; `print.rs:25` `Lits`, `:24` `Bdd`; `rec.rs:29` `Piece`, `Verdict` | Move the shared data (`AtomPart`, `Lits`, `Piece`, `Form`, `Part`, `Refusal`, `Verdict`, `Key`) to a leaf file under `types`, so the algorithms in `bdd`, `debug`, `empty`, `print` and `rec` import it and `types.rs` imports them |
+| `zed-kernel`: `num`, `num/bound` | `num.rs:31` `bound::Format`; `bound.rs:16` `LiteralRounding` | Move `LiteralRounding` to `num/bound.rs` or `Format` to `num.rs` |
+| `zed-native`: `codegen`, `exe`, `hooks`, `lib` | `codegen.rs:31` `hooks::HOOKS`; `exe.rs:58`, `hooks.rs:845` `crate::legalize`; `lib.rs:159` `codegen::define`, `:222` `exe::data`, `:37` `hooks::Counted` | Move `legalize` from `lib.rs` to its own file, which `codegen`, `exe` and `hooks` import |
 
-A ninth component in the scanner's first run, `lib` with `term`, came from `use super::*` inside
-the inline module `term::build` (`term.rs:317`), and is not a cycle. Zed units are files, so all of
-this is a Rust refactor, cheap and safe to do now.
+`zed-kernel` reads the shared scaling test through `#[path]` (`lib.rs:30`); the tool reports such
+a module and does not read it, since its file is outside the crate.
 
 ## Workarounds that depend on cost
 
@@ -565,7 +591,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `u32` | 29 | 49 | 0 | 1 | 79 | Evaluator (impl) `zed-kernel/eval.rs:829` (8); Cx::lin_at `zedc/store/preimage.rs:1244` (3); Machine::note `zedc/zir/memory.rs:1133` (2) |
 | `u64` | 77 | 97 | 2 | 12 | 188 | Parts::hash `zed-kernel/types.rs:340` (7); add_shifted `zed-kernel/exact.rs:11` (5); Bdd (impl) `zed-kernel/types/bdd.rs:154` (4) |
 | `u128` | 4 | 0 | 0 | 0 | 4 | add_shifted `zed-kernel/exact.rs:14` (4) |
-| `usize` | 107 | 579 | 55 | 19 | 760 | blocks `zedc/store/product.rs:501` (20); topo `zedc/elab.rs:1533` (8); Evaluator (impl) `zed-kernel/eval.rs:831` (7) |
+| `usize` | 107 | 579 | 55 | 19 | 760 | blocks `zedc/store/product.rs:501` (20); topo `zedc/elab/topo.rs:10` (8); Evaluator (impl) `zed-kernel/eval.rs:831` (7) |
 | `i8` | 0 | 6 | 0 | 0 | 6 | at `zedc/store/revision.rs:110` (3); End::signum `zedc/store/interval.rs:103` (2); quotient `zedc/store/revision.rs:320` (1) |
 | `i32` | 3 | 3 | 0 | 0 | 6 | show_f64 `zed-kernel/num.rs:197` (2); Width::holds `zedc/store/float.rs:49` (2); exact_f64 `zed-kernel/num.rs:230` (1) |
 | `i64` | 14 | 100 | 75 | 17 | 206 | addresses `zed-native/hooks.rs:112` (24); Word (impl) `zed-rt/heap.rs:36` (9); rt_callable `zed-native/hooks.rs:159` (5) |
@@ -919,7 +945,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | A hash key over a shared list (`ListKey`) hashed by its first element and length, compared by `Vector::ptr_eq` before its content, so a use finds its group in O(1) | `elab::Tables::new` | Identity (gap 1) | Number each overload set when `resolve` makes it and record the number in the use, so the group is found by an integer key |
 | `<[V; 2]>::try_from(Vec)` to move both arguments out of the argument list after its length is checked | `eval::Machine::prim` | None | A tuple or list pattern of two items |
-| Join nodes numbered after the items in one `Vec<Vec<usize>>`, told apart by `index < items` | `elab::topo_joined`, `elab::place` | None | A sum type of item and join for each node, or the same numbering |
+| Join nodes numbered after the items in one `Vec<Vec<usize>>`, told apart by `index < items` | `elab::topo_joined`, `elab::topo::place` | None | A sum type of item and join for each node, or the same numbering |
 
 ## Entries from T14-rope (`zed-kernel/src/text.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
 
@@ -1532,7 +1558,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `for` loop over the items that pushes each built statement to one `Vec` and each error to another, inside the `with_holes` closure | `ast::unit_all_errors` | Mutation (gap 11) | A fold over the items into a pair of lists, statements and errors |
-| Tarjan's search over a `Vec` of (node, next dependency) frames, with `index`, `low` and `on_stack` updated in place by node | `elab::cycles` | Mutation (gap 11) | A fold over the nodes with persistent maps for `index` and `low` and a list for the stack, or the same loop once Zed has mutable arrays |
+| Tarjan's search over a `Vec` of (node, next dependency) frames, with `index`, `low` and `on_stack` updated in place by node | `elab::topo::cycles` | Mutation (gap 11) | A fold over the nodes with persistent maps for `index` and `low` and a list for the stack, or the same loop once Zed has mutable arrays |
 
 ## Entries from L1.19a (`zedc/src/run.rs`, `main.rs`, `check/mod.rs`, `testing.rs`)
 

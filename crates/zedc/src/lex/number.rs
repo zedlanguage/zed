@@ -28,7 +28,7 @@ use num_bigint::BigUint;
 use unicode_ident::is_xid_continue;
 use zed_kernel::num::TooLarge;
 
-use super::{Error, ErrorKind, Span, Tok};
+use super::token::{Error, ErrorKind, Span, Tok};
 
 /// The end and token of the number starting at byte `pos` of `text`, if one starts there.
 pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Error>> {

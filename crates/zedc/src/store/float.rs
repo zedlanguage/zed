@@ -11,7 +11,8 @@
 
 use std::fmt;
 
-use super::lattice::{Landmarks, Lattice};
+use super::landmarks::Landmarks;
+use super::lattice::Lattice;
 
 /// An IEEE binary format, narrowest first.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

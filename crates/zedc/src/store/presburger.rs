@@ -96,28 +96,10 @@ use super::linear::{Q, Term};
 use super::{live3, twovar, utvpi};
 
 mod deep;
-use deep::Id;
+mod formula;
 
-/// A variable of a relation.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Atom {
-    /// A symbol: an input, a parameter, a key.
-    Sym(Arc<str>),
-    /// The product of two factors, in order.
-    Product(Factor, Factor),
-    /// An auxiliary variable, defined by the relation's definitions.
-    Aux(u32),
-}
-
-/// A factor of a product atom: a symbol, or an auxiliary variable such as the quotient `q` of
-/// `x div n` in `x == n * q + r`.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Factor {
-    /// A symbol.
-    Sym(Arc<str>),
-    /// An auxiliary variable.
-    Aux(u32),
-}
+use formula::Id;
+pub use formula::{Atom, Con, Factor, Formula, Lin, Model, Rel};
 
 impl Factor {
     /// The factor as an atom of its own.
@@ -282,15 +264,6 @@ impl fmt::Display for Refusal {
     }
 }
 
-/// A linear term: each atom times its coefficient, plus a constant. No coefficient is zero.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
-pub struct Lin {
-    /// The coefficients.
-    pub terms: BTreeMap<Atom, Int>,
-    /// The constant.
-    pub constant: Int,
-}
-
 impl Lin {
     /// The constant `k`.
     pub fn constant(k: impl Into<Int>) -> Lin {
@@ -426,24 +399,6 @@ impl fmt::Display for Lin {
     }
 }
 
-/// How a constraint's term compares with zero.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Rel {
-    /// `t >= 0`.
-    Ge,
-    /// `t == 0`.
-    Eq,
-}
-
-/// A linear constraint.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Con {
-    /// The term.
-    pub lin: Lin,
-    /// Its comparison with zero.
-    pub rel: Rel,
-}
-
 impl Con {
     /// `a >= b`.
     pub fn ge(a: &Lin, b: &Lin) -> Con {
@@ -506,25 +461,6 @@ impl fmt::Display for Con {
         };
         write!(f, "{left} {op} {right}")
     }
-}
-
-/// A quantifier-free formula over linear constraints. Each compound node holds its parts
-/// behind an [`Arc`], so a copy costs O(1) and shares them, and a part may be held by many
-/// parents: the formula of a `let`-bound test is held once at each use (COMPLEXITY.md S31).
-/// Every pass over a formula reads a shared part once per call (`deep`), so its cost is the
-/// number of distinct parts. Drop, compare, hash and show do not recurse on its depth. Two
-/// formulas are compared as the derived order would compare their trees written out, but a
-/// part compared with itself is equal at once: a lookup of a conjunct in the maps keyed by
-/// formulas finds the very formula it holds, and would otherwise walk the whole of it.
-pub enum Formula {
-    /// A constraint.
-    Con(Con),
-    /// Negation.
-    Not(Arc<Formula>),
-    /// Conjunction; empty is `true`.
-    And(Arc<Vec<Formula>>),
-    /// Disjunction; empty is `false`.
-    Or(Arc<Vec<Formula>>),
 }
 
 impl Formula {
@@ -983,9 +919,6 @@ impl fmt::Display for Relation {
         Ok(())
     }
 }
-
-/// A satisfying assignment, each atom absent from it zero.
-pub type Model = BTreeMap<Atom, Int>;
 
 /// Whether `f` holds somewhere, and where.
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {

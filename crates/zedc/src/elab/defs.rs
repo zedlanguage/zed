@@ -1,0 +1,51 @@
+//! What elaboration gives: a unit's definitions and the cases of its `test` tables, which the
+//! stager, the runner and the queries read below elaboration.
+
+use std::sync::Arc;
+
+use zed_kernel::{Shared, Term};
+
+use crate::ast::Error;
+use crate::lex::Span;
+
+/// A top-level definition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Def {
+    /// Its source name, or the temporary's name for the tuple of `a, b = e;`.
+    pub name: String,
+    /// Its kernel name.
+    pub kernel: Arc<str>,
+    /// Its value, shared with the lets that close a term over it.
+    pub term: Shared,
+    /// Whether it is bound by `=` to a value whose type, as the checker gives it, has no
+    /// function component (step L1.37).
+    pub first_order: bool,
+}
+
+/// A case of a `test` table: `f(input) == expected`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Test {
+    /// The function's source name.
+    pub function: String,
+    /// The bool term that checks the case, over the unit's definitions.
+    pub check: Term,
+    /// The arguments the key gives, in declaration order.
+    pub args: Vec<Term>,
+    /// The expected value.
+    pub want: Term,
+    /// The case's text.
+    pub span: Span,
+}
+
+/// An elaborated unit.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Unit {
+    /// The definitions, each after those it uses.
+    pub defs: Vec<Def>,
+    /// The test cases, in written order, shared with the unit once staged.
+    pub tests: Arc<[Test]>,
+    /// The warnings, which do not stop the build: each operation that widens a value past a
+    /// machine word (DESIGN.md sec:domains). `front::compile` moves them out, placed in the
+    /// source, and leaves this empty.
+    pub warnings: Vec<Error>,
+}

@@ -3,7 +3,7 @@
 //! and grammar into this repository; `progress` writes the spec's PROGRESS.md; `cite` checks
 //! that every section label and step id cited is defined in DESIGN.md; `plan` checks this
 //! repository's plan DAG; `step_targets` writes the test target of each step folder into
-//! `tests/Cargo.toml`.
+//! `tests/Cargo.toml`; `imports` names every cycle of a Rust crate's file import graph.
 //!
 //! Each tool is a module with a `run` function over its arguments, and a thin `main` in
 //! `src/bin/`. Grammar reading and matching are the compiler's (`zedc::parse`), so a rule of the
@@ -17,6 +17,7 @@ pub mod check;
 pub mod cite;
 pub mod fences;
 pub mod fuzz;
+pub mod imports;
 pub mod layer;
 pub mod plan;
 pub mod progress;

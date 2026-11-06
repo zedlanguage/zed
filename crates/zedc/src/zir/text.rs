@@ -353,7 +353,7 @@ pub fn pattern(p: &Pattern) -> String {
 // ---------------------------------------------------------------------------------------------
 // Reading
 
-/// The graph in `text`, which [`super::validate`] has not yet checked. An error names the
+/// The graph in `text`, which [`super::validate::validate`] has not yet checked. An error names the
 /// line and column.
 pub fn parse(text: &str) -> Result<Region, String> {
     let mut lines = Vec::new();

@@ -8,7 +8,8 @@ use zedc::store::affine::{Affine, Bounds};
 use zedc::store::cell::{Cell, Entry, Premise, Premises, Store};
 use zedc::store::float::{FloatClass, Kind, Width};
 use zedc::store::interval::{IntervalSet, Num};
-use zedc::store::lattice::{FiniteSet, Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::{FiniteSet, Lattice};
 
 /// The fact at node `n` with no keypath.
 fn addr(n: u32) -> FactAddress {

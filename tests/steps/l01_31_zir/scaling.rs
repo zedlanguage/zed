@@ -10,7 +10,8 @@ use zed_kernel::term::Pattern;
 use zed_kernel::types::Type;
 use zed_tests::deep::on_small_stack;
 use zed_tests::scaling::check_order;
-use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text, validate};
+use zedc::zir::validate::validate;
+use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text};
 
 pub(crate) use zed_tests::step_helpers::l01_31_zir::nested_ifs;
 

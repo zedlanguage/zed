@@ -5,7 +5,8 @@ use zed_kernel::types::Type;
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::affine::Bounds;
 use zedc::store::interval::IntervalSet;
-use zedc::store::lattice::{Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::Lattice;
 use zedc::store::product::{Product, Scope};
 
 use super::ints;

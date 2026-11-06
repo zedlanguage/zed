@@ -11,7 +11,7 @@ use std::cell::Cell;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::{Equations, order, phase1};
-use zedc::store::lattice::Landmarks;
+use zedc::store::landmarks::Landmarks;
 use zedc::store::wto::{Element, VertexKey};
 
 use super::{name_key, numbered_names};

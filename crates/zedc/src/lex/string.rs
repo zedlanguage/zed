@@ -27,12 +27,13 @@
 
 use std::collections::HashMap;
 
-use super::{Error, ErrorKind, Part, Span, Tok, comment};
+use super::comment;
+use super::token::{Error, ErrorKind, Part, Span, Tok, Token};
 
 /// A part before decoding: a range of literal source text, or a hole.
 enum Raw {
     Lit(usize, usize),
-    Hole(Vec<super::Token>, Span),
+    Hole(Vec<Token>, Span),
 }
 
 /// What is known of the holes of one text, so that a hole nested in others is scanned once,
@@ -159,7 +160,7 @@ impl Reading {
     }
 
     /// Records the hole `next` stopped at, as `tokens`.
-    pub(super) fn hole(&mut self, tokens: Vec<super::Token>, open: usize, end: usize) {
+    pub(super) fn hole(&mut self, tokens: Vec<Token>, open: usize, end: usize) {
         let span = Span {
             start: open,
             end: end + 1,

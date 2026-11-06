@@ -32,7 +32,8 @@ use zed_kernel::provenance::FactAddress;
 use super::affine::{Affine, Bounds};
 use super::float::FloatClass;
 use super::interval::{IntervalSet, Num};
-use super::lattice::{Congruence, FiniteSet, Landmarks, Lattice};
+use super::landmarks::Landmarks;
+use super::lattice::{Congruence, FiniteSet, Lattice};
 
 /// What an element rests on.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

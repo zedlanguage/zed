@@ -13,7 +13,8 @@
 //! The specification of these rules is prelude source, `zed/prelude/iteration.zed`; this
 //! module is the Rust-hosted checker's copy.
 
-use super::lattice::{Landmarks, Lattice};
+use super::landmarks::Landmarks;
+use super::lattice::Lattice;
 use super::wto::{Element, SameKey, VertexKey, ordered_by};
 
 /// A system of equations over a lattice: one cell per vertex, `0..n`. The numbering does not

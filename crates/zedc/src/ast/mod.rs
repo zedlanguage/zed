@@ -24,6 +24,7 @@
 mod body;
 mod drop;
 mod neglit;
+mod node;
 mod show;
 mod stmts;
 mod types;
@@ -33,301 +34,17 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use num_bigint::BigUint;
-use zed_kernel::num::{TooLarge, bytes_of};
+use zed_kernel::num::TooLarge;
 
-pub use stmts::{
-    Annot, BoundaryItem, Field, Function, Import, ImportKind, IndexKey, IndexedDef, Method, Port,
-    Stmt, StmtKind, Struct, Target, TypeDecl,
+pub use node::{
+    Annot, Arm, BoundaryItem, Error, Every, Expr, ExprKind, Field, Function, Import, ImportKind,
+    IndexKey, IndexedDef, Method, Note, Param, Pattern, Port, RangeEnd, Stmt, StmtKind, StrPart,
+    Struct, Target, Type, TypeBound, TypeDecl, TypeKind, TypeParam, Update,
 };
-pub use types::{Every, Param, Pattern, Type, TypeBound, TypeKind, TypeParam};
 
-use crate::lex::{Digits, Part, Span, Tok, Token};
+use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
 use crate::rejection::Row;
-
-/// An expression and its span.
-pub struct Expr {
-    /// What it is.
-    pub kind: ExprKind,
-    /// Its text.
-    pub span: Span,
-}
-
-/// The kinds of expression.
-#[derive(Debug)]
-pub enum ExprKind {
-    /// An integer: its base and digits.
-    Int {
-        /// The base.
-        radix: u32,
-        /// The digits, shared with the token.
-        digits: Digits,
-        /// Written with the suffix `n` (step L1.26a): the integer in whichever numeric carrier
-        /// its use needs, counting toward no int default.
-        generic: bool,
-    },
-    /// A float, as its decimal text, shared with the token.
-    Float(Digits),
-    /// An exact rational, as its decimal text, shared with the token.
-    Rat(Digits),
-    /// A string: its text and its holes.
-    Str(Vec<StrPart>),
-    /// `true` or `false`.
-    Bool(bool),
-    /// An atom, without its `#`.
-    Atom(String),
-    /// A name.
-    Name(String),
-    /// A prefix operator, `-` or `!`, and its operand.
-    Unary(&'static str, Box<Expr>),
-    /// A binary operator and its operands.
-    Binary(&'static str, Box<Expr>, Box<Expr>),
-    /// A call `f(…)`.
-    Call {
-        /// The function.
-        callee: Box<Expr>,
-        /// The positional arguments, in order.
-        positional: Vec<Expr>,
-        /// The named arguments, in written order; `x:` is `x: x`.
-        named: Vec<(String, Expr)>,
-        /// Whether the arguments end in `...`, currying the named parameters left out.
-        curry: bool,
-    },
-    /// An index `e[k]`.
-    Index(Box<Expr>, Box<Expr>),
-    /// A tuple `(a, b, …)`.
-    Tuple(Vec<Expr>),
-    /// A lambda `x -> e` or `(params) -> e`.
-    Lambda {
-        /// The parameters.
-        params: Vec<Param>,
-        /// The body.
-        body: Box<Expr>,
-    },
-    /// A type test `e is T`, or `e is not T` when `negated`: whether the value of `e` is in the
-    /// set of `T`, decided when the program runs. It is not the subtype relation `S <: T`
-    /// between two types, which the checker decides and Zed has no syntax for
-    /// (DESIGN.md sec:type_language).
-    Is {
-        /// The value tested.
-        of: Box<Expr>,
-        /// The type.
-        ty: Type,
-        /// Whether it is `is not`.
-        negated: bool,
-    },
-    /// `e else d`, or `e else #a -> d` with its atom pattern.
-    Else {
-        /// The value whose atom members are replaced.
-        of: Box<Expr>,
-        /// The members replaced: every loose atom member when `None`.
-        pattern: Option<Pattern>,
-        /// The default.
-        default: Box<Expr>,
-    },
-    /// A block `{ … }`: its statements in written order, except that its `return` is last
-    /// (none in a function's body block that only pushes).
-    Block(Vec<Stmt>),
-    /// `if c { a } else { b }`; `else if` is an `If` in the `else` branch.
-    If {
-        /// The condition.
-        cond: Box<Expr>,
-        /// The branch taken when it holds.
-        then: Box<Expr>,
-        /// The other branch.
-        otherwise: Box<Expr>,
-    },
-    /// A member `e.n`, or `e?.n` when `safe`.
-    Member {
-        /// The value.
-        of: Box<Expr>,
-        /// The member's name.
-        name: String,
-        /// Whether it is `?.`, which passes an atom member of the value's type through.
-        safe: bool,
-    },
-    /// A record display `{x: 1, y:}`: its fields in written order; `y:` is `y: y`.
-    Record(Vec<(String, Expr)>),
-    /// A struct update `e with { x = 1, c.y = 2 }`.
-    With {
-        /// The value updated.
-        of: Box<Expr>,
-        /// The updates, in written order.
-        updates: Vec<Update>,
-    },
-    /// `this`, a method's receiver.
-    This,
-    /// `match e { p -> a, q where c -> b }`: the value matched and its arms, in written order.
-    Match {
-        /// The value matched.
-        of: Box<Expr>,
-        /// The arms.
-        arms: Vec<Arm>,
-    },
-    /// A range `a..<b`, `a..=b` or `a..`: its first value and its end.
-    Range(Box<Expr>, RangeEnd<Box<Expr>>),
-    /// A membership test `e in s`, or `e not in s` when `negated`.
-    In {
-        /// The value tested.
-        of: Box<Expr>,
-        /// The family whose domain it is tested against.
-        set: Box<Expr>,
-        /// Whether it is `not in`.
-        negated: bool,
-    },
-    /// A reduction `m >< op`, which folds `op` over the innermost level of `m`.
-    Reduce {
-        /// The family reduced.
-        of: Box<Expr>,
-        /// The operator.
-        op: Box<Expr>,
-    },
-    /// A metadata read `e::name`, such as `xs::len` or `m::domain`.
-    Read {
-        /// The value read.
-        of: Box<Expr>,
-        /// The metadata's name.
-        name: String,
-    },
-    /// An operator section `(+)`: the binary operator as a function.
-    Section(&'static str),
-    /// An array display `[a, b, c]`, its elements in written order: the array
-    /// `{0 -> a, 1 -> b, 2 -> c}` of type `int[0..<3] -> T`, keyed by rank, each element's
-    /// rank its position (sec:grammar, `ArrayExpr`). It is not a `Seq` (sec:order), whose keys
-    /// are origins.
-    Array(Vec<Expr>),
-    /// A set display `{a, b}`, its elements in written order.
-    Set(Vec<Expr>),
-    /// A map display `{k -> v, …}`, its entries in written order. `{}` is the empty family,
-    /// built as the map with no entries: a set is a map from each element to itself.
-    Map(Vec<(Expr, Expr)>),
-    /// `for k -> v in m where c { … }`: a family with one frame per entry of the source.
-    For {
-        /// The binders of the keypath pattern, outermost level first; a bare name binds the
-        /// value.
-        binders: Vec<Target>,
-        /// The family iterated.
-        source: Box<Expr>,
-        /// The `where` restriction of the source's domain, if written.
-        guard: Option<Box<Expr>>,
-        /// The block run for each entry.
-        body: Box<Expr>,
-    },
-    /// `loop t { … }`: a body run once per generation, `t` naming the step index if written.
-    Loop {
-        /// The name of the step index, if written.
-        label: Option<String>,
-        /// The body, a block that need not export.
-        body: Box<Expr>,
-    },
-    /// `break e`: ends the loop, `e` its result.
-    Break(Box<Expr>),
-    /// `c*.m`: the member `m` of `c` called so that it writes `c'`.
-    Spread {
-        /// The receiver.
-        of: Box<Expr>,
-        /// The member's name.
-        name: String,
-    },
-    /// `asc e` or `desc e`: a sort key, written only as a positional argument (`SortArg`).
-    SortKey {
-        /// Whether it is `desc`.
-        desc: bool,
-        /// The key.
-        key: Box<Expr>,
-    },
-}
-
-/// How a range ends: below `b` (`..<b`), through `b` (`..=b`), or not at all (`..`).
-#[derive(Debug)]
-pub enum RangeEnd<T> {
-    /// `..<b`.
-    Below(T),
-    /// `..=b`.
-    Through(T),
-    /// `..`.
-    Open,
-}
-
-impl<T> RangeEnd<T> {
-    /// The operator written.
-    pub fn op(&self) -> &'static str {
-        match self {
-            RangeEnd::Below(_) => "..<",
-            RangeEnd::Through(_) => "..=",
-            RangeEnd::Open => "..",
-        }
-    }
-
-    /// The last value, or the bound below it, if written.
-    pub fn bound(&self) -> Option<&T> {
-        match self {
-            RangeEnd::Below(b) | RangeEnd::Through(b) => Some(b),
-            RangeEnd::Open => None,
-        }
-    }
-}
-
-/// An arm of a `match`: a pattern, a guard `where c` if written, and the arm's value.
-#[derive(Debug)]
-pub struct Arm {
-    /// The pattern.
-    pub pattern: Pattern,
-    /// The guard.
-    pub guard: Option<Expr>,
-    /// The value when the pattern matches and the guard holds.
-    pub body: Expr,
-    /// Its text.
-    pub span: Span,
-}
-
-/// One update of a `with`: a field path, `c.y`, and its new value.
-#[derive(Debug)]
-pub struct Update {
-    /// The fields of the path, outermost first.
-    pub path: Vec<String>,
-    /// The new value.
-    pub value: Expr,
-    /// Its text.
-    pub span: Span,
-}
-
-/// A part of a string expression.
-#[derive(Debug)]
-pub enum StrPart {
-    /// Text.
-    Text(String),
-    /// A `${…}` hole.
-    Hole(Expr),
-}
-
-/// Why an expression could not be built.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Error {
-    /// Where.
-    pub span: Span,
-    /// Why.
-    pub message: String,
-    /// How the checker reached it: each constraint and step, in the order it met them.
-    pub notes: Vec<Note>,
-    /// The row of the rejection table (DESIGN.md sec:diagnostics) the error is a case of, if any.
-    pub row: Option<crate::rejection::Row>,
-}
-
-/// One step of a derivation: a place in the source and what holds there.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Note {
-    /// Where.
-    pub span: Span,
-    /// What holds there.
-    pub text: String,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
 
 /// The expression of `tree`, parsed as `Expr` from `tokens` of `text`.
 pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {
@@ -423,7 +140,7 @@ fn with_holes<'t, R>(
         }
         i += 1;
     }
-    let bare = neglit::Bare::new();
+    let bare = Bare::new();
     let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
     done.resize_with(list.len(), || None);
     for (i, l) in list.iter().enumerate().skip(1).rev() {
@@ -484,6 +201,9 @@ fn forms() -> &'static [Form] {
     })
 }
 
+/// The cache [`Builder::written_bare`] reads, one per source.
+type Bare<'a> = std::cell::OnceCell<std::collections::HashSet<&'a str>>;
+
 struct Builder<'a, 's: 'a> {
     text: &'s str,
     tokens: &'a [Token],
@@ -503,7 +223,7 @@ struct Builder<'a, 's: 'a> {
     place: Vec<usize>,
     front: usize,
     /// The names written in the source other than after a `.`, listed on first use.
-    bare: &'a neglit::Bare<'s>,
+    bare: &'a Bare<'s>,
     /// The parent of each node of the tree, listed on the first rejection that names one.
     parents: std::cell::OnceCell<Vec<usize>>,
 }
@@ -513,7 +233,7 @@ impl<'a, 's> Builder<'a, 's> {
         text: &'s str,
         level: &Level<'a>,
         done: &'a mut [Option<Result<Expr, Error>>],
-        bare: &'a neglit::Bare<'s>,
+        bare: &'a Bare<'s>,
     ) -> Builder<'a, 's> {
         let mut holes = Vec::with_capacity(level.tokens.len());
         let mut count = 0;
@@ -1322,17 +1042,6 @@ pub fn shown(x: &impl fmt::Display) -> Result<String, TooLarge> {
     })?;
     fmt::write(&mut out, format_args!("{x}")).expect("writing to a String");
     Ok(out)
-}
-
-/// The message for a numeric literal whose digits the system refused the memory to read. It
-/// does not quote the literal, which may be millions of digits long.
-pub fn unread_literal(r: &TooLarge) -> String {
-    format!(
-        "this literal has so many digits that the system refused the {} bytes of memory asked \
-         to read them; a literal has no size limit, but this machine cannot hold this one's \
-         value; write fewer digits",
-        bytes_of(&r.bits)
-    )
 }
 
 /// Counts the bytes written to it.

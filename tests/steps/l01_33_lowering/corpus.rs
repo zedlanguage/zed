@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use zedc::testing::{test, test_through};
 use zedc::zir::canon::canonicalize;
 use zedc::zir::lower::{lower, raise};
-use zedc::zir::{binary, text, validate};
+use zedc::zir::validate::validate;
+use zedc::zir::{binary, text};
 
 fn units() -> Vec<PathBuf> {
     let steps = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps");

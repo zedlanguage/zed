@@ -80,7 +80,8 @@ use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval, on_stack};
 
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
-use super::lattice::{Congruence, Landmarks, Lattice};
+use super::landmarks::Landmarks;
+use super::lattice::{Congruence, Lattice};
 use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
 use super::revision::{self, Op, Tonicity, reduce_congruence};
 use crate::stage;

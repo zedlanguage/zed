@@ -745,7 +745,7 @@ pub struct Sig {
     /// fixes their carriers. Worked out when it is built ([`Sig::note_held`]), so a comparison
     /// does not walk its parameters again at each depth.
     pub held: BTreeSet<Arc<str>>,
-    /// How many of the names `super::var_name` gives its own type variables and those of the
+    /// How many of the names `var_name` gives its own type variables and those of the
     /// functions it holds take: a function around it names its own from there on. The checker
     /// writes the own variables of a signature it solved `$k`, for the class `k` each was solved
     /// from, and gives them their names when it finishes, so a function around one does not
@@ -808,7 +808,7 @@ pub struct VarFacts {
     pub classes: imbl::OrdSet<Arc<str>>,
     /// The other variables, with its own, bounded and held ones.
     pub names: imbl::OrdSet<Arc<str>>,
-    /// The first `n` such that `names` lacks the `n`th variable name (`super::var_name`).
+    /// The first `n` such that `names` lacks the `n`th variable name (`var_name`).
     pub free: usize,
 }
 
@@ -846,7 +846,7 @@ impl VarFacts {
         let extra = s.bounds.keys().chain(&s.own).chain(&s.held);
         extra.for_each(|v| add(&mut g.names, v));
         g.free = g.free.max(s.named);
-        while g.names.contains(&*super::var_name(g.free)) {
+        while g.names.contains(&*var_name(g.free)) {
             g.free += 1;
         }
         g
@@ -856,7 +856,7 @@ impl VarFacts {
     /// keeps them, so the cost is that of its outer level.
     fn ty(&mut self, t: &Ty) {
         for v in &t.vars {
-            match super::class_id(v) {
+            match class_id(v) {
                 Some(_) => add(&mut self.classes, v),
                 None => add(&mut self.names, v),
             }
@@ -3766,7 +3766,7 @@ impl Scope {
             }
             let name = if self.printed.contains(v) {
                 loop {
-                    let name = super::var_name(self.fresh);
+                    let name = var_name(self.fresh);
                     self.fresh += 1;
                     if !self.printed.contains(&name) && !sig.bounds.contains_key(&name) {
                         break name;
@@ -3997,6 +3997,19 @@ impl Sig {
         parts.push(Print::Text(" ->? "));
         parts.push(Print::Ty(&a.result));
         parts.push(Print::Bounds(self, bounds));
+    }
+}
+
+/// The class a type variable names: `$k` is class `k`.
+pub(super) fn class_id(v: &str) -> Option<usize> {
+    v.strip_prefix('$')?.parse().ok()
+}
+
+/// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
+pub(super) fn var_name(n: usize) -> Arc<str> {
+    match n {
+        0..4 => ["T", "U", "V", "W"][n].into(),
+        _ => format!("T{}", n + 1).into(),
     }
 }
 

@@ -6,7 +6,6 @@
 //! grouped, `-(1).abs`, or that is grouped whole, `-(1.abs)`, is not rejected, and neither is
 //! a chain whose base is a name, `-x.abs`.
 
-use std::cell::OnceCell;
 use std::collections::HashSet;
 
 use zed_kernel::num::literal_f64;
@@ -181,6 +180,3 @@ fn number(e: &Expr) -> Option<Value> {
         _ => None,
     }
 }
-
-/// The cache [`Builder::written_bare`] reads, one per source.
-pub(super) type Bare<'a> = OnceCell<HashSet<&'a str>>;

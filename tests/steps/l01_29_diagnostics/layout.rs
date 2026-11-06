@@ -2,7 +2,7 @@
 //! width, its source line with a gutter of one width and the covered text underlined, the
 //! source shown once for consecutive steps on one place.
 
-use zedc::run::{Diagnostic, Step};
+use zedc::front::{Diagnostic, Step};
 
 fn step(line: usize, col: usize, text: &str, source: &str, width: usize) -> Step {
     Step {

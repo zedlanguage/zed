@@ -27,10 +27,10 @@ use zed_kernel::{Prim, Rat, Shared, Term, Value};
 use crate::ast::{Stmt, StmtKind};
 use crate::elab::{self, Cones, Mark, Unit};
 use crate::lex::Span;
+use crate::rows;
 use crate::run::{self, Through};
 use crate::source;
 use crate::stage::{self, Remix};
-use crate::testing;
 
 /// What a mutant puts in place of a node, or what the node was.
 #[derive(Clone, PartialEq, Debug)]
@@ -350,8 +350,8 @@ pub fn run(
                     continue;
                 }
                 let failed = match (t.function.as_str(), &program) {
-                    ("main", Some(p)) => testing::wave(&cones, swap, p, t, map).is_err(),
-                    _ => testing::row(&cones, swap, t, map).is_err(),
+                    ("main", Some(p)) => rows::wave(&cones, swap, p, t, map).is_err(),
+                    _ => rows::row(&cones, swap, t, map).is_err(),
                 };
                 if failed {
                     verdict = Verdict::Detected;

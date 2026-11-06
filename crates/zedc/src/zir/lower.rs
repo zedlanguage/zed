@@ -51,7 +51,8 @@ use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
 use zed_kernel::types::Type;
 
 use super::legalize::{Swapped, written};
-use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name, validate};
+use super::validate::validate;
+use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name};
 use crate::address::ContentAddress;
 use crate::canon::Facet;
 

@@ -4,7 +4,8 @@
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::interval::IntervalSet;
 use zedc::store::iterate::{Equations, Scopes, narrow, order, phase1, solve};
-use zedc::store::lattice::{Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::Lattice;
 use zedc::store::wto::{Element, VertexKey};
 
 use super::{System, Term, is_post_fixpoint, iv, name_key, numbered_names};

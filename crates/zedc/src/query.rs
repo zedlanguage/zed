@@ -38,12 +38,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::Term;
 
-use crate::ast::{self, Stmt};
-use crate::elab::{Cones, Unit};
-use crate::lex::Span;
+use crate::elab::Cones;
+use crate::front::{self, Front, Parsed};
 use crate::resolve::{Exports, Resolved};
-use crate::run::{self, Diagnostic};
-use crate::unit;
 
 /// A query's key: its inputs, encoded.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -79,14 +76,6 @@ pub enum Query {
     /// imports and of the prelude unit it sees.
     Resolve,
 }
-
-/// The front end's result: the statements, elaboration and placed warnings, or the first
-/// rejecting phase's diagnostics.
-pub type Front = Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>>;
-
-/// A unit's statements and its imports, each with the unit it names, in text order; or the
-/// errors of the first phase that rejects it.
-pub type Parsed = Result<(Vec<Stmt>, Vec<(Arc<str>, Span)>), Vec<ast::Error>>;
 
 /// The memoized results, and how many times each query was computed rather than reused.
 pub struct Db {
@@ -152,7 +141,7 @@ impl Db {
             return f.clone();
         }
         *self.computed.entry(Query::Front).or_default() += 1;
-        let f = Arc::new(run::compile(text));
+        let f = Arc::new(front::compile(text));
         self.front.insert(k, f.clone());
         f
     }
@@ -164,7 +153,7 @@ impl Db {
             return p.clone();
         }
         *self.computed.entry(Query::Parse).or_default() += 1;
-        let p = Arc::new(unit::parse_unit(text));
+        let p = Arc::new(front::parse_unit(text));
         self.parsed.insert(k, p.clone());
         p
     }

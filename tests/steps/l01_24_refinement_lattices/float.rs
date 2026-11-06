@@ -1,7 +1,8 @@
 //! Float classes, against the floats they hold.
 
 use zedc::store::float::{FloatClass, Kind, Width};
-use zedc::store::lattice::{Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::Lattice;
 
 /// Floats of every kind and of each narrowest width.
 const SAMPLES: [f64; 14] = [

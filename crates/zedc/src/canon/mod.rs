@@ -27,47 +27,21 @@
 //! address, and the address is what an import's pin names (step L2.8).
 
 pub mod binders;
+mod def;
 pub mod domain;
+
 mod serial;
-
-use std::sync::Arc;
-
 use zed_kernel::num::TooLarge;
-use zed_kernel::term::Term;
 use zed_kernel::value::Value;
 
 use crate::address::ContentAddress;
+pub use def::{Def, Facet};
 pub use domain::Domain;
 
 /// The version of the rule set and the serialization, hashed into every address. Version 3
 /// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name;
 /// version 4 writes an exact number past `i64` by its limbs, not its decimal digits.
 pub const VERSION: u32 = 4;
-
-/// A facet of a definition: a named fact about it, such as its units or a proved property.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Facet {
-    /// Whether the facet is a hint, which diagnostics and printing read and no value may
-    /// depend on, such as a binder's written name.
-    pub hint: bool,
-    /// The facet's kind, such as `units`.
-    pub kind: Arc<str>,
-    /// The facet's value.
-    pub value: Value,
-}
-
-/// A definition as the canonicalizer sees it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Def {
-    /// The declaration's own name, which is part of its interface and so of its value.
-    pub name: Arc<str>,
-    /// The integer facts of its result, when it has any.
-    pub domain: Option<Domain>,
-    /// Its other facets.
-    pub facets: Vec<Facet>,
-    /// Its body.
-    pub body: Term,
-}
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {

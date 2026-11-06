@@ -216,7 +216,7 @@ impl Permuted {
         let lines: Vec<usize> = std::iter::once(0)
             .chain(text.match_indices('\n').map(|(i, _)| i + 1))
             .collect();
-        let said = |d: &zedc::run::Diagnostic| Said {
+        let said = |d: &zedc::front::Diagnostic| Said {
             at: self.place(&lines, d.line, d.col),
             row: d.row,
             message: d.message.clone(),

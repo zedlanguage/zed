@@ -8,7 +8,8 @@ mod names;
 mod rejections;
 pub(crate) mod scaling;
 
-use zedc::zir::{Region, binary, text, validate};
+use zedc::zir::validate::validate;
+use zedc::zir::{Region, binary, text};
 
 /// The graph in `src`, checked, after asserting that it prints back as `src`, that its lines
 /// read back in reverse order, and that its binary form decodes to it.

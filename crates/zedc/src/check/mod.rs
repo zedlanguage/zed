@@ -50,10 +50,10 @@ use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use crate::ast::{
     Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
-    Type, TypeKind, shown, unread_literal,
+    Type, TypeKind, shown,
 };
 use crate::elab::Tables;
-use crate::lex::Span;
+use crate::lex::{Span, unread_literal};
 use crate::rejection::Row;
 use crate::resolve::{Handle, Ref, Resolution};
 use crate::store::int::Int;
@@ -65,7 +65,7 @@ use crate::store::revision::{Op, forward};
 
 use ty::{
     Arrow, Binds, Carrier, EVERY, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot,
-    Ty, VarFacts, Vars, atoms, errs, mask_text,
+    Ty, VarFacts, Vars, atoms, class_id, errs, mask_text, var_name,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -369,8 +369,18 @@ enum ArgSrc<'a> {
     Got(Box<Arg>),
 }
 
+/// The positional and named arguments of a call, shared by the frames that read them.
+#[derive(Default)]
+struct Args<'a> {
+    positional: Vec<ArgSrc<'a>>,
+    named: Vec<(String, ArgSrc<'a>)>,
+}
+
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
 type Facts = Vec<(usize, Ty, Span)>;
+
+/// What [`Ck::narrow`] changed, for [`Ck::widen`] to restore.
+type Saved<'a> = Vec<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
 
 /// Where an expression's type comes from, for a derivation (DESIGN.md "Diagnostics").
 #[derive(Clone)]
@@ -1974,7 +1984,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 named,
                 curry,
             } => {
-                let args = walk::Args {
+                let args = Args {
                     positional: positional
                         .iter()
                         .map(|t| ArgSrc::Got(Box::new(Arg::of(b(self, t)))))
@@ -2815,7 +2825,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Narrows the binders of `facts`, each origin now the test; gives what to restore.
-    fn narrow(&mut self, facts: &Facts) -> walk::Saved<'a> {
+    fn narrow(&mut self, facts: &Facts) -> Saved<'a> {
         facts
             .iter()
             .map(|(b, t, test)| {
@@ -2833,7 +2843,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Restores what [`Self::narrow`] changed.
-    fn widen(&mut self, saved: walk::Saved<'a>) {
+    fn widen(&mut self, saved: Saved<'a>) {
         for (b, old, o) in saved.into_iter().rev() {
             match old {
                 Some(t) => self.env.insert(b, t),
@@ -6122,19 +6132,6 @@ fn port(key: Carrier, io: bool) -> Ty {
         named: 0,
         facts: Default::default(),
     }))
-}
-
-/// The class a type variable names: `$k` is class `k`.
-fn class_id(v: &str) -> Option<usize> {
-    v.strip_prefix('$')?.parse().ok()
-}
-
-/// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
-pub(super) fn var_name(n: usize) -> Arc<str> {
-    match n {
-        0..4 => ["T", "U", "V", "W"][n].into(),
-        _ => format!("T{}", n + 1).into(),
-    }
 }
 
 /// The variables of `s`, in order of first appearance.

@@ -212,7 +212,7 @@ fn translating_symbolic_divisors_scales() {
 #[test]
 fn a_program_with_a_remainder_by_a_symbol_is_checked_and_runs() {
     // Through `zedc run`: the checker's linear questions on `ok` now read `i mod len`, and
-    // deciding them rejects nothing (run.rs, `linear_questions`).
+    // deciding them rejects nothing (front.rs, `linear_questions`).
     let src = "ok(i, len) = len >= 1 && 0 <= i mod len && i mod len < len;\n\
                main(stdin: Lines) -> (stdout: Lines) {\n  \
                a = int(stdin[1] else \"0\") else 0;\n  \

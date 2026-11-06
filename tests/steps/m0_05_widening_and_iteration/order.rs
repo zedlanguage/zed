@@ -13,7 +13,7 @@ use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 use zedc::store::interval::IntervalSet;
 use zedc::store::iterate::{Equations, order, phase1, solve};
-use zedc::store::lattice::Landmarks;
+use zedc::store::landmarks::Landmarks;
 use zedc::store::wto::{Element, SameKey, VertexKey};
 
 use super::iteration::three_cell_loop;

@@ -3,7 +3,8 @@
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::affine::{Affine, Bound, Bounds, Side};
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::lattice::{Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::Lattice;
 
 use super::{WINDOW, affine, at, envs, members, random_bounds};
 

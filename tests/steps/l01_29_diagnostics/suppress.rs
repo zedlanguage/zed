@@ -5,7 +5,8 @@
 
 use zed_tests::scaling;
 use zedc::address::ContentAddress;
-use zedc::run::{Diagnostic, load, load_file};
+use zedc::front::Diagnostic;
+use zedc::run::{load, load_file};
 use zedc::suppress::Suppress;
 
 use super::widen_test::{checked_program, many_squares, unit};

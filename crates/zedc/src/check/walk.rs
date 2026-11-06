@@ -41,13 +41,6 @@ impl Want {
     }
 }
 
-/// The positional and named arguments of a call, shared by the frames that read them.
-#[derive(Default)]
-pub(super) struct Args<'a> {
-    pub(super) positional: Vec<ArgSrc<'a>>,
-    pub(super) named: Vec<(String, ArgSrc<'a>)>,
-}
-
 impl<'a> Args<'a> {
     /// The arguments written in a call.
     fn of(positional: &'a [Expr], named: &'a [(String, Expr)]) -> Rc<Args<'a>> {
@@ -118,9 +111,6 @@ pub(super) enum At {
     Pos(usize),
     Named(usize),
 }
-
-/// What [`Ck::narrow`] changed, for [`Ck::widen`] to restore.
-pub(super) type Saved<'a> = Vec<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
 
 pub(super) enum Job<'a> {
     /// An expression's type, recorded for derivations.

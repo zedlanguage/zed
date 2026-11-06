@@ -323,7 +323,7 @@ fn the_linear_questions_of_a_unit_scale() {
         .collect();
     zed_tests::scaling::check("the linear questions of a unit", 64, |m| {
         let (stmts, program) = &units[&m];
-        let refused = zedc::run::linear_questions(stmts, program.unit());
+        let refused = zedc::front::linear_questions(stmts, program.unit());
         assert!(refused.is_empty(), "{refused:?}");
     });
 }

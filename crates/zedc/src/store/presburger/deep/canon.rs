@@ -38,8 +38,7 @@ use std::slice;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
-use super::super::{Con, Formula};
-use super::{Id, Side};
+use super::super::formula::{Con, Formula, Id};
 
 /// A symbol's number in the arena.
 type S = usize;
@@ -569,6 +568,45 @@ impl Finger {
         }
         self.dropped = k;
         (rem, ctx)
+    }
+}
+
+/// One side of a pair of nodes being compared: the parts left at each level of the node's own
+/// kind, the innermost last, as in `super::Flat`, each with the number of the entry it was entered
+/// with when the other side entered its partner at the same point ([`Formula::cmp`]).
+pub(super) struct Side<'a> {
+    pub(super) left: Vec<(slice::Iter<'a, Formula>, Option<usize>)>,
+}
+
+impl<'a> Side<'a> {
+    pub(super) fn of(g: &'a Formula) -> Side<'a> {
+        Side {
+            left: vec![(g.kids().iter(), None)],
+        }
+    }
+
+    /// The next part at the innermost level, not read through.
+    pub(super) fn peek(&self) -> Option<&'a Formula> {
+        self.left.last().and_then(|(it, _)| it.as_slice().first())
+    }
+
+    pub(super) fn advance(&mut self) {
+        if let Some((it, _)) = self.left.last_mut() {
+            it.next();
+        }
+    }
+
+    pub(super) fn enter(&mut self, g: &'a Formula, entry: Option<usize>) {
+        self.left.push((g.kids().iter(), entry));
+    }
+
+    /// The entry of the innermost level if it has no parts left: `Some(None)` for a level
+    /// entered alone.
+    pub(super) fn done(&self) -> Option<Option<usize>> {
+        self.left
+            .last()
+            .filter(|(it, _)| it.as_slice().is_empty())
+            .map(|&(_, e)| e)
     }
 }
 

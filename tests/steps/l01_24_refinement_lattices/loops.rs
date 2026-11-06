@@ -9,7 +9,8 @@ use zedc::store::affine::{Affine, Bounds};
 use zedc::store::interval::End;
 use zedc::store::interval::IntervalSet;
 use zedc::store::iterate::{Equations, solve};
-use zedc::store::lattice::{Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::Lattice;
 use zedc::store::wto::VertexKey;
 
 use super::{WINDOW, at, envs, random_bounds};

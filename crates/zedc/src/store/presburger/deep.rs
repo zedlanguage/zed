@@ -15,11 +15,11 @@ use std::mem;
 use std::slice;
 use std::sync::Arc;
 
-use super::{Con, Formula, Lin, Model, Rel};
+use super::formula::{Con, Formula, Id, Lin, Model, Rel};
 
 mod canon;
 
-use canon::Canon;
+use canon::{Canon, Side};
 
 impl Con {
     /// The constraint, moved out of `c`, with `c` left the constraint `0 >= 0` of no atoms.
@@ -28,87 +28,6 @@ impl Con {
             lin: mem::take(&mut c.lin),
             rel: c.rel,
         }
-    }
-}
-
-/// A compound part of a formula, held, so that it lives as long as the key, and compared and
-/// hashed as the one part it is, not by its content. Two keys are equal when they hold the
-/// same part, so a part that two parents hold is found by either.
-pub(super) struct Id(Formula);
-
-impl Clone for Id {
-    fn clone(&self) -> Id {
-        Id(self.0.clone())
-    }
-}
-
-impl Id {
-    /// The key of `f`, a compound part.
-    fn any(f: &Formula) -> Id {
-        debug_assert!(!matches!(f, Formula::Con(_)), "a compound part");
-        Id(f.clone())
-    }
-
-    /// The key of `f` when another holder shares it, so that a pass may reach it again, or
-    /// `None` for a constraint or a part held by its parent alone.
-    pub(super) fn of(f: &Formula) -> Option<Id> {
-        f.is_shared().then(|| Id::any(f))
-    }
-
-    /// The key of `f` when `f` is one of `twice` ([`Id::reached_twice`]), or `None`.
-    pub(super) fn among(f: &Formula, twice: &HashSet<Id>) -> Option<Id> {
-        if matches!(f, Formula::Con(_)) {
-            return None;
-        }
-        let id = Id::any(f);
-        twice.contains(&id).then_some(id)
-    }
-
-    /// The compound parts of `f` that `f` reaches through more than one parent, found in one
-    /// walk with a visited set, so in time near the number of distinct parts. A pass that
-    /// treats these parts apart reads `f`'s own sharing, not the handles held outside it.
-    pub(super) fn reached_twice(f: &Formula) -> HashSet<Id> {
-        let mut seen: HashSet<Id> = HashSet::new();
-        let mut twice: HashSet<Id> = HashSet::new();
-        let mut stack = vec![f];
-        while let Some(g) = stack.pop() {
-            for h in g.kids() {
-                if matches!(h, Formula::Con(_)) {
-                    continue;
-                }
-                let id = Id::any(h);
-                if seen.contains(&id) {
-                    twice.insert(id);
-                } else {
-                    seen.insert(id);
-                    stack.push(h);
-                }
-            }
-        }
-        twice
-    }
-
-    /// Where the part is kept, which names it while the key holds it.
-    fn at(&self) -> *const () {
-        match &self.0 {
-            Formula::Con(_) => unreachable!("a key holds a compound part"),
-            Formula::Not(g) => Arc::as_ptr(g).cast(),
-            Formula::And(gs) | Formula::Or(gs) => Arc::as_ptr(gs).cast(),
-        }
-    }
-}
-
-impl PartialEq for Id {
-    fn eq(&self, other: &Id) -> bool {
-        self.at() == other.at()
-    }
-}
-
-impl Eq for Id {}
-
-impl Hash for Id {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.at().hash(state)
     }
 }
 
@@ -169,24 +88,6 @@ impl Formula {
     /// as flattened into a parent of that variant ([`Flat`]).
     fn flattens_into(&self, kind: u8) -> bool {
         matches!(self, Formula::And(_) | Formula::Or(_)) && self.rank() == kind
-    }
-
-    /// The formulas directly under `self`, in order.
-    fn kids(&self) -> &[Formula] {
-        match self {
-            Formula::Con(_) => &[],
-            Formula::Not(g) => slice::from_ref(&**g),
-            Formula::And(gs) | Formula::Or(gs) => gs,
-        }
-    }
-
-    /// Whether another holder shares the part, so that a pass may reach it twice.
-    pub(super) fn is_shared(&self) -> bool {
-        match self {
-            Formula::Con(_) => false,
-            Formula::Not(g) => Arc::strong_count(g) > 1,
-            Formula::And(gs) | Formula::Or(gs) => Arc::strong_count(gs) > 1,
-        }
     }
 
     /// The fold of the formula from its constraints up. Each part is reached with a context:
@@ -451,45 +352,6 @@ impl Clone for Formula {
             Formula::And(gs) => Formula::And(Arc::clone(gs)),
             Formula::Or(gs) => Formula::Or(Arc::clone(gs)),
         }
-    }
-}
-
-/// One side of a pair of nodes being compared: the parts left at each level of the node's own
-/// kind, the innermost last, as in [`Flat`], each with the number of the entry it was entered
-/// with when the other side entered its partner at the same point ([`Formula::cmp`]).
-struct Side<'a> {
-    left: Vec<(slice::Iter<'a, Formula>, Option<usize>)>,
-}
-
-impl<'a> Side<'a> {
-    fn of(g: &'a Formula) -> Side<'a> {
-        Side {
-            left: vec![(g.kids().iter(), None)],
-        }
-    }
-
-    /// The next part at the innermost level, not read through.
-    fn peek(&self) -> Option<&'a Formula> {
-        self.left.last().and_then(|(it, _)| it.as_slice().first())
-    }
-
-    fn advance(&mut self) {
-        if let Some((it, _)) = self.left.last_mut() {
-            it.next();
-        }
-    }
-
-    fn enter(&mut self, g: &'a Formula, entry: Option<usize>) {
-        self.left.push((g.kids().iter(), entry));
-    }
-
-    /// The entry of the innermost level if it has no parts left: `Some(None)` for a level
-    /// entered alone.
-    fn done(&self) -> Option<Option<usize>> {
-        self.left
-            .last()
-            .filter(|(it, _)| it.as_slice().is_empty())
-            .map(|&(_, e)| e)
     }
 }
 

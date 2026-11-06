@@ -7,7 +7,7 @@
 //!
 //! Block comments nest, so commenting out a region that already holds one works.
 
-use super::{Error, ErrorKind, Span};
+use super::token::{Error, ErrorKind, Span};
 
 /// The end of the comment starting at byte `pos` of `text`, if one starts there.
 pub(super) fn comment(text: &str, pos: usize) -> Option<Result<usize, Error>> {

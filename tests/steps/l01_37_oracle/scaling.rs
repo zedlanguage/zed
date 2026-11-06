@@ -10,7 +10,8 @@ use zed_kernel::{Evaluator, Term, Value};
 use zed_tests::oracle::{Engine, Report, bindings, counterexamples, native, program};
 use zed_tests::scaling::check;
 use zedc::elab::Unit;
-use zedc::query::{Db, Front};
+use zedc::front::Front;
+use zedc::query::Db;
 use zedc::run;
 
 /// `x0 = 0; x1 = 1; …`: `n` first-order bindings, elaborated.

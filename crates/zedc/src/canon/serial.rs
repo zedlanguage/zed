@@ -14,7 +14,8 @@ use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witnes
 use zed_kernel::value::Value;
 
 use super::binders::level_of;
-use super::{Def, Domain};
+use super::def::Def;
+use super::domain::Domain;
 use crate::address::ContentAddress;
 use crate::store::interval::End;
 use crate::store::lattice::Congruence;

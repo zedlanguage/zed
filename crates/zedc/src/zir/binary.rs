@@ -365,7 +365,7 @@ impl W {
 // ---------------------------------------------------------------------------------------------
 // Reading
 
-/// The graph encoded in `bytes`, which [`super::validate`] has not yet checked.
+/// The graph encoded in `bytes`, which [`super::validate::validate`] has not yet checked.
 pub fn decode(bytes: &[u8]) -> Result<Region, String> {
     let mut r = R { b: bytes, i: 0 };
     if r.take(4)? != MAGIC {

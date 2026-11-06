@@ -236,7 +236,7 @@ fn checking_a_graph_of_many_pushes_scales() {
                 .map(|n| (n, lower(&calls_in_place(n)).unwrap()))
                 .collect();
             scaling::check("checking a graph of n pushes", N, |n| {
-                zedc::zir::validate(&graphs[&n]).unwrap();
+                zedc::zir::validate::validate(&graphs[&n]).unwrap();
             });
         })
         .unwrap()
@@ -398,7 +398,7 @@ fn lowering_and_raising_a_deep_term_is_linear_in_its_depth() {
 fn a_port_used_100000_regions_deep_is_lowered_on_a_2_mib_stack() {
     on_small_stack(|| {
         let g = lower(&push_under_ifs(100_000)).unwrap();
-        zedc::zir::validate(&g).unwrap();
+        zedc::zir::validate::validate(&g).unwrap();
         let small = push_under_ifs(5_000);
         let large = push_under_ifs(40_000);
         check_order("lowering a push under nested `if`s", 5_000, 1, |d| {

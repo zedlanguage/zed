@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::store::interval::{End, IntervalSet, Num};
-use zedc::store::lattice::{Card, Congruence, FiniteSet, Landmarks, Lattice};
+use zedc::store::landmarks::Landmarks;
+use zedc::store::lattice::{Card, Congruence, FiniteSet, Lattice};
 
 use super::iv;
 

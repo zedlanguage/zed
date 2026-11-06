@@ -22,7 +22,7 @@ use zed_tests::instances::Rng;
 use zedc::address::ContentAddress;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::Equations;
-use zedc::store::lattice::Landmarks;
+use zedc::store::landmarks::Landmarks;
 use zedc::store::wto::VertexKey;
 
 /// One term of a cell's transfer: `(cell[from] ⊓ filter) + offset`.

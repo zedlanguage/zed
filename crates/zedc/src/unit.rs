@@ -28,11 +28,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
+use crate::front::{self, Diagnostic, Parsed, error};
 use crate::lex::{self, Span, Tok};
 use crate::parse::{TOP, parse};
-use crate::query::{self, Db, Parsed};
-use crate::resolve::{self, Alone, Exports, Refused, Resolved, Units};
-use crate::run::{self, Diagnostic};
+use crate::query::{self, Db};
+use crate::resolve::{self, Exports, Refused, Resolved, Units};
 use crate::source;
 use crate::suppress::Severity;
 
@@ -104,16 +104,6 @@ pub struct Manifest {
 
 /// The start of a file, where an error about the whole file is placed.
 const NOWHERE: Span = Span { start: 0, end: 0 };
-
-/// An error at `span` with no derivation.
-fn error(span: Span, message: String) -> Error {
-    Error {
-        row: None,
-        span,
-        message,
-        notes: Vec::new(),
-    }
-}
 
 /// The manifest `text`, or every error in it: it is written in unit syntax and binds only
 /// names to string literals, each name once, and `prelude` is the one name it may bind.
@@ -239,21 +229,6 @@ pub fn unit_of(file: &str) -> Result<String, String> {
     }
 }
 
-/// The statements of the unit `text` and its imports, each with the unit it names, in text
-/// order; or the errors of the first phase that rejects it. What [`Query::Parse`] computes.
-///
-/// [`Query::Parse`]: crate::query::Query::Parse
-pub(crate) fn parse_unit(text: &str) -> Parsed {
-    let tokens = lex::lex(text).map_err(|e| vec![error(e.span, e.to_string())])?;
-    let tree = parse(text, &tokens, "Unit", TOP).map_err(|e| vec![error(e.span, e.to_string())])?;
-    let stmts = ast::unit_all_errors(text, &tokens, &tree)?;
-    // The imports are found by the resolver's own walk, which meets every import in every
-    // scope; read alone, the unit resolves with no other unit, and only the imports are kept.
-    let mut imports = resolve::resolve_in(&stmts, &Alone).res.units;
-    imports.sort_by_key(|i| i.1);
-    Ok((stmts, imports))
-}
-
 /// A unit the loader read.
 #[derive(Debug)]
 pub struct Loaded {
@@ -344,7 +319,7 @@ impl Package {
             let file = root.join(name);
             let errors = at.iter().map(|&i| self.problems[i].error.clone()).collect();
             let lines = source::Lines::new(text.as_bytes());
-            let d: Vec<Diagnostic> = run::placed(text, &lines, &[], Severity::Rejection, errors);
+            let d: Vec<Diagnostic> = front::placed(text, &lines, &[], Severity::Rejection, errors);
             for (i, d) in at.into_iter().zip(d) {
                 out[i] = format!("{}:{d}", file.display());
             }

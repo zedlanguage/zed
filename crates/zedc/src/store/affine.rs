@@ -21,7 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use super::interval::{End, IntervalSet, Num};
-use super::lattice::{Landmarks, Lattice};
+use super::landmarks::Landmarks;
+use super::lattice::Lattice;
 
 /// A symbol an affine bound names: a name in scope or its length, `n` or `a::len`. The store
 /// names each symbol by its source text, unique within one store.
