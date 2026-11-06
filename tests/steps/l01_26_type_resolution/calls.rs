@@ -2,7 +2,7 @@
 //! the checker gives the value.
 
 use super::type_errors;
-use crate::l01_16_elaboration::{errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 
 #[test]
 fn named_arguments_through_a_value() {

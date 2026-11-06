@@ -3,6 +3,7 @@
 use zedc::resolve::Ref;
 
 use super::{at, errors, run};
+pub(crate) use zed_tests::step_helpers::l01_14_name_resolution::overloads;
 
 /// Blocks nested `n` deep, each binding a name, the innermost reading the top-level `c` `n`
 /// times.
@@ -14,22 +15,6 @@ fn nested(n: usize) -> String {
     src += &format!("{}\n", vec!["c"; n].join(" + "));
     src += &"}\n".repeat(n);
     src + ";\n"
-}
-
-/// `k` overloads of `f`, at most 8^5: five parameters, each with no written type or one of
-/// the seven types of L1, so no two have the same parameter types.
-pub(crate) fn overloads(k: usize) -> String {
-    const TYPES: [&str; 8] = [
-        "", ": int", ": rat", ": f64", ": bool", ": String", ": Lines", ": Files",
-    ];
-    let mut src = String::new();
-    for i in 0..k {
-        let ps: Vec<String> = (0..5)
-            .map(|j| format!("p{j}{}", TYPES[i >> (3 * j) & 7]))
-            .collect();
-        src += &format!("f({}) = 0;\n", ps.join(", "));
-    }
-    src
 }
 
 #[test]

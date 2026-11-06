@@ -5,7 +5,7 @@
 //! no `FieldType` and builds at L1.
 
 use super::check;
-use crate::m0_03_grammar_tools::grammar;
+use zed_tests::step_helpers::m0_03_grammar_tools::grammar;
 
 /// The desugaring rule of `rule` in `zed/grammar/desugar.txt`.
 fn rule(rule: &str) -> String {

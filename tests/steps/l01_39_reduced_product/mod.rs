@@ -30,8 +30,8 @@ use zed_kernel::Term;
 use zed_kernel::types::Type;
 use zedc::store::product::{Arm, Product, Scope, arms};
 
-use crate::l01_16_elaboration::elab;
-use crate::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_16_elaboration::elab;
+use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 
 /// The scope of integer parameters `ps`, known only when the program runs.
 fn ints(ps: &[Arc<str>]) -> Scope {

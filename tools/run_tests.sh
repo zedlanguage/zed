@@ -38,13 +38,13 @@ if ! cargo test --workspace $features --no-run --message-format=short >"$out/bui
 fi
 # Cargo prints a binary path relative to the checkout only when the target directory is inside it.
 bins=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^/].*\))$|$root/\1|p" "$out/build.log")
-steps=$(echo "$bins" | grep '/steps-')
 full=$(echo "$bins" | grep '/full-')
 # The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
 # so distinct values collide; its pieces check that every place that compares by address
 # confirms equal addresses by contents, and that verdicts and outputs match the full build.
+short_steps="l01_37a_short_addresses l01_37_oracle"
 if ! CARGO_TARGET_DIR=$root/build/short cargo test -p zed-tests --features short-addresses \
-  --test steps --no-run --message-format=short >"$out/build-short.log" 2>&1; then
+  $(printf -- '--test %s ' $short_steps) --no-run --message-format=short >"$out/build-short.log" 2>&1; then
   tail -40 "$out/build-short.log"
   echo "BUILD FAILED (short-addresses)"
   exit 1
@@ -58,8 +58,10 @@ if ! RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items >"$
   echo "DOC FAILED"
   exit 1
 fi
-# A step folder or module named here gets a piece for each of its modules and each of its own
-# tests instead of one piece; the rest get one piece each. Named because together they ran past
+# Each step folder is a test binary of its own, named after the folder (tests/Cargo.toml), and a
+# test's name in it is its module path within the folder. A step folder or module named here
+# gets a piece for each of its modules and each of its own tests instead of one piece; the rest
+# get one piece each. Named because together they ran past
 # 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s; l01_23
 # 29 to 35 s at load 53, with tests of 36, 32 and 15 s); the modules are those with a test over
 # 10 s there, so each of those tests has a process of its own. l01_38 names ran past 60 s at
@@ -77,32 +79,43 @@ split="
   l01_38_presburger::names l01_38_presburger::live3
   l01_38_presburger::shared l01_38_presburger::stages
 "
+# The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
+# binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
+# a name, so it is a piece only when every test matching the filter lies in the module; otherwise
+# each of the module's tests is a piece.
 step_pieces() {
-  case " $(echo $split) " in
-    *" $1 "*) ;;
-    *)
-      echo "$1 tests $steps $1::"
-      return
-      ;;
-  esac
-  local tests
-  if ! tests=$("$steps" --list --format terse "$1::"); then
-    echo "$1 tests $steps $1::"
+  local name=$1${3:+::$3} prefix=${3:+$3::} tests
+  if ! tests=$("$2" --list --format terse ${prefix:+"$prefix"}); then
+    echo "$name tests $2${prefix:+ $prefix}"
     return
   fi
-  tests=$(echo "$tests" | sed -n "s/^\($1::[^:]*\)\(.*\): test$/\1 \2/p")
+  tests=$(echo "$tests" | sed -n "s/: test$//p")
+  case " $(echo $split) " in
+    *" $name "*) ;;
+    *)
+      if [ -z "$prefix" ] || ! echo "$tests" | grep -qv "^$prefix"; then
+        echo "$name tests $2${prefix:+ $prefix}"
+        return
+      fi
+      ;;
+  esac
+  tests=$(echo "$tests" | sed -n "s/^\($prefix[^:]*\)\(.*\)$/\1 \2/p")
   for t in $(echo "$tests" | sed -n 's/ $//p'); do
-    echo "$t tests $steps --exact $t"
+    echo "$1::$t tests $2 --exact $t"
   done
   for m in $(echo "$tests" | sed -n 's/ ::.*//p' | sort -u); do
-    step_pieces "$m"
+    step_pieces "$1" "$2" "$m"
   done
 }
 {
   for p in $bins; do
     n=$(basename "$p")
+    if [ -d "tests/steps/${n%-*}" ]; then
+      step_pieces "${n%-*}" "$p"
+      continue
+    fi
     case $n in
-      steps-* | full-*) ;;
+      full-*) ;;
       deep_values-* | deep_scaling-* | deep_heap-*)
         # Tests of many gigabytes at once slow each other through the lock on the address space
         # of their process: 59 s together against 17 s alone at load 50. Each gets a process.
@@ -123,11 +136,8 @@ step_pieces() {
       *) echo "$n tests $p" ;;
     esac
   done
-  for d in tests/steps/*/; do
-    step_pieces "$(basename "$d")"
-  done
-  for g in l01_37a_short_addresses l01_37_oracle; do
-    echo "short-$g tests $short $g::"
+  for p in $short; do
+    echo "short-$(basename "${p%-*}") tests $p"
   done
   if [ -n "$full" ]; then
     for d in tests/full/*/; do

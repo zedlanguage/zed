@@ -15,7 +15,7 @@ use zedc::run::{Program, load};
 use zedc::stage::{Domain, Specializer, Stage, color, ends, free, mix, passed};
 
 use super::out;
-use crate::l01_16_elaboration::elab;
+use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 /// `main` with `n` local definitions in a chain from a port, each read by the next; `all`
 /// writes their sum, so the last term reads every one.

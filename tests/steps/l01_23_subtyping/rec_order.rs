@@ -157,12 +157,9 @@ fn child(mode: &str) -> Option<Vec<String>> {
         }
         return None;
     }
-    let name = format!(
-        "{}::checking_a_program_alone_or_after_another_agrees",
-        module_path!()
-            .strip_prefix("steps::")
-            .unwrap_or(module_path!())
-    );
+    // A test's name within its binary is its module path without the crate.
+    let module = module_path!().split_once("::").map_or("", |(_, m)| m);
+    let name = format!("{module}::checking_a_program_alone_or_after_another_agrees");
     let out = Command::new(std::env::current_exe().expect("the test binary has a path"))
         .args(["--exact", &name, "--nocapture", "--test-threads=1"])
         .env(CHILD, mode)

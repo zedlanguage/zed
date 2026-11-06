@@ -8,7 +8,7 @@ use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Family, Prim, Term, Value, World};
 use zed_tests::kernel::*;
 
-use crate::l01_16_elaboration::elab;
+use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 /// The term of the definition `x` of `text`.
 fn x_of(text: &str) -> Term {

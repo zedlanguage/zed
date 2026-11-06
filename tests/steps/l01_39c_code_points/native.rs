@@ -7,7 +7,7 @@ use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Prim, Value};
 
 use super::{BOUNDARIES, from_one, from_zero};
-use crate::l01_36_cranelift::{kernel, native};
+use zed_tests::step_helpers::l01_36_cranelift::{kernel, native};
 
 fn agree(t: &Term) -> Value {
     let k = kernel(t).unwrap_or_else(|e| panic!("{t}: {e}"));

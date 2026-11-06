@@ -5,7 +5,7 @@ use zed_kernel::{Evaluator, World};
 use zed_tests::deep::resolved;
 use zed_tests::scaling::{check, inputs};
 
-use crate::l01_16_elaboration::{checked, value, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{checked, value, with_prelude};
 
 /// An atom with `n` named fields `p0`, `p1`, … (`f64` would name a type), and an `else` that matches it naming them all.
 fn fields(n: usize) -> String {

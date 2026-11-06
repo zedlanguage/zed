@@ -58,7 +58,7 @@ fn fields(n: usize) -> Term {
     ins.extend(
         (0..n)
             .rev()
-            .map(|i| super::super::l01_34_memory::cat(&format!("x{i}"), "")),
+            .map(|i| zed_tests::step_helpers::l01_34_memory::cat(&format!("x{i}"), "")),
     );
     let p = Pattern::Fields(
         "a".into(),
@@ -109,7 +109,7 @@ fn lambdas(n: usize) -> Term {
 fn dups(n: usize) -> Term {
     let_(
         "x",
-        super::super::l01_34_memory::cat("a", "b"),
+        zed_tests::step_helpers::l01_34_memory::cat("a", "b"),
         prim(Prim::Tuple, (0..n).map(|_| var("x")).collect()),
     )
 }

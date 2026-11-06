@@ -14,7 +14,7 @@ use zed_tests::scaling;
 use zedc::store::product::{Product, Scope, arms};
 
 use super::{arm, arms_of, ints};
-use crate::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 
 /// The test of each arm, the outcome, and the integers each named parameter holds there.
 fn readings(src: &str, names: &[&str]) -> Vec<String> {

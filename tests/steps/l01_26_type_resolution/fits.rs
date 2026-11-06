@@ -3,7 +3,7 @@
 //! default.
 
 use super::{info, sig, type_errors};
-use crate::l01_16_elaboration::{errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 use zedc::ast::unit;
 use zedc::check::Fit;
 use zedc::lex::lex_fence;

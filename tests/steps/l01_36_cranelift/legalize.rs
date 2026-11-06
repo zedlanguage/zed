@@ -168,7 +168,7 @@ fn native_stack() -> u64 {
 /// operator the program wrote.
 #[test]
 fn an_order_refused_its_memory_names_the_operator_as_written() {
-    use super::super::l01_17_value_representation::memory_check::{
+    use zed_tests::step_helpers::l01_17_value_representation::{
         MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by,
     };
     if !in_child_at(

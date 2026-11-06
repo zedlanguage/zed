@@ -18,7 +18,7 @@ This file lists the remaining work on Zed and the order it must run in. It has 8
 
 **Done, so not listed:** T1 (all crates optimized in dev builds, `Cargo.toml` `[profile.dev]` at `opt-level = 2`) and T8 (code in other languages removed). Both landed in commit cd2d30b. Every step L1.1 to L1.39 and M0.x is also done, so a need on one of them is treated as met and left out of the table. The exceptions are L1.17a, L1.29a, L1.37a, L1.39a and L1.39b, added on 2026-11-03, which have rows.
 
-**Files every step touches:** `tests/steps/main.rs`, `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` and `../zed/PROGRESS.md`. These are left out of the conflict lists, since every pair would match. The changes are additive, so resolve them at merge by keeping both sides, then regenerate `PROGRESS.md`. Each step's own `tests/steps/lNN_MM_*/` directory is separate from every other step's.
+**Files every step touches:** `tests/Cargo.toml` (written by the step_targets tool), `tests/steps/m0_01_scaffolding/`, `STATUS.md`, `COMPLEXITY.md` and `../zed/PROGRESS.md`. These are left out of the conflict lists, since every pair would match. The changes are additive, so resolve them at merge by keeping both sides, then rerun step_targets and regenerate `PROGRESS.md`. Each step's own `tests/steps/lNN_MM_*/` directory is separate from every other step's.
 
 **Builders of new forms.** A builder tells kids apart by the token that follows or by position, never by rule name where a `~` rule can stand (STATUS.md, the LR4 fix).
 

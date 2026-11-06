@@ -13,6 +13,8 @@ use zed_tests::scaling::check_order;
 use zedc::zir::Region;
 use zedc::zir::lower::{lower, raise};
 
+pub(crate) use zed_tests::step_helpers::l01_33_lowering::{nest, push_under_ifs};
+
 fn push(port: &str, v: Term) -> Term {
     Term::Push(port.into(), v.into())
 }
@@ -87,24 +89,6 @@ fn lowering_the_chain_scales() {
         .unwrap()
         .join()
         .unwrap();
-}
-
-/// `if i < d then (let y{i} = (if ...) + 1 in y{i}) else i`, `d` deep: each level a match node
-/// whose arm holds the next, its edge carrying the hint of a `let`.
-pub(crate) fn nest(d: usize) -> Term {
-    use zed_kernel::Prim;
-    use zed_kernel::term::build::{if_, prim};
-    let mut t = lit(0);
-    for i in 0..d {
-        let y = format!("y{i}");
-        let inner = let_(&y, prim(Prim::Add, vec![t, lit(1)]), var(&y));
-        t = if_(
-            prim(Prim::Lt, vec![lit(i as i64), lit(d as i64)]),
-            inner,
-            lit(i as i64),
-        );
-    }
-    t
 }
 
 /// CSE keys each node by the hashes of its regions, so a nest is not canonicalized again at
@@ -408,16 +392,6 @@ fn lowering_and_raising_a_deep_term_is_linear_in_its_depth() {
             lower(if d == 5_000 { &small } else { &large }).unwrap();
         });
     });
-}
-
-/// `if 0 < 1 then (if ... push stdout 0 ...) else 0`, `d` deep: the push at the bottom takes
-/// the state edge through every region above it.
-pub(crate) fn push_under_ifs(d: usize) -> Term {
-    use zed_kernel::Prim;
-    use zed_kernel::term::build::{if_, prim};
-    (0..d).fold(push("stdout", lit(0i64)), |t, _| {
-        if_(prim(Prim::Lt, vec![lit(0i64), lit(1i64)]), t, lit(0i64))
-    })
 }
 
 #[test]

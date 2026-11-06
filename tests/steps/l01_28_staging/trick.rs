@@ -9,7 +9,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Term, Value, World};
 use zedc::stage::{Choice, Domain, Specializer, passed, split, trick};
 
-use crate::l01_16_elaboration::{elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 fn ints(vs: &[i64]) -> BTreeSet<Value> {
     vs.iter().copied().map(Value::Int).collect()

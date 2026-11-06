@@ -12,7 +12,7 @@ use zed_kernel::{Prim, Term, Value};
 use zedc::zir::canon;
 use zedc::zir::lower::lower;
 
-use crate::l01_33_lowering::{count, eval, round_trip};
+use zed_tests::step_helpers::l01_33_lowering::{count, eval, round_trip};
 
 /// `x + 1` for each `x` in `0..n`: `n` distinct prim nodes.
 fn sums(n: i64) -> Vec<Term> {

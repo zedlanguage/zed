@@ -4,7 +4,7 @@
 //! a table that states what the program does passes, and one that states something else fails.
 
 use super::checks;
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The unit `def` with a table of `rows`, each `(key, call, want)`: every row `key -> want`
 /// passes, and `call`, the same call written in the program, gives `want`.

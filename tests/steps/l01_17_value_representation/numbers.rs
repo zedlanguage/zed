@@ -1,6 +1,6 @@
 //! Unbounded integers and exact rationals, from literals through arithmetic.
 
-use crate::l01_16_elaboration::{errors, term, value};
+use zed_tests::step_helpers::l01_16_elaboration::{errors, term, value};
 
 #[test]
 fn integers_widen_past_64_bits_and_narrow_back() {

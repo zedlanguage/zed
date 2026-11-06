@@ -5,7 +5,7 @@
 use zed_kernel::{Evaluator, KernelError, Prim, Term, Value, World};
 use zedc::zir::text::PRIMS;
 
-use crate::l01_16_elaboration::{elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 /// The primitives no program names by a word of its own: elaboration builds them from other
 /// forms (a tuple, a component `p[0]`, an atom), or they belong to later layers. A refusal

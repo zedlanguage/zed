@@ -285,7 +285,7 @@ fn a_difference_of_a_value_with_itself_is_read_as_a_range() {
 #[test]
 fn zedc_run_prints_the_warning_and_runs_the_program() {
     let src = main_with("  side = 3037000500;\n  area = side * side;\n", "area");
-    let out = crate::l01_19_whole_file_ports::run("widen_area", &src, "", &[]);
+    let out = zed_tests::step_helpers::l01_19_whole_file_ports::run("widen_area", &src, "", &[]);
     assert_eq!(out.status, 0, "{}", out.stderr);
     assert_eq!(out.stdout, "9223372037000250000\n");
     let first = out.stderr.lines().next().unwrap_or_default();

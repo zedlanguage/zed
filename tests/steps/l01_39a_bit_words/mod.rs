@@ -17,7 +17,7 @@ use zedc::run::load;
 
 /// The value of `x = <expr>;`, printed.
 fn x(expr: &str) -> String {
-    crate::l01_16_elaboration::value(&format!("x = {expr};\n"), "x")
+    zed_tests::step_helpers::l01_16_elaboration::value(&format!("x = {expr};\n"), "x")
 }
 
 /// `src` as a whole program: a `main` is added when it declares none.

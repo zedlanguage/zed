@@ -10,9 +10,9 @@ mod scaling;
 use zed_tests::tokens;
 use zedc::lex::lex_fence;
 
-use crate::l01_16_elaboration::value;
-use crate::l01_19_whole_file_ports::run;
-use crate::l01_26_type_resolution::{sig, type_errors};
+use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_19_whole_file_ports::run;
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 const INC: &str = "inc(x) = x + 1n;\n";
 

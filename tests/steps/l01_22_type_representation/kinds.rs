@@ -4,9 +4,9 @@
 //! set it names in the kernel and in the checker, and prints back as text that reads back as the
 //! same type.
 
-use crate::l01_13_formatter::fmt;
 use zed_kernel::types::{Type, Universe};
 use zed_tests::scaling;
+use zed_tests::step_helpers::l01_13_formatter::fmt;
 use zedc::ast::unit;
 use zedc::check::read::parse_type;
 use zedc::check::ty::{Ty, atoms};

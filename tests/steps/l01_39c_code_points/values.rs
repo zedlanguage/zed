@@ -79,7 +79,7 @@ fn the_failures_pass_through_else() {
     let src = "digit = codePoint(\"7\") - codePoint(\"0\") else -1;\n\
                none = codePoint(\"77\") else -1;\n\
                shown = scalar(55296) else \"?\";\n";
-    let v = |n| crate::l01_16_elaboration::value(src, n);
+    let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("digit"), "7");
     assert_eq!(v("none"), "-1");
     assert_eq!(v("shown"), "\"?\"");

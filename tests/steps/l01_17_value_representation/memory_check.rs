@@ -9,8 +9,6 @@
 //! [`MARGIN`]. An allocation that was not asked for first would then abort the child, which
 //! the parent reports as a failure.
 
-use std::process::Command;
-
 use num_bigint::{BigInt, BigUint};
 use zed_kernel::num::bytes_of;
 use zed_kernel::term::build::{lit, prim};
@@ -18,81 +16,14 @@ use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Ter
 use zed_tests::kernel::{bin, get, path};
 use zed_tests::scaling::check_order;
 
-/// Set in the child process that runs a test under the lowered limit.
-const CHILD: &str = "ZED_L1_17A_UNDER_LIMIT";
-
-/// The address space the child may take beyond what it holds once its operands are built.
-pub(crate) const MARGIN: u64 = 64 << 20;
-
-/// The width, in bits, of the operands in the child: 128 MiB, twice [`MARGIN`], so building
-/// any of them again is refused.
-pub(crate) const WIDE: u64 = 1 << 30;
+pub(crate) use zed_tests::step_helpers::l01_17_value_representation::{
+    WIDE, in_child_at, lower_limit, lower_limit_by,
+};
 
 /// In the parent, runs the test `name` of this module again in a child process and returns
 /// `false` once it has passed there; in the child, returns `true`.
 fn in_child(name: &str) -> bool {
     in_child_at(module_path!(), name)
-}
-
-/// [`in_child`] for the test `name` of the module `module`.
-pub(crate) fn in_child_at(module: &str, name: &str) -> bool {
-    if std::env::var_os(CHILD).is_some() {
-        return true;
-    }
-    let module = module.strip_prefix("steps::").unwrap_or(module);
-    let full = format!("{module}::{name}");
-    let out = Command::new(std::env::current_exe().expect("the test binary has a path"))
-        .args(["--exact", &full, "--nocapture", "--test-threads=1"])
-        .env(CHILD, "1")
-        // One malloc arena, so no thread reserves a new 64 MiB heap under the limit.
-        .env("MALLOC_ARENA_MAX", "1")
-        // A fixed mmap threshold, so an allocation of 128 KiB or more is its own mapping, which
-        // the limit counts: glibc otherwise raises the threshold to the size of each mapped
-        // block freed, up to 32 MiB, and serves a later large allocation from freed heap
-        // inside the limit, where it is not refused.
-        .env("MALLOC_MMAP_THRESHOLD_", "131072")
-        .output()
-        .expect("the test binary runs");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success() && stdout.contains("1 passed"),
-        "{full} under the lowered limit: {}\n{stdout}\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stderr)
-    );
-    false
-}
-
-/// Lowers this process's address-space limit to what it uses now plus [`MARGIN`], and checks
-/// that a request of twice the margin is then refused.
-pub(crate) fn lower_limit() {
-    lower_limit_by(MARGIN);
-}
-
-/// Lowers this process's address-space limit to what it uses now plus `margin` bytes, and
-/// checks that a request of twice the margin is then refused.
-pub(crate) fn lower_limit_by(margin: u64) {
-    let status = std::fs::read_to_string("/proc/self/status").expect("Linux has /proc");
-    let kib: u64 = status
-        .lines()
-        .find_map(|l| l.strip_prefix("VmSize:"))
-        .and_then(|v| v.trim().strip_suffix("kB"))
-        .and_then(|v| v.trim().parse().ok())
-        .expect("/proc/self/status has VmSize in kB");
-    let limit = (kib << 10) + margin;
-    rustix::process::setrlimit(
-        rustix::process::Resource::As,
-        rustix::process::Rlimit {
-            current: Some(limit),
-            maximum: Some(limit),
-        },
-    )
-    .expect("a process may lower its own limit");
-    let words = usize::try_from(margin / 4).expect("the margin fits a usize");
-    assert!(
-        Vec::<u64>::new().try_reserve_exact(words).is_err(),
-        "the lowered limit refuses twice the margin"
-    );
 }
 
 fn int(n: u64) -> Rat {

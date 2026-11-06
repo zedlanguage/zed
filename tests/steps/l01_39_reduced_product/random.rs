@@ -18,7 +18,7 @@ use zed_tests::instances::Rng;
 use zedc::store::product::Arm;
 
 use super::ints;
-use crate::l01_38_presburger::random::{bool_term, int_term};
+use zed_tests::step_helpers::l01_38_presburger::{bool_term, int_term};
 
 /// The window of `x` and `y`.
 const LO: i64 = -6;

@@ -9,9 +9,9 @@ use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
 use zedc::zir::memory;
 
-use super::super::l01_34_memory::cat;
 use super::planned;
 use super::scaling::{counted_in, strings, unused};
+use zed_tests::step_helpers::l01_34_memory::cat;
 
 /// `#a(n0: a0, n1: a1, …)`, with the field names in the order given; no names makes a tuple
 /// payload.

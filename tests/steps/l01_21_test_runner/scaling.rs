@@ -8,7 +8,7 @@ use zed_tests::scaling;
 use zedc::query::Db;
 use zedc::testing::test_in;
 
-use crate::l01_16_elaboration::{Checked, checked};
+use zed_tests::step_helpers::l01_16_elaboration::{Checked, checked};
 
 /// `n` functions, each with one row, beside a constant each that no row reads.
 fn tables(n: usize) -> String {

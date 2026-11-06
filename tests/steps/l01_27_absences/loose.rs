@@ -1,8 +1,8 @@
 //! Loose atoms, the failure channel: `else` defaults them, the pattern form handles the one it
 //! names, and they flow through the operators unchanged.
 
-use crate::l01_16_elaboration::value;
-use crate::l01_26_type_resolution::{sig, type_errors};
+use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 /// A lookup's result: a value, a missing row, or a stored NULL.
 const LOOKUP: &str = "positional x: int | #notFound | #none";

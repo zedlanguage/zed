@@ -3,7 +3,7 @@
 
 use zed_kernel::{Family, Value};
 
-use crate::l01_16_elaboration::{elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 /// The values of the definitions `names` of `src`.
 fn values(src: &str, names: &[&str]) -> Vec<Value> {

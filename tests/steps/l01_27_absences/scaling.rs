@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use zed_tests::scaling::{self, FACTOR};
 use zedc::check::check;
 
-use crate::l01_26_type_resolution::info;
+use zed_tests::step_helpers::l01_26_type_resolution::info;
 
 /// `x = #e0 + #e1 + … + #e(n-1);`
 fn chain(n: usize) -> String {

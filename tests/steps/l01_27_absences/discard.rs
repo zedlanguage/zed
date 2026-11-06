@@ -11,8 +11,8 @@ use zedc::check::ty::{Carrier, Ty};
 use zedc::lex::Span;
 use zedc::rejection::Row;
 
-use crate::l01_16_elaboration::value;
-use crate::l01_26_type_resolution::{info, type_errors};
+use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_26_type_resolution::{info, type_errors};
 
 /// A lookup that misses: a number, or the loose failure `#notFound`.
 const LOOKUP: &str = "lookup(positional k: int) = if k > 0 { k } else { #notFound };\n";

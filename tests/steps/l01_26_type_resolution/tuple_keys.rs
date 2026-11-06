@@ -7,7 +7,7 @@
 use zed_tests::scaling;
 
 use super::{Resolved, sig, type_errors};
-use crate::l01_19_whole_file_ports::run;
+use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A record read by a column number the user types.
 const COLUMN: &str = "main(stdin: Lines) -> (stdout: Lines) {\n  \

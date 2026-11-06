@@ -6,7 +6,7 @@ use zedc::store::presburger::{Atom, Entailment, entails};
 use zedc::store::preimage::relations;
 
 use super::{holds, point};
-use crate::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 
 /// What rung 2 concludes from the body of `ok` in `premise` to the body of `ok` in `goal`,
 /// the two translated in one call, so that their auxiliary variables are numbered apart.

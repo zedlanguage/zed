@@ -3,9 +3,9 @@
 //! that holds every use of `X` takes one carrier of the bound for it at each call.
 
 use super::{info, sig, type_errors};
-use crate::l01_10_lambdas_types_else_tuples::sx;
-use crate::l01_13_formatter::fmt;
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_10_lambdas_types_else_tuples::sx;
+use zed_tests::step_helpers::l01_13_formatter::fmt;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 use zedc::ast::unit;
 use zedc::check::read::parse_type;
 use zedc::lex::lex_fence;

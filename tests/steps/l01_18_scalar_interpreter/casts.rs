@@ -2,7 +2,7 @@
 //! number has no equal `T`, and `#invalid` when the source is not a `T` at all.
 
 use super::x;
-use crate::l01_16_elaboration::errors;
+use zed_tests::step_helpers::l01_16_elaboration::errors;
 
 #[test]
 fn reading_a_quantity_from_a_form_field() {

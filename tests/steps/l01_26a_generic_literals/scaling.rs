@@ -9,8 +9,8 @@
 
 use zed_tests::scaling;
 
-use crate::l01_16_elaboration::{checked, elab};
-use crate::l01_26_type_resolution::sig;
+use zed_tests::step_helpers::l01_16_elaboration::{checked, elab};
+use zed_tests::step_helpers::l01_26_type_resolution::sig;
 
 /// A function of `n` untyped parameters, each added with a generic literal: `n` class
 /// merges and `n` generic literals, nested `2n` deep.

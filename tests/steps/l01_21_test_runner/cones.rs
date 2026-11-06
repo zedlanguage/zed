@@ -8,7 +8,7 @@ use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::elab::{Cones, Unit};
 use zedc::stage::free;
 
-use crate::l01_16_elaboration::elab;
+use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 /// The cone by one backward pass over the unit, each definition after those it uses.
 fn by_scan(unit: &Unit, roots: &[&Term]) -> Vec<usize> {

@@ -9,10 +9,199 @@ publish.workspace = true
 [lib]
 path = "src/lib.rs"
 
-# One test binary for every step folder, so that adding a step adds a module, not a link.
+# One test binary per step folder, so that a change to one folder's tests recompiles and links
+# that binary alone.
+# BEGIN step targets: written by `cargo run -p zed-tools --bin step_targets`; do not edit by hand.
 [[test]]
-name = "steps"
-path = "steps/main.rs"
+name = "l01_01_source_loading"
+path = "steps/l01_01_source_loading/mod.rs"
+[[test]]
+name = "l01_02_lexer_names"
+path = "steps/l01_02_lexer_names/mod.rs"
+[[test]]
+name = "l01_03_lexer_integers"
+path = "steps/l01_03_lexer_integers/mod.rs"
+[[test]]
+name = "l01_04_lexer_floats_and_rationals"
+path = "steps/l01_04_lexer_floats_and_rationals/mod.rs"
+[[test]]
+name = "l01_05_lexer_strings"
+path = "steps/l01_05_lexer_strings/mod.rs"
+[[test]]
+name = "l01_06_lexer_tokens"
+path = "steps/l01_06_lexer_tokens/mod.rs"
+[[test]]
+name = "l01_07_fences"
+path = "steps/l01_07_fences/mod.rs"
+[[test]]
+name = "l01_08_parser"
+path = "steps/l01_08_parser/mod.rs"
+[[test]]
+name = "l01_09_postfix_chains"
+path = "steps/l01_09_postfix_chains/mod.rs"
+[[test]]
+name = "l01_10_lambdas_types_else_tuples"
+path = "steps/l01_10_lambdas_types_else_tuples/mod.rs"
+[[test]]
+name = "l01_11_statements"
+path = "steps/l01_11_statements/mod.rs"
+[[test]]
+name = "l01_12_declarations"
+path = "steps/l01_12_declarations/mod.rs"
+[[test]]
+name = "l01_13_formatter"
+path = "steps/l01_13_formatter/mod.rs"
+[[test]]
+name = "l01_14_name_resolution"
+path = "steps/l01_14_name_resolution/mod.rs"
+[[test]]
+name = "l01_15_kernel_terms"
+path = "steps/l01_15_kernel_terms/mod.rs"
+[[test]]
+name = "l01_16_elaboration"
+path = "steps/l01_16_elaboration/mod.rs"
+[[test]]
+name = "l01_17_value_representation"
+path = "steps/l01_17_value_representation/mod.rs"
+[[test]]
+name = "l01_18_scalar_interpreter"
+path = "steps/l01_18_scalar_interpreter/mod.rs"
+[[test]]
+name = "l01_19_whole_file_ports"
+path = "steps/l01_19_whole_file_ports/mod.rs"
+[[test]]
+name = "l01_19a_command_line"
+path = "steps/l01_19a_command_line/mod.rs"
+[[test]]
+name = "l01_20_provenance"
+path = "steps/l01_20_provenance/mod.rs"
+[[test]]
+name = "l01_21_test_runner"
+path = "steps/l01_21_test_runner/mod.rs"
+[[test]]
+name = "l01_22_type_representation"
+path = "steps/l01_22_type_representation/mod.rs"
+[[test]]
+name = "l01_23_subtyping"
+path = "steps/l01_23_subtyping/mod.rs"
+[[test]]
+name = "l01_24_refinement_lattices"
+path = "steps/l01_24_refinement_lattices/mod.rs"
+[[test]]
+name = "l01_25_preimage_catalog"
+path = "steps/l01_25_preimage_catalog/mod.rs"
+[[test]]
+name = "l01_26_type_resolution"
+path = "steps/l01_26_type_resolution/mod.rs"
+[[test]]
+name = "l01_26a_generic_literals"
+path = "steps/l01_26a_generic_literals/mod.rs"
+[[test]]
+name = "l01_27_absences"
+path = "steps/l01_27_absences/mod.rs"
+[[test]]
+name = "l01_28_staging"
+path = "steps/l01_28_staging/mod.rs"
+[[test]]
+name = "l01_29_diagnostics"
+path = "steps/l01_29_diagnostics/mod.rs"
+[[test]]
+name = "l01_30_queries"
+path = "steps/l01_30_queries/mod.rs"
+[[test]]
+name = "l01_31_zir"
+path = "steps/l01_31_zir/mod.rs"
+[[test]]
+name = "l01_32_canonical_zir"
+path = "steps/l01_32_canonical_zir/mod.rs"
+[[test]]
+name = "l01_33_lowering"
+path = "steps/l01_33_lowering/mod.rs"
+[[test]]
+name = "l01_34_memory"
+path = "steps/l01_34_memory/mod.rs"
+[[test]]
+name = "l01_35_mlir_study"
+path = "steps/l01_35_mlir_study/mod.rs"
+[[test]]
+name = "l01_36_cranelift"
+path = "steps/l01_36_cranelift/mod.rs"
+[[test]]
+name = "l01_36a_executables"
+path = "steps/l01_36a_executables/mod.rs"
+[[test]]
+name = "l01_37_oracle"
+path = "steps/l01_37_oracle/mod.rs"
+[[test]]
+name = "l01_37a_short_addresses"
+path = "steps/l01_37a_short_addresses/mod.rs"
+[[test]]
+name = "l01_38_presburger"
+path = "steps/l01_38_presburger/mod.rs"
+[[test]]
+name = "l01_39_reduced_product"
+path = "steps/l01_39_reduced_product/mod.rs"
+[[test]]
+name = "l01_39a_bit_words"
+path = "steps/l01_39a_bit_words/mod.rs"
+[[test]]
+name = "l01_39b_on_demand"
+path = "steps/l01_39b_on_demand/mod.rs"
+[[test]]
+name = "l01_39c_code_points"
+path = "steps/l01_39c_code_points/mod.rs"
+[[test]]
+name = "l02_01_parser_structs"
+path = "steps/l02_01_parser_structs/mod.rs"
+[[test]]
+name = "l02_02_parser_match_imports"
+path = "steps/l02_02_parser_match_imports/mod.rs"
+[[test]]
+name = "l02_03_name_resolution"
+path = "steps/l02_03_name_resolution/mod.rs"
+[[test]]
+name = "l03_01_parser"
+path = "steps/l03_01_parser/mod.rs"
+[[test]]
+name = "l06_01_parser"
+path = "steps/l06_01_parser/mod.rs"
+[[test]]
+name = "l07_03_unit_log_off"
+path = "steps/l07_03_unit_log_off/mod.rs"
+[[test]]
+name = "l25_08_mutate"
+path = "steps/l25_08_mutate/mod.rs"
+[[test]]
+name = "m0_01_scaffolding"
+path = "steps/m0_01_scaffolding/mod.rs"
+[[test]]
+name = "m0_03_grammar_tools"
+path = "steps/m0_03_grammar_tools/mod.rs"
+[[test]]
+name = "m0_04_corpus_references"
+path = "steps/m0_04_corpus_references/mod.rs"
+[[test]]
+name = "m0_05_widening_and_iteration"
+path = "steps/m0_05_widening_and_iteration/mod.rs"
+[[test]]
+name = "m0_06_cost_scalarization"
+path = "steps/m0_06_cost_scalarization/mod.rs"
+[[test]]
+name = "m0_07_canonicalization"
+path = "steps/m0_07_canonicalization/mod.rs"
+[[test]]
+name = "m0_08_zed0_checklist"
+path = "steps/m0_08_zed0_checklist/mod.rs"
+[[test]]
+name = "m0_09_kernel_evaluator"
+path = "steps/m0_09_kernel_evaluator/mod.rs"
+[[test]]
+name = "m0_10_finite_model_harness"
+path = "steps/m0_10_finite_model_harness/mod.rs"
+[[test]]
+name = "m0_11_prelude_axioms_and_limits"
+path = "steps/m0_11_prelude_axioms_and_limits/mod.rs"
+# END step targets
 
 # The tests that need tools outside the Rust toolchain; tools/run_tests.sh --full runs them.
 [[test]]

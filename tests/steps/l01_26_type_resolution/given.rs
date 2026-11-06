@@ -8,7 +8,7 @@
 use zed_tests::scaling;
 
 use super::{Resolved, type_errors};
-use crate::l01_19a_command_line::{dir, run};
+use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
 
 /// `main` reading the files its first two arguments name through `r`, `missing` for a file
 /// that is not there.

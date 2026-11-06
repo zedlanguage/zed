@@ -3,7 +3,7 @@
 
 use zedc::store::preimage::{Demand, preimage};
 
-use crate::l01_25_preimage_catalog::{doms, function, shown};
+use zed_tests::step_helpers::l01_25_preimage_catalog::{doms, function, shown};
 
 /// The preimage of `true` under `ok` in `src` over `ds`, printed, with the relation kept.
 fn pre(src: &str, ds: &[(&str, Option<i64>, Option<i64>)]) -> String {

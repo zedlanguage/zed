@@ -10,7 +10,7 @@ use zed_kernel::types::Type;
 use zed_kernel::value::Value;
 use zed_tests::scaling;
 
-use crate::l01_16_elaboration::{Checked, checked, elab};
+use zed_tests::step_helpers::l01_16_elaboration::{Checked, checked, elab};
 
 /// A string of 1000 characters ending in `i`, as a type.
 fn long(i: usize) -> Type {

@@ -11,16 +11,12 @@ mod fusion;
 mod places;
 mod scaling;
 
-use zed_kernel::term::build::{lit, prim};
-use zed_kernel::{Evaluator, Prim, Term, World};
+use zed_kernel::{Evaluator, Term, World};
 use zedc::zir::Region;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{self, Plan, Stats};
 
-/// A fresh string: the concatenation of `a` and `b`, made when the program runs.
-pub(crate) fn cat(a: &str, b: &str) -> Term {
-    prim(Prim::Concat, vec![lit(a), lit(b)])
-}
+pub(crate) use zed_tests::step_helpers::l01_34_memory::cat;
 
 /// `t` lowered and planned, with fusion or not.
 pub(crate) fn planned(t: &Term, fuse: bool) -> (Region, Plan) {

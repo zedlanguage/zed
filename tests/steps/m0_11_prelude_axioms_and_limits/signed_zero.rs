@@ -3,7 +3,7 @@
 //! a value's identity matters (a law's equation, a content address) they stay two values,
 //! since `1.0 / x` separates them.
 
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 const READINGS: &str = "\
 calm = -0.0;

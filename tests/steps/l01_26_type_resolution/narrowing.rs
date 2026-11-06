@@ -2,7 +2,7 @@
 //! rest where it does not, through `not`, `&&` and `||`.
 
 use super::{sig, type_errors};
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 const N: &str = "n(x: int | String) = if x is String { len(x) } else { x * 2 };\n";
 

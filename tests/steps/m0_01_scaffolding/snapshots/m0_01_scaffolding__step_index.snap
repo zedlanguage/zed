@@ -1,6 +1,6 @@
 ---
 source: tests/steps/m0_01_scaffolding/mod.rs
-expression: "declared_modules().join(\"\\n\")"
+expression: "names.join(\"\\n\")"
 ---
 l01_01_source_loading
 l01_02_lexer_names

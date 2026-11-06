@@ -15,7 +15,7 @@ use std::path::Path;
 
 use zed_tests::scaling;
 
-use crate::l01_36a_executables::{Ran, built, dir, executable, interpreter};
+use zed_tests::step_helpers::l01_36a_executables::{Ran, built, dir, executable, interpreter};
 
 /// The words that come before "build" or "builds" in DESIGN.md and name no kind of build: a
 /// determiner, a verb or adverb with "build" as a verb, a thing that builds something, a build

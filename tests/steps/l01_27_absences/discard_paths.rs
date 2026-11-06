@@ -6,7 +6,7 @@
 use zedc::lex::Span;
 use zedc::rejection::Row;
 
-use crate::l01_26_type_resolution::{info, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{info, type_errors};
 
 /// A lookup that misses: a number, or the loose failure `#notFound`.
 const LOOKUP: &str = "lookup(positional k: int) = if k > 0 { k } else { #notFound };\n";

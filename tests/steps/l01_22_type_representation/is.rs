@@ -1,7 +1,7 @@
 //! `e is T` elaborates to a match whose first arm is the type and whose second is `_`, and
 //! `is not` swaps the answers; a type naming a port, or bounding functions, is rejected.
 
-use crate::l01_16_elaboration::elab;
+use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 fn term(text: &str, name: &str) -> String {
     let u = elab(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));

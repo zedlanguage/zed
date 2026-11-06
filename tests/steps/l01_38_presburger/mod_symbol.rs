@@ -16,7 +16,7 @@ use zedc::store::presburger::{Atom, Con, Entailment, Formula, Lin, Model, satisf
 
 use super::entailment::rung2;
 use super::{holds, point, window};
-use crate::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_25_preimage_catalog::function;
 
 /// The countermodel of `e`, checked against the interpreter: the premise holds there and the
 /// goal does not give `true`.
@@ -219,7 +219,7 @@ fn a_program_with_a_remainder_by_a_symbol_is_checked_and_runs() {
                held = ok(i: a, len: a - 2) else false;\n  \
                r = if held { \"in\" } else { \"out\" };\n  stdout <- \"${r}\";\n}\n";
     for (input, out) in [("7\n", "in\n"), ("-3\n", "out\n")] {
-        let o = crate::l01_19_whole_file_ports::run("ring", src, input, &[]);
+        let o = zed_tests::step_helpers::l01_19_whole_file_ports::run("ring", src, input, &[]);
         assert_eq!(
             (o.status, o.stdout.as_str(), o.stderr.as_str()),
             (0, out, ""),

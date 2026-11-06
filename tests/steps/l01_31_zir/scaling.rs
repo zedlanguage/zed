@@ -12,38 +12,7 @@ use zed_tests::deep::on_small_stack;
 use zed_tests::scaling::check_order;
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text, validate};
 
-/// `if true then (if true then ... 0 else 0) else 0`, `depth` branches deep, built from the
-/// bottom up.
-pub(crate) fn nested_ifs(depth: usize) -> Region {
-    let region = |kind, nodes, results| Region {
-        kind,
-        args: Vec::new(),
-        nodes,
-        results,
-    };
-    let zero = || {
-        region(
-            RegionKind::Match,
-            Vec::new(),
-            vec![Src::Const(Value::Int(0))],
-        )
-    };
-    let branch = |then: Region| Node {
-        op: Op::If,
-        inputs: vec![Src::Const(Value::Bool(true))],
-        outputs: vec![Edge::value(Type::int())],
-        regions: vec![Arc::new(then), Arc::new(zero())],
-    };
-    let mut arm = zero();
-    for _ in 1..depth {
-        arm = region(RegionKind::Match, vec![branch(arm)], vec![Src::Out(0, 0)]);
-    }
-    region(
-        RegionKind::Function,
-        vec![branch(arm)],
-        vec![Src::Out(0, 0)],
-    )
-}
+pub(crate) use zed_tests::step_helpers::l01_31_zir::nested_ifs;
 
 #[test]
 fn a_graph_nested_100000_deep_is_checked_compared_and_freed_on_a_2_mib_stack() {

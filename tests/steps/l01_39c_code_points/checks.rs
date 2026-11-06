@@ -54,7 +54,7 @@ fn a_code_point_is_in_the_domain_of_the_bit_words() {
                mid = bitOr(128, bitAnd(shr(c, 6), 63)) else 0;\n\
                low = bitOr(128, bitAnd(\"€\".codePoint, 63)) else 0;\n\
                wide = rotl(\"€\".codePoint(), 1, width: 21) else 0;\n";
-    let v = |n| crate::l01_16_elaboration::value(src, n);
+    let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert!(accepted(src));
     assert_eq!(
         (v("lead"), v("mid"), v("low")),

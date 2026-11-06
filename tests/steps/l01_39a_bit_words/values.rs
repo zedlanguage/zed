@@ -14,7 +14,7 @@ fn the_named_cases() {
 fn masking_a_byte_and_packing_two() {
     let src = "word = 51966;\nlow = bitAnd(word, 255);\nhigh = shr(word, 8);\n\
                packed = bitOr(shl(high, 8), low);\nflipped = bitXor(word, 65535);\n";
-    let v = |n| crate::l01_16_elaboration::value(src, n);
+    let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("low"), "254");
     assert_eq!(v("high"), "202");
     assert_eq!(v("packed"), "51966");

@@ -17,11 +17,12 @@ use zed_kernel::Shared;
 use zed_kernel::{Evaluator, Prim, Term, Value, World, on_stack};
 
 use super::*;
-use crate::l01_16_elaboration::with_prelude;
+use zed_tests::step_helpers::l01_16_elaboration::with_prelude;
 
 /// The value of the function `ok` of `src` at the integer `x`.
 fn run(src: &str, x: i64) -> Value {
-    let u = crate::l01_16_elaboration::elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let u = zed_tests::step_helpers::l01_16_elaboration::elab(src)
+        .unwrap_or_else(|e| panic!("{src}: {e:?}"));
     let ok = u.get("ok").expect("a definition `ok`");
     let call = Term::App(Shared::new(ok), vec![Term::Lit(Value::Int(x))]);
     on_stack(|| Evaluator::new(World::new()).run(&with_prelude(call)))

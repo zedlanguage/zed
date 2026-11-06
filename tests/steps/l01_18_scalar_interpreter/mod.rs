@@ -11,7 +11,7 @@ mod rat_text;
 mod scaling;
 mod words;
 
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The value of `x = <expr>;`, printed.
 fn x(expr: &str) -> String {

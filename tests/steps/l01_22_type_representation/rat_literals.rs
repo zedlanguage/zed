@@ -13,7 +13,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling::{check, check_order};
 use zedc::zir::text::parse_type;
 
-use crate::l01_26_type_resolution::info;
+use zed_tests::step_helpers::l01_26_type_resolution::info;
 
 fn dec(text: &str) -> Value {
     Value::rat(

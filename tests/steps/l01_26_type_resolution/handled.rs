@@ -9,7 +9,7 @@ use zedc::check::read::parse_type;
 use zedc::check::ty::{Arrow, Carrier, Ty, atoms};
 
 use super::{info, sig, type_errors};
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The one arrow of `r(positional line) = body;`, which checks without error.
 fn arrow(body: &str) -> Arrow {
@@ -176,7 +176,7 @@ fn a_function_that_calls_itself_waits_for_layer_l6() {
         "r(positional line) = if line is #again { r(\"x\") } else { trim(line else \"\") };\n";
     let (info, _) = info(text);
     assert!(info.sigs.is_empty());
-    let e = crate::l01_16_elaboration::errors(&format!("{text}y = r(#again);\n"));
+    let e = zed_tests::step_helpers::l01_16_elaboration::errors(&format!("{text}y = r(#again);\n"));
     assert!(e[0].contains("recursion arrives at layer L6"), "{e:?}");
 }
 

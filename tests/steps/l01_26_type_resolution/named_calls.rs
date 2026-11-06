@@ -5,8 +5,8 @@
 //! is passed only by name, in any order").
 
 use super::type_errors;
-use crate::l01_16_elaboration::{errors, value};
-use crate::l01_19_whole_file_ports::run;
+use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
+use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A greeting with a positional name and a named punctuation mark, and three arithmetic
 /// helpers: `dbl` and `sub` take their parameters by name, `add` by position.

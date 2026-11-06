@@ -353,7 +353,7 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
     // `is` is an error of its own: the bound check no longer stops elaboration of the type.
     let src = "f(x) = x is ((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int);";
     assert_eq!(
-        crate::l01_16_elaboration::errors(src),
+        zed_tests::step_helpers::l01_16_elaboration::errors(src),
         [
             "`is` cannot test a value against a function type at run time \
              [((int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int)]"

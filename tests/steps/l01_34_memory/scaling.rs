@@ -15,7 +15,7 @@ use zed_tests::scaling::check_order;
 use zedc::zir::lower::lower;
 use zedc::zir::memory;
 
-use crate::l01_33_lowering::scaling::{nest, push_under_ifs};
+use zed_tests::step_helpers::l01_33_lowering::{nest, push_under_ifs};
 
 /// `t` lowered, planned with fusion and run by the machine, on a 2 MiB stack: the value it
 /// gives.

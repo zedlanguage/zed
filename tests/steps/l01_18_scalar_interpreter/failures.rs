@@ -2,7 +2,7 @@
 //! on, and the atoms of several operands merge into `#errs` of the set of them.
 
 use super::x;
-use crate::l01_16_elaboration::errors;
+use zed_tests::step_helpers::l01_16_elaboration::errors;
 
 #[test]
 fn one_failure_flows_through_the_arithmetic() {
@@ -32,7 +32,7 @@ fn two_failures_merge_into_a_set() {
 fn a_merge_flattens_and_else_replaces_it() {
     let src = "price = int(\"n/a\");\nqty = int(1.5);\nfee = 10 div 0;\n\
                total = price * qty + fee;\nshown = total else 0;\n";
-    let v = |n| crate::l01_16_elaboration::value(src, n);
+    let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("total"), "#errs({#divByZero, #inexact, #invalid})");
     assert_eq!(v("shown"), "0");
 }

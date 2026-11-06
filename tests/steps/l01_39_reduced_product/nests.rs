@@ -539,8 +539,10 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
     let mut r = Rng::new(0xd15);
     let mut cases = vec![one];
     for _ in 0..400 {
-        let a = crate::l01_38_presburger::random::bool_term(&mut r, 2);
-        let b = renamed(&crate::l01_38_presburger::random::bool_term(&mut r, 2));
+        let a = zed_tests::step_helpers::l01_38_presburger::bool_term(&mut r, 2);
+        let b = renamed(&zed_tests::step_helpers::l01_38_presburger::bool_term(
+            &mut r, 2,
+        ));
         cases.push((a, b));
     }
     let mut narrowed = 0;

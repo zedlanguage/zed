@@ -5,8 +5,8 @@
 //! its use, exactly or not at all; a decorated literal such as `1r` keeps its own.
 
 use super::{info, type_errors};
-use crate::l01_16_elaboration::value;
 use zed_kernel::{F64, Value};
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The values the literals of `text` adopt, sorted by position.
 fn adopted(text: &str) -> Vec<Value> {

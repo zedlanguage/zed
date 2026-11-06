@@ -9,7 +9,7 @@ use zed_tools::spec::{Spec, zed_fences_in};
 use zed_tools::sync;
 
 use super::copies::{marks_by_key, tokens_by_key};
-use crate::m0_03_grammar_tools::{Dir, design, fence, spec_dir};
+use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, design, fence, spec_dir};
 
 /// The section and place of each fence of the document `text`.
 fn keys(text: &str) -> Vec<(String, usize)> {

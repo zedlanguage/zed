@@ -14,7 +14,7 @@ use zedc::canon::Facet;
 use zedc::zir::canon::{address, canonicalize, key, ranks, step};
 use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src};
 
-use crate::l01_31_zir::scaling::nested_ifs;
+use zed_tests::step_helpers::l01_31_zir::nested_ifs;
 
 /// [`nested_ifs`] with the deepest `then` region holding `match 0 { binder => binder }`.
 fn deep_match(depth: usize, binder: &str) -> Region {

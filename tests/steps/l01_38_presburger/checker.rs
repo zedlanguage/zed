@@ -2,7 +2,7 @@
 //! decides rejects nothing, and one it refuses is a rejection with its cause, its span and
 //! the constraints.
 
-use crate::l01_19_whole_file_ports::run;
+use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A program whose `main` calls `ok`, defined by `def`, at `args`, and prints whether it held;
 /// `a` in `args` is the integer on the first line of the input (lines count from 1), or 0.

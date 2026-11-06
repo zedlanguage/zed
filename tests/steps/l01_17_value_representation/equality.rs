@@ -4,7 +4,7 @@
 use zed_kernel::term::build::{lam, prim, var};
 use zed_kernel::{Evaluator, F64, Prim, Value, World};
 
-use crate::l01_16_elaboration::{errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 
 #[test]
 fn float_equality_and_comparison_follow_ieee() {

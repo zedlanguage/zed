@@ -9,19 +9,7 @@ mod scaling;
 mod tests_of_types;
 mod tuples;
 
-use zedc::lex::lex;
-use zedc::parse::{TOP, parse};
-
-/// The s-expression of the expression `text`, or its error: `error: …`, or `syntax` when it
-/// does not parse.
-pub(crate) fn sx(text: &str) -> String {
-    let tokens = lex(text).unwrap();
-    match parse(text, &tokens, "Expr", TOP) {
-        Err(_) => "syntax".into(),
-        Ok(tree) => zedc::ast::build(text, &tokens, &tree)
-            .map_or_else(|e| format!("error: {e}"), |e| e.to_string()),
-    }
-}
+pub(crate) use zed_tests::step_helpers::l01_10_lambdas_types_else_tuples::sx;
 
 #[track_caller]
 fn check(cases: &[(&str, &str)]) {

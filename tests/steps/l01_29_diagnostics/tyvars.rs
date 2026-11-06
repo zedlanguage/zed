@@ -10,7 +10,7 @@ use zedc::check::read::parse_type;
 use zedc::check::ty::{Arrow, Sig, Ty};
 
 use super::rejected;
-use crate::l01_26_type_resolution::sig_of as sig;
+use zed_tests::step_helpers::l01_26_type_resolution::sig_of as sig;
 
 /// The signature the rejection of `text` shows for the function it says is declared there.
 fn declared(text: &str) -> String {

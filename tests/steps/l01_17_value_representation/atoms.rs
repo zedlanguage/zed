@@ -1,6 +1,6 @@
 //! Atoms with payloads: built and matched by position or by name.
 
-use crate::l01_16_elaboration::{errors, term, value};
+use zed_tests::step_helpers::l01_16_elaboration::{errors, term, value};
 
 #[test]
 fn a_named_payload_is_a_struct_whatever_the_written_order() {

@@ -37,7 +37,10 @@ fn confirming_a_key_reads_each_node_once() {
         1,
         |k| {
             let g = lower(&inputs[&k]).expect("two lambdas lower");
-            assert_eq!(crate::l01_33_lowering::count(&g, "lambda"), 1);
+            assert_eq!(
+                zed_tests::step_helpers::l01_33_lowering::count(&g, "lambda"),
+                1
+            );
         },
     );
 }
@@ -60,7 +63,10 @@ fn many_equal_nodes_are_found_by_their_keys() {
         .collect();
     check_order("lowering n sums, each built twice apart, by n", n, 1, |k| {
         let g = lower(&inputs[&k]).expect("sums lower");
-        assert_eq!(crate::l01_33_lowering::count(&g, "prim"), k + 1);
+        assert_eq!(
+            zed_tests::step_helpers::l01_33_lowering::count(&g, "prim"),
+            k + 1
+        );
     });
 }
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use zed_kernel::num::{LiteralRounding, literal_f32, literal_f64};
 
 use super::x;
-use crate::l01_16_elaboration::{elab, errors};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, errors};
 
 #[test]
 fn a_price_reads_as_the_nearest_f64() {

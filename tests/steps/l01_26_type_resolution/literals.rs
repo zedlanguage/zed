@@ -11,7 +11,7 @@ use zed_tests::scaling;
 use zedc::testing::test;
 
 use super::{info, type_errors};
-use crate::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// The values the literals of `text` adopt, sorted by position.
 fn adopted(text: &str) -> Vec<Value> {

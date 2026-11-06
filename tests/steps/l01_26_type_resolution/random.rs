@@ -6,7 +6,7 @@ use zed_tests::instances::Rng;
 use zedc::check::ty::Carrier;
 
 use super::info;
-use crate::l01_16_elaboration::{elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 /// A random body over `x` and `y`, of depth at most `d`.
 fn body(rng: &mut Rng, d: u32) -> String {

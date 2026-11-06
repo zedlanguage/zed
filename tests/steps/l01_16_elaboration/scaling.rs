@@ -194,7 +194,7 @@ fn wide(n: usize, w: usize) -> String {
 /// The type of `main` in `src` and the signature of `h{last}`, which a search stopped by
 /// its budget does not find.
 fn found(src: &str, last: usize) -> (Option<String>, Option<String>) {
-    let (i, names) = crate::l01_26_type_resolution::info(src);
+    let (i, names) = zed_tests::step_helpers::l01_26_type_resolution::info(src);
     assert!(i.errors.is_empty(), "{:?}", i.errors);
     let name = format!("h{last}");
     let sig = i.sigs.iter().find(|(id, _)| names[**id] == name);
@@ -397,8 +397,11 @@ fn searches_through_nested_functions_scale() {
             assert_eq!(found(&open(6), 5), t);
             assert_eq!(found(&open(64), 63), t);
             for n in [6, 64] {
-                let h0 = crate::l01_26_type_resolution::sig_of(&open(n), "h0");
-                let last = crate::l01_26_type_resolution::sig_of(&open(n), &format!("h{}", n - 1));
+                let h0 = zed_tests::step_helpers::l01_26_type_resolution::sig_of(&open(n), "h0");
+                let last = zed_tests::step_helpers::l01_26_type_resolution::sig_of(
+                    &open(n),
+                    &format!("h{}", n - 1),
+                );
                 let a = &last.arrows[0];
                 assert!(last.own.is_empty() && last.bounds.is_empty());
                 assert_eq!(
@@ -457,7 +460,7 @@ fn ordering_many_uses_of_many_overloads_scales() {
     // using it waited on each overload directly, so `k` uses of `k` overloads made `k²`
     // entries and dependencies.
     let built = |k: usize| {
-        let text = crate::l01_14_name_resolution::scaling::overloads(k)
+        let text = zed_tests::step_helpers::l01_14_name_resolution::overloads(k)
             + "g = ("
             + &vec!["f"; k].join(", ")
             + ");\n";

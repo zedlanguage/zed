@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use zedc::run::{Record, load};
 
 use super::{ECHO, dir, program, run_words, zedc};
-use crate::l01_21_test_runner::checks;
+use zed_tests::step_helpers::l01_21_test_runner::checks;
 
 #[test]
 fn a_replay_sees_the_recorded_arguments_not_its_own() {

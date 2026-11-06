@@ -1,7 +1,7 @@
 //! `String`, `abs`, `min`, `max`, `sum` and the string words.
 
 use super::x;
-use crate::l01_16_elaboration::errors;
+use zed_tests::step_helpers::l01_16_elaboration::errors;
 
 #[test]
 fn string_writes_any_value_and_leaves_a_string_alone() {
@@ -17,7 +17,7 @@ fn string_writes_any_value_and_leaves_a_string_alone() {
 fn cleaning_a_user_name() {
     let src = "raw = \"  Ada Lovelace \\n\";\nname = trim(raw);\nkey = lower(name);\n\
                shout = upper(name);\nsize = len(name);\n";
-    let v = |n| crate::l01_16_elaboration::value(src, n);
+    let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("name"), "\"Ada Lovelace\"");
     assert_eq!(v("key"), "\"ada lovelace\"");
     assert_eq!(v("shout"), "\"ADA LOVELACE\"");
@@ -82,7 +82,7 @@ fn min_and_max_of_each_number_kind() {
         ]
     );
     assert_eq!(
-        crate::l01_16_elaboration::value("f = max;\nx = f(1, 2);\n", "x"),
+        zed_tests::step_helpers::l01_16_elaboration::value("f = max;\nx = f(1, 2);\n", "x"),
         "2"
     );
 }
@@ -95,7 +95,7 @@ fn min_and_max_pass_a_failure_on() {
 
 #[test]
 fn min_and_max_take_two_numbers_of_one_kind() {
-    let sig = crate::l01_26_type_resolution::sig;
+    let sig = zed_tests::step_helpers::l01_26_type_resolution::sig;
     assert_eq!(
         sig(
             "f(positional a: int, positional b: int) = max(a, b);\n",

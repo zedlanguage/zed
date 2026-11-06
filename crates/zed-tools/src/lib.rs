@@ -2,7 +2,8 @@
 //! fences of a spec checkout and report the layers of programs; `sync` copies the spec's fences
 //! and grammar into this repository; `progress` writes the spec's PROGRESS.md; `cite` checks
 //! that every section label and step id cited is defined in DESIGN.md; `plan` checks this
-//! repository's plan DAG.
+//! repository's plan DAG; `step_targets` writes the test target of each step folder into
+//! `tests/Cargo.toml`.
 //!
 //! Each tool is a module with a `run` function over its arguments, and a thin `main` in
 //! `src/bin/`. Grammar reading and matching are the compiler's (`zedc::parse`), so a rule of the
@@ -21,6 +22,7 @@ pub mod progress;
 pub mod random;
 pub mod ring;
 pub mod spec;
+pub mod step_targets;
 pub mod sync;
 pub mod syntax;
 pub mod text;

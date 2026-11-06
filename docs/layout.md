@@ -31,10 +31,11 @@ zed/                  Zed source code
   fences/             the spec's `zed` fences (step L1.7): design.md and examples.md, written
                       by the sync tool, and variants/, one fixture per commented ✗ variant
 tests/                the step tests (the `zed-tests` crate)
-  src/                helpers shared by every step
-  steps/main.rs       declares one module per step, in plan order
-  steps/<step>/       one folder per step of Part G; the local suite, which needs only the
-                      Rust toolchain
+  Cargo.toml          one test target per step folder, written by the step_targets tool
+  src/                helpers shared by every step; step_helpers/, those that the tests of
+                      more than one step folder use
+  steps/<step>/       one folder per step of Part G, each its own test binary; the local
+                      suite, which needs only the Rust toolchain
   full/<step>/        tests of a step that need outside tools, listed in the folder's file
                       `needs`; run by tools/run_tests.sh --full
 docs/                 documentation of the implementation
@@ -80,8 +81,8 @@ A step folder is named `<stage>_<step>_<description>`:
 The step is the two-digit step number within its stage, and the description is a few
 lowercase words. Where a layer's work runs in vertical slices (Part G), a slice's tests go into
 the folder of each step it takes from. The structure check in `m0_01_scaffolding` rejects a
-folder whose name is malformed and a folder not declared in `main.rs`, and the same file holds
-the index of all steps as an expected-output snapshot.
+folder whose name is malformed, a folder without a test target and a target without a folder,
+and the same file holds the index of all steps as an expected-output snapshot.
 
 A step folder holds:
 
@@ -90,11 +91,19 @@ A step folder holds:
 - `snapshots/`, the expected outputs, kept by [insta](https://insta.rs). A changed output fails
   the test; review it with `cargo insta review` and accept it there.
 
-All step folders compile into one test binary, `steps`, so adding a step adds a module, not a
-link step. To run one step: `cargo test -p zed-tests --test steps l01_07`. The exceptions are
-the files `binary.rs` that run the zedc executable (in m0_09, l01_19a and l01_36a): they are not
-modules of `steps` but tests of zed-native, named in `crates/zed-native/Cargo.toml`, since only
-a test of that package can name the executable.
+Each step folder is a test binary of its own, named after the folder, with the folder's
+`mod.rs` as its crate root, so a change to one folder's tests recompiles and links that binary
+alone. To run one step: `cargo test -p zed-tests --test l01_07_fences`. Within the binary a
+test's name is its path below the folder: `copies::the_copies_match_the_spec`, not
+`l01_07_fences::copies::the_copies_match_the_spec`. The targets are listed in
+`tests/Cargo.toml` between the lines `# BEGIN step targets` and `# END step targets`, which
+`cargo run -p zed-tools --bin step_targets` writes from the folders; run it after adding,
+renaming or removing a folder, and after a rebase that does. Code that the tests of more than
+one folder use lives in the `zed-tests` library, under `tests/src/step_helpers/`, in a module
+named after the folder it came from. The exceptions are the files `binary.rs` that run the zedc
+executable (in m0_09, l01_19a and l01_36a): they are not modules of their folder's binary but
+tests of zed-native, named in `crates/zed-native/Cargo.toml`, since only a test of that package
+can name the executable.
 
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
 EXAMPLES.md is a test. The extractor copies them into checked-in fixture files under
