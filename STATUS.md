@@ -1320,7 +1320,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PORT-catalog | impl attempt 1 | 2026-11-05 04:07 | rebased on origin/main without conflict, head 5bd87c7b; returning |
 | S.1f | merge attempt 1 | 2026-11-05 04:07 | ready (zedc part): head 9287cb68 on wt/s1f, spec db90136 on wt/s1f-spec; build, fmt, clippy -D warnings pass; s01f 10, l01_15 34, l01_16 75, l01_17 89, l01_21 5 |
 | STEPS-split | merge attempt 1 | 2026-11-05 21:45 | pre-rebase d3069763: 63 step binaries in 511 pieces (timeout 60, 6 at once): 3161 passed 0 failed 6 ignored, longest piece 23 s, load5 29 to 39; waiting for bat |
-| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | waiting: committed 79394ee5 e74e3a7a on wt/st-ladder; one test near-linear, ladder total O(k^2), walk quadratic, B4 open; ledger waiting |
+| ST-ladder | merge attempt 1 | 2026-11-06 | ready on wt/st-ladder: difference groups projected by one shortest-path pass (one test on a ladder near-linear); the ladder total O(k^2), the shared-name walk and B4 move to ST-ladder-incremental (COMPLEXITY.md S25) |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T6-2sat | merge attempt 1 | 2026-11-05 04:07 | ready head 32e09869 on wt/t6-2sat (rebased on e676cdd2, STATUS conflict only, docs both sides); scaling at 45/128 vars (type 8x, limit 24): chain 7.2x, chainsat |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
