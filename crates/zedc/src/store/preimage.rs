@@ -1579,7 +1579,7 @@ struct Memo {
     back: HashMap<(At, Demand), Entry<Res>>,
     /// The piecewise-affine summary of an integer term of one input ([`Walk::pa`]).
     pa: HashMap<At, Entry<Option<Pa>>>,
-    /// The interval an integer demand on a term is met with before it is read ([`Tx::clip`]).
+    /// The interval an integer demand on a term is met with before it is read ([`Walk::clip`]).
     clip: HashMap<At, Entry<Option<IntervalSet>>>,
     /// The summaries of a term in every class of remainders of a split ([`Walk::by_class`]).
     by_class: HashMap<At, Entry<Option<ByClass>>>,
@@ -2234,7 +2234,7 @@ impl<'t> Tx<'t> {
 }
 
 /// The analyses of the transfer that recurse on the depth of the term, each call that may
-/// recurse on a frame of [`frames::Stack`], so that the depth is limited by memory alone. A
+/// recurse on a frame of [`Stack`], so that the depth is limited by memory alone. A
 /// frame holds this by a shared reference, so what it reads of the [`Tx`] it reads through
 /// [`Walk::with`], whose borrow ends before any call.
 struct Walk<'m, 't> {
@@ -4460,7 +4460,7 @@ impl Pa {
 /// the tree. When every leaf is the base and every map only adds (`adds`), the summary in
 /// class `i` is `base + d_i` for a constant `d_i`, so that an `if` on a test that reads no
 /// remainder, whose arms add constants to one such tree, is the same tree over a new base
-/// ([`Tx::by_class_if`]).
+/// ([`Walk::by_class_if`]).
 #[derive(Clone)]
 struct ByClass {
     root: Rc<Cls>,
@@ -5118,7 +5118,7 @@ fn ceil_div(n: i128, d: i128) -> Option<i128> {
     Some(-n.checked_neg()?.div_euclid(d))
 }
 
-/// The names bound within a term being closed ([`Tx::close`]).
+/// The names bound within a term being closed ([`Walk::close`]).
 type Local = imbl::HashMap<Name, Option<Rc<Term>>>;
 
 /// Whether the scalar catalog has an entry for the primitive, or reads through it (`len`).
