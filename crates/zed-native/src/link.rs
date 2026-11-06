@@ -13,10 +13,8 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 
 use zedc::zir::lower::lower;
-use zedc::zir::memory::plan;
 
 /// The system libraries the runtime library needs, as `rustc --print native-static-libs`
 /// lists them for this crate on x86-64 Linux with glibc.
@@ -109,8 +107,8 @@ pub fn build(
         ));
     }
     let program = zedc::run::load_file(file, stderr)?;
-    let g = Arc::new(lower(&program.term()).map_err(|e| (1, format!("{file}: {e}")))?);
-    let object = crate::executable_object(&g, &plan(&g, true), program.ports())
+    let g = lower(&program.term()).map_err(|e| (1, format!("{file}: {e}")))?;
+    let object = crate::executable_object(g, true, program.ports())
         .map_err(|e| (1, format!("{file}: {e}")))?;
     let mut at = out.as_os_str().to_owned();
     at.push(".zed.o");

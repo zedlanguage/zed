@@ -193,6 +193,37 @@ fn files_named_by_arguments_agree() {
     );
 }
 
+/// Compares its first two arguments by `>` and `>=`, which legalization rewrites for this back
+/// end, the comparison not known before the run.
+const ORDER: &str = "main(args: CommandLine) -> (stdout: Lines) {\n  \
+    a = args[1] else \"\";\n  \
+    b = args[2] else \"\";\n  \
+    x = if a > b { \"after\" } else { \"not after\" };\n  \
+    y = if a >= b { \"at or after\" } else { \"before\" };\n  \
+    stdout <- \"${x}|${y}\";\n}\n";
+
+#[test]
+fn a_built_comparison_by_greater_than_agrees() {
+    let d = dir("order");
+    let src = d.join("order.zed");
+    std::fs::write(&src, ORDER).unwrap();
+    let exe = built_twice("order", &src);
+    for (a, b, want) in [
+        ("b", "a", "after|at or after\n"),
+        ("a", "a", "not after|at or after\n"),
+        ("a", "b", "not after|before\n"),
+    ] {
+        let words: Vec<OsString> = vec!["--".into(), a.into(), b.into()];
+        let native = executable(&exe, &words, b"");
+        assert_eq!(
+            (native.status, native.stdout.as_str()),
+            (0, want),
+            "{a} {b}"
+        );
+        assert_eq!(native, interpreter(&src, &words, b""), "{a} {b}");
+    }
+}
+
 #[test]
 fn a_record_of_the_executable_replays_under_the_interpreter() {
     let d = dir("record");

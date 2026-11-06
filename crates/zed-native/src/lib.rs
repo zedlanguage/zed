@@ -208,19 +208,24 @@ pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
     m.finish().emit().map_err(|e| format!("native: {e}"))
 }
 
-/// The object file of an executable that runs graph `g` under `plan` with `main`'s ports
-/// `ports` (step L1.36a): [`object`]'s code, the program as data, and a C `main` that passes
-/// both, with the command line, to the runtime library's start.
+/// The object file of an executable that runs the lowered graph `g`, planned with `fuse`, with
+/// `main`'s ports `ports` (step L1.36a): [`object`]'s code for `g` legalized, the program as
+/// data, and a C `main` that passes both, with the command line, to the runtime library's
+/// start. The data holds `g` as lowered, since ZIR's binary form does not record which nodes
+/// legalization swapped; the start legalizes and plans it again, as this does.
 #[cfg(unix)]
 pub fn executable_object(
-    g: &Arc<Region>,
-    plan: &Plan,
+    g: Region,
+    fuse: bool,
     ports: &zedc::run::Ports,
 ) -> Result<Vec<u8>, String> {
-    let (t, plans) = Tables::new(g, plan)?;
+    let data = exe::data(fuse, ports, &g);
+    let g = legalize(g);
+    let plan = plan(g.graph(), fuse);
+    let (t, plans) = Tables::new(&g, &plan)?;
     let mut m = object_module()?;
     let f = codegen::define(&mut m, &t, &plans)?;
-    exe::define_main(&mut m, f.root, &exe::data(plan.fuse, ports, g))?;
+    exe::define_main(&mut m, f.root, &data)?;
     m.finish().emit().map_err(|e| format!("native: {e}"))
 }
 

@@ -3,9 +3,10 @@
 //! [`zed_main`] in the runtime library.
 //!
 //! The data is the plan's `fuse` flag, `main`'s ports as [`Ports::to_text`] writes them, and
-//! the graph in ZIR's binary form. The runtime decodes the graph and plans it again, which
-//! gives the tables the code was generated from, node for node: the code passes node numbers,
-//! and the hooks read the tables by them.
+//! the graph as lowered in ZIR's binary form. The runtime decodes the graph, legalizes it and
+//! plans it again, which gives the tables the code was generated from, node for node, and the
+//! nodes legalization swapped: the code passes node numbers, and the hooks read the tables by
+//! them.
 
 use std::ffi::{CStr, OsString, c_char, c_int};
 use std::io::Write as _;
@@ -19,16 +20,17 @@ use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 
 use zedc::run::Ports;
 use zedc::zir::Region;
+use zedc::zir::legalize::Legalized;
 use zedc::zir::memory::{Plan, plan};
 
 use zed_rt::Word;
 
 use crate::tables::Tables;
 
-/// The program an executable runs: what its data holds, decoded.
+/// The program an executable runs: what its data holds, decoded and legalized.
 struct Program {
     ports: Ports,
-    graph: Arc<Region>,
+    graph: Legalized,
     plan: Plan,
 }
 
@@ -44,7 +46,7 @@ pub(crate) fn data(fuse: bool, ports: &Ports, graph: &Region) -> Vec<u8> {
 }
 
 impl Program {
-    /// The program `data` holds, as [`data`] writes it.
+    /// The program `data` holds, as [`data`] writes it, legalized for this back end.
     fn decode(data: &[u8]) -> Result<Program, String> {
         let bad = || "the program data of this executable is damaged".to_string();
         let (&fuse, rest) = data.split_first().ok_or_else(bad)?;
@@ -53,8 +55,8 @@ impl Program {
         let (text, zir) = rest.split_at_checked(len).ok_or_else(bad)?;
         let text = std::str::from_utf8(text).map_err(|_| bad())?;
         let ports = Ports::from_text(text)?;
-        let graph = Arc::new(zedc::zir::binary::decode(zir)?);
-        let plan = plan(&graph, fuse != 0);
+        let graph = crate::legalize(zedc::zir::binary::decode(zir)?);
+        let plan = plan(graph.graph(), fuse != 0);
         Ok(Program { ports, graph, plan })
     }
 }
@@ -180,10 +182,20 @@ mod tests {
             ],
             outputs: vec!["stdout".into(), "log".into()],
         };
-        let graph = zedc::zir::lower::lower(&zed_kernel::term::build::lit("a")).unwrap();
+        // `"a" > "b"`: the start legalizes the graph as the build does, so its swapped node
+        // is known again and a refusal there names `>`.
+        use zed_kernel::term::{Prim, build::lit};
+        let graph = zedc::zir::lower::lower(&zed_kernel::term::build::prim(
+            Prim::Gt,
+            vec![lit("a"), lit("b")],
+        ))
+        .unwrap();
         let p = Program::decode(&data(true, &ports, &graph)).unwrap();
         assert_eq!(p.ports, ports);
-        assert_eq!(*p.graph, graph);
+        let built = crate::legalize(graph.clone());
+        assert_eq!(p.graph.graph(), built.graph());
+        assert_eq!(p.graph.swapped(), built.swapped());
+        assert!(p.graph.swapped().contains(0));
         assert!(p.plan.fuse);
         let bytes = data(false, &ports, &graph);
         assert!(!Program::decode(&bytes).unwrap().plan.fuse);
