@@ -1262,22 +1262,20 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | reproduced: #a(#a(..)) one expression 3.6-3.8x per 2x (n=400 94 ms, load 27); cause Ty::clone of by-value payload Shape at walk.rs:562 (perf, 65% clone + 31% dr |
+| ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | negative control on old checker (Shape by value, no facts), sizes 100/800: one-expression 48.1x, bindings 61.2x, calls 53.7x instructions (limit 24); load 62.19 |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | BUILD-opt-measure | running | 2026-11-05 21:05 |  |
-| CAST-menu | impl attempt 1 | 2026-11-05 04:07 | negative control 2 (seen scanned 32x per trial): scaling test 300->2400 26.2x instructions, limit 24, caught; load 55/59/58; good source restored |
-| DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | negative controls (not committed): old check payload() clone at 500/4000 named fields 62.2x bytes (122,191,958 to 7,603,093,622), fails; at 2000/16000 does not  |
+| DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | done: ebe0ee1c on wt/dart-scale (rebased on origin/main ff7fd9a1), not pushed; COMPLEXITY F99, STATUS row, PORT_GAPS no new gap; fmt and clippy clean; groups l0 |
 | F70-rerun | impl attempt 1 | 2026-11-05 20:49 | chain plain arms: d=16 90.5M instr 23.2 MB 37 ms; d=48 1.008G 248 MB 243 ms; d=128 14.87G 3.76 GB 2.29 s; local exponent rises 1.5 (8-16) to 2.8 (64-128); load  |
-| FLOAT-tie-read | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree float-tie-read |
+| FLOAT-tie-read | impl attempt 1 | 2026-11-05 04:07 | test every_sampled_tie_prints_the_larger_magnitude: 52,000 ties in 52 binades 2^-23..2^50 pass, 0.45 s alone; l01_18 50 pass 1 ignored (load 64->61); negative c |
 | LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | negative control (run once, reverted): #[repr(align(64))] on ast::Expr -> table test fails (Expr 120->128, Stmt 272->384), step-unit AST 255->293 B/node (126752 |
-| LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | reproduced 41.6x bytes 128->1024 (load 66). Cause found by counters: not growth in work. tangents(n,0): the rounded first LP vertex holds the rows at 128 (1 LP, |
-| M0d-suite | impl attempt 1 | 2026-11-05 04:07 | 20 predictions committed before any run |
+| LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | slab family point(): instr 64/128/256/512/1024 = 3598M/6373M/14878M/29056M/112080M, bytes 64->512 9.4x, instr 8.1x (load 58-60); 8/16/32 = 223M/1420M/1238M (ins |
+| M0d-suite | impl attempt 1 | 2026-11-05 04:07 | done 90459407 on wt/m0d-suite (not merged): 20 predictions (808d684c before any run); L1: 04,05,06 agree, 01 relabel fix (ResultType is L10), 02 pending STR-typ |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| orch | running | 2026-11-05 18:05 | user asked: DESIGN step L36 (methods account, formal statement, paper citing Adams 2011) pushed zed 199f40f; L36-plan queued; BUILD-opt-measure started |
-| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | fix (passes as map by argument span, per-entry undo) passes: one call 1000/8000 args 8.02x work 7.97x bytes; elab of that call 8.07x/7.97x; ISSUE1-passby-scale  |
+| orch | running | 2026-11-05 18:05 | DART-SCALE impl done ebe0ee1c; merge started, with fence resync to zed HEAD (l01_07 copies test fails on main since spec 199f40f) |
+| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | negative controls (not committed): original pass_at clone fails the checker test at 1000/8000, 38.5x bytes (66.0M, 2,543.5M), 13.25x instructions, load 68; line |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | tests pass, load5 54-61: asks 19/19; groups l01_02 8, l01_03 5, l01_04 5, l01_08 134, l01_15 31, l01_17 95, l01_18 49, l01_24 66, l01_26 223, l01_26a 19, l01_29 |
-| RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
-| STEPS-binary-orphan | impl attempt 1 | 2026-11-05 20:30 | done e9dec093+20d7055a on wt/steps-binary-orphan (rebased on 7e5bf60b, not pushed): binary.rs is zed-native's [[test]] build_binary, 5 pass, comments added; doc |
+| RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | mod_symbol 9/9 pass; scaling 256->2048 passes (bytes 8.0x at 64->512 read with a strict temp limit); negative controls: 16 defs copies/call 46.7x bytes FAIL at  |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (c)+(f) committed 26362eaf: 9 BDD walks on explicit stacks; deep 100k on 2 MiB passes (old: 9/10 overflow); scaling 4096/32768 pass ratio<24; kernel lib 86, l01 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
