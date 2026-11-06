@@ -19,5 +19,6 @@ mod rec;
 mod rec_order;
 mod refusals;
 mod scaling;
+mod two_sat;
 mod witnesses;
 mod x13;

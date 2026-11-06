@@ -663,6 +663,14 @@ impl<A: Literal> Part<A> {
         }
     }
 
+    /// The id of the part's node, unique among the nodes of the process; a leaf's is its value.
+    pub(super) fn id(&self) -> u64 {
+        match self {
+            Part::Bdd(b) => b.id(),
+            Part::Expr(e) => e.id,
+        }
+    }
+
     /// Whether `self` goes first of the two operands of a connective: the smaller digest, and
     /// of equal digests the smaller in the order of contents, so that two distinct parts whose
     /// digests collide still have one order (step L1.37a).

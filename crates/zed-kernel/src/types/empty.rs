@@ -74,7 +74,7 @@ use std::pin::Pin;
 
 use num_bigint::BigUint;
 
-use super::bdd::Part;
+use super::bdd::{Bdd, Form, Part};
 use super::{Lits, Morphism, Node, Parts, Row, Type};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
@@ -1668,6 +1668,9 @@ impl<'m> Searching<'m> {
                 self.s().refused = Some(Refusal::Fork);
                 return true;
             }
+            if let Some(found) = self.two_sat(g, &f).await {
+                return found.is_none();
+            }
             if let Some((j, classes)) = classes(g, &open) {
                 let mut each = Each::Decide { may_cover };
                 return self.split_classes(g, &f, j, &classes, &mut each).await;
@@ -1862,6 +1865,76 @@ impl<'m> Searching<'m> {
                 found.is_none()
             }
         }
+    }
+
+    /// The tuple part `f` on the box of `g`, narrowed, decided as a 2-CNF when it is one by its
+    /// structure (step T6-2sat): each open tuple type is open on one component alone, so it is
+    /// a literal of that component; the open tuple types of one component cut it into the same
+    /// two pieces, each the cell of one of them or its complement in the component, so the
+    /// component is a variable (a finite Boolean component, the values `0` and `1`, is one);
+    /// and the part read over those literals is a 2-CNF ([`read_two_sat`]). The components are
+    /// independent, so a tuple of the box is in `f` exactly when its pieces solve the 2-CNF,
+    /// and [`TwoSat::solve`] decides it in time linear in the part. `None` when the part is not
+    /// of that structure; `Some(None)` when no tuple of the box is in `f`; else the box with
+    /// each variable's component cut to the piece the solution chooses, all of whose tuples
+    /// are in `f`. Each cell is compared with its component's pieces once.
+    async fn two_sat(&'m self, g: &Region, f: &Part<Row>) -> Option<Option<Vec<Type>>> {
+        // For each component cut, its variable, the piece its literal `true` stands for, and
+        // the rest of the component.
+        let mut cut: BTreeMap<usize, (usize, Type, Type)> = BTreeMap::new();
+        let mut cells: BTreeMap<(usize, usize), Literal2> = BTreeMap::new();
+        let mut literals: Vec<Option<Literal2>> = vec![None; g.atoms.len()];
+        for a in f.distinct_atoms() {
+            let k = g.index[&a];
+            let (loose, j) = g.loose[k];
+            if g.missed[k] != 0 || loose != 1 {
+                return None;
+            }
+            let c = g.cell(k, j);
+            let l = match cells.get(&(j, c)) {
+                Some(&l) => l,
+                None => {
+                    let ty = &g.cells[j][c].ty;
+                    let l = match cut.get(&j) {
+                        None => {
+                            let (v, piece) = (cut.len(), &g.r[j] & ty);
+                            let rest = &g.r[j] - &piece;
+                            cut.insert(j, (v, piece, rest));
+                            2 * v
+                        }
+                        Some((v, piece, rest)) => {
+                            if self.settles(piece, ty, false).await
+                                && self.settles(rest, ty, true).await
+                            {
+                                2 * v
+                            } else if self.settles(piece, ty, true).await
+                                && self.settles(rest, ty, false).await
+                            {
+                                2 * v + 1
+                            } else {
+                                return None;
+                            }
+                        }
+                    };
+                    cells.insert((j, c), l);
+                    l
+                }
+            };
+            literals[k] = Some(l);
+        }
+        // Complexity tradeoff: a part with a clause of three or more literals, or a tuple type
+        // open on two components, is no 2-CNF and goes on to the search below, as before this
+        // step; deciding it is NP-complete in general (pigeonhole is one), so no linear method
+        // covers it, and the search may refuse it.
+        let s = read_two_sat(f, cut.len(), &|a| literals[g.index[a]])?;
+        let Some(values) = s.solve() else {
+            return Some(None);
+        };
+        let mut r = g.r.clone();
+        for (j, (v, piece, rest)) in cut {
+            r[j] = if values[v] { piece } else { rest };
+        }
+        Some(Some(r))
     }
 
     /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
@@ -2297,6 +2370,16 @@ impl<'m> Searching<'m> {
             if let Some(v) = self.row_rep(&b.r, f).await {
                 return Some(v);
             }
+            // A 2-CNF's solution, checked as any candidate is.
+            match self.two_sat(&b, &g).await {
+                Some(None) => continue,
+                Some(Some(row)) => {
+                    if let Some(v) = self.row_rep(&row, f).await {
+                        return Some(v);
+                    }
+                }
+                None => {}
+            }
             if let Some(found) = self.class_rep(&b, &g, *len).await {
                 match found {
                     Some(v) => return Some(v),
@@ -2578,6 +2661,316 @@ impl<'m> Searching<'m> {
                 return false;
             }
         })
+    }
+}
+
+/// A literal of a 2-CNF: variable `v` true is `2 * v`, false is `2 * v + 1`, so `l ^ 1` is the
+/// complement of `l`.
+type Literal2 = usize;
+
+/// A 2-CNF read from a tuple part (step T6-2sat): its variables, and its clauses, each one or
+/// two literals (a clause of one literal holds it twice).
+struct TwoSat {
+    vars: usize,
+    clauses: Vec<(Literal2, Literal2)>,
+    /// The variable of each meet under an `or`, by the key of its node ([`At::key`]).
+    meets: HashMap<(u64, bool, u8), Literal2>,
+}
+
+/// A node of a tuple part as [`read_two_sat`] meets it: a part, a diagram, or one arm of a
+/// diagram node, `atom & hi` when `true`, `!atom & lo` when `false`.
+#[derive(Clone, Copy)]
+enum At<'p> {
+    Part(&'p Part<Row>),
+    Bdd(&'p Bdd<Row>),
+    Arm(&'p Bdd<Row>, bool),
+}
+
+impl At<'_> {
+    /// The key of the node read as itself (`pos`) or as its complement: its id, and which arm.
+    fn key(self, pos: bool) -> (u64, bool, u8) {
+        match self {
+            At::Part(p) => (p.id(), pos, 0),
+            At::Bdd(b) => (Part::Bdd(b.clone()).id(), pos, 0),
+            At::Arm(b, hi) => (Part::Bdd(b.clone()).id(), pos, 1 + u8::from(hi)),
+        }
+    }
+}
+
+/// An operand of a connective in [`Shape`]: a literal, or a node read as itself or as its
+/// complement.
+#[derive(Clone, Copy)]
+enum Operand<'p> {
+    Literal(Literal2),
+    Node(At<'p>, bool),
+}
+
+/// A node read one step down, its negations pushed to the atoms.
+enum Shape<'p> {
+    Leaf(bool),
+    Literal(Literal2),
+    And(Operand<'p>, Operand<'p>),
+    Or(Operand<'p>, Operand<'p>),
+}
+
+/// The shape of the node `at` read as itself (`pos`) or as its complement, each atom the
+/// literal `literal` gives it; `None` for an atom it gives none. A diagram node `c ? hi : lo`
+/// whose branches are not leaves is the union of its two arms.
+fn shape<'p>(
+    mut at: At<'p>,
+    mut pos: bool,
+    literal: &impl Fn(&Row) -> Option<Literal2>,
+) -> Option<Shape<'p>> {
+    loop {
+        match at {
+            At::Part(p) => match p.view() {
+                Ok(b) => at = At::Bdd(b),
+                Err(Form::Not(q)) => (at, pos) = (At::Part(q), !pos),
+                Err(Form::Or(a, b) | Form::And(a, b)) => {
+                    let (x, y) = (
+                        Operand::Node(At::Part(a), pos),
+                        Operand::Node(At::Part(b), pos),
+                    );
+                    // `!(a | b)` is `!a & !b`, and `!(a & b)` is `!a | !b`.
+                    let or = matches!(p.view(), Err(Form::Or(..))) == pos;
+                    return Some(if or {
+                        Shape::Or(x, y)
+                    } else {
+                        Shape::And(x, y)
+                    });
+                }
+            },
+            At::Bdd(b) => {
+                let (_, a, hi, lo) = match b.branch() {
+                    Err(v) => return Some(Shape::Leaf(v == pos)),
+                    Ok(n) => n,
+                };
+                let l = literal(a)?;
+                let leaf = |x: &Bdd<Row>| x.branch().err().map(|v| v == pos);
+                let node = |x| Operand::Node(At::Bdd(x), pos);
+                return Some(match (leaf(hi), leaf(lo)) {
+                    (Some(h), Some(_)) => Shape::Literal(if h { l } else { l ^ 1 }),
+                    (_, Some(false)) => Shape::And(Operand::Literal(l), node(hi)),
+                    (Some(false), _) => Shape::And(Operand::Literal(l ^ 1), node(lo)),
+                    (Some(true), _) => Shape::Or(Operand::Literal(l), node(lo)),
+                    (_, Some(true)) => Shape::Or(Operand::Literal(l ^ 1), node(hi)),
+                    _ => Shape::Or(
+                        Operand::Node(At::Arm(b, true), pos),
+                        Operand::Node(At::Arm(b, false), pos),
+                    ),
+                });
+            }
+            At::Arm(b, hi) => {
+                let (_, a, h, lo) = b.branch().ok()?;
+                let l = literal(a)?;
+                return Some(if hi {
+                    Shape::And(Operand::Literal(l), Operand::Node(At::Bdd(h), pos))
+                } else {
+                    Shape::And(Operand::Literal(l ^ 1), Operand::Node(At::Bdd(lo), pos))
+                });
+            }
+        }
+    }
+}
+
+/// The 2-CNF of the tuple part `f` over `vars` variables, each atom the literal `literal`
+/// gives it, when `f` is one by its structure: from the root through `and`s, each `or` has at
+/// most two operands that are not `false`, and each of those is a literal or a meet of literals
+/// through `and`s alone. `None` for any other part, and for an atom with no literal.
+///
+/// A meet under an `or` takes a variable of its own, `g`, with the clauses `!g | x` for each
+/// operand `x`, so the `or` is the clause of the two variables, and a meet reached from many
+/// `or`s is read once (Plaisted and Greenbaum's encoding: `g` true forces the meet, and a
+/// value of `f` sets `g` to the meet's value, so the 2-CNF is satisfiable exactly when `f` is,
+/// and a solution sets the first `vars` variables to a value of `f`). Each node and arm is read
+/// once from the root and once as a meet, from a stack, so the time and the clauses are
+/// linear in the part's nodes.
+fn read_two_sat(
+    f: &Part<Row>,
+    vars: usize,
+    literal: &impl Fn(&Row) -> Option<Literal2>,
+) -> Option<TwoSat> {
+    let mut s = TwoSat {
+        vars,
+        clauses: Vec::new(),
+        meets: HashMap::new(),
+    };
+    // The operands that hold, and the nodes read from them.
+    let mut holds = vec![Operand::Node(At::Part(f), true)];
+    let mut read = std::collections::HashSet::new();
+    // Each meet's variable with an operand the meet forces.
+    let mut forces: Vec<(Literal2, Operand)> = Vec::new();
+    while let Some(x) = holds.pop() {
+        let (at, pos) = match x {
+            Operand::Literal(l) => {
+                s.clauses.push((l, l));
+                continue;
+            }
+            Operand::Node(at, pos) => (at, pos),
+        };
+        if !read.insert(at.key(pos)) {
+            continue;
+        }
+        match shape(at, pos, literal)? {
+            Shape::Leaf(true) => {}
+            Shape::Leaf(false) => s.contradiction(),
+            Shape::Literal(l) => s.clauses.push((l, l)),
+            Shape::And(x, y) => holds.extend([x, y]),
+            Shape::Or(x, y) => {
+                // The operands of the `or` and of the `or`s under it, the `false` ones left out.
+                let (mut out, mut under, mut always) = (Vec::new(), vec![x, y], false);
+                while let Some(d) = under.pop() {
+                    let l = match d {
+                        Operand::Literal(l) => l,
+                        Operand::Node(at, pos) => match shape(at, pos, literal)? {
+                            Shape::Leaf(b) => {
+                                always |= b;
+                                continue;
+                            }
+                            Shape::Literal(l) => l,
+                            Shape::Or(x, y) => {
+                                under.extend([x, y]);
+                                continue;
+                            }
+                            Shape::And(x, y) => s.meet(at.key(pos), [x, y], &mut forces),
+                        },
+                    };
+                    out.push(l);
+                    if out.len() > 2 {
+                        break;
+                    }
+                }
+                match (always, &out[..]) {
+                    (true, _) => {}
+                    (false, []) => s.contradiction(),
+                    (false, &[a]) => s.clauses.push((a, a)),
+                    (false, &[a, b]) => s.clauses.push((a, b)),
+                    _ => return None,
+                }
+            }
+        }
+    }
+    while let Some((g, x)) = forces.pop() {
+        let l = match x {
+            Operand::Literal(l) => l,
+            Operand::Node(at, pos) => match shape(at, pos, literal)? {
+                Shape::Leaf(true) => continue,
+                Shape::Leaf(false) => g ^ 1,
+                Shape::Literal(l) => l,
+                Shape::And(x, y) => s.meet(at.key(pos), [x, y], &mut forces),
+                Shape::Or(..) => return None,
+            },
+        };
+        s.clauses.push((g ^ 1, l));
+    }
+    Some(s)
+}
+
+impl TwoSat {
+    /// A variable of its own, as its literal `true`.
+    fn fresh(&mut self) -> Literal2 {
+        self.vars += 1;
+        2 * (self.vars - 1)
+    }
+
+    /// Clauses no value holds: a fresh variable both true and false.
+    fn contradiction(&mut self) {
+        let g = self.fresh();
+        self.clauses.extend([(g, g), (g ^ 1, g ^ 1)]);
+    }
+
+    /// The variable of the meet with the key `key` and operands `xs`, made the first time, with
+    /// each operand put on `forces`.
+    fn meet<'p>(
+        &mut self,
+        key: (u64, bool, u8),
+        xs: [Operand<'p>; 2],
+        forces: &mut Vec<(Literal2, Operand<'p>)>,
+    ) -> Literal2 {
+        if let Some(&g) = self.meets.get(&key) {
+            return g;
+        }
+        let g = self.fresh();
+        self.meets.insert(key, g);
+        forces.extend(xs.map(|x| (g, x)));
+        g
+    }
+
+    /// A value of each variable that holds every clause, or `None` when there is none: a
+    /// variable and its complement in one strongly connected component of the implication
+    /// graph (`!a -> b` and `!b -> a` for each clause `a | b`). The components are found by
+    /// Tarjan's algorithm on an explicit stack, each completed after every component it
+    /// reaches, so a literal is set true when its component is completed before its
+    /// complement's: then nothing true implies anything false. Time linear in the variables
+    /// and clauses.
+    fn solve(&self) -> Option<Vec<bool>> {
+        let n = 2 * self.vars;
+        // The edges out of each literal, as one list cut at `start`.
+        let mut start = vec![0usize; n + 1];
+        for &(a, b) in &self.clauses {
+            start[(a ^ 1) + 1] += 1;
+            start[(b ^ 1) + 1] += 1;
+        }
+        for i in 0..n {
+            start[i + 1] += start[i];
+        }
+        let mut next = start.clone();
+        let mut to = vec![0usize; start[n]];
+        for &(a, b) in &self.clauses {
+            for (from, x) in [(a ^ 1, b), (b ^ 1, a)] {
+                to[next[from]] = x;
+                next[from] += 1;
+            }
+        }
+        const NONE: usize = usize::MAX;
+        let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
+        let (mut found, mut comps) = (0, 0);
+        let mut on: Vec<usize> = Vec::new();
+        // The walk: each literal entered and the position of its next edge.
+        let mut walk: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if index[root] != NONE {
+                continue;
+            }
+            index[root] = found;
+            low[root] = found;
+            found += 1;
+            on.push(root);
+            walk.push((root, start[root]));
+            while let Some(&(v, e)) = walk.last() {
+                if e < start[v + 1] {
+                    let w = to[e];
+                    let top = walk.len() - 1;
+                    walk[top].1 += 1;
+                    if index[w] == NONE {
+                        index[w] = found;
+                        low[w] = found;
+                        found += 1;
+                        on.push(w);
+                        walk.push((w, start[w]));
+                    } else if comp[w] == NONE {
+                        low[v] = low[v].min(index[w]);
+                    }
+                    continue;
+                }
+                walk.pop();
+                if let Some(&(u, _)) = walk.last() {
+                    low[u] = low[u].min(low[v]);
+                }
+                if low[v] == index[v] {
+                    while let Some(w) = on.pop() {
+                        comp[w] = comps;
+                        if w == v {
+                            break;
+                        }
+                    }
+                    comps += 1;
+                }
+            }
+        }
+        (0..self.vars)
+            .map(|v| (comp[2 * v] != comp[2 * v + 1]).then(|| comp[2 * v] < comp[2 * v + 1]))
+            .collect()
     }
 }
 
@@ -3217,5 +3610,119 @@ mod tests {
             assert_eq!(h.missed[k], usize::from(a[2] == lit(1)), "{k}");
         }
         assert_eq!(h.opens, [4, 0, 0]);
+    }
+
+    /// A small generator for the tests below: xorshift.
+    fn next(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    /// Random clauses of one and two literals on `vars` variables.
+    fn clauses(s: &mut u64, vars: usize) -> Vec<(Literal2, Literal2)> {
+        let m = 1 + next(s) as usize % (3 * vars);
+        let lit = |s: &mut u64| next(s) as usize % (2 * vars);
+        (0..m)
+            .map(|_| {
+                let a = lit(s);
+                if next(s).is_multiple_of(3) {
+                    (a, a)
+                } else {
+                    (a, lit(s))
+                }
+            })
+            .collect()
+    }
+
+    /// Whether the literal `l` holds of the values `x`.
+    fn holds2(x: &[bool], l: Literal2) -> bool {
+        x[l / 2] == l.is_multiple_of(2)
+    }
+
+    /// `TwoSat::solve` answers as enumeration does on random clause sets of up to 12
+    /// variables, and each solution it gives holds every clause.
+    #[test]
+    fn two_sat_solve_agrees_with_enumeration_and_its_solutions_hold() {
+        let mut s = 0x9e37_79b9_7f4a_7c15;
+        let mut seen = [0usize; 2];
+        for vars in 1..=12 {
+            for _ in 0..40 {
+                let cs = clauses(&mut s, vars);
+                let sat = (0u64..1 << vars).any(|m| {
+                    let x: Vec<bool> = (0..vars).map(|v| m >> v & 1 == 1).collect();
+                    cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b))
+                });
+                let t = TwoSat {
+                    vars,
+                    clauses: cs.clone(),
+                    meets: HashMap::new(),
+                };
+                let x = t.solve();
+                assert_eq!(x.is_some(), sat, "{vars} variables, {cs:?}");
+                if let Some(x) = x {
+                    assert!(cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b)));
+                }
+                seen[usize::from(sat)] += 1;
+            }
+        }
+        assert!(seen[0] > 20 && seen[1] > 20, "{seen:?}");
+    }
+
+    /// The value the search shows for a satisfiable 2-CNF of 48 bits is a tuple of 48 bits
+    /// that holds every clause, read from the values shown, not from the search's own check.
+    #[test]
+    fn the_value_shown_for_a_two_cnf_holds_every_clause() {
+        let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+        let vars = 48;
+        let mut s = 0x2545_f491_4f6c_dd1d;
+        let mut shown = 0;
+        for _ in 0..12 {
+            let cs: Vec<(Literal2, Literal2)> = (0..vars)
+                .map(|_| {
+                    let mut l = || next(&mut s) as usize % (2 * vars);
+                    (l(), l())
+                })
+                .collect();
+            let cylinder = |l: Literal2| {
+                let mut c = vec![Type::top(); vars];
+                c[l / 2] = lit(i64::from(l.is_multiple_of(2)));
+                Type::tuple(c)
+            };
+            let mut t = Type::tuple(vec![&lit(0) | &lit(1); vars]);
+            for &(a, b) in &cs {
+                t = &t & &(&cylinder(a) | &cylinder(b));
+            }
+            let sat = TwoSat {
+                vars,
+                clauses: cs.clone(),
+                meets: HashMap::new(),
+            }
+            .solve()
+            .is_some();
+            let mut search = Search {
+                strict: true,
+                refuse_forks: true,
+                ..Search::default()
+            };
+            let Some(v) = search.rep(&t) else {
+                assert!(!sat, "{cs:?}");
+                continue;
+            };
+            let Rep::Tuple(vs) = &search.shown[v] else {
+                panic!("a tuple is shown")
+            };
+            let x: Vec<bool> = (vs.iter())
+                .map(|&i| match &search.shown[i] {
+                    Rep::Value(Value::Int(1)) => true,
+                    Rep::Value(Value::Int(0)) => false,
+                    _ => panic!("a bit is shown"),
+                })
+                .collect();
+            assert!(cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b)));
+            shown += 1;
+        }
+        assert!(shown > 0);
     }
 }
