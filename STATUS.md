@@ -1267,23 +1267,25 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | committed 9f42df4a on wt/atom-nested-sq (Shape shared node with kept facts; F100); groups l01_26 225, l01_29 127, l01_17 86, l01_23 131, l01_22 41, l01_27 39, l |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BUILD-modes | impl attempt 1 | 2026-11-05 04:07 | l07_03 19/19 pass on spec branch (load 46.5); negative control: 'A release build' appended -> every_kind fails with 4664: "release build"; copy deleted |
+| BUILD-modes | merge attempt 1 | 2026-11-05 04:07 | started by orch (batched procedure) |
 | CAST-menu | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
-| DART-SCALE | merge attempt 1 | 2026-11-05 04:07 | merge agent running (started by orch) |
-| F70-rerun | merge attempt 1 | 2026-11-05 20:49 | merge agent running |
+| DART-SCALE | merge attempt 1 | 2026-11-05 04:07 | rebased on a9f0523c (doc conflicts COMPLEXITY/STATUS/ZED_PORT_GAPS with INCR-script, both kept); 12 new scaling modules pass (38 tests, load 35-37); check:: 6,  |
+| F70-rerun | merge attempt 1 | 2026-11-05 20:49 | reproduced arms on plain chain (dev profile): d=48 998M instr 248MB, d=128 14,832M 3.76GB, d=192 48,619M, d=256 112,443M (exp 2.91-2.92; instr/d^3 7073->6702),  |
 | FLOAT-tie-read | merge attempt 1 | 2026-11-05 04:07 | merge agent running |
 | LIVE3-lp-tangents | merge attempt 1 | 2026-11-05 19:39 | merge agent running |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
+| ORACLE-cones | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/oracle-cones on origin/main |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | PASS-at-args | merge attempt 1 | 2026-11-04 00:20 | merge agent running |
-| POW-kept-exp | impl attempt 1 | 2026-11-05 04:07 | started by orch |
+| POW-kept-exp | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/pow-kept-exp on origin/main 3df3943c |
 | RAT-asks-rest | merge attempt 1 | 2026-11-05 18:19 | started by orch |
 | RUNG2-mod-symbol | merge attempt 1 | 2026-11-05 04:07 | started; rebased 72ccaa06 on origin/main; load 33.97 44.51 48.89 |
-| S.1f | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/s1f on origin/main 0752a662 |
-| STEPS-split | impl attempt 1 | 2026-11-05 21:45 | started; worktree wt/steps-split on origin/main 0752a662 |
-| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | started by orch |
+| S.1f | impl attempt 1 | 2026-11-05 04:07 | imports tool fixed (whitespace lexing); zedc has 9 cycles, not 4 or 3; canon, store/landmarks, zir/validate cycles broken |
+| STEPS-split | impl attempt 1 | 2026-11-05 21:45 | before counts (old steps binary, 484 pieces under timeout 60, 8 at once): 3074 tests, 3066 passed, 1 failed (l01_07 copies::the_copies_match_the_spec: design.md |
+| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | started; worktree wt/st-ladder at 29c4a3b7; load 40.87 42.81 47.65 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T2-types-rest | verify attempt 1 | 2026-11-03 09:40 | part 3 verify+merge started: branch ac273df4 (5 commits on 654e453f), 63 behind origin/main; load 35.00 45.28 53.89 |
+| T2-types-rest | verify attempt 1 | 2026-11-03 09:40 | width-80 text of the three indented shapes is exactly 3n^2, 2n^2, 4n^2 bytes at n=500..8000 (layout); time 0.27-1.13 ns per output byte, linear in output (load  |
+| T6-2sat | impl attempt 1 | 2026-11-05 04:07 | started; worktree t6-2sat from origin/main 29c4a3b7; load 44.43 44.89 46.94 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
