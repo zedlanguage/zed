@@ -3,8 +3,8 @@
 Zed₀ is the part of the language the Rust-hosted compiler must run for the Zed compiler
 (row S) to be written in Zed. By the author's order of 2026-11-05, **Zed₀ is the whole core, not
 the smallest subset that compiles**: L1–L18 in full, the language parts of L19–L24 and the
-back end ZIR → MLIR → LLVM IR → x86-64 of L28 (DESIGN.md step M0.8). Row S follows them. Parts
-A and B below record what the compiler needs at least; the audit found that L6 completes that
+back end ZIR → MLIR → LLVM IR → x86-64 of L28 (DESIGN.md step M0.8). Row S follows them. Part
+A below records what the compiler needs at least; the audit found that L6 completes that
 much, and Zed₀ is larger because few rows should be written twice.
 
 The checklist has two parts. Part A is audited mechanically against corpus program 31, the
