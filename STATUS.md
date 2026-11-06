@@ -1296,26 +1296,25 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BATCH | merge attempt 2 | 2026-11-05 22:07 | done: RUNG2-mod-symbol 7f0dc484, RAT-asks-rest 8fc378cc, PASS-at-args fdac94cb, BUILD-modes a694c9db, F70-rerun ee2650b8, CAST-menu e3c52406 pushed (3a60948d..b |
-| DIAG-suppress | impl attempt 1 | 2026-11-05 04:07 | done: impl e7ac6f7b+b18c1e59+be6b0461 on wt/diag-suppress, spec 91585dd on wt/diag-suppress-spec (from local zed main eb265c5); groups l01_29 142, l01_21 50, l0 |
+| DIAG-suppress | merge attempt 1 | 2026-11-05 04:07 | ready head 76a29fae on wt/diag-suppress, spec 91585dd on wt/diag-suppress-spec; rebased on origin/main (doc conflicts COMPLEXITY/STATUS/ZED_PORT_GAPS kept both) |
 | ERRS-precise | impl attempt 1 | 2026-11-05 22:12 | fix 2 done 757422a2 on wt/errs-precise; l01_27 48, l01_26 235, l01_18 50, l01_16 75, l01_20 20, l01_21 50, l01_28 63, l01_29 133, l01_30 15, l01_19 40, zedc che |
-| GROUP-oracle | impl attempt 1 | 2026-11-05 04:07 | sweeps pass: x14 0/1 4.2/2.9 s, mixed_1 4.4 s, layer_1 1.4 s, cells_1 2.4 s, seeded_1 0.24 s; no wrong answer, reruns 0, unsettled 0 (load 54 -> 52) |
-| ISSUE1-tvar-else | impl attempt 1 | 2026-11-03 17:05 | cause: apply_many merged the paths ($k,int) and (int,int) of (line else 0) + bump into one state, dropping the class restriction; fix keys states on the class's |
-| L1.19b | impl attempt 1 | 2026-11-05 04:07 | ready: c2d9936d on wt/l1-19b (rebased on origin/main), PROGRESS 02b0fa9 on wt/l1-19b-spec (zed); groups l01_19b 7, l01_19 28, l01_19a 16, l01_21 50, l01_36a 21, |
-| MENU-linear | impl attempt 2 | 2026-11-05 04:07 | L1 menu (equality, split) in run.rs; tests written; spec e9826c7 on wt/menu-linear-spec; plan rows MENU-linear-L10/L15 + ledger lines; first test run killed by  |
+| GROUP-oracle | impl attempt 1 | 2026-11-05 04:07 | done-unmerged b9c2509c on wt/group-oracle; group_oracle 14, judgments 17, bes 6 pass (load 28); follow-up REP-path-memo in ledger |
+| ISSUE1-tvar-else | merge attempt 1 | 2026-11-03 17:05 | ready head e2398332 on wt/issue1-tvar-else (rebased on e676cdd2, no conflict); STATUS corrected (second handled test passes on old code); worktree build holds t |
+| L1.19b | merge attempt 1 | 2026-11-05 04:07 | ready head 6af7e2c7 on wt/l1-19b, spec 08886eb (DESIGN L1.19 sentence: address = term main runs + port declarations); rebase conflicts in zed-native exe.rs/lib. |
+| MENU-linear | impl attempt 2 | 2026-11-05 04:07 | ready: 0cf78eba on wt/menu-linear, spec e9826c7; l01_38 226 ok, l01_39 134 ok, l01_29 133 ok; negative control 4/9 fail; load 21.74 31.34 45.58 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NUM-subquad | impl attempt 1 | 2026-11-03 17:42 | stopped unfinished, WIP 58ee5b29 (rebased); probes load 55-75: mul crossover ~1024 words (NTT 52.6 ms vs bigint 370 ms at 65536), gcd 12 vs 30 ms at 1024 words, |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | PORT-catalog | impl attempt 1 | 2026-11-05 04:07 | rebased on origin/main without conflict, head 5bd87c7b; returning |
 | S.1f | merge attempt 1 | 2026-11-05 04:07 | ready (zedc part): head 9287cb68 on wt/s1f, spec db90136 on wt/s1f-spec; build, fmt, clippy -D warnings pass; s01f 10, l01_15 34, l01_16 75, l01_17 89, l01_21 5 |
-| STEPS-split | impl attempt 1 | 2026-11-05 21:45 | step_targets scaling at 2000/16000 folders: 8.3x instructions, 8.0x bytes (limit 24); negative control quadratic drift (Vec contains): 59.4x, fails as it should |
-| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | added difference_hulls random comparison unit test, walk reversed/start-first checks, ladder scaling tests (one test order 1, k ifs order 2); building |
+| STEPS-split | merge attempt 1 | 2026-11-05 21:45 | pre-rebase d3069763: 63 step binaries in 511 pieces (timeout 60, 6 at once): 3161 passed 0 failed 6 ignored, longest piece 23 s, load5 29 to 39; waiting for bat |
+| ST-ladder | impl attempt 1 | 2026-11-03 02:59 | waiting: committed 79394ee5 e74e3a7a on wt/st-ladder; one test near-linear, ladder total O(k^2), walk quadratic, B4 open; ledger waiting |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T6-2sat | merge attempt 1 | 2026-11-05 04:07 | started verify and prepare; load 58.72 62.43 60.27 |
+| T6-2sat | merge attempt 1 | 2026-11-05 04:07 | ready head 32e09869 on wt/t6-2sat (rebased on e676cdd2, STATUS conflict only, docs both sides); scaling at 45/128 vars (type 8x, limit 24): chain 7.2x, chainsat |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
-| TIME-report | impl attempt 1 | 2026-11-05 04:07 | scaling l01_30_queries::report 40 vs 320 definitions: 7.90x instructions, 8.0x bytes, limit 24; load 107.50 73.05 64.18 / 51.96 69.39 65.90 |
-| TUPLE-eq-dup | impl attempt 1 | 2026-11-05 22:50 | started; load 62.15 73.97 67.05 |
-| XMARK-rows | impl attempt 1 | 2026-11-05 04:07 | started by orch (ready row, batch 2026-11-05) |
+| TIME-report | impl attempt 1 | 2026-11-05 04:07 | committed a2e41c97 on wt/time-report, rebased on origin/main e676cdd2; COMPLEXITY F105 (F100-F104 taken); groups after rebase: l01_30 21, l01_21 50, l01_19 28,  |
+| TUPLE-eq-dup | impl attempt 1 | 2026-11-05 22:50 | reproduced on main: pair(pair(..1..)) n=18 1.26 s, 4x per +2 (2^n); perf: 99.4% in Ty::kernel from Ty::sub_in at each call (shape_kernel walks each path to a sh |
+| XMARK-rows | merge attempt 1 | 2026-11-05 04:07 | started: verify ab8147dc (wt/xmark-rows) and spec 528d962; both behind origin/main (impl 22, spec 4); load 25.60 28.81 35.34 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
