@@ -254,14 +254,17 @@ impl Operands {
     }
 }
 
-/// A numeric literal: its span, its value, whether a `-` is applied to it, its text, whether
-/// it is written with the suffix `n`, whether it is generic (step L1.26a): written `kn` where
-/// it joins a class other than under `==` and `!=`, and whether, generic, it has no other
-/// operand to take its carrier from at run time and takes it from a parameter of its class
-/// ([`Info::witness`]). Where it joins no class, a `kn` is read as `k`.
+/// A numeric literal: its span, without a `-`, which keys what it adopts; its site, the span
+/// of the literal with its `-`, where every message about it points; its value, whether a `-`
+/// is applied to it, its text, without the `-`, whether it is written with the suffix `n`,
+/// whether it is generic (step L1.26a): written `kn` where it joins a class other than under
+/// `==` and `!=`, and whether, generic, it has no other operand to take its carrier from at
+/// run time and takes it from a parameter of its class ([`Info::witness`]). Where it joins no
+/// class, a `kn` is read as `k`.
 #[derive(Clone)]
 struct Lit {
     span: Span,
+    site: Span,
     value: Value,
     neg: bool,
     text: String,
@@ -279,6 +282,12 @@ impl Lit {
             witness: self.n,
             ..self.clone()
         }
+    }
+
+    /// The literal as the program writes it, with its `-`.
+    fn written(&self) -> String {
+        let sign = if self.neg { "-" } else { "" };
+        format!("{sign}{}", self.text)
     }
 }
 
@@ -928,7 +937,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         next.push(match literal(p) {
                             Some(l) => note(
                                 p.span,
-                                format!("this literal, {}, is {}", l.text, {
+                                format!("this literal, {}, is {}", l.written(), {
                                     lit_ty(&l.value, l.neg)
                                 }),
                             ),
@@ -2203,7 +2212,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .into_iter()
                 .filter(|&c| adoptable(l, c) && (!l.generic || adopt(l, c).is_ok()))
                 .fold(0, |m, c| m | c.bit());
-            if !self.restrict(k, m, &format!("the literal {}", l.text), l.span) {
+            if !self.restrict(k, m, &format!("the literal {}", l.written()), l.site) {
                 return false;
             }
         }
@@ -2621,7 +2630,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 t
             }
             Err(m) => {
-                self.error(l.span, m);
+                self.error(l.site, m);
                 lit_ty(&l.value, l.neg)
             }
         }
@@ -2974,7 +2983,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         )
                     }
                 };
-                self.error(l.span, m);
+                self.error(l.site, m);
             }
             return;
         }
@@ -2983,7 +2992,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.adopt_to(l, c);
             }
             Ok(None) => {}
-            Err(m) => self.error(l.span, m),
+            Err(m) => self.error(l.site, m),
         }
     }
 
@@ -3516,7 +3525,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             match (&a.lit, a.at) {
                 (Some(l), Some(at)) => out.push(Note {
                     span: at,
-                    text: format!("this literal, {}, is {}", l.text, self.text(&a.ty)),
+                    text: format!("this literal, {}, is {}", l.written(), self.text(&a.ty)),
                 }),
                 (None, Some(at)) => self.derive_into(&[at], &mut out),
                 _ => {}
@@ -4352,7 +4361,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     args.iter()
                         .flatten()
                         .filter_map(|a| a.lit.as_ref())
-                        .find(|l| l.span == s)
+                        .find(|l| l.site == s)
                         .map_or(3, |l| match lit_carrier(&l.value) {
                             Carrier::Int => 0,
                             Carrier::F64 => 1,
@@ -4741,6 +4750,7 @@ fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
     };
     Ok(Some(Lit {
         span: inner.span,
+        site: e.span,
         value,
         neg,
         text: shown(inner)?,
@@ -4873,7 +4883,7 @@ type Adoptions = Vec<(Span, Value)>;
 fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
     let mut ads = Adoptions::new();
     let lit = |l: &Lit, want: &[&Ty], ads: &mut Adoptions| {
-        let Some(c) = expected(l, want).map_err(|m| (l.span, m))? else {
+        let Some(c) = expected(l, want).map_err(|m| (l.site, m))? else {
             return Ok(None);
         };
         match adopt(l, c) {
@@ -4883,7 +4893,7 @@ fn adopted(a: &Arg, p: &Ty) -> Result<Option<(Ty, Adoptions)>, (Span, String)> {
                 Ok(Some(t))
             }
             Ok(None) => Ok(None),
-            Err(m) => Err((l.span, m)),
+            Err(m) => Err((l.site, m)),
         }
     };
     if let Some(l) = &a.lit {
@@ -5002,7 +5012,14 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
             .map(Value::rat),
         v => run(Prim::CastRat, v),
     };
-    let not = || Err(format!("`{}` is not {} {}", l.text, article(c), c.name()));
+    let not = || {
+        Err(format!(
+            "`{}` is not {} {}",
+            l.written(),
+            article(c),
+            c.name()
+        ))
+    };
     let Some(exact) = exact else {
         return not();
     };

@@ -157,7 +157,7 @@ fn a_literal_at_a_union_of_two_carriers() {
         type_errors("f(positional x: f64 | rat) = x;\ny = f(-1n);\n"),
         [
             "`-1n` at `rat | f64` adopts no one carrier: the type holds numbers of rat and f64; \
-             write the one meant, as `-1r` or `-1.0` [1n]"
+             write the one meant, as `-1r` or `-1.0` [-1n]"
         ]
     );
 }
@@ -521,10 +521,11 @@ fn a_plain_literal_is_rejected_at_each_kind_of_declared_type() {
         [menu("0xFF", "an int", "f64", "`0xFFn`", "0xFF")]
     );
     assert_eq!(value(&format!("{f}y = f(0xFFn);\n"), "y"), "255.0");
-    // A negative literal: the menu names the negation, and the span is the literal.
+    // A negative literal: the menu names the negation, and the span is the literal with its
+    // `-`.
     assert_eq!(
         type_errors(&format!("{f}y = f(-3);\n")),
-        [menu("-3", "an int", "f64", "`-3.0` or `-3n`", "3")]
+        [menu("-3", "an int", "f64", "`-3.0` or `-3n`", "-3")]
     );
     assert_eq!(value(&format!("{f}y = f(-3n);\n"), "y"), "-3.0");
 }
