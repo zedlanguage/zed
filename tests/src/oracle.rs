@@ -16,7 +16,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Lookup, Value, World};
+use zed_kernel::{Evaluator, Lookup, Term, Value, World};
+use zedc::elab::{Cones, Unit};
 use zedc::interp;
 use zedc::query::Db;
 use zedc::run::{self, PortKind, Through};
@@ -81,22 +82,31 @@ fn printed(r: Result<Value, String>) -> String {
     }
 }
 
-/// Compares the unit `text` under each of `engines`: its bindings with no function component,
-/// and the checks of its tables. A rejected unit compares nothing.
-pub fn unit(text: &str, engines: &[Engine<'_>]) -> Report {
+/// Compares each binding of the elaborated unit `u` with no function component under each of
+/// `engines`, each run alone: closed over the definitions it reaches, from one [`Cones`] of the
+/// unit, so a unit of `n` bindings costs the cones of its bindings, not `n` passes over it.
+pub fn bindings(u: &Unit, engines: &[Engine<'_>]) -> Report {
     let mut r = Report::default();
-    let front = Db::new().front(text);
-    let Ok((_, u, _)) = &*front else {
-        return r;
-    };
+    let cones = Cones::new(u);
     for d in u.defs.iter().filter(|d| d.first_order) {
-        let t = interp::prelude(u.get(&d.name).expect("a definition of the unit"));
+        let t = interp::prelude(cones.close(Term::Var(d.kernel.clone())));
         let want = printed(run::direct(&t, &mut Evaluator::new(World::new())));
         for (name, engine) in engines {
             let got = printed(engine(&t, &mut Evaluator::new(World::new())));
             r.compare(&format!("binding `{}`", d.name), name, &want, &got);
         }
     }
+    r
+}
+
+/// Compares the unit `text` under each of `engines`: its bindings with no function component,
+/// and the checks of its tables. A rejected unit compares nothing.
+pub fn unit(text: &str, engines: &[Engine<'_>]) -> Report {
+    let front = Db::new().front(text);
+    let Ok((_, u, _)) = &*front else {
+        return Report::default();
+    };
+    let mut r = bindings(u, engines);
     let want = test(text);
     for (name, engine) in engines {
         let got = test_through(text, engine);
@@ -218,22 +228,37 @@ pub fn counterexamples(text: &str, engines: &[Engine<'_>]) -> (Report, usize) {
         return (r, 0);
     };
     let failures: Vec<String> = test(text).into_iter().filter_map(|o| o.failure).collect();
+    // Each failure's text and its first place in source order. The failures that begin with
+    // a row's text are one range of this map, and the first of them in source order is the
+    // row's: a lookup per row in place of a pass over the failures.
+    let mut first: BTreeMap<&str, usize> = BTreeMap::new();
+    for (i, f) in failures.iter().enumerate() {
+        first.entry(f.as_str()).or_insert(i);
+    }
+    let cones = Cones::new(u);
     let mut replayed = 0;
     for t in u.tests.iter().filter(|t| t.function != "main") {
-        let row = format!("`{}` of `{}`", &text[t.span.start..t.span.end], t.function);
-        let Some(why) = failures
-            .iter()
-            .find_map(|f| f.strip_prefix(row.as_str())?.strip_prefix(": "))
+        let row = format!(
+            "`{}` of `{}`: ",
+            &text[t.span.start..t.span.end],
+            t.function
+        );
+        let Some(why) = first
+            .range(row.as_str()..)
+            .take_while(|(f, _)| f.starts_with(row.as_str()))
+            .min_by_key(|&(_, i)| i)
+            .map(|(f, _)| &f[row.len()..])
         else {
             continue;
         };
+        let row = &row[..row.len() - ": ".len()];
         if !why.starts_with("the result is ") {
             continue;
         }
         let zed_kernel::Term::Prim(_, sides) = &t.check else {
             unreachable!("a check is `call == want`")
         };
-        let call = interp::prelude(u.close(sides[0].clone()));
+        let call = interp::prelude(cones.close(sides[0].clone()));
         let named = |v: Result<Value, String>| match v {
             Ok(v) => format!("the result is {v}"),
             Err(e) => format!("the error `{e}`"),

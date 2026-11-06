@@ -5,8 +5,9 @@
 
 use std::fmt::Write;
 
-use zed_kernel::{Evaluator, World};
+use zed_kernel::{Evaluator, Term, World};
 use zed_tests::oracle::{self, ENABLED};
+use zedc::elab::Cones;
 use zedc::interp;
 use zedc::query::Db;
 use zedc::run;
@@ -22,8 +23,9 @@ fn verdict(text: &str) -> String {
         Err(ds) => writeln!(out, "  rejected: {ds:#?}"),
         Ok((_, u, warnings)) => {
             writeln!(out, "  warnings: {warnings:#?}").expect("a String takes any write");
+            let cones = Cones::new(u);
             for d in u.defs.iter().filter(|d| d.first_order) {
-                let t = interp::prelude(u.get(&d.name).expect("a definition of the unit"));
+                let t = interp::prelude(cones.close(Term::Var(d.kernel.clone())));
                 let v = run::direct(&t, &mut Evaluator::new(World::new()));
                 writeln!(out, "  `{}`: {v:?}", d.name).expect("a String takes any write");
             }
