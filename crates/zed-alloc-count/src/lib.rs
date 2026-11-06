@@ -478,6 +478,43 @@ mod tests {
         assert!(!TRACKED.get().on);
     }
 
+    #[test]
+    fn a_measurement_counts_no_other_thread() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        // Another thread allocates and frees all through the measurement; the measurement
+        // waits until it has done so 100 times, and still sees only its own blocks.
+        let (stop, done) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+        );
+        let other = {
+            let (stop, done) = (Arc::clone(&stop), Arc::clone(&done));
+            std::thread::spawn(move || {
+                let mut kept = Vec::new();
+                while !stop.load(Ordering::Relaxed) {
+                    kept.push(black_box(vec![0u8; 4096]));
+                    if kept.len() == 8 {
+                        kept.clear();
+                    }
+                    done.fetch_add(1, Ordering::Relaxed);
+                }
+            })
+        };
+        let (kept, l) = live(|| {
+            let start = done.load(Ordering::Relaxed);
+            drop(black_box(vec![0u8; 64]));
+            while done.load(Ordering::Relaxed) < start + 100 {
+                std::hint::spin_loop();
+            }
+            black_box(vec![0u8; 10])
+        });
+        stop.store(true, Ordering::Relaxed);
+        other.join().unwrap();
+        drop(kept);
+        assert_eq!(l, Live { net: 10, peak: 64 });
+    }
+
     // Off Linux the count is of the whole process, which other threads add to.
     #[cfg(target_os = "linux")]
     #[test]

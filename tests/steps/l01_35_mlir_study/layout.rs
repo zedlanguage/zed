@@ -121,7 +121,9 @@ fn an_empty_node_and_a_six_field_node_are_measured() {
     )
     .unwrap();
     println!("empty node: {leaf:?}\nsix-field node: {node:?}");
-    // An atom is boxed even with no payload: the empty node takes a cell beside its word.
+    // Each row allocates one cell for the closure of the function it applies. An atom with no
+    // payload is a word and takes no cell; a six-field one takes a cell, for the result and for
+    // the expected value.
     assert_eq!(
         leaf.native,
         Native {

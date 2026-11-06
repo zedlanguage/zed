@@ -158,8 +158,10 @@ record):
   vectors (56 bytes per input, 120 per output edge) and each region's vectors hold the rest.
 - Native values: 109 runs allocated 195 heap cells, at most 8 live at once in one run. An
   unboxed value is one 16-byte word; a boxed one is a word and a 144-byte cell, plus its
-  payload's own blocks. An atom is boxed even without a payload: `#leaf` takes one cell, and
-  the six-field `#node(…)` row allocates 3 cells, 2 live at once.
+  payload's own blocks. An atom with no payload is a word and takes no cell; one with a payload
+  takes a cell. Each row also allocates one cell for the closure of the function it applies,
+  so the `#leaf` row allocates 1 cell (the closure) and the six-field `#node(…)` row 3 (the
+  closure, the result and the expected value), 2 live at once.
 - A struct declaration (syntax tree only, since structs are compiled from step L2.4): 273
   bytes with no fields, 1,695 with six, about 237 bytes per field.
 - Peak bytes of front end, lowering and native run together: 2,420,339 at 100 one-row
