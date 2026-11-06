@@ -343,6 +343,70 @@ replaced them and updated their rows.
 | C29 | `zed-kernel` `text.rs` `Text::join`, `push_back`, `push_front`, `concat`, `Text::chunks`, `Text::flat`, `LEAF` (WRITE-prefix-scale, TEXT-append-O1) | a string is a persistent 2-3 finger tree of shared blocks (Hinze and Paterson 2006), strict, and nothing read is cached in a node. A join of a block onto either end is amortized O(1) over a chain of joins each made on the result of the one before, as a `foldl` of `++` makes them (DESIGN.md line 376, L6.16); a join of two long texts is O(log m), m the blocks of the shorter. Given up: a program that keeps one old version whose ends are full at every level and joins onto that same version again and again pays O(log n) new nodes per join, the AVL cost this replaced; an O(1) bound under any reuse needs a lazy middle or Kaplan and Tarjan's deques (comment above `push_back`). A reader of the whole text (hash, printing, `lower`, `upper`, `trim`, the casts, `flat`) walks the blocks at each read, O(len + blocks). Holding all n prefixes of a chain is O(n) bytes for the chain plus the walks' stacks; `<` or `==` of equal byte lengths stops at the first byte that differs; the hash reads 64-byte pieces of the text, so it does not depend on the shape of the joins. Measured, release, 200,000 joins (probe, not committed; load 47 to 49; the AVL tree in brackets, the one-node join of before WRITE-prefix-scale in braces): a `foldl` of 1-byte pieces 32 ms [83 ms] {4.8 ms}, 8-byte 34 ms [111 ms] {11.5 ms}, 128-byte 32 ms [162 ms] {14.5 ms}; on the 25.6 MB result one hash 17.5 ms [16.2], one print 34 ms [32], one `flat` 13.8 ms [11.1], `==` of two built apart 19.7 ms [13.4]. Each join allocates about two nodes of 112 bytes, where the AVL tree allocated 606 bytes per join at n = 1,024 and 1,055 at 131,072. One more effect of the blocks: a join of at most `LEAF` bytes is one block, so staging keys a call at it by its answers (`zedc::stage::compared`), and a call at a longer join by the function's term; the program's value is the same either way | Why: a block shared by a prefix and its extension needs writes past the end of a block the prefix's readers hold (`unsafe`, Miri); a tree of shared blocks gets the bounds in safe Rust, at a walk per whole read. `LEAF` (128 bytes) is a representation constant: a join of a short block onto the block at that end of a text copies both into one, so text built a character at a time is held in blocks, not one node per character; it never changes what a reader sees. Measured on the AVL tree with merging off (release, load 62 to 69, 200,000 one-byte joins): `==` 34 to 40 ms against 0.2 ms, a hash 22 to 24 ms against 0.3 to 3.6 ms; so the constant stays (comment at `LEAF`) | `zed_kernel` `text::tests`: `a_chain_of_joins_allocates_a_constant_per_join` (n = 1,024 and 131,072, either end: at most (2n + 64) nodes of bytes); `a_chain_either_way_is_built_in_order_n` (n = 5,000 against 40,000, limit 24): 8.0 times the bytes; `every_prefix_held_and_compared_costs_order_n_log_n` (n = 2,000 against 16,000): 9.7 times the bytes; `a_chain_a_million_long_either_way_is_balanced_read_and_dropped` (depth at most log2(b/2 + 1) for b blocks, the finger-tree invariants checked); `joins_in_any_order_keep_the_tree_balanced_and_the_text_whole`; `equal_texts_hash_alike_however_joined`; `reading_every_prefix_costs_the_text_read` (power 2, the output is n² bytes); `m0_10_finite_model_harness::scaling::a_string_joined_by_a_fold_scales`. Negative control, the AVL tree (not committed): the allocation test gives 606 and 1,055 bytes per join against a limit of 231, and fails; the 24-times instruction check cannot tell n log n from n at these sizes, so the allocation test is the one that separates them |
 | OMEGA-cycle-growth | `store/presburger.rs` `Omega::cycles`, the equalities that cycles of rows imply, found once, before the first step of `Omega::run` that is not an equality | the rows `x - y + k >= 0` with `k <= 0`, and `x + k >= 0` and `-x + k >= 0` through a node for zero, are edges of weight `-k`; the rows of each strongly connected component become equalities, or the system is empty when one has an edge of weight above zero (Tarjan, `utvpi::components`, O(m log m + n)). Not found: a cycle whose weights have both signs and sum to zero, and a cycle that only forms after a definition or an elimination; such a system goes on to the stages after as before and may be refused `Refusal::Growth` | a zero-sum cycle with mixed signs needs a potential of the graph, a shortest-path search with negative weights (C24); searching again after every step costs O(m) each, O(m·n) over a run, and keeping the components current as rows are added is incremental strongly connected components | Before the fix the 4-cycle `x0 >= x1 >= x2 >= x3 >= x0` in `[-1, 1]^4` with `1 <= x0 + x1 + x2 + x3 <= 3` entered the loop with 14 rows and took no step (every elimination had fill 10, four live variables), and the box gave `Growth`; now `Ok(false)` under every naming (`l01_38_presburger::names::the_orbit_of_a_row_under_a_rotation_or_a_reflection_is_closed`, `l01_38_presburger::omega::a_cycle_of_rows_makes_its_variables_equal`). Scaling: `l01_38_presburger::scaling::a_cycle_of_rows_scales`, a cycle of 512 and 4,096 variables, 9.4 times the instructions and 8.0 times the bytes (2026-11-05, load 57 to 59); control, not committed: the components found again for each equality, 38.2 times the bytes, fails |
 
+## Crossovers
+
+A crossover is a size at which code changes from one method to another that gives an
+identical result, so nothing observable changes there. DESIGN P9 asks for the crossing to be
+solved from the two methods' cost formulas, with the target's constants as parameters. The
+author accepted crossovers set from timings for now (2026-11-06), on these conditions:
+- the two methods' results are identical, and a test compares them;
+- each crossover is commented at its site with the timings it rests on, their date and the
+  load average;
+- the timings are measured again when the code is rewritten in Zed for self-hosting (row S),
+  when the cost characteristics and the anomalies below are to be understood more fully;
+- where one method is never slower than the other, it is used alone, with no crossover.
+
+### NUM-subquad, `zed-kernel/src/num/fast.rs`, measured 2026-11-06
+
+Procedure (the test was not committed): a release test build of `zed-kernel`, load average 1.0
+to 1.4, each method repeated at each size until 40 ms had passed, on random dense operands
+with the top bit set. Multiplication: `transform_mul` of two `w`-word factors against
+num-bigint's `*`. Division: `div_rem` of `2w` by `w` words against num-bigint's `div_rem`.
+Gcd: `gcd` of two `w`-word numbers against num-bigint's. Printing: `to_decimal` against
+`to_str_radix(10)`. For the run the test-build leaves were changed: `DIV_LEAF` to 4 words and
+`RECIP_LEAF` to 2, so that Newton division runs below its leaf, and `MUL_LEAF` to the build's
+1024. With its test value 48, the products inside division, gcd and printing use the transform
+from 48 words, which raises the gcd's ratio at 1024 words from 0.50 to 0.64. `GCD_LEAF` kept
+its test value of 16 words. Each entry is NUM-subquad's time over num-bigint's at the same
+size; below 1 NUM-subquad is faster.
+
+| Operation (leaf in the build) | Ratio at each size in words |
+|---|---|
+| multiplication (1024) | 64: 6.20, 128: 3.96, 256: 2.69, 512: 2.03, 768: 2.23, 1024: 1.50, 1536: 1.80, 2048: 1.18, 4096: 0.96, 8192: 0.73, 16384: 0.56 |
+| division, `2w` by `w` (64) | 8: 2.13, 16: 1.66, 32: 1.25, 64: 1.13, 96: 1.00, 128: 1.06, 256: 1.28, 512: 1.60, 1024: 2.03, 2048: 3.84, 4096: 3.28, 8192: 2.60 |
+| gcd (512) | 64: 2.44, 128: 1.80, 256: 1.20, 384: 0.76, 512: 0.78, 768: 0.51, 1024: 0.50, 2048: 0.34, 4096: 0.24, 8192: 0.17 |
+| printing (1024 digits, about 53 words) | 64: 0.94, 256: 0.93, 1024: 1.01, 4096: 1.46, 16384: 1.74, 32768: 1.50, 65536: 1.27, 131072: 0.96 |
+
+What the curves show, and what is not yet understood:
+- Each method's own curve is smooth; a leaf only chooses between two curves. A scaling test
+  whose `n` lies below a leaf and whose `8n` lies above it measures the change of curve, not
+  either method: `reading_a_rat_of_two_wide_parts_scales` at 2,500 digits grew 75 times in
+  bytes across the gcd's leaf (K41).
+- Multiplication crosses near 4096 words, not at the leaf of 1024; from 1024 to 4096 words the
+  build takes up to 1.5 times the faster method's time. The transform's time rises in steps
+  with its padded length: 512 to 768 words multiplies it by 2.08, 768 to 1024 by 1.03, 1024
+  to 1536 by 2.18, 1536 to 2048 by 1.04.
+- The gcd crosses near 300 words, below the leaf of 512; from 300 to 512 words the build takes
+  up to 1.3 times the faster method's time. Across 1024 to 8192 words num-bigint's Stein gcd
+  grows 59 times (about `n^2`) and the half gcd 20 times.
+- Newton division is never faster up to 8192 words. Its ratio peaks at 3.84 at 2048 words and
+  falls about 0.8 times each doubling after that, so the curves would cross above 100,000 words
+  (extrapolated, not measured). The cause of the excess is not measured; candidates are the
+  full product `a2 y` of which only the high half is used, the product `q b` in `settle`, and a
+  reciprocal built at each call.
+- Printing by halves is slower than num-bigint's from about 1024 to 131072 words, with its
+  peak at 16384, the same shape as division's, which each level of it calls (the link is
+  inferred). Nothing switches back to num-bigint in that range.
+- num-bigint 0.4.8 divides above 64 words by Burnikel and Ziegler's recursion over Toom-3
+  (`biguint/division.rs` lines 216 and 343) and prints by halves over that division
+  (`biguint/convert.rs` line 705), both about `n^1.46`: over these sizes its division grows 24
+  times per 8 times the size and its printing 22 times. This is why num-bigint's division and
+  printing pass the scaling tests' limit of 24 (merge check: 21.71 and 22.48), and only its gcd
+  (Stein's, O(n^2)) fails it.
+- The crossings move with the load: the timings of 2026-11-05, at load 45 to 75, put
+  multiplication's at 1024 words, the gcd's at 512 to 1024 and printing's break-even at
+  262,144; at load 1 they are about 4096, 300 and 131,072.
+
 ## Kept
 
 | Where | Why |

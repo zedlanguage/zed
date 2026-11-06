@@ -1,12 +1,25 @@
 //! Subquadratic arithmetic on wide integers: multiplication by number-theoretic transforms,
 //! division by a Newton reciprocal, the binary recursive gcd of Stehlé and Zimmermann, and
-//! decimal printing by halves. num-bigint's multiplication is Toom-3, about `n^1.46`, and its
-//! gcd and decimal printing are O(n^2) (COMPLEXITY.md K30 and K41).
+//! decimal printing by halves. num-bigint 0.4.8's multiplication is Toom-3, about `n^1.46`; its
+//! division above 64 words is Burnikel and Ziegler's recursion over that multiplication, and
+//! its decimal printing is by halves over that division, both about `n^1.46` too; its gcd is
+//! Stein's, O(n^2) (COMPLEXITY.md K30 and K41).
 //!
 //! `M(n)` below is the cost of a product of two `n`-bit numbers, O(n log n) here. Division
 //! costs O(M(n)), and gcd and printing O(M(n) log n). Below a leaf size each operation hands
 //! its operands to num-bigint, which is faster there; the value computed does not depend on
 //! the leaf sizes.
+//!
+//! Each leaf is a crossover between two methods whose results are identical, set from timings
+//! rather than solved from the two methods' cost formulas. The author accepted this for now
+//! (2026-11-06) because nothing observable changes at a crossover, on the condition that each
+//! is commented with the timings it rests on. The timings move with the load and the code: at
+//! load 45 to 75 on 2026-11-05 multiplication and the gcd crossed at about 1024 and 512 words,
+//! at load 1 on 2026-11-06 at about 4096 and 300. They are to be measured again when this file
+//! is rewritten in Zed for self-hosting, by the procedure in COMPLEXITY.md section
+//! "Crossovers", which also lists the curves on both sides of each leaf and what is not yet
+//! understood about them. Where one method is never slower than the other, it is used alone,
+//! with no crossover.
 
 use std::borrow::Cow;
 
@@ -16,8 +29,10 @@ use num_traits::{One, Signed, Zero};
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication: the crossover measured on 2026-11-05, both about 0.33 ms at 1024 words
-/// (load 68). The product does not depend on it; the unit tests use a smaller leaf, so that
-/// they reach the transforms at small sizes.
+/// (load 68). Measured again on 2026-11-06 at load 1, the transform takes 1.50 times
+/// num-bigint's time at 1024 words, 1.18 at 2048, 0.96 at 4096 and 0.56 at 16384, so the
+/// curves cross near 4096 words (COMPLEXITY.md, "Crossovers"). The product does not depend on
+/// it; the unit tests use a smaller leaf, so that they reach the transforms at small sizes.
 #[cfg(not(test))]
 const MUL_LEAF: usize = 1024;
 #[cfg(test)]
@@ -25,15 +40,23 @@ const MUL_LEAF: usize = 48;
 
 /// The bits at or below which the divisor, or the quotient, goes to num-bigint's division,
 /// which then costs at most this many bits times the dividend's. The result does not depend
-/// on it.
+/// on it. Not measured when it was set. On 2026-11-06 at load 1, Newton division of `2w` by
+/// `w` words takes 1.13 times num-bigint's time at `w` = 64, 1.00 at 96, 2.03 at 1024, 3.84
+/// at 2048 and 2.60 at 8192: never faster up to 8192 words. num-bigint's division is about
+/// `n^1.46` and Newton's O(n log n), so the curves cross higher up, above 100,000 words by
+/// extrapolation, not measured (COMPLEXITY.md, "Crossovers").
 const DIV_LEAF: u64 = 64 * 64;
 
-/// The bits at or below which a reciprocal is found by num-bigint's division.
+/// The bits at or below which a reciprocal is found by num-bigint's division. Not measured
+/// apart from [`DIV_LEAF`].
 const RECIP_LEAF: u64 = 64 * 32;
 
 /// The bits at or below which the gcd of what is left goes to num-bigint's gcd: near the
 /// crossover measured on 2026-11-05, 2.2 ms against 1.7 ms at 256 words and 12 ms against
-/// 30 ms at 1024 (load 75). The gcd does not depend on it; the unit tests use a smaller leaf.
+/// 30 ms at 1024 (load 75). Measured again on 2026-11-06 at load 1, the half gcd takes 1.20
+/// times num-bigint's time at 256 words, 0.76 at 384, 0.78 at 512 and 0.50 at 1024, so the
+/// curves cross near 300 words (COMPLEXITY.md, "Crossovers"). The gcd does not depend on it;
+/// the unit tests use a smaller leaf.
 #[cfg(not(test))]
 const GCD_LEAF: u64 = 64 * 512;
 #[cfg(test)]
@@ -43,13 +66,19 @@ const GCD_LEAF: u64 = 64 * 16;
 /// residues of `2k + 1 <= 121` bits stay below `2^120`, and so do the matrix entries.
 const HALF_LEAF: u64 = 60;
 
-/// The decimal digits of a leaf of [`to_decimal`], written by num-bigint.
+/// The decimal digits of a leaf of [`to_decimal`], written by num-bigint. Not a crossover
+/// with num-bigint's printing of the whole number: on 2026-11-06 at load 1 printing by halves
+/// takes 0.93 times num-bigint's time at 256 words, 1.46 at 4096, 1.74 at 16384, 1.27 at
+/// 65536 and 0.96 at 131072, so num-bigint's is faster from about 1024 to 131072 words. The
+/// slower range matches that of [`div_rem`], which each level divides by; that this is the
+/// cause is not yet measured (COMPLEXITY.md, "Crossovers").
 const PRINT_LEAF: usize = 1024;
 
 /// The cost of a transform product on `n` points, per `n log2(n)`, in units of one word
 /// product of [`sparse_mul`]: measured on 2026-11-05 at 1024 to 8192 words a factor, 23 to
 /// 28 ns per `n log2(n)` against 1.2 to 2 ns a word product (load 45 to 55). Only which of
-/// two equal results is computed depends on it.
+/// two equal results is computed depends on it. Measured again at the port to Zed, with the
+/// leaves above.
 const TRANSFORM_COST: u128 = 20;
 
 /// The cost of a word of a step of [`sparse_div_rem`], and of a step besides its words (the
