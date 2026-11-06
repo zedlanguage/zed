@@ -193,7 +193,7 @@ l01_29_diagnostics/zed/narrowed.zed
             Step {
                 line: 3,
                 col: 22,
-                text: "repair: wrap this in `String(…)`; the checker accepts that",
+                text: "repair: write `String(v)`; the checker accepts that",
                 source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ `++` does not take an int",
                 width: 1,
             },

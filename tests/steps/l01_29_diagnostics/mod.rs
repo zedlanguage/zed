@@ -6,6 +6,7 @@
 mod batch;
 mod binder_type;
 mod body_display;
+mod casts;
 mod derivations;
 mod layout;
 mod negative_literals;

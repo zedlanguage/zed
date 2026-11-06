@@ -54,7 +54,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [14] 4:13: `++` takes (String, String) -> String
        4 |   stdout <- "total: " ++ total;
          |             ^^^^^^^^^^^^^^^^^^
-  [15] 4:26: repair: wrap this in `String(…)`; the checker accepts that
+  [15] 4:26: repair: write `String(total)`; the checker accepts that
        4 |   stdout <- "total: " ++ total;
          |                          ^^^^^"#
     );
@@ -255,7 +255,7 @@ main(stdin: Lines) -> (stdout: Lines) {
             "this expression is 4",
             "this literal, 3, is 3",
             "`++` takes (String, String) -> String",
-            "repair: wrap this in `String(…)`; the checker accepts that",
+            "repair: write `String(rate)`; the checker accepts that",
         ]
     );
 }

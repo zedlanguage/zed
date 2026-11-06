@@ -3630,7 +3630,12 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The repairs of a rejected application the checker discharges: each argument wrapped
     /// in a prelude word, when the application then checks, tried with the checker's state
-    /// restored after.
+    /// restored after. The wrapped argument has no place, so no failure of the word passes by
+    /// a call (rule 6 of sec:type_resolution): the trial sees the application, not where its
+    /// result goes, and a passed failure may have nowhere to go there. An argument of a class
+    /// is wrapped as a value of the carriers the class still holds. A name is shown
+    /// wrapped, `f64(r)`, and anything else as the word around the place shown: the menu of
+    /// the row for two numeric values with no common carrier (DESIGN.md sec:diagnostics).
     fn repairs(
         &mut self,
         what: &str,
@@ -3653,8 +3658,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             else {
                 continue;
             };
+            let held = match self.class_of_ty(ty) {
+                Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
+                _ => ty.clone(),
+            };
+            let t = self.t;
+            let name = match self.seen.get(at) {
+                Some((_, Src::Name(id))) => Some(&t.res.binders[*id].name),
+                _ => None,
+            };
             for w in ["String", "int", "rat", "f64"] {
-                let Some(r) = converted(&word_sig(w), ty) else {
+                let Some(r) = converted(&word_sig(w), &held) else {
                     continue;
                 };
                 let mut with = args.to_vec();
@@ -3666,10 +3680,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.trying = false;
                 self.undo(&saved);
                 if ok {
-                    out.push(Note {
-                        span: *at,
-                        text: format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
-                    });
+                    let text = match name {
+                        Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
+                        None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
+                    };
+                    out.push(Note { span: *at, text });
                 }
             }
         }

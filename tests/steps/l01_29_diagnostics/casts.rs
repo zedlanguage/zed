@@ -1,0 +1,161 @@
+//! Two numeric values with no common carrier (DESIGN.md sec:diagnostics; item CAST-menu): Zed
+//! converts no value implicitly, so `r + x` with `r: rat` and `x: f64` is rejected. The
+//! rejection shows both operands with their carriers and where each carrier comes from, and
+//! its menu is the casts the checker accepts, written at the operand: `f64(r)`, `rat(x)`.
+
+use zed_tests::scaling;
+
+use super::{rejected, steps};
+use zedc::run::load;
+
+/// The program `src` with the one occurrence of `from` replaced by `to`.
+fn edited(src: &str, from: &str, to: &str) -> String {
+    assert_eq!(src.matches(from).count(), 1, "{from}");
+    src.replace(from, to)
+}
+
+/// Asserts that `src` checks.
+fn checks(src: &str) {
+    load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
+}
+
+/// The menu entry offering the cast `cast`.
+fn offered(cast: &str) -> String {
+    format!("repair: write `{cast}`; the checker accepts that")
+}
+
+/// `body` as the one function of a program.
+fn program(body: &str) -> String {
+    format!("{body}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- \"a\";\n}}\n")
+}
+
+#[test]
+fn a_rat_and_an_f64_are_shown_with_their_carriers_and_the_casts_between_them() {
+    let src = program("total(r: rat, x: f64) = r + x;");
+    let out = rejected(&src);
+    assert_eq!(
+        out.lines().next(),
+        Some("1:25: `+` does not take (rat, f64)"),
+        "{out}"
+    );
+    let s = steps(&out);
+    for step in [
+        "`r` is rat here",
+        "`r` is declared `rat`",
+        "`x` is f64 here",
+        "`x` is declared `f64`",
+        "`+` takes (f64, f64) -> f64",
+        "`+` takes (rat, rat) -> rat",
+    ] {
+        assert!(s.contains(&step), "{step}\n{out}");
+    }
+    let menu: Vec<&str> = s
+        .iter()
+        .copied()
+        .filter(|t| t.starts_with("repair:"))
+        .collect();
+    assert_eq!(menu, [offered("f64(r)"), offered("rat(x)")], "{out}");
+    checks(&edited(&src, "r + x", "f64(r) + x"));
+    checks(&edited(&src, "r + x", "r + rat(x)"));
+}
+
+#[test]
+fn an_int_and_an_f64_offer_f64_of_the_int() {
+    let src = program("scaled(n: int, x: f64) = n * x;");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("1:26: `*` does not take (int, f64)"),
+        "{out}"
+    );
+    assert!(out.contains(&offered("f64(n)")), "{out}");
+    checks(&edited(&src, "n * x", "f64(n) * x"));
+    // The other way is a cast too: `int(x)` is `int | #inexact | #invalid`, and `*` passes
+    // those atoms on.
+    assert!(out.contains(&offered("int(x)")), "{out}");
+    checks(&edited(&src, "n * x", "n * int(x)"));
+}
+
+#[test]
+fn a_comparison_offers_the_same_casts() {
+    let src = program("late(r: rat, x: f64) = r < x;");
+    let out = rejected(&src);
+    for (to, cast) in [("f64(r) < x", "f64(r)"), ("r < rat(x)", "rat(x)")] {
+        assert!(out.contains(&offered(cast)), "{cast}\n{out}");
+        checks(&edited(&src, "r < x", to));
+    }
+}
+
+#[test]
+fn parameters_without_declared_types_are_shown_with_the_uses_that_gave_their_carriers() {
+    let src = program("mix(positional a, positional b) = (a * 1r, b * 2.5, a + b);");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("1:53: `+` does not take (rat, f64)"),
+        "{out}"
+    );
+    let s = steps(&out);
+    for step in [
+        "`a` has no declared type; its uses give it rat",
+        "`b` has no declared type; its uses give it f64",
+        "the literal 2.5 takes f64",
+    ] {
+        assert!(s.contains(&step), "{step}\n{out}");
+    }
+    assert!(out.contains(&offered("f64(a)")), "{out}");
+    assert!(out.contains(&offered("rat(b)")), "{out}");
+    checks(&edited(&src, "a + b", "f64(a) + b"));
+    checks(&edited(&src, "a + b", "a + rat(b)"));
+}
+
+#[test]
+fn values_joined_by_an_earlier_use_offer_the_cast_of_the_joined_one() {
+    // `a + b` gives `a` and `b` one carrier, `a * 1r` makes it rat, and `b * 2.5` meets f64.
+    let src = program("join(positional a, positional b) = (a + b, a * 1r, b * 2.5);");
+    let out = rejected(&src);
+    let s = steps(&out);
+    assert!(s.contains(&"`+` gives these values one carrier"), "{out}");
+    assert!(out.contains(&offered("f64(b)")), "{out}");
+    checks(&edited(&src, "b * 2.5", "f64(b) * 2.5"));
+}
+
+#[test]
+fn an_operand_that_is_not_a_name_is_shown_with_the_cast_around_it() {
+    let src = program("area(r: rat, x: f64) = r * r + x;");
+    let out = rejected(&src);
+    assert!(
+        out.contains("repair: wrap this in `f64(…)`; the checker accepts that"),
+        "{out}"
+    );
+    checks(&edited(&src, "r * r + x", "f64(r * r) + x"));
+}
+
+#[test]
+fn a_value_with_no_numeric_cast_is_offered_none() {
+    // `bool` has no cast to a number, and a number none to `bool`: the menu offers no cast
+    // that does not exist. Types a program declares are built from step L2.5; this one
+    // stands for them, since the casts tried are the prelude's (`int`, `rat`, `f64`, `String`).
+    let src = program("bump(b: bool, x: f64) = b + x;");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("1:25: `+` does not take (bool, f64)"),
+        "{out}"
+    );
+    assert!(!out.contains("repair:"), "{out}");
+}
+
+/// `n` functions, each adding a `rat` and an `f64`.
+fn mixed(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("sum{i}(r: rat, x: f64) = r + x;\n"))
+        .collect()
+}
+
+#[test]
+fn the_cast_menus_of_many_rejections_scale() {
+    // Each rejection tries four casts at each of its two operands: a constant per rejection.
+    scaling::check("the cast menus of n rejected sums", 300, |n| {
+        let out = rejected(&mixed(n));
+        assert_eq!(out.matches(&offered("f64(r)")).count(), n);
+        assert_eq!(out.matches(&offered("rat(x)")).count(), n);
+    });
+}
