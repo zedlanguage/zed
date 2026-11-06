@@ -5510,7 +5510,7 @@ impl Omega {
     fn cycles(&mut self) -> bool {
         // The node of `x[j]` is `j + 1`, and zero is node 0.
         let mut out: Vec<Vec<usize>> = vec![Vec::new(); self.sys.vars.len() + 1];
-        let mut edges: Vec<(usize, usize, &Coefs, bool)> = Vec::new();
+        let mut edges: Vec<(usize, usize, usize, bool)> = Vec::new();
         for (a, held) in &self.sys.rows {
             if held.k.is_positive() || a.iter().any(|(_, c)| !c.is_unit()) {
                 continue;
@@ -5524,11 +5524,11 @@ impl Omega {
                 _ => continue,
             };
             out[from].push(to);
-            edges.push((from, to, a, held.k.is_zero()));
+            edges.push((from, to, held.id, held.k.is_zero()));
         }
         let comp = utvpi::components(&out, |v| *v);
-        let mut tight: Vec<Coefs> = Vec::new();
-        for (from, to, a, zero) in edges {
+        let mut tight: Vec<usize> = Vec::new();
+        for (from, to, id, zero) in edges {
             if comp[from] != comp[to] {
                 continue;
             }
@@ -5536,11 +5536,10 @@ impl Omega {
                 self.sys.empty = true;
                 return true;
             }
-            tight.push(a.clone());
+            tight.push(id);
         }
         let found = !tight.is_empty();
-        for a in tight {
-            let id = self.sys.rows[&a].id;
+        for id in tight {
             let r = self.sys.remove(id);
             self.es.push(r, &mut self.sys);
         }
