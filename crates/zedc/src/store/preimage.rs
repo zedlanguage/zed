@@ -6627,18 +6627,19 @@ mod tests {
         }
     }
 
-    /// The rounds `part` of four checks, of `rounds` rounds of one seed, split so that each test
-    /// stays well under 60 s under load.
-    fn quarter(part: usize, rounds: usize) -> std::ops::Range<usize> {
-        part * rounds / 4..(part + 1) * rounds / 4
-    }
+    /// The number of tests the rounds of one seed are split into, so that each test takes
+    /// under 30 s at a load average of 90 on 32 cores (four parts took up to 40 s there).
+    const PARTS: usize = 8;
 
-    /// The chain translator against the translation two at a time, on the rounds `only` of
-    /// 4,000 random programs of one seed. Every round's program is generated, so that a round
-    /// checks the same program whichever part it is in.
-    fn joins_as_two_at_a_time(only: std::ops::Range<usize>) {
+    /// The chain translator against the translation two at a time, on the rounds of part
+    /// `part` ([`PARTS`]) of 4,000 random programs of one seed: an eighth of them in a row, as
+    /// every fourth round also builds preimages, so that rounds taken by remainder would put
+    /// all of those in two parts. Every round's program is generated, so that a round checks
+    /// the same program whichever part it is in.
+    fn joins_as_two_at_a_time(part: usize) {
         let mut g = Gen::new(0x9e37_79b9_7f4a_7c15, false);
         let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
+        let only = part * 4000 / PARTS..(part + 1) * 4000 / PARTS;
         for round in 0..only.end {
             g.pool.clear();
             let t = match g.rng.below(4) {
@@ -6719,27 +6720,52 @@ mod tests {
         }
         eprintln!("some {some}, kept {kept}, none {none}, stopped {stopped}, fewer {fewer}");
         // Formulas, kept parts, translations that fail, stops and dropped entries all occur.
-        assert!(some > 125 && kept > 5 && none > 25 && stopped > 12 && fewer > 125);
+        // Each part has more than its share, rounded down, of the counts the 4,000 rounds had
+        // to have, so together the parts have more: some > 500, kept > 20, none > 100,
+        // stopped > 50 and fewer > 500.
+        let n = PARTS;
+        assert!(some > 500 / n && kept > 20 / n && none > 100 / n);
+        assert!(stopped > 50 / n && fewer > 500 / n);
     }
 
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_1() {
-        joins_as_two_at_a_time(quarter(0, 4000));
+        joins_as_two_at_a_time(0);
     }
 
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_2() {
-        joins_as_two_at_a_time(quarter(1, 4000));
+        joins_as_two_at_a_time(1);
     }
 
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_3() {
-        joins_as_two_at_a_time(quarter(2, 4000));
+        joins_as_two_at_a_time(2);
     }
 
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_4() {
-        joins_as_two_at_a_time(quarter(3, 4000));
+        joins_as_two_at_a_time(3);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_5() {
+        joins_as_two_at_a_time(4);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_6() {
+        joins_as_two_at_a_time(5);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_7() {
+        joins_as_two_at_a_time(6);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_8() {
+        joins_as_two_at_a_time(7);
     }
 
     /// What `t` gives with `x` and `y` at `at`, `Some(None)` for a failure; `None` when the run
@@ -6826,14 +6852,17 @@ mod tests {
     /// read the term again at each place ([`check`]), on random programs of functions that
     /// call themselves and each other ([`Gen::group`]), nested, with shared tests and calls
     /// whose arguments read the inputs, so that entries are read within other summaries and
-    /// on higher stacks. Checks the rounds `only` of 1,000 of one seed; every round's program is
-    /// generated, so that a round checks the same program whichever part it is in.
-    fn entries_below_a_stop(only: std::ops::Range<usize>) {
+    /// on higher stacks. Checks the rounds of part `part` ([`PARTS`]) of 1,000 of one seed,
+    /// those whose remainder by [`PARTS`] is `part`, so that each part has about its share of
+    /// every kind of program (taken an eighth in a row, rounds 375 to 499 held too few entries
+    /// read again). Every round's program is generated, so that a round checks the same
+    /// program whichever part it is in.
+    fn entries_below_a_stop(part: usize) {
         let mut g = Gen::new(0x2545_f491_4f6c_dd1d, true);
         READS.set([0; 3]);
         CHECKED.set([0; 5]);
         let (mut met, mut endless, mut stopped) = (0, 0, 0);
-        for round in 0..only.end {
+        for round in 0..1000 {
             g.pool.clear();
             let t = match g.rng.below(3) {
                 0 => g.group(4),
@@ -6847,7 +6876,7 @@ mod tests {
                     Term::Prim(p, vec![g.test(4), g.test(4)])
                 }
             };
-            if round < only.start {
+            if round % PARTS != part {
                 continue;
             }
             let (_, s, m, e) = check(&t, round);
@@ -6863,28 +6892,56 @@ mod tests {
              under other inputs {inside}, entries that hold anywhere {everywhere}; stopped \
              {stopped}, points met {met}, rounds out of fuel {endless}"
         );
-        assert!(reads > 1250 && higher > 750 && other > 500 && stopped > 100 && met > 25_000);
-        assert!(checked > 1000 && raised > 750 && inside > 500 && everywhere > 125_000);
+        // Each part has more than its share, rounded down, of the counts the 1,000 rounds had
+        // to have, so together the parts have more: reads > 5000, higher > 3000, other > 2000,
+        // stopped > 400, met > 100,000, checked > 4000, raised > 3000, inside > 2000 and
+        // everywhere > 500,000.
+        let n = PARTS;
+        assert!(stopped > 400 / n && met > 100_000 / n);
+        let n = n as u64;
+        assert!(reads > 5000 / n && higher > 3000 / n && other > 2000 / n);
+        assert!(checked > 4000 / n && raised > 3000 / n && inside > 2000 / n);
+        assert!(everywhere > 500_000 / n);
     }
 
     #[test]
     fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_1() {
-        entries_below_a_stop(quarter(0, 1000));
+        entries_below_a_stop(0);
     }
 
     #[test]
     fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_2() {
-        entries_below_a_stop(quarter(1, 1000));
+        entries_below_a_stop(1);
     }
 
     #[test]
     fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_3() {
-        entries_below_a_stop(quarter(2, 1000));
+        entries_below_a_stop(2);
     }
 
     #[test]
     fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_4() {
-        entries_below_a_stop(quarter(3, 1000));
+        entries_below_a_stop(3);
+    }
+
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_5() {
+        entries_below_a_stop(4);
+    }
+
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_6() {
+        entries_below_a_stop(5);
+    }
+
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_7() {
+        entries_below_a_stop(6);
+    }
+
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_8() {
+        entries_below_a_stop(7);
     }
 
     mod written {
