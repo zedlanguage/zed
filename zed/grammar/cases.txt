@@ -74,8 +74,10 @@ Type ::: int where x > 0 ::: (int (where (x > 0)))
 Type ::: A | B \ C & D ::: ERROR
 Type ::: K ->? V with reducer((+)) ::: ((K ->? V) (with (reducer ( (( + )) ))))
 Type ::: Config | #syntaxError(pos: int) ::: (Config | (#syntaxError ( (pos : int) )))
+Type ::: {#red, #blue} ::: ERROR
 Type ::: String matching grammar { digit digit* } ::: (String (matching (grammar { (digit (digit *)) })))
 Expr ::: x<-1 ::: ERROR
+Expr ::: x < -1 ::: (x < (- 1))
 Item ::: x <- -1; ::: (x <- (- 1) ;)
 Expr ::: f(x: 1, y: 2) ::: (f (( ((x : 1) , (y : 2)) )))
 Expr ::: xs.sort(desc x.size) ::: ((xs (. sort)) (( (desc (x (. size))) )))
@@ -150,6 +152,9 @@ Expr ::: x else 0 with bound(3) ::: (x (else (0 (with (bound ( 3 ))))))
 # difference does not mix with union or intersection without parentheses
 Type ::: A \ B & C ::: ERROR
 Type ::: A & B \ C ::: ERROR
+Type ::: A | B \ C ::: ERROR
+Type ::: A \ B | C ::: ERROR
+Type ::: A | (B \ C) ::: (A | (( (B \ C) )))
 Type ::: (A | B) \ C ::: ((( (A | B) )) \ C)
 Type ::: A \ B \ C ::: ((A \ B) \ C)
 Type ::: A | B & C ::: (A | (B & C))
@@ -330,7 +335,9 @@ Expr ::: a == b <= c ::: (a == (b <= c))
 Expr ::: a == b != c ::: ERROR
 Item ::: interface Monoid(T) { import Semigroup(T), one: T, law oneMul(a: T) = mul(one, a) == a } ::: (interface Monoid (( T )) { (import Semigroup ( T )) , (one : T) , (law oneMul ( (a : T) ) = ((mul (( (one , a) ))) == a)) })
 Item ::: struct S { import Monoid(T) } ::: ERROR
+Item ::: struct S { x: int } test { 1 -> 1 } ::: ERROR
 Item ::: law square(R: CommRing(T), a: T) = a * a == a * a proof { a * a == a * a == a * a } ::: (law square ( ((R : (CommRing ( T ))) , (a : T)) ) = ((a * a) == (a * a)) (proof ({ ((a * a) == (a * a) == (a * a)) })))
+Item ::: law l(a: int) = a == a test { 1 -> 1 } ::: ERROR
 Expr@21 ::: a < b < c ::: ERROR
 Expr@21 ::: a == b == c ::: ERROR
 Expr@21 ::: a >= b > c ::: ERROR
