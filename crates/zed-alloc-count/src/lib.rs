@@ -4,7 +4,8 @@
 //! A block of `n` bytes counts `n` when it is allocated, and a block grown or shrunk in place or
 //! by a copy counts its new size, which is what a copy writes. A request the system refuses writes
 //! nothing and counts nothing, so a probe such as `try_reserve` of an impossible size leaves the
-//! count as it was. Freeing counts nothing.
+//! count as it was. Freeing counts nothing toward that count; [`live`] measures, on one thread,
+//! the bytes a run leaves allocated, frees counted, and its peak.
 //!
 //! The count of a thread is of the bytes it and every thread it starts, and every thread those
 //! start, allocate, as the kernel's counters of instructions count a thread and the threads it
@@ -37,7 +38,6 @@
 //! Windows builds are compiled here (on Linux, by `cargo check --target`) but have not been run.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-#[cfg(target_os = "linux")]
 use std::cell::Cell;
 #[cfg(target_os = "linux")]
 use std::ffi::{c_int, c_void};
@@ -131,6 +131,84 @@ fn count(block: *mut u8, bytes: usize) -> *mut u8 {
     }
     block
 }
+
+/// The live bytes of the measurement running on this thread (see [`live`]).
+#[derive(Clone, Copy)]
+struct Tracked {
+    /// Whether a measurement is running.
+    on: bool,
+    /// The bytes allocated less the bytes freed since it started.
+    net: i64,
+    /// The largest `net` has been.
+    peak: i64,
+}
+
+thread_local! {
+    /// The measurement of [`live`] on this thread. A `const` cell of a type with no destructor,
+    /// so the allocator reads it without allocating, and a free reads one flag when no
+    /// measurement runs.
+    static TRACKED: Cell<Tracked> = const { Cell::new(Tracked { on: false, net: 0, peak: 0 }) };
+}
+
+/// Adds `bytes`, which may be negative, to the measurement running on this thread, if one is.
+fn track(bytes: i64) {
+    let t = TRACKED.get();
+    if t.on {
+        let net = t.net + bytes;
+        TRACKED.set(Tracked {
+            on: true,
+            net,
+            peak: t.peak.max(net),
+        });
+    }
+}
+
+/// What [`live`] measured.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Live {
+    /// The bytes allocated less the bytes freed: what the run left allocated, or, when negative,
+    /// what it freed of the blocks it was given.
+    pub net: i64,
+    /// The most bytes the run had allocated and not yet freed at any one time, at least 0.
+    pub peak: u64,
+}
+
+/// Runs `f` and returns its result with the bytes it left allocated and its peak, counting only
+/// the allocations and frees made on this thread: a block a thread started by `f` allocates is
+/// not counted, and a block `f` frees that was allocated before it counts as negative. A
+/// measurement inside another adds its bytes to the outer one.
+pub fn live<R>(f: impl FnOnce() -> R) -> (R, Live) {
+    /// Puts the outer measurement back when `f` returns or unwinds.
+    struct Restore(Tracked);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TRACKED.set(self.0);
+        }
+    }
+    let outer = TRACKED.get();
+    let restore = Restore(outer);
+    TRACKED.set(Tracked {
+        on: true,
+        net: 0,
+        peak: 0,
+    });
+    let out = f();
+    let inner = TRACKED.get();
+    drop(restore);
+    if outer.on {
+        TRACKED.set(Tracked {
+            on: true,
+            net: outer.net + inner.net,
+            peak: outer.peak.max(outer.net + inner.peak),
+        });
+    }
+    let live = Live {
+        net: inner.net,
+        peak: inner.peak.unsigned_abs(),
+    };
+    (out, live)
+}
+
 /// The system allocator, counting bytes per thread.
 pub struct Counting;
 
@@ -143,22 +221,35 @@ pub struct Counting;
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller's guarantees about `layout` are passed on unchanged.
-        count(unsafe { System.alloc(layout) }, layout.size())
+        let block = count(unsafe { System.alloc(layout) }, layout.size());
+        if !block.is_null() {
+            track(layout.size() as i64);
+        }
+        block
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         // SAFETY: as in `alloc`.
-        count(unsafe { System.alloc_zeroed(layout) }, layout.size())
+        let block = count(unsafe { System.alloc_zeroed(layout) }, layout.size());
+        if !block.is_null() {
+            track(layout.size() as i64);
+        }
+        block
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        track(-(layout.size() as i64));
         // SAFETY: `ptr` and `layout` come from this allocator, which is `System`.
         unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: as in `dealloc`; the caller's guarantees about `new_size` are passed on.
-        count(unsafe { System.realloc(ptr, layout, new_size) }, new_size)
+        let block = count(unsafe { System.realloc(ptr, layout, new_size) }, new_size);
+        if !block.is_null() {
+            track(new_size as i64 - layout.size() as i64);
+        }
+        block
     }
 }
 
@@ -319,6 +410,72 @@ mod tests {
     fn freeing_counts_nothing() {
         let v = black_box(vec![1u8; 4096]);
         assert_eq!(bytes_of(|| drop(v)), 0);
+    }
+
+    #[test]
+    fn live_bytes_count_what_is_kept_and_the_peak_counts_what_was_held_at_once() {
+        let (kept, l) = live(|| {
+            drop(black_box(vec![0u8; 5000]));
+            black_box(vec![0u8; 1000])
+        });
+        assert_eq!(
+            l,
+            Live {
+                net: 1000,
+                peak: 5000
+            }
+        );
+        let (_, l) = live(|| drop(kept));
+        assert_eq!(
+            l,
+            Live {
+                net: -1000,
+                peak: 0
+            }
+        );
+        let (grown, l) = live(|| {
+            let mut v = Vec::<u8>::with_capacity(100);
+            v.reserve_exact(300);
+            black_box(v)
+        });
+        assert_eq!(l.net, 300);
+        assert_eq!(grown.capacity(), 300);
+    }
+
+    #[test]
+    fn a_measurement_inside_another_adds_to_it() {
+        let ((inner, keep), outer) = live(|| {
+            let a = black_box(vec![0u8; 100]);
+            let (b, inner) = live(|| {
+                drop(black_box(vec![0u8; 700]));
+                black_box(vec![0u8; 200])
+            });
+            (inner, (a, b))
+        });
+        assert_eq!(
+            inner,
+            Live {
+                net: 200,
+                peak: 700
+            }
+        );
+        assert_eq!(
+            outer,
+            Live {
+                net: 300,
+                peak: 800
+            }
+        );
+        drop(keep);
+        // Off again: a free outside any measurement changes nothing.
+        assert_eq!(live(|| ()).1, Live { net: 0, peak: 0 });
+    }
+
+    #[test]
+    fn a_measurement_that_panics_leaves_none_running() {
+        let caught = std::panic::catch_unwind(|| live(|| panic!("inside")));
+        assert!(caught.is_err());
+        assert!(!TRACKED.get().on);
     }
 
     // Off Linux the count is of the whole process, which other threads add to.

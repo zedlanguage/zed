@@ -11,6 +11,7 @@ pub mod deep;
 pub mod fences;
 pub mod instances;
 pub mod kernel;
+pub mod layout;
 pub mod oracle;
 pub mod scaling;
 pub mod spec;

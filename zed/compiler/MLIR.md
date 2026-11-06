@@ -118,6 +118,56 @@ dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
 | `value` | an SSA value; its type from the edge's domain (an integer domain inside 64 bits is `i64`, a float `f64`, a boolean `i1`, other values a pointer to a runtime cell). |
 | `state` | no value: the order of the runtime calls in sequential code, an `!async.token` between concurrent regions (decision 4). |
 
+## Layout
+
+Item LAYOUT-measure, 2026-11-05: the bytes each of the compiler's representations takes per
+node, measured by the counting allocator of the test binaries on the step units
+(`tests/steps/*/zed/*.zed`). The bytes of a structure are the bytes its drop frees, so a name
+it shares with a structure that outlives it is not counted in it. The test
+`l01_35_mlir_study::layout` holds the inline sizes below to the compiler's own, so a type that
+grows fails it, and prints the measured figures.
+
+Inline sizes, `size_of` on x86-64 (the heap cell as the tests build it, with feature `counts`):
+
+| Type | Bytes |
+|---|---|
+| `ast::Expr` | 120 |
+| `ast::ExprKind` | 104 |
+| `ast::Stmt` | 272 |
+| `ast::Type` | 72 |
+| `ast::Pattern` | 88 |
+| `kernel Term` | 88 |
+| `kernel Value` | 56 |
+| `zir::Node` | 112 |
+| `zir::Op` | 40 |
+| `zir::Src` | 56 |
+| `zir::Edge` | 120 |
+| `zir::Region` | 80 |
+| `native Word` | 16 |
+| `native heap cell` | 144 |
+
+Measured on the 10 step units the front end accepts (4 more are refused by design and give no
+record):
+
+- Syntax tree: 496 expressions and statements in 126,752 bytes, 255 bytes per node, its
+  types, patterns and names included.
+- Kernel terms: 1,060 distinct terms (a shared term counted once) in 168,510 bytes for the
+  elaborated units, 158 bytes per term.
+- ZIR: 694 nodes in the 109 graphs of the closed terms the tables run, 649,448 bytes, 935
+  bytes per node. A node's inline 112 bytes are a small part; its input, output and region
+  vectors (56 bytes per input, 120 per output edge) and each region's vectors hold the rest.
+- Native values: 109 runs allocated 195 heap cells, at most 8 live at once in one run. An
+  unboxed value is one 16-byte word; a boxed one is a word and a 144-byte cell, plus its
+  payload's own blocks. An atom is boxed even without a payload: `#leaf` takes one cell, and
+  the six-field `#node(…)` row allocates 3 cells, 2 live at once.
+- A struct declaration (syntax tree only, since structs are compiled from step L2.4): 273
+  bytes with no fields, 1,695 with six, about 237 bytes per field.
+- Peak bytes of front end, lowering and native run together: 2,420,339 at 100 one-row
+  definitions and 19,281,463 at 800, a ratio of 7.97 for 8 times the size.
+
+For comparison, the Zig compiler's syntax-tree node is 13 bytes (zig-study); the figures here
+are the base that items LAYOUT-soa and UNION-spare measure against.
+
 ## What this leaves for L28
 
 - The integer domain decides when an `arith` operation can drop its overflow check; the

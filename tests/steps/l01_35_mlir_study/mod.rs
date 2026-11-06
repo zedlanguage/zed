@@ -14,6 +14,8 @@ fn read(path: &str) -> String {
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
 }
 
+mod layout;
+
 fn record() -> String {
     read("../zed/compiler/MLIR.md")
 }

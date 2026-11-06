@@ -220,6 +220,11 @@ struct Cell {
     site: Option<usize>,
 }
 
+/// The bytes of one heap cell in the heap's table, its contents' own blocks not included: what a
+/// boxed value costs beside its [`Word`] (the layout record, `zed/compiler/MLIR.md`). The build
+/// with feature `counts` adds the allocating node.
+pub const CELL_BYTES: usize = mem::size_of::<Cell>();
+
 /// An entry of the table: an uncounted value, and where the entries of its parts start once a
 /// match has read them.
 #[derive(Debug)]
