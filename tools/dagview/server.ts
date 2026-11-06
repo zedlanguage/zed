@@ -1,14 +1,18 @@
 // Serves the live plan view on http://127.0.0.1:4317 (PORT overrides the port).
 // Run with `node server.ts`. Node strips the types; nothing is compiled.
 //
-// Reads, on each poll: docs/plan_dag.md, wt/running-log.md, wt/ledger.jsonl,
-// wt/dag-overrides.json, wt/merge.lock/owner, /proc/loadavg and git. Lays the
-// plan out when the page posts its graph to /api/layout (see layout.ts).
+// Reads, on each request for the state: docs/plan_dag.md, wt/running-log.md,
+// wt/ledger.jsonl, wt/dag-overrides.json, wt/merge.lock/owner, /proc/loadavg
+// and git. Lays the plan out when the page posts its graph to /api/layout (see
+// layout.ts). It watches those files and the main and origin/main refs, and
+// tells the page over /api/events when one changes or a layout finishes, so an
+// idle page and server do no work.
 
 import { execFile } from "node:child_process";
+import { watch } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -119,11 +123,46 @@ const page = `<!doctype html>
 <link rel="stylesheet" href="/style.css"></head>
 <body><script type="module" src="/client.js"></script></body></html>`;
 
+// The pages listening on /api/events. A change is sent once its burst of file
+// events has been quiet for a quarter second.
+const listeners = new Set<ServerResponse>();
+let changeTimer: ReturnType<typeof setTimeout> | null = null;
+function changed(): void {
+  if (changeTimer) clearTimeout(changeTimer);
+  changeTimer = setTimeout(() => {
+    changeTimer = null;
+    for (const res of listeners) res.write("data: change\n\n");
+  }, 250);
+}
+
+// Directories are watched, not files: sed -i and git replace a file by
+// renaming a new one over it, which a watch on the old file never reports.
+function watchNames(dir: string, names: string[]): void {
+  try {
+    watch(dir, (_, name) => {
+      if (name !== null && names.includes(String(name))) changed();
+    });
+  } catch (err) {
+    console.error(`not watching ${dir}:`, err);
+  }
+}
+watchNames(join(repo, "docs"), ["plan_dag.md"]);
+watchNames(work, ["running-log.md", "ledger.jsonl", "dag-overrides.json", "merge.lock"]);
+watchNames(join(work, "merge.lock"), ["owner"]);
+for (const dir of [repo, spec]) {
+  watchNames(join(dir, ".git"), ["packed-refs"]);
+  watchNames(join(dir, ".git/refs/heads"), ["main"]);
+  watchNames(join(dir, ".git/refs/remotes/origin"), ["main"]);
+}
+
 const savedLayouts = join(work, "dagview-layouts.json");
 const layouts = new Layouts(
   layoutInWorker,
   JSON.parse(await readFile(savedLayouts, "utf8").catch(() => "{}")),
-  (done) => void writeFile(savedLayouts, JSON.stringify(done)).catch((err) => console.error(`saving layouts failed:`, err)),
+  (done) => {
+    changed();
+    void writeFile(savedLayouts, JSON.stringify(done)).catch((err) => console.error(`saving layouts failed:`, err));
+  },
 );
 
 async function body(req: IncomingMessage): Promise<string> {
@@ -149,6 +188,12 @@ const server = createServer(async (req, res) => {
           "text/javascript; charset=utf-8",
           stripTypeScriptTypes(await readFile(join(here, "client.ts"), "utf8")),
         );
+      case "/api/events":
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+        res.write("retry: 2000\n\n");
+        listeners.add(res);
+        req.on("close", () => listeners.delete(res));
+        return;
       case "/api/state":
         return send("application/json", JSON.stringify(await state()));
       case "/api/layout": {

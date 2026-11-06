@@ -1,5 +1,7 @@
-// The page: polls /api/state, asks the server for a layout (/api/layout, laid
-// out with ELK), draws it. The view (pan and zoom) survives every update; a new
+// The page: reads /api/state when the server reports a change on /api/events,
+// and once a minute while visible for the durations and the load; asks the
+// server for a layout (/api/layout, laid out with ELK), draws it. It does no
+// work between those. The view (pan and zoom) survives every update; a new
 // layout is asked for only when the set of nodes, the set of expanded nodes or
 // the edge mode changes, and the last layout stays on screen until it arrives.
 
@@ -23,7 +25,7 @@ interface Layout {
   edges: { from: string; to: string; points: Point[] }[];
 }
 
-const POLL_MS = 2000;
+const TICK_MS = 60_000;
 const WIDE = 330;
 const NARROW = 210;
 
@@ -94,6 +96,9 @@ let extent = { w: 1, h: 1 };
 const view = { x: 0, y: 0, k: 1 };
 let placed = false;
 const cards = new Map<string, HTMLElement>();
+// What each card was last filled from; an unchanged card that shows no
+// durations is not filled again.
+const filledFrom = new Map<string, string>();
 
 function applyView(): void {
   world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`;
@@ -207,7 +212,8 @@ function heightOf(n: Node): number {
 
 // Asks for the layout of the graph s shows. The server answers at once with
 // its newest layout for the edge mode, which may be of an older graph while it
-// lays out this one; the page draws that and asks again on the next poll.
+// lays out this one; the page draws that and asks again when the server
+// reports the layout finished.
 async function relayout(s: State): Promise<void> {
   const graph = {
     nodes: s.nodes.map((n) => ({ id: n.id, w: n.state === "active" ? WIDE : NARROW, h: heightOf(n) })),
@@ -317,6 +323,7 @@ function render(s: State): void {
     if (!live.has(id)) {
       card.remove();
       cards.delete(id);
+      filledFrom.delete(id);
     }
   }
   for (const n of s.nodes) {
@@ -339,7 +346,11 @@ function render(s: State): void {
     card.style.width = `${p.w}px`;
     card.style.height = `${p.h}px`;
     card.title = n.title;
-    fill(card, n, s.now);
+    const from = JSON.stringify(n);
+    if (n.state === "active" || filledFrom.get(n.id) !== from) {
+      fill(card, n, s.now);
+      filledFrom.set(n.id, from);
+    }
   }
   if (!placed && positions.size > 0) {
     placed = true;
@@ -413,7 +424,20 @@ function select(id: string | null): void {
 }
 
 let lastGood = 0;
-async function poll(): Promise<void> {
+function lost(): void {
+  title.textContent = lastGood === 0 ? "Zed plan: no server" : `Zed plan: server lost ${duration(Date.now() - lastGood)} ago`;
+  title.classList.add("lost");
+}
+
+// One read at a time; a change reported during a read is read after it.
+let reading = false;
+let again = false;
+async function refresh(): Promise<void> {
+  if (reading) {
+    again = true;
+    return;
+  }
+  reading = true;
   try {
     const res = await fetch("/api/state");
     if (!res.ok) throw new Error(String(res.status));
@@ -424,9 +448,27 @@ async function poll(): Promise<void> {
     title.textContent = layoutNote ? `Zed plan: ${layoutNote}` : "Zed plan";
     title.classList.remove("lost");
   } catch {
-    title.textContent = lastGood === 0 ? "Zed plan: no server" : `Zed plan: server lost ${duration(Date.now() - lastGood)} ago`;
-    title.classList.add("lost");
+    lost();
   }
-  setTimeout(() => void poll(), POLL_MS);
+  reading = false;
+  if (again) {
+    again = false;
+    void refresh();
+  }
 }
-void poll();
+
+// The browser reconnects by itself after the server restarts, and each
+// connection starts with a read, so nothing is missed while it was down.
+const events = new EventSource("/api/events");
+events.addEventListener("open", () => void refresh());
+// A hidden page reads nothing; it reads once when shown again.
+events.addEventListener("message", () => {
+  if (document.visibilityState === "visible") void refresh();
+});
+events.addEventListener("error", () => lost());
+setInterval(() => {
+  if (document.visibilityState === "visible") void refresh();
+}, TICK_MS);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void refresh();
+});
