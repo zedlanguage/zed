@@ -384,7 +384,7 @@ struct Solver<'g, H, F> {
     scale_h: Int,
     n_h: u64,
     /// The rounds after which a merge's BF-Dijkstra shows a negative cycle, `32·N₀ + 4`: one more
-    /// than [D]'s `q + 3`, since the comparison walk of its proof may have `q + 3` negative edges
+    /// than \[D\]'s `q + 3`, since the comparison walk of its proof may have `q + 3` negative edges
     /// after its source edge when that edge is not negative (UTVPI-union design check).
     eta: u64,
     /// The last id given to a set; sets are marked by stamps.
