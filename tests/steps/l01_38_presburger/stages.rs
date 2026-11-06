@@ -867,10 +867,13 @@ fn three_rows(m: usize) -> Formula {
 #[test]
 fn three_variables_in_many_rows_scale() {
     // The rows hold at (3, -2, 5). No elimination keeps them from growing and none of the
-    // five points of the box meets every row, but `x2` has a unit coefficient in every row:
-    // the `hull3` stage replaces its rows by the O(m) pairs of the edges of the polyhedron
-    // and `twovar` decides the rest, in O(m log m) (XT3 B4).
-    decides("three variables in many rows", 64, Ok(true), three_rows);
+    // five points of the box meets every row, so `live3` decides them, in O(m log m). `x2` has
+    // a unit coefficient in every row. With the `hull3` stage, which projected it out first,
+    // the work grew 14.2 times from 64 to 512 rows, so the stage was removed (HULL3-subsumed).
+    // At 64 rows `live3` finds the point in 6.7M instructions and 0.85 MB, a path the larger
+    // sizes do not take, so the sizes are 128 and 1,024: 210M to 399M instructions, 8.3 MB to
+    // 26.7 MB (512 to 4,096 rows: 392M to 454M, 22.2 MB to 56.4 MB).
+    decides("three variables in many rows", 128, Ok(true), three_rows);
     let f = three_rows(64);
     let m = satisfiable(&f).expect("answered").expect("a point");
     assert!(f.holds(&m), "{m:?}");
@@ -907,8 +910,8 @@ fn a_box_point_held_by_many_rows_scales() {
 #[test]
 fn twice_a_variable_odd_has_no_point() {
     // 2·x2 = 2·x0 + 1 has a real point for every x0 in -5..5 and no integer one. `x2` has
-    // coefficient 2 on both sides, no unit side, so the `hull3` stage, whose projection is
-    // the real one, does not take it (XT3 B4, the unit condition).
+    // coefficient 2 on both sides, so its real projection is not its integer one; `live3`
+    // decides the rows over three variables exactly.
     let mut r = vec![ge(&[(2, 2), (0, -2)], -1), ge(&[(2, -2), (0, 2)], 1)];
     r.extend(within(0, -5, 5));
     r.extend(within(1, -5, 5));

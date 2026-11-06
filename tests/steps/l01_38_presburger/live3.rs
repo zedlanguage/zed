@@ -1,14 +1,17 @@
 //! Rows over three variables, decided completely (plan item LIVE3): `live3::point` against
 //! enumeration on random systems that are feasible, empty, flat, unbounded, or equalities; on
 //! Reeve's tetrahedra, which are thin, hold a real point and no integer point, under random
-//! unimodular changes of variable; on the corner cases; and its work at `m` and `8m` rows and
-//! at `B` and `8B` bits.
+//! unimodular changes of variable; on the corner cases; on the systems of the removed `hull3`
+//! tests, rows with a term in one variable everywhere (HULL3-subsumed); and its work at `m` and
+//! `8m` rows and at `B` and `8B` bits.
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::live3::{Row3, point};
 use zedc::store::presburger::{Con, Formula, Lin, satisfiable};
+
+use super::scaling::decides;
 
 fn int(n: i64) -> Int {
     Int::from(n)
@@ -635,4 +638,209 @@ fn slabs_of_million_coefficients_scale() {
         &small,
         &large,
     );
+}
+
+// The systems of the removed `hull3` tests (plan item HULL3-subsumed): rows `z·Z + x·X + y·Y +
+// k >= 0` with `z != 0` in every row, the unit-side class the `hull3` stage once projected on
+// `(X, Y)` before the box. `live3` decides them now, checked against enumeration.
+
+/// `z·Z + x·X + y·Y + k >= 0`, as `[z, x, y, k]`, over the variables `(X, Y, Z)`.
+fn zxy(rows: &[[i64; 4]]) -> Vec<Row3> {
+    rows.iter().map(|r| row([r[1], r[2], r[0]], r[3])).collect()
+}
+
+/// Checks `point` on `rows` and on `rows` cut to the cube `|x_i| <= 5`: every point found holds
+/// every row (`solve`), the rows have a point when the cube holds one, and on the cut rows the
+/// answer is enumeration's. Returns whether the rows, uncut, have a point.
+fn agrees(rows: &[Row3]) -> bool {
+    let found = solve(rows).is_some();
+    assert!(
+        found || !enumerate(rows, 5),
+        "no point found in rows with one: {rows:?}"
+    );
+    let mut cut = rows.to_vec();
+    cut.extend(cube(5));
+    assert_eq!(solve(&cut).is_some(), enumerate(&cut, 5), "{cut:?}");
+    found
+}
+
+/// `m` rows with `Z`'s coefficient in `±(1..=zc)`, `X`'s and `Y`'s in `-c..=c`, `k` in `-k..=k`.
+fn rows_with_z(rng: &mut Rng, m: usize, c: i64, k: i64, zc: i64) -> Vec<Row3> {
+    (0..m)
+        .map(|_| {
+            let z = rng.int(1, zc) * if rng.below(2) == 0 { 1 } else { -1 };
+            row([rng.int(-c, c), rng.int(-c, c), z], rng.int(-k, k))
+        })
+        .collect()
+}
+
+#[test]
+fn rows_with_a_term_in_one_variable_everywhere_match_enumeration() {
+    let mut rng = Rng::new(0x4_3333);
+    let (mut sat, mut unsat) = (0, 0);
+    for _ in 0..400 {
+        let m = 1 + rng.below(12);
+        if agrees(&rows_with_z(&mut rng, m, 5, 12, 3)) {
+            sat += 1;
+        } else {
+            unsat += 1;
+        }
+    }
+    assert!(
+        sat > 40 && unsat > 40,
+        "{sat} with a point, {unsat} without"
+    );
+}
+
+#[test]
+fn rows_whose_planes_coincide_match_enumeration() {
+    // Coefficients in -1..1: many planes parallel, equal, or meeting in one line or point.
+    let mut rng = Rng::new(0x4_3334);
+    let (mut sat, mut unsat) = (0, 0);
+    for _ in 0..400 {
+        let m = 1 + rng.below(14);
+        if agrees(&rows_with_z(&mut rng, m, 1, 2, 2)) {
+            sat += 1;
+        } else {
+            unsat += 1;
+        }
+    }
+    assert!(
+        sat > 40 && unsat > 40,
+        "{sat} with a point, {unsat} without"
+    );
+}
+
+#[test]
+fn planes_through_one_line_or_one_point() {
+    // All through the line X = Y = Z: the integer points are that line's.
+    let line = zxy(&[
+        [1, -1, 0, 0],
+        [1, 0, -1, 0],
+        [2, -1, -1, 0],
+        [-1, 1, 0, 0],
+        [-1, 0, 1, 0],
+        [-3, 1, 2, 0],
+    ]);
+    assert!(agrees(&line));
+    let x = solve(&line).expect("a point on the line");
+    assert!(x[0] == x[1] && x[1] == x[2], "{x:?}");
+    let pin = |rows: &[Row3], i: usize, v: i64| {
+        let mut a = [0; 3];
+        a[i] = 1;
+        let mut r = rows.to_vec();
+        r.extend([row(a, -v), row(a.map(|c| -c), v)]);
+        r
+    };
+    assert_eq!(solve(&pin(&line, 0, 5)), Some([5, 5, 5].map(int)));
+    assert_eq!(solve(&pin(&pin(&line, 0, 5), 1, 6)), None);
+    // A cone with its apex at the origin, Z >= |X| + |Y| and Z <= 0: a single point.
+    let point = zxy(&[
+        [1, 1, 1, 0],
+        [1, -1, 1, 0],
+        [1, 1, -1, 0],
+        [1, -1, -1, 0],
+        [-1, 0, 0, 0],
+    ]);
+    assert!(agrees(&point));
+    assert_eq!(solve(&point), Some([0, 0, 0].map(int)));
+    // The same plane many times over, on both sides: a slab of width zero over everything,
+    // which holds integer points since Z's coefficient is 1.
+    let same = zxy(&[
+        [1, 2, 3, 4],
+        [1, 2, 3, 4],
+        [-1, -2, -3, -4],
+        [-2, -4, -6, -8],
+    ]);
+    assert!(agrees(&same));
+}
+
+#[test]
+fn normals_in_one_plane_unbounded_and_empty_systems() {
+    // No Y anywhere: a strip in X.
+    assert!(agrees(&zxy(&[
+        [1, 1, 0, 3],
+        [1, -2, 0, 1],
+        [-1, 1, 0, 4],
+        [-2, 0, 0, 5]
+    ])));
+    // One side only: unbounded in Z.
+    assert!(agrees(&zxy(&[[1, 1, 2, 3], [2, -1, 0, 1]])));
+    assert!(agrees(&zxy(&[[-1, 1, 2, 3]])));
+    // A half-space, and an unbounded wedge.
+    assert!(agrees(&zxy(&[[1, 0, 0, 0], [-1, 1, 1, 0]])));
+    assert!(agrees(&zxy(&[[1, 1, 0, 0], [1, 0, 1, 0], [-1, 0, 0, 5]])));
+    // Parallel bounds that do not meet.
+    assert!(!agrees(&zxy(&[
+        [1, 1, 1, -1],
+        [-1, -1, -1, 0],
+        [1, 0, 0, 7]
+    ])));
+    // Bounds that meet nowhere though no two are parallel: Z >= |X| and Z <= -1.
+    assert!(!agrees(&zxy(&[
+        [1, -1, 0, 0],
+        [1, 1, 0, 0],
+        [1, 0, 1, 0],
+        [-1, 0, 0, -1]
+    ])));
+}
+
+/// `n` planes tangent to `Z = (X - p)² + (Y - p)²` from below and `n` to `Z = C - (X - p)² -
+/// (Y - p)²` from above, at random points: the body between them is near a lens over `(p, p)`,
+/// with many planes on its boundary.
+fn tangents(n: usize, p: i64) -> Vec<Row3> {
+    let mut rng = Rng::new(0x4_3335);
+    let c = 2_000_000i64;
+    (0..2 * n)
+        .map(|i| {
+            let (a, b) = (rng.int(-1000, 1000), rng.int(-1000, 1000));
+            let s = a * a + b * b + 2 * (a + b) * p;
+            if i % 2 == 0 {
+                // Z >= 2a(X - p) + 2b(Y - p) - a² - b².
+                row([-2 * a, -2 * b, 1], s)
+            } else {
+                // Z <= -2a(X - p) - 2b(Y - p) + a² + b² + C.
+                row([-2 * a, -2 * b, -1], s + c)
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_lens_of_tangent_planes_away_from_the_origin_scales() {
+    // Over (5000, 5000) no point of the box stage holds the lens, so `satisfiable` reaches
+    // `live3`. From 128 to 1,024 pairs of planes: 1,489M to 7,163M instructions (4.8 times),
+    // 57.9M to 399M bytes (6.9 times). With the removed `hull3` stage first it was 894M to
+    // 11,712M (13.1 times) and 324M to 4,205M bytes (HULL3-subsumed, load 47 to 53).
+    let f = formula(&tangents(64, 5_000));
+    let m = satisfiable(&f).expect("answered").expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+    decides(
+        "a lens of tangent planes away from the origin",
+        128,
+        Ok(true),
+        |n| formula(&tangents(n, 5_000)),
+    );
+}
+
+#[test]
+fn a_lens_of_tangent_planes_has_a_point() {
+    assert!(solve(&tangents(128, 0)).is_some());
+    assert!(solve(&tangents(128, 5_000)).is_some());
+}
+
+#[test]
+#[ignore = "LIVE3-lp-tangents: the linear programs of `point` grow irregularly on this family"]
+fn a_lens_of_tangent_planes_scales_in_point() {
+    // Measured (HULL3-subsumed, load 52 to 59), `point` alone on the lens over the origin:
+    // 128 pairs 595M instructions, 256 1,461M, 512 42,807M, 1,024 32,633M; bytes 21.2M to
+    // 882M from 128 to 1,024 (41.6 times). The time is in the linear programs (`simplex`,
+    // `solve2`, `side`, `solve1`, `least`, `on_line`, `eval1`: rational additions and gcds
+    // of large integers), not in `twovar`. `satisfiable` does not reach `point` here, since a
+    // point of the box stage holds the lens.
+    let (small, large) = (tangents(128, 0), tangents(128 * scaling::FACTOR, 0));
+    scaling::check("tangent planes of two paraboloids, in `point`", 128, |m| {
+        let rows = if m == 128 { &small } else { &large };
+        std::hint::black_box(point(rows));
+    });
 }

@@ -31,15 +31,13 @@
 //! ([`super::utvpi`]); once they are shown to have a point, exact eliminations that add terms
 //! are allowed, since each keeps that form, and they are taken only when a model is wanted.
 //!
-//! When every elimination left would add terms and three variables are live, one with a unit
-//! coefficient in every row on one side, its rows are replaced by the O(m) pairs of bounds that
-//! [`super::hull3`] chooses, which cut out the same shadow as all pairs. Otherwise the box test
-//! decides what it can, in one pass over the terms and with no linear program: each
-//! variable's bounds are tightened once by every row from the bounds its bound rows give
-//! (`bounds`); the rows are empty when one of
+//! When every elimination left would add terms, the box test decides what it can, in one pass
+//! over the terms and with no linear program: each variable's bounds are tightened once by
+//! every row from the bounds its bound rows give (`bounds`); the rows are empty when one of
 //! them is below zero at every point of that box, have a point when one of five points of the
 //! box holds every row (the point nearest zero, the lower and upper corners, and the two
-//! midpoints, `box_point`), and are refused otherwise. At the first inexact elimination
+//! midpoints, `box_point`), are decided completely by [`super::live3`] when three variables are
+//! live, and are refused otherwise. At the first inexact elimination
 //! the real shadow is tested once (`relaxed_empty`): real-shadow eliminations are taken
 //! while each adds no terms, and the box test ends it; empty, it shows the problem empty. From
 //! there on the dark shadow is solved, whose points are points of the problem. When it has
@@ -95,7 +93,7 @@ use imbl::OrdSet;
 use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::linear::{Q, Term};
-use super::{hull3, live3, twovar, utvpi};
+use super::{live3, twovar, utvpi};
 
 mod deep;
 use deep::Id;
@@ -5086,46 +5084,22 @@ impl Omega {
                     _ => {}
                 }
             }
-            // Every elimination left adds terms. With three variables, one of which has a
-            // unit coefficient in every row on one side (an exact elimination), that
-            // variable's rows are replaced by the pairs of a lower and an upper bound that
-            // `hull3::shadow` chooses: the edges where the top of the polyhedron meets its
-            // bottom, O(m) rows found in O(m log m), which cut out the same real shadow as all
-            // m² pairs. With the unit side the integer shadow is the real one, so the rows of
-            // two variables left are decided exactly by `pair`, and `choose` lifts the
-            // variable back. The dispatch on three live variables is a structural class, like
-            // the dispatch on two or fewer to `twovar`: it switches on a count of dimensions,
-            // not on a size of the input, so it is no threshold. The stage decides the rows
-            // exactly with any such variable, so which one it takes does not change the answer.
-            if self.sys.live == 3
-                && let Some(&(_, _, z)) = self.sys.exact.first()
-            {
-                let rows = self.sys.take(z);
-                let mut others: Vec<usize> = Vec::with_capacity(2);
-                for (i, _) in rows.iter().flat_map(|r| r.a.iter()) {
-                    if *i != z && !others.contains(i) {
-                        others.push(*i);
-                    }
-                }
-                let at = |r: &Row, v: Option<&usize>| {
-                    v.and_then(|v| r.a.binary_search_by_key(v, |t| t.0).ok())
-                        .map_or(Int::ZERO, |i| r.a[i].1.clone())
-                };
-                let planes: Vec<hull3::Plane> = rows
-                    .iter()
-                    .map(|r| hull3::Plane {
-                        z: r.at(z).clone(),
-                        x: at(r, others.first()),
-                        y: at(r, others.get(1)),
-                        k: r.k.clone(),
-                    })
-                    .collect();
-                for (lo, hi) in hull3::shadow(&planes) {
-                    self.sys.add(combine(&rows[lo], &rows[hi], z, false));
-                }
-                self.steps.push(Step::Chosen(z, rows));
-                continue;
-            }
+            // Every elimination left adds terms. Three live variables, with a unit side or
+            // not, are decided by `live3` below, after the box. Until HULL3-subsumed a
+            // variable with a unit coefficient in every row on one side was first projected
+            // out here by the pairs of bounds `hull3::shadow` chose (XT3 B4). That stage was
+            // removed on these measurements of `decide` (instructions; load 47 to 57,
+            // 2026-11-05). Rows of `stages::three_rows` with
+            // coefficients up to a million, summed over 3 seeds, at 64 / 512 / 4,096 rows:
+            // 261M / 3,705M / 38,929M with the stage, 203M / 501M / 1,369M without it. The
+            // lens of `live3::tangents` over (5000, 5000), at 64 / 256 / 1,024 pairs of
+            // planes: 355M / 2,198M / 11,712M with the stage, 941M / 4,092M / 7,163M without
+            // it, and in time 66 ms / 1.61 s against about 210 ms / 2.4 s. The stage was at
+            // worst 28 times the work of `live3` alone and grew 13 to 14 times per factor 8,
+            // while `live3` alone was at worst 2.7 times the work (3.5 times the time) of the
+            // stage. With coefficients up to 5, or a pair of rows with no point, the stage
+            // never ran.
+            //
             // An empty real shadow shows the problem empty whatever was tied.
             if tie.is_some() && !self.tested {
                 self.tested = true;
@@ -5135,7 +5109,7 @@ impl Omega {
             }
             // The rows are empty when the box of their bounds shows it, and have a point when
             // one of the five points of the box that `box_point` tries holds them; otherwise
-            // three variables left (with no unit side) are decided by `live3`, and four or
+            // three variables left are decided by `live3`, and four or
             // more are refused.
             //
             // Complexity tradeoff: a system over four variables or more that the box neither
@@ -5156,8 +5130,7 @@ impl Omega {
             // every point of the box is exponential in the variables. Trigger: four or more
             // live variables whose every elimination pairs more bounds than it removes and
             // whose rows are not all `±x ± y + k >= 0`; the size of the system plays no part.
-            // (Three live variables are decided completely: with a unit side by the `hull3`
-            // stage above, otherwise by `live3` below.) Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+            // (Three live variables are decided completely, by `live3` below.) Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
             // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
             // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`,
             // `l01_38_presburger::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,

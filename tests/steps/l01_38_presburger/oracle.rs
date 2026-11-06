@@ -133,8 +133,9 @@ fn small_coefficients_over_four_variables_match_enumeration() {
     // shown empty; now 3 are, and the empty systems the program decided are refused with
     // Growth. With only the point nearest zero the counts were (213, 3, 184); the four other
     // points decide 42 more with a point, more than the 229 the linear program found: (255, 3,
-    // 142). The `hull3` stage (XT3 B4), which decides three live variables with a unit side
-    // exactly, decides 6 more with a point. Of the 136 systems then refused, 18 have no rational
+    // 142). The `hull3` stage (XT3 B4), which decided three live variables with a unit side
+    // exactly, decided 6 more with a point (`live3` decides them since that stage was removed,
+    // HULL3-subsumed). Of the 136 systems then refused, 18 have no rational
     // point (cross-review XR3, Q1); the row test of the box stage (Q1-ROWBOX), two rows
     // bounding one variable by rationals that cross, shows 1 of them empty. `live3`, which
     // decides every part left with three variables, decides 13 more with a point and shows one
@@ -186,8 +187,9 @@ fn large_coefficients_over_two_variables_match_enumeration() {
 #[test]
 fn rows_over_three_variables_with_a_unit_side_match_enumeration() {
     // 4 to 12 rows over three variables, the last with coefficient ±1 in every row: once no
-    // elimination keeps the rows from growing, the `hull3` stage projects that variable out
-    // exactly (XT3 B4), so none is refused.
+    // elimination keeps the rows from growing, `live3` decides the three variables exactly, so
+    // none is refused. (Until HULL3-subsumed the `hull3` stage projected that variable out
+    // first, XT3 B4.)
     let t = run(0x38_0d, 400, 3, 6, |rng| {
         let rows = 4 + rng.below(9);
         (0..rows)
@@ -230,20 +232,21 @@ fn corner_rows(rng: &mut Rng, n: usize, half: i64) -> Vec<Row> {
 #[test]
 fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // Most eliminations of these rows are inexact or add terms, so the box of the bounds and
-    // its five points decide, with the `hull3` stage once three variables are left and one
-    // has a unit side, and a bound one too tight or a point not checked against every row
+    // its five points decide, with `live3` once three variables are left, and a bound one too tight or a point not checked against every row
     // gives a wrong answer here. 12,000 systems; `run` fails at the first wrong answer.
     let t = run(0x38_3b, 12_000, 4, 3, |rng| corner_rows(rng, 4, 3));
     // The counts measured with design R and the five points of its box stage (XT3). Without
     // the box test 5,074 are refused (control run once, STATUS.md, L1.38); the box shows most
     // of the empty ones empty. With only the point nearest zero the counts were (2550, 9282,
     // 168): the corners and midpoints find 36 more points, (2586, 9282, 132). The `hull3`
-    // stage (XT3 B4) decides 25 more with a point and shows 24 more empty. The row test of the
+    // stage (XT3 B4) decided 25 more with a point and showed 24 more empty. The row test of the
     // box stage (Q1-ROWBOX) shows 14 more empty. Without the `hull3` stage it shows 23 of the
     // 64 systems with no rational point empty that design R and the five points refused
-    // (2586, 9305, 109, as cross-review XR3 counted); `hull3` already decides 9 of those 23.
+    // (2586, 9305, 109, as cross-review XR3 counted); `hull3` already decided 9 of those 23.
     // `live3` decides 20 more with a point and shows 20 more empty: (2631, 9340, 29); without
-    // the row test it showed 25 more empty, 5 of them among the 14 the row test shows.
+    // the row test it showed 25 more empty, 5 of them among the 14 the row test shows. Since
+    // the `hull3` stage was removed (HULL3-subsumed) `live3` decides its systems too, and the
+    // counts are unchanged.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
         (2631, 9340, 29, 0),

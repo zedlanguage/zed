@@ -255,7 +255,8 @@ fn random_tests_agree_with_the_interpreter() {
     // is refused, so the bound below stays where no question showed it can move. The linear
     // program before design R decided that question; this count measures that strength, not
     // correctness, which the check above holds for every projection. Since HULL3 (XT3 B4), the
-    // only change, that projection is [0..=5]: every projection is the hull of its values.
+    // only change, that projection is [0..=5]: every projection is the hull of its values. It
+    // stays so with `live3` alone, since that stage was removed (HULL3-subsumed).
     assert_eq!(wider, 0, "projections wider than the hull of their values");
     // Since NAME-ties repair 2, one entailment of the 60, from `x != y` in the window to
     // `-x == y - 1`, is refused: `x` and `y` occur alike, and two disjunctions are left that only

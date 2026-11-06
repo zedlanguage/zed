@@ -10,7 +10,6 @@ pub mod cell;
 pub mod conjuncts;
 pub mod float;
 pub mod hull;
-pub mod hull3;
 pub mod int;
 pub mod interval;
 pub mod iterate;
