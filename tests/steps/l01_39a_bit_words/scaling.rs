@@ -131,9 +131,11 @@ fn check_alone(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> 
 fn the_checker_reads_each_operand_of_a_nest_once() {
     // `x = bitAnd(bitAnd(…bitAnd(1, 1)…, 1), 1);`, `n` calls deep. Each call checks its
     // operands' domains from what their text shows; each expression is read once, so the nest
-    // is checked in O(n). Read again at each call, it is O(n²): 42 times the work at 300 and
-    // 2400 against 8 times.
-    check_alone("checking a nest of n bit-word calls", 300, 1, |n| {
+    // is checked in O(n): 7.9 times the work at 80 and 640. With `Ck::known`'s memo cleared at
+    // each call, so each call reads its operands again, it is O(n²): 51.8 times the work and
+    // 45.9 times the bytes (BIT-memo-test, 2026-11-05). The sizes are small so that version
+    // fails within seconds.
+    check_alone("checking a nest of n bit-word calls", 80, 1, |n| {
         with_main(format!(
             "x = {}1{};\n",
             "bitAnd(".repeat(n),
@@ -145,9 +147,13 @@ fn the_checker_reads_each_operand_of_a_nest_once() {
 #[test]
 fn the_checker_reads_each_binding_of_a_chain_once() {
     // `y0 = 255; y1 = bitXor(shr(y0, 1), 3); …`, `n` bindings each a call on the one before.
+    // Each binding's value is read once: 8.0 times the work at 80 and 640. With `Ck::known`'s
+    // memo cleared at each call, each call reads the whole chain before it again: 57.9 times
+    // the work and 53.5 times the bytes (BIT-memo-test, 2026-11-05). At 200 and 1600 that
+    // version ran past 60 seconds, so the sizes are small.
     check_alone(
         "checking a chain of n bindings of bit-word calls",
-        200,
+        80,
         1,
         |n| {
             let mut src = String::from("y0 = 255;\n");
