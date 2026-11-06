@@ -1217,14 +1217,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CAST-menu | impl attempt 1 | 2026-11-05 04:07 | probes: typed r + x already gets 'wrap this in f64(…)' repairs; untyped-class operands (h(a,b)=(a*1r,b*2.5,a+b)) and max(r, x) get no cast (repairs' trial drops |
 | DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/dart-scale on origin/main, seeded |
 | FLOAT-minmax | impl attempt 1 | 2026-11-05 04:07 | edits in (kernel ieee min/max, Law::Selective + f64 laws, codegen fmin/fmax, tests); building, load 46.01 43.67 41.67 |
+| INCR-script | running | 2026-11-05 04:07 |  |
 | ISSUE1-passby-scale | merge attempt 1 | 2026-11-04 00:20 | started verify+merge of 9bcbf366, load 42.42 50.39 52.02 |
+| L1.35-inventory | running | 2026-11-05 04:07 |  |
+| LAYOUT-measure | running | 2026-11-05 04:07 |  |
 | LIT-menu-minus | impl attempt 1 | 2026-11-05 18:21 | scaling test n=256/2048 negative literals: instructions and bytes <= 8.05x (bytes 8.0x), limit 24, load 47-51; negative control (copy of every earlier error per |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | started; worktree native-build-id from origin/main 2d8f2ee1 |
-| orch | running | 2026-11-05 18:05 | LIT-plain merged 4a610db6; PREIMAGE-timeout ed89e9d4 and M0.8-test-text e0b0e294 merged; QUESTIONS A14 (LIT-if-print) and A15 (LIT-eq-kind) added; queued L01-35 |
+| NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | negative controls (not committed): A holds compares only the crate-hash 16 bytes -> 3 of 7 runtime tests fail (other-flags library picked/linked); B quadratic i |
+| orch | running | 2026-11-05 18:05 | started RUNG2-mod-symbol, INCR-script, L1.35-inventory, LAYOUT-measure; A21 (one-tuple syntax) added; status-cite removed |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/rat-asks-rest on origin/main; load 47.16 53.67 46.80 |
+| RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
 | S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | negative controls (run, not committed): plan's control (clip off in back) does NOT fail rangeand (7.03x 16->128, 6.41x 32->256; min fails 42.7x so the edit was  |
-| SLABS-count | impl attempt 1 | 2026-11-05 18:19 | done: 3587dde9 on wt/slabs-count, rebased on origin/main 9e28986c (append conflicts in STATUS.md and ZED_PORT_GAPS.md, both sides kept); live3 16 pass, stages 3 |
+| SLABS-count | merge attempt 1 | 2026-11-05 18:19 | started verify+merge of 3587dde9, load 51.81 51.37 52.25 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (e) shared Bdd nodes and Expr operands written once (#k=/#k#) committed; deep_types 20/20, l01_15 31/31, kernel types 21/21; xor chain old 2^n (183 MB, 1 s at n |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
