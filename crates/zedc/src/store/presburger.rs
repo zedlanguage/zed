@@ -6370,8 +6370,20 @@ impl fmt::Display for Entailment {
 
 /// Whether `premises` entail `goal` (rung 2). The two come from one call of
 /// `preimage::relations`, so that their auxiliary variables are numbered apart: the definitions
-/// of both are conjoined, and `q0` of one is otherwise `q0` of the other.
+/// of both are conjoined, and `q0` of one is otherwise `q0` of the other, which proves goals
+/// that do not follow (`x mod 2 == 1` to `x mod 4 <= 1`). Panics when the numbers overlap.
 pub fn entails(premises: &Relation, goal: &Relation) -> Entailment {
+    // The numbers of a relation's definitions ascend from its first to its last
+    // (`preimage::relations` numbers them in one sequence), so the two ends tell whether the
+    // two relations share one.
+    let ends = |r: &Relation| (r.defs.first()).zip(r.defs.last()).map(|(a, b)| (a.0, b.0));
+    if let (Some((p0, p1)), Some((g0, g1))) = (ends(premises), ends(goal)) {
+        assert!(
+            p1 < g0 || g1 < p0,
+            "the auxiliary variables of premises and goal must be numbered apart: \
+             translate both in one call of `preimage::relations`"
+        );
+    }
     entails_inner(premises, goal).unwrap_or_else(Entailment::Refused)
 }
 

@@ -227,3 +227,33 @@ fn a_program_with_a_remainder_by_a_symbol_is_checked_and_runs() {
         );
     }
 }
+
+#[test]
+fn remainders_by_two_distinct_divisors_are_not_confused() {
+    // `x mod n` and `x mod m` are distinct auxiliary variables: at `x = 5, n = 2, m = 3` the
+    // first is 1 and the second 2.
+    let e = rung2(
+        "ok(x, n, m) = n >= 2 && m >= 2 && x mod n == 1;",
+        "ok(x, n, m) = x mod m <= 1;",
+    );
+    assert!(!matches!(e, Entailment::Proved(_)), "{e}");
+    // With a constant divisor on one side.
+    let e = rung2(
+        "ok(x, n) = n >= 2 && x mod 2 == 1;",
+        "ok(x, n) = x mod n <= 1;",
+    );
+    assert!(!matches!(e, Entailment::Proved(_)), "{e}");
+}
+
+#[test]
+#[should_panic(expected = "numbered apart")]
+fn relations_translated_in_two_calls_are_refused_by_entails() {
+    // Two calls of `relations` both number their auxiliary variables from 0, so `x mod 2` of
+    // the premise and `x mod 4` of the goal would be one variable and `x mod 4 <= 1` would
+    // follow from `x mod 2 == 1`. `entails` stops on such a pair rather than answer.
+    let (ps, p) = function("ok(x) = x mod 2 == 1;");
+    let (_, g) = function("ok(x) = x mod 4 <= 1;");
+    let p = relations(&[&p], &ps, true).expect("in the domain");
+    let g = relations(&[&g], &ps, true).expect("in the domain");
+    let _ = zedc::store::presburger::entails(&p[0], &g[0]);
+}
