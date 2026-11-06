@@ -1246,21 +1246,22 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | started; worktree created from origin/main and seeded |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BREAK-cases | merge attempt 1 | 2026-11-05 04:07 | started verify and merge of bca94497; load 41.90 50.15 51.93 |
+| BREAK-cases | merge attempt 1 | 2026-11-05 04:07 | rebased on 01272894 (STATUS row conflict with P14-dup-scale, both rows kept); l01_08_parser 134 pass, m0_03 55 pass, cases 434 wrong 0, leftrec 85 wrong 0; cont |
 | CAST-menu | impl attempt 1 | 2026-11-05 04:07 | probes: typed r + x already gets 'wrap this in f64(…)' repairs; untyped-class operands (h(a,b)=(a*1r,b*2.5,a+b)) and max(r, x) get no cast (repairs' trial drops |
 | DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/dart-scale on origin/main, seeded |
-| FLOAT-minmax | impl attempt 1 | 2026-11-05 04:07 | edits in (kernel ieee min/max, Law::Selective + f64 laws, codegen fmin/fmax, tests); building, load 46.01 43.67 41.67 |
-| INCR-script | running | 2026-11-05 04:07 |  |
+| FLOAT-minmax | merge attempt 1 | 2026-11-05 04:07 | started verify and merge of 5828d09b; load 67.86 56.00 53.48 |
+| INCR-script | impl attempt 1 | 2026-11-05 04:07 | started; worktree wt/incr-script created and seeded; load 44.36 48.98 51.29 |
 | ISSUE1-passby-scale | merge attempt 1 | 2026-11-04 00:20 | started verify+merge of 9bcbf366, load 42.42 50.39 52.02 |
-| L1.35-inventory | running | 2026-11-05 04:07 |  |
-| LAYOUT-measure | running | 2026-11-05 04:07 |  |
+| L1.35-inventory | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree l135-inventory |
+| LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | started; load 48.04 50.56 51.94 |
 | LIT-menu-minus | impl attempt 1 | 2026-11-05 18:21 | scaling test n=256/2048 negative literals: instructions and bytes <= 8.05x (bytes 8.0x), limit 24, load 47-51; negative control (copy of every earlier error per |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | negative controls (not committed): A holds compares only the crate-hash 16 bytes -> 3 of 7 runtime tests fail (other-flags library picked/linked); B quadratic i |
-| orch | running | 2026-11-05 18:05 | started RUNG2-mod-symbol, INCR-script, L1.35-inventory, LAYOUT-measure; A21 (one-tuple syntax) added; status-cite removed |
+| orch | running | 2026-11-05 18:05 | FLOAT-minmax merge started; PROV-expected-index started; A22 (clamp) added |
+| PROV-expected-index | impl attempt 1 | 2026-11-05 20:27 | started; load 61.38 53.27 52.53 |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | started; worktree wt/rat-asks-rest on origin/main; load 47.16 53.67 46.80 |
 | RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
-| S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | negative controls (run, not committed): plan's control (clip off in back) does NOT fail rangeand (7.03x 16->128, 6.41x 32->256; min fails 42.7x so the edit was  |
+| S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | done: 9f5d1617 on wt/s22-more-scales (rebased on origin/main c4d25761, not pushed); 12 new scaling tests in s22.rs, COMPLEXITY S22 and STATUS rows; fmt and clip |
 | SLABS-count | merge attempt 1 | 2026-11-05 18:19 | started verify+merge of 3587dde9, load 51.81 51.37 52.25 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (e) shared Bdd nodes and Expr operands written once (#k=/#k#) committed; deep_types 20/20, l01_15 31/31, kernel types 21/21; xor chain old 2^n (183 MB, 1 s at n |
