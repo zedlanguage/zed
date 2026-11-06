@@ -211,12 +211,18 @@ impl Type {
             // a built value is refused, never called empty or inhabited, so a verdict is never
             // wrong; it gives up the answer itself. Why: the search is incomplete (the tradeoffs
             // at the Fork, Residues, TupleSplit and MorphismSplit sites), and the value builder
-            // shows only values it can check, so a closure of a morphism type is not built before
-            // L2. Trigger: no refusal was named, and neither search built a value. Tests:
-            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_between`) and
-            // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length`. COMPLEXITY.md
-            // Kept row "emptiness and subtyping of tuple and morphism parts". A complete solution
-            // needs a value builder for every kind of type (closures included, L2) and a
+            // shows only values it can check: a closure is built only when a value of its value
+            // type is built, or when its key type is known empty without a search (the empty
+            // type, or a recursive type its group decided empty), so it is never called. A key
+            // type only a search proves empty, such as `bool -> empty`, gets no closure, so
+            // `(bool -> empty) -> empty` is refused. Trigger: no refusal was named, and neither
+            // search built a value. Tests:
+            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_between`),
+            // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
+            // `l01_23_subtyping::judgments::a_morphism_cycle_through_an_empty_part_is_empty`.
+            // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
+            // complete solution needs a value builder for every kind of type (closures included,
+            // L2), the emptiness of each key type decided within the search that reads it, and a
             // complete search.
             Verdict::Refused(s.refused.or(s.gave_up).unwrap_or(Refusal::NoWitness))
         };
@@ -2184,15 +2190,30 @@ impl<'m> Searching<'m> {
             };
             // A closure is shown only for a meet of morphism types whose keys are all
             // permitted as written and whose value type has a value, which may be one being
-            // built here, holding this closure: a closure can return itself.
+            // built here, holding this closure: a closure can return itself. A closure whose
+            // keys are known empty is shown for any value type, since it is never called. The
+            // keys of a meet are the union of its morphism types' keys, so they are empty when
+            // each of those is; each is read as written, since a recursive type and its
+            // unfolding are compared as different types.
             let (taken, refused) = p.morphisms.forced();
             let whole = refused.is_empty() && taken.len() == p.morphisms.distinct_atoms().len();
-            let meets: Vec<Morphism> = match (whole, p.morphisms.union_rows()) {
-                (true, _) => vec![taken.iter().fold(top, |r, a| meet(&r, a))],
-                (false, Some(rows)) => rows,
+            let meets: Vec<(Morphism, bool)> = match (whole, p.morphisms.union_rows()) {
+                (true, _) => vec![(
+                    taken.iter().fold(top, |r, a| meet(&r, a)),
+                    taken.iter().all(|a| known_empty(&a.guarantee)),
+                )],
+                (false, Some(rows)) => (rows.into_iter())
+                    .map(|m| {
+                        let keyless = known_empty(&m.guarantee);
+                        (m, keyless)
+                    })
+                    .collect(),
                 (false, None) => Vec::new(),
             };
-            for m in &meets {
+            for (m, keyless) in &meets {
+                if *keyless {
+                    return Some(self.show(Rep::Closure));
+                }
                 let permitted = m.guarantee == m.permission
                     || m.guarantee == Type::empty()
                     || m.permission == Type::top();
@@ -2935,6 +2956,13 @@ fn list_step(t: &Type) -> Option<Step> {
         return None;
     }
     Some((stop, name, atoms[0][0].clone(), atoms[0][1].clone()))
+}
+
+/// Whether `k` is known empty for good without a search: the empty type, or a recursive type
+/// its group decided empty. A type the search reads is not taken, since its answer may rest on
+/// an assumption the search later drops.
+fn known_empty(k: &Type) -> bool {
+    *k == Type::empty() || k.judged() == Some(true)
 }
 
 /// The morphisms both `a` and `b` admit.

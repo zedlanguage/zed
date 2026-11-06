@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Type, Verdict};
+use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::scaling;
 
 fn r(i: usize) -> Expr {
@@ -412,19 +412,27 @@ fn a_morphism_cycle_through_an_empty_part_is_empty() {
         "V",
         Expr::exact(
             Expr::Type(Type::int()),
-            Expr::Tuple(vec![r(0), Expr::Type(bool_to_empty)]),
+            Expr::Tuple(vec![r(0), Expr::Type(bool_to_empty.clone())]),
         ),
     );
     let n = Type::morphism(v.clone(), v.clone(), Type::empty());
     assert!(v.is_empty(), "V = int -> (V, bool -> empty) is empty");
     assert_eq!(v.verdict(), Verdict::Empty);
     assert!(!n.is_empty(), "N = V -> empty is inhabited");
-    // The verdict builds a closure only when its value type has a value, so `N` is refused
-    // (`NoWitness`) rather than shown inhabited; a refusal claims nothing, but `Empty` is wrong.
-    // This is weaker than the plan row's "N is inhabited": the ledger item EMPTY-key-closure
-    // lets `find_rep` build a closure whose key type is empty (it is never called) and then
-    // tightens this line to `assert_eq!(n.verdict(), Verdict::Inhabited)`.
-    assert_ne!(n.verdict(), Verdict::Empty, "N = V -> empty is not empty");
+    // The value shown is a closure that is never called: its key type `V` is empty, as its
+    // recursive group decides, so it needs no return value, and `empty` having none does not
+    // matter.
+    assert_eq!(
+        n.verdict(),
+        Verdict::Inhabited,
+        "N = V -> empty is inhabited"
+    );
+    // A key type that is not recursive, which only a search proves empty, gets no such closure
+    // yet, so `(bool -> empty) -> empty` is refused, never called empty (ledger item
+    // EMPTY-key-search).
+    let m = Type::morphism(bool_to_empty.clone(), bool_to_empty, Type::empty());
+    assert!(!m.is_empty(), "(bool -> empty) -> empty is inhabited");
+    assert_eq!(m.verdict(), Verdict::Refused(Refusal::NoWitness));
     // The same answers with the kept results of the other type in place.
     assert!(v.is_empty() && !n.is_empty() && !w.is_empty());
 }
