@@ -155,6 +155,32 @@ fn definitions(n: usize) -> String {
         .collect()
 }
 
+/// The recorder alone, with a counter that does no work of its own: n definitions in n / 8
+/// units, each marked once computed and once cached, then written as text. The front end's
+/// work hides the recorder's in the test below, so this one measures it apart.
+#[test]
+fn the_recorder_scales_with_its_rows() {
+    let n = 2000;
+    let names = |m: usize| -> Vec<(String, String)> {
+        (0..m)
+            .map(|i| (format!("u{}.zed", i / 8), format!("d{i}")))
+            .collect()
+    };
+    let (small, large) = (names(n), names(8 * n));
+    scaling::check("the recorder with n rows", n, |m| {
+        let marks = if m == n { &small } else { &large };
+        let ((), r) = work::with(Box::new(Work::default), || {
+            for (u, d) in marks {
+                work::unit(u);
+                work::stage(Stage::Test, Some(d), || ());
+                work::cached(Stage::Test, Some(d));
+            }
+        });
+        assert_eq!(test_rows(&r).len(), m);
+        std::hint::black_box(r.to_string());
+    });
+}
+
 #[test]
 fn a_report_scales_with_the_definitions() {
     // The texts are built before any run is counted.
