@@ -120,6 +120,11 @@ three ways, all confirmed:
   (`zed-kernel/text.rs:136`), `Type::cmp` (`zed-kernel/types.rs:45`), `Row::cmp`
   (`types.rs:253`), `Premises::extend` and `Premises::eq` (`zedc/store/cell.rs:90`, `:152`),
   `Cx::power` (`preimage.rs:1188`).
+  ERRS-precise added one in a library: `Atoms::zip` (`zed-kernel/types.rs`) walks
+  `imbl::OrdMap::diff` of two atom maps, which skips the subtrees the maps share by address, so
+  the union that builds a chain's `#errs(E ->? E)` costs the entries that differ, not the
+  smaller map. A port needs a diff of two persistent maps that skips shared nodes, from the
+  runtime or by the content digests of gap 1.
 - **Hand-written equality and order.** 12 `Ord` and 12 `PartialEq` impls (`Type`, `Row`, `Rec`,
   `Bdd`, `Part`, `Expr`, `Text`, `Rope`, `Shown`, `Rat`, `F64`, `Value`, `Premises`), and 2 of
   `Hash`. Zed's `==` and natural order are structural and cannot be replaced by a program.

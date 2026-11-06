@@ -229,6 +229,37 @@ fn an_atom_with_a_payload_reads_back() {
     }
 }
 
+/// Failures that merge are printed `#errs(E ->? E)`, the family that maps each distinct
+/// failure to itself, with `E` written out and no `#errs` in it, and read back to the type
+/// printed (ERRS-precise).
+#[test]
+fn a_merged_failure_reads_back() {
+    let text = "p(positional n: int) = if n > 0 { n } else { #syntaxError(n) };\n\
+                f(positional x: int | #notFound, positional y: int | #invalid) = x + y;\n\
+                g(positional x: int | #a, positional y: int | #b, positional z: int | #c) = (x + y) + z;\n\
+                h(positional a: int, positional b: int) = p(a) + p(b);\n";
+    for (name, want) in [
+        ("f", "#errs(#invalid | #notFound ->? #invalid | #notFound)"),
+        ("g", "#errs(#a | #b | #c ->? #a | #b | #c)"),
+        ("h", "#errs(#syntaxError(int) ->? #syntaxError(int))"),
+    ] {
+        let s = crate::l01_26_type_resolution::sig_of(text, name);
+        let t = Ty::func(s.clone());
+        let shown = s.to_string();
+        assert!(shown.contains(want), "{shown}");
+        assert_eq!(shown.matches("#errs").count(), 1, "{shown}");
+        assert_eq!(mismatch(&t, &shown), None, "{shown}");
+        let alone = &s.arrows[0].result;
+        assert_eq!(mismatch(alone, &alone.to_string()), None, "{alone}");
+    }
+    assert_eq!(
+        back("#errs(#a | #b ->? #a | #b)").payloads["errs"]
+            .as_ref()
+            .map(Vec::len),
+        Some(1)
+    );
+}
+
 #[test]
 fn the_three_leaves_of_layer_l10_read_back() {
     assert_eq!(back("_"), Ty::dynamic());

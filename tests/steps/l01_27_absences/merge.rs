@@ -10,7 +10,7 @@ fn different_failures_on_two_operands_merge_into_errs() {
     let t = "f(positional x: int | #notFound, positional y: int | #invalid) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #notFound, int | #invalid) -> int | #errs(..) | #invalid | #notFound"
+        "(int | #notFound, int | #invalid) -> int | #invalid | #notFound | #errs(#invalid | #notFound ->? #invalid | #notFound)"
     );
     let run = format!("{t}a = f(#notFound, #invalid);\nb = f(#invalid, 1);\n");
     assert_eq!(value(&run, "a"), "#errs({#invalid, #notFound})");
@@ -45,7 +45,7 @@ fn one_operand_that_can_fail_two_ways_meets_one_of_them() {
     let t = "f(positional x: int | #none | #notFound, positional y: int | #notFound) = x + y;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #none | #notFound, int | #notFound) -> int | #errs(..) | #none | #notFound"
+        "(int | #none | #notFound, int | #notFound) -> int | #none | #notFound | #errs(#none | #notFound ->? #none | #notFound)"
     );
     let run = format!("{t}a = f(#none, #notFound);\nb = f(#notFound, #notFound);\n");
     assert_eq!(value(&run, "a"), "#errs({#none, #notFound})");
@@ -72,7 +72,7 @@ fn the_same_failure_name_with_a_payload_can_differ() {
     assert!(type_errors(t).is_empty(), "{:?}", type_errors(t));
     assert_eq!(
         sig(t, "f"),
-        "(int, int) -> int | #errs(..) | #syntaxError(int)"
+        "(int, int) -> int | #errs(#syntaxError(int) ->? #syntaxError(int)) | #syntaxError(int)"
     );
     let run = format!("{t}a = f(-3, -7);\nb = f(-3, -3);\n");
     assert_eq!(
@@ -90,7 +90,7 @@ fn a_nested_chain_merges_into_one_flat_set() {
              = (x + y) + z;\n";
     assert_eq!(
         sig(t, "f"),
-        "(int | #a, int | #b, int | #c) -> int | #a | #b | #c | #errs(..)"
+        "(int | #a, int | #b, int | #c) -> int | #a | #b | #c | #errs(#a | #b | #c ->? #a | #b | #c)"
     );
     let run = format!("{t}abc = f(#a, #b, #c);\nab = f(#a, #b, 1);\nac = f(#a, 1, #c);\n");
     assert_eq!(value(&run, "abc"), "#errs({#a, #b, #c})");
@@ -101,7 +101,7 @@ fn a_nested_chain_merges_into_one_flat_set() {
                  = (x + y) + z;\n";
     assert_eq!(
         sig(again, "g"),
-        "(int | #a, int | #b, int | #a) -> int | #a | #b | #errs(..)"
+        "(int | #a, int | #b, int | #a) -> int | #a | #b | #errs(#a | #b ->? #a | #b)"
     );
     assert_eq!(
         value(&format!("{again}v = g(#a, #b, #a);\n"), "v"),

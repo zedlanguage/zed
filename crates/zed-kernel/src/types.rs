@@ -31,6 +31,7 @@ pub mod rec;
 
 pub use print::Surface;
 
+use imbl::ordmap::DiffItem;
 use imbl::{OrdMap, OrdSet};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1273,10 +1274,17 @@ impl Atoms {
         }
     }
 
-    /// The parts combined by `op`, in `O(s log l)` steps for the smaller map's `s` names and
-    /// the larger's `l`. A name the smaller map does not list has every payload or none, and
-    /// a part combined with all or none is itself, all or none: so the result is the larger
-    /// map, or nothing, changed at the smaller map's names.
+    /// The parts combined by `op`. A name the smaller map does not list has every payload or
+    /// none, and a part combined with all or none is itself, all or none: so the result is the
+    /// larger map, or nothing, changed at the smaller map's names. When it is the larger map,
+    /// only the names where the two differ change, since a part combined with itself is itself;
+    /// those are found by walking the smaller map, `O(s log l)` steps for its `s` names and the
+    /// larger's `l`, or by a diff of the two maps, which skips the nodes they share, so that
+    /// two sets grown from one another, as a chain of merged failures grows the set of its
+    /// members beside its loose atoms (ERRS-precise), differ in `O(d log l)` for their `d`
+    /// differing names. The two walks advance in turn and the first to finish is used:
+    // Complexity tradeoff: twice the cheaper walk, so `O(min(s, d + log l) log l)`, against
+    // `O(s log l)` alone, which is quadratic for a chain of `n` such unions.
     fn zip(&self, other: &Atoms, op: Op) -> Atoms {
         let cofinite = match op {
             Op::Or => self.cofinite || other.cofinite,
@@ -1289,10 +1297,37 @@ impl Atoms {
         };
         let mut out = match (op, small.cofinite) {
             (Op::Or, false) | (Op::And, true) => large.clone(),
-            _ => Atoms::default(),
+            _ => {
+                let mut out = Atoms {
+                    cofinite,
+                    ..Atoms::default()
+                };
+                for (n, p) in &small.names {
+                    out.set(n, large.get(n).zip(p, op));
+                }
+                return out;
+            }
         };
         out.cofinite = cofinite;
-        for (n, p) in &small.names {
+        let mut walk = small.names.iter();
+        let mut diff = large.names.diff(&small.names);
+        let mut differ = Vec::new();
+        loop {
+            if walk.next().is_none() {
+                for (n, p) in &small.names {
+                    out.set(n, large.get(n).zip(p, op));
+                }
+                return out;
+            }
+            match diff.next() {
+                None => break,
+                Some(DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. }) => {
+                    differ.push((n, p));
+                }
+                Some(DiffItem::Remove(..)) => {}
+            }
+        }
+        for (n, p) in differ {
             out.set(n, large.get(n).zip(p, op));
         }
         out
@@ -2116,5 +2151,62 @@ mod tests {
         let all = subsets_and_complements(&lits, &scalars);
         assert_eq!(all.len(), 128);
         agree(&all);
+    }
+
+    /// [`Atoms::zip`] by the walk over the smaller map alone, as it was before the diff.
+    fn zip_by_walk(a: &Atoms, b: &Atoms, op: Op) -> Atoms {
+        let (large, small) = if a.names.len() >= b.names.len() {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let mut out = match (op, small.cofinite) {
+            (Op::Or, false) | (Op::And, true) => large.clone(),
+            _ => Atoms::default(),
+        };
+        out.cofinite = match op {
+            Op::Or => a.cofinite || b.cofinite,
+            Op::And => a.cofinite && b.cofinite,
+        };
+        for (n, p) in &small.names {
+            out.set(n, large.get(n).zip(p, op));
+        }
+        out
+    }
+
+    /// The diff of two maps that share nodes gives what the walk gives, for sets grown from
+    /// one another as a chain of merged failures grows them, for unrelated sets, for payloads
+    /// and bare atoms, for complements, and for both operations (ERRS-precise).
+    #[test]
+    fn atoms_combined_by_a_diff_agree_with_the_walk() {
+        let atom = |i: usize| match i % 3 {
+            0 => Type::atom(&format!("a{i}")),
+            1 => Type::atom_with(&format!("a{i}"), &Type::tuple(vec![Type::int()])),
+            _ => Type::atom(&format!("a{i}")) | Type::atom_with(&format!("a{i}"), &Type::top()),
+        };
+        let mut grown = vec![Type::empty()];
+        for i in 0..200 {
+            let last = grown.last().expect("one at least").clone();
+            grown.push(&last | &atom(i));
+        }
+        let mut sets = grown.clone();
+        // Grown again from a midpoint, so the two lines share their first nodes.
+        let mut other = grown[100].clone();
+        for i in 300..380 {
+            other = &other | &atom(i);
+            sets.push(other.clone());
+        }
+        sets.push(Type::union_all((0..150).step_by(2).map(atom)));
+        let complements: Vec<Type> = sets.iter().step_by(17).map(|t| !t).collect();
+        sets.extend(complements);
+        for a in sets.iter().step_by(3) {
+            for b in sets.iter().step_by(5) {
+                for op in [Op::Or, Op::And] {
+                    let (x, y) = (&a.p().atoms, &b.p().atoms);
+                    assert_eq!(x.zip(y, op), zip_by_walk(x, y, op));
+                    assert_eq!(y.zip(x, op), zip_by_walk(y, x, op));
+                }
+            }
+        }
     }
 }

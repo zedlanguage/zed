@@ -417,7 +417,13 @@ impl Shape {
         let mut first = true;
         for t in &self.items {
             between(parts, &mut first, ", ");
-            parts.push(Print::Ty(t));
+            // The family of an `#errs` is written bare, `#errs(#a | #b ->? #a | #b)`.
+            match &t.fns[..] {
+                [s] if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
+                    parts.push(Print::Family(s));
+                }
+                _ => parts.push(Print::Ty(t)),
+            }
         }
         for (f, t) in &self.fields {
             between(parts, &mut first, ", ");
@@ -1213,6 +1219,56 @@ pub fn wide() -> KType {
 /// The atom `#errs` that two distinct failures merge into, with any payload.
 pub fn errs() -> KType {
     KType::atom_with("errs", &KType::top())
+}
+
+/// The type of the failures that merge into `#errs`, each from the type `e` of the failures
+/// that meet: `#errs(E ->? E)`, the family that maps each distinct failure to itself
+/// (DESIGN.md sec:failure), whose exact keys are not kept. Its payload is a family, so its
+/// signature is data and prints with `->?`.
+pub fn errs_of(e: Ty) -> Ty {
+    let param = SParam {
+        name: "".into(),
+        positional: true,
+        default: None,
+    };
+    let mut family = Sig::one(vec![param], vec![e.clone()], e);
+    family.data = true;
+    let mut t = Ty::set(errs());
+    let shape = Shape::new(vec![Ty::func(Arc::new(family))], BTreeMap::new());
+    t.payloads.insert("errs".into(), Some(vec![shape]));
+    t
+}
+
+/// Whether `set` may hold an `#errs` with a payload.
+pub fn holds_errs(set: &KType) -> bool {
+    holds_payload(set, "errs")
+}
+
+/// The failures the `#errs` of `t` may hold, when each of its payloads is a family that
+/// [`errs_of`] built: the union of their keys. `None` when `t` holds no `#errs` or an `#errs`
+/// whose payload is not known; then what it holds is not known either.
+pub fn errs_members(t: &Ty) -> Option<Ty> {
+    if !holds_payload(&t.set, "errs") {
+        return None;
+    }
+    let shapes = t.payloads.get("errs")?.as_ref()?;
+    let mut keys = Ty::empty();
+    for s in shapes {
+        let [f] = &s.items[..] else { return None };
+        let [sig] = &f.fns[..] else { return None };
+        let only_fn = f.set.is_empty() && f.tuples.is_empty() && f.vars.is_empty() && !f.dynamic;
+        let [arrow] = &sig.arrows[..] else {
+            return None;
+        };
+        let [key] = &arrow.params[..] else {
+            return None;
+        };
+        if !s.fields.is_empty() || !only_fn || !sig.data {
+            return None;
+        }
+        keys = keys.union(key);
+    }
+    Some(keys)
 }
 
 /// Whether the failures of one application's operands can merge into `#errs`, given the
@@ -3837,6 +3893,8 @@ enum Print<'a> {
     Text(&'a str),
     Ty(&'a Ty),
     Sig(&'a Sig),
+    /// A signature written as a family ([`Sig::family_parts`]).
+    Family(&'a Sig),
     /// The end of a type's text ([`Ty::write_vars`]), and whether nothing of it is written yet.
     Vars(&'a Ty, bool),
     /// The bounds clause of a signature, which closes the variables it opened.
@@ -3855,6 +3913,7 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
             Print::Text(text) => out.push_str(text),
             Print::Ty(t) => t.parts(out, &mut stack),
             Print::Sig(s) => s.parts(scope, &mut stack),
+            Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, first) => t.write_vars(first, out, scope),
             Print::Bounds(s, bounds) => {
                 for (i, (v, m)) in bounds.iter().enumerate() {
@@ -3918,6 +3977,25 @@ impl Sig {
                 parts.push(Print::Text(")"));
             }
         }
+        parts.push(Print::Bounds(self, bounds));
+    }
+
+    /// Whether it is a family with one key type and no tuple or function in that type, so that
+    /// [`Sig::family_parts`] can write it bare.
+    fn is_family(&self) -> bool {
+        matches!((&self.params[..], &self.arrows[..]), ([p], [a])
+            if self.data && p.positional && a.params[0].tuples.is_empty() && a.params[0].fns.is_empty())
+    }
+
+    /// Opens its variables in `scope` and pushes the parts of its text as a family, a partial
+    /// map `K ->? V` (DESIGN.md sec:values_morphisms), to `parts`, in order. Its key type is
+    /// written bare, as [`Sig::is_family`] leaves none that could be read as parameters.
+    fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
+        let bounds = scope.open(self);
+        let a = &self.arrows[0];
+        parts.push(Print::Ty(&a.params[0]));
+        parts.push(Print::Text(" ->? "));
+        parts.push(Print::Ty(&a.result));
         parts.push(Print::Bounds(self, bounds));
     }
 }

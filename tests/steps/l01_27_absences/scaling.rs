@@ -246,11 +246,12 @@ fn merging_the_failures_of_a_long_chain_scales() {
         std::thread::Builder::new()
             .stack_size(1 << 29)
             .spawn_scoped(s, || {
-                for (kinds, errs) in [(7, 1), (1, 0)] {
-                    let what = format!("a chain of n sums of {kinds} kinds of failure");
+                // `None`: a different failure on each operand, so the `#errs` holds `n` of them.
+                for (kinds, errs) in [(Some(7), 1), (Some(1), 0), (None, 1)] {
+                    let what = format!("a chain of n sums of {kinds:?} kinds of failure");
                     scaling::check(&what, 1000, |n| {
-                        let sig =
-                            crate::l01_26_type_resolution::sig(&mixed_failures(n, kinds), "f");
+                        let text = mixed_failures(n, kinds.unwrap_or(n));
+                        let sig = crate::l01_26_type_resolution::sig(&text, "f");
                         let result = sig.rsplit(" -> ").next().unwrap();
                         assert_eq!(result.matches("#errs").count(), errs, "{result}");
                     })

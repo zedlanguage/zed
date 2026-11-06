@@ -162,11 +162,13 @@ fn every_dropped_atom_is_named_with_where_it_enters() {
     let (message, _, notes) = the_error(t);
     assert_eq!(
         message,
-        "`_` drops a loose failure this value may be, #a | #b | #errs(..)"
+        "`_` drops a loose failure this value may be, #a | #b | #errs(#a | #b ->? #a | #b)"
     );
     assert!(notes.contains(&"the loose failure #a enters here [positional x: int | #a]".into()));
     assert!(notes.contains(&"the loose failure #b enters here [positional y: int | #b]".into()));
-    assert!(notes.contains(&"the loose failure #errs(..) enters here [x + y]".into()));
+    assert!(
+        notes.contains(&"the loose failure #errs(#a | #b ->? #a | #b) enters here [x + y]".into())
+    );
 }
 
 #[test]

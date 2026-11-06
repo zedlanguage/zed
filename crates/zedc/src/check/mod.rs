@@ -1475,7 +1475,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(i) => format!("component {i} of this value"),
         };
         let mut notes = self.entries(e.span, &dropped);
-        let atoms = Ty::set(dropped);
+        let atoms = self.with_payloads(e.span, dropped);
         self.derive_into(&[e.span], &mut notes);
         let menu = [
             "repair: write a default for the value, as `_ = … else #ok;`, so the text names what it drops".to_string(),
@@ -1489,6 +1489,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             format!("`_` drops a loose failure {what} may be, {atoms}"),
             notes,
         );
+    }
+
+    /// The atoms `atoms` of the value of the expression at `span`, with the payloads its type
+    /// gives them, `#errs(#a | #b ->? #a | #b)`; with any payload, `#errs(..)`, where the
+    /// expression has no type or the payloads are not in it.
+    fn with_payloads(&self, span: Span, atoms: KType) -> Ty {
+        match self.seen.get(&span) {
+            Some((Some(t), _)) => t.of_piece(&Piece::Set(atoms)),
+            _ => Ty::set(atoms),
+        }
     }
 
     /// Where the atoms of `wanted` enter the value at `root`: a note at each expression, or
@@ -1521,7 +1531,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let new = &(own & &want) & &left;
                 if !new.is_empty() {
                     left = &left - &new;
-                    let text = format!("the loose failure {} enters here", Ty::set(new));
+                    let text = format!(
+                        "the loose failure {} enters here",
+                        self.with_payloads(span, new)
+                    );
                     out.push(Note { span: site, text });
                 }
             }
@@ -1557,7 +1570,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             stack.extend(parts.into_iter().rev());
         }
         if !left.is_empty() {
-            let text = format!("the loose failure {} enters here", Ty::set(left));
+            let text = format!(
+                "the loose failure {} enters here",
+                self.with_payloads(root, left)
+            );
             out.push(Note { span: root, text });
         }
         out
@@ -4681,20 +4697,36 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 }
 
 /// `out` with the atoms of `ts` added, with their payloads: when two of them can carry
-/// different failures at once ([`ty::merges`]), also `#errs`, which they merge into.
+/// different failures at once ([`ty::merges`]), also `#errs(E ->? E)`, which they merge into,
+/// with `E` the failures that meet and the members of an operand's own `#errs` in place of
+/// it, since the merge flattens (DESIGN.md sec:failure). That `#errs` holds the operands'
+/// own, whose members are in `E`, so theirs is not added; a chain carries one `#errs`, not one
+/// per step. An `#errs` whose members are not known leaves those of the merge unknown.
 fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
     let mut holding = Vec::new();
     for t in ts {
         let a = t.atoms();
         if !a.is_empty() {
             // A `KType` is one `Arc`, so the clone is a count, not a copy of the type.
-            *out = out.union(&t.of_piece(&Piece::Set(a.clone())));
-            holding.push(a);
+            holding.push((t, a));
         }
     }
-    if ty::merges(&holding) {
-        *out = out.union(&Ty::set(errs()));
+    if !ty::merges(holding.iter().map(|(_, a)| a)) {
+        for (t, a) in holding {
+            *out = out.union(&t.of_piece(&Piece::Set(a)));
+        }
+        return;
     }
+    let mut members = Some(Ty::empty());
+    for (t, a) in holding {
+        let loose = t.of_piece(&Piece::Set(&a - &errs()));
+        *out = out.union(&loose);
+        members = members.map(|m| m.union(&loose));
+        if ty::holds_errs(&a) {
+            members = members.zip(ty::errs_members(t)).map(|(m, e)| m.union(&e));
+        }
+    }
+    *out = out.union(&members.map_or_else(|| Ty::set(errs()), ty::errs_of));
 }
 
 /// `t` with each of `needs` joined to the functions in it whose types share a variable with

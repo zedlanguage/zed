@@ -44,7 +44,7 @@ fn the_three_absences_stay_three_facts() {
             "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n",
             "f"
         ),
-        "(int | #notFound, int | #none) -> int | #errs(..) | #none | #notFound"
+        "(int | #notFound, int | #none) -> int | #none | #notFound | #errs(#none | #notFound ->? #none | #notFound)"
     );
     let run = "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n\
                a = f(#notFound, 1);\nb = f(1, #none);\nc = f(#notFound, #none);\n";
