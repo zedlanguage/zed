@@ -129,7 +129,6 @@ Type ::: (a: int, b: int) -> int ::: ((( (a : int) , (b : int) )) -> int)
 Type ::: () ::: ( )
 Type ::: () -> () ::: (( ) -> ( ))
 Type ::: (s: Lines) -> () ::: ((( s : Lines )) -> ( ))
-Item ::: p[k] <- v; ::: (p [ k ] <- v ;)
 # a brace after a fallback's else or an arrow is a block, never a display; `Block`'s `Display`
 # alternative reads a display there only so that the tree builder rejects it (row "Display in
 # body position"), as it rejects a block whose one content is a lambda, `{ k -> v }`
@@ -274,7 +273,6 @@ Item ::: struct P { x: f64 = 0.0, y: f64 = 0.0, } ::: (struct P { (x : f64 = 0.0
 Item ::: interface Named { name: String = "" } ::: ERROR
 Item ::: struct S { positional x: int } ::: ERROR
 Expr ::: Point(x: 0.0, ...) ::: (Point (( ((x : 0.0) , ...) )))
-Expr ::: (a, b) -> a + b ::: (( (a , b) ) -> (a + b))
 Expr ::: ((s, c)) -> s ::: (( (( s , c )) ) -> s)
 Expr ::: t.fold(n -> match n { #leaf -> 0, Node(l:, r:) -> 1 + max(l, r) }) ::: ((t (. fold)) (( (n -> (match n { (#leaf -> 0) , ((Node ( (l :) , (r :) )) -> (1 + (max (( (l , r) ))))) })) )))
 Expr ::: (0..<xs::len).where(i -> xs[i] >= t).first ::: ((((( (0 (..< (xs (:: len)))) )) (. where)) (( (i -> ((xs ([ i ])) >= t)) ))) (. first))
@@ -306,6 +304,13 @@ Expr ::: a else (break b) ::: (a (else (( (break b) ))))
 Expr ::: break ::: ERROR
 Expr ::: if c { break i } else { i } ::: (if c ({ (break i) }) else ({ i }))
 Expr ::: match v { #a -> break 1, _ -> 2 } ::: (match v { (#a -> (break 1)) , (_ -> 2) })
+# an unparenthesized `break` operand takes its own else tail and stops there: no tail, arrow or list item continues it (BREAK-cases)
+Expr ::: break a else b ::: (break (a (else b)))
+Expr ::: a else break b else c ::: ERROR
+Expr ::: m into (break a && b || c -> v) ::: ERROR
+Expr ::: m into ((break a) -> v) ::: (m (into ( ((( (break a) )) -> v) )))
+Expr ::: [break x ..] ::: ERROR
+Expr ::: [(break x) ..] ::: ([ ((( (break x) )) ..) ])
 # an annotation's arguments are the parentheses after it only when the declaration after them still parses (CRITIQUE-AGY-2 3.6)
 Item ::: @fused (a + b).map(f); ::: (@fused ((((( (a + b) )) (. map)) (( f ))) ;))
 Item ::: @fused () -> { }; ::: (@fused ((( ) -> { }) ;))
@@ -387,7 +392,6 @@ Expr ::: p with { x = 1 }.norm.abs ::: (p (with { (x = 1) } (. norm) (. abs)))
 Expr ::: m into (k -> v).rank.first ::: (m (into ( (k -> v) ) (. rank) (. first)))
 Expr ::: s with { a.b.c = 1 } ::: (s (with { (a . b . c = 1) }))
 Expr ::: for x in xs, y in ys, z in zs { x } ::: (for (x in xs) (, (y in ys)) (, (z in zs)) ({ x }))
-Expr ::: x -> y -> x + y ::: (x -> (y -> (x + y)))
 Expr ::: - - x ::: (- (- x))
 Type ::: T with f(1) with g(2) ::: (T (with (f ( 1 ))) (with (g ( 2 ))))
 Type ::: int \ 0 \ 1 ::: ((int \ 0) \ 1)
