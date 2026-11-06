@@ -1807,3 +1807,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | An index loop over the line's bytes that finds the first `//` outside a string literal, a `Peekable<Chars>` scan of tags and entities, and `str::find` over the HTML of cells | `comment`, `text_of`, `cells` | None | A fold over the string's code points with the state in the accumulator |
 | `let … else { continue }` to skip a fence with no entry | `the_enabled_readme_fences_run_with_their_stated_results` | None | A `match` on the lookup's `#notFound` |
+## Entries from DIAG-suppress (`zedc/src/suppress.rs`, `zedc/src/run.rs`, `zedc/src/unit.rs`)
+| `u128` products reduced modulo `2^61 - 1` for the prefix hashes of a text, and the hash of a span from two prefixes | `Content::new`, `Content::hash` | None | `(a * b) mod (2 ** 61 - 1)` on `int`, the operands' ranges `int[0..<2 ** 61]` letting the plan use two words (as `num::mul_mod`) |
+| An incremental `blake3::Hasher`, finalized once for the occurrence key and again after the count is added | `addresses` | Library | A hash word over a byte sequence built by appending, from the stdlib catalog of step L2.11; the key and the address as two hashes of two sequences |
+| `slice::partition_point` over the top-level statements in source order | `enclosing` | None | A binary search over a sequence by a predicate, from the L3 library (as `docs::check`) |
+| A `HashMap<ContentAddress, bool>` whose flags are set as warnings match, then read for the addresses that matched nothing | `Suppress::hides`, `unmatched`, `refused` | Mutation | A fold over the warnings that returns the set of matched addresses beside the printed ones; the unmatched are the named set minus it |
+| `vec![String::new(); n]` filled by index, so problems placed per file come out in their first order | `Package::report` | Mutation | Each problem keyed by its index in a map, read back in key order |
