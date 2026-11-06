@@ -181,9 +181,11 @@ pub fn runtime_of(exe: &Path, dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// The name of [`build`]'s symbol in the executable or object file `exe`. Its mangled name
-/// holds a hash of this crate's build (its features, its dependencies' builds and the
-/// compiler's flags), in both of Rust's manglings: `_RNvNtCs<hash>_10zed_native4link5build`
-/// and `_ZN10zed_native4link5build17h<hash>E`.
+/// holds a hash of this crate's build (its features and its dependencies' builds), in both of
+/// Rust's manglings: `_RNvNtCs<hash>_10zed_native4link5build` and
+/// `_ZN10zed_native4link5build17h<hash>E`. `RUSTFLAGS` are not in that hash (Cargo puts them
+/// in the file name only; measured with Cargo 1.99), so two builds that differ only in
+/// `RUSTFLAGS` are not told apart (NATIVE-build-id).
 pub fn build_symbol(exe: &Path) -> Result<Vec<u8>, String> {
     use object::{Object as _, ObjectSymbol as _};
     let file = std::fs::File::open(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
