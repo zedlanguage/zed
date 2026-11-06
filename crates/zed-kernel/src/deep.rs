@@ -514,7 +514,8 @@ fn show<'a>(v: &'a Value, f: &mut fmt::Formatter<'_>, todo: &mut Vec<Task<'a>>) 
             f.write_str("#")
         }
         Value::Tuple(items) => {
-            todo.push(Task::Text(")"));
+            // A one-tuple is `(x,)`, as its type `(T,)` is written: `(x)` is `x` in brackets.
+            todo.push(Task::Text(if items.len() == 1 { ",)" } else { ")" }));
             push_list(todo, items, ", ", Task::Show);
             f.write_str("(")
         }

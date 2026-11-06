@@ -212,7 +212,7 @@ const CONSTANTS: &str = "\
 zir 1
 r region function ()
 r.0 prim tuple (-3r/4r, 1.5e30, nan, -0.0, 123456789012345678901234567890) -> (_)
-r.1 prim tuple (#err(code: 3, why: \"disk\\nfull\"), #pair(1, 2), (7), [1 -> \"a\"], {1 -> 2, 3 -> 4}, {\"x\", \"y\"}, {}) -> (_)
+r.1 prim tuple (#err(code: 3, why: \"disk\\nfull\"), #pair(1, 2), (7,), [1 -> \"a\"], {1 -> 2, 3 -> 4}, {\"x\", \"y\"}, {}) -> (_)
 r results (r.0^0, r.1^0, true)
 ";
 

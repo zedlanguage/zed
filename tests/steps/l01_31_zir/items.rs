@@ -57,7 +57,10 @@ fn values_read_back() {
         "#pair(1, \"b\")",
         "#err(code: 3, why: \"x\")",
         "()",
-        "(1)",
+        "(1,)",
+        "((1,),)",
+        "(#e(1),)",
+        "(1, (2,))",
         "(1, (2, 3))",
         "[\"eu\" -> 2024 -> 3]",
         "{}",
@@ -68,6 +71,27 @@ fn values_read_back() {
         let val = parse_value(v).unwrap_or_else(|e| panic!("{v}: {e}"));
         assert_eq!(val.to_string(), v);
     }
+}
+
+#[test]
+fn a_one_tuple_is_written_with_a_comma() {
+    // A one-tuple is written `(x,)`, as its type `(T,)` is: in a program `(x)` is `x`.
+    let one = |v| Value::tuple(vec![v]);
+    let nested = one(one(Value::Int(0)));
+    assert_eq!(one(Value::Int(0)).to_string(), "(0,)");
+    assert_eq!(nested.to_string(), "((0,),)");
+    assert_eq!(parse_value(&nested.to_string()), Ok(nested.clone()));
+    assert_ne!(parse_value("((0,),)"), Ok(one(Value::Int(0))));
+    // The reader takes a tuple's last `,` or not, as it does a pattern's.
+    assert_eq!(parse_value("((0),)"), Ok(nested));
+    assert_eq!(
+        parse_value("(1, 2,)"),
+        Ok(Value::tuple(vec![Value::Int(1), Value::Int(2)]))
+    );
+    assert_eq!(
+        parse_value("(1,,)"),
+        Err("column 4: expected a value, found `,)`".into())
+    );
 }
 
 #[test]

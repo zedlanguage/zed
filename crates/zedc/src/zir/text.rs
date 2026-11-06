@@ -1156,6 +1156,9 @@ impl<'a> P<'a> {
             }
             _ => {
                 let t = self.token("()[]{},;^");
+                if t.is_empty() {
+                    return Err(format!("expected a value, found {}", self.found()));
+                }
                 number(t)?
             }
         }))
@@ -1198,6 +1201,10 @@ impl<'a> P<'a> {
                     return Ok(true);
                 }
                 self.expect(if *path { "->" } else { "," })?;
+                // A tuple may end in `,`, as a pattern may: the kernel writes a one-tuple `(x,)`.
+                if !*path && self.eat(")") {
+                    return Ok(true);
+                }
             }
             OpenValue::Family { map, entries, key } => {
                 // The first part says whether the family is a map: `{k -> v, …}` or `{k, …}`.

@@ -112,7 +112,7 @@ fn a_body_returning_its_capture_dups_it_and_without_the_dup_frees_it_early() {
         ),
     );
     let (g, mut p) = planned(&t);
-    assert_eq!(run(&g, &p).unwrap(), "(\"abc\")");
+    assert_eq!(run(&g, &p).unwrap(), "(\"abc\",)");
     let body = p.regions.get_mut("r.1/0").unwrap();
     assert_eq!(body.result_dups, vec![0]);
     body.result_dups.clear();

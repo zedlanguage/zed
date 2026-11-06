@@ -229,7 +229,7 @@ fn comparing_and_keying_values_that_share_their_parts_scales() {
 
 #[test]
 fn showing_sets_nested_inside_tuples_scales() {
-    // `{({(...)})}`: each set's member is its own key, so the test that writes a set by its
+    // `{({(...,)},)}`: each set's member is its own key, so the test that writes a set by its
     // members compares one shared value with itself, O(1) at each level.
     let nest = |d: usize| {
         (0..d).fold(Value::Int(0), |v, _| {
@@ -237,7 +237,7 @@ fn showing_sets_nested_inside_tuples_scales() {
         })
     };
     let values: HashMap<usize, Value> = [2000, 16000].map(|n| (n, nest(n))).into();
-    assert_eq!(nest(2).to_string(), "{({(0)})}");
+    assert_eq!(nest(2).to_string(), "{({(0,)},)}");
     check_order(
         "Display of sets nested inside tuples, by depth",
         2000,
