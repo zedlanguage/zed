@@ -1318,10 +1318,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TUPLE-eq-dup | impl attempt 1 | 2026-11-05 22:50 | reproduced on main: pair(pair(..1..)) n=18 1.26 s, 4x per +2 (2^n); perf: 99.4% in Ty::kernel from Ty::sub_in at each call (shape_kernel walks each path to a sh |
 | XMARK-rows | merge attempt 1 | 2026-11-05 04:07 | started: verify ab8147dc (wt/xmark-rows) and spec 528d962; both behind origin/main (impl 22, spec 4); load 25.60 28.81 35.34 |
 
-Merged into local main and not yet pushed (2 commits); the push follows one full test run on the merged tree:
+Merged into local main and not yet pushed (4 commits); the push follows one full test run on the merged tree:
 
-- 6b2ccbf9 T6-2sat: decide 2-CNF tuple parts by an implication graph and its strongly connected components (branch wt/t6-2sat, not merged yet)
-- T6-2sat: COMPLEXITY K54, STATUS and plan row (the commit after it on wt/t6-2sat)
+- 20c8b2dc T6-2sat: decide 2-CNF tuple parts by an implication graph and its strongly connected components (branch wt/t6-2sat, ready for the batch merge)
+- f14b371d T6-2sat: COMPLEXITY K54, STATUS and plan row
+- 9bc4a2cc T6-2sat merge verification: scaling sizes, the parity cycle by its variables, Bdd::id
+- T6-2sat: this list (the commit after it on wt/t6-2sat)
 
 
 ## Open points
