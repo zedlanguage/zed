@@ -3,9 +3,11 @@
 //! rejection shows both operands with their carriers and where each carrier comes from, and
 //! its menu is the casts the checker accepts, written at the operand: `f64(r)`, `rat(x)`.
 
-use zed_tests::scaling;
+use zed_tests::scaling::{self, Meter, on_a_thread};
 
 use super::{rejected, steps};
+use zedc::ast::Stmt;
+use zedc::resolve::Resolution;
 use zedc::run::load;
 
 /// The program `src` with the one occurrence of `from` replaced by `to`.
@@ -158,4 +160,66 @@ fn the_cast_menus_of_many_rejections_scale() {
         assert_eq!(out.matches(&offered("f64(r)")).count(), n);
         assert_eq!(out.matches(&offered("rat(x)")).count(), n);
     });
+}
+
+/// A program of one function giving a tuple of `m` integers and `r` functions each adding a
+/// `rat` and an `f64`, parsed and resolved, so that only its check is measured.
+fn padded(m: usize, r: usize) -> (Vec<Stmt>, Resolution) {
+    let mut text = String::from("big() = (0");
+    text.push_str(&", 1".repeat(m));
+    text.push_str(");\n");
+    text.push_str(&mixed(r));
+    let tokens = zedc::lex::lex_fence(&text).expect("the program lexes");
+    let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
+    let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
+    let res = zedc::resolve::resolve(&stmts).expect("it resolves");
+    (stmts, res)
+}
+
+#[test]
+fn a_cast_menu_costs_the_same_in_a_larger_program() {
+    // The test above holds the work of n rejections to n, but not the cost of one rejection
+    // to a constant: the checker spends about 33,000 instructions on each expression and a
+    // scan of its record of expressions about 16 per entry, so a menu that scanned the whole
+    // record once per offered cast, O(n) per rejection and O(n²) in all, did 8.8 times the
+    // work at 1,000 and 8,000 rejections and passed it. Here the work of the rejections
+    // alone, the check of the program with them less the check without, is held to the
+    // limit of work of order n^0 as the program around them grows from m to 8m expressions.
+    // That scan did 4.1 times the work at m = 60,000 against 480,000; this code 1.00 times.
+    // The difference of two counts needs the count of instructions, which repeats to within
+    // 0.1% here; a meter of processor time does not.
+    const R: usize = 100;
+    let meter = &mut Meter::new();
+    let mut rejections = |m: usize| {
+        let mut work = |r: usize| {
+            let (stmts, res) = padded(m, r);
+            let mut errors = 0;
+            let units = meter
+                .work(|| {
+                    errors = on_a_thread(256 << 20, || zedc::check::check(&stmts, &res))
+                        .errors
+                        .iter()
+                        .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
+                        .count();
+                })
+                .units;
+            assert_eq!(errors, r, "rejections with a menu among {r}");
+            units
+        };
+        let without = work(0);
+        work(R)
+            .checked_sub(without)
+            .expect("the rejections add work")
+    };
+    let (m, limit) = (60_000, scaling::RATIO / scaling::FACTOR as f64);
+    let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
+    let ratio = large as f64 / small as f64;
+    assert!(
+        ratio <= limit,
+        "{R} rejections beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
+         times the work; for work of order n^0 the rule of low complexity allows at most \
+         {limit} times (DESIGN.md Part G)",
+        scaling::FACTOR * m,
+        meter.unit(),
+    );
 }
