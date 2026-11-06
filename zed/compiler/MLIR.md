@@ -4,8 +4,10 @@ The record of DESIGN.md step L1.35 and the plan for L28. It answers four questio
 ZIR-loop and the target dialects lower to MLIR's dialects; whether ZIR is also written as an
 MLIR dialect; what MLIR's graph regions and LLVM's lowering provide and lack against ZIR's state
 edges, content addresses and certificates; and whether the compact back end of L1.36 stays
-Cranelift. The test `tests/steps/l01_35_mlir_study` checks that every ZIR operation and region
-kind has a row in the tables below, so an operation added later without a lowering fails it.
+Cranelift. The test `tests/steps/l01_35_mlir_study` reads the variants of `Op`, `Derived` and
+`RegionKind` from the text of `crates/zedc/src/zir/mod.rs` and checks that every ZIR operation
+and region kind has a row in the tables below and every row an operation or region kind, so an
+operation added later without a lowering fails it.
 
 Sources, read 2026-10-30: the MLIR Language Reference (mlir.llvm.org/docs/LangRef), the `func`
 dialect (mlir.llvm.org/docs/Dialects/Func), the `scf` dialect
