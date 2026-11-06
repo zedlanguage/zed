@@ -1401,6 +1401,79 @@ fn chain_min_scales() {
     scales("min", 256);
 }
 
+/// The probe with the guard spelled `j <= i`.
+#[test]
+fn chain_le_scales() {
+    scales("le", 256);
+}
+
+/// The probe asked `tk >= -3 && tk <= 7`: two comparisons of the shared chain under `&&`.
+#[test]
+fn chain_rangeand_scales() {
+    scales("rangeand", 256);
+}
+
+/// The live families, `i` in `[-k, k]`: no demand merges with another.
+#[test]
+fn chain_alt_live_scales() {
+    scales("alt_live", 256);
+}
+
+#[test]
+fn chain_eq0_live_scales() {
+    scales("eq0_live", 256);
+}
+
+#[test]
+fn chain_range_live_scales() {
+    scales("range_live", 256);
+}
+
+/// `c_j = j` over `[-k, k]`: before S22a 28.9 times the instructions at 8 and 64 (cross-review
+/// xs22, VERIFY_CLAUDE.md).
+#[test]
+fn chain_cj_live_scales() {
+    scales("cj_live", 256);
+}
+
+/// `c_j = ±j`, the sign alternating with `j`.
+#[test]
+fn chain_altj_scales() {
+    scales("altj", 256);
+}
+
+/// `c_j = ±j` over `[-k, k]`: before S22a 216 times the instructions at 8 and 64 (cross-review
+/// xs22, VERIFY_CLAUDE.md).
+#[test]
+fn chain_altj_live_scales() {
+    scales("altj_live", 256);
+}
+
+#[test]
+fn chain_ne0_scales() {
+    scales("ne0", 256);
+}
+
+/// Else arm `0 - (t + 1)`, under an integer demand of two pieces on both signs.
+#[test]
+fn chain_neg_scales() {
+    scales("neg", 256);
+}
+
+/// Else arm `-2 * t`, under an integer demand of two pieces on both signs: `tk` reaches
+/// `50 * 2^k`, which passes `i128` from `k = 122`, where the summary is given up (COMPLEXITY.md
+/// S22, `mul`). From 32 to 256 the chain crosses that size.
+#[test]
+fn chain_mul_across_i128_scales() {
+    scales("mul", 32);
+}
+
+/// `mul` past `i128` at both sizes, its ends a bit longer at each level.
+#[test]
+fn chain_mul_scales() {
+    scales("mul", 256);
+}
+
 /// `cross` below its domain's width: `m` plus the number of guards `i >= j` that fail, for
 /// `j` up to 40 and both inputs in `[-50, 50]`. The transfer's box is inexact, so the
 /// preimage asks whether the box can be listed; it cannot (two inputs are ranges), and that is
