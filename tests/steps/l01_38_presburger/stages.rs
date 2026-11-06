@@ -872,7 +872,10 @@ fn three_variables_in_many_rows_scale() {
     // the work grew 14.2 times from 64 to 512 rows, so the stage was removed (HULL3-subsumed).
     // At 64 rows `live3` finds the point in 6.7M instructions and 0.85 MB, a path the larger
     // sizes do not take, so the sizes are 128 and 1,024: 210M to 399M instructions, 8.3 MB to
-    // 26.7 MB (512 to 4,096 rows: 392M to 454M, 22.2 MB to 56.4 MB).
+    // 26.7 MB (512 to 4,096 rows: 392M to 454M, 22.2 MB to 56.4 MB). The cost depends on the
+    // instance, not on its size: this seed takes 215M at 32 rows, 6.7M at 64 and 9.9M at 96, and
+    // summed over 12 seeds 64 to 512 rows is 2.8 times the instructions and 4.7 the bytes
+    // (HULL3-subsumed merge), so the ratio at 64 is that one cheap instance's.
     decides("three variables in many rows", 128, Ok(true), three_rows);
     let f = three_rows(64);
     let m = satisfiable(&f).expect("answered").expect("a point");

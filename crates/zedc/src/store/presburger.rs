@@ -5095,7 +5095,7 @@ impl Omega {
             // lens of `live3::tangents` over (5000, 5000), at 64 / 256 / 1,024 pairs of
             // planes: 355M / 2,198M / 11,712M with the stage, 941M / 4,092M / 7,163M without
             // it, and in time 66 ms / 1.61 s against about 210 ms / 2.4 s. The stage was at
-            // worst 28 times the work of `live3` alone and grew 13 to 14 times per factor 8,
+            // worst 28 times the work of `live3` alone and grew 10 to 14 times per factor 8,
             // while `live3` alone was at worst 2.7 times the work (3.5 times the time) of the
             // stage. With coefficients up to 5, or a pair of rows with no point, the stage
             // never ran.

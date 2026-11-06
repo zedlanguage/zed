@@ -1124,7 +1124,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   (processor time 47 / 117 / 306 / 676 / 1,547 ms against 146 / 225 / 620 / 660 / 1,143 ms;
   bytes 129M → 4,205M against 33.6M → 399M). The stage is faster on small lenses (at most 3.1
   times in processor time, 3.5 in wall time), slower from 1,024 pairs, 28 times slower on the
-  wide rows, and grows 13 to 14 times per factor 8 where `live3` alone grows 2.7 to 4.8 times; it
+  wide rows, and grows 10 to 14 times per factor 8 where `live3` alone grows 2.5 to 4.8 times; it
   never ran on rows with coefficients up to 5 or on empty pairs of rows. Since the gain is at
   most a constant factor on one family and the loss grows with the size, it was removed rather
   than kept as a first try (a first try that sometimes loses a factor of 28 is not faster).
