@@ -43,12 +43,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use zed_kernel::num::TooLarge;
 use zed_kernel::types::{Type as KType, Verdict};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
 use crate::ast::{
     Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
-    Type, TypeKind,
+    Type, TypeKind, shown, unread_literal,
 };
 use crate::elab::Tables;
 use crate::lex::Span;
@@ -4697,31 +4698,44 @@ fn flows(e: &Expr) -> Vec<Span> {
     }
 }
 
-/// `e` as a numeric literal, perhaps under one `-`.
+/// `e` as a numeric literal, perhaps under one `-`; `None` also where the system refuses the
+/// memory to read it, which [`Ck::expr_of`] reports through [`read_literal`].
 fn literal(e: &Expr) -> Option<Lit> {
+    read_literal(e).ok().flatten()
+}
+
+/// `e` as a numeric literal, perhaps under one `-`; [`TooLarge`] when the system refuses the
+/// memory to read its digits or to copy its text. The lexer has removed the `_` from the
+/// digits, so they are read where they are, not copied.
+fn read_literal(e: &Expr) -> Result<Option<Lit>, TooLarge> {
     let (inner, neg) = match &e.kind {
         ExprKind::Unary("-", a) => (&**a, true),
         _ => (e, false),
     };
-    let text = |s: &str| s.chars().filter(|&c| c != '_').collect::<String>();
     let (value, n) = match &inner.kind {
         ExprKind::Int {
             radix,
             digits,
             generic,
-        } => (Value::int_text(&text(digits), *radix)?, *generic),
-        ExprKind::Float(s) => (Value::float(text(s).parse().ok()?), false),
-        _ => return None,
+        } => match Value::int_text(digits, *radix)? {
+            Some(v) => (v, *generic),
+            None => return Ok(None),
+        },
+        ExprKind::Float(s) => match s.parse() {
+            Ok(x) => (Value::float(x), false),
+            Err(_) => return Ok(None),
+        },
+        _ => return Ok(None),
     };
-    Some(Lit {
+    Ok(Some(Lit {
         span: inner.span,
         value,
         neg,
-        text: inner.to_string(),
+        text: shown(inner)?,
         n,
         generic: false,
         witness: false,
-    })
+    }))
 }
 
 /// The literals written in the tuple `e`, by component, at any depth; `None` when `e` is not
@@ -4971,7 +4985,9 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, String> {
         return Err(menu(l, &[c]));
     }
     let exact = match &l.value {
-        Value::Float(_) => Rat::decimal(&l.text).map(Value::rat),
+        Value::Float(_) => Rat::decimal(&l.text)
+            .map_err(|r| unread_literal(&r))?
+            .map(Value::rat),
         v => run(Prim::CastRat, v),
     };
     let not = || Err(format!("`{}` is not {} {}", l.text, article(c), c.name()));
@@ -5527,10 +5543,10 @@ impl<'a> Ck<'_, 'a> {
         };
         let nonnegative = IntervalSet::range(End::of(0), PosInf);
         match &e.kind {
-            ExprKind::Int { radix, digits, .. } => {
-                let digits: String = digits.chars().filter(|&c| c != '_').collect();
-                Value::int_text(&digits, *radix).map_or_else(Known::top, Known::of)
-            }
+            ExprKind::Int { radix, digits, .. } => Value::int_text(digits, *radix)
+                .ok()
+                .flatten()
+                .map_or_else(Known::top, Known::of),
             ExprKind::Name(_) => self
                 .bound_value(e)
                 .map_or_else(Known::top, |v| self.memo(v)),

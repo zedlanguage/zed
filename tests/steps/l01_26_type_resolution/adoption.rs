@@ -125,7 +125,7 @@ fn a_decorated_literal_keeps_its_carrier_and_a_plain_one_beside_it_is_rejected()
     assert_eq!(value("x = 1r + 1n;\n", "x"), "2r");
     assert_eq!(
         adopted("x = 1r + 1n;\n"),
-        [Value::rat(zed_kernel::Rat::decimal("1").unwrap())]
+        [Value::rat(zed_kernel::Rat::decimal("1").unwrap().unwrap())]
     );
 }
 

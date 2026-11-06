@@ -16,7 +16,11 @@ use zedc::zir::text::parse_type;
 use crate::l01_26_type_resolution::info;
 
 fn dec(text: &str) -> Value {
-    Value::rat(Rat::decimal(text).expect("a test literal is decimal"))
+    Value::rat(
+        Rat::decimal(text)
+            .expect("a test literal is small")
+            .expect("a test literal is decimal"),
+    )
 }
 
 fn lit(v: &Value) -> Type {
@@ -119,7 +123,7 @@ fn literal_types_order_by_value_across_rat_and_int() {
     assert!(lit(&dec("1e400000")).subtype(&t));
     assert!(!lit(&dec("2e400000")).subtype(&t));
     // In the natural order a number of any kind sits by its value, `int` before `rat`.
-    let big = Value::integer(Rat::decimal("1e400000").unwrap());
+    let big = Value::integer(Rat::decimal("1e400000").unwrap().unwrap());
     let mut vs = vec![
         dec("1e400000"),
         big.clone(),
@@ -159,7 +163,9 @@ fn kept_and_built_forms_of_random_numbers_print_alike() {
             text.insert(text.len() - point, '.');
         }
         let sign = if mantissa < 0 { "-" } else { "" };
-        let kept = Rat::decimal(&format!("{sign}{text}e{exp}")).unwrap();
+        let kept = Rat::decimal(&format!("{sign}{text}e{exp}"))
+            .unwrap()
+            .unwrap();
         let n: BigInt = kept.numer_text().parse().unwrap();
         let d: BigInt = kept.denom_text().parse().unwrap();
         let built = Rat::new(n, d).unwrap();
@@ -184,7 +190,7 @@ fn a_computed_power_prints_its_digits() {
         "9094947017729282379150390625e-40r"
     );
     let three = Rat::int(BigInt::from(3)).pow(&5u32.into()).unwrap();
-    let r = three.mul(&Rat::decimal("1e7").unwrap()).unwrap();
+    let r = three.mul(&Rat::decimal("1e7").unwrap().unwrap()).unwrap();
     assert_eq!(lit(&Value::rat(r)).to_string(), "243e7r");
     // A quotient that is not a decimal has no literal; its type prints the quotient.
     let third = Rat::int(BigInt::from(-1))

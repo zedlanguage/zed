@@ -39,14 +39,19 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         },
         // A tuple, keypath, atom or family prints each number inside it.
         (Prim::Show, _) => print(x)?,
-        (Prim::CastInt, Value::Str(s)) => match read_int(&s.flat()) {
-            Some(n) => Value::int(n),
-            None => invalid(),
-        },
-        (Prim::CastRat, Value::Str(s)) => match read_rat(&s.flat()) {
-            Some(r) => Value::rat(r),
-            None => invalid(),
-        },
+        // Reading a number's digits asks the system for the memory first.
+        (Prim::CastInt, Value::Str(s)) => {
+            match read_int(&s.flat()).map_err(|e| refused("int", e))? {
+                Some(n) => Value::int(n),
+                None => invalid(),
+            }
+        }
+        (Prim::CastRat, Value::Str(s)) => {
+            match read_rat(&s.flat()).map_err(|e| refused("rat", e))? {
+                Some(r) => Value::rat(r),
+                None => invalid(),
+            }
+        }
         (Prim::CastF64, Value::Str(s)) => {
             let s = s.flat();
             match read_f64(&s) {
@@ -280,8 +285,8 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
         let (own, items) = match v {
             Value::Big(n) | Value::Rat(n) => {
                 n.text_room()?;
-                let (bits, text) = n.text_size();
-                widest = widest.max(bits + (&text << 3u32));
+                let text = n.text_size().1;
+                widest = widest.max(n.text_ask());
                 // A sign, and the `r`, `r/` and `r` of a `rat`.
                 add(&mut open, (text + 5u32).to_u128());
                 continue;
@@ -339,10 +344,15 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
     Ok(Room { bytes, widest })
 }
 
+/// The error for a number the system refused the memory to build or read for `op`.
+fn refused(op: &'static str, e: TooLarge) -> KernelError {
+    KernelError::NumberTooLarge { op, bits: e.bits }
+}
+
 /// An optional `-` and decimal digits.
-fn read_int(s: &str) -> Option<BigInt> {
+fn read_int(s: &str) -> Result<Option<BigInt>, TooLarge> {
     let (sign, digits) = signed(s);
-    Some(BigInt::from_biguint(sign, read_decimal(digits)?))
+    Ok(read_decimal(digits)?.map(|n| BigInt::from_biguint(sign, n)))
 }
 
 /// The sign of a text and the rest of it after an optional `-`.
@@ -354,20 +364,20 @@ fn signed(s: &str) -> (Sign, &str) {
 }
 
 /// What `String` writes for a `rat`, `3r` or `-1r/3r`, or the same without the `r`s, or a
-/// decimal with digits on both sides of the point, such as `0.25` or `-0.5`.
+/// decimal with digits on both sides of the point, such as `0.25` or `-0.5`; [`TooLarge`] when
+/// the system refuses the memory for reading it, asked before anything is built.
 ///
 /// `String` writes a `rat` in lowest terms, the sign on the numerator only, a denominator only
 /// when it is above 1, and no leading zero, so `1r/-3r`, `-0r`, `03r`, `2r/4r` and `3r/1r` are
 /// read as nothing, and so are `1r/3`, `1/3r`, where only one part drops its `r`. A zero
 /// denominator is not in lowest terms either. A decimal's digits are any digits.
-fn read_rat(s: &str) -> Option<Rat> {
+fn read_rat(s: &str) -> Result<Option<Rat>, TooLarge> {
     let (sign, body) = signed(s);
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
     if let Some((whole, frac)) = body.split_once('.') {
-        if whole.is_empty() || frac.is_empty() {
-            return None;
+        if !digits(whole) || !digits(frac) {
+            return Ok(None);
         }
-        read_decimal(whole)?;
-        read_decimal(frac)?;
         return Rat::decimal(s);
     }
     let (num, den) = match body.split_once('/') {
@@ -375,19 +385,28 @@ fn read_rat(s: &str) -> Option<Rat> {
         Some((n, d)) => match (n.strip_suffix('r'), d.strip_suffix('r')) {
             (Some(n), Some(d)) => (n, Some(d)),
             (None, None) => (n, Some(d)),
-            _ => return None,
+            _ => return Ok(None),
         },
     };
-    let printed = |t: &str| t == "0" || !t.starts_with('0');
-    if !printed(num) || sign == Sign::Minus && num == "0" {
-        return None;
+    let printed = |t: &str| digits(t) && (t == "0" || !t.starts_with('0'));
+    if !printed(num) || sign == Sign::Minus && num == "0" || den.is_some_and(|d| !printed(d)) {
+        return Ok(None);
     }
-    let num = BigInt::from_biguint(sign, read_decimal(num)?);
-    match den {
+    // Complexity tradeoff: the memory asked for is 32 bits for each digit of the two parts, a
+    // measured bound, not a proved one, on reading both and the gcd that checks lowest terms
+    // (Stein's, on copies of the two): the peak heap was at most 20.3 bits per digit (6.11
+    // times the `3.32 n` bits of the two numbers) over texts of 2^12 to 2^18 digits on each
+    // side, nines over a one and sevens, and a power of 2 over a power of 3. So a text needing
+    // less is refused when the free memory lies between the two, and none aborts. Tested by
+    // `reading_a_long_number_from_a_string_is_refused_when_memory_is_short` (COMPLEXITY.md
+    // K30). A complete solution would ask each allocation of the reading for its own memory.
+    room(BigUint::from(num.len() + den.map_or(0, str::len)) << 5u32)?;
+    let read = |t: &str| read_decimal(t).map(|n| n.expect("checked digits"));
+    let num = BigInt::from_biguint(sign, read(num)?);
+    Ok(match den {
         None => Some(Rat::int(num)),
-        Some(den) if printed(den) => Rat::in_lowest_terms(num, read_decimal(den)?.into()),
-        Some(_) => None,
-    }
+        Some(den) => Rat::in_lowest_terms(num, read(den)?.into()),
+    })
 }
 
 /// What `String` writes for a float, correctly rounded: `-0.5`, `1.0e300`, `inf`, `nan`;

@@ -170,13 +170,14 @@ fn bare_names(text: &str) -> HashSet<&str> {
 }
 
 /// The value of the numeric literal `e`, as elaboration reads it; `None` for any other
-/// expression and for a float literal that does not round to a finite non-zero `f64`.
+/// expression, for a float literal that does not round to a finite non-zero `f64`, and for a
+/// literal the system refuses the memory to read, which elaboration reports where it reads
+/// the literal. The lexer has removed the `_` from the digits, so they are read where they are.
 fn number(e: &Expr) -> Option<Value> {
-    let plain = |s: &str| s.chars().filter(|&c| c != '_').collect::<String>();
     match &e.kind {
-        ExprKind::Int { radix, digits, .. } => Value::int_text(&plain(digits), *radix),
-        ExprKind::Float(s) => literal_f64(&plain(s)).ok().map(Value::float),
-        ExprKind::Rat(s) => Rat::decimal(s).map(Value::rat),
+        ExprKind::Int { radix, digits, .. } => Value::int_text(digits, *radix).ok().flatten(),
+        ExprKind::Float(s) => literal_f64(s).ok().map(Value::float),
+        ExprKind::Rat(s) => Rat::decimal(s).ok().flatten().map(Value::rat),
         _ => None,
     }
 }

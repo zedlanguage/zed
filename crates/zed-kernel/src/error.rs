@@ -7,6 +7,7 @@
 use std::fmt;
 
 use crate::family::Keypath;
+use crate::num::bytes_of;
 
 /// Why a kernel evaluation stopped without a value.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -38,13 +39,15 @@ pub enum KernelError {
         /// The undefined keys, in order.
         keys: Vec<crate::value::Value>,
     },
-    /// An arithmetic operation had to build a number in full, of at most `bits` bits, and the
-    /// system refused the memory for it (sec:domains says when a number is built). The number
+    /// An arithmetic operation had to build or read a number in full, and the system refused the
+    /// `bits` bits of memory asked for it (sec:domains says when a number is built). The number
     /// is a value of the language; this evaluator cannot run the program on this machine.
     NumberTooLarge {
-        /// The operator: `+`, `-`, `div`, `mod`, `**`, or `String` printing a number.
+        /// The operator: `+`, `-`, `div`, `mod`, `**`, `String` printing a number, or `int` or
+        /// `rat` reading one from a string.
         op: &'static str,
-        /// At most this many bits: the size of the number to build.
+        /// The memory asked for, in bits: a measured multiple of the number's size, not the size
+        /// itself. The message gives it in bytes.
         bits: num_bigint::BigUint,
     },
     /// `String` of a tuple, keypath, atom or family must write a text of up to `bytes` bytes,
@@ -55,44 +58,49 @@ pub enum KernelError {
         bytes: Option<u128>,
     },
     /// Two numbers agree in so many leading bits that ordering them, for `<`, `<=`, `>`,
-    /// `>=`, `min` or `max`, needs bounds of up to `bits` bits, or the two in full, and the
-    /// system refused the memory for it.
+    /// `>=`, `min` or `max`, needs bounds of them, or the two in full, and the system refused
+    /// the `bits` bits of memory asked for them.
     OrderTooLarge {
         /// The operator.
         op: &'static str,
-        /// At most this many bits: the size of the widest bound or number to build.
+        /// The memory asked for, in bits: a measured multiple of the widest bound's or number's
+        /// size, not the size itself. The message gives it in bytes.
         bits: num_bigint::BigUint,
     },
     /// `==` or `!=` of two numbers, one of whose coefficients is divisible by a prime the other
     /// keeps as a power, must copy and divide the coefficients to compare their normal forms,
-    /// which needs up to `bits` bits, and the system refused the memory for it.
+    /// and the system refused the `bits` bits of memory asked for it.
     EqualityTooLarge {
         /// The operator.
         op: &'static str,
-        /// At most this many bits: the size of the copy and the division.
+        /// The memory asked for, in bits: a measured multiple of the size of the copy and the
+        /// division, not the size itself. The message gives it in bytes.
         bits: num_bigint::BigUint,
     },
     /// Two numbers among a family's keys, or a key looked up and one in the family, agree in
-    /// so many leading bits that placing them in key order needs up to `bits` bits, and the
-    /// system refused the memory for it.
+    /// so many leading bits that placing them in key order needs bounds of them, or the two in
+    /// full, and the system refused the `bits` bits of memory asked for them.
     KeyOrderTooLarge {
-        /// At most this many bits: the size of the widest bound or number to build.
+        /// The memory asked for, in bits: a measured multiple of the widest bound's or number's
+        /// size, not the size itself. The message gives it in bytes.
         bits: num_bigint::BigUint,
     },
     /// Two numbers in families, compared for equality (two leaves written at one keypath, or a
-    /// key and its member when a set is printed), must be put in the same normal form, which
-    /// needs up to `bits` bits, and the system refused the memory for it.
+    /// key and its member when a set is printed), must be put in the same normal form, and the
+    /// system refused the `bits` bits of memory asked for it.
     FamilyEqualityTooLarge {
-        /// At most this many bits: the size of the copy and the division.
+        /// The memory asked for, in bits: a measured multiple of the size of the copy and the
+        /// division, not the size itself. The message gives it in bytes.
         bits: num_bigint::BigUint,
     },
     /// A number lies so near a rounding boundary of a float that telling which side it is on
-    /// needs bounds of up to `bits` bits, or the number in full, and the system refused the
-    /// memory for it.
+    /// needs bounds of it, or the number in full, and the system refused the `bits` bits of
+    /// memory asked for them.
     RoundTooLarge {
         /// The float it is rounded to, as the cast is written: `f64`.
         to: &'static str,
-        /// At most this many bits: the size of the widest bound or number to build.
+        /// The memory asked for, in bits: a measured multiple of the widest bound's or number's
+        /// size, not the size itself. The message gives it in bytes.
         bits: num_bigint::BigUint,
     },
     /// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length
@@ -136,9 +144,10 @@ impl fmt::Display for KernelError {
             }
             KernelError::NumberTooLarge { op, bits } => write!(
                 f,
-                "`{op}` must build a number of up to {bits} bits in full, and the system \
-                 refused the memory for it; the number is exact and has no size limit, but this \
-                 machine cannot hold its digits"
+                "`{op}` must build a number in full, and the system refused the {} bytes of \
+                 memory asked for it; the number is exact and has no size limit, but this \
+                 machine cannot hold its digits",
+                bytes_of(bits)
             ),
             KernelError::TextTooLarge { bytes } => {
                 match bytes {
@@ -158,39 +167,44 @@ impl fmt::Display for KernelError {
             }
             KernelError::OrderTooLarge { op, bits } => write!(
                 f,
-                "`{op}` must compare two numbers that agree in their leading digits, which \
-                 needs up to {bits} bits of each, and the system refused the memory for it; \
+                "`{op}` must compare two numbers that agree in their leading digits, and the \
+                 system refused the {} bytes of memory asked to read enough of their digits; \
                  the numbers are exact and have no size limit, but this machine cannot hold \
-                 enough of their digits to order them"
+                 enough of their digits to order them",
+                bytes_of(bits)
             ),
             KernelError::EqualityTooLarge { op, bits } => write!(
                 f,
                 "`{op}` must compare two numbers in the same normal form, which moves a prime \
-                 one keeps as a power out of the other's digits and needs up to {bits} bits, \
-                 and the system refused the memory for it; the numbers are exact and have no \
-                 size limit, but this machine cannot hold enough of their digits to compare them"
+                 one keeps as a power out of the other's digits, and the system refused the {} \
+                 bytes of memory asked for it; the numbers are exact and have no size limit, \
+                 but this machine cannot hold enough of their digits to compare them",
+                bytes_of(bits)
             ),
             KernelError::KeyOrderTooLarge { bits } => write!(
                 f,
-                "two numbers placed in a family's key order agree in their leading digits, \
-                 which needs up to {bits} bits of each to order them, and the system refused \
-                 the memory for it; the numbers are exact and have no size limit, but this \
-                 machine cannot hold enough of their digits to order them"
+                "two numbers placed in a family's key order agree in their leading digits, and \
+                 the system refused the {} bytes of memory asked to read enough of their \
+                 digits; the numbers are exact and have no size limit, but this machine cannot \
+                 hold enough of their digits to order them",
+                bytes_of(bits)
             ),
             KernelError::FamilyEqualityTooLarge { bits } => write!(
                 f,
                 "two numbers in families, compared to tell whether they are equal, must be put \
                  in the same normal form, which moves a prime one keeps as a power out of the \
-                 other's digits and needs up to {bits} bits, and the system refused the memory \
-                 for it; the numbers are exact and have no size limit, but this machine cannot \
-                 hold enough of their digits to compare them"
+                 other's digits, and the system refused the {} bytes of memory asked for it; \
+                 the numbers are exact and have no size limit, but this machine cannot hold \
+                 enough of their digits to compare them",
+                bytes_of(bits)
             ),
             KernelError::RoundTooLarge { to, bits } => write!(
                 f,
-                "`{to}` must round a number that lies near a rounding boundary, which needs up \
-                 to {bits} bits of it, and the system refused the memory for it; the number \
+                "`{to}` must round a number that lies near a rounding boundary, and the system \
+                 refused the {} bytes of memory asked to read enough of its digits; the number \
                  is exact and has no size limit, but this machine cannot hold enough of its \
-                 digits to round it"
+                 digits to round it",
+                bytes_of(bits)
             ),
             KernelError::StringTooLong { left, right } => write!(
                 f,

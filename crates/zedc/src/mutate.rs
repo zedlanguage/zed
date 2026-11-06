@@ -20,7 +20,7 @@
 //! definition's term replaced, so it costs that definition and the tables that reach it, not
 //! a new parse, check or elaboration.
 
-use zed_kernel::num::TooLarge;
+use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::provenance::{Position, child, child_mut};
 use zed_kernel::{Prim, Rat, Shared, Term, Value};
 
@@ -104,8 +104,9 @@ fn beside(n: &Value) -> Result<[Value; 2], String> {
         let one = Rat::int(1.into());
         let refused = |e: TooLarge| {
             format!(
-                "a neighbor of the integer literal {n} needs {} bits, and the system refused the memory to build it",
-                e.bits
+                "the system refused the {} bytes of memory asked to build a neighbor of the \
+                 integer literal {n}",
+                bytes_of(&e.bits)
             )
         };
         Ok([r.sub(&one).map_err(refused)?, r.add(&one).map_err(refused)?])

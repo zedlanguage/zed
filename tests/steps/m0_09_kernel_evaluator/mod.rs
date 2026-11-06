@@ -1028,7 +1028,7 @@ fn a_unit_to_a_kept_power_builds_no_exponent() {
 /// address space. Each stops the run with an error naming the size, and the process goes on.
 #[test]
 fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
-    for (k, bits) in [
+    for (k, bytes) in [
         (100u32, "1267650600228229401496703205379"),
         (60, "1152921504606846979"),
     ] {
@@ -1041,8 +1041,8 @@ fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
         assert_eq!(
             err.to_string(),
             format!(
-                "`+` must build a number of up to {bits} bits in full, and the system refused \
-                 the memory for it; the number is exact and has no size limit, but this \
+                "`+` must build a number in full, and the system refused the {bytes} bytes of \
+                 memory asked for it; the number is exact and has no size limit, but this \
                  machine cannot hold its digits"
             )
         );
@@ -1089,9 +1089,9 @@ fn printing_a_number_too_large_to_build_is_an_error_naming_its_size() {
     );
     assert_eq!(
         err.to_string(),
-        "`String` must build a number of up to 1267650600228229401496703205378 bits in full, \
-         and the system refused the memory for it; the number is exact and has no size limit, \
-         but this machine cannot hold its digits"
+        "`String` must build a number in full, and the system refused the \
+         4322886617184547919947741790226 bytes of memory asked for it; the number is exact and \
+         has no size limit, but this machine cannot hold its digits"
     );
     // A rational with a huge denominator is refused the same way.
     let rat = |t: Term| prim(Prim::CastRat, vec![t]);

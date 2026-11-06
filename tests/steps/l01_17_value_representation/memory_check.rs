@@ -12,6 +12,7 @@
 use std::process::Command;
 
 use num_bigint::{BigInt, BigUint};
+use zed_kernel::num::bytes_of;
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Term, Value, eval};
 use zed_tests::kernel::{bin, get, path};
@@ -45,6 +46,11 @@ pub(super) fn in_child_at(module: &str, name: &str) -> bool {
         .env(CHILD, "1")
         // One malloc arena, so no thread reserves a new 64 MiB heap under the limit.
         .env("MALLOC_ARENA_MAX", "1")
+        // A fixed mmap threshold, so an allocation of 128 KiB or more is its own mapping, which
+        // the limit counts: glibc otherwise raises the threshold to the size of each mapped
+        // block freed, up to 32 MiB, and serves a later large allocation from freed heap
+        // inside the limit, where it is not refused.
+        .env("MALLOC_MMAP_THRESHOLD_", "131072")
         .output()
         .expect("the test binary runs");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -156,10 +162,11 @@ fn ordering_numbers_that_agree_in_many_bits_is_refused_when_memory_is_short() {
         assert_eq!(
             err.to_string(),
             format!(
-                "`{op}` must compare two numbers that agree in their leading digits, which \
-                 needs up to {bits} bits of each, and the system refused the memory for it; \
+                "`{op}` must compare two numbers that agree in their leading digits, and the \
+                 system refused the {} bytes of memory asked to read enough of their digits; \
                  the numbers are exact and have no size limit, but this machine cannot hold \
-                 enough of their digits to order them"
+                 enough of their digits to order them",
+                bytes_of(bits)
             )
         );
     }
@@ -219,9 +226,10 @@ fn equality_that_must_copy_a_wide_number_is_refused_when_memory_is_short() {
             err.to_string(),
             format!(
                 "`{op}` must compare two numbers in the same normal form, which moves a prime \
-                 one keeps as a power out of the other's digits and needs up to {bits} bits, \
-                 and the system refused the memory for it; the numbers are exact and have no \
-                 size limit, but this machine cannot hold enough of their digits to compare them"
+                 one keeps as a power out of the other's digits, and the system refused the {} \
+                 bytes of memory asked for it; the numbers are exact and have no size limit, \
+                 but this machine cannot hold enough of their digits to compare them",
+                bytes_of(bits)
             )
         );
     }
@@ -276,10 +284,11 @@ fn a_family_key_order_refused_is_an_error() {
     assert_eq!(
         err.to_string(),
         format!(
-            "two numbers placed in a family's key order agree in their leading digits, which \
-             needs up to {bits} bits of each to order them, and the system refused the memory \
-             for it; the numbers are exact and have no size limit, but this machine cannot \
-             hold enough of their digits to order them"
+            "two numbers placed in a family's key order agree in their leading digits, and \
+             the system refused the {} bytes of memory asked to read enough of their \
+             digits; the numbers are exact and have no size limit, but this machine cannot \
+             hold enough of their digits to order them",
+            bytes_of(bits)
         )
     );
 }
@@ -301,10 +310,11 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
     assert_eq!(
         err.to_string(),
         format!(
-            "`f64` must round a number that lies near a rounding boundary, which needs up to \
-             {bits} bits of it, and the system refused the memory for it; the number is exact \
-             and has no size limit, but this machine cannot hold enough of its digits to \
-             round it"
+            "`f64` must round a number that lies near a rounding boundary, and the system \
+             refused the {} bytes of memory asked to read enough of its digits; the number \
+             is exact and has no size limit, but this machine cannot hold enough of its \
+             digits to round it",
+            bytes_of(bits)
         )
     );
     // `1.5` is a float exactly, and reads no more than its own bits.
@@ -316,15 +326,13 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
 }
 
 /// A float literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53`
-/// less `10^-(54 + n)`: its digits to `...203124` and then `n = 2^22` nines. Rounding it must
-/// read about `3.3 n` bits of it to tell which side of the boundary it lies on, which the
-/// system refuses under a limit `margin` bytes above what the child holds, so the elaborator
-/// reports an error at the literal and does not abort. The text is parsed, resolved and checked
-/// before the limit is lowered, as each of those copies the literal's text; the message holds
-/// the literal, so it is read without copying it. Below about 24 MiB the reading of the digits
-/// (`Rat::decimal`), which asks for nothing, aborts first, and above about 64 MiB the literal
-/// rounds (COMPLEXITY.md K30).
-fn a_literal_near_a_boundary_is_refused_under(margin: u64) {
+/// less `10^-(54 + n)`: its digits to `...203124` and then `n = 2^22` nines, parsed, resolved
+/// and checked, then elaborated under a limit `margin` bytes above what the child holds.
+/// Returns the one error the elaborator reports, at the literal; it does not abort. Reading
+/// the digits (`Rat::decimal`) asks for 64 bits of memory a digit, about 32 MiB; rounding the
+/// number then reads about `3.3 n` bits of it to tell which side of the boundary it lies on,
+/// and above about 64 MiB the literal rounds (COMPLEXITY.md K30).
+fn a_literal_near_a_boundary_refused_under(margin: u64) -> String {
     let literal = format!(
         "1.00000000000000011102230246251565404236316680908203124{}",
         "9".repeat(1 << 22)
@@ -337,49 +345,56 @@ fn a_literal_near_a_boundary_is_refused_under(margin: u64) {
     let info = zedc::check::check(&stmts, &res);
     assert!(info.errors.is_empty());
     lower_limit_by(margin);
-    let Err(errs) = zedc::elab::elaborate_checked(&stmts, &res, &info) else {
+    let Err(mut errs) = zedc::elab::elaborate_checked(&stmts, &res, &info) else {
         panic!("elaborated without error")
     };
     assert_eq!(errs.len(), 1);
     assert!(text[errs[0].span.start..errs[0].span.end] == *literal);
-    let rest = errs[0]
-        .message
-        .strip_prefix('`')
-        .and_then(|e| e.strip_prefix(literal.as_str()))
-        .and_then(|e| {
-            e.strip_prefix(
-                "` lies so near a rounding boundary of f64 that telling which side it is on \
-                 needs up to ",
-            )
-        })
-        .unwrap_or_else(|| panic!("another message: {}", &errs[0].message[..200]));
-    let (bits, rest) = rest.split_once(' ').expect("a size and the rest");
-    let bits: u64 = bits.parse().expect("a size in bits");
-    assert!(bits > 1 << 22, "{bits} bits");
+    errs.pop().expect("one error").message
+}
+
+/// The memory asked to read the literal's 54 digits and `2^22` nines, 64 bits a digit, in bytes.
+fn literal_read_bytes() -> u64 {
+    8 * (54 + (1 << 22))
+}
+
+/// [`a_literal_near_a_boundary_refused_under`] 16 MiB, where reading the digits, which asked
+/// for nothing, aborted the child; it asks first and is refused.
+#[test]
+fn a_long_decimal_literal_is_refused_when_memory_is_short() {
+    if !in_child("a_long_decimal_literal_is_refused_when_memory_is_short") {
+        return;
+    }
     assert_eq!(
-        rest,
-        "bits of it, and the system refused the memory for it; write fewer digits"
+        a_literal_near_a_boundary_refused_under(16 << 20),
+        format!(
+            "this literal has so many digits that the system refused the {} bytes of memory \
+             asked to read them; a literal has no size limit, but this machine cannot hold \
+             this one's value; write fewer digits",
+            literal_read_bytes()
+        )
     );
 }
 
-/// [`a_literal_near_a_boundary_is_refused_under`] 32 MiB, where a round of the rounding that
-/// asked for `16k` bits was given them, rose above them in num-bigint's division and aborted
-/// the child; it asks for `32k` and is refused (the Complexity tradeoff in `bound::round`).
-#[test]
-fn a_literal_near_a_rounding_boundary_is_a_compile_error_when_memory_is_short() {
-    if !in_child("a_literal_near_a_rounding_boundary_is_a_compile_error_when_memory_is_short") {
-        return;
-    }
-    a_literal_near_a_boundary_is_refused_under(32 << 20);
-}
-
-/// [`a_literal_near_a_boundary_is_refused_under`] 48 MiB, where the `16k` ask also aborted.
+/// [`a_literal_near_a_boundary_refused_under`] 48 MiB: the digits are read, and a round of the
+/// rounding that asked for `16k` bits was given them, rose above them in num-bigint's division
+/// and aborted the child; it asks for `32k` and is refused (the Complexity tradeoff in
+/// `bound::round`).
 #[test]
 fn a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round() {
     if !in_child("a_literal_near_a_rounding_boundary_is_refused_below_the_peak_of_a_round") {
         return;
     }
-    a_literal_near_a_boundary_is_refused_under(48 << 20);
+    let message = a_literal_near_a_boundary_refused_under(48 << 20);
+    let bytes = message
+        .strip_prefix(
+            "this literal lies so near a rounding boundary of f64 that telling which side it \
+             is on needs more of its digits than the system gives: it refused the ",
+        )
+        .and_then(|e| e.strip_suffix(" bytes of memory asked to read them; write fewer digits"))
+        .unwrap_or_else(|| panic!("another message: {message}"));
+    let bytes: u64 = bytes.parse().expect("a size in bytes");
+    assert!(bytes > 1 << 19, "{bytes} bytes");
 }
 
 /// With memory to spare the same operations give the exact answers.
@@ -446,9 +461,11 @@ fn printing_a_composite_holding_a_number_too_large_to_build_is_an_error() {
             panic!("{what}: {err:?}")
         };
         assert_eq!((what, *op), (what, "String"));
+        // The memory asked: a byte for each of its `2^100 + 2` bits and eight for each byte of
+        // its text, at most `0.301 (2^100 + 2) + 2` (`Rat::text_ask`).
         assert_eq!(
-            bits.to_string(),
-            "1267650600228229401496703205378",
+            bytes_of(bits).to_string(),
+            "4322886617184547919947741790226",
             "{what}"
         );
     }
@@ -670,9 +687,10 @@ fn a_literal_pattern_refused_its_equality_test_is_an_error_of_match() {
         err.to_string(),
         format!(
             "`match` must compare two numbers in the same normal form, which moves a prime \
-             one keeps as a power out of the other's digits and needs up to {bits} bits, and \
-             the system refused the memory for it; the numbers are exact and have no size \
-             limit, but this machine cannot hold enough of their digits to compare them"
+             one keeps as a power out of the other's digits, and the system refused the {} \
+             bytes of memory asked for it; the numbers are exact and have no size limit, \
+             but this machine cannot hold enough of their digits to compare them",
+            bytes_of(bits)
         )
     );
 }
@@ -753,11 +771,12 @@ fn a_family_merge_refused_its_equality_test_is_an_error() {
     assert_eq!(
         err.to_string(),
         format!(
-            "two numbers in families, compared to tell whether they are equal, must be put in \
-             the same normal form, which moves a prime one keeps as a power out of the other's \
-             digits and needs up to {bits} bits, and the system refused the memory for it; the \
-             numbers are exact and have no size limit, but this machine cannot hold enough of \
-             their digits to compare them"
+            "two numbers in families, compared to tell whether they are equal, must be put \
+             in the same normal form, which moves a prime one keeps as a power out of the \
+             other's digits, and the system refused the {} bytes of memory asked for it; \
+             the numbers are exact and have no size limit, but this machine cannot hold \
+             enough of their digits to compare them",
+            bytes_of(bits)
         )
     );
 }

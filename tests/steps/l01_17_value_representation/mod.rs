@@ -4,6 +4,7 @@
 //! payload by position or by name; and `==` on functions waits for the enumerable domain
 //! their types give.
 
+mod asks;
 mod atoms;
 mod equality;
 mod in_place;

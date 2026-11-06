@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use unicode_ident::{is_xid_continue, is_xid_start};
 use zed_kernel::family::Family;
-use zed_kernel::num::Rat;
+use zed_kernel::num::{Rat, TooLarge, bytes_of};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::Value;
@@ -1509,12 +1509,20 @@ fn number(t: &str) -> Result<Value, String> {
         "nan" | "inf" | "-inf" => return t.parse().map(Value::float).map_err(|_| not()),
         _ => {}
     }
+    let refused = |e: TooLarge| {
+        format!(
+            "the system refused the {} bytes of memory asked to read the number `{t}`",
+            bytes_of(&e.bits)
+        )
+    };
     if t.contains('r') {
         // A side is digits, or digits and an exponent as a type prints them (`1e400000r`),
         // read as a decimal literal so the power is kept and not built.
         let side = |s: &str| -> Result<Rat, String> {
-            let s = s.strip_suffix('r').filter(|s| !s.contains('.'));
-            s.and_then(Rat::decimal).ok_or_else(not)
+            let Some(s) = s.strip_suffix('r').filter(|s| !s.contains('.')) else {
+                return Err(not());
+            };
+            Rat::decimal(s).map_err(refused)?.ok_or_else(not)
         };
         let Some((n, d)) = t.split_once('/') else {
             return side(t).map(Value::rat);
@@ -1522,10 +1530,7 @@ fn number(t: &str) -> Result<Value, String> {
         return match side(n)?.div(&side(d)?) {
             Ok(Some(r)) => Ok(Value::rat(r)),
             Ok(None) => Err(not()),
-            Err(e) => Err(format!(
-                "`{t}` needs up to {} bits, and the system refused the memory for it",
-                e.bits
-            )),
+            Err(e) => Err(refused(e)),
         };
     }
     if t.contains(['.', 'e']) {
@@ -1539,5 +1544,5 @@ fn number(t: &str) -> Result<Value, String> {
     {
         return Err(not());
     }
-    Value::int_text(t, 10).ok_or_else(not)
+    Value::int_text(t, 10).map_err(refused)?.ok_or_else(not)
 }

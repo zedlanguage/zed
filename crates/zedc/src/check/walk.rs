@@ -1418,12 +1418,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     fn expr_of(&mut self, m: &mut M<'a>, e: &'a Expr) {
-        if let Some(l) = literal(e) {
-            let t = match self.info.adopt.get(&l.span) {
-                Some(v) => lit_ty(v, l.neg),
-                None => lit_ty(&l.value, l.neg),
-            };
-            return m.ty(t);
+        match read_literal(e) {
+            Ok(Some(l)) => {
+                let t = match self.info.adopt.get(&l.span) {
+                    Some(v) => lit_ty(v, l.neg),
+                    None => lit_ty(&l.value, l.neg),
+                };
+                return m.ty(t);
+            }
+            Ok(None) => {}
+            // A refused `-k` is walked on, and its literal `k` reports the refusal, once.
+            Err(_) if matches!(e.kind, ExprKind::Unary(..)) => {}
+            Err(r) => {
+                self.error(e.span, unread_literal(&r));
+                return m.ty(Ty::empty());
+            }
         }
         match &e.kind {
             ExprKind::Record(_)
@@ -1446,9 +1455,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 unreachable!("resolve rejects the forms of layer L6")
             }
             // A `rat` literal is decorated and keeps its carrier.
-            ExprKind::Rat(s) => m.ty(Ty::lit(&Value::rat(
-                Rat::decimal(s).expect("the lexer's rat text is a decimal"),
-            ))),
+            ExprKind::Rat(s) => match Rat::decimal(s) {
+                Ok(r) => m.ty(Ty::lit(&Value::rat(
+                    r.expect("the lexer's rat text is a decimal"),
+                ))),
+                Err(r) => {
+                    self.error(e.span, unread_literal(&r));
+                    m.ty(Ty::empty())
+                }
+            },
             ExprKind::Int { .. } | ExprKind::Float(_) => m.ty(Ty::empty()),
             ExprKind::Bool(b) => m.ty(Ty::lit(&Value::Bool(*b))),
             ExprKind::Atom(a) => m.ty(Ty::set(KType::atom(a))),

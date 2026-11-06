@@ -54,7 +54,7 @@ fn every_printed_rat_reads_back_to_itself() {
     values.extend(wide.into_iter().map(|(n, d)| Rat::new(n, d).unwrap()));
     // Powers kept as exponents print their digits in full and read back as the same value.
     for text in ["1e300", "-2.5e-200", "123456789e45"] {
-        values.push(Rat::decimal(text).unwrap());
+        values.push(Rat::decimal(text).unwrap().unwrap());
     }
     for r in values {
         let v = Value::rat(r);

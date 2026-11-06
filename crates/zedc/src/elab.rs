@@ -25,13 +25,13 @@ use std::sync::Arc;
 
 use imbl::Vector;
 
-use zed_kernel::num::{LiteralRounding, literal_f64, show_f64};
+use zed_kernel::num::{LiteralRounding, bytes_of, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Universe, Value};
 
 use crate::ast::{
     Error, Every, Expr, ExprKind, Function, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type,
-    TypeKind,
+    TypeKind, unread_literal,
 };
 use crate::check::{self, Fit, Info, Misfit};
 use crate::lex::Span;

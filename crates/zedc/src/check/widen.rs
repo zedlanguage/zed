@@ -677,10 +677,11 @@ fn wraps(e: &Expr) -> bool {
     )
 }
 
-/// The digits of an integer literal as a number, if it fits in 128 bits.
+/// The digits of an integer literal as a number, if it fits in 128 bits. The lexer has removed
+/// the `_`, and the reading stops at the first digit past 128 bits, so a long literal is
+/// neither copied nor read in full.
 fn magnitude(digits: &str, radix: u32) -> Option<u128> {
-    let digits: String = digits.chars().filter(|&c| c != '_').collect();
-    u128::from_str_radix(&digits, radix).ok()
+    u128::from_str_radix(digits, radix).ok()
 }
 
 /// `k` when `e` is a power of two `2 ** k` with k at most 64, written as one literal or as

@@ -2102,7 +2102,7 @@ mod tests {
     fn scalar_cells_agree_with_explicit_set_operations_across_carriers() {
         // One or two literals of each carrier, so that every clause of `scalar_cell` decides
         // some pair: 128 types, finite and cofinite in each carrier.
-        let half = Rat::decimal("0.5").unwrap();
+        let half = Rat::decimal("0.5").expect("given").unwrap();
         let lits: Vec<Type> = [
             Value::Bool(true),
             Value::Int(0),

@@ -235,7 +235,9 @@ fn the_three_leaves_of_layer_l10_read_back() {
         Ty::union_all(&[
             Ty::lit(&Value::str("a")),
             Ty::lit(&Value::int((-1).into())),
-            Ty::lit(&Value::rat(Rat::decimal("2.5").expect("a decimal"))),
+            Ty::lit(&Value::rat(
+                Rat::decimal("2.5").unwrap().expect("a decimal")
+            )),
         ])
     );
     assert_eq!(

@@ -115,8 +115,10 @@ fn small() -> Vec<Value> {
 fn values() -> Vec<Value> {
     let mut vs = vec![
         int(2),
-        Value::int_text("1208925819614629174706176", 10).unwrap(),
-        Value::rat(zed_kernel::Rat::decimal("0.5").unwrap()),
+        Value::int_text("1208925819614629174706176", 10)
+            .unwrap()
+            .unwrap(),
+        Value::rat(zed_kernel::Rat::decimal("0.5").unwrap().unwrap()),
         Value::float(0.5),
         Value::float(-1.0),
         Value::Bool(false),

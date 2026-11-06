@@ -79,8 +79,8 @@ fn a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
         out.stderr.contains(
-            "`+` must build a number of up to 1267650600228229401496703205379 bits in full, \
-             and the system refused the memory for it"
+            "`+` must build a number in full, and the system refused the \
+             1267650600228229401496703205379 bytes of memory asked for it"
         ),
         "{}",
         out.stderr
@@ -97,8 +97,8 @@ fn printing_a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
         out.stderr.contains(
-            "`String` must build a number of up to 1267650600228229401496703205378 bits in \
-             full, and the system refused the memory for it"
+            "`String` must build a number in full, and the system refused the \
+             4322886617184547919947741790226 bytes of memory asked for it"
         ),
         "{}",
         out.stderr

@@ -20,7 +20,9 @@ fn int(n: i64) -> Rat {
 }
 
 fn dec(text: &str) -> Rat {
-    Rat::decimal(text).expect("a test literal is decimal")
+    Rat::decimal(text)
+        .expect("a test literal is small")
+        .expect("a test literal is decimal")
 }
 
 /// `2^k`, with `k` of either sign.

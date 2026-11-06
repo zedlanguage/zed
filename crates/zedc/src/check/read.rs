@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, Ty};
@@ -119,9 +119,9 @@ fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Bind
             (Tok::Op("!"), Some(Tok::Wildcard)) => (Ty::empty(), 2),
             (Tok::Op("!"), _) => return Err(format!("`{text}`: `!` stands before no `_`")),
             (Tok::Op("-"), Some(Tok::Int { radix, digits })) => {
-                (Ty::lit(&int(*radix, digits, true)?), 2)
+                (Ty::lit(&int(*radix, digits, true, text)?), 2)
             }
-            (Tok::Int { radix, digits }, _) => (Ty::lit(&int(*radix, digits, false)?), 1),
+            (Tok::Int { radix, digits }, _) => (Ty::lit(&int(*radix, digits, false, text)?), 1),
             (Tok::Float(s), _) => (
                 Ty::lit(&Value::float(
                     s.parse()
@@ -131,7 +131,9 @@ fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Bind
             ),
             (Tok::Rat(s), _) => (
                 Ty::lit(&Value::rat(
-                    Rat::decimal(s).ok_or_else(|| format!("`{text}`: the rational `{s}`"))?,
+                    Rat::decimal(s)
+                        .map_err(|e| refused(text, &e))?
+                        .ok_or_else(|| format!("`{text}`: the rational `{s}`"))?,
                 )),
                 1,
             ),
@@ -157,9 +159,23 @@ fn leaves(text: &str, head: &str, tokens: &[lex::Token]) -> Result<(String, Bind
     Ok((out, binds))
 }
 
-/// The integer of `digits` in `radix`, negated when `negative`.
-fn int(radix: u32, digits: &str, negative: bool) -> Result<Value, String> {
-    let n = BigInt::parse_bytes(digits.as_bytes(), radix)
+/// The integer of `digits` in `radix`, negated when `negative`, read in memory the system
+/// gives first; the type text `text` names it in an error.
+fn int(radix: u32, digits: &str, negative: bool, text: &str) -> Result<Value, String> {
+    let n = Value::int_text(digits, radix)
+        .map_err(|e| refused(text, &e))?
         .ok_or_else(|| format!("the digits `{digits}` in base {radix}"))?;
-    Ok(Value::int(if negative { -n } else { n }))
+    Ok(match negative {
+        true => Value::integer(n.as_integer().expect("an integer literal is an int").neg()),
+        false => n,
+    })
+}
+
+/// The message for a number in the type text `text` whose digits the system refused the memory
+/// to read.
+fn refused(text: &str, e: &TooLarge) -> String {
+    format!(
+        "`{text}`: the system refused the {} bytes of memory asked to read a number in it",
+        bytes_of(&e.bits)
+    )
 }

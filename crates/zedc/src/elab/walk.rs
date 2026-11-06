@@ -593,44 +593,45 @@ impl<'a> Elab<'a> {
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
                 unreachable!("resolve rejects the forms of layer L6")
             }
-            ExprKind::Int { radix, digits, .. } => {
-                let digits: String = digits.chars().filter(|&c| c != '_').collect();
-                let v = Value::int_text(&digits, *radix).expect("the lexer's digits");
-                Some(self.constant(e, v))
-            }
-            ExprKind::Float(s) => {
-                let s: String = s.chars().filter(|&c| c != '_').collect();
-                match literal_f64(&s) {
-                    Ok(x) => lit(Value::float(x)),
-                    Err(LiteralRounding::Infinite) => self.error(
-                        e.span,
-                        format!(
-                            "`{s}` rounds to infinity as an f64; the largest f64 is {}",
-                            show_f64(f64::MAX)
-                        ),
+            // The lexer has removed the `_` from a literal's digits, so they are read where they
+            // are, not copied.
+            ExprKind::Int { radix, digits, .. } => match Value::int_text(digits, *radix) {
+                Ok(v) => Some(self.constant(e, v.expect("the lexer's digits"))),
+                Err(r) => self.error(e.span, unread_literal(&r)),
+            },
+            ExprKind::Float(s) => match literal_f64(s) {
+                Ok(x) => lit(Value::float(x)),
+                Err(LiteralRounding::Infinite) => self.error(
+                    e.span,
+                    format!(
+                        "`{s}` rounds to infinity as an f64; the largest f64 is {}",
+                        show_f64(f64::MAX)
                     ),
-                    Err(LiteralRounding::Zero) => self.error(
-                        e.span,
-                        format!(
-                            "`{s}` is not zero but rounds to zero as an f64; the least positive \
-                             f64 is {}",
-                            show_f64(f64::from_bits(1))
-                        ),
+                ),
+                Err(LiteralRounding::Zero) => self.error(
+                    e.span,
+                    format!(
+                        "`{s}` is not zero but rounds to zero as an f64; the least positive \
+                         f64 is {}",
+                        show_f64(f64::from_bits(1))
                     ),
-                    Err(LiteralRounding::TooLarge(t)) => self.error(
-                        e.span,
-                        format!(
-                            "`{s}` lies so near a rounding boundary of f64 that telling which \
-                             side it is on needs up to {} bits of it, and the system refused \
-                             the memory for it; write fewer digits",
-                            t.bits
-                        ),
+                ),
+                Err(LiteralRounding::TooLarge(t)) => self.error(
+                    e.span,
+                    format!(
+                        "this literal lies so near a rounding boundary of f64 that telling \
+                         which side it is on needs more of its digits than the system \
+                         gives: it refused the {} bytes of memory asked to read them; \
+                         write fewer digits",
+                        bytes_of(&t.bits)
                     ),
-                }
-            }
-            ExprKind::Rat(s) => lit(Value::rat(
-                Rat::decimal(s).expect("the lexer's rat text is a decimal"),
-            )),
+                ),
+                Err(LiteralRounding::Unread(r)) => self.error(e.span, unread_literal(&r)),
+            },
+            ExprKind::Rat(s) => match Rat::decimal(s) {
+                Ok(r) => lit(Value::rat(r.expect("the lexer's rat text is a decimal"))),
+                Err(r) => self.error(e.span, unread_literal(&r)),
+            },
             ExprKind::Bool(b) => lit(Value::Bool(*b)),
             ExprKind::Atom(a) => lit(Value::atom(a)),
             ExprKind::Str(parts) => {

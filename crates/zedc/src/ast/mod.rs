@@ -32,6 +32,9 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::OnceLock;
 
+use num_bigint::BigUint;
+use zed_kernel::num::{TooLarge, bytes_of};
+
 pub use stmts::{
     Annot, BoundaryItem, Field, Function, Import, ImportKind, IndexKey, IndexedDef, Method, Port,
     Stmt, StmtKind, Struct, Target, TypeDecl,
@@ -1297,5 +1300,40 @@ impl<'a, 's> Builder<'a, 's> {
             _ => unreachable!("Literal = INT | FLOAT | RAT | STRING | 'true' | 'false'"),
         };
         Ok(Expr { kind, span })
+    }
+}
+
+/// The text `x` writes, in memory the system gives first for all of it; [`TooLarge`] when it
+/// refuses, naming that memory. The text is written twice, once to count its bytes, so a
+/// literal too long to copy is an error and not an abort.
+pub fn shown(x: &impl fmt::Display) -> Result<String, TooLarge> {
+    let mut len = Count(0);
+    fmt::write(&mut len, format_args!("{x}")).expect("counting cannot fail");
+    let mut out = String::new();
+    out.try_reserve_exact(len.0).map_err(|_| TooLarge {
+        bits: BigUint::from(len.0) << 3u32,
+    })?;
+    fmt::write(&mut out, format_args!("{x}")).expect("writing to a String");
+    Ok(out)
+}
+
+/// The message for a numeric literal whose digits the system refused the memory to read. It
+/// does not quote the literal, which may be millions of digits long.
+pub fn unread_literal(r: &TooLarge) -> String {
+    format!(
+        "this literal has so many digits that the system refused the {} bytes of memory asked \
+         to read them; a literal has no size limit, but this machine cannot hold this one's \
+         value; write fewer digits",
+        bytes_of(&r.bits)
+    )
+}
+
+/// Counts the bytes written to it.
+struct Count(usize);
+
+impl fmt::Write for Count {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 += s.len();
+        Ok(())
     }
 }

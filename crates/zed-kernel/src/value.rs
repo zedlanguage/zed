@@ -15,12 +15,12 @@ use std::ops::Deref;
 use std::slice;
 use std::sync::Arc;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
 
 use crate::deep::{self, Part};
 use crate::family::{Family, Id, fresh_id};
-use crate::num::{Exact, Rat};
+use crate::num::{Exact, Rat, TooLarge, read_decimal, room, sign_of};
 use crate::text::Text;
 
 /// A 64-bit float that compares bitwise after NaN canonicalization, as every kernel equation
@@ -429,9 +429,30 @@ impl Value {
         }
     }
 
-    /// The integer whose digits, in base `radix`, are `digits`.
-    pub fn int_text(digits: &str, radix: u32) -> Option<Self> {
-        BigInt::parse_bytes(digits.as_bytes(), radix).map(Value::int)
+    /// The integer whose digits, in base `radix` (2 to 36), are `text`, after an optional `-` or
+    /// `+`; `Ok(None)` when they are not, and [`TooLarge`] when the system refuses the memory for
+    /// reading them, asked before anything is built.
+    pub fn int_text(text: &str, radix: u32) -> Result<Option<Self>, TooLarge> {
+        let (sign, digits) = sign_of(text);
+        let int = |n: BigUint| Value::int(BigInt::from_biguint(sign, n));
+        if radix == 10 {
+            return Ok(read_decimal(digits)?.map(int));
+        }
+        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+            return Ok(None);
+        }
+        // Complexity tradeoff: the memory asked for is twice a byte per digit plus the
+        // integer's width, a measured bound, not a proved one, on num-bigint's reading of a
+        // text in a base other than 10, which holds the digits as bytes and then packs them
+        // into words: the peak heap was 8 bits per digit plus the width (9, 11 and 12 bits per
+        // digit in bases 2, 8 and 16) over texts of 2^12 to 2^22 digits, half the ask. A width
+        // alone undercounts base 2, whose byte per digit is eight times its width. So a text
+        // needing less is refused when the free memory lies between the two, and none aborts.
+        // Tested by `a_long_integer_literal_is_refused_when_memory_is_short` (COMPLEXITY.md
+        // K30). A complete solution would pack the digits into words with memory reserved once.
+        let per_digit = radix.ilog2() + u32::from(!radix.is_power_of_two());
+        room((BigUint::from(digits.len()) * (8 + per_digit)) << 1u32)?;
+        Ok(BigUint::parse_bytes(digits.as_bytes(), radix).map(int))
     }
 
     /// The rational `r`.

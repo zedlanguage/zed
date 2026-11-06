@@ -106,31 +106,45 @@ impl Rat {
     }
 
     /// The exact value of a decimal literal's text, such as `0.1`, `2.5e-3` or `1e400000`;
-    /// `None` when it is not decimal digits with an optional `-`, fraction and exponent. A
-    /// written exponent is kept as powers of 2 and 5, so the text's length bounds the cost.
-    pub fn decimal(text: &str) -> Option<Self> {
+    /// `Ok(None)` when it is not decimal digits with an optional sign, fraction and exponent
+    /// (the exponent with an optional sign). A written exponent is kept as powers of 2 and 5, so
+    /// the text's length bounds the cost. [`TooLarge`] when the system refuses the memory for
+    /// reading the digits, asked before anything is built.
+    pub fn decimal(text: &str) -> Result<Option<Self>, TooLarge> {
         let (mantissa, exp) = match text.find(['e', 'E']) {
-            Some(i) => (&text[..i], Some(text[i + 1..].parse::<BigInt>().ok()?)),
+            Some(i) => (&text[..i], Some(sign_of(&text[i + 1..]))),
             None => (text, None),
         };
-        let (sign, mantissa) = match (mantissa.strip_prefix('-'), mantissa.strip_prefix('+')) {
-            (Some(rest), _) => (Sign::Minus, rest),
-            (None, Some(rest)) => (Sign::Plus, rest),
-            (None, None) => (Sign::Plus, mantissa),
-        };
+        let (sign, mantissa) = sign_of(mantissa);
         let (whole, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-        let digits = BigInt::from_biguint(sign, read_decimal(&format!("{whole}{frac}"))?);
-        match exp {
-            None => Some(Rat::over_ten_to(digits, u64::try_from(frac.len()).ok()?)),
-            Some(e) => {
-                let e = e - frac.len();
-                Some(Rat::extract(
-                    digits,
-                    BigInt::one(),
-                    vec![(2, e.clone()), (5, e)],
-                ))
-            }
+        let digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+        let read = !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac);
+        if !read || exp.is_some_and(|(_, e)| e.is_empty() || !digits(e)) {
+            return Ok(None);
         }
+        // Complexity tradeoff: the memory asked for is 64 bits for each digit of the text, a
+        // measured bound, not a proved one, on the copy of the mantissa's digits, their reading
+        // by halves, and the division by a power of ten in lowest terms or the powers of 2 and
+        // 5 moved out into exponents: the peak heap was at most 31.3 bits per digit (9.41 times
+        // the `3.32 n` bits of the number) over texts of 2^12 to 2^24 digits, all nines, a long
+        // fraction, a run of zeros and an exponent. So a literal needing less is refused when
+        // the free memory lies between the two, and none aborts. Tested by
+        // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
+        // complete solution would ask each allocation of the reading for its own memory.
+        let len = whole.len() + frac.len() + exp.map_or(0, |(_, e)| e.len());
+        room(BigUint::from(len) << 6u32)?;
+        let mantissa = match frac.is_empty() {
+            true => BigInt::from_biguint(sign, read_digits(whole)),
+            false => BigInt::from_biguint(sign, read_digits(&[whole, frac].concat())),
+        };
+        let shift = u64::try_from(frac.len()).expect("a text's length fits in 64 bits");
+        Ok(Some(match exp {
+            None => Rat::over_ten_to(mantissa, shift),
+            Some((s, e)) => {
+                let e = BigInt::from_biguint(s, read_digits(e)) - shift;
+                Rat::extract(mantissa, BigInt::one(), vec![(2, e.clone()), (5, e)])
+            }
+        }))
     }
 
     /// `digits / 10^k` as a plain reduced rational. `10^k` is `2^k 5^k`, so the common factor
@@ -179,10 +193,20 @@ impl Rat {
     /// The integer it is, built, or [`TooLarge`] when the system refuses the memory for it.
     /// It must be an integer.
     pub fn to_integer(&self) -> Result<BigInt, TooLarge> {
-        room(width(
-            &self.num,
-            self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
-        ))?;
+        // Complexity tradeoff: the memory asked for is eight times the integer's width, a
+        // measured bound, not a proved one, on building it power by power (each power by
+        // num-bigint's squaring and the running product by its Toom-3 multiplication): the
+        // peak heap was at most 5.49 times the width over integers of 2^14 to 2^24 bits, one
+        // prime, several primes, and a wide coefficient times a power. So an integer needing
+        // less is refused when the free memory lies between the two, and none aborts. Tested by
+        // `building_a_kept_power_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
+        // complete solution would ask each allocation of the build for its own memory.
+        room(
+            width(
+                &self.num,
+                self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
+            ) << 3u32,
+        )?;
         Ok(self.integer_built())
     }
 
@@ -227,15 +251,25 @@ impl Rat {
         format!("{sign}{}", digits(self.num.magnitude(), pows.collect()))
     }
 
-    /// `Ok` when the system gives the memory to write its digits: the number built, of at
-    /// most `bits` bits, and its text, at most `bits * log10(2) + 2` bytes; else [`TooLarge`]
-    /// naming `bits`, before anything is built.
+    /// `Ok` when the system gives the memory to write its digits ([`Rat::text_ask`]); else
+    /// [`TooLarge`] naming that memory, before anything is built.
     pub fn text_room(&self) -> Result<(), TooLarge> {
+        room(self.text_ask())
+    }
+
+    /// The memory writing its digits asks for, in bits.
+    pub(crate) fn text_ask(&self) -> BigUint {
         let (bits, text) = self.text_size();
-        match given(&(&bits + (text << 3u32))) {
-            true => Ok(()),
-            false => Err(TooLarge { bits }),
-        }
+        // Complexity tradeoff: the memory asked for is eight times the number's width and its
+        // text together, a measured bound, not a proved one, on building the number, num-
+        // bigint's conversion to decimal (by divide and conquer, its powers of ten and parts
+        // held at once), the zeros of a kept power of ten, and the copy of the text into the
+        // value: the peak heap was at most 4.52 times that over numbers of 2^12 to 2^20 bits,
+        // plain, kept powers and rationals. So a text needing less is refused when the free
+        // memory lies between the two, and none aborts. Tested by
+        // `printing_a_wide_number_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
+        // complete solution would write the digits by halves into memory reserved once.
+        (bits + (text << 3u32)) << 3u32
     }
 
     /// What writing its digits builds: the number, of at most the first many bits, and its
@@ -412,6 +446,13 @@ impl Rat {
         // `a_sum_too_large_to_build_is_an_error_naming_its_size` (COMPLEXITY.md K30).
         // A complete solution would keep a sum of terms unbuilt, ordered and projected by
         // bounds as products are.
+        // Complexity tradeoff: the memory asked for is eight times the wider side's width, a
+        // measured bound, not a proved one, on building both sides' powers, the cross products,
+        // the sum, and its reduction and the primes moved out into exponents: the peak heap was
+        // at most 4.97 times that width over sums of 2^14 to 2^24 bits, an integer and a power,
+        // two powers, a common power, a wide coefficient, and rationals. So a sum needing less
+        // is refused when the free memory lies between the two, and none aborts. Tested by
+        // `a_sum_of_kept_powers_is_refused_when_memory_is_short` (COMPLEXITY.md K30).
         let a = self.aligned(&b.pows, true)?;
         let b = b.aligned(&self.pows, true)?;
         let mut common = Vec::new();
@@ -425,7 +466,8 @@ impl Rat {
         }
         let sizes = [(&a.num, &rest_a, &b.den), (&b.num, &rest_b, &a.den)]
             .map(|(n, rest, d)| width(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
-        room(sizes[0].clone().max(sizes[1].clone()) + 1u32)?;
+        let [x, y] = sizes;
+        room((x.max(y) + 1u32) << 3u32)?;
         let ra = &a.num * built(&rest_a);
         let rb = &b.num * built(&rest_b);
         Ok(Rat::build(
@@ -537,14 +579,29 @@ impl Rat {
         if self.is_zero() {
             return Ok(self.clone());
         }
+        let parts = [self.num.magnitude(), self.den.magnitude()];
+        // Complexity tradeoff: the memory asked for is eight times the width of the built
+        // powers together, a measured bound, not a proved one, on num-bigint's power by
+        // squaring (each square by Toom-3, the base and the running result held at once), the
+        // numerator's power held while the denominator's is built: the peak heap was at most
+        // 6.09 times the width over bases of 2^10 to 2^22 bits and exponents 2 to 31, and 3.55
+        // times it for a rational with both parts wide. So a power needing less is refused when
+        // the free memory lies between the two, and none aborts. Tested by
+        // `a_power_of_a_wide_base_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
+        // complete solution would ask each allocation of the power for its own memory.
+        let wide: u64 = parts
+            .iter()
+            .filter(|part| part.to_u64().is_none())
+            .map(|part| part.bits())
+            .sum();
+        if wide > 0 {
+            room((BigUint::from(wide) * e) << 3u32)?;
+        }
         let times = BigInt::from(e.clone());
         let mut pows: Vec<(u64, BigInt)> =
             self.pows.iter().map(|(p, x)| (*p, x * &times)).collect();
-        let mut parts = [BigInt::one(), BigInt::one()];
-        for (i, part) in [self.num.magnitude(), self.den.magnitude()]
-            .into_iter()
-            .enumerate()
-        {
+        let mut raised = [BigInt::one(), BigInt::one()];
+        for (i, part) in parts.into_iter().enumerate() {
             if part.is_one() {
                 continue;
             }
@@ -559,18 +616,15 @@ impl Rat {
                 // the power by building it, at a cost proportional to the result's size,
                 // where one within 64 bits is factored and kept as exponents; such a part only
                 // arises from a value built before, so its power is the size of that value
-                // times `e`; one that does not fit in memory is `TooLarge`. Tested by
-                // `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
+                // times `e`; one that does not fit in memory is `TooLarge`, asked above. Tested
+                // by `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
                 // A complete solution would keep an opaque base `b^e` beside the primes, with
                 // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
-                None => {
-                    room(BigUint::from(part.bits()) * e)?;
-                    parts[i] = BigInt::from(Pow::pow(part, e));
-                }
+                None => raised[i] = BigInt::from(Pow::pow(part, e)),
             }
         }
         pows.sort_unstable_by_key(|(p, _)| *p);
-        let [mut num, den] = parts;
+        let [mut num, den] = raised;
         if self.is_negative() && e.bit(0) {
             num = -num;
         }
@@ -891,7 +945,34 @@ fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
 /// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.
 const LEAF_DIGITS: usize = 512;
 
-/// The value of a text of ASCII decimal digits, `None` when it is empty or holds anything else.
+/// The sign of a text and the rest of it after an optional `-` or `+`.
+pub(crate) fn sign_of(text: &str) -> (Sign, &str) {
+    match (text.strip_prefix('-'), text.strip_prefix('+')) {
+        (Some(rest), _) => (Sign::Minus, rest),
+        (None, Some(rest)) => (Sign::Plus, rest),
+        (None, None) => (Sign::Plus, text),
+    }
+}
+
+/// The value of a text of ASCII decimal digits; `Ok(None)` when it is empty or holds anything
+/// else, and [`TooLarge`] when the system refuses the memory for reading it, asked before
+/// anything is built.
+pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(None);
+    }
+    // Complexity tradeoff: the memory asked for is 32 bits for each digit, a measured bound,
+    // not a proved one, on the reading by halves (the powers of ten, the parts and their
+    // products held at once): the peak heap was at most 20.0 bits per digit (6.00 times the
+    // `3.32 n` bits of the number) over texts of 2^12 to 2^24 nines. So a text needing less is
+    // refused when the free memory lies between the two, and none aborts. Tested by
+    // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A complete
+    // solution would ask each allocation of the reading for its own memory.
+    room(BigUint::from(digits.len()) << 5u32)?;
+    Ok(Some(read_digits(digits)))
+}
+
+/// The value of a nonempty text of ASCII decimal digits, with no check of its size.
 ///
 /// num-bigint reads a text one machine word of digits at a time into the whole number read so
 /// far, O(n^2) for `n` digits. This reads the text in two parts, the low part `LEAF_DIGITS *
@@ -899,10 +980,7 @@ const LEAF_DIGITS: usize = 512;
 /// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring. The cost is
 /// that of the widest product, O(n^1.47) with num-bigint's Toom-3 multiplication, and the
 /// recursion is `log2(n / LEAF_DIGITS)` deep.
-pub fn read_decimal(digits: &str) -> Option<BigUint> {
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
+fn read_digits(digits: &str) -> BigUint {
     let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
     if let Some(top) = split_depth(digits.len()) {
         while tens.len() <= top {
@@ -910,7 +988,7 @@ pub fn read_decimal(digits: &str) -> Option<BigUint> {
             tens.push(next);
         }
     }
-    Some(read_parts(digits, &tens))
+    read_parts(digits, &tens)
 }
 
 /// The `i` for which a text of `len` digits splits into a low part of `LEAF_DIGITS * 2^i`
@@ -1037,19 +1115,32 @@ fn width<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> B
     bits
 }
 
-/// A number the evaluator must build, of at most `bits` bits, for which the system refused
-/// the memory (DESIGN.md sec:domains): the number is a value of the language, and building
-/// it is the machine's failure, not the program's.
+/// A number the evaluator must build, or read, for which the system refused the memory
+/// (DESIGN.md sec:domains): the number is a value of the language, and building it is the
+/// machine's failure, not the program's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TooLarge {
-    /// At most this many bits: the size the build needs.
+    /// The memory asked for, in bits: a measured multiple of the size of what is built, not
+    /// the size of the number.
     pub bits: BigUint,
 }
 
-/// `Ok` when the system gives the memory for a number of `bits` bits, asked of the allocator
-/// itself and freed at once, so the answer is the machine's and the evaluator sets no limit.
-/// A build that would ask for more than the system gives is reported before it starts, where
-/// num-bigint would abort the process.
+impl TooLarge {
+    /// The memory asked for, in bytes, rounded up.
+    pub fn bytes(&self) -> BigUint {
+        bytes_of(&self.bits)
+    }
+}
+
+/// `bits` bits of memory in bytes, rounded up.
+pub fn bytes_of(bits: &BigUint) -> BigUint {
+    (bits + 7u32) >> 3u32
+}
+
+/// `Ok` when the system gives `bits` bits of memory, asked of the allocator itself and freed
+/// at once, so the answer is the machine's and the evaluator sets no limit. A build that would
+/// ask for more than the system gives is reported before it starts, where num-bigint would
+/// abort the process.
 pub(crate) fn room(bits: BigUint) -> Result<(), TooLarge> {
     match given(&bits) {
         true => Ok(()),
@@ -1466,6 +1557,9 @@ pub enum LiteralRounding {
     /// It lies so near a rounding boundary that telling which side it is on needs more
     /// memory than the system gives.
     TooLarge(TooLarge),
+    /// The literal has so many digits that reading them needs more memory than the system
+    /// gives.
+    Unread(TooLarge),
 }
 
 /// The float literal `text` at `f64`: decimal digits with an optional fraction and exponent,
@@ -1474,17 +1568,20 @@ pub enum LiteralRounding {
 /// ties to even; it is an error when that rounds to infinity, or to zero while the literal is
 /// not zero, so `0e999` is zero and `1e-400` is an error.
 pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
-    Rat::decimal(text)
-        .expect("the lexer's float text is a decimal")
-        .to_f64()
+    literal(text)?.to_f64()
 }
 
 /// The float literal `text` at `f32`, by the rule of [`literal_f64`]: `1e39` rounds to
 /// infinity and `1e-46` to zero.
 pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
-    Rat::decimal(text)
-        .expect("the lexer's float text is a decimal")
-        .to_f32()
+    literal(text)?.to_f32()
+}
+
+/// The exact value of the float literal `text`.
+fn literal(text: &str) -> Result<Rat, LiteralRounding> {
+    Ok(Rat::decimal(text)
+        .map_err(LiteralRounding::Unread)?
+        .expect("the lexer's float text is a decimal"))
 }
 
 /// The float equal to `r`, when there is one; [`TooLarge`] when rounding `r` was refused the
@@ -1499,7 +1596,7 @@ pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
     }
     let x = match r.to_f64() {
         Ok(x) => x,
-        Err(LiteralRounding::TooLarge(e)) => return Err(e),
+        Err(LiteralRounding::TooLarge(e) | LiteralRounding::Unread(e)) => return Err(e),
         Err(LiteralRounding::Infinite | LiteralRounding::Zero) => return Ok(None),
     };
     Ok(match Exact::float(x) {

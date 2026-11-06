@@ -263,7 +263,11 @@ fn a_literal_pattern_on_a_state_word_is_an_error() {
 fn an_is_pattern_reads_a_constant_and_a_kernel_value_in_place() {
     let mut h = Heap::new();
     let name = h.uncounted(Value::str("Ada"));
-    let big = h.fresh(&Value::int_text("1180591620717411303424", 10).unwrap());
+    let big = h.fresh(
+        &Value::int_text("1180591620717411303424", 10)
+            .unwrap()
+            .unwrap(),
+    );
     let pair = h.fresh(&Value::tuple(vec![Value::Int(1), Value::str("x")]));
     let is = |h: &mut Heap, t: Type, w| {
         h.matches(&Pattern::Is(t), w, &mut Vec::new(), &mut Vec::new())
