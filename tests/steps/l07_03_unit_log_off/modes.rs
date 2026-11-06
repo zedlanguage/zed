@@ -1,12 +1,15 @@
 //! The build modes (DESIGN.md Part F, "Build modes"; plan row BUILD-modes): the table names
 //! the debug build and the optimized build, each preserving the program's values, and every
 //! "X build" of DESIGN.md that names a kind of build is a name the bullet defines. A program
-//! gives the same expected outputs in each way this implementation builds it, with logging on
-//! and off.
+//! gives the same expected outputs in each way this implementation builds it, with and without
+//! the unit item `@log(#off);`.
 //!
 //! The implementation does not yet have the two modes (the log modes come with step L7.3, and
 //! what a debug build optimizes is author question A25), so the run test covers the two
-//! builds it has: the interpreter, `zedc run`, and the native executable, `zedc build`.
+//! builds it has: the interpreter, `zedc run`, and the native executable, `zedc build`. There
+//! is no log port before step L7.3, so the program writes no log line with or without the
+//! item: the test compares the two builds against fixed outputs, and shows that both accept
+//! the item and that it changes no output; it cannot yet show that logging off drops a line.
 
 use std::path::Path;
 
@@ -264,7 +267,7 @@ fn program(off: bool) -> String {
 }
 
 #[test]
-fn a_run_gives_the_same_outputs_in_each_build_with_logging_on_and_off() {
+fn a_run_gives_the_same_outputs_in_each_build_with_and_without_the_log_off_item() {
     let d = dir("build_modes");
     let cases: [(&[u8], &str); 4] = [
         (b"21\n", "69F\n"),
