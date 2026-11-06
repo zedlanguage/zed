@@ -5,6 +5,7 @@
 //! reason.
 
 mod items;
+mod modes;
 mod resolution;
 mod run;
 mod scaling;
