@@ -4,7 +4,7 @@
 //! root region follows. Every count, index and integer is a 64-bit little-endian word, every
 //! string a count of bytes and then its UTF-8 bytes, and every choice a one-byte tag. A name
 //! (of an atom, a field, a port or an evidence key) is read by the rule the text form reads one
-//! by, and a pattern binder may also be one the compiler makes ([`text::not_a_binder`]); a
+//! by, and a pattern binder may also be one the compiler makes (`text::not_a_binder`); a
 //! catalog entry, a string value and the digits of a number are not names. A value is
 //! written by its structure, a number outside the 64-bit range and a rational by their
 //! decimal digits, and a float by its bits, so every value comes back bit for bit. An edge is
