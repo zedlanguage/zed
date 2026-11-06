@@ -45,6 +45,8 @@ sig u = (n: int) -> ((int) -> ((int) -> (int, int, int)))
 sig v = (n: int) -> !_
 err `n` of `u` is named: pass it as `n: …` [n]
   note `u` is declared here, `(n: int) -> ((int) -> ((int) -> (int, int, int)))`
+  note repair: pass `n` by name, as `n: …`
+  note repair: declare `n` `positional`
 === "w(f: (int) -> (int) -> (int, int, int)) = f;\nr = w(f: g(0))(1)(2);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig w = (f: ((int) -> ((int) -> (int, int, int)))) -> ((int) -> ((int) -> (int, int, int)))
@@ -84,8 +86,12 @@ top zz = !_
 call "g(q)(q)" = (int) -> ((int) -> (int, int, int))
 err `q` of `y` is named: pass it as `q: …` [1]
   note `y` is declared here, `(q: int) -> ((int) -> (int, int, int))`
+  note repair: pass `q` by name, as `q: …`
+  note repair: declare `q` `positional`
 err `q` of `y` is named: pass it as `q: …` [1.5]
   note `y` is declared here, `(q: int) -> ((int) -> (int, int, int))`
+  note repair: pass `q` by name, as `q: …`
+  note repair: declare `q` `positional`
 === "take(f: (int) -> (int) -> (int, int, int)) = f(1)(2);\nr = take(f: (a1) -> (a2) -> (0 + 1, a1 + 1, a2 + 1));\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig take = (f: ((int) -> ((int) -> (int, int, int)))) -> (int, int, int)
@@ -131,6 +137,8 @@ sig p = (x: T) -> ((T) -> T) for T in int | f64 | rat
 top q = !_
 err `x` of `p` is named: pass it as `x: …` [1]
   note `p` is declared here, `(x: T) -> ((T) -> T) for T in int | f64 | rat`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 === "p(x) = (y) -> (z) -> x + y + z;\nq = p(1)(2)(3);\nr = p(1.5)(2.5)(3.5);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig p = (x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat
@@ -138,8 +146,12 @@ top q = !_
 top r = !_
 err `x` of `p` is named: pass it as `x: …` [1]
   note `p` is declared here, `(x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 err `x` of `p` is named: pass it as `x: …` [1.5]
   note `p` is declared here, `(x: T) -> ((T) -> ((T) -> T)) for T in int | f64 | rat`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 === "p(x) = (y) -> (z) -> (x + 1, y, z);\nq = p(1)(\"s\")(true);\nr = p(1)(2)(3) + 1;\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig p = (x: int) -> ((_) -> ((_) -> (int, _, _)))
@@ -147,8 +159,12 @@ top q = !_
 top r = !_
 err `x` of `p` is named: pass it as `x: …` [1]
   note `p` is declared here, `(x: int) -> ((_) -> ((_) -> (int, _, _)))`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 err `x` of `p` is named: pass it as `x: …` [1]
   note `p` is declared here, `(x: int) -> ((_) -> ((_) -> (int, _, _)))`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 === "o(x) = (y) -> (z) -> x + 1;\nq = o(1)(2)(3) == 2;\nw = (o(1), 0);\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 sig o = (x: int) -> ((_) -> ((_) -> int))
@@ -156,8 +172,12 @@ top q = bool
 top w = (!_, 0)
 err `x` of `o` is named: pass it as `x: …` [1]
   note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 err `x` of `o` is named: pass it as `x: …` [1]
   note `o` is declared here, `(x: int) -> ((_) -> ((_) -> int))`
+  note repair: pass `x` by name, as `x: …`
+  note repair: declare `x` `positional`
 === "h = g(0);\nt = (h, 1);\nr = if t is (((int) -> ((int) -> (int, int, int))), int) { 1 } else { t };\n"
 sig g = (int) -> ((int) -> ((int) -> (int, int, int)))
 top h = ((int) -> ((int) -> (int, int, int)))

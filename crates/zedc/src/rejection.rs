@@ -1,6 +1,6 @@
 //! The rows of the rejection table (DESIGN.md sec:diagnostics, "What a rejection owes"). Each
-//! diagnostic of a rejection the table lists names its row, and a `// ✗ Row: …` comment that
-//! names a row is checked against it (step L1.21). The names are the table's first column up to
+//! diagnostic of a rejection the table lists names its row, and every `// ✗ Row: …` comment
+//! names the row it is checked against (step L1.21). The names are the table's first column up to
 //! any parenthesis; the sync tool copies them into `zed/fences/rejections.txt`, and a test
 //! holds this list equal to that copy.
 
@@ -58,6 +58,7 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
+    Rebinding => "Rebinding in the same scope",
     BinderNamingType => "Binder naming a type",
     NoCommonCarrier => "Two numeric values with no common carrier",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
@@ -85,6 +86,9 @@ rows! {
         "Linear question outside the polynomial fragment of the linear-relation domain",
     WritesNothing => "Statement that writes nothing, or drops a declared result",
     StateValueCycle => "Cycle through state and value edges",
+    NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
+    UnitsDiffer => "Units that differ where an operation requires equal ones",
+    TaintAtSink => "Taint at a sink whose parameter does not take it",
 }
 
 impl Row {

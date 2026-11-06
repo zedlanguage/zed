@@ -130,7 +130,11 @@ fn a_tuple_destructuring_parameter_binds_its_names_in_the_body() {
     );
     assert_eq!(
         errors("f = ((a, a)) -> a;\n"),
-        ["`a` is already bound in this scope [a]; the first binding of `a` [a]"]
+        [
+            "`a` is already bound in this scope [a]; the first binding of `a` [a]; repair: give \
+             this binding a new name [a]; repair: move this binding into a nested block, where \
+             it shadows the first [a]"
+        ]
     );
     let text =
         std::fs::read_to_string(zed_tests::oracle::corpus_dir().join("05-max-prefix-sum.zed"))

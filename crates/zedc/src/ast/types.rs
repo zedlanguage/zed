@@ -566,6 +566,14 @@ impl Builder<'_, '_> {
                                 span: decl,
                                 text: "the declaration".into(),
                             },
+                            Note {
+                                span: p.span,
+                                text: format!(
+                                    "repair: declare `{}` before `{}`, the positional parameters \
+                                     first",
+                                    p.name, named.name
+                                ),
+                            },
                         ],
                     });
                 }

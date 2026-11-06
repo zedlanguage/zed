@@ -56,7 +56,7 @@ first = pair[0];                 // a tuple is indexed like any morphism; a lite
 // [d4] sec:lexical (the `=` row), sec:corner_cases — single assignment
 f(x) {
   y = x + 1;
-  y = y * 2;                     // ✗ rebinding in the same scope
+  y = y * 2;                     // ✗ Rebinding in the same scope: y is bound above
   z = { y = 0; y };              // ✓ a nested block may shadow; its value is the trailing expression
   y + z
 }
@@ -76,7 +76,7 @@ half = 0.5;                // never .5 — a float literal starts with a digit
 y   = x ** 2 + 2*x + 1;
 b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a wrap
 w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordinary functions
-z   = 7 / 2;               // ✗ `/` is for f64 and rat only
+z   = 7 / 2;               // ✗ Operator with no arrow at its operands' carrier: `/` is for f64 and rat only
 ```
 
 <!-- EXAMPLES.md:108 layer L10: ring L10, word none, label none, documentation notation; section [3. Numbers] 2 -->
@@ -442,7 +442,7 @@ struct Colored { import Point, color: Utf8String }
 struct Weighted { import Point, w: f64 }
 struct Marker { import Colored, import Weighted }   // x and y once: the same declaration both ways
 struct Sized { w: int }
-struct Bad { import Weighted, import Sized }         // ✗ w: f64 from Weighted, w: int from Sized
+struct Bad { import Weighted, import Sized }         // ✗ Two members of one name with different declarations in a struct or interface body: w: f64 from Weighted, w: int from Sized
 ```
 
 <!-- EXAMPLES.md:478 layer L2: ring L2, word none, label none; section [11. Unions, atoms, match] 1 -->
@@ -786,7 +786,7 @@ orders with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql"))
 <!-- EXAMPLES.md:816 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 4 -->
 ```zed
 // [d4] sec:units — a path outside the package is rejected
-orders with store(postgres(dbUrl, table: "orders", schema: sql("../shared/orders.sql")));   // ✗ leaves the package root
+orders with store(postgres(dbUrl, table: "orders", schema: sql("../shared/orders.sql")));   // ✗ File read at the compile-time stage by a path that leaves the package root: `..`
 ```
 
 <!-- EXAMPLES.md:821 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 5 -->
@@ -894,7 +894,7 @@ variance = m.sumSq / rat(m.n) - mean * mean;                                    
 @ensure scaledOdd(x: int[0..=100]) = (x * 2 + 1).refine(v -> v < 100);   // ✗ Undischargeable `@ensure`: int[0..=100] does not entail the preimage; the menu prints `x: int[0..=49]`
 @ensure odd(positional x) = (x * 2 + 1).refine(v -> v < 100);              // inferred: x <= 49 — the obligation moves to the callers
 a = odd(12);                                                              // 25: a literal is a static frontier, decided here
-b = odd(60);                                                              // ✗ 60 is outside x <= 49; the call is rejected, and nothing runs to find out
+b = odd(60);                                                              // ✗ Undischargeable `@ensure`: 60 is outside x <= 49; the call is rejected, and nothing runs to find out
 ```
 
 <!-- EXAMPLES.md:923 layer L15: ring L15, word L15 (byInduction), label none; section [20. Testing, properties, and proofs] 4 -->
@@ -935,7 +935,7 @@ type Name  = Utf8String[len 1..=80];
 type Small(K, V) = (K -> V)[card <= 10];
 type Ident = Utf8String matching grammar { alpha (alpha | digit)* };
 p: Port = 8080;
-q: Port = 70000;                          // ✗ 70000 is not in int[1..=65535]
+q: Port = 70000;                          // ✗ Unsatisfiable declared constraints: 70000 is not in int[1..=65535]
 n = int(input);                           // int | #invalid
 p2 = n?.refine(v -> v in 1..=65535);      // int | #invalid, and the refinement is what the checker keeps
 ```
@@ -954,10 +954,10 @@ all  = for x -> y -> _ in grid { grid[x][y] };   // total, by construction: the 
 v = 3.0 with units("m/s");
 t = 2.0 with units("s");
 d = v * t;                                 // f64 with units("m")
-bad = v + t;                               // ✗ m/s + s
+bad = v + t;                               // ✗ Units that differ where an operation requires equal ones: m/s + s
 u = d::units;
 exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type — no ';'
-q = exec(db, "select …" ++ userInput);     // ✗ taint flows through ++
+q = exec(db, "select …" ++ userInput);     // ✗ Taint at a sink whose parameter does not take it: taint flows through ++
 ```
 
 <!-- EXAMPLES.md:989 layer L12: ring L7, word L12 (parity), label none; section [22. Facets] 2 -->
@@ -974,7 +974,7 @@ seven = 7 with parity(#odd);                          // attaching a fact is an 
 // [d4*] sec:checking_in_zed (checked formats), sec:staging, sec:domains — `format` is the library function the spec names
 squares = (0..<256).map(i -> i * i);                     // computed at build, residualized as a literal
 @ensure line = format(spec: "{} scored {}", args: [name, score]);   // the spec is static: parsed at build, the residual is concatenation
-@ensure oops = format(spec: "{} scored {}", args: [name]);          // ✗ at build, with the library's message: two holes, one argument
+@ensure oops = format(spec: "{} scored {}", args: [name]);          // ✗ Undischargeable `@ensure`: at build, with the library's message: two holes, one argument
 ```
 
 <!-- EXAMPLES.md:1010 layer L20: ring L20, word L20 (serialize), label none; section [23. Grammars] 1 -->

@@ -9,7 +9,11 @@ fn rebinding_in_one_scope_is_an_error_and_a_nested_scope_may_shadow() {
     let text = "f(x) { y = x + 1; y = y * 2; z = { y = 0; y }; return y + z; }";
     assert_eq!(
         errors(text),
-        ["`y` is already bound in this scope [y = y * 2;]; the first binding of `y` [y = x + 1;]"]
+        [
+            "`y` is already bound in this scope [y = y * 2;]; the first binding of `y` \
+             [y = x + 1;]; repair: give this binding a new name [y = y * 2;]; repair: move this \
+             binding into a nested block, where it shadows the first [y = y * 2;]"
+        ]
     );
 }
 
@@ -17,7 +21,11 @@ fn rebinding_in_one_scope_is_an_error_and_a_nested_scope_may_shadow() {
 fn a_parameter_and_the_body_blocks_statements_share_one_scope() {
     assert_eq!(
         errors("clean(s) { s = trim(s); return s; }"),
-        ["`s` is already bound in this scope [s = trim(s);]; the first binding of `s` [s]"]
+        [
+            "`s` is already bound in this scope [s = trim(s);]; the first binding of `s` [s]; \
+             repair: give this binding a new name [s = trim(s);]; repair: move this binding \
+             into a nested block, where it shadows the first [s = trim(s);]"
+        ]
     );
     let text = "clean(s) { t = { s = trim(s); s }; return t; }";
     assert_eq!(at(text, "s", 3), ["binding s = trim(s);"]);
@@ -37,7 +45,8 @@ fn functions_of_one_name_with_different_parameter_types_form_an_overload_set() {
         errors("show(n: int) = n; show(m: int) = m;"),
         [
             "`show` is already declared in this scope with these parameter types \
-             [show(m: int) = m;]; the first `show` with these parameter types [show(n: int) = n;]"
+             [show(m: int) = m;]; the first `show` with these parameter types [show(n: int) = n;]; \
+             repair: give this binding a new name [show(m: int) = m;]"
         ]
     );
 }

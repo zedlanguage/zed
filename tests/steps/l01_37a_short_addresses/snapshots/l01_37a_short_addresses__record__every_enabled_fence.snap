@@ -16,8 +16,24 @@ EXAMPLES.md [2. Bindings and values] 2
                 source: "  y = x + 1;",
                 width: 10,
             },
+            Step {
+                line: 4,
+                col: 3,
+                text: "repair: give this binding a new name",
+                source: "  y = y * 2;                     // ✗ Rebinding in the same scope: y is bound above",
+                width: 10,
+            },
+            Step {
+                line: 4,
+                col: 3,
+                text: "repair: move this binding into a nested block, where it shadows the first",
+                source: "  y = y * 2;                     // ✗ Rebinding in the same scope: y is bound above",
+                width: 10,
+            },
         ],
-        row: None,
+        row: Some(
+            Rebinding,
+        ),
     },
 ]
   checks: [Outcome { line: 4, col: 3, failure: None }]

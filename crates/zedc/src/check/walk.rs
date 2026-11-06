@@ -2261,8 +2261,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
+                let menu = misfit
+                    .menu()
+                    .into_iter()
+                    .map(|text| Note { span: at, text });
                 match misfit.row() {
-                    Some(row) => self.rejects_with(row, at, message, Vec::new()),
+                    Some(row) => self.rejects_with(row, at, message, menu.collect()),
                     None => self.error_with(at, message, Vec::new()),
                 }
             }
@@ -2443,7 +2447,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut extra = Vec::new();
         if params.len() < pos.len() {
             let shown = self.sig_text(&e);
-            self.rejects(
+            let menu = [format!(
+                "repair: a lambda in the form `{shown}` passes, its first {} parameters taken by \
+                 position",
+                pos.len()
+            )];
+            self.rejects_offering(
                 Row::ParameterKinds,
                 span,
                 format!(
@@ -2452,6 +2461,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if params.len() == 1 { "" } else { "s" },
                     pos.len()
                 ),
+                menu,
             );
             return m.ty(Ty::func(e));
         }
@@ -2477,13 +2487,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                         None => String::new(),
                     };
                     let shown = self.sig_text(&e);
-                    self.rejects(
+                    let menu = match free.first() {
+                        Some(f) => format!("repair: rename `{}` to {f}", p.name),
+                        None => format!("repair: a lambda in the form `{shown}` passes"),
+                    };
+                    self.rejects_offering(
                         Row::ParameterKinds,
                         p.span,
                         format!(
                             "the lambda's parameter `{}` is not a parameter of `{shown}`{fix}",
                             p.name
                         ),
+                        [menu],
                     );
                     return m.ty(Ty::func(e));
                 }

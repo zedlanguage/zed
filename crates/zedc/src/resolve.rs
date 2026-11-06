@@ -759,12 +759,28 @@ impl Resolver<'_> {
                         format!("the first binding of `{name}`"),
                     ),
                 };
-                let notes = vec![Note {
-                    span: first.span,
-                    text: note,
-                }];
+                let mut notes = vec![
+                    Note {
+                        span: first.span,
+                        text: note,
+                    },
+                    Note {
+                        span,
+                        text: "repair: give this binding a new name".into(),
+                    },
+                ];
+                // Shadowing is legal in a nested scope (sec:lexical); the top level has none
+                // to move a binding into.
+                if level > TOP {
+                    notes.push(Note {
+                        span,
+                        text: "repair: move this binding into a nested block, where it shadows \
+                               the first"
+                            .into(),
+                    });
+                }
                 self.errors.push(Error {
-                    row: None,
+                    row: Some(Row::Rebinding),
                     span,
                     message,
                     notes,
@@ -816,13 +832,19 @@ impl Resolver<'_> {
             Some(b) if !b.imported => {
                 let first = b.ids[0];
                 self.errors.push(Error {
-                    row: None,
+                    row: Some(Row::Rebinding),
                     span,
                     message: format!("`{name}` is already bound in this scope"),
-                    notes: vec![Note {
-                        span: self.out.binders[first].span,
-                        text: format!("the binding of `{name}` the import would hide"),
-                    }],
+                    notes: vec![
+                        Note {
+                            span: self.out.binders[first].span,
+                            text: format!("the binding of `{name}` the import would hide"),
+                        },
+                        Note {
+                            span: self.out.binders[first].span,
+                            text: "repair: give this binding a new name".into(),
+                        },
+                    ],
                 });
                 self.dead.insert(id);
             }

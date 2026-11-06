@@ -1,6 +1,7 @@
 //! A `// ✗` comment that names a row of the rejection table (DESIGN.md sec:diagnostics) is
-//! checked against the row of the diagnostic on its line; one that names no row accepts any.
+//! checked against the row of the diagnostic on its line; one that names no row fails.
 
+use zed_tests::scaling;
 use zedc::rejection::Row;
 
 use super::checks;
@@ -73,7 +74,7 @@ a = label(city: \"Leeds\");    // ✗ Argument in the wrong form: but the name i
 
 #[test]
 fn a_mark_naming_a_row_fails_on_a_diagnostic_in_no_row() {
-    let unit = "total = 3 + \"pounds\";    // ✗ Missing argument: not this one\n";
+    let unit = "total = pounds;    // ✗ Missing argument: not this one\n";
     let got = checks(unit);
     assert_eq!(got.len(), 1, "{got:?}");
     assert!(
@@ -86,14 +87,56 @@ fn a_mark_naming_a_row_fails_on_a_diagnostic_in_no_row() {
 }
 
 #[test]
-fn a_mark_naming_no_row_accepts_any_row() {
+fn a_mark_naming_no_row_fails() {
     let unit = "\
 label(positional name: String, city: String) = name ++ \", \" ++ city;
 a = label(city: \"Leeds\");    // ✗ the name is left out
 ";
-    assert_eq!(checks(unit), ["2:5: ok"]);
+    assert_eq!(
+        checks(unit),
+        [
+            "2:5: the line is marked ✗ and its comment names no row of the rejection table: write \
+             `// ✗ <row>: …` with the row's name"
+        ]
+    );
 }
 
+/// Every live ✗ mark of the spec's fences, at any layer, names its row; the whole-line `//`
+/// variants are checked by their own fixtures.
+#[test]
+fn every_live_mark_of_the_spec_names_a_row() {
+    let mut unnamed = Vec::new();
+    let mut named = 0;
+    for f in zed_tests::fences::all() {
+        let lines: Vec<&str> = f.text.split('\n').collect();
+        for k in zedc::fence::marks(&f.text).lines {
+            let comment = lines[k - 1].split_once('✗').map(|(_, c)| c);
+            match comment.and_then(Row::named_by) {
+                Some(_) => named += 1,
+                None => unnamed.push(format!("{} line {k}: {}", f.at, lines[k - 1].trim())),
+            }
+        }
+    }
+    assert!(unnamed.is_empty(), "{unnamed:#?}");
+    assert!(named >= 9, "{named} named marks");
+}
+
+/// `n` names each bound twice, the second binding marked with its row.
+fn rebound(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("a{i} = {i};\na{i} = 1;  // ✗ Rebinding in the same scope: a{i}\n"))
+        .collect()
+}
+
+#[test]
+fn checking_n_marks_scales() {
+    let n = 200;
+    scaling::check_order("checking n marked lines against their rows", n, 1, |m| {
+        let got = checks(&rebound(m));
+        assert_eq!(got.len(), m);
+        assert!(got.iter().all(|c| c.ends_with(": ok")), "{got:?}");
+    });
+}
 /// A fee calculator called with its rate named before its positional base: the grammar takes
 /// either order, and the check names the row, the argument, the first named one and the call.
 #[test]
@@ -116,7 +159,10 @@ arguments first, then its named ones
         |         ^^^^
   [2] 2:5: the call
       2 | f = fee(rate: 3, 5);
-        |     ^^^^^^^^^^^^^^^"
+        |     ^^^^^^^^^^^^^^^
+  [3] 2:18: repair: pass this argument before `rate`, the positional arguments first
+      2 | f = fee(rate: 3, 5);
+        |                  ^"
     );
 }
 
@@ -159,7 +205,10 @@ lists its positional parameters first
         |           ^^^^^^^^^
   [2] 1:1: the declaration
       1 | surcharge(rate: int, positional base: int) = base * rate;
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [3] 1:22: repair: declare `base` before `rate`, the positional parameters first
+      1 | surcharge(rate: int, positional base: int) = base * rate;
+        |                      ^^^^^^^^^^^^^^^^^^^^"
     );
 }
 

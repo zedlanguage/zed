@@ -142,7 +142,7 @@ fn a_rejection_unit_with_a_table_fails_each_row_and_exits_non_zero() {
         "rows-rejected.zed",
         "inc(positional x: int) = x + 1\n\
          test { 1 -> 999, 2 -> 3, 5 -> \"wrong\" }\n\
-         bad = 1 + \"s\";    // ✗\n",
+         bad = inc();    // ✗ Missing argument: x\n",
     );
     assert_eq!(
         run(&[&a]),

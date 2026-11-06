@@ -117,7 +117,11 @@ fn a_rebinding_points_at_the_first_binding() {
         "3:3: `rate` is already bound in this scope
   [1] 2:3: the first binding of `rate`
       2 |   rate = 3;
-        |   ^^^^^^^^^"
+        |   ^^^^^^^^^
+  [2] 3:3: repair: give this binding a new name
+      3 |   rate = 4;
+        |   ^^^^^^^^^
+  [3] 3:3: repair: move this binding into a nested block, where it shadows the first"
     );
 }
 

@@ -17,48 +17,39 @@ fn first(name: &str) -> String {
 
 #[test]
 fn each_variant_gives_its_pinned_diagnostic_at_l1() {
+    // The whole-line variants of the spec name no row: each marked line fails on that until
+    // the step that enables it names its row in the spec.
+    let no_row = |line: usize| {
+        format!(
+            "{line}: the line is marked ✗ and its comment names no row of the rejection table: \
+             write `// ✗ <row>: …` with the row's name"
+        )
+    };
     let cases = [
-        // Passes the mark check because `Point` is not defined: structs are L2.
-        ("constructor-called-by-position", "pass"),
+        ("constructor-called-by-position", no_row(6)),
         (
             "dot-never-mutates",
-            "8: this form (ResultType) is built from layer L10",
+            "8: this form (ResultType) is built from layer L10".into(),
         ),
-        (
-            "nullable-column-missing-none",
-            "25: the line is marked ✗ and has no diagnostic",
-        ),
-        (
-            "numeric-is-not-binary-float",
-            "25: the line is marked ✗ and has no diagnostic",
-        ),
+        ("nullable-column-missing-none", no_row(25)),
+        ("numeric-is-not-binary-float", no_row(25)),
         (
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which
             // comes before the marked line.
             "payload-built-by-position",
-            "3: a type declaration is compiled from step L2.5",
+            "3: a type declaration is compiled from step L2.5".into(),
         ),
-        // Passes the mark check because its marked line does not parse at L1.
-        ("taint-reaches-clean-sink", "pass"),
-        (
-            "taint-through-concatenation",
-            "44: the line is marked ✗ and has no diagnostic",
-        ),
+        ("taint-reaches-clean-sink", no_row(39)),
+        ("taint-through-concatenation", no_row(44)),
         (
             "two-writers-of-one-generation",
-            "8: this form (ResultType) is built from layer L10",
+            "8: this form (ResultType) is built from layer L10".into(),
         ),
-        (
-            "unit-mismatch-force-energy",
-            "49: the line is marked ✗ and has no diagnostic",
-        ),
-        (
-            "unit-mismatch-in-sum",
-            "36: the line is marked ✗ and has no diagnostic",
-        ),
+        ("unit-mismatch-force-energy", no_row(49)),
+        ("unit-mismatch-in-sum", no_row(36)),
         (
             "value-binding-has-no-next-generation",
-            "8: this form (ResultType) is built from layer L10",
+            "8: this form (ResultType) is built from layer L10".into(),
         ),
     ];
     let names: Vec<String> = std::fs::read_dir(DIR)
@@ -71,16 +62,16 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
     assert_eq!(names.len(), cases.len(), "{names:?}");
     let wrong: Vec<String> = cases
         .iter()
-        .filter_map(|&(name, want)| {
+        .filter_map(|(name, want)| {
             let got = first(name);
-            (got != want).then(|| format!("{name}\n  got  {got}\n  want {want}"))
+            (got != *want).then(|| format!("{name}\n  got  {got}\n  want {want}"))
         })
         .collect();
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 #[test]
-fn the_two_passing_variants_pass_for_a_reason_other_than_their_documented_error() {
+fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
     let rejected = |n: &str| {
         let text = std::fs::read_to_string(format!("{DIR}/{n}.zed")).unwrap();
         super::rejected(&text)

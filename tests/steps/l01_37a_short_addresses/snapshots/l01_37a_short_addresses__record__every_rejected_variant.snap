@@ -12,7 +12,7 @@ constructor-called-by-position
         row: None,
     },
 ]
-  checks: [Outcome { line: 6, col: 5, failure: None }]
+  checks: [Outcome { line: 6, col: 5, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }]
 
 dot-never-mutates
   rejected: [
@@ -24,7 +24,7 @@ dot-never-mutates
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 30, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 30, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }]
 
 nullable-column-missing-none
   rejected: [
@@ -36,7 +36,7 @@ nullable-column-missing-none
         row: None,
     },
 ]
-  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 numeric-is-not-binary-float
   rejected: [
@@ -48,7 +48,7 @@ numeric-is-not-binary-float
         row: None,
     },
 ]
-  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 payload-built-by-position
   rejected: [
@@ -81,7 +81,7 @@ payload-built-by-position
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
 
 taint-reaches-clean-sink
   rejected: [
@@ -93,7 +93,7 @@ taint-reaches-clean-sink
         row: None,
     },
 ]
-  checks: [Outcome { line: 39, col: 1, failure: None }]
+  checks: [Outcome { line: 39, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }]
 
 taint-through-concatenation
   rejected: [
@@ -105,7 +105,7 @@ taint-through-concatenation
         row: None,
     },
 ]
-  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 75, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
+  checks: [Outcome { line: 44, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }, Outcome { line: 75, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
 
 two-writers-of-one-generation
   rejected: [
@@ -117,7 +117,7 @@ two-writers-of-one-generation
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }]
 
 unit-mismatch-force-energy
   rejected: [
@@ -129,7 +129,7 @@ unit-mismatch-force-energy
         row: None,
     },
 ]
-  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 76, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
+  checks: [Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }, Outcome { line: 76, col: 55, failure: Some("no token starts with '…' (U+2026)") }]
 
 unit-mismatch-in-sum
   rejected: [
@@ -141,7 +141,7 @@ unit-mismatch-in-sum
         row: None,
     },
 ]
-  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 value-binding-has-no-next-generation
   rejected: [
@@ -153,4 +153,4 @@ value-binding-has-no-next-generation
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("this form (ResultType) is built from layer L10") }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and its comment names no row of the rejection table: write `// ✗ <row>: …` with the row's name") }]

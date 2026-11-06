@@ -76,6 +76,10 @@ fn the_underline_covers_a_multibyte_span_by_characters() {
         "3:3: `größe` is already bound in this scope
   [1] 2:3: the first binding of `größe`
       2 |   größe = 3;
-        |   ^^^^^^^^^^"
+        |   ^^^^^^^^^^
+  [2] 3:3: repair: give this binding a new name
+      3 |   größe = 4;
+        |   ^^^^^^^^^^
+  [3] 3:3: repair: move this binding into a nested block, where it shadows the first"
     );
 }

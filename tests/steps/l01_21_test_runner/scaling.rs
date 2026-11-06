@@ -75,7 +75,7 @@ fn wide_row(n: usize) -> String {
 /// `n` functions with a row each, in a unit a marked line rejects, so no row runs.
 fn rejected_rows(n: usize) -> String {
     let mut text = tables(n);
-    text.push_str("bad = 1 + \"s\";    // ✗\n");
+    text.push_str("c0 = 1;    // ✗ Rebinding in the same scope: c0 is bound above\n");
     text
 }
 

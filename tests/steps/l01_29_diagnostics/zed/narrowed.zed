@@ -1,3 +1,3 @@
 // A narrowed parameter used as the wrong carrier: the note on the narrowing names the
 // carrier the solver gave the parameter's class, never the class itself.
-f(v) = if v is int { v ++ "x" } else { "y" };  // ✗ `++` does not take an int
+f(v) = if v is int { v ++ "x" } else { "y" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int

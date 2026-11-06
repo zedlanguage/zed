@@ -151,6 +151,36 @@ impl Misfit<'_> {
             ),
         }
     }
+
+    /// The menu of the misfit's row (DESIGN.md sec:diagnostics), in the table's order, each
+    /// entry a `repair:` note's text; empty for a misfit in no row.
+    pub(crate) fn menu(self) -> Vec<String> {
+        match self {
+            Misfit::NoReceiver | Misfit::TooMany(_) | Misfit::NoParam(_) | Misfit::Supplied(_) => {
+                Vec::new()
+            }
+            Misfit::Named(name) => vec![
+                format!("repair: pass `{name}` by name, as `{name}: …`"),
+                format!("repair: declare `{name}` `positional`"),
+            ],
+            Misfit::Positional(name) => vec![
+                format!("repair: pass `{name}` by position"),
+                format!("repair: remove `positional` from the declaration of `{name}`"),
+            ],
+            Misfit::CurriedPositional(name) => vec![
+                "repair: remove the `...`".into(),
+                format!(
+                    "repair: leave out the positional `{name}` with a bracket section or a lambda"
+                ),
+            ],
+            Misfit::NothingLeftOut => vec!["repair: remove the `...`".into()],
+            Misfit::Missing(name) => vec![
+                format!("repair: supply `{name}`"),
+                format!("repair: declare a default for `{name}`"),
+            ],
+            Misfit::OpenDefault(name) => vec![format!("repair: supply `{name}`")],
+        }
+    }
 }
 
 /// What the checker finds.
@@ -812,9 +842,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// An error at `span` that is a case of the row `row` of the rejection table, with the
-    /// derivation of the expression there.
-    fn rejects(&mut self, row: Row, span: Span, message: impl Into<String>) {
-        let notes = self.derive(&[span]);
+    /// derivation of the expression there and then the repairs `menu`, each placed at `span`.
+    fn rejects_offering(
+        &mut self,
+        row: Row,
+        span: Span,
+        message: impl Into<String>,
+        menu: impl IntoIterator<Item = String>,
+    ) {
+        let mut notes = self.derive(&[span]);
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
         self.rejects_with(row, span, message, notes);
     }
 
@@ -3521,7 +3558,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
             let call: Vec<String> = names.iter().map(|n| format!("{n}: {n}")).collect();
             let shown = self.sig_text(e);
-            self.rejects(
+            let menu = [
+                format!(
+                    "repair: declare the parameters of `{}` as `{shown}` passes them, with \
+                     `positional` where it passes by position",
+                    f.name
+                ),
+                format!(
+                    "repair: pass a lambda, `({}) -> {}({})`",
+                    names.join(", "),
+                    f.name,
+                    call.join(", ")
+                ),
+            ];
+            self.rejects_offering(
                 Row::ParameterKinds,
                 span,
                 format!(
@@ -3540,6 +3590,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     f.name,
                     call.join(", ")
                 ),
+                menu,
             );
             return Ty::func(e.clone());
         }
@@ -3709,7 +3760,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         for e in &mut self.info.errors[from..] {
             if !e.notes.contains(&note) {
-                e.notes.push(note.clone());
+                // A witness goes before the menu, which ends the notes.
+                let menu = (e.notes.iter())
+                    .position(|n| n.text.starts_with("repair: "))
+                    .unwrap_or(e.notes.len());
+                e.notes.insert(menu, note.clone());
             }
         }
     }
@@ -3801,9 +3856,63 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 notes.extend(self.repairs(what, sig, &args, pass, span));
-                self.error_with(span, message, notes);
+                match self.no_arrow_at_carrier(what, sig, &args) {
+                    true => self.rejects_with(Row::NoArrowAtCarrier, span, message, notes),
+                    false => self.error_with(span, message, notes),
+                }
                 (out, Vec::new())
             }
+        }
+    }
+
+    /// Whether `what` is an operator and an operand's type, one closed type, shares no value
+    /// with the parameter of any arrow at its place: `7 / 2`, whose `int` operands no arrow
+    /// of `/` takes, and not `r + x` of a `rat` and an `f64`, each of which an arrow takes.
+    /// One meet per operand and arrow.
+    fn no_arrow_at_carrier(&self, what: &str, sig: &Sig, args: &[Option<Arg>]) -> bool {
+        let op = what.trim_matches('`');
+        let operator = matches!(
+            op,
+            "+" | "-"
+                | "*"
+                | "/"
+                | "div"
+                | "mod"
+                | "**"
+                | "++"
+                | "<"
+                | "<="
+                | ">"
+                | ">="
+                | "&&"
+                | "||"
+                | "!"
+        );
+        operator
+            && args.iter().enumerate().any(|(i, a)| {
+                a.as_ref().is_some_and(|a| {
+                    let t = &a.ty;
+                    !t.dynamic
+                        && t.vars.is_empty()
+                        && !t.set.is_empty()
+                        && sig
+                            .arrows
+                            .iter()
+                            .all(|arrow| (&t.set & &arrow.params[i].set).is_empty())
+                })
+            })
+    }
+
+    /// Reports a literal of `args` rejected at a parameter of `sig` with the message `m` at
+    /// `s`, in the row of an operator with no arrow at its operands' carrier where that holds
+    /// (`7 / 2`), and in no row otherwise.
+    fn literal_refused(&mut self, what: &str, sig: &Sig, args: &[Option<Arg>], s: Span, m: String) {
+        match self.no_arrow_at_carrier(what, sig, args) {
+            true => {
+                let notes = self.derive(&[s]);
+                self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
+            }
+            false => self.error(s, m),
         }
     }
 
@@ -4113,7 +4222,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let ty = match adopted(a, p) {
                 // A literal that cannot adopt is its own error, and the application's none.
                 Err((s, m)) => {
-                    self.error(s, m);
+                    self.literal_refused(what, sig, args, s, m);
                     continue;
                 }
                 Ok(Some((t, ads))) => {
@@ -4500,7 +4609,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let Some((need, retyped)) = best else {
             if let Some((s, m)) = adopt_error {
-                self.error(s, m);
+                self.literal_refused(what, sig, args, s, m);
                 return Ok(None);
             }
             // No arrow met an argument, which may rest on a refused check that it is empty.

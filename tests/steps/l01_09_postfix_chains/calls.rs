@@ -67,7 +67,7 @@ fn a_positional_argument_after_a_named_one_parses_and_is_rejected_with_its_row()
         .iter()
         .map(|n| &text[n.span.start..n.span.end])
         .collect();
-    assert_eq!(notes, ["punct", text]);
+    assert_eq!(notes, ["punct", text, "\"Al\""]);
 }
 
 #[test]

@@ -1218,6 +1218,13 @@ impl<'a, 's> Builder<'a, 's> {
                             span: call,
                             text: "the call".into(),
                         },
+                        Note {
+                            span: self.span(k),
+                            text: format!(
+                                "repair: pass this argument before `{word}`, the positional \
+                                 arguments first"
+                            ),
+                        },
                     ],
                 });
             }

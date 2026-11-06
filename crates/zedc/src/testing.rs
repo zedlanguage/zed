@@ -181,13 +181,19 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
 }
 
 /// Why a line marked ✗ fails, given its diagnostics `ds` and the row its comment names: it
-/// has no diagnostic, or it names a row and no diagnostic on it is a case of that row. A mark
-/// that names no row accepts any diagnostic.
+/// names no row, it has no diagnostic, or no diagnostic on it is a case of the row it names
+/// (DESIGN.md, "The document is the first test suite").
 fn mark_failure(ds: &[&run::Diagnostic], named: Option<Row>) -> Option<String> {
+    let Some(want) = named else {
+        return Some(
+            "the line is marked ✗ and its comment names no row of the rejection table: write \
+             `// ✗ <row>: …` with the row's name"
+                .into(),
+        );
+    };
     let Some(first) = ds.first() else {
         return Some("the line is marked ✗ and has no diagnostic".into());
     };
-    let want = named?;
     if ds.iter().any(|d| d.row == Some(want)) {
         return None;
     }
