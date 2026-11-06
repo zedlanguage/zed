@@ -842,20 +842,42 @@ fn a_lens_of_tangent_planes_has_a_point() {
     assert!(solve(&tangents(128, 5_000)).is_some());
 }
 
+/// The lens of [`tangents`] over the origin cut by the slab `10^6 + 1/4 <= Z <= 10^6 + 1/2`,
+/// which holds real points of the lens and no integer `Z`.
+fn lens_in_a_thin_slab(n: usize) -> Vec<Row3> {
+    let mut rows = tangents(n, 0);
+    rows.push(row([0, 0, 4], -4_000_001));
+    rows.push(row([0, 0, -4], 4_000_002));
+    rows
+}
+
 #[test]
-#[ignore = "LIVE3-lp-tangents: the linear programs of `point` grow irregularly on this family"]
+fn a_lens_in_a_thin_slab_has_no_point() {
+    assert_eq!(solve(&lens_in_a_thin_slab(64)), None);
+}
+
+#[test]
 fn a_lens_of_tangent_planes_scales_in_point() {
-    // Measured (HULL3-subsumed, load 52 to 59), `point` alone on the lens over the origin:
-    // 128 pairs 595M instructions, 256 1,461M, 512 42,807M, 1,024 32,633M; bytes 21.2M to
-    // 882M from 128 to 1,024 (41.6 times). The time is in the linear programs (`simplex`,
-    // `solve2`, `side`, `solve1`, `least`, `on_line`, `eval1`: rational additions and gcds
-    // of large integers), not in `twovar`. `satisfiable` does not reach `point` here, since a
-    // point of the box stage holds the lens.
-    let (small, large) = (tangents(128, 0), tangents(128 * scaling::FACTOR, 0));
-    scaling::check("tangent planes of two paraboloids, in `point`", 128, |m| {
-        let rows = if m == 128 { &small } else { &large };
-        std::hint::black_box(point(rows));
-    });
+    // With no integer point, every size takes the whole path of `point`: six linear programs,
+    // the reduction and the slices. The lens alone over the origin is no scaling test of
+    // `point`: there the rounded first vertex holds the rows at 128 pairs, which ends `point`
+    // after one linear program on numbers that fit in 128 bits, and at 512 and 1,024 pairs it
+    // does not, so `point` runs five and three linear programs, the later ones along
+    // directions with 12 to 23 digits on numbers that do not fit (LIVE3-lp-tangents: 0.35 s,
+    // 13.0 s and 7.3 s; 41.6 times the bytes from 128 to 1,024). The work of each linear
+    // program was linear there: 35k to 345k pieces visited by `solve1` from 128 to 1,024.
+    let (small, large) = (
+        lens_in_a_thin_slab(64),
+        lens_in_a_thin_slab(64 * scaling::FACTOR),
+    );
+    scaling::check(
+        "a lens of tangent planes in a thin slab, in `point`",
+        64,
+        |m| {
+            let rows = if m == 64 { &small } else { &large };
+            std::hint::black_box(point(rows));
+        },
+    );
 }
 
 /// The calls of `Lin2::minus` that `point` makes on `rows`.
