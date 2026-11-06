@@ -27,6 +27,181 @@ fn rejection(name: &str, src: &str) -> String {
         .join("\n")
 }
 
+/// The menu a refused question prints at L1, numbered after its one note of constraints, both
+/// placed at the body that begins at column 18 of line 1 (that of `ok(x, y, z, w) = `): the
+/// repairs an L1 program can follow (DESIGN.md sec:diagnostics, row "Linear question outside the
+/// polynomial fragment").
+const MENU: &str = "[2] 1:18: repair: state an equality on one of the names, as `x == 4 && …`, \
+                    so the solver removes that name from the question\n  \
+                    [3] 1:18: repair: split the question into functions of fewer constraints \
+                    each, and join their results where they are called; a function whose body \
+                    joins them asks the joined question again";
+
+/// A refused `ok` over `x, y, z, w`, and, for each repair of the menu, `ok` repaired by it: an
+/// equality joined to the body, and the rows split into `first` and `second` joined at the call.
+struct Refused {
+    name: &'static str,
+    rows: [&'static str; 2],
+    equality: &'static str,
+}
+
+const REFUSED: [Refused; 3] = [
+    // Growth: no elimination keeps the four rows within their count.
+    Refused {
+        name: "growth",
+        rows: [
+            "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 \
+             >= 0",
+            "11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0",
+        ],
+        equality: "x == 4",
+    },
+    // Shadows: a point could lie only in a splinter of a splinter.
+    Refused {
+        name: "shadows",
+        rows: [
+            "9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && -7 * x - 12 * \
+             y - 2 * z + 8 * w - 1 >= 0",
+            "-9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0",
+        ],
+        equality: "w == 1",
+    },
+    // Tie: the cycle `3 * next - this >= 10`, whose four names occur alike and share rows.
+    Refused {
+        name: "tie",
+        rows: [
+            "3 * y - x - 10 >= 0 && 3 * z - y - 10 >= 0",
+            "3 * w - z - 10 >= 0 && 3 * x - w - 10 >= 0",
+        ],
+        equality: "x == 5",
+    },
+];
+
+/// A program like [`program`]'s whose `main` tests `test` in place of a call of `ok`.
+fn program_testing(defs: &str, test: &str) -> String {
+    format!(
+        "{defs}\nmain(stdin: Lines) -> (stdout: Lines) {{\n  a = int(stdin[1] else \"0\") else 0;\n  \
+         r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  stdout <- \"${{r}}\";\n}}\n"
+    )
+}
+
+#[test]
+fn following_each_repair_of_the_menu_makes_the_program_check() {
+    const ARGS: &str = "x: a, y: a, z: a, w: a";
+    for r in &REFUSED {
+        let [first, second] = r.rows;
+        let refused = program(&format!("ok(x, y, z, w) = {first} && {second};"), ARGS);
+        let printed = rejection(r.name, &refused);
+        assert!(printed.ends_with(MENU), "{}: {printed}", r.name);
+        // The question with a name fixed by an equality is decided; each run prints whether
+        // `ok` held at the input, which the equality decides with the rows.
+        let equality = program(
+            &format!("ok(x, y, z, w) = {} && {first} && {second};", r.equality),
+            ARGS,
+        );
+        let split = program_testing(
+            &format!("first(x, y, z, w) = {first};\nsecond(x, y, z, w) = {second};"),
+            &format!("first({ARGS}) && second({ARGS})"),
+        );
+        for (repair, src) in [("equality", &equality), ("split", &split)] {
+            for input in ["3\n", "5\n"] {
+                let o = run(r.name, src, input, &[]);
+                assert_eq!(
+                    (o.status, o.stderr.as_str()),
+                    (0, ""),
+                    "{} {repair} {input}",
+                    r.name
+                );
+                // At x = y = z = w = 5 the cycle holds (3 * 5 - 5 = 10); every other case holds
+                // at no point x = y = z = w.
+                let held = r.name == "tie" && input == "5\n";
+                assert_eq!(
+                    o.stdout,
+                    if held { "in\n" } else { "out\n" },
+                    "{} {repair} {input}",
+                    r.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_refused_question_over_disjunctions_prints_the_menu_and_an_equality_repairs_it() {
+    // (name, parameters, rows, the cause's opening words, the equality, the arguments, and
+    // whether `ok` holds at inputs 1 and 3 once repaired).
+    let cases = [
+        // Four names in 0..=2 that differ pairwise: no point, which the search through the
+        // disjunctions of `!=` does not settle.
+        (
+            "disjuncts",
+            "x, y, z, w",
+            "0 <= x && x <= 2 && 0 <= y && y <= 2 && 0 <= z && z <= 2 && 0 <= w && w <= 2 && x \
+             != y && x != z && y != z && x != w && y != w && z != w",
+            "no choice among the disjunctions of the integer constraints was settled",
+            "x == 0",
+            "x: a, y: a, z: a, w: a",
+            ["out\n", "out\n"],
+        ),
+        // Two shifts in 0..=9, each early or late, with a total of at most 10: `x` and `y`
+        // occur alike, so the search through the disjunctions would go in an order chosen by
+        // name (`l01_38_presburger::names`, the shifts with `x + y <= 10`).
+        (
+            "unordered",
+            "x, y",
+            "0 <= x && x <= 9 && 0 <= y && y <= 9 && x + y <= 10 && (x <= 2 || x >= 7) && (y \
+             <= 2 || y >= 7)",
+            "the disjunctions of the integer constraints would be searched in an order chosen \
+             by name",
+            "x == 1",
+            "x: a, y: a",
+            ["in\n", "out\n"],
+        ),
+    ];
+    for (name, params, rows, cause, equality, args, outs) in cases {
+        let printed = rejection(name, &program(&format!("ok({params}) = {rows};"), args));
+        assert!(
+            printed.starts_with(&format!(
+                "1:1: whether `ok` can hold is not decided: {cause}"
+            )),
+            "{printed}"
+        );
+        // The body begins after `ok(`, the parameters and `) = `.
+        let menu = MENU.replace("1:18", &format!("1:{}", params.len() + 8));
+        assert!(printed.ends_with(&menu), "{printed}");
+        let repaired = program(&format!("ok({params}) = {equality} && {rows};"), args);
+        for (input, out) in ["1\n", "3\n"].into_iter().zip(outs) {
+            let o = run(name, &repaired, input, &[]);
+            assert_eq!(
+                (o.status, o.stdout.as_str(), o.stderr.as_str()),
+                (0, out, ""),
+                "{name} {input}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_function_that_joins_the_split_questions_asks_the_joined_question_again() {
+    // The second half of the split repair's line: joining `first` and `second` in a function
+    // other than `main` inlines both, and the joined question is refused as before.
+    let [first, second] = REFUSED[0].rows;
+    let src = program(
+        &format!(
+            "first(x, y, z, w) = {first};\nsecond(x, y, z, w) = {second};\nok(x, y, z, w) = \
+             first(x:, y:, z:, w:) && second(x:, y:, z:, w:);"
+        ),
+        "x: a, y: a, z: a, w: a",
+    );
+    let o = run("joined", &src, "3\n", &[]);
+    assert_eq!(o.status, 1, "{}", o.stderr);
+    assert!(
+        o.stderr.contains("whether `ok` can hold is not decided"),
+        "{}",
+        o.stderr
+    );
+}
+
 #[test]
 fn pughs_example_is_decided_and_its_arm_is_unreachable() {
     // 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has rational points and no integer point:
@@ -59,12 +234,14 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
     );
     assert_eq!(
         rejection("growth", &src),
-        "1:1: whether `ok` can hold is not decided: the integer constraints have four \
-         variables or more, each of whose elimination would enlarge them, so whether they hold \
-         at an integer point is not decided\n  \
-         [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * x \
-         >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + z <= \
-         12 * y + 31"
+        format!(
+            "1:1: whether `ok` can hold is not decided: the integer constraints have four \
+             variables or more, each of whose elimination would enlarge them, so whether they \
+             hold at an integer point is not decided\n  \
+             [1] 1:18: the constraints: 12 * w + 10 * y + 12 * z <= 4 * x + 11 && 4 * w + 10 * \
+             x >= 10 * y + 11 * z + 28 && 11 * w + 4 * x + 12 * z >= y + 28 && 8 * w + 5 * x + \
+             z <= 12 * y + 31\n  {MENU}"
+        )
     );
 }
 
@@ -78,12 +255,14 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
     );
     assert_eq!(
         rejection("shadows", &src),
-        "1:1: whether `ok` can hold is not decided: an integer point of the integer \
-         constraints could lie only in a splinter of a splinter of their projection, so \
-         whether one exists is not decided\n  \
-         [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= 9 \
-         && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * x + 6 \
-         * z <= 4 * y + 22"
+        format!(
+            "1:1: whether `ok` can hold is not decided: an integer point of the integer \
+             constraints could lie only in a splinter of a splinter of their projection, so \
+             whether one exists is not decided\n  \
+             [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
+             9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
+             x + 6 * z <= 4 * y + 22\n  {MENU}"
+        )
     );
 }
 

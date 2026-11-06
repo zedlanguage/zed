@@ -407,6 +407,18 @@ pub(crate) fn write_warnings(
     Ok(())
 }
 
+/// The menu of a refused linear question at L1 (DESIGN.md sec:diagnostics, row "Linear question
+/// outside the polynomial fragment"): the repairs an L1 program can follow. A written domain on
+/// a name and the check moved to a `refine` join it at L10, a `proof { }` at L15. Tests:
+/// `l01_38_presburger::checker::following_each_repair_of_the_menu_makes_the_program_check`.
+const NON_LINEAR_MENU: [&str; 2] = [
+    "repair: state an equality on one of the names, as `x == 4 && …`, so the solver removes \
+     that name from the question",
+    "repair: split the question into functions of fewer constraints each, and join their \
+     results where they are called; a function whose body joins them asks the joined question \
+     again",
+];
+
 /// The linear questions of the unit (step L1.38): for each function other than `main` whose
 /// body the linear-relation domain states over its parameters, whether the body can hold and
 /// whether it can fail. A question the solver refuses is a rejection at the function, with
@@ -466,10 +478,21 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
                                 "whether `{}` can {can} is not decided: {why}",
                                 f.name
                             ),
-                            notes: vec![ast::Note {
-                                span: f.body.span,
-                                text: format!("the constraints: {r}"),
-                            }],
+                            notes: vec![
+                                ast::Note {
+                                    span: f.body.span,
+                                    text: format!("the constraints: {r}"),
+                                },
+                                // O(1): two constant lines per refused question.
+                                ast::Note {
+                                    span: f.body.span,
+                                    text: NON_LINEAR_MENU[0].into(),
+                                },
+                                ast::Note {
+                                    span: f.body.span,
+                                    text: NON_LINEAR_MENU[1].into(),
+                                },
+                            ],
                         });
                     }
                 }
