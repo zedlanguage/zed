@@ -155,7 +155,7 @@ fn the_address_is_pinned() {
     // IEEE-754 bits, big numbers in decimal), so this hash is the same on every machine.
     assert_eq!(
         address(&graph(DISCOUNT)).to_string(),
-        "800ef82a27b7bce0e3dbb8d28e72373e6e875532698f89294af97adbb2847b41"
+        "791e272238d9f405d5ff1240684a43b7209c2cfcef6d0e260eb0bee9c052444f"
     );
 }
 

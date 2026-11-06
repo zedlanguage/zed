@@ -37,9 +37,9 @@ fn a_term_that_does_not_fit_breaks_into_indented_parts() {
         "\
 fold(
   reindex(
-    discard(sales, s -> (get(s, \"week\") == week)),
-    (k, s) -> path(get(s, \"region\"), k),
-    (k, s) -> (get(s, \"qty\") * get(s, \"price\")),
+    discard(sales, s -> (s[\"week\"] == week)),
+    (k, s) -> path(s[\"region\"], k),
+    (k, s) -> (s[\"qty\"] * s[\"price\"]),
     witness: residue
   ),
   (+),

@@ -5,6 +5,7 @@
 
 mod alpha;
 mod domains;
+mod prim_codes;
 mod rules;
 mod scaling;
 

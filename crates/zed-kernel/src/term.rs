@@ -155,6 +155,72 @@ impl Prim {
             _ => Some(2),
         }
     }
+
+    /// The fixed number of the primitive, by which the canonical serialization writes it.
+    /// Each number is assigned here and never changes, so that renaming a variant, reordering
+    /// the enum, or adding a primitive leaves every other primitive's number, and with it every
+    /// canonical address, as it was; a new primitive takes the next unused number. The numbers
+    /// are the positions of the ZIR binary form's list, `zedc::zir::text::PRIMS`.
+    pub fn code(self) -> u64 {
+        use Prim::*;
+        match self {
+            Add => 0,
+            Sub => 1,
+            Mul => 2,
+            Div => 3,
+            IntDiv => 4,
+            Mod => 5,
+            Neg => 6,
+            Eq => 7,
+            Ne => 8,
+            Lt => 9,
+            Le => 10,
+            Gt => 11,
+            Ge => 12,
+            And => 13,
+            Or => 14,
+            Not => 15,
+            Min => 16,
+            Max => 17,
+            Get => 18,
+            Count => 19,
+            Union => 20,
+            Path => 21,
+            PathKey => 22,
+            PathLen => 23,
+            Tuple => 24,
+            TupleGet => 25,
+            Concat => 26,
+            Pow => 27,
+            Atom => 28,
+            Show => 29,
+            CastInt => 30,
+            CastRat => 31,
+            CastF64 => 32,
+            Abs => 33,
+            Len => 34,
+            Lower => 35,
+            Upper => 36,
+            Trim => 37,
+            Sum => 38,
+            BitAnd => 39,
+            BitOr => 40,
+            BitXor => 41,
+            BitNot => 42,
+            Shl => 43,
+            Shr => 44,
+            PopCount => 45,
+            LeadingZeros => 46,
+            TrailingZeros => 47,
+            Rotl => 48,
+            Rotr => 49,
+            F64Bits => 50,
+            CodePoint => 51,
+            Scalar => 52,
+            Utf8 => 53,
+            FromUtf8 => 54,
+        }
+    }
 }
 
 /// A pattern of a `match` arm.

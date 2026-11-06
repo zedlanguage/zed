@@ -5,9 +5,12 @@
 //! [`Term`]'s `Display` writes a term on one line. [`pretty`] writes the same text, broken
 //! into lines of at most a given width where it can be: a term that does not fit puts each of
 //! its parts on its own line, indented two spaces, so the only difference from the one-line
-//! form is whitespace. Binary primitives are written infix and always parenthesized, so the
-//! text needs no precedence to be read.
+//! form is whitespace. Binary primitives are written infix and always parenthesized. Negation,
+//! `!`, an index and an atom are written as a program writes them (`-x`, `!x`, `t[0]`, `f[k]`,
+//! `#err(code: 3)`), their operands parenthesized wherever sec:grammar would read the text
+//! otherwise, so the text reads back as the same term.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
@@ -131,9 +134,10 @@ impl Prim {
     /// `-` for both `Sub` and `Neg`, `!` for `Not`), the prelude word (`popCount`,
     /// `String`), or the form DESIGN.md gives one with no word of its own: a tuple `(..)`, a
     /// component `[i]` (`p[0]`), an entry `[k]` (`f[k]`), and the methods `.count` and
-    /// `.union`. The rest are named as the printer writes them: `atom`, since a fixed text
-    /// cannot carry the atom's name, and `path`, `pathKey`, `pathLen`, for which DESIGN.md
-    /// gives no written form.
+    /// `.union`. An atom is `#_(..)`, an atom of any name with any payload, since a fixed text
+    /// cannot carry its name; a message that has the name writes `#err(..)` instead
+    /// ([`Prim::written_with`]). `path`, `pathKey` and `pathLen` keep the kernel's words, for
+    /// which DESIGN.md gives no written form.
     pub fn written(self) -> &'static str {
         match self {
             Prim::Neg => "-",
@@ -143,7 +147,17 @@ impl Prim {
             Prim::Get => "[k]",
             Prim::Count => ".count",
             Prim::Union => ".union",
+            Prim::Atom => "#_(..)",
             p => name(p),
+        }
+    }
+
+    /// As [`Prim::written`], with the primitive's first argument where a message has it: an
+    /// atom whose first argument is its name, the string `"err"`, is `#err(..)`.
+    pub fn written_with(self, first: Option<&Value>) -> Cow<'static, str> {
+        match (self, first) {
+            (Prim::Atom, Some(Value::Str(name))) => Cow::Owned(format!("#{}(..)", name.flat())),
+            _ => Cow::Borrowed(self.written()),
         }
     }
 
@@ -262,19 +276,20 @@ fn doc(t: &Term) -> Doc {
             sep: ", ",
             close: ")",
         },
-        // An atom built from a literal name and field names is written as Zed writes it.
-        Term::Prim(Prim::Atom, args)
-            if matches!(
-                &args[..],
-                [Term::Lit(Value::Str(_)), Term::Lit(Value::Tuple(fs)), rest @ ..]
-                    if fs.is_empty() || fs.len() == rest.len()
-            ) =>
-        {
-            let (Term::Lit(Value::Str(name)), Term::Lit(Value::Tuple(fs))) = (&args[0], &args[1])
-            else {
-                unreachable!("matched above")
+        // An atom is written as Zed writes it: `#err(1)`, `#err(code: 3)`. Elaboration gives
+        // the name and the field names as literals; a term that gives them any other way has
+        // no written form, so its name is written `#_` and its payload positionally.
+        Term::Prim(Prim::Atom, args) if !args.is_empty() => {
+            let open = match &args[0] {
+                Term::Lit(Value::Str(name)) => format!("#{name}("),
+                _ => "#_(".into(),
             };
-            let items = args[2..]
+            let rest = args.get(2..).unwrap_or_default();
+            let fs: &[Value] = match args.get(1) {
+                Some(Term::Lit(Value::Tuple(fs))) if fs.len() == rest.len() => fs,
+                _ => &[],
+            };
+            let items = rest
                 .iter()
                 .enumerate()
                 .map(|(i, a)| match fs.get(i) {
@@ -283,21 +298,50 @@ fn doc(t: &Term) -> Doc {
                 })
                 .collect();
             Doc::List {
-                open: format!("#{name}("),
+                open,
                 items,
                 sep: ", ",
                 close: ")",
             }
         }
+        // `-x` and `!x`: the operator before its operand (sec:grammar, Prefix).
+        Term::Prim(p @ (Prim::Neg | Prim::Not), args) if args.len() == 1 => {
+            Doc::Cat(vec![text(p.written()), operand(&args[0])])
+        }
+        // `t[0]` and `f[k]`: the key in brackets after its receiver (sec:grammar, IndexSuffix).
+        // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop, so
+        // that `fits` meets the receiver's text first rather than after walking down the
+        // chain, which made a broken layout quadratic in the chain's length.
+        Term::Prim(Prim::TupleGet | Prim::Get, args) if args.len() == 2 => {
+            let mut parts = vec![index(doc(&args[1]))];
+            let mut receiver = &args[0];
+            while let Term::Prim(Prim::TupleGet | Prim::Get, inner) = receiver
+                && inner.len() == 2
+            {
+                parts.push(index(doc(&inner[1])));
+                receiver = &inner[0];
+            }
+            parts.push(operand(receiver));
+            parts.reverse();
+            Doc::Cat(parts)
+        }
         Term::Prim(p, args) => match (infix(*p), &args[..]) {
+            // The left operand of `**` is a postfix expression (sec:grammar, Power), so
+            // `-x ** 2` would read as `-(x ** 2)`.
             (Some(sep), [a, b]) => Doc::List {
                 open: "(".into(),
-                items: vec![doc(a), doc(b)],
+                items: vec![if *p == Prim::Pow { operand(a) } else { doc(a) }, doc(b)],
                 sep,
                 close: ")",
             },
             _ => call(name(*p), args.iter().map(doc).collect()),
         },
+        // A primitive with no operator function of its own is written as the lambda a program
+        // writes for it (DESIGN.md writes `neg: (a -> -a)`), parenthesized as `(+)` is, so
+        // that a call or an operator after it is not read as part of its body.
+        Term::PrimFn(p @ (Prim::Neg | Prim::Not)) => text(format!("(x -> {}x)", p.written())),
+        Term::PrimFn(Prim::TupleGet) => text("((t, i) -> t[i])"),
+        Term::PrimFn(Prim::Get) => text("((f, k) -> f[k])"),
         Term::PrimFn(p) => match infix(*p) {
             Some(op) => text(format!("({})", op.trim())),
             None => text(name(*p)),
@@ -410,6 +454,56 @@ fn doc(t: &Term) -> Doc {
         }
         Term::Read(port) => call("port.read", vec![text(&**port)]),
         Term::Push(port, v) => call("port.push", vec![text(&**port), doc(v)]),
+    }
+}
+
+/// `t` as the operand of a prefix `-` or `!` or the receiver of `[k]`: parenthesized unless it
+/// is written as a primary or a postfix expression (sec:grammar, Prefix and Postfix).
+fn operand(t: &Term) -> Doc {
+    if primary(t) {
+        doc(t)
+    } else {
+        Doc::Cat(vec![text("("), doc(t), text(")")])
+    }
+}
+
+/// Whether the printer writes `t` as a primary or a postfix expression: a name, a call, a
+/// parenthesized or bracketed form, or a literal with no sign or slash in its text. A prefix
+/// operation, a lambda, a block, an `if`, a `match` and the other literals are not; nor is
+/// `-x` a primary, as `-x[0]` reads as `-(x[0])`.
+fn primary(t: &Term) -> bool {
+    match t {
+        Term::Lit(v) => match v {
+            Value::Int(n) => *n >= 0,
+            Value::Bool(_) | Value::Str(_) | Value::Atom(_) | Value::Tuple(_) => true,
+            Value::Big(_) | Value::Rat(_) | Value::Float(_) | Value::Path(_) | Value::Family(_) => {
+                false
+            }
+        },
+        Term::Prim(Prim::Neg | Prim::Not, args) => args.len() != 1,
+        Term::Lam(..) | Term::Let(..) | Term::If(..) | Term::Match(..) => false,
+        Term::Var(_)
+        | Term::App(..)
+        | Term::Prim(..)
+        | Term::PrimFn(_)
+        | Term::Fam { .. }
+        | Term::Reindex { .. }
+        | Term::Discard { .. }
+        | Term::Fold { .. }
+        | Term::Fix { .. }
+        | Term::Gen { .. }
+        | Term::Read(_)
+        | Term::Push(..) => true,
+    }
+}
+
+/// `[k]`, the brackets of an index.
+fn index(k: Doc) -> Doc {
+    Doc::List {
+        open: "[".into(),
+        items: vec![k],
+        sep: ", ",
+        close: "]",
     }
 }
 

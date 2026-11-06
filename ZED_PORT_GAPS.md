@@ -1662,3 +1662,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | The `object` crate reading an executable's symbol table and an archive's symbol index through `ReadCache` (reads of the file on demand), and Rust's mangled symbol names, whose hash tells two builds of a crate apart | `link::runtime_of`, `link::build_symbol`, `link::holds` | Foreign library; Bytes (gap 5) | The linking driver stays in Rust until a process port exists (as for `std::process::Command` above); a Zed version reads the two tables as bytes once Bytes words exist (step L7.3f) |
+
+## Entries from PRIM-hidden-names (`zed-kernel/src/print.rs`, `term.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Cow<'static, str>`, a primitive's fixed text borrowed, or `#err(..)` built when the message has the atom's name | `Prim::written_with` | None | Zed shares strings, so it returns a plain `String` |
+| `while let … && …` (a let chain) gathering an index chain `t[0][1]…` into one list | `print::doc` | None | a loop with `match` and `is` |
+| An exhaustive `match` giving each `Prim` variant a fixed number | `Prim::code` | None | a `match` on the atom of each primitive |

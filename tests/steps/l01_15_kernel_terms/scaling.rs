@@ -180,3 +180,39 @@ fn a_term_far_deeper_than_the_stack_drops_and_keeps_its_shared_parts() {
         drop(wide);
     });
 }
+
+/// Negations and indices nested `d` deep: `-(-(-x))` and `t[0][0][0]`, each operand checked
+/// for parentheses once (repair PRIM-hidden-names).
+fn prefix_shape(k: usize, d: usize) -> Term {
+    use zed_kernel::term::Prim;
+    use zed_kernel::term::build::{lit, prim};
+    (0..d).fold(var("x"), |t, _| match k {
+        0 => prim(Prim::Neg, vec![t]),
+        _ => prim(Prim::TupleGet, vec![t, lit(0)]),
+    })
+}
+
+#[test]
+fn negations_and_indices_print_in_linear_time() {
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            let n = 2_000;
+            for (k, what) in ["negations", "indices"].into_iter().enumerate() {
+                let (small, large) = (prefix_shape(k, n), prefix_shape(k, 8 * n));
+                scaling::check(&format!("one line, nested {what}, by depth"), n, |d| {
+                    let t = if d == n { &small } else { &large };
+                    std::hint::black_box(t.to_string());
+                });
+                scaling::check(&format!("width 80, nested {what}, by depth"), n, |d| {
+                    let t = if d == n { &small } else { &large };
+                    std::hint::black_box(pretty(t, 80));
+                });
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(prefix_shape(0, 3).to_string(), "-(-(-x))");
+    assert_eq!(prefix_shape(1, 3).to_string(), "x[0][0][0]");
+}

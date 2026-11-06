@@ -71,6 +71,6 @@ fn brackets_index_one_level_and_fill_no_default() {
     assert_eq!(term(src, "inc"), "$1 -> add(1, $1)");
     assert_eq!(value(src, "r"), "42");
     assert_eq!(value(src, "m"), "-5");
-    assert_eq!(term(src, "second"), "tupleGet(pair, 1)");
+    assert_eq!(term(src, "second"), "pair[1]");
     assert_eq!(value(src, "second"), "8");
 }

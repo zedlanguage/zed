@@ -14,7 +14,7 @@ fn an_invoice_total_is_a_fold_over_a_family() {
     );
     assert_eq!(
         total.to_string(),
-        "fold(fam(lines, line -> (get(line, \"qty\") * get(line, \"price\"))), (+), \
+        "fold(fam(lines, line -> (line[\"qty\"] * line[\"price\"])), (+), \
          identity: 0, depth: 1, ev: {})"
     );
 }
@@ -32,7 +32,7 @@ fn grouping_orders_by_customer_is_a_reindex_with_its_witness() {
     };
     assert_eq!(
         by_customer.to_string(),
-        "reindex(orders, (k, v) -> path(get(v, \"customer\"), k), (k, v) -> v, witness: residue)"
+        "reindex(orders, (k, v) -> path(v[\"customer\"], k), (k, v) -> v, witness: residue)"
     );
     let catalog = Term::Reindex {
         family: rc(var("orders")),
@@ -55,7 +55,7 @@ fn a_filter_is_a_discard() {
     );
     assert_eq!(
         open.to_string(),
-        "discard(tickets, t -> (get(t, \"state\") == #open))"
+        "discard(tickets, t -> (t[\"state\"] == #open))"
     );
 }
 
@@ -164,7 +164,7 @@ fn tuples_primitives_and_applied_lambdas_print_unambiguously() {
     let pair = prim(Prim::Tuple, vec![lit(1), lit("a")]);
     assert_eq!(pair.to_string(), "(1, \"a\")");
     assert_eq!(prim(Prim::Tuple, vec![lit(1)]).to_string(), "(1,)");
-    assert_eq!(prim(Prim::Neg, vec![var("x")]).to_string(), "neg(x)");
+    assert_eq!(prim(Prim::Neg, vec![var("x")]).to_string(), "-x");
     assert_eq!(count(var("orders")).to_string(), "count(orders)");
     assert_eq!(Term::PrimFn(Prim::Max).to_string(), "max");
     // A lambda applied in place is parenthesized, so its body does not swallow the call.

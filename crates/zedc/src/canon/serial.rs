@@ -260,12 +260,12 @@ impl Out<'_> {
             }
             Term::Prim(p, args) => {
                 self.tag(7);
-                self.str(&format!("{p:?}"));
+                self.word(p.code());
                 self.seq(args, Job::Term, todo);
             }
             Term::PrimFn(p) => {
                 self.tag(8);
-                self.str(&format!("{p:?}"));
+                self.word(p.code());
             }
             Term::Let(_, e, body) => {
                 self.tag(9);

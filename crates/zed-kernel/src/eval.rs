@@ -1428,7 +1428,12 @@ impl<'t> Machine<'_, 't> {
                         p.written()
                     ));
                 }
-                _ => return type_err(format!("`{}` applied to a function", p.written())),
+                _ => {
+                    return type_err(format!(
+                        "`{}` applied to a function",
+                        p.written_with(vals.first())
+                    ));
+                }
             }
         }
         // A tuple and an atom's payload hold atoms as data, and `==` has an arrow at every
@@ -2144,7 +2149,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             .collect();
         Err(KernelError::Type(format!(
             "`{}` applied to {}",
-            p.written(),
+            p.written_with(vals.first()),
             shown.join(", ")
         )))
     };

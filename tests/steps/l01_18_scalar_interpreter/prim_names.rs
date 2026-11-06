@@ -97,12 +97,12 @@ fn a_refusal_names_each_primitive_as_the_program_writes_it() {
 }
 
 /// The forms of the primitives with no word of their own: DESIGN.md's `(..)`, `p[0]`, `f[k]`,
-/// `.count` and `.union`; the printer's word for an atom, whose name a fixed text cannot
-/// carry, and for the keypath primitives, which DESIGN.md does not write.
+/// `.count` and `.union`; `#_(..)`, any atom, whose name a fixed text cannot carry; and the
+/// printer's words for the keypath primitives, which DESIGN.md does not write.
 #[test]
 fn a_primitive_with_no_word_is_named_by_its_written_form() {
     let forms = [
-        "(..)", "[i]", "atom", "[k]", ".count", ".union", "path", "pathKey", "pathLen",
+        "(..)", "[i]", "#_(..)", "[k]", ".count", ".union", "path", "pathKey", "pathLen",
     ];
     for (p, w) in UNNAMED.into_iter().zip(forms) {
         assert_eq!(p.written(), w, "{p:?}");
@@ -150,5 +150,31 @@ fn comparing_a_number_with_a_city_name_names_the_comparison() {
             .unwrap_err()
             .to_string(),
         "type error: `>` applied to `int`, `String`"
+    );
+}
+
+/// A refusal names an atom by its name when it has one, `#err(..)`, and as any atom, `#_(..)`,
+/// when its first argument is not a name (repair PRIM-hidden-names).
+#[test]
+fn a_refusal_names_an_atom_by_its_name() {
+    use zed_kernel::term::build::{lam, lit, var};
+    let run =
+        |args: Vec<Term>| match Evaluator::new(World::new()).run(&Term::Prim(Prim::Atom, args)) {
+            Err(KernelError::Type(m)) => m,
+            other => panic!("no type error but {other:?}"),
+        };
+    let none = || lit(Value::tuple(Vec::new()));
+    let f = || lam(&["y"], var("y"));
+    assert_eq!(
+        run(vec![lit("err"), none(), f()]),
+        "`#err(..)` applied to a function"
+    );
+    assert_eq!(
+        run(vec![lit("err"), lit(5), lit(1)]),
+        "`#err(..)` applied to `String`, `int`, `int`"
+    );
+    assert_eq!(
+        run(vec![lit(7), none(), lit(1)]),
+        "`#_(..)` applied to `int`, `(..)`, `int`"
     );
 }
