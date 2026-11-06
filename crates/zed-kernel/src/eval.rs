@@ -1350,8 +1350,9 @@ impl<'t> Machine<'_, 't> {
         if let Some(n) = p.arity()
             && args.len() != n
         {
+            let s = if n == 1 { "" } else { "s" };
             return type_err(format!(
-                "`{}` takes {n} arguments, given {}",
+                "`{}` takes {n} argument{s}, given {}",
                 p.written(),
                 args.len()
             ));

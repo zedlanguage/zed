@@ -7,9 +7,9 @@ use zedc::zir::text::PRIMS;
 
 use crate::l01_16_elaboration::{elab, with_prelude};
 
-/// The primitives no program names: elaboration builds them from other forms (a tuple, a
-/// component `t.0`, an atom), or they belong to later layers. A refusal names them as the
-/// kernel's printer writes them.
+/// The primitives no program names by a word of its own: elaboration builds them from other
+/// forms (a tuple, a component `p[0]`, an atom), or they belong to later layers. A refusal
+/// names them by the form DESIGN.md writes, or else as the kernel's printer writes them.
 const UNNAMED: [Prim; 9] = [
     Prim::Tuple,
     Prim::TupleGet,
@@ -94,6 +94,46 @@ fn a_refusal_names_each_primitive_as_the_program_writes_it() {
         check_refusal(p, w, &refusal(with_prelude(x), n));
     }
     assert_eq!(named, PRIMS.len() - UNNAMED.len());
+}
+
+/// The forms of the primitives with no word of their own: DESIGN.md's `(..)`, `p[0]`, `f[k]`,
+/// `.count` and `.union`; the printer's word for an atom, whose name a fixed text cannot
+/// carry, and for the keypath primitives, which DESIGN.md does not write.
+#[test]
+fn a_primitive_with_no_word_is_named_by_its_written_form() {
+    let forms = [
+        "(..)", "[i]", "atom", "[k]", ".count", ".union", "path", "pathKey", "pathLen",
+    ];
+    for (p, w) in UNNAMED.into_iter().zip(forms) {
+        assert_eq!(p.written(), w, "{p:?}");
+    }
+}
+
+/// The ZIR text form reads a primitive back by its printed name, so no two share one.
+#[test]
+fn each_primitive_has_its_own_printed_name() {
+    let mut seen = std::collections::HashMap::new();
+    for p in PRIMS {
+        if let Some(q) = seen.insert(p.printed(), p) {
+            panic!("{q:?} and {p:?} are both printed `{}`", p.printed());
+        }
+    }
+}
+
+/// An arity refusal counts its arguments in the singular for one.
+#[test]
+fn an_arity_refusal_says_one_argument() {
+    let t = Term::Prim(
+        Prim::PopCount,
+        vec![Term::Lit(Value::Int(1)), Term::Lit(Value::Int(2))],
+    );
+    assert_eq!(
+        Evaluator::new(World::new())
+            .run(&t)
+            .unwrap_err()
+            .to_string(),
+        "type error: `popCount` takes 1 argument, given 2"
+    );
 }
 
 /// The example of the report: an int compared with a string, given past the checker as a

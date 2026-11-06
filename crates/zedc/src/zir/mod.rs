@@ -447,7 +447,7 @@ fn shape(n: &Node) -> Result<Shape, String> {
 /// How a message names an operation: its name, with the primitive or the port.
 fn title(op: &Op) -> String {
     match op {
-        Op::Prim(p) => format!("prim {}", text::spell(*p)),
+        Op::Prim(p) => format!("prim {}", p.printed()),
         Op::Read(port) => format!("port read {port}"),
         Op::Push(port) => format!("port push {port}"),
         op => op_name(op).into(),

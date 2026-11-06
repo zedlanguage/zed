@@ -128,16 +128,29 @@ fn name(p: Prim) -> &'static str {
 
 impl Prim {
     /// How a message names the primitive: as a program writes it, the operator (`>`, `++`,
-    /// `-` for both `Sub` and `Neg`, `!` for `Not`) or the prelude word (`popCount`,
-    /// `String`). The primitives no program names, which elaboration builds from other forms
-    /// or which belong to later layers (`tuple`, `tupleGet`, `atom`, `get`, `count`,
-    /// `union`, `path`, `pathKey`, `pathLen`), are named as the printer writes them.
+    /// `-` for both `Sub` and `Neg`, `!` for `Not`), the prelude word (`popCount`,
+    /// `String`), or the form DESIGN.md gives one with no word of its own: a tuple `(..)`, a
+    /// component `[i]` (`p[0]`), an entry `[k]` (`f[k]`), and the methods `.count` and
+    /// `.union`. The rest are named as the printer writes them: `atom`, since a fixed text
+    /// cannot carry the atom's name, and `path`, `pathKey`, `pathLen`, for which DESIGN.md
+    /// gives no written form.
     pub fn written(self) -> &'static str {
         match self {
             Prim::Neg => "-",
             Prim::Not => "!",
+            Prim::Tuple => "(..)",
+            Prim::TupleGet => "[i]",
+            Prim::Get => "[k]",
+            Prim::Count => ".count",
+            Prim::Union => ".union",
             p => name(p),
         }
+    }
+
+    /// The name the printer writes the primitive by in function form (`neg`, `get`, `+`),
+    /// a different one for each primitive, so the ZIR text form reads it back.
+    pub fn printed(self) -> &'static str {
+        name(self)
     }
 }
 

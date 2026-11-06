@@ -105,68 +105,6 @@ pub const PRIMS: [Prim; 55] = {
     ]
 };
 
-/// How the text form spells a primitive: as the kernel's printer does.
-pub fn spell(p: Prim) -> &'static str {
-    use Prim::*;
-    match p {
-        Add => "+",
-        Sub => "-",
-        Mul => "*",
-        Div => "/",
-        IntDiv => "div",
-        Mod => "mod",
-        Neg => "neg",
-        Eq => "==",
-        Ne => "!=",
-        Lt => "<",
-        Le => "<=",
-        Gt => ">",
-        Ge => ">=",
-        And => "&&",
-        Or => "||",
-        Not => "not",
-        Min => "min",
-        Max => "max",
-        Get => "get",
-        Count => "count",
-        Union => "union",
-        Path => "path",
-        PathKey => "pathKey",
-        PathLen => "pathLen",
-        Tuple => "tuple",
-        TupleGet => "tupleGet",
-        Concat => "++",
-        Pow => "**",
-        Atom => "atom",
-        Show => "String",
-        CastInt => "int",
-        CastRat => "rat",
-        CastF64 => "f64",
-        Abs => "abs",
-        Len => "len",
-        Lower => "lower",
-        Upper => "upper",
-        Trim => "trim",
-        Sum => "sum",
-        BitAnd => "bitAnd",
-        BitOr => "bitOr",
-        BitXor => "bitXor",
-        BitNot => "bitNot",
-        Shl => "shl",
-        Shr => "shr",
-        PopCount => "popCount",
-        LeadingZeros => "leadingZeros",
-        TrailingZeros => "trailingZeros",
-        Rotl => "rotl",
-        Rotr => "rotr",
-        F64Bits => "f64Bits",
-        CodePoint => "codePoint",
-        Scalar => "scalar",
-        Utf8 => "utf8",
-        FromUtf8 => "fromUtf8",
-    }
-}
-
 const GRADES: [(Grade, &str); 6] = [
     (Grade::Axiom, "axiom"),
     (Grade::CheckedExhaustive, "checkedExhaustive"),
@@ -306,7 +244,7 @@ fn op(op: &Op) -> String {
         Op::Gen(GuardPos::After) => format!("{name} after"),
         Op::Read(port) => format!("{name} read {port}"),
         Op::Push(port) => format!("{name} push {port}"),
-        Op::Prim(p) => format!("{name} {}", spell(*p)),
+        Op::Prim(p) => format!("{name} {}", p.printed()),
         Op::Match(ps) => {
             let ps: Vec<String> = ps.iter().map(pattern).collect();
             format!("{name} [{}]", ps.join(", "))
@@ -951,7 +889,7 @@ impl<'a> P<'a> {
                 Op::Prim(
                     *PRIMS
                         .iter()
-                        .find(|p| spell(**p) == t)
+                        .find(|p| p.printed() == t)
                         .ok_or_else(|| format!("`{t}` is not a primitive"))?,
                 )
             }

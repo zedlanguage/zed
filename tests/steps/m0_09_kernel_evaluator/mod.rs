@@ -610,7 +610,7 @@ fn ill_typed_terms_are_reported() {
         ),
         (
             prim(Prim::Neg, vec![lit(1), lit(2)]),
-            "`-` takes 1 arguments, given 2",
+            "`-` takes 1 argument, given 2",
         ),
         (prim(Prim::Not, vec![lit(1)]), "`!` applied to `int`"),
     ] {
