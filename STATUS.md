@@ -1201,8 +1201,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BEND-tt | impl attempt 1 | 2026-11-05 04:07 | started: study of Bend 2 type theory and proof side; report to wt/studies/BEND-tt.md |
-| BIB-check | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/bib-check-spec (spec-only item) |
 | BIT-memo-test | impl attempt 1 | 2026-11-03 16:32 | started; worktree /home/luke/Work/wt/bit-memo-test at origin/main ab40a46f |
 | CASES-xr1 | impl attempt 1 | 2026-11-05 04:07 | started; load 38.85 44.88 50.79 |
 | CONST-wide-addr | impl attempt 1 | 2026-11-05 18:05 | negative control (decimal digits in binary.rs and serial.rs magnitude, not committed): instructions 8x bits 22.3x (23.8M to 532M at 2^17 to 2^20 bits), under ch |
