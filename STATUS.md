@@ -1265,16 +1265,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | negative control on old checker (Shape by value, no facts), sizes 100/800: one-expression 48.1x, bindings 61.2x, calls 53.7x instructions (limit 24); load 62.19 |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
+| BUILD-modes | impl attempt 1 | 2026-11-05 04:07 | started; reading brief, plan row, DESIGN text |
 | BUILD-opt-measure | running | 2026-11-05 21:05 |  |
 | DART-SCALE | merge attempt 1 | 2026-11-05 04:07 | merge agent running (started by orch) |
-| F70-rerun | impl attempt 1 | 2026-11-05 20:49 | perf d=48 (1747 samples, load 61-67): 95% in one preimage of the outer test: preimage::linear -> presburger::project_each 87% -> settle_as_sets 83% -> solve 77% |
+| DOC-zedc-collision | impl attempt 1 | 2026-11-05 21:26 | started; worktree created and seeded |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | orch | running | 2026-11-05 18:05 | LAYOUT-measure and LIVE3-lp-tangents impl done (725f9db7+fa327ce, b5501ddb); merges started |
-| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | negative controls (not committed): original pass_at clone fails the checker test at 1000/8000, 38.5x bytes (66.0M, 2,543.5M), 13.25x instructions, load 68; line |
+| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | done on wt/pass-at-args (code + docs, rebased on f36a66f6); fmt, clippy clean; l01_26 179, l01_16 53, l01_21 44, l01_27 33 pass; scaling modules 49/23/4/6 pass  |
 | RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | tests pass, load5 54-61: asks 19/19; groups l01_02 8, l01_03 5, l01_04 5, l01_08 134, l01_15 31, l01_17 95, l01_18 49, l01_24 66, l01_26 223, l01_26a 19, l01_29 |
 | RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | found and fixed test helper flaw: entailment.rs rung2 translated premise and goal in separate calls, so aux q0 of both conflated; 'x mod 2 == 1' => 'x mod 4 <=  |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (d) printer on a token sequence, 134b2b92; docs (K39, STATUS, ZED_PORT_GAPS) committed; l01_15 33, lib 86, l01_22 41, l01_23 131, l01_31 46, m0_09 98, l01_16 75 |
+| T2-types-rest | verify attempt 1 | 2026-11-03 09:40 | part 3 verify+merge started: branch ac273df4 (5 commits on 654e453f), 63 behind origin/main; load 35.00 45.28 53.89 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
