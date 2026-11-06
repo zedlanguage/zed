@@ -73,17 +73,63 @@ fn the_text_of_a_list_type_nested_deep_is_made() {
 #[path = "debug_samples.rs"]
 mod debug_samples;
 
+/// `text` with each diagram node written once, `#k=Node(..)` then `#k#`, written out in full at
+/// each use, as the derived `Debug` wrote it. The samples hold no `#` and no unmatched
+/// parenthesis but these.
+fn unshared(text: &str) -> String {
+    let (mut out, mut defs, mut open) = (String::new(), Vec::<String>::new(), Vec::new());
+    let mut depth = 0;
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if c == '#' {
+            let digits = rest[1..].find(|c: char| !c.is_ascii_digit()).unwrap() + 1;
+            let k: usize = rest[1..digits].parse().unwrap();
+            match &rest[digits..digits + 1] {
+                "=" => {
+                    assert_eq!(defs.len(), k, "numbered in the order written");
+                    defs.push(String::new());
+                    open.push((k, out.len(), depth));
+                }
+                _ => out.push_str(&defs[k]),
+            }
+            rest = &rest[digits + 1..];
+            continue;
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if let Some(&(k, at, d)) = open.last()
+                    && d == depth
+                {
+                    open.pop();
+                    defs[k] = out[at..].to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 #[test]
-fn debug_writes_the_derived_text() {
+fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // debug_text.txt is the text the derived `Debug`s wrote, a recursion, for these types.
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());
+    let mut shared = 0;
     for (t, line) in samples.iter().zip(expected.lines()) {
-        assert_eq!(format!("{t:?}"), line);
+        let text = format!("{t:?}");
+        assert_eq!(unshared(&text), line);
+        assert!(text.len() <= line.len());
+        shared += usize::from(text.contains("#0#"));
         // On one line under `{:#?}` too, as `Value`'s and `Term`'s `Debug` write it.
-        assert_eq!(format!("{t:#?}"), line);
+        assert_eq!(format!("{t:#?}"), text);
     }
+    assert!(shared > 0, "some sample shares a node");
 }
 
 /// How deep the types whose `Debug` text is made go: each level of a list type writes about
@@ -509,4 +555,39 @@ fn the_text_of_a_type_with_recursive_types_is_the_same_made_outside_in_and_insid
         let inside_out = random_in(&mut seed, 5, true, Some(&trees));
         assert_eq!(text, inside_out.to_string());
     }
+}
+
+/// Operands of an xor chain on the default stack. The derived `Debug` wrote `2^n` copies of the
+/// first operand: 2.9 MB at 12 operands, 183 MB in 1 s at 18; this size would never end.
+const XORS: usize = 16_000;
+
+#[test]
+fn the_debug_text_of_an_expression_writes_each_shared_operand_once() {
+    let text = format!("{:?}", xor_chain(0, XORS));
+    // Each step but the first two names its operand `t` once and refers to it once.
+    assert_eq!(text.matches('=').count(), XORS - 2);
+    assert_eq!(text.matches("#0#").count(), 1);
+    assert_eq!(text.matches('#').count(), 3 * (XORS - 2));
+    assert!(text.len() < 1_000 * XORS);
+}
+
+#[test]
+fn the_debug_text_of_an_xor_chain_scales() {
+    scales_at(
+        "the Debug text of an xor chain",
+        2_000,
+        |n, i| xor_chain(i * 1_000_000, n),
+        |_, t| format!("{t:?}"),
+    );
+}
+
+/// The parity of `n` one-tuples of the literals from `leaf`, built as `t = (t - r) | (r - t)`
+/// for each tuple `r` in turn: an expression whose operand `t` is reached by two edges at each
+/// step, `2^n` paths through `2n` expressions.
+fn xor_chain(leaf: usize, n: usize) -> Type {
+    let row = |i: usize| Type::tuple(vec![Type::lit(&Value::Int((leaf + i) as i64)).unwrap()]);
+    (1..n).fold(row(0), |t, i| {
+        let r = row(i);
+        &(&t - &r) | &(&r - &t)
+    })
 }

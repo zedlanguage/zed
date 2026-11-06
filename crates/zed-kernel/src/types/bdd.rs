@@ -33,7 +33,6 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::Bound;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
@@ -1437,6 +1436,14 @@ impl<A: Literal> Part<A> {
         go(self, &mut HashSet::new(), &mut out).then_some(out)
     }
 
+    /// The id of an expression; a diagram part has none of its own.
+    pub(super) fn expr_id(&self) -> Option<u64> {
+        match self {
+            Part::Bdd(_) => None,
+            Part::Expr(e) => Some(e.id),
+        }
+    }
+
     /// The diagram, or the connective of an expression.
     pub(super) fn view(&self) -> Result<&Bdd<A>, &Form<A>> {
         match self {
@@ -1828,12 +1835,6 @@ impl<A: Literal> PartialEq for Expr<A> {
 }
 
 impl<A: Literal> Eq for Expr<A> {}
-
-impl<A: Literal> fmt::Debug for Expr<A> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.form.fmt(f)
-    }
-}
 
 impl<A: Literal> Ord for Bdd<A> {
     fn cmp(&self, other: &Bdd<A>) -> Ordering {

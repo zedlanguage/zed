@@ -40,7 +40,8 @@ fn random(s: &mut u64, d: u32) -> Type {
 }
 
 /// Each scalar part, tuples of two lengths, atoms with and without payloads, morphisms,
-/// complements, a tuple part kept as an expression, a recursive type, and random types.
+/// complements, a tuple part kept as an expression, a recursive type, and random types, one with
+/// a shared diagram node, and an xor chain whose expressions share operands.
 pub fn samples() -> Vec<Type> {
     let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
     let one = |t: Type| Type::tuple(vec![t]);
@@ -78,5 +79,12 @@ pub fn samples() -> Vec<Type> {
     ];
     let mut seed = 5;
     out.extend((0..12).map(|_| random(&mut seed, 3)));
+    // A tuple part whose diagram has a node reached by two edges.
+    let mut seed = 3;
+    out.extend((0..=1172).map(|_| random(&mut seed, 5)).last());
+    // An xor chain of four one-tuples, whose expressions share their operands.
+    out.push((1..4).fold(one(lit(0)), |t, i| {
+        &(&t - &one(lit(i))) | &(&one(lit(i)) - &t)
+    }));
     out
 }

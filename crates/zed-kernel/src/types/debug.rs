@@ -1,7 +1,13 @@
 //! `Debug` of [`Type`], and of the rows, morphisms, parts and diagrams it holds, written from
 //! one stack of what is left to write, so a type nested to any depth is written on a small
-//! stack. The text is the one line the derived `Debug`s write for `{:?}`, under `{:#?}` too.
+//! stack. The text is the one line the derived `Debug`s write for `{:?}`, under `{:#?}` too,
+//! but for the diagram nodes and expressions of a part reached by two edges or more: such a
+//! node is written once, numbered, as `#k=Node(..)` or `#k=Expr(..)`, and after that as `#k#`,
+//! the notation of Common Lisp's `*print-circle*`, so the text of a part is linear in its nodes,
+//! not in its paths. The numbers count from 0 in each part, in the order the nodes are written,
+//! so equal parts have equal texts and the text names the part.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use super::bdd::{Bdd, Form, Literal, Part};
@@ -14,8 +20,10 @@ pub(super) enum Show<'a> {
     Leaf(&'a dyn fmt::Debug),
     /// A part that holds types, which queues its own text.
     Item(&'a dyn Queue),
-    /// A diagram.
-    Diagram(&'a dyn Diagram),
+    /// A part or diagram, whose shared nodes are numbered apart from any other's.
+    Graph(&'a dyn Vertex),
+    /// A node of the part or diagram whose shared nodes are those of this scope.
+    Below(&'a dyn Vertex, usize),
 }
 
 /// A part whose text is queued on the stack of what is left to write.
@@ -24,13 +32,42 @@ pub(super) trait Queue {
     fn queue<'a>(&'a self, todo: &mut Vec<Show<'a>>);
 }
 
-/// A diagram node's id, atom, `hi` and `lo`.
-type Split<'a> = (u64, &'a dyn Queue, &'a dyn Diagram, &'a dyn Diagram);
+/// A node of a part: a diagram node or leaf, an expression, or a part that is a diagram.
+pub(super) trait Vertex {
+    /// The node's id, unique in the process, if it can be shared.
+    fn id(&self) -> Option<u64>;
+    /// The nodes below it.
+    fn children(&self) -> [Option<&dyn Vertex>; 2];
+    /// Pushes the text of `self` onto `todo`, its nodes in `scope`, its first piece last.
+    fn layout<'a>(&'a self, scope: usize, todo: &mut Vec<Show<'a>>);
+}
 
-/// A diagram of any universe, seen as a node or a leaf.
-pub(super) trait Diagram {
-    /// The node's id, atom, `hi` and `lo`, or the leaf's value.
-    fn split(&self) -> Result<Split<'_>, bool>;
+/// The nodes of one part reached by two edges or more, keyed by id, each with its number once
+/// it is written, and the next number.
+struct Scope {
+    shared: HashMap<u64, Option<usize>>,
+    next: usize,
+}
+
+impl Scope {
+    /// One pass over the nodes below `root`, each visited once.
+    fn of(root: &dyn Vertex) -> Scope {
+        let mut seen = HashSet::new();
+        let mut shared = HashMap::new();
+        seen.extend(root.id());
+        let mut stack = vec![root];
+        while let Some(v) = stack.pop() {
+            for c in v.children().into_iter().flatten() {
+                match c.id() {
+                    Some(id) if !seen.insert(id) => {
+                        shared.insert(id, None);
+                    }
+                    _ => stack.push(c),
+                }
+            }
+        }
+        Scope { shared, next: 0 }
+    }
 }
 
 /// Pushes `parts`, to be written in the order given.
@@ -41,26 +78,33 @@ fn put<'a>(todo: &mut Vec<Show<'a>>, parts: Vec<Show<'a>>) {
 /// Writes `first` and all it holds.
 pub(super) fn run(first: Show<'_>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut todo = vec![first];
+    let mut scopes: Vec<Scope> = Vec::new();
     while let Some(s) = todo.pop() {
         match s {
             Show::Text(s) => f.write_str(s)?,
             Show::Leaf(x) => write!(f, "{x:?}")?,
             Show::Item(x) => x.queue(&mut todo),
-            Show::Diagram(d) => match d.split() {
-                Err(b) => write!(f, "{b}")?,
-                Ok((_, atom, hi, lo)) => put(
-                    &mut todo,
-                    vec![
-                        Show::Text("Node("),
-                        Show::Item(atom),
-                        Show::Text(", "),
-                        Show::Diagram(hi),
-                        Show::Text(", "),
-                        Show::Diagram(lo),
-                        Show::Text(")"),
-                    ],
-                ),
-            },
+            Show::Graph(v) => {
+                scopes.push(Scope::of(v));
+                todo.push(Show::Below(v, scopes.len() - 1));
+            }
+            Show::Below(v, s) => {
+                let scope = &mut scopes[s];
+                match v.id().and_then(|id| scope.shared.get_mut(&id)) {
+                    Some(Some(k)) => {
+                        write!(f, "#{k}#")?;
+                        continue;
+                    }
+                    Some(mark) => {
+                        let k = scope.next;
+                        scope.next += 1;
+                        *mark = Some(k);
+                        write!(f, "#{k}=")?;
+                    }
+                    None => {}
+                }
+                v.layout(s, &mut todo);
+            }
         }
     }
     Ok(())
@@ -123,13 +167,13 @@ impl Queue for Node {
             if i > 0 {
                 w.push(Text(", "));
             }
-            w.extend([Leaf(len), Text(": "), Item(part)]);
+            w.extend([Leaf(len), Text(": "), Show::Graph(part)]);
         }
         w.extend([
             Text("} }, structs: "),
             Leaf(&p.structs),
             Text(", morphisms: "),
-            Item(&p.morphisms),
+            Show::Graph(&p.morphisms),
             Text(" })"),
         ]);
         put(todo, w);
@@ -167,42 +211,78 @@ impl Queue for Morphism {
     }
 }
 
-impl<A: Literal> Queue for Part<A> {
-    fn queue<'a>(&'a self, todo: &mut Vec<Show<'a>>) {
+impl<A: Literal> Vertex for Part<A> {
+    fn id(&self) -> Option<u64> {
+        self.expr_id()
+    }
+
+    fn children(&self) -> [Option<&dyn Vertex>; 2] {
+        match self.view() {
+            Ok(b) => [Some(b), None],
+            Err(Form::Not(p)) => [Some(p), None],
+            Err(Form::Or(p, q) | Form::And(p, q)) => [Some(p), Some(q)],
+        }
+    }
+
+    fn layout<'a>(&'a self, s: usize, todo: &mut Vec<Show<'a>>) {
+        use Show::{Below, Text};
         put(
             todo,
             match self.view() {
-                Ok(b) => vec![Show::Text("Bdd("), Show::Diagram(b), Show::Text(")")],
-                Err(form) => vec![Show::Text("Expr("), Show::Item(form), Show::Text(")")],
+                Ok(b) => vec![Text("Bdd("), Below(b, s), Text(")")],
+                Err(Form::Not(p)) => vec![Text("Expr(Not("), Below(p, s), Text("))")],
+                Err(Form::Or(p, q)) => {
+                    vec![
+                        Text("Expr(Or("),
+                        Below(p, s),
+                        Text(", "),
+                        Below(q, s),
+                        Text("))"),
+                    ]
+                }
+                Err(Form::And(p, q)) => {
+                    vec![
+                        Text("Expr(And("),
+                        Below(p, s),
+                        Text(", "),
+                        Below(q, s),
+                        Text("))"),
+                    ]
+                }
             },
         );
     }
 }
 
-impl<A: Literal> Queue for Form<A> {
-    fn queue<'a>(&'a self, todo: &mut Vec<Show<'a>>) {
-        use Show::{Item, Text};
-        put(
-            todo,
-            match self {
-                Form::Not(p) => vec![Text("Not("), Item(p), Text(")")],
-                Form::Or(p, q) => vec![Text("Or("), Item(p), Text(", "), Item(q), Text(")")],
-                Form::And(p, q) => vec![Text("And("), Item(p), Text(", "), Item(q), Text(")")],
-            },
-        );
+impl<A: Literal> Vertex for Bdd<A> {
+    fn id(&self) -> Option<u64> {
+        self.branch().ok().map(|(id, ..)| id)
     }
-}
 
-impl<A: Literal> Diagram for Bdd<A> {
-    fn split(&self) -> Result<Split<'_>, bool> {
-        self.branch().map(|(id, atom, hi, lo)| {
-            (
-                id,
-                atom as &dyn Queue,
-                hi as &dyn Diagram,
-                lo as &dyn Diagram,
-            )
-        })
+    fn children(&self) -> [Option<&dyn Vertex>; 2] {
+        match self.branch() {
+            Ok((_, _, hi, lo)) => [Some(hi), Some(lo)],
+            Err(_) => [None, None],
+        }
+    }
+
+    fn layout<'a>(&'a self, s: usize, todo: &mut Vec<Show<'a>>) {
+        use Show::{Below, Item, Text};
+        match self.branch() {
+            Err(b) => todo.push(Text(if b { "true" } else { "false" })),
+            Ok((_, atom, hi, lo)) => put(
+                todo,
+                vec![
+                    Text("Node("),
+                    Item(atom),
+                    Text(", "),
+                    Below(hi, s),
+                    Text(", "),
+                    Below(lo, s),
+                    Text(")"),
+                ],
+            ),
+        }
     }
 }
 
@@ -232,18 +312,12 @@ impl fmt::Debug for Morphism {
 
 impl<A: Literal> fmt::Debug for Part<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        run(Show::Item(self), f)
-    }
-}
-
-impl<A: Literal> fmt::Debug for Form<A> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        run(Show::Item(self), f)
+        run(Show::Graph(self), f)
     }
 }
 
 impl<A: Literal> fmt::Debug for Bdd<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        run(Show::Diagram(self), f)
+        run(Show::Graph(self), f)
     }
 }
