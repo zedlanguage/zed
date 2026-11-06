@@ -262,6 +262,123 @@ fn patterns_read_back() {
 }
 
 #[test]
+fn generated_binders_read_back() {
+    use zedc::canon::binders::level_name;
+    // The elaborator's binders `$1`, `$2` (a wave's values in a port graph) and the canonical
+    // binders at levels 0 and 12 print with `$`, which no written name contains, and read back.
+    let bind = |x: &str| Pattern::Bind(x.into());
+    let level = |k| Pattern::Bind(level_name(k));
+    for (p, text) in [
+        (bind("$1"), "$1"),
+        (
+            Pattern::Tuple(vec![bind("$1"), bind("$2"), bind("n")]),
+            "($1, $2, n)",
+        ),
+        (level(0), "$$0"),
+        (Pattern::Atom("some".into(), vec![level(12)]), "#some($$12)"),
+        (
+            Pattern::Fields("err".into(), vec![("code".into(), level(1))]),
+            "#err(code: $$1)",
+        ),
+    ] {
+        assert_eq!(pattern(&p), text);
+        assert_eq!(parse_pattern(text), Ok(p), "{text}");
+    }
+    // A graph the canonicalizer renamed prints and reads back whole, its binders at their levels.
+    let g = parse(
+        "zir 1\nr region function (tuple)\nr.0 match [(lo, hi)] (r^0) -> (int)\nr.0/0 region match (int; int)\nr.0/0.0 prim + (r.0/0^0, r.0/0^1) -> (int)\nr.0/0 results (r.0/0.0^0)\nr results (r.0^0)\n",
+    )
+    .expect("a graph");
+    let c = zedc::zir::canon::canonicalize(&g);
+    let printed = zedc::zir::text::print(&c);
+    assert!(printed.contains("match [($$0, $$1)]"), "{printed}");
+    assert_eq!(parse(&printed), Ok(c));
+    // Each binder has one spelling, and a `$` that starts no binder is refused at the `$`.
+    for (text, why) in [
+        (
+            "$",
+            "`$` is not a binder: a binder written with `$` has a number after the `$`",
+        ),
+        (
+            "($$, a)",
+            "`$$` is not a binder: a binder written with `$` has a number after the `$`",
+        ),
+        (
+            "$01",
+            "`$01` is not a binder: a binder written with `$` has a number with no leading zero",
+        ),
+        (
+            "$$007",
+            "`$$007` is not a binder: a binder written with `$` has a number with no leading zero",
+        ),
+        (
+            "(a, $1x)",
+            "`$1x` is not a binder: a binder written with `$` ends with its number",
+        ),
+        (
+            "$$99999999999999999999999",
+            "`$$99999999999999999999999` is not a binder: its level is too large",
+        ),
+    ] {
+        let col = text.find('$').expect("a `$`") + 1;
+        assert_eq!(
+            parse_pattern(text),
+            Err(format!("column {col}: {why}")),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn the_text_and_binary_forms_read_the_same_generated_binders() {
+    use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text};
+    // A match on `0` with one arm, whose pattern binds the one name `x`.
+    let matching = |x: &str| Region {
+        kind: RegionKind::Function,
+        args: Vec::new(),
+        nodes: vec![Node {
+            op: Op::Match(vec![Pattern::Bind(x.into())]),
+            inputs: vec![Src::Const(Value::Int(0))],
+            outputs: vec![Edge::value(zed_kernel::types::Type::int())],
+            regions: vec![
+                Region {
+                    kind: RegionKind::Match,
+                    args: vec![Edge::value(zed_kernel::types::Type::int())],
+                    nodes: Vec::new(),
+                    results: vec![Src::Arg(0)],
+                }
+                .into(),
+            ],
+        }],
+        results: vec![Src::Out(0, 0)],
+    };
+    let huge = "99999999999999999999999";
+    for (x, made) in [
+        ("$1", true),
+        ("$10", true),
+        ("\u{0}0", true),
+        ("\u{0}12", true),
+        ("$", false),
+        ("$01", false),
+        ("\u{0}", false),
+        ("\u{0}01", false),
+        ("\u{0}+1", false),
+        (&format!("${huge}"), true),
+        (&format!("\u{0}{huge}"), false),
+    ] {
+        let g = matching(x);
+        let from_text = text::parse(&text::print(&g));
+        let from_binary = binary::decode(&binary::encode(&g));
+        assert_eq!(from_text.as_ref().ok(), made.then_some(&g), "text, {x:?}");
+        assert_eq!(
+            from_binary.as_ref().ok(),
+            made.then_some(&g),
+            "binary, {x:?}"
+        );
+    }
+}
+
+#[test]
 fn edges_read_back() {
     for e in [
         "state out",

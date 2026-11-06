@@ -20,8 +20,11 @@
 //! its regions, and the results last; the reader accepts the lines in any order, so the form
 //! can be sorted, diffed and merged line by line. A pattern is written as the kernel writes
 //! one, except that a literal is `=v`, so a literal atom or tuple is not read as a pattern of
-//! that shape. A recursive type prints as its name, which this form cannot read back: such
-//! types are declared from step L2, and their text form comes with the declarations.
+//! that shape, and a binder the compiler made is written with `$`, which no name contains:
+//! the elaborator's binder `$k` as it is, and the canonical binder at de Bruijn level `k`
+//! (canon/binders.rs) as `$$k`. A recursive type prints as its name, which this form cannot
+//! read back: such types are declared from step L2, and their text form comes with the
+//! declarations.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -36,6 +39,7 @@ use zed_kernel::value::Value;
 
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};
 use crate::canon::Facet;
+use crate::canon::binders::level_of;
 use crate::lex;
 use crate::store::interval::{End, IntervalSet, Num};
 use crate::store::lattice::{Congruence, FiniteSet, Lattice};
@@ -303,7 +307,14 @@ pub fn pattern(p: &Pattern) -> String {
         };
         match p {
             Pattern::Wild => out.push('_'),
-            Pattern::Bind(x) => out.push_str(x),
+            // A canonical binder `\0k` is written `$$k`; every other binder as it is.
+            Pattern::Bind(x) => match x.strip_prefix('\0') {
+                Some(k) => {
+                    out.push_str("$$");
+                    out.push_str(k);
+                }
+                None => out.push_str(x),
+            },
             Pattern::Lit(v) => {
                 let _ = write!(out, "={v}");
             }
@@ -639,13 +650,17 @@ pub(super) fn not_a_name(w: &str) -> Option<String> {
 /// Why `w` is not a pattern binder, or `None` when it is one: a name, or a binder the compiler
 /// makes, which no written name can equal. Those are the elaborator's `$N` (elab.rs `temp`)
 /// and the canonical `\0N` (canon/binders.rs `level_name`), `N` a decimal number with no
-/// leading zero. The binary form reads binders by this function. This is the one place that
-/// says which made binders a reader accepts; the text form does not yet print them in a form
-/// it reads back (item ZIR-text-binders).
+/// leading zero, and for `\0N` a level that fits a `usize`. Both forms read binders by this
+/// function: the binary form as they are, the text form after writing `\0N` as `$$N`
+/// ([`pattern`]). This is the one place that says which made binders a reader accepts.
 pub(super) fn not_a_binder(w: &str) -> Option<String> {
-    let made = w.strip_prefix(['$', '\0']).is_some_and(|n| {
+    let number = |n: &str| {
         !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && (n == "0" || !n.starts_with('0'))
-    });
+    };
+    let made = match w.strip_prefix('$') {
+        Some(n) => number(n),
+        None => w.strip_prefix('\0').is_some_and(number) && level_of(w).is_some(),
+    };
     if made { None } else { not_a_name(w) }
 }
 
@@ -1323,7 +1338,45 @@ impl<'a> P<'a> {
         if self.eat_word("_") {
             return Ok(Some(Pattern::Wild));
         }
+        if self.peek() == Some('$') {
+            return self.generated_binder().map(|x| Some(Pattern::Bind(x)));
+        }
         Ok(Some(Pattern::Bind(self.name()?.into())))
+    }
+
+    /// A binder the compiler made: `$k`, the elaborator's binder of that name, or `$$k`, the
+    /// canonical binder at de Bruijn level `k` (`\0k`). Which binders exist is
+    /// [`not_a_binder`]'s to say, as for the binary form; the number has no leading zero, so
+    /// each binder has one spelling. An error points at the `$`.
+    fn generated_binder(&mut self) -> Result<Arc<str>, String> {
+        let canonical = self.rest().starts_with("$$");
+        let sigil = if canonical { 2 } else { 1 };
+        let digits = &self.rest()[sigil..];
+        let n = digits
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(digits.len());
+        let (k, after) = digits.split_at(n);
+        let joined = after.starts_with(|c: char| is_xid_continue(c) || c == '\'');
+        let x: Arc<str> = match canonical {
+            true => format!("\0{k}"),
+            false => format!("${k}"),
+        }
+        .into();
+        if !joined && not_a_binder(&x).is_none() {
+            self.i += sigil + n;
+            return Ok(x);
+        }
+        let why = if k.is_empty() {
+            "a binder written with `$` has a number after the `$`"
+        } else if k.len() > 1 && k.starts_with('0') {
+            "a binder written with `$` has a number with no leading zero"
+        } else if joined {
+            "a binder written with `$` ends with its number"
+        } else {
+            "its level is too large"
+        };
+        let w = &self.rest()[..sigil + n + word_len(after)];
+        Err(format!("`{w}` is not a binder: {why}"))
     }
 
     /// `f:`, the name of the next part of a fields pattern.

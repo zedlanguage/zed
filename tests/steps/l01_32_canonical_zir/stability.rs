@@ -39,7 +39,7 @@ fn renamed_binders_keep_the_address() {
     let Op::Match(ps) = &canonicalize(&pair("(lo, hi)")).nodes[0].op else {
         panic!("a match")
     };
-    assert_eq!(zedc::zir::text::pattern(&ps[0]), "(\u{0}0, \u{0}1)");
+    assert_eq!(zedc::zir::text::pattern(&ps[0]), "($$0, $$1)");
     // A match one region down, inside a function's body.
     let inner = |a: &str, b: &str| {
         graph(&format!(
@@ -139,7 +139,7 @@ fn the_normal_form() {
     let Op::Match(ps) = &n.nodes[0].op else {
         panic!("a match")
     };
-    assert_eq!(zedc::zir::text::pattern(&ps[0]), "#some(\u{0}0)");
+    assert_eq!(zedc::zir::text::pattern(&ps[0]), "#some($$0)");
     let Edge::Value(v) = &n.nodes[0].regions[0].args[0] else {
         panic!("a value edge")
     };

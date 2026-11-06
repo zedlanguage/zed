@@ -274,6 +274,30 @@ fn writing_and_reading_deep_values_patterns_and_types_is_linear_in_their_depth()
     });
 }
 
+/// A tuple of `n` generated binders, the elaborator's `$k` and the canonical level `k` in turn,
+/// as a wave of `n` values and its canonical form bind them.
+fn generated_binders(n: usize) -> Pattern {
+    let bind = |k: usize| match k % 2 {
+        0 => Pattern::Bind(format!("${k}").into()),
+        _ => Pattern::Bind(zedc::canon::binders::level_name(k)),
+    };
+    Pattern::Tuple((0..n).map(bind).collect())
+}
+
+#[test]
+fn writing_and_reading_generated_binders_is_linear_in_their_number() {
+    let (small, large) = (generated_binders(12_500), generated_binders(100_000));
+    let pick = |k: usize| if k == 12_500 { &small } else { &large };
+    check_order("writing generated binders as text", 12_500, 1, |k| {
+        text::pattern(pick(k));
+    });
+    let (ts, tl) = (text::pattern(&small), text::pattern(&large));
+    assert_eq!(text::parse_pattern(&ts).as_ref(), Ok(&small));
+    check_order("reading generated binders as text", 12_500, 1, |k| {
+        text::parse_pattern(if k == 12_500 { &ts } else { &tl }).unwrap();
+    });
+}
+
 // `Debug` writes a region from a stack of its own too, so an assertion that fails on a deep graph
 // can print it (step T2-mid).
 

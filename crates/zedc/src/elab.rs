@@ -727,6 +727,8 @@ impl<'a> Elab<'a> {
         None
     }
 
+    /// A fresh binder, `$k`: no written name starts with `$`, and the ZIR text form writes and
+    /// reads it as it is (zir/text.rs).
     fn temp(&mut self) -> Arc<str> {
         self.fresh += 1;
         format!("${}", self.fresh).into()
