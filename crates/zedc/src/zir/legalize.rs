@@ -168,7 +168,7 @@ pub fn legalize(g: Region, want: Expansions) -> Legalized {
                 // Lowering gives every region its own `Arc`, so this moves the region.
                 // Complexity tradeoff: a region a graph shares is copied and legalized once per
                 // use, so the cost is the graph's size read as a tree, which is what validation
-                // and planning already pay (COMPLEXITY.md Z23, PLAN-shared-regions); a memo by
+                // and planning already pay (COMPLEXITY.md Z24, PLAN-shared-regions); a memo by
                 // address is banned.
                 stack.push(Frame::new(Arc::unwrap_or_clone(r)));
                 continue;
