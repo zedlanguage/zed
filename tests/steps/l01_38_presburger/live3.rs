@@ -880,6 +880,25 @@ fn a_lens_of_tangent_planes_scales_in_point() {
     );
 }
 
+#[test]
+fn a_lens_of_tangent_planes_over_the_origin_scales_in_point_on_its_long_path() {
+    // The lens alone over the origin, at two sizes where `point` takes the same path: five
+    // linear programs, e0 and -e0, then directions of 13 to 25 digits, the last vertex's
+    // rounding holding the rows (counted at merge of LIVE3-lp-tangents, sizes 16 to 512 by 8 and
+    // 2,880 to 8,192: only 24, 32, 504 and 512 take five or more, and no pair 8 times apart
+    // under 60 s takes three or more). Measured 19.4 times the instructions and 24.2 times the
+    // bytes (2,196M to 42,544M, 36.5M to 885.4M) for 16 times the rows, load 47 to 52.
+    let (small, large) = (tangents(32, 0), tangents(512, 0));
+    scaling::compare(
+        "the lens of tangent planes over the origin, in `point`: 32 and 512 pairs",
+        "16 times the rows, both sizes running five linear programs; the rule of low complexity \
+         allows 24 times for 8, so 48 for 16 (DESIGN.md Part G)",
+        2.0 * scaling::RATIO,
+        || drop(point(&small)),
+        || drop(point(&large)),
+    );
+}
+
 /// The calls of `Lin2::minus` that `point` makes on `rows`.
 fn minus_calls(rows: &[Row3]) -> u64 {
     let before = live3::counts::minus();
