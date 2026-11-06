@@ -1195,6 +1195,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
+| audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
+| CONST-wide-addr | impl attempt 1 | 2026-11-05 18:05 | negative control (decimal digits in binary.rs and serial.rs magnitude, not committed): instructions 8x bits 22.3x (23.8M to 532M at 2^17 to 2^20 bits), under ch |
+| HULL3-subsumed | impl attempt 1 | 2026-11-03 12:22 | measured decide() on the unit-side subclass (3 seeds each, m=64/512/4096, instructions): wide coefficients with a point, hull3 first 261M/3,705M/38,929M vs live |
+| LOWER-legalize | merge attempt 2 | 2026-11-05 04:07 | started: verify and merge repair 1 (4803fe19, spec 0157f5a); load 54.48 59.26 68.14 |
+| mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
+| OMEGA-cycle-growth | impl attempt 1 | 2026-11-05 17:03 | done: commit a394f1d1 on wt/omega-cycle-growth (rebased on c3a09472, utvpi::components conflict resolved to the new generic signature); l01_38 names/live3/omega |
+| orch | running | 2026-11-05 18:05 | LIT-plain merged 4a610db6; PREIMAGE-timeout ed89e9d4 and M0.8-test-text e0b0e294 merged; QUESTIONS A14 (LIT-if-print) and A15 (LIT-eq-kind) added; queued L01-35 |
+| REPLACE-shared-rows | impl attempt 1 | 2026-11-05 17:26 | affected groups pass (load 48-57): l01_16 53, l01_19 24, l01_19a 15, l01_20 16, l01_21 36, l01_22 38+3, l01_23 90+all scaling, l01_26 172+all scaling (split, on |
+| SUB-corpus-slow | impl attempt 1 | 2026-11-05 16:16 | done, committed on wt/sub-corpus-slow (not pushed): settles memo keyed by node (cuts), corpus seeds 2/3 back split in parts, pinwheel test split; 129 l01_23 tes |
+| sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
+| TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
