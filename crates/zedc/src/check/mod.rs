@@ -1236,7 +1236,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// takes from outside; an operator, another call of a function [`Self::called`] names (a
     /// method call's receiver one of its parts, `x.r` as `x.r()`) or a prelude word passes on
     /// its parts' and gives the atoms its arrows' results hold, and `#errs` only when two of
-    /// its parts give atoms; any other expression gives all its loose atoms.
+    /// its parts give different failures ([`ty::merges`]); any other expression gives all its
+    /// loose atoms.
     /// Each set is compared with the empty type as written, in `O(1)`, as in
     /// [`Self::unnamed_of`], so a chain of `n` expressions costs `O(n log² n)`.
     fn outside_of(
@@ -1260,7 +1261,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut atoms = sigs
                 .iter()
                 .fold(KType::empty(), |a, arrow| &a | &arrow.result.loose());
-            if parts.iter().filter(|p| **p != KType::empty()).count() > 1 {
+            if ty::merges(parts.iter().filter(|p| **p != KType::empty())) {
                 atoms = &atoms | &errs();
             }
             parts.iter().fold(&loose & &atoms, |a, p| &a | p)
@@ -4679,18 +4680,19 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
     Some(out)
 }
 
-/// `out` with the atoms of `ts` added, with their payloads: when two of them hold atoms, also
-/// `#errs`, which two distinct failures merge into.
+/// `out` with the atoms of `ts` added, with their payloads: when two of them can carry
+/// different failures at once ([`ty::merges`]), also `#errs`, which they merge into.
 fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
-    let mut n = 0;
+    let mut holding = Vec::new();
     for t in ts {
         let a = t.atoms();
         if !a.is_empty() {
-            n += 1;
-            *out = out.union(&t.of_piece(&Piece::Set(a)));
+            // A `KType` is one `Arc`, so the clone is a count, not a copy of the type.
+            *out = out.union(&t.of_piece(&Piece::Set(a.clone())));
+            holding.push(a);
         }
     }
-    if n > 1 {
+    if ty::merges(&holding) {
         *out = out.union(&Ty::set(errs()));
     }
 }

@@ -226,3 +226,38 @@ fn many_dropped_generic_calls_scale() {
         assert!(found.is_empty(), "{found:?}");
     });
 }
+
+/// `f(positional x0: int | #e0, …) = x0 + x1 + … + x(n-1);`, operand i able to fail with
+/// `#e(i % kinds)`: with one kind every operand carries the same failure.
+fn mixed_failures(n: usize, kinds: usize) -> String {
+    let params: Vec<String> = (0..n)
+        .map(|i| format!("positional x{i}: int | #e{}", i % kinds))
+        .collect();
+    let sum: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    format!("f({}) = {};\n", params.join(", "), sum.join(" + "))
+}
+
+#[test]
+fn merging_the_failures_of_a_long_chain_scales() {
+    // Each `+` compares its operands' failures with the first one's (`ty::merges`), and the
+    // left operand already holds the failures of the chain before it; the result keeps one
+    // flat `#errs`, and none when every operand carries the same failure.
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(1 << 29)
+            .spawn_scoped(s, || {
+                for (kinds, errs) in [(7, 1), (1, 0)] {
+                    let what = format!("a chain of n sums of {kinds} kinds of failure");
+                    scaling::check(&what, 1000, |n| {
+                        let sig =
+                            crate::l01_26_type_resolution::sig(&mixed_failures(n, kinds), "f");
+                        let result = sig.rsplit(" -> ").next().unwrap();
+                        assert_eq!(result.matches("#errs").count(), errs, "{result}");
+                    })
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}

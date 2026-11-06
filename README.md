@@ -151,7 +151,7 @@ revenue = sales as (region -> day -> sku -> q) into (region -> day -> sku -> q *
 <tr><td><code>1</code></td><td><code>ink</code></td><td><code>42</code></td></tr>
 </table>
 
-`prices["pad"]` is `#notFound`, and so is `1 * #notFound`: a failure passes through arithmetic unchanged. It stays in the map at its own keypath, next to the good values, so one bad record doesn't stop the rest of the computation. The type of `revenue`'s values, `int | #notFound`, says that some may be failures.
+`prices["pad"]` is `#notFound`, and so is `1 * #notFound`: a failure passes through arithmetic unchanged. When two different failures meet, the result keeps both: if `#invalid` stands for a number that failed to parse, `(1 + #notFound) + #invalid` is `#errs({#invalid, #notFound})`, the set of the two, and `((1 + #notFound) + #invalid) else 0` is `0`, as for a single failure. It stays in the map at its own keypath, next to the good values, so one bad record doesn't stop the rest of the computation. The type of `revenue`'s values, `int | #notFound`, says that some may be failures.
 
 > [!TIP]
 > Elsewhere this remap is three nested loops that fill a new nested dictionary. A remap can also move levels: `matrix as (r -> c -> v) into (c -> r -> v)` transposes a matrix, where other languages set `out[c][r] = matrix[r][c]` in two nested loops. [Remapping](#remapping) below compares remaps with spreadsheet pivot tables.
@@ -283,12 +283,12 @@ The trouble is at `("West", 0)`, where `+` would have to add these two values:
 There is a second reason. The compiler may add one day's values in any order, splitting them across cores. Suppose a day held two different failures, `#notFound` and `#invalid` (a number that failed to parse), and a merge kept the first failure it met. The result would depend on the order:
 
 <table>
-<tr><th>Order of the additions</th><th>Result if the first failure wins</th></tr>
-<tr><td><code>(#notFound + 8) + #invalid</code></td><td><code>#notFound</code></td></tr>
-<tr><td><code>(#invalid + 8) + #notFound</code></td><td><code>#invalid</code></td></tr>
+<tr><th>Order of the additions</th><th>Result if the first failure wins</th><th>Zed's result</th></tr>
+<tr><td><code>(#notFound + 8) + #invalid</code></td><td><code>#notFound</code></td><td><code>#errs({#invalid, #notFound})</code></td></tr>
+<tr><td><code>(#invalid + 8) + #notFound</code></td><td><code>#invalid</code></td><td><code>#errs({#invalid, #notFound})</code></td></tr>
 </table>
 
-So the same program could give different totals on one core and on eight.
+So the same program could give different totals on one core and on eight. Zed's `+` keeps both failures, as in step 3, and keeps them in a set rather than a list, because a list would record the order the additions ran in and the two rows would again differ. Pen's `8` is still lost, so the merge stays rejected.
 
 > [!IMPORTANT]
 > **A merge runs only on values its operator is defined for.** A merge over values that may be failures is rejected until the code says what the failures mean: replace them with `else`, filter them out with `where`, or keep them apart, as step 4 did.

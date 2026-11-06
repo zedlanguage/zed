@@ -1215,6 +1215,41 @@ pub fn errs() -> KType {
     KType::atom_with("errs", &KType::top())
 }
 
+/// Whether the failures of one application's operands can merge into `#errs`, given the
+/// atoms of each operand that may carry one (DESIGN.md sec:failure): whether two of them can
+/// carry different failures at once. Equal failures merge into one, and a singleton is the
+/// atom itself, so they cannot exactly when fewer than two operands carry atoms, or each one
+/// carries only the same payload-free atom, the one value they can all be. An atom with a
+/// payload has a value per payload, so two of them can differ. One pass over the operands,
+/// each compared with the first: types of different digests differ in `O(1)`, and equal ones
+/// are read once (`Type::cmp`), so `O(n)` comparisons for `n` operands, each linear at most in
+/// the atom types the checker already built.
+pub fn merges<'k>(holding: impl IntoIterator<Item = &'k KType>) -> bool {
+    let mut holding = holding.into_iter();
+    let Some(first) = holding.next() else {
+        return false;
+    };
+    let mut more = false;
+    for t in holding {
+        if t != first {
+            return true;
+        }
+        more = true;
+    }
+    more && !one_bare_atom(first)
+}
+
+/// Whether `t` is one payload-free atom: a type of one value.
+fn one_bare_atom(t: &KType) -> bool {
+    let Some(mut names) = t.atom_names() else {
+        return false;
+    };
+    match (names.next(), names.next()) {
+        (Some((name, true)), None) => *t == KType::atom(name),
+        _ => false,
+    }
+}
+
 /// A piece of a type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Piece {

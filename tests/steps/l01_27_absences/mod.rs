@@ -9,4 +9,5 @@ mod discard;
 mod discard_paths;
 mod families;
 mod loose;
+mod merge;
 mod scaling;
