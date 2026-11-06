@@ -1259,26 +1259,24 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | ATOM-nested-sq | impl attempt 1 | 2026-11-05 19:20 | reproduced: #a(#a(..)) one expression 3.6-3.8x per 2x (n=400 94 ms, load 27); cause Ty::clone of by-value payload Shape at walk.rs:562 (perf, 65% clone + 31% dr |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| CAST-menu | impl attempt 1 | 2026-11-05 04:07 | probes: typed r + x already gets 'wrap this in f64(…)' repairs; untyped-class operands (h(a,b)=(a*1r,b*2.5,a+b)) and max(r, x) get no cast (repairs' trial drops |
-| DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | ported 39 scaling cases into 12 groups (l01_01..l01_30); all pass, ratios 7.2-10.3 at limit 24, load1 61-68 before/after; found and fixed 2 quadratics: tests/sr |
-| INCR-script | impl attempt 1 | 2026-11-05 04:07 | script runner and 4 script tests + 2 malformed-script tests + scaling test in reuse.rs; l01_30_queries 15 pass; load 60.3 |
+| CAST-menu | impl attempt 1 | 2026-11-05 04:07 | spec d794fca on wt/cast-menu-spec; impl: class operands get casts, names printed as f64(r); trial-place change reverted (offered int("12") to discount, unsound) |
+| DART-SCALE | impl attempt 1 | 2026-11-05 04:07 | negative controls (not committed): old check payload() clone at 500/4000 named fields 62.2x bytes (122,191,958 to 7,603,093,622), fails; at 2000/16000 does not  |
+| F70-rerun | impl attempt 1 | 2026-11-05 20:49 | started; worktree f70-rerun created from origin/main and seeded; load 53.17 53.60 55.84 |
+| INCR-script | impl attempt 1 | 2026-11-05 04:07 | scaling 8 and 64 steps: 7.2x work (1.59e8 to 1.14e9 instr), 7.2x bytes, limit 24, load 48.6; controls (temporary, reverted): quadratic runner 41.9x bytes fails; |
 | L1.35-inventory | impl attempt 1 | 2026-11-05 04:07 | done: 7b1878a0 on wt/l135-inventory (rebased on origin/main); l01_35 5/5 pass, load 58-63; scaling 20000/160000 variants 8.05x instr 8.08x bytes (limit 24, load |
-| LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | started; load 48.04 50.56 51.94 |
+| LAYOUT-measure | impl attempt 1 | 2026-11-05 04:07 | record + tests written; l01_35 group 10/10 pass (load 63.33->61.70); step units: ast 255 B/node, term 158 B/term, zir 935 B/node, 195 cells in 109 runs; peak 10 |
 | LIVE3-lp-tangents | impl attempt 1 | 2026-11-05 19:39 | reproduced 41.6x bytes 128->1024 (load 66). Cause found by counters: not growth in work. tangents(n,0): the rounded first LP vertex holds the rows at 128 (1 LP, |
-| M0d-suite | impl attempt 1 | 2026-11-05 04:07 | started; load 56.11 62.18 58.97 |
+| M0d-suite | impl attempt 1 | 2026-11-05 04:07 | 20 predictions committed before any run |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NATIVE-build-id | impl attempt 1 | 2026-11-05 18:36 | done 3985196c on wt/native-build-id (not pushed): BUILD in section .zed_native.build (TypeId crate hash + RUSTFLAGS hash from build.rs); tests l01_36a_executabl |
-| orch | running | 2026-11-05 18:05 | STUDY-linearlog done; report written by orch (agent could not write); L1.40b-sparse open, F70-rerun queued |
-| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | started; creating worktree pass-at-args |
-| RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | negative-control checkout /home/luke/Work/wt/rat-asks-rest-ctl at 17b7ceca, seeded |
+| orch | running | 2026-11-05 18:05 | STEPS-binary-orphan impl done e9dec093+20d7055a (binary.rs was not orphaned: zed-native [[test]] build_binary; orch's claim wrong); merge started |
+| PASS-at-args | impl attempt 1 | 2026-11-04 00:20 | red before green: new test one_call_passing_the_atoms_of_many_arguments_by_scales fails on main code, 1000 and 8000 args: 66.0M and 2,543.5M bytes, 38.5x (24 al |
+| RAT-asks-rest | impl attempt 1 | 2026-11-05 18:19 | negative control at 17b7ceca, load5 ~55: all 6 new refusal tests abort (SIGABRT): lexer separators (alloc 8388608 failed), syntax-tree digit copy (16777216), in |
 | RUNG2-mod-symbol | impl attempt 1 | 2026-11-05 04:07 | started; creating worktree rung2-mod-symbol; load 47.92 50.62 51.97 |
-| S22-more-scales | impl attempt 1 | 2026-11-05 04:07 | final: d3a2aed3 on wt/s22-more-scales (rebased twice; on origin/main, not pushed; replaces 9f5d1617 above); after the HULL3-subsumed presburger change all 47 s2 |
-| SLABS-count | merge attempt 1 | 2026-11-05 18:19 | started verify+merge of 3587dde9, load 51.81 51.37 52.25 |
-| STEPS-binary-orphan | impl attempt 1 | 2026-11-05 20:30 | started; worktree made and seeded; load 66.53 62.44 57.73 |
+| STEPS-binary-orphan | impl attempt 1 | 2026-11-05 20:30 | done e9dec093+20d7055a on wt/steps-binary-orphan (rebased on 7e5bf60b, not pushed): binary.rs is zed-native's [[test]] build_binary, 5 pass, comments added; doc |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (e) shared Bdd nodes and Expr operands written once (#k=/#k#) committed; deep_types 20/20, l01_15 31/31, kernel types 21/21; xor chain old 2^n (183 MB, 1 s at n |
+| T2-types-rest | impl attempt 3 | 2026-11-03 09:40 | (c)+(f) committed 26362eaf: 9 BDD walks on explicit stacks; deep 100k on 2 MiB passes (old: 9/10 overflow); scaling 4096/32768 pass ratio<24; kernel lib 86, l01 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
-| TUPLE-dyn-index | merge attempt 1 | 2026-11-05 19:29 | started verify+merge; rebased on 9eb0086a; load 56.16 55.25 53.62 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
