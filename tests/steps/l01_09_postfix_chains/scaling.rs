@@ -34,7 +34,7 @@ fn deep_nesting_scales() {
             (e, depth) = (inner, depth + 1);
         }
         assert_eq!(depth, n);
-        assert!(matches!(&e.kind, ExprKind::Int { digits, .. } if digits == "1"));
+        assert!(matches!(&e.kind, ExprKind::Int { digits, .. } if digits.as_str() == "1"));
     });
 }
 
