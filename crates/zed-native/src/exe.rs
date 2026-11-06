@@ -2,11 +2,11 @@
 //! code, the program as data, and a C `main` that passes both, with its own command line, to
 //! [`zed_main`] in the runtime library.
 //!
-//! The data is the plan's `fuse` flag, `main`'s ports as [`Ports::to_text`] writes them, and
-//! the graph as lowered in ZIR's binary form. The runtime decodes the graph, legalizes it and
-//! plans it again, which gives the tables the code was generated from, node for node, and the
-//! nodes legalization swapped: the code passes node numbers, and the hooks read the tables by
-//! them.
+//! The data is the plan's `fuse` flag, the program's content address, which a record names
+//! (step L1.19b), `main`'s ports as [`Ports::to_text`] writes them, and the graph as lowered in
+//! ZIR's binary form. The runtime decodes the graph, legalizes it and plans it again, which
+//! gives the tables the code was generated from, node for node, and the nodes legalization
+//! swapped: the code passes node numbers, and the hooks read the tables by them.
 
 use std::ffi::{CStr, OsString, c_char, c_int};
 use std::io::Write as _;
@@ -18,6 +18,7 @@ use cranelift_codegen::ir::{AbiParam, InstBuilder};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 
+use zedc::address::ContentAddress;
 use zedc::run::Ports;
 use zedc::zir::Region;
 use zedc::zir::legalize::Legalized;
@@ -30,16 +31,24 @@ use crate::tables::Tables;
 /// The program an executable runs: what its data holds, decoded and legalized.
 struct Program {
     ports: Ports,
+    /// The content address of the program built, which a record names (step L1.19b).
+    address: ContentAddress,
     graph: Legalized,
     plan: Plan,
 }
 
-/// The bytes of the data: `fuse` as one byte, the length of the ports' text as 8 bytes, little
-/// end first, the text, then the graph. An error when the system refuses the memory to write
-/// one of the graph's exact numbers.
-pub(crate) fn data(fuse: bool, ports: &Ports, graph: &Region) -> Result<Vec<u8>, String> {
+/// The bytes of the data: `fuse` as one byte, the program's content address as its 32 bytes,
+/// the length of the ports' text as 8 bytes, little end first, the text, then the graph. An
+/// error when the system refuses the memory to write one of the graph's exact numbers.
+pub(crate) fn data(
+    fuse: bool,
+    address: ContentAddress,
+    ports: &Ports,
+    graph: &Region,
+) -> Result<Vec<u8>, String> {
     let text = ports.to_text();
     let mut out = vec![u8::from(fuse)];
+    out.extend_from_slice(&address.0);
     out.extend_from_slice(&(text.len() as u64).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
     let zir = zedc::zir::binary::encode(graph).map_err(|e| {
@@ -58,6 +67,8 @@ impl Program {
     fn decode(data: &[u8]) -> Result<Program, String> {
         let bad = || "the program data of this executable is damaged".to_string();
         let (&fuse, rest) = data.split_first().ok_or_else(bad)?;
+        let (address, rest) = rest.split_first_chunk::<32>().ok_or_else(bad)?;
+        let address = ContentAddress(*address);
         let (len, rest) = rest.split_first_chunk::<8>().ok_or_else(bad)?;
         let len = usize::try_from(u64::from_le_bytes(*len)).map_err(|_| bad())?;
         let (text, zir) = rest.split_at_checked(len).ok_or_else(bad)?;
@@ -65,7 +76,12 @@ impl Program {
         let ports = Ports::from_text(text)?;
         let graph = crate::legalize(zedc::zir::binary::decode(zir)?);
         let plan = plan(graph.graph(), fuse != 0);
-        Ok(Program { ports, graph, plan })
+        Ok(Program {
+            ports,
+            address,
+            graph,
+            plan,
+        })
     }
 }
 
@@ -164,6 +180,7 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
     zedc::run::executable(
         &name,
         &program.ports,
+        program.address,
         words.get(1..).unwrap_or_default(),
         &mut stdin,
         &mut stdout,
@@ -198,16 +215,19 @@ mod tests {
             vec![lit("a"), lit("b")],
         ))
         .unwrap();
-        let p = Program::decode(&data(true, &ports, &graph).unwrap()).unwrap();
+        let address = ContentAddress([7; 32]);
+        let p = Program::decode(&data(true, address, &ports, &graph).unwrap()).unwrap();
         assert_eq!(p.ports, ports);
+        assert_eq!(p.address, address);
         let built = crate::legalize(graph.clone());
         assert_eq!(p.graph.graph(), built.graph());
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));
         assert!(p.plan.fuse);
-        let bytes = data(false, &ports, &graph).unwrap();
+        let bytes = data(false, address, &ports, &graph).unwrap();
         assert!(!Program::decode(&bytes).unwrap().plan.fuse);
-        for cut in [0, 1, 5, 9, 12] {
+        // Cut in the flag, the address, the length, at the text and in it.
+        for cut in [0, 1, 5, 37, 41, 44] {
             assert_eq!(
                 Program::decode(&bytes[..cut]).err().as_deref(),
                 Some("the program data of this executable is damaged"),

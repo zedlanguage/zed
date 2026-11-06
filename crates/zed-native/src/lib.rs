@@ -209,17 +209,19 @@ pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
 }
 
 /// The object file of an executable that runs the lowered graph `g`, planned with `fuse`, with
-/// `main`'s ports `ports` (step L1.36a): [`object()`]'s code for `g` legalized, the program as
-/// data, and a C `main` that passes both, with the command line, to the runtime library's
-/// start. The data holds `g` as lowered, since ZIR's binary form does not record which nodes
-/// legalization swapped; the start legalizes and plans it again, as this does.
+/// `main`'s ports `ports` and the program's content address `address` (steps L1.36a and
+/// L1.19b): [`object()`]'s code for `g` legalized, the program as data, and a C `main` that
+/// passes both, with the command line, to the runtime library's start. The data holds `g` as
+/// lowered, since ZIR's binary form does not record which nodes legalization swapped; the
+/// start legalizes and plans it again, as this does.
 #[cfg(unix)]
 pub fn executable_object(
     g: Region,
     fuse: bool,
     ports: &zedc::run::Ports,
+    address: zedc::address::ContentAddress,
 ) -> Result<Vec<u8>, String> {
-    let data = exe::data(fuse, ports, &g)?;
+    let data = exe::data(fuse, address, ports, &g)?;
     let g = legalize(g);
     let plan = plan(g.graph(), fuse);
     let (t, plans) = Tables::new(&g, &plan)?;

@@ -1527,6 +1527,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `split('\n')`, `Vec::pop` of a last empty piece, `strip_suffix('\r')` | `testing::given_args` | Mutation (gap 11) | The L3 word `lines`, which splits a `String` as a `Lines` input is |
 | A `match` on `&words.command[..]` slice patterns with `*cmd == "run"` | `run::command_inner` | None: Zed's `match` on tuples | The same match on the list of words |
 
+## Entries from L1.19b (`zedc/src/run.rs`, `zed-native/src/exe.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Program::address: OnceLock<ContentAddress>`, the address taken at the first wave and kept in the program | `Program::address` | Lazy cells (gap 3) | The address computed once when the program is loaded and held as a field, or a lazy cell once Zed has one |
+| A `blake3::Hasher` updated in place with a tag, an address, a length and the ports' text | `Ports::address` | Identity (gap 1) and Mutation (gap 11) | The hash built-in of gap 1 over the concatenated bytes |
+| `let mut first = true`, cleared at the end of each pass of the loop over the record's entries, so a `program` entry is accepted only first | `Record::from_bytes` | Mutation (gap 11) | A fold over the entries with the entry's index, or a match on the head of the list of entries |
+| `split_first_chunk::<32>()` reading the address out of the executable's data | `exe::Program::decode` | Bytes (gap 5) | A slice of the first 32 bytes of the data, once Zed has bytes |
+
 ## Entries from ISSUE1-else-atoms (`zedc/src/resolve.rs`, `zedc/src/check/mod.rs`, `check/walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |

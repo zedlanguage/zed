@@ -9,8 +9,9 @@
 //! wave ends, each with its acknowledgment, `#ok` or `#ioError(op:, path:, why:)`; the program has no name
 //! for the acknowledgment, so a failed write takes the default policy and aborts the wave.
 //!
-//! A [`Record`] holds every input the wave read, so [`Program::replay`] runs it again without
-//! reading the world.
+//! A [`Record`] holds every input the wave read and the content address of its program, so
+//! [`Program::replay`] runs it again without reading the world, and only against that program
+//! (step L1.19b).
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -23,7 +24,7 @@ use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::{Unit, elaborate};
 use crate::parse::{TOP, parse};
 use crate::suppress::{self, Severity, Suppress};
-use crate::{docs, interp, lex, resolve, source, stage};
+use crate::{canon, docs, interp, lex, resolve, source, stage};
 
 /// The kinds of input port `main` declares at L1.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -51,6 +52,8 @@ pub struct Program {
     pub(crate) unit: Unit,
     /// `main` closed over the definitions it reaches, made at the first wave.
     main: std::sync::OnceLock<Term>,
+    /// The program's content address, taken at the first wave or replay.
+    address: std::sync::OnceLock<ContentAddress>,
     ports: Ports,
     /// The warnings, placed in the source: they do not stop the build.
     warnings: Arc<[Diagnostic]>,
@@ -109,7 +112,8 @@ impl Ports {
     }
 
     /// Runs one wave on these ports, as [`Program::run_args`] does, with the wave run by `run`
-    /// in an evaluator that holds the ports: an executable's way to run its own code.
+    /// in an evaluator that holds the ports: an executable's way to run its own code. The
+    /// wave's record names no program, since ports alone do not say which; the caller names it.
     pub fn run(
         &self,
         lines: &BTreeMap<String, Vec<u8>>,
@@ -118,6 +122,28 @@ impl Ports {
         run: impl FnOnce(&mut Evaluator) -> Result<Value, String>,
     ) -> Result<Wave, String> {
         Ok(self.wave(lines, args, files, false, run)?.0)
+    }
+
+    /// The content address of the program that runs `term` on these ports (step L1.19b): the
+    /// BLAKE3-256 hash of `zed-program\0`, the address the canonicalizer gives `term` as the
+    /// definition `main` (sec:ir, "Identity"), and the ports as [`Ports::to_text`] writes
+    /// them, since the term reads each input by its name and not by its kind. Two programs
+    /// that differ only in local names, layout or comments have one address. O(t log t) for a
+    /// term of size t, the canonicalizer's cost.
+    pub fn address(&self, term: Term) -> ContentAddress {
+        let main = canon::Def {
+            name: "main".into(),
+            domain: None,
+            facets: Vec::new(),
+            body: term,
+        };
+        let ports = self.to_text();
+        let mut h = blake3::Hasher::new();
+        h.update(b"zed-program\0");
+        h.update(&canon::address(&main, &|_| None).0);
+        h.update(&(ports.len() as u64).to_le_bytes());
+        h.update(ports.as_bytes());
+        ContentAddress::hashed(&h)
     }
 
     fn wave(
@@ -182,9 +208,14 @@ pub struct Wave {
 }
 
 /// The inputs a wave read: each `Lines` port's bytes, each `Files` port's reads, and the
-/// command-line arguments when a `CommandLine` port reads them.
+/// command-line arguments when a `CommandLine` port reads them; and the content address of the
+/// program that read them.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Record {
+    /// The content address of the program whose wave this is ([`Program::address`]); `None`
+    /// in a record written before step L1.19b, and in the wave of a mutant's `main`, which
+    /// is no program's.
+    pub program: Option<ContentAddress>,
     /// The bytes of each `Lines` port.
     pub lines: BTreeMap<String, Vec<u8>>,
     /// The paths read from each `Files` port and what each read gave.
@@ -513,6 +544,7 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
     Ok(Program {
         unit,
         main: std::sync::OnceLock::new(),
+        address: std::sync::OnceLock::new(),
         ports: Ports { inputs, outputs },
         warnings: Arc::from([]),
     })
@@ -536,6 +568,12 @@ impl Program {
             .main
             .get_or_init(|| self.unit.get("main").expect("`main` was elaborated"));
         self.term_of(main.clone())
+    }
+
+    /// The program's content address (step L1.19b), [`Ports::address`] of [`Program::term`].
+    /// Taken once, at the first wave or replay.
+    pub fn address(&self) -> ContentAddress {
+        *self.address.get_or_init(|| self.ports.address(self.term()))
     }
 
     /// `main` applied to a read of each input port, under the prelude.
@@ -566,6 +604,7 @@ impl Program {
         let program = Program {
             unit,
             main: std::sync::OnceLock::new(),
+            address: std::sync::OnceLock::new(),
             ports: self.ports.clone(),
             warnings: Arc::clone(&self.warnings),
         };
@@ -644,16 +683,39 @@ impl Program {
         map: &Through<'_>,
         main: Option<&Term>,
     ) -> Result<(Wave, Option<Provenance>), String> {
-        let term = match main {
-            Some(main) => self.term_of(main.clone()),
-            None => self.term(),
+        let (term, program) = match main {
+            Some(main) => (self.term_of(main.clone()), None),
+            None => (self.term(), Some(self.address())),
         };
-        self.ports
-            .wave(lines, args, files, trace, |ev| map(&term, ev))
+        let mut out = self
+            .ports
+            .wave(lines, args, files, trace, |ev| map(&term, ev))?;
+        out.0.record.program = program;
+        Ok(out)
     }
 
-    /// Runs the wave `record` holds, reading nothing from the world.
+    /// Checks that `record` is a record of this program: it names a content address, and the
+    /// address is this program's.
+    pub fn check_record(&self, record: &Record) -> Result<(), String> {
+        let ours = self.address();
+        match record.program {
+            Some(a) if a == ours => Ok(()),
+            Some(a) => Err(format!(
+                "the record is of the program with content address {a}, not of this program, \
+                 {ours}"
+            )),
+            None => Err(
+                "the record names no program, as records written before programs were \
+                 named in them do; run the program again with `--record`"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// Runs the wave `record` holds, reading nothing from the world, once
+    /// [`Program::check_record`] finds it a record of this program.
     pub fn replay(&self, record: &Record) -> Result<Wave, String> {
+        self.check_record(record)?;
         self.run_args(&record.lines, &record.args, |name| {
             Arc::new(Recorded(
                 record.files.get(name).cloned().unwrap_or_default(),
@@ -777,7 +839,8 @@ impl Record {
     /// `error P K O W` (port, path, operation, reason) for a read that gave `#notFound` or
     /// `#ioError(op: O, path: K, why: W)`, and `arg A` for each command-line argument, in
     /// order. An `error P K` entry, as a record written before the payload has it, reads back
-    /// as a bare `#ioError`.
+    /// as a bare `#ioError`. The first entry, `program A`, is the program's content address
+    /// in 64 hexadecimal digits; a record written before step L1.19b has none.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = MAGIC.as_bytes().to_vec();
         let mut entry = |kind: &str, fields: &[&[u8]]| {
@@ -788,6 +851,9 @@ impl Record {
             }
             out.push(b'\n');
         };
+        if let Some(a) = self.program {
+            entry("program", &[a.to_string().as_bytes()]);
+        }
         for (port, bytes) in &self.lines {
             entry("lines", &[port.as_bytes(), bytes]);
         }
@@ -831,6 +897,7 @@ impl Record {
         let bad = || "not a Zed record".to_string();
         let mut rest = bytes.strip_prefix(MAGIC.as_bytes()).ok_or_else(bad)?;
         let mut record = Record::default();
+        let mut first = true;
         while !rest.is_empty() {
             let end = rest.iter().position(|b| *b == b'\n').ok_or_else(bad)?;
             let head = std::str::from_utf8(&rest[..end]).map_err(|_| bad())?;
@@ -847,6 +914,11 @@ impl Record {
             rest = rest.strip_prefix(b"\n").ok_or_else(bad)?;
             let text = |f: &[u8]| String::from_utf8(f.to_vec()).map_err(|_| bad());
             match (kind, &fields[..]) {
+                // One `program` entry, before every other.
+                ("program", [a]) if first => {
+                    let a = std::str::from_utf8(a).ok().and_then(ContentAddress::parse);
+                    record.program = Some(a.ok_or_else(bad)?);
+                }
                 ("lines", [p, b]) => {
                     record.lines.insert(text(p)?, b.to_vec());
                 }
@@ -864,6 +936,7 @@ impl Record {
                 ("arg", [a]) => record.args.push(text(a)?),
                 _ => return Err(bad()),
             }
+            first = false;
         }
         Ok(record)
     }
@@ -963,6 +1036,10 @@ fn command_inner(
         Some(path) => {
             let bytes = std::fs::read(path).map_err(|e| (2, format!("{path}: {e}")))?;
             let record = Record::from_bytes(&bytes).map_err(|e| (2, format!("{path}: {e}")))?;
+            // A record of another program, or of none, is a usage error, as a damaged one is.
+            program
+                .check_record(&record)
+                .map_err(|e| (2, format!("{path}: {e}")))?;
             program.replay(&record)
         }
         None => {
@@ -1146,11 +1223,19 @@ impl<'a> Options<'a> {
 /// The command line of an executable `zedc build` makes (step L1.36a), `name [port=path …]
 /// [--record <out>] [-- arg …]`, with `args` the words after `name`: the ports are bound and
 /// written as `zedc run` binds and writes them, and the wave is run by `run`, the
-/// executable's own code, in an evaluator that holds the ports. Returns the exit status, as
-/// [`command`] does.
+/// executable's own code, in an evaluator that holds the ports. The record `--record` writes
+/// names `address`, the content address of the program the executable was built from
+/// ([`Program::address`]), so `zedc replay` runs it against that program's source. Returns
+/// the exit status, as [`command`] does.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the executable's name, ports, address, command line, three streams and code are \
+              each a separate input of the run, and the executable's start passes each once"
+)]
 pub fn executable(
     name: &str,
     ports: &Ports,
+    address: ContentAddress,
     args: &[impl AsRef<std::ffi::OsStr>],
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
@@ -1166,9 +1251,10 @@ pub fn executable(
         })?;
         options.check(ports)?;
         let lines = options.read_lines(ports, stdin)?;
-        let wave = ports
+        let mut wave = ports
             .run(&lines, &words.args, |_| Arc::new(Disk), run)
             .map_err(|e| (1, e))?;
+        wave.record.program = Some(address);
         options.finish(&wave, stdout, stderr)
     });
     match outcome {

@@ -36,7 +36,11 @@ fn a_read_the_record_lacks_stops_the_replay() {
     let p =
         load(b"main(fs: Files) -> (stdout: Lines) {\n  stdout <- fs[\"a.txt\"] else \"-\";\n}\n")
             .unwrap();
-    let e = p.replay(&Record::default()).err();
+    let record = Record {
+        program: Some(p.address()),
+        ..Record::default()
+    };
+    let e = p.replay(&record).err();
     assert_eq!(
         e.as_deref(),
         Some("port `fs`: the record holds no read of \"a.txt\"")
@@ -59,7 +63,9 @@ fn a_record_round_trips_any_bytes() {
     files.insert(Value::str("old"), Value::atom("ioError"));
     let mut lines = BTreeMap::new();
     lines.insert("stdin".to_string(), b"\xff 12 34\n\n".to_vec());
+    // No program: a record as written before step L1.19b still reads back.
     let record = Record {
+        program: None,
         lines,
         files: BTreeMap::from([("fs".to_string(), files)]),
         args: vec!["--".to_string(), "a\nb".to_string()],
