@@ -2031,3 +2031,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `RefCell<HashMap>` memo filled by a `&self` method, so a lookup under a shared borrow of the arms keeps its answers | `Arms::found`, `Arms::lookup` | Mutation (gap 2) | `lookup` takes and returns the memo as a state receiver; every lookup runs inside `deciding`, which holds the arms mutably but reads a node's names (`push_names`) while it looks each one up, hence the cell |
 | Skew-binary jump pointers in two `Vec<usize>` indexed by node and pushed as nodes are added (Myers 1983) | `Arms::add`, `Arms::depth`, `Arms::jump`, `Arms::step` | Mutation | Two maps from node to depth and jump target, grown with the node list; the arithmetic is plain `int` |
 | A scope settled in place on a clone (`let mut s = self.clone(); s.settle(..)`) to answer a read through `&self` | `Scope::settled` | Mutation | `settle` returns the settled scope; the clone is the persistent maps' sharing, which Zed values have |
+
+## Entries from DECIDE-disj-chain (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashMap::entry(..).or_default()` accumulators per atom, updated in place (an owner set to `None` when a second disjunction holds the atom; bounds, rows and a `bad` flag pushed per row) | `absorb` | Mutation (gap 11) | A fold over the rows that returns the map |
+| `enum Side<'a>`, a bound side kept as a small state machine (`Empty`, `Shared`, `Mixed`) changed in place by `add(&mut self, ..)`, borrowing the terms and constant of a row | `Side::add`, `absorb` | Mutation (gap 11); lifetimes vanish | `add` returns the new side; the terms are shared values |
+| A `struct Bounds<'a>` with `#[derive(Default)]` declared inside the function that uses it | `absorb` | None | A record type declared `local` in the file |
+| Closures `held_by` and `serves` that borrow the function's maps, with `?` and early `return None` inside `serves` | `absorb` | None (early exit is gap 12) | Local functions taking the maps as arguments; the early exits as `if` or a fold with an `Option` |
+| `Vec::retain` whose closure advances a captured counter to read a `Vec<bool>` of removed positions | `absorb` | Mutation (gap 11) | `where` over the disjunctions zipped with their positions |
+| `Option::is_none_or`, `Option::is_some_and` | `repair`, `settle` | None | A `match`, or `x is #none or ..` |

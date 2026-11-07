@@ -81,7 +81,7 @@
 
 use std::cell::{Cell, OnceCell};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::mem;
 use std::rc::Rc;
@@ -980,12 +980,18 @@ pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
     }
 }
 
-/// [`satisfiable`] of a formula whose names no longer matter ([`Renamed`]).
+/// [`satisfiable`] of a formula whose names no longer matter ([`Renamed`]): searched as
+/// [`decide_inner`] searches it, with the atoms that [`absorb`] projected away given values.
 fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
-    match propagate(f)? {
-        None => Ok(None),
-        Some(p) => found(p),
-    }
+    let (p, gone) = absorbed(f, &[]);
+    let m = match settle(p, true)? {
+        None => None,
+        Some(p) => found(p)?,
+    };
+    Ok(m.map(|mut m| {
+        repair(&mut m, &gone);
+        m
+    }))
 }
 
 /// Whether `f` holds somewhere. A conjunction is decided without building a point; a point is
@@ -1002,9 +1008,11 @@ pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     }
 }
 
-/// [`decide`] of a formula whose names no longer matter ([`Renamed`]).
+/// [`decide`] of a formula whose names no longer matter ([`Renamed`]): the disjunctions that
+/// [`absorb`] shows to remove no point removed, the rest settled for a search ([`settle`] with
+/// `search`) and searched ([`found`]).
 fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
-    match propagate(f)? {
+    match settle(absorbed(f, &[]).0, true)? {
         None => Ok(false),
         Some(p) if p.ors.is_empty() => Ok(true),
         Some(p) => Ok(found(p)?.is_some()),
@@ -1380,7 +1388,8 @@ enum Settled {
 /// exponential in the disjunctions in the worst case, or tell the atoms apart by a canonical
 /// labeling, exponential in the worst case too.
 fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<Settled, Refusal> {
-    let Some(AsSets { p, proven }) = settle_as_sets(Parts::of(nnf(f, true)))? else {
+    let (p, gone) = absorbed(f, &[]);
+    let Some(AsSets { p, proven }) = settle_as_sets(p)? else {
         return Ok(Settled::Empty);
     };
     // Settling solved the base, and showed a point of the base with each disjunct that
@@ -1394,7 +1403,12 @@ fn settle_tied(f: &Formula, color: &HashMap<Atom, usize>, want: bool) -> Result<
         return Ok(Settled::Left(p));
     };
     Ok(match solve(&cons, want)? {
-        Some(m) => Settled::Point(m),
+        Some(mut m) => {
+            if want {
+                repair(&mut m, &gone);
+            }
+            Settled::Point(m)
+        }
         None => Settled::Left(p),
     })
 }
@@ -2033,7 +2047,7 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     failed: Cell::new(0),
                 };
                 q.put(&d);
-                if !matches!(settle(q), Ok(None)) {
+                if !matches!(settle(q, false), Ok(None)) {
                     live.push(d);
                     live_held.push(false);
                     continue;
@@ -2052,7 +2066,7 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
         if !changed {
             return Ok(Some(p));
         }
-        match settle(p)? {
+        match settle(p, false)? {
             None => return Ok(None),
             Some(q) => p = q,
         }
@@ -2121,7 +2135,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
             }
             let mut q = f.clone();
             q.cons.push(c);
-            matches!(settle(q), Ok(None))
+            matches!(settle(q, false), Ok(None))
         };
         if !none(&ws[0]) {
             continue;
@@ -2785,15 +2799,262 @@ fn nnf(f: &Formula, sign: bool) -> Formula {
     )
 }
 
-/// The formula's base and disjunctions once no disjunct can be removed, or `None` when it has
+/// The parts of `f` ([`Parts::of`] its [`nnf`]) with each disjunction removed that [`absorb`]
+/// shows to change no answer read over `keep` alone, and the rows over the atoms projected
+/// away with it, which [`repair`] reads to give them values.
+fn absorbed(f: &Formula, keep: &[Atom]) -> (Parts, Vec<(Atom, Vec<Con>)>) {
+    let mut p = Parts::of(nnf(f, true));
+    let gone = absorb(&mut p, keep);
+    (p, gone)
+}
+
+/// The rows over one atom on one side, read by [`absorb`]: each row `x + r >= 0` (a lower
+/// bound) or `-x + r >= 0` (an upper bound) by its rest `r`, written as its terms and its
+/// constant.
+#[derive(Default)]
+enum Side<'a> {
+    /// No row.
+    #[default]
+    Empty,
+    /// Every row has these terms; the least constant among them.
+    Shared(Vec<(&'a Atom, &'a Int)>, &'a Int),
+    /// Two rows differ in their terms.
+    Mixed,
+}
+
+impl<'a> Side<'a> {
+    /// Adds the row whose rest has the terms `terms` and the constant `k`.
+    fn add(&mut self, terms: Vec<(&'a Atom, &'a Int)>, k: &'a Int) {
+        match self {
+            Side::Empty => *self = Side::Shared(terms, k),
+            Side::Shared(t, least) if *t == terms => *least = (*least).min(k),
+            Side::Shared(..) => *self = Side::Mixed,
+            Side::Mixed => {}
+        }
+    }
+
+    /// Whether every lower bound of `self` and upper bound of `upper` sum to a constant at
+    /// least zero: their terms cancel, and the least constants sum to zero or more.
+    fn fits(&self, upper: &Side<'_>) -> bool {
+        match (self, upper) {
+            (Side::Empty, _) | (_, Side::Empty) => true,
+            (Side::Shared(l, kl), Side::Shared(u, ku)) => {
+                l.len() == u.len()
+                    && l.iter().zip(u).all(|((a, k), (b, j))| a == b && **k == -*j)
+                    && !(*kl + *ku).is_negative()
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The row `c` read as a bound on `x` ([`Side`]): whether it is a lower bound, and the terms of
+/// its rest; `None` when it is an equality or the coefficient of `x` is not 1 or -1.
+fn unit_bound<'a>(c: &'a Con, x: &Atom) -> Option<(bool, Vec<(&'a Atom, &'a Int)>)> {
+    let k = c.lin.terms.get(x)?;
+    let lower = *k == Int::ONE;
+    if c.rel != Rel::Ge || !(lower || *k == -&Int::ONE) {
+        return None;
+    }
+    let rest = c.lin.terms.iter().filter(|(a, _)| *a != x).collect();
+    Some((lower, rest))
+}
+
+/// Removes from `p` each top-level disjunction `D` one of whose disjuncts `d` shows that `D`
+/// removes no point once the atoms private to `d` are projected away, and gives, for each
+/// such atom, the rows over it (the base's and `d`'s), from which [`repair`] gives it a value.
+///
+/// An atom of `d` is private when it is a symbol or an auxiliary variable, not a product nor a
+/// factor of one, not in `keep`, and in no other top-level disjunction at any depth. `d` serves
+/// when it has no disjunction of its own and each of its constraints is an inequality with one
+/// private atom, of coefficient 1 or -1; each base row over that atom must be such an
+/// inequality too, with no other atom held by a disjunction alone. Writing each row over a
+/// private atom `x` as `x + l >= 0` or `u - x >= 0`, `d` serves when `l + u` is a constant at
+/// least zero for each pair of a lower and an upper bound of which one or both are `d`'s.
+///
+/// Why this is exact: with each coefficient of `x` 1 or -1, an integer `x` lies between its
+/// bounds at a point of the other atoms exactly when each lower bound is at most each upper
+/// bound there (Fourier-Motzkin elimination of `x` is exact over the integers). The pairs with
+/// a row of `d` hold everywhere, so the base `R` gives the rest: `∃x (R ∧ d) ≡ ∃x R`. Each row
+/// has one private atom, so they are eliminated one by one, and since `R ∧ d` implies `R ∧ D`,
+/// which implies `R`, `∃P (R ∧ D) ≡ ∃P R` over the private atoms `P`. No other part reads
+/// `P`, so `D` is removed for every question over the other atoms: whether a point exists,
+/// and the projections onto `keep`. A disjunction removed this way holds the private atoms
+/// of its own disjuncts only, so the removals do not depend on each other or on the order in
+/// which they are made. Which disjunctions are removed depends on the structure alone, not on
+/// the names or the order of the parts, so [`settle_as_sets`] may run after it; only the
+/// disjunct whose rows [`repair`] reads is the first by that order.
+///
+/// The cost is linear in the size of the parts, times a logarithm: the atoms of each disjunct
+/// are found once ([`Parts::atoms`]), each base row is read once, and each disjunct's rows
+/// once, compared with the base's bounds as two summaries per atom ([`Side`]).
+///
+/// Complexity tradeoff: only disjunctions shown removable by one disjunct over private atoms
+/// with unit coefficients are removed here; the rest are settled and searched ([`settle`],
+/// [`settle_as_sets`], [`pick`]), whose test of a disjunct that the base's point misses solves
+/// it with every base row linked to it. What is given up: a formula with many disjunctions
+/// linked through one group of base rows, none of them shown removable by this rule (their
+/// atoms shared, or with coefficients other than 1 or -1, or bounds that do not cancel), still
+/// costs a solve of the group for each such disjunct: quadratic in the formula. A base row over
+/// two atoms each held by a single disjunction marks both, though when it bounds the atom only
+/// on the side `d` leaves unpaired it would not stop the removal: telling those apart would
+/// read the row once for each such atom in it. Why: removing a disjunction requires showing
+/// that it changes no projection, which in general is the projection itself; the unit case is
+/// the one where elimination is exact and reads only the bounds of one atom. Trigger: a star
+/// whose leaves each choose between two bounds (`l01_38_presburger::names::star_with_choices`)
+/// is covered; the same with each choice over two leaves is not. Tests:
+/// `l01_38_presburger::names::decide_on_tied_disjunctions_scales`,
+/// `satisfiable_on_tied_disjunctions_scales` and `project_each_on_tied_disjunctions_scales`.
+/// COMPLEXITY.md row DECIDE-disj-chain. A complete solution would be a projection that shares
+/// work between the disjuncts of one group (an incremental solver that keeps the eliminated
+/// group and adds one disjunct at a time).
+fn absorb(p: &mut Parts, keep: &[Atom]) -> Vec<(Atom, Vec<Con>)> {
+    if p.ors.is_empty() {
+        return Vec::new();
+    }
+    let (removed, gone) = {
+        // The top-level disjunction that holds each atom of a disjunction, or `None` when two
+        // or more do.
+        let mut owner: HashMap<&Atom, Option<usize>> = HashMap::new();
+        for (j, ds) in p.ors.iter().enumerate() {
+            for a in ds.iter().flat_map(|d| d.atoms()) {
+                let o = owner.entry(a).or_insert(Some(j));
+                if *o != Some(j) {
+                    *o = None;
+                }
+            }
+        }
+        let kept: HashSet<&Atom> = keep.iter().collect();
+        let mut factors: HashSet<Atom> = HashSet::new();
+        for a in (p.cons.iter().flat_map(|c| c.lin.terms.keys())).chain(owner.keys().copied()) {
+            if let Atom::Product(x, y) = a {
+                factors.insert(x.atom());
+                factors.insert(y.atom());
+            }
+        }
+        // The disjunction that alone holds `a`, when `a` may be private to one of its disjuncts.
+        let held_by = |a: &Atom| match (a, owner.get(a)) {
+            (Atom::Product(..), _) => None,
+            (_, Some(Some(j))) if !kept.contains(a) && !factors.contains(a) => Some(*j),
+            _ => None,
+        };
+        // The base's bounds on each such atom, its rows, and whether a row over it is not a
+        // unit inequality with no other such atom.
+        #[derive(Default)]
+        struct Bounds<'a> {
+            lower: Side<'a>,
+            upper: Side<'a>,
+            rows: Vec<&'a Con>,
+            bad: bool,
+        }
+        let mut base: HashMap<&Atom, Bounds<'_>> = HashMap::new();
+        for c in &p.cons {
+            let mut own = c.lin.terms.keys().filter(|a| held_by(a).is_some());
+            let Some(x) = own.next() else {
+                continue;
+            };
+            if own.next().is_some() {
+                for a in c.lin.terms.keys().filter(|a| held_by(a).is_some()) {
+                    base.entry(a).or_default().bad = true;
+                }
+                continue;
+            }
+            let b = base.entry(x).or_default();
+            b.rows.push(c);
+            match unit_bound(c, x) {
+                Some((true, rest)) => b.lower.add(rest, &c.lin.constant),
+                Some((false, rest)) => b.upper.add(rest, &c.lin.constant),
+                None => b.bad = true,
+            }
+        }
+        let none = Bounds::default();
+        // The rows of each private atom of `d`, a disjunct of disjunction `j`, when `d` shows
+        // that `j` removes no point.
+        let serves = |j: usize, d: &Parts| -> Option<Vec<(Atom, Vec<Con>)>> {
+            if !d.ors.is_empty() {
+                return None;
+            }
+            let mut own: BTreeMap<&Atom, (Side<'_>, Side<'_>, Vec<&Con>)> = BTreeMap::new();
+            for c in &d.cons {
+                let mut xs = (c.lin.terms.keys()).filter(|a| held_by(a) == Some(j));
+                let (Some(x), None) = (xs.next(), xs.next()) else {
+                    return None;
+                };
+                let (lower, rest) = unit_bound(c, x)?;
+                let (dl, du, rows) = own.entry(x).or_default();
+                (if lower { dl } else { du }).add(rest, &c.lin.constant);
+                rows.push(c);
+            }
+            let mut out = Vec::new();
+            for (x, (dl, du, rows)) in own {
+                let b = base.get(x).unwrap_or(&none);
+                if b.bad || !(b.lower.fits(&du) && dl.fits(&du) && dl.fits(&b.upper)) {
+                    return None;
+                }
+                let all = b.rows.iter().chain(&rows).map(|&c| c.clone());
+                out.push((x.clone(), all.collect()));
+            }
+            Some(out)
+        };
+        let mut removed = vec![false; p.ors.len()];
+        let mut gone = Vec::new();
+        for (j, ds) in p.ors.iter().enumerate() {
+            if let Some(rows) = ds.iter().find_map(|d| serves(j, d)) {
+                removed[j] = true;
+                gone.extend(rows);
+            }
+        }
+        (removed, gone)
+    };
+    let mut j = 0;
+    p.ors.retain(|_| {
+        j += 1;
+        !removed[j - 1]
+    });
+    gone
+}
+
+/// Gives each atom that [`absorb`] projected away a value between its bounds at `m` over the
+/// rows kept for it: its value in `m` when that lies between them, so that a point that already
+/// holds is not moved, and otherwise the nearer bound. When `m` is a point of the parts left,
+/// the bounds meet ([`absorb`]), and no row left or kept for another such atom reads this one,
+/// so `m` becomes a point of the parts with each disjunction removed. The cost is that of
+/// reading the rows once.
+fn repair(m: &mut Model, gone: &[(Atom, Vec<Con>)]) {
+    for (x, rows) in gone {
+        let at = m.get(x).cloned().unwrap_or(Int::ZERO);
+        let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);
+        for c in rows {
+            // `c` is `k·x + r >= 0`, `k` 1 or -1: `x >= -r` or `x <= r`.
+            let k = &c.lin.terms[x];
+            let r = &c.lin.eval(m) - &(k * &at);
+            if k.is_negative() {
+                hi = Some(match hi {
+                    Some(h) => h.min(r),
+                    None => r,
+                });
+            } else {
+                let r = -&r;
+                lo = Some(match lo {
+                    Some(l) => l.max(r),
+                    None => r,
+                });
+            }
+        }
+        debug_assert!(lo.as_ref().zip(hi.as_ref()).is_none_or(|(l, h)| l <= h));
+        let v = match (lo, hi) {
+            (Some(l), _) if at < l => l,
+            (_, Some(h)) if at > h => h,
+            _ => continue,
+        };
+        m.insert(x.clone(), v);
+    }
+}
+
+/// The parts' base and disjunctions once no disjunct can be removed, or `None` when they have
 /// no point. A disjunct is removed when its top-level constraints meet the base nowhere; a
 /// disjunction left with one disjunct adds it to the base. Each round but the last removes a
 /// disjunct, so there are at most as many rounds as disjuncts, each a test of every disjunct.
-fn propagate(f: &Formula) -> Result<Option<Parts>, Refusal> {
-    settle(Parts::of(nnf(f, true)))
-}
-
-/// [`propagate`] from parts.
 ///
 /// A disjunct is kept when its constraints hold at a point of the base or when its own atoms
 /// re-solved with the base's other atoms held at that point have a point ([`local_repair`]);
@@ -2808,7 +3069,31 @@ fn propagate(f: &Formula) -> Result<Option<Parts>, Refusal> {
 /// that joins it does not hold there (COMPLEXITY S22, tests
 /// `l01_25_preimage_catalog::s22::chain_cross_live_scales` and
 /// `chain_cross_within_its_width_scales`).
-fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
+///
+/// With `search`, for a caller that only searches the parts for a point ([`decide`],
+/// [`satisfiable`]), a disjunct that the local tests neither keep nor remove is kept untested
+/// when another disjunct of its disjunction holds at the point: the search takes that one
+/// while the point stands ([`pick`]), and when the point moves it tests each disjunct anyway,
+/// so a disjunct kept so is at worst one the search tries and fails, after which [`probe`]
+/// tests each disjunct without `search`. Without `search` (a projection, or a test of
+/// emptiness in [`probe`]) every disjunct is answered, since a disjunct kept there widens a
+/// hull or hides that the parts have no point.
+///
+/// Complexity tradeoff: without `search`, or when no disjunct of a disjunction holds at the
+/// point, a disjunct that the local tests do not answer is solved with every base row linked
+/// to it, so `n` such disjuncts over one linked group of `n` rows cost `n` solves of the
+/// group: quadratic. What is given up: no answer, only time on such formulas: a projection of
+/// a chain whose disjunctions each have a disjunct that holds at the point still pays it, as
+/// does a search whose disjunctions have no disjunct holding there. Why: the solve shows a disjunct empty, which no point can, and testing each disjunct
+/// against one solved group kept between the tests needs an incremental solver, which
+/// [`solve`] is not. Trigger: `n` disjunctions over one group of linked rows, a disjunct of
+/// each not met by moving its own atoms. With `search`, the chain with a disjunction every
+/// fourth stage
+/// (`l01_38_presburger::names::decide_scales_over_a_chain_with_a_disjunction_every_fourth_stage`)
+/// is linear: before, 127 solves of about 513 rows at 512 stages, 52.5 times the bytes of 64
+/// stages. COMPLEXITY.md row DECIDE-disj-chain. A complete solution would settle against one
+/// solved group, adding and retracting each disjunct.
+fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
     // The base, with a bound written again (at each level of a nest, say) kept once
     // ([`Linked::meet`]), so that the groups a disjunct is tested with do not grow with the
     // depth, and indexed for [`local_repair`].
@@ -2838,6 +3123,10 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
             let ds = std::mem::take(&mut todo[next]);
             next += 1;
             let n = ds.len();
+            // With `search`, whether a disjunct of this disjunction holds at the point.
+            let served = search
+                && (point.as_ref())
+                    .is_some_and(|pt| ds.iter().any(|d| d.cons.iter().all(|c| c.holds(pt))));
             let mut live: Vec<Rc<Parts>> = ds
                 .into_iter()
                 .filter(|d| {
@@ -2852,6 +3141,9 @@ fn settle(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     }
                     if local_refute(&base.cons, &near, &d.cons) {
                         return false;
+                    }
+                    if served {
+                        return true;
                     }
                     let mut cs = base.around(&d.cons);
                     cs.extend(d.cons.iter());
@@ -5705,7 +5997,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         // Projected with each disjunction kept, by questions that no order of the parts
         // changes ([`project_parts`] with `sets`).
         Naming::Tied(..) => {
-            return match settle_as_sets(Parts::of(nnf(f, true)))? {
+            return match settle_as_sets(absorbed(f, syms).0)? {
                 None => Ok(no_points(syms)),
                 // A projection may keep a disjunct not shown to have a point.
                 Some(AsSets { p, .. }) => {
@@ -5726,7 +6018,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 
 /// [`project_each`] of a formula whose names no longer matter ([`Renamed`]).
 fn project_each_inner(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    match propagate(f)? {
+    match settle(absorbed(f, syms).0, false)? {
         Some(p) => project_parts(p, syms, Some(f), false, &mut HashMap::new()),
         None => Ok(no_points(syms)),
     }
@@ -5969,7 +6261,7 @@ fn project_parts(
             } else {
                 let settled = match pre_d {
                     Some(s) => s,
-                    None => settle(parts_of(d, &roots)),
+                    None => settle(parts_of(d, &roots), false),
                 };
                 let r = settled.and_then(|q| match q {
                     None => Ok((no_points(&sub), false)),

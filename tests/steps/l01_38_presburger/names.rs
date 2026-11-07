@@ -1140,10 +1140,8 @@ fn a_point_and_a_projection_of_a_renamed_formula_are_over_the_names_as_written()
 
 /// The chain `x[0] >= 0`, `x[i + 1] - x[i] >= 1`, `x[n - 1] <= 2·n`, whose variables color
 /// refinement tells apart by their distance from `x[0]`, with `x[i + 1] - x[i] <= 1 ||
-/// x[i + 1] - x[i] >= 3` at `i = 0`: renamed, then searched. A disjunction at every fourth `i`
-/// makes [`decide`] quadratic in its bytes with or without the renaming (52.9 and 55.0 times from
-/// 64 to 512 variables), a cost of the search, not of the renaming.
-fn chain_with_disjunctions(n: usize) -> Formula {
+/// x[i + 1] - x[i] >= 3` at each `i` that `every` divides: renamed, then searched.
+fn chain_with_disjunctions(n: usize, every: usize) -> Formula {
     let at = |i: usize, c: i64, j: usize, d: i64| {
         let mut cs = vec![0; n];
         cs[i] += c;
@@ -1155,24 +1153,50 @@ fn chain_with_disjunctions(n: usize) -> Formula {
         ge(&at(n - 1, -1, n - 1, 0), 2 * n as i64),
     ];
     base.extend((0..n - 1).map(|i| ge(&at(i + 1, 1, i, -1), -1)));
-    let ors = vec![vec![
-        vec![ge(&at(0, 1, 1, -1), 1)],
-        vec![ge(&at(1, 1, 0, -1), -3)],
-    ]];
+    let ors = ((0..n - 1).step_by(every))
+        .map(|i| {
+            vec![
+                vec![ge(&at(i, 1, i + 1, -1), 1)],
+                vec![ge(&at(i + 1, 1, i, -1), -3)],
+            ]
+        })
+        .collect();
     disjunctive_formula(&(base, ors), &(0..n).collect::<Vec<_>>())
 }
 
 #[test]
 fn decide_scales_over_a_renamed_chain_with_disjunctions() {
     let (small, large) = (
-        chain_with_disjunctions(64),
-        chain_with_disjunctions(64 * scaling::FACTOR),
+        chain_with_disjunctions(64, 64),
+        chain_with_disjunctions(64 * scaling::FACTOR, 64 * scaling::FACTOR),
     );
     assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
     scaling::check("decide on a chain with disjunctions", 64, |n| {
         let f = if n == 64 { &small } else { &large };
         let _ = std::hint::black_box(decide(f));
     });
+}
+
+#[test]
+fn decide_scales_over_a_chain_with_a_disjunction_every_fourth_stage() {
+    let (small, large) = (
+        chain_with_disjunctions(64, 4),
+        chain_with_disjunctions(64 * scaling::FACTOR, 4),
+    );
+    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
+    for f in [&small, &large] {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    scaling::check_order(
+        "decide on a chain with a disjunction every fourth stage",
+        64,
+        1,
+        |n| {
+            let f = if n == 64 { &small } else { &large };
+            let _ = std::hint::black_box(decide(f));
+        },
+    );
 }
 
 /// [`star`] with, for each leaf, `x[i] <= h1 + h2 + 1 || x[i] >= h1 + 2·h2 + 3`: one
@@ -1196,11 +1220,13 @@ fn star_with_choices(n: usize) -> Formula {
 // colors choose one disjunct of each, and one solve of the base with them finds a point: one
 // settling and one solve, where the probe this replaced, which tested each of the 2n disjuncts
 // with the n − 1 other disjunctions, was cubic (8 to 64 leaves: 22 ms to 10.8 s, then refused).
-// What is left is quadratic, and the same with the leaves told apart, when the formula is
-// renamed and searched instead: settling tests each disjunct that the base's point misses
-// against the whole group of rows it is linked to, here every row through the hubs (`settle`
-// and `settle_as_sets`), and the projection settles each disjunct with that group. Hence power
-// 2; open, ledger DECIDE-disj-chain (COMPLEXITY.md NAME-ties-or).
+// Settling then stayed quadratic: it tested each disjunct that the base's point missed against
+// every row linked to it through the hubs, and the projection settled each disjunct with that
+// group. Now each leaf's disjunction is removed before settling (`absorb`): the leaf occurs in
+// no other row but its two bounds, and one of its disjuncts (`x[i] <= h1 + h2 + 1`) meets them
+// for every value of the hubs, so the disjunction removes no point. What is left is the star
+// alone, settled once; the projection keeps only the disjunction of the leaf it is asked for.
+// COMPLEXITY.md rows DECIDE-disj-chain and NAME-ties-or.
 
 #[test]
 fn decide_on_tied_disjunctions_scales() {
@@ -1209,7 +1235,7 @@ fn decide_on_tied_disjunctions_scales() {
         star_with_choices(16 * scaling::FACTOR),
     );
     assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
-    scaling::check_order("decide on a star of tied leaves with choices", 16, 2, |n| {
+    scaling::check_order("decide on a star of tied leaves with choices", 16, 1, |n| {
         let f = if n == 16 { &small } else { &large };
         let _ = std::hint::black_box(decide(f));
     });
@@ -1228,7 +1254,7 @@ fn satisfiable_on_tied_disjunctions_scales() {
     scaling::check_order(
         "a point of a star of tied leaves with choices",
         16,
-        2,
+        1,
         |n| {
             let f = if n == 16 { &small } else { &large };
             let _ = std::hint::black_box(satisfiable(f));
@@ -1255,7 +1281,7 @@ fn project_each_on_tied_disjunctions_scales() {
     scaling::check_order(
         "projections of a star of tied leaves with choices",
         4,
-        2,
+        1,
         |n| {
             let f = if n == 4 { &small } else { &large };
             let _ = std::hint::black_box(project_each(f, &syms));
