@@ -633,10 +633,11 @@ const fn sig(word: &'static str, positional: Count) -> Sig {
 /// The words a catalog Zed text may call, each a prelude word of `zedc::resolve::WORDS`, with
 /// its arguments: the casts and the L1 string and number words take one (L1.14); `min` and
 /// `max` two or more (`min(d[i-1][j] + 1, …)`, sec:power); the bit words as step L1.39a
-/// gives them, with `width:` on the words whose result depends on a width; the views of a
-/// string one (L1.39c); the family operations their receiver and the operands of the kernel
-/// table (sec:kernel): `foldl(init, op)`, `foldr(op, init)`, `.sort(asc f, …)` or
-/// `.sort(by: le)`, and one operand for the others.
+/// gives them and the integer machine operations as step L1.39f does, with `width:` on the
+/// words whose result depends on a width; the views of a string one (L1.39c); the family
+/// operations their receiver and the operands of the kernel table (sec:kernel): `foldl(init,
+/// op)`, `foldr(op, init)`, `.sort(asc f, …)` or `.sort(by: le)`, and one operand for the
+/// others.
 const SIGS: &[Sig] = &[
     sig("String", Count::Exactly(1)),
     sig("int", Count::Exactly(1)),
@@ -677,6 +678,28 @@ const SIGS: &[Sig] = &[
         ..sig("rotr", Count::Exactly(2))
     },
     sig("f64Bits", Count::Exactly(1)),
+    Sig {
+        required: &["width"],
+        ..sig("mulHi", Count::Exactly(2))
+    },
+    Sig {
+        required: &["width"],
+        ..sig("bitReverse", Count::Exactly(1))
+    },
+    Sig {
+        required: &["width"],
+        ..sig("byteSwap", Count::Exactly(1))
+    },
+    sig("pdep", Count::Exactly(2)),
+    sig("pext", Count::Exactly(2)),
+    Sig {
+        required: &["width"],
+        ..sig("funnelShl", Count::Exactly(3))
+    },
+    Sig {
+        required: &["width"],
+        ..sig("funnelShr", Count::Exactly(3))
+    },
     sig("codePoint", Count::Exactly(1)),
     sig("scalar", Count::Exactly(1)),
     sig("utf8", Count::Exactly(1)),

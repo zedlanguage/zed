@@ -140,6 +140,24 @@ pub enum Prim {
     /// `fromUtf8(b)`: the string the bytes of `b`, in key order, encode; `#badUtf8` when they
     /// are not well-formed UTF-8.
     FromUtf8,
+    /// `mulHi(a, b, width: w)`: `shr(a * b, w)`, for `a` and `b` in `0 ..< 2^w`, the high half of
+    /// the product (step L1.39f, DESIGN.md sec:linalg, machine operations).
+    MulHi,
+    /// `bitReverse(x, width: w)`: the `w` low digits of `x` in reverse order.
+    BitReverse,
+    /// `byteSwap(x, width: w)`, `w` a multiple of 8: the `w / 8` low bytes of `x` in reverse order.
+    ByteSwap,
+    /// `pdep(x, mask)`: the low digits of `x` deposited at the one digits of `mask`, lowest first.
+    Pdep,
+    /// `pext(x, mask)`: the digits of `x` at the one digits of `mask`, gathered into the low
+    /// digits.
+    Pext,
+    /// `funnelShl(hi, lo, k, width: w)`: the high `w` digits of the `2w` digits `hi * 2^w + lo`
+    /// shifted `k` places toward the high, for `k` in `0 ..< w`.
+    FunnelShl,
+    /// `funnelShr(hi, lo, k, width: w)`: the low `w` digits of `hi * 2^w + lo` shifted `k` places
+    /// toward the low.
+    FunnelShr,
 }
 
 impl Prim {
@@ -150,7 +168,8 @@ impl Prim {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | Abs | Len
             | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
             | FromUtf8 => Some(1),
-            Rotl | Rotr => Some(3),
+            Rotl | Rotr | MulHi => Some(3),
+            FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom => None,
             _ => Some(2),
         }
@@ -219,6 +238,13 @@ impl Prim {
             Scalar => 52,
             Utf8 => 53,
             FromUtf8 => 54,
+            MulHi => 55,
+            BitReverse => 56,
+            ByteSwap => 57,
+            Pdep => 58,
+            Pext => 59,
+            FunnelShl => 60,
+            FunnelShr => 61,
         }
     }
 }

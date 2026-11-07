@@ -219,6 +219,10 @@ with forward transfer on intervals (`store::interval::bit_word`, COMPLEXITY.md r
 negative operand, or an `x` wider than its width, is a type error at the call with its
 derivation; the checker decides it from the operand's text and listed values (row C26), so an
 int that only a test narrows is rejected, as `**`'s exponent is. Shift counts are never masked.
+Step L1.39f adds the integer machine operations `mulHi bitReverse byteSwap pdep pext funnelShl
+funnelShr` on the same domains (`zed_kernel::bits`, row C25). The Rust uses `u128::reverse_bits`,
+`swap_bytes`, `isolate_lowest_one` and a `u128` product to compute them on machine operands; in
+Zed these are the words themselves, so the step adds no new gap.
 What remains for S.2 and S.3: the representation point and `mix` below; `i32` and other
 domain-typed ints are L10, so `w: i32 = shl(1, 31)` is decided by the store's transfer, not yet
 by the checker. The text below is the audit's, kept as found.

@@ -6,7 +6,7 @@
 use zed_kernel::Prim;
 use zedc::zir::text::PRIMS;
 
-const CODES: [(Prim, u64); 55] = [
+const CODES: [(Prim, u64); 62] = [
     (Prim::Add, 0),
     (Prim::Sub, 1),
     (Prim::Mul, 2),
@@ -62,6 +62,13 @@ const CODES: [(Prim, u64); 55] = [
     (Prim::Scalar, 52),
     (Prim::Utf8, 53),
     (Prim::FromUtf8, 54),
+    (Prim::MulHi, 55),
+    (Prim::BitReverse, 56),
+    (Prim::ByteSwap, 57),
+    (Prim::Pdep, 58),
+    (Prim::Pext, 59),
+    (Prim::FunnelShl, 60),
+    (Prim::FunnelShr, 61),
 ];
 
 #[test]

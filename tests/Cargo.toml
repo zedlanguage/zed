@@ -157,6 +157,9 @@ path = "steps/l01_39b_on_demand/mod.rs"
 name = "l01_39c_code_points"
 path = "steps/l01_39c_code_points/mod.rs"
 [[test]]
+name = "l01_39f_int_machine_ops"
+path = "steps/l01_39f_int_machine_ops/mod.rs"
+[[test]]
 name = "l02_01_parser_structs"
 path = "steps/l02_01_parser_structs/mod.rs"
 [[test]]

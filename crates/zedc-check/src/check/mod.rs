@@ -3332,11 +3332,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some((self.env.get(&ids[0]).and_then(only_fn)?, receiver))
     }
 
-    /// Checks each operand of the bit word `w` against its domain (DESIGN.md sec:domains):
-    /// `int[0..]` for every one but the `x` of `shl` and `shr`, and `int[0..<2 ** width]` for the
-    /// `x` of a word with a width. An operand is rejected when its int part is not shown to lie
-    /// in the domain, from its listed values or the interval of its expression, as `**`'s
-    /// exponent is.
+    /// Checks each operand of the bit word or integer machine operation `w` against its domain
+    /// (DESIGN.md sec:domains, sec:linalg): `int[0..]` for every one but the `x` of `shl` and
+    /// `shr`, `int[0..<2 ** width]` for the operands read as `width` digits, `int[0..<width]`
+    /// for the `k` of a funnel shift, and a multiple of 8 for the width of `byteSwap`. An operand
+    /// is rejected when its int part is not shown to lie in the domain, from its listed values or
+    /// the interval of its expression, as `**`'s exponent is.
     fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg, &'a Expr)], span: Span) {
         let names = zed_kernel::bits::params(p);
         let shift = matches!(p, Prim::Shl | Prim::Shr);
@@ -3369,40 +3370,86 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !fine || !zed_kernel::bits::has_width(p) {
             return;
         }
-        let ((x, xe), (wa, we)) = (&slots[0], &slots[slots.len() - 1]);
-        let (Some(rx), Some(rw)) = (&ranges[0], &ranges[slots.len() - 1]) else {
+        let last = slots.len() - 1;
+        let (wa, we) = &slots[last];
+        let Some(rw) = &ranges[last] else {
             return;
         };
-        // `x` lies below `2 ** width` when its largest value does below the smallest width.
-        let (hi, lo) = (
-            rx.extreme(std::cmp::Ordering::Greater),
-            rw.extreme(std::cmp::Ordering::Less),
-        );
-        let below = hi
-            .zip(lo)
-            .is_some_and(|(h, l)| zed_kernel::bits::below_two_pow(&h, &l));
-        if !below {
-            let (sx, sw) = (&rx.shown, &rw.shown);
-            let (ax, aw) = (x.at.unwrap_or(xe.span), wa.at.unwrap_or(we.span));
-            let mut notes = vec![
-                Note {
-                    span: ax,
-                    text: format!("`x` is this operand, {sx}"),
-                },
-                Note {
-                    span: aw,
-                    text: format!("`width` is this operand, {sw}"),
-                },
-            ];
-            self.derive_into(&[ax, aw], &mut notes);
+        let width = (wa.at.unwrap_or(we.span), rw.shown.as_str());
+        if zed_kernel::bits::whole_bytes(p) && !whole_bytes(rw) {
+            let (aw, sw) = width;
+            let mut notes = vec![Note {
+                span: aw,
+                text: format!("`width` is this operand, {sw}"),
+            }];
+            self.derive_into(&[aw], &mut notes);
             self.error_with(
                 span,
-                format!(
-                    "`{w}` takes `x` in int[0..<2 ** width], and this `x` is {sx} with `width` {sw}"
-                ),
+                format!("`{w}` takes `width` a multiple of 8, and this `width` is {sw}"),
                 notes,
             );
+            return;
         }
+        let smallest = rw.extreme(std::cmp::Ordering::Less);
+        // An operand lies below `2 ** width` when its largest value does below the smallest
+        // width, and below `width` when its largest value is less than the smallest width.
+        for (i, two_pow) in zed_kernel::bits::below_two_pow_width(p)
+            .iter()
+            .map(|&i| (i, true))
+            .chain(zed_kernel::bits::below_width(p).map(|i| (i, false)))
+        {
+            let ((a, e), Some(r)) = (&slots[i], &ranges[i]) else {
+                continue;
+            };
+            let below = r
+                .extreme(std::cmp::Ordering::Greater)
+                .zip(smallest.as_ref())
+                .is_some_and(|(h, l)| match two_pow {
+                    true => zed_kernel::bits::below_two_pow(&h, l),
+                    false => h
+                        .as_integer()
+                        .zip(l.as_integer())
+                        .is_some_and(|(h, l)| h < l),
+                });
+            if !below {
+                let needs = if two_pow {
+                    "int[0..<2 ** width]"
+                } else {
+                    "int[0..<width]"
+                };
+                let operand = (a.at.unwrap_or(e.span), r.shown.as_str());
+                self.width_error(w, names[i], needs, operand, width, span);
+            }
+        }
+    }
+
+    /// The error for operand `name` of `w`, at `operand`, outside `needs` for the width at
+    /// `width`; each is the operand's place and how it is shown.
+    fn width_error(
+        &mut self,
+        w: &str,
+        name: &str,
+        needs: &str,
+        (ax, sx): (Span, &str),
+        (aw, sw): (Span, &str),
+        span: Span,
+    ) {
+        let mut notes = vec![
+            Note {
+                span: ax,
+                text: format!("`{name}` is this operand, {sx}"),
+            },
+            Note {
+                span: aw,
+                text: format!("`width` is this operand, {sw}"),
+            },
+        ];
+        self.derive_into(&[ax, aw], &mut notes);
+        self.error_with(
+            span,
+            format!("`{w}` takes `{name}` in {needs}, and this `{name}` is {sx} with `width` {sw}"),
+            notes,
+        );
     }
 
     /// The integers an argument may be, when its type has an int part: an interval holding them,
@@ -6090,6 +6137,20 @@ struct IntRange {
     shown: String,
     /// Whether a test the walk is in narrowed them.
     narrowed: bool,
+}
+
+/// Whether every value `r` holds is shown to be a multiple of 8: its listed values each are, or
+/// its interval is one such value.
+fn whole_bytes(r: &IntRange) -> bool {
+    let eight = |v: &Value| {
+        v.as_integer()
+            .is_some_and(|n| Num::from(&*n).mod_floor(&Num::from(8)).is_zero())
+    };
+    match (&r.values, r.ints.bounds()) {
+        (Some(vs), _) => vs.iter().all(eight),
+        (None, Some((Fin(a), Fin(b)))) if a == b => eight(&Value::from(a)),
+        _ => false,
+    }
 }
 
 impl IntRange {

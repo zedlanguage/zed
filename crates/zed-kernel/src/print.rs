@@ -129,6 +129,13 @@ fn name(p: Prim) -> &'static str {
         Scalar => "scalar",
         Utf8 => "utf8",
         FromUtf8 => "fromUtf8",
+        MulHi => "mulHi",
+        BitReverse => "bitReverse",
+        ByteSwap => "byteSwap",
+        Pdep => "pdep",
+        Pext => "pext",
+        FunnelShl => "funnelShl",
+        FunnelShr => "funnelShr",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),

@@ -50,6 +50,7 @@ l01_39_reduced_product
 l01_39a_bit_words
 l01_39b_on_demand
 l01_39c_code_points
+l01_39f_int_machine_ops
 l02_01_parser_structs
 l02_02_parser_match_imports
 l02_03_name_resolution

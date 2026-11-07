@@ -558,12 +558,14 @@ fn fin(e: &End) -> &Num {
     }
 }
 
-/// Forward transfer of a bit word (step L1.39a, DESIGN.md sec:domains) on the intervals of its
-/// int operands, in parameter order with the width last: a set holding `p(args)` for every
-/// tuple of members on which `p` is defined. Each operand is first met with its domain,
-/// `int[0..]` for every one but the `x` of `shl` and `shr`, and the `x` of a word with a width
-/// with `int[0..<2 ** w]` for the largest `w`; an operand left empty gives the empty set, and
-/// operands that are each one integer give the word's value. Every end is exact at any size.
+/// Forward transfer of a bit word (step L1.39a, DESIGN.md sec:domains) or an integer machine
+/// operation (step L1.39f, DESIGN.md sec:linalg) on the intervals of its int operands, in
+/// parameter order with the width last: a set holding `p(args)` for every tuple of members on
+/// which `p` is defined. Each operand is first met with its domain, `int[0..]` for every one
+/// but the `x` of `shl` and `shr`, the operands read as `w` digits with `int[0..<2 ** w]` and
+/// the `k` of a funnel shift with `int[0..<w]`, for the largest `w`; an operand left empty
+/// gives the empty set, and operands that are each one integer give the word's value. Every end
+/// is exact at any size.
 ///
 /// `bitAnd` lies in `0..=min(hi_a, hi_b)`, `bitOr` and `bitXor` below the least power of two
 /// above the larger upper bound (`bitOr` from the larger lower bound), `bitNot` in
@@ -573,17 +575,27 @@ fn fin(e: &End) -> &Num {
 /// `x` is. `shl` and `shr` are the product and the floor quotient by `2^k`, monotone in `x` and,
 /// on each sign of `x`, in `k`, so each sign part of each piece of `x` maps by its corners; a
 /// shift right by at least the digits of `x` gives 0 or -1, so `k` is read up to those digits.
-/// `f64Bits` is in `int[0..<2 ** 64]`.
+/// `f64Bits` is in `int[0..<2 ** 64]`. `mulHi` is monotone in each factor and falls as `w`
+/// grows, so it lies in `(lo_a * lo_b) div 2^hi_w ..= (hi_a * hi_b) div 2^lo_w`, below
+/// `2^hi_w`; `bitReverse` and `byteSwap` lie below `2^w`, 0 exactly when `x` is, as the
+/// rotations do; `pdep` lies in `0..=hi_mask`, since its one digits are some of the mask's;
+/// `pext` lies in `0..=min(hi_x, 2^digits(hi_mask) - 1)`, since it moves the digits of `x` it
+/// keeps to places no higher and in the same order, and keeps at most `popCount(mask)` of them.
+/// DESIGN gives no bound for `funnelShl` and `funnelShr`; they take the hull `0 ..< 2^hi_w`, 0
+/// exactly when both halves are.
 ///
 /// Complexity tradeoff: every operand but the `x` of `shl` and `shr` is read by its hull, and
 /// the result is at most two intervals, so a hole in an operand is not carried through and the
 /// digit-wise words are bounded by their operands' digits, not by the digits they share. Why:
 /// these words are not monotone, so an exact image of unions of pieces is a search over the
 /// pieces' digits, and the hull rule is O(1) per word; `shl` and `shr` are monotone on each
-/// sign and keep their `x` pieces at O(pieces). Trigger: an operand of more than one piece,
-/// or of more than one value for `bitAnd`, `bitOr` and `bitXor`. Tests:
-/// `l01_39a_bit_words::transfer`. A complete solution would add the known-bits domain of step
-/// L1.40a, which carries the digits fixed in every member. COMPLEXITY.md row C25.
+/// sign and keep their `x` pieces at O(pieces). The machine operations of step L1.39f but
+/// `mulHi` are bounded by their width or by one operand's upper end, and the funnel shifts by
+/// their width alone. Trigger: an operand of more than one piece, or of more than one value
+/// for `bitAnd`, `bitOr`, `bitXor` and the machine operations. Tests:
+/// `l01_39a_bit_words::transfer` and `l01_39f_int_machine_ops::transfer`. A complete solution
+/// would add the known-bits domain of step L1.40a, which carries the digits fixed in every
+/// member. COMPLEXITY.md row C25.
 pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
     let nonneg = IntervalSet::range(End::of(0), PosInf);
     if p == Prim::F64Bits {
@@ -598,13 +610,17 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
             false => a.meet(&nonneg),
         })
         .collect();
-    let width = matches!(
-        p,
-        Prim::BitNot | Prim::LeadingZeros | Prim::TrailingZeros | Prim::Rotl | Prim::Rotr
-    );
-    if width && let Some((_, Fin(wh))) = xs.last().and_then(IntervalSet::bounds) {
+    if zed_kernel::bits::has_width(p)
+        && let Some((_, Fin(wh))) = xs.last().and_then(IntervalSet::bounds)
+    {
         let within = IntervalSet::range(End::of(0), Fin(ones(wh)));
-        xs[0] = xs[0].meet(&within);
+        let below_w = IntervalSet::range(End::of(0), Fin(wh - &Num::ONE));
+        for &i in zed_kernel::bits::below_two_pow_width(p) {
+            xs[i] = xs[i].meet(&within);
+        }
+        if let Some(i) = zed_kernel::bits::below_width(p) {
+            xs[i] = xs[i].meet(&below_w);
+        }
     }
     if xs.iter().any(IntervalSet::is_empty) {
         return IntervalSet::empty();
@@ -701,6 +717,43 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
                 e => e.clone(),
             };
             IntervalSet::range(End::of(i64::from(fin(x_lo).signum() > 0)), hi)
+        }
+        Prim::MulHi => {
+            let (b_lo, b_hi) = b(1);
+            let (w_lo, w_hi) = b(2);
+            let lo = match w_hi {
+                Fin(w) => Fin((fin(x_lo) * fin(b_lo)).div_floor(&Num::pow2(w))),
+                _ => End::of(0),
+            };
+            let hi = match (x_hi, b_hi, w_hi) {
+                (Fin(a), Fin(c), Fin(w)) => {
+                    Fin((a * c).div_floor(&Num::pow2(fin(w_lo))).min(ones(w)))
+                }
+                _ => PosInf,
+            };
+            IntervalSet::range(lo, hi)
+        }
+        Prim::BitReverse | Prim::ByteSwap => {
+            if *x_hi == End::of(0) {
+                return IntervalSet::single(0);
+            }
+            let hi = match b(1).1 {
+                Fin(w) => Fin(ones(w)),
+                e => e.clone(),
+            };
+            IntervalSet::range(End::of(i64::from(fin(x_lo).signum() > 0)), hi)
+        }
+        Prim::Pdep => IntervalSet::range(End::of(0), b(1).1.clone()),
+        Prim::Pext => IntervalSet::range(End::of(0), x_hi.clone().min(mask(b(1).1))),
+        Prim::FunnelShl | Prim::FunnelShr => {
+            if *x_hi == End::of(0) && *b(1).1 == End::of(0) {
+                return IntervalSet::single(0);
+            }
+            let hi = match b(3).1 {
+                Fin(w) => Fin(ones(w)),
+                e => e.clone(),
+            };
+            IntervalSet::range(End::of(0), hi)
         }
         Prim::Shl => {
             let (k_lo, k_hi) = b(1);
