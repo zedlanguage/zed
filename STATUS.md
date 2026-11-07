@@ -1504,14 +1504,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | ready dfc29dc9 on 503bea5b: faces of kept conjunctions; 244/245 pieces pass with doc check (l01_37a stale snapshot on main); 160 links 1.849 -> 0.129 s, hashes  |
 | MAIN-red | impl attempt 1 | 2026-11-07 11:37 | l01_37a blamed: passes at d516c04f^, 3 snapshots fail at d516c04f (DIAG-addr-rest added Outcome.address, printed as address: Some(#..)/None, which without_addre |
 | PA-let-narrow-many | impl attempt 1 | 2026-11-07 11:31 | measured (a): d=32..512 term_bounds 627/2275/8643/33667/132867 (Theta(d^2)), cause Ck::with_bound_read reads all k narrowed inputs of x_(k-1) per binding |
 | SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | started: worktree /home/luke/Work/wt/scale-fix-kernel from wt/scale-ratio cd98182c; 10 findings to fit, profile and fix; load 35.52 |
 | SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | started; worktree from wt/scale-ratio cd98182c; load 41.15 |
 | SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | kept power: cause is MUL_LEAF 1024 mixing (build 3^n 10.83 at 2^18..2^21; with leaf 48 as an uncommitted experiment 9.53, compare 9.14); load 21.36 22.26 26.47 |
 | STAGE-store-probes | impl attempt 1 | 2026-11-07 10:13 | design chosen: shared records (Part items) + recall memo keyed by stamp map; capturing baseline / load 13.14 21.53 26.47 |
-| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | ready 86ac734d on d798ac47; 364 pieces 0 failed with doc check / load 30.07 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
