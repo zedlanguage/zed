@@ -89,17 +89,15 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
     ] {
         let one = type_errors(&text(3));
         assert_eq!(one.len(), 1, "{what}: {one:?}");
-        scaling::on_a_thread(1 << 29, || {
-            let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-                .into_iter()
-                .map(|n| (n, Resolved::new(&text(n))))
-                .collect();
-            scaling::check_order(what, 500, 1, |n| {
-                let info = units[&n].check();
-                // One error with its two notes, whatever the depth.
-                assert_eq!(info.errors.len(), 1, "{what} at {n}");
-                assert_eq!(info.errors[0].notes.len(), 2, "{what} at {n}");
-            });
+        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            // One error with its two notes, whatever the depth.
+            assert_eq!(info.errors.len(), 1, "{what} at {n}");
+            assert_eq!(info.errors[0].notes.len(), 2, "{what} at {n}");
         });
     }
 }
@@ -198,15 +196,13 @@ fn a_function_in_payloads_is_found_in_linear_time() {
             0,
         ),
     ] {
-        scaling::on_a_thread(1 << 29, || {
-            let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-                .into_iter()
-                .map(|n| (n, Resolved::new(&text(n, leaf))))
-                .collect();
-            scaling::check_order(what, 500, 1, |n| {
-                let info = units[&n].check();
-                assert_eq!(info.errors.len(), errors, "{what} at {n}");
-            });
+        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n, leaf))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), errors, "{what} at {n}");
         });
     }
 }

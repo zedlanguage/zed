@@ -136,13 +136,11 @@ fn names_chain(k: usize) -> String {
 /// times.
 fn scales(what: &str, text: impl Fn(usize) -> String + Sync) {
     let n = 500;
-    scaling::on_a_thread(1 << 29, || {
-        let built = scaling::inputs(n, |m| zed_tests::deep::resolved(&text(m)));
-        scaling::check_order(what, n, 1, |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::check(stmts, res);
-            assert!(info.errors.is_empty(), "{what}: {:?}", info.errors);
-        });
+    let built = scaling::inputs(n, |m| zed_tests::deep::resolved(&text(m)));
+    scaling::check_order(what, n, 1, |m| {
+        let (stmts, res) = &built[&m];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{what}: {:?}", info.errors);
     });
 }
 

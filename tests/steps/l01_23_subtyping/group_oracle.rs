@@ -1285,49 +1285,46 @@ fn sweep(
     tally
 }
 
-/// Each sweep is a piece of the seeds, sized to finish well under 60 s.
-fn on_a_big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    scaling::on_a_thread(1 << 28, f)
-}
+// Each sweep is a piece of the seeds, sized to finish well under 60 s.
 
 #[test]
 fn x14_family_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("claude", gen_claude, 0..150, 0));
+    sweep("claude", gen_claude, 0..150, 0);
 }
 
 #[test]
 fn x14_family_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("claude", gen_claude, 150..300, 0));
+    sweep("claude", gen_claude, 150..300, 0);
 }
 
 #[test]
 fn partial_morphism_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("mixed", gen_mixed, 0..150, 0));
+    sweep("mixed", gen_mixed, 0..150, 0);
 }
 
 #[test]
 fn partial_morphism_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("mixed", gen_mixed, 150..300, 0));
+    sweep("mixed", gen_mixed, 150..300, 0);
 }
 
 #[test]
 fn layered_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("layer", gen_layer, 0..100, 4));
+    sweep("layer", gen_layer, 0..100, 4);
 }
 
 #[test]
 fn layered_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("layer", gen_layer, 100..200, 3));
+    sweep("layer", gen_layer, 100..200, 3);
 }
 
 #[test]
 fn meets_and_differences_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("cells", gen_cells, 0..150, 1));
+    sweep("cells", gen_cells, 0..150, 1);
 }
 
 #[test]
 fn meets_and_differences_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("cells", gen_cells, 150..300, 0));
+    sweep("cells", gen_cells, 150..300, 0);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1530,12 +1527,12 @@ fn seeded(seeds: std::ops::Range<u64>) {
 
 #[test]
 fn seeded_random_systems_agree_with_the_reference_0() {
-    on_a_big_stack(|| seeded(0..40));
+    seeded(0..40);
 }
 
 #[test]
 fn seeded_random_systems_agree_with_the_reference_1() {
-    on_a_big_stack(|| seeded(40..80));
+    seeded(40..80);
 }
 
 /// `n` definitions in one group, `R_i = (R_j, R0) | (R_{i+1}, #stop)` with `j` random and
@@ -1587,30 +1584,28 @@ fn verdicts_of_random_groups_scale() {
             std::hint::black_box(t.verdict());
         }
     };
-    on_a_big_stack(|| {
-        let n = 64;
-        let groups = scaling::inputs(n, many);
-        scaling::check("verdicts of the members of n random groups", n, |m| {
-            every(&groups[&m])
-        });
-        let n = 128;
-        let chains = scaling::inputs(n, chain);
-        scaling::check("the verdict of one member of a chain group of n", n, |m| {
-            Type::forget_emptiness();
-            std::hint::black_box(chains[&m][0].verdict());
-        });
-        scaling::check(
-            "the verdicts of every member of a chain group of n",
-            n,
-            |m| every(&chains[&m]),
-        );
-        let ones = scaling::inputs(n, one);
-        scaling::check(
-            "the verdicts of every member of one X14 group of n",
-            n,
-            |m| every(&ones[&m]),
-        );
+    let n = 64;
+    let groups = scaling::inputs(n, many);
+    scaling::check("verdicts of the members of n random groups", n, |m| {
+        every(&groups[&m])
     });
+    let n = 128;
+    let chains = scaling::inputs(n, chain);
+    scaling::check("the verdict of one member of a chain group of n", n, |m| {
+        Type::forget_emptiness();
+        std::hint::black_box(chains[&m][0].verdict());
+    });
+    scaling::check(
+        "the verdicts of every member of a chain group of n",
+        n,
+        |m| every(&chains[&m]),
+    );
+    let ones = scaling::inputs(n, one);
+    scaling::check(
+        "the verdicts of every member of one X14 group of n",
+        n,
+        |m| every(&ones[&m]),
+    );
 }
 
 /// Every member of a chain group of 512 is inhabited, by a chain of up to 512 values; before
@@ -1619,28 +1614,26 @@ fn verdicts_of_random_groups_scale() {
 /// member asked alone, for a few members.
 #[test]
 fn every_member_of_a_long_chain_is_inhabited() {
-    on_a_big_stack(|| {
-        let ts: Vec<Type> = kernel(&chain_of(&mut Rng::new(7), 512), "long_chain")
-            .into_iter()
-            .map(|t| t.expect("a chain group is admitted"))
-            .collect();
+    let ts: Vec<Type> = kernel(&chain_of(&mut Rng::new(7), 512), "long_chain")
+        .into_iter()
+        .map(|t| t.expect("a chain group is admitted"))
+        .collect();
+    Type::forget_emptiness();
+    let forward: Vec<Verdict> = ts.iter().map(Type::verdict).collect();
+    Type::forget_emptiness();
+    let mut backward: Vec<Verdict> = ts.iter().rev().map(Type::verdict).collect();
+    backward.reverse();
+    assert_eq!(
+        forward, backward,
+        "the verdicts depend on the order they are asked in"
+    );
+    for (i, v) in forward.iter().enumerate() {
+        assert_eq!(*v, Verdict::Inhabited, "R{i} of the chain");
+    }
+    for i in [0, 1, 255, 510, 511] {
         Type::forget_emptiness();
-        let forward: Vec<Verdict> = ts.iter().map(Type::verdict).collect();
-        Type::forget_emptiness();
-        let mut backward: Vec<Verdict> = ts.iter().rev().map(Type::verdict).collect();
-        backward.reverse();
-        assert_eq!(
-            forward, backward,
-            "the verdicts depend on the order they are asked in"
-        );
-        for (i, v) in forward.iter().enumerate() {
-            assert_eq!(*v, Verdict::Inhabited, "R{i} of the chain");
-        }
-        for i in [0, 1, 255, 510, 511] {
-            Type::forget_emptiness();
-            assert_eq!(ts[i].verdict(), forward[i], "R{i} asked alone");
-        }
-    });
+        assert_eq!(ts[i].verdict(), forward[i], "R{i} asked alone");
+    }
 }
 
 /// Two X14 groups whose values the shared search of plan item VERDICT-group-share missed, by
@@ -1672,17 +1665,15 @@ fn a_closure_returns_a_member_built_or_decided_inhabited() {
             tup(vec![r(4), r(2)]),
         ]),
     ];
-    on_a_big_stack(|| {
-        for (sys, tag) in [(claude210, "c210"), (claude118, "c118")] {
-            let mut tally = Tally::default();
-            compare(&sys, tag, &mut tally);
-            assert_eq!(
-                (tally.missed, tally.inhabited),
-                (0, sys.len()),
-                "{tag}: {tally:?}"
-            );
-        }
-    });
+    for (sys, tag) in [(claude210, "c210"), (claude118, "c118")] {
+        let mut tally = Tally::default();
+        compare(&sys, tag, &mut tally);
+        assert_eq!(
+            (tally.missed, tally.inhabited),
+            (0, sys.len()),
+            "{tag}: {tally:?}"
+        );
+    }
 }
 
 /// A layered group (seed 1335) whose member `R4 = (R3) -> empty` is a closure never called: its
@@ -1709,15 +1700,13 @@ fn a_key_type_proved_empty_again_ends_the_search() {
         ]),
         exact(r(3), E::Empty),
     ];
-    on_a_big_stack(|| {
-        let mut tally = Tally::default();
-        compare(&sys, "layer1335", &mut tally);
-        assert_eq!(
-            (tally.empty, tally.inhabited, tally.missed),
-            (4, 1, 0),
-            "{tally:?}"
-        );
-    });
+    let mut tally = Tally::default();
+    compare(&sys, "layer1335", &mut tally);
+    assert_eq!(
+        (tally.empty, tally.inhabited, tally.missed),
+        (4, 1, 0),
+        "{tally:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1806,65 +1795,61 @@ fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
     }
     systems.push(("chainu".into(), undecided(chain_of(&mut Rng::new(7), 64))));
     systems.push(("x14u".into(), undecided(claude_of(&mut Rng::new(5), 24))));
-    on_a_big_stack(|| {
-        let (mut members, mut orders) = (0, 0);
-        for (tag, sys) in &systems {
-            let types = kernel(sys, tag);
-            let want = alone(&types);
-            let n = sys.len();
-            let all: Vec<Vec<usize>> = if n <= 3 {
-                permutations(n)
-            } else {
-                (0..n)
-                    .map(|k| (0..n).map(|i| (i + k) % n).collect())
-                    .collect()
-            };
-            for order in &all {
-                assert_eq!(
-                    in_order(&types, order),
-                    want,
-                    "{tag}: asked in the order {order:?}: {}",
-                    show_system(sys)
-                );
-                orders += 1;
-            }
-            if n == 3 {
-                // Definition k of the rewritten system is definition order[k] of `sys`.
-                for (p, order) in all.iter().enumerate() {
-                    let mut to = vec![0; n];
-                    for (k, &i) in order.iter().enumerate() {
-                        to[i] = k;
-                    }
-                    let moved: Vec<E> = order.iter().map(|&i| renamed(&sys[i], &to)).collect();
-                    let got = alone(&kernel(&moved, &format!("{tag}_p{p}")));
-                    let want: Vec<_> = order.iter().map(|&i| want[i]).collect();
-                    assert_eq!(
-                        got,
-                        want,
-                        "{tag}: definitions in the order {order:?}: {}",
-                        show_system(&moved)
-                    );
-                }
-            }
-            members += want.iter().flatten().count();
+    let (mut members, mut orders) = (0, 0);
+    for (tag, sys) in &systems {
+        let types = kernel(sys, tag);
+        let want = alone(&types);
+        let n = sys.len();
+        let all: Vec<Vec<usize>> = if n <= 3 {
+            permutations(n)
+        } else {
+            (0..n)
+                .map(|k| (0..n).map(|i| (i + k) % n).collect())
+                .collect()
+        };
+        for order in &all {
+            assert_eq!(
+                in_order(&types, order),
+                want,
+                "{tag}: asked in the order {order:?}: {}",
+                show_system(sys)
+            );
+            orders += 1;
         }
-        eprintln!("{members} members, {orders} orders");
-    });
+        if n == 3 {
+            // Definition k of the rewritten system is definition order[k] of `sys`.
+            for (p, order) in all.iter().enumerate() {
+                let mut to = vec![0; n];
+                for (k, &i) in order.iter().enumerate() {
+                    to[i] = k;
+                }
+                let moved: Vec<E> = order.iter().map(|&i| renamed(&sys[i], &to)).collect();
+                let got = alone(&kernel(&moved, &format!("{tag}_p{p}")));
+                let want: Vec<_> = order.iter().map(|&i| want[i]).collect();
+                assert_eq!(
+                    got,
+                    want,
+                    "{tag}: definitions in the order {order:?}: {}",
+                    show_system(&moved)
+                );
+            }
+        }
+        members += want.iter().flatten().count();
+    }
+    eprintln!("{members} members, {orders} orders");
 }
 
 /// Every member of a chain group of 512 that the decider refuses is inhabited, by a chain of up
 /// to 512 values, decided by one search with all 512 as roots.
 #[test]
 fn every_member_of_an_undecided_long_chain_is_inhabited() {
-    on_a_big_stack(|| {
-        let ts = kernel(&undecided(chain_of(&mut Rng::new(7), 512)), "long_chain_u");
-        for (i, v) in in_order(&ts, &(0..ts.len()).collect::<Vec<_>>())
-            .iter()
-            .enumerate()
-        {
-            assert_eq!(*v, Some(Verdict::Inhabited), "R{i} of the chain");
-        }
-    });
+    let ts = kernel(&undecided(chain_of(&mut Rng::new(7), 512)), "long_chain_u");
+    for (i, v) in in_order(&ts, &(0..ts.len()).collect::<Vec<_>>())
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(*v, Some(Verdict::Inhabited), "R{i} of the chain");
+    }
 }
 
 /// The definitions of the largest group of `sys`, those that reach each other, in order: a
@@ -1946,27 +1931,25 @@ fn verdicts_of_undecided_groups_scale() {
             std::hint::black_box(t.verdict());
         }
     };
-    on_a_big_stack(|| {
-        let n = 128;
-        let chains = scaling::inputs(n, chain);
-        scaling::check(
-            "the verdicts of every member of an undecided chain group of n",
-            n,
-            |m| every(&chains[&m]),
-        );
-        let ones = scaling::inputs(n, one);
-        scaling::check(
-            "the verdicts of the members of the largest undecided X14 group of n definitions",
-            n,
-            |m| every(&ones[&m]),
-        );
-        let alls = scaling::inputs(n, all);
-        scaling::check(
-            "the verdicts of every definition of an undecided X14 system of n",
-            n,
-            |m| every(&alls[&m]),
-        );
-    });
+    let n = 128;
+    let chains = scaling::inputs(n, chain);
+    scaling::check(
+        "the verdicts of every member of an undecided chain group of n",
+        n,
+        |m| every(&chains[&m]),
+    );
+    let ones = scaling::inputs(n, one);
+    scaling::check(
+        "the verdicts of the members of the largest undecided X14 group of n definitions",
+        n,
+        |m| every(&ones[&m]),
+    );
+    let alls = scaling::inputs(n, all);
+    scaling::check(
+        "the verdicts of every definition of an undecided X14 system of n",
+        n,
+        |m| every(&alls[&m]),
+    );
 }
 
 /// A definition outside a group the decider refuses reads each member of it by the group's
@@ -1978,54 +1961,52 @@ fn verdicts_of_undecided_groups_scale() {
 /// inhabited.
 #[test]
 fn readers_of_undecided_groups_agree_with_the_values() {
-    on_a_big_stack(|| {
-        let sys = undecided(gen_layer(&mut Rng::new(316)));
-        let types = kernel(&sys, "readers316");
-        assert_eq!(
-            alone(&types),
-            [
-                Verdict::Empty,
-                Verdict::Inhabited,
-                Verdict::Empty,
-                Verdict::Inhabited
-            ]
-            .map(Some),
-            "{}",
-            show_system(&sys)
-        );
-        let gens: [fn(&mut Rng) -> Vec<E>; 4] = [gen_claude, gen_mixed, gen_layer, gen_cells];
-        for (name, g) in ["claude", "mixed", "layer", "cells"].into_iter().zip(gens) {
-            for seed in 0..100 {
-                let sys = undecided(g(&mut Rng::new(seed)));
-                let tag = format!("readers-{name}{seed}");
-                let types = kernel(&sys, &tag);
-                let got = alone(&types);
-                let truth = truth(&sys, CAP);
-                for (i, v) in got.iter().enumerate() {
-                    let at = || format!("{tag}: R{i} of {}", show_system(&sys));
-                    match (&truth.seen[i], v) {
-                        (Seen::Member(w), Some(Verdict::Empty)) => {
-                            panic!("{}: Empty, but holds {w}", at())
-                        }
-                        (Seen::None, Some(Verdict::Inhabited)) if truth.exhaustive => {
-                            panic!("{}: Inhabited, but the pool shows no value", at())
-                        }
-                        _ => {}
+    let sys = undecided(gen_layer(&mut Rng::new(316)));
+    let types = kernel(&sys, "readers316");
+    assert_eq!(
+        alone(&types),
+        [
+            Verdict::Empty,
+            Verdict::Inhabited,
+            Verdict::Empty,
+            Verdict::Inhabited
+        ]
+        .map(Some),
+        "{}",
+        show_system(&sys)
+    );
+    let gens: [fn(&mut Rng) -> Vec<E>; 4] = [gen_claude, gen_mixed, gen_layer, gen_cells];
+    for (name, g) in ["claude", "mixed", "layer", "cells"].into_iter().zip(gens) {
+        for seed in 0..100 {
+            let sys = undecided(g(&mut Rng::new(seed)));
+            let tag = format!("readers-{name}{seed}");
+            let types = kernel(&sys, &tag);
+            let got = alone(&types);
+            let truth = truth(&sys, CAP);
+            for (i, v) in got.iter().enumerate() {
+                let at = || format!("{tag}: R{i} of {}", show_system(&sys));
+                match (&truth.seen[i], v) {
+                    (Seen::Member(w), Some(Verdict::Empty)) => {
+                        panic!("{}: Empty, but holds {w}", at())
                     }
-                }
-                let n = types.len();
-                let forward: Vec<usize> = (0..n).collect();
-                let backward: Vec<usize> = (0..n).rev().collect();
-                for order in [forward, backward] {
-                    assert_eq!(
-                        in_order(&types, &order),
-                        got,
-                        "{tag}: in the order {order:?}"
-                    );
+                    (Seen::None, Some(Verdict::Inhabited)) if truth.exhaustive => {
+                        panic!("{}: Inhabited, but the pool shows no value", at())
+                    }
+                    _ => {}
                 }
             }
+            let n = types.len();
+            let forward: Vec<usize> = (0..n).collect();
+            let backward: Vec<usize> = (0..n).rev().collect();
+            for order in [forward, backward] {
+                assert_eq!(
+                    in_order(&types, &order),
+                    got,
+                    "{tag}: in the order {order:?}"
+                );
+            }
         }
-    });
+    }
 }
 
 /// A chain of n groups, each one definition `Ri = (Ri, #stop) | (R(i+1), int)` that reads the
@@ -2059,7 +2040,7 @@ fn a_chain_of_groups_is_decided_on_a_small_stack() {
     let n = 1000;
     for open in [false, true] {
         let sys = chain_of_groups(n, open);
-        let first = on_a_big_stack(|| kernel(&sys, "chain")[0].clone().expect("admitted"));
+        let first = kernel(&sys, "chain")[0].clone().expect("admitted");
         let outside = Type::tuple(vec![first.clone(), Type::int()]);
         for t in [first, outside] {
             let v = scaling::on_a_thread(1 << 20, move || {
@@ -2084,37 +2065,35 @@ fn a_chain_of_groups_is_decided_on_a_small_stack() {
 /// taken as empty for good, which made `R2` hold a closure and `R3` empty.
 #[test]
 fn a_type_decided_again_is_not_read_as_empty_before_it_is() {
-    on_a_big_stack(|| {
-        let sys = vec![
-            diff(
-                exact(E::Int, tup(vec![E::Ref(0), exact(E::Bool, E::Empty)])),
-                E::Atom("none"),
-            ),
-            exact(E::Ref(0), E::Empty),
-            exact(E::Ref(1), E::Empty),
-            exact(E::Ref(2), E::Empty),
-        ];
-        let types = kernel(&sys, "late");
-        let empty: Vec<bool> = (types.iter())
-            .map(|t| {
-                Type::forget_emptiness();
-                t.as_ref().expect("admitted").is_empty()
-            })
-            .collect();
-        assert_eq!(empty, [true, false, true, false], "{}", show_system(&sys));
-        assert_eq!(
-            alone(&types),
-            [
-                Verdict::Empty,
-                Verdict::Inhabited,
-                Verdict::Empty,
-                Verdict::Inhabited
-            ]
-            .map(Some),
-            "{}",
-            show_system(&sys)
-        );
-    });
+    let sys = vec![
+        diff(
+            exact(E::Int, tup(vec![E::Ref(0), exact(E::Bool, E::Empty)])),
+            E::Atom("none"),
+        ),
+        exact(E::Ref(0), E::Empty),
+        exact(E::Ref(1), E::Empty),
+        exact(E::Ref(2), E::Empty),
+    ];
+    let types = kernel(&sys, "late");
+    let empty: Vec<bool> = (types.iter())
+        .map(|t| {
+            Type::forget_emptiness();
+            t.as_ref().expect("admitted").is_empty()
+        })
+        .collect();
+    assert_eq!(empty, [true, false, true, false], "{}", show_system(&sys));
+    assert_eq!(
+        alone(&types),
+        [
+            Verdict::Empty,
+            Verdict::Inhabited,
+            Verdict::Empty,
+            Verdict::Inhabited
+        ]
+        .map(Some),
+        "{}",
+        show_system(&sys)
+    );
 }
 
 /// The layered system of seed 316 with every body written `b \ #none`: `R3 = (int, R0) |
@@ -2122,17 +2101,15 @@ fn a_type_decided_again_is_not_read_as_empty_before_it_is() {
 /// does (plan item VERDICT-group-readers).
 #[test]
 fn the_layered_system_316_is_not_called_empty() {
-    on_a_big_stack(|| {
-        let sys = undecided(gen_layer(&mut Rng::new(316)));
-        let types = kernel(&sys, "empty316");
-        let empty: Vec<bool> = (types.iter())
-            .map(|t| {
-                Type::forget_emptiness();
-                t.as_ref().expect("admitted").is_empty()
-            })
-            .collect();
-        assert_eq!(empty, [true, false, true, false], "{}", show_system(&sys));
-    });
+    let sys = undecided(gen_layer(&mut Rng::new(316)));
+    let types = kernel(&sys, "empty316");
+    let empty: Vec<bool> = (types.iter())
+        .map(|t| {
+            Type::forget_emptiness();
+            t.as_ref().expect("admitted").is_empty()
+        })
+        .collect();
+    assert_eq!(empty, [true, false, true, false], "{}", show_system(&sys));
 }
 
 /// Each system `generate` gives for `seeds`, as written and with every body `b \ #none` (so the
@@ -2170,22 +2147,22 @@ fn never_empty_with_a_value(
 
 #[test]
 fn x14_family_is_never_called_empty_with_a_value() {
-    assert!(on_a_big_stack(|| never_empty_with_a_value("claude", gen_claude, 0..600)) > 0);
+    assert!(never_empty_with_a_value("claude", gen_claude, 0..600) > 0);
 }
 
 #[test]
 fn partial_morphisms_are_never_called_empty_with_a_value() {
-    assert!(on_a_big_stack(|| never_empty_with_a_value("mixed", gen_mixed, 0..600)) > 0);
+    assert!(never_empty_with_a_value("mixed", gen_mixed, 0..600) > 0);
 }
 
 #[test]
 fn layered_systems_are_never_called_empty_with_a_value() {
-    assert!(on_a_big_stack(|| never_empty_with_a_value("layer", gen_layer, 0..600)) > 0);
+    assert!(never_empty_with_a_value("layer", gen_layer, 0..600) > 0);
 }
 
 #[test]
 fn meets_and_differences_are_never_called_empty_with_a_value() {
-    assert!(on_a_big_stack(|| never_empty_with_a_value("cells", gen_cells, 0..600)) > 0);
+    assert!(never_empty_with_a_value("cells", gen_cells, 0..600) > 0);
 }
 
 /// The system of [`a_type_decided_again_is_not_read_as_empty_before_it_is`] with `n` morphism
@@ -2206,30 +2183,28 @@ fn key_chain(n: usize) -> Vec<Type> {
 
 #[test]
 fn a_chain_decided_again_scales() {
-    on_a_big_stack(|| {
-        let chains = scaling::inputs(64, key_chain);
-        for m in 1..=16 {
-            let ts = key_chain(m);
-            let empty: Vec<usize> = (0..=m)
-                .filter(|&k| {
-                    Type::forget_emptiness();
-                    ts[k].is_empty()
-                })
-                .collect();
-            assert_eq!(
-                empty,
-                (0..=m).step_by(2).collect::<Vec<_>>(),
-                "a key chain of {m}"
-            );
-        }
-        for (&m, ts) in &chains {
-            Type::forget_emptiness();
-            assert!(!ts[m - 1].is_empty(), "R{} of a key chain of {m}", m - 1);
-        }
-        scaling::check("is_empty of R(n - 1) of a key chain of n", 64, |m| {
-            Type::forget_emptiness();
-            std::hint::black_box(chains[&m][m - 1].is_empty());
-        });
+    let chains = scaling::inputs(64, key_chain);
+    for m in 1..=16 {
+        let ts = key_chain(m);
+        let empty: Vec<usize> = (0..=m)
+            .filter(|&k| {
+                Type::forget_emptiness();
+                ts[k].is_empty()
+            })
+            .collect();
+        assert_eq!(
+            empty,
+            (0..=m).step_by(2).collect::<Vec<_>>(),
+            "a key chain of {m}"
+        );
+    }
+    for (&m, ts) in &chains {
+        Type::forget_emptiness();
+        assert!(!ts[m - 1].is_empty(), "R{} of a key chain of {m}", m - 1);
+    }
+    scaling::check("is_empty of R(n - 1) of a key chain of n", 64, |m| {
+        Type::forget_emptiness();
+        std::hint::black_box(chains[&m][m - 1].is_empty());
     });
 }
 
@@ -2247,13 +2222,11 @@ fn the_groups_of_a_system_are_built_in_its_size() {
         let types = kernel(sys, &format!("built{run}"));
         assert!(types.iter().all(Option::is_some), "every group is admitted");
     };
-    on_a_big_stack(|| {
-        let n = 128;
-        let chains = scaling::inputs(n, |m| chain_of_groups(m, false));
-        scaling::check("the groups of a chain of n groups", n, |m| {
-            build(&chains[&m])
-        });
-        let groups = scaling::inputs(n, |m| chain_of(&mut Rng::new(7), m));
-        scaling::check("one group of n definitions", n, |m| build(&groups[&m]));
+    let n = 128;
+    let chains = scaling::inputs(n, |m| chain_of_groups(m, false));
+    scaling::check("the groups of a chain of n groups", n, |m| {
+        build(&chains[&m])
     });
+    let groups = scaling::inputs(n, |m| chain_of(&mut Rng::new(7), m));
+    scaling::check("one group of n definitions", n, |m| build(&groups[&m]));
 }

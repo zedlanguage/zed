@@ -336,46 +336,45 @@ fn corpus(seed: u64, n: usize) -> Vec<Type> {
 /// the slower seeds split it in `parts`: a test answers alone the queries whose index is `part`
 /// modulo `parts`, and checks them against both batches (COMPLEXITY.md K51).
 fn subtype_answers_agree(seed: u64, part: usize, parts: usize) {
-    scaling::on_a_thread(1 << 29, || {
-        let ts = corpus(seed, 150);
-        let mut x = seed + 5;
-        let mut next = || {
-            x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
-            (x >> 33) as usize % ts.len()
-        };
-        let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
-        let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
-        let mine = |i: &usize| i % parts == part;
-        let alone: Vec<Option<bool>> = qs
-            .iter()
-            .enumerate()
-            .map(|(i, q)| {
-                mine(&i).then(|| {
-                    Type::forget_emptiness();
-                    ask(q)
-                })
+    // On the stack of its test thread, 2 MiB by default.
+    let ts = corpus(seed, 150);
+    let mut x = seed + 5;
+    let mut next = || {
+        x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+        (x >> 33) as usize % ts.len()
+    };
+    let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
+    let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
+    let mine = |i: &usize| i % parts == part;
+    let alone: Vec<Option<bool>> = qs
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            mine(&i).then(|| {
+                Type::forget_emptiness();
+                ask(q)
             })
-            .collect();
-        Type::forget_emptiness();
-        let batch: Vec<bool> = qs.iter().map(ask).collect();
-        Type::forget_emptiness();
-        let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
-        back.reverse();
-        let held = batch.iter().filter(|&&b| b).count();
-        assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
-        for (i, &(a, b)) in qs.iter().enumerate().filter(|(i, _)| mine(i)) {
-            let alone = alone[i] == Some(true);
-            assert!(
-                alone == batch[i] && alone == back[i],
-                "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
-                ts[a],
-                ts[b],
-                alone,
-                batch[i],
-                back[i]
-            );
-        }
-    });
+        })
+        .collect();
+    Type::forget_emptiness();
+    let batch: Vec<bool> = qs.iter().map(ask).collect();
+    Type::forget_emptiness();
+    let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
+    back.reverse();
+    let held = batch.iter().filter(|&&b| b).count();
+    assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
+    for (i, &(a, b)) in qs.iter().enumerate().filter(|(i, _)| mine(i)) {
+        let alone = alone[i] == Some(true);
+        assert!(
+            alone == batch[i] && alone == back[i],
+            "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
+            ts[a],
+            ts[b],
+            alone,
+            batch[i],
+            back[i]
+        );
+    }
 }
 
 #[test]

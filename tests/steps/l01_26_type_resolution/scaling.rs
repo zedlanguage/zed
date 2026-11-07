@@ -217,20 +217,18 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
         "(_) -> ((_) -> ((_) -> ((_) -> (_, _, _, _))))"
     );
     let n = 100;
-    scaling::on_a_thread(1 << 29, || {
-        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| {
-                let stmts = zed_tests::deep::statements(&curried(m));
-                let res = zedc::resolve::resolve(&stmts).unwrap();
-                (m, (stmts, res))
-            })
-            .collect();
-        scaling::check_order("n curried lambdas using every parameter", n, 1, |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::check(stmts, res);
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        });
+    let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let stmts = zed_tests::deep::statements(&curried(m));
+            let res = zedc::resolve::resolve(&stmts).unwrap();
+            (m, (stmts, res))
+        })
+        .collect();
+    scaling::check_order("n curried lambdas using every parameter", n, 1, |m| {
+        let (stmts, res) = &built[&m];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
 
@@ -257,26 +255,24 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
         "(int) -> ((int) -> ((int) -> (int, int, int)))"
     );
     let n = 100;
-    scaling::on_a_thread(1 << 29, || {
-        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| {
-                let stmts = zed_tests::deep::statements(&curried_sums(m));
-                let res = zedc::resolve::resolve(&stmts).unwrap();
-                (m, (stmts, res))
-            })
-            .collect();
-        scaling::check_order(
-            "n curried lambdas whose parameters take a carrier",
-            n,
-            1,
-            |m| {
-                let (stmts, res) = &built[&m];
-                let info = zedc::check::check(stmts, res);
-                assert!(info.errors.is_empty(), "{:?}", info.errors);
-            },
-        );
-    });
+    let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let stmts = zed_tests::deep::statements(&curried_sums(m));
+            let res = zedc::resolve::resolve(&stmts).unwrap();
+            (m, (stmts, res))
+        })
+        .collect();
+    scaling::check_order(
+        "n curried lambdas whose parameters take a carrier",
+        n,
+        1,
+        |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
 }
 
 /// [`curried_sums`] with `h = g(0)` put in a tuple and tested by `is` against its written
@@ -301,6 +297,8 @@ fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
     assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
     assert_eq!(info.tops["r"].to_string(), "1");
     let n = 100;
+    // 512 MiB until item TY-sub-stack: the comparison of function types (`Ty::sub_in`)
+    // recurses once a curried level and overflows a 2 MiB stack at n = 800.
     scaling::on_a_thread(1 << 29, || {
         let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
             .into_iter()
@@ -378,20 +376,18 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
     assert!(info.errors.is_empty(), "{:?}", info.errors);
     assert_eq!(info.tops["y"].to_string(), "(int, int, int, int)");
     let n = 100;
-    scaling::on_a_thread(1 << 29, || {
-        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| {
-                let stmts = zed_tests::deep::statements(&call_chain(m));
-                let res = zedc::resolve::resolve(&stmts).unwrap();
-                (m, (stmts, res))
-            })
-            .collect();
-        scaling::check_order("a chain of n calls on one value", n, 1, |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::check(stmts, res);
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        });
+    let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let stmts = zed_tests::deep::statements(&call_chain(m));
+            let res = zedc::resolve::resolve(&stmts).unwrap();
+            (m, (stmts, res))
+        })
+        .collect();
+    scaling::check_order("a chain of n calls on one value", n, 1, |m| {
+        let (stmts, res) = &built[&m];
+        let info = zedc::check::check(stmts, res);
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
 

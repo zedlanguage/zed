@@ -420,22 +420,20 @@ fn pairing_the_sides_of_a_deep_comparison_scales() {
     // pairing itself spends about 106,000 instructions a level, most in `class_of_ty` of each
     // literal's carrier, so the O(d^2) walk reaches the limit only from depth 2,048: that
     // `sides` takes 37.3 times the instructions from 2,048 to 16,384 here, and this one 8.0.
-    scaling::on_a_thread(1 << 29, || {
-        assert_eq!(deep_operands(3).adoptions(), 4);
-        let ops: Vec<_> = [2048, scaling::FACTOR * 2048]
-            .into_iter()
-            .map(|d| (d, deep_operands(d)))
-            .collect();
-        scaling::check_order(
-            "pairing the sides of == of tuples nested n deep",
-            2048,
-            1,
-            |d| {
-                let (_, o) = ops.iter().find(|(k, _)| *k == d).unwrap();
-                assert_eq!(o.adoptions(), d + 1);
-            },
-        );
-    });
+    assert_eq!(deep_operands(3).adoptions(), 4);
+    let ops: Vec<_> = [2048, scaling::FACTOR * 2048]
+        .into_iter()
+        .map(|d| (d, deep_operands(d)))
+        .collect();
+    scaling::check_order(
+        "pairing the sides of == of tuples nested n deep",
+        2048,
+        1,
+        |d| {
+            let (_, o) = ops.iter().find(|(k, _)| *k == d).unwrap();
+            assert_eq!(o.adoptions(), d + 1);
+        },
+    );
 }
 
 #[test]
@@ -565,16 +563,14 @@ fn rejecting_plain_literals_with_their_menus_scales() {
             (m, stmts, res)
         })
         .collect();
-    scaling::on_a_thread(1 << 29, || {
-        scaling::check_order(
-            "rejecting n plain literals at a parameter and n compared with a class",
-            n,
-            1,
-            |m| {
-                let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-                let info = zedc::check::check(stmts, res);
-                assert_eq!(info.errors.len(), 2 * m);
-            },
-        );
-    });
+    scaling::check_order(
+        "rejecting n plain literals at a parameter and n compared with a class",
+        n,
+        1,
+        |m| {
+            let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
+            let info = zedc::check::check(stmts, res);
+            assert_eq!(info.errors.len(), 2 * m);
+        },
+    );
 }

@@ -51,15 +51,14 @@ fn values_held_twice_at_each_level_are_checked_in_linear_time() {
         ("an integer doubled by n nested calls", by_calls as Family),
         ("an integer doubled by n bindings", by_bindings),
     ] {
-        scaling::on_a_thread(1 << 29, || {
-            let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-                .into_iter()
-                .map(|n| (n, Resolved::new(&text(n, "1"))))
-                .collect();
-            scaling::check_order(what, 500, 1, |n| {
-                let info = units[&n].check();
-                assert!(info.errors.is_empty(), "{what} at {n}");
-            });
+        // On the 2 MiB stack of a test thread: nothing recurses on the 4,000 levels.
+        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n, "1"))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{what} at {n}");
         });
     }
 }
