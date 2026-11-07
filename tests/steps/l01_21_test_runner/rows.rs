@@ -292,10 +292,11 @@ fn said<'w>(text: &str, words: &'w HashSet<String>) -> Vec<&'w str> {
             (None, true) => start = Some(i),
             (Some(s), false) => {
                 out.extend(words.get(&text[s..i]).map(String::as_str));
-                if let Some((ls, le)) = last {
-                    if le + 1 == s && text.as_bytes()[le] == b'-' {
-                        out.extend(words.get(&text[ls..i]).map(String::as_str));
-                    }
+                if let Some((ls, le)) = last
+                    && le + 1 == s
+                    && text.as_bytes()[le] == b'-'
+                {
+                    out.extend(words.get(&text[ls..i]).map(String::as_str));
                 }
                 (start, last) = (None, Some((s, i)));
             }
