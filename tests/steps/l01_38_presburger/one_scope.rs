@@ -1708,3 +1708,130 @@ fn answers_are_those_reading_bodies(src: &str) {
         }
     }
 }
+
+/// A link of the drifting chain that moves its argument down by 30 (LOAD-bound-holes).
+fn falling_link(i: usize) -> String {
+    format!(
+        "p{i}(x: int) = q(x: x) && p{}(x: x - 30) && x < {};\n",
+        i - 1,
+        1000 * i
+    )
+}
+
+/// A link of the drifting chain that moves its argument up by 12, twice the modulus of the
+/// callee's remainders (LOAD-bound-holes).
+fn rising_link(i: usize) -> String {
+    format!(
+        "p{i}(x: int) = q(x: x) && p{}(x: x + 12) && x < {};\n",
+        i - 1,
+        1000 * i
+    )
+}
+
+#[test]
+fn the_questions_of_a_chain_moving_a_hole_scale() {
+    // LOAD-bound-holes: the drifting chain beside `q(x) = (x < 10 || x > 20) && 0 < x <
+    // 1000000`. Each link moves the hole `10..=20` by 3 and keeps it, so the face of the
+    // chain at link i says `x` lies outside the union of i holes. Before, a face held one
+    // clause a link and each link was decided whole: 0.39, 1.62, 7.06 s at 40, 80, 160 links
+    // (debug, measured once). Now the holes are one ordered map of disjoint intervals, read
+    // through each call's binding and merged in O(log n): 0.032, 0.098, 0.198 s.
+    questions_scale(
+        "a chain whose links move a hole of their callee",
+        40,
+        "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
+        drifting_link,
+    );
+    // The same moved down by 30, so that the holes do not overlap: 0.011, 0.021, 0.038 s.
+    questions_scale(
+        "a chain whose links move a hole of their callee apart",
+        40,
+        "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
+        falling_link,
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_moving_bounds_beside_a_shared_remainder_scale() {
+    // LOAD-bound-holes: `q(x) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50)`, whose
+    // two disjunctions share the remainder of `x` by 6, in a chain moving `x` by 12. Each link
+    // kept its own bound atom, quotient and remainder, and a clause each, so a link read the
+    // chain: 3.06 s at 40 links, 25.4 s at 80 (debug, measured once). Now the bindings are
+    // followed to the caller's atom, the divisions of one term by 6 read one remainder, and
+    // the clauses `r == 5 || x <= b` keep the tightest `b`: 0.111, 0.369 s at 40, 80 links.
+    questions_scale(
+        "a chain whose links move bounds beside a shared remainder",
+        40,
+        "q(x: int) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50) && x > 0 \
+         && x < 1000000;\np0(x: int) = x > 0;\n",
+        rising_link,
+    );
+}
+
+/// A random chain of the drifting chain's shape whose callee holds a hole, and may hold two
+/// disjunctions that share a remainder or one of [`random_case`]s, and whose links move the
+/// argument by up to 15 either way and may hold a hole or a disjunction over the callee's
+/// remainder of their own (LOAD-bound-holes): holes that overlap, touch or lie apart, rays
+/// that share a remainder, and links that hold or fail.
+fn random_hole_chain(rng: &mut zed_tests::instances::Rng) -> String {
+    let hole = |rng: &mut zed_tests::instances::Rng| {
+        let lo = rng.int(-5, 30);
+        format!("(x < {} || x > {})", lit(lo), lit(lo + rng.int(-1, 15)))
+    };
+    let m = rng.int(2, 7);
+    let mut q = hole(rng);
+    match rng.below(3) {
+        0 => q.push_str(&format!(
+            " && (x mod {m} == {} || x > {}) && (x mod {m} == {} || x < {})",
+            rng.int(0, m - 1),
+            lit(rng.int(-10, 120)),
+            rng.int(0, m - 1),
+            lit(rng.int(-10, 120)),
+        )),
+        1 => q.push_str(&format!(
+            " && ({} || {})",
+            random_case(rng),
+            random_case(rng)
+        )),
+        _ => {}
+    }
+    let a = rng.int(-5, 5);
+    let mut src = format!(
+        "q(x: int) = {q} && x > {} && x < {};\np0(x: int) = x > {};\n",
+        lit(a),
+        lit(a + rng.int(-2, 200)),
+        lit(rng.int(-10, 10)),
+    );
+    for i in 1..rng.int(2, 13) {
+        let own = match rng.below(4) {
+            0 => format!(" && {}", hole(rng)),
+            1 => format!(
+                " && (x mod {m} == {} || x > {})",
+                rng.int(0, m - 1),
+                lit(rng.int(-10, 120))
+            ),
+            _ => String::new(),
+        };
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {}) && x < {}{own};\n",
+            i - 1,
+            lit(rng.int(-15, 15)),
+            lit(rng.int(-10, 400)),
+        ));
+    }
+    src
+}
+
+#[test]
+fn each_answer_of_a_random_chain_moving_holes_is_the_answer_of_the_relation_whole() {
+    // LOAD-bound-holes: random chains mixing moved holes, bounds beside a shared remainder and
+    // other disjunctions, each answer with faces (holes, merged bounds, one remainder for each
+    // divided term) the same as without, refusals too, and the same as `decide`'s on the
+    // relation written whole wherever that is decided, in both orders of the bodies.
+    let mut rng = zed_tests::instances::Rng::new(0x401e5);
+    let mut decided = 0;
+    for _ in 0..40 {
+        decided += answers_with_faces_are_those_without(&random_hole_chain(&mut rng));
+    }
+    assert!(decided >= 400, "{decided} answers of the whole");
+}
