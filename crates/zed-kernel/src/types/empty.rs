@@ -2247,7 +2247,7 @@ impl<'m> Searching<'m> {
                 (s.built.len(), s.resting, std::mem::take(&mut s.read))
             };
             let r = self.find_rep(&t).await;
-            {
+            let again = {
                 let mut s = self.s();
                 s.building.remove(&t);
                 s.reps.insert(t.clone(), r);
@@ -2259,13 +2259,28 @@ impl<'m> Searching<'m> {
                             s.reps.remove(&x);
                         }
                     }
-                    for x in read.into_iter().filter(|x| *x != t) {
-                        s.waiting.entry(x).or_default().push(t.clone());
+                    // A type read while it had no value, which got one before this build ended:
+                    // its retry has passed, so this build is sought again now.
+                    let again =
+                        (read.iter()).any(|x| *x != t && matches!(s.reps.get(x), Some(Some(_))));
+                    if again {
+                        s.reps.remove(&t);
+                    } else {
+                        for x in read.into_iter().filter(|x| *x != t) {
+                            s.waiting.entry(x).or_default().push(t.clone());
+                        }
+                        s.read.push(t.clone());
                     }
-                    s.read.push(t);
-                    return r;
+                    Some(again)
+                } else {
+                    s.built.push(t.clone());
+                    None
                 }
-                s.built.push(t.clone());
+            };
+            match again {
+                Some(true) => return self.rep(&t).await,
+                Some(false) => return r,
+                None => {}
             }
             self.retry(&t).await;
             r
@@ -2303,8 +2318,13 @@ impl<'m> Searching<'m> {
         Some(vs)
     }
 
-    /// Whether a closure can return a value of `v`.
+    /// Whether a closure can return a value of `v`: one built here, one being built (the closure
+    /// may be part of it), or one its group decided `v` has, which the closure, never called
+    /// here, does not need built.
     async fn returnable(&'m self, v: &Type) -> bool {
+        if v.judged() == Some(false) {
+            return true;
+        }
         {
             let mut s = self.s();
             if s.building.contains(v) {
@@ -2394,12 +2414,17 @@ impl<'m> Searching<'m> {
             // keys are known empty is shown for any value type, since it is never called. The
             // keys of a meet are the union of its morphism types' keys, so they are empty when
             // each of those is; each is read as written, since a recursive type and its
-            // unfolding are compared as different types.
+            // unfolding are compared as different types. A meet of one morphism type is that type
+            // as written: its meet with the top one would give the unfolding of a recursive value
+            // type, which is neither the type being built nor one its group decided.
             let (taken, refused) = p.morphisms.forced();
             let whole = refused.is_empty() && taken.len() == p.morphisms.distinct_atoms().len();
             let meets: Vec<(Morphism, bool)> = match (whole, p.morphisms.union_rows()) {
                 (true, _) => vec![(
-                    taken.iter().fold(top, |r, a| meet(&r, a)),
+                    match taken.split_first() {
+                        Some((a, rest)) => rest.iter().fold(a.clone(), |r, b| meet(&r, b)),
+                        None => top,
+                    },
                     taken.iter().all(|a| known_empty(&a.guarantee)),
                 )],
                 (false, Some(rows)) => (rows.into_iter())

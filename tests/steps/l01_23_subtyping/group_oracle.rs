@@ -1211,6 +1211,7 @@ fn compare(sys: &[E], tag: &str, tally: &mut Tally) {
                 assert!(!empty, "{}: is_empty, but holds {w}", at());
                 if matches!(verdict, Verdict::Refused(_)) {
                     tally.missed += 1;
+                    eprintln!("missed: {verdict:?}: {}: holds {w}", at());
                 }
             }
             Seen::None if seen.exhaustive => {
@@ -1239,7 +1240,15 @@ fn compare(sys: &[E], tag: &str, tally: &mut Tally) {
     }
 }
 
-fn sweep(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: std::ops::Range<u64>) -> Tally {
+/// The systems `generate` gives for `seeds`, each against the pool; panics on a wrong answer, and
+/// unless the refusals of members the pool shows inhabited number `missed`, so that a change in
+/// what the value builder finds is seen either way.
+fn sweep(
+    name: &str,
+    generate: fn(&mut Rng) -> Vec<E>,
+    seeds: std::ops::Range<u64>,
+    missed: usize,
+) -> Tally {
     let mut tally = Tally::default();
     for seed in seeds {
         let sys = generate(&mut Rng::new(seed));
@@ -1249,6 +1258,10 @@ fn sweep(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: std::ops::Range<u6
     assert!(
         tally.members > 0 && tally.empty > 0 && tally.inhabited > 0,
         "{name}: {tally:?}"
+    );
+    assert_eq!(
+        tally.missed, missed,
+        "{name}: refusals of inhabited members: {tally:?}"
     );
     tally
 }
@@ -1260,42 +1273,42 @@ fn on_a_big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 
 #[test]
 fn x14_family_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("claude", gen_claude, 0..150));
+    on_a_big_stack(|| sweep("claude", gen_claude, 0..150, 0));
 }
 
 #[test]
 fn x14_family_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("claude", gen_claude, 150..300));
+    on_a_big_stack(|| sweep("claude", gen_claude, 150..300, 0));
 }
 
 #[test]
 fn partial_morphism_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("mixed", gen_mixed, 0..150));
+    on_a_big_stack(|| sweep("mixed", gen_mixed, 0..150, 0));
 }
 
 #[test]
 fn partial_morphism_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("mixed", gen_mixed, 150..300));
+    on_a_big_stack(|| sweep("mixed", gen_mixed, 150..300, 0));
 }
 
 #[test]
 fn layered_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("layer", gen_layer, 0..100));
+    on_a_big_stack(|| sweep("layer", gen_layer, 0..100, 28));
 }
 
 #[test]
 fn layered_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("layer", gen_layer, 100..200));
+    on_a_big_stack(|| sweep("layer", gen_layer, 100..200, 51));
 }
 
 #[test]
 fn meets_and_differences_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("cells", gen_cells, 0..150));
+    on_a_big_stack(|| sweep("cells", gen_cells, 0..150, 1));
 }
 
 #[test]
 fn meets_and_differences_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("cells", gen_cells, 150..300));
+    on_a_big_stack(|| sweep("cells", gen_cells, 150..300, 0));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1607,6 +1620,48 @@ fn every_member_of_a_long_chain_is_inhabited() {
         for i in [0, 1, 255, 510, 511] {
             Type::forget_emptiness();
             assert_eq!(ts[i].verdict(), forward[i], "R{i} asked alone");
+        }
+    });
+}
+
+/// Two X14 groups whose values the shared search of plan item VERDICT-group-share missed, by
+/// the order it builds them in (plan item REP-path-memo). In `claude210` a closure's value type
+/// is the meet of its morphism types, the unfolding of `R0`, while `R0` itself is being built;
+/// in `claude118` the closure `(int) -> R1` inside `R3` is reached after `R1` failed on the path
+/// through `R0`, which was being built, and `R1` is a member its group decided inhabited.
+#[test]
+fn a_closure_returns_a_member_built_or_decided_inhabited() {
+    let stop = || E::Atom("stop");
+    let claude210 = vec![
+        E::Union(vec![tup(vec![r(0), r(0)]), tup(vec![r(3), r(2)])]),
+        E::Union(vec![exact(E::Int, r(2)), stop()]),
+        exact(E::Int, r(0)),
+        tup(vec![r(2), r(2)]),
+    ];
+    let claude118 = vec![
+        E::Union(vec![tup(vec![r(0), r(1)]), tup(vec![r(2), r(3)])]),
+        tup(vec![r(2), r(0)]),
+        E::Union(vec![exact(E::Int, r(2)), tup(vec![r(1), r(1)])]),
+        E::Union(vec![
+            tup(vec![r(2), r(1)]),
+            exact(E::Int, r(1)),
+            tup(vec![r(1), r(1)]),
+        ]),
+        E::Union(vec![
+            exact(E::Int, r(4)),
+            tup(vec![r(3), r(1)]),
+            tup(vec![r(4), r(2)]),
+        ]),
+    ];
+    on_a_big_stack(|| {
+        for (sys, tag) in [(claude210, "c210"), (claude118, "c118")] {
+            let mut tally = Tally::default();
+            compare(&sys, tag, &mut tally);
+            assert_eq!(
+                (tally.missed, tally.inhabited),
+                (0, sys.len()),
+                "{tag}: {tally:?}"
+            );
         }
     });
 }
