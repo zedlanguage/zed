@@ -2431,6 +2431,15 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A local `#[derive(PartialEq, Eq, Hash)] struct Congruence` turned into a `Con` key with a placeholder atom `Atom::Product(Aux(u32::MAX), Aux(u32::MAX))` | `Congruence::key`, `extend::clause_key` | None | A record or union value used as the key directly |
 | `Model` (`HashMap<Atom, Int>`) filled in place by `solved` before a check | `extend::solved`, `extend::met` | Mutation (gap 11) | `solved` returns the extended map |
 
+## Entries from LOAD-extend-refuses (`crates/zedc-presburger/src/presburger/extend.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Union-find over atoms in a `HashMap<Atom, (Int, Option<Atom>, Int)>` (`a == k·b + c`) with path compression through `&mut self` | `Bound::bind`, `Bound::resolve`, `Bound::back` | Mutation (gap 11) | A persistent map from atom to its binding, threaded through `of` and returned, or the union-find of the stdlib catalog of step L2.11 |
+| An iterative post-order walk over the divisions' owners on a `Vec` of `(usize, btree_map::Iter<Atom, Int>)` frames, with a `Vec<bool>` visited set | `Bound::merge_divisions` | Mutation (gap 11); a borrowed iterator kept in a stack frame | A fold over a work list carrying the visited set, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)) |
+| `HashMap::entry` on the `(Lin, Int)` key of a division, binding the second quotient and remainder on `Entry::Occupied` | `Bound::merge_divisions` | Mutation (gap 11) | A map lookup and an insert returning the new map |
+| `Point` (`HashMap<Atom, Int>`) filled in place with the replaced atoms' values | `Bound::back`, `extend::point` | Mutation (gap 11) | `back` returns the extended map |
+
 ## Entries from TY-write-stack (`crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |

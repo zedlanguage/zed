@@ -1502,7 +1502,7 @@ fn decided(f: &Formula) -> Result<bool, Refusal> {
 }
 
 /// `f` with its bindings in place, as a whole question refused with them as rows is asked again
-/// ([`Bound`]), or `None` when it has none: for tests. Time of `f` times a logarithm.
+/// (`Bound`), or `None` when it has none: for tests. Time of `f` times a logarithm.
 pub fn with_bindings_in_place(f: &Formula) -> Option<Formula> {
     Bound::of(f).map(|b| b.f)
 }
