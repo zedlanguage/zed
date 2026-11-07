@@ -36,15 +36,16 @@ zedc-elab.workspace = true
 # tests turn on `two-at-a-time`, the step tests `counts`), and does not overwrite their copies.
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 zedc-solvers = { workspace = true, features = ["counts"] }
+zedc-preimage = { workspace = true, features = ["counts"] }
 
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
 printed-types = ["zedc-check/printed-types"]
 # Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
-# work of the linear programs by a count that does not depend on the load (SLABS-count). Off in a
-# release build.
-counts = ["zedc-solvers/counts"]
+# work of the linear programs by a count that does not depend on the load (SLABS-count), and the
+# nodes `LetPa::sum` enters in `store::preimage` (PA-let-narrow). Off in a release build.
+counts = ["zedc-solvers/counts", "zedc-preimage/counts"]
 # Truncates content addresses so that they collide (step L1.37a); see zed-kernel src/address.rs.
 short-addresses = ["zed-kernel/short-addresses"]
 

@@ -1003,3 +1003,46 @@ fn a_block_of_tested_lets_over_two_inputs_is_checked_in_time_linear_in_the_bindi
         })
     });
 }
+
+/// The nodes `LetPa::sum` enters while the program `src` is loaded, on this thread.
+fn sum_nodes(src: &str) -> u64 {
+    let before = zedc::store::preimage::counts::sum_nodes();
+    if let Err(e) = zedc::run::load(src.as_bytes()) {
+        panic!("rejected: {e}");
+    }
+    zedc::store::preimage::counts::sum_nodes() - before
+}
+
+#[test]
+fn the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of_times() {
+    // The work of the two tests above is mostly linear in the bindings for other causes, so it
+    // hides a summary formed from the whole chain below it, `Θ(d²)`: measured 16.8 times the
+    // instructions at 8x, under the limit of 24. The nodes `LetPa::sum` enters are linear in the
+    // bindings only when each summary is formed from the formed sums of those it reads (item
+    // PA-let-narrow), and a count does not change with the load. Measured 2026-11-07: 129 nodes
+    // at d = 64 and 1,025 at d = 512 (7.95 times) for each block. A negative control in which
+    // `sum` ignores the formed sums entered 2,145 and 131,841 nodes for the first block (61.5
+    // times) and failed this test.
+    let n = 64;
+    let large = n * scaling::FACTOR;
+    for (what, make) in [
+        (
+            "a block of d lets read under a test, last first",
+            Box::new(|d| read_let_chain(d, true)) as Box<dyn Fn(usize) -> String>,
+        ),
+        (
+            "a block of d tested lets over two inputs",
+            Box::new(two_input_chain),
+        ),
+    ] {
+        let (small_src, large_src) = (super::program(&make(n)), super::program(&make(large)));
+        let (a, b) =
+            scaling::on_a_thread(1 << 29, || (sum_nodes(&small_src), sum_nodes(&large_src)));
+        let ratio = b as f64 / a as f64;
+        assert!(
+            a > 0 && ratio <= 9.0,
+            "{what}: `LetPa::sum` entered {a} nodes at d = {n} and {b} at d = {large}: \
+             {ratio:.2} times, above 9"
+        );
+    }
+}

@@ -1,4 +1,4 @@
-# Complexity audit
+measured 0.426 and 7.15 billion (16.8 times), two inputs 16.1 times, which the limit of 24 does not fail at sizes a test can run in 60 s; so the test `scaling::the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of_times` counts the nodes `LetPa::sum` enters (feature `counts`, `store::preimage::counts::sum_nodes`): 129 at d = 64 and 1,025 at d = 512 (7.95 times) for each block, and under that control 2,145 and 131,841 (61.5 times), which fails it. |# Complexity audit
 
 DESIGN.md Part G, "Six standing rules", requires every algorithm to be of low complexity:
 O(n log n) or better, O(n²) only with a recorded reason, nothing cubic or worse outside a

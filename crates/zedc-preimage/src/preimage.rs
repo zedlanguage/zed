@@ -6873,6 +6873,8 @@ impl LetPa {
             if !entered.insert(n.id) {
                 continue;
             }
+            #[cfg(feature = "counts")]
+            counts::SUM_NODES.set(counts::SUM_NODES.get() + 1);
             stack.push((n, true));
             if n.id == self.0.id || n.forced.get().is_none() {
                 for (_, p) in &n.parts {
@@ -6899,6 +6901,24 @@ impl LetPa {
             }
         }
         sum
+    }
+}
+
+/// The nodes `LetPa::sum` enters on a thread (feature `counts`, PA-let-narrow). Forming a
+/// summary enters its own node and the nodes it reads, not those below a node already formed, so a
+/// test holds the count of a block of bindings to linear growth, a measure the load does not
+/// change.
+#[cfg(feature = "counts")]
+pub mod counts {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(super) static SUM_NODES: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The nodes `LetPa::sum` has entered on this thread since it started.
+    pub fn sum_nodes() -> u64 {
+        SUM_NODES.get()
     }
 }
 

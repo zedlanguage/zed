@@ -23,12 +23,20 @@ zedc-stage.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Counts the nodes `LetPa::sum` enters on a thread, for the test that bounds the forming of the
+# summaries of a block of bindings by a count that does not depend on the load (PA-let-narrow).
+# Off in a release build; zedc's feature `counts` turns it on.
+counts = []
+
 [dev-dependencies]
 # The tests of preimage set presburger::TWO_AT_A_TIME, which exists only with this feature.
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 # A dylib's file name does not change with its features, so `cargo test -p zedc-preimage` builds
 # zedc-solvers with the feature `counts` the step tests give it, and does not overwrite their copy.
 zedc-solvers = { workspace = true, features = ["counts"] }
+# As for zedc-solvers: this crate with the feature `counts` the step tests give it.
+zedc-preimage = { path = ".", features = ["counts"] }
 # The scaling test of the rule of low complexity (tests/src/scaling.rs), which preimage's tests use.
 rustix.workspace = true
 zed-alloc-count.workspace = true

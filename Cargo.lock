@@ -1158,6 +1158,7 @@ dependencies = [
  "zed-kernel",
  "zedc-int",
  "zedc-lattice",
+ "zedc-preimage",
  "zedc-presburger",
  "zedc-solvers",
  "zedc-stage",
