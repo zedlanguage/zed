@@ -69,8 +69,8 @@ impl<A: Literal> Tables<A> {
     pub(super) const fn new() -> Tables<A> {
         Tables {
             sets: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
-            cells: BTreeMap::new(),
-            xors: BTreeMap::new(),
+            cells: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
+            xors: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
         }
     }
 }
@@ -179,10 +179,20 @@ impl<A: Literal> Bdd<A> {
     }
 
     /// `self op other` when one of the two is a chain under `op`: the chain's literals joined
-    /// to the other one at a time, the shorter chain's when both are; `None` when neither is.
-    // Complexity tradeoff: when both are chains, joining the shorter to the longer costs
-    // `O(k log n)` for the shorter's `k` literals; either order gives the one list.
+    /// to the other one at a time; `None` when neither is. Two chains of two or more literals
+    /// each are one block of one value, so their blocks are joined as sets
+    /// ([`set::union_if_agree`]), and an atom taken by one and refused by the other leaves the
+    /// leaf `op` stops at.
     fn zip_chain(&self, other: &Bdd<A>, op: Op) -> Option<Bdd<A>> {
+        if let (Bdd::List(x, v), Bdd::List(y, _)) = (self, other)
+            && self.is_long_chain(op)
+            && other.is_long_chain(op)
+        {
+            return Some(match set::union_if_agree(&x.block, &y.block) {
+                Some(block) => Bdd::assemble(vec![(*v, Some(block))], &Bdd::Leaf(!*v)),
+                None => Bdd::Leaf(op == Op::Or),
+            });
+        }
         // Only the chain joined is listed: listing the other too would cost its length at each
         // literal added to a long chain.
         let (base, joined) = match (self.chain_len(op), other.chain_len(op)) {
@@ -1718,11 +1728,11 @@ mod xor {
     //! An exclusive or is recognized when it is built from two others ([`xor_of`], [`xor_choice`]),
     //! and a literal is one, of one atom; any other part is not taken for one.
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::{Arc, Weak};
 
     use super::set::{self, Set, Tree};
-    use super::{Expr, Form, Literal, Op, Operands, Owned, Part};
+    use super::{Expr, Form, KeyHasher, Literal, Op, Operands, Owned, Part};
 
     /// An exclusive or: the set of its atoms, each taken, and the constant joined to them.
     pub(super) type Tag<A> = (Arc<Set<A>>, bool);
@@ -1751,7 +1761,8 @@ mod xor {
     }
 
     /// The live exclusive ors of a thread, by the id of their set's tree node and their constant.
-    pub(in crate::types) type XorTable<A> = BTreeMap<(u64, bool), Weak<Expr<A>>>;
+    pub(in crate::types) type XorTable<A> =
+        HashMap<(u64, bool), Weak<Expr<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
 
     /// The exclusive or of the one literal on `atom`, taken or refused.
     fn literal<A: Literal>(atom: &A, taken: bool) -> Tag<A> {
@@ -1971,7 +1982,7 @@ mod list {
     //! of it first; a literal on an atom the list holds is first set false there, which removes it
     //! from its block or cuts the list at its block. Each such change rebuilds the cells on the
     //! paths to the blocks it changes, `O(log m)` cells in expectation, each looked up in the
-    //! table in `O(log N)`.
+    //! table in `O(1)` expected.
 
     use std::collections::HashMap;
     use std::sync::atomic::Ordering as Atomic;
@@ -2008,7 +2019,7 @@ mod list {
     /// The live cells of a thread, by the ids of their children and block, each held weakly: a cell
     /// leaves the table when it is dropped (step TABLE-life).
     pub(in crate::types) type CellTable<A> =
-        std::collections::BTreeMap<(u64, u64, u64), Weak<Cell<A>>>;
+        HashMap<(u64, u64, u64), Weak<Cell<A>>, std::hash::BuildHasherDefault<KeyHasher>>;
 
     /// A cell leaves its thread's table, and its children and views are freed in a loop (module
     /// `deep`).
@@ -2017,7 +2028,7 @@ mod list {
             let key = (id(&self.left), self.block.id, id(&self.right));
             A::untable(|t| {
                 // Another cell of the key may have taken the entry since, or none was made here.
-                if let std::collections::btree_map::Entry::Occupied(e) = t.cells.entry(key)
+                if let std::collections::hash_map::Entry::Occupied(e) = t.cells.entry(key)
                     && std::ptr::eq(e.get().as_ptr(), self)
                 {
                     e.remove();
@@ -2097,7 +2108,7 @@ mod list {
         // replaced there, and its weak handle dropped, which touches no table.
         A::table(|t| {
             let entry = t.cells.entry(key);
-            if let std::collections::btree_map::Entry::Occupied(e) = &entry
+            if let std::collections::hash_map::Entry::Occupied(e) = &entry
                 && let Some(c) = e.get().upgrade()
             {
                 return c;

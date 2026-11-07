@@ -7,7 +7,7 @@
 //! one node: two sets are equal exactly when their roots are one node, and a set built in two
 //! orders is found again. The table holds each node weakly, and a node leaves it when it is
 //! dropped (step TABLE-life). An insertion or removal rebuilds the path to the place it changes,
-//! `O(log n)` nodes in expectation, each looked up in the table in `O(log N)`; the walks keep
+//! `O(log n)` nodes in expectation, each looked up in the table in `O(1)` expected; the walks keep
 //! stacks of their own, so a set of any shape is walked on a small stack.
 
 use std::sync::Arc;
@@ -307,6 +307,71 @@ pub(super) fn union<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Arc<Set<A>> {
         out = insert(Some(&out), k.clone());
     }
     out
+}
+
+/// The union of two sets, or `None` when one holds an atom with the other `taken` than the
+/// other set: from the roots down, the higher root kept and the other set split at its atom,
+/// past each pair of subtrees that is one node. A set has one shape, so the union is the node
+/// that adding the literals one at a time makes. For `k` literals into `n`, `O(k log(n/k + 1))`
+/// nodes are visited in expectation, each splitting in `O(log n)`, and two sets that differ on
+/// `d` paths cost only those paths; the walk keeps a stack of its own.
+pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Option<Arc<Set<A>>> {
+    /// A pair of subtrees to join, or a literal to make over the two joined last.
+    enum Step<A: Atom> {
+        Join(Tree<A>, Tree<A>),
+        Make(Key<A>),
+    }
+    let mut todo = vec![Step::Join(Some(x.clone()), Some(y.clone()))];
+    let mut done: Vec<Tree<A>> = Vec::new();
+    while let Some(step) = todo.pop() {
+        let (x, y) = match step {
+            Step::Make(key) => {
+                let r = done.pop().expect("the right side is joined");
+                let l = done.pop().expect("the left side is joined");
+                done.push(Some(make(key, l, r)));
+                continue;
+            }
+            Step::Join(None, t) | Step::Join(t, None) => {
+                done.push(t);
+                continue;
+            }
+            Step::Join(Some(x), Some(y)) if x.id == y.id => {
+                done.push(Some(x));
+                continue;
+            }
+            Step::Join(Some(x), Some(y)) => (x, y),
+        };
+        let (hi, lo) = if above(x.prio, &x.key, &y) {
+            (x, y)
+        } else {
+            (y, x)
+        };
+        let (atom, taken) = &hi.key;
+        if *atom == lo.key.0 {
+            // One atom at both roots: the children are joined side by side, with no split.
+            if *taken != lo.key.1 {
+                return None;
+            }
+            todo.push(Step::Make(hi.key.clone()));
+            todo.push(Step::Join(hi.right.clone(), lo.right.clone()));
+            todo.push(Step::Join(hi.left.clone(), lo.left.clone()));
+            continue;
+        }
+        let lo = match get(Some(&lo), atom) {
+            None => Some(lo),
+            Some(t) if t == *taken => remove(&lo, &hi.key),
+            Some(_) => return None,
+        };
+        let (l, r) = split(lo.as_ref(), &hi.key);
+        todo.push(Step::Make(hi.key.clone()));
+        todo.push(Step::Join(hi.right.clone(), r));
+        todo.push(Step::Join(hi.left.clone(), l));
+    }
+    Some(
+        done.pop()
+            .flatten()
+            .expect("the union of two sets has a root"),
+    )
 }
 
 /// The literals in exactly one of the two sets: each of the smaller's added to the larger, or
