@@ -290,7 +290,7 @@ impl<A: Literal> Bdd<A> {
     /// the chain takes it; `None` for any other list.
     fn chain(&self, op: Op) -> Option<Vec<(&A, bool)>> {
         let Bdd::List(c, _) = self else { return None };
-        if self.is_literal() || !self.is_chain(op) {
+        if !self.is_long_chain(op) {
             return None;
         }
         let out = op == Op::Or;
@@ -301,11 +301,35 @@ impl<A: Literal> Bdd<A> {
         )
     }
 
-    /// The chain under `op` without its literal on `atom`, which it takes when `taken`.
+    /// Whether the list is a chain under `op` of two or more literals.
+    fn is_long_chain(&self, op: Op) -> bool {
+        matches!(self, Bdd::List(..)) && !self.is_literal() && self.is_chain(op)
+    }
+
+    /// Whether the chain under `op` of two or more literals takes `atom` (`Some(true)`),
+    /// refuses it (`Some(false)`), or has no literal on it, in `O(log k)` for its `k` literals.
+    fn chain_takes(&self, op: Op, atom: &A) -> Option<bool> {
+        let Bdd::List(c, _) = self else { return None };
+        set::get(Some(&c.block), atom).map(|p| p == (op == Op::Or))
+    }
+
+    /// The chain under `op` without its literal on `atom`, which it takes when `taken`, in
+    /// `O(log k)` for its `k` literals: the chain restricted on its one block.
     fn chain_without(&self, op: Op, atom: &A, taken: bool) -> Bdd<A> {
+        let Bdd::List(c, v) = self else {
+            return self.clone();
+        };
+        debug_assert!(c.next.is_none(), "a chain is one block");
         // The literal is left out by fixing it to the value `op` passes over.
         let value = taken != (op == Op::Or);
-        self.restrict(&|a| (a == atom).then_some(value), &mut HashMap::new())
+        match set::get(Some(&c.block), atom) {
+            None => self.clone(),
+            Some(p) if p == value => Bdd::Leaf(*v),
+            Some(p) => {
+                let block = set::remove(&c.block, &(atom.clone(), p));
+                Bdd::before((*v, block, None), &Bdd::Leaf(!*v))
+            }
+        }
     }
 
     /// The literal on `atom`, taken or refused.
@@ -337,52 +361,69 @@ impl<A: Literal> Bdd<A> {
 
     /// The list with each atom that `fix` decides replaced by its value: a literal set false
     /// leaves its block, and one set true ends the list at its block with the block's value.
-    /// The blocks after the last one changed are kept as they are.
+    /// The list after each cell is restricted once for each `memo`, keyed by its id, so lists
+    /// that share cells share the work (item CHAIN-restrict-memo): the cells are walked down to
+    /// the first one in `memo`, then restricted from the last up, each a block put before the
+    /// list after it restricted. A cell whose block and rest are unchanged is kept.
     fn restrict(
         &self,
         fix: &impl Fn(&A) -> Option<bool>,
         memo: &mut HashMap<u64, Bdd<A>>,
     ) -> Bdd<A> {
-        if let Bdd::Leaf(_) = self {
+        let Bdd::List(first, v) = self else {
             return self.clone();
+        };
+        let mut todo: Vec<(bool, &Arc<Cell<A>>)> = Vec::new();
+        let mut below = None;
+        let mut at = Some((*v, first));
+        while let Some((w, c)) = at {
+            if let Some(r) = memo.get(&(c.id + u64::from(w))) {
+                below = Some(r.clone());
+                break;
+            }
+            todo.push((w, c));
+            at = c.next.as_ref().map(|n| (!w, n));
         }
-        if let Some(r) = memo.get(&self.id()) {
-            return r.clone();
-        }
-        let mut prefix = Vec::new();
-        // The length of the prefix to the last block changed, and the list after that block.
-        let mut changed = None;
-        let mut cut = None;
-        'blocks: for (w, c) in self.cells() {
+        let Some(&(last, _)) = todo.last() else {
+            return below.expect("a list not walked is in `memo`");
+        };
+        // The list after the last cell to restrict, restricted: from `memo`, or the default.
+        let mut below = below.unwrap_or(Bdd::Leaf(!last));
+        for (w, c) in todo.into_iter().rev() {
             let mut block = Some(c.block.clone());
+            let mut cut = false;
             for k in set::iter(Some(&c.block)) {
                 match fix(&k.0) {
                     None => {}
                     Some(x) if x == k.1 => {
-                        cut = Some(w);
-                        break 'blocks;
+                        cut = true;
+                        break;
                     }
                     Some(_) => {
                         let b = block
                             .as_ref()
                             .expect("a literal not yet removed is in its block");
                         block = set::remove(b, k);
-                        changed = Some((prefix.len() + 1, (c.next.clone(), !w)));
                     }
                 }
             }
-            prefix.push((w, block, None));
+            let kept = !cut
+                && block.as_ref().is_some_and(|b| b.id == c.block.id)
+                && match (&below, &c.next) {
+                    (Bdd::Leaf(x), None) => *x != w,
+                    (Bdd::List(d, x), Some(n)) => d.id == n.id && *x != w,
+                    _ => false,
+                };
+            below = if cut {
+                Bdd::Leaf(w)
+            } else if kept {
+                Bdd::List(c.clone(), w)
+            } else {
+                Bdd::before((w, block, None), &below)
+            };
+            memo.insert(c.id + u64::from(w), below.clone());
         }
-        let r = match (cut, changed) {
-            (Some(w), _) => Bdd::assemble(prefix, (None, w)),
-            (None, Some((len, rest))) => {
-                prefix.truncate(len);
-                Bdd::assemble(prefix, rest)
-            }
-            (None, None) => self.clone(),
-        };
-        memo.insert(self.id(), r.clone());
-        r
+        below
     }
 
     /// The atoms every value takes, and those every value refuses: [`Bdd::forced_to`] `true`.
@@ -687,8 +728,8 @@ impl<A: Literal> Form<A> {
 enum Operands<'a, A: Literal> {
     /// An expression's two operands.
     Two(&'a Part<A>, &'a Part<A>),
-    /// A chain, with its literals.
-    Chain(&'a Bdd<A>, Vec<(&'a A, bool)>),
+    /// A chain of two or more literals, looked up rather than listed.
+    Chain(&'a Bdd<A>),
 }
 
 impl<A: Literal> Part<A> {
@@ -799,7 +840,7 @@ impl<A: Literal> Part<A> {
                 Form::Or(a, b) => Some(Operands::Two(a, b)),
                 _ => None,
             },
-            (Part::Bdd(b), _) => b.chain(op).map(|lits| Operands::Chain(b, lits)),
+            (Part::Bdd(b), _) => b.is_long_chain(op).then_some(Operands::Chain(b)),
         }
     }
 }
@@ -992,11 +1033,11 @@ impl<'m> Connect<'m> {
     ) -> Option<(Part<A>, Part<A>, Part<A>)> {
         let inner = if op == Op::Or { Op::And } else { Op::Or };
         let (l, r) = (a.operands(inner)?, b.operands(inner)?);
-        // The literal of `lits` that `n` is.
-        let within = |n: &Part<A>, lits: &[(&A, bool)]| match n {
-            Part::Bdd(d) => d
+        // The literal of the chain `d` that `n` is, looked up in `O(log k)`.
+        let within = |n: &Part<A>, d: &Bdd<A>| match n {
+            Part::Bdd(n) => n
                 .as_literal()
-                .filter(|(atom, taken)| lits.iter().any(|(x, t)| x == atom && t == taken))
+                .filter(|(atom, taken)| d.chain_takes(inner, atom) == Some(*taken))
                 .map(|(atom, taken)| (atom.clone(), taken)),
             Part::Expr(_) => None,
         };
@@ -1011,39 +1052,44 @@ impl<'m> Connect<'m> {
                     }
                 }
             }
-            (Operands::Two(p, q), Operands::Chain(d, lits)) => {
+            (Operands::Two(p, q), Operands::Chain(d)) => {
                 for (c, x) in [(p, q), (q, p)] {
-                    if let Some((atom, taken)) = within(&self.not(c).await, lits) {
+                    if let Some((atom, taken)) = within(&self.not(c).await, d) {
                         let y = Part::Bdd(d.chain_without(inner, &atom, taken));
                         found.push(((*c).clone(), (*x).clone(), y));
                     }
                 }
             }
-            (Operands::Chain(d, lits), Operands::Two(s, t)) => {
+            (Operands::Chain(d), Operands::Two(s, t)) => {
                 for (n, y) in [(s, t), (t, s)] {
-                    if let Some((atom, taken)) = within(&self.not(n).await, lits) {
+                    if let Some((atom, taken)) = within(&self.not(n).await, d) {
                         let c = Part::Bdd(Bdd::literal_of(&atom, taken));
                         let x = Part::Bdd(d.chain_without(inner, &atom, taken));
                         found.push((c, x, (*y).clone()));
                     }
                 }
             }
-            (Operands::Chain(d, xs), Operands::Chain(e, ys)) => {
-                // The atoms on which the chains' literals are complements, found by sorting so
-                // that the time is `O(k log k)` in the literals; the rests are built only for
-                // a single atom.
-                let mut sorted = xs.clone();
-                sorted.sort_unstable();
-                let mut both = ys
-                    .iter()
-                    .filter(|(atom, taken)| sorted.binary_search(&(*atom, !*taken)).is_ok());
-                let (Some(&(atom, taken)), None) = (both.next(), both.next()) else {
+            (Operands::Chain(d), Operands::Chain(e)) => {
+                // The atoms on which the chains' literals are complements, found by looking the
+                // shorter chain's literals up in the longer, so that the time is `O(k log n)`
+                // for `k` the shorter's literals and `n` the longer's; the rests are built only
+                // for a single atom.
+                let short_is_d = d.chain_len(inner) <= e.chain_len(inner);
+                let (short, long) = if short_is_d { (d, e) } else { (e, d) };
+                let lits = short
+                    .chain(inner)
+                    .expect("an operand chain has its literals");
+                let mut both = (lits.into_iter())
+                    .filter(|(atom, taken)| long.chain_takes(inner, atom) == Some(!*taken));
+                let (Some((atom, taken)), None) = (both.next(), both.next()) else {
                     return None;
                 };
+                // Whether `d` takes the atom.
+                let taken = if short_is_d { taken } else { !taken };
                 found.push((
-                    Part::Bdd(Bdd::literal_of(atom, !taken)),
-                    Part::Bdd(d.chain_without(inner, atom, !taken)),
-                    Part::Bdd(e.chain_without(inner, atom, taken)),
+                    Part::Bdd(Bdd::literal_of(atom, taken)),
+                    Part::Bdd(d.chain_without(inner, atom, taken)),
+                    Part::Bdd(e.chain_without(inner, atom, !taken)),
                 ));
             }
         }
@@ -2157,9 +2203,10 @@ mod xor {
         (set::single((atom.clone(), true)), !taken)
     }
 
-    /// Whether `x` is the complement of `y`.
+    /// Whether `x` is the complement of `y`: one set of atoms, compared by contents when the
+    /// two were made on two threads ([`set::same`]), and the other constant.
     fn opposite<A: Literal>(x: &Tag<A>, y: &Tag<A>) -> bool {
-        x.0.id == y.0.id && x.1 != y.1
+        x.1 != y.1 && set::same(&x.0, &y.0)
     }
 
     /// The exclusive or of `x` and `y`.
@@ -2306,7 +2353,7 @@ mod xor {
         }
         match p.operands(op)? {
             Operands::Two(x, y) => Some([x.xor_tag()?, y.xor_tag()?]),
-            Operands::Chain(_, lits) => match lits[..] {
+            Operands::Chain(d) => match d.chain(op)?[..] {
                 [(a, s), (b, t)] => Some([literal(a, s), literal(b, t)]),
                 _ => None,
             },
@@ -3672,5 +3719,200 @@ mod tests {
         let alone = complement_of_a_kept_complement(false);
         assert!(alone.2);
         assert_eq!(complement_of_a_kept_complement(true), alone);
+    }
+
+    /// The block of the two literals on the atoms `a` and `a + 1`, each taken.
+    fn pair_block(a: u64) -> Arc<Set<Row>> {
+        set::insert(Some(&set::single((atom(a), true))), (atom(a + 1), true))
+    }
+
+    /// The list of `m` blocks of two literals, the atoms from `base`, the values alternating
+    /// from `true`: no block is merged or moved, so the list has `m` cells.
+    fn blocks(base: u64, m: usize) -> Bdd<Row> {
+        let prefix = (0..m as u64)
+            .map(|i| (i % 2 == 0, Some(pair_block(base + 2 * i)), None))
+            .collect();
+        Bdd::assemble(prefix, (None, m.is_multiple_of(2)))
+    }
+
+    #[test]
+    fn restricting_lists_that_share_a_tail_scales() {
+        // Item CHAIN-restrict-memo: `m` lists, each a block of its own before one tail of `m`
+        // blocks, restricted on an atom of the tail's last block with one memo. Memoized by
+        // list, each walked and rebuilt the whole tail again, `O(m²)` in all; memoized by the
+        // list after each cell, the tail is restricted once.
+        let n = 1 << 9;
+        let lists = scaling::inputs(n, |m| {
+            let tail = blocks(8000, m);
+            let Bdd::List(c, v) = &tail else {
+                unreachable!("a list of blocks has a cell")
+            };
+            let heads: Vec<Bdd<Row>> = (0..m as u64)
+                .map(|i| {
+                    let head = (!*v, Some(pair_block(30000 + 2 * i)), None);
+                    Bdd::assemble(vec![head], (Some(c.clone()), *v))
+                })
+                .collect();
+            (atom(8000 + 2 * (m as u64 - 1)), heads)
+        });
+        scaling::check("lists sharing a tail of m blocks, restricted", n, |m| {
+            let (last, heads) = &lists[&m];
+            let fix = |a: &Row| (a == last).then_some(false);
+            let mut memo = HashMap::new();
+            for l in heads {
+                assert_ne!(l.restrict(&fix, &mut memo).id(), l.id());
+            }
+        });
+    }
+
+    #[test]
+    fn restricting_with_a_shared_memo_gives_the_lists_restricted_alone() {
+        // Item CHAIN-restrict-memo: a memo kept across lists that share cells gives each list
+        // what a fresh memo gives it, on every atom fixed either way.
+        let tail = blocks(8500, 6);
+        let Bdd::List(c, v) = &tail else {
+            unreachable!("a list of blocks has a cell")
+        };
+        let mut lists = vec![tail.clone(), tail.not()];
+        for i in 0..3u64 {
+            let head = (i % 2 == 0, Some(pair_block(8600 + 2 * i)), None);
+            lists.push(Bdd::assemble(vec![head], (Some(c.clone()), *v)));
+            let one = (i % 2 == 1, Some(set::single((atom(8700 + i), true))), None);
+            lists.push(Bdd::assemble(vec![one], (Some(c.clone()), *v)));
+        }
+        let atoms: Vec<Row> = (8500..8512)
+            .chain(8600..8606)
+            .chain(8700..8703)
+            .map(atom)
+            .collect();
+        for a in &atoms {
+            for x in [false, true] {
+                let fix = |b: &Row| (b == a).then_some(x);
+                let mut memo = HashMap::new();
+                for l in &lists {
+                    let shared = l.restrict(&fix, &mut memo);
+                    let alone = l.restrict(&fix, &mut HashMap::new());
+                    assert_eq!(shared, alone, "{a:?} {x}");
+                    for bits in [0u64, 0x15555, 0xaaaaa, 0x1fffff, 0x12345] {
+                        let holds = |b: &Row| {
+                            if b == a {
+                                return x;
+                            }
+                            let i = atoms.iter().position(|y| y == b).expect("an atom listed");
+                            bits >> i & 1 == 1
+                        };
+                        assert_eq!(shared.eval(holds), l.eval(holds), "{a:?} {x} {bits:x}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_meet_joined_to_short_meets_scales() {
+        // Item CHOICE-both-chains: a meet of `m` literals joined under `|` to `m` meets of two,
+        // half of them with the complement of one of its literals, each a choice then. Listing
+        // both chains at each join took `O(m)` a join; the longer is now only looked up.
+        let n = 1 << 10;
+        let parts = scaling::inputs(n, |m| {
+            let long = Part::Bdd(meet(40000, m));
+            let short: Vec<Part<Row>> = (0..m as u64)
+                .map(|i| match i % 2 {
+                    0 => Part::Bdd(meet(50000 + 2 * i, 2)),
+                    _ => Part::Bdd(meet(50000 + 2 * i, 1).and_literal((atom(40000 + i), false))),
+                })
+                .collect();
+            (long, short)
+        });
+        scaling::check("a meet of m literals joined to m meets of two", n, |m| {
+            let (long, short) = &parts[&m];
+            for s in short {
+                assert!(matches!(long.zip(s, Op::Or), Part::Expr(_)));
+            }
+        });
+    }
+
+    #[test]
+    fn a_choice_between_chains_is_the_one_found_by_listing_both() {
+        // Item CHOICE-both-chains: the union of two meets with one literal each the other's
+        // complement, found by looking the shorter's literals up in the longer, has the values
+        // of the union; with two such literals it is kept as written.
+        let x = meet(8800, 5);
+        let y = meet(8810, 2).and_literal((atom(8802), false));
+        let z = meet(8810, 1)
+            .and_literal((atom(8802), false))
+            .and_literal((atom(8803), false));
+        let atoms: Vec<Row> = (8800..8805).chain(8810..8812).map(atom).collect();
+        for other in [y, z] {
+            let u = Part::Bdd(x.clone()).zip(&Part::Bdd(other.clone()), Op::Or);
+            assert!(
+                matches!(&u, Part::Expr(e) if matches!(e.form, Form::Or(..))),
+                "{u:?}"
+            );
+            for bits in 0..1u32 << atoms.len() {
+                let holds =
+                    |a: &Row| (0..atoms.len()).any(|i| bits >> i & 1 == 1 && *a == atoms[i]);
+                assert_eq!(
+                    u.eval(&holds),
+                    x.eval(holds) || other.eval(holds),
+                    "{bits:b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_expression_and_its_complement_are_freed_together() {
+        // Item CHOICE-both-chains: an expression and its complement point at each other, and
+        // were a cycle of `Arc`s that no drop freed; since step TABLE-life the complement
+        // holds its expression weakly. A choice, a choice of chains and an exclusive or, each
+        // with its complement made, are freed when dropped.
+        let weak = |p: &Part<Row>| match p {
+            Part::Expr(e) => Arc::downgrade(e),
+            Part::Bdd(_) => unreachable!("an expression"),
+        };
+        let held = {
+            let chains = Part::Bdd(meet(8900, 4)).zip(
+                &Part::Bdd(meet(8910, 1).and_literal((atom(8901), false))),
+                Op::Or,
+            );
+            let parts = [choices(8920, 8940, 6), chains, parity(8960, 5)];
+            let nots: Vec<Part<Row>> = parts.iter().map(Part::not).collect();
+            for (p, n) in parts.iter().zip(&nots) {
+                assert_eq!(n.not().id(), p.id());
+            }
+            (parts.iter().chain(&nots)).map(weak).collect::<Vec<_>>()
+        };
+        for (i, w) in held.iter().enumerate() {
+            assert!(w.upgrade().is_none(), "part {i} lives on");
+        }
+    }
+
+    #[test]
+    fn an_exclusive_or_built_on_another_thread_is_recognized() {
+        // Item XOR-cross-thread: an exclusive or built on another thread, joined to the
+        // complement of the same one built here, is the exclusive or that the two built here
+        // give: the atoms' sets of the two threads are equal but not one node.
+        let k = 6;
+        let there = std::thread::spawn(move || parity(9000, k))
+            .join()
+            .expect("the thread runs without panicking");
+        let here = parity(9000, k);
+        let l = Part::literal(atom(9000 + k));
+        let mixed = (there.zip(&l, Op::Or)).zip(&here.not().zip(&l.not(), Op::Or), Op::And);
+        let alone = (here.zip(&l, Op::Or)).zip(&here.not().zip(&l.not(), Op::Or), Op::And);
+        assert!(alone.xor_tag().is_some());
+        assert_eq!(mixed, alone);
+        assert!(mixed.xor_tag().is_some(), "{mixed:?}");
+        // The choice `l&x | !l&!x`, `x` built there and `!x` here: `!(l ^ x)`.
+        let c = l
+            .zip(&there, Op::And)
+            .zip(&l.not().zip(&here.not(), Op::And), Op::Or);
+        let d = l
+            .zip(&here, Op::And)
+            .zip(&l.not().zip(&here.not(), Op::And), Op::Or);
+        assert!(d.xor_tag().is_some());
+        assert_eq!(c, d);
+        assert!(c.xor_tag().is_some(), "{c:?}");
     }
 }

@@ -223,6 +223,20 @@ impl<A: Literal> Bdd<A> {
         )
     }
 
+    /// The list of `block` before `rest`, a list in its one form, in its one form. A `rest` of
+    /// one cell is passed to [`Bdd::assemble`] as a block before the default, so that its last
+    /// block may move into the one before; a longer one ends in a block that cannot move.
+    pub(super) fn before(block: Block<A>, rest: &Bdd<A>) -> Bdd<A> {
+        match rest {
+            Bdd::Leaf(x) => Bdd::assemble(vec![block], (None, *x)),
+            Bdd::List(c, x) if c.next.is_none() => {
+                let last = (*x, Some(c.block.clone()), None);
+                Bdd::assemble(vec![block, last], (None, !*x))
+            }
+            Bdd::List(c, x) => Bdd::assemble(vec![block], (Some(c.clone()), *x)),
+        }
+    }
+
     /// `self | l`, `l` the literal `key`. When the list holds the atom, the literal is first set
     /// false in it; the literal then joins the first block if its value is `true`, or comes
     /// first in a block of its own.
@@ -232,8 +246,14 @@ impl<A: Literal> Bdd<A> {
             Bdd::Leaf(false) => return Bdd::literal_key(key),
             Bdd::List(c, v) => (c, *v),
         };
-        if !c.atoms().contains(&key.0) {
-            let atoms = Some(c.atoms().update(key.0.clone()));
+        // A list of one block, such as a chain, is looked up in its block, in `O(log n)`: its
+        // set of atoms would cost `O(n)` to make for each new chain.
+        let holds = match &c.next {
+            None => set::get(Some(&c.block), &key.0).is_some(),
+            Some(_) => c.atoms().contains(&key.0),
+        };
+        if !holds {
+            let atoms = (c.next.is_some()).then(|| c.atoms().update(key.0.clone()));
             return if v {
                 let first = set::insert(Some(&c.block), key);
                 Bdd::assemble(vec![(true, Some(first), atoms)], (c.next.clone(), false))

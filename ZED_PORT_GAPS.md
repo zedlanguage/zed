@@ -2247,6 +2247,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A weak table of rows, each row removed by `Drop for RowNode` on a pointer match | `Row::new`, `ROWS`, `Drop for RowNode` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A row table in the unit's state struct, dropped whole at the end of a unit |
 | The form an expression was the complement of, kept so a freed source is made again alike | `Expr::source`, `Source`, `Connect::negate` | Lazy cells (gap 3) | Not needed when the unit's memo table keeps both sides for the unit |
 
+## Entries from CHAIN-restrict-memo, CHOICE-both-chains, XOR-cross-thread (`zed-kernel/src/types/bdd.rs`, `bdd/list.rs`, `bdd/set.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A walk down a list that pushes `(&Arc<Cell>, bool)` onto a `Vec` until a memo hit, then pops it to build the result bottom up, writing each suffix into a `HashMap` memo passed as `&mut` | `Bdd::restrict` | Mutation | A loop that collects the cells down to the memo hit into a list, then a fold over it that returns the result and the memo |
+| An enum variant holding a borrowed `&Bdd` (`Operands::Chain`) so a chain is looked up in place, not listed | `Part::operands`, `choice_of`, `xor::pair` | Borrowed references in data | The variant holds the list value itself; values are shared, not copied |
+| Two sets compared by `Arc` id first, then walked side by side from a `Vec` stack of node pairs, so equal sets made on two threads are found equal | `set::same`, `xor::opposite` | Identity (gap 1), mutation | Not needed if the port keeps one table per unit and checks on one thread; otherwise a recursive comparison of the two trees, stopping where the nodes are one |
+
 ## Entries from S22-linear-rem (`crates/zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |

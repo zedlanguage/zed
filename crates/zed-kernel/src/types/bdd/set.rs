@@ -311,3 +311,31 @@ pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
 pub(super) fn single_key<A: Atom>(t: &Arc<Set<A>>) -> Option<&Key<A>> {
     (t.len == 1).then_some(&t.key)
 }
+
+/// Whether two sets have the same literals. Equal sets made on one thread are one node, so
+/// their ids agree; equal sets made on two threads are not (each thread has its table), so
+/// trees of one digest are walked side by side, from a stack, past each pair of subtrees that
+/// is one node. A set has one shape, its priorities a hash of its literals, so equal sets
+/// match node by node (item XOR-cross-thread).
+// Complexity tradeoff: two equal sets made on two threads are compared in `O(k)` for their `k`
+// literals at each comparison, rather than made one node by a table of the process, which
+// would take a lock at each set node made on every thread; on one thread the ids decide.
+pub(super) fn same<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> bool {
+    let mut stack = vec![(x, y)];
+    while let Some((x, y)) = stack.pop() {
+        if x.id == y.id {
+            continue;
+        }
+        if x.digest != y.digest || x.len != y.len || x.key != y.key {
+            return false;
+        }
+        for (a, b) in [(&x.left, &y.left), (&x.right, &y.right)] {
+            match (a, b) {
+                (Some(a), Some(b)) => stack.push((a, b)),
+                (None, None) => {}
+                _ => return false,
+            }
+        }
+    }
+    true
+}
