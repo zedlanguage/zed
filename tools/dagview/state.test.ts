@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
+import { buildGraph, buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
 
 const plan = `# Plan
 ## Items by level
@@ -129,10 +129,10 @@ test("retries, rejections, runtime and last tests come from the log", () => {
   assert.equal(n.role, "repair");
 });
 
-test("the XV checks appear as parts of XE2, and unplanned ids get a node", () => {
+test("the XV checks appear as parts of XE2, and an unplanned id with a ledger line gets a node", () => {
   const nodes = by(buildNodes(inputs(
     "2026-11-02 10:00:00 | XV-Q8:verify#1 | one\n2026-11-02 10:01:00 | XV-Q8:verify#1 | two\n2026-11-02 10:01:00 | XV-Q9:verify#1 | three\n",
-    "",
+    '{"id":"XE2","state":"fixing"}\n',
   )));
   const x = nodes.get("XE2")!;
   assert.equal(x.planned, false);
@@ -328,4 +328,60 @@ test("a label naming several items with commas is a line of each, not an item of
   assert.equal(nodes.has("A, LR2"), false);
   assert.equal(nodes.get("A")!.logLines, 1);
   assert.equal(nodes.get("LR2")!.logLines, 1);
+});
+
+test("a done item's ledger feeds into an item with override needs are kept; an unfinished one's are dropped and reported", () => {
+  const inp = inputs(
+    "",
+    '{"id":"X","state":"fixed","by":"X:merge#1","commit":"c111111","feeds":["Y"]}\n' +
+      '{"id":"Z","state":"open","feeds":["Y"]}\n{"id":"Y","state":"open"}\n',
+  );
+  inp.overrides = { Y: { needs: [] } };
+  const g = buildGraph(inp);
+  assert.deepEqual(by(g.nodes).get("Y")!.needs, ["X"]);
+  assert.deepEqual(g.problems, ["DROPPED FEED: Z feeds Y, whose override lists its needs (add Z there, or remove the feed)"]);
+});
+
+test("a feed into an item outside the graph is reported; one from an outside item is not", () => {
+  const inp = inputs("", '{"id":"X","state":"open","feeds":["O","C"]}\n{"id":"V","state":"done","feeds":["C"]}\n');
+  inp.overrides = { O: { outside: true }, V: { outside: true } };
+  const g = buildGraph(inp);
+  assert.deepEqual(g.problems, ["FEED INTO OUTSIDE ITEM: X feeds O"]);
+  assert.ok(by(g.nodes).get("C")!.needs.includes("X"));
+});
+
+test("override needs replace a plan row's needs, and feeds into it still count", () => {
+  const inp = inputs("", '{"id":"X","state":"fixed","by":"orchestrator","feeds":["C"]}\n');
+  inp.overrides = { C: { needs: ["A"] }, W: { feeds: ["C"] } };
+  assert.deepEqual(by(buildNodes(inp)).get("C")!.needs, ["A", "W", "X"]);
+});
+
+test("a ledger id with a colon or joined with + is a line of each item it names", () => {
+  const g = buildGraph(inputs(
+    "2026-11-02 10:00:00 | A+LR2:impl#1 | started\n",
+    '{"id":"A:merge","state":"merged","commit":"c111111","needs":["A"]}\n' +
+      '{"id":"A+LR2","state":"note","what":"merge label","feeds":["C"]}\n{"id":"B+Q","state":"note","feeds":["C"]}\n',
+  ));
+  const nodes = by(g.nodes);
+  assert.deepEqual([...nodes.keys()].sort(), ["A", "B", "C", "LR2"]);
+  assert.equal(nodes.get("A")!.state, "done");
+  assert.deepEqual(nodes.get("A")!.needs, []);
+  assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "LR2"]);
+  assert.equal(nodes.get("LR2")!.logLines, 1);
+  assert.deepEqual(g.problems, ['LABEL WITH NO ITEM: Q (from "B+Q"; give it a ledger line or an override)']);
+});
+
+test("a log label alone makes no node, and one not written by the orchestrator is reported", () => {
+  const g = buildGraph(inputs(
+    "2026-11-02 10:00:00 | Q:orch | lock taken\n2026-11-02 10:00:01 | R | merged\n" +
+      "2026-11-02 10:00:02 | S:orchestrator | status\n2026-11-02 10:00:03 | T:impl#1 | start\n",
+    '{"id":"T","state":"fixing"}\n',
+  ));
+  const nodes = by(g.nodes);
+  assert.deepEqual(["Q", "R", "S"].map((id) => nodes.has(id)), [false, false, false]);
+  assert.equal(nodes.get("T")!.state, "active");
+  assert.deepEqual(g.problems, [
+    'LABEL WITH NO ITEM: Q (from "Q:orch"; give it a ledger line or an override)',
+    'LABEL WITH NO ITEM: R (from "R"; give it a ledger line or an override)',
+  ]);
 });

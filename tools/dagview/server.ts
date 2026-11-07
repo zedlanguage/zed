@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId } from "./state.ts";
+import { buildGraph, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
 import { Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph } from "./layout.ts";
@@ -92,7 +92,7 @@ async function state() {
   }
   await originCommits(ledger.flatMap(ledgerCommits), origin ?? "");
   const now = Date.now();
-  const nodes = buildNodes({
+  const { nodes, problems } = buildGraph({
     plan: parsePlan(plan),
     log,
     ledger,
@@ -107,6 +107,7 @@ async function state() {
     direct: Object.fromEntries(direct),
     log: log.slice(-60).reverse(),
     warnings: overrideWarnings(overrides),
+    problems,
     machine: {
       load: loadavg.split(" ").slice(0, 3).join(" "),
       lock: lock.trim(),

@@ -123,9 +123,9 @@ export function parseLog(text: string): LogEntry[] {
     const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \| ([^|]+?) \| (.*)$/.exec(line);
     if (!m) continue;
     // "A:impl#1", and "A:orchestrator" or "A:code-sweep" with no attempt: all three are lines of A.
-    // "A, B:orchestrator" or "A, B" is a line of A and a line of B.
+    // "A, B:orchestrator", "A+B:merge#1" or "A, B" is a line of A and a line of B.
     const label = /^([^:#]+):([a-z][^#]*?)(?:#(.*))?$/.exec(m[2]);
-    for (const id of (label ? label[1] : m[2]).split(/\s*,\s*/)) {
+    for (const id of (label ? label[1] : m[2]).split(/\s*[,+]\s*/)) {
       out.push({
         at: Date.parse(m[1].replace(" ", "T")),
         time: m[1],
@@ -185,6 +185,16 @@ export function resolveId(raw: string, known: Map<string, string>): { id: string
   return { id: known.get(bare.toLowerCase()) ?? bare, sub: "" };
 }
 
+// The items a ledger id names: "STRNAN-spec:merge" is STRNAN-spec, and "A+B" or "A, B" is A and B.
+export function ledgerItems(raw: string, known: Map<string, string>): string[] {
+  const ids = raw
+    .replace(/:.*$/s, "")
+    .split(/\s*[,+]\s*/)
+    .map((part) => resolveId(part, known)?.id ?? "")
+    .filter((id) => id !== "");
+  return [...new Set(ids)];
+}
+
 export function shortLabel(title: string): string {
   const text = title.replace(/^Done:\s*/, "").replaceAll("`", "");
   const head = text.split(/[:;(]| - /)[0].trim();
@@ -215,63 +225,58 @@ export interface Inputs {
   now: number;
 }
 
+// The nodes, and the problems board-check.sh prints: edges dagview leaves out and labels that name no item.
+export interface BoardState {
+  nodes: ViewNode[];
+  problems: string[];
+}
+
 export function buildNodes(inp: Inputs): ViewNode[] {
+  return buildGraph(inp).nodes;
+}
+
+export function buildGraph(inp: Inputs): BoardState {
   const known = new Map<string, string>();
   for (const r of inp.plan) known.set(r.id.toLowerCase(), r.id);
+  const problems: string[] = [];
 
+  // The label an item is named by when nothing else names it, for the problem that reports it.
+  const labelOf = new Map<string, string>();
   const logs = new Map<string, { entry: LogEntry; sub: string }[]>();
   for (const entry of inp.log) {
     const r = resolveId(entry.id, known);
     if (!r) continue;
     if (!logs.has(r.id)) logs.set(r.id, []);
     logs.get(r.id)!.push({ entry, sub: r.sub });
+    // The orchestrator's bookkeeping (status, plan and lock lines) names no task.
+    if (entry.role !== "orchestrator" && !labelOf.has(r.id)) labelOf.set(r.id, entry.label);
   }
+  // Only a ledger line whose id is the item's own makes the item a node; a line of a label such as
+  // "A:merge" or "A+B" goes to each item it names.
   const ledger = new Map<string, LedgerEntry[]>();
+  const named = new Set<string>();
   for (const e of inp.ledger) {
-    const id = resolveId(e.id, known)?.id ?? e.id;
-    if (!ledger.has(id)) ledger.set(id, []);
-    ledger.get(id)!.push(e);
+    const ids = ledgerItems(e.id, known);
+    for (const id of ids) {
+      if (!ledger.has(id)) ledger.set(id, []);
+      ledger.get(id)!.push(e);
+      if (!/[:,+]/.test(e.id)) named.add(id);
+      else if (!labelOf.has(id)) labelOf.set(id, e.id);
+    }
   }
 
   const outside = (id: string) => inp.overrides[id]?.outside === true;
   const rows = inp.plan.filter((r) => !outside(r.id));
   const planned = new Set(rows.map((r) => r.id));
-  // An item only the orchestrator's bookkeeping names (status, plan and lock lines) is not a task.
-  const bookkeeping = (id: string) =>
-    !ledger.has(id) && !inp.overrides[id] && (logs.get(id) ?? []).every((l) => l.entry.role === "orchestrator");
+  // A label alone makes no node: an item needs a plan row, a ledger line or an override.
   for (const id of new Set([...logs.keys(), ...ledger.keys()])) {
-    if (!planned.has(id) && !bookkeeping(id) && !outside(id)) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
+    if (planned.has(id) || outside(id)) continue;
+    if (named.has(id) || inp.overrides[id]) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
+    else if (labelOf.has(id)) problems.push(`LABEL WITH NO ITEM: ${id} (from "${labelOf.get(id)}"; give it a ledger line or an override)`);
   }
-  // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
-  // An override's needs replace what the ledger says the item needs: the needs of its own ledger
-  // lines and the feeds into it of other items' ledger lines, so a wrong one of either can be corrected.
-  const corrected = (id: string) => Array.isArray(inp.overrides[id]?.needs);
-  const edges: [string, { needs?: string[]; feeds?: string[] }, boolean][] = [
-    ...Object.entries(inp.overrides).map(([id, ov]): [string, Override, boolean] => [id, ov, false]),
-    ...[...ledger].flatMap(([id, es]) =>
-      es.map((e): [string, LedgerEntry, boolean] => [id, corrected(id) ? { ...e, needs: undefined } : e, true]),
-    ),
-  ];
-  const own = new Map<string, string[]>();
-  const fed = new Map<string, string[]>();
-  // An agent may write a bare string; only a list of ids is read.
-  const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
-  for (const [id, ov, fromLedger] of edges) {
-    if (!own.has(id)) own.set(id, []);
-    own.get(id)!.push(...list(ov.needs));
-    for (const f of list(ov.feeds)) {
-      if (fromLedger && corrected(f)) continue;
-      if (!fed.has(f)) fed.set(f, []);
-      fed.get(f)!.push(id);
-    }
-  }
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    const extra = [...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])].filter((n) => !r.needs.includes(n));
-    if (extra.length > 0) rows[i] = { ...r, needs: [...r.needs, ...new Set(extra)] };
-    if (rows[i].needs.some(outside)) rows[i] = { ...rows[i], needs: rows[i].needs.filter((n) => !outside(n)) };
-  }
+  const nodeIds = new Set(rows.map((r) => r.id));
 
+  // A node's state does not depend on its needs, so it is known before the edges are.
   const states = new Map<string, NodeState>();
   for (const r of rows) {
     const ov = inp.overrides[r.id]?.state;
@@ -298,7 +303,45 @@ export function buildNodes(inp: Inputs): ViewNode[] {
     states.set(r.id, s);
   }
 
-  return rows.map((r) => {
+  // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
+  // An override's needs replace the needs of the item's plan row and of its own ledger lines, and the
+  // ledger feeds into it of unfinished items, so a wrong one of any can be corrected. A done item's
+  // ledger feeds into it stay: an edge out of a done item never points backward.
+  const corrected = (id: string) => Array.isArray(inp.overrides[id]?.needs);
+  const edges: [string, { needs?: string[]; feeds?: string[] }, boolean][] = [
+    ...Object.entries(inp.overrides).map(([id, ov]): [string, Override, boolean] => [id, ov, false]),
+    ...[...ledger]
+      .filter(([id]) => nodeIds.has(id))
+      .flatMap(([id, es]) => es.map((e): [string, LedgerEntry, boolean] => [id, corrected(id) ? { ...e, needs: undefined } : e, true])),
+  ];
+  const own = new Map<string, string[]>();
+  const fed = new Map<string, string[]>();
+  // An agent may write a bare string; only a list of ids is read.
+  const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
+  for (const [id, ov, fromLedger] of edges) {
+    if (!own.has(id)) own.set(id, []);
+    own.get(id)!.push(...list(ov.needs));
+    for (const f of list(ov.feeds)) {
+      if (outside(f)) {
+        if (!outside(id)) problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f}`);
+        continue;
+      }
+      if (fromLedger && corrected(f) && states.get(id) !== "done") {
+        problems.push(`DROPPED FEED: ${id} feeds ${f}, whose override lists its needs (add ${id} there, or remove the feed)`);
+        continue;
+      }
+      if (!fed.has(f)) fed.set(f, []);
+      fed.get(f)!.push(id);
+    }
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const all = [...(corrected(r.id) ? [] : r.needs), ...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])];
+    rows[i] = { ...r, needs: [...new Set(all)].filter((n) => n !== r.id && !outside(n)) };
+  }
+
+
+  const nodes = rows.map((r): ViewNode => {
     const lines = logs.get(r.id) ?? [];
     const ledgerLines = ledger.get(r.id) ?? [];
     const lastLedger = ledgerLines.at(-1);
@@ -362,6 +405,7 @@ export function buildNodes(inp: Inputs): ViewNode[] {
       note,
     };
   });
+  return { nodes, problems: [...new Set(problems)] };
 }
 
 // Edges to draw when only direct dependencies are wanted: a need that another
