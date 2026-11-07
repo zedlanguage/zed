@@ -462,7 +462,7 @@ fn read_rat(s: &str) -> Result<Option<Rat>, TooLarge> {
         if !digits(whole) || !digits(frac) {
             return Ok(None);
         }
-        return Rat::decimal(s);
+        return Rat::decimal_parts(sign, whole, frac, None).map(Some);
     }
     let (num, den) = match body.split_once('/') {
         None => (body.strip_suffix('r').unwrap_or(body), None),

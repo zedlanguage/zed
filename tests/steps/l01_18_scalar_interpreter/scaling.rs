@@ -1,6 +1,8 @@
 //! The scalar tier at the rule of low complexity (DESIGN.md Part G).
 
-use zed_kernel::{Evaluator, Prim, Term, Value, World};
+use num_bigint::{BigInt, BigUint};
+use num_traits::One;
+use zed_kernel::{Evaluator, Prim, Rat, Term, Value, World};
 
 #[test]
 fn a_chain_of_n_failures_merging_scales() {
@@ -134,4 +136,111 @@ fn reading_a_rat_of_two_wide_parts_scales() {
             .into_iter()
             .collect()
     });
+}
+
+/// The decimal digits of the product of `p^e` over `factors`, printed by the kernel.
+fn product(factors: &[(u32, usize)]) -> String {
+    let r = factors.iter().fold(Rat::int(BigInt::one()), |r, &(p, e)| {
+        let power = Rat::int(BigInt::from(p)).pow(&BigUint::from(e));
+        r.mul(&power.expect("memory is given"))
+            .expect("memory is given")
+    });
+    Value::integer(r).to_string()
+}
+
+/// `0.` and the digits of `x` after zeros, `k` digits in all: the text of `x / 10^k`.
+fn fraction(x: &str, k: usize) -> String {
+    format!("0.{}{x}", "0".repeat(k - x.len()))
+}
+
+/// Texts of decimals of about n digits, by the powers of 2 and 5 their digits hold: the texts
+/// `rat(s)` reads, and those of literals with an exponent, `<digits>e<exp>r` without the `r`,
+/// which `Rat::decimal` reads. In `0.<5^n>`, which is `1r/2r^n`, the n factors of 5 of the
+/// digits cancel against `10^n`; in `<5^m>.0` one of the m factors cancels; in `<5^m>e-n` the
+/// m are moved into the kept power of 5.
+fn valuation_families(n: usize) -> Vec<Family> {
+    // `5^m` and `2^m` of about n digits.
+    let (m5, m2) = (n * 10 / 7, n * 10 / 3);
+    let both = product(&[(2, n), (5, n / 2), (7, 1)]);
+    vec![
+        (
+            "a high power of 5",
+            vec![
+                fraction(&product(&[(5, n)]), n),
+                format!("{}.0", product(&[(5, m5)])),
+            ],
+            vec![format!("{}e-{n}", product(&[(5, m5)]))],
+        ),
+        (
+            "a high power of 2",
+            vec![
+                fraction(&product(&[(2, n)]), n),
+                format!("-{}.0", product(&[(2, m2)])),
+            ],
+            vec![format!("-{}e-{n}", product(&[(2, m2)]))],
+        ),
+        (
+            "high powers of 2 and 5",
+            vec![fraction(&both, both.len() + n / 4), format!("{both}.0")],
+            vec![format!("{both}e{n}")],
+        ),
+        (
+            "no high power",
+            vec![format!(
+                "{}.{}",
+                digits(n / 2, 21, '1'),
+                digits(n / 2, 22, '3')
+            )],
+            vec![format!("{}e-{}", digits(n, 23, '9'), digits(n, 24, '1'))],
+        ),
+    ]
+}
+
+/// A family of [`valuation_families`]: its name, the texts `rat(s)` reads and the literals
+/// with an exponent.
+type Family = (&'static str, Vec<String>, Vec<String>);
+
+/// A decimal is reduced by the powers of 2 and 5 of its digits, which can be as many as the
+/// digits: each power `v` is bounded by testing `p^(2^i)`, built by squaring, while it divides,
+/// read by its binary digits from the top and divided out at once, and the remaining power of
+/// 10 is built by squaring, all with `num::fast`'s products and quotients, O(n log^2 v), at
+/// most the order of the reading of the digits, O(M(n) log n). Each family runs through
+/// `rat(s)` and through `Rat::decimal`, the reading of a literal, at 160,000 and 1,280,000
+/// digits. At 80,000 the divisions lie where `num::fast::div_rem` takes long division, whose
+/// cost grows as the square of the width, and the family with both powers grew 32.5 times to
+/// 640,000 digits; from 160,000, 13.8 to 20.8 times (2026-11-07).
+#[test]
+fn reading_a_decimal_with_high_powers_of_2_and_5_scales() {
+    let n = 160_000;
+    let built = zed_tests::scaling::inputs(n, valuation_families);
+    let cast = |s: &String| Term::Prim(Prim::CastRat, vec![Term::Lit(Value::str(s))]);
+    for i in 0..built[&n].len() {
+        let what = built[&n][i].0;
+        let terms: std::collections::HashMap<usize, Vec<Term>> = built
+            .iter()
+            .map(|(&m, families)| (m, families[i].1.iter().map(cast).collect()))
+            .collect();
+        for t in &terms[&n] {
+            let v = zed_kernel::eval(t).unwrap();
+            assert!(!v.to_string().starts_with('#'), "{what}: the text reads");
+        }
+        zed_tests::scaling::check(
+            &format!("rat(s) of a decimal of n digits with {what}"),
+            n,
+            |m| {
+                for t in &terms[&m] {
+                    zed_kernel::eval(t).unwrap();
+                }
+            },
+        );
+        zed_tests::scaling::check(
+            &format!("a rat literal with an exponent, of n digits with {what}"),
+            n,
+            |m| {
+                for s in &built[&m][i].2 {
+                    Rat::decimal(s).unwrap().expect("a decimal literal");
+                }
+            },
+        );
+    }
 }

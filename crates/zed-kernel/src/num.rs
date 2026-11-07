@@ -126,6 +126,18 @@ impl Rat {
         if !read || exp.is_some_and(|(_, e)| e.is_empty() || !digits(e)) {
             return Ok(None);
         }
+        Rat::decimal_parts(sign, whole, frac, exp).map(Some)
+    }
+
+    /// The exact value of a decimal whose parts were checked: `whole` and `frac` decimal digits,
+    /// not both empty, and `exp`, when present, a sign and decimal digits, not empty. Each digit
+    /// is read once. [`TooLarge`] as for [`Rat::decimal`].
+    pub(crate) fn decimal_parts(
+        sign: Sign,
+        whole: &str,
+        frac: &str,
+        exp: Option<(Sign, &str)>,
+    ) -> Result<Self, TooLarge> {
         // Complexity tradeoff: the memory asked for is 64 bits for each digit of the text, a
         // measured bound, not a proved one, on the copy of the mantissa's digits, their reading
         // by halves, and the division by a power of ten in lowest terms or the powers of 2 and
@@ -133,8 +145,11 @@ impl Rat {
         // the `3.32 n` bits of the number) over texts of 2^12 to 2^24 digits, all nines, a long
         // fraction, a run of zeros and an exponent, measured on 2026-11-06 with glibc's mmap
         // threshold fixed at 128 KiB; with its default, which keeps freed blocks of up to 32 MiB
-        // on the heap, 49.1. So a literal needing less is refused when
-        // the free memory lies between the two, and none aborts. Tested by
+        // on the heap, 49.1. Since RAT-parse-scale reads the powers of 2 and 5 by their binary
+        // digits, decimals whose digits hold a high power of 2, of 5 or of both, of 13,000 to
+        // 1,280,000 digits, peaked at most at 42.1 bits per digit (allocator bytes, 2026-11-07,
+        // `l01_18_scalar_interpreter::scaling`'s families). So a literal needing less is refused
+        // when the free memory lies between the two, and none aborts. Tested by
         // `a_long_decimal_literal_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the reading for its own memory.
         let len = whole.len() + frac.len() + exp.map_or(0, |(_, e)| e.len());
@@ -144,29 +159,26 @@ impl Rat {
             false => BigInt::from_biguint(sign, read_digits(&[whole, frac].concat())),
         };
         let shift = u64::try_from(frac.len()).expect("a text's length fits in 64 bits");
-        Ok(Some(match exp {
+        Ok(match exp {
             None => Rat::over_ten_to(mantissa, shift),
             Some((s, e)) => {
                 let e = BigInt::from_biguint(s, read_digits(e)) - shift;
                 Rat::extract(mantissa, BigInt::one(), vec![(2, e.clone()), (5, e)])
             }
-        }))
+        })
     }
 
     /// `digits / 10^k` as a plain reduced rational. `10^k` is `2^k 5^k`, so the common factor
-    /// is `2^min(v2, k) 5^min(v5, k)` for the valuations `v2` and `v5` of `digits`: a shift and
-    /// divisions by powers of 5 while they divide, which is one division by 5 for most digits,
-    /// where num-bigint's gcd of the two wide numbers is O(n^2).
+    /// is `2^min(v2, k) 5^min(v5, k)` for the valuations `v2` and `v5` of `digits`, found with
+    /// the cap `k` ([`valuation_upto`]) and divided out, where num-bigint's gcd of the two wide
+    /// numbers is O(n^2).
     fn over_ten_to(digits: BigInt, k: u64) -> Rat {
         if digits.is_zero() {
             return Rat::int(digits);
         }
-        let (twos, rest) = valuation(digits, 2);
-        let (fives, rest) = valuation(rest, 5);
-        let (t, f) = (twos.min(k), fives.min(k));
-        let five = |e: u64| Pow::pow(BigUint::from(5u32), e);
-        let num = (rest * BigInt::from(five(fives - f))) << (twos - t);
-        let den = BigInt::from(five(k - f) << (k - t));
+        let (t, rest) = valuation_upto(digits, 2, k);
+        let (f, num) = valuation_upto(rest, 5, k);
+        let den = BigInt::from(fast::pow(BigUint::from(5u32), k - f) << (k - t));
         Rat::plain(num, den)
     }
 
@@ -1065,39 +1077,90 @@ fn read_parts(digits: &str, tens: &[BigUint]) -> BigUint {
     fast::mul(&read_parts(high, tens), &tens[i]) + read_parts(low, tens)
 }
 
-/// The power of the prime `p` in `n`, and `n` without it. Powers `p, p^2, p^4, ...` divide
-/// out while they can, then the same powers in decreasing order, so the cost is `log v`
-/// divisions for a power `v`, not `v`.
+/// The power of the prime `p` in `n`, and `n` without it ([`valuation_upto`] with no cap).
 fn valuation(n: BigInt, p: u64) -> (u64, BigInt) {
-    if n.is_zero() || n.magnitude().is_one() {
+    valuation_upto(n, p, u64::MAX)
+}
+
+/// `v = min(v_p(n), cap)` for the power `v_p(n)` of the prime `p` in `n`, and `n / p^v`.
+///
+/// For `p = 2`, the trailing zero bits. Otherwise, after a check that `p` divides `n` (O(n)),
+/// the powers `P_i = p^(2^i)` are built by squaring while `P_i` divides `n`, each tested by
+/// the remainder `x = |n| mod P_(i+1)`, until `x` is not zero or `2^(i+1)` passes `cap`; let
+/// `J` be the last `i`. (`P_(J+1)` above `|n|` is not divided by: `x` is `|n|`.) If `x` is
+/// zero, `v_p(n) >= 2^(J+1) > cap`, so `v` is `cap`. Otherwise `v_p(x)` is `v_p(n)`, below
+/// `2^(J+1)`, and its binary digits are read from the top: at step `i`, with `x < P_(i+1)`,
+/// `x = q P_i + r`; when `r` is zero, `2^i` is a digit and `x` becomes `q`, otherwise `x`
+/// becomes `r`, which has the same power of `p` as `x` since that is below `2^i`. Both are
+/// below `P_i`, so the widths halve from step to step. Then `n` is divided once by `p^v`, the
+/// product of the `P_i` of its digits.
+///
+/// The steps down, the powers and the last division cost O(M(n)) in all. The tests on the
+/// way up divide `n`, of `N` bits, by powers of `s_i = 2^(i+1) log2 p` bits, `(N / s_i) M(s_i)`
+/// each, so O(N log^2 v) in all: O(N) for a power `v` of a few factors, as most decimals have,
+/// and O(M(N) log N) = O(N log^2 N) at most, the order of reading the digits.
+fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
+    if n.is_zero() || cap == 0 {
         return (0, n);
     }
     if p == 2 {
-        let z = n.trailing_zeros().expect("n is not zero");
+        let z = n.trailing_zeros().expect("n is not zero").min(cap);
         return (z, n >> z);
     }
-    let mut n = n;
-    let mut powers = vec![BigInt::from(p)];
-    let mut v = 0u64;
-    loop {
-        let last = powers.last().expect("powers starts with p");
-        let (q, r) = fast::div_rem(n.magnitude(), last.magnitude());
-        if !r.is_zero() {
-            break;
+    if !divides(n.magnitude(), p) {
+        return (0, n);
+    }
+    // Complexity tradeoff: each test on the way up divides the whole of `n`, so a power `v` as
+    // wide as `n` costs O(n log^2 n), a log above building every `P_i` to the width of `n`
+    // first, O(M(n)); but that costs O(M(n)) for every `v`, and through long division of
+    // balanced widths it was quadratic up to some 2000 words for the one factor of 5 most
+    // decimals have, where the tests cost O(n). The reading of the digits is O(n log^2 n) as
+    // well (COMPLEXITY.md K41).
+    // `P_0 .. P_J`, each dividing `n`.
+    let mut powers = vec![BigUint::from(p)];
+    let mut x = loop {
+        let i = powers.len() - 1;
+        let next = fast::mul(&powers[i], &powers[i]);
+        let x = match next.bits() > n.bits() {
+            true => n.magnitude().clone(),
+            false => fast::div_rem(n.magnitude(), &next).1,
+        };
+        if !x.is_zero() || i + 1 >= 64 || 2u64 << i > cap {
+            break x;
         }
-        n = BigInt::from_biguint(n.sign(), q);
-        v += 1 << (powers.len() - 1);
-        let next = fast::mul_int(last, last);
         powers.push(next);
-    }
-    for (i, pw) in powers.iter().enumerate().rev() {
-        let (q, r) = fast::div_rem(n.magnitude(), pw.magnitude());
-        if r.is_zero() {
-            n = BigInt::from_biguint(n.sign(), q);
-            v += 1 << i;
+    };
+    let v = match x.is_zero() {
+        // `p^(2^(J+1))` divides `n`, and `2^(J+1) > cap`.
+        true => cap,
+        false => {
+            let mut v = 0u64;
+            for (i, pw) in powers.iter().enumerate().rev() {
+                let (q, r) = fast::div_rem(&x, pw);
+                x = match r.is_zero() {
+                    true => {
+                        v += 1 << i;
+                        q
+                    }
+                    false => r,
+                };
+            }
+            // Below `2^(J+1)`, but it may pass a cap that is not a power of 2 less 1.
+            v.min(cap)
         }
+    };
+    drop(x);
+    if v == 0 {
+        return (0, n);
     }
-    (v, n)
+    // The smaller powers first, so that each product is of a number by a wider one.
+    let pv = powers
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| v >> i & 1 == 1)
+        .fold(BigUint::one(), |acc, (_, pw)| fast::mul(&acc, pw));
+    drop(powers);
+    (v, fast::exact_quotient(&n, &BigInt::from(pv)))
 }
 
 /// The prime powers of two numbers merged by prime, `f` combining the exponents of a prime

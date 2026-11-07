@@ -185,3 +185,61 @@ fn a_decimal_keeps_the_powers_of_2_and_5_it_does_not_cancel() {
     let by_gcd = Rat::new(digits / &g, ten_k / g).unwrap();
     assert_eq!(read(&wide), Value::rat(by_gcd).to_string());
 }
+
+/// `2^a 5^b m` as a decimal with `k` digits after the point, zeros put in front as needed.
+fn with_point(digits: &str, k: usize) -> String {
+    let padded = format!(
+        "{}{digits}",
+        "0".repeat((k + 1).saturating_sub(digits.len()))
+    );
+    let (whole, frac) = padded.split_at(padded.len() - k);
+    format!("{whole}.{}", if frac.is_empty() { "0" } else { frac })
+}
+
+#[test]
+fn a_decimal_is_reduced_as_by_the_gcd_whatever_its_powers_of_2_and_5() {
+    // The powers of 2 and 5 below, at and above the number of fraction digits `k`, near powers
+    // of 2 (where the reading of the power by its binary digits changes length), with a cofactor
+    // `m`, and through an exponent, which keeps them as powers.
+    let twos = [0u32, 1, 2, 3, 7, 8, 9, 63, 64, 65, 200];
+    let fives = [
+        0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 31, 33, 100, 255, 256, 257,
+    ];
+    for a in twos {
+        for b in fives {
+            for m in [1u32, 3, 7, 21] {
+                let d = (BigInt::one() << a) * Pow::pow(BigInt::from(5), b) * m;
+                let text = d.to_string();
+                let (a, b) = (a as usize, b as usize);
+                let ks = [
+                    0,
+                    1,
+                    2,
+                    3,
+                    5,
+                    6,
+                    a,
+                    a + 1,
+                    b,
+                    b + 1,
+                    b.saturating_sub(1),
+                    a + b + 3,
+                ];
+                for k in ks {
+                    let ten_k = Pow::pow(BigInt::from(10), k);
+                    let want = Rat::new(d.clone(), ten_k.clone()).unwrap();
+                    let s = with_point(&text, k);
+                    assert_eq!(read_value(&s), Value::rat(want.clone()), "rat({s:?})");
+                    let lit = Rat::decimal(&format!("{text}e-{k}")).unwrap().unwrap();
+                    assert_eq!(lit, want, "{text}e-{k}");
+                    let up = Rat::decimal(&format!("{s}e{k}")).unwrap().unwrap();
+                    let want_up = Rat::new(d.clone(), BigInt::one());
+                    assert_eq!(up, want_up.unwrap(), "{s}e{k}");
+                }
+            }
+        }
+    }
+    let half = Rat::new(BigInt::one(), BigInt::from(2)).unwrap();
+    assert_eq!(Rat::decimal("5e-1").unwrap().unwrap(), half);
+    assert_eq!(read("-0.5000"), "-1r/2r");
+}
