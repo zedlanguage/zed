@@ -16,6 +16,7 @@ mod deep_rec;
 mod group_oracle;
 mod judgments;
 mod listing;
+mod one_pass;
 mod oracle;
 mod rec;
 mod rec_order;

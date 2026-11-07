@@ -2168,6 +2168,14 @@ mod xor {
             }
         }
 
+        /// The atoms of the part as an exclusive or in its one form ([`Part::xor_tag`]), in
+        /// order, and the constant joined to them; `None` for a part that is not one.
+        pub(in crate::types) fn exclusive_or(&self) -> Option<(Vec<A>, bool)> {
+            let (atoms, constant) = self.xor_tag()?;
+            let atoms = set::iter(Some(&atoms)).map(|(a, _)| a.clone());
+            Some((atoms.collect(), constant))
+        }
+
         /// The exclusive or of `atoms`, each taken, and `constant`, in its one form.
         pub(super) fn xor(atoms: Tree<A>, constant: bool) -> Part<A> {
             let Some(root) = atoms else {

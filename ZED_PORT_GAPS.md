@@ -2497,3 +2497,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A cargo feature, `preimage-ref`, that adds a whole module and its re-export, off in a release build; every package that builds the zedc and zedc-preimage dylibs asks for it, so their copies are not rebuilt | `zedc_preimage::preimage_ref`, `zedc::store::preimage_ref` under `#[cfg(feature = "preimage-ref")]` | No conditional compilation | A unit of its own that only the test units import, so the release build does not hold it; no build mode needed |
+
+## Entries from EMPTY-overlap-chain (`crates/zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<u64, Known>` memo keyed by a part node's id, filled during an explicit-stack walk whose entries carry a "children done" flag, each node's components held as an `Rc<[usize]>` shared with its `!` parent | `Choices::decide` | Mutation (gap 11); Identity (gap 1) for the node id | A map from the node's identity threaded through the walk's fold; the components as an immutable shared sequence |
+| A `HashMap<usize, Pick>` of the choices along a decision list, each `Pick` holding a `HashSet` of refused cells, updated in place block by block and read hypothetically before each update (`Picks::fits`) | `Choices::list`, `Picks::fix` | Mutation (gap 11) | Persistent maps threaded through the fold over the blocks |
+| A `&dyn Fn(&Row) -> (usize, usize)` closure over the region's index, read for every atom | `Choices::at`, `Searching::one_pass` | none | A function value |
