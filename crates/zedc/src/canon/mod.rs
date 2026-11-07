@@ -40,8 +40,9 @@ pub use domain::Domain;
 
 /// The version of the rule set and the serialization, hashed into every address. Version 3
 /// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name;
-/// version 4 writes an exact number past `i64` by its limbs, not its decimal digits.
-pub const VERSION: u32 = 4;
+/// version 4 writes an exact number past `i64` by its limbs, not its decimal digits; version 5
+/// writes an interval end or a class past `i64` by its sign and limbs too.
+pub const VERSION: u32 = 5;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {

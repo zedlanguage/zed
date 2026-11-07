@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
+use zed_kernel::num::{TooLarge, room};
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division.
@@ -872,6 +873,17 @@ impl Atom {
             ),
         }
     }
+
+    /// Bounds on the bits of the value and of the widest number [`Atom::expand`] builds.
+    fn widths(&self) -> (BigUint, BigUint) {
+        match self {
+            Atom::Int(b) => (BigUint::from(b.bits()), BigUint::from(b.bits())),
+            Atom::Root { rad, k, .. } => {
+                let (value, widest) = rad.widths();
+                (value / k + 1u32, widest)
+            }
+        }
+    }
 }
 
 impl Core {
@@ -1071,6 +1083,19 @@ impl Core {
             .iter()
             .map(|(a, e)| expand_pow(&a.expand(), e))
             .product()
+    }
+
+    /// Bounds on the bits of the value and of the widest number [`Core::expand`] builds: each
+    /// power and each partial product is at most the value, every factor being at least 1.
+    fn widths(&self) -> (BigUint, BigUint) {
+        let (mut value, mut widest) = (BigUint::ZERO, BigUint::ZERO);
+        for (a, e) in &self.0 {
+            let (v, w) = a.widths();
+            value += e * v;
+            widest = widest.max(w);
+        }
+        let widest = widest.max(value.clone());
+        (value, widest)
     }
 
     /// The value modulo `n >= 1`, by `modpow`, or `None` when a factor is a root, whose
@@ -1288,6 +1313,23 @@ impl Kept {
             s + c * BigInt::from(core.expand())
         });
         num / BigInt::from(self.den.clone())
+    }
+
+    /// Bounds on the bits of the value and of the widest number [`Kept::expand`] builds: a
+    /// term `c * core` has at most the bits of both, and the sum of the terms and `d` at most
+    /// the widest of them and one bit for each doubling of their count.
+    fn widths(&self) -> (BigUint, BigUint) {
+        let mut sum = BigUint::from(self.d.bits());
+        let mut widest = BigUint::ZERO;
+        for (c, core) in &self.terms {
+            let (v, w) = core.widths();
+            sum = sum.max(v + c.bits());
+            widest = widest.max(w);
+        }
+        let count = self.terms.len() as u64 + 1;
+        sum += 64 - u64::from(count.leading_zeros());
+        let widest = widest.max(sum.clone());
+        (sum, widest)
     }
 
     /// The negation of the form. Its value lies outside `i128` except when `self` is `2^127`,
@@ -1690,6 +1732,25 @@ impl Num {
     pub const ZERO: Num = Num(Word::Small(0));
     /// One.
     pub const ONE: Num = Num(Word::Small(1));
+
+    /// The value, written out when kept, once the system gives a byte for each bit of the
+    /// widest number the writing builds ([`Kept::widths`]); [`TooLarge`] names that memory when
+    /// it refuses. A value not kept is borrowed, or built from its one word.
+    // Complexity tradeoff: the memory asked for is a byte for each bit of a bound on the widest
+    // number built (each power, product, sum and radicand), the factor `Rat::built_parts`
+    // asks, which `to_integer` measured at a peak of 5.49 times the width; this build was not
+    // measured on its own. So a value needing less is refused when the free memory lies
+    // between the two, and none aborts. Trigger: the canonical serialization of an interval end
+    // or a class past `i64` (`canon::serial`). Test:
+    // `l01_24_refinement_lattices::kept_serial` (refused at two widths, exact when given);
+    // COMPLEXITY.md S33. A complete solution would ask each allocation of the build for its
+    // own memory.
+    pub fn built(&self) -> Result<Cow<'_, BigInt>, TooLarge> {
+        if let Word::Kept(k) = &self.0 {
+            room(k.widths().1 << 3u32)?;
+        }
+        Ok(self.big())
+    }
 
     /// The value, written out when kept: its cost is then that of the value's digits.
     fn big(&self) -> Cow<'_, BigInt> {

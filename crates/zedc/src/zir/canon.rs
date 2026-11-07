@@ -224,7 +224,7 @@ fn region_hasher(bytes: &[u8], nodes: usize) -> blake3::Hasher {
 // regions' constants again at each comparison, two at once, and a refusal there could only
 // stop the compiler. Trigger: a lowering of wide constants inside lambdas or arms, which holds
 // them twice, once in the graph and once here. Test:
-// `l01_33_lowering::asks::equal_lambdas_of_a_wide_constant_are_one_or_refused` and
+// `l01_33_lowering::asks` (refused at two widths, one node when memory is given) and
 // `l01_37a_short_addresses::scaling`. A complete solution would hold each node's bytes once,
 // shared by its shape and by its region's contents, which needs them written after the
 // region's arguments are renumbered, before the node is entered.

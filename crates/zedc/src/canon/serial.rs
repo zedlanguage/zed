@@ -8,7 +8,7 @@
 //! Binders are canonical by then, so a binder is written by its count alone (a lambda's
 //! parameters, a pattern's `Bind`), and a bound variable by its level.
 
-use num_bigint::BigUint;
+use num_bigint::{BigUint, Sign};
 use zed_kernel::num::{Rat, TooLarge};
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
 use zed_kernel::value::Value;
@@ -17,6 +17,7 @@ use super::binders::level_of;
 use super::def::Def;
 use super::domain::Domain;
 use crate::address::ContentAddress;
+use crate::store::int::Num;
 use crate::store::interval::End;
 use crate::store::lattice::Congruence;
 
@@ -25,22 +26,41 @@ type Refs<'a> = &'a dyn Fn(&str) -> Option<ContentAddress>;
 struct Out<'a> {
     bytes: Vec<u8>,
     refs: Refs<'a>,
-    /// The first refusal of the memory for a number, after which the bytes are not used.
+    /// The first refusal of the memory for a number or for the bytes, after which the bytes
+    /// are not used.
     refused: Option<TooLarge>,
 }
 
 impl Out<'_> {
+    /// Appends `bytes` once the system gives the memory the vector grows to; a refusal is kept
+    /// and nothing more written.
+    fn put(&mut self, bytes: &[u8]) {
+        if self.refused.is_some() {
+            return;
+        }
+        let (len, cap) = (self.bytes.len(), self.bytes.capacity());
+        if cap - len < bytes.len() && self.bytes.try_reserve(bytes.len()).is_err() {
+            // What `Vec` asks to grow: twice its capacity, or what the bytes need if more.
+            let ask = (2 * cap).max(len + bytes.len());
+            self.refused = Some(TooLarge {
+                bits: BigUint::from(ask) << 3u32,
+            });
+            return;
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+
     fn tag(&mut self, t: u8) {
-        self.bytes.push(t);
+        self.put(&[t]);
     }
 
     fn word(&mut self, n: u64) {
-        self.bytes.extend_from_slice(&n.to_le_bytes());
+        self.put(&n.to_le_bytes());
     }
 
     fn str(&mut self, s: &str) {
         self.word(s.len() as u64);
-        self.bytes.extend_from_slice(s.as_bytes());
+        self.put(s.as_bytes());
     }
 
     /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
@@ -78,8 +98,25 @@ impl Out<'_> {
         }
     }
 
+    /// An integer of an interval end or a class past `i64`: its sign as a tag, then its
+    /// magnitude, as [`Out::number`] writes a numerator. A kept value is written out only after
+    /// the system gives the memory ([`Num::built`]); a refusal is kept and nothing more of the
+    /// integer written.
+    fn int(&mut self, v: &Num) {
+        if self.refused.is_some() {
+            return;
+        }
+        match v.built() {
+            Ok(b) => {
+                self.tag(u8::from(b.sign() == Sign::Minus));
+                self.magnitude(b.magnitude());
+            }
+            Err(e) => self.refused = Some(e),
+        }
+    }
+
     /// An endpoint: an integer in `i64` is a word, as an `int` value is; one past it is its
-    /// decimal text under a tag of its own.
+    /// sign and limbs ([`Out::int`]) under a tag of its own.
     fn end(&mut self, e: &End) {
         match e {
             End::NegInf => self.tag(0),
@@ -90,7 +127,7 @@ impl Out<'_> {
                 }
                 None => {
                     self.tag(3);
-                    self.str(&v.to_string());
+                    self.int(v);
                 }
             },
             End::PosInf => self.tag(2),
@@ -104,7 +141,7 @@ impl Out<'_> {
             self.end(hi);
         }
         // A class whose modulus and residue fit in `i64` is two words; one past it is their
-        // decimal texts under a tag of its own, as at `end`.
+        // signs and limbs under a tag of its own, as at `end`.
         match &d.class {
             Congruence::Bottom => self.tag(0),
             Congruence::Class { modulus, residue } => match (modulus.to_i64(), residue.to_i64()) {
@@ -115,8 +152,8 @@ impl Out<'_> {
                 }
                 _ => {
                     self.tag(2);
-                    self.str(&modulus.to_string());
-                    self.str(&residue.to_string());
+                    self.int(modulus);
+                    self.int(residue);
                 }
             },
         }
@@ -173,8 +210,7 @@ impl Out<'_> {
                 self.tag(3);
                 // The text is written block by block, as `str` writes one block.
                 self.word(s.len() as u64);
-                s.chunks()
-                    .for_each(|c| self.bytes.extend_from_slice(c.as_bytes()));
+                s.chunks().for_each(|c| self.put(c.as_bytes()));
             }
             Value::Atom(a) if a.fields.is_empty() => {
                 self.tag(4);
@@ -281,7 +317,7 @@ impl Out<'_> {
                 None => match (self.refs)(x) {
                     Some(a) => {
                         self.tag(3);
-                        self.bytes.extend_from_slice(&a.0);
+                        self.put(&a.0);
                     }
                     None => {
                         self.tag(4);
@@ -418,7 +454,8 @@ enum Job<'t> {
 }
 
 /// The serialization of a definition in normal form, or [`TooLarge`] when the system refuses
-/// the memory to build or write one of its exact numbers ([`Rat::built_parts`]).
+/// the memory to build or write one of its exact numbers ([`Rat::built_parts`], [`Num::built`])
+/// or to grow the bytes.
 pub fn def(d: &Def, refs: Refs<'_>) -> Result<Vec<u8>, TooLarge> {
     let mut out = Out {
         bytes: Vec::new(),

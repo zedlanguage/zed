@@ -165,7 +165,7 @@ fn the_address_is_pinned() {
     // machine.
     assert_eq!(
         address(&graph(DISCOUNT)).to_string(),
-        "d2e1a8db559c8bc1200419ed80ee91a852d506a89c17a7a313ea7e89a6e8f7fd"
+        "5f8e7983c8c0fa467c552359cc4928d6559f2d756b99142128b6d375af63286a"
     );
 }
 

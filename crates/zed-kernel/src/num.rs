@@ -1207,7 +1207,7 @@ pub fn bytes_of(bits: &BigUint) -> BigUint {
 /// at once, so the answer is the machine's and the evaluator sets no limit. A build that would
 /// ask for more than the system gives is reported before it starts, where num-bigint would
 /// abort the process.
-pub(crate) fn room(bits: BigUint) -> Result<(), TooLarge> {
+pub fn room(bits: BigUint) -> Result<(), TooLarge> {
     match given(&bits) {
         true => Ok(()),
         false => Err(TooLarge { bits }),
