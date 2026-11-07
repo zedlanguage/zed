@@ -745,7 +745,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Raw pointers as map keys, `*const Node` and `*const Value` | `Type::contains` | Identity | Keyed by a hash-consed id of the type and the position in the value |
 | Hardware counter opened with `perf_event_open` through `perf-event2`, and the thread CPU clock through `rustix` | `zed_tests::scaling::Meter`, `cpu_time` | Foreign library | Test harness only, so a Zed port needs it only if the tests move to Zed: an `@ffi` signature over the two system calls (L7.4) |
 
-## Entries from T2-parse (`zedc/src/parse/mod.rs`, `ast/`, `format.rs`, `lex/`)
+## Entries from T2-parse (`zedc-syntax/src/parse/mod.rs`, `ast/`, `format.rs`, `lex/`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -787,7 +787,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A complement kept beside an expression in a `OnceLock<Part>`, set once by `get_or_init` after it is made, the complement's own cell set to the expression | `Connect::negate` | Mutation, interior mutability | A memo from expression id to its complement, threaded through the calls |
 | Shared types found by one pass with a `HashSet<&Type>` and numbered from a `HashMap<&Type, Option<usize>>`, keyed by the type's value (`Hash` is its digest, `Eq` its comparison), with one counter for the whole text | `debug::shared_types`, `debug::number`, `debug::run` | Identity (gap 1: digests), mutation | A map from digest to number passed along the fold that writes |
 
-## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zir/`)
+## Entries from T2-mid (`zedc-resolve/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zir/`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -809,14 +809,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | The kernel `Pattern`'s `Clone` and `PartialEq` are written by hand as loops over explicit stacks since T2-types-rest part 1 (`term/walk.rs`, entry under T2-types-rest; they were derived and recursed), and its `Drop`, and `Type`'s, are loops since T2-types | `zed_kernel::term::Pattern` | None (a Rust limit) | Removed: the runtime frees and compares values without recursion |
 | Plan keys that are the path from the root region, so a region `d` deep stores `d` indices and all keys take O(d^2) bytes | `zir::memory::Planner` | None | One id per region (T12-Z4) |
 
-## Entries from L2.1 (`zedc/src/ast/`, `format.rs`)
+## Entries from L2.1 (`zedc-syntax/src/ast/`, `format.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `HashMap<&'a str, Span>` borrowing names from the source text, filled while a list is built | `Builder::once` and its callers (struct fields, display entries, `with` paths, type parameters) | None | A map from name to span over shared strings |
 | `let … else { unreachable!() }` on an enum variant that an earlier pass has ruled out | `elab.rs`, `check/mod.rs` (the L2 forms resolution refuses) | Partial match | A total match whose L2 arm returns the refusal, or a narrower type from resolution |
 
-## Entries from L2.2 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
+## Entries from L2.2 (`zedc-syntax/src/ast/`, `format.rs`, `resolve.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -838,7 +838,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `binary_search_by` on a sorted `Vec` of imported units | `Linked::exports` | None | A map from path to resolution |
 | `let … else { unreachable!(…) }` for a unit with imports that has text | `unit::cycle_error` | Broken invariants | A type that carries the text with the parsed unit |
 
-## Entries from T4 (`zedc/src/store/utvpi.rs`, `presburger.rs`)
+## Entries from T4 (`zedc-solvers/src/utvpi.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -846,7 +846,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `VecDeque` used as a FIFO queue, `push_back` and `pop_front`, with a `Vec<bool>` of what it holds | `utvpi::potential` (Kahn's order since UTVPI-GOR) | Mutation | A state receiver over a list and a set, or two lists swapped at each round |
 | `Iterator::partition` of borrowed rows into two `Vec<&Row>` | `presburger::search` | None | Two `where` calls or a `group` over the list of rows, which Zed shares rather than borrows |
 
-## Entries from UTVPI-GOR (`zedc/src/store/utvpi.rs`)
+## Entries from UTVPI-GOR (`zedc-solvers/src/utvpi.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -854,7 +854,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Vec` of `(node, next edge)` frames as an explicit stack for a depth-first search, the top frame's edge place advanced through `last_mut` | `utvpi::potential` | Mutation | A state receiver, as for the parser's machine |
 | Distances in a `Vec<Int>` lowered in place while the edges are relaxed | `utvpi::potential` | Mutation | A state receiver over a map from node to distance |
 
-## Entries from UTVPI-NEAR (`zedc/src/store/negsssp.rs`, `utvpi.rs`)
+## Entries from UTVPI-NEAR (`zedc-solvers/src/negsssp.rs`, `utvpi.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -864,7 +864,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BinaryHeap<Reverse<(Int, usize)>>` with stale entries skipped at the pop instead of a decrease-key | `negsssp::Search`, `bf_dijkstra`, `Rounds`, `Solver::run` | Mutation | A persistent priority queue (a pairing or leftist heap) in a state receiver |
 | Labels, stamps and ball membership in `Vec`s written in place and shared by every node of the recursion, each node marked with a fresh stamp so no set is cleared | `negsssp::Solver` | Mutation | A state receiver over maps from vertex to stamp and label |
 
-## Entries from UTVPI-union (`zedc/src/store/utvpi.rs`, `negsssp.rs`)
+## Entries from UTVPI-union (`zedc-solvers/src/utvpi.rs`, `negsssp.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -890,7 +890,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Arc::strong_count` to tell a shared sequence from one held once, and `Arc::get_mut` to move the parts out of one held once | `Items::is_shared`, `Items::pair`, `Items::into_vec` | Identity, mutation | Removed: the runtime reuses a value held once, and the walks key their read sets by a hash-consed id |
 | The id a sequence carries (`Items::id`, drawn by `fresh_id`, shared by copies) as a key in a `HashSet` or `HashMap`, since ADDR-keys | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
-## Entries from T11-elab (`zedc/src/elab.rs`, `stage.rs`, `query.rs`)
+## Entries from T11-elab (`zedc-elab/src/elab.rs`, `stage.rs`, `query.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -908,7 +908,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `BTreeMap::pop_last` as a worklist taken in descending key order, each step adding entries at smaller keys | `Provenance::origins` | Key range queries (gap 9), mutation | `.last` and a `patch` removing that key on an ordered map, in a state receiver; or a fold over the fact indices from `i` down to 0, which visits facts the pass would skip |
 | `BTreeMap::entry(k).or_insert_with` as a memo filled during the pass | `Provenance::origins` | Mutation | A state receiver over a map, or the members each fact holds computed for all facts before the pass |
 
-## Entries from T11-preimage (`zedc/src/store/preimage.rs`)
+## Entries from T11-preimage (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -980,7 +980,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `std::slice::from_ref` to compare one arrow of the slot alone | `check::ty::fits_in` | None | A list of one |
 | A test generator of small types as bit masks of 7 values (`u8`), with `Rng` threaded through plain functions | `check::ty::tests::a_fit_of_small_types_is_a_cover_of_their_values` (test only) | Bit operations on a machine word | The bit operations of the integer carrier, or a set of values |
 
-## Entries from LR4 (`zedc/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
+## Entries from LR4 (`zedc-syntax/src/ast/mod.rs`, `zed-tools/src/fuzz.rs`)
 
 - No new gap. `Builder::make_expr`, arm `"Expr12"`, reads its two children with `let [l, t] = kids[..] else { unreachable!(..) }`, a slice pattern in a `let … else`; both are rows of the appendix (`let_else`, slice patterns) with the rewrite already listed: test the length, then index.
 
@@ -995,7 +995,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A pair of slices read as one list (`args.0` then `args.1`) | `zir::lower::raise_region` | None | `++` of two shared lists, or the index split the same way |
 | A cursor (`next: usize`) into a sorted `Box<[Value]>` held in an `Rc`, and `binary_search` for membership | `eval::Pull`, `Definedness::domain` | Mutation | A fold over the domain's keys, and a sorted set's membership |
 
-## Entries from T11-uses-of (`zedc/src/elab.rs`, `zed-kernel/src/eval.rs`)
+## Entries from T11-uses-of (`zedc-elab/src/elab.rs`, `zed-kernel/src/eval.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1030,7 +1030,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::array::from_fn` to fill a digit or node from a slice | `digit`, `node` | None | A tuple or list built from the parts |
 | `std::slice::from_ref` to pass one part as a slice | `push_back`, `push_front` | None | A list of one part |
 
-## Entries from L3.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
+## Entries from L3.1 (`zedc-syntax/src/ast/`, `format.rs`, `resolve.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1056,7 +1056,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `usize::checked_add` of two byte counts, refused past `usize::MAX` | `Text::join` | Machine integers | With `int` counts the sum never wraps; the refusal stays as an `if` comparing the sum with the largest length the runtime can address |
 | `i64::try_from` of a count, with a big integer when it does not fit | `words::word` (`Len`), `hooks::node` (`Len`), `store::cell::Cell::literal` (a string's length; past `i64` its exact value as a big integer) | Machine integers | Vanishes: `len` returns an `int` |
 
-## Entries from L6.1 (`zedc/src/ast/`, `format.rs`, `resolve.rs`)
+## Entries from L6.1 (`zedc-syntax/src/ast/`, `format.rs`, `resolve.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1065,7 +1065,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `HashSet<&str>` borrowed from the statements, so each indexed family is bound once | `Resolver::declare` | Borrowed keys | A set of names; strings are values, so no borrow is needed |
 | `unreachable!` arms for the L6 forms that resolution refuses | `elab.rs`, `check/mod.rs` | Partial match | As for L2.1 and L3.1: a total match whose L6 arm returns the refusal, or a narrower type from resolution |
 
-## Entries from OSP-lit (`zedc/src/docs.rs`, `zed-kernel/src/num.rs`, `zedc/src/run.rs`)
+## Entries from OSP-lit (`zedc-resolve/src/docs.rs`, `zed-kernel/src/num.rs`, `zedc/src/run.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1074,13 +1074,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `str::parse::<f64>()` and `str::parse::<f32>()`, correctly rounded by the standard library | `num::literal_f64`, `num::literal_f32` | Missing primitive | A prelude cast `f64(text)` that rounds to nearest with ties to even, as `num::literal_f64` does |
 | A sink typed `FnMut(&str, &str) -> Result<(), (String, String)>` for the path and reason of a failed write | `run::commit` | Mutation | A function returning the acknowledgment atom `#ioError(op:, path:, why:)` directly |
 
-## Entries from T11-fix-store (`zedc/src/store/hull.rs`)
+## Entries from T11-fix-store (`zedc-presburger/src/hull.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A builder that takes `mut self` and changes its `imbl::OrdMap`s in place through `get_mut` and `entry(..).or_default()`, which copy only the shared nodes on the path; `contains_key` first, since `remove` and `get_mut` copy that path even for an absent key | `Hull::and`, `Hull::join`, `used` | Mutation | Zed's map updates return new maps; the cost matches only if the runtime updates a map in place at its last use (step L6.13) |
 
-## Entries from T-zone (`zedc/src/store/product.rs`)
+## Entries from T-zone (`zedc-preimage/src/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1089,7 +1089,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A worklist `Vec` with a visited `BTreeSet`, then a sort by order and a right fold into nested `Term::Let` | `Scope::close` | None | A `fold` over the worklist with a set in its state, then `sort` and a fold |
 | `matches!(**e, Term::Lam(..))` on an `Arc<Term>`, and `Option::then` | `Scope::bind` | None | A pattern test `is Lam` |
 
-## Entries from OSP-order (`zedc/src/store/wto.rs`, `iterate.rs`)
+## Entries from OSP-order (`zedc-lattice/src/wto.rs`, `iterate.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1097,7 +1097,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Ord` written by hand for a struct of three fields, so that the form, a type parameter, is compared last and only on a tie | `VertexKey::cmp` | None | A tuple `(name, address, form)`, which compares left to right (`zed/prelude/iteration.zed`, `solve`) |
 | A stack of `&mut Element` walked to rewrite vertex numbers in place in a nested tree | `wto::ordered_by` | Mutation | A map over the tree of elements that returns a renumbered tree, by an explicit stack or by recursion on the nesting depth |
 
-## Entries from ST (`zedc/src/store/product.rs`, `presburger.rs`)
+## Entries from ST (`zedc-preimage/src/product.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1112,7 +1112,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A map from a set of atoms to the conjuncts taken out of a relation (`BTreeMap<BTreeSet<Atom>, Vec<Arc<Formula>>>`), passed by `&mut` through `and_one` so each new conjunct takes the place of an old one with the same atoms (`Vec::swap_remove`), the rest removed after | `Conjuncts::swap`, `Conjuncts::and_one` | Mutation | A state receiver, or the map returned with the relation from each step of the fold over the new conjuncts |
 | `std::mem::take` of the relation out of the scope while the worklist reads its blocks and narrows the names, and putting it back after | `Scope::project` | Workaround | In Zed the relation and the names are separate values of one record; the worklist reads one and returns the other, so nothing is taken out |
 
-## Entries from OSP-diag (`zedc/src/rejection.rs`, `check/read.rs`, `check/ty.rs`, `testing.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+## Entries from OSP-diag (`zedc-base/src/rejection.rs`, `check/read.rs`, `check/ty.rs`, `testing.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1123,7 +1123,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A text-level pass over a printed type that tracks parenthesis depth and quotes to cut the `for` clauses | `read::clauses` | None | A fold over the characters with the stack of open groups as its state |
 | `<[String; 1]>::try_from(Vec)` to move the one item out, the vector given back otherwise | `Sig::text` | None | A list pattern of one item |
 
-## Entries from ST-deep-stack (`zedc/src/store/presburger/deep.rs`)
+## Entries from ST-deep-stack (`zedc-presburger/src/presburger/deep.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1132,7 +1132,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Hand-written `Clone`, `PartialEq`, `Ord`, `Hash`, `Debug` and `Display` over explicit stacks, giving what the derived forms give (since ST-formula-share `Clone` is one `Arc::clone`) | `presburger/deep.rs` | Missing | Structural equality, order, hashing and printing are the runtime's, which must not recurse on depth |
 | A generic post-order fold with a context passed down, results kept on one `Vec` and split off per node | `Formula::fold`, used by `map_cons`, `forget`, `nnf` and `Hash` (since ST-formula-share `holds_as` and `Clone` no longer use it) | None | A recursive function, once the machine keeps frames on the heap; or a state receiver over a list |
 
-## Entries from ST-formula-share (`zedc/src/store/presburger.rs`, `presburger/deep.rs`, `preimage.rs`)
+## Entries from ST-formula-share (`zedc-presburger/src/presburger.rs`, `presburger/deep.rs`, `preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1142,7 +1142,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `u64` hash folded bottom up per node with `DefaultHasher`, then written once, so a formula hashes alike however its parts are shared | `impl Hash for Formula` | None | The runtime's structural hash, which must read a shared value once |
 | `Rc<Parts>` memo tables (`HashMap<Id, Vec<Rc<Parts>>>` for disjunctions and `HashMap<Id, Rc<Parts>>` for disjuncts) filled while the frames of an explicit stack are made | `Parts::of` | Mutation (gap 11) | A fold over the formula with the tables in its state |
 
-## Entries from ST-formula-wide (`zedc/src/store/presburger.rs`, `presburger/deep.rs`, `preimage.rs`, `conjuncts.rs`)
+## Entries from ST-formula-wide (`zedc-presburger/src/presburger.rs`, `presburger/deep.rs`, `preimage.rs`, `conjuncts.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1152,7 +1152,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A visited `HashSet<Id>` built in one walk to find the parts reached through two or more parents | `deep::Id::reached_twice`, `Id::among`, `Formula::chooses` | Mutation (gap 11) | A fold with the set in its state |
 | Two stacks of `slice::Iter` over borrowed parts, each level tagged with the number of the entry it was entered with, read in step; a `HashSet<(Id, Id)>` of pairs found equal and a `Vec<Option<(Id, Id)>>` of open entries, `take`n when an entry ends | `deep::Side`, `deep::Level`, `Formula::cmp` | Mutation (gap 11), identity (gap 1) | A fold over the two sides' worklists with the set of equal pairs in its state, the pairs keyed by node identity |
 
-## Entries from ST-formula-shift (`zedc/src/store/presburger/deep.rs`, `presburger/deep/canon.rs`)
+## Entries from ST-formula-shift (`zedc-presburger/src/presburger/deep.rs`, `presburger/deep/canon.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1171,20 +1171,20 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Ranks of nodes by height, each level's signatures sorted by `sort_unstable` and numbered (AHU) | `Printer::canon` | None | A sort of a list of (signature, node) values, then a fold that numbers equal runs |
 | A `#[cfg(test)]` `thread_local!` salt mixed into the type digests, so tests can permute the atom order | `types::SALT`, `mix` | Not ported | Tests only; the port's digests would take the salt as an argument of the digest function |
 
-## Entries from ST-formula-k2-rec (`zedc/src/store/preimage.rs`)
+## Entries from ST-formula-k2-rec (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A stack of boxed closures `Box<dyn FnOnce(&mut Memo)>`, each removing one memo entry, run by `Vec::pop_if` as the reading stack falls | `preimage::Memo::held`, `Tx::cached`, `Tx::through` | Mutation (gap 11) | A list of (height, table, key) values in the translator's state; the drop is a fold that removes each key from its table |
 
-## Entries from ST-formula-k2 (`zedc/src/store/presburger.rs`, `preimage.rs`)
+## Entries from ST-formula-k2 (`zedc-presburger/src/presburger.rs`, `preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A builder struct changed through `&mut self` one operand at a time (`Joining`: the parts, a `BTreeMap` from each term and comparison to its place, the count of parts added), with `mark` and `close` around an inner operand of a chain, popping its one part back off the `Vec` | `presburger::Joining`, `Formula::and_keeping`, `or_keeping`, `preimage::Tx::chain` | Mutation (gap 11) | A fold over the chain's operands with the joining in its state, `close` a step of that fold |
 | An enum declared inside a function (`Step`: an operand to read, or the end of an inner `&&`), the frames of an explicit stack | `preimage::Tx::chain` | None | A sum type private to the unit |
 
-## Entries from OSP-drop (`zedc/src/check/mod.rs`)
+## Entries from OSP-drop (`zedc-check/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1192,14 +1192,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | An explicit stack over nested `else` nodes, with an `if let` guard in a match arm to tell an atom default from any other | `named_defaults` (removed by OSP-drop2) | None | A loop over the `else` chain, and a nested `match` on the default in place of the guard |
 | `Src::Call` holding a borrowed `&'a Expr` beside the function id, so the walk can reach the call's arguments | `Src`, `Ck::entries` | None | The call node itself as the source, a shared value |
 
-## Entries from TD-refusals (`zedc/src/store/product.rs`)
+## Entries from TD-refusals (`zedc-preimage/src/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | An `FnMut` closure that prints the constraint once into a captured `Option<Arc<str>>` (`get_or_insert_with`) and is called at each refused question of one projection | `Scope::project_part` (`refuse`) | Mutation (gap 11) | The text is printed before the projection when it may be needed, or each call returns the text with the refusal; printing once per refused part costs the same |
 | A struct whose derived `Ord` (field order: constraint, how it was asked, cause) is the order of the warnings, kept in an `imbl::OrdSet` | `Refused`, `Scope::warnings` | None | A record in a set ordered by its fields in that order |
 
-## Entries from ST-join (`zedc/src/store/conjuncts.rs`)
+## Entries from ST-join (`zedc-presburger/src/conjuncts.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1231,7 +1231,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `text.as_bytes()` scanned for the operator after a span, skipping blanks, parentheses and `//` comments | `mutate::operator_at` | Bytes (gap 5) | A fold over the text's characters from the span's end |
 | `Option<(usize, &Arc<Term>)>` passed down to replace one definition while closing a term | `testing::Swap`, `Cones::close_with`, `testing::row`, `testing::wave` | None | An optional pair argument |
 
-## Entries from OSP-drop2 (`zedc/src/check/mod.rs`)
+## Entries from OSP-drop2 (`zedc-check/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1239,14 +1239,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A loop over an array of `(&mut HashMap, Option<KType>)` pairs, to insert or remove one entry in each of two maps | `Ck::expr` | None | Two calls of one helper, or a fold over the pairs |
 | Closures that borrow `self` immutably (`u`, `union`, `made`) inside one method | `Ck::unnamed_of` | None | Local functions taking the maps as arguments |
 
-## Entries from S22a (`zedc/src/store/preimage.rs`)
+## Entries from S22a (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A persistent treap in `Rc` nodes, each holding its subtree's least and greatest value and a lazy affine tag pushed down on a split, with a priority computed from the piece's ends, shared by every summary built from it | `PaNode`, `Tree`, `split_at`, `join_treap`, `slice_treap`, `apply_tag`, `invert_treap` | Identity (gap 1) | A Zed tree value: an update makes new nodes along one path and shares the rest, which the runtime must keep at `O(log n)`; the priority is a field, so no identity is needed |
 | The sticky `ROUNDED` flag saved, cleared and restored around the hull of a term, so a rounding while computing the hull is seen and not reported | `Tx::clip`, `Tx::invert_pa` | Mutation, global state (gap 11) | The hull computation returns whether it rounded with its result; no flag |
 
-## Entries from ENDS-dag (`zedc/src/stage.rs`)
+## Entries from ENDS-dag (`zedc-stage/src/stage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1255,13 +1255,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | An arena of trie nodes (`Vec<SetNode>`) with a hash table from node to number (hash-consing) and a memo `HashMap<(Set, Set), Set>` of unions, all filled through `&mut self` | `Sets::make`, `Sets::union` | Shared memo (gap 2), Mutation | A state receiver holding the arena, the table and the memo, returned with each set made; or sets made identical by the content digest of gap 1 |
 | `u32::leading_zeros` and bit masks to find the highest differing bit of two names | `Sets::join`, `above` | Bit operations (gap 4) | As gap 4 |
 
-## Entries from S22b (`zedc/src/store/preimage.rs`)
+## Entries from S22b (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `c - v` computed in `i128` and turned into an end by `End::lower` and `End::upper`, which set the global `ROUNDED` flag when the end leaves `i64` | `reflect` | Machine integers; Mutation, global state | Zed's `int` is unbounded, so `c - v` needs no wider type and no rounding flag |
 
-## Entries from S22-WIDE (`zedc/src/store/preimage.rs`)
+## Entries from S22-WIDE (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1297,7 +1297,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Option<Option<KType>>` filled on first use inside an `all` closure (`get_or_insert_with`), so the kernel type of the target is built only when some piece needs it | `zedc` `check/ty.rs` `Ty::sub` | Laziness, mutation | A plain `let` before the fold, the plan choosing when it runs (DESIGN sec:semantics) |
 | The id of a sequence (`Items::id`) with a type as the memo key of one membership test, never iterated (ADDR-keys) | `types::Type::contains` | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
-## Entries from OSP-neglit (`zedc/src/ast/neglit.rs`)
+## Entries from OSP-neglit (`zedc-syntax/src/ast/neglit.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1330,7 +1330,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A raw pointer `*mut c_void` to the mapping | `Stack::base` | Identity (gap 1) | An address held by the runtime, not by Zed code |
 | `std::process::Command` with `pre_exec` calling `libc::setrlimit(RLIMIT_AS, …)`, running the test binary again as a child (R10-stack-notes) | test `stack::tests::a_limited_address_space_refuses_the_reservation` | Missing (process limits) | A test-harness facility, not the language |
 
-## Entries from ST-arms-quad (`zedc/src/store/presburger.rs`, `preimage.rs`)
+## Entries from ST-arms-quad (`zedc-presburger/src/presburger.rs`, `preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1349,7 +1349,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `impl Drop` with a work list on `Parts`, taking each nested disjunct no other holder shares by `Rc::try_unwrap`, so a nest 100,000 deep is freed without recursion; and `Parts::of` building nested disjuncts on an explicit stack of frames | `Parts::drop`, `Parts::of` | None | Removed: the runtime frees values without recursion (as for `Formula`), and `of` becomes a fold over the formula |
 | A `bottom` flag set on a scope while its names are kept as they were, and the names rebuilt as bottom only for a scope that is shown | `Scope::reduce_case`, `Scope::empty_if_bottom` | None | A record field set by the reduce that returns the scope; the shown scope is mapped to bottom names once |
 
-## Entries from HOLE-oneline (`zedc/src/lex/string.rs`)
+## Entries from HOLE-oneline (`zedc-syntax/src/lex/string.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1365,13 +1365,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `split_at_mut` of the basis, so one row is reduced by an earlier row in place (LLL size reduction, and the unimodular completion) | `store::live3::reduce`, `store::live3::complete` | Mutation | The step builds the reduced row from the two rows and puts it in the persistent list of rows |
 | `std::mem::replace` of the maker's state with `At::Start`, put back on the path that waits | `types::Maker::step` | Mutation | The step returns the next state as a value |
 
-## Entries from LIN-probe (`zedc/src/store/presburger.rs`)
+## Entries from LIN-probe (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `Vec<Vec<bool>>` of which disjuncts a point found so far holds, beside the disjunctions; one row taken with `std::mem::take` while its disjunction is tested and put back after, the other rows set in place when a point is found | `probe` | Mutation | A loop whose state is the disjunctions with their flags as one list of records; a point found returns the list with its flags or-ed |
 
-## Entries from CAP-pow32 (`zedc/src/store/revision.rs`, `preimage.rs`)
+## Entries from CAP-pow32 (`zedc-lattice/src/revision.rs`, `preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1379,7 +1379,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Option<u32>` with `checked_add` and `zip`, a count that is `None` past `u32::MAX` | `preimage::Count` | Fixed-width integers | `Option<u32>`, or an `int` compared with `2 ** 32`, as it is O(1) only while bounded |
 | `Op` no longer `Copy`, passed as `&Op` to `tonicity`, `forward` and `backward` | `revision`, `preimage`, `preimage_ref`, `product`, `check` | None | Values are shared in Zed; the reference goes |
 
-## Entries from CANON-stable (`zedc/src/store/presburger.rs`)
+## Entries from CANON-stable (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1393,7 +1393,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `num::mul_mod` | Bit operations (gap 4) | `(a * b) mod (2 ** 61 - 1)` on `int`, the operands' ranges `int[0..<2 ** 61]` letting the plan use two words |
 | `[2, 5].map` with a closure that splits each prime off two captured coefficients through `std::mem::take` and reassigns them | `Rat::literal_text` | Mutation | A fold over the two primes with the coefficients as its state |
 
-## Entries from S22e-quad (`zedc/src/store/preimage.rs`)
+## Entries from S22e-quad (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1401,13 +1401,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | The memo tables a run computes without reading its class moved out with `std::mem::take` and moved back for the next class | `Kept`, `Run::keep`, `Run::restore` | Mutation | The tables are a value passed from one class's run to the next and returned with each result |
 | `u128` saturating multiply and add to bound values and coefficients over every class against `i64::MAX` | `Bound::holds`, `ByClass::affine` | Machine integers | Zed's `int` is unbounded; the check compares with the `i64` limit directly and needs no saturation |
 
-## Entries from S22e-wide (`zedc/src/store/preimage.rs`)
+## Entries from S22e-wide (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A Fenwick tree in a `Vec<i64>` changed in place by closures over `&mut`, stepped with `isolate_lowest_one` | `covers` | Mutation | A Zed value threaded through the sweep's fold, or a persistent counting tree over the classes, `O(log G)` per step either way; the step is `bitAnd(i, 0 - i)` on bit words (L1.39a) |
 
-## Entries from TD-ends (`zedc/src/store/int.rs`, `interval.rs`, `affine.rs`, `presburger.rs`)
+## Entries from TD-ends (`zedc-int/src/int.rs`, `interval.rs`, `affine.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1419,7 +1419,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2 ** k` unless Zed gains bit operations on `int` |
 | The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`; since S22-WIDE `in_range`, the ends strictly inside `i128` and the infinities `i128::MIN` and `i128::MAX`), and nodes copied whole with `..(**node).clone()` now that an end is not `Copy` | `store::preimage::{in_range, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
 
-## Entries from TD-cong (`zedc/src/store/lattice.rs`, `canon/domain.rs`, `canon/serial.rs`, `store/affine.rs`, `store/int.rs`)
+## Entries from TD-cong (`zedc-lattice/src/lattice.rs`, `canon/domain.rs`, `canon/serial.rs`, `store/affine.rs`, `store/int.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1451,14 +1451,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `String::try_reserve_exact` that keeps the reserved block and writes into it | `words::print` | Missing (no allocator query) | The runtime primitive above, returning the block |
 | A `HashMap` memo keyed by a sequence's id and a family's id, and a map keyed by a field list's id (`Fields::id`) and its length (ADDR-keys) | `words::room_to_print` | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
-## Entries from BIT-kept-ends (`zedc/src/store/int.rs`)
+## Entries from BIT-kept-ends (`zedc-int/src/int.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `match` arm guarded by `if let … && let …` on a divisor that is a kept power of 2 and on the dividend's shift by its exponent (`Kept::shr`, `None` when no term has that power as a factor) | `Num::div_floor` | None | An `is` test and the shift before the `match`, falling through to it when either is absent |
 | A struct declared inside a function, `Part<'a>`, whose odd atoms borrow the exponents of the kept form | `Kept::trailing_zeros` | None | A record of the function's own module; the exponents are shared values, not borrows |
 
-## Entries from TYPE-forms (`zedc/src/check/mod.rs`, `resolve.rs`)
+## Entries from TYPE-forms (`zedc-check/src/check/mod.rs`, `resolve.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1467,7 +1467,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A flag on each open function type, set while its parameters are read, so a use records whether a parameter holds its variable (`Sig::held`) | `check::Denote::{open_params, close_params}` | Mutation | Each denotation returns, with the bounds of its uses, the set of those in parameters, merged at each function type |
 | A comparison context whose maps of rigid variables and of functions met are filled as each comparison of function types opens and emptied by a list of the names it made as it closes (`Cx::fresh`, `Cx::forget`), and a counter of names made | `check::ty::Cx`, `fits_in` | Mutation | The maps passed down as persistent map arguments, so closing needs no undo; the counter is a state receiver, or the depth and position of the comparison as the name |
 
-## Entries from LIN-probe-refute (`zedc/src/store/presburger.rs`)
+## Entries from LIN-probe-refute (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1485,13 +1485,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `unsafe impl Send` for a struct holding a raw pointer to memory it alone owns | test `placement::FarApart` | Foreign library | Inside the `@ffi` binding, which owns the mapping as a handle |
 | `Box<dyn JITMemoryProvider + Send>` passed in to choose where the JIT puts code | `zed_native::run_in` | Foreign library | A parameter of the `@ffi` binding to the code generator |
 
-## Entries from BODY-display (`zedc/src/ast/body.rs`)
+## Entries from BODY-display (`zedc-syntax/src/ast/body.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `OnceCell<Vec<usize>>` of each node's parent, filled on the first rejection through `&self` by one walk from the root | `Builder::parents`, `Builder::body_of` | Lazy cells (gap 3) | The parent passed down while building, or the map made in one pass before building and threaded through as a state receiver |
 
-## Entries from T6-kinds (`zedc/src/check/ty.rs`, `parse/mod.rs`)
+## Entries from T6-kinds (`zedc-types/src/ty.rs`, `parse/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1508,25 +1508,25 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `BigUint::from_slice` of a block of `u64` words split into reversed `u32` pairs | `num::rem` | Missing (no word view of an `int`) | The same primitive, building an `int` from a slice of its words |
 | `Result<bool, TooLarge>` with `?` through `divides_by`, `magnitude_order` and `exact_div` | `Rat::divides_by`, `Rat::div_euclid`, `Rat::rem_euclid` | Early exit (gap 12) | A failure value returned and matched at each call |
 
-## Entries from PRINT-tyvars (`zedc/src/check/ty.rs`)
+## Entries from PRINT-tyvars (`zedc-types/src/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `Scope` of `HashMap<Arc<str>, Vec<Option<Arc<str>>>>` (the printed name of each variable, innermost last), a `HashSet` of names in use and a counter, held as `&mut Scope` across the recursion of the printer, pushed by `Scope::open` at each signature and popped by `Scope::close` after it | `Ty::write`, `Sig::write`, `Scope::open`, `Scope::close` | Mutation (gap 11): a map held across a recursion and undone after it | A persistent map from variable to printed name and a set of names in use, passed down into each signature, so nothing is undone; the counter is returned with the text, so a fresh name is still tried once in the whole type |
 
-## Entries from ADDR-cell (`zedc/src/store/cell.rs`)
+## Entries from ADDR-cell (`zedc-lattice/src/cell.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A premise-set node's id, drawn by `zed_kernel::family::fresh_id` (made `pub` for it) and shared by copies, as the key of a `HashSet` of the parts a walk has read and as the "one shared set" test in `extend` and `==` | `Premises::{one, extend, set, eq}`, `Node::id` | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
 
-## Entries from ADDR-memory (`zedc/src/zir/memory.rs`)
+## Entries from ADDR-memory (`zedc-zir/src/zir/memory.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `Vec<Option<Region>>` indexed by occurrence id, an entry filled the first time its occurrence runs (`get_or_insert_with`), and a `HashMap<&str, (usize, &RegionPlan)>` from a region's path to the occurrence id of its first node and its plan, built by one walk of the plan | `zir::memory::Machine::alone`, `Machine::places`, `memory::run` | Mutation (gap 11), lazy cells (gap 3) | A map from occurrence id to region in the machine's state receiver, updated in place by provable last use (L6.13); the path map is a fold over the plan |
 
-## Entries from ADDR-preimage (`zed-kernel/src/term.rs`, `zedc/src/store/preimage.rs`, `preimage_ref.rs`)
+## Entries from ADDR-preimage (`zed-kernel/src/term.rs`, `zedc-preimage/src/preimage.rs`, `preimage_ref.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1542,7 +1542,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Box<dyn FnMut() -> u64>` counters in a const-generic array, the first that moves taken | `scaling::Meter`, `first_that_moves` | Mutation | A list of counter functions, each read as a value |
 | One process-wide `static AtomicU64` of bytes off Linux | `zed_alloc_count::ALL` | Shared tables across pure calls (gap 2) | A count kept by the runtime and read as a value |
 
-## Entries from LIT-adopt (`zedc/src/check/mod.rs`, `walk.rs`, `elab/walk.rs`, `store/preimage.rs`, `store/product.rs`)
+## Entries from LIT-adopt (`zedc-check/src/check/mod.rs`, `walk.rs`, `elab/walk.rs`, `store/preimage.rs`, `store/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1552,14 +1552,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `let … else` and `if let … && let …` chains, one on a slice pattern (`if let [t] = ts && let Some(k) = …`), choosing the follow shape of a `match`, a comparison of an int-typed operand, and the class a literal operand of `==` follows | `store::preimage::follow_own`, `store::product::plain_comparison`, `Ck::follow` | None | An `is` test on the term's shape, then a `match` |
 | A `Vec` stack rebuilding a condition through `&&`, `\|\|`, `!` and `if`, with a nested `fn kids` in place of a closure, whose borrow the compiler could not tie to the term | `store::product::plain_test` | Mutation (gap 11) | A fold over the condition's tree with the rebuilt children as values |
 
-## Entries from FOOTPRINT-peak (`zedc/src/cost.rs`)
+## Entries from FOOTPRINT-peak (`zedc-base/src/cost.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | Two per-device accumulators updated in place through `&mut out[d]` and `&mut kept[d]` in one loop over the regions | `per_device` | Mutation (gap 11) | `zed/prelude/cost.zed` `peak`: a fold over the device's regions with a pair (peak, retained so far) as its value |
 | `saturating_add` on the retained bytes and the peak | `per_device` | Machine integers (see the mechanical rewrites) | Vanishes on an unbounded `int`; the peak then does not stop at the maximum |
 
-## Entries from NARROW-if (`zedc/src/check/arms.rs`, `store/product.rs`)
+## Entries from NARROW-if (`zedc-check/src/check/arms.rs`, `store/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1577,7 +1577,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A closure `push_names` that borrows `self.nodes` and the chain lookup (disjoint field captures) while `self.carried` is borrowed mutably, and takes the stack as `&mut Vec` | `Arms::deciding` (repair 8) | Mutation (gap 11) | A local function returning the entries to push, appended to the stack in the loop state |
 | `Iterator::reduce` folding a path's tests into one `&&` term, each failing outcome wrapped in `!`; `BTreeMap::entry(..).or_insert_with` for the first product of each name | `Arms::explains` (repair 8) | None | A `fold` over the list of sides; a map insert that keeps an existing key |
 
-## Entries from BIT-axioms (`zedc/src/axioms.rs`, `tests/steps/m0_11_prelude_axioms_and_limits/`)
+## Entries from BIT-axioms (`zedc-base/src/axioms.rs`, `tests/steps/m0_11_prelude_axioms_and_limits/`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1586,14 +1586,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `<[Term; 2]>::try_from(Vec<Term>)` to take the two arguments of a binary operator by value | `call` (test) | None | A list pattern `[a, b]` in a `match` |
 | `num_bigint::BigInt` for 2^63, 2^64 and 2^128 corner values | `word_corners`, `shift_values` (test) | None | `int` is unbounded: the literals `2 ** 64` and so on |
 
-## Entries from TERM-id (`zedc/src/stage.rs`)
+## Entries from TERM-id (`zedc-stage/src/stage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `HashMap<u64, usize>` keyed by `Shared::id` while one term is read, a part held inline having no key | `stage::Reader::ids`, `Reader::read`, `Part::held` | Identity (gap 1), mutation | A state receiver over a map keyed by the term's digest |
 | A closure over a mutable iterator (`move \|\| parts.next()`) passed as `&mut impl FnMut() -> Needs`, so a callee takes the next part's answer only when it is a lambda | `stage::Reader::needs_of`, `Reader::callee` | Mutation | The list of the parts' answers passed as a value, each case taking its head |
 
-## Entries from STAGE-dag (`zedc/src/stage.rs`)
+## Entries from STAGE-dag (`zedc-stage/src/stage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1609,7 +1609,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A log of the calls a run made, and the first answer it lacked, written through `&self` from inside `Lookup::get` (`Mutex<Vec<(Probe, Answer)>>`, `Mutex<Option<(Arc<Stub>, Value)>>`), so a pure evaluation reports what it read through the `Lookup` trait object it was given; and `Lookup::refuses`, a default trait method the evaluator asks before it compares a key (repair 3) | `Run::log`, `Run::need`, `Port::get`, `Port::refuses`, `Mixer::eval`, `zed_kernel::eval::Lookup::refuses` | Mutation (gap 11), traits (`interface` is L10; `dyn Lookup` becomes a port, catalog above) | The run returns the list of the calls it made, or the answer it lacked, beside its value; the port is a record of the table and a function from key to whether the key is refused |
 | A trie of the questions a part asked, `Vec<Node>` with `Node::Ask(Probe, BTreeMap<Answer, usize>)` edges by arena index and `Node::Leaf` holding the mixed node, reached from a `HashMap<(u64, Map), usize>` by the part's id and bindings, extended in place when a place answers differently (repair 3) | `Mixer::trie`, `Mixer::memo`, `Mixer::recall`, `Mixer::remember` | Identity (gap 1), Shared memo (gap 2), Mutation (gap 11) | A family from a part's digest and bindings' map to a tree of questions, each node a family from answer to subtree, rebuilt along the path it extends and threaded as state |
 
-## Entries from NAME-ties (`zedc/src/store/presburger.rs`)
+## Entries from NAME-ties (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1627,7 +1627,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `let ... else` returns on a settling with no point and on no choice by color | `settle_tied` | Early exit (gap 12) | A match on each result |
 | A vector of each disjunct's settled parts, filled before the asking loop and emptied by `Option::take` as each is read | `project_parts` (`pre`) | Mutation (gap 11) | The settled parts zipped with the disjuncts, read once by a map; no take needed |
 
-## Entries from ITEM-order (`zedc/src/ast/mod.rs`, `run.rs`, `elab.rs`)
+## Entries from ITEM-order (`zedc-syntax/src/ast/mod.rs`, `run.rs`, `elab.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1653,7 +1653,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `let mut first = true`, cleared at the end of each pass of the loop over the record's entries, so a `program` entry is accepted only first | `Record::from_bytes` | Mutation (gap 11) | A fold over the entries with the entry's index, or a match on the head of the list of entries |
 | `split_first_chunk::<32>()` reading the address out of the executable's data | `exe::Program::decode` | Bytes (gap 5) | A slice of the first 32 bytes of the data, once Zed has bytes |
 
-## Entries from ISSUE1-else-atoms (`zedc/src/resolve.rs`, `zedc/src/check/mod.rs`, `check/walk.rs`)
+## Entries from ISSUE1-else-atoms (`zedc-resolve/src/resolve.rs`, `zedc-check/src/check/mod.rs`, `check/walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1671,7 +1671,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Ck::need_args: Option<Vec<bool>>`, set by `meet` and taken by `apply` with `Option::take` | `Ck::meet`, `Ck::apply` | Mutation | An argument of `apply` |
 | `Info::passes: HashMap<Span, Vec<(Span, KType)>>`, an entry merged in place (`*old = &*old \| k`) and logged for undo | `Ck::pass_at` | Mutation | A persistent map updated by value; the undo log is not needed once the state is a value |
 
-## Entries from CHK-cost (`zedc/src/check/ty.rs`, `mod.rs`, `zed-kernel/src/types.rs`)
+## Entries from CHK-cost (`zedc-types/src/ty.rs`, `mod.rs`, `zed-kernel/src/types.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1686,7 +1686,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A method on `self: &Arc<Sig>` that returns the shared `Arc` itself when nothing changes | `check::ty::Sig::settle` | None | Values are shared in Zed; returning the argument unchanged is the default |
 | A resolver passed as `&dyn Fn(&str) -> Option<Ty>` (`Solve`) into the comparisons and held in `Cx` | `check::ty::{Solve, Cx, sub_with, subtype_with, fits_sig_with}`, `check::Ck::stale` | None | A function value passed as an argument |
 
-## Entries from L1.37a (`zed-kernel/src/address.rs`, `types/bdd.rs`, `zedc/src/address.rs`, `zir/canon.rs`, `zir/lower.rs`, `query.rs`, `elab.rs`, `cost.rs`, `store/product.rs`, `tests/src/oracle.rs`)
+## Entries from L1.37a (`zed-kernel/src/address.rs`, `types/bdd.rs`, `zedc-base/src/address.rs`, `zir/canon.rs`, `zir/lower.rs`, `query.rs`, `elab.rs`, `cost.rs`, `store/product.rs`, `tests/src/oracle.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1705,7 +1705,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `rustix::process::setrlimit(Resource::Stack, …)` on the test process, so the child it runs inherits an 8 MiB stack | `limit_stack` in the `zedc_binary` test | Missing (process limits) | A test-harness facility, not the language |
 
-## Entries from GRAMMAR-read-cost (`zedc/src/parse/grammar.rs`, `parse/engine.rs`, `zed-tools/src/check.rs`, `fuzz.rs`)
+## Entries from GRAMMAR-read-cost (`zedc-syntax/src/parse/grammar.rs`, `parse/engine.rs`, `zed-tools/src/check.rs`, `fuzz.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1713,13 +1713,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A frame holding a slice `&'g [Expr]` borrowed from the grammar, and `std::slice::from_ref` to see one expression as a list of one | `engine::Frame::Loop`, `Frame::Sep`, `engine::iteration`, `fuzz::Gen::repeat` | None | Zed shares values, so the frame holds the list itself; a list of one |
 | `Iterator::try_for_each` to stop at the first item whose derivation fails | `fuzz::Gen::repeat` | None | A fold that carries the first failure |
 
-## Entries from ZIR-family-key (`zedc/src/zir/text.rs`, `zir/binary.rs`)
+## Entries from ZIR-family-key (`zedc-zir/src/zir/text.rs`, `zir/binary.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A literal's entries rewritten in place to their keys (`*k = k.key()` through `&mut`), sorted in place by `sort_unstable_by`, and a repeat found by `windows(2).find` | `zir::text::family` | Mutation (gap 11), Early exit (gap 12) | `sort` of the entries mapped to their keys into a new list, then `zip` with its `drop(1)` and a search for the first equal pair |
 
-## Entries from CHK-held-cascade (`zedc/src/check/ty.rs`, `mod.rs`)
+## Entries from CHK-held-cascade (`zedc-types/src/ty.rs`, `mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1739,7 +1739,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Post-order builds with an enum of steps borrowing the input (`Visit`, `Build`; `Eval`, `Component`, `Build`) on a `Vec` and a second `Vec` of results split off per node | `rec` `Node::of`, `eval`, `Show::rope`, `Expr::clone` | Mutation (gap 11) | A state receiver holding the two lists, as for `canon::binders::Levels::term` |
 | `async fn` methods run by a hand-written executor (`frames::Stack`, `Deep`): each call that may recurse is a boxed future on the heap, polled from a loop, so the compiler writes the resume points of about thirty mutually recursive methods | `types/empty.rs` `Searching` (frames of their own: `empty`, `decide`, `rep`, `member_known`, `tuples`, `morphisms`) | Missing (no coroutines or `async`) | Removed: the port's runtime must not recurse on depth; without that, a state machine with one frame variant per resume point |
 | The search's state in a `RefCell`, moved in with `mem::take` for a run and back after it, borrowed one statement at a time and never across an `await` | `types/empty.rs` `Search::run`, `Searching::s` | Mutation, interior mutability | A state receiver threaded through the calls |
-| One `frames.rs` in the kernel, used by the emptiness search and by `zedc`'s preimage analysis (`zedc/src/store/frames.rs` removed at this merge) | `zed-kernel/src/frames.rs`, `zedc/src/store/preimage.rs` | None | One module in the port too |
+| One `frames.rs` in the kernel, used by the emptiness search and by `zedc`'s preimage analysis (`zedc/src/store/frames.rs` removed at this merge) | `zed-kernel/src/frames.rs`, `zedc-preimage/src/preimage.rs` | None | One module in the port too |
 | Pairs to compare kept on a `Vec` (`Simulation::todo`) and drained after the pair is registered, failures spread once every pair is made | `types/empty.rs` `Simulation::pair`, `holds`, `compare` | Mutation (gap 11) | A fold over a list of pairs in a state receiver |
 | An explicit stack of index ranges for the halving split, with an enum (`Each`) holding a `&mut Option<usize>` the search writes its answer to | `types/empty.rs` `split_classes`, `Each` | Mutation | A fold returning the answer |
 
@@ -1763,7 +1763,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A struct of options parsed once and shared by `zedc run` and an executable, its methods taking `&mut dyn Read`/`Write` | `run::Options`, `run::Ports::run`, `run::executable` | none | A record and functions over the `Lines` ports |
 | A length-prefixed byte layout (`u64::to_le_bytes`, `split_first_chunk`, `split_at_checked`) | `exe::data`, `exe::Program::decode` | Bytes (gap 5) | Bytes words of step L7.3f |
 
-## Entries from CHK-need-uses (`zedc/src/check/mod.rs`, `check/ty.rs`)
+## Entries from CHK-need-uses (`zedc-check/src/check/mod.rs`, `check/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1791,13 +1791,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::process::Command` running `git ls-files -z` and reading its standard output and exit status | `cite::run` | Command line and exit status (gap 6): Zed has no port that runs another program | An input port of the tracked paths, or a port that runs a program and gives its output and exit status |
 | `std::fs::read` of a path built at run time, with `ErrorKind::NotFound` told apart from other errors, and `String::from_utf8` to skip a file that is not text | `cite::run` | Computed paths and bytes (gaps 5 and 6) | The byte file port of step L7.3f and `fromUtf8` |
 
-## Entries from ROW-made-cost (`zedc/src/check/ty.rs`)
+## Entries from ROW-made-cost (`zedc-types/src/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `imbl::OrdSet::diff`, which steps over the nodes two sets share, run a step at a time in turn with the insertions of the smaller set into the larger, stopping when either ends | `check::ty::merge` | Missing | As for `OrdSet::diff` above: Zed's sets are values but have no structural difference; the port needs a `diff` word that the runtime answers in time proportional to the unshared part, and a lazy sequence to step it in turn with the insertions |
 
-## Entries from TEST-rows-rule6 (`zedc/src/elab/walk.rs`, `testing.rs`)
+## Entries from TEST-rows-rule6 (`zedc-elab/src/elab/walk.rs`, `testing.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1828,11 +1828,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `while let … && …` (a let chain) gathering an index chain `t[0][1]…` into one list | `print::doc` | None | a loop with `match` and `is` |
 | An exhaustive `match` giving each `Prim` variant a fixed number | `Prim::code` | None | a `match` on the atom of each primitive |
 
-## Entries from OMEGA-cycle-growth (`zedc/src/store/presburger.rs`)
+## Entries from OMEGA-cycle-growth (`zedc-presburger/src/presburger.rs`)
 
 - No new gap. `Omega::cycles` reads a row of one or two unit terms with a `match` on slice patterns with guards (`[t] if t.1.is_positive()`, `[s, t] if s.1 == -&t.1`), a row of the appendix (slice patterns) with the rewrite already listed: test the length, then index.
 
-## Entries from LOWER-legalize (`zedc/src/zir/legalize.rs`, `zed-native/src/lib.rs`)
+## Entries from LOWER-legalize (`zedc-zir/src/zir/legalize.rs`, `zed-native/src/lib.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1842,14 +1842,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `Vec<u64>` bit set of node numbers, grown and set in place as the walk swaps a node, then held in an `Arc` the native tables share | `Swapped::insert`, `Swapped::contains`, `legalize::legalize`, `Tables::new` | Mutation (gap 11); Identity (gap 1: the reference count) | The pass returns the set of swapped numbers as a value beside the region; the tables read it, shared as every value is |
 | A counter `next` threaded through a heap-stack walk by `&mut` to number nodes in preorder | `legalize::legalize`, `Tables::visit`, `lower::Written` in `raise_from` | Mutation (gap 11) | The counter is part of the fold's state, each node's number the state on entering it |
 
-## Entries from CONST-wide-addr (`zed-kernel/src/num.rs`, `zedc/src/zir/binary.rs`, `canon/serial.rs`)
+## Entries from CONST-wide-addr (`zed-kernel/src/num.rs`, `zedc-zir/src/zir/binary.rs`, `canon/serial.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `Cow<'_, BigUint>`, a side of a rational borrowed when it has no kept powers, built otherwise | `Rat::built_parts` | None | Zed shares numbers, so it returns the side as a plain value |
 | `BigUint::iter_u64_digits`, the 64-bit limbs of a magnitude least significant first, and `BigUint::from_bytes_le` to read them back | `W::magnitude`, `R::magnitude` in `zir/binary.rs`, `Out::magnitude` in `canon/serial.rs` | Missing | A primitive giving an exact integer's limbs as a `U8String`, and its inverse |
 
-## Entries from REPLACE-shared-rows (`zedc/src/check/ty.rs`, `zedc/src/check/mod.rs`)
+## Entries from REPLACE-shared-rows (`zedc-types/src/ty.rs`, `zedc-check/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1859,11 +1859,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A stack of memo frames, pushed when the walk enters a signature that hides variables and popped when it leaves, with a counting map of the hidden variables | `Replacer::held`, `Replacer::hidden`, `Replacer::memos` | Expressible | A list of maps threaded as state, and a map from variable to count; no new form |
 | Closures that change captured state, passed as `impl FnMut` to `Shape::map`, `Ty::map_payloads` and `Need::map_tys`, so a walk's memo is shared by its calls | `check::ty` | Workaround (gap 2) | Thread the memo as an argument and result through the map, or a state receiver |
 
-## Entries from FLOAT-minmax (`zed-kernel/src/eval.rs`, `zedc/src/axioms.rs`, `zed-native/src/codegen.rs`)
+## Entries from FLOAT-minmax (`zed-kernel/src/eval.rs`, `zedc-base/src/axioms.rs`, `zed-native/src/codegen.rs`)
 
 - No new gap. `ieee_min_max` is `if`s on `f64` comparisons and `is_sign_negative`, which Zed writes with `min` and `max` on `f64` themselves; the manual `PartialEq` on `Const` compares `to_bits`, the float bits word of gap 4 (built). Cranelift `fmin`/`fmax` is the back end's own instruction.
 
-## Entries from SLABS-count (`zedc/src/store/live3.rs`)
+## Entries from SLABS-count (`zedc-solvers/src/live3.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1886,18 +1886,18 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A drop guard that puts the outer measurement back when the closure returns or unwinds | `live`, `Restore` | Missing (no destructors, no unwinding) | A failure returns through `live`, which restores the state on both paths |
 | Measuring a structure by the bytes its `drop` frees | `bytes_of` | Missing (no explicit drop) | The runtime's count of freed cells when the value's last reference goes |
 
-## Entries from DART-SCALE (`zedc/src/check/ty.rs`, `check/mod.rs`)
+## Entries from DART-SCALE (`zedc-types/src/ty.rs`, `check/mod.rs`)
 
 - No new gap. `Ty::shapes` now returns a borrowed `Option<&[Shape]>` (`Option::as_deref`) where it returned a copy; Zed shares values, so at the port it returns the list itself, and the copy that made the pattern quadratic (COMPLEXITY.md F100) does not arise. The other changes are in test code (`partition_point`, a `Mutex` around a held `Db`).
 
-## Entries from RUNG2-mod-symbol (`zedc/src/store/preimage.rs`, `presburger.rs`)
+## Entries from RUNG2-mod-symbol (`zedc-preimage/src/preimage.rs`, `presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `while let … && …` (a let chain) popping the pairs a truncation undoes from the end of a list | `preimage::Tr::truncate` | None | a loop with `match` and `is` |
 | A `HashMap` keyed by a pair of linear forms, `(Lin, Lin)`, so `a div n` and `a mod n` share one quotient and remainder | `preimage::Tr::div_mod_by_term` | None | a family keyed by the pair, the linear forms compared by content |
 
-## Entries from RAT-asks-rest (`zedc/src/lex`, `ast`, `check/mod.rs`, `mutate.rs`, `zir/binary.rs`, `zir/canon.rs`, `zir/lower.rs`, `canon/serial.rs`, `zed-kernel/src/text.rs`)
+## Entries from RAT-asks-rest (`zedc-syntax/src/lex`, `ast`, `check/mod.rs`, `mutate.rs`, `zir/binary.rs`, `zir/canon.rs`, `zir/lower.rs`, `canon/serial.rs`, `zed-kernel/src/text.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1907,7 +1907,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Cow<'_, str>` from `Text::try_flat`, a one-piece string borrowed and a joined one copied into memory asked first | `Text::try_flat`, `words` casts | None | Zed shares values; the copy is a runtime primitive returning the block or a refusal |
 | An `Option<TooLarge>` field holding the first refusal while an infallible writer or the lowering goes on, read once at the end | `zir::binary::W`, `canon::serial::Out`, `zir::lower::Lower` | Mutation | The writer returns the refusal through each call, as Zed has no mutable field |
 
-## Entries from ATOM-nested-sq (`zedc/src/check/ty.rs`, `mod.rs`)
+## Entries from ATOM-nested-sq (`zedc-types/src/ty.rs`, `mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1915,7 +1915,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `impl Drop for ShapeData` that moves its components out and frees them with the rows' explicit stack (`drop_types`, `Arc::into_inner` on each shape no other type holds) | `check::ty::{ShapeData::drop, drop_types}` | Missing (user-defined destructors) | As for `RowData::drop`: the runtime frees shared values, on a stack of its own |
 | A visited set of shape addresses (`HashSet<*const ShapeData>` from `Arc::as_ptr`, `Shape::as_ptr`) so a walk enters a shared shape once | `check::ty::Ty::{vars_in, vars_outside}`, `check::Ck::data`; and a memo of what a rebuilding walk made of each shape (`Made::shapes`, `Memo`) | Identity (gap 1) | As for rows: the shape's digest as the key, confirmed by contents, or its kept facts read in place of the walk |
 
-## Entries from ATOM-payload-open (`zedc/src/check/ty.rs`)
+## Entries from ATOM-payload-open (`zedc-types/src/ty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1928,7 +1928,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `BTreeMap::range` from a prefix with `take_while(starts_with)`, to find the keys that begin with a text | `counterexamples` | Library: DESIGN.md names no ordered-map range word | A stdlib word (catalog of step L2.11) that walks an ordered map from a key |
 
-## Entries from HOOKS-term-dag (`zed-native/src/hooks.rs`, `zedc/src/zir/memory.rs`)
+## Entries from HOOKS-term-dag (`zed-native/src/hooks.rs`, `zedc-zir/src/zir/memory.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1957,7 +1957,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Closures inside the pool written as a small enum of body forms applied by a loop that replaces the closure and argument in place for calls in tail position | `Body`, `Machine::app` | None | A `match` on the body atom in a loop over `(c, x)` |
 ## Entries from XMARK-rows (`zedc/src/testing.rs`, `check/mod.rs`, `resolve.rs`)
 - No new gap. `no_arrow_at_carrier` is a search over the operator's arrows for one whose parameter type meets the operand's, a fold with early exit that Zed writes as `any` over the arrows; the menus are lists of notes built once per refusal; `mark_failure` is a `match` on an optional row.
-## Entries from TIME-report (`zedc/src/work.rs`, `main.rs`, `testing.rs`)
+## Entries from TIME-report (`zedc-base/src/work.rs`, `main.rs`, `testing.rs`)
 | A `thread_local!` `RefCell` holding the recorder, which every stage mark reads and writes without the stages passing it | `work::RECORDER`, `with`, `stage`, `unit`, `cached` | Mutation, global state (gap 2) | A recorder threaded as a state receiver through the stages, or the runtime's own counters read by the compiler's driver at each stage |
 | A counter given as a boxed `FnMut` closure that reads a hardware counter and the global allocator | `work::Counter`, `main.rs` `counter` | Missing (no foreign counters, no allocator hook); mutation inside a closure | The runtime offers instructions and bytes as one foreign read; the port's driver passes it in, as the Rust driver does |
 | `perf_event_open` through `perf-event2`, and the global allocator of `zed-alloc-count` | `main.rs` `counter` | Missing (foreign calls) | Stays in Rust: the measurement belongs to the runtime the port runs on |
@@ -1968,10 +1968,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Leaf sizes that differ between the unit tests and the build (`#[cfg(test)]` constants), so the unit tests reach the transforms at small sizes | `MUL_LEAF`, `GCD_LEAF` | No conditional compilation | A parameter of the routine, or a build mode of the unit, as in the entry from SLABS-count |
 | Leaf sizes and cost constants set from timings of the Rust code, crossovers between methods with identical results (author decision 2026-11-06) | `MUL_LEAF`, `DIV_LEAF`, `RECIP_LEAF`, `GCD_LEAF`, `PRINT_LEAF`, `TRANSFORM_COST`, `SPARSE_WORD`, `SPARSE_STEP` | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers", compare with the curves recorded there, and explain the anomalies listed there; a method never slower than the other is used alone |
 | A divisor borrowed or owned (`Cow<'a, BigUint>`) beside its reciprocal, built once and used for every block | `Divisor` | None | Zed shares values; the divisor is a value and the reciprocal a field beside it |
-## Entries from CAST-menu-check and CAST-menu-rest (`zedc/src/check/mod.rs`)
+## Entries from CAST-menu-check and CAST-menu-rest (`zedc-check/src/check/mod.rs`)
 - No new gap. The carriers of an argument are a `u8` mask with one bit per carrier, and the disjointness test runs over a `u16` with one bit per mask value; Zed writes both as sets of a four-member enum (bit operations, gap 1 where the masks are packed). The literal refusals of an application are pushed to a `Vec` on the checker and split off after it (mutation, gap 2), which the port writes as a list the application returns. A trial of a repair saves the checker's state, applies and undoes (as F6 and the CAST-menu entry).
 
-## Entries from ORACLE-chain (`tests/src/oracle.rs`, `zedc/src/elab.rs`)
+## Entries from ORACLE-chain (`tests/src/oracle.rs`, `zedc-elab/src/elab.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -1999,7 +1999,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::fs::canonicalize` of the file and of `std::env::current_dir()`, which resolve every symbolic link and `.` and `..` step through the operating system | `InFile::of` | Library (host file system) | A `realpath` word of the `Files` port (step L1.19), and the current directory as a field of the process environment port (ENV-port) |
 | `Path::components` compared pairwise up to the first difference, then each remaining part's bytes by `OsStr::as_encoded_bytes` | `InFile::from_resolved` | None | A path as a list of `U8String` parts; the shared prefix by a fold with early exit, the rest appended to the hash input |
 
-## Entries from K30-rest (`zedc/src/zir/canon.rs`, `canon/serial.rs`, `store/int.rs`, `zed-kernel/src/words.rs`, `text.rs`, `zed-native/src/exe.rs`)
+## Entries from K30-rest (`zedc-zir/src/zir/canon.rs`, `canon/serial.rs`, `store/int.rs`, `zed-kernel/src/words.rs`, `text.rs`, `zed-native/src/exe.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2008,14 +2008,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Arc<String>` shared between a token and the syntax tree | `lex::Part::Text`, `ast::StrPart::Text` | None | Zed values are shared |
 | A table numbering finished regions by their contents, read by a derived order of node shapes | `canon::Regions`, `Shape` | Gap 2 (shared tables) | A map from contents to number threaded through the lowering |
 
-## Entries from LOAD-chain (`zedc/src/store/preimage.rs`, `front.rs`)
+## Entries from LOAD-chain (`zedc-preimage/src/preimage.rs`, `front.rs`)
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | An undo log of boxed `FnOnce(&mut Memo)` closures, each removing one memo entry a body made, run after the body; the scopes made since a mark cut off the end of their `Vec` | `Fresh`, `Walk::made`, `Tx::bind`, `Tx::drop_fresh` | Mutation (gap 11), Shared tables (gap 2) | The memo threaded as state, with the entries a body made kept in a map of their own and dropped as one value, or the tables as values taken before the body and the scope's part restored after |
 | A trait over memo keys (`Key`, implemented for `At` and `(At, D)`) giving the term and scope an entry is keyed by | `Key`, `Walk::cached`, `Walk::made`, `Walk::translated` | Interfaces (L10) | A function giving the place passed beside the table, as `Table` is |
 | A struct borrowing the given terms for its lifetime (`Scoped<'t>`), built once and asked once per body | `Scoped`, `front::linear_questions` | None | A value threaded through the fold over the functions, returned with each relation |
 
-## Entries from LOAD-chain-share (`zedc/src/store/preimage.rs`, `presburger/extend.rs`, `front.rs`)
+## Entries from LOAD-chain-share (`zedc-preimage/src/preimage.rs`, `presburger/extend.rs`, `front.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2023,7 +2023,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | The memo's translation tables moved out with `std::mem::take` after a body and moved back before the next (`Option<(bool, Translations)>`) | `Memo::take_translations`, `Memo::put_translations`, `Scoped::relation` | Mutation (gap 11) | The tables returned with each relation and passed to the next |
 | An index `HashMap<Arc<str>, Vec<Rc<Logged>>>` from a name to the kept call entries whose arguments hold it, pruned with `retain` to the names a body reads | `Scoped::by_name`, `Scoped::relation` | Shared tables (gap 2), Mutation (gap 11) | A map from name to entries rebuilt by a filter over the next body's inputs |
 
-## Entries from LOAD-chain-aux (`zedc/src/store/preimage.rs`, `presburger/extend.rs`, `front.rs`)
+## Entries from LOAD-chain-aux (`zedc-preimage/src/preimage.rs`, `presburger/extend.rs`, `front.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2032,7 +2032,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A borrowed closure `&dyn Fn(u32) -> Formula` giving the definition of an auxiliary variable | `Extending::defined`, `extend::reached`, `front::linear_questions` | None | A function value passed beside the formula |
 | An enum `What` of what an auxiliary variable stands for, written by a function that renumbers its auxiliary atoms, and `Display` | `preimage::What`, `What::written`, `Scoped::written` | Interfaces (L10) for `Display` | A union with a function writing it |
 
-## Entries from LOAD-chain-args (`zedc/src/store/preimage.rs`, `front.rs`)
+## Entries from LOAD-chain-args (`zedc-preimage/src/preimage.rs`, `front.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2050,20 +2050,20 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `object::File::parse` over a `ReadCache` of the output and `Object::build_id`, to read the key an executable records in its GNU build-ID note | `link::recorded` | Foreign library; Bytes (gap 5) | An ELF note read from the bytes of a `Files` read once Bytes works, or the record kept beside the executable |
 | An `Option` built with `?` from each fallible step, every failure meaning "no record" | `link::recorded` | None | An `else` chain ending in `#none` |
 
-## Entries from NAME-at-print-warnings (`zed-kernel/src/print.rs`, `zedc/src/store/presburger.rs`, `presburger/deep.rs`, `elab.rs`)
+## Entries from NAME-at-print-warnings (`zed-kernel/src/print.rs`, `zedc-presburger/src/presburger.rs`, `presburger/deep.rs`, `elab.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A plain function pointer `fn(&str) -> &str` held in the printer's state (`Option<fn(..)>`) and passed down the `show` of each formula part, whose result borrows from its argument (a prefix of the name) | `print::written`, `Pieces::name`; `Formula::written`, `Factor::show`, `Atom::show`, `Lin::show`, `Con::show`; `elab::written_name` | None | A function value passed as an argument; the written name is the string's `slice` before `@`, shared and not borrowed |
 
-## Entries from ST-exact-enum (`zedc/src/store/product.rs`)
+## Entries from ST-exact-enum (`zedc-preimage/src/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `if … && let …` (a let chain) taking a constraint off the due set and reading its free names | `product::Scope::enumerate_exactly` | None | a `match` on the lookup inside the `if` |
 | An or-pattern in an irrefutable `let`, naming the key of each item of a persistent map's difference | `product::Scope::enumerate_exactly` | Or-patterns (row above) | a `match` with one arm per kind of change |
 
-## Entries from NARROW-hub-settle (`zedc/src/check/arms.rs`, `zedc/src/store/product.rs`, `zedc/src/store/conjuncts.rs`)
+## Entries from NARROW-hub-settle (`zedc-check/src/check/arms.rs`, `zedc-preimage/src/product.rs`, `zedc-presburger/src/conjuncts.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2071,7 +2071,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Skew-binary jump pointers in two `Vec<usize>` indexed by node and pushed as nodes are added (Myers 1983) | `Arms::add`, `Arms::depth`, `Arms::jump`, `Arms::step` | Mutation | Two maps from node to depth and jump target, grown with the node list; the arithmetic is plain `int` |
 | A scope settled in place on a clone (`let mut s = self.clone(); s.settle(..)`) to answer a read through `&self` | `Scope::settled` | Mutation | `settle` returns the settled scope; the clone is the persistent maps' sharing, which Zed values have |
 
-## Entries from DECIDE-disj-chain (`zedc/src/store/presburger.rs`)
+## Entries from DECIDE-disj-chain (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2082,7 +2082,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Vec::retain` whose closure advances a captured counter to read a `Vec<bool>` of removed positions | `absorb` | Mutation (gap 11) | `where` over the disjunctions zipped with their positions |
 | `Option::is_none_or`, `Option::is_some_and` | `repair`, `settle` | None | A `match`, or `x is #none or ..` |
 
-## Entries from DISJ-diff-fast and DISJ-incremental (`zedc/src/store/presburger.rs`)
+## Entries from DISJ-diff-fast and DISJ-incremental (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2113,7 +2113,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Command::env` and `env_remove` per variable, and `std::env::var_os` | `link::driver_env`, `Toolchain::driver` | Process port (environment) | The process port's environment map, passed to the spawn |
 | `OsStr::as_encoded_bytes` and `OsStr::from_bytes` (`OsStrExt`) to read paths from the linker's list and the record | `link::dependencies`, `link::Record::read`, `Record::to_bytes` | Bytes as paths (gap 5) | Paths as byte strings in the file-system port |
 
-## Entries from S22-order (`zedc/src/store/preimage.rs` tests, `zedc/src/lib.rs`)
+## Entries from S22-order (`zedc-preimage/src/preimage.rs` tests, `zedc/src/lib.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2127,7 +2127,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A build script hashing the source files of its crate and of the workspace crates it depends on, found by reading `Cargo.toml` files line by line, listing directories (`std::fs::read_dir`, `canonicalize`) and searching Rust files for `include!`, `include_str!`, `include_bytes!` and `#[path]`; it prints `cargo::rerun-if-changed` for each file and directory read | `build.rs`, `sources::of` | None at the language level: Cargo's crate hash leaves out the sources' contents; Library (host file system) | The Zed build tool knows the content address of every unit it compiles (sec:ir) and writes the runtime's identity from those addresses; no file walk or manifest reading is needed |
 | `#[path]` on a module, to compile one file both in a build script and in the crate | `build.rs` (`mod sources`), `lib.rs` (`pub mod sources`) | Modules | Gone with the build script, as above |
 
-## Entries from IS-chain-quad (`zedc/src/check/mod.rs`, `zedc/src/check/walk.rs`)
+## Entries from IS-chain-quad (`zedc-check/src/check/mod.rs`, `zedc-check/src/check/walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2141,7 +2141,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A tree of restrictions by halves kept in a `Vec<Option<Part<Row>>>`, each built on first use through `&mut self` while the iterator runs | `RowIndex::half`, `RowIndex::holds` | Mutation | The tree in the iterator's state receiver, each node a lazy value; or all `2c` restrictions built before the first value, which costs the same order |
 | Per column and depth, a `BTreeMap<Value, Vec<usize>>` filled with `entry().or_default().push` | `Keyed::add`, `Keyed::at` | Mutation | A table from column, depth and value to a list, built by a fold over the tuple types |
 
-## Entries from S22-chain-cost (`zedc/src/store/preimage.rs`)
+## Entries from S22-chain-cost (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2149,14 +2149,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `&mut Vec` passed down a recursion that pushes the leaf pairs of two trees walked together | `cls_zip` | Mutation | A fold that returns the list, or the two walks' leaf lists merged by their ranges |
 | `if … && let Split::Exact(..) = …` (a let chain) taking a second split's answer only when it is exact | `preimage_in` | None | `match` with an `is` test |
 
-## Entries from NARROW-hub-rest (`zedc/src/store/conjuncts.rs`, `zedc/src/store/product.rs`)
+## Entries from NARROW-hub-rest (`zedc-presburger/src/conjuncts.rs`, `zedc-preimage/src/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `Box<StarIndex>`, the star indexes of a conjunction behind one pointer, so a `Scope` moved on the checker's stack stays small (an unboxed index made `check::walk`'s frame 0x1278 bytes against 0xbe8, and `follow::following_tests_scale` overflowed) | `Conjuncts::index` | None | Removed: Zed values are shared, and size is not the programmer's concern |
 | The relation cloned to forget a name on the copy, and its stars compared with the original's by `OrdMap::diff`, before the scope settles and forgets in place | `Scope::bind` | Mutation | `forget` returns the new relation; the clone is the persistent maps' sharing, which Zed values have |
 
-## Entries from NARROW-hub-related (`zedc/src/store/conjuncts.rs`, `zedc/src/store/product.rs`)
+## Entries from NARROW-hub-related (`zedc-presburger/src/conjuncts.rs`, `zedc-preimage/src/product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2178,7 +2178,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Treap walks that keep `Vec<&Arc<Set>>` stacks of the path and rebuild it bottom up; an `Iterator` struct holding its own stack | `set::split`, `set::insert`, `set::remove`, `set::Iter`, `xor::node` | Mutation, iterators | A fold over the path list returned by a loop; the iterator as a recursive list builder |
 | A slice pattern binding the last two elements of a `Vec` mutably inside a let chain | `Bdd::assemble` | Mutation | Take the last two elements off the list, rebuild them, and put them back |
 
-## Entries from NARROW-notes-name (`zedc/src/check/arms.rs`)
+## Entries from NARROW-notes-name (`zedc-check/src/check/arms.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2190,7 +2190,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | A `BTreeSet` round of types popped one at a time (`pop_first`) from the search's state, refilled by `std::mem::take` of `again`, and read by drains started inside the decisions it runs | `Searching::drain`, `Search::round` | Mutation | The round is search state threaded through each decision, as the other `Search` fields; a nested drain returns the round it leaves |
 
-## Entries from S22-transfer-rem (`zedc/src/store/preimage.rs`)
+## Entries from S22-transfer-rem (`zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
