@@ -1537,13 +1537,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| EMPTY-overlap-chain | impl attempt 3 | 2026-11-07 01:46 | started on origin/main 45f8a2bb, worktree wt/empty-overlap-chain, load 14.24 |
-| GROUP-admit-msg | impl attempt 1 | 2026-11-05 04:07 | admission refusals reworded per arm with site and path, Show prints L .. U -> V and surface leaves; spec 1bf7dde on wt/group-admit-msg-spec; building tests |
-| KERNEL-leaf-digits | impl attempt 1 | 2026-11-07 15:32 | measured read_digits leaf 32..2048 at 10^3..10^6 random digits (instructions, min of 2-20 runs, load5 28-36): 1024 fewest at every size (10^3: 47,480 vs 52,879  |
-| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | reproduced on 26372a77: drifting chain with q=(x<10//x>20), shift +3: Extending 0.39/1.62/7.06 s at 40/80/160 links (quadratic, load ~22); shared-atom chain (x  |
-| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | ready e1849d6d on f990a010: 195/195 affected pieces pass with docs after rebase; l02_03 bf16 failure is the spec's (WORDS-half-layer) |
-| PREIMAGE-or-chain | impl attempt 1 | 2026-11-07 15:35 | reproduced on b4e083a7: new scaling test k=256->2048 for // as ifs fails, 15.6 MB -> 663 MB (42.6x, limit 24); load 26 |
-| ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | stopped for decision: pendant method answers parts today's solver refuses (6 in 900 random cases); stage 1 uncommitted in wt/st-eqs-cubic |
+| DAGVIEW-narrow | impl attempt 1 | 2026-11-07 15:58 | ready f95a835a: live direct 51,123x11,558 -> 14,783x13,880, all 14,463x11,304; tests 48+2 pass |
+| EMPTY-overlap-chain | impl attempt 3 | 2026-11-07 01:46 | ready 899ff174 on wt/empty-overlap-chain (rebased on 00c9fe4b): one-pass exact path linear on xor/chain families, may_cover kept (A46); groups pass except unrel |
+| GROUP-admit-msg | impl attempt 1 | 2026-11-05 04:07 | ready 84946ca8 on wt/group-admit-msg (base 00c9fe4b), spec f13973f on wt/group-admit-msg-spec; l01_23+l01_22+zed_kernel 76 pieces 0 failed (load 19-28), spec gr |
+| KERNEL-leaf-digits | impl attempt 1 | 2026-11-07 15:32 | ready 964b8047 rebased on ccb8ddfb (STATUS conflict, both rows kept); zedrt.rs copy set to 1024 with pointer comment; 7 pieces incl m0_04 pass, 0 failed, load 3 |
+| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | STOPPED: answers change vs main in 3 random chains (one_scope.rs:557): faces now answer holds Ok(true) where the relation whole refuses Err(Shadows); e.g. q=!(x |
+| NAN-inf-atom | spec attempt 1 | 2026-11-07 15:57 | returning: ready spec 34286da + impl dcde9a40; board-check shows DANGLING EDGE NAN-inf-atom->KNOWN-mix until the KNOWN-mix row merges (first ready line named it |
+| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | ready again at 2be6273a on 31dc18db: bottom scope, one-input and other-domain inputs on structural paths, three scaling tests with negative controls, groups 195 |
+| PREIMAGE-or-chain | impl attempt 1 | 2026-11-07 15:35 | ready wt/preimage-or-chain 62f640da; fmt, clippy clean; 383+192+124 test pieces pass except l02_03 later_words (allIntro spec drift, not this branch) |
+| ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | ready 5e7448b9 on 31dc18db: 388 pieces pass, 146 after rebase / load 18.79 16.44 22.84 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
