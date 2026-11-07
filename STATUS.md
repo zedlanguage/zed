@@ -1496,10 +1496,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DIAG-addr-root | impl attempt 1 | 2026-11-07 10:10 | InFile now from unit name (package) or absolute path (loose); l01_29+suppress_binary pass (178+3); new suppress_binary tests fail on old zedc (2 of 3), load 19 |
+| DIAG-addr-root | impl attempt 1 | 2026-11-07 10:10 | ready 9a9e3d38 on 691a4927, spec 08a19a2; 14 pieces 0 failed with doc check; clippy, fmt clean; load 20.91 20.61 20.65 |
 | LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | started: worktree from origin/main, reading extend.rs and drift probe |
-| STACK-big-tests | impl attempt 1 | 2026-11-07 09:39 | started: worktree from origin/main, finding the walk behind the 512 MiB stacks |
-| STAGE-stub-rerun | impl attempt 1 | 2026-11-07 10:13 | baseline at 5367fa6a: l01_28_staging 70 pass, l25_08_mutate 20 pass, zedc_stage unit 0 (load 35.6) |
+| PA-let-multi | impl attempt 1 | 2026-11-07 10:18 | the probe's family (one test, d remainders) is quadratic on base too: 44.9x bytes at d=64->512 (load 16), 42.3x with the fix; with_bound binds every input of ea |
+| STACK-big-tests | impl attempt 1 | 2026-11-07 09:39 | ready: 377070e0 on 691a4927; l01_23+l01_26 74 pieces pass, same counts before/after (load 18-34); fmt, clippy clean; TY-sub-stack queued for the real recursion |
+| STAGE-stub-rerun | impl attempt 1 | 2026-11-07 10:13 | ready effdd587 on 691a4927: l01_28_staging 72, l25_08_mutate 20, zedc_stage 0 pass with doc check; fmt and clippy clean; follow-up STAGE-stub-env queued |
 | ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | design settled (CM-2006 potential repair + Dijkstra bounds per qualifying tree, per-tree counters in Blocks); baseline run of the six groups started / load 26.5 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
