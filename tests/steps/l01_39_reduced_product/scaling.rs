@@ -542,3 +542,78 @@ fn a_chain_of_shadowing_lets_scales() {
     });
     t.expect("a thread").join().expect("the chain scales");
 }
+
+/// `n{i}`.
+fn n(i: usize) -> String {
+    format!("n{i}")
+}
+
+/// `a * b mod 10 == r`.
+fn ends_in(a: &str, b: &str, r: i64) -> Term {
+    let ab = prim(Prim::Mul, var(a), var(b));
+    prim(Prim::Eq, prim(Prim::Mod, ab, int(10)), int(r))
+}
+
+/// The scope under `@exact` of the integers `n0` to `n{k - 1}`, each within `0..=30`.
+fn exact_within(k: usize) -> Scope {
+    let names: Vec<std::sync::Arc<str>> = (0..k).map(|i| n(i).into()).collect();
+    let int_ty = || zedc::store::product::Product::of_type(zed_kernel::types::Type::int());
+    let mut s = Scope::exact(names.iter().map(|x| (x.clone(), int_ty())));
+    let p = Premises::new();
+    for x in &names {
+        let from = prim(Prim::Ge, var(x), int(0));
+        let to = prim(Prim::Le, var(x), int(30));
+        s = s.assume(&prim(Prim::And, from, to), true, &p);
+    }
+    s
+}
+
+/// `scope` with each of `written` written and the scope reduced after each, as a body's
+/// constraints are met one by one.
+fn reduced_one_by_one(scope: &Scope, written: &[Term]) -> Scope {
+    let mut s = scope.clone();
+    for c in written {
+        s.write(c.clone());
+        s.reduce();
+    }
+    s
+}
+
+/// `n{i} * n{i} mod 10 == 9` for `i` below `k`: constraints on names apart.
+fn squares_apart(k: usize) -> Vec<Term> {
+    (0..k).map(|i| ends_in(&n(i), &n(i), 9)).collect()
+}
+
+/// `n{i} * n{i + 1} mod 10 == 1` for `i` below `k`: one group of constraints, linked in a chain.
+fn products_in_a_chain(k: usize) -> Vec<Term> {
+    (0..k).map(|i| ends_in(&n(i), &n(i + 1), 1)).collect()
+}
+
+/// What a scaling test calls a family of constraints, and its constraints by their count.
+type Family = (&'static str, fn(usize) -> Vec<Term>);
+
+#[test]
+fn many_reductions_under_exact_scale() {
+    // An `@exact` scope reduced after each of k written constraints: a reduction searches only
+    // the constraints written since the last one and those on names that changed, and a point
+    // kept from an earlier search that the new constraint extends is not searched again, so
+    // the k reductions cost about k, for constraints on names apart and for one group linked
+    // in a chain. The scopes and constraints are built before the timing.
+    let families: [Family; 2] = [
+        (
+            "k reductions under @exact, each after a constraint on names apart",
+            squares_apart,
+        ),
+        (
+            "k reductions under @exact, each after a constraint of one chain",
+            products_in_a_chain,
+        ),
+    ];
+    for (what, family) in families {
+        let built = scaling::inputs(32, |k| (exact_within(k + 1), family(k)));
+        scaling::check(what, 32, |k| {
+            let (s, cs) = &built[&k];
+            assert!(!reduced_one_by_one(s, cs).bottom);
+        });
+    }
+}

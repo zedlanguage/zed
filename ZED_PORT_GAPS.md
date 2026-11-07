@@ -1998,3 +1998,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A plain function pointer `fn(&str) -> &str` held in the printer's state (`Option<fn(..)>`) and passed down the `show` of each formula part, whose result borrows from its argument (a prefix of the name) | `print::written`, `Pieces::name`; `Formula::written`, `Factor::show`, `Atom::show`, `Lin::show`, `Con::show`; `elab::written_name` | None | A function value passed as an argument; the written name is the string's `slice` before `@`, shared and not borrowed |
+
+## Entries from ST-exact-enum (`zedc/src/store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `if … && let …` (a let chain) taking a constraint off the due set and reading its free names | `product::Scope::enumerate_exactly` | None | a `match` on the lookup inside the `if` |
+| An or-pattern in an irrefutable `let`, naming the key of each item of a persistent map's difference | `product::Scope::enumerate_exactly` | Or-patterns (row above) | a `match` with one arm per kind of change |

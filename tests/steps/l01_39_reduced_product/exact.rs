@@ -130,15 +130,76 @@ fn constraints_that_share_no_name_are_searched_apart() {
 fn a_witness_still_within_the_bounds_is_kept() {
     let t = product_mod_10("n", "n", 9);
     let s = written(within(&[("n", 0, 30)], true), &[t]);
-    let w = s.exactly.values().next().cloned().expect("a witness");
+    let w = s.exactly.get("n").cloned().expect("a witness");
     // Narrowing to a range that keeps the witness keeps it; one that drops it finds another.
-    let v = w["n"].to_i64().expect("a witness in 0..=30");
+    let v = w.to_i64().expect("a witness in 0..=30");
     let keep = s.assume(&prim(Prim::Ge, vec![var("n"), lit(v)]), true, &none());
-    assert_eq!(keep.exactly.values().next(), Some(&w));
+    assert_eq!(keep.exactly, s.exactly);
     let drop = s.assume(&prim(Prim::Gt, vec![var("n"), lit(v)]), true, &none());
     assert!(!drop.bottom);
-    let w2 = drop.exactly.values().next().expect("a witness")["n"]
-        .to_i64()
-        .expect("a witness in 0..=30");
+    let w2 = drop.exactly.get("n").expect("a witness").to_i64();
+    let w2 = w2.expect("a witness in 0..=30");
     assert!(w2 > v && (w2 * w2) % 10 == 9, "{w2}");
+}
+
+/// A chain of four names, each pair of neighbors with a product ending in 1, and the last
+/// name's square ending in 9: the constraints of a scope that tracks, say, four gears whose
+/// tooth counts must mesh in turn.
+fn gear_chain() -> [Term; 4] {
+    [
+        product_mod_10("a", "b", 1),
+        product_mod_10("b", "c", 1),
+        product_mod_10("c", "d", 1),
+        product_mod_10("d", "d", 9),
+    ]
+}
+
+#[test]
+fn constraints_reduced_one_at_a_time_decide_as_all_at_once() {
+    // A program that checks one constraint per line reduces after each; the exact sets must
+    // be those of reducing once after all of them.
+    let names = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
+    let at_once = written(within(&names, true), &gear_chain());
+    let mut one_by_one = within(&names, true);
+    for t in gear_chain() {
+        one_by_one = written(one_by_one, &[t]);
+    }
+    assert!(!at_once.bottom && !one_by_one.bottom);
+    for (n, lo, hi) in names {
+        assert_eq!(
+            allowed(&one_by_one, n, lo, hi),
+            allowed(&at_once, n, lo, hi),
+            "{n}"
+        );
+    }
+    // `d` ends in 3 or 7, so `c`, `b` and `a` do too.
+    assert_eq!(allowed(&one_by_one, "a", 0, 30), [3, 7, 13, 17, 23, 27]);
+}
+
+#[test]
+fn a_later_constraint_that_breaks_the_chain_makes_the_scope_bottom() {
+    // After the chain is reduced, a last line asks for `a` ending in 5: no product of it
+    // ends in 1, so no point is left. Only the group of `a` holds the change.
+    let names = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
+    let s = written(within(&names, true), &gear_chain());
+    assert!(!s.bottom);
+    let five = prim(
+        Prim::Eq,
+        vec![prim(Prim::Mod, vec![var("a"), lit(10)]), lit(5)],
+    );
+    let s = written(s, &[five]);
+    assert!(s.bottom || s.get("a").is_empty(), "{}", s.get("a"));
+}
+
+#[test]
+fn a_name_fixed_in_the_middle_of_a_chain_still_decides_both_sides() {
+    // Fixing `b` to 3 splits the chain in two; `a` must then end in 7 and so must `c`, and
+    // with `b` ending in 5 no point is left.
+    let names = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
+    let s = written(within(&names, true), &gear_chain());
+    let three = s.assume(&is("b", 3), true, &none());
+    assert!(!three.bottom);
+    assert_eq!(allowed(&three, "a", 0, 30), [7, 17, 27]);
+    assert_eq!(allowed(&three, "c", 0, 30), [7, 17, 27]);
+    assert!(s.assume(&is("b", 5), true, &none()).bottom);
 }

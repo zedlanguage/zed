@@ -16,10 +16,11 @@
 //!   constraint whose form does not show it ends removes nothing. A range is left to the
 //!   interval, congruence and relation reasoning (docs/thresholds.md, replacement 8). In a
 //!   scope under `@exact` ([`Scope::exact`]) the scope is bottom exactly when no point of its
-//!   bounded integer names' intervals and classes meets their written constraints. The
-//!   constraints are taken in groups that share names, each group searched for one point
-//!   ([`witness`]); the point is kept, and the group is searched again only when a name's
-//!   interval or class no longer holds it. Nothing lists the points, so the scope stays the
+//!   bounded integer names' intervals and classes meets their written constraints. One point
+//!   that meets them is kept; a constraint new since the last reduction, or on a name that
+//!   has changed, is searched over its names the point does not give ([`witness`]), and only
+//!   when that finds nothing is the group of constraints that share names with it searched
+//!   whole ([`Scope::enumerate_exactly`]). Nothing lists the points, so the scope stays the
 //!   size of the source, and a question about the exact set is a test assumed in the scope:
 //!   whether `p == 4` can hold is whether the scope assuming it is bottom.
 //!
@@ -53,7 +54,7 @@ use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::landmarks::Landmarks;
 use super::lattice::{Congruence, FiniteSet, Lattice};
-use super::preimage::{Classes, Demand, Domains, Point, follow_own, preimage, relations, witness};
+use super::preimage::{Classes, Demand, Domains, follow_own, preimage, relations, witness};
 use super::presburger::{self, Atom, Con, Formula, Lin, Rel};
 use super::revision::{self, Op, reduce_congruence};
 use crate::elab::written_name;
@@ -499,9 +500,10 @@ pub struct Scope {
     pub projected: imbl::OrdMap<PartKey, Projected>,
     /// Whether the scope is under `@exact`.
     pub exact: bool,
-    /// Under `@exact`, each group of written constraints that share names, by their texts with
-    /// the static values substituted, with a point that meets them all.
-    pub exactly: imbl::OrdMap<Vec<String>, Point>,
+    /// Under `@exact`, a point that meets the written constraints the last enumeration took: a
+    /// value for each open name of each group of them whose search found a point, and none for
+    /// the names of a group whose search gave no answer ([`Scope::enumerate_exactly`]).
+    pub exactly: imbl::OrdMap<Arc<str>, Num>,
     /// Each question the integer solver left undecided while this scope was narrowed or
     /// projected, with the constraint it was asked of and how the scope came to ask it; each
     /// one leaves the scope sound but wider than it could be. [`Scope::warnings`] reports them.
@@ -1116,13 +1118,11 @@ impl Scope {
                 DiffItem::Add(..) => {}
             }
         }
-        // A point of either side is a point of the join; it is checked again when read.
-        let mut exactly = self.exactly.clone();
-        for d in self.exactly.diff(&other.exactly) {
-            if let DiffItem::Add(k, v) = d {
-                exactly.insert(k.clone(), v.clone());
-            }
-        }
+        // This side's point, which goes with this side's last enumeration, kept below as the
+        // join's: the constraints on a name the join changed are searched again, and the
+        // others hold at it as they did on this side. The other side's values are not mixed
+        // in, since this side's constraints need not hold at them.
+        let exactly = self.exactly.clone();
         let mut refusals = self.refusals.clone();
         for d in self.refusals.diff(&other.refusals) {
             if let imbl::ordset::DiffItem::Add(r) = d {
@@ -2000,15 +2000,16 @@ impl Scope {
     /// termination proof stronger than the form of the term (size-change termination,
     /// PSPACE-complete in the call graph).
     fn enumerate(&mut self) {
-        if self.exact {
-            self.enumerate_exactly();
-        }
         let now = (
             self.names.clone(),
             self.written.clone(),
             self.enumerated.clone(),
         );
-        let texts: BTreeSet<String> = match self.seen.enumeration.replace(now) {
+        let last = self.seen.enumeration.replace(now);
+        if self.exact {
+            self.enumerate_exactly(last.as_ref());
+        }
+        let texts: BTreeSet<String> = match last {
             None => self.written.keys().cloned().collect(),
             Some((names, written, enumerated)) => {
                 let mut out = BTreeSet::new();
@@ -2114,82 +2115,195 @@ impl Scope {
 }
 
 impl Scope {
-    /// Under `@exact`: each written constraint whose free names are all in scope, with its
-    /// static names substituted and its other names all integers, meets each of those with the
-    /// projection of the points at which it holds; one with no such name is evaluated. A
-    /// constraint is projected again only when an interval or class of its open names has
-    /// changed since its last projection. Each projection only narrows, and each name's
-    /// interval and class change only finitely often, so the rounds of [`Scope::reduce`] end.
-    fn enumerate_exactly(&mut self) {
-        let int = Type::int();
-        let bounded = |p: &Product| matches!(p.ints().bounds(), Some((End::Fin(_), End::Fin(_))));
-        // Each written constraint over open integer names, all bounded, with its statics
-        // substituted; then the groups of those that share an open name.
-        let mut groups: Vec<(Vec<Term>, BTreeSet<Arc<str>>)> = Vec::new();
-        for (c, free) in self.written.values() {
-            if !free.iter().all(|n| self.names.contains_key(n)) {
-                continue;
-            }
-            let statics = self.statics_of(free);
-            let open: BTreeSet<Arc<str>> = free
-                .iter()
-                .filter(|n| !statics.contains_key(*n))
-                .cloned()
-                .collect();
-            if open.is_empty()
-                || !open.iter().all(|n| {
-                    let p = self.get(n);
-                    p.ty.element.subtype(&int) && bounded(&p)
-                })
-            {
-                continue;
-            }
-            let mut group = (vec![substitute(c, &statics)], open);
-            groups.retain(|(cs, ns)| {
-                if ns.is_disjoint(&group.1) {
-                    return true;
+    /// Under `@exact`: decides whether some point of the bounded integer names' intervals and
+    /// classes meets the written constraints on them, and sets `bottom` when none does. The
+    /// constraints taken are each written constraint whose free names are all in scope, with
+    /// its static names substituted and its other names, its open names, all bounded integers;
+    /// their groups that share open names are independent, so the conjunction has a point
+    /// exactly when each group does. [`Scope::exactly`] keeps a point: every constraint taken
+    /// holds at it, except those of a group whose search gave no answer, whose names it does
+    /// not give. `last` is the scope as the last enumeration found it, and a constraint is due
+    /// only when it is new or rewritten since, mentions a name changed since, or shares a name
+    /// with one removed since. A constraint due is first searched over its own open names that
+    /// the point does not give within their intervals and classes, the others fixed at the
+    /// point; a point found extends the point kept, and the constraints on the names it gives
+    /// are due in turn. Only when that finds none is the constraint's whole group searched,
+    /// once in a call. A reduction then costs the constraints due and the names they reach,
+    /// found by the persistent maps' difference and the index of constraints by name, and
+    /// not every group (ST-exact-enum, COMPLEXITY.md row S40); a group is searched whole only
+    /// when the point cannot be extended, at the cost [`witness`] states. Whether the scope
+    /// is bottom does not depend on the point kept: a group is found to have no point only
+    /// by the search of the whole group, which is what the search of each group in full
+    /// would find.
+    fn enumerate_exactly(&mut self, last: Option<&Enumeration>) {
+        let mut due: BTreeSet<String> = BTreeSet::new();
+        match last {
+            None => due.extend(self.written.keys().cloned()),
+            Some((names, written, _)) => {
+                for d in written.diff(&self.written) {
+                    match d {
+                        DiffItem::Add(k, _) | DiffItem::Update { new: (k, _), .. } => {
+                            due.insert(k.clone());
+                        }
+                        // The constraints on its names: a group whose search gave no answer
+                        // may fall apart into groups that give one.
+                        DiffItem::Remove(_, (_, free)) => {
+                            for n in free {
+                                due.extend(self.written_by.of(n).cloned());
+                            }
+                        }
+                    }
                 }
-                group.0.extend(cs.iter().cloned());
-                group.1.extend(ns.iter().cloned());
-                false
-            });
-            groups.push(group);
+                for d in names.diff(&self.names) {
+                    let (DiffItem::Add(n, _)
+                    | DiffItem::Remove(n, _)
+                    | DiffItem::Update { new: (n, _), .. }) = d;
+                    due.extend(self.written_by.of(n).cloned());
+                }
+            }
         }
-        for (cs, open) in groups {
-            let mut key: Vec<String> = cs.iter().map(|c| c.to_string()).collect();
-            key.sort();
-            let holds = |w: &Point| {
-                open.iter().all(|n| {
-                    w.get(n)
-                        .is_some_and(|v| self.get(n).contains(&Value::from(v)))
-                })
+        let mut todo = due.clone();
+        // The names of the groups searched whole in this call.
+        let mut searched: BTreeSet<Arc<str>> = BTreeSet::new();
+        let yes = Demand::Bool(true);
+        while let Some(text) = todo.pop_first() {
+            let Some((c, open)) = self.taken(&text) else {
+                // A constraint due that is no longer taken may have linked groups, as a
+                // removed one did: the constraints on its names are due in its place.
+                if due.remove(&text)
+                    && let Some((_, free)) = self.written.get(&text)
+                {
+                    for n in free {
+                        todo.extend(self.written_by.of(n).filter(|k| **k != text).cloned());
+                    }
+                }
+                continue;
             };
-            if self.exactly.get(&key).is_some_and(holds) {
+            if open.iter().any(|n| searched.contains(n)) {
                 continue;
             }
-            let all = cs
-                .into_iter()
-                .reduce(|a, b| Term::Prim(Prim::And, vec![a, b]))
-                .expect("a group has a constraint");
-            let dom: Domains = open
-                .iter()
-                .map(|n| (n.clone(), self.get(n).ints().clone()))
-                .collect();
-            let classes: Classes = open
-                .iter()
-                .map(|n| (n.clone(), self.get(n).cell.congruence.element))
-                .collect();
-            match witness(&all, &dom, &classes, &Demand::Bool(true)) {
-                Some(Some(w)) => {
-                    self.exactly.insert(key, w);
+            let mut fixed: BTreeMap<Arc<str>, Value> = BTreeMap::new();
+            let mut free: BTreeSet<Arc<str>> = BTreeSet::new();
+            for n in open {
+                match self.exactly.get(&n) {
+                    Some(v) if self.admits(&n, v) => {
+                        fixed.insert(n, Value::from(v));
+                    }
+                    _ => {
+                        free.insert(n);
+                    }
                 }
+            }
+            let (dom, classes) = self.box_of(&free);
+            if let Some(Some(w)) = witness(&substitute(&c, &fixed), &dom, &classes, &yes) {
+                for n in &free {
+                    todo.extend(self.written_by.of(n).filter(|k| **k != text).cloned());
+                }
+                self.exactly.extend(w);
+                continue;
+            }
+            // Complexity tradeoff: when the kept point cannot be extended to this constraint,
+            // its whole group is searched, at the cost of `witness` (COMPLEXITY.md row S17),
+            // and a point is not repaired from part of the group. Why: a search over part of
+            // the group cannot show that the group has no point, and a repair that frees names
+            // one hop at a time can visit the group many times before failing. Trigger: k
+            // reduces each of whose constraints the point cannot meet, on one group of k
+            // constraints: k searches of the group. Test:
+            // `l01_39_reduced_product::scaling::many_reductions_under_exact_scale` covers the
+            // case the point extends. COMPLEXITY.md row S40.
+            let (all, names) = self.group(free.into_iter().chain(fixed.into_keys()));
+            let (dom, classes) = self.box_of(&names);
+            match witness(&all, &dom, &classes, &yes) {
+                Some(Some(w)) => self.exactly.extend(w),
                 Some(None) => {
                     self.bottom = true;
                     return;
                 }
-                None => {}
+                None => {
+                    for n in &names {
+                        self.exactly.remove(n);
+                    }
+                }
+            }
+            searched.extend(names);
+        }
+    }
+
+    /// The written constraint of text `text` as [`Scope::enumerate_exactly`] takes it, with
+    /// its static names substituted, and its open names; `None` when it is not taken: a free
+    /// name not in scope, no open name, or an open name not a bounded integer.
+    fn taken(&self, text: &str) -> Option<(Term, BTreeSet<Arc<str>>)> {
+        let (c, free) = self.written.get(text)?;
+        if !free.iter().all(|n| self.names.contains_key(n)) {
+            return None;
+        }
+        let statics = self.statics_of(free);
+        let open: BTreeSet<Arc<str>> = free
+            .iter()
+            .filter(|n| !statics.contains_key(*n))
+            .cloned()
+            .collect();
+        let int = Type::int();
+        let bounded_int = |n: &Arc<str>| {
+            self.names.get(n).is_some_and(|p| {
+                p.ty.element.subtype(&int)
+                    && matches!(p.ints().bounds(), Some((End::Fin(_), End::Fin(_))))
+            })
+        };
+        (!open.is_empty() && open.iter().all(bounded_int)).then(|| (substitute(c, &statics), open))
+    }
+
+    /// Whether `v` lies in the interval and the class of the name `n`.
+    fn admits(&self, n: &str, v: &Num) -> bool {
+        self.names.get(n).is_some_and(|p| {
+            p.ints().contains_end(&End::Fin(v.clone())) && p.cell.congruence.element.contains(v)
+        })
+    }
+
+    /// The intervals and classes of `names`, the box a [`witness`] searches.
+    fn box_of(&self, names: &BTreeSet<Arc<str>>) -> (Domains, Classes) {
+        let product = |n: &Arc<str>| self.names.get(n).expect("a name in scope");
+        let dom = names
+            .iter()
+            .map(|n| (n.clone(), product(n).ints().clone()))
+            .collect();
+        let classes = names
+            .iter()
+            .map(|n| (n.clone(), product(n).cell.congruence.element.clone()))
+            .collect();
+        (dom, classes)
+    }
+
+    /// The group of a taken constraint whose open names are `open`: the conjunction of the
+    /// taken constraints linked to it by shared open names, in the order of their texts, and
+    /// their open names. Each constraint and name is visited once.
+    fn group(&self, open: impl IntoIterator<Item = Arc<str>>) -> (Term, BTreeSet<Arc<str>>) {
+        let mut names: BTreeSet<Arc<str>> = open.into_iter().collect();
+        let mut todo: Vec<Arc<str>> = names.iter().cloned().collect();
+        let mut texts: BTreeSet<&String> = BTreeSet::new();
+        let mut taken: BTreeMap<&String, Term> = BTreeMap::new();
+        while let Some(n) = todo.pop() {
+            for k in self.written_by.of(&n) {
+                if !texts.insert(k) {
+                    continue;
+                }
+                let Some((t, more)) = self.taken(k) else {
+                    continue;
+                };
+                for m in more {
+                    if !names.contains(&m) {
+                        names.insert(m.clone());
+                        todo.push(m);
+                    }
+                }
+                taken.insert(k, t);
             }
         }
+        let all = taken
+            .into_values()
+            .reduce(|a, b| Term::Prim(Prim::And, vec![a, b]))
+            .expect("the constraint the group is of is taken");
+        (all, names)
     }
 }
 
