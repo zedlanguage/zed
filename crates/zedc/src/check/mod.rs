@@ -31,6 +31,7 @@
 //! Step L1.27: an atom of a named family is data (sec:failure). `else` strips only the loose
 //! atoms, and a family atom that selects no arrow is an error, where a loose one flows on.
 
+pub(crate) mod kernel_type;
 pub mod read;
 pub mod ty;
 pub mod widen;
@@ -53,9 +54,9 @@ use crate::ast::{
     Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
     Type, TypeKind, shown,
 };
-use crate::resolve::tables::Tables;
 use crate::lex::{Span, unread_literal};
 use crate::rejection::Row;
+use crate::resolve::tables::Tables;
 use crate::resolve::{Handle, Ref, Resolution};
 use crate::store::int::Int;
 use crate::store::interval::{
@@ -64,6 +65,7 @@ use crate::store::interval::{
 };
 use crate::store::revision::{Op, forward};
 
+use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot,
     Ty, VarFacts, Vars, atoms, class_id, errs, mask_text, var_name,
@@ -828,7 +830,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Checks that the guarantee of every `L .. U -> V` in the unit's written types is within
-    /// its permission ([`crate::elab::kernel_type`]). Every way of checking a program comes
+    /// its permission ([`kernel_type()`]). Every way of checking a program comes
     /// here once, so the check runs on each bound once. The walk keeps its own stack, as a
     /// written type nests as deep as its text; each outermost bound is read whole, with the
     /// bounds inside it, so each node of a written type is read once.
@@ -841,7 +843,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             while let Some(ty) = stack.pop() {
                 match &ty.kind {
                     TypeKind::Bounded { .. } => {
-                        crate::elab::kernel_type(ty, &mut ports, Some(&mut bad));
+                        kernel_type(ty, &mut ports, Some(&mut bad));
                         ports.clear();
                     }
                     TypeKind::Tuple(ts) | TypeKind::Union(ts) | TypeKind::And(ts) => {
@@ -4945,7 +4947,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 /// shows a declared type the checker does not track. `None` for a type that holds a port,
 /// which has no kernel type.
 pub fn declared_text(a: &Type) -> Option<String> {
-    crate::elab::kernel_type(a, &mut Vec::new(), None).map(|k| k.surface().to_string())
+    kernel_type(a, &mut Vec::new(), None).map(|k| k.surface().to_string())
 }
 
 /// When an application of the arrows `arrows` of `sig` to arguments of the types `args` was

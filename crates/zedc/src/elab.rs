@@ -33,13 +33,12 @@ use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
 use crate::work::{self, Stage};
 
 mod defs;
-mod kernel_type;
 mod walk;
 
 pub use crate::stage::Cones;
-pub use defs::{Def, Test, Unit, written_name};
-pub(crate) use kernel_type::kernel_type;
+pub(crate) use crate::check::kernel_type::kernel_type;
 pub use crate::resolve::topo::{topo, topo_joined};
+pub use defs::{Def, Test, Unit, written_name};
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {

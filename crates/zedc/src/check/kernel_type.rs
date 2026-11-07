@@ -81,7 +81,7 @@ fn kernel_form(
                 return None;
             }
         },
-        TypeKind::Every(Every::Atom) => crate::check::ty::atoms(),
+        TypeKind::Every(Every::Atom) => super::ty::atoms(),
         TypeKind::Every(Every::Tuple) => KType::universe(Universe::Tuple),
         TypeKind::Every(Every::Struct) => KType::universe(Universe::Struct),
         TypeKind::AtomAny(a) => KType::atom_with(a, &KType::top()),
