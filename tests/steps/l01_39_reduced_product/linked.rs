@@ -990,6 +990,48 @@ fn a_ladder_grown_by_k_if_statements_is_linear() {
     }
 }
 
+#[test]
+fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
+    // The chain from x0 within 0..=10^9, each rung's `if` after an `if` that leaves the tree to
+    // the projection block by block in its arms: `x_i + w_i >= 0`, not a difference
+    // constraint, with w_i unbounded. The edges that come while the tree goes block by block
+    // are put in the potential all the same (`Scope::repair`), so no later test finds it again
+    // from the whole tree (`Scope::reseed`). The same mix with a hole, `x_i != 5`, in place of
+    // the sum grows 58 times from k = 40 to 320, as on the code before this test: the
+    // projection of the holed tree, not the potential (COMPLEXITY.md row S25).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+        .into_iter()
+        .map(|k| {
+            let n = named(k + 1, "x");
+            let w = named(k, "w");
+            let s = ints(&[n.clone(), w.clone()].concat())
+                .assume(&prim(Prim::Ge, var("x0"), int(0)), true, &p)
+                .assume(&prim(Prim::Le, var("x0"), int(1_000_000_000)), true, &p);
+            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+            let mut tests: Vec<Term> = Vec::new();
+            for i in 0..k - 1 {
+                tests.push(prim(
+                    Prim::Ge,
+                    prim(Prim::Add, var(&n[i]), var(&w[i])),
+                    int(0),
+                ));
+                tests.push(ge(&n[i], &n[i + 2], 2));
+            }
+            (k, (s, tests))
+        })
+        .collect();
+    let name = "a ladder grown by k if statements, each after an if on a sum";
+    scaling::check_order(name, 40, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| {
+            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+            j.reduce();
+            j
+        });
+    });
+}
+
 /// The scope of integers `ns`, each within `0..=10` unless given.
 fn within(ns: &[&str], given: &[(&str, Product)]) -> Scope {
     let p = Premises::new();
@@ -1118,6 +1160,76 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
     }
     assert!(moved > 500, "{moved} steps moved an interval");
     assert!(empty > 50, "{empty} ladders became empty");
+}
+
+#[test]
+fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block() {
+    // As above, with tests that leave a tree to the projection block by block between the
+    // difference constraints: `x != c`, which gives `x` a hole until a bound closes it, and
+    // `x + y >= c`, not a difference constraint. An edge that comes while its tree goes block
+    // by block is in the potential before any later edge is read (`Scope::repair`).
+    let mut r = Rng::new(0x401e);
+    let p = Premises::new();
+    let (mut moved, mut empty, mut holes) = (0, 0, 0);
+    for case in 0..150 {
+        let k = 3 + r.below(6);
+        let ns = named(k, "x");
+        let mut tests: Vec<(Term, bool, bool)> = Vec::new();
+        for _ in 0..k + r.below(3 * k) {
+            let (i, j) = (r.below(k), r.below(k));
+            let c = r.int(-3, 3);
+            let t = match r.below(10) {
+                0 => prim(Prim::Ge, var(&ns[i]), int(r.int(-5, 5))),
+                1 => prim(Prim::Le, var(&ns[i]), int(r.int(-5, 5))),
+                2 | 3 => prim(Prim::Ne, var(&ns[i]), int(r.int(-3, 3))),
+                4 if i != j => prim(Prim::Ge, prim(Prim::Add, var(&ns[i]), var(&ns[j])), int(c)),
+                5 if i != j => prim(Prim::Eq, prim(Prim::Sub, var(&ns[i]), var(&ns[j])), int(c)),
+                _ if i != j => ge(&ns[i], &ns[j], c),
+                _ => continue,
+            };
+            tests.push((t, r.below(6) != 0, r.below(10) == 0));
+        }
+        for reverse in [false, true] {
+            let mut order = tests.clone();
+            if reverse {
+                order.reverse();
+            }
+            let mut s = ints(&ns);
+            for (step, (t, holds, joined)) in order.iter().enumerate() {
+                let before = intervals(&s, &ns);
+                let next = |s: &Scope| {
+                    if *joined {
+                        let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+                        j.reduce();
+                        j
+                    } else {
+                        s.assume(t, *holds, &p)
+                    }
+                };
+                let got = next(&s);
+                let mut fresh = s.clone();
+                fresh.forget_projections();
+                let mut want = next(&fresh);
+                want.forget_projections();
+                want.reduce();
+                assert_eq!(
+                    intervals(&got, &ns),
+                    intervals(&want, &ns),
+                    "case {case} reverse {reverse} step {step}: {order:?}"
+                );
+                moved += usize::from(intervals(&got, &ns) != before);
+                holes += usize::from(ns.iter().any(|n| got.get(n).ints().pieces().len() > 1));
+                if got.bottom {
+                    empty += 1;
+                    break;
+                }
+                s = got;
+            }
+        }
+    }
+    assert!(moved > 500, "{moved} steps moved an interval");
+    assert!(empty > 50, "{empty} ladders became empty");
+    assert!(holes > 200, "{holes} steps left a name with holes");
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:

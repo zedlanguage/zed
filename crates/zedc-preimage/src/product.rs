@@ -542,10 +542,13 @@ impl fmt::Debug for Seen {
     }
 }
 
-/// A value of each name of the trees of blocks projected by shortest paths
-/// ([`Scope::shortest`]) at which every difference constraint among them holds: under it no
-/// edge has a negative reduced weight, so a Dijkstra search finds their bounds. A cache, equal
-/// in every scope, and checked at every edge it is read at.
+/// A value of names at which every difference constraint among them holds: under it no edge
+/// has a negative reduced weight, so a Dijkstra search finds the bounds of a tree of blocks
+/// projected by shortest paths ([`Scope::shortest`]). It holds at every edge of the relation
+/// as of its last projection, except the edges of names it lacks: each edge added is put in
+/// it at the next projection, whichever way its tree is projected ([`Scope::repair`]), and a
+/// projection of every block ([`Due::All`]) empties it. A cache, equal in every scope, and
+/// checked at every edge it is read at.
 #[derive(Clone, Default)]
 struct Potential(imbl::OrdMap<Arc<str>, Int>);
 
@@ -574,7 +577,7 @@ struct Seeds {
     added: BTreeSet<Arc<Formula>>,
     /// The seeds whose tree at the last projection held a conjunct other than a difference
     /// constraint or a bound, or a name with holes or a class: their bounds may be no fixed
-    /// point of the difference constraints alone, and no potential was kept for them.
+    /// point of the difference constraints alone.
     unsure: BTreeSet<Arc<str>>,
 }
 
@@ -590,8 +593,9 @@ enum Shortest {
 /// Why [`Scope::shortest`] left a tree to be projected block by block.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fall {
-    /// The potential lacks a name it reads, or an edge it reads has a negative reduced weight
-    /// under it: it is found again after ([`Scope::reseed`]).
+    /// The potential lacks a name it reads, as after a projection of every block, or an edge
+    /// it reads has a negative reduced weight under it: it is found again after
+    /// ([`Scope::reseed`]).
     Potential,
     /// A name it reads has holes or a class, or no product.
     Name,
@@ -600,7 +604,10 @@ enum Fall {
 }
 
 /// The edges of tree `t` of the forest at `name`, each with its conjunct and whether it is the
-/// conjunct's back edge ([`conjuncts::edges`]); a bound is an edge to or from no name.
+/// conjunct's back edge ([`conjuncts::edges`]); a bound is an edge to or from no name. A
+/// conjunct other than a difference constraint or a bound has none: the potential is kept for
+/// the edges of every tree ([`Scope::repair`]), and only a tree of edges alone is projected by
+/// shortest paths.
 fn tree_edges(relation: &Conjuncts, t: BlockId, name: &str) -> Vec<(Arc<Formula>, bool, Edge)> {
     let blocks = relation.blocks();
     let mut out = Vec::new();
@@ -612,7 +619,6 @@ fn tree_edges(relation: &Conjuncts, t: BlockId, name: &str) -> Vec<(Arc<Formula>
             continue;
         }
         let Some((e, back)) = conjuncts::edges(g) else {
-            debug_assert!(false, "a tree of difference constraints holds {g:?}");
             continue;
         };
         out.push((g.clone(), false, e));
@@ -2317,6 +2323,11 @@ impl Scope {
     /// `whole`, every tree of blocks is projected as a whole: its constraints together, and
     /// each other conjunct with them.
     fn project(&mut self, due: Due, whole: bool) {
+        // A projection of every block puts no edge in the potential, which may then fail at
+        // the edges added since the last projection: it is found again where it is read.
+        if matches!(due, Due::All) {
+            self.potential = Potential::default();
+        }
         if self.relation.is_top() {
             self.projected = imbl::OrdMap::new();
             return;
@@ -2402,6 +2413,24 @@ impl Scope {
         // The trees projected block by block in this projection, each with a block of it when
         // its potential is to be found again ([`Scope::reseed`]).
         let mut fallen: BTreeMap<BlockId, Option<BlockId>> = BTreeMap::new();
+        // Each edge added is put in the potential before any tree is projected, whichever way
+        // its tree is, so that the potential holds at every edge it has ([`Scope::repair`]).
+        for (&t, at) in &fresh {
+            if at.added.is_empty() {
+                continue;
+            }
+            match self.repair(&relation, t, &at.added) {
+                Ok(None) => {}
+                Ok(Some(n)) => {
+                    self.empty_at(&n);
+                    self.relation = relation;
+                    return;
+                }
+                Err(_) => {
+                    fallen.insert(t, at.added.iter().find_map(|g| blocks.of(g)));
+                }
+            }
+        }
         // The trees a name of which has come to have holes or a class in this projection.
         let mut holed: BTreeSet<BlockId> = BTreeSet::new();
         let mut order: Vec<(&Arc<Formula>, BlockId)> = due
@@ -2439,7 +2468,7 @@ impl Scope {
                     continue;
                 }
                 let found = if at.unsure.is_empty() {
-                    self.shortest(&relation, t, &at.names, &at.added)
+                    self.shortest(&relation, t, &at.names)
                 } else {
                     Err(Fall::Unsure)
                 };
@@ -2460,13 +2489,7 @@ impl Scope {
                         continue;
                     }
                     Ok(Shortest::Bottom(n)) => {
-                        match self.names.get_mut(&n) {
-                            Some(p) => {
-                                let prem = p.premises();
-                                p.meet_ints(IntervalSet::empty(), &prem);
-                            }
-                            None => self.bottom = true,
-                        }
+                        self.empty_at(&n);
                         self.relation = relation;
                         return;
                     }
@@ -2523,10 +2546,7 @@ impl Scope {
             }
         }
         for (t, b) in fallen {
-            if let Some(b) = b
-                && !holed.contains(&t)
-                && blocks.differences_only(t)
-            {
+            if let Some(b) = b {
                 self.reseed(&relation, t, b);
             }
         }
@@ -2535,32 +2555,96 @@ impl Scope {
 
     /// Projects tree `t` of the forest, a tree of difference constraints and bounds whose
     /// names each have one interval and no class ([`conjuncts::Blocks::differences_only`]),
-    /// after the names `seeds` changed and the conjuncts `added` came, by shortest paths:
-    /// `y <= x + k` is an edge `x → y` of weight `k`, a name's greatest value is its least
-    /// distance from a bound, and its least the negated least distance to one (Shostak, "Deciding
-    /// linear inequalities by computing loop residues", J. ACM 28, 1981). Such rows are totally
-    /// unimodular, so these are the ends of the name's projection, an interval, and an empty
-    /// one or a cycle of negative weight is bottom.
+    /// after the names `seeds` changed, by shortest paths: `y <= x + k` is an edge `x → y` of
+    /// weight `k`, a name's greatest value is its least distance from a bound, and its least
+    /// the negated least distance to one (Shostak, "Deciding linear inequalities by computing
+    /// loop residues", J. ACM 28, 1981). Such rows are totally unimodular, so these are the
+    /// ends of the name's projection, an interval, and an empty one is bottom.
     ///
     /// The bounds were a fixed point of the tree's other conjuncts at the last projection, so
     /// only paths from the seeds can move one: each seed takes the least bound its edges in
     /// give it, and a Dijkstra search from the seeds moves the names its paths reach, with the
-    /// weights reduced by the scope's potential ([`Potential`]) so that none is negative. Each
-    /// edge added first repairs the potential by a Dijkstra search from its end over the names
-    /// whose potential must fall (Cotton and Maler, "Fast and flexible difference constraint
-    /// propagation for DPLL(T)", SAT 2006), which reaches the edge's start exactly when it
-    /// closes a cycle of negative weight. Every edge read is checked under the potential, so a
-    /// potential left from another tree or scope is used only where it holds. In
-    /// O((s + m) log n) for the `s` seeds and the `m` edges at the names whose potential or
-    /// bound moves, of `n` names; the tree's other names are not read. `Err` says why the tree
-    /// is to be projected block by block, and nothing has changed.
+    /// weights reduced by the scope's potential ([`Potential`]), which [`Scope::repair`] has
+    /// put the edges added in. In O((s + m) log n) for the `s` seeds and the `m` edges at the
+    /// names whose bound moves, of `n` names; the tree's other names are not read. `Err` says
+    /// why the tree is to be projected block by block, and nothing has changed.
     fn shortest(
         &mut self,
         relation: &Conjuncts,
         t: BlockId,
         seeds: &BTreeSet<Arc<str>>,
-        added: &BTreeSet<Arc<Formula>>,
     ) -> Result<Shortest, Fall> {
+        let up = self.bound_pass(relation, t, seeds, true)?;
+        let down = self.bound_pass(relation, t, seeds, false)?;
+        let mut moved: BTreeMap<Arc<str>, (Option<Int>, Option<Int>)> = BTreeMap::new();
+        for (n, hi) in up {
+            moved.entry(n).or_default().1 = Some(hi);
+        }
+        for (n, lo) in down {
+            moved.entry(n).or_default().0 = Some(-&lo);
+        }
+        // Every name moved was read, so has one interval.
+        let mut out = Vec::with_capacity(moved.len());
+        for (n, (lo, hi)) in &moved {
+            let (was_lo, was_hi) = self.ends(n)?;
+            let lo = lo.clone().or(was_lo);
+            let hi = hi.clone().or(was_hi);
+            if let (Some(lo), Some(hi)) = (&lo, &hi)
+                && lo > hi
+            {
+                return Ok(Shortest::Bottom(n.clone()));
+            }
+            let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
+            out.push((n.clone(), end(lo, End::NegInf), end(hi, End::PosInf)));
+        }
+        let mut ns = Vec::with_capacity(out.len());
+        for (n, lo, hi) in out {
+            if let Some(p) = self.names.get_mut(&n) {
+                let prem = p.premises();
+                p.meet_ints(IntervalSet::range(lo, hi), &prem);
+                ns.push(n);
+            }
+        }
+        Ok(Shortest::Moved(ns))
+    }
+
+    /// Puts the edges of the conjuncts `added` to tree `t` of the forest in the potential
+    /// ([`Potential`]), one at a time: an edge `u → v` whose reduced weight `γ` is negative
+    /// lowers the potential of each name `x` by the least reduced distance from `v` to `x`
+    /// plus `γ`, where that is below zero, found by a Dijkstra search from `v` over those names
+    /// alone (Cotton and Maler, "Fast and flexible difference constraint propagation for
+    /// DPLL(T)", SAT 2006). `Ok(Some(u))` when the edge closes a cycle of negative weight, so
+    /// that no point meets the tree's difference constraints; `Err` when the search reads a
+    /// name the potential lacks, or an edge with a negative reduced weight, and then nothing
+    /// has changed. A conjunct other than a difference constraint or a bound has no edge, and
+    /// the tree may hold some.
+    ///
+    /// Why the potential then holds at every edge, and the cycle is found, though only the
+    /// edges at the names the search settles are read: the potential held at every edge of
+    /// the relation before ([`Potential`]), so each edge read has a reduced weight of zero or
+    /// more, each key pushed is at least the key popped, and the names settle in the order of
+    /// their distances. Then an edge `a → b` keeps a reduced weight of zero or more: when
+    /// neither end's potential falls it is unchanged; when only `b`'s falls it grows; when
+    /// `a` settles its edges are read, and `b` either settles too, by at most `a`'s fall plus
+    /// the old reduced weight, or keeps a reduced weight of zero or more from `a`'s new
+    /// potential. The new edge's reduced weight is then zero, since `v` falls by `γ` and `u`
+    /// does not fall unless the edge closes such a cycle. That cycle is a path `P` from `v` to
+    /// `u` with `γ` plus its reduced weight below zero; each edge of `P` has a reduced weight
+    /// of zero or more, so each of its prefixes is below zero as well, the search settles each
+    /// of its names or reaches them by a path no longer, and so reaches `u`. A name the
+    /// potential lacks takes its value from its first edge only when every edge at it is among
+    /// those added, each put in after; otherwise, as after a projection of every block, the
+    /// tree is found again from the solver ([`Scope::reseed`]). The check of each edge read
+    /// therefore fails only at a name the potential lacks.
+    ///
+    /// In O(m log n) for the `m` edges at the names whose potential falls, of `n` names.
+    fn repair(
+        &mut self,
+        relation: &Conjuncts,
+        t: BlockId,
+        added: &BTreeSet<Arc<Formula>>,
+    ) -> Result<Option<Arc<str>>, Fall> {
+        let blocks = relation.blocks();
         let mut pot = self.potential.0.clone();
         // The edges added and not yet in the potential's graph.
         let mut pending: Vec<(Arc<Formula>, bool, Edge)> = Vec::new();
@@ -2568,7 +2652,6 @@ impl Scope {
             let Some((e, back)) = conjuncts::edges(g) else {
                 continue;
             };
-            let blocks = relation.blocks();
             if !blocks.of(g).is_some_and(|b| blocks.tree(b) == t) {
                 continue;
             }
@@ -2577,6 +2660,18 @@ impl Scope {
                 pending.push((g.clone(), true, e));
             }
         }
+        // A name the potential lacks may take a value from an edge added only when every edge
+        // at it was added: those are put in after.
+        let new_name = |n: &Arc<str>| -> Result<(), Fall> {
+            let all_added = tree_edges(relation, t, n)
+                .iter()
+                .all(|(g, _, e)| e.from.is_none() || e.to.is_none() || added.contains(g));
+            if all_added {
+                Ok(())
+            } else {
+                Err(Fall::Potential)
+            }
+        };
         let mut waiting: BTreeSet<(Arc<Formula>, bool)> = pending
             .iter()
             .map(|(g, back, _)| (g.clone(), *back))
@@ -2588,15 +2683,19 @@ impl Scope {
             };
             let gamma = match (pot.get(u).cloned(), pot.get(v).cloned()) {
                 (None, None) => {
+                    new_name(u)?;
+                    new_name(v)?;
                     pot.insert(u.clone(), Int::ZERO);
                     pot.insert(v.clone(), e.weight.clone());
                     continue;
                 }
                 (Some(pu), None) => {
+                    new_name(v)?;
                     pot.insert(v.clone(), &pu + &e.weight);
                     continue;
                 }
                 (None, Some(pv)) => {
+                    new_name(u)?;
                     pot.insert(u.clone(), &pv - &e.weight);
                     continue;
                 }
@@ -2633,7 +2732,7 @@ impl Scope {
                         continue;
                     }
                     if x == u {
-                        return Ok(Shortest::Bottom(u.clone()));
+                        return Ok(Some(u.clone()));
                     }
                     if fall.get(x).is_none_or(|c| gx < *c) {
                         fall.insert(x.clone(), gx.clone());
@@ -2646,39 +2745,19 @@ impl Scope {
                 pot.insert(s, ps);
             }
         }
-        let up = self.bound_pass(relation, t, seeds, &pot, true)?;
-        let down = self.bound_pass(relation, t, seeds, &pot, false)?;
-        let mut moved: BTreeMap<Arc<str>, (Option<Int>, Option<Int>)> = BTreeMap::new();
-        for (n, hi) in up {
-            moved.entry(n).or_default().1 = Some(hi);
-        }
-        for (n, lo) in down {
-            moved.entry(n).or_default().0 = Some(-&lo);
-        }
-        // Every name moved was read, so has one interval.
-        let mut out = Vec::with_capacity(moved.len());
-        for (n, (lo, hi)) in &moved {
-            let (was_lo, was_hi) = self.ends(n)?;
-            let lo = lo.clone().or(was_lo);
-            let hi = hi.clone().or(was_hi);
-            if let (Some(lo), Some(hi)) = (&lo, &hi)
-                && lo > hi
-            {
-                return Ok(Shortest::Bottom(n.clone()));
-            }
-            let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
-            out.push((n.clone(), end(lo, End::NegInf), end(hi, End::PosInf)));
-        }
         self.potential.0 = pot;
-        let mut ns = Vec::with_capacity(out.len());
-        for (n, lo, hi) in out {
-            if let Some(p) = self.names.get_mut(&n) {
+        Ok(None)
+    }
+
+    /// Empties the interval of `n`, or the scope when it has no product of `n`.
+    fn empty_at(&mut self, n: &str) {
+        match self.names.get_mut(n) {
+            Some(p) => {
                 let prem = p.premises();
-                p.meet_ints(IntervalSet::range(lo, hi), &prem);
-                ns.push(n);
+                p.meet_ints(IntervalSet::empty(), &prem);
             }
+            None => self.bottom = true,
         }
-        Ok(Shortest::Moved(ns))
     }
 
     /// The least and greatest integers of `n`, `None` for an infinite end, when `n` has a
@@ -2697,16 +2776,22 @@ impl Scope {
     }
 
     /// One side of [`Scope::shortest`]: with `up` the greatest values, along the edges, with
-    /// potential `pot`; otherwise the least values negated, along the edges reversed, with the
-    /// potential negated, under which the reduced weights are the same. Each seed first takes
-    /// the least bound its edges in give it, then a Dijkstra search from the seeds lowers the
-    /// names its paths reach. The names lowered, with their new bounds on this side.
+    /// the scope's potential; otherwise the least values negated, along the edges reversed,
+    /// with the potential negated, under which the reduced weights are the same. Each seed
+    /// first takes the least bound its edges in give it, then a Dijkstra search from the seeds
+    /// lowers the names its paths reach. The names lowered, with their new bounds on this side.
+    ///
+    /// The bounds found do not depend on the potential: a name lowered is pushed again, and
+    /// each name popped at its latest bound lowers along each of its edges, so the search
+    /// stops at a fixed point of the edges at the names it lowers, and the others' bounds were
+    /// one already. The potential bounds the cost: each edge read is checked to have a reduced
+    /// weight of zero or more, so each key pushed is at least the key popped, and each name
+    /// is popped at its latest bound once.
     fn bound_pass(
         &self,
         relation: &Conjuncts,
         t: BlockId,
         seeds: &BTreeSet<Arc<str>>,
-        pot: &imbl::OrdMap<Arc<str>, Int>,
         up: bool,
     ) -> Result<BTreeMap<Arc<str>, Int>, Fall> {
         // An edge on this side, from and to.
@@ -2718,7 +2803,7 @@ impl Scope {
             }
         };
         let q = |n: &Arc<str>| -> Result<Int, Fall> {
-            let v = pot.get(n).ok_or(Fall::Potential)?;
+            let v = self.potential.0.get(n).ok_or(Fall::Potential)?;
             Ok(if up { v.clone() } else { -v })
         };
         let mut label: BTreeMap<Arc<str>, Option<Int>> = BTreeMap::new();
@@ -2794,18 +2879,24 @@ impl Scope {
 
     /// Finds again the potential of tree `t` of the forest, which holds block `b`, as a point
     /// of its conjuncts, all difference constraints and bounds, from the solver: after the
-    /// tree was projected block by block because its potential lacked a name or failed at an
-    /// edge ([`Fall::Potential`]). Nothing when the solver finds no point.
+    /// tree was projected block by block because its potential lacked a name
+    /// ([`Fall::Potential`]). Nothing when the solver finds no point.
     ///
     /// Complexity tradeoff: the point is asked of the whole tree, in the solver's time for its
-    /// conjuncts, though only the names the potential lacks or fails at need new values.
-    /// Why: a potential of part of a tree must agree with the rest at every edge between them,
-    /// which a point of the part alone need not, and a potential of any part is found only
-    /// by shortest paths from all the tree's names, Bellman–Ford in O(n m). Trigger: a tree
-    /// last projected with every block ([`Due::All`], as when a scope is made), or with a
-    /// conjunct other than a difference constraint or bound, that then gets one: once per such
-    /// tree, after which each edge added repairs the potential ([`Scope::shortest`]). Test:
-    /// `l01_39_reduced_product::linked::a_ladder_grown_by_k_if_statements_is_linear`.
+    /// conjuncts, though only the names the potential lacks need new values. Why: a potential
+    /// of part of a tree must agree with the rest at every edge between them, which a point of
+    /// the part alone need not, and a potential of any part is found only by shortest paths
+    /// from all the tree's names, Bellman–Ford in O(n m). Trigger: once per tree after a
+    /// projection of every block ([`Due::All`], as when a scope is made), which empties the
+    /// potential. No other projection triggers it, so a sequence of tests cannot reseed a tree
+    /// again and again: each projection repairs the potential at every edge added, whichever
+    /// way the tree is projected ([`Scope::repair`]), so after a reseed a name lacks a potential
+    /// only if it had no edge to another name at the last projection, and then every such edge
+    /// it has now was added and seeds it. Measured with tests that leave the tree to the
+    /// projection block by block (`x_i + w_i >= 0`) between difference tests on the same tree:
+    /// 661 MB at k = 40 and 5576 MB at k = 320, 8.4 times for 8 times k, the same on the code
+    /// before the repair covered those edges, with no reseed in either. Test:
+    /// `l01_39_reduced_product::linked::if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear`.
     /// COMPLEXITY.md row S25. A complete solution keeps the point the projection's own solver
     /// finds for each tree (`presburger::difference_hulls` reads one) and passes it back.
     fn reseed(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId) {
@@ -2835,7 +2926,10 @@ impl Scope {
                 }
             }
         }
-        let all = Formula::and(cons.iter().map(|g| Formula::clone(g)).collect());
+        // The potential is of the edges alone, so the point is of the difference constraints and
+        // bounds alone, where the tree holds other conjuncts.
+        let edges = cons.iter().filter(|g| conjuncts::edges(g).is_some());
+        let all = Formula::and(edges.map(|g| Formula::clone(g)).collect());
         if let Ok(Some(point)) = presburger::satisfiable(&all) {
             for n in names {
                 if let Some(v) = point.get(&Atom::Sym(n.clone())) {
