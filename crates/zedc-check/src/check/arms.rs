@@ -69,15 +69,16 @@ pub(super) struct Translated {
     pub(super) vars: Vec<(Arc<str>, usize)>,
 }
 
-/// The piecewise-affine summary of a binder's value over the one input it reads
+/// The piecewise-affine summary of a binder's value over the inputs it reads
 /// ([`zedc_preimage::preimage::let_summary`]), made once for the binder and bound with the name
 /// in each scope told of it ([`Scope::bind_summarized`]), so that a test of the name narrows the
 /// input: `m >= 3` after `m = n + 3` narrows `n` to `int[0..]`.
 pub(super) struct Summarized {
     pub(super) summary: LetPa,
-    /// The input the summary reads and its product where the summary was made: what a scope
-    /// with no product of the input is told of it.
-    pub(super) input: Option<(Arc<str>, Product)>,
+    /// The inputs the summary reads and their products where the summary was made: what a
+    /// scope with no product of an input is told of it. A persistent map, so that a binder
+    /// takes the largest map of the binders it reads and adds the others' to it.
+    pub(super) inputs: imbl::OrdMap<Arc<str>, Product>,
 }
 
 /// For one node, each name to the nearest node at or above it where a search of the tests

@@ -908,3 +908,98 @@ fn a_block_of_tested_lets_is_checked_in_time_linear_in_the_bindings() {
         })
     });
 }
+
+/// A block of `d` bindings `x_k = x_(k-1) + 1` from `x_0 = v`, where `v is int` has narrowed
+/// the parameter `v`, then one test `x_d >= d`, which holds where `v >= 0`, and in its arm a
+/// bit word on each `x_k`, the first binding first or the last first. Each read is accepted
+/// only through the summary of `x_k` over the narrowed `v` (item PA-let-narrow: a parameter
+/// narrowed by `is` has summaries, and a name read under a test of a name over the same input
+/// is narrowed by its summary).
+fn read_let_chain(d: usize, last_first: bool) -> String {
+    let mut s = String::from("x0 = v; ");
+    for k in 1..=d {
+        s += &format!("x{k} = x{} + 1; ", k - 1);
+    }
+    let mut reads: Vec<usize> = (1..=d).collect();
+    if last_first {
+        reads.reverse();
+    }
+    let mut body = String::from("t0 = 0; ");
+    for (i, k) in reads.iter().enumerate() {
+        body += &format!("t{} = t{i} + popCount(x{k}); ", i + 1);
+    }
+    format!(
+        "f(positional v: int | String) =\n  \
+         if v is int {{ {s}if x{d} >= {d} {{ {body}t{d} }} else {{ 0 }} }} else {{ 0 }};\n"
+    )
+}
+
+#[test]
+fn the_names_of_a_tested_block_read_under_the_test_are_checked_in_time_linear_in_the_bindings() {
+    // Each binder's summary is made once and formed from those of the binders it reads,
+    // children first, so a read of `x_k` costs one evaluation of its formed summary over the
+    // narrowed input, in either order of reads (item PA-let-narrow). Measured 2026-11-07, last
+    // first: 3.57e8 instructions at d = 256 and 2.81e9 at d = 2048, 7.9 times. A negative
+    // control in which a summary sums the whole chain of those it reads, not their formed sums,
+    // measured 16.8 times; the limit of 24 at sizes this test can afford does not fail it.
+    for last_first in [false, true] {
+        let what = if last_first {
+            "reading each of a block of d lets under a test, last first"
+        } else {
+            "reading each of a block of d lets under a test, first first"
+        };
+        let n = 64;
+        let srcs = scaling::inputs(n, |d| super::program(&read_let_chain(d, last_first)));
+        scaling::on_a_thread(1 << 29, || {
+            scaling::check(what, n, |m| {
+                let src = &srcs[&m];
+                if let Err(e) = zedc::run::load(src.as_bytes()) {
+                    panic!("rejected at d = {m}: {e}");
+                }
+            })
+        });
+    }
+}
+
+/// A block of `d` bindings over two inputs, `x_0 = n + m`, then `x_k = x_(k-1) + n` and
+/// `x_k = x_(k-1) + m` in turn, where a test has bounded `m` to `0..=5`; each `x_k = a n + b m`
+/// is tested by `x_k >= 5 b`, which holds where `n >= 0`, with a bit word on `n` in its arm.
+fn two_input_chain(d: usize) -> String {
+    let mut b = 1u64;
+    let mut s = String::from("x0 = n + m; s0 = 0; ");
+    for k in 1..=d {
+        let j = k - 1;
+        let add = if k % 2 == 1 { "n" } else { "m" };
+        if k % 2 == 0 {
+            b += 1;
+        }
+        let at_least = 5 * b;
+        s += &format!(
+            "x{k} = x{j} + {add}; \
+             s{k} = s{j} + (if x{k} >= {at_least} {{ popCount(n) }} else {{ 0 }}); "
+        );
+    }
+    format!(
+        "f(positional n: int, positional m: int) =\n  \
+         if m >= 0 && m <= 5 {{ {s}s{d} }} else {{ 0 }};\n"
+    )
+}
+
+#[test]
+fn a_block_of_tested_lets_over_two_inputs_is_checked_in_time_linear_in_the_bindings() {
+    // Each summary is over `n` and `m` (item PA-let-narrow), made once and formed from the
+    // one before it; each test narrows `n` by the bounds of `m`, `O(1)` for two inputs.
+    // Measured 2026-11-07: 6.60e8 instructions at d = 256 and 5.27e9 at d = 2048, 8.0 times;
+    // 16.1 times under the negative control of the test above.
+    let what = "checking a block of d tested lets over two inputs";
+    let n = 64;
+    let srcs = scaling::inputs(n, |d| super::program(&two_input_chain(d)));
+    scaling::on_a_thread(1 << 29, || {
+        scaling::check(what, n, |m| {
+            let src = &srcs[&m];
+            if let Err(e) = zedc::run::load(src.as_bytes()) {
+                panic!("rejected at d = {m}: {e}");
+            }
+        })
+    });
+}

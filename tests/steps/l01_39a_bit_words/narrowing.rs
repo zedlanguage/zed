@@ -268,15 +268,19 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
             "{out}"
         );
     }
-    // The value of `k` is read where it was bound, so a test on `n` after the binding says
-    // nothing of it and is not named.
-    let out = rejected(
+    // `k` is read through its summary over `n` where it is read (item PA-let-narrow), so a
+    // test on `n` after the binding bears on it and is named: `n > 1` shows `k >= -1`. Before,
+    // `k` was read where it was bound, and `n > 5` here did not accept `popCount(k)`.
+    assert!(accepted(
         "g(positional n: int) =\n  \
            if n > 0 {\n    k = n - 2;\n    if n > 5 { popCount(k) } else { 0 }\n  } else { 0 };\n",
+    ));
+    let out = rejected(
+        "g(positional n: int) =\n  \
+           if n > 0 {\n    k = n - 3;\n    if n > 1 { popCount(k) } else { 0 }\n  } else { 0 };\n",
     );
     assert!(out.contains("this `x` is int[-1..]"), "{out}");
-    assert_eq!(out.matches("this test is").count(), 1, "{out}");
-    assert!(out.contains("2:6: this test is true here"), "{out}");
+    assert!(out.contains("4:8: this test is true here"), "{out}");
     // A test on `n` that bounds it no further than the one around it is not named.
     let out = rejected(
         "f(positional n: int) =\n  \
@@ -341,9 +345,10 @@ fn a_test_of_a_name_bound_by_let_gives_its_input_the_bound_it_shows() {
 }
 
 #[test]
-fn a_value_with_no_summary_over_one_input_narrows_no_input() {
-    // `n * n` has no summary over the ints, and `n + k` reads two inputs: the test narrows the
-    // name alone, and `n` stays any int.
+fn a_value_with_no_summary_or_an_unbounded_other_input_narrows_no_input() {
+    // `n * n` has no summary over the ints, so the test narrows the name alone. `n + k` has a
+    // summary over `n` and `k` (item PA-let-narrow), but `m >= 0` holds for every `n` with
+    // some `k`, and `k` is any int: `n` stays any int.
     for src in [
         "bits(positional n: int) = { q = n * n; r = q + n; if r >= 0 { popCount(n) } else { 0 } };\n",
         "bits(positional n: int, positional k: int) =\n  \
@@ -355,6 +360,98 @@ fn a_value_with_no_summary_over_one_input_narrows_no_input() {
             "{out}"
         );
     }
+}
+
+#[test]
+fn a_name_its_tested_name_reads_is_narrowed_by_its_summary() {
+    // With `y = n + 1; x = y + n`, a test of `x` narrows `n`, and `y`, read under the test,
+    // lies where `n + 1` does over the narrowed `n` (item PA-let-narrow). Before, `y` was read
+    // as its own value, any int, and each of these was rejected.
+    for src in [
+        // `x >= 1` holds where `n >= 0`, so `y >= 1`.
+        "bits(positional n: int) =\n  \
+           { y = n + 1; x = y + n; if x >= 1 { popCount(y) } else { 0 } }\n\
+         test { 3 -> 1, -2 -> 0 }\n",
+        // A chain: `c` is `4 * n + 3` through `a` and `b`; `c >= 3` shows `a >= 1`.
+        "bits(positional n: int) =\n  \
+           { a = n + 1; b = a + n; c = b + a + n; if c >= 3 { popCount(a) } else { 0 } }\n\
+         test { 2 -> 2, -1 -> 0 }\n",
+        // The steps left of a budget, where the spent steps are tested.
+        "power(positional x: int, positional used: int) =\n  \
+           { left = 10 - used; spent = used + 0;\n    \
+             if spent >= 0 && spent <= 10 { x ** left } else { 0 } }\n\
+         test { (2, 7) -> 8, (2, 11) -> 0 }\n",
+    ] {
+        assert!(rows_pass(src), "{src}");
+    }
+    // The bound it gives, when too weak: `x >= -1` holds where `n >= -1`, so `y >= 0`, and
+    // `y - 1` is int[-1..].
+    let out = rejected(
+        "bits(positional n: int) =\n  \
+           { y = n + 1; x = y + n; if x >= -1 { popCount(y - 1) } else { 0 } };\n",
+    );
+    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+}
+
+#[test]
+fn a_parameter_narrowed_by_is_has_a_summary() {
+    // A value bound where `is` has narrowed a parameter it reads has a summary over the
+    // parameter's type there (item PA-let-narrow), so a test of the value narrows the
+    // parameter. Before, the value had no summary and each of these was rejected.
+    for src in [
+        "bits(positional x: int | String) =\n  \
+           if x is int { m = x + 3; if m >= 3 { popCount(x) } else { 0 } } else { 0 }\n\
+         test { 4 -> 1, -2 -> 0, \"a\" -> 0 }\n",
+        // Bound under the narrowing and read under a deeper test of the same parameter.
+        "bits(positional x: int | String) =\n  \
+           if x is int {\n    m = x + 3;\n    \
+             if x is int { if m >= 3 { popCount(x) } else { 0 } } else { 0 }\n  \
+           } else { 0 }\n\
+         test { 4 -> 1, -2 -> 0, \"a\" -> 0 }\n",
+    ] {
+        assert!(rows_pass(src), "{src}");
+    }
+    // A test of the value narrows the parameter and no other name.
+    let out = rejected(
+        "bits(positional x: int | String, positional n: int) =\n  \
+           if x is int { m = x + 3; if m >= 3 { popCount(n) } else { 0 } } else { 0 };\n",
+    );
+    assert!(
+        out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_value_over_two_inputs_narrows_both() {
+    // `m = n + k` has a summary over `n` and `k` (item PA-let-narrow): a test of `m` narrows
+    // each by the bounds of the other, `n >= 10 - k` with `k` at most 10 giving `n >= 0`.
+    // Before, the value had no summary and each of these was rejected.
+    for src in [
+        "bits(positional n: int, positional k: int) =\n  \
+           if k >= 0 && k <= 10 { m = n + k; if m >= 10 { popCount(n) } else { 0 } } else { 0 }\n\
+         test { (12, 3) -> 2, (-1, 3) -> 0, (5, 11) -> 0 }\n",
+        // The other input, read through a chain over both.
+        "bits(positional n: int, positional k: int) =\n  \
+           if n >= 0 && n <= 5 { a = k + 1; m = a + n; if m >= 6 { popCount(k) } else { 0 } }\n  \
+           else { 0 }\n\
+         test { (2, 6) -> 2, (2, -9) -> 0, (7, 1) -> 0 }\n",
+        // Free space, `cap - used` with `used` at most 8, tested against what is asked.
+        "bits(positional cap: int, positional used: int) =\n  \
+           if used >= 0 && used <= 8 {\n    \
+             free = cap - used;\n    \
+             if free >= 8 { popCount(cap) } else { 0 }\n  \
+           } else { 0 }\n\
+         test { (20, 3) -> 2, (-4, 3) -> 0, (20, 9) -> 0 }\n",
+    ] {
+        assert!(rows_pass(src), "{src}");
+    }
+    // The bound it gives: `m >= 7` with `k` at most 10 holds where `n >= -3`.
+    let out = rejected(
+        "bits(positional n: int, positional k: int) =\n  \
+           if k >= 0 && k <= 10 { m = n + k; if m >= 7 { popCount(n) } else { 0 } } else { 0 };\n",
+    );
+    assert!(out.contains("this `x` is int[-3..]"), "{out}");
 }
 
 /// A known precision limit (COMPLEXITY.md S25, B4) that a program meets. Where `used + free >=
@@ -386,4 +483,191 @@ fn a_test_between_two_names_after_a_disjunction_on_both_is_a_known_precision_lim
          test { (5, 3) -> 1, (1, 4) -> 0, (8, 0) -> 3 }\n";
     assert!(accepted(without), "{}", rejected(without));
     assert!(rows_pass(without), "{without}");
+}
+
+/// One random program of the soundness test below: a block of bindings, each a sum of earlier
+/// names with small coefficients, a test `t >= c` or `t <= c` of one of them, and `popCount`
+/// of another name in its arm. `guard` is `0` for none, `1` for `k` bounded by a test, `2` for
+/// `n` narrowed from `int | String` by `is`.
+struct Block {
+    guard: usize,
+    k_range: (i64, i64),
+    /// Each binding's coefficients on `n`, `k` and the bindings before it, and its constant.
+    lets: Vec<(Vec<i64>, i64)>,
+    tested: usize,
+    at_least: bool,
+    bound: i64,
+    /// The name `popCount` reads: `0` is `n`, `1` is `k`, `j + 2` is binding `j`.
+    read: usize,
+}
+
+impl Block {
+    fn random(rng: &mut zed_tests::instances::Rng) -> Block {
+        let guard = rng.below(3);
+        let lo = rng.int(-3, 3);
+        let k_range = (lo, lo + rng.int(0, 6));
+        let count = rng.int(1, 4) as usize;
+        let lets = (0..count)
+            .map(|j| {
+                let mut c: Vec<i64> = (0..j + 2).map(|_| 0).collect();
+                for _ in 0..rng.int(1, 2) {
+                    let at = rng.below(j + 2);
+                    c[at] = rng.pick(&[-2, -1, 1, 1, 2]);
+                }
+                (c, rng.int(-4, 4))
+            })
+            .collect();
+        Block {
+            guard,
+            k_range,
+            lets,
+            tested: rng.below(count),
+            at_least: rng.below(4) != 0,
+            bound: rng.int(-6, 8),
+            read: rng.below(count + 2),
+        }
+    }
+
+    fn name(i: usize) -> String {
+        match i {
+            0 => "n".into(),
+            1 => "k".into(),
+            j => format!("v{}", j - 2),
+        }
+    }
+
+    /// The values of `n`, `k` and every binding.
+    fn values(&self, n: i64, k: i64) -> Vec<i64> {
+        let mut vs = vec![n, k];
+        for (c, b) in &self.lets {
+            let v = c.iter().zip(&vs).map(|(c, v)| c * v).sum::<i64>() + b;
+            vs.push(v);
+        }
+        vs
+    }
+
+    /// Whether the arm runs at `(n, k)`, and the operand of `popCount` there.
+    fn arm(&self, n: i64, k: i64) -> Option<i64> {
+        if self.guard == 1 && !(self.k_range.0 <= k && k <= self.k_range.1) {
+            return None;
+        }
+        let vs = self.values(n, k);
+        let t = vs[self.tested + 2];
+        let holds = if self.at_least {
+            t >= self.bound
+        } else {
+            t <= self.bound
+        };
+        holds.then_some(vs[self.read])
+    }
+
+    fn source(&self, rows: &[(i64, i64)]) -> String {
+        let mut body = String::new();
+        for (j, (c, b)) in self.lets.iter().enumerate() {
+            let mut e = String::new();
+            for (i, &c) in c.iter().enumerate().filter(|(_, c)| **c != 0) {
+                let x = Block::name(i);
+                let term = if c.abs() == 1 {
+                    x
+                } else {
+                    format!("{} * {x}", c.abs())
+                };
+                e += &match (e.is_empty(), c < 0) {
+                    (true, false) => term,
+                    (true, true) => format!("0 - {term}"),
+                    (false, false) => format!(" + {term}"),
+                    (false, true) => format!(" - {term}"),
+                };
+            }
+            if *b != 0 {
+                e += &format!(" {} {}", if *b < 0 { "-" } else { "+" }, b.abs());
+            }
+            body += &format!("v{j} = {e}; ");
+        }
+        let op = if self.at_least { ">=" } else { "<=" };
+        body = format!(
+            "{{ {body}if v{} {op} {} {{ popCount({}) }} else {{ 0 }} }}",
+            self.tested,
+            self.bound,
+            Block::name(self.read)
+        );
+        let (head, body) = match self.guard {
+            1 => (
+                "positional n: int, positional k: int",
+                format!(
+                    "if k >= {} && k <= {} {body} else {{ 0 }}",
+                    self.k_range.0, self.k_range.1
+                ),
+            ),
+            2 => (
+                "positional n: int | String, positional k: int",
+                format!("if n is int {body} else {{ 0 }}"),
+            ),
+            _ => ("positional n: int, positional k: int", body),
+        };
+        let mut table: Vec<String> = rows
+            .iter()
+            .map(|&(n, k)| {
+                let out = self.arm(n, k).map_or(0, |v| v.count_ones());
+                format!("({n}, {k}) -> {out}")
+            })
+            .collect();
+        if self.guard == 2 {
+            table.push("(\"a\", 0) -> 0".into());
+        }
+        if rows.is_empty() {
+            format!("f({head}) =\n  {body};\n")
+        } else {
+            format!("f({head}) =\n  {body}\ntest {{ {} }}\n", table.join(", "))
+        }
+    }
+}
+
+#[test]
+fn a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter() {
+    // Random blocks of sums over `n` and `k` (item PA-let-narrow): where the checker accepts
+    // `popCount` of a name in the arm of a test of another, no `(n, k)` of the grid
+    // `-40..=40` squared that reaches the arm gives it a negative operand; and the rows the
+    // interpreter runs give the values computed here. With coefficients at most 2 in size,
+    // constants at most 8 and at most 4 bindings, a wrong bound shows within the grid.
+    let mut rng = zed_tests::instances::Rng::new(0x5a1e_7e57);
+    let (mut accepted_count, mut by_summary) = (0, 0);
+    let mut by_guard = [0; 3];
+    for _ in 0..400 {
+        let block = Block::random(&mut rng);
+        let src = block.source(&[]);
+        if !super::accepted(&src) {
+            continue;
+        }
+        accepted_count += 1;
+        by_guard[block.guard] += 1;
+        let mut rows = Vec::new();
+        for n in -40..=40 {
+            for k in -40..=40 {
+                if let Some(v) = block.arm(n, k) {
+                    assert!(v >= 0, "unsound at n = {n}, k = {k}, operand {v}:\n{src}");
+                    if rows.len() < 6 && (n + k) % 7 == 0 {
+                        rows.push((n, k));
+                    }
+                }
+            }
+        }
+        if block.read != block.tested + 2 {
+            by_summary += 1;
+        }
+        rows.extend([(-3, 1), (0, 0), (5, -2)]);
+        let with_rows = block.source(&rows);
+        assert!(
+            rows_pass(&with_rows),
+            "rows differ from the interpreter:\n{with_rows}"
+        );
+    }
+    // Not vacuous, and the item shows: measured 2026-11-07, 115 of the 400 are accepted, 74
+    // reading a name other than the tested one, and 25, 64, 26 with no guard, a bound on `k`
+    // and `is`; at base 4de1fa22, before the item, 96, 55 and 19, 59, 18.
+    let counts = (accepted_count, by_summary, by_guard);
+    assert!(
+        accepted_count >= 110 && by_summary >= 70 && by_guard[2] >= 24,
+        "{counts:?}"
+    );
 }

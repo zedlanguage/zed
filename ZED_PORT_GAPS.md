@@ -2369,3 +2369,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 
 - No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).
 - `preimage::CLASS_READS`, read and reset by a test through `class_domain_reads`, is a `thread_local!` `Cell<u64>` counter, the gap of row `preimage::EXACT` above (the count returned with the answer at the port); `meets` uses `partition_point` as `no_input_between`.
+
+## Entries from PA-let-narrow (`crates/zedc-check/src/check/walk.rs`, `mod.rs`, `crates/zedc-preimage/src/preimage.rs`, `product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The inputs of a summary in a persistent `imbl::OrdMap`, merged by `union`, which puts the smaller map into the larger and shares the rest | `Summarized::inputs`, `Ck::summarize_value` | Shared structure of persistent maps; Zed's maps are values, but a union that costs the smaller side is not specified | A map union of cost `O(m log n)` for the smaller side `m`, or a table of inputs keyed by binder |
+| The type of each parameter at each binder bound under a narrowing, in a `HashMap` keyed by `(binder, parameter)`, and a counter of narrowings in place | `Ck::narrowed_at`, `Ck::unnarrowed`, `Ck::narrowings`, `Ck::param_type` | Mutation of the checker state | A field of each binder's record, written when it is bound |

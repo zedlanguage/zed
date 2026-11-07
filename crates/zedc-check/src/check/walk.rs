@@ -1278,6 +1278,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
                 self.facts.insert(id, value);
+                self.narrowed_at(id, value);
                 self.arms.bind(id, plain(&v));
                 self.env.insert(id, v);
             }
@@ -2833,7 +2834,8 @@ impl<'a> Ck<'_, 'a> {
     /// The scope names `e` reads, each with the node it is read under: its own, under the node
     /// the walk is in, and those of the values of the names bound in an arm that it reads,
     /// through binders of binders, each binder once, under the node the binder was bound
-    /// under, where its value is read ([`Item::Bound`]).
+    /// under, where its value is read ([`Item::Bound`]), and the inputs of a binder's summary
+    /// under the node the walk is in, where they are read ([`Ck::with_bound`]).
     fn read_names(&mut self, e: &'a Expr) -> Vec<(Arc<str>, usize)> {
         let t = self.term(e);
         let here = self.arms.here();
@@ -2848,6 +2850,11 @@ impl<'a> Ck<'_, 'a> {
             let Some(&value) = self.facts.get(&b) else {
                 continue;
             };
+            // A binder with a summary is also read through it over its inputs here
+            // ([`Ck::with_bound`]), so a test on an input since the binding bears on it.
+            if let Some(Some(sum)) = self.arms.summaries.get(&b) {
+                out.extend(sum.summary.vars().iter().map(|x| (x.clone(), here)));
+            }
             let v = self.term(value);
             let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
             out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
@@ -2872,16 +2879,16 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// `s` told of the values of `binders` it has no product of, each with the summary of its
-    /// value over the input it reads ([`Ck::summarized`]), and of that input when `s` has no
-    /// product of it: so a test of the name narrows the input too.
+    /// value over the inputs it reads ([`Ck::summarized`]), and of each input `s` has no
+    /// product of: so a test of the name narrows its inputs, and a name read where a test has
+    /// narrowed its inputs is narrowed by its summary over them ([`Scope::bind_summarized`]).
+    /// With `y = n + 1; x = y + n`, a test of `x` narrows `n`, and `y` read under it lies where
+    /// `n + 1` does over the narrowed `n`: one evaluation of `y`'s formed summary, `O(k)` for
+    /// `k` inputs.
     fn with_bound(&mut self, mut s: Scope, binders: &[usize]) -> Scope {
         if s.bottom {
             return s;
         }
-        // Only the binders the expression reads, and the one input of each summary, are bound:
-        // a test of `x` with `y = n + 1; x = y + n` narrows `n` but not `y`. Narrowing `y` from
-        // its summary over the narrowed `n`, summaries of parameters narrowed by `is`, and
-        // values that read two inputs are left to item PA-let-narrow.
         for &b in binders {
             let (Some(p), Some(name)) = (self.arms.bound.get(&b), self.arms.names.get(&b)) else {
                 continue;
@@ -2891,22 +2898,45 @@ impl<'a> Ck<'_, 'a> {
             }
             let (p, name) = (p.clone(), name.clone());
             let e = Shared::new(Term::Var(name.clone()));
+            // Every input of a summary is in its map ([`Ck::summarize_value`]).
             let Some(sum) = self.summarized(b) else {
                 s.bind(&name, p, &e);
                 continue;
             };
-            let dom = match &sum.input {
-                Some((v, q)) => {
-                    if !s.names.contains_key(v) {
-                        s.bind(v, q.clone(), &Shared::new(Term::Var(v.clone())));
-                    }
-                    q.ints().clone()
+            let mut doms = Domains::new();
+            for (v, q) in sum
+                .summary
+                .vars()
+                .iter()
+                .filter_map(|v| Some((v, sum.inputs.get(v)?)))
+            {
+                if !s.names.contains_key(v) {
+                    s.bind(v, q.clone(), &Shared::new(Term::Var(v.clone())));
                 }
-                None => IntervalSet::empty(),
-            };
-            s.bind_summarized(&name, p, &e, &sum.summary, &dom);
+                doms.insert(v.clone(), q.ints().clone());
+            }
+            s.bind_summarized(&name, p, &e, &sum.summary, &doms);
         }
         s
+    }
+
+    /// Records, for the binder `b` of `value` bound here, the type here of each narrowed name
+    /// the value reads ([`Ck::summarize_value`]): the type a summary of the value takes for
+    /// it, which holds wherever `b` is read, since `b` is read only within the narrowing it was
+    /// bound in, where a name is narrowed further or not at all. Nothing is recorded while no
+    /// narrowing is in place. Costs the value's size, once.
+    fn narrowed_at(&mut self, b: usize, value: &'a Expr) {
+        if self.narrowings == 0 {
+            return;
+        }
+        let t = self.term(value);
+        for (_, id) in &t.vars {
+            if (self.whence.get(id)).is_some_and(|o| matches!(o.why, Why::Narrowed(_)))
+                && let Some(ty) = self.env.get(id)
+            {
+                self.narrowed_at.insert((b, *id), ty.clone());
+            }
+        }
     }
 
     /// The summary of the value of binder `b` ([`Summarized`]), made once for the binder from
@@ -2914,11 +2944,14 @@ impl<'a> Ck<'_, 'a> {
     /// once: the binders form a graph without cycles, as statements are checked in dependency
     /// order, and the memo is the visited set. A name the value reads is read through its
     /// binder's summary when it has one, and is otherwise an input: a binder over its product,
-    /// a parameter over the ints of its type. A parameter whose type a test has narrowed
-    /// (`is`) is no input, since its type here need not hold where the scope is read, and a
-    /// value that reads it has no summary. Costs the size of each value read, once.
+    /// a parameter over the ints of its type where `b` is bound ([`Ck::narrowed_at`]). Each
+    /// summary is formed as it is made ([`LetPa::form`]), its parts formed before it, so that
+    /// forming it adds their sums and does not walk them: a test reading any binder of a block,
+    /// in any order, costs its own summary. Costs the size of each value read, once, and the
+    /// merges of the inputs' maps and of the formed sums, each by input.
     ///
     /// [`Summarized`]: super::arms::Summarized
+    /// [`LetPa::form`]: zedc_preimage::preimage::LetPa::form
     fn summarized(&mut self, b: usize) -> Option<Rc<Summarized>> {
         let mut entered = HashSet::new();
         let mut stack = vec![(b, false)];
@@ -2936,24 +2969,26 @@ impl<'a> Ck<'_, 'a> {
                 stack.extend(t.binders.iter().map(|&d| (d, false)));
                 continue;
             }
-            let s = self.summarize_value(&t);
+            let s = self.summarize_value(c, &t);
             self.arms.summaries.insert(c, s.map(Rc::new));
         }
         self.arms.summaries[&b].clone()
     }
 
-    /// The summary of the value `t`, the summaries of the binders it reads made
-    /// ([`Ck::summarized`]).
-    fn summarize_value(&self, t: &Translated) -> Option<Summarized> {
+    /// The summary of the value `t` of binder `b`, the summaries of the binders it reads made
+    /// ([`Ck::summarized`]). Its inputs' map is the largest of those of the binders it reads,
+    /// with the others' and its own inputs added: an input it reads itself takes its type
+    /// where `b` is bound, at least as narrow as a binder it reads took.
+    fn summarize_value(&self, b: usize, t: &Translated) -> Option<Summarized> {
         let int = KType::int();
-        let mut inputs: HashMap<Arc<str>, Product> = HashMap::new();
+        let mut inputs: imbl::OrdMap<Arc<str>, Product> = imbl::OrdMap::new();
+        let mut own: Vec<(Arc<str>, Product)> = Vec::new();
         let mut lets = Lets::new();
         for (x, id) in &t.vars {
             let bound = self.arms.bound.get(id);
             if let Some(Some(sum)) = self.arms.summaries.get(id) {
-                if let Some((v, q)) = &sum.input {
-                    inputs.entry(v.clone()).or_insert_with(|| q.clone());
-                }
+                // `union` adds the smaller map to the larger.
+                inputs = inputs.union(sum.inputs.clone());
                 let ints = bound.map_or_else(IntervalSet::top, |p| p.ints().clone());
                 let summary = sum.summary.clone();
                 lets.insert(x.clone(), LetIn { summary, ints });
@@ -2962,31 +2997,49 @@ impl<'a> Ck<'_, 'a> {
             let p = match bound {
                 Some(p) => p.clone(),
                 None if self.facts.contains_key(id) => continue,
-                None => {
-                    let narrowed = self
-                        .whence
-                        .get(id)
-                        .is_some_and(|o| matches!(o.why, Why::Narrowed(_)));
-                    match self.env.get(id).and_then(plain) {
-                        Some(ty) if !narrowed => Product::of_type(ty),
-                        _ => continue,
-                    }
-                }
+                None => match self.param_type(b, *id).and_then(plain) {
+                    Some(ty) => Product::of_type(ty),
+                    None => continue,
+                },
             };
             if p.ty.element.subtype(&int) && !p.is_empty() {
-                inputs.insert(x.clone(), p);
+                own.push((x.clone(), p));
             }
         }
-        let domains: Domains = inputs
-            .iter()
-            .map(|(x, p)| (x.clone(), p.ints().clone()))
-            .collect();
+        // The domains of the inputs the value reads itself, and of the one input of each name
+        // it reads through a summary over one, which a term of the value other than a sum
+        // reads it through (`2 * y` is a sum, `y * y` is not); not those of every input of the
+        // map, which would cost each binder of a chain the inputs of all before it.
+        let mut domains = Domains::new();
+        for l in lets.values() {
+            let vars = l.summary.vars();
+            if vars.len() == 1
+                && let Some(v) = vars.iter().next()
+                && let Some(p) = inputs.get(v)
+            {
+                domains.insert(v.clone(), p.ints().clone());
+            }
+        }
+        for (x, p) in own {
+            domains.insert(x.clone(), p.ints().clone());
+            inputs.insert(x, p);
+        }
         let summary = let_summary(&t.term, &domains, lets)?;
-        let input = match summary.var() {
-            Some(v) => Some((v.clone(), inputs.get(v)?.clone())),
-            None => None,
-        };
-        Some(Summarized { summary, input })
+        summary.form();
+        Some(Summarized { summary, inputs })
+    }
+
+    /// The type of the parameter `id` where binder `b` is bound: as recorded there when a
+    /// narrowing was in place ([`Ck::narrowed_at`]); else, when a test has narrowed it since,
+    /// its type before that narrowing; else its type.
+    fn param_type(&self, b: usize, id: usize) -> Option<&Ty> {
+        if let Some(ty) = self.narrowed_at.get(&(b, id)) {
+            return Some(ty);
+        }
+        match self.whence.get(&id) {
+            Some(o) if matches!(o.why, Why::Narrowed(_)) => self.unnarrowed.get(&id),
+            _ => self.env.get(&id),
+        }
     }
 
     /// Computes the scopes and binder products `wanted` needs, each once, on an explicit stack:

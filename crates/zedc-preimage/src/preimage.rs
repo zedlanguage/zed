@@ -226,12 +226,13 @@ pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Optio
 
 /// The box over `inputs` of the points where `term` meets `demand`, read by the backward
 /// transfer alone, the names of `lets` read through their summaries ([`LetPa`]): a name of
-/// `lets` is no input, and the input its summary reads is one of `inputs`. A test of a name
+/// `lets` is no input, and the inputs its summary reads are among `inputs`. A test of a name
 /// bound by a `let` (`x == 1` after `y = n + 1; x = y + n`) narrows the input the name is
-/// computed from (`n` to 0). The stages after the transfer (the split by remainders, the
-/// linear relation, enumeration) read the term itself, whose names of `lets` they would take
-/// for inputs, and are not run: the caller meets this box with the preimage of the term over
-/// the names themselves ([`preimage`]).
+/// computed from (`n` to 0), and one of a name over several inputs (`x >= 0` after
+/// `x = n + k`) narrows each by the bounds of the others ([`Tx::invert_sep`]). The stages
+/// after the transfer (the split by remainders, the linear relation, enumeration) read the
+/// term itself, whose names of `lets` they would take for inputs, and are not run: the caller
+/// meets this box with the preimage of the term over the names themselves ([`preimage`]).
 pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) -> Domains {
     on_stack(|| {
         let mut tx = Tx::new();
@@ -245,8 +246,9 @@ pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) 
 }
 
 /// The summary of the term `e` a `let` binds ([`LetPa`]), its free names in `inputs` ranging
-/// over their domains and those of `lets` read through their summaries; `None` when its value
-/// has no summary over one input. Its sums of names of `lets` are kept unsummed, so that each
+/// over their domains and those of `lets` read through their summaries; `None` when a term it
+/// adds has no summary over one input. The summaries of the terms it adds are summed by input
+/// ([`Sep`]): `n + k` is a summary over `n` and `k`. Its sums of names of `lets` are kept unsummed, so that each
 /// binding costs its own term and not the summaries it adds ([`LetPa`]).
 pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
     on_stack(|| {
@@ -278,7 +280,7 @@ pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
                 _ => rest.push((c, t)),
             }
         }
-        let mut sum = Pa::Const(constant);
+        let mut sum = Sep::constant(constant);
         if !rest.is_empty() {
             let mut tx = Tx::new();
             tx.lets = lets;
@@ -286,18 +288,10 @@ pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
             let marks = tx.landmarks(inputs, &Demand::Bool(true));
             tx.start(inputs, marks);
             for ((c, _), root) in rest.iter().zip(roots) {
-                sum = sum.plus(&tx.pa(root, ROOT)?.affine(c.clone(), 0), 1)?;
+                sum.add_pa(tx.pa(root, ROOT)?.affine(c.clone(), 0));
             }
         }
-        let mut var = sum.var().cloned();
-        for (_, p) in &parts {
-            match (&var, &p.0.var) {
-                (Some(v), Some(w)) if v != w => return None,
-                (None, w) => var = w.clone(),
-                _ => {}
-            }
-        }
-        Some(LetPa::new(var, parts, sum))
+        Some(LetPa::new(parts, sum))
     })
 }
 
@@ -3439,6 +3433,69 @@ impl<'t> Tx<'t> {
         }
         Res { dom, ..r }
     }
+
+    /// The inputs on which the sum `sep` takes a value in `z`, as a box. Over one input, that
+    /// of [`Tx::invert_pa`]. Over several, each input `v` lies where its term takes a value in
+    /// `z` less the bounds of the other terms over their domains ([`Sep::bounds`]): `x >= 0`
+    /// with `x = n + k` and `k` in `0..=10` gives `n >= -10`. That box holds every point of
+    /// the preimage, and is not exact, since a point of it need not be one. `O(k)` for `k`
+    /// inputs, with the inversion of each term.
+    fn invert_sep(&self, sep: &Sep, z: &IntervalSet) -> Option<Res> {
+        if let Some(pa) = sep.single() {
+            return self.invert_pa(&pa, z);
+        }
+        // Each term's bounds, and their sum with its infinite ends counted, so that the sum of
+        // the others is the whole sum less one term's.
+        let mut terms = Vec::with_capacity(sep.terms.len());
+        let (mut lo, mut hi) = (sep.constant.clone(), sep.constant.clone());
+        let (mut lo_inf, mut hi_inf) = (0usize, 0usize);
+        for (v, t) in &sep.terms {
+            let pa = sep.term(t);
+            let Some((l, h)) = pa_bounds(&pa, self.cx.inputs.get(v)?) else {
+                return Some(Res::none());
+            };
+            match &l {
+                Val::Fin(x) => lo = &lo + x,
+                _ => lo_inf += 1,
+            }
+            match &h {
+                Val::Fin(x) => hi = &hi + x,
+                _ => hi_inf += 1,
+            }
+            terms.push((pa, l, h));
+        }
+        let mut r = Res::unknown();
+        for (pa, l, h) in &terms {
+            // The others' least and greatest sum; `None` for an infinite one.
+            let others = |sum: &Int, inf: usize, own: &Val| match own {
+                Val::Fin(x) if inf == 0 => Some(sum - x),
+                Val::Fin(_) => None,
+                _ if inf == 1 => Some(sum.clone()),
+                _ => None,
+            };
+            let (olo, ohi) = (others(&lo, lo_inf, l), others(&hi, hi_inf, h));
+            // `z - [olo, ohi]`, piece by piece.
+            let shift = |e: &End, by: &Int| match e {
+                Fin(v) => Fin(v - &Num::from(by)),
+                _ => e.clone(),
+            };
+            let pieces = z
+                .pieces()
+                .iter()
+                .map(|(zl, zh)| {
+                    let lo = ohi.as_ref().map_or(NegInf, |c| shift(zl, c));
+                    let hi = olo.as_ref().map_or(PosInf, |c| shift(zh, c));
+                    (lo, hi)
+                })
+                .collect();
+            let own = self.invert_pa(pa, &IntervalSet::from_pieces(pieces))?;
+            if own.none {
+                return Some(Res::none());
+            }
+            r.dom.extend(own.dom);
+        }
+        Some(r)
+    }
 }
 
 /// The analyses of the transfer that recurse on the depth of the term, each call that may
@@ -4293,10 +4350,8 @@ impl<'m, 't> Walk<'m, 't> {
                         // A name bound by a `let` outside the term: the inputs where its
                         // summary meets the demand.
                         (None, d) if let Some(l) = tx.lets.get(x) => match d {
-                            Demand::Ints(z) => l
-                                .summary
-                                .force()
-                                .and_then(|pa| tx.invert_pa(&pa, z))
+                            Demand::Ints(z) => tx
+                                .invert_sep(l.summary.formed(), z)
                                 .unwrap_or_else(Res::unknown),
                             Demand::Bool(_) => Res::none(),
                         },
@@ -6546,11 +6601,155 @@ pub struct LetIn {
     pub ints: IntervalSet,
 }
 
-/// The piecewise-affine summary (`Pa`) of the value a `let` binds, over the one input it
-/// reads, kept as the sum `Σ c_i * s_i + rest` of the summaries `s_i` of the bound names it
-/// adds and the summary of the rest of its term ([`let_summary`]). Each binding is summarized
-/// once, in its own term's size, when it is bound, and the sum is formed when a test reads
-/// the name (`LetPa::force`), so that a block of bindings each adding the one before
+/// The value of a `let` over the inputs it reads, as the sum of one piecewise-affine summary
+/// ([`Pa`]) of each input and a constant: `n + 2 * k - 1` is `n`, `2 * k` and `-1`. The value
+/// at a point is the sum of each input's summary at it, defined where every one is.
+///
+/// Each term `(pa, at)` stands for `pa * (scale / at)`: `scale` is the product of the factors
+/// the sum was multiplied by since the term was put in, so multiplying the sum by a nonzero
+/// factor costs `O(1)` however many inputs it reads ([`Sep::scaled`]), and the division is
+/// exact. The map is persistent, so a sum of two copies the smaller one into the larger
+/// ([`Sep::add`]).
+#[derive(Clone)]
+struct Sep {
+    scale: Int,
+    terms: imbl::OrdMap<Arc<str>, (Pa, Int)>,
+    constant: Int,
+}
+
+impl Sep {
+    /// The constant `c`.
+    fn constant(c: Int) -> Sep {
+        Sep {
+            scale: Int::ONE,
+            terms: imbl::OrdMap::new(),
+            constant: c,
+        }
+    }
+
+    /// The term of `t` as it stands: its summary times the factors the sum took since.
+    fn term(&self, (pa, at): &(Pa, Int)) -> Pa {
+        if *at == self.scale {
+            pa.clone()
+        } else {
+            pa.affine(self.scale.div_floor(at), 0)
+        }
+    }
+
+    /// `w * self`. At 0 a line goes into the constant, at 0, and a [`Pa::Piecewise`] is kept at
+    /// 0, since where it has no value the sum has none: `O(p)` for the `p` piecewise terms,
+    /// which only an `if` of the term gives.
+    fn scaled(&self, w: &Int) -> Sep {
+        if w.is_zero() {
+            let terms = self
+                .terms
+                .iter()
+                .filter(|(_, (pa, _))| matches!(pa, Pa::Piecewise { .. }))
+                .map(|(v, t)| (v.clone(), (self.term(t).affine(0, 0), Int::ONE)))
+                .collect();
+            return Sep {
+                scale: Int::ONE,
+                terms,
+                constant: Int::ZERO,
+            };
+        }
+        Sep {
+            scale: &self.scale * w,
+            terms: self.terms.clone(),
+            constant: &self.constant * w,
+        }
+    }
+
+    /// `self + pa`, for a `pa` over one input or none.
+    fn add_pa(&mut self, pa: Pa) {
+        let Some(v) = pa.var().cloned() else {
+            if let Pa::Const(c) = pa {
+                self.constant = &self.constant + &c;
+            }
+            return;
+        };
+        let sum = match self.terms.get(&v) {
+            Some(t) => self
+                .term(t)
+                .plus(&pa, 1)
+                .expect("two summaries of one input"),
+            None => pa,
+        };
+        self.terms.insert(v, (sum, self.scale.clone()));
+    }
+
+    /// `self + other`: the terms of the one with fewer put into the other, `O(m log n)` for
+    /// `m <= n` inputs and the sums of the summaries of the inputs both read.
+    fn add(self, other: Sep) -> Sep {
+        let (mut big, small) = if self.terms.len() >= other.terms.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        big.constant = &big.constant + &small.constant;
+        for t in small.terms.values() {
+            big.add_pa(small.term(t));
+        }
+        big
+    }
+
+    /// The sum as one [`Pa`], when it reads one input or none.
+    fn single(&self) -> Option<Pa> {
+        let mut it = self.terms.values();
+        match (it.next(), it.next()) {
+            (None, _) => Some(Pa::Const(self.constant.clone())),
+            (Some(t), None) => Some(self.term(t).affine(1, self.constant.clone())),
+            _ => None,
+        }
+    }
+
+    /// The least and the greatest value of the sum where each input lies in `dom` of it,
+    /// `Some(None)` when it has no value there, and `None` when an input has no domain.
+    /// Exact for lines over intervals; the bounds of a [`Pa::Piecewise`] may be wider
+    /// ([`Tag::vals`]). `O(k)` for `k` inputs.
+    fn bounds<'d>(
+        &self,
+        dom: impl Fn(&Arc<str>) -> Option<&'d IntervalSet>,
+    ) -> Option<Option<(Val, Val)>> {
+        let c = Val::Fin(self.constant.clone());
+        let (mut lo, mut hi) = (c.clone(), c);
+        for (v, t) in &self.terms {
+            let Some((l, h)) = pa_bounds(&self.term(t), dom(v)?) else {
+                return Some(None);
+            };
+            lo = lo.plus(&l, Val::Neg);
+            hi = hi.plus(&h, Val::Pos);
+        }
+        Some(Some((lo, hi)))
+    }
+}
+
+/// The least and the greatest value of `pa` over `dom`, the domain of its input, or `None`
+/// when it has no value there.
+fn pa_bounds(pa: &Pa, dom: &IntervalSet) -> Option<(Val, Val)> {
+    let (lo, hi) = dom.bounds()?;
+    match pa {
+        Pa::Const(c) => Some((Val::Fin(c.clone()), Val::Fin(c.clone()))),
+        Pa::Linear { a, b, .. } => {
+            let (u, v) = (value_at(lo, a, b), value_at(hi, a, b));
+            Some(if u <= v { (u, v) } else { (v, u) })
+        }
+        Pa::Piecewise { root, .. } => {
+            let root = if in_range(dom) {
+                slice_treap(root.clone(), lo, hi)
+            } else {
+                root.clone()
+            };
+            root.map(|n| n.vals.clone())
+        }
+    }
+}
+
+/// The piecewise-affine summary of the value a `let` binds, over the inputs it reads ([`Sep`]),
+/// kept as the sum `Σ c_i * s_i + rest` of the summaries `s_i` of the bound names it adds and
+/// the summary of the rest of its term ([`let_summary`]). Each binding is summarized once, in
+/// its own term's size, when it is bound, and the sum is formed when a test reads the name
+/// (`LetPa::force`), so that a block of bindings each adding the one before
 /// (`x_k = x_(k-1) + y_k`) costs no more than the summaries a test reads.
 ///
 /// The summaries form a graph without cycles: a binding's parts were bound before it. Two
@@ -6561,36 +6760,77 @@ pub struct LetPa(Arc<LetNode>);
 struct LetNode {
     /// A number no other summary has, for the visited set of [`LetPa::sum`].
     id: u64,
-    /// The input the summary reads, if any.
-    var: Option<Arc<str>>,
+    /// The inputs the summary reads, a persistent set shared with the parts' sets.
+    vars: imbl::OrdSet<Arc<str>>,
     parts: Vec<(Int, LetPa)>,
-    rest: Pa,
+    rest: Sep,
     /// The sum, once a test has read it.
-    forced: OnceLock<Option<Pa>>,
+    forced: OnceLock<Sep>,
 }
 
 static LET_IDS: AtomicU64 = AtomicU64::new(0);
 
 impl LetPa {
-    fn new(var: Option<Arc<str>>, parts: Vec<(Int, LetPa)>, rest: Pa) -> LetPa {
+    /// The summary of `parts` and `rest`: its inputs are those of the part that reads the most,
+    /// with the others' put in, `O(m log n)` for the `m` inputs of the others.
+    fn new(parts: Vec<(Int, LetPa)>, rest: Sep) -> LetPa {
+        let widest = parts.iter().max_by_key(|(_, p)| p.0.vars.len());
+        let mut vars = widest.map_or_else(imbl::OrdSet::new, |(_, p)| p.0.vars.clone());
+        for (_, p) in &parts {
+            if widest.is_some_and(|(_, w)| w == p) {
+                continue;
+            }
+            vars.extend(p.0.vars.iter().cloned());
+        }
+        vars.extend(rest.terms.keys().cloned());
         LetPa(Arc::new(LetNode {
             id: LET_IDS.fetch_add(1, Ordering::Relaxed),
-            var,
+            vars,
             parts,
             rest,
             forced: OnceLock::new(),
         }))
     }
 
-    /// The input the summary reads, if any.
-    pub fn var(&self) -> Option<&Arc<str>> {
-        self.0.var.as_ref()
+    /// The inputs the summary reads.
+    pub fn vars(&self) -> &imbl::OrdSet<Arc<str>> {
+        &self.0.vars
     }
 
-    /// The summary as one [`Pa`], formed the first time it is read and kept: `None` when a
-    /// part has no summary over the input's domain.
+    /// The summary formed ([`LetPa::sum`]) the first time it is read, and kept.
+    fn formed(&self) -> &Sep {
+        self.0.forced.get_or_init(|| self.sum())
+    }
+
+    /// The summary as one [`Pa`], when it reads one input or none ([`LetPa::formed`]).
     fn force(&self) -> Option<Pa> {
-        self.0.forced.get_or_init(|| self.sum()).clone()
+        self.formed().single()
+    }
+
+    /// Forms the summary now ([`LetPa::sum`]). A caller that makes the summaries of a block of
+    /// bindings children first and forms each as it is made adds to each the formed sums of
+    /// its parts, `O(1)` merges a binding, so that the names are then read in any order at
+    /// no cost but their own.
+    pub fn form(&self) {
+        self.formed();
+    }
+
+    /// Bounds on the value where each input `v` lies in `ints(v)`, as one interval; the empty
+    /// set where it has no value; `None` when an input has no integers given. `O(k)` for `k`
+    /// inputs, the summary formed ([`LetPa::formed`]).
+    pub fn image<'d>(
+        &self,
+        ints: impl Fn(&Arc<str>) -> Option<&'d IntervalSet>,
+    ) -> Option<IntervalSet> {
+        let end = |v: Val| match v {
+            Val::Neg => NegInf,
+            Val::Fin(x) => Fin(Num::from(&x)),
+            Val::Pos => PosInf,
+        };
+        Some(match self.formed().bounds(ints)? {
+            Some((lo, hi)) => IntervalSet::range(end(lo), end(hi)),
+            None => IntervalSet::empty(),
+        })
     }
 
     /// The summary's parts summed. Each node of the graph below it gets the sum of the
@@ -6600,8 +6840,9 @@ impl LetPa {
     /// sum and not entered. A rest whose coefficient comes to 0 is still added, at 0, since
     /// where it has no value the sum has none.
     ///
-    /// Cost: the nodes and edges reached, and one [`Pa::plus`] per node, each
-    /// `O(m log(n / m + 1))` for a rest of `m` pieces added to a sum of `n` ([`add_treaps`]):
+    /// Cost: the nodes and edges reached, and one [`Sep::add`] per node, which puts the terms
+    /// of the smaller sum into the larger and adds the summaries of an input both read by
+    /// [`Pa::plus`], each `O(m log(n / m + 1))` for `m` pieces added to `n` ([`add_treaps`]):
     /// `O(d log d)` for a chain of `d` bindings that each add a summary of one test.
     ///
     /// Complexity tradeoff: a test reading the name forms its whole summary, as many pieces as
@@ -6618,7 +6859,7 @@ impl LetPa {
     /// `l01_39_reduced_product::follow::a_block_of_sums_of_ramps_scales`. COMPLEXITY.md row
     /// PA-let-block. A complete solution would invert a sum without forming it, from bounds of
     /// the parts on each range of the input.
-    fn sum(&self) -> Option<Pa> {
+    fn sum(&self) -> Sep {
         // Postorder of the graph, on an explicit stack: a node is entered once (`entered`)
         // and listed after every node it adds.
         let mut order: Vec<&LetNode> = Vec::new();
@@ -6642,22 +6883,22 @@ impl LetPa {
             }
         }
         let mut weight: HashMap<u64, Int> = HashMap::from([(self.0.id, Int::ONE)]);
-        let mut sum = Pa::Const(Int::ZERO);
+        let mut sum = Sep::constant(Int::ZERO);
         for n in order.into_iter().rev() {
             let w = weight.remove(&n.id).unwrap_or(Int::ZERO);
             if n.id != self.0.id
                 && let Some(formed) = n.forced.get()
             {
-                sum = sum.plus(&formed.as_ref()?.affine(w, 0), 1)?;
+                sum = sum.add(formed.scaled(&w));
                 continue;
             }
-            sum = sum.plus(&n.rest.affine(w.clone(), 0), 1)?;
+            sum = sum.add(n.rest.scaled(&w));
             for (c, p) in &n.parts {
                 let e = weight.entry(p.0.id).or_insert(Int::ZERO);
                 *e = &*e + &(&w * c);
             }
         }
-        Some(sum)
+        sum
     }
 }
 
@@ -6684,7 +6925,7 @@ impl PartialEq for LetPa {
 
 impl fmt::Debug for LetPa {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "LetPa({:?}, {} parts)", self.0.var, self.0.parts.len())
+        write!(f, "LetPa({:?}, {} parts)", self.0.vars, self.0.parts.len())
     }
 }
 

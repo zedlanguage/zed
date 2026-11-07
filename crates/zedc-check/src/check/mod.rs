@@ -612,6 +612,14 @@ struct Ck<'t, 'a> {
     facts: HashMap<usize, &'a Expr>,
     /// Where each binder's type comes from.
     whence: HashMap<usize, Rc<Origin<'a>>>,
+    /// The number of narrowings in place ([`Ck::narrow`]): while it is 0, no name a bound value
+    /// reads is narrowed, and [`Ck::narrowed_at`] has nothing to record.
+    narrowings: usize,
+    /// For each binder `name = e` bound while a narrowing was in place and each name `e` reads
+    /// that was narrowed, the name's type there ([`Ck::narrowed_at`]).
+    pub(super) narrowed_at: HashMap<(usize, usize), Ty>,
+    /// The type each narrowed binder had before its first narrowing in place.
+    pub(super) unnarrowed: HashMap<usize, Ty>,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
     /// The output ports declared `Lines`.
@@ -697,6 +705,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             known: HashMap::new(),
             facts: HashMap::new(),
             whence: HashMap::new(),
+            narrowings: 0,
+            narrowed_at: HashMap::new(),
+            unnarrowed: HashMap::new(),
             trying: false,
             lines_out: HashSet::new(),
             classes: Vec::new(),
@@ -2854,10 +2865,17 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Narrows the binders of `facts`, each origin now the test; gives what to restore.
     fn narrow(&mut self, facts: &Facts) -> Saved<'a> {
+        self.narrowings += facts.len();
         facts
             .iter()
             .map(|(b, t, test)| {
                 let old = self.whence.get(b).cloned();
+                let first = !old
+                    .as_ref()
+                    .is_some_and(|o| matches!(o.why, Why::Narrowed(_)));
+                if first && let Some(t) = self.env.get(b) {
+                    self.unnarrowed.insert(*b, t.clone());
+                }
                 let o = Origin {
                     span: *test,
                     why: Why::Narrowed(t.clone()),
@@ -2872,6 +2890,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Restores what [`Self::narrow`] changed.
     fn widen(&mut self, saved: Saved<'a>) {
+        self.narrowings -= saved.len();
         for (b, old, o) in saved.into_iter().rev() {
             match old {
                 Some(t) => self.env.insert(b, t),
