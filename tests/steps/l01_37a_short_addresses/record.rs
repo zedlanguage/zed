@@ -158,9 +158,10 @@ fn printed_types() {
 /// `out` without the address of each diagnostic. The build with `short-addresses` keeps one
 /// byte of each address, so the two builds print different addresses for the same diagnostic,
 /// and the snapshots they share leave them out: a line `address: #…,` of a pretty-printed
-/// diagnostic and `, address: #…` of one printed on a line. One pass over `out`.
+/// diagnostic, `, address: #…` of one printed on a line, and the optional address of a test
+/// outcome, `, address: Some(#…)` or `, address: None` (DIAG-addr-rest). One pass over `out`.
 fn without_addresses(out: &str) -> String {
-    const FIELD: &str = ", address: #";
+    const FIELD: &str = ", address: ";
     let mut kept = String::with_capacity(out.len());
     for line in out.split_inclusive('\n') {
         if line.trim_start().starts_with("address: #") {
@@ -168,12 +169,30 @@ fn without_addresses(out: &str) -> String {
         }
         let mut rest = line;
         while let Some(i) = rest.find(FIELD) {
-            kept.push_str(&rest[..i]);
             let tail = &rest[i + FIELD.len()..];
-            let hex = tail
-                .find(|c: char| !c.is_ascii_hexdigit())
-                .unwrap_or(tail.len());
-            rest = &tail[hex..];
+            let after = if let Some(t) = tail.strip_prefix("None") {
+                t
+            } else {
+                let (t, some) = match tail.strip_prefix("Some(") {
+                    Some(t) => (t, true),
+                    None => (tail, false),
+                };
+                let Some(t) = t.strip_prefix('#') else {
+                    // Not an address: keep the text and look after it.
+                    kept.push_str(&rest[..i + FIELD.len()]);
+                    rest = tail;
+                    continue;
+                };
+                let hex = t.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(t.len());
+                let t = &t[hex..];
+                if some {
+                    t.strip_prefix(')').unwrap_or(t)
+                } else {
+                    t
+                }
+            };
+            kept.push_str(&rest[..i]);
+            rest = after;
         }
         kept.push_str(rest);
     }
