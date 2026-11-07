@@ -9,6 +9,7 @@ mod constants;
 mod corpus;
 mod deep_calls;
 mod drops;
+mod function_binders;
 mod hooks;
 mod kernel_inputs;
 mod kinds;

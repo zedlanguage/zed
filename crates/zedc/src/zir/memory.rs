@@ -1292,6 +1292,11 @@ impl<'g> Machine<'g, '_> {
 
     /// A `match`: the kernel picks the arm and binds its values, and the machine finds the
     /// binders' cells inside the scrutinee's and releases the scrutinee.
+    ///
+    /// A function scrutinee (a closure, a primitive or a lookup port) is no data, so the
+    /// kernel cannot give it back in a tuple. A pattern that matches a function binds it
+    /// whole or not at all (data holds no function), so the kernel gives `()` in each
+    /// binder's place and each binder of the arm is the scrutinee itself, at the empty path.
     fn matched(
         &mut self,
         node: &'g Node,
@@ -1300,6 +1305,7 @@ impl<'g> Machine<'g, '_> {
         at: &str,
         ins: Vec<Mv<'g>>,
     ) -> Result<Out<'g>, String> {
+        let data = matches!(ins[0], Mv::Data(..));
         let mut lets = Lets::default();
         let s = self.term(&ins[0], &mut lets)?;
         let mut arms = Vec::new();
@@ -1310,7 +1316,11 @@ impl<'g> Machine<'g, '_> {
             rename(&mut p, &mut || {
                 n += 1;
                 let x: Arc<str> = format!("\0bind{n}").into();
-                xs.push(Term::Var(x.clone()));
+                xs.push(if data {
+                    Term::Var(x.clone())
+                } else {
+                    Term::Lit(Value::tuple(Vec::new()))
+                });
                 x
             });
             arms.push((p, Term::Prim(Prim::Tuple, xs)));
@@ -1330,9 +1340,18 @@ impl<'g> Machine<'g, '_> {
         let path = format!("{at}/{i}");
         let (key, first, arm) = self.plan_of(&path)?;
         let mut paths = Vec::new();
-        if let Mv::Data(v, _) = &ins[0] {
-            binder_paths(&ps[i], v, &mut Vec::new(), &mut paths);
+        match &ins[0] {
+            Mv::Data(v, _) => binder_paths(&ps[i], v, &mut Vec::new(), &mut paths),
+            _ => paths.resize(vals.len(), Vec::new()),
         }
+        // A binder of value `v` and cell `cell`; for a function scrutinee, the scrutinee.
+        let bound = |v: Value, cell: Option<usize>| {
+            if data {
+                Mv::Data(v, cell)
+            } else {
+                ins[0].clone()
+            }
+        };
         let scrut = ins[0].cell();
         let cells: Vec<Option<usize>> = (0..vals.len())
             .map(|b| paths.get(b).and_then(|p| self.cell_at(scrut, p)))
@@ -1356,7 +1375,7 @@ impl<'g> Machine<'g, '_> {
             }
             for (b, v) in vals.into_iter().enumerate() {
                 let owned = arm.args[b] == Mode::Owned;
-                args.push((Mv::Data(v, if owned { cells[b] } else { None }), owned));
+                args.push((bound(v, if owned { cells[b] } else { None }), owned));
             }
         } else {
             for (b, v) in vals.into_iter().enumerate() {
@@ -1365,7 +1384,7 @@ impl<'g> Machine<'g, '_> {
                         "memory: {at}: the scrutinee is borrowed, and arm {i} owns binder {b}"
                     ));
                 }
-                args.push((Mv::Data(v, cells[b]), false));
+                args.push((bound(v, cells[b]), false));
             }
         }
         args.extend((1..ins.len()).map(|j| (ins[j].clone(), np.modes[j] == Mode::Owned)));

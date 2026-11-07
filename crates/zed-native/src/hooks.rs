@@ -19,12 +19,11 @@ use zed_rt::{Heap, Obj, Word};
 
 use crate::tables::{NodeInfo, Tables};
 
-/// A match's binders: each word, and its path in the scrutinee when native matching found it.
-type Binders = Vec<(Word, Option<Vec<usize>>)>;
+/// A match's binders: each word and its path in the scrutinee.
+type Binders = Vec<(Word, Vec<usize>)>;
 
-/// The kernel's decision on a match: the arm and the tuple `(arm, binders…)` it gives, or the
-/// failure value.
-type Decision = Result<(usize, Vec<Value>), Value>;
+/// The kernel's decision on a match: the arm and its number of binders, or the failure value.
+type Decision = Result<(usize, usize), Value>;
 
 /// A native run: the program's tables, read by every hook, and the state the hooks change.
 pub(crate) struct State {
@@ -646,7 +645,7 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
         for (i, p) in ps.iter().enumerate() {
             let mut out = Vec::new();
             if s.heap.matches(p, scrut, &mut Vec::new(), &mut out)? {
-                found = Some((i, out.into_iter().map(|(w, p)| (w, Some(p))).collect()));
+                found = Some((i, out));
                 break;
             }
         }
@@ -654,17 +653,16 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
     let (i, binders): (usize, Binders) = match found {
         Some(f) => f,
         None => match kernel_match(t, s, ps, scrut)? {
-            Ok((i, vals)) => {
+            Ok((i, n)) => {
                 if !function {
                     return Err(format!(
                         "native: {}: no pattern matches natively, and the kernel picks arm {i}",
                         t.path(id)
                     ));
                 }
-                // The first value is the arm's index.
-                let vals = vals.into_iter().skip(1);
-                let binders = vals.map(|v| (s.heap.uncounted(v), None));
-                (i, binders.collect())
+                // A pattern that matches a function binds it whole or not at all (data holds
+                // no function), so each binder is the scrutinee, at the empty path.
+                (i, vec![(scrut, Vec::new()); n])
             }
             Err(v) => {
                 failed(s, ni, ins, v)?;
@@ -689,10 +687,7 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
                 words.push(Word::err());
             }
         }
-        let kept_paths: Vec<&[usize]> = kept
-            .iter()
-            .filter_map(|b| binders[*b].1.as_deref())
-            .collect();
+        let kept_paths: Vec<&[usize]> = kept.iter().map(|b| binders[*b].1.as_slice()).collect();
         if t.fuse {
             s.heap.release(scrut, &kept_paths)?;
         } else {
@@ -716,28 +711,34 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
     Ok(i as i64)
 }
 
-/// The kernel's decision on a scrutinee native matching does not decide: the arm and the
-/// values `(arm, binders…)`, or the failure value.
+/// The kernel's decision on a scrutinee native matching does not decide: the arm and its
+/// number of binders, or the failure value. The binders' values are not asked for: a function
+/// scrutinee is no data, so the kernel could not give it back in a tuple, and a data
+/// scrutinee that native matching does not match matches no arm.
 fn kernel_match(t: &Tables, s: &mut Run, ps: &[Pattern], scrut: Word) -> Result<Decision, String> {
     let mut lets = Lets::default();
     let st = term(t, s, scrut, &mut lets)?;
     let mut arms = Vec::new();
+    let mut counts = Vec::new();
     for (i, p) in ps.iter().enumerate() {
         let mut p = p.clone();
-        let mut xs = vec![Term::Lit(Value::Int(i as i64))];
         let mut n = 0;
         rename(&mut p, &mut || {
             n += 1;
-            let x: Arc<str> = format!("\0bind{n}").into();
-            xs.push(Term::Var(x.clone()));
-            x
+            format!("\0bind{n}").into()
         });
-        arms.push((p, Term::Prim(Prim::Tuple, xs)));
+        counts.push(n);
+        arms.push((
+            p,
+            Term::Prim(Prim::Tuple, vec![Term::Lit(Value::Int(i as i64))]),
+        ));
     }
     let q = wrap(lets, Term::Match(Shared::new(st), arms));
     Ok(match run(s, &q)? {
         Value::Tuple(xs) => match xs.first() {
-            Some(&Value::Int(i)) if (i as usize) < ps.len() => Ok((i as usize, xs.into_vec())),
+            Some(&Value::Int(i)) if xs.len() == 1 && (i as usize) < ps.len() => {
+                Ok((i as usize, counts[i as usize]))
+            }
             _ => Err(Value::Tuple(xs)),
         },
         v => Err(v),
