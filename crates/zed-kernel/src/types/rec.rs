@@ -861,6 +861,20 @@ impl Key {
         self.digest
     }
 
+    /// The recursive members of the group, in definition order, when the key names a member.
+    pub(super) fn members(&self) -> Option<Vec<Type>> {
+        let At::Member(_) = self.at else {
+            return None;
+        };
+        let plain = &self.env.group().0.plain;
+        Some(
+            (self.env.members.iter().zip(plain))
+                .filter(|(_, p)| !**p)
+                .map(|(m, _)| m.get().expect("every member is set").clone())
+                .collect(),
+        )
+    }
+
     /// The order of two keys: by digest, place, the groups' definitions and the arguments. What
     /// the definitions' shapes decide is decided here; the pairs of types inside them that tie
     /// in digest, then the arguments, are pushed to `types` in the order they are to be compared

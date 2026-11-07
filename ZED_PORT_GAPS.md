@@ -1897,3 +1897,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `OnceCell` per definition holding its reads, filled on the first call | `Cones::reads`, `Cones::reach` | Lazy cells (gap 3) | The reads of every definition computed once when the cones are built, as one map from position to reads |
 | A visited set kept as a vector of walk numbers, one per definition, set in place by `std::mem::replace` so all walks share it without clearing | `Runs::run` | Mutation | A set of the positions met, new for each walk; each walk is over one run's cone, so the cost stays that of the walk |
 | `Vec<Known>` and `Vec<Option<String>>` written by index as definitions are run or marked, and a `loop` whose `break` gives the first stop | `Runs::outcomes`, `Runs::reads_a_stop`, `Runs::values` | Mutation | Maps from position to state and to outcome threaded through a fold over the unit's order; the doubling of the prefixes as a recursive function returning the stop |
+
+## Entries from VERDICT-group-share (`zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::mem::take` and `std::mem::replace` of the search's list of missing values read, around a nested build and each retry, and a `BTreeMap` from a type to the kept failures waiting on it, updated in place | `Searching::rep`, `Searching::retry`, `Search::forget_failures` | Mutation | A nested build returns the types it read with its value; the waiting map is search state threaded through the builds, as the other `Search` fields |

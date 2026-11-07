@@ -82,7 +82,8 @@ use crate::value::Value;
 thread_local! {
     static MEMO: RefCell<BTreeMap<Type, bool>> = const { RefCell::new(BTreeMap::new()) };
     /// The verdict of each type asked. A verdict is decided by a search that reads no kept
-    /// result, so it is a function of the type alone, and keeping it changes no answer: these
+    /// result, or with the other members of its recursive group ([`group_verdicts`]), so it is
+    /// a function of the type alone, and keeping it changes no answer: these
     /// are the types proved empty and those with a checked value, and the refusals.
     static VERDICTS: RefCell<BTreeMap<Type, Verdict>> = const { RefCell::new(BTreeMap::new()) };
 }
@@ -147,6 +148,34 @@ impl std::fmt::Display for Refusal {
     }
 }
 
+/// Keeps the verdicts of `members`, the recursive members of one group, for each member its
+/// group's decider (module `bes`) decides: a member decided empty is `Empty`, and one decided
+/// inhabited is `Inhabited` once a value of it is built and checked. The values are built by one
+/// search for all members, in definition order, which keeps each value it builds, so a type
+/// shared by members is given its value once: the verdicts of a group of n cost what one search
+/// over the group does, where a search for each member would read the group n times. A member
+/// with no value built here is given the verdict of a search of its own. Each verdict is a
+/// function of the group, which every member names, whichever member is asked first.
+fn group_verdicts(members: &[Type]) {
+    let mut s = Search {
+        strict: true,
+        ..Search::default()
+    };
+    for m in members {
+        let v = match m.judged() {
+            Some(true) => Verdict::Empty,
+            Some(false) if s.rep(m).is_some() => Verdict::Inhabited,
+            // Complexity tradeoff: a member decided inhabited whose value the shared search does
+            // not build gets a search of its own, which may read the whole group again; the X14
+            // groups of 1024 and 2048 definitions measured for plan item VERDICT-group-share
+            // needed none.
+            Some(false) => m.verdict_alone(),
+            None => continue,
+        };
+        VERDICTS.with(|k| k.borrow_mut().insert(m.clone(), v));
+    }
+}
+
 impl Type {
     /// Drops the kept emptiness results. A unit's checker calls it first: a type equal to a
     /// kept one but built apart from it is compared with it in full, so a result kept from
@@ -179,11 +208,33 @@ impl Type {
 
     /// Whether `self` is empty, shown inhabited by a checked value, or refused: not proved
     /// empty, and no value found. Kept results are not read, since those of `is_empty` carry no
-    /// value and would make the outcome depend on the queries before it.
+    /// value and would make the outcome depend on the queries before it. A member of a recursive
+    /// group that its decider decides gets its verdict with the other members
+    /// ([`group_verdicts`]).
     pub fn verdict(&self) -> Verdict {
-        if let Some(v) = VERDICTS.with(|m| m.borrow().get(self).copied()) {
+        let kept = || VERDICTS.with(|m| m.borrow().get(self).copied());
+        if let Some(v) = kept() {
             return v;
         }
+        // Complexity tradeoff: a member its decider does not decide (a refusal, or a recursive
+        // occurrence under `&`, `\` or a complement) gets a search of its own, which reads no
+        // result of another member, so the verdicts of every member of such a group of n cost n
+        // searches of the group, O(n^2). Trigger: `judged` is none. COMPLEXITY.md row K55.
+        if self.judged().is_some()
+            && let Some(members) = self.group_members()
+        {
+            group_verdicts(&members);
+            if let Some(v) = kept() {
+                return v;
+            }
+        }
+        let v = self.verdict_alone();
+        VERDICTS.with(|m| m.borrow_mut().insert(self.clone(), v));
+        v
+    }
+
+    /// The verdict of `self` by a search of its own.
+    fn verdict_alone(&self) -> Verdict {
         let mut s = Search {
             strict: true,
             refuse_forks: true,
@@ -191,7 +242,7 @@ impl Type {
         };
         let b = s.solve(self);
         let decided = s.refused.is_none();
-        let v = if decided && b {
+        if decided && b {
             Verdict::Empty
         } else if decided
             && (s.ids.get(self).is_some_and(|t| s.witnessed.contains(t)) || s.rep(self).is_some())
@@ -225,9 +276,7 @@ impl Type {
             // L2), the emptiness of each key type decided within the search that reads it, and a
             // complete search.
             Verdict::Refused(s.refused.or(s.gave_up).unwrap_or(Refusal::NoWitness))
-        };
-        VERDICTS.with(|m| m.borrow_mut().insert(self.clone(), v));
-        v
+        }
     }
 
     /// Whether every value of `self` is in `other`: `self <: other`.
@@ -443,6 +492,11 @@ struct Search {
     resting: usize,
     /// The representatives kept, in order, so those resting on a failed build are dropped.
     built: Vec<Type>,
+    /// The types whose missing value the build under way has read.
+    read: Vec<Type>,
+    /// For each type, the kept failures that read its missing value: they are sought again when
+    /// it gets one ([`Searching::retry`]).
+    waiting: BTreeMap<Type, Vec<Type>>,
     /// Whether a closure was tested against a type that holds some morphisms.
     unsure: bool,
     /// Whether a type was settled in the first walk, after answers that read it as inhabited.
@@ -1039,6 +1093,13 @@ impl Search {
         self.run(|d| Box::pin(d.rep(&t)))
     }
 
+    /// Drops every kept failure, between phases of a search, when no value is being built.
+    fn forget_failures(&mut self) {
+        self.reps.retain(|_, r| r.is_some());
+        self.waiting.clear();
+        self.read.clear();
+    }
+
     /// The end of a phase of [`Searching::solve`], once each inhabited answer was tried for a
     /// value, `new` when one was found: the answer for the root, numbered `r`, when the phases
     /// are over, or none when another starts.
@@ -1059,7 +1120,7 @@ impl Search {
                     self.again.insert(t);
                 }
             }
-            self.reps.retain(|_, r| r.is_some());
+            self.forget_failures();
             return None;
         }
         if !new {
@@ -1246,7 +1307,7 @@ impl<'m> Searching<'m> {
                 s.answer.clear();
                 return false;
             }
-            s.reps.retain(|_, r| r.is_some());
+            s.forget_failures();
         }
         self.s().walking = true;
         let b = self.empty(root).await;
@@ -1261,7 +1322,7 @@ impl<'m> Searching<'m> {
                 let open = (0..s.types.len())
                     .filter(|&t| !s.answer[t] && !s.witnessed.contains(&t))
                     .collect();
-                s.reps.retain(|_, r| r.is_some());
+                s.forget_failures();
                 open
             };
             let mut new = false;
@@ -2161,34 +2222,75 @@ impl<'m> Searching<'m> {
     /// tuple type left open; each is tested against every tuple type of `t`, so a poor choice
     /// costs precision, never soundness. A type met again while its own is sought has none on
     /// that path, since a value is finite; none found means only that, never that `t` is
-    /// empty. Each type is tried once and each test of a representative against a type is
-    /// made once, so a value nested in shared types is never copied out.
+    /// empty. A value found is kept for good. A failure is kept with the types whose missing
+    /// values it read, and is sought again when one of them gets a value ([`Searching::retry`]),
+    /// so a type is tried again once a type its value needs has one: the value of a member of a
+    /// chain whose next member was being built when it was first tried. Each test of a
+    /// representative against a type is made once, so a value nested in shared types is never
+    /// copied out.
     fn rep(&'m self, t: &Type) -> Deep<'m, Option<usize>> {
-        if let Some(&r) = self.s().reps.get(t) {
-            return Stack::ready(r);
+        {
+            let mut s = self.s();
+            if let Some(&r) = s.reps.get(t) {
+                if r.is_none() {
+                    s.read.push(t.clone());
+                }
+                return Stack::ready(r);
+            }
         }
         let t = t.clone();
         self.stack.call(move || async move {
-            let (mark, resting) = {
+            let (mark, resting, outer) = {
                 let mut s = self.s();
                 s.reps.insert(t.clone(), None);
                 s.building.insert(t.clone());
-                (s.built.len(), s.resting)
+                (s.built.len(), s.resting, std::mem::take(&mut s.read))
             };
             let r = self.find_rep(&t).await;
-            let mut s = self.s();
-            s.building.remove(&t);
-            s.reps.insert(t.clone(), r);
-            if r.is_some() {
-                s.built.push(t);
-            } else if s.resting > resting {
-                // What was built here rests on a value that does not exist.
-                for x in s.built.split_off(mark) {
-                    s.reps.remove(&x);
+            {
+                let mut s = self.s();
+                s.building.remove(&t);
+                s.reps.insert(t.clone(), r);
+                let read = std::mem::replace(&mut s.read, outer);
+                if r.is_none() {
+                    if s.resting > resting {
+                        // What was built here rests on a value that does not exist.
+                        for x in s.built.split_off(mark) {
+                            s.reps.remove(&x);
+                        }
+                    }
+                    for x in read.into_iter().filter(|x| *x != t) {
+                        s.waiting.entry(x).or_default().push(t.clone());
+                    }
+                    s.read.push(t);
+                    return r;
                 }
+                s.built.push(t.clone());
             }
+            self.retry(&t).await;
             r
         })
+    }
+
+    /// Seeks again, at once, each kept failure that read the missing value of `t`, which now
+    /// has one: a failure sought again that finds a value does the same for those that read
+    /// it, so values spread back as in a worklist, and each failure is sought again once for
+    /// each type it read that gets a value.
+    async fn retry(&'m self, t: &Type) {
+        let waiting = self.s().waiting.remove(t).unwrap_or_default();
+        for y in waiting {
+            let outer = {
+                let mut s = self.s();
+                if s.reps.get(&y) != Some(&None) || s.building.contains(&y) {
+                    continue;
+                }
+                s.reps.remove(&y);
+                std::mem::take(&mut s.read)
+            };
+            // Read by no build under way: what it reads is its own.
+            self.rep(&y).await;
+            self.s().read = outer;
+        }
     }
 
     /// The representatives of `ts`, if each has one, sought in order up to the first that has

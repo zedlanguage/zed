@@ -515,6 +515,14 @@ impl Type {
         }
     }
 
+    /// The recursive members of the group of a recursive member, in definition order.
+    pub(crate) fn group_members(&self) -> Option<Vec<Type>> {
+        match &*self.0 {
+            Node::Parts(..) => None,
+            Node::Rec(r) => r.key.members(),
+        }
+    }
+
     /// Whether this is a recursive type by name, not its unfolding.
     fn is_recursive(&self) -> bool {
         matches!(&*self.0, Node::Rec(_))

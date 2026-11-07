@@ -1523,11 +1523,12 @@ fn chain_of(g: &mut Rng, n: usize) -> Vec<E> {
         .collect()
 }
 
-/// The verdicts of every member of `n` random groups of the X14 family, and the verdict of the
-/// first member of one group of `n` definitions that its search reads whole, at `n` and `8n`,
-/// the groups built before the runs. The verdicts of every member of one large group are not
-/// measured: each verdict is a search of its own, which reads no result kept from another
-/// (`Type::verdict`), so their sum is quadratic in the group by design.
+/// The verdicts of every member of `n` random groups of the X14 family, the verdict of the
+/// first member of one chain group of `n` definitions, which its search reads whole, and the
+/// verdicts of every member of one group of `n` (plan item VERDICT-group-share), of the X14
+/// family and of the chain family, at `n` and `8n`, the groups built before the runs. The first
+/// verdict asked of a member decides the whole group in one search (`Type::verdict`), so the
+/// verdicts of all members cost what one does.
 #[test]
 fn verdicts_of_random_groups_scale() {
     let many = |n: usize| -> Vec<Type> {
@@ -1542,20 +1543,70 @@ fn verdicts_of_random_groups_scale() {
             .map(|t| t.expect("a chain group is admitted"))
             .collect()
     };
+    let one = |n: usize| -> Vec<Type> {
+        kernel(&claude_of(&mut Rng::new(3), n), &format!("one{n}"))
+            .into_iter()
+            .map(|t| t.expect("every definition of the X14 family is admitted"))
+            .collect()
+    };
+    let every = |ts: &[Type]| {
+        Type::forget_emptiness();
+        for t in ts {
+            std::hint::black_box(t.verdict());
+        }
+    };
     on_a_big_stack(|| {
         let n = 64;
-        let (small, large) = (many(n), many(scaling::FACTOR * n));
+        let groups = scaling::inputs(n, many);
         scaling::check("verdicts of the members of n random groups", n, |m| {
-            Type::forget_emptiness();
-            for t in if m == n { &small } else { &large } {
-                std::hint::black_box(t.verdict());
-            }
+            every(&groups[&m])
         });
         let n = 128;
-        let (small, large) = (chain(n), chain(scaling::FACTOR * n));
+        let chains = scaling::inputs(n, chain);
         scaling::check("the verdict of one member of a chain group of n", n, |m| {
             Type::forget_emptiness();
-            std::hint::black_box((if m == n { &small } else { &large })[0].verdict());
+            std::hint::black_box(chains[&m][0].verdict());
         });
+        scaling::check(
+            "the verdicts of every member of a chain group of n",
+            n,
+            |m| every(&chains[&m]),
+        );
+        let ones = scaling::inputs(n, one);
+        scaling::check(
+            "the verdicts of every member of one X14 group of n",
+            n,
+            |m| every(&ones[&m]),
+        );
+    });
+}
+
+/// Every member of a chain group of 512 is inhabited, by a chain of up to 512 values; before
+/// the search kept a failure only until a type it read got a value, all but 8 were refused.
+/// The verdicts agree whatever order the members are asked in, and with the verdict of each
+/// member asked alone, for a few members.
+#[test]
+fn every_member_of_a_long_chain_is_inhabited() {
+    on_a_big_stack(|| {
+        let ts: Vec<Type> = kernel(&chain_of(&mut Rng::new(7), 512), "long_chain")
+            .into_iter()
+            .map(|t| t.expect("a chain group is admitted"))
+            .collect();
+        Type::forget_emptiness();
+        let forward: Vec<Verdict> = ts.iter().map(Type::verdict).collect();
+        Type::forget_emptiness();
+        let mut backward: Vec<Verdict> = ts.iter().rev().map(Type::verdict).collect();
+        backward.reverse();
+        assert_eq!(
+            forward, backward,
+            "the verdicts depend on the order they are asked in"
+        );
+        for (i, v) in forward.iter().enumerate() {
+            assert_eq!(*v, Verdict::Inhabited, "R{i} of the chain");
+        }
+        for i in [0, 1, 255, 510, 511] {
+            Type::forget_emptiness();
+            assert_eq!(ts[i].verdict(), forward[i], "R{i} asked alone");
+        }
     });
 }
