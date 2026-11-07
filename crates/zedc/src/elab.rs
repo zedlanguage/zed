@@ -17,7 +17,6 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
-use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -38,136 +37,11 @@ mod tables;
 mod topo;
 mod walk;
 
-pub use defs::{Def, Test, Unit};
+pub use crate::stage::Cones;
+pub use defs::{Def, Test, Unit, written_name};
 pub(crate) use kernel_type::kernel_type;
 pub(crate) use tables::Tables;
 pub use topo::{topo, topo_joined};
-
-impl Unit {
-    /// `body` under the definitions it reaches, each a let, in the unit's order. For many
-    /// terms of one unit, make its [`Cones`] once.
-    pub fn close(&self, body: Term) -> Term {
-        Cones::new(self).close(body)
-    }
-
-    /// The definition of source name `name`, closed over the others.
-    pub fn get(&self, name: &str) -> Option<Term> {
-        let d = self.defs.iter().find(|d| d.name == name)?;
-        Some(self.close(Term::Var(d.kernel.clone())))
-    }
-}
-
-/// The definitions each term of a unit reaches, from an index of the unit made once: each
-/// kernel name's definition, and the definitions each definition reads, found when first
-/// needed. A term's cone then costs the definitions in it, not a pass over the unit, and
-/// closing a term over its cone shares each definition's term rather than copying it.
-pub struct Cones<'u> {
-    unit: &'u Unit,
-    by_kernel: HashMap<&'u str, usize>,
-    /// The positions of the definitions each definition reads.
-    reads: Vec<OnceCell<Vec<usize>>>,
-    /// The number a query database gave each definition's text, for a query key.
-    numbers: Vec<OnceCell<u64>>,
-    /// The stamp of that database.
-    db: OnceCell<u64>,
-}
-
-impl<'u> Cones<'u> {
-    /// The index of `unit`.
-    pub fn new(unit: &'u Unit) -> Self {
-        Cones {
-            unit,
-            by_kernel: unit
-                .defs
-                .iter()
-                .enumerate()
-                .map(|(i, d)| (&*d.kernel, i))
-                .collect(),
-            reads: unit.defs.iter().map(|_| OnceCell::new()).collect(),
-            numbers: unit.defs.iter().map(|_| OnceCell::new()).collect(),
-            db: OnceCell::new(),
-        }
-    }
-
-    /// The positions of the definitions of the names `t` reads.
-    fn positions(&self, t: &Term) -> impl Iterator<Item = usize> {
-        crate::stage::free(t)
-            .into_iter()
-            .filter_map(|x| self.by_kernel.get(&*x).copied())
-    }
-
-    /// The positions of the definitions the definition at position `i` reads, found when
-    /// first asked.
-    pub fn reads(&self, i: usize) -> &[usize] {
-        self.reads[i].get_or_init(|| self.positions(&self.unit.defs[i].term).collect())
-    }
-
-    /// The definitions `roots` read, and those they read in turn: their positions in the
-    /// unit, in its order.
-    pub fn reach(&self, roots: &[&Term]) -> Vec<usize> {
-        let mut seen = BTreeSet::new();
-        let mut todo: Vec<usize> = roots.iter().flat_map(|t| self.positions(t)).collect();
-        while let Some(i) = todo.pop() {
-            if seen.insert(i) {
-                todo.extend(self.reads(i));
-            }
-        }
-        seen.into_iter().collect()
-    }
-
-    /// The definitions `roots` reach, in the unit's order.
-    pub fn defs(&self, roots: &[&Term]) -> impl Iterator<Item = &'u Def> + use<'u> {
-        let unit = self.unit;
-        self.reach(roots).into_iter().map(move |i| &unit.defs[i])
-    }
-
-    /// The number of the definition at position `i` in the query database of stamp `db`:
-    /// what `number` gives its text, its kernel name and its term as `Debug` prints them,
-    /// asked once. The numbers are those of one database, so a [`Cones`] is read with one.
-    pub(crate) fn number(&self, i: usize, db: u64, number: impl FnOnce(&str) -> u64) -> u64 {
-        let first = *self.db.get_or_init(|| db);
-        assert_eq!(
-            first, db,
-            "the definitions of a unit are numbered by the one query database that met them"
-        );
-        *self.numbers[i].get_or_init(|| {
-            let d = &self.unit.defs[i];
-            number(&format!("{}={:?}", d.kernel, d.term))
-        })
-    }
-
-    /// `body` under the definitions it reaches, each a let, in the unit's order: each after
-    /// those it uses, as in the unit. Each let shares its definition's term.
-    pub fn close(&self, body: Term) -> Term {
-        self.close_with(body, None)
-    }
-
-    /// `body` closed as [`Cones::close`] closes it, with the definition at position `i` bound
-    /// to `term` when `swap` is `Some((i, term))` (step L25.8, a mutant). `term` must read
-    /// the names the definition reads, as a mutant's term does, so the cone is the same.
-    pub fn close_with(&self, body: Term, swap: Option<(usize, &Shared)>) -> Term {
-        let reach = self.reach(&[&body]);
-        reach.into_iter().rev().fold(body, |body, i| {
-            let d = &self.unit.defs[i];
-            let term = match swap {
-                Some((j, term)) if j == i => term.clone(),
-                _ => d.term.clone(),
-            };
-            Term::Let(d.kernel.clone(), term, Shared::new(body))
-        })
-    }
-}
-
-/// The name the program wrote for the binder whose kernel name is `kernel`: the kernel name
-/// itself, or the part before `@k` where elaboration renamed the binder (`Elab::new`). A
-/// written name holds no `@` (`crate::lex::name`), and neither does a temporary `$k`, which
-/// is kept as it is. A message names a binder by it (sec:diagnostics). Linear in the length
-/// of the name.
-pub fn written_name(kernel: &str) -> &str {
-    kernel
-        .split_once('@')
-        .map_or(kernel, |(written, _)| written)
-}
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {

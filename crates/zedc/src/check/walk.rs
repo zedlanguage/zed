@@ -10,7 +10,12 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::arms::{Item, Node, Translated, prim_of, var};
 use super::*;
+use crate::store::cell::Premises;
+use crate::store::lattice::Lattice;
+use crate::store::product::{self, Product, Scope};
+use zed_kernel::Shared;
 
 /// What a job gives back.
 pub(super) enum Ret<'a> {
@@ -1272,7 +1277,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
                 self.facts.insert(id, value);
-                self.arms.bind(id, &v);
+                self.arms.bind(id, plain(&v));
                 self.env.insert(id, v);
             }
             [Target::Wild] => {
@@ -2756,5 +2761,357 @@ fn exported(e: &Expr) -> &Expr {
             _ => e,
         },
         _ => e,
+    }
+}
+
+/// The scalars and atoms of `ty`, when it holds nothing else.
+fn plain(ty: &Ty) -> Option<KType> {
+    (ty.tuples.is_empty() && ty.fns.is_empty() && ty.vars.is_empty() && !ty.dynamic)
+        .then(|| ty.set.clone())
+}
+
+// The checker's side of the tests around an expression (`arms.rs`): the nodes of a condition
+// and the ints the tests allow an operand. It is written here rather than beside `Arms`, so
+// that `arms.rs` imports none of the checker's own files (step S.1f).
+impl<'a> Ck<'_, 'a> {
+    /// The ints `e` may be here: what its text shows ([`Ck::known`]) met with what the tests
+    /// the walk is in show of it; and whether a test narrowed it.
+    pub(super) fn ints_here(&mut self, e: &'a Expr) -> (IntervalSet, bool) {
+        let k = self.known(e);
+        if k.value.is_some() || self.arms.here() == 0 {
+            return (k.ints, false);
+        }
+        let narrowed = self.ints_in_scope(e);
+        let ints = k.ints.meet(&narrowed);
+        let changed = ints != k.ints;
+        (ints, changed)
+    }
+
+    /// The two nodes of the condition `e` checked here, where it holds and where it fails, with
+    /// the products of its names taken from their types as they are here: a type an `is` has
+    /// narrowed holds here, and may not where the scope is read.
+    pub(super) fn test_nodes(&mut self, e: &'a Expr) -> (usize, usize) {
+        let t = self.term(e);
+        let fresh = t
+            .vars
+            .iter()
+            .map(|(x, id)| {
+                let p = match self.env.get(id).and_then(plain) {
+                    Some(t) => Product::of_type(t),
+                    None => Product::top(),
+                };
+                (x.clone(), p)
+            })
+            .collect();
+        self.arms.test(e, fresh)
+    }
+
+    /// A note at each test the walk is in that bears on the operand `e`, innermost first, for a
+    /// rejection whose operand a test narrowed ([`Arms::deciding`]): a test that changed a name
+    /// `e` reads, or one the value of a name bound in an arm reads, where it was bound
+    /// ([`Arms::bound`]), or one that changed a name such a test reads (`a == b` relates `b` to
+    /// a test on `a`).
+    ///
+    /// [`Arms::deciding`]: super::arms::Arms::deciding
+    /// [`Arms::bound`]: super::arms::Arms::bound
+    pub(super) fn deciding_notes(&mut self, e: &'a Expr) -> Vec<Note> {
+        let starts = self.read_names(e);
+        self.arms
+            .deciding(starts)
+            .into_iter()
+            .map(|(span, outcome, case)| Note {
+                span,
+                text: match case {
+                    false => format!("this test is {outcome} here"),
+                    true => format!("this test is {outcome} in one case here"),
+                },
+            })
+            .collect()
+    }
+
+    /// The scope names `e` reads, each with the node it is read under: its own, under the node
+    /// the walk is in, and those of the values of the names bound in an arm that it reads,
+    /// through binders of binders, each binder once, under the node the binder was bound
+    /// under, where its value is read ([`Item::Bound`]).
+    fn read_names(&mut self, e: &'a Expr) -> Vec<(Arc<str>, usize)> {
+        let t = self.term(e);
+        let here = self.arms.here();
+        let mut out: Vec<(Arc<str>, usize)> =
+            t.vars.iter().map(|(x, _)| (x.clone(), here)).collect();
+        let mut seen = HashSet::new();
+        let mut stack = t.binders.clone();
+        while let Some(b) = stack.pop() {
+            if !seen.insert(b) {
+                continue;
+            }
+            let Some(&value) = self.facts.get(&b) else {
+                continue;
+            };
+            let v = self.term(value);
+            let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
+            out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
+            stack.extend_from_slice(&v.binders);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The ints `e` may be in the scope of the node the walk is in.
+    fn ints_in_scope(&mut self, e: &'a Expr) -> IntervalSet {
+        let t = self.term(e);
+        let here = self.arms.here();
+        let mut wanted = vec![Item::Scope(here)];
+        wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+        self.settle(wanted);
+        let s = self.arms.scopes[here].clone().expect("settled");
+        let mut s = self.with_bound(s, &t.binders);
+        s.eager_on(&t.term);
+        product::forward(&t.term, &mut s).ints().clone()
+    }
+
+    /// `s` told of the values of `binders` it has no product of.
+    fn with_bound(&self, mut s: Scope, binders: &[usize]) -> Scope {
+        if s.bottom {
+            return s;
+        }
+        for b in binders {
+            let (Some(p), Some(name)) = (self.arms.bound.get(b), self.arms.names.get(b)) else {
+                continue;
+            };
+            if !s.names.contains_key(name) {
+                let e = Shared::new(Term::Var(name.clone()));
+                s.bind(name, p.clone(), &e);
+            }
+        }
+        s
+    }
+
+    /// Computes the scopes and binder products `wanted` needs, each once, on an explicit stack:
+    /// an item is computed when every item it waits on is, and the memo is the visited set.
+    fn settle(&mut self, wanted: Vec<Item>) {
+        let mut entered = HashSet::new();
+        let mut stack: Vec<(Item, bool)> = wanted.into_iter().map(|i| (i, false)).collect();
+        while let Some((item, ready)) = stack.pop() {
+            if self.computed(item) {
+                continue;
+            }
+            if ready {
+                self.compute(item);
+            } else if entered.insert(item) {
+                stack.push((item, true));
+                for d in self.waits(item) {
+                    if !self.computed(d) {
+                        stack.push((d, false));
+                    }
+                }
+            }
+        }
+    }
+
+    fn computed(&self, item: Item) -> bool {
+        match item {
+            Item::Scope(n) => self.arms.scopes[n].is_some(),
+            Item::Bound(b) => self.arms.bound.contains_key(&b),
+        }
+    }
+
+    /// The items `item` is computed from.
+    fn waits(&mut self, item: Item) -> Vec<Item> {
+        match item {
+            Item::Scope(n) => match self.arms.nodes[n] {
+                Node::Root => Vec::new(),
+                Node::Assume { parent, test, .. } => {
+                    let t = self.term(test);
+                    let mut out = vec![Item::Scope(parent)];
+                    out.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+                    out
+                }
+                Node::Join(a, b) => vec![Item::Scope(a), Item::Scope(b)],
+            },
+            Item::Bound(b) => {
+                let Some(&value) = self.facts.get(&b) else {
+                    return Vec::new();
+                };
+                let t = self.term(value);
+                let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
+                let mut out = vec![Item::Scope(at)];
+                out.extend(t.binders.iter().map(|&c| Item::Bound(c)));
+                out
+            }
+        }
+    }
+
+    /// Computes `item` from the items it waits on. One still being computed, which only a
+    /// cycle through binders could give, is read as saying nothing.
+    fn compute(&mut self, item: Item) {
+        match item {
+            Item::Scope(n) => {
+                let s = match self.arms.nodes[n] {
+                    Node::Root => Scope::new([]).lazy(),
+                    Node::Assume {
+                        parent,
+                        test,
+                        outcome,
+                        ..
+                    } => {
+                        let t = self.term(test);
+                        let p = self.scope_or_root(parent);
+                        // A bound name the scope has no product of is its value, and any other
+                        // name any value of its type where the test is checked. A scope no
+                        // state reaches is told of none: it stays unreachable.
+                        let mut p = self.with_bound(p, &t.binders);
+                        if let Node::Assume { fresh, .. } = &self.arms.nodes[n]
+                            && !p.bottom
+                        {
+                            for (x, q) in fresh.iter() {
+                                if !p.names.contains_key(x) {
+                                    p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
+                                }
+                            }
+                        }
+                        // Not shown, so a failing test leaves the names as they were
+                        // (`assume_case`): emptying each costs the names in scope.
+                        //
+                        // The scopes are lazy ([`Scope::lazy`]): a test that moves a hub, a name
+                        // many spokes `ai >= n` mention, leaves the leaves `ai` to be settled
+                        // where a read needs them, so `k` tests on a hub of `k` spokes cost `k`
+                        // narrowings and the reads, not `k²` projections; a rejection's notes
+                        // find the tests that changed a name by [`Arms::lookup`], not by a list
+                        // per test of the names it changed, which is `k` names a test there.
+                        //
+                        // Complexity tradeoff: only a star's leaf is left to a read: a name
+                        // whose conjuncts are each a bound on a sum of names, of coefficients
+                        // one and minus one, with one hub, or with hubs each of whose other
+                        // conjuncts is a leaf's, bounds the hub alone or mentions only hubs of
+                        // the leaf (`Conjuncts::star`), such as `n >= m` for the hubs of
+                        // `ai >= n && ai >= m`; such a star is projected with those conjuncts
+                        // (`Conjuncts::core`). So `ai >= n && ai >= m` and `ai >= n + m` under
+                        // `k` tests on `n` and `k` on `m` cost `O(k)`: 0.15, 0.28 and 0.52 s at
+                        // `k` = 96, 192 and 384, and 0.11, 0.18, 0.33 and 1.51 s at `k` = 12,
+                        // 24, 48 and 192 (2026-11-07, load 18); with `n >= m` above them, 0.05,
+                        // 0.11, 0.22 and 0.43 s at `k` = 24 to 192, and 0.08, 0.17, 0.40 and
+                        // 0.81 s at `k` = 12 to 96 for the sum (2026-11-07, load 23), where
+                        // 0.09, 0.31, 1.16 and 4.91 s were `k²` before (wt/narrow-hub-rest at
+                        // 68a03534). What is given up is time, not an answer: a scope that is
+                        // not lazy projects each star of two hubs or more again when a conjunct
+                        // among its hubs comes or goes, `k` stars a test there, about `k²`
+                        // over `k` such tests; a conjunct at a hub that mentions a name no
+                        // star's leaf there has as a hub keeps every leaf there in the forest,
+                        // `k` blocks a test on the hub, as before; and a hub that comes to have
+                        // such a leaf counts the names its other conjuncts mention. Why: the
+                        // leaf of related hubs lies on a cycle of the relation, so its product
+                        // is the projection of the star with the conjuncts among its hubs, not a
+                        // cut at a box's corner. Trigger: many tests among two hubs that many
+                        // stars share, in a scope that is not lazy; or a hub related to a name
+                        // that is not a hub of its leaves.
+                        // Test: `l01_39a_bit_words::scaling::related_hubs_settle_in_time_linear_in_the_tests`.
+                        // COMPLEXITY.md C26. A complete solution keeps a feasible point and
+                        // settles the cone of a read on demand (the design note of
+                        // NARROW-hub-settle, revision of 2026-11-04).
+                        let s = p.assume_case(&t.term, outcome, &Premises::new());
+                        self.arms.before[n] = Some(p);
+                        s
+                    }
+                    Node::Join(a, b) => self.scope_or_root(a).join(&self.scope_or_root(b)),
+                };
+                self.arms.scopes[n] = Some(s);
+            }
+            Item::Bound(b) => {
+                let Some(&value) = self.facts.get(&b) else {
+                    return;
+                };
+                let t = self.term(value);
+                let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
+                let s = self.scope_or_root(at);
+                let mut s = self.with_bound(s, &t.binders);
+                s.eager_on(&t.term);
+                let mut p = product::forward(&t.term, &mut s);
+                if let Some(ty) = self.arms.bound_ty.get(&b) {
+                    p.ty.element = p.ty.element.meet(ty);
+                }
+                self.arms.bound.insert(b, p);
+            }
+        }
+    }
+
+    fn scope_or_root(&self, n: usize) -> Scope {
+        self.arms.scopes[n]
+            .clone()
+            .unwrap_or_else(|| Scope::new([]).lazy())
+    }
+
+    /// `e` as a kernel term ([`Translated`]): its int and bool literals and the values its text
+    /// shows ([`Ck::known`]), its names, its unary `-` and `!`, its integer operators, its
+    /// comparisons, `&&` and `||`; anything else is a name of its own, by its span, which the
+    /// scope knows nothing of. Built children first on an explicit stack, once for `e`.
+    fn term(&mut self, e: &'a Expr) -> Rc<Translated> {
+        if let Some(t) = self.arms.terms.get(&e.span) {
+            return t.clone();
+        }
+        let (mut binders, mut vars) = (Vec::new(), Vec::new());
+        let mut done: Vec<Term> = Vec::new();
+        let mut stack = vec![(e, false)];
+        while let Some((x, ready)) = stack.pop() {
+            let opaque = || Term::Var(format!("?{}:{}", x.span.start, x.span.end).into());
+            if ready {
+                let t = match &x.kind {
+                    ExprKind::Unary(o, _) => {
+                        let a = done.pop().expect("an operand");
+                        let p = if *o == "-" { Prim::Neg } else { Prim::Not };
+                        Term::Prim(p, vec![a])
+                    }
+                    ExprKind::Binary(o, _, _) => {
+                        let b = done.pop().expect("a second operand");
+                        let a = done.pop().expect("a first operand");
+                        Term::Prim(prim_of(o).expect("a translated operator"), vec![a, b])
+                    }
+                    _ => unreachable!("only operators wait on their operands"),
+                };
+                done.push(t);
+                continue;
+            }
+            if let Some(v) = self.known(x).value {
+                done.push(Term::Lit(v));
+                continue;
+            }
+            match &x.kind {
+                ExprKind::Bool(b) => done.push(Term::Lit(Value::Bool(*b))),
+                ExprKind::Name(n) => match self.t.res.uses.get(&x.span) {
+                    Some(Ref::Bound(ids)) if ids.len() == 1 => {
+                        let id = ids[0];
+                        let name = var(n, id);
+                        if self.facts.contains_key(&id) {
+                            binders.push(id);
+                            self.arms.names.insert(id, name.clone());
+                        }
+                        vars.push((name.clone(), id));
+                        done.push(Term::Var(name));
+                    }
+                    _ => done.push(opaque()),
+                },
+                ExprKind::Unary("-" | "!", a) => {
+                    stack.push((x, true));
+                    stack.push((a, false));
+                }
+                ExprKind::Binary(o, a, b) if prim_of(o).is_some() => {
+                    stack.push((x, true));
+                    stack.push((b, false));
+                    stack.push((a, false));
+                }
+                _ => done.push(opaque()),
+            }
+        }
+        binders.sort_unstable();
+        binders.dedup();
+        vars.sort_unstable();
+        vars.dedup();
+        let t = Rc::new(Translated {
+            term: done.pop().expect("a term"),
+            binders,
+            vars,
+        });
+        self.arms.terms.insert(e.span, t.clone());
+        t
     }
 }
