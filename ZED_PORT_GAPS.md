@@ -2083,3 +2083,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `VecDeque` joined by moving the shorter onto the longer: `append` onto the back, or `pop_back` and `push_front` onto the front, so an item moves at most log2 n times in a tree of joins | `check::joined`, the `Facts` and `Saved` of `CondAnd2` | Mutation (gap 11) | A persistent sequence with O(log n) concatenation (a finger tree or rope of facts), or a list consumed and rebuilt in place by provable last use; `Saved` is restored in reverse order, so the sequence needs a walk from its back |
 | A narrowing left applied to the checker's environment across frames (`Held`: the `Saved` that restores it, handed from the frame of a condition to the frame that reads it) | `CondAnd1`, `CondAnd2`, `CondNot`, `Logic1`, `If1`, `Ck::narrow_side`, `Ck::release` | Mutation (gap 11) | The environment a value in the walk's state, the condition's result carrying the environment it leaves, read by the next frame in place of the outer one |
+
+## Entries from LIST-parity-quad (`zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A tree of restrictions by halves kept in a `Vec<Option<Part<Row>>>`, each built on first use through `&mut self` while the iterator runs | `RowIndex::half`, `RowIndex::holds` | Mutation | The tree in the iterator's state receiver, each node a lazy value; or all `2c` restrictions built before the first value, which costs the same order |
+| Per column and depth, a `BTreeMap<Value, Vec<usize>>` filled with `entry().or_default().push` | `Keyed::add`, `Keyed::at` | Mutation | A table from column, depth and value to a list, built by a fold over the tuple types |

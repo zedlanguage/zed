@@ -420,17 +420,31 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
         .into_iter()
         .map(|c| (c, odd_tuples(c, 0)))
         .collect();
-    // One pass over the nodes lists the candidates, but each of the `c` values is still checked
-    // along a path of the diagram, and every path of a parity tests each of the `c` tuple
-    // types: order `c²` (BDD-xor-parity measured 33 M and 2,088 M instructions at `c` 64 and
-    // 512). An exclusive-or node would not lower it, since a value's check would still test
-    // each tuple type the node holds. Open item LIST-parity-quad, COMPLEXITY.md K57.
-    scaling::check_order(
+    // A parity is an expression over the `c` tuple types, and checking each of the `c` values
+    // on all of it was order `c²` (BDD-xor-parity measured 33 M and 2,088 M instructions at `c`
+    // 64 and 512); a value is checked on the expression restricted to the tuple types that may
+    // hold it, found by its components (LIST-parity-quad, COMPLEXITY.md K57).
+    scaling::check(
         "listing an exclusive or of tuple types, by count",
         64,
-        2,
         |c| {
             assert_eq!(built[&c].each_value().map(|v| v.count()), Some(c));
+        },
+    );
+    // The same with each value one level down, `((b + i, b + i),)`: such a column is found by
+    // the first components of its tuples.
+    let nested: std::collections::HashMap<usize, Type> = [64, 512]
+        .into_iter()
+        .map(|c| {
+            let row = |i: usize| Type::tuple(vec![Type::tuple(vec![lit(i), lit(i)])]);
+            (c, parity((0..c).map(row)))
+        })
+        .collect();
+    scaling::check(
+        "listing an exclusive or of nested tuple types, by count",
+        64,
+        |c| {
+            assert_eq!(nested[&c].each_value().map(|v| v.count()), Some(c));
         },
     );
 }

@@ -213,3 +213,122 @@ fn taking_k_values_costs_k_times_the_depth() {
         |d| take(&built[&d], 500),
     );
 }
+
+/// The exclusive or of `types`, taken in order as `x = (x - t) | (t - x)`.
+fn parity(types: impl IntoIterator<Item = Type>) -> Type {
+    types
+        .into_iter()
+        .fold(Type::empty(), |x, t| &(&x - &t) | &(&t - &x))
+}
+
+fn span(from: usize, to: usize) -> Type {
+    Type::union_all((from..to).map(lit))
+}
+
+fn int(i: i64) -> Value {
+    Value::Int(i)
+}
+
+fn pair(a: Value, b: Value) -> Value {
+    Value::tuple(vec![a, b])
+}
+
+fn one_of(v: Value) -> Value {
+    Value::tuple(vec![v])
+}
+
+#[test]
+fn tuples_are_checked_against_the_tuple_types_that_may_hold_them() {
+    // A tuple is checked on the part restricted to the tuple types that may hold it, found by
+    // its components, and an earlier box is read only when it may hold the tuple
+    // (LIST-parity-quad). Each list is checked against `contains` over the integers 0..8, the
+    // pairs of them, those integers and pairs in a one-tuple, and those integers in a one-tuple
+    // in a one-tuple; its order is the order of the boxes.
+    let ints: Vec<Value> = (0..8).map(int).collect();
+    let pairs: Vec<Value> = ints
+        .iter()
+        .flat_map(|a| ints.iter().map(move |b| pair(a.clone(), b.clone())))
+        .collect();
+    let all: Vec<Value> = ints
+        .iter()
+        .chain(&pairs)
+        .cloned()
+        .chain(
+            ints.iter()
+                .chain(&pairs)
+                .map(|p| Value::tuple(vec![p.clone()])),
+        )
+        .chain(ints.iter().map(|i| one_of(one_of(i.clone()))))
+        .collect();
+    let exact = |t: &Type| -> Vec<Value> {
+        let got: Vec<Value> = t.each_value().expect("finite").collect();
+        let want: BTreeSet<Value> = all.iter().filter(|v| t.contains(v)).cloned().collect();
+        assert_eq!(listed(t), Some(want), "{t}");
+        got
+    };
+    let diagonal = |i: usize| Type::tuple(vec![lit(i), lit(i)]);
+    // No tuple type, one, and two: the exclusive or of two disjoint types is their union.
+    assert!(exact(&parity([])).is_empty());
+    assert_eq!(exact(&parity([diagonal(3)])), [pair(int(3), int(3))]);
+    assert_eq!(
+        exact(&parity([diagonal(3), diagonal(1)])).len(),
+        2,
+        "two disjoint tuple types"
+    );
+    // Overlapping one-column tuple types: a value in an even number of them is not listed.
+    let ones = parity((0..5).map(|i| Type::tuple(vec![span(i, i + 3)])));
+    assert_eq!(exact(&ones).len(), 5);
+    // Overlapping two-column tuple types, each keyed by a column the other holds: `(0, 0)` is
+    // in both, `(1, 0)` and `(0, 1)` in one each, so each column's lookup finds a type that
+    // the other column then rules out.
+    let crossed = parity([
+        Type::tuple(vec![span(0, 2), lit(0)]),
+        Type::tuple(vec![lit(0), span(0, 2)]),
+    ]);
+    assert_eq!(
+        BTreeSet::from_iter(exact(&crossed)),
+        BTreeSet::from([pair(int(1), int(0)), pair(int(0), int(1))])
+    );
+    // A column of tuples is found by their first components.
+    let nested = parity((0..4).map(|i| Type::tuple(vec![diagonal(i)])));
+    assert_eq!(exact(&nested).len(), 4);
+    let one = |t: Type| Type::tuple(vec![t]);
+    let crossed_nested = parity([
+        one(Type::tuple(vec![span(0, 2), lit(0)])),
+        one(Type::tuple(vec![lit(0), span(0, 2)])),
+    ]);
+    assert_eq!(
+        BTreeSet::from_iter(exact(&crossed_nested)),
+        BTreeSet::from([one_of(pair(int(1), int(0))), one_of(pair(int(0), int(1)))])
+    );
+    // A column of tuples and integers, or of tuples of two lengths, is not found by
+    // components, and its tuple types are checked for every tuple: `(5)` is in all three
+    // tuple types and so in their parity.
+    let loose = parity((0..3).map(|i| one(&diagonal(i) | &lit(5))));
+    assert_eq!(exact(&loose).len(), 3 + 1);
+    let lengths = parity((0..3).map(|i| one(&diagonal(i) | &Type::tuple(vec![lit(i)]))));
+    assert_eq!(exact(&lengths).len(), 3 + 3);
+    let mixed = &nested | &parity((0..3).map(|i| Type::tuple(vec![span(0, 3), lit(i)])));
+    assert_eq!(exact(&mixed).len(), 4 + 9);
+    // A parity beside a tuple type that meets every one of its types.
+    let wide =
+        &parity((0..6).map(diagonal)) | &(&Type::tuple(vec![span(0, 6), lit(0)]) - &diagonal(0));
+    assert_eq!(exact(&wide).len(), 6 + 5);
+    // Overlapping boxes of one diagram: a tuple two boxes hold is listed once, from the first.
+    let boxes =
+        &Type::tuple(vec![span(0, 2), span(0, 2)]) | &Type::tuple(vec![span(1, 3), span(1, 3)]);
+    assert_eq!(exact(&boxes).len(), 7);
+    let squares =
+        Type::union_all((0..4).map(|i| Type::tuple(vec![span(i, i + 2), span(i, i + 2)])));
+    assert_eq!(exact(&squares).len(), 13);
+    // The order: each box in turn, the last component fastest, a tuple an earlier box gave
+    // left out.
+    let pairs_of = |ps: &[(i64, i64)]| -> Vec<Value> {
+        ps.iter().map(|&(a, b)| pair(int(a), int(b))).collect()
+    };
+    let first = [(1, 1), (1, 2), (2, 1), (2, 2), (0, 0), (0, 1), (1, 0)];
+    assert_eq!(exact(&boxes), pairs_of(&first));
+    let rest = [(2, 3), (3, 2), (3, 3), (3, 4), (4, 3), (4, 4)];
+    assert_eq!(exact(&squares), pairs_of(&[&first[..], &rest[..]].concat()));
+    assert_eq!(exact(&crossed), pairs_of(&[(0, 1), (1, 0)]));
+}
