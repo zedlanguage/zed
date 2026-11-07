@@ -2066,3 +2066,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | A build script hashing the source files of its crate and of the workspace crates it depends on, found by reading `Cargo.toml` files line by line, listing directories (`std::fs::read_dir`, `canonicalize`) and searching Rust files for `include!`, `include_str!`, `include_bytes!` and `#[path]`; it prints `cargo::rerun-if-changed` for each file and directory read | `build.rs`, `sources::of` | None at the language level: Cargo's crate hash leaves out the sources' contents; Library (host file system) | The Zed build tool knows the content address of every unit it compiles (sec:ir) and writes the runtime's identity from those addresses; no file walk or manifest reading is needed |
 | `#[path]` on a module, to compile one file both in a build script and in the crate | `build.rs` (`mod sources`), `lib.rs` (`pub mod sources`) | Modules | Gone with the build script, as above |
+
+## Entries from IS-chain-quad (`zedc/src/check/mod.rs`, `zedc/src/check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `VecDeque` joined by moving the shorter onto the longer: `append` onto the back, or `pop_back` and `push_front` onto the front, so an item moves at most log2 n times in a tree of joins | `check::joined`, the `Facts` and `Saved` of `CondAnd2` | Mutation (gap 11) | A persistent sequence with O(log n) concatenation (a finger tree or rope of facts), or a list consumed and rebuilt in place by provable last use; `Saved` is restored in reverse order, so the sequence needs a walk from its back |
+| A narrowing left applied to the checker's environment across frames (`Held`: the `Saved` that restores it, handed from the frame of a condition to the frame that reads it) | `CondAnd1`, `CondAnd2`, `CondNot`, `Logic1`, `If1`, `Ck::narrow_side`, `Ck::release` | Mutation (gap 11) | The environment a value in the walk's state, the condition's result carrying the environment it leaves, read by the next frame in place of the outer one |
