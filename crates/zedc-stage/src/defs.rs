@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use zed_kernel::{Shared, Term};
 
-use crate::ast::Error;
-use crate::lex::Span;
+use zedc_syntax::ast::Error;
+use zedc_syntax::lex::Span;
 
 /// A top-level definition.
 #[derive(Clone, Debug, PartialEq)]

@@ -1088,6 +1088,7 @@ dependencies = [
  "zedc-presburger",
  "zedc-resolve",
  "zedc-solvers",
+ "zedc-stage",
  "zedc-syntax",
  "zedc-types",
 ]
@@ -1148,6 +1149,15 @@ version = "0.0.0"
 dependencies = [
  "zedc-int",
  "zedc-solvers",
+]
+
+[[package]]
+name = "zedc-stage"
+version = "0.0.0"
+dependencies = [
+ "zed-kernel",
+ "zedc-base",
+ "zedc-syntax",
 ]
 
 [[package]]

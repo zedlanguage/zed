@@ -26,7 +26,7 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Shared, Term, Value, World};
 
 use crate::defs::{Def, Unit};
-use crate::interp;
+use zedc_base::interp;
 
 /// When a term is evaluated.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -142,7 +142,7 @@ impl<'u> Cones<'u> {
     /// The number of the definition at position `i` in the query database of stamp `db`:
     /// what `number` gives its text, its kernel name and its term as `Debug` prints them,
     /// asked once. The numbers are those of one database, so a [`Cones`] is read with one.
-    pub(crate) fn number(&self, i: usize, db: u64, number: impl FnOnce(&str) -> u64) -> u64 {
+    pub fn number(&self, i: usize, db: u64, number: impl FnOnce(&str) -> u64) -> u64 {
         let first = *self.db.get_or_init(|| db);
         assert_eq!(
             first, db,
@@ -1216,7 +1216,7 @@ pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
 
 /// `unit` with its demanded build-stage terms evaluated, keeping the definitions `roots`
 /// and the tests read. The result has no warnings: they are the elaborator's, and
-/// [`crate::run::Program::stage`] shares the program's placed warnings instead.
+/// `zedc::run::Program::stage` shares the program's placed warnings instead.
 pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
     let (out, m) = mix_keeping(unit, roots);
     (out, m.report)
