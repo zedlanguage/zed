@@ -3377,4 +3377,45 @@ mod tests {
         drop((a, b));
         assert_eq!(live(), 0);
     }
+
+    /// The text of `!n` and whether it equals the type `n` is the complement of, where `n` is
+    /// the complement of a type whose tuple part is a choice, found through a row of `n`. In
+    /// batch mode an earlier unit built the same row and dropped the type, keeping the row (as
+    /// a recursive instance that outlives its unit keeps its members, item REC-cycle), so the
+    /// row found is that unit's and `!n` is made again from a complement whose holder was freed;
+    /// alone, the complement's holder lives and `!n` is it.
+    fn complement_of_a_kept_complement(batch: bool) -> (String, String, bool) {
+        std::thread::spawn(move || {
+            let ty = || {
+                Type::with(|p| {
+                    p.tuples.lens.insert(1, choices(7950, 7980, 8));
+                })
+            };
+            let kept = batch.then(|| {
+                let t = ty();
+                Row::new(vec![!&t])
+            });
+            let t = ty();
+            let row = Row::new(vec![!&t]);
+            assert_eq!(
+                kept.as_ref()
+                    .map(|k| std::ptr::eq(k.as_ptr(), row.as_ptr())),
+                batch.then_some(true),
+                "the earlier unit's row is found",
+            );
+            let back = !&row[0];
+            (back.to_string(), back.surface().to_string(), back == t)
+        })
+        .join()
+        .expect("the thread runs without panicking")
+    }
+
+    #[test]
+    fn batch_and_single_file_agree_on_a_complement_whose_holder_was_freed() {
+        // Step TABLE-life: a complement made again after its holder was freed is made from the
+        // holder's written form, so the text and order are those of a check run alone.
+        let alone = complement_of_a_kept_complement(false);
+        assert!(alone.2);
+        assert_eq!(complement_of_a_kept_complement(true), alone);
+    }
 }
