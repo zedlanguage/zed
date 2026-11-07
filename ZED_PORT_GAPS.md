@@ -446,7 +446,7 @@ holding `Value`), so `family.rs` and `error.rs` merged into `value.rs`, and `dee
 `outcome.rs`. `zed-native`, `zed-rt`,
 `zed-cert`, `zed-tools` and `zed-alloc-count` have no cycle.
 
-`zed-kernel` reads the shared scaling test through `#[path]` (`lib.rs:30`); the tool reports such
+`zed-kernel` and `zedc` read the shared scaling test through `#[path]` (`zed-kernel` `lib.rs:28`, `zedc` `lib.rs:45`); the tool reports such
 a module and does not read it, since its file is outside the crate.
 
 ## Workarounds that depend on cost
@@ -2052,3 +2052,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `static AtomicU64` counter with `std::process::id()` to name a fresh directory | `link::Scratch::new` | No global mutable state; process id | A counter in the build's state and the process port's id |
 | `MetadataExt::dev` and `ino` compared after `symlink_metadata` and `File::metadata`, to check a name still names the locked directory | `link::names` | File identity from the OS (gap 5, Bytes and foreign calls) | A file-system port call returning a file's identity |
 | `std::fs::rename` of the linked executable over the output | `link::build` | File system port | The port's atomic replace |
+
+## Entries from S22-order (`zedc/src/store/preimage.rs` tests, `zedc/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `&dyn Any` with `downcast_ref::<T>()` and `is::<T>()`, to compare a memo entry of any table by its type | test `rechecked`, `shown_any` | Reflection | One comparison function per memo table, passed with the table |
+| `#[path]` on a module, to share one test file between crates | `zedc` `lib.rs` (`mod scaling`), as `zed-kernel` | Modules | A shared test unit imported by each crate's tests |
