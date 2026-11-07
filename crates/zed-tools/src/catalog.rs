@@ -38,9 +38,10 @@ use crate::syntax::{Tokens, lex, then_end};
 use crate::text::{read_text, repr};
 use crate::{Outcome, arg, impl_root, say};
 
-/// The source directories whose calls the catalog lists.
+/// The source directories whose calls the catalog lists, as path prefixes: `crates/zedc` covers
+/// the compiler `zedc` and each crate `zedc-*` it is split into.
 pub const SOURCES: [&str; 3] = [
-    "crates/zedc/src/",
+    "crates/zedc",
     "crates/zed-kernel/src/",
     "crates/zed-native/src/",
 ];

@@ -47,6 +47,25 @@ pub fn impl_root() -> String {
     format!("{}/../..", env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The source directories of the Rust-hosted compiler under `root`: those of `zedc` and of each
+/// crate `zedc-*` it is split into, by name.
+pub fn compiler_dirs(root: &str) -> Result<Vec<String>, String> {
+    let crates = format!("{root}/crates");
+    let mut dirs = Vec::new();
+    for entry in std::fs::read_dir(&crates).map_err(|e| format!("{crates}: {e}"))? {
+        let entry = entry.map_err(|e| format!("{crates}: {e}"))?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| format!("{crates}: a name that is not UTF-8"))?;
+        if name == "zedc" || name.starts_with("zedc-") {
+            dirs.push(format!("{crates}/{name}/src"));
+        }
+    }
+    dirs.sort_unstable();
+    Ok(dirs)
+}
+
 /// Runs a tool's `run` on the command line's arguments, prints what it wrote, and gives the exit
 /// status: 0 when it passed, and 1 when it failed or stopped, with a stopping failure's message
 /// on standard error.

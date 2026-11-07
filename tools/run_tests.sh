@@ -166,6 +166,7 @@ step_pieces() {
           fi
           ;;
         zedc-*) echo "$n crates/zedc $p" ;;
+        zedc_*-*) c=${n%-*}; echo "$n crates/${c//_/-} $p" ;;
         zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;

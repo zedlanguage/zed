@@ -6,34 +6,34 @@
 //! (step L1.30). It stays as the bootstrap root after the compiler is rewritten in Zed (row S),
 //! and its interpreter stays as the permanent differential oracle (step L1.37).
 
-pub mod address;
+pub use zedc_base::address;
 pub mod ast;
-pub mod axioms;
+pub use zedc_base::axioms;
 pub mod canon;
 pub mod check;
-pub mod cost;
+pub use zedc_base::cost;
 mod defs;
 pub mod docs;
 pub mod elab;
-pub mod fence;
+pub use zedc_base::fence;
 pub mod format;
 pub mod front;
-pub mod interp;
+pub use zedc_base::interp;
 pub mod lex;
 pub mod mutate;
 pub mod parse;
 pub mod query;
-pub mod rejection;
+pub use zedc_base::rejection;
 pub mod resolve;
 mod rows;
 pub mod run;
-pub mod source;
+pub use zedc_base::source;
 pub mod stage;
 pub mod store;
 pub mod suppress;
 pub mod testing;
 pub mod unit;
-pub mod work;
+pub use zedc_base::work;
 pub mod zir;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.

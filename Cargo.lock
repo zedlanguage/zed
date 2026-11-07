@@ -1082,4 +1082,14 @@ dependencies = [
  "zed-alloc-count",
  "zed-kernel",
  "zedc",
+ "zedc-base",
+]
+
+[[package]]
+name = "zedc-base"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "unicode-normalization",
+ "zed-kernel",
 ]

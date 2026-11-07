@@ -116,16 +116,17 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
         new.is_empty(),
         "files in an import cycle not known to be: {new:?}"
     );
-    // The graph is the compiler's, not an empty one: every file is reached, with its imports.
-    let dir = format!("{root}/crates/zedc/src");
-    let files = imports::read_sources(&dir).expect("the compiler's sources");
-    let g = Graph::of(&files).expect("the compiler's graph");
-    assert!(g.files.len() > 60, "{} files", g.files.len());
-    assert!(
-        edges(&g).len() > g.files.len(),
-        "{} imports",
-        edges(&g).len()
-    );
+    // The graphs are the compiler's, not empty ones: every file is reached, with its imports.
+    // The compiler is the crate `zedc` and the crates `zedc-*` it is split into.
+    let (mut file_count, mut import_count) = (0, 0);
+    for dir in zed_tools::compiler_dirs(&root).expect("the compiler's crates") {
+        let sources = imports::read_sources(&dir).expect("the compiler's sources");
+        let g = Graph::of(&sources).expect("the compiler's graph");
+        file_count += g.files.len();
+        import_count += edges(&g).len();
+    }
+    assert!(file_count > 60, "{file_count} files");
+    assert!(import_count > file_count, "{import_count} imports");
     // A crate with no open cycle passes the tool itself.
     let dir = format!("{root}/crates/zed-native/src");
     let (outcome, out) = tool(imports::run, &[&dir]);

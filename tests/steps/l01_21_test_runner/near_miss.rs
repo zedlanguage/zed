@@ -170,9 +170,10 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 /// The rows the implementation raises: those whose variant the compiler's source names, the
 /// table's own file aside.
 fn raised() -> BTreeSet<Row> {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates/zedc/src");
     let mut files = Vec::new();
-    sources(&src, &mut files);
+    for dir in zed_tools::compiler_dirs(&zed_tools::impl_root()).expect("the compiler's crates") {
+        sources(Path::new(&dir), &mut files);
+    }
     let names: Vec<(String, Row)> = Row::ALL.iter().map(|&r| (format!("{r:?}"), r)).collect();
     let mut out = BTreeSet::new();
     for f in files.iter().filter(|f| !f.ends_with("rejection.rs")) {

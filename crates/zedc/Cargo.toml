@@ -15,15 +15,16 @@ autobins = false
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
-blake3 = "1"
-imbl = "7.0.2"
-num-bigint = "0.4"
-num-integer = "0.1"
-num-traits = "0.2"
-unicode-ident = "1.0.27"
-unicode-normalization = "0.1.26"
-unicode-script = "0.5.8"
+blake3.workspace = true
+imbl.workspace = true
+num-bigint.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+unicode-ident.workspace = true
+unicode-normalization.workspace = true
+unicode-script.workspace = true
 zed-kernel.workspace = true
+zedc-base.workspace = true
 
 [dev-dependencies]
 rustix.workspace = true

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/zedc",
+    "crates/zedc-base",
     "crates/zed-kernel",
     "crates/zed-rt",
     "crates/zed-cert",
@@ -28,6 +29,16 @@ zed-native = { path = "crates/zed-native" }
 zed-corpus-ref = { path = "zed/corpus/ref" }
 zed-tools = { path = "crates/zed-tools" }
 zed-alloc-count = { path = "crates/zed-alloc-count" }
+zedc-base = { path = "crates/zedc-base" }
+# The libraries the compiler crates (zedc, zedc-*) share, at one version each.
+blake3 = "1"
+imbl = "7.0.2"
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+unicode-ident = "1.0.27"
+unicode-normalization = "0.1.26"
+unicode-script = "0.5.8"
 insta = "1.49.0"
 rustix = { version = "1.1.6", features = ["time", "process"] }
 perf-event2 = "0.7.4"
