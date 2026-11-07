@@ -27,7 +27,7 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 
 use crate::provenance::{Fact, FactAddress, NodeAddress, Position, Provenance};
-use crate::term::{FixKind, GuardPos, Pattern, Prim, Term};
+use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
 use crate::value::Value;
 
 /// The minimum resource limits of compile-time evaluation (DESIGN.md sec:verification,
@@ -119,9 +119,94 @@ type Defined = BTreeMap<Value, (Value, u64)>;
 /// A name's binding in an environment.
 #[derive(Clone)]
 struct Binding<'t> {
-    value: V<'t>,
+    value: Slot<'t>,
     /// The fact the value came from, when provenance is recorded and it came from one.
     fact: Option<usize>,
+}
+
+/// What a name is bound to: a value, or a binding of the run's [`Globals`], by its position,
+/// whose value is made when the name is first read ([`Machine::global`]).
+#[derive(Clone)]
+enum Slot<'t> {
+    Is(V<'t>),
+    Global(usize),
+}
+
+/// What a name read by a binding of [`Globals`], or by a term run under them, refers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Global {
+    /// The binding of the globals at this position.
+    At(usize),
+    /// A primitive, as the prelude binds its words.
+    Prim(Prim),
+}
+
+/// Bindings kept in scope from one run to the next ([`Evaluator::run_under`]), innermost
+/// last, each a literal, a lambda, a primitive or a name, with what each name it reads refers
+/// to. A run makes a binding's value when it first reads the binding, at most once, so a run
+/// costs the bindings it reaches, not all those in scope. Each such term gives its value in
+/// one step, never fails and writes no port, so the value made when it is first read is the
+/// value a `let` of it would bind at the start of the run.
+#[derive(Debug, Default)]
+pub struct Globals {
+    entries: Vec<GlobalEntry>,
+}
+
+#[derive(Debug)]
+struct GlobalEntry {
+    term: Shared,
+    reads: Vec<(Arc<str>, Global)>,
+}
+
+impl Globals {
+    /// Binds `term`, whose free names are `reads`, next, and gives its position; or gives
+    /// `None`, binding nothing, when `term` is not a literal, a lambda, a primitive or a name
+    /// in `reads`, or a name in `reads` refers to a position not below it.
+    pub fn push(&mut self, term: Shared, reads: Vec<(Arc<str>, Global)>) -> Option<usize> {
+        let at = self.entries.len();
+        let below = |&(_, g): &(Arc<str>, Global)| !matches!(g, Global::At(i) if i >= at);
+        let value = match &*term {
+            Term::Lit(_) | Term::Lam(..) | Term::PrimFn(_) => true,
+            Term::Var(y) => reads.iter().any(|(x, _)| x == y),
+            _ => false,
+        };
+        if !value || !reads.iter().all(below) {
+            return None;
+        }
+        self.entries.push(GlobalEntry { term, reads });
+        Some(at)
+    }
+
+    /// Removes the innermost binding.
+    pub fn pop(&mut self) {
+        self.entries.pop();
+    }
+
+    /// The number of bindings.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// The environment in which a binding of globals, or a term run under them, reads `reads`.
+fn global_env<'t>(reads: &'t [(Arc<str>, Global)]) -> Env<'t> {
+    let slot = |g: Global| match g {
+        Global::At(i) => Slot::Global(i),
+        Global::Prim(p) => Slot::Is(V::Prim(p)),
+    };
+    let map = reads.iter().map(|(x, g)| {
+        let b = Binding {
+            value: slot(*g),
+            fact: None,
+        };
+        (&**x, b)
+    });
+    Some(map.collect())
 }
 
 /// The names in scope, in a persistent map: binding a name and looking one up cost
@@ -131,6 +216,7 @@ type Env<'t> = Option<OrdMap<&'t str, Binding<'t>>>;
 
 fn bind<'t>(env: Env<'t>, name: &'t str, value: V<'t>, fact: Option<usize>) -> Env<'t> {
     let mut map = env.unwrap_or_default();
+    let value = Slot::Is(value);
     map.insert(name, Binding { value, fact });
     Some(map)
 }
@@ -139,7 +225,7 @@ fn lookup_fact(env: &Env<'_>, name: &str) -> Option<usize> {
     env.as_ref()?.get(name)?.fact
 }
 
-fn lookup<'t>(env: &Env<'t>, name: &str) -> Option<V<'t>> {
+fn lookup<'t>(env: &Env<'t>, name: &str) -> Option<Slot<'t>> {
     Some(env.as_ref()?.get(name)?.value.clone())
 }
 
@@ -363,6 +449,36 @@ impl Evaluator {
 
     /// Evaluates a closed term, expecting data.
     pub fn run(&mut self, term: &Term) -> Result<Value, KernelError> {
+        self.run_from(term, None, None)
+    }
+
+    /// Evaluates `term`, whose free names are `reads`, under `globals`, expecting data: what
+    /// [`Evaluator::run`] gives of `term` under a `let` of each binding of `globals` it
+    /// reaches, in time linear in the run and the bindings it reaches. It records no
+    /// provenance, which places each node within one closed term.
+    ///
+    /// # Panics
+    ///
+    /// When provenance is asked for ([`Evaluator::with_provenance`]).
+    pub fn run_under(
+        &mut self,
+        term: &Term,
+        globals: &Globals,
+        reads: &[(Arc<str>, Global)],
+    ) -> Result<Value, KernelError> {
+        assert!(
+            self.trace.is_none(),
+            "a run under globals records no provenance"
+        );
+        self.run_from(term, Some(globals), global_env(reads))
+    }
+
+    fn run_from<'t>(
+        &mut self,
+        term: &'t Term,
+        globals: Option<&'t Globals>,
+        env: Env<'t>,
+    ) -> Result<Value, KernelError> {
         let mut marks = (0, 0);
         if let Some(t) = &mut self.trace {
             t.nodes = vec![Position::root()];
@@ -377,8 +493,10 @@ impl Evaluator {
             ev: self,
             frames: Vec::new(),
             drops: Rc::default(),
+            globals,
+            made: HashMap::new(),
         }
-        .run(term);
+        .run(term, env);
         drop(watch);
         if let Some(t) = &mut self.trace {
             // A run that stopped with an error left the regions it was inside.
@@ -708,11 +826,15 @@ struct Machine<'e, 't> {
     ev: &'e mut Evaluator,
     frames: Vec<Frame<'t>>,
     drops: Rc<Drops<'t>>,
+    /// The bindings the run is under ([`Evaluator::run_under`]).
+    globals: Option<&'t Globals>,
+    /// The value of each of them made so far, by position.
+    made: HashMap<usize, V<'t>>,
 }
 
 impl<'t> Machine<'_, 't> {
-    fn run(&mut self, term: &'t Term) -> R<V<'t>> {
-        let mut step = Ok(Step::Eval(term, 0, None));
+    fn run(&mut self, term: &'t Term, env: Env<'t>) -> R<V<'t>> {
+        let mut step = Ok(Step::Eval(term, 0, env));
         loop {
             let out = match step {
                 Ok(Step::Eval(term, at, env)) => {
@@ -755,6 +877,50 @@ impl<'t> Machine<'_, 't> {
 
     fn wait(&mut self, wait: Wait<'t>) {
         self.frames.push(Frame::Wait(wait));
+    }
+
+    /// The value of the binding of the globals at position `i`, made the first time it is read.
+    /// A name is followed down to the binding it names, each binding on the way given the same
+    /// value; [`Globals::push`] keeps each name in its reads and each read below it, so the
+    /// walk ends.
+    fn global(&mut self, mut i: usize) -> V<'t> {
+        let globals = self.globals.expect("a slot of globals in a run under them");
+        let mut names = Vec::new();
+        let v = loop {
+            if let Some(v) = self.made.get(&i) {
+                break v.clone();
+            }
+            let g = &globals.entries[i];
+            let v = match &*g.term {
+                Term::Lit(v) => V::Data(v.clone()),
+                Term::PrimFn(p) => V::Prim(*p),
+                Term::Lam(params, body) => V::Closure(Rc::new(Closure {
+                    params,
+                    body,
+                    at: 0,
+                    env: global_env(&g.reads),
+                    drops: self.drops.clone(),
+                })),
+                Term::Var(y) => {
+                    names.push(i);
+                    match g.reads.iter().find(|(x, _)| x == y).map(|&(_, r)| r) {
+                        Some(Global::At(j)) => {
+                            i = j;
+                            continue;
+                        }
+                        Some(Global::Prim(p)) => break V::Prim(p),
+                        None => unreachable!("Globals::push keeps a name in its reads"),
+                    }
+                }
+                _ => unreachable!("Globals::push takes a literal, lambda, primitive or name"),
+            };
+            self.made.insert(i, v.clone());
+            break v;
+        };
+        for j in names {
+            self.made.insert(j, v.clone());
+        }
+        v
     }
 
     /// Goes on from `frame` with how the term above it ended.
@@ -823,7 +989,8 @@ impl<'t> Machine<'_, 't> {
         match term {
             Term::Lit(v) => give(v.clone()),
             Term::Var(name) => match lookup(&env, name) {
-                Some(v) => Ok(Step::Give(v)),
+                Some(Slot::Is(v)) => Ok(Step::Give(v)),
+                Some(Slot::Global(i)) => Ok(Step::Give(self.global(i))),
                 None => type_err(format!("unbound variable `{name}`")),
             },
             Term::Lam(params, body) => Ok(Step::Give(V::Closure(Rc::new(Closure {

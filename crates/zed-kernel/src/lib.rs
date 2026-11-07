@@ -27,7 +27,7 @@ pub mod words;
 #[path = "../../../tests/src/scaling.rs"]
 mod scaling;
 
-pub use eval::{Evaluator, Lookup, Schedule, World, eval, on_stack};
+pub use eval::{Evaluator, Global, Globals, Lookup, Schedule, World, eval, on_stack};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Shared, Term, Witness};

@@ -182,11 +182,12 @@ fn at_minus_zero(n: usize, f0: F0) -> Unit {
 }
 
 /// A call at an argument no answer table takes (`-0.0`, which a key reads as `0.0`) is refused
-/// by the stub and run again as written, closed over the chain below it: time linear in the
-/// chain per call, quadratic in all (the complexity tradeoff at `Mixer::as_written`,
-/// COMPLEXITY.md row F43). The test holds it to that order, so that it grows no worse.
+/// by the stub and run again as written, under the functions of the chain as globals whose
+/// values are made when the run first reads them (`Mixer::run_under`): the run of `fj(-0.0)`
+/// fails at the guard of `fj` and reads no function below it, so each call takes constant
+/// time and all of them time linear in `n` (COMPLEXITY.md row F43).
 #[test]
-fn failing_calls_no_answer_table_takes_are_run_as_written_in_quadratic_time() {
+fn failing_calls_no_answer_table_takes_are_run_as_written_in_linear_time() {
     deep(|| {
         let (_, report) = stage::mix(&at_minus_zero(2, F0::Fails), &["main"]);
         let error = "type error: `>=` applied to `f64`, `int`";
@@ -195,18 +196,56 @@ fn failing_calls_no_answer_table_takes_are_run_as_written_in_quadratic_time() {
             format!("{t:?}: {error}")
         };
         assert_eq!(left(&report), vec![call(1), call(2)]);
-        let n = 60;
+        let n = 100;
         let units = scaling::inputs(n, |n| at_minus_zero(n, F0::Fails));
-        scaling::check_order(
+        scaling::check(
             "stage::mix on n calls at -0.0 of a chain of n functions whose every call fails",
             n,
-            2,
             |n| {
                 let (_, report) = stage::mix(&units[&n], &["main"]);
                 assert_eq!(report.left.len(), n);
             },
         );
     });
+}
+
+/// The Trick's mixer binds each definition unmixed (`Specializer::new`), so a build-stage
+/// binding may be a term that is no literal, lambda, primitive or name, here `k = 2 + 2`. A
+/// call whose run with stubs fails inside a stub and whose cone reads such a binding is run as
+/// written closed under the `let`s of what it needs, which evaluate each binding where it is
+/// bound, not under the globals (the complexity tradeoff at `Mixer::as_written`).
+#[test]
+fn a_call_reading_an_unmixed_binding_is_run_as_written_closed() {
+    let split = |k: Term| {
+        let guard = prim(Prim::Ge, vec![var("y"), lit(1i64)]);
+        let g = def("g", lam(&["y"], if_(guard, var("k"), lit(0i64))));
+        let call = app(var("g"), vec![Term::Lit(Value::float(-0.0))]);
+        let f = def("f", lam(&["x"], prim(Prim::Add, vec![call, var("x")])));
+        let main = def("main", lam(&["c"], app(var("f"), vec![lit(1i64)])));
+        let u = unit(vec![def("k", k), g, f, main]);
+        let (lam, report) =
+            stage::split(&u, "f", 0, &stage::Domain::Ints(Some(0), Some(9))).expect("split");
+        (lam.to_string(), left(&report))
+    };
+    let want = |error: &str| {
+        let call = format!("{:?}", app(var("g"), vec![Term::Lit(Value::float(-0.0))]));
+        let site = format!("Prim(Add, [{call}, Var(\"x\")])");
+        let lam = "x -> match x { 1 -> (g(-0.0) + x), _ -> (g(-0.0) + x) }".to_string();
+        (
+            lam,
+            vec![format!("{site}: {error}"), format!("{call}: {error}")],
+        )
+    };
+    let ge = "type error: `>=` applied to `f64`, `int`";
+    assert_eq!(split(prim(Prim::Add, vec![lit(2i64), lit(2i64)])), want(ge));
+    // The `let` of `k` is evaluated before the run of `g(-0.0)`, which never reads `k`, so
+    // the call fails with what `k` gives; globals made when first read would give `>=`'s
+    // error instead, which is why such a cone is not run under them.
+    let add = "type error: `+` applied to `int`, `bool`";
+    assert_eq!(
+        split(prim(Prim::Add, vec![lit(1i64), lit(true)])),
+        want(add)
+    );
 }
 
 #[test]

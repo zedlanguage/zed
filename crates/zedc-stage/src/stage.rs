@@ -23,7 +23,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, KernelError, Lookup, Pattern, Prim, Shared, Term, Value, World};
+use zed_kernel::{
+    Evaluator, Global, Globals, KernelError, Lookup, Pattern, Prim, Shared, Term, Value, World,
+};
 
 use crate::defs::{Def, Unit};
 use zedc_base::interp;
@@ -1522,6 +1524,9 @@ struct Entry {
     cone_ends: bool,
     /// The port that answers calls of the function, when it is one whose calls end.
     stub: Option<Arc<Stub>>,
+    /// The binding's position in [`Scope::globals`], when it and each binding it needs are
+    /// literals, lambdas, primitives or names.
+    global: Option<usize>,
 }
 
 /// The names in scope, innermost last, with the positions of each name's entries, so a name
@@ -1532,6 +1537,9 @@ struct Scope {
     entries: Vec<Entry>,
     by_name: BTreeMap<Arc<str>, Vec<usize>>,
     top: Map,
+    /// The build-stage entries with a position here ([`Entry::global`]), which a run as
+    /// written is under ([`Mixer::run_under`]).
+    globals: Globals,
 }
 
 impl Scope {
@@ -1554,7 +1562,33 @@ impl Scope {
         if at.is_empty() {
             self.by_name.remove(&e.name);
         }
+        if e.global.is_some() {
+            self.globals.pop();
+        }
         self.top = e.prev;
+    }
+
+    /// What each of `names`, read at position `at`, refers to among the globals: the
+    /// innermost build-stage entry below `at` of that name, else the prelude word. `None` when
+    /// such an entry has no position among the globals. A name that is neither is left out, so
+    /// a run reads it as unbound, as it would under the `let`s of [`Mixer::closed`].
+    fn reads<'n>(
+        &self,
+        names: impl IntoIterator<Item = &'n Arc<str>>,
+        at: usize,
+    ) -> Option<Vec<(Arc<str>, Global)>> {
+        let mut out = Vec::new();
+        for y in names {
+            let g = match self.known_below(y, at) {
+                Some(j) => Global::At(self.entries[j].global?),
+                None => match interp::prim(y) {
+                    Some(p) => Global::Prim(p),
+                    None => continue,
+                },
+            };
+            out.push((y.clone(), g));
+        }
+        Some(out)
     }
 
     fn truncate(&mut self, n: usize) {
@@ -1904,11 +1938,17 @@ impl Mixer {
             call_ends: false,
             cone_ends: false,
             stub: None,
+            global: None,
         };
         let b = match &known {
             Some(k) => self.number(&mut e, k),
             None => UNKNOWN,
         };
+        if let Some(k) = &known {
+            let at = self.scope.len();
+            let reads = self.scope.reads(self.frees.names_in(e.reads), at);
+            e.global = reads.and_then(|r| self.scope.globals.push(k.clone(), r));
+        }
         e.known = known;
         self.scope.top = self.maps.insert(prev, x, b);
         self.scope.push(e);
@@ -2274,35 +2314,43 @@ impl Mixer {
     /// The value of `t`, which reads `free`, with every binding it needs as written, recorded as
     /// depending on what each function at `stubs` is. A run with stubs that fails where the
     /// error as written is known ([`error_as_written`]) does not come here.
-    // Complexity tradeoff: a run as written takes time linear in the bindings `t` needs, all of
-    // them below as well as above the base, since the evaluator runs only a closed term: what
-    // is given up is time, `O(n)` per such evaluation and `O(n^2)` for `n` places each calling
-    // one of a chain of `n` functions at an argument no answer table takes. Measured on the
-    // test below at n = 60 and 480: 39.4 times the bytes. Why: the kernel's evaluator takes a
-    // closed term and its values borrow it, so it cannot run under an environment kept from
-    // one evaluation to the next, and the error a run with stubs gives where a stub itself
-    // fails need not be the error the run as written gives, which the report shows. Trigger: a
-    // build-stage call whose run with stubs fails inside a stub (a call at an argument no answer
-    // table takes, [`compared`], an argument holding a function, a call inside a pure region,
-    // an answer that cannot be compared), or a function with no stub; a call whose run with
-    // stubs fails anywhere else, or at a stub whose call fails as written, is left with the
-    // error the stubs kept, in time linear in its own run
-    // (`l01_28_staging::cone::failing_calls_of_a_long_chain_are_left_to_run_in_linear_time`).
-    // Tests: `l01_28_staging::cone::failing_calls_no_answer_table_takes_are_run_as_written_in_quadratic_time`
-    // (at n and 8n, power 2), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written`,
-    // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F43. A
-    // complete solution would give the evaluator an environment of the bindings in scope, each
-    // entry's closure made once when it is pushed, and run `t` under it in time linear in `t`
-    // and the bindings the run reaches; a run as written that itself walks the chain (a function
-    // of it passed as an argument and called) would still take time linear in the chain, which
-    // only answer tables keyed by such functions would share.
+    // Complexity tradeoff: a run as written is run under the globals of the scope
+    // ([`Mixer::run_under`]), in time linear in `t` and the bindings the run reaches, except
+    // when a binding `t` needs is no literal, lambda, primitive or name: then it is run closed
+    // under the `let`s of every binding it needs, all of them below as well as above the base,
+    // `O(n)` per such evaluation and `O(n^2)` for `n` places each calling one of a chain of `n`
+    // functions. Why: such a `let` is evaluated where it is bound and may fail, so a run that
+    // makes it only when first read could give another error than the closed run gives, which
+    // the report shows. Trigger: the Trick's mixer ([`Specializer::new`]), which binds each
+    // definition unmixed, and [`color`]; [`mix`] binds only literals, lambdas, primitives and
+    // names. Test: `l01_28_staging::cone::a_call_reading_an_unmixed_binding_is_run_as_written_closed`.
+    // COMPLEXITY.md row F43. A complete solution would bind the Trick's definitions mixed, as
+    // [`mix`] does, so that each is a value when pushed.
     fn as_written(&mut self, t: &Term, free: Set, stubs: &[usize]) -> Result<Value, String> {
         self.same(stubs);
         if !self.shows_end(t, free) {
             return Err(FORM.into());
         }
+        if let Some(out) = self.run_under(t, free) {
+            return out;
+        }
         let (lets, _) = self.needs(free, None);
         run_with(self.closed(t, &lets, &[]), &[], &Arc::default()).map_err(|e| e.to_string())
+    }
+
+    /// The value of the build-stage term `t`, which reads `free`, run as written under the
+    /// globals of the scope ([`Evaluator::run_under`]), when each binding it reads has a
+    /// position among them ([`Entry::global`]). It gives what the run of `t` closed under the
+    /// bindings it needs ([`Mixer::closed`]) gives, since that run's `let`s bind literals,
+    /// lambdas, primitives and names alone, each of which gives its value in one step and
+    /// cannot fail; and in time linear in `t` and the bindings the run reaches, since a
+    /// binding's value is made when the run first reads it.
+    fn run_under(&self, t: &Term, free: Set) -> Option<Result<Value, String>> {
+        let top = self.scope.len();
+        let reads = self.scope.reads(self.frees.names_in(free), top)?;
+        let mut ev = Evaluator::new(World::new());
+        let out = ev.run_under(t, &self.scope.globals, &reads);
+        Some(out.map_err(|e| e.to_string()))
     }
 
     /// Whether [`ends`] would show that the build-stage term `t`, which reads `free`, ends
