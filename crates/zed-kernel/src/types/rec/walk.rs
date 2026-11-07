@@ -1,5 +1,5 @@
-//! `Clone`, `==` and `Debug` of [`Expr`], and `==` and `Debug` of a body's tree ([`Node`]), each
-//! keeping its own stack on the heap, so an expression of any depth is copied, compared and
+//! `Clone`, `==` and `Debug` of [`Expr`], and `Debug` of a body's tree ([`Node`]) and `==` of
+//! its shapes, each keeping its own stack on the heap, so an expression of any depth is copied, compared and
 //! written on a small stack (COMPLEXITY.md K39). Each costs O(size). `Debug` writes the one line
 //! a derived `Debug` writes for `{:?}`, under `{:#?}` too.
 
@@ -55,7 +55,7 @@ impl Shape {
         list.iter().chain(boxes.into_iter().flatten())
     }
 
-    fn same_head(&self, other: &Shape) -> bool {
+    pub(super) fn same_head(&self, other: &Shape) -> bool {
         match (self, other) {
             (Shape::Param(i), Shape::Param(j)) => i == j,
             (Shape::Ref(i, xs), Shape::Ref(j, ys)) => i == j && xs.len() == ys.len(),
@@ -261,12 +261,6 @@ impl PartialEq for Expr {
 }
 
 impl Eq for Expr {}
-
-impl PartialEq for Node {
-    fn eq(&self, other: &Node) -> bool {
-        equal(self, other)
-    }
-}
 
 impl PartialEq for Shape {
     fn eq(&self, other: &Shape) -> bool {

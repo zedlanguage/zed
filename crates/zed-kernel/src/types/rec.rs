@@ -23,9 +23,11 @@ use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
+use super::bdd::KeyHasher;
 use super::bes::{Answer, Bes, Kind, decide};
 use super::{Piece, Rope, Type, Verdict, bytes, mix};
 use crate::deep;
@@ -218,7 +220,22 @@ struct Node {
     /// The node's place in its group: its number in the order the bodies' nodes are left,
     /// children first, the bodies in order. A part kept unevaluated is known by it ([`Key`]).
     at: u32,
+    /// The number (`at`) of the first node of its group built with an equal shape: two nodes of
+    /// one group are equal exactly when these are, so two domain bounds are compared in O(1)
+    /// ([`same`]).
+    class: u32,
     e: Shape,
+}
+
+/// The numbering of a group's nodes while its trees are built ([`Node::of`]).
+#[derive(Default)]
+struct Numbering {
+    /// The number the next node built gets.
+    next: u32,
+    /// The first node built of each shape, by its digest and its place among the shapes of that
+    /// digest. A node whose head equals one's and whose children are of that one's children's
+    /// classes is equal to it, and takes its class.
+    first: HashMap<(u64, u32), Arc<Node>, BuildHasherDefault<KeyHasher>>,
 }
 
 enum Shape {
@@ -237,8 +254,10 @@ enum Shape {
 impl Node {
     /// The tree of `e`, given which definitions are plain; an index outside `plain` is not.
     /// Each expression's node is built once its parts' are, from a stack. Its nodes are
-    /// numbered from `next` on, in the order they are built, children first.
-    fn of(e: &Expr, plain: &[bool], next: &mut u32) -> Arc<Node> {
+    /// numbered from `numbering.next` on, in the order they are built, children first, and each
+    /// is given its class among the nodes `numbering` has seen, in expected O(1) a node: its
+    /// head is compared with the first nodes of equal digest, and its children by class.
+    fn of(e: &Expr, plain: &[bool], numbering: &mut Numbering) -> Arc<Node> {
         enum Step<'a> {
             Visit(&'a Expr),
             Build(&'a Expr),
@@ -283,15 +302,38 @@ impl Node {
                 _ => shape.kids().any(|c| c.open),
             };
             let digest = shape.kids().fold(shape.tag(), |h, c| mix(h, c.digest));
-            let at = *next;
-            *next += 1;
-            done.push(Arc::new(Node {
+            let at = numbering.next;
+            numbering.next += 1;
+            let equal = |c: &Node| {
+                c.recursive == recursive
+                    && c.open == open
+                    && c.e.same_head(&shape)
+                    && c.e
+                        .kids()
+                        .zip(shape.kids())
+                        .all(|(a, b)| a.class == b.class)
+            };
+            // The nodes of one digest and differing shapes are at probes 0, 1, 2 and on.
+            let mut probe = 0;
+            let (class, vacant) = loop {
+                match numbering.first.entry((digest, probe)) {
+                    Entry::Occupied(c) if equal(c.get()) => break (c.get().class, None),
+                    Entry::Occupied(_) => probe += 1,
+                    Entry::Vacant(v) => break (at, Some(v)),
+                }
+            };
+            let node = Arc::new(Node {
                 digest,
                 recursive,
                 open,
                 at,
+                class,
                 e: shape,
-            }));
+            });
+            if let Some(v) = vacant {
+                v.insert(node.clone());
+            }
+            done.push(node);
         }
         done.pop().expect("the tree of the expression")
     }
@@ -430,11 +472,13 @@ impl Group {
     pub fn new(defs: Vec<Def>) -> Result<Group, Rejection> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let (plain, order) = plain(&defs);
-        let mut next = 0;
+        // The numbering, and its hold on the first node of each class, ends with the trees.
+        let mut numbering = Numbering::default();
         let bodies: Vec<Arc<Node>> = defs
             .iter()
-            .map(|d| Node::of(&d.body, &plain, &mut next))
+            .map(|d| Node::of(&d.body, &plain, &mut numbering))
             .collect();
+        drop(numbering);
         let digest = digest(&defs, &bodies);
         let g = Group(Arc::new(Checked {
             number: NEXT.fetch_add(1, Ordering::Relaxed),
@@ -690,7 +734,7 @@ impl Group {
             defs: &self.0.defs,
             params: &self.0.defs[def].params,
             args: None,
-            e: &Node::of(e, &[], &mut 0),
+            e: &Node::of(e, &[], &mut Numbering::default()),
         }
         .to_string()
     }
@@ -737,9 +781,10 @@ fn refs(e: &Node, constrained: bool, out: &mut [bool], names: &mut BTreeSet<usiz
     }
 }
 
-/// Whether the domain bounds `l` and `u` are written the same.
-fn same(l: &Arc<Node>, u: &Arc<Node>) -> bool {
-    Arc::ptr_eq(l, u) || l == u
+/// Whether the domain bounds `l` and `u`, of one group, are written the same: their classes,
+/// given when the group's trees were built ([`Node::of`]), are equal. O(1) (COMPLEXITY.md K27).
+fn same(l: &Node, u: &Node) -> bool {
+    l.class == u.class
 }
 
 /// Whether the domain bounds `l .. u` narrow the domain: they differ, the guarantee is not
@@ -1321,7 +1366,7 @@ impl Show<'_> {
                                 let v = parts.pop().expect("the value type");
                                 let u_rope = parts.pop().expect("the permission");
                                 let l_rope = parts.pop().expect("the guarantee");
-                                if l == u {
+                                if same(l, u) {
                                     Rope::joined("(", [l_rope, v], ") -> ", "")
                                 } else if l.e == Shape::Type(Type::empty()) {
                                     Rope::joined("", [u_rope, v], " ->? ", "")

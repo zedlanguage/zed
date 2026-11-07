@@ -2455,3 +2455,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A walk over auxiliary numbers on a `Vec<Lin>` work list with a `HashSet<u32>` visited set, leaving early with `?` on a definition of another kind | `preimage::value_projected` | Mutation (gap 11), Early exit (gap 12) | A fold over a work list ending in `#none` |
 | A `&mut HashMap<u32, u32>` passed down a recursive writer so each pair is made once per call | `Tr::instance` | Mutation (gap 11) | The map returned with the written term |
 | A `Projection` record of `Arc<[Con]>`, `Option<Lin>` and `Arc<HashMap<u32, (Lin, i128)>>`, cloned out of the memo by reference count | `Projection`, `Walk::projection`, `Walk::value_projection` | Shared ownership by reference count | A plain record value; Zed values are shared |
+
+## Entries from GROUP-same (`crates/zed-kernel/src/types/rec.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<(u64, u32), Arc<Node>>` from a digest and a probe number to the first node of each shape, filled while the tree is built, its `Entry` held across the building of the node and filled from the `Vacant` entry; the probe loop runs on over the shapes of one digest | `Numbering`, `Node::of` | Mutation; identity of a node shared by reference count (gap 1) | The table as a map in the state receiver of the post-order build; the class is a number held in the node, so no identity is needed beyond it |
