@@ -6,8 +6,15 @@ polynomial procedure with no known algorithm of lower degree, run only on the co
 of its input a question mentions, and nothing cut short by a budget, a threshold or a count
 of steps. This file lists every place an audit of
 2026-10-30 found that breaks the rule, and the state of each. An item is closed when its
-fix is in and a scaling test (size n against 8n, ratio at most 24 in instructions and, since
-SCALE-bytes, in bytes allocated) passes, or when the reason it stays is recorded here.
+fix is in and a scaling test (size n against 8n, in instructions and, since SCALE-bytes, in
+bytes allocated) passes, or when the reason it stays is recorded here. Since SCALE-ratio
+(2026-11-07) the test allows at most 8^k ln(8n)/ln(n) × 1.1 times for work of order n^k or
+n^k log n (`zed_tests::scaling::limit`): the ratio of n^k log n, with a slack of 1.1 from the
+spread of three runs of 387 tests (median 0.03%, at most 6.5%). It catches n^(k+1/4) from
+n = 52 and n^(k+0.19) from n = 500. The limit of 24 × 8^(k−1) before it let n^1.5 pass
+(22.6 times at 8n), so an item closed under it may hide such an order; the tests it newly
+fails are listed under SCALE-ratio in STATUS.md. Setting `ZED_SCALING_RATIOS` to a file makes
+every check append its sizes, order, limit and ratios there.
 
 Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason).
 
