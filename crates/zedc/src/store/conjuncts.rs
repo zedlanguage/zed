@@ -277,7 +277,7 @@ impl Conjuncts {
     /// mentioned by more conjuncts than `x`, and where a conjunct mentions two hubs or more,
     /// `x` is unbounded on the side away from it ([`Conjuncts::bound`]). The leaf's conjuncts
     /// are a star when it has one hub or each of its hubs is clean: every conjunct at the hub
-    /// is a leaf's or of the hub alone ([`alone`]), such as a bound on it. A conjunct is the
+    /// is a leaf's or of the hub alone (`alone`), such as a bound on it. A conjunct is the
     /// leaf's of one name at most, since its hubs have more conjuncts than it.
     ///
     /// A star bounds its leaf on one side only, the side its hubs' least or greatest values
