@@ -2,8 +2,8 @@
 // Run with `node server.ts`. Node strips the types; nothing is compiled.
 //
 // Reads, on each request for the state: docs/plan_dag.md, wt/running-log.md,
-// wt/ledger.jsonl, wt/dag-overrides.json, wt/merge.lock/owner, /proc/loadavg
-// and git. Lays the plan out when the page posts its graph to /api/layout (see
+// wt/ledger.jsonl, wt/dag-overrides.json, the author's open questions in
+// wt/zed0-review/pass2/QUESTIONS.md, wt/merge.lock/owner, /proc/loadavg and git. Lays the plan out when the page posts its graph to /api/layout (see
 // layout.ts). It watches those files and the main and origin/main refs, and
 // tells the page over /api/events when one changes or a layout finishes, so an
 // idle page and server do no work.
@@ -14,9 +14,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildGraph, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId } from "./state.ts";
+import { buildGraph, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
 import { Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph } from "./layout.ts";
@@ -26,6 +26,7 @@ const repo = process.env.DAGVIEW_REPO ?? resolve(here, "../..");
 const work = process.env.DAGVIEW_WT ?? resolve(repo, "../wt");
 // Ledger lines also name commits of the spec repository.
 const spec = process.env.DAGVIEW_SPEC ?? resolve(repo, "../zed");
+const questions = process.env.DAGVIEW_QUESTIONS ?? join(work, "zed0-review/pass2/QUESTIONS.md");
 const port = Number(process.env.PORT ?? 4317);
 const run = promisify(execFile);
 
@@ -71,11 +72,12 @@ async function originCommits(commits: string[], origin: string): Promise<void> {
 }
 
 async function state() {
-  const [plan, logText, ledgerText, overridesText, lock, loadavg, origin, main, ahead] = await Promise.all([
+  const [plan, logText, ledgerText, overridesText, questionsText, lock, loadavg, origin, main, ahead] = await Promise.all([
     text(join(repo, "docs/plan_dag.md")),
     text(join(work, "running-log.md")),
     text(join(work, "ledger.jsonl")),
     text(join(work, "dag-overrides.json")),
+    text(questions),
     text(join(work, "merge.lock/owner")),
     text("/proc/loadavg"),
     git("rev-parse", "--short", "origin/main"),
@@ -92,13 +94,14 @@ async function state() {
   }
   await originCommits(ledger.flatMap(ledgerCommits), origin ?? "");
   const now = Date.now();
-  const { nodes, problems } = buildGraph({
+  const { nodes, problems, dropped } = buildGraph({
     plan: parsePlan(plan),
     log,
     ledger,
     overrides,
     onOrigin: (c) => onOriginMemo.has(c),
     now,
+    held: parseQuestions(questionsText),
   });
   const direct = directNeeds(nodes);
   return {
@@ -108,6 +111,7 @@ async function state() {
     log: log.slice(-60).reverse(),
     warnings: overrideWarnings(overrides),
     problems,
+    dropped,
     machine: {
       load: loadavg.split(" ").slice(0, 3).join(" "),
       lock: lock.trim(),
@@ -150,6 +154,7 @@ function watchNames(dir: string, names: string[]): void {
 watchNames(join(repo, "docs"), ["plan_dag.md"]);
 watchNames(work, ["running-log.md", "ledger.jsonl", "dag-overrides.json", "merge.lock"]);
 watchNames(join(work, "merge.lock"), ["owner"]);
+watchNames(dirname(questions), [basename(questions)]);
 for (const dir of [repo, spec]) {
   watchNames(join(dir, ".git"), ["packed-refs"]);
   watchNames(join(dir, ".git/refs/heads"), ["main"]);

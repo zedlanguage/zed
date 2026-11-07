@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildGraph, buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
+import { buildGraph, buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
 
 const plan = `# Plan
 ## Items by level
@@ -270,12 +270,79 @@ test("a waiting or blocked override is never ready", () => {
   }
 });
 
-test("a dropped item counts as met for the items that need it", () => {
-  const nodes = by(buildNodes(inputs("", '{"id":"A","state":"dropped"}\n{"id":"LR2","state":"fixed"}\n')));
-  assert.equal(nodes.get("A")!.state, "dropped");
-  assert.equal(nodes.get("A")!.ready, false);
-  assert.equal(nodes.get("A")!.pushed, false);
-  assert.equal(nodes.get("B")!.ready, true);
+test("a dropped item is no node, whether the ledger, an override or a plan row drops it, and a need on it counts as met", () => {
+  const inp = inputs("", '{"id":"A","state":"dropped"}\n{"id":"X","state":"open","needs":["A"]}\n');
+  const nodes = by(buildNodes(inp));
+  assert.equal(nodes.has("A"), false);
+  assert.deepEqual(nodes.get("B")!.needs, ["LR2"]);
+  assert.deepEqual(nodes.get("X")!.needs, []);
+  assert.equal(nodes.get("X")!.ready, true);
+  inp.overrides = { LR2: { state: "dropped" } };
+  assert.equal(by(buildNodes(inp)).has("LR2"), false);
+  assert.equal(by(buildNodes(inp)).get("B")!.ready, true);
+  inp.overrides = {};
+  inp.plan = inp.plan.map((r) => (r.id === "LR2" ? { ...r, title: "Done: Dropped, moved into A" } : r));
+  assert.deepEqual(by(buildNodes(inp)).get("B")!.needs, []);
+  assert.equal(by(buildNodes(inp)).has("LR2"), false);
+});
+
+test("the questions table gives each held item its unanswered questions", () => {
+  const md = `# Questions
+| Q1 | Not this table | same |
+
+## Which plan steps each question holds up
+
+Text.
+
+| Question | Steps held up | Rows an answer would add |
+|---|---|---|
+| A6 | ATOM-payload-sub |  |
+| A2 | ORDER-keypath, and through it L6.11 |  |
+| Q34 | L25.1, L30.1 to L30.3 |  |
+| A31 | Nothing (CAST-menu-check is ready with option 2 in effect) |  |
+| A36 | L10.3 and CHECKED-float (the cast's atom); S.1 counts 45 catalog rows as gaps until answered |  |
+| Q51 | L33.2 (L7.15 under D) | PORT-process |
+| Q41 | see Q11 |  |
+| A46 | The rest of EMPTY-overlap-chain: the parts the fast path does not cover |  |
+| A26 | XMARK-rows, ATOM-payload-sub |  |
+
+## Q34: Which compiler hosts the language server
+
+**Holds up.** L25.1.
+
+### A26: Are the two rows right?
+
+**Answer (author, 2026-11-06).** 1: keep both rows.
+
+### A27: Next question
+`;
+  assert.deepEqual(Object.fromEntries(parseQuestions(md)), {
+    "ATOM-payload-sub": ["A6"],
+    "ORDER-keypath": ["A2"],
+    "L25.1": ["Q34"],
+    "L30.1": ["Q34"],
+    "L30.2": ["Q34"],
+    "L30.3": ["Q34"],
+    "L10.3": ["A36"],
+    "CHECKED-float": ["A36"],
+    "L33.2": ["Q51"],
+    "EMPTY-overlap-chain": ["A46"],
+  });
+});
+
+test("an item an unanswered question holds, or whose ledger says blocked, is blocked; other waiting stays waiting", () => {
+  const inp = inputs(
+    "",
+    '{"id":"A","state":"fixed","commit":"c111111"}\n{"id":"LR2","state":"waiting"}\n{"id":"B","state":"blocked"}\n{"id":"X","state":"waiting","note":"waits on QUESTIONS A6"}\n',
+  );
+  inp.held = new Map([["X", ["A6"]], ["A", ["A6"]], ["C", ["Q1"]]]);
+  const nodes = by(buildNodes(inp));
+  assert.equal(nodes.get("X")!.state, "blocked");
+  assert.equal(nodes.get("C")!.state, "blocked");
+  assert.equal(nodes.get("C")!.ready, false);
+  assert.equal(nodes.get("B")!.state, "blocked");
+  assert.equal(nodes.get("LR2")!.state, "waiting");
+  assert.equal(nodes.get("A")!.state, "done");
 });
 
 test("merged is done, and verified, drafting, merging and a probe's done are active", () => {

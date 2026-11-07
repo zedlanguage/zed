@@ -64,8 +64,9 @@ export interface Sub {
   text: string;
 }
 
-// Waiting and blocked nodes are never ready; a dropped node counts as met for the nodes that need it.
-export type NodeState = "unstarted" | "active" | "done" | "waiting" | "blocked" | "dropped";
+// Waiting and blocked nodes are never ready. A blocked node waits on an author question; a dropped item
+// is no node at all.
+export type NodeState = "unstarted" | "active" | "done" | "waiting" | "blocked";
 
 export interface ViewNode {
   id: string;
@@ -77,7 +78,7 @@ export interface ViewNode {
   needs: string[];
   planned: boolean;
   state: NodeState;
-  ready: boolean; // unstarted, and everything it needs is merged or dropped
+  ready: boolean; // unstarted, and everything it needs is merged
   pushed: boolean; // done, and on origin/main as far as the ledger tells
   awaitingBatch: boolean;
   startedAt: number | null;
@@ -92,6 +93,7 @@ export interface ViewNode {
   lastTests: string;
   subs: Sub[];
   note: string;
+  questions: string[]; // the unanswered author questions that hold it
 }
 
 // Table cells may hold a `|` inside code, so the cells are counted from both ends.
@@ -227,12 +229,53 @@ export interface Inputs {
   overrides: Record<string, Override>;
   onOrigin: (commit: string) => boolean;
   now: number;
+  // Item to the unanswered questions that hold it (parseQuestions).
+  held?: Map<string, string[]>;
 }
 
 // The nodes, and the problems board-check.sh prints: edges dagview leaves out and labels that name no item.
 export interface BoardState {
   nodes: ViewNode[];
   problems: string[];
+  dropped: string[]; // the dropped items the plan, ledger or overrides name, which are no nodes
+}
+
+// The items each unanswered author question holds, from the table under "## Which plan steps each
+// question holds up" in QUESTIONS.md: item id to question ids. A cell that starts "Nothing" or "see"
+// holds nothing; a parenthesis, the text after ";" or ":", and an item reached "through it" are notes, not
+// holds (an item that needs a held one waits through its needs). "L30.1 to L30.3" is a range. A question
+// whose section carries an "**Answer (" paragraph is answered and holds nothing.
+export function parseQuestions(markdown: string): Map<string, string[]> {
+  const lines = markdown.split("\n");
+  const answered = new Set<string>();
+  let section = "";
+  for (const l of lines) {
+    const h = /^#{2,4} ([A-Z]+\d+):/.exec(l);
+    if (h) section = h[1];
+    else if (/^#{1,4} /.test(l)) section = "";
+    else if (section && l.startsWith("**Answer (")) answered.add(section);
+  }
+  const held = new Map<string, string[]>();
+  const start = lines.findIndex((l) => l.startsWith("## Which plan steps each question holds up"));
+  if (start < 0) return held;
+  let i = start + 1;
+  while (i < lines.length && !lines[i].startsWith("|")) i++;
+  for (i += 2; i < lines.length && lines[i].startsWith("|"); i++) {
+    const cells = lines[i].split("|").map((c) => c.trim());
+    const [q, steps] = [cells[1], cells[2] ?? ""];
+    if (answered.has(q) || /^(nothing|see)\b/i.test(steps)) continue;
+    let text = steps.split(/[;:]/)[0];
+    while (/\([^()]*\)/.test(text)) text = text.replace(/\([^()]*\)/g, "");
+    text = text.replace(/\bthrough (it|them)\b[^,]*/g, "");
+    text = text.replace(/\b([A-Za-z][\w-]*\.)(\d+) to \1(\d+)\b/g, (_, p: string, a: string, b: string) =>
+      Array.from({ length: Math.max(0, Number(b) - Number(a) + 1) }, (_, k) => p + (Number(a) + k)).join(", "));
+    for (const id of text.match(/\b[A-Z][A-Za-z0-9]*(?:[.-][A-Za-z0-9]+)*\b/g) ?? []) {
+      if (!/[\d-]/.test(id)) continue;
+      if (!held.has(id)) held.set(id, []);
+      if (!held.get(id)!.includes(q)) held.get(id)!.push(q);
+    }
+  }
+  return held;
 }
 
 export function buildNodes(inp: Inputs): ViewNode[] {
@@ -270,11 +313,19 @@ export function buildGraph(inp: Inputs): BoardState {
   }
 
   const outside = (id: string) => inp.overrides[id]?.outside === true;
-  const rows = inp.plan.filter((r) => !outside(r.id));
+  // A dropped item is no node, and a need on it counts as met: the ledger's last state or the override
+  // says dropped, or the plan row's title starts "Done: Dropped". An override's state wins over the ledger.
+  const droppedRows = new Set(inp.plan.filter((r) => /^Done: Dropped\b/.test(r.title)).map((r) => r.id));
+  const dropped = (id: string): boolean => {
+    const ov = inp.overrides[id]?.state;
+    return droppedRows.has(id) || (ov ?? ledger.get(id)?.findLast((e) => !stateless(e))?.state) === "dropped";
+  };
+  const gone = (id: string) => outside(id) || dropped(id);
+  const rows = inp.plan.filter((r) => !gone(r.id));
   const planned = new Set(rows.map((r) => r.id));
   // A label alone makes no node: an item needs a plan row, a ledger line or an override.
   for (const id of new Set([...logs.keys(), ...ledger.keys()])) {
-    if (planned.has(id) || outside(id)) continue;
+    if (planned.has(id) || gone(id)) continue;
     if (named.has(id) || inp.overrides[id]) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
     else if (labelOf.has(id)) problems.push(`LABEL WITH NO ITEM: ${id} (from "${labelOf.get(id)}"; give it a ledger line or an override)`);
   }
@@ -287,14 +338,14 @@ export function buildGraph(inp: Inputs): BoardState {
     const ls = last?.state;
     const lines = logs.get(r.id) ?? [];
     let s: NodeState = "unstarted";
-    if (ov) s = ov;
+    if (ov && ov !== "dropped") s = ov;
     else if (r.title.startsWith("Done:")) s = "done";
     // Only a merge or the orchestrator finishes a node: an impl, repair, verify or probe agent's
     // "done" means its own attempt ended, and the item may still be rejected and repaired.
     else if ((ls === "fixed" || ls === "done") && !/:(impl|repair|verify|probe)#/.test(last!.by ?? last!.agent ?? "")) s = "done";
     else if (ls === "fixed" || ls === "done" || ls === "verified") s = "active";
     else if (ls === "merged") s = "done";
-    else if (ls === "dropped") s = "dropped";
+    else if (ls === "blocked") s = "blocked";
     else if (ls === "waiting" || ls === "deferred") s = "waiting";
     else if (ls === "fixing" || ls === "drafting" || ls === "merging") s = "active";
     else if (ls === "abandoned") s = "unstarted";
@@ -303,6 +354,8 @@ export function buildGraph(inp: Inputs): BoardState {
     else if (ls === "running" || ls === "started" || ls === "active") s = "active";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
     else if (lines.length > 0) s = "active";
+    // An unanswered author question holds an item that is not yet done or under way.
+    if ((s === "unstarted" || s === "waiting") && inp.held?.has(r.id)) s = "blocked";
     states.set(r.id, s);
   }
 
@@ -330,9 +383,10 @@ export function buildGraph(inp: Inputs): BoardState {
   for (const [id, ov] of edges) {
     if (!own.has(id)) own.set(id, []);
     own.get(id)!.push(...list(ov.needs));
-    if (outside(id)) continue;
+    if (gone(id)) continue;
     for (const f of list(ov.feeds)) {
       const to = replaced(f);
+      if (to !== null && dropped(to)) continue;
       if (to === null) {
         problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f} (give ${f} a replacedBy override, or remove the feed)`);
         continue;
@@ -348,11 +402,11 @@ export function buildGraph(inp: Inputs): BoardState {
     for (const n of not) {
       if (!all.delete(n)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${r.id} notNeeds ${n}`);
     }
-    rows[i] = { ...r, needs: [...all].filter((n) => n !== r.id && !outside(n)) };
+    rows[i] = { ...r, needs: [...all].filter((n) => n !== r.id && !gone(n)) };
   }
   const rowIds = new Set(rows.map((r) => r.id));
   for (const [id, ov] of Object.entries(inp.overrides)) {
-    if (!rowIds.has(id) && !outside(id)) for (const n of list(ov.notNeeds)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${id} notNeeds ${n} (${id} is no node)`);
+    if (!rowIds.has(id) && !gone(id)) for (const n of list(ov.notNeeds)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${id} notNeeds ${n} (${id} is no node)`);
   }
 
   const nodes = rows.map((r): ViewNode => {
@@ -402,7 +456,7 @@ export function buildGraph(inp: Inputs): BoardState {
       needs: r.needs,
       planned: planned.has(r.id),
       state,
-      ready: state === "unstarted" && r.needs.every((n) => states.get(n) === "done" || states.get(n) === "dropped"),
+      ready: state === "unstarted" && r.needs.every((n) => states.get(n) === "done"),
       pushed: state === "done" && onOrigin,
       awaitingBatch: state === "done" && !onOrigin,
       startedAt,
@@ -417,9 +471,11 @@ export function buildGraph(inp: Inputs): BoardState {
       lastTests,
       subs: [...subs.values()],
       note,
+      questions: inp.held?.get(r.id) ?? [],
     };
   });
-  return { nodes, problems: [...new Set(problems)] };
+  const droppedIds = [...new Set([...inp.plan.map((r) => r.id), ...ledger.keys(), ...Object.keys(inp.overrides)])].filter((id) => !outside(id) && dropped(id));
+  return { nodes, problems: [...new Set(problems)], dropped: droppedIds };
 }
 
 // Edges to draw when only direct dependencies are wanted: a need that another
