@@ -2143,3 +2143,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A hub's map of near names updated in place through `OrdMap::get_mut`, its size before and each pair's presence before kept in `BTreeMap`s, so that the leaves are rechecked only for net changes | `Conjuncts::refree` | Mutation | A fold over the changed conjuncts that returns the new map and the two maps of what was before |
+
+## Entries from LIST-parity-tail (`zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A stack of runs, each a meet and its length, merged with `Vec::pop_if` while the top run is no longer than the new one, as a binary counter | `Type::boxes` | Mutation | A list of runs returned from each step of the fold, merged by a recursive step on its head |
+| A `HashMap<Vec<usize>, usize>` numbering each set of rows (a region) on first sight, seeded with the empty set as 0 | `RowIndex::new` | Mutation (gap 2: an intern table) | A fold over the keys with the map in its state, or the sets sorted and numbered by their rank |

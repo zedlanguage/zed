@@ -463,9 +463,24 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
         if which < 2 {
             return parity((0..c).map(row));
         }
-        let all = Type::tuple(vec![Type::union_all((0..2 * c).map(lit))]);
+        // Shape 4 puts a second column beside each, `(0..2c, 0)` met with each `(int - (2i + 1),
+        // 0)`, and shape 3 puts that pair one level down, `((0..2c, 0),)` met with each
+        // `((int - (2i + 1), 0),)` (LIST-parity-tail). Each such row was read for every tuple,
+        // and the meet of the tuple types was made one by one along a path: from `c` 64 to 512,
+        // 50.1 times the instructions and 30.4 times the bytes. Such a row is now filed by its
+        // second column, and the meets along a path are made in balanced runs (`Type::boxes`):
+        // 9.4 and 9.7 times the instructions.
+        let deeper = |t: Type| match which {
+            2 => t,
+            _ => Type::tuple(vec![t, lit(0)]),
+        };
+        let wrap = |t: Type| match which {
+            4 => t,
+            _ => Type::tuple(vec![t]),
+        };
+        let all = wrap(deeper(Type::union_all((0..2 * c).map(lit))));
         (0..c).fold(all, |t, i| {
-            &t & &Type::tuple(vec![&Type::int() - &lit(2 * i + 1)])
+            &t & &wrap(deeper(&Type::int() - &lit(2 * i + 1)))
         })
     };
     for (which, what, per) in [
@@ -484,6 +499,16 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
             "listing a meet of tuple types given by their complements, by count",
             1,
         ),
+        (
+            4,
+            "listing a meet of pairs with a complement first, by count",
+            1,
+        ),
+        (
+            3,
+            "listing a meet of tuple types with a complement first in a pair, by count",
+            1,
+        ),
     ] {
         let built: std::collections::HashMap<usize, Type> = [64, 512]
             .into_iter()
@@ -497,6 +522,35 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
             assert_eq!(built[&c].each_value().map(|v| v.count()), Some(per * c));
         });
     }
+    // Rows each with keys of their own in a column they could absorb (LIST-parity-tail): `(0..3,
+    // 0..=c)` met with the union of each `(int - (2i + 1), i | i + 1)`. Absorbing every second
+    // column makes a region, and so a class reading every row, per key: order `c²`, 27.5 times
+    // the bytes when it was tried. Such a column is filed by its keys instead.
+    let regions: std::collections::HashMap<usize, Type> = [1, 2, 7, 64, 512]
+        .into_iter()
+        .map(|c| {
+            let all = Type::tuple(vec![
+                Type::union_all((0..3).map(lit)),
+                Type::union_all((0..=c).map(lit)),
+            ]);
+            let row =
+                |i: usize| Type::tuple(vec![&Type::int() - &lit(2 * i + 1), &lit(i) | &lit(i + 1)]);
+            (c, &all & &Type::union_all((0..c).map(row)))
+        })
+        .collect();
+    // Row `i` takes `x = 2i + 1` out of the first column, which holds only `x = 1` of them:
+    // `y = 0` keeps 2 values and every other `y` 3, but at `c = 1`, where `y = 1` keeps 2.
+    let count = |c: usize| regions[&c].each_value().map(|v| v.count());
+    for (c, n) in [(1, 4), (2, 8), (7, 23)] {
+        assert_eq!(count(c), Some(n), "c = {c}");
+    }
+    scaling::check(
+        "listing a meet with tuple types of many keys each, by count",
+        64,
+        |c| {
+            assert_eq!(count(c), Some(3 * c + 2));
+        },
+    );
 }
 
 /// The rows of a decision tree on `c` columns of `{b, b + 1, b + 2}`: on column `i`, after

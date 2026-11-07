@@ -404,3 +404,81 @@ fn every_tuple_type_is_filed_by_its_parts() {
     let empty = parity([one(&Type::tuple(vec![]) | &lit(1)), one(&lit(1) | &lit(2))]);
     assert_eq!(exact(&empty), 2, "(()) and (2)");
 }
+
+#[test]
+fn a_tuple_type_with_a_complement_column_is_filed_by_it() {
+    // A tuple type with a column given by its complement and a column whose keys more tuple
+    // types share, such as each `(int - i, w)` of a meet, is filed by the complement and
+    // absorbs the other column: a scalar there is read once per region of scalars the
+    // absorbing tuple types hold alike, and a tuple there by its keys (LIST-parity-tail).
+    // Each list is checked against `contains` over pairs of the values below, their
+    // one-tuples, and pairs with a one-tuple on either side.
+    // The empty tuple is no literal: it is the tuple type of no columns.
+    let v = |x: Value| Type::lit(&x).unwrap_or_else(|| Type::tuple(vec![]));
+    let mut scalars: Vec<Value> = (0..6).map(int).collect();
+    scalars.extend([
+        Value::Bool(false),
+        Value::Bool(true),
+        Value::str("s"),
+        Value::str("t"),
+        Value::atom("a"),
+        Value::atom("b"),
+        Value::float(0.5),
+        Value::rat(zed_kernel::Rat::int(7.into())),
+        Value::tuple(vec![]),
+    ]);
+    let one = |t: Type| Type::tuple(vec![t]);
+    let u = &Type::union_all(scalars.iter().cloned().map(v)) | &one(&lit(0) | &lit(1));
+    let mut values = scalars.clone();
+    values.extend([one_of(int(0)), one_of(int(1)), one_of(int(2))]);
+    let mut all: Vec<Value> = values
+        .iter()
+        .flat_map(|a| values.iter().map(move |b| pair(a.clone(), b.clone())))
+        .collect();
+    all.extend(all.clone().into_iter().map(one_of));
+    let exact = |t: &Type| -> usize {
+        let want: BTreeSet<Value> = all.iter().filter(|x| t.contains(x)).cloned().collect();
+        assert_eq!(listed(t), Some(want.clone()), "{t}");
+        want.len()
+    };
+    let but = |x: Type| &Type::top() - &x;
+    // The second columns share most of their keys, so they are absorbed: `0`, `1`, `2`, `"t"`
+    // and `0.5` are in all of them, one region; `true` and `()` in the even ones and `"s"`, `7`
+    // and `(0)` in the odd ones, two more.
+    let second = |i: usize| -> Type {
+        let common = [int(0), int(1), int(2), Value::str("t"), Value::float(0.5)];
+        let mut w = Type::union_all(common.into_iter().map(v));
+        w = &w
+            | &match i % 2 {
+                0 => &v(Value::Bool(true)) | &Type::tuple(vec![]),
+                _ => {
+                    &(&v(Value::str("s")) | &v(Value::rat(zed_kernel::Rat::int(7.into()))))
+                        | &one(lit(0))
+                }
+            };
+        w
+    };
+    let rows: Vec<Type> = (0..6)
+        .map(|i| Type::tuple(vec![but(lit(i)), second(i)]))
+        .collect();
+    let pairs = Type::tuple(vec![u.clone(), u.clone()]);
+    for k in [2, 4, 6] {
+        let met = rows[..k].iter().fold(pairs.clone(), |t, r| &t & r);
+        exact(&met);
+        exact(&one(met));
+        exact(
+            &rows[..k - 1]
+                .iter()
+                .fold(&pairs - &rows[k - 1], |t, r| &t & r),
+        );
+        exact(&(&pairs - &Type::union_all(rows[..k].iter().cloned())));
+    }
+    // The meet of the scaling test: `(0..2c, 0)` met with each `(int - (2i + 1), 0)`.
+    let c = 5;
+    let all_firsts = Type::tuple(vec![Type::union_all((0..2 * c).map(lit)), lit(0)]);
+    let met = (0..c).fold(all_firsts, |t, i| {
+        &t & &Type::tuple(vec![&Type::int() - &lit(2 * i + 1), lit(0)])
+    });
+    assert_eq!(listed(&met).map(|s| s.len()), Some(c));
+    assert_eq!(listed(&one(met)).map(|s| s.len()), Some(c));
+}
