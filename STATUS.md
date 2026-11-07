@@ -1537,7 +1537,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | P14-coord-scale | impl attempt 1 | 2026-11-05 08:27 | negative control (not committed): extra O(n^2) BigInt distances over all pairs, wide-coordinate test at 1000 and 8000 fails at 51.0x instructions and 50.7x byte |
 | PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | base measured: product walk 3,200/204,800 term bounds at k=40/320, checker 1,680/103,040 (61.3x); probes added |
 | ST-eqs-cubic | impl attempt 1 | 2026-11-07 14:15 | started; worktree wt/st-eqs-cubic from 6c3b8f88 |
-| ST-holes-many | impl attempt 1 | 2026-11-07 13:25 | residual probe (band 10<=x_i-x_(i+1)<=11, hole each name, joined rungs x_i-x_(i+2)>=20): 138 M/4,115 M/110,524 M at k=5/10/20, base identical (pre-existing); wi |
+| ST-holes-many | impl attempt 1 | 2026-11-07 13:25 | ready 2de155b6 on base 6c3b8f88: 387 pieces pass (doc check on, load 20-33), clippy and fmt clean; chain of holes order 2 (15.0x at k=40->320), grid order 3 (115.2x at m=4->32), both open under ST-holes-moves; negative control: base k=320 past 120 s |
 | ST-holes-moves | running | 2026-11-07 14:32 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
