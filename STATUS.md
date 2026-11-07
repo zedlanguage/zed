@@ -1531,11 +1531,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| P14-bits | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/p14-bits (branch wt/p14-bits from origin/main 32654e93), load 20.26 |
-| P14-coord-scale | impl attempt 1 | 2026-11-05 08:27 | negative control (not committed): extra O(n^2) BigInt distances over all pairs, wide-coordinate test at 1000 and 8000 fails at 51.0x instructions and 50.7x byte |
+| P14-bigint-parse | impl attempt 1 | 2026-11-07 14:59 | started; worktree /home/luke/Work/wt/p14-bigint-parse from wt/p14-bits cb5854a8 |
+| P14-bits | impl attempt 1 | 2026-11-05 04:07 | ready again cb5854a8 on wt/p14-bits, base 40b74119: coordinate-size test at limit 24, m0_04 95 pass, load 22 |
+| P14-coord-scale | impl attempt 1 | 2026-11-05 08:27 | ready again cb5854a8 on wt/p14-bits, base 40b74119: coordinate-size test at limit 24, m0_04 95 pass, load 22 |
 | PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | base measured: product walk 3,200/204,800 term bounds at k=40/320, checker 1,680/103,040 (61.3x); probes added |
-| ST-eqs-cubic | impl attempt 1 | 2026-11-07 14:15 | started; worktree wt/st-eqs-cubic from 6c3b8f88 |
-| ST-holes-moves | running | 2026-11-07 14:32 |  |
+| ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | rebased onto f813fa34 (batch 46); state fixing |
+| T14-paths | impl attempt 1 | 2026-11-05 04:07 | negative control (path strings put back, not committed; load 15.54): nest4 plan 41.0x bytes, capture arms 41.0x, deep nest plan 57.1x and run 50.7x (limit 24),  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
