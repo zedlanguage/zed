@@ -14,6 +14,7 @@ members = [
     "crates/zedc-preimage",
     "crates/zedc-check",
     "crates/zedc-zir",
+    "crates/zedc-elab",
     "crates/zed-kernel",
     "crates/zed-rt",
     "crates/zed-cert",
@@ -52,6 +53,7 @@ zedc-stage = { path = "crates/zedc-stage" }
 zedc-preimage = { path = "crates/zedc-preimage" }
 zedc-check = { path = "crates/zedc-check" }
 zedc-zir = { path = "crates/zedc-zir" }
+zedc-elab = { path = "crates/zedc-elab" }
 # The libraries the compiler crates (zedc, zedc-*) share, at one version each.
 blake3 = "1"
 imbl = "7.0.2"

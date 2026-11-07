@@ -59,6 +59,8 @@ const KNOWN_CYCLES: &[&str] = &[
     "zed-kernel/value.rs",
     "zedc-check/check/mod.rs",
     "zedc-check/check/walk.rs",
+    "zedc-elab/elab.rs",
+    "zedc-elab/elab/walk.rs",
     "zedc-presburger/presburger.rs",
     "zedc-presburger/presburger/deep.rs",
     "zedc-presburger/presburger/deep/canon.rs",
@@ -67,8 +69,6 @@ const KNOWN_CYCLES: &[&str] = &[
     "zedc-syntax/ast/neglit.rs",
     "zedc-syntax/ast/stmts.rs",
     "zedc-syntax/ast/types.rs",
-    "zedc/elab.rs",
-    "zedc/elab/walk.rs",
 ];
 
 #[test]

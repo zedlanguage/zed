@@ -24,19 +24,21 @@ use zed_kernel::num::{LiteralRounding, bytes_of, literal_f64, show_f64};
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
-use crate::ast::{Error, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPart, Target, Type};
-use crate::check::{self, Fit, Info, Misfit};
-use crate::lex::{Span, unread_literal};
-use crate::rejection::Row;
-use crate::resolve::tables::Tables;
-use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
-use crate::work::{self, Stage};
+use zedc_base::rejection::Row;
+use zedc_base::work::{self, Stage};
+use zedc_check::check::{self, Fit, Info, Misfit};
+use zedc_resolve::resolve::tables::Tables;
+use zedc_resolve::resolve::{Kind, Ref, Resolution, prelude_layer};
+use zedc_syntax::ast::{
+    Error, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPart, Target, Type,
+};
+use zedc_syntax::lex::{Span, unread_literal};
 
 mod walk;
 
-pub use crate::defs::{Def, Test, Unit, written_name};
-pub use crate::resolve::topo::{topo, topo_joined};
-pub use crate::stage::Cones;
+pub use zedc_resolve::resolve::topo::{topo, topo_joined};
+pub use zedc_stage::defs::{Def, Test, Unit, written_name};
+pub use zedc_stage::stage::Cones;
 pub(crate) use zedc_types::kernel_type::kernel_type;
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.

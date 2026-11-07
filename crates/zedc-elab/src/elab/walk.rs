@@ -11,8 +11,8 @@
 use std::mem;
 
 use super::*;
-use crate::ast::Param;
-use crate::check::ty::Sig;
+use zedc_check::check::ty::Sig;
+use zedc_syntax::ast::Param;
 
 /// What a job gives back.
 enum Ret {

@@ -1080,6 +1080,7 @@ dependencies = [
  "zedc",
  "zedc-base",
  "zedc-check",
+ "zedc-elab",
  "zedc-int",
  "zedc-lattice",
  "zedc-preimage",
@@ -1115,6 +1116,21 @@ dependencies = [
  "zedc-presburger",
  "zedc-resolve",
  "zedc-solvers",
+ "zedc-syntax",
+ "zedc-types",
+]
+
+[[package]]
+name = "zedc-elab"
+version = "0.0.0"
+dependencies = [
+ "zed-kernel",
+ "zedc-base",
+ "zedc-check",
+ "zedc-presburger",
+ "zedc-resolve",
+ "zedc-solvers",
+ "zedc-stage",
  "zedc-syntax",
  "zedc-types",
 ]

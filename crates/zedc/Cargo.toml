@@ -36,6 +36,7 @@ zedc-stage.workspace = true
 zedc-preimage.workspace = true
 zedc-check.workspace = true
 zedc-zir.workspace = true
+zedc-elab.workspace = true
 
 [dev-dependencies]
 # A dylib's file name does not change with its features, so `cargo test -p zedc` builds

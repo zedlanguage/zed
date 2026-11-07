@@ -1,0 +1,38 @@
+[package]
+name = "zedc-elab"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A part of the compiler `zedc`, which re-exports its modules at their old paths. Also a dylib, as
+# zedc is: an edit recompiles this crate and those above it, and each test binary links one shared
+# copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+zed-kernel.workspace = true
+zedc-base.workspace = true
+zedc-check.workspace = true
+zedc-resolve.workspace = true
+zedc-stage.workspace = true
+zedc-syntax.workspace = true
+zedc-types.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# As in zedc-check: `cargo test -p zedc-elab` builds zedc-presburger and zedc-solvers with the
+# features the workspace build gives them, and does not overwrite their copies.
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+zedc-solvers = { workspace = true, features = ["counts"] }
+
+# A dylib's file name does not change with its features, so `cargo test -p zedc-elab` builds
+# zedc-check and zedc-types with the feature `printed-types` the step tests give them, and does not
+# overwrite the copies the step tests link to.
+[dev-dependencies.zedc-check]
+workspace = true
+features = ["printed-types"]
