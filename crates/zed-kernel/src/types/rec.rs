@@ -90,15 +90,16 @@ pub struct Def {
 /// Each group is held weakly and leaves the table when it is dropped (step TABLE-life).
 static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Weak<Checked>>>>> = LazyLock::new(Mutex::default);
 
-/// The live instances, by the unit that made them, the group's number and the arguments, each
+/// The live instances, by the thread that made them, the group's number and the arguments, each
 /// held weakly.
 type Instances = HashMap<(u64, u64, Vec<Type>), Weak<Env>>;
 
-/// The live instances, by the unit that made them ([`Unit`]), the group's number and the
-/// arguments: one group at equal arguments gives one set of types in a unit while they live, so
-/// that equal definitions meet as equal types. Types of two units are equal types too, by their
-/// keys ([`Key::order`]), but no unit finds another's instance, so the end of one unit never
-/// changes the types another is reading. The arguments hash by their digests and compare
+/// The live instances, by the thread that made them ([`Unit::thread`]), the group's number and
+/// the arguments: one group at equal arguments gives one set of types on a thread while they
+/// live, so that equal definitions meet as equal types, and a later unit finds an instance an
+/// earlier one made while something holds it, with the group's decided verdicts. Types of two
+/// threads are equal types too, by their keys ([`Key::order`]), but no thread finds another's
+/// instance, so the end of one thread's unit never changes the types another is reading. The arguments hash by their digests and compare
 /// exactly, so a call costs time in its arguments only. An instance leaves the table when it is
 /// dropped (step TABLE-life). No type is dropped while this table or [`GROUPS`] is locked, since
 /// a type dropped may drop an instance or a group, which takes the lock.
@@ -106,6 +107,9 @@ static INSTANCES: LazyLock<Mutex<Instances>> = LazyLock::new(Mutex::default);
 
 /// The units begun, over all threads.
 static UNITS: AtomicU64 = AtomicU64::new(0);
+
+/// The threads that began a unit.
+static THREADS: AtomicU64 = AtomicU64::new(0);
 
 /// The instances made, over all threads: each instance's number ([`Key::group`]).
 static ENVS: AtomicU64 = AtomicU64::new(0);
@@ -125,12 +129,15 @@ static ENVS: AtomicU64 = AtomicU64::new(0);
 // held, or keep every recursive type with atoms. COMPLEXITY.md K68.
 struct Unit {
     number: u64,
+    /// The thread's number, under which its instances are in [`INSTANCES`].
+    thread: u64,
     made: Vec<Weak<Env>>,
 }
 
 thread_local! {
     static UNIT: RefCell<Unit> = RefCell::new(Unit {
         number: UNITS.fetch_add(1, Ordering::Relaxed),
+        thread: THREADS.fetch_add(1, Ordering::Relaxed),
         made: Vec::new(),
     });
 }
@@ -147,6 +154,12 @@ fn unit() -> u64 {
     // Thread-locals first used after this call are dropped before the queue that frees types.
     super::hold();
     UNIT.with_borrow(|u| u.number)
+}
+
+/// The number of this thread ([`Unit::thread`]).
+fn thread() -> u64 {
+    super::hold();
+    UNIT.with_borrow(|u| u.thread)
 }
 
 /// Ends this thread's unit: breaks the cycle of each instance whose recursive members it made,
@@ -623,7 +636,7 @@ impl Group {
             self.0.defs[0].params.len(),
             "one argument per parameter"
         );
-        let key = (unit(), self.0.number, args);
+        let key = (thread(), self.0.number, args);
         let lock = || {
             INSTANCES
                 .lock()
@@ -636,7 +649,7 @@ impl Group {
         let args = key.2.clone();
         let env = Arc::new(Env {
             id: ENVS.fetch_add(1, Ordering::Relaxed),
-            unit: key.0,
+            thread: key.0,
             registered: AtomicU64::new(u64::MAX),
             group: Some(self.clone()),
             digest: args
@@ -876,8 +889,8 @@ struct Env {
     /// The instance's number among all instances made: never another's, so a group's members
     /// are told from another instance's after this one is dropped ([`Key::group`]).
     id: u64,
-    /// The unit that made it, under which it is in [`INSTANCES`].
-    unit: u64,
+    /// The thread that made it, under which it is in [`INSTANCES`].
+    thread: u64,
     /// The last unit that made its recursive members, which ends them ([`Unit`]).
     registered: AtomicU64,
     group: Option<Group>,
@@ -896,7 +909,7 @@ struct Env {
 impl Drop for Env {
     fn drop(&mut self) {
         let Some(g) = &self.group else { return };
-        let key = (self.unit, g.0.number, std::mem::take(&mut self.args));
+        let key = (self.thread, g.0.number, std::mem::take(&mut self.args));
         let removed = INSTANCES.lock().ok().and_then(|mut t| {
             let mine = t.get(&key).is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
             mine.then(|| t.remove_entry(&key)).flatten()
@@ -926,7 +939,7 @@ impl Env {
     fn ground(args: Vec<Type>) -> Env {
         Env {
             id: ENVS.fetch_add(1, Ordering::Relaxed),
-            unit: u64::MAX,
+            thread: u64::MAX,
             registered: AtomicU64::new(u64::MAX),
             group: None,
             digest: 0,
@@ -1529,7 +1542,7 @@ mod tests {
     /// Whether [`INSTANCES`] has a live instance of group `number` at no arguments.
     fn instanced(number: u64) -> bool {
         let t = INSTANCES.lock().expect("no panic under the lock");
-        t.get(&(unit(), number, vec![]))
+        t.get(&(thread(), number, vec![]))
             .is_some_and(|w| w.strong_count() > 0)
     }
 
