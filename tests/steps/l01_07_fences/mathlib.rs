@@ -1,7 +1,8 @@
-//! Item MATHLIB-minfac: every `zed` fence of docs/mathlib-study.md lexes and parses as a unit at
-//! the top ring, and each law the `euclid` proof cites outside the prelude is written in one of
-//! them. This checks syntax only: `minFac`'s test table needs recursion (step L6.7) and its laws
-//! need layer L15, as the page says.
+//! Items MATHLIB-minfac and MATHLIB-euclid-gaps: every `zed` fence of docs/mathlib-study.md lexes
+//! and parses as a unit at the top ring, and each law that the proofs of `euclid`, `euclidChain`,
+//! `minFacPrime` and `minFacMin` cite outside the prelude is written in one of them. This checks
+//! syntax only: `minFac`'s test table needs recursion (step L6.7) and its laws need layer L15, as
+//! the page says.
 
 use std::path::PathBuf;
 
@@ -47,14 +48,15 @@ fn euclid_cites(page: &str) -> Vec<String> {
     list.split(',').map(|s| s.trim().to_string()).collect()
 }
 
-/// Whether a fence of `page` defines `name`, as a function (`name(` at the start of a line,
-/// after any annotations) or as a law (`law name(`).
+/// Whether a fence of `page` defines `name` at its top level, as a function (`name(` at the start
+/// of an unindented line, after any annotations) or as a law (`law name(`). An indented line, such
+/// as a claim of a `#chain` that starts with a call of `name`, defines nothing.
 fn defines(page: &str, name: &str) -> bool {
     let call = format!("{name}(");
     let law = format!("law {name}(");
     extract(page).iter().any(|f| {
         f.text.lines().any(|l| {
-            let mut rest = l.trim_start();
+            let mut rest = l;
             while let Some(after) = rest.strip_prefix('@') {
                 rest = skip_annotation(after).trim_start();
             }
@@ -90,6 +92,47 @@ fn skip_annotation(text: &str) -> &str {
     ""
 }
 
+/// The text of the law `name` in a fence of `page`: its first line, `law name(` unindented, and
+/// the indented lines after it up to and including the first line that starts with `}`.
+fn law_text(page: &str, name: &str) -> Option<String> {
+    let head = format!("law {name}(");
+    extract(page).into_iter().find_map(|f| {
+        let mut lines = f.text.lines().skip_while(|l| !l.starts_with(&head));
+        let mut text = lines.next()?.to_string();
+        for l in lines {
+            if !(l.starts_with(' ') || l.starts_with('}')) {
+                break;
+            }
+            text.push('\n');
+            text.push_str(l);
+            if l.starts_with('}') {
+                break;
+            }
+        }
+        Some(text)
+    })
+}
+
+/// The laws that `text` cites, in order: the rule of each `#use(rule: …)`, then each name in each
+/// `using(…)` list.
+fn cited(text: &str) -> Vec<&str> {
+    let uses = text.match_indices("#use(rule: ").map(|(i, m)| {
+        let rest = &text[i + m.len()..];
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        &rest[..end]
+    });
+    let usings = text.match_indices("using(").flat_map(|(i, m)| {
+        let rest = &text[i + m.len()..];
+        rest.split_once(')')
+            .map_or(rest, |(list, _)| list)
+            .split(',')
+            .map(str::trim)
+    });
+    uses.chain(usings).collect()
+}
+
 /// The laws the prelude states (DESIGN.md sec:verification, the `using` tactic), which the page
 /// does not define.
 const PRELUDE: &[&str] = &["anyIntro", "anyElim", "allElim"];
@@ -97,8 +140,9 @@ const PRELUDE: &[&str] = &["anyIntro", "anyElim", "allElim"];
 #[test]
 fn every_fence_of_the_mathlib_study_parses() {
     let page = page();
-    // The sixteen theorems' fifteen fences, section 5's fence, and the fence of `minFac`.
-    assert_eq!(extract(&page).len(), 17);
+    // The sixteen theorems' fifteen fences, section 5's fence, the fence of `minFac`, and the
+    // fence of the divisibility laws, `allIntro` and `euclidChain`.
+    assert_eq!(extract(&page).len(), 18);
     let bad = unparsed(&page);
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
@@ -132,25 +176,83 @@ fn a_law_with_a_product_after_a_reduction_does_not_parse() {
 fn every_law_euclid_cites_is_written_on_the_page() {
     let page = page();
     let cites = euclid_cites(&page);
-    assert_eq!(cites, ["anyIntro", "minFacPrime", "minFacDvd", "dvdFact"]);
+    assert_eq!(
+        cites,
+        [
+            "anyIntro",
+            "minFacPrime",
+            "minFacDvd",
+            "minFacLe",
+            "dvdRefl",
+            "dvdFact",
+            "notDvdSucc"
+        ]
+    );
     for name in cites.iter().filter(|c| !PRELUDE.contains(&c.as_str())) {
         assert!(
             defines(&page, name),
             "`{name}` is cited by `euclid` and written nowhere"
         );
     }
-    for name in ["minFac", "minFacAux", "minFacLe", "isPrime", "fact", "dvd"] {
+    for name in [
+        "minFac",
+        "minFacAux",
+        "isPrime",
+        "fact",
+        "dvd",
+        "dvdTrans",
+        "dvdMulRight",
+        "dvdMulLeftOfDvd",
+        "allIntro",
+    ] {
         assert!(defines(&page, name), "`{name}` is written nowhere");
     }
 }
 
 #[test]
+fn every_law_the_proofs_of_euclid_and_minfac_cite_is_written_on_the_page() {
+    let page = page();
+    for law in ["euclid", "euclidChain", "minFacPrime", "minFacMin"] {
+        let text = law_text(&page, law).unwrap_or_else(|| panic!("`{law}` is written nowhere"));
+        let cites = cited(&text);
+        assert!(!cites.is_empty(), "`{law}` cites no law");
+        for name in cites {
+            assert!(
+                PRELUDE.contains(&name) || defines(&page, name),
+                "`{name}` is cited by `{law}` and written nowhere"
+            );
+        }
+    }
+    // The chain cites exactly the laws that `euclid`'s `using` list names.
+    let chain = law_text(&page, "euclidChain").expect("`euclidChain` is written");
+    let mut chain_cites = cited(&chain);
+    chain_cites.sort_unstable();
+    chain_cites.dedup();
+    let mut using = euclid_cites(&page);
+    using.sort_unstable();
+    assert_eq!(chain_cites, using);
+}
+
+#[test]
 fn a_cited_law_that_is_not_written_is_found() {
     let page = "```zed\nlaw euclid(n: int[0..]) = true proof { using(anyIntro, minFacPrime) }\n\
-                @measure(n - (n + 0)) minFacPrime2(n: int[2..]) = n;\n```\n";
+                @measure(n - (n + 0)) minFacPrime2(n: int[2..]) = n;\n\
+                law chain(n: int[0..]) = true proof {\n  #chain(steps: [\n    \
+                #use(rule: minFacDvd, args: [n]),\n  ], claims: [\n    minFacDvd(n),\n  ])\n}\n\
+                law after(n: int[0..]) = true proof { using(dvdTrans) }\n```\n";
     assert_eq!(euclid_cites(page), ["anyIntro", "minFacPrime"]);
     assert!(defines(page, "minFacPrime2"));
     assert!(!defines(page, "minFacPrime"));
+    // A claim line that starts with a call is indented, so it defines nothing.
+    assert!(!defines(page, "minFacDvd"));
+    // The law's text ends at its closing brace, before the next law's `using`.
+    let chain = law_text(page, "chain").expect("`chain` is on the page");
+    assert_eq!(cited(&chain), ["minFacDvd"]);
+    assert_eq!(
+        cited(&law_text(page, "euclid").unwrap()),
+        ["anyIntro", "minFacPrime"]
+    );
+    assert_eq!(law_text(page, "missing"), None);
 }
 
 #[test]
@@ -168,6 +270,8 @@ fn parsing_the_fences_of_a_page_scales() {
             // read the whole page.
             assert_eq!(euclid_cites(page), ["anyIntro", "dvdFact"]);
             assert!(!defines(page, "dvdFact"));
+            let text = law_text(page, "euclid").expect("`euclid` is on the last line");
+            assert_eq!(cited(&text), ["anyIntro", "dvdFact"]);
         },
     );
 }

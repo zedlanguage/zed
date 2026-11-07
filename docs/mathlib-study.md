@@ -1,8 +1,8 @@
 # Mathlib study: data for the L33.3 benchmark
 
-This file keeps the data of the 2026-11-03 proofs study (ledger item PROOFS) that step L33.3 relies on: the sixteen Mathlib theorems stated in Zed, the helper definitions, the pinned Mathlib and Lean commits, the Lean line counts, and the study's section A rejections. The study's files are in `/home/luke/Work/wt/proofs`, which is not a git repository; item MATHLIB-seed copies these pieces here so that they are kept. Every piece below is copied verbatim from the file named in its header, except the section "`minFac` and its laws". In the copied text, `D:n` means line n of the zed spec's DESIGN.md at commit 8456c46 (`REPORT.md` line 4), and "section 5" means the section "Helper definitions and other code" below.
+This file keeps the data of the 2026-11-03 proofs study (ledger item PROOFS) that step L33.3 relies on: the sixteen Mathlib theorems stated in Zed, the helper definitions, the pinned Mathlib and Lean commits, the Lean line counts, and the study's section A rejections. The study's files are in `/home/luke/Work/wt/proofs`, which is not a git repository; item MATHLIB-seed copies these pieces here so that they are kept. Every piece below is copied verbatim from the file named in its header, except the sections "`minFac` and its laws" and "Divisibility laws, `.all` introduction and the `euclid` chain", and the `using` list of theorem 11, which item MATHLIB-euclid-gaps extended (the study wrote `using(anyIntro, minFacPrime, minFacDvd, dvdFact)`). In the copied text, `D:n` means line n of the zed spec's DESIGN.md at commit 8456c46 (`REPORT.md` line 4), and "section 5" means the section "Helper definitions and other code" below.
 
-`minFac` and the laws `minFacPrime`, `minFacDvd` and `dvdFact`, cited by the `euclid` proof (theorem 11), are written in the section "`minFac` and its laws" below (item MATHLIB-minfac, 2026-11-07). That section is new text, not a copy from the study. zed-impl can only parse it today: a test lexes and parses every `zed` fence of this file (`l01_07_fences::mathlib`). Running `minFac`'s test table needs recursion (step L6.7) and, with its parameter types, layer L10, and checking its laws needs laws and proofs (layer L15, step L22.5 and step L33.3).
+`minFac` and the laws `minFacPrime`, `minFacDvd` and `dvdFact`, cited by the `euclid` proof (theorem 11), are written in the section "`minFac` and its laws" below (item MATHLIB-minfac, 2026-11-07). That section is new text, not a copy from the study. The divisibility laws they rest on (`dvdRefl`, `dvdTrans`, `dvdMulRight`, `dvdMulLeftOfDvd`, `notDvdSucc`), an introduction rule for `.all` (`allIntro`) and the proof of theorem 11 written out as a `#chain` (`euclidChain`) are in the section "Divisibility laws, `.all` introduction and the `euclid` chain" (item MATHLIB-euclid-gaps, 2026-11-07), also new text. zed-impl can only parse these sections today: a test lexes and parses every `zed` fence of this file (`l01_07_fences::mathlib`). Running `minFac`'s test table needs recursion (step L6.7) and, with its parameter types, layer L10, and checking its laws needs laws and proofs (layer L15, step L22.5 and step L33.3).
 
 ## The two commits
 
@@ -92,7 +92,7 @@ law coprimeDvd(k: int[0..], m: int[0..], n: int[0..]) = (gcd(k, m) == 1 && dvd(k
 - Witness: `minFac(fact(n) + 1)`.
 - Missing: the prelude laws `anyIntro`/`anyElim`, and `using`.
 ```zed
-law euclid(n: int[0..]) = (n..=fact(n) + 1).any(p -> isPrime(p)) proof { using(anyIntro, minFacPrime, minFacDvd, dvdFact) }
+law euclid(n: int[0..]) = (n..=fact(n) + 1).any(p -> isPrime(p)) proof { using(anyIntro, minFacPrime, minFacDvd, minFacLe, dvdRefl, dvdFact, notDvdSucc) }
 ```
 
 **12. `Nat.Prime.two_le`** (1/3)
@@ -224,7 +224,31 @@ law minFacAuxLe(n: int[2..], k: int[3..], m: int[2..]) = (k mod 2 == 1 && (2..<k
 
 law minFacDvd(n: int[2..]) = dvd(minFac(n), n) proof { using(minFacAuxDvd) }
 law minFacLe(n: int[2..], m: int[2..]) = dvd(m, n).implies(minFac(n) <= m) proof { using(minFacAuxLe) }
-law minFacPrime(n: int[2..]) = isPrime(minFac(n)) proof { using(minFacDvd, minFacLe, dvdTrans) }
+law minFacMin(n: int[2..], d: int[2..<minFac(n)]) = minFac(n) mod d != 0 proof {
+  #cases(on: dvd(d, minFac(n)), arms: b -> match b {
+    true -> #chain(steps: [
+      #use(rule: minFacDvd, args: [n]),
+      #use(rule: dvdTrans, args: [d, minFac(n), n]),
+      #use(rule: minFacLe, args: [n, d]),
+      #domain,
+    ], claims: [
+      dvd(minFac(n), n),
+      dvd(d, n),
+      minFac(n) <= d,
+      minFac(n) mod d != 0,
+    ]),
+    false -> #domain,
+  })
+}
+law minFacPrime(n: int[2..]) = isPrime(minFac(n)) proof {
+  #chain(steps: [
+    #use(rule: allIntro, args: [(2..<minFac(n)), (d -> minFac(n) mod d != 0)]),
+    #domain,
+  ], claims: [
+    (2..<minFac(n)).all(d -> minFac(n) mod d != 0),
+    isPrime(minFac(n)),
+  ])
+}
 law dvdFact(m: int[1..], n: int[0..]) = (m <= n).implies(dvd(m, fact(n))) proof { byInduction(n) }
 ```
 
@@ -237,16 +261,83 @@ law dvdFact(m: int[1..], n: int[0..]) = (m <= n).implies(dvd(m, fact(n))) proof 
 - `minFacDvd` is `Nat.minFac_dvd` (`Defs`:283-284). The even branch is `n mod 2 == 0`, which is `dvd(2, n)` unfolded; the odd branch cites `minFacAuxDvd` at `(n, 3)`.
 - `minFacLe` is `Nat.minFac_le_of_dvd` (`Defs`:296-299). `minFacPrime` needs it, and `euclid` needs it at `m = n` for its witness's upper end (below). The odd branch cites `minFacAuxLe` at `(n, 3, m)`, whose premise `(2..<3).all(j -> n mod j != 0)` is the branch's `n mod 2 != 0`.
 - `minFacAuxDvd` and `minFacAuxLe` together are the private `minFacAux_has_prop` (`Defs`:239-268). Its premise `k = 2 * i + 3` becomes `k mod 2 == 1`, which the step uses to skip the even `k + 1`. Its premise "every divisor m ≥ 2 of n is at least k" becomes `(2..<k).all(j -> n mod j != 0)`, in the form of `isPrime`. Both laws are proved by induction read off `minFacAux`'s recursion (rung 4, step L6.12) under the termination evidence above, so they have no `proof` clause. In the case `n < k * k` of `minFacAuxLe`, a divisor m with `m < n` would give the divisor `n div m`, also at least k, so `n >= k * k`; Mathlib proves this case through `prime_def_le_sqrt`. That step is nonlinear [I].
-- `minFacPrime` is `Nat.minFac_prime` (`Defs`:286-288), 1 statement line and 2 proof lines in lean_counts.txt. Mathlib's proof: `prime_def_lt'` with `minFac_has_prop` and `Nat.dvd_trans`. In Zed: `isPrime(p)` unfolds to `p >= 2 && (2..<p).all(d -> p mod d != 0)`; the first conjunct is the result type; for the second, a d in `2..<p` with `p mod d == 0` divides n by `dvdTrans`, so `minFacLe` gives `p <= d`, against `d < p`.
-- `dvdFact` is `Nat.dvd_factorial`, used at `Infinite`:41 (`dvd_factorial (minFac_pos _) h`, so its premises are `0 < m` and `m ≤ n`, hence `m: int[1..]`). It is defined in `Mathlib/Data/Nat/Factorial/Basic.lean` (imported at `Infinite`:11), which this item did not read because the study does not cite it; its line numbers and line counts are not recorded here.
-- **`dvdFact`'s proof is `byInduction(n)`, not `using`.** `using` only instantiates cited laws at subterms of the goal and hypotheses (D:1122), so it cannot supply the claim at `n - 1`. The step unfolds `fact(n)` to `n * fact(n - 1)`: at `m == n` it needs `dvd(n, n * x)`, and at `m <= n - 1` the claim at `n - 1` and `dvd(m, x).implies(dvd(m, n * x))`. With `dvd` defined through `mod`, both are nonlinear, so the induction step needs these two divisibility laws [I].
+- `minFacPrime` is `Nat.minFac_prime` (`Defs`:286-288), 1 statement line and 2 proof lines in lean_counts.txt. Mathlib's proof: `prime_def_lt'` with `minFac_has_prop` and `Nat.dvd_trans`. In Zed: `isPrime(p)` unfolds to `p >= 2 && (2..<p).all(d -> p mod d != 0)`; the first conjunct is the result type; for the second, a d in `2..<p` with `p mod d == 0` divides n by `dvdTrans`, so `minFacLe` gives `p <= d`, against `d < p`. That argument is about one d at a time, and it is the law `minFacMin`; the proof of `minFacPrime` turns it into the `.all` by `allIntro` (next section), then closes `isPrime(minFac(n))` at rung 2 from the result type and the `.all` it has as a claim [I]. MATHLIB-minfac wrote this proof as `using(minFacDvd, minFacLe, dvdTrans)`. That cannot work: `using` chains forward from hypotheses (D:1122), and nothing it can add has the form `(2..<p).all(…)`. The written proof is 8 lines against Lean's 2, because Lean's `prime_def_lt'` already states primality as a property of each smaller number, which `isPrime`'s `.all` does not.
+- `minFacMin` has no Mathlib counterpart of its own: it is the step inside `Nat.minFac_prime`'s proof (`Defs`:286-288) that applies `minFac_le_of_dvd` to a divisor of `minFac n` through `Nat.dvd_trans`. Its binder `d: int[2..<minFac(n)]` has a range bound by the earlier binder, as in step L22.5's test `law impossible(n: int[0..], k: int[0..<n]) = false` (D:2638). The proof splits on `dvd(d, minFac(n))` with `#cases` on a `bool` expression (D:1122), written as step L15.5's test writes it (D:2508). In the arm `true` the chain reaches `minFac(n) <= d`, which with the binder's `d < minFac(n)` leaves no case, so `#domain` closes the goal. In the arm `false`, `dvd(d, minFac(n))` unfolds at `d >= 2` to `minFac(n) mod d == 0`, whose negation is the goal.
+- `dvdFact` is `Nat.dvd_factorial`, used at `Infinite`:42 (`dvd_factorial (minFac_pos _) h`, so its premises are `0 < m` and `m ≤ n`, hence `m: int[1..]`). It is defined in `Mathlib/Data/Nat/Factorial/Basic.lean` (imported at `Infinite`:11), which MATHLIB-minfac did not read because the study does not cite it. MATHLIB-euclid-gaps read it at the pinned commit: `Nat.dvd_factorial` is at lines 82-83, proved by `Nat.dvd_mul_right` and `factorial_dvd_factorial` (lines 77-80, an induction on `m ≤ n` whose step is `Nat.dvd_trans` with `Nat.dvd_mul_left`). lean_counts.txt has no row for it.
+- **`dvdFact`'s proof is `byInduction(n)`, not `using`.** `using` only instantiates cited laws at subterms of the goal and hypotheses (D:1122), so it cannot supply the claim at `n - 1`. The step unfolds `fact(n)` to `n * fact(n - 1)`: at `m == n` it needs `dvd(n, n * x)`, and at `m <= n - 1` the claim at `n - 1` and `dvd(m, x).implies(dvd(m, n * x))`. With `dvd` defined through `mod`, both are nonlinear, so the induction step needs these two divisibility laws [I]. They are `dvdMulRight` at `(n, fact(n - 1))` and `dvdMulLeftOfDvd` at `(m, fact(n - 1), n)`, written in the next section, the same two laws Mathlib's proof uses. Whether `byInduction(n)` finds them in its step without a citation is [I]: rung 3 uses every proved law in scope (D:1096), but `dvdMulLeftOfDvd` is an implication, which a rewrite does not apply. If it does not, the step is written as a `#chain` with a `#use` of each.
 
-**Still missing.**
-- The helper laws `dvdTrans` (Lean's `Nat.dvd_trans`) and the two divisibility laws of `dvdFact`'s step are cited but not written, like `gcdDvd`, `dvdGcd` and `dvdAntisymm` in theorems 9 and 10.
-- `minFacPrime` proves a `.all` over `2..<p`. The prelude states `allElim` but no introduction rule for `.all` (D:1122). Whether rung 5 or a `#cases` covers this is [I].
-- Theorem 11's list `using(anyIntro, minFacPrime, minFacDvd, dvdFact)` is not enough as copied. `Infinite`:42-43 also use `Nat.dvd_add_iff_right` and `Prime.not_dvd_one`: a p ≥ 2 that divides `fact(n)` cannot divide `fact(n) + 1`. `anyIntro` also needs `p <= fact(n) + 1`, which is `minFacLe` at `m = n`. The fix is to add `minFacLe` and a law such as `law notDvdSucc(d: int[2..], x: int[0..]) = !(dvd(d, x) && dvd(d, x + 1))` to theorem 11's list. The list above is left as the study wrote it.
+**Still missing.** The gaps that MATHLIB-minfac listed here (`dvdTrans`, the two laws of `dvdFact`'s step, an introduction rule for `.all`, and the two laws theorem 11's `using` list lacked) are written in the next section. What remains is that their proofs, and those of `dvdFact`, `minFacAuxDvd` and `minFacAuxLe`, are only claimed [I], as the next section states law by law.
 
 **What checks this.** zed-impl parses every `zed` fence of this file at the top ring (test `l01_07_fences::mathlib`), so the code above is checked for syntax only. Nothing runs or checks its meaning yet. `zedc test` refuses the unit for three reasons: parameter types are built from layer L10, recursion arrives at layer L6 (steps L6.4 and L6.7), and `law` is built from layer L15. Measured on 2026-11-07 with the types removed, `minFac`'s table still did not run, because of the recursion. The first step that can run `minFac`'s test table with the types removed is L6.7; with them it also needs layer L10. The laws are checked from L15.2 (laws enter the obligation record), with `using` at L15.7, `byInduction` on `int[lo..]` at L22.5, `@measure` at L17.1, and the theorems at proof grade at L33.3, whose test proves `isPrime` equal to a `minFac`-based test.
+
+## Divisibility laws, `.all` introduction and the `euclid` chain
+
+Written for item MATHLIB-euclid-gaps on 2026-11-07; this section is not copied from the study. The Lean sources were read at the two pinned commits from GitHub, as in the previous section: `Dvd` is Lean 4 core's `src/Init/Data/Nat/Dvd.lean`, and `Defs` and `Infinite` are the two Mathlib files of the previous section. `D:n` means line n of DESIGN.md at zed spec commit d3c2da0, as in the previous section.
+
+```zed
+law dvdRefl(a: int[0..]) = dvd(a, a);
+law dvdTrans(a: int[0..], b: int[0..], c: int[0..]) = (dvd(a, b) && dvd(b, c)).implies(dvd(a, c));
+law dvdMulRight(a: int[0..], b: int[0..]) = dvd(a, a * b);
+law dvdMulLeftOfDvd(a: int[0..], b: int[0..], c: int[0..]) = dvd(a, b).implies(dvd(a, c * b));
+law notDvdSucc(d: int[2..], x: int[0..]) = dvd(d, x).implies(!dvd(d, x + 1));
+
+law allIntro(m: K -> V, p: (V) -> bool where m.map(p) == m.map(v -> true)) = m.all(p) proof { byCollectionInduction(m) }
+
+law euclidChain(n: int[0..]) = (n..=fact(n) + 1).any(p -> isPrime(p)) proof {
+  #chain(steps: [
+    #use(rule: minFacPrime, args: [fact(n) + 1]),
+    #use(rule: minFacDvd, args: [fact(n) + 1]),
+    #use(rule: dvdRefl, args: [fact(n) + 1]),
+    #use(rule: minFacLe, args: [fact(n) + 1, fact(n) + 1]),
+    #cases(on: minFac(fact(n) + 1) <= n, arms: b -> match b {
+      true -> #chain(steps: [
+        #use(rule: dvdFact, args: [minFac(fact(n) + 1), n]),
+        #use(rule: notDvdSucc, args: [minFac(fact(n) + 1), fact(n)]),
+        #domain,
+      ], claims: [
+        dvd(minFac(fact(n) + 1), fact(n)),
+        !dvd(minFac(fact(n) + 1), fact(n) + 1),
+        n <= minFac(fact(n) + 1),
+      ]),
+      false -> #domain,
+    }),
+    #domain,
+    #use(rule: anyIntro, args: [minFac(fact(n) + 1), (n..=fact(n) + 1), (p -> isPrime(p))]),
+  ], claims: [
+    isPrime(minFac(fact(n) + 1)),
+    dvd(minFac(fact(n) + 1), fact(n) + 1),
+    dvd(fact(n) + 1, fact(n) + 1),
+    minFac(fact(n) + 1) <= fact(n) + 1,
+    n <= minFac(fact(n) + 1),
+    minFac(fact(n) + 1) in (n..=fact(n) + 1)::domain,
+    (n..=fact(n) + 1).any(p -> isPrime(p)),
+  ])
+}
+```
+
+**The divisibility laws.** Each states a Lean core law over `int[0..]`, with `dvd` as section 5 defines it (`d == 0` divides only 0; otherwise `n mod d == 0`). None has a `proof` clause. With `dvd` defined through `mod`, rung 2 writes `x mod a` as a remainder `r` with `x == a * q + r`, where `a * q` is a product atom (D:1093), and from such atoms it does not derive `r == 0` in any of these laws, so each needs a written proof [I]. They are in the same state as `gcdDvd`, `dvdGcd` and `dvdAntisymm`, which theorems 9 and 10 cite and nobody has written.
+- `dvdRefl` is `Nat.dvd_refl` (`Dvd`:19). `euclidChain` uses it at `fact(n) + 1`: it is the premise of `minFacLe` at `m = n = fact(n) + 1`, which gives the witness's upper end `minFac(fact(n) + 1) <= fact(n) + 1`.
+- `dvdTrans` is `Nat.dvd_trans` (`Dvd`:26-29). `minFacMin` uses it at `(d, minFac(n), n)`, so `minFacPrime`, and through it `euclidChain`, rest on it.
+- `dvdMulRight` is `Nat.dvd_mul_right` (`Dvd`:24), and `dvdMulLeftOfDvd` is `Nat.dvd_mul_left_of_dvd` (`Dvd`:31-32), with Lean's order of the factors in `c * b`. They are the two laws of `dvdFact`'s induction step (previous section), and Mathlib's proof of `Nat.dvd_factorial` uses the same two. `euclidChain` uses them only through `dvdFact`.
+- `notDvdSucc` replaces Mathlib's two steps at `Infinite`:43-44: `Nat.dvd_add_iff_right` (`Dvd`:52-53) gives `p ∣ 1` from `p ∣ n !` and `p ∣ n ! + 1`, and `Nat.Prime.not_dvd_one` (`Defs`:191-192) refutes it. A d that divides both x and `x + 1` divides 1, so `d <= 1`; the law needs only `d >= 2`, not that d is prime. It is an implication, not the conjunction `!(dvd(d, x) && dvd(d, x + 1))` that MATHLIB-minfac proposed, so that a `#use` and `using` can apply it forward from the hypothesis `dvd(d, x)`. `euclidChain` uses it at `(minFac(fact(n) + 1), fact(n))` in the case `minFac(fact(n) + 1) <= n`.
+
+**`allIntro`, an introduction rule for `.all`.** The prelude states `anyIntro`, `anyElim` and `allElim` (D:1122), each an implication whose premise a proof supplies as a hypothesis. An introduction rule for `.all` needs its premise at every key of `m`, and no constructor of `Proof` introduces a new binder for a key (D:1110-1119). The ladder does: rung 5 turns an equation between two collections into `f::domain == g::domain` and `f[k] == g[k]` at a new binder `k` in `f::domain` (D:1098). So `allIntro` puts its premise in the `where` clause of its binder `p`, as the collection equation `m.map(p) == m.map(v -> true)`: a `#use` adds, for each argument, the obligation that it lies in its binder's domain, `where` clause included (D:1352), and the ladder, not the proof, discharges that obligation. Rung 5 splits it into `p(m[k]) == true` at a new binder `k` in `m::domain`; the two domains are equal because `.map` keeps the keys [I].
+- **In `minFacPrime`**, `m` is the range `2..<minFac(n)`, a self-map whose values are its keys (D:3062), so each half of the split is `minFac(n) mod k != 0` with `k` in `2..<minFac(n)`, which is `minFacMin` at `(n, k)`. Rung 3 uses every proved law in scope (D:1096); that it uses a law whose statement is a `bool` expression, not an equation, as a rewrite to `true`, with the binder's range read from the hypotheses, is [I], since D:1096 does not say how such a law is used.
+- **Its own proof** is by `byCollectionInduction(m)` (D:1122): at the empty collection `.all` is `true` (D:2123), and adding one entry adds one conjunct to `m.all(p)` and one key to each side of the premise [I].
+- **It is not in the prelude.** D:1122 states only the three laws above, and step L15.7 builds them. Adding `allIntro` to the prelude is a spec change, which this item does not make; until then it is a library law that L33.3 writes.
+- `m: K -> V` takes a range because a range is a map (D:3062) [I: that a range value fills a binder of a map type].
+
+**`euclidChain`, the proof of theorem 11 written out.** It proves `euclid`'s statement by the kernel's rules alone, as `gcdCommChain` does for theorem 9. With N = `fact(n) + 1` and p = `minFac(N)`:
+1. `minFacPrime` and `minFacDvd` at N give `isPrime(p)` and `dvd(p, N)`. N fills `n: int[2..]` because `fact`'s result type is `int[1..]`, an obligation rung 2 discharges.
+2. `dvdRefl` and `minFacLe` at `(N, N)` give `p <= N`, the upper end.
+3. `#cases` on `p <= n` gives the lower end. In the arm `true`, `dvdFact` at `(p, n)` gives `dvd(p, fact(n))` (p fills `m: int[1..]` because `minFac`'s result type is `int[2..]`), `notDvdSucc` at `(p, fact(n))` gives `!dvd(p, fact(n) + 1)`, against step 1's `dvd(p, N)`, and `#domain` closes the goal with no case left. In the arm `false`, `n < p` gives `n <= p`. This is Mathlib's `le_of_not_ge` at `Infinite`:41.
+4. `#domain` turns `n <= p` and `p <= N` into `p in (n..=N)::domain`, a range's domain being the range itself (D:3062) [I: that rung 2 reads that membership as the two bounds].
+5. `anyIntro` at `(p, n..=N, (p -> isPrime(p)))` gives the goal. Its premise `k in m::domain && p(m[k])` is the conjunction of the claims of steps 4 and 1 once `m[k]` on a range is `k` and the function is applied [I: that canonical equality, D:1352, includes both]. D:1122 gives `anyIntro`'s statement but not its binders, so the chain assumes the binder order in which the statement first names them: `k`, `m`, `p`.
+- The proof takes 29 lines after the statement line; Lean's takes 9 (lean_counts.txt).
+
+**Theorem 11's one-line proof.** The `using` list of theorem 11 now names every law `euclidChain` cites. `using` as D:1122 defines it still does not find the proof, for two reasons. (1) It instantiates the cited laws' binders only with subterms of the goal and of the hypotheses it starts with. The witness `minFac(fact(n) + 1)` is neither, so `anyIntro`, `dvdFact` and `notDvdSucc` are never instantiated at it. (2) The lower end needs the case split of step 3, and forward chaining makes no case split. So L33.3 proves theorem 11 by `euclidChain`, or changes `using`. Two changes would do. For (1), `using` could take written terms, for example `using(anyIntro, …, at: [minFac(fact(n) + 1)])`, added to the subterms it instantiates with; the set stays fixed and finite, so the termination argument of D:1122 still holds. For (2), the laws could be stated in the direction forward chaining needs: `notDvdSucc` as `dvd(d, x + 1).implies(!dvd(d, x))` and the contrapositive of `dvdFact`, `(!dvd(m, fact(n))).implies(n < m)`, give `n < p` from `dvd(p, N)` with no case split. Both are spec or library decisions for L15.7 and L33.3, not made here.
+
+**What checks this.** As for the previous section: test `l01_07_fences::mathlib` parses every fence of this file, and it also checks that each law cited by a `#use` or `using` in `euclid`, `euclidChain`, `minFacPrime` and `minFacMin` is a prelude law or is written in a fence of this file. Nothing checks the laws' meaning before layer L15.
 
 ## Lean line counts (lean_counts.txt)
 
