@@ -106,7 +106,8 @@ fi
 # load 80 once the orbit tests (11 to 15 s each) joined it, and live3 at load 76 to 95, where
 # `slabs_of_million_coefficients_scale` takes 38 s alone (2026-11-05).
 # l01_38 shared and stages were added in UTVPI-union verify, where they took 49 and 36 s whole
-# at load 77 with the other modules running.
+# at load 77 with the other modules running. l01_39a scaling took 59 s alone at load 62, its
+# 29 tests together; the whole step 38 to 47 s at load 23 to 38 (2026-11-07, PA-let-check).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_subtyping l01_23_subtyping::scaling
@@ -116,6 +117,7 @@ split="
   l01_38_presburger::scaling l01_38_presburger::deep
   l01_38_presburger::names l01_38_presburger::live3
   l01_38_presburger::shared l01_38_presburger::stages
+  l01_39a_bit_words l01_39a_bit_words::scaling
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in

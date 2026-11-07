@@ -2878,10 +2878,10 @@ impl<'a> Ck<'_, 'a> {
         if s.bottom {
             return s;
         }
-        // Complexity tradeoff: only the binders the expression reads, and the one input of each
-        // summary, are bound, not the binders their values read in turn. A test of `x` with
-        // `y = n + 1; x = y + n` narrows `n` but not `y`. Binding the whole chain at each of
-        // `d` tests in a block of `d` lets costs `d²`.
+        // Only the binders the expression reads, and the one input of each summary, are bound:
+        // a test of `x` with `y = n + 1; x = y + n` narrows `n` but not `y`. Narrowing `y` from
+        // its summary over the narrowed `n`, summaries of parameters narrowed by `is`, and
+        // values that read two inputs are left to item PA-let-narrow.
         for &b in binders {
             let (Some(p), Some(name)) = (self.arms.bound.get(&b), self.arms.names.get(&b)) else {
                 continue;
