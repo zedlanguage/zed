@@ -362,7 +362,7 @@ fn each_answer_with_auxiliary_variables_is_the_answer_of_the_relation_alone() {
                 let Some(r) = scoped.relation(body, ps, ps, true) else {
                     continue;
                 };
-                let a = extending.defined(&r, &|n| scoped.def(n));
+                let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
                 let w = scoped.written(&r);
                 defined += usize::from(!w.defs.is_empty());
                 let with = |f: Formula| Formula::and(vec![w.defined(), f]);
@@ -405,8 +405,6 @@ fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relatio
     // the definitions it reaches has, decided whole over the names the user wrote.
     // No cycle of substitutions is written here: a function defined in terms of itself is
     // rejected below layer L6 ("recursion arrives at layer L6").
-    use zedc::store::presburger::extend::Extending;
-    use zedc::store::presburger::{Formula, decide};
     let units = [
         // A chain whose links move the argument, each by another constant.
         "s0(x: int) = x > 0 && x < 50;\ns1(x: int) = s0(x: x + 1) && x mod 3 == 0;\n\
@@ -470,44 +468,160 @@ fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relatio
          v0(x: int) = x != 2 && x != 5;\nv1(x: int) = v0(x: x) && v0(x: x + 1) && x > 0 && x < 9;",
     ];
     for src in units {
-        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
-        let cones = Cones::new(&unit);
-        let lets = lets(&unit);
-        let fs = functions(&unit);
-        let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
-        // In the unit's order and in the reverse, so that a caller is asked before its callee.
-        for order in [
-            (0..fs.len()).collect::<Vec<_>>(),
-            (0..fs.len()).rev().collect(),
-        ] {
-            let mut scoped = Scoped::new(&lets);
-            let mut extending = Extending::new();
-            for i in order {
-                let (name, ps, body) = fs[i];
-                let (expected, r) = match (
-                    closed(&cones, ps, body),
-                    scoped.relation(body, ps, ps, true),
-                ) {
-                    (Some(e), Some(r)) => (e, r),
-                    (None, None) => continue,
-                    (e, r) => panic!("`{name}`: {e:?} whole, {} read in the scope", r.is_some()),
-                };
-                let a = extending.defined(&r, &|n| scoped.def(n));
-                let w = scoped.written(&r);
-                for (got, f) in [
-                    (&a.holds, expected.body.clone()),
-                    (&a.fails, Formula::negate(expected.body.clone())),
-                ] {
-                    assert_eq!(*got, whole(&expected, f), "`{name}` in\n{src}\n{w}");
-                }
-                assert_eq!(
-                    whole(&w, w.body.clone()),
-                    a.holds,
-                    "`{name}` as written in\n{src}\n{w}"
-                );
+        answers_are_those_of_the_whole(src);
+    }
+}
+
+/// Checks that each answer of each function of `src`, read under one scope and decided from the
+/// answers of the conjunctions it extends, with each kept part read through its face where one
+/// is made (`Extending::defined_with`), is the one the body closed over the definitions it
+/// reaches has, decided whole over the names the user wrote; in the unit's order and in the
+/// reverse.
+fn answers_are_those_of_the_whole(src: &str) {
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let cones = Cones::new(&unit);
+    let lets = lets(&unit);
+    let fs = functions(&unit);
+    let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+    // In the unit's order and in the reverse, so that a caller is asked before its callee.
+    for order in [
+        (0..fs.len()).collect::<Vec<_>>(),
+        (0..fs.len()).rev().collect(),
+    ] {
+        let mut scoped = Scoped::new(&lets);
+        let mut extending = Extending::new();
+        for i in order {
+            let (name, ps, body) = fs[i];
+            let (expected, r) = match (
+                closed(&cones, ps, body),
+                scoped.relation(body, ps, ps, true),
+            ) {
+                (Some(e), Some(r)) => (e, r),
+                (None, None) => continue,
+                (e, r) => panic!("`{name}`: {e:?} whole, {} read in the scope", r.is_some()),
+            };
+            let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            let w = scoped.written(&r);
+            for (got, f) in [
+                (&a.holds, expected.body.clone()),
+                (&a.fails, Formula::negate(expected.body.clone())),
+            ] {
+                assert_eq!(*got, whole(&expected, f), "`{name}` in\n{src}\n{w}");
             }
+            assert_eq!(
+                whole(&w, w.body.clone()),
+                a.holds,
+                "`{name}` as written in\n{src}\n{w}"
+            );
         }
     }
+}
+
+/// The drifting chain of LOAD-call-summary, `q` and `p0` followed by `p{i}(x) = q(x: x) &&
+/// p{i-1}(x: x + 3) && x < 1000 i` for `i` in 1..n: `p{i-1}`'s point is its lowest `x`, which
+/// `x + 3` takes below `q`'s range, so each link extends `q`'s point with the chain beside it.
+fn drifting_chain(q: &str, n: usize) -> String {
+    let mut src = format!("{q}p0(x: int) = x > 0;\n");
+    for i in 1..n {
+        src.push_str(&drifting_link(i));
+    }
+    src
+}
+
+fn drifting_link(i: usize) -> String {
+    format!(
+        "p{i}(x: int) = q(x: x) && p{}(x: x + 3) && x < {};\n",
+        i - 1,
+        1000 * i
+    )
+}
+
+/// `n` as Zed writes it: a negative number as a difference, since a literal has no sign.
+fn lit(n: i64) -> String {
+    match n < 0 {
+        true => format!("(0 - {})", -n),
+        false => n.to_string(),
+    }
+}
+
+/// A random chain of conjunctions in the shape of the drifting chain: a callee `q` of a range
+/// and a remainder, which may hold nowhere, and links that move the argument by a random
+/// constant, bound it above, and may test a remainder or a quotient of their own, so that
+/// links hold or fail, and their points extend the chain's, `q`'s, or neither.
+fn random_chain(rng: &mut zed_tests::instances::Rng) -> String {
+    let a = rng.int(-5, 5);
+    let b = a + rng.int(-2, 60);
+    let m = rng.int(2, 5);
+    let mut src = format!(
+        "r(x: int) = x > {} && x < {};\nq(x: int) = r(x: x) && x mod {m} == {};\n\
+         p0(x: int) = x > {};\n",
+        lit(a),
+        lit(b),
+        rng.int(0, m),
+        lit(rng.int(-10, 10)),
+    );
+    for i in 1..rng.int(2, 7) {
+        let own = match rng.below(4) {
+            0 => {
+                let m = rng.int(2, 4);
+                format!(" && x mod {m} == {}", rng.int(0, m - 1))
+            }
+            1 => format!(" && x div 2 > {}", lit(rng.int(-5, 20))),
+            _ => String::new(),
+        };
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {}) && x < {}{own};\n",
+            i - 1,
+            lit(rng.int(-4, 4)),
+            lit(rng.int(-10, 120)),
+        ));
+    }
+    src
+}
+
+#[test]
+fn each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole() {
+    // LOAD-call-summary: chains whose links extend the point of a small callee beside the
+    // chain, which they read through its face. The drifting chain; the same with a
+    // disjunction in its callee, which has no face and is read whole (the Complexity tradeoff
+    // at `Extending::extend`, LOAD-disj-residue); a chain moving a second parameter beside a
+    // callee of the first; and random chains of the drifting chain's shape.
+    let r = "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n";
+    answers_are_those_of_the_whole(&drifting_chain(r, 30));
+    let disjunction = "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n";
+    answers_are_those_of_the_whole(&drifting_chain(disjunction, 30));
+    let mut second =
+        String::from("s(x: int) = x > 0 && x mod 3 == 1;\np0(y: int, x: int) = y > 0 && x > 0;\n");
+    for i in 1..30 {
+        second.push_str(&format!(
+            "p{i}(y: int, x: int) = s(x: x) && p{}(y: y + 3, x: x) && y < {};\n",
+            i - 1,
+            1000 * i
+        ));
+    }
+    answers_are_those_of_the_whole(&second);
+    let mut rng = zed_tests::instances::Rng::new(0x1c5a);
+    for _ in 0..60 {
+        answers_are_those_of_the_whole(&random_chain(&mut rng));
+    }
+}
+
+#[test]
+fn the_questions_of_a_drifting_chain_scale() {
+    // `p{i}(x) = q(x: x) && p{i-1}(x: x + 3) && x < 1000 i` beside `q(x) = r(x: x) && x mod 3
+    // == 1` (LOAD-call-summary): each link extends `q`'s point, which it read with the whole
+    // chain beside it before; now with the chain's face, `x >= 1`, `x mod 3 == 1` and the
+    // link's bound. 40 → 320: 83.9 times the bytes before, the chain read at each link (190
+    // MB → 15.9 GB, measured once), 8.2 now (40.9 MB → 334 MB).
+    questions_scale(
+        "a chain whose links extend a callee's point beside the chain",
+        40,
+        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
+         p0(x: int) = x > 0;\n",
+        drifting_link,
+    );
 }
 
 #[test]
@@ -593,7 +707,7 @@ fn each_answer_through_a_chain_of_definitions_is_the_answer_of_the_relation_alon
                 let Some(r) = scoped.relation(body, ps, ps, true) else {
                     continue;
                 };
-                let a = extending.defined(&r, &|n| scoped.def(n));
+                let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
                 let w = scoped.written(&r);
                 let with = |f: Formula| Formula::and(vec![w.defined(), f]);
                 assert_eq!(
@@ -789,7 +903,7 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
                 let Some(r) = scoped.relation(body, ps, ps, true) else {
                     continue;
                 };
-                let a = extending.defined(&r, &|n| scoped.def(n));
+                let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
                 let w = scoped.written(&r);
                 let with = |f: Formula| Formula::and(vec![w.defined(), f]);
                 agrees(

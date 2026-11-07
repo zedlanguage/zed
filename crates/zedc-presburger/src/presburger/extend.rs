@@ -17,11 +17,17 @@
 //! last definition and the atoms it does not define, made from the summary of the definition
 //! before, so separate tests over the links of one chain (`t{i}(x) = h{i}(x: x) > 0`, `h{i} =
 //! h{i-1} div 2 + 1`) read one definition and one summary each, not the chain.
+//!
+//! A kept conjunction whose caller reads it at a few atoms is read beside another kept part
+//! through its face (LOAD-call-summary): the conjunction and its definitions projected exactly
+//! onto those atoms, made from the faces of its own kept parts, so a link of a chain that
+//! extends the point of a small callee beside the chain (`p{i}(x) = q(x: x) && p{i-1}(x: x + 3)
+//! && x < 1000 * i`) reads O(1) rows, not the chain.
 
 use std::collections::{HashMap, HashSet};
 
-use super::formula::{Id, Rel};
-use super::{Atom, Con, Factor, Formula, Lin, Model, Refusal, decide, satisfiable, shadow};
+use super::formula::Rel;
+use super::{Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, satisfiable, shadow};
 use zedc_int::int::Int;
 
 /// Whether a formula holds somewhere and whether its negation does, each with the refusal that
@@ -38,10 +44,20 @@ pub struct Answers {
 /// O(log n) each, and copies nothing.
 type Point = imbl::OrdMap<Atom, Int>;
 
+/// A set of atoms, shared: the atoms of a conjunction are its largest part's with the others'
+/// added, O(log n) each, and copy nothing.
+type Atoms = imbl::OrdSet<Atom>;
+
+/// The atoms a caller reads of each kept part, by the part: those its call binds
+/// ([`Extending::defined_with`]), `None` for a part no call binds.
+pub type Interface<'a> = &'a dyn Fn(&Formula) -> Option<Vec<Atom>>;
+
 /// What is remembered of a decided conjunction: its answers, and a point where it and its
 /// definitions hold when it holds and the solver gave one. The point gives a value to every
 /// atom of the conjunction and of its definitions, so that a part added beside it, with
-/// atoms of its own, is met by giving values to those alone.
+/// atoms of its own, is met by giving values to those alone; but a point found with a kept
+/// part read through its face ([`Face`]) gives none to the atoms the face projects out, which a
+/// question that reads one may not use ([`given`]).
 struct Known {
     answers: Answers,
     point: Option<Point>,
@@ -51,6 +67,19 @@ struct Known {
     /// How many atoms it holds, its parts' counted once for each part they are in: which of
     /// two kept parts is the larger ([`Extending::extend`]).
     size: usize,
+    /// Every atom of the conjunction and of the definitions it reaches.
+    closure: Atoms,
+}
+
+/// A kept conjunction and the definitions it reaches, projected exactly onto the atoms its
+/// caller reads ([`Interface`]), with every atom [`shadow`] does not eliminate kept: a point of
+/// `rows` extends to a point of the conjunction and its definitions with the same values on
+/// `atoms`, and on no other atom, so the rows stand for the conjunction in a question that
+/// reads none of its other atoms. Rows of atoms none of the caller's reads are dropped, since
+/// the conjunction holds and so they hold somewhere apart.
+struct Face {
+    rows: Vec<Con>,
+    atoms: HashSet<Atom>,
 }
 
 /// The answers of conjunctions decided so far, by the part each is, and the summaries of the
@@ -59,6 +88,7 @@ struct Known {
 pub struct Extending {
     known: HashMap<Id, Known>,
     sums: Summaries,
+    faces: Faces,
 }
 
 /// The definitions a definition reaches, projected exactly: by the definition (the formula
@@ -153,6 +183,21 @@ impl Extending {
     // q(x: 2 * x)`, `q` failing at odd values alone) and whose other parts never fail: decided
     // whole (LOAD-chain-affine).
     pub fn defined(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Answers {
+        self.defined_with(f, def, &|_| None)
+    }
+
+    /// [`Extending::defined`], where `iface` gives the atoms a caller reads of each kept part
+    /// (the canonical atoms a claimed call binds, or the atoms of the arguments of a callee's
+    /// body read again: `preimage::Scoped::interface`), so that a link whose point is found
+    /// beside a kept part reads that part through its face (`Face`, LOAD-call-summary). The
+    /// answers are those [`Extending::defined`] gives, since each face is exact; every formula
+    /// asked of one `Extending` is read with the same `iface`.
+    pub fn defined_with(
+        &mut self,
+        f: &Formula,
+        def: &dyn Fn(u32) -> Formula,
+        iface: Interface,
+    ) -> Answers {
         // The kept conjunctions under `f` not yet known, each decided after every one it holds
         // (LOAD-chain-affine: `q(x: x) && p(x: x + 1)` holds two), so that the largest is kept:
         // an explicit stack, since the conjunctions nest as deep as the chain of calls. The
@@ -163,7 +208,8 @@ impl Extending {
                 continue;
             }
             if after {
-                let k = self.extend(&g, def);
+                let mut k = self.extend(&g, def, iface);
+                k.closure = self.closure(&g, def);
                 self.known.insert(Id::any(&g), k);
                 continue;
             }
@@ -187,7 +233,7 @@ impl Extending {
     /// part, among its conjunctions kept whole, with the most atoms, the first of those with as
     /// many, so that a call of a small function beside a long chain (`q(x: x) && p(x: x + 1)`)
     /// extends the chain and reads `q` beside it (LOAD-chain-affine). O(its parts).
-    fn extend(&mut self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
+    fn extend(&mut self, g: &Formula, def: &dyn Fn(u32) -> Formula, iface: Interface) -> Known {
         let kids = g.kids();
         // The kept parts, the largest first, the first of those with as many.
         let mut parts: Vec<(usize, &Known)> = Vec::new();
@@ -231,6 +277,27 @@ impl Extending {
         // `l01_38_presburger::one_scope::each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relation_whole`
         // (the chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3)`).
         // COMPLEXITY.md row LOAD-chain-affine.
+        // A part other than the largest is tried with each other kept part read through its face
+        // where one is made and nothing beside it reads an atom it projects out ([`Face`],
+        // LOAD-call-summary), so the drifting chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3) && x
+        // < 1000 * i`, whose `q` point serves each link, reads O(1) rows a link and not the
+        // chain (160 links: 1.80 s before, 0.13 s now; test
+        // `l01_38_presburger::one_scope::the_questions_of_a_drifting_chain_scale`). Each face is exact, so the point is
+        // found where the whole one would be; where the solver refuses the question with faces,
+        // or none is read, the question is asked with the parts themselves, as before.
+        // Complexity tradeoff: a kept part with no face is read whole, as before: one that
+        // holds a disjunction or a negation (an `if`, `min`, `max`, `abs`, `!=`, an `||`, a
+        // `div` or `mod` by a variable, whose definition is one disjunct per sign), a product,
+        // a let-bound name (no call binds it, so its caller's atoms are not known), one that
+        // does not hold, and one beside which an atom it projects out is read. Why:
+        // projecting a disjunction keeps a disjunct for each of its cases, which doubles at
+        // each link of a chain; the exact face is small (`(x mod 3 == 1 || x mod 5 == 2)`
+        // repeats every 15 values) but needs the disjuncts merged by their residues modulo
+        // the least common multiple of the moduli. Trigger: the chain above with `q = (x mod
+        // 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000`: 0.224, 0.910 and 4.576 s at 40,
+        // 80 and 160 links (measured once, debug). Test
+        // `l01_38_presburger::one_scope::each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole`.
+        // COMPLEXITY.md row LOAD-call-summary; LOAD-disj-residue is the complete solution.
         let mut holds = None;
         for &(j, k) in &parts {
             let (Ok(true), Some(m)) = (&k.answers.holds, &k.point) else {
@@ -240,6 +307,19 @@ impl Extending {
                 }
                 continue;
             };
+            if j != at {
+                let others = (kids.iter().enumerate()).filter(|&(i, _)| i != j);
+                self.faces
+                    .make(&self.known, others.map(|(_, h)| h), def, iface);
+                match self.faces.met(&self.known, kids, j, m, def) {
+                    Some(Ok(Some(p))) => {
+                        holds = Some((Ok(true), Some(p)));
+                        break;
+                    }
+                    Some(Ok(None)) => continue,
+                    Some(Err(_)) | None => {}
+                }
+            }
             let rest_j = match j == at {
                 true => rest.clone(),
                 false => Formula::and(
@@ -249,7 +329,10 @@ impl Extending {
                         .collect(),
                 ),
             };
-            if let Some(p) = met(m, &new(&rest_j, m)) {
+            let f = new(&rest_j, m);
+            if given(&k.closure, m, &f)
+                && let Ok(Some(p)) = met(m, &f)
+            {
                 holds = Some((Ok(true), Some(p)));
                 break;
             }
@@ -272,8 +355,11 @@ impl Extending {
             // atoms, and the part's definitions hold there for some value of their variables.
             // Otherwise it is decided whole.
             Ok(true) => {
-                let extended = (part.miss.as_ref())
-                    .and_then(|m| met(m, &with(&reached_past(&rest, def, m), Formula::top())));
+                let extended = (part.miss.as_ref()).and_then(|m| {
+                    met(m, &with(&reached_past(&rest, def, m), Formula::top()))
+                        .ok()
+                        .flatten()
+                });
                 match extended {
                     Some(p) => (Ok(true), Some(p)),
                     None => match decide_defined(&mut self.sums, not, def) {
@@ -287,7 +373,7 @@ impl Extending {
                     let f = new(&not, m);
                     match decide(&f) {
                         Ok(false) => Some((false, None)),
-                        _ => met(m, &f).map(|p| (true, Some(p))),
+                        _ => met(m, &f).ok().flatten().map(|p| (true, Some(p))),
                     }
                 });
                 match short {
@@ -305,8 +391,406 @@ impl Extending {
             point,
             miss,
             size: part.size + rest.atoms().len(),
+            closure: Atoms::new(),
         }
     }
+
+    /// The atoms of the conjunction `g`, whose kept parts are known, and of the definitions it
+    /// reaches: its largest kept part's, with the others' added, the atoms of its other parts,
+    /// and those of the definitions they reach past these. O(log n) for each atom added, so a
+    /// chain of n links costs O(n log n) in all, each link's own atoms added once.
+    fn closure(&self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Atoms {
+        let mut parts: Vec<&Atoms> = Vec::new();
+        let mut own: Vec<Atom> = Vec::new();
+        for h in g.kids() {
+            match h {
+                Formula::And(_) if let Some(k) = self.known.get(&Id::any(h)) => {
+                    parts.push(&k.closure)
+                }
+                _ => own.extend(h.atoms()),
+            }
+        }
+        parts.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        let mut out = parts.first().map(|&s| s.clone()).unwrap_or_default();
+        for s in parts.iter().skip(1) {
+            out.extend(s.iter().cloned());
+        }
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut todo: Vec<u32> = own.iter().flat_map(auxes).collect();
+        out.extend(own);
+        while let Some(n) = todo.pop() {
+            if !seen.insert(n) || parts_hold(&parts, n) {
+                continue;
+            }
+            let d = def(n);
+            let atoms = d.atoms();
+            todo.extend(atoms.iter().flat_map(auxes));
+            out.extend(atoms);
+        }
+        out
+    }
+}
+
+/// The faces of the kept conjunctions, each once asked: `None` where none is made.
+#[derive(Default)]
+struct Faces {
+    by: HashMap<Id, Option<Face>>,
+}
+
+impl Faces {
+    /// The faces of the kept parts among `roots` and of the kept parts under them, each made
+    /// once, after those of its own kept parts: an explicit stack, since the parts nest as deep
+    /// as the chain of calls, and the faces made are the visited set.
+    fn make<'f>(
+        &mut self,
+        known: &HashMap<Id, Known>,
+        roots: impl Iterator<Item = &'f Formula>,
+        def: &dyn Fn(u32) -> Formula,
+        iface: Interface,
+    ) {
+        let unmade = |by: &HashMap<Id, Option<Face>>, h: &Formula| {
+            matches!(h, Formula::And(_))
+                && known.contains_key(&Id::any(h))
+                && !by.contains_key(&Id::any(h))
+        };
+        let mut stack: Vec<Formula> = roots.filter(|h| unmade(&self.by, h)).cloned().collect();
+        while let Some(g) = stack.last() {
+            if !unmade(&self.by, g) {
+                stack.pop();
+                continue;
+            }
+            let below: Vec<Formula> = (g.kids().iter())
+                .filter(|h| unmade(&self.by, h))
+                .cloned()
+                .collect();
+            if !below.is_empty() {
+                stack.extend(below);
+                continue;
+            }
+            let face = self.face(known, g, def, iface);
+            self.by.insert(Id::any(g), face);
+            stack.pop();
+        }
+    }
+
+    /// The face of the known conjunction `g`, whose kept parts' faces are made: `shadow` of its
+    /// constraints, the definitions they reach past its kept parts, and its kept parts' faces,
+    /// onto the atoms its caller reads. Exact: each part's face stands for it where nothing
+    /// else read with it reads an atom the face projects out, which is checked, and `shadow`
+    /// eliminates an atom only where that is exact. `None` where `g` does not hold, no call
+    /// binds it, it or a definition it reaches holds a disjunction, a negation or a product, or
+    /// a kept part has no face or is read at an atom its face projects out. Time of `g`'s own
+    /// parts and definitions and of its parts' faces, and, for each two kept parts, of the
+    /// smaller of their atoms.
+    fn face(
+        &self,
+        known: &HashMap<Id, Known>,
+        g: &Formula,
+        def: &dyn Fn(u32) -> Formula,
+        iface: Interface,
+    ) -> Option<Face> {
+        let k = known.get(&Id::any(g))?;
+        if k.answers.holds != Ok(true) {
+            return None;
+        }
+        let keep: HashSet<Atom> = iface(g)?.into_iter().collect();
+        let mut rows: Vec<Con> = Vec::new();
+        let mut parts: Vec<(&Known, &Face)> = Vec::new();
+        for h in g.kids() {
+            match h {
+                Formula::Con(c) => rows.push(c.clone()),
+                Formula::And(_) => {
+                    let id = Id::any(h);
+                    parts.push((known.get(&id)?, self.by.get(&id)?.as_ref()?));
+                }
+                _ => return None,
+            }
+        }
+        // The definitions its own constraints reach past its kept parts, whose own are in
+        // their faces.
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut todo: Vec<u32> = (rows.iter())
+            .flat_map(|c| c.lin.terms.keys().flat_map(auxes).collect::<Vec<_>>())
+            .collect();
+        while let Some(n) = todo.pop() {
+            let a = Atom::Aux(n);
+            if !seen.insert(n) || parts.iter().any(|(p, _)| p.closure.contains(&a)) {
+                continue;
+            }
+            for c in constraints(&def(n))? {
+                todo.extend(c.lin.terms.keys().flat_map(auxes));
+                rows.push(c.clone());
+            }
+        }
+        let own: HashSet<Atom> = (rows.iter())
+            .flat_map(|c| c.lin.terms.keys().cloned())
+            .collect();
+        if own.iter().any(|a| matches!(a, Atom::Product(..))) {
+            return None;
+        }
+        for (i, &(p, face)) in parts.iter().enumerate() {
+            let others = (parts.iter().enumerate()).filter(|&(j, _)| j != i);
+            if own.iter().any(|a| hidden(p, face, a))
+                || others
+                    .into_iter()
+                    .any(|(_, (o, _))| !apart(&o.closure, p, face))
+            {
+                return None;
+            }
+        }
+        for (_, face) in &parts {
+            rows.extend(face.rows.iter().cloned());
+        }
+        let rows = shadow(&rows, &|a| keep.contains(a), true)?;
+        Some(Face::of(rows, &keep))
+    }
+
+    /// A point of the conjunction `g` (whose parts are `kids`) that extends the point `m` of its
+    /// kept part `kids[j]`, found with each other kept part that has a face read through it,
+    /// with the definitions the question reaches past `m` and those faces' parts: `None` when
+    /// no other part has a face or an atom a face projects out is read beside it, and
+    /// otherwise what [`met`] gives, `Ok(None)` too when the question reads an atom of the part
+    /// `m` gives no value ([`given`]). Time of the faces, the other parts and the definitions
+    /// reached, and, for each part read through its face, of the smaller of its atoms and each
+    /// other part's.
+    fn met(
+        &self,
+        known: &HashMap<Id, Known>,
+        kids: &[Formula],
+        j: usize,
+        m: &Point,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> Option<Result<Option<Point>, Refusal>> {
+        let kj = &known[&Id::any(&kids[j])];
+        let mut faced: Vec<(&Known, &Face)> = Vec::new();
+        let mut whole: Vec<&Known> = vec![kj];
+        let mut rows: Vec<Formula> = Vec::new();
+        let mut beside: HashSet<Atom> = HashSet::new();
+        for (i, h) in kids.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let id = matches!(h, Formula::And(_)).then(|| Id::any(h));
+            let k = id.as_ref().and_then(|id| known.get(id));
+            match k.and_then(|k| Some((k, self.by.get(id.as_ref()?)?.as_ref()?))) {
+                Some((k, face)) => {
+                    faced.push((k, face));
+                    rows.extend(face.rows.iter().cloned().map(Formula::Con));
+                }
+                None => {
+                    match k {
+                        Some(k) => whole.push(k),
+                        None => beside.extend(h.atoms()),
+                    }
+                    rows.push(h.clone());
+                }
+            }
+        }
+        if faced.is_empty() {
+            return None;
+        }
+        let base = Formula::and(rows);
+        let past = |a: &Atom| m.contains_key(a) || faced.iter().any(|(k, _)| k.closure.contains(a));
+        let defs = reached_by(&base, def, &past);
+        for d in &defs {
+            beside.extend(d.atoms());
+        }
+        for (i, &(k, face)) in faced.iter().enumerate() {
+            let others = (faced.iter().enumerate())
+                .filter(|&(n, _)| n != i)
+                .map(|(_, (o, _))| *o);
+            if beside.iter().any(|a| hidden(k, face, a))
+                || (whole.iter().copied().chain(others)).any(|o| !apart(&o.closure, k, face))
+            {
+                return None;
+            }
+        }
+        let f = with(&defs, base);
+        if !given(&kj.closure, m, &f) {
+            return Some(Ok(None));
+        }
+        Some(met(m, &f))
+    }
+}
+
+impl Face {
+    /// The face of `rows`, a projection onto `keep` of a conjunction that holds: each row once,
+    /// and the rows of each group linked by shared atoms that reads none of `keep` dropped,
+    /// since the conjunction holds and so each such group holds somewhere apart. Time of the
+    /// rows, near linear.
+    fn of(rows: Vec<Con>, keep: &HashSet<Atom>) -> Face {
+        let rows: Vec<Con> = (rows.into_iter())
+            .filter(|c| !c.lin.terms.is_empty())
+            .collect::<std::collections::BTreeSet<Con>>()
+            .into_iter()
+            .collect();
+        let rows = congruences_once(rows, keep);
+        // The groups, by a union of the atoms each row reads: each atom's index, and the
+        // index each points to, followed to its group's by halving.
+        let mut index: HashMap<&Atom, usize> = HashMap::new();
+        for c in &rows {
+            for a in c.lin.terms.keys() {
+                let n = index.len();
+                index.entry(a).or_insert(n);
+            }
+        }
+        let mut up: Vec<usize> = (0..index.len()).collect();
+        fn root(up: &mut [usize], mut a: usize) -> usize {
+            while up[a] != a {
+                up[a] = up[up[a]];
+                a = up[a];
+            }
+            a
+        }
+        for c in &rows {
+            let mut atoms = c.lin.terms.keys().map(|a| index[a]);
+            let first = atoms.next().expect("a row with an atom");
+            for a in atoms {
+                let (r, s) = (root(&mut up, first), root(&mut up, a));
+                up[s] = r;
+            }
+        }
+        let kept: HashSet<usize> = (keep.iter())
+            .filter_map(|a| index.get(a).copied())
+            .map(|a| root(&mut up, a))
+            .collect();
+        let read: Vec<bool> = (rows.iter())
+            .map(|c| {
+                let a = c.lin.terms.keys().next().expect("a row with an atom");
+                kept.contains(&root(&mut up, index[a]))
+            })
+            .collect();
+        drop(index);
+        let rows: Vec<Con> = (rows.into_iter().zip(read))
+            .filter_map(|(c, r)| r.then_some(c))
+            .collect();
+        let atoms = (rows.iter())
+            .flat_map(|c| c.lin.terms.keys().cloned())
+            .collect();
+        Face { rows, atoms }
+    }
+}
+
+/// `rows` with each congruence said once. An equality that reads an atom outside `keep` no other
+/// row reads says only that the rest of its term is a multiple of that atom's coefficient: the
+/// atom is a quotient `shadow` could not eliminate, since it substitutes unit equalities only.
+/// Of the rows that say the same congruence one is kept, and a row whose congruence always
+/// holds is dropped; this keeps the face of a chain of `x mod 3 == 1` tests at one row however
+/// long the chain (LOAD-call-summary). Exact: the dropped row's lone atom is read nowhere else,
+/// so the rows kept, with that atom projected out, say the same of every other atom. Time of
+/// the rows, near linear.
+fn congruences_once(rows: Vec<Con>, keep: &HashSet<Atom>) -> Vec<Con> {
+    /// The terms and constant of a congruence, each a residue modulo `modulus`.
+    #[derive(PartialEq, Eq, Hash)]
+    struct Congruence {
+        modulus: Int,
+        terms: Vec<(Atom, Int)>,
+        constant: Int,
+    }
+    enum Says {
+        Row,
+        Nothing,
+        Congruence(Congruence),
+    }
+    let mut reads: HashMap<&Atom, usize> = HashMap::new();
+    for c in &rows {
+        for a in c.lin.terms.keys() {
+            *reads.entry(a).or_default() += 1;
+        }
+    }
+    let says: Vec<Says> = (rows.iter())
+        .map(|c| {
+            let lone = (c.lin.terms.iter()).find(|(a, _)| reads[a] == 1 && !keep.contains(*a));
+            let (Rel::Eq, Some((q, d))) = (c.rel, lone) else {
+                return Says::Row;
+            };
+            let d = d.abs();
+            // The residues of the rest of the term and of its negation; the smaller names the
+            // congruence, which the two say alike.
+            let residues = |sign: &Int| {
+                let terms: Vec<(Atom, Int)> = (c.lin.terms.iter())
+                    .filter(|(a, _)| *a != q)
+                    .map(|(a, e)| (a.clone(), (e * sign).mod_floor(&d)))
+                    .filter(|(_, r)| !r.is_zero())
+                    .collect();
+                (terms, (&c.lin.constant * sign).mod_floor(&d))
+            };
+            let (terms, constant) = residues(&Int::from(1)).min(residues(&Int::from(-1)));
+            match (terms.is_empty(), constant.is_zero()) {
+                (true, true) => Says::Nothing,
+                // A congruence that never holds: kept, though a face is made only where its
+                // rows hold.
+                (true, false) => Says::Row,
+                (false, _) => Says::Congruence(Congruence {
+                    modulus: d,
+                    terms,
+                    constant,
+                }),
+            }
+        })
+        .collect();
+    drop(reads);
+    let mut said: HashSet<Congruence> = HashSet::new();
+    (rows.into_iter().zip(says))
+        .filter_map(|(c, s)| match s {
+            Says::Row => Some(c),
+            Says::Nothing => None,
+            Says::Congruence(k) => said.insert(k).then_some(c),
+        })
+        .collect()
+}
+
+/// Whether the closure of a kept part holds the auxiliary variable `n`, so that its definition
+/// is among the part's atoms already.
+fn parts_hold(parts: &[&Atoms], n: u32) -> bool {
+    parts.iter().any(|s| s.contains(&Atom::Aux(n)))
+}
+
+/// The constraints of a definition, a conjunction of constraints: `None` for one that holds
+/// a disjunction or a negation.
+fn constraints(d: &Formula) -> Option<Vec<&Con>> {
+    match d {
+        Formula::Con(c) => Some(vec![c]),
+        Formula::And(gs) => (gs.iter())
+            .map(|h| match h {
+                Formula::Con(c) => Some(c),
+                _ => None,
+            })
+            .collect(),
+        Formula::Not(_) | Formula::Or(_) => None,
+    }
+}
+
+/// Whether `a` is an atom of the part `k` that its face projects out.
+fn hidden(k: &Known, face: &Face, a: &Atom) -> bool {
+    k.closure.contains(a) && !face.atoms.contains(a)
+}
+
+/// Whether no atom of `atoms` is one the face of the part `k` projects out: the smaller side
+/// read, each atom looked up in the other.
+fn apart(atoms: &Atoms, k: &Known, face: &Face) -> bool {
+    match atoms.len() <= k.closure.len() {
+        true => !atoms.iter().any(|a| hidden(k, face, a)),
+        false => !(k.closure.iter())
+            .filter(|a| !face.atoms.contains(*a))
+            .any(|a| atoms.contains(a)),
+    }
+}
+
+/// Whether the point `m` of a part whose atoms are `closure` gives a value to every atom of the
+/// part that `f` reads, with the factors of its products: a point found with a part read
+/// through its face gives none to the atoms the face projects out, and a question that reads
+/// one would be met at a value the part may not hold at. Time of `f`, O(log n) an atom.
+fn given(closure: &Atoms, m: &Point, f: &Formula) -> bool {
+    f.atoms().iter().all(|a| {
+        let factors = auxes(a).map(Atom::Aux).chain(match a {
+            Atom::Product(f, g) => vec![f.atom(), g.atom()],
+            Atom::Sym(_) | Atom::Aux(_) => Vec::new(),
+        });
+        std::iter::once(a.clone())
+            .chain(factors)
+            .all(|b| !closure.contains(&b) || m.contains_key(&b))
+    })
 }
 
 /// The auxiliary variables of an atom.
@@ -335,11 +819,22 @@ fn reached(f: &Formula, def: &dyn Fn(u32) -> Formula) -> Vec<Formula> {
 /// its auxiliary variables not in `m`, and of theirs. Time of `f` and of the definitions read,
 /// each read once, and O(log n) for each variable looked up in `m`.
 fn reached_past(f: &Formula, def: &dyn Fn(u32) -> Formula, m: &Point) -> Vec<Formula> {
+    reached_by(f, def, &|a| m.contains_key(a))
+}
+
+/// The definitions `f` reaches through the auxiliary variables not `past`: those of its
+/// auxiliary variables not `past`, and of theirs. Time of `f` and of the definitions read, each
+/// read once, and of `past` for each variable.
+fn reached_by(
+    f: &Formula,
+    def: &dyn Fn(u32) -> Formula,
+    past: &dyn Fn(&Atom) -> bool,
+) -> Vec<Formula> {
     let mut seen: HashSet<u32> = HashSet::new();
     let mut todo: Vec<u32> = f.atoms().iter().flat_map(auxes).collect();
     let mut out = Vec::new();
     while let Some(n) = todo.pop() {
-        if !seen.insert(n) || m.contains_key(&Atom::Aux(n)) {
+        if !seen.insert(n) || past(&Atom::Aux(n)) {
             continue;
         }
         let d = def(n);
@@ -365,9 +860,10 @@ fn with(defs: &[Formula], f: Formula) -> Formula {
 
 /// A point where `f` holds that gives each atom of `m` its value there: `m` itself, each atom of
 /// `f` it does not hold given 0, when `f` holds at it; otherwise `m` with the values of a point
-/// the solver gives `f` with the atoms of `m` fixed to their values. `None` when neither is
-/// found. Time of `f`, and O(log n) for each atom added to `m`.
-fn met(m: &Point, f: &Formula) -> Option<Point> {
+/// the solver gives `f` with the atoms of `m` fixed to their values. `Ok(None)` when `f` holds
+/// nowhere with them so fixed, and the refusal when the solver refuses that question. Time of
+/// `f`, and O(log n) for each atom added to `m`.
+fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
     let atoms = f.atoms();
     // The values `f` reads at `m`, with the factors of its products.
     let mut at = Model::new();
@@ -387,21 +883,23 @@ fn met(m: &Point, f: &Formula) -> Option<Point> {
         for a in atoms {
             out.entry(a).or_default();
         }
-        return Some(out);
+        return Ok(Some(out));
     }
     let mut fixed = vec![f.clone()];
     for a in atoms.iter().filter(|&a| m.contains_key(a)) {
         let v = Lin::constant(m[a].clone());
         fixed.push(Formula::Con(Con::eq(&Lin::atom(a.clone()), &v)));
     }
-    let found = satisfiable(&Formula::and(fixed)).ok()??;
+    let Some(found) = satisfiable(&Formula::and(fixed))? else {
+        return Ok(None);
+    };
     for a in atoms {
         if !m.contains_key(&a) {
             let v = found.get(&a).cloned().unwrap_or_default();
             out.insert(a, v);
         }
     }
-    Some(out)
+    Ok(Some(out))
 }
 
 /// Whether `g` and its definitions hold somewhere, decided whole, with a point when they hold
@@ -457,6 +955,7 @@ fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Kno
         point,
         miss,
         size: g.atoms().len(),
+        closure: Atoms::new(),
     }
 }
 

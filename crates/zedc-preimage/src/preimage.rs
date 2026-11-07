@@ -1153,6 +1153,19 @@ impl<'t> Scoped<'t> {
         body
     }
 
+    /// The atoms a caller reads of `f`, a part of a relation [`Scoped::relation`] gave, when a
+    /// call gave it: the canonical atoms its claimed call binds, or the atoms of the arguments
+    /// its callee's body was read again at; `None` for another part, as a let-bound name's. The
+    /// interface [`presburger::extend::Extending::defined_with`] reads (LOAD-call-summary).
+    /// Time of the atoms.
+    pub fn interface(&self, f: &Formula) -> Option<Vec<presburger::Atom>> {
+        if matches!(f, Formula::Con(_)) {
+            return None;
+        }
+        let atoms = self.tr.interfaces.get(&presburger::Id::any(f))?;
+        Some(atoms.iter().cloned().collect())
+    }
+
     /// The formula that defines the auxiliary variable `n` of a relation [`Scoped::relation`]
     /// gave, over the atoms it is made of: for the remainder of a pair, its quotient's, which
     /// defines both. Each holds for some value of `n` whatever the values of those atoms, as
@@ -1434,6 +1447,11 @@ struct Tr {
     claims: HashMap<At, (Vec<Lin>, u32)>,
     /// The keys of `claims`, in the order made, as `made` is for `pairs`.
     claimed: Vec<At>,
+    /// The atoms a caller reads of each relation a call of a function gave, by the relation:
+    /// the canonical atoms a claimed call binds, and the atoms of the arguments of a callee's
+    /// body read again ([`Scoped::interface`], LOAD-call-summary). Kept when definitions are
+    /// undone, since a stale entry only names atoms no question reads.
+    interfaces: HashMap<presburger::Id, HashSet<presburger::Atom>>,
 }
 
 impl Tr {
@@ -1448,6 +1466,7 @@ impl Tr {
             cased: Vec::new(),
             claims: HashMap::new(),
             claimed: Vec::new(),
+            interfaces: HashMap::new(),
         }
     }
 
@@ -1478,6 +1497,18 @@ impl Tr {
         {
             self.claims.remove(lam);
             self.claimed.pop();
+        }
+    }
+
+    /// Records that a caller reads the relation `f` of a call at the atoms of `at`, where `f`
+    /// is a conjunction, a part a caller's relation may keep whole.
+    fn bound(&mut self, f: &Formula, at: &[Lin]) {
+        if matches!(f, Formula::And(_)) {
+            let atoms = at.iter().flat_map(|l| l.terms.keys().cloned());
+            self.interfaces
+                .entry(presburger::Id::any(f))
+                .or_default()
+                .extend(atoms);
         }
     }
 
@@ -6225,9 +6256,12 @@ impl<'m, 't> Walk<'m, 't> {
         if let Some(key) = self.claimable(ps, &k) {
             // A key equal to the call's own is the entry being made, so read it here.
             if key == k.1 {
-                return self
-                    .canonical_formula_read(t, ps, (body, lam), Some((args, env)), key)
-                    .await;
+                let f = self.canonical_formula_read(t, ps, (body, lam), Some((args, env)), key);
+                let f = f.await;
+                if let Some(f) = &f {
+                    self.tr(|tr| tr.bound(f, &k.1));
+                }
+                return f;
             }
             let canonical =
                 self.canonical_formula(t, ps, (body, lam), Some((args, env)), key.clone());
@@ -6241,6 +6275,7 @@ impl<'m, 't> Walk<'m, 't> {
             }
             if let Some(r) = r {
                 if let Some(b) = self.binding((body, lam), &k.1, &key, None) {
+                    self.tr(|tr| tr.bound(&r, &key));
                     let b =
                         Formula::Con(Con::eq(&Lin::atom(Atom::Aux(b)), &Lin::constant(b as i64)));
                     return Some(Formula::and_keeping(vec![r, b], |i| i == 0));
@@ -6253,12 +6288,18 @@ impl<'m, 't> Walk<'m, 't> {
                         Some(Formula::Con(Con { lin, rel: c.rel }))
                     });
                     if let Some(parts) = at.collect::<Option<Vec<_>>>() {
-                        return Some(Formula::and(parts));
+                        let f = Formula::and(parts);
+                        self.tr(|tr| tr.bound(&f, &k.1));
+                        return Some(f);
                     }
                 }
             }
         }
-        self.formula_call(t, ps, (body, lam), args, env).await
+        let f = self.formula_call(t, ps, (body, lam), args, env).await;
+        if let Some(f) = &f {
+            self.tr(|tr| tr.bound(f, &k.1));
+        }
+        f
     }
 
     /// [`Walk::formula_called`] for an integer function: when the call may be claimed and its

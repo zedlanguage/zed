@@ -2089,6 +2089,15 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | An explicit stack of `&Formula` with a `HashSet<u32>` visited set over auxiliary numbers, pushing each definition reached once and leaving early with `return None` | `preimage::projected` | Mutation (gap 11), Early exit (gap 12) | A fold over a work list carrying the visited set, ending in `#none` |
 | A memo table of `Arc<[Con]>` keyed by `CallKey`, with an undo log entry `Logged::Projection` | `Memo::projections`, `Walk::projection` | Mutation (gap 11) | A map value threaded through the translation, the undo a kept earlier value |
 
+## Entries from LOAD-call-summary (`zedc-presburger/src/presburger/extend.rs`, `zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo `HashMap<Id, Option<Face>>` filled by an explicit stack of `Formula` (shared nodes), a conjunction popped once its kept parts have faces, the map itself the visited set | `extend::Faces::make` | Mutation (gap 11) | A map value threaded through a fold over a work list |
+| A local `#[derive(PartialEq, Eq, Hash)] struct Congruence` and `enum Says` used as `HashSet` keys to keep each congruence once | `extend::congruences_once` | None | A record and a union type as keys of a set from the stdlib catalog of step L2.11 |
+| A per-scope `HashMap<Id, HashSet<Atom>>` of the atoms each bound conjunction's caller binds, extended in place at each binding | `preimage::Tr::bound`, `Scoped::interface` | Mutation (gap 11) | A map value returned with each translation, the undo a kept earlier value |
+| Closures `&dyn Fn(u32) -> Formula` and `&dyn Fn(&Formula) -> Option<Vec<Atom>>` (`Interface`) passed as parameters | `Extending::defined_with` | None | Function values |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |

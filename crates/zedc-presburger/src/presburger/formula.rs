@@ -83,7 +83,7 @@ pub type Model = BTreeMap<Atom, Int>;
 /// A compound part of a formula, held, so that it lives as long as the key, and compared and
 /// hashed as the one part it is, not by its content. Two keys are equal when they hold the
 /// same part, so a part that two parents hold is found by either.
-pub(super) struct Id(Formula);
+pub struct Id(Formula);
 
 impl Clone for Id {
     fn clone(&self) -> Id {
@@ -93,7 +93,7 @@ impl Clone for Id {
 
 impl Id {
     /// The key of `f`, a compound part.
-    pub(super) fn any(f: &Formula) -> Id {
+    pub fn any(f: &Formula) -> Id {
         debug_assert!(!matches!(f, Formula::Con(_)), "a compound part");
         Id(f.clone())
     }

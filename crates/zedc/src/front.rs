@@ -248,6 +248,9 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             // (`p{i-1}(x: x + 1)`, `p{i-1}(x: 2*x)`, `p{i-1}(y: x, z: x)`, constants): each body is
             // read once over its parameters' canonical atoms, and a call binds them to its
             // arguments (`preimage::Scoped::relation`, LOAD-chain-affine).
+            // A link whose point extends a small callee beside the chain reads the chain
+            // through its face, the chain projected onto the atoms its call binds
+            // (`preimage::Scoped::interface`, LOAD-call-summary).
             // The question is stated over the names the user wrote: elaboration renames a binder
             // `x` to `x@k` when another binder of the unit is named `x` too (`crate::elab`), which
             // the user cannot write, so the question, its refusal and its constraints print `x`,
@@ -256,7 +259,8 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             // which an earlier function that made one of them first may change.
             let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
             if let Some(r) = scoped.relation(body, ps, &inputs, true) {
-                let mut answers = extending.defined(&r, &|n| scoped.def(n));
+                let mut answers =
+                    extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
                 // A relation is read over canonical atoms (LOAD-chain-affine), so a refusal names
                 // them; a refused question is asked again over the inputs, its bindings
                 // substituted (`preimage::Scoped::written`), and its refusal, if it stays, names

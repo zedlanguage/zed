@@ -99,8 +99,7 @@ mod deep;
 pub mod extend;
 mod formula;
 
-use formula::Id;
-pub use formula::{Atom, Con, Factor, Formula, Lin, Model, Rel};
+pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel};
 
 impl Factor {
     /// The factor as an atom of its own.
