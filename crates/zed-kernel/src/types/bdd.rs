@@ -169,20 +169,28 @@ impl<A: Literal> Drop for Expr<A> {
                 }
             });
         }
-        let (p, q) = match &mut self.form {
-            Form::Not(p) => (p, None),
-            Form::Or(p, q) | Form::And(p, q) => (p, Some(q)),
-        };
-        for part in std::iter::once(p).chain(q) {
-            if part.is_leaf().is_none() {
-                A::free(Owned::Part(std::mem::replace(part, Part::leaf(false))));
-            }
+        free_form(&mut self.form);
+        if let Some(Source::Form(mut f)) = self.source.take() {
+            free_form(&mut f);
         }
         if let Some(c) = self.complement.take() {
             A::free(Owned::Part(c));
         }
         // The pair frees its parts in the loop when it is dropped.
         self.xor.take();
+    }
+}
+
+/// The operands of `form` freed in a loop (module `deep`), leaves left in their place.
+fn free_form<A: Literal>(form: &mut Form<A>) {
+    let (p, q) = match form {
+        Form::Not(p) => (p, None),
+        Form::Or(p, q) | Form::And(p, q) => (p, Some(q)),
+    };
+    for part in std::iter::once(p).chain(q) {
+        if part.is_leaf().is_none() {
+            A::free(Owned::Part(std::mem::replace(part, Part::leaf(false))));
+        }
     }
 }
 
@@ -580,6 +588,11 @@ pub(super) struct Expr<A: Literal> {
     /// holds them (step TABLE-life). When the complement held here is freed, the next one made
     /// replaces it.
     back: Mutex<Weak<Expr<A>>>,
+    /// The expression this one was made the complement of, as it was written, when this one does
+    /// not hold it: its form, or that it was `Not` of this one. A source freed while this one
+    /// lives is made again from it with the same form and digest, so the complement of a part
+    /// does not depend on what was freed before (batch and single-file checking agree).
+    source: std::sync::OnceLock<Source<A>>,
     /// Whether the complement is `Not` of the expression: no choice was found in it, so a
     /// complement made again skips the search.
     plain: AtomicBool,
@@ -632,10 +645,30 @@ impl<A: Literal> Expr<A> {
     }
 }
 
+/// What an expression was made the complement of (`Expr::source`).
+enum Source<A: Literal> {
+    /// `Not` of the expression.
+    NotOfThis,
+    /// An expression of this form.
+    Form(Form<A>),
+}
+
+#[derive(Clone)]
 pub(super) enum Form<A: Literal> {
     Not(Part<A>),
     Or(Part<A>, Part<A>),
     And(Part<A>, Part<A>),
+}
+
+impl<A: Literal> Form<A> {
+    /// Whether `e` is an operand of the form.
+    fn holds(&self, e: &Arc<Expr<A>>) -> bool {
+        let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
+        match self {
+            Form::Not(p) => is_e(p),
+            Form::Or(p, q) | Form::And(p, q) => is_e(p) || is_e(q),
+        }
+    }
 }
 
 /// The operands of a part under a connective ([`Part::operands`]).
@@ -706,6 +739,7 @@ impl<A: Literal> Part<A> {
             form,
             complement: std::sync::OnceLock::new(),
             back: Mutex::new(Weak::new()),
+            source: std::sync::OnceLock::new(),
             plain: AtomicBool::new(false),
             xor,
         }))
@@ -802,18 +836,34 @@ impl<'m> Connect<'m> {
         let Part::Expr(e) = &p else {
             unreachable!("only an expression keeps its complement")
         };
-        let n = if let Some((pair, constant)) = &e.xor {
+        let n = if let Some(source) = e.source.get() {
+            // The expression this one was made the complement of, freed: made again as written.
+            match source {
+                Source::NotOfThis => Part::expr(Form::Not(p.clone())),
+                Source::Form(f) => Part::expr(f.clone()),
+            }
+        } else if let Some((pair, constant)) = &e.xor {
             // An exclusive or's complement is made again as it was first made beside it, so
             // that the two are equal as built.
             xor::mate(pair, !constant)
         } else if let Form::Not(q) = &e.form {
+            if let Part::Expr(m) = q {
+                let _ = m.source.set(Source::NotOfThis);
+            }
             q.clone()
         } else if !e.plain.load(Atomic::Relaxed)
             && let Some((c, x, y)) = self.choice(&p).await
         {
             let x = self.not(&x).await;
             let y = self.not(&y).await;
-            self.choose(&c, &x, &y).await
+            let n = self.choose(&c, &x, &y).await;
+            if let Part::Expr(m) = &n
+                && !m.holds(e)
+                && !e.form.holds(m)
+            {
+                let _ = m.source.set(Source::Form(e.form.clone()));
+            }
+            n
         } else {
             e.plain.store(true, Atomic::Relaxed);
             Part::expr(Form::Not(p.clone()))
@@ -3022,12 +3072,9 @@ mod tests {
 
     /// The list `x_0 & x_1 & … & x_{m-1}`, one block of `m` literals, the atoms from `base`.
     fn meet(base: u64, m: usize) -> Bdd<Row> {
-        meet_of(&(0..m as u64).map(|k| atom(base + k)).collect::<Vec<_>>())
-    }
-
-    /// The list of the literals `x` of `rows`, each taken.
-    fn meet_of(rows: &[Row]) -> Bdd<Row> {
-        (rows.iter()).fold(Bdd::Leaf(true), |b, x| b.and_literal((x.clone(), true)))
+        (0..m as u64).fold(Bdd::Leaf(true), |b, k| {
+            b.and_literal((atom(base + k), true))
+        })
     }
 
     /// The walks on expressions and diagrams nested this deep, on a 2 MiB stack.
@@ -3111,14 +3158,11 @@ mod tests {
         });
     }
 
-    /// [`meet`]`(base, m)`, and the list `x_0 & … & x_{m-2} & !x_{m-1}` on the same atoms, which
-    /// meets it in no value: the meet of the two joins each literal of one to the other. The
-    /// two share their rows, so the meet compares atoms by pointer; two equal rows built apart
-    /// are compared by content (`Row`), a cost of its own (follow-up item ROW-intern).
-    fn meets(base: u64, m: usize) -> (Bdd<Row>, Bdd<Row>) {
-        let rows: Vec<Row> = (0..m as u64).map(|k| atom(base + k)).collect();
-        let but_last = meet_of(&rows[..m - 1]).and_literal((rows[m - 1].clone(), false));
-        (meet_of(&rows), but_last)
+    /// The list `x_0 & … & x_{m-2} & !x_{m-1}`, on the atoms of [`meet`]`(base, m)`, which
+    /// meets it in no value: the meet of the two joins each literal of one to the other.
+    fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
+        let last = atom(base + m as u64 - 1);
+        meet(base, m - 1).and_literal((last, false))
     }
 
     /// The choice `c_{m-1} & (… (c_1 & x_0 | !c_1 & y_1) …) | !c_{m-1} & y_{m-1}`, kept as
@@ -3149,7 +3193,7 @@ mod tests {
     fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
         // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), a
         // quarter of the 8 MiB the depths above overflowed.
-        let (a, b) = meets(0, DIAGRAM_DEPTH);
+        let (a, b) = (meet(0, DIAGRAM_DEPTH), meet_but_last(0, DIAGRAM_DEPTH));
         assert_eq!(a.zip_chain(&b, Op::And), Some(Bdd::Leaf(false)));
         let not_a = a.not();
         assert_eq!(not_a.not(), a);
@@ -3181,7 +3225,7 @@ mod tests {
         let n = 1 << 12;
         let meets = scaling::inputs(n, |m| {
             let base = 100 * m as u64;
-            meets(base, m)
+            (meet(base, m), meet_but_last(base, m))
         });
         // A union keeps the complements it makes with the expressions, so each run of it takes
         // chains of its own, on atoms of their own.
@@ -3275,13 +3319,14 @@ mod tests {
         drop(n);
         let n = e.not();
         assert_eq!((n.digest(), n.not().id()), (n_digest, e.id()));
-        // The expression dropped while its complement lives: made again from the complement,
-        // as a choice, which may differ from the expression as written but holds the same
-        // values, and negates back to the complement.
-        let e_id = e.id();
+        // The expression dropped while its complement lives: made again as written, with the
+        // same digest (so no order or text depends on whether it was freed), the same values,
+        // and negating back to the complement.
+        let (e_id, e_digest) = (e.id(), e.digest());
         drop(e);
         let again = n.not();
         assert_ne!(again.id(), e_id);
+        assert_eq!(again.digest(), e_digest);
         assert_eq!(again.not().id(), n.id());
         let written = choices(7500, 7600, 8);
         let atoms: Vec<Row> = (7501..=7508).chain(7601..7608).map(atom).collect();
@@ -3317,5 +3362,19 @@ mod tests {
         let x = mate.not();
         assert_eq!(x.digest(), x_digest);
         assert_eq!(x.id(), parity(7700, 6).id());
+    }
+
+    #[test]
+    fn equal_rows_alive_together_are_one_node_and_leave_the_table_when_freed() {
+        // Step TABLE-life: two equal rows built apart while both live are one node, so a meet
+        // compares them by pointer; a freed row leaves the table.
+        let (a, b) = (atom(7900), atom(7900));
+        assert!(std::ptr::eq(a.as_ptr(), b.as_ptr()));
+        assert!(!std::ptr::eq(a.as_ptr(), atom(7901).as_ptr()));
+        let digest = a.digest();
+        let live = || super::super::ROWS.with(|t| t.borrow().get(&digest).map_or(0, Vec::len));
+        assert_eq!(live(), 1);
+        drop((a, b));
+        assert_eq!(live(), 0);
     }
 }

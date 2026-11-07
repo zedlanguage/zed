@@ -304,25 +304,72 @@ impl PartialOrd for Morphism {
 
 /// The component types of a tuple type, an atom of the tuple parts, kept with their hash in
 /// one shared node: a row is copied in constant time, and compared in constant time unless it
-/// equals a row built apart from it.
+/// equals a row built apart from it on another thread. The live rows of a thread are kept in a
+/// table by digest, so two equal rows alive on one thread are one node (step TABLE-life; the
+/// tables of diagram nodes once kept every row's node for the life of the thread, which had
+/// made equal rows one node only while their first diagram's nodes were never freed).
 #[derive(Clone)]
-pub(crate) struct Row(Arc<(u64, Vec<Type>)>);
+pub(crate) struct Row(Arc<RowNode>);
+
+pub(crate) struct RowNode {
+    digest: u64,
+    items: Vec<Type>,
+}
+
+thread_local! {
+    /// The live rows of the thread, by digest; rows of one digest that differ share a bucket.
+    static ROWS: RefCell<HashMap<u64, Vec<std::sync::Weak<RowNode>>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// A row leaves its thread's table when dropped; one dropped on another thread leaves an entry
+/// that no longer upgrades, which the next row of its digest built here takes out.
+impl Drop for RowNode {
+    fn drop(&mut self) {
+        let me: *const RowNode = self;
+        let _ = ROWS.try_with(|t| {
+            if let Ok(mut t) = t.try_borrow_mut()
+                && let Some(bucket) = t.get_mut(&self.digest)
+            {
+                bucket.retain(|w| !std::ptr::eq(w.as_ptr(), me));
+                if bucket.is_empty() {
+                    t.remove(&self.digest);
+                }
+            }
+        });
+    }
+}
 
 impl Row {
     pub(crate) fn new(items: Vec<Type>) -> Row {
         let digest = items.iter().fold(5, |h, t| mix(h, t.digest()));
-        Row(Arc::new((digest, items)))
+        // The live rows of the digest are taken out of the table before they are compared, so
+        // that no comparison runs while the table is borrowed.
+        let live: Vec<Arc<RowNode>> = ROWS.with(|t| {
+            let mut t = t.borrow_mut();
+            let bucket = t.entry(digest).or_default();
+            bucket.retain(|w| w.strong_count() > 0);
+            bucket.iter().filter_map(std::sync::Weak::upgrade).collect()
+        });
+        if let Some(r) = live.iter().find(|r| r.items == items) {
+            return Row(r.clone());
+        }
+        let r = Arc::new(RowNode { digest, items });
+        ROWS.with(|t| {
+            (t.borrow_mut().entry(digest).or_default()).push(Arc::downgrade(&r));
+        });
+        Row(r)
     }
 
     pub(crate) fn digest(&self) -> u64 {
-        self.0.0
+        self.0.digest
     }
 }
 
 impl std::ops::Deref for Row {
     type Target = [Type];
     fn deref(&self) -> &[Type] {
-        &self.0.1
+        &self.0.items
     }
 }
 
@@ -330,7 +377,7 @@ impl<'a> IntoIterator for &'a Row {
     type Item = &'a Type;
     type IntoIter = std::slice::Iter<'a, Type>;
     fn into_iter(self) -> Self::IntoIter {
-        self.0.1.iter()
+        self.0.items.iter()
     }
 }
 
@@ -340,8 +387,8 @@ impl Ord for Row {
             return std::cmp::Ordering::Equal;
         }
         self.0
-            .0
-            .cmp(&other.0.0)
+            .digest
+            .cmp(&other.0.digest)
             .then_with(|| bdd::order(bdd::Step::Rows(self, other)))
     }
 }
