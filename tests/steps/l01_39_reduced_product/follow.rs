@@ -670,14 +670,17 @@ fn random_sum(rng: &mut Rng, xs: &[Arc<str>], doms: &Domains) -> Option<LetPa> {
 /// `if`s over domains with holes, unbounded ends and ends beyond `i64`, tested by `z OP c`,
 /// `z + x1 >= c`, or two names at once, in sequences that narrow the domains as a walk does,
 /// each tree after the first found from the last by the inputs that changed
-/// ([`images::updated`]). Item PA-letpre-linear.
+/// ([`images::updated`]); with summaries over one input, read as inputs, inputs of empty
+/// domains, as in a scope no state reaches, and an input the test reads over another domain
+/// than the tree's. Item PA-letpre-linear.
 #[test]
 fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
     let mut rng = Rng::new(0x1e7_b0d5);
     let mut compared = 0;
     let mut narrowed = 0;
-    for round in 0..600 {
-        let k = 2 + rng.below(7);
+    let (mut single, mut void, mut shadowed) = (0, 0, 0);
+    for round in 0..800 {
+        let k = 1 + rng.below(8);
         let xs: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
         let mut names: images::Names<IntervalSet> = xs
             .iter()
@@ -689,7 +692,7 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
             continue;
         };
         let some: Vec<Arc<str>> = xs.iter().filter(|_| rng.below(2) == 0).cloned().collect();
-        let sw = if some.len() >= 2 {
+        let sw = if !some.is_empty() {
             random_sum(&mut rng, &some, &doms)
         } else {
             None
@@ -697,6 +700,10 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
         let lit = |v: i64| Term::Lit(Value::Int(v));
         let mut last: Vec<Option<(images::Names<IntervalSet>, images::Tree<_>)>> = vec![None, None];
         for step in 0..4 {
+            // An input of no value, as in a scope no state reaches.
+            if rng.below(12) == 0 {
+                names.insert(rng.pick(&xs), IntervalSet::empty());
+            }
             let cmp = |rng: &mut Rng, t: Term| {
                 let op = rng.pick(&[Prim::Eq, Prim::Ne, Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge]);
                 Term::Prim(op, vec![t, lit(rng.int(-30, 30))])
@@ -728,7 +735,10 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
             let lets_of = |reads: Option<[Arc<TermRead<IntervalSet>>; 2]>| {
                 let mut lets = Lets::new();
                 let mut add = |n: &Arc<str>, s: &LetPa, i: usize| {
-                    let read = reads.as_ref().map(|r| r[i].clone() as _);
+                    // A summary over one input reads it as an input.
+                    let read = (reads.as_ref())
+                        .filter(|_| s.vars().len() > 1)
+                        .map(|r| r[i].clone() as _);
                     let l = LetIn {
                         summary: s.clone(),
                         ints: ints.clone(),
@@ -770,10 +780,25 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
                 .vars()
                 .iter()
                 .chain(sw.iter().flat_map(|s| s.vars().iter()));
-            let all: Domains = (own.iter().chain(read))
+            let mut all: Domains = (own.iter().chain(read))
                 .map(|x| (x.clone(), names[x].clone()))
                 .collect();
-            let over: Domains = own.iter().map(|x| (x.clone(), names[x].clone())).collect();
+            let one = ([Some(&sz), sw.as_ref()].into_iter().flatten())
+                .filter(|s| s.vars().len() == 1)
+                .flat_map(|s| s.vars().iter());
+            let mut over: Domains = (own.iter().chain(one))
+                .map(|x| (x.clone(), names[x].clone()))
+                .collect();
+            // An input the test reads over another domain than the scope's, within the one its
+            // summaries were formed over, where they hold.
+            let vars: Vec<Arc<str>> = sz.vars().iter().cloned().collect();
+            if !vars.is_empty() && rng.below(3) == 0 {
+                let x = rng.pick(&vars);
+                let d = names[&x].meet(&random_domain(&mut rng));
+                all.insert(x.clone(), d.clone());
+                over.insert(x, d);
+                shadowed += 1;
+            }
             let want = let_preimage(&test, &all, lets_of(None), &demand);
             let got = let_narrowing(&test, &over, lets_of(Some(reads.clone())), &demand);
             let whole = let_preimage(&test, &over, lets_of(Some(reads)), &demand);
@@ -787,7 +812,7 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
                         m.keys().all(|x| all.contains_key(x)),
                         "round {round}: {m:?}"
                     );
-                    let of = |x: &Arc<str>| m.get(x).unwrap_or(&names[x]).clone();
+                    let of = |x: &Arc<str>| m.get(x).unwrap_or(&all[x]).clone();
                     all.keys().map(|x| (x.clone(), of(x))).collect()
                 }
             };
@@ -795,6 +820,10 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
             assert_eq!(rebuilt, want, "{case}");
             assert_eq!(whole, want, "{case}");
             compared += 1;
+            single += usize::from(
+                sz.vars().len() == 1 || sw.as_ref().is_some_and(|s| s.vars().len() == 1),
+            );
+            void += usize::from(all.values().any(IntervalSet::is_empty));
             if want.values().any(IntervalSet::is_empty) {
                 break;
             }
@@ -807,7 +836,8 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
         }
     }
     assert!(
-        compared > 1_000 && narrowed > 300,
-        "{compared} compared, {narrowed} narrowed"
+        compared > 1_000 && narrowed > 300 && single > 100 && void > 20 && shadowed > 200,
+        "{compared} compared, {narrowed} narrowed, {single} over one input, {void} empty, \
+         {shadowed} read over another domain"
     );
 }

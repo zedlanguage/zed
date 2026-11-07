@@ -409,6 +409,8 @@ pub struct Scope {
     written_by: Uses<String>,
     /// Whether no state reaches this scope.
     pub bottom: bool,
+    /// Whether each name is already the bottom, in a scope no state reaches ([`Emptied`]).
+    emptied: Emptied,
     /// The written constraints already enumerated, each as its text with the values of its
     /// static names. A second enumeration removes nothing more: the members a constraint holds
     /// at do not depend on the interval, which already lies within them.
@@ -575,6 +577,24 @@ impl PartialEq for Reads {
 }
 
 impl fmt::Debug for Reads {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
+}
+
+/// Whether each name of a scope no state reaches is already the bottom
+/// ([`Scope::empty_if_bottom`]): a cache, equal in every scope, so that the arms a walk shows
+/// below a test no state passes empty the names once and not once each.
+#[derive(Clone, Copy, Default)]
+struct Emptied(bool);
+
+impl PartialEq for Emptied {
+    fn eq(&self, _: &Emptied) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Emptied {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("..")
     }
@@ -1146,6 +1166,7 @@ impl Scope {
             written: imbl::OrdMap::new(),
             written_by: Uses::default(),
             bottom: false,
+            emptied: Emptied::default(),
             enumerated: imbl::OrdSet::new(),
             projected: imbl::OrdMap::new(),
             exact,
@@ -1398,11 +1419,7 @@ impl Scope {
         self.names.insert(x.clone(), p);
         if self.names[x].is_empty() {
             self.bottom = true;
-            self.names = self
-                .names
-                .keys()
-                .map(|n| (n.clone(), Product::bottom()))
-                .collect();
+            self.empty_if_bottom();
         }
         saved
     }
@@ -1554,17 +1571,22 @@ impl Scope {
     /// of the summary with the most inputs among these. With `all`, for a test, which narrows
     /// the inputs of each summary too ([`let_narrowing`]), a summary over two or more inputs
     /// is read through the tree of its terms' bounds ([`Scope::term_read`]), its inputs not
-    /// among the inputs, so that the test costs the inputs it narrows and not all `k`; in a
-    /// scope no state reaches, its inputs are inputs, each empty. Without `all`, only the
-    /// input of a summary over one, which a term of a value other than a sum reads it through
-    /// (`2 * y` is a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does
-    /// not read the inputs of the summaries it adds: so a chain of bindings each adding the
-    /// one before costs each binding its own term, not the inputs of all before it.
+    /// among the inputs, so that the test costs the inputs it narrows and not all `k`, and the
+    /// input of a summary over one is an input, read in `O(log n)`. A test reads no scope no
+    /// state reaches (`Scope::narrow_node`, `Scope::exclude`). Without `all`, only the input
+    /// of a summary over one, which a term of a value other than a sum reads it through
+    /// (`2 * y` is a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does not
+    /// read the inputs of the summaries it adds: so a chain of bindings each adding the one
+    /// before costs each binding its own term, not the inputs of all before it.
     fn inputs_and_lets(
         &self,
         free: &BTreeSet<Arc<str>>,
         all: bool,
     ) -> (Domains, Lets, Option<u64>) {
+        debug_assert!(
+            !(all && self.bottom),
+            "a test read in a scope no state reaches"
+        );
         let int = Type::int();
         let mut inputs = Domains::new();
         let mut lets = Lets::new();
@@ -1581,7 +1603,7 @@ impl Scope {
                         widest = Some((k, id));
                     }
                     let mut read = None;
-                    if all && k > 1 && !self.bottom {
+                    if all && k > 1 {
                         read = Some(Arc::new(self.term_read(&summary, id)) as _);
                     } else if all || k == 1 {
                         for v in summary.vars() {
@@ -1976,6 +1998,7 @@ impl Scope {
             written,
             written_by,
             bottom: false,
+            emptied: Emptied::default(),
             enumerated,
             projected,
             exact: self.exact,
@@ -2255,6 +2278,9 @@ impl Scope {
     /// case of a nest knows of the sides before it. The relation and the written constraints
     /// are left as they are, so a case costs its own side and not the sides before it.
     fn exclude(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises) {
+        if self.bottom {
+            return;
+        }
         let node = &tree.nodes[n];
         match &node.kind {
             Kind::Lit(b) => {
@@ -2478,14 +2504,17 @@ impl Scope {
         self.empty_if_bottom();
     }
 
-    /// Empties every name of a scope no state reaches, as a scope that is shown has them.
+    /// Empties every name of a scope no state reaches, as a scope that is shown has them: once,
+    /// when it is first shown, since nothing narrows or binds a name in it after
+    /// ([`Scope::narrow`], [`Scope::bind`]) and its copies share the emptied names.
     fn empty_if_bottom(&mut self) {
-        if self.bottom {
+        if self.bottom && !self.emptied.0 {
             self.names = self
                 .names
                 .keys()
                 .map(|n| (n.clone(), Product::bottom()))
                 .collect();
+            self.emptied.0 = true;
         }
     }
 

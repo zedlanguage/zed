@@ -9,6 +9,9 @@ use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
+use zedc::store::images::{self, TermRead};
+use zedc::store::interval::{End, IntervalSet};
+use zedc::store::preimage::{Demand, Domains, LetIn, Lets, let_narrowing, let_summary};
 use zedc::store::product::Scope;
 
 use super::ints;
@@ -1024,21 +1027,9 @@ fn a_binding_over_many_inputs_narrows_each_and_is_read_in_linear_time() {
     });
 }
 
-/// `if x1 >= 0 { if x1 <= 1 { … let z = x1 + … + xk in if z >= 1 { if z >= 2 { … if z >= k
-/// { 0 } else { k } … } else { 2 } } else { 1 } … } else { -1 } } else { -1 }`: each `xi` in
-/// `0..=1`, then `k` tests of `z`, a name over `k` inputs, each arm reachable.
-fn tests_of_one_sum(k: usize) -> (Vec<Arc<str>>, Term) {
-    let names: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
-    let mut t = int(0);
-    for i in (1..=k).rev() {
-        t = Term::If(
-            arc(prim(Prim::Ge, var("z"), int(i as i64))),
-            arc(t),
-            arc(int(i as i64)),
-        );
-    }
-    let sum = (2..=k).fold(var("x1"), |s, i| prim(Prim::Add, s, var(&format!("x{i}"))));
-    t = Term::Let("z".into(), arc(sum), arc(t));
+/// `if x1 >= 0 { if x1 <= 1 { … t … } else { -1 } } else { -1 }`: each `xi` of `1..=k` in
+/// `0..=1` around `t`.
+fn in_bits(k: usize, mut t: Term) -> Term {
     for i in (1..=k).rev() {
         let x = format!("x{i}");
         t = Term::If(
@@ -1051,7 +1042,29 @@ fn tests_of_one_sum(k: usize) -> (Vec<Arc<str>>, Term) {
             arc(int(-1)),
         );
     }
-    (names, t)
+    t
+}
+
+/// `if test(1) { if test(2) { … if test(k) { 0 } else { k } … } else { 2 } } else { 1 }`.
+fn nested(k: usize, test: impl Fn(usize) -> Term) -> Term {
+    (1..=k).rev().fold(int(0), |t, i| {
+        Term::If(arc(test(i)), arc(t), arc(int(i as i64)))
+    })
+}
+
+/// `x1 + … + xk`.
+fn sum_of(k: usize) -> Term {
+    (2..=k).fold(var("x1"), |s, i| prim(Prim::Add, s, var(&format!("x{i}"))))
+}
+
+/// `if x1 >= 0 { if x1 <= 1 { … let z = x1 + … + xk in if z >= 1 { if z >= 2 { … if z >= k
+/// { 0 } else { k } … } else { 2 } } else { 1 } … } else { -1 } } else { -1 }`: each `xi` in
+/// `0..=1`, then `k` tests of `z`, a name over `k` inputs, each arm reachable.
+fn tests_of_one_sum(k: usize) -> (Vec<Arc<str>>, Term) {
+    let names: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
+    let tests = nested(k, |i| prim(Prim::Ge, var("z"), int(i as i64)));
+    let t = Term::Let("z".into(), arc(sum_of(k)), arc(tests));
+    (names, in_bits(k, t))
 }
 
 #[test]
@@ -1076,5 +1089,133 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
     assert!(
         large as f64 <= scaling::RATIO * small as f64,
         "term bounds: {small} at 40 tests, {large} at 320"
+    );
+}
+
+/// `let z = x1 + … + xk in if x1 >= 2 { if z >= 1 { if z == 2 { … } } } else { 0 }` in the
+/// scope where each `xi` is in `0..=1`: `k` tests of `z`, by `>=` and `==` in turn, in a scope
+/// no state reaches. No test reads it, since what narrows and what excludes stop there, and the
+/// arms shown below it share its names, emptied once (item PA-letpre-linear).
+#[test]
+fn tests_in_a_scope_no_state_reaches_read_nothing() {
+    let built = scaling::inputs(40, |k| {
+        let (names, _) = tests_of_one_sum(k);
+        let bits = (1..=k)
+            .flat_map(|i| {
+                let x = format!("x{i}");
+                [
+                    prim(Prim::Ge, var(&x), int(0)),
+                    prim(Prim::Le, var(&x), int(1)),
+                ]
+            })
+            .reduce(|a, b| prim(Prim::And, a, b))
+            .expect("k is not 0");
+        let s = ints(&names).assume(&bits, true, &Premises::new());
+        let test = |i: usize| {
+            let p = if i.is_multiple_of(2) {
+                Prim::Eq
+            } else {
+                Prim::Ge
+            };
+            prim(p, var("z"), int(i as i64))
+        };
+        let dead = Term::If(
+            arc(prim(Prim::Ge, var("x1"), int(2))),
+            arc(nested(k, test)),
+            arc(int(0)),
+        );
+        (s, Term::Let("z".into(), arc(sum_of(k)), arc(dead)))
+    });
+    scaling::check(
+        "k tests of a sum over k inputs in a scope no state reaches",
+        40,
+        |k| {
+            let (s, t) = &built[&k];
+            let a = super::arms(t, s);
+            assert!(a.iter().any(|a| !a.reachable()), "{k} tests");
+        },
+    );
+}
+
+/// `if x1 >= 0 { if x1 <= 1 { … let z1 = x1 + 1 in … let zk = xk + k in if z1 >= 2 { …
+/// if zk >= k + 1 { 0 } else { k } … } else { 1 } … } } }`: `k` tests, each of a summary over
+/// one input, which reads that input as an input (item PA-letpre-linear).
+#[test]
+fn tests_of_summaries_over_one_input_read_that_input() {
+    let built = scaling::inputs(40, |k| {
+        let names: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
+        let z = |i: usize| format!("z{i}");
+        let tests = nested(k, |i| prim(Prim::Ge, var(&z(i)), int(i as i64 + 1)));
+        let t = (1..=k).rev().fold(tests, |t, i| {
+            let v = prim(Prim::Add, var(&format!("x{i}")), int(i as i64));
+            Term::Let(z(i).into(), arc(v), arc(t))
+        });
+        (ints(&names), in_bits(k, t))
+    });
+    scaling::check("k tests, each of a summary over one input", 40, |k| {
+        let (s, t) = &built[&k];
+        let a = super::arms(t, s);
+        assert!(a.iter().all(|a| a.reachable()), "{k} tests");
+    });
+    // The time of a test is mostly its binding's and its arms', so the inputs are counted too.
+    let given = |k: usize| {
+        let (s, t) = &built[&k];
+        scaling::on_a_thread(1 << 26, || {
+            let before = zedc::store::preimage::counts::inputs();
+            super::arms(t, s);
+            zedc::store::preimage::counts::inputs() - before
+        })
+    };
+    let (small, large) = (given(40), given(320));
+    assert!(
+        large as f64 <= scaling::RATIO * small as f64,
+        "inputs given: {small} at 40 tests, {large} at 320"
+    );
+}
+
+/// `z = x1 + … + xk` over each `xi` in `0..=1`, read through the tree of its terms' bounds, and
+/// `k` tests `z >= 1`, the `i`-th given `xi` in `1..=1`, another domain than the scope's: each
+/// reads that input over its own domain and the rest through the tree (item PA-letpre-linear).
+#[test]
+fn tests_that_give_an_input_another_domain_read_it_through_the_tree() {
+    let built = scaling::inputs(40, |k| {
+        let xs: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
+        let names: images::Names<IntervalSet> = (xs.iter())
+            .map(|x| (x.clone(), IntervalSet::range(End::of(0), End::of(1))))
+            .collect();
+        let doms: Domains = names.iter().map(|(x, d)| (x.clone(), d.clone())).collect();
+        let s = let_summary(&sum_of(k), &doms, Lets::new()).expect("a sum of inputs");
+        let leaf = |v: &Arc<str>, d: &IntervalSet| s.term_bounds(v, d);
+        let tree = images::fresh(s.vars(), &names, leaf);
+        let read = Arc::new(TermRead {
+            names,
+            vars: s.vars().clone(),
+            tree,
+            ints: |d| d,
+        });
+        (xs, s, read)
+    });
+    scaling::check(
+        "k tests of a sum over k inputs, each giving one input its own domain",
+        40,
+        |k| {
+            let (xs, s, read) = &built[&k];
+            let test = prim(Prim::Ge, var("z"), int(1));
+            for x in xs {
+                let lets: Lets = [(
+                    "z".into(),
+                    LetIn {
+                        summary: s.clone(),
+                        ints: IntervalSet::top(),
+                        read: Some(read.clone() as _),
+                    },
+                )]
+                .into_iter()
+                .collect();
+                let over: Domains = [(x.clone(), IntervalSet::single(1))].into_iter().collect();
+                let got = let_narrowing(&test, &over, lets, &Demand::Bool(true));
+                assert!(got.is_some(), "{x}");
+            }
+        },
     );
 }

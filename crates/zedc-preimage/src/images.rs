@@ -314,6 +314,10 @@ impl<P> SummaryRead for TermRead<P> {
         self.names.get(v).map(self.ints)
     }
 
+    fn scope_ints(&self, v: &str) -> Option<&IntervalSet> {
+        self.names.get(v).map(self.ints)
+    }
+
     fn total(&self) -> TermBounds {
         total(&self.tree)
     }
