@@ -39,6 +39,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Prim, Term};
 
 use zedc_lattice::cell::Premises;
+use zedc_preimage::preimage::LetPa;
 use zedc_preimage::product::{Product, Scope};
 use zedc_syntax::ast::Expr;
 use zedc_syntax::lex::Span;
@@ -66,6 +67,17 @@ pub(super) struct Translated {
     pub(super) binders: Vec<usize>,
     /// The names of binders in it, in the scope, with the binders.
     pub(super) vars: Vec<(Arc<str>, usize)>,
+}
+
+/// The piecewise-affine summary of a binder's value over the one input it reads
+/// ([`zedc_preimage::preimage::let_summary`]), made once for the binder and bound with the name
+/// in each scope told of it ([`Scope::bind_summarized`]), so that a test of the name narrows the
+/// input: `m >= 3` after `m = n + 3` narrows `n` to `int[0..]`.
+pub(super) struct Summarized {
+    pub(super) summary: LetPa,
+    /// The input the summary reads and its product where the summary was made: what a scope
+    /// with no product of the input is told of it.
+    pub(super) input: Option<(Arc<str>, Product)>,
 }
 
 /// For one node, each name to the nearest node at or above it where a search of the tests
@@ -131,6 +143,9 @@ pub(super) struct Arms<'a> {
     pub(super) terms: HashMap<Span, Rc<Translated>>,
     /// The scope name of each binder a term has read.
     pub(super) names: HashMap<usize, Arc<str>>,
+    /// The summary of each binder's value, once a scope has been told of the binder
+    /// ([`Summarized`]); none when its value has no summary over one input.
+    pub(super) summaries: HashMap<usize, Option<Rc<Summarized>>>,
 }
 
 impl<'a> Arms<'a> {
@@ -150,6 +165,7 @@ impl<'a> Arms<'a> {
             bound: HashMap::new(),
             terms: HashMap::new(),
             names: HashMap::new(),
+            summaries: HashMap::new(),
         }
     }
 

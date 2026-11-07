@@ -294,3 +294,65 @@ fn a_rejection_names_the_tests_that_bear_on_its_operand_and_no_others() {
     assert_eq!(out.matches("this test is").count(), 3, "{out}");
     assert!(!out.contains("2:6: this test"), "{out}");
 }
+
+#[test]
+fn a_test_of_a_name_bound_by_let_narrows_the_input_its_value_reads() {
+    // The checker binds a name a test reads with the summary of its value over the one input
+    // it reads (item PA-let-check), so the test narrows that input too. Before, the name was
+    // read as a value of its own and each of these reads was rejected as any int.
+    for src in [
+        // A reading with an offset: `m >= 3` holds where `n >= 0`.
+        "bits(positional n: int) = { m = n + 3; if m >= 3 { popCount(n) } else { 0 } }\n\
+         test { 4 -> 1, -2 -> 0 }\n",
+        // Through two bindings: `x` is `2 * n + 1`, at least 1 where `n >= 0`.
+        "bits(positional n: int) = { y = n + 1; x = y + n; if x >= 1 { popCount(n) } else { 0 } }\n\
+         test { 5 -> 2, -3 -> 0 }\n",
+        // An exponent under a test of the steps left: `left <= 10` holds where `n >= 0`.
+        "power(positional x: int, positional n: int) =\n  \
+           { left = 10 - n; if left <= 10 { x ** n } else { 0 } }\n\
+         test { (2, 3) -> 8, (2, -1) -> 0 }\n",
+        // A call's value named: the name is the input the next binding's summary reads.
+        "g(positional n: int) = n - 3;\n\
+         f(positional n: int) = { q = g(n); r = q + 1; if r >= 1 { popCount(q) } else { 0 } }\n\
+         test { 7 -> 1, 1 -> 0 }\n",
+        // A binding inside an arm, tested in an inner one.
+        "f(positional n: int) =\n  \
+           if n < 100 { m = 2 * n + 1; if m > 0 { popCount(n) } else { 0 } } else { 0 }\n\
+         test { 3 -> 2, -4 -> 0, 200 -> 0 }\n",
+    ] {
+        assert!(rows_pass(src), "{src}");
+    }
+}
+
+#[test]
+fn a_test_of_a_name_bound_by_let_gives_its_input_the_bound_it_shows() {
+    // `m >= 2` with `m = n + 3` holds where `n >= -1`: rejected with that bound, and the test
+    // named.
+    let out = rejected(
+        "bits(positional n: int) = { m = n + 3; if m >= 2 { popCount(n) } else { 0 } };\n",
+    );
+    assert!(out.contains("this `x` is int[-1..]"), "{out}");
+    assert!(out.contains("1:43: this test is true here"), "{out}");
+    // A summary that decreases: `5 - n >= 0` holds where `n <= 5`.
+    let out = rejected(
+        "bits(positional n: int) = { m = 5 - n; if m >= 0 { popCount(n) } else { 0 } };\n",
+    );
+    assert!(out.contains("this `x` is int[..=5]"), "{out}");
+}
+
+#[test]
+fn a_value_with_no_summary_over_one_input_narrows_no_input() {
+    // `n * n` has no summary over the ints, and `n + k` reads two inputs: the test narrows the
+    // name alone, and `n` stays any int.
+    for src in [
+        "bits(positional n: int) = { q = n * n; r = q + n; if r >= 0 { popCount(n) } else { 0 } };\n",
+        "bits(positional n: int, positional k: int) =\n  \
+           { m = n + k; if m >= 0 { popCount(n) } else { 0 } };\n",
+    ] {
+        let out = rejected(src);
+        assert!(
+            out.contains("`popCount` takes `x` in int[0..], and this `x` is int\n"),
+            "{out}"
+        );
+    }
+}

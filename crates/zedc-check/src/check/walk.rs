@@ -10,11 +10,12 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::arms::{Item, Node, Translated, prim_of, var};
+use super::arms::{Item, Node, Summarized, Translated, prim_of, var};
 use super::*;
 use zed_kernel::Shared;
 use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
+use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, Product, Scope};
 
 /// What a job gives back.
@@ -2870,21 +2871,122 @@ impl<'a> Ck<'_, 'a> {
         product::forward(&t.term, &mut s).ints().clone()
     }
 
-    /// `s` told of the values of `binders` it has no product of.
-    fn with_bound(&self, mut s: Scope, binders: &[usize]) -> Scope {
+    /// `s` told of the values of `binders` it has no product of, each with the summary of its
+    /// value over the input it reads ([`Ck::summarized`]), and of that input when `s` has no
+    /// product of it: so a test of the name narrows the input too.
+    fn with_bound(&mut self, mut s: Scope, binders: &[usize]) -> Scope {
         if s.bottom {
             return s;
         }
-        for b in binders {
-            let (Some(p), Some(name)) = (self.arms.bound.get(b), self.arms.names.get(b)) else {
+        // Complexity tradeoff: only the binders the expression reads, and the one input of each
+        // summary, are bound, not the binders their values read in turn. A test of `x` with
+        // `y = n + 1; x = y + n` narrows `n` but not `y`. Binding the whole chain at each of
+        // `d` tests in a block of `d` lets costs `d²`.
+        for &b in binders {
+            let (Some(p), Some(name)) = (self.arms.bound.get(&b), self.arms.names.get(&b)) else {
                 continue;
             };
-            if !s.names.contains_key(name) {
-                let e = Shared::new(Term::Var(name.clone()));
-                s.bind(name, p.clone(), &e);
+            if s.names.contains_key(name) {
+                continue;
             }
+            let (p, name) = (p.clone(), name.clone());
+            let e = Shared::new(Term::Var(name.clone()));
+            let Some(sum) = self.summarized(b) else {
+                s.bind(&name, p, &e);
+                continue;
+            };
+            let dom = match &sum.input {
+                Some((v, q)) => {
+                    if !s.names.contains_key(v) {
+                        s.bind(v, q.clone(), &Shared::new(Term::Var(v.clone())));
+                    }
+                    q.ints().clone()
+                }
+                None => IntervalSet::empty(),
+            };
+            s.bind_summarized(&name, p, &e, &sum.summary, &dom);
         }
         s
+    }
+
+    /// The summary of the value of binder `b` ([`Summarized`]), made once for the binder from
+    /// those of the binders its value reads, children first on an explicit stack, each entered
+    /// once: the binders form a graph without cycles, as statements are checked in dependency
+    /// order, and the memo is the visited set. A name the value reads is read through its
+    /// binder's summary when it has one, and is otherwise an input: a binder over its product,
+    /// a parameter over the ints of its type. A parameter whose type a test has narrowed
+    /// (`is`) is no input, since its type here need not hold where the scope is read, and a
+    /// value that reads it has no summary. Costs the size of each value read, once.
+    ///
+    /// [`Summarized`]: super::arms::Summarized
+    fn summarized(&mut self, b: usize) -> Option<Rc<Summarized>> {
+        let mut entered = HashSet::new();
+        let mut stack = vec![(b, false)];
+        while let Some((c, ready)) = stack.pop() {
+            if self.arms.summaries.contains_key(&c) || (!ready && !entered.insert(c)) {
+                continue;
+            }
+            let Some(&value) = self.facts.get(&c) else {
+                self.arms.summaries.insert(c, None);
+                continue;
+            };
+            let t = self.term(value);
+            if !ready {
+                stack.push((c, true));
+                stack.extend(t.binders.iter().map(|&d| (d, false)));
+                continue;
+            }
+            let s = self.summarize_value(&t);
+            self.arms.summaries.insert(c, s.map(Rc::new));
+        }
+        self.arms.summaries[&b].clone()
+    }
+
+    /// The summary of the value `t`, the summaries of the binders it reads made
+    /// ([`Ck::summarized`]).
+    fn summarize_value(&self, t: &Translated) -> Option<Summarized> {
+        let int = KType::int();
+        let mut inputs: HashMap<Arc<str>, Product> = HashMap::new();
+        let mut lets = Lets::new();
+        for (x, id) in &t.vars {
+            let bound = self.arms.bound.get(id);
+            if let Some(Some(sum)) = self.arms.summaries.get(id) {
+                if let Some((v, q)) = &sum.input {
+                    inputs.entry(v.clone()).or_insert_with(|| q.clone());
+                }
+                let ints = bound.map_or_else(IntervalSet::top, |p| p.ints().clone());
+                let summary = sum.summary.clone();
+                lets.insert(x.clone(), LetIn { summary, ints });
+                continue;
+            }
+            let p = match bound {
+                Some(p) => p.clone(),
+                None if self.facts.contains_key(id) => continue,
+                None => {
+                    let narrowed = self
+                        .whence
+                        .get(id)
+                        .is_some_and(|o| matches!(o.why, Why::Narrowed(_)));
+                    match self.env.get(id).and_then(plain) {
+                        Some(ty) if !narrowed => Product::of_type(ty),
+                        _ => continue,
+                    }
+                }
+            };
+            if p.ty.element.subtype(&int) && !p.is_empty() {
+                inputs.insert(x.clone(), p);
+            }
+        }
+        let domains: Domains = inputs
+            .iter()
+            .map(|(x, p)| (x.clone(), p.ints().clone()))
+            .collect();
+        let summary = let_summary(&t.term, &domains, lets)?;
+        let input = match summary.var() {
+            Some(v) => Some((v.clone(), inputs.get(v)?.clone())),
+            None => None,
+        };
+        Some(Summarized { summary, input })
     }
 
     /// Computes the scopes and binder products `wanted` needs, each once, on an explicit stack:

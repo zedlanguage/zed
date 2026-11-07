@@ -2291,3 +2291,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A recursive type's unfolding and an instance's recursive members in `Mutex<Option<Type>>` cells, cleared at the end of a unit and made again when next read | `Rec::body`, `Rec::unfolding`, `Rec::forget_unfolding`, `Env::members`, `Env::member` | Lazy cells and tied recursive types (gap 3) | The unfolding in the unit's memo table keyed by member id |
 | A guard that lends the parts of a node or of a fresh unfolding (`PartsRef`), and an append-only arena of chunks that holds the unfoldings a walk borrows from (`Held`) | `Type::p`, `Type::p_held`, `Held::put`, `classes`, `overlaps`, `Walk::enter` | References into values (Rust lifetimes); a Zed value is not freed while a binding names it | Not needed: the walk binds the unfoldings it reads |
 | An instance named by a counter, never reused, instead of its address | `Env::id`, `ENVS`, `Key::group`, `Type::group` | Identity (gap 1) | The instance's index in the unit's table |
+
+## Entries from PA-let-check (`crates/zedc-check/src/check/walk.rs`, `arms.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo of `Rc<Summarized>` per binder in a `HashMap`, filled on an explicit stack with an `entered` set | `Arms::summaries`, `Ck::summarized` | Shared ownership, mutation of the checker state | A table of summaries keyed by binder, filled in dependency order with the binders |

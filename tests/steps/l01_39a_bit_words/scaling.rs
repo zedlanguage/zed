@@ -873,3 +873,38 @@ fn the_longer_paths_to_a_name_are_searched_in_linear_time() {
         longer_paths,
     );
 }
+
+/// A block of `d` bindings `x_k = x_(k-1) + 1` from `x_0 = n`, each tested by `x_k >= k`, which
+/// holds where `n >= 0`, with a bit word on `n` in its arm.
+fn tested_let_chain(d: usize) -> String {
+    let mut s = String::from("x0 = n; s0 = 0; ");
+    for k in 1..=d {
+        let j = k - 1;
+        s += &format!(
+            "x{k} = x{j} + 1; s{k} = s{j} + (if x{k} >= {k} {{ popCount(n) }} else {{ 0 }}); "
+        );
+    }
+    format!("f(positional n: int) = {{ {s}s{d} }};\n")
+}
+
+#[test]
+fn a_block_of_tested_lets_is_checked_in_time_linear_in_the_bindings() {
+    // Each test binds its name with the summary of its value, made once for the binder from
+    // the summary of the binding before it, and formed from that one's sum (item PA-let-check):
+    // `d` tests cost `O(d log d)`. Every read of `n` is accepted only through the summaries.
+    // Measured 2026-11-07 (load 35 to 40): 0.16, 0.32, 0.63, 1.27 and 2.54 billion
+    // instructions at `d` = 64 to 1024; with the summaries made again for each test, 0.23,
+    // 0.58, 1.69, 5.50 and 19.4 billion, which this test rejects (26.7 times the bytes for 8 times).
+    let what = "checking a block of d tested lets, each one more than the last";
+    let n = 64;
+    let srcs = scaling::inputs(n, |d| super::program(&tested_let_chain(d)));
+    scaling::on_a_thread(1 << 29, || {
+        scaling::check(what, n, |m| {
+            let src = &srcs[&m];
+            assert!(
+                zedc::run::load(src.as_bytes()).is_ok(),
+                "rejected at d = {m}"
+            )
+        })
+    });
+}

@@ -860,7 +860,33 @@ impl Scope {
     /// scope then mentions `x`, so `p`'s own reductions are the whole reduction, and the
     /// scope is not copied unless `x` shadows a name or `p` is empty. `e` is the bound term,
     /// kept when it is a lambda, so that a test calling `x` is read through the call.
-    pub fn bind(&mut self, x: &Arc<str>, mut p: Product, e: &Shared) -> Unbind {
+    pub fn bind(&mut self, x: &Arc<str>, p: Product, e: &Shared) -> Unbind {
+        self.bind_with(x, p, e, None)
+    }
+
+    /// [`Scope::bind`] with the summary `s` of the bound value ([`let_summary`]), made over the
+    /// integers `dom` of the input it reads, in place of the summary of `e` this scope would
+    /// make: for a caller that summarizes each binding once and binds it in many scopes, as
+    /// the checker binds a name in the scope of each test that reads it. The summary holds
+    /// here while that input is the binding it now is and its integers lie within `dom`.
+    pub fn bind_summarized(
+        &mut self,
+        x: &Arc<str>,
+        p: Product,
+        e: &Shared,
+        s: &LetPa,
+        dom: &IntervalSet,
+    ) -> Unbind {
+        self.bind_with(x, p, e, Some((s, dom)))
+    }
+
+    fn bind_with(
+        &mut self,
+        x: &Arc<str>,
+        mut p: Product,
+        e: &Shared,
+        given: Option<(&LetPa, &IntervalSet)>,
+    ) -> Unbind {
         loop {
             let before = p.clone();
             p.reduce_domains();
@@ -869,10 +895,15 @@ impl Scope {
                 break;
             }
         }
+        let summary = match given {
+            None => self.summarize(e, &p),
+            Some((s, dom)) if self.summarizes(&p) => self.held(s.clone(), dom.clone()),
+            Some(_) => Summary::default(),
+        };
         let binding = Binding {
             order: self.clock,
             function: matches!(**e, Term::Lam(..)).then(|| e.clone()),
-            summary: self.summarize(e, &p),
+            summary,
         };
         self.clock += 1;
         if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
@@ -988,21 +1019,31 @@ impl Scope {
     /// and the others are inputs. Costs `e`'s size and its names' domains, not the summaries
     /// of the names it reads.
     fn summarize(&self, e: &Term, p: &Product) -> Summary {
-        if self.bottom || !p.ty.element.subtype(&Type::int()) {
+        if !self.summarizes(p) {
             return Summary::default();
         }
         let (inputs, lets) = self.inputs_and_lets(&stage::free(e));
         let Some(s) = let_summary(e, &inputs, lets) else {
             return Summary::default();
         };
-        let held = s.var().map_or(Some((None, IntervalSet::empty())), |v| {
-            let dom = inputs.get(v)?.clone();
-            Some((self.bindings.get(v).map(|b| b.order), dom))
-        });
-        match held {
-            Some((order, dom)) => Summary(Some((s, order, dom))),
-            None => Summary::default(),
+        match s.var().map(|v| inputs.get(v)) {
+            Some(None) => Summary::default(),
+            Some(Some(dom)) => self.held(s.clone(), dom.clone()),
+            None => self.held(s, IntervalSet::empty()),
         }
+    }
+
+    /// Whether a name of product `p` bound here keeps a summary: an integer in a reachable
+    /// scope.
+    fn summarizes(&self, p: &Product) -> bool {
+        !self.bottom && p.ty.element.subtype(&Type::int())
+    }
+
+    /// The summary `s`, made over the integers `dom` of the input it reads, as a binding here
+    /// keeps it: with the order of that input's binding ([`Scope::summary`]).
+    fn held(&self, s: LetPa, dom: IntervalSet) -> Summary {
+        let order = s.var().and_then(|v| self.bindings.get(v)).map(|b| b.order);
+        Summary(Some((s, order, dom)))
     }
 
     /// The summary of the integer `x` is bound to, when it has one and it holds: the input
