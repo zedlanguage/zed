@@ -1,7 +1,11 @@
 //! A `// ✗` comment that names a row of the rejection table (DESIGN.md sec:diagnostics) is
 //! checked against the row of the diagnostic on its line; one that names no row fails.
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
 use zed_tests::scaling;
+use zedc::query::Db;
 use zedc::rejection::Row;
 
 use super::checks;
@@ -220,4 +224,271 @@ fee(positional base: int, positional lo: int, rate: int, cap: int = 9) = base * 
 f(x) = fee(x, 1, rate: 3) + fee(x, 1, cap: 4, rate: 3) test { 2 -> 27 }
 ";
     assert_eq!(checks(unit), ["2:63: ok"]);
+}
+
+/// The words no message prints (DESIGN.md sec:diagnostics): the name of each typing rule of the
+/// kernel calculus, `T-` and the generator for each generator of sec:kernel's grammar `F ::= …`
+/// (`fam` gives `T-Fam`), with every other `T-` rule the spec names; and `Boom`, since a menu
+/// says a reduction owes its operator's laws, not its Boom obligations (item MSG-words).
+fn unsaid_words(design: &str) -> HashSet<String> {
+    let kernel = design
+        .split_once("\n# (sec:kernel)")
+        .expect("DESIGN.md has the section sec:kernel")
+        .1;
+    let kernel = kernel.split_once("\n# (").map_or(kernel, |(k, _)| k);
+    let mut words = HashSet::from(["Boom".to_string()]);
+    let mut generators = 0;
+    for line in kernel.lines() {
+        let Some(rest) = line
+            .strip_prefix("F ::= ")
+            .or_else(|| line.trim_start().strip_prefix("| "))
+        else {
+            continue;
+        };
+        let Some((name, _)) = rest.split_once('(') else {
+            continue;
+        };
+        let mut chars = name.chars();
+        let Some(first) = chars.next().filter(|c| c.is_ascii_lowercase()) else {
+            continue;
+        };
+        let rest = chars.as_str();
+        if rest.chars().all(|c| c.is_ascii_alphanumeric()) {
+            words.insert(format!("T-{}{rest}", first.to_ascii_uppercase()));
+            generators += 1;
+        }
+    }
+    // The grammar names seven generators; a parse that found none would ban nothing.
+    assert!(generators >= 7, "{generators} kernel generators found");
+    for (at, _) in design.match_indices("T-") {
+        let before = design[..at].chars().next_back();
+        let rule: String = design[at + 2..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric())
+            .collect();
+        if !before.is_some_and(is_word_char) && rule.starts_with(|c: char| c.is_uppercase()) {
+            words.insert(format!("T-{rule}"));
+        }
+    }
+    words
+}
+
+/// Whether `c` is part of a word: a letter, a digit or `_`.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Each of `words` in `text`, in order of place, matched whole: a word is a run of letters,
+/// digits and `_`, and a rule such as `T-Fold` is two words joined by one `-`, so `T-Folder`
+/// and `Boomerang` match nothing. O(length of `text`): one pass, a hash lookup per word.
+fn said<'w>(text: &str, words: &'w HashSet<String>) -> Vec<&'w str> {
+    let mut out = Vec::new();
+    let (mut start, mut last) = (None, None);
+    let ends = text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')));
+    for (i, c) in ends {
+        match (start, is_word_char(c)) {
+            (None, true) => start = Some(i),
+            (Some(s), false) => {
+                out.extend(words.get(&text[s..i]).map(String::as_str));
+                if let Some((ls, le)) = last {
+                    if le + 1 == s && text.as_bytes()[le] == b'-' {
+                        out.extend(words.get(&text[ls..i]).map(String::as_str));
+                    }
+                }
+                (start, last) = (None, Some((s, i)));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The lines of `text` that hold expected output: all but a comment line, which is one whose
+/// text starts with `//` and holds no ✗ mark (a comment of a test, or of a Zed fence).
+fn expected_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim_start().starts_with("//") || l.contains('✗'))
+        .map(|(k, l)| (k + 1, l))
+}
+
+/// Every file under `dir`, at any depth, sorted.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let (mut out, mut todo) = (Vec::new(), vec![dir.to_path_buf()]);
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).expect("a readable directory") {
+            let p = e.expect("an entry").path();
+            if p.is_dir() {
+                todo.push(p);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// No message names a kernel rule (DESIGN.md sec:diagnostics). Checked on what the front end
+/// prints for every fence of the spec, every ✗ variant and every unit of a step's `zed/` folder,
+/// derivations and warnings included, and on every expected output the step tests and the
+/// fence copies hold: each line of their files but a comment line.
+#[test]
+fn no_message_names_a_kernel_rule() {
+    let Some(spec) = zed_tests::spec::dir("the words of messages") else {
+        return;
+    };
+    let design = std::fs::read_to_string(spec.join("DESIGN.md")).expect("a readable DESIGN.md");
+    let words = unsaid_words(&design);
+    let mut found = Vec::new();
+    let mut runs: Vec<(String, String)> = zed_tests::fences::all()
+        .into_iter()
+        .map(|f| (f.at, f.text))
+        .collect();
+    runs.extend(
+        zed_tests::fences::variants()
+            .into_iter()
+            .map(|v| (v.name, v.text)),
+    );
+    for p in zed_tests::oracle::step_units() {
+        let text = std::fs::read_to_string(&p).expect("a readable step unit");
+        runs.push((p.display().to_string(), text));
+    }
+    let mut messages = 0;
+    for (at, text) in &runs {
+        let front = Db::new().front(text);
+        let ds = match &*front {
+            Ok((_, _, warnings)) => warnings,
+            Err(ds) => ds,
+        };
+        for d in ds {
+            let m = d.to_string();
+            messages += 1;
+            let w = said(&m, &words);
+            if !w.is_empty() {
+                found.push(format!("{at}: the message names {w:?}: {m}"));
+            }
+        }
+    }
+    // A message the spec prints in a ```text fence, as the collision of sec:remap_law.
+    let mut lines = 0;
+    for doc in ["DESIGN.md", "EXAMPLES.md"] {
+        let text = std::fs::read_to_string(spec.join(doc)).expect("a readable spec document");
+        let mut inside = false;
+        for (k, line) in text.lines().enumerate() {
+            if line.starts_with("```") {
+                inside = line == "```text";
+            } else if inside {
+                lines += 1;
+                let w = said(line, &words);
+                if !w.is_empty() {
+                    found.push(format!("{doc}:{}: names {w:?}: {line}", k + 1));
+                }
+            }
+        }
+    }
+    let fences = zed_tests::fences::dir();
+    // This file names the words to test the search for them.
+    let this = zed_tests::steps_dir().join("l01_21_test_runner/rows.rs");
+    for p in files_under(&zed_tests::steps_dir())
+        .into_iter()
+        .chain(files_under(&fences))
+        .filter(|p| *p != this)
+    {
+        let text = std::fs::read_to_string(&p).expect("a readable test file");
+        for (k, line) in expected_lines(&text) {
+            lines += 1;
+            let w = said(line, &words);
+            if !w.is_empty() {
+                found.push(format!("{}:{k}: names {w:?}: {line}", p.display()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "{found:#?}");
+    // A run that read nothing would pass the loops above.
+    assert!(
+        messages >= 100 && lines >= 10_000,
+        "{messages} messages, {lines} lines"
+    );
+}
+
+#[test]
+fn a_word_is_matched_whole() {
+    let words: HashSet<String> = ["T-Fold", "T-Fix", "Boom"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let cases: [(&str, &[&str]); 7] = [
+        ("explicit reduction; owes op's laws", &[]),
+        ("the fold (T-Fold) needs evidence", &["T-Fold"]),
+        (
+            "T-Fix: no bottom, and the Boom obligations",
+            &["T-Fix", "Boom"],
+        ),
+        ("`AT-Folder` and `Boomerang` are a user's names", &[]),
+        ("`T - Fold` is a subtraction", &[]),
+        ("T-Fixed, T_Fix, xT-Fix", &[]),
+        ("ends with T-Fold", &["T-Fold"]),
+    ];
+    for (text, want) in cases {
+        assert_eq!(said(text, &words), want, "{text}");
+    }
+}
+
+#[test]
+fn the_unsaid_words_come_from_the_kernel_grammar() {
+    let design = "\
+# (sec:kernel_terms) An earlier section
+    | skip(x)
+# (sec:kernel) Appendix
+```
+F ::= fam(D, i -> e)   -- introduce
+    | reindex(F, kf, vf)
+    | discard(F, sel)
+    | fold(F, op, ev)
+    | fix(F0, step, ev)
+    | gen(init, step, guard)
+    | port(decl)
+```
+*T-Fam*: and a rule T-Ext named only in prose; GT-Not is no rule.
+# (sec:categories) Appendix
+    | other(x)
+";
+    let mut got: Vec<String> = unsaid_words(design).into_iter().collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [
+            "Boom",
+            "T-Discard",
+            "T-Ext",
+            "T-Fam",
+            "T-Fix",
+            "T-Fold",
+            "T-Gen",
+            "T-Port",
+            "T-Reindex"
+        ]
+    );
+}
+
+/// `n` lines of a collision message, each naming one rule, as a message must not.
+fn messages(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("{i}:5: two keypaths land on `k{i}` (T-Reindex); owes op's laws\n"))
+        .collect()
+}
+
+#[test]
+fn finding_the_unsaid_words_scales() {
+    let words: HashSet<String> = ["T-Reindex", "T-Fold", "Boom"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let texts = scaling::inputs(2000, messages);
+    scaling::check("finding kernel rule names in n message lines", 2000, |m| {
+        assert_eq!(said(&texts[&m], &words).len(), m);
+    });
 }
