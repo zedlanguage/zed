@@ -1215,13 +1215,13 @@ impl<'t> Scoped<'t> {
     }
 
     /// Whether the relation read last was read in coordinates other than its inputs
-    /// ([`Frame`]). O(1).
+    /// (`Frame`). O(1).
     pub fn moved(&self) -> bool {
         !self.back.is_empty()
     }
 
     /// The relation of `body`, the body [`Scoped::relation`] gave last: over its inputs, each
-    /// atom of its coordinates ([`Frame`]) written as the input it stands for, with the
+    /// atom of its coordinates (`Frame`) written as the input it stands for, with the
     /// definitions it reaches, its auxiliary variables numbered from 0 in the order the scope
     /// numbered them.
     /// It is the relation [`relations`] states for the body closed over the definitions it
