@@ -18,7 +18,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::family::{Family, Id};
+use crate::value::{Family, Id};
 use crate::term::{FixKind, Shared, Term};
 use crate::value::{Items, Value};
 

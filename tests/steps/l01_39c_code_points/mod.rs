@@ -9,7 +9,7 @@ mod native;
 mod scaling;
 mod values;
 
-use zed_kernel::family::Family;
+use zed_kernel::value::Family;
 use zed_kernel::{Prim, Value};
 use zedc::run::load;
 

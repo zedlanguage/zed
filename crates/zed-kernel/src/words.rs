@@ -14,7 +14,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
-use crate::family::Family;
+use crate::value::Family;
 use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, room, show_f64};
 use crate::term::Prim;
 use crate::text::Text;
@@ -282,8 +282,8 @@ fn type_err(p: Prim, x: &Value) -> Result<Value, KernelError> {
 /// A part of a value that more than one holder can share, read once by [`room_to_print`].
 #[derive(PartialEq, Eq, Hash)]
 enum Shared {
-    Items(crate::family::Id),
-    Family(crate::family::Id),
+    Items(crate::value::Id),
+    Family(crate::value::Id),
 }
 
 /// What is left to read in [`room_to_print`].
@@ -350,7 +350,7 @@ fn room_to_print(v: &Value) -> Result<Room, TooLarge> {
     let mut known: HashMap<Shared, Option<u128>> = HashMap::new();
     let mut open: Vec<Option<u128>> = vec![Some(0)];
     // The length of a struct payload's field names, `name: ` each, by their shared list.
-    let mut names: HashMap<(crate::family::Id, usize), u128> = HashMap::new();
+    let mut names: HashMap<(crate::value::Id, usize), u128> = HashMap::new();
     let mut widest = BigUint::zero();
     let add = |open: &mut Vec<Option<u128>>, n: Option<u128>| {
         let sum = open.last_mut().expect("the whole value is open");
@@ -521,7 +521,7 @@ fn read_f64(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::family::Family;
+    use crate::value::Family;
 
     /// The length [`room_to_print`] counts is the length written, for every kind of part, with
     /// sharing, and at most a few bytes more per number.

@@ -26,7 +26,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use zed_kernel::Value;
-use zed_kernel::family::{Id, fresh_id};
+use zed_kernel::value::{Id, fresh_id};
 use zed_kernel::provenance::FactAddress;
 
 use super::affine::{Affine, Bounds};

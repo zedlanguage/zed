@@ -18,9 +18,9 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
-use crate::error::KernelError;
+use crate::value::KernelError;
 use crate::exact::{CanonicalTree, TreeStep, exact_sum};
-use crate::family::{Family, Keypath};
+use crate::value::{Family, Keypath};
 use crate::num::{Test, TooLarge, refused};
 use std::sync::Arc;
 

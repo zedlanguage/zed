@@ -104,7 +104,7 @@ use std::borrow::Cow;
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication: the crossover measured on 2026-11-05, both about 0.33 ms at 1024 words
@@ -1217,6 +1217,27 @@ fn write_decimal(x: &BigUint, powers: &[Divisor], level: usize, pad: bool, out: 
     write_decimal(&high, powers, level - 1, pad, out);
     drop(high);
     write_decimal(&low, powers, level - 1, true, out);
+}
+
+/// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
+/// not the squarings of a multiplication.
+pub(super) fn built(pows: &[(u64, BigUint)]) -> BigInt {
+    let mut out = BigUint::one();
+    let mut twos = None;
+    for (p, e) in pows {
+        match (p, e.is_zero()) {
+            (_, true) => {}
+            (2, false) => twos = Some(e),
+            _ => {
+                let e = e.to_u64().expect("a power whose bits fit in memory");
+                out = mul(&out, &pow(BigUint::from(*p), e));
+            }
+        }
+    }
+    if let Some(e) = twos {
+        out <<= e.to_u64().expect("a power of 2 whose bits fit in memory");
+    }
+    BigInt::from(out)
 }
 
 #[cfg(test)]

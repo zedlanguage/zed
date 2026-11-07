@@ -19,6 +19,7 @@
 mod bound;
 mod factor;
 mod fast;
+mod room;
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -30,6 +31,8 @@ use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
+use fast::built;
+pub use room::{LiteralRounding, TooLarge, bytes_of, room};
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
 /// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
@@ -1149,27 +1152,6 @@ fn zip_pows<'a>(
     })
 }
 
-/// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
-/// not the squarings of a multiplication.
-fn built(pows: &[(u64, BigUint)]) -> BigInt {
-    let mut out = BigUint::one();
-    let mut twos = None;
-    for (p, e) in pows {
-        match (p, e.is_zero()) {
-            (_, true) => {}
-            (2, false) => twos = Some(e),
-            _ => {
-                let e = e.to_u64().expect("a power whose bits fit in memory");
-                out = fast::mul(&out, &fast::pow(BigUint::from(*p), e));
-            }
-        }
-    }
-    if let Some(e) = twos {
-        out <<= e.to_u64().expect("a power of 2 whose bits fit in memory");
-    }
-    BigInt::from(out)
-}
-
 /// At least the number of bits of `coef * prod p^e`, from the exponents alone: the size of
 /// building it.
 fn width<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> BigUint {
@@ -1179,39 +1161,6 @@ fn width<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> B
         bits += e * (p.ilog2() + u32::from(!p.is_power_of_two()));
     }
     bits
-}
-
-/// A number the evaluator must build, or read, for which the system refused the memory
-/// (DESIGN.md sec:domains): the number is a value of the language, and building it is the
-/// machine's failure, not the program's.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TooLarge {
-    /// The memory asked for, in bits: a measured multiple of the size of what is built, not
-    /// the size of the number.
-    pub bits: BigUint,
-}
-
-impl TooLarge {
-    /// The memory asked for, in bytes, rounded up.
-    pub fn bytes(&self) -> BigUint {
-        bytes_of(&self.bits)
-    }
-}
-
-/// `bits` bits of memory in bytes, rounded up.
-pub fn bytes_of(bits: &BigUint) -> BigUint {
-    (bits + 7u32) >> 3u32
-}
-
-/// `Ok` when the system gives `bits` bits of memory, asked of the allocator itself and freed
-/// at once, so the answer is the machine's and the evaluator sets no limit. A build that would
-/// ask for more than the system gives is reported before it starts, where num-bigint would
-/// abort the process.
-pub fn room(bits: BigUint) -> Result<(), TooLarge> {
-    match given(&bits) {
-        true => Ok(()),
-        false => Err(TooLarge { bits }),
-    }
 }
 
 /// Whether `p` divides `m`, read one word at a time with no quotient built, so a wide `m` costs
@@ -1314,14 +1263,6 @@ fn times<'a>(x: &'a BigUint, y: &'a BigUint, check: bool) -> Result<Cow<'a, BigU
         room(BigUint::from(x.bits() + y.bits()))?;
     }
     Ok(Cow::Owned(fast::mul(x, y)))
-}
-
-/// Whether the allocator gives `bits` bits at once, asked and freed at once.
-fn given(bits: &BigUint) -> bool {
-    let words = (bits + 63u32) >> 6u32;
-    words
-        .to_usize()
-        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok())
 }
 
 /// The digits of `coef * prod pows`. The power of 10 they share is written as zeros, so a
@@ -1618,22 +1559,6 @@ pub fn show_f64(x: f64) -> String {
         format!("{first}.{rest}e{exp}")
     };
     format!("{sign}{body}")
-}
-
-/// Why a float literal has no value at a binary float carrier (DESIGN.md sec:domains), or why
-/// a number could not be rounded to one.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LiteralRounding {
-    /// It rounds to infinity: it is beyond the largest finite float.
-    Infinite,
-    /// It is not zero, but it rounds to zero: it is below half the least subnormal.
-    Zero,
-    /// It lies so near a rounding boundary that telling which side it is on needs more
-    /// memory than the system gives.
-    TooLarge(TooLarge),
-    /// The literal has so many digits that reading them needs more memory than the system
-    /// gives.
-    Unread(TooLarge),
 }
 
 /// The float literal `text` at `f64`: decimal digits with an optional fraction and exponent,

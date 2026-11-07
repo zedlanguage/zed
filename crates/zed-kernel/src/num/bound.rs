@@ -13,7 +13,8 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, ToPrimitive, Zero};
 
-use super::{LiteralRounding, TooLarge, built, fast, room};
+use super::fast::{self, built};
+use super::room::{LiteralRounding, TooLarge, room};
 
 /// `coef * prod p^e`, every exponent positive; the coefficient is borrowed from the number it
 /// bounds where it can be, so a wide one is not copied.

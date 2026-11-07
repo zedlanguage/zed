@@ -2,7 +2,7 @@
 //! UTF-8 lengths, the round trip over every string of up to 4 scalars of 1, 2, 3 and 4 bytes, and
 //! each form of bytes that is not well-formed UTF-8 (the Unicode Standard, table 3-7).
 
-use zed_kernel::family::Family;
+use zed_kernel::value::Family;
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{KernelError, Prim, Value};
 

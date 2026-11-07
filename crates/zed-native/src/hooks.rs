@@ -434,7 +434,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         }
         Op::Prim(Prim::Concat) if ins.len() == 2 => match (text(s, ins[0])?, text(s, ins[1])?) {
             (Some(a), Some(b)) => {
-                let r = Text::join(&a, &b).map_err(|e| e.to_string())?;
+                let r = Text::join(&a, &b).map_err(|e| KernelError::from(e).to_string())?;
                 consume(s, ni, ins)?;
                 Ok(s.heap.alloc(Obj::Str(r)))
             }
@@ -863,7 +863,7 @@ mod tests {
     #[test]
     fn a_chain_of_closures_becomes_a_term() {
         // `(x) -> (y) -> x`, whose inner lambda captures one value.
-        let g = crate::legalize(lower(&lam(&["x"], lam(&["y"], var("x")))).unwrap());
+        let g = crate::legal::legalize(lower(&lam(&["x"], lam(&["y"], var("x")))).unwrap());
         let (t, _) = Tables::new(&g, &plan(g.graph(), false)).unwrap();
         let captures = |l: &&crate::tables::LambdaInfo| !t.nodes[l.node].node().inputs.is_empty();
         let inner = t.lambdas.iter().position(|l| captures(&l)).unwrap();
@@ -891,7 +891,7 @@ mod tests {
         let lt = Term::Prim(Prim::Lt, vec![var("y"), lit(1i64)]);
         let less = Term::Prim(Prim::Sub, vec![var("y"), lit(1i64)]);
         let body = if_(lt, var("a"), app(var("b"), vec![less]));
-        let g = crate::legalize(lower(&lam(&["a", "b"], lam(&["y"], body))).unwrap());
+        let g = crate::legal::legalize(lower(&lam(&["a", "b"], lam(&["y"], body))).unwrap());
         let (t, _) = Tables::new(&g, &plan(g.graph(), false)).unwrap();
         let captures = |l: &&crate::tables::LambdaInfo| t.nodes[l.node].node().inputs.len() == 2;
         let inner = t.lambdas.iter().position(|l| captures(&l)).unwrap();
@@ -962,7 +962,7 @@ mod tests {
     /// A run of the program `0` installed, with a string cell already freed: a word of it kept
     /// past its free, as a wrong plan would keep it, and a live string.
     fn with_a_freed_cell() -> (Word, Word) {
-        let g = crate::legalize(lower(&Term::Lit(Value::Int(0))).unwrap());
+        let g = crate::legal::legalize(lower(&Term::Lit(Value::Int(0))).unwrap());
         let (t, _) = Tables::new(&g, &plan(g.graph(), false)).unwrap();
         install(State::new(Arc::new(t), Evaluator::new(World::new())));
         with(|_, s| {

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::deep;
 
 mod walk;
-use crate::family::{Id, fresh_id};
+use crate::value::{Id, fresh_id};
 use crate::types::Type;
 use crate::value::Value;
 

@@ -11,8 +11,10 @@ mod codegen;
 #[cfg(unix)]
 mod exe;
 mod hooks;
+mod legal;
 #[cfg(target_os = "linux")]
 pub mod link;
+mod outcome;
 mod tables;
 
 use std::mem::ManuallyDrop;
@@ -23,33 +25,21 @@ use cranelift_jit::{JITBuilder, JITMemoryProvider, JITModule, SystemMemoryProvid
 use cranelift_module::default_libcall_names;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use zed_kernel::{Evaluator, Term, Value, World};
+use zed_kernel::{Evaluator, Term, Value};
 use zedc::zir::Region;
-use zedc::zir::legalize::{Expansion, Expansions, Legalized};
+use zedc::zir::legalize::Legalized;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{Plan, plan};
 
-use zed_rt::{Stack, Stats, Word};
+use zed_rt::Word;
 
 use crate::tables::Tables;
 
 #[cfg(feature = "counts")]
 pub use hooks::{Counted, counted};
-
-/// What one native run gives.
-#[derive(Clone, Debug)]
-pub struct Outcome {
-    /// The program's value.
-    pub value: Value,
-    /// The heap's counts.
-    pub stats: Stats,
-    /// How many nodes the kernel ran for the runtime.
-    pub kernel_calls: u64,
-    /// The entries of the heap's table of uncounted values when the run ends.
-    pub table: usize,
-    /// The cells the heap holds when the run ends, live or free.
-    pub cells: usize,
-}
+pub use legal::{EXPANSIONS, legalize};
+pub use outcome::Outcome;
+use outcome::call;
 
 /// Cranelift's `opt_level`, with the register allocator that goes with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,33 +162,6 @@ fn run_in(
     o
 }
 
-/// Runs the generated code entered at `root`, made from the tables `t`, the kernel in `ev`
-/// running the nodes the runtime does not: the JIT's way and a linked executable's.
-fn call(
-    t: Arc<Tables>,
-    root: extern "C" fn() -> Word,
-    ev: &mut Evaluator,
-) -> Result<Outcome, String> {
-    // Generated code recurses on the machine stack once per Zed call and keeps a function's
-    // words in its frame, so it runs on a stack as large as memory (COMPLEXITY.md R10), mapped
-    // before the run's state is installed so that a failure leaves nothing to undo.
-    let stack = Stack::new()?;
-    let taken = std::mem::replace(ev, Evaluator::new(World::new()));
-    hooks::install(hooks::State::new(t, taken));
-    let w = stack.run(|| root());
-    drop(stack);
-    let mut s = hooks::remove();
-    let r = hooks::finish(&s.t, &mut s.run, w);
-    *ev = s.run.ev;
-    Ok(Outcome {
-        value: r?,
-        stats: s.run.heap.stats,
-        kernel_calls: s.run.kernel_calls,
-        table: s.run.heap.table_len(),
-        cells: s.run.heap.cell_slots(),
-    })
-}
-
 /// The object file of graph `g`, made by [`legalize`], under `plan`, for the host: `zed_root`
 /// exported, the runtime's hooks imported.
 pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
@@ -236,17 +199,6 @@ fn object_module() -> Result<ObjectModule, String> {
     let b = ObjectBuilder::new(isa(true, OptLevel::None)?, "zed", default_libcall_names())
         .map_err(|e| format!("native: {e}"))?;
     Ok(ObjectModule::new(b))
-}
-
-/// The expansions this back end asks of legalization (DESIGN.md sec:ir, "Legalization"): a
-/// derived node runs through its certificate, and `>` and `>=` are compiled as `<` and `<=`
-/// on their inputs swapped, so the code generator compiles only the latter two.
-pub const EXPANSIONS: Expansions =
-    Expansions::of(&[Expansion::Derived, Expansion::Gt, Expansion::Ge]);
-
-/// `g` legalized for this back end: what [`run`] and [`object()`] take, with a plan of its graph.
-pub fn legalize(g: Region) -> Legalized {
-    zedc::zir::legalize::legalize(g, EXPANSIONS)
 }
 
 /// Lowers, legalizes, plans with `fuse` and runs a closed term natively: a `through` for
@@ -372,7 +324,7 @@ mod placement {
     use cranelift_jit::{BranchProtection, JITMemoryKind};
     use cranelift_module::ModuleResult;
     use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
-    use zed_kernel::{Prim, Term};
+    use zed_kernel::{Prim, Term, World};
     use zedc::zir::memory::plan;
 
     use super::*;

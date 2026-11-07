@@ -83,7 +83,7 @@ impl Program {
         let (text, zir) = rest.split_at_checked(len).ok_or_else(bad)?;
         let text = std::str::from_utf8(text).map_err(|_| bad())?;
         let ports = Ports::from_text(text)?;
-        let graph = crate::legalize(zedc::zir::binary::decode(zir)?);
+        let graph = crate::legal::legalize(zedc::zir::binary::decode(zir)?);
         let plan = plan(graph.graph(), fuse != 0);
         Ok(Program {
             ports,
@@ -196,7 +196,7 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
         &mut stderr,
         |ev| {
             let (t, _) = Tables::new(&program.graph, &program.plan)?;
-            crate::call(Arc::new(t), root, ev).map(|o| o.value)
+            crate::outcome::call(Arc::new(t), root, ev).map(|o| o.value)
         },
     )
 }
@@ -228,7 +228,7 @@ mod tests {
         let p = Program::decode(&data(true, address, &ports, &graph).unwrap()).unwrap();
         assert_eq!(p.ports, ports);
         assert_eq!(p.address, address);
-        let built = crate::legalize(graph.clone());
+        let built = crate::legal::legalize(graph.clone());
         assert_eq!(p.graph.graph(), built.graph());
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));

@@ -36,12 +36,22 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::KernelError;
 use crate::num::{TooLarge, room};
 
 /// A string's text, shared.
 #[derive(Clone)]
 pub struct Text(Arc<Tree>);
+
+/// `++` of two strings whose lengths in bytes add up past `usize::MAX`, the most a length holds:
+/// the lengths of the two, which the kernel reports as
+/// [`KernelError::StringTooLong`](crate::KernelError::StringTooLong).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TooLong {
+    /// The left string's length in bytes.
+    pub left: usize,
+    /// The right string's length in bytes.
+    pub right: usize,
+}
 
 /// A length in bytes and in characters (Unicode scalar values).
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -115,8 +125,8 @@ impl Text {
     /// join shares its parts, so a string doubled 64 times is a few thousand nodes and `2^64`
     /// times as long as the first: when the two lengths in bytes add up past `usize::MAX` the
     /// join's length is not representable, and it is refused with
-    /// [`KernelError::StringTooLong`].
-    pub fn join(a: &Text, b: &Text) -> Result<Text, KernelError> {
+    /// [`TooLong`].
+    pub fn join(a: &Text, b: &Text) -> Result<Text, TooLong> {
         if a.is_empty() {
             return Ok(b.clone());
         }
@@ -124,7 +134,7 @@ impl Text {
             return Ok(a.clone());
         }
         if a.len().checked_add(b.len()).is_none() {
-            return Err(KernelError::StringTooLong {
+            return Err(TooLong {
                 left: a.len(),
                 right: b.len(),
             });
@@ -837,7 +847,7 @@ mod tests {
     }
 
     /// A block doubled `k` times, `s = s ++ s`: `2^k` blocks long.
-    fn doubled(block: &str, k: u32) -> Result<Text, KernelError> {
+    fn doubled(block: &str, k: u32) -> Result<Text, TooLong> {
         let mut s = Text::from(block);
         for _ in 0..k {
             s = Text::join(&s, &s)?;
@@ -869,19 +879,12 @@ mod tests {
     #[test]
     fn a_string_doubled_to_2_64_bytes_is_refused() {
         let half = 1usize << 63;
-        let too_long = KernelError::StringTooLong {
+        let too_long = TooLong {
             left: half,
             right: half,
         };
         assert_eq!(doubled("a", 64).unwrap_err(), too_long);
         assert_eq!(doubled("ä", 63).unwrap_err(), too_long);
-        assert_eq!(
-            too_long.to_string(),
-            "`++` cannot join a string of 9223372036854775808 bytes to one of \
-             9223372036854775808 bytes: the result would be 18446744073709551616 bytes, more \
-             than the 18446744073709551615 bytes a string's length can hold; keep the parts \
-             apart, as a list of strings written out one at a time, or join fewer of them"
-        );
     }
 
     #[test]
@@ -903,7 +906,7 @@ mod tests {
         );
         assert_eq!(
             Text::join(&all, &Text::from("b")).unwrap_err(),
-            KernelError::StringTooLong {
+            TooLong {
                 left: usize::MAX,
                 right: 1,
             }
