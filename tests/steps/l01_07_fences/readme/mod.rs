@@ -256,11 +256,7 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
 /// place and the variant's line in it, with the item that will raise it: the test of the
 /// enabled fences leaves them out, and `each_readme_variant_gives_its_pinned_outcome_at_l1`
 /// holds what each gives now.
-const RAISED_LATER: &[(&str, usize, &str)] = &[
-    // `bad = q + 1.5;` gives a diagnostic in no row; item CAST-menu-check makes the checker
-    // raise "Two numeric values with no common carrier", and this pin then becomes `pass`.
-    ("README.md:763", 6, "CAST-menu-check"),
-];
+const RAISED_LATER: &[(&str, usize, &str)] = &[];
 
 /// What each ✗ variant of README.md gives at L1, by the fence's place and the variant's line
 /// in it: `pass`, or its first problem. Most need forms of later layers; the step that
@@ -281,12 +277,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         4,
         "line 1: this form (ReduceTail) is built from layer L7",
     ),
-    // Item CAST-menu-check makes the checker raise this row, and the pin becomes `pass`.
-    (
-        "README.md:763",
-        6,
-        "line 6: the mark names the row \"Two numeric values with no common carrier\", and the diagnostic is in no row of the rejection table: `1.5` is an f64 where `int` is expected; a literal takes no other carrier",
-    ),
+    ("README.md:763", 6, "pass"),
     ("README.md:1013", 2, "line 1: `files` is not defined"),
     (
         "README.md:1049",

@@ -625,6 +625,9 @@ struct Ck<'t, 'a> {
     defer: BTreeSet<Arc<str>>,
     /// What the last application of one arrow bound, and the needs it left.
     applied: Option<(Binds, Vec<Need>)>,
+    /// The literals the applications under way refused, each with its message, for
+    /// [`Self::apply`] to report with the application's derivation and repairs.
+    lit_refused: Vec<(Span, String)>,
     /// The atoms the uses of each binder handle, `else` and `is` on its name or on a name
     /// bound to it: an undeclared parameter's type holds them.
     handled: Handled,
@@ -684,6 +687,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
+            lit_refused: Vec::new(),
             handled: handled(t.res),
             widened: HashSet::new(),
             outside: HashMap::new(),
@@ -2987,7 +2991,66 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is inside a tuple. Each side borrows its component types, one per shape, so a tuple
     /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
     fn equal(&mut self, x: &Arg, y: &Arg) {
+        let from = self.info.errors.len();
         self.pair(side(x), side(y));
+        if !self.trying {
+            self.equal_repairs(from, x, y);
+            self.equal_repairs(from, y, x);
+        }
+    }
+
+    /// The derivation and repairs of the rejection, among the errors from the `from`th on, of
+    /// the plain literal `l` compared by `==` with the value `v` of other carriers in the row
+    /// of two numbers with no common carrier (`n == 1.0` with `n: int`): `v`'s derivation, the
+    /// literal, and each cast of `v` with which the comparison checks, tried with the
+    /// checker's state restored after, `f64(n)`. One trial per cast word.
+    fn equal_repairs(&mut self, from: usize, l: &Arg, v: &Arg) {
+        let (Some(lit), None, Some(at)) = (&l.lit, &v.lit, v.at) else {
+            return;
+        };
+        let Some(k) = (from..self.info.errors.len()).find(|&k| {
+            let e = &self.info.errors[k];
+            e.span == lit.site && e.row == Some(Row::NoCommonCarrier)
+        }) else {
+            return;
+        };
+        let mut notes = self.derive(&[at]);
+        notes.push(Note {
+            span: lit.span,
+            text: literal_note(lit.written(), lit_ty(&lit.value, lit.neg())),
+        });
+        let held = match self.class_of_ty(&v.ty) {
+            Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
+            _ => v.ty.clone(),
+        };
+        let t = self.t;
+        let name = match self.seen.get(&at) {
+            Some((_, Src::Name(id))) => Some(&t.res.binders[*id].name),
+            _ => None,
+        };
+        for w in ["int", "rat", "f64"] {
+            let Some(r) = converted(&word_sig(w), &held) else {
+                continue;
+            };
+            let cast = Arg {
+                at: Some(at),
+                ..Arg::of(r)
+            };
+            let saved = self.mark();
+            self.trying = true;
+            self.equal(l, &cast);
+            let ok = self.info.errors.len() == saved.errors;
+            self.trying = false;
+            self.undo(&saved);
+            if ok {
+                let text = match name {
+                    Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
+                    None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
+                };
+                notes.push(Note { span: at, text });
+            }
+        }
+        self.info.errors[k].notes = notes;
     }
 
     /// [`Ck::equal`] of the two sides `x` and `y`.
@@ -3006,6 +3069,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                     match (lc == mc, m_takes) {
                         (true, _) => {}
+                        // Two plain literals of two carriers: two numbers with no common
+                        // carrier, the one rejected at the other's carrier.
+                        (false, takes) if !l.n && !m.n => {
+                            let (r, c) = if takes { (m, lc) } else { (l, mc) };
+                            let notes = [l, m]
+                                .map(|l| Note {
+                                    span: l.span,
+                                    text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
+                                })
+                                .to_vec();
+                            self.rejects_with(Row::NoCommonCarrier, r.site, menu(r, &[c]), notes);
+                        }
                         (false, true) => {
                             self.adopt_to(m, lc);
                         }
@@ -3066,7 +3141,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         )
                     }
                 };
-                self.error(l.site, m);
+                self.compared(l, ts, m);
             }
             return;
         }
@@ -3075,7 +3150,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.adopt_to(l, c);
             }
             Ok(None) => {}
-            Err(m) => self.error(l.site, m),
+            Err(m) => self.compared(l, ts, m),
+        }
+    }
+
+    /// Reports the literal `l`, compared by `==` with a value of one of the types `ts`,
+    /// rejected with the message `m`: in the row of two numbers with no common carrier where
+    /// `l` is plain and every value of `ts` is a number of other carriers (`n == 1.0` with
+    /// `n: int`), whose derivation and repairs [`Self::equal_repairs`] adds; in no row
+    /// otherwise.
+    fn compared(&mut self, l: &Lit, ts: &[&Ty], m: String) {
+        let numbers = (ts.iter()).try_fold(0, |acc, t| self.numbers_in(t).map(|m| acc | m));
+        match numbers {
+            Some(n) if !l.n && n != 0 && n & lit_carrier(&l.value).bit() == 0 => {
+                let notes = self.derive(&[l.site]);
+                self.rejects_with(Row::NoCommonCarrier, l.site, m, notes)
+            }
+            _ => self.error(l.site, m),
         }
     }
 
@@ -3712,12 +3803,17 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The repairs of a rejected application the checker discharges: each argument wrapped
     /// in a prelude word, when the application then checks, tried with the checker's state
-    /// restored after. The wrapped argument has no place, so no failure of the word passes by
-    /// a call (rule 6 of sec:type_resolution): the trial sees the application, not where its
-    /// result goes, and a passed failure may have nowhere to go there. An argument of a class
-    /// is wrapped as a value of the carriers the class still holds. A name is shown
-    /// wrapped, `f64(r)`, and anything else as the word around the place shown: the menu of
-    /// the row for two numeric values with no common carrier (DESIGN.md sec:diagnostics).
+    /// restored after. At an operator or a call of a prelude word the wrapped argument keeps
+    /// its place, so a failure of the word, `#inexact` of `f64(r)`, passes by as it does where
+    /// the repair is written (rule 6 of sec:type_resolution): `max(f64(r), x)` as
+    /// `f64(r) + x`. At a call of a declared function it has none, so a word whose failure the
+    /// parameter does not take is not offered: `discount(price: int("12"))`. The trial sees
+    /// the application, not where its result goes. An argument of a class is wrapped as a value
+    /// of the carriers the class still holds. A name is shown wrapped, `f64(r)`, and anything
+    /// else as the word around the place shown: the menu of the row for two numeric values
+    /// with no common carrier (DESIGN.md sec:diagnostics). A `rat` literal is offered the
+    /// literals of the other carriers that are the same number exactly, `1.0` for `1r`, in
+    /// place of the words ([`rat_forms`]).
     fn repairs(
         &mut self,
         what: &str,
@@ -3730,6 +3826,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.trying {
             return out;
         }
+        // A word is called by its name and has its own signature; a declared function may
+        // share the name only with a signature of its own.
+        let word = what
+            .strip_prefix('`')
+            .and_then(|w| w.strip_suffix('`'))
+            .is_some_and(|w| crate::resolve::prelude_layer(w).is_some() && *word_sig(w) == *sig);
+        let kept = pass || word;
         for (i, a) in args.iter().enumerate() {
             let Some(Arg {
                 lit: None,
@@ -3745,23 +3848,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => ty.clone(),
             };
             let t = self.t;
-            let name = match self.seen.get(at) {
-                Some((_, Src::Name(id))) => Some(&t.res.binders[*id].name),
-                _ => None,
+            let (name, written) = match self.seen.get(at) {
+                Some((_, Src::Name(id))) => (Some(&t.res.binders[*id].name), None),
+                Some((_, Src::Other(e))) => (None, rat_forms(e)),
+                _ => (None, None),
             };
+            if let Some(forms) = written {
+                for (ty, text) in forms {
+                    if self.repaired(what, sig, args, (i, ty, kept.then_some(*at)), pass, span) {
+                        out.push(Note { span: *at, text });
+                    }
+                }
+                continue;
+            }
             for w in ["String", "int", "rat", "f64"] {
                 let Some(r) = converted(&word_sig(w), &held) else {
                     continue;
                 };
-                let mut with = args.to_vec();
-                with[i] = Some(Arg::of(r));
-                let saved = self.mark();
-                self.trying = true;
-                self.apply(what, sig, with, pass, span);
-                let ok = self.info.errors.len() == saved.errors;
-                self.trying = false;
-                self.undo(&saved);
-                if ok {
+                if self.repaired(what, sig, args, (i, r, kept.then_some(*at)), pass, span) {
                     let text = match name {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                         None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
@@ -3771,6 +3875,28 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         out
+    }
+
+    /// Whether the application of `sig` to `args` checks with argument `i` replaced by a
+    /// value of type `ty` at the place `at`, if any, tried with the checker's state restored after.
+    fn repaired(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg>],
+        (i, ty, at): (usize, Ty, Option<Span>),
+        pass: bool,
+        span: Span,
+    ) -> bool {
+        let mut with = args.to_vec();
+        with[i] = Some(Arg { at, ..Arg::of(ty) });
+        let saved = self.mark();
+        self.trying = true;
+        self.apply(what, sig, with, pass, span);
+        let ok = self.info.errors.len() == saved.errors;
+        self.trying = false;
+        self.undo(&saved);
+        ok
     }
 
     /// Adds the note at `span` that `text` words to each error from the `from`th on that lacks
@@ -3858,6 +3984,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let defer = std::mem::take(&mut self.defer);
         let passing = self.need_passed.len();
+        let refusals = self.lit_refused.len();
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
             (1, _) => self.apply_one(what, sig, 0, &args, defer, span),
             (_, Some(k)) => self.apply_one(what, sig, k, &args, defer, span),
@@ -3869,6 +3996,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // What a check of a need left when the application failed before taking it.
         self.need_passed.truncate(passing);
+        // A literal refused is its own error, and the application's none.
+        for refused in self.lit_refused.split_off(refusals) {
+            self.literal_refused(what, sig, &args, refused, pass, span);
+        }
         match r {
             Ok((t, kept)) => (out.union(&t), kept),
             Err(message) => {
@@ -3883,9 +4014,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 notes.extend(self.repairs(what, sig, &args, pass, span));
-                match self.no_arrow_at_carrier(what, sig, &args) {
-                    true => self.rejects_with(Row::NoArrowAtCarrier, span, message, notes),
-                    false => self.error_with(span, message, notes),
+                if self.no_arrow_at_carrier(what, sig, &args) {
+                    self.rejects_with(Row::NoArrowAtCarrier, span, message, notes);
+                } else if self.no_common_carrier(sig, &args) {
+                    self.rejects_with(Row::NoCommonCarrier, span, message, notes);
+                } else {
+                    self.error_with(span, message, notes);
                 }
                 (out, Vec::new())
             }
@@ -3930,16 +4064,132 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
     }
 
+    /// Whether two of `args` are numbers with no carrier in common and no arrow of `sig`
+    /// takes all the numbers of `args` together, though some arrow takes each alone: `r + x`
+    /// of a `rat` and an `f64`, `q + 1.5` of an `int` and an `f64` literal, `max(r, x)`. A
+    /// bounded variable stands for one carrier at all its places (sec:type_resolution), so
+    /// `f(a: T, b: T)` takes no `rat` and `f64` together. An argument whose values are not
+    /// all numbers of known carriers, a generic literal `kn` among them, decides nothing.
+    /// One pass over the arguments per arrow, and the pairs of the seven sets of numeric
+    /// carriers, a constant.
+    fn no_common_carrier(&self, sig: &Sig, args: &[Option<Arg>]) -> bool {
+        let masks: Vec<Option<u8>> = args
+            .iter()
+            .map(|a| a.as_ref().and_then(|a| self.numbers_of(a)))
+            .collect();
+        // The sets of carriers the arguments take, each a bit: a mask is below 16.
+        let kinds = masks.iter().flatten().fold(0u16, |k, &m| k | 1 << m);
+        let has = |m: u8| kinds & 1 << m != 0;
+        let disjoint = (1..16u8).any(|m| has(m) && (1..16u8).any(|n| has(n) && m & n == 0));
+        if !disjoint {
+            return false;
+        }
+        let takes = |p: &Ty, m: u8| m & self.param_mask(sig, p);
+        let each = masks.iter().enumerate().all(|(i, m)| {
+            m.is_none_or(|m| {
+                (sig.arrows.iter()).any(|ar| ar.params.get(i).is_some_and(|p| takes(p, m) != 0))
+            })
+        });
+        each && !sig.arrows.iter().any(|ar| {
+            let mut common: HashMap<&str, u8> = HashMap::new();
+            masks.iter().zip(&ar.params).all(|(m, p)| {
+                let Some(m) = *m else {
+                    return true;
+                };
+                let t = takes(p, m);
+                match p.as_var().filter(|v| sig.bounds.contains_key(*v)) {
+                    _ if t == 0 => false,
+                    Some(v) => {
+                        let c = common.entry(&**v).or_insert(EVERY);
+                        *c &= t;
+                        *c != 0
+                    }
+                    None => true,
+                }
+            })
+        })
+    }
+
+    /// The numeric carriers a value of the argument `a` may be of, `None` unless every value
+    /// is a number of a known carrier: a plain literal's own carrier, and otherwise those of
+    /// its type ([`Self::numbers_in`]); a generic literal `kn` may take any.
+    fn numbers_of(&self, a: &Arg) -> Option<u8> {
+        match &a.lit {
+            Some(l) if l.n => None,
+            Some(l) => Some(lit_carrier(&l.value).bit()),
+            None => self.numbers_in(&a.ty),
+        }
+    }
+
+    /// The numeric carriers a value of `t` may be of, `None` unless every value is a number
+    /// of a known carrier, a class's carriers where it holds numbers only. Atoms, which pass
+    /// by, are not read. One split of the set and one lookup per variable.
+    fn numbers_in(&self, t: &Ty) -> Option<u8> {
+        let numbers = Carrier::Int.bit() | Carrier::Rat.bit() | Carrier::F64.bit();
+        if t.dynamic || !t.tuples.is_empty() || !t.fns.is_empty() {
+            return None;
+        }
+        let s = t.set.split();
+        if s.rest.is_some() {
+            return None;
+        }
+        let mut m = Carrier::ALL
+            .into_iter()
+            .filter(|c| s.bases[c.base()].is_some())
+            .fold(0, |m, c| m | c.bit());
+        for v in &t.vars {
+            m |= self.classes[self.class_of(&Piece::Var(v.clone()))?].mask;
+        }
+        (m != 0 && m & !numbers == 0).then_some(m)
+    }
+
+    /// The carriers a parameter `p` of `sig` takes: a bounded variable's bound, a class's
+    /// carriers, and those of a closed type; every value for a variable or `_`.
+    fn param_mask(&self, sig: &Sig, p: &Ty) -> u8 {
+        if let Some(&b) = p.as_var().and_then(|v| sig.bounds.get(v)) {
+            return b;
+        }
+        match self.class_of_ty(p) {
+            Some(r) => self.classes[r].mask,
+            None => mask_of(p),
+        }
+    }
+
     /// Reports a literal of `args` rejected at a parameter of `sig` with the message `m` at
-    /// `s`, in the row of an operator with no arrow at its operands' carrier where that holds
-    /// (`7 / 2`), and in no row otherwise.
-    fn literal_refused(&mut self, what: &str, sig: &Sig, args: &[Option<Arg>], s: Span, m: String) {
-        match self.no_arrow_at_carrier(what, sig, args) {
-            true => {
-                let notes = self.derive(&[s]);
-                self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
+    /// `s`: in the row of an operator with no arrow at its operands' carrier where that holds
+    /// (`7 / 2`); in the row of two numbers with no common carrier where that holds
+    /// (`q + 1.5` with `q: int`), with the application's derivation and the casts of the other
+    /// operands the checker accepts, `f64(q)`, where the message holds the literal's own
+    /// forms; and in no row otherwise.
+    fn literal_refused(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg>],
+        (s, m): (Span, String),
+        pass: bool,
+        span: Span,
+    ) {
+        if self.no_arrow_at_carrier(what, sig, args) {
+            let notes = self.derive(&[s]);
+            self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
+        } else if self.no_common_carrier(sig, args) {
+            let mut notes = Vec::new();
+            if !self.trying {
+                notes = self.applied(what, sig, args, span);
+                let mut seen: HashSet<Note> = notes.iter().cloned().collect();
+                for a in args.iter().flatten() {
+                    for n in self.reasons(&a.ty) {
+                        if seen.insert(n.clone()) {
+                            notes.push(n);
+                        }
+                    }
+                }
+                notes.extend(self.repairs(what, sig, args, pass, span));
             }
-            false => self.error(s, m),
+            self.rejects_with(Row::NoCommonCarrier, s, m, notes);
+        } else {
+            self.error(s, m);
         }
     }
 
@@ -4249,7 +4499,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let ty = match adopted(a, p) {
                 // A literal that cannot adopt is its own error, and the application's none.
                 Err((s, m)) => {
-                    self.literal_refused(what, sig, args, s, m);
+                    self.lit_refused.push((s, m));
                     continue;
                 }
                 Ok(Some((t, ads))) => {
@@ -4636,7 +4886,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let Some((need, retyped)) = best else {
             if let Some((s, m)) = adopt_error {
-                self.literal_refused(what, sig, args, s, m);
+                self.lit_refused.push((s, m));
                 return Ok(None);
             }
             // No arrow met an argument, which may rest on a refused check that it is empty.
@@ -5410,6 +5660,50 @@ fn menu(l: &Lit, held: &[Carrier]) -> String {
             m
         },
     )
+}
+
+/// The literals of the other carriers that are exactly the number of `e` when `e` is a `rat`
+/// literal, `k` or `-k` with `k` written `1r` or `0.5r`, each with its type and the repair
+/// that writes it, in the order of [`menu`]: the `f64` literal, `1.0` or `0.5`, where the
+/// number is an `f64` exactly, then the `int` literal, `1`, where it is written without a
+/// point; `None` when `e` is no `rat` literal. A literal has no length limit, so a repair
+/// that quotes it is written in memory asked for first ([`quoting`]).
+fn rat_forms(e: &Expr) -> Option<Vec<(Ty, String)>> {
+    let (neg, digits) = match &e.kind {
+        ExprKind::Rat(d) => (false, d),
+        ExprKind::Unary("-", a) => match &a.kind {
+            ExprKind::Rat(d) => (true, d),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let v = neg_value(&Value::rat(Rat::decimal(digits).ok()??), neg);
+    let sign = if neg { "-" } else { "" };
+    let point = digits.contains('.');
+    let mut out = Vec::new();
+    for (prim, carrier, suffix) in [
+        (Prim::CastF64, Carrier::F64, if point { "" } else { ".0" }),
+        (Prim::CastInt, Carrier::Int, ""),
+    ] {
+        if carrier == Carrier::Int && point {
+            continue;
+        }
+        let Some(x) = run(prim, &v).filter(|x| !matches!(x, Value::Atom(_))) else {
+            continue;
+        };
+        let text = quoting(
+            &format_args!("repair: write `{sign}{digits}{suffix}`; the checker accepts that"),
+            || {
+                format!(
+                    "repair: write this literal as {} {} literal; the checker accepts that",
+                    article(carrier),
+                    carrier.name()
+                )
+            },
+        );
+        out.push((Ty::lit(&x), text));
+    }
+    Some(out)
 }
 
 /// The message for the literal `l` where `want` holds numbers of the carriers `cs`, two or

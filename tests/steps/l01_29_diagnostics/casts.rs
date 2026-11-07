@@ -7,6 +7,7 @@ use zed_tests::scaling::{self, Meter, on_a_thread};
 
 use super::{rejected, steps};
 use zedc::ast::Stmt;
+use zedc::rejection::Row;
 use zedc::resolve::Resolution;
 use zedc::run::load;
 
@@ -152,6 +153,14 @@ fn mixed(n: usize) -> String {
         .collect()
 }
 
+/// `n` functions, each with three rejections of the row: a call of `max`, a `rat` literal
+/// beside an `f64`, and an `f64` literal compared with an `int`.
+fn called(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("call{i}(r: rat, x: f64, n: int) = (max(r, x), x * 1r, n == 1.0);\n"))
+        .collect()
+}
+
 #[test]
 fn the_cast_menus_of_many_rejections_scale() {
     // Each rejection tries four casts at each of its two operands: a constant per rejection.
@@ -165,10 +174,16 @@ fn the_cast_menus_of_many_rejections_scale() {
 /// A program of one function giving a tuple of `m` integers and `r` functions each adding a
 /// `rat` and an `f64`, parsed and resolved, so that only its check is measured.
 fn padded(m: usize, r: usize) -> (Vec<Stmt>, Resolution) {
+    padded_with(m, &mixed(r))
+}
+
+/// A program of one function giving a tuple of `m` integers and the functions `rest`, parsed
+/// and resolved.
+fn padded_with(m: usize, rest: &str) -> (Vec<Stmt>, Resolution) {
     let mut text = String::from("big() = (0");
     text.push_str(&", 1".repeat(m));
     text.push_str(");\n");
-    text.push_str(&mixed(r));
+    text.push_str(rest);
     let tokens = zedc::lex::lex_fence(&text).expect("the program lexes");
     let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
     let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
@@ -217,6 +232,186 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     assert!(
         ratio <= limit,
         "{R} rejections beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
+         times the work; for work of order n^0 the rule of low complexity allows at most \
+         {limit} times (DESIGN.md Part G)",
+        scaling::FACTOR * m,
+        meter.unit(),
+    );
+}
+
+/// The errors of checking `text`, parsed and resolved.
+fn errors(text: &str) -> Vec<zedc::ast::Error> {
+    let tokens = zedc::lex::lex_fence(text).expect("the program lexes");
+    let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
+    let stmts = zedc::ast::unit(text, &tokens, &tree).expect("it is a unit");
+    let res = zedc::resolve::resolve(&stmts).expect("it resolves");
+    zedc::check::check(&stmts, &res).errors
+}
+
+/// The rows of the errors of checking `text`.
+fn rows(text: &str) -> Vec<Option<Row>> {
+    errors(text).into_iter().map(|e| e.row).collect()
+}
+
+/// The menu of the one rejection of `src`: its entries after `repair: `.
+fn menu(src: &str) -> Vec<String> {
+    let out = rejected(src);
+    steps(&out)
+        .iter()
+        .filter_map(|t| t.strip_prefix("repair: "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The menu entry offering the cast or literal `cast`, after `repair: `.
+fn entry(cast: &str) -> String {
+    format!("write `{cast}`; the checker accepts that")
+}
+
+#[test]
+fn a_plain_literal_beside_a_value_of_another_carrier_is_a_case_of_the_row() {
+    // README.md's `bad = q + 1.5;` with `q` an `int`: the literal is refused, as it adopts no
+    // carrier, and the error is the row's, with the literal's other forms in its message and
+    // the cast of the operand in its menu.
+    let src = program("half(q: int) = q + 1.5;");
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("1:20: `1.5` is an f64 where `int` is expected"),
+        "{out}"
+    );
+    assert!(steps(&out).contains(&"`q` is declared `int`"), "{out}");
+    assert_eq!(menu(&src), [entry("f64(q)")]);
+    checks(&edited(&src, "q + 1.5", "f64(q) + 1.5"));
+    // The same literal where `int` has no arrow is still a case of the row.
+    let src = program("half(r: rat) = r * 1.5;");
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    assert_eq!(menu(&src), [entry("f64(r)")]);
+}
+
+#[test]
+fn a_literal_an_operator_takes_at_another_carrier_is_not_a_case_of_the_row() {
+    // `"a" ++ 1` refuses the literal too, but `++` takes no number at all: no carrier is
+    // missing, and the error keeps no row of the two numeric values.
+    let src = program("tag(s: String) = s ++ 1;");
+    assert!(!rows(&src).contains(&Some(Row::NoCommonCarrier)), "{src}");
+}
+
+#[test]
+fn a_call_of_max_offers_the_casts_of_its_arguments() {
+    let src = program("top(r: rat, x: f64) = max(r, x);");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("1:23: `max` does not take (rat, f64)"),
+        "{out}"
+    );
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    assert_eq!(menu(&src), [entry("f64(r)"), entry("rat(x)")]);
+    checks(&edited(&src, "max(r, x)", "max(f64(r), x)"));
+    checks(&edited(&src, "max(r, x)", "max(r, rat(x))"));
+    let src = program("low(n: int, x: f64) = min(n, x);");
+    assert!(menu(&src).contains(&entry("f64(n)")), "{src}");
+    checks(&edited(&src, "min(n, x)", "min(f64(n), x)"));
+}
+
+#[test]
+fn a_rat_literal_is_offered_its_literal_forms_not_a_cast() {
+    let src = program("scaled(b: f64) = b * 1r;");
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    assert_eq!(menu(&src), [entry("rat(b)"), entry("1.0")]);
+    checks(&edited(&src, "b * 1r", "b * 1.0"));
+    checks(&edited(&src, "b * 1r", "rat(b) * 1r"));
+    // A negative literal keeps its sign, and an integral one beside an `int` drops the point.
+    let src = program("scaled(n: int) = n * -3r;");
+    assert_eq!(menu(&src), [entry("rat(n)"), entry("-3")]);
+    checks(&edited(&src, "n * -3r", "n * -3"));
+    let src = program("scaled(b: f64) = b * 0.5r;");
+    assert_eq!(menu(&src), [entry("rat(b)"), entry("0.5")]);
+    checks(&edited(&src, "b * 0.5r", "b * 0.5"));
+}
+
+#[test]
+fn a_rat_literal_that_no_f64_holds_exactly_is_offered_no_literal() {
+    // 0.1 has no exact `f64`; writing `0.1` would change the number, so only the cast of the
+    // other operand is offered.
+    let src = program("scaled(b: f64) = b * 0.1r;");
+    assert_eq!(menu(&src), [entry("rat(b)")]);
+}
+
+#[test]
+fn a_comparison_with_a_literal_of_another_carrier_offers_the_cast_of_the_value() {
+    let src = program("one(n: int) = n == 1.0;");
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    let out = rejected(&src);
+    let s = steps(&out);
+    assert!(s.contains(&"`n` is declared `int`"), "{out}");
+    assert!(s.contains(&"this literal, 1.0, is 1.0"), "{out}");
+    assert_eq!(menu(&src), [entry("f64(n)")]);
+    checks(&edited(&src, "n == 1.0", "f64(n) == 1.0"));
+    let src = program("one(r: rat) = r == 1.0;");
+    assert_eq!(menu(&src), [entry("f64(r)")]);
+    checks(&edited(&src, "r == 1.0", "f64(r) == 1.0"));
+}
+
+#[test]
+fn two_literals_of_different_carriers_compared_show_both() {
+    let src = program("same() = 1 == 1.0;");
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
+    let out = rejected(&src);
+    let s = steps(&out);
+    assert!(s.contains(&"this literal, 1, is 1"), "{out}");
+    assert!(s.contains(&"this literal, 1.0, is 1.0"), "{out}");
+}
+
+#[test]
+fn the_menus_of_calls_literals_and_comparisons_scale() {
+    // Each rejection tries a constant number of casts and literal forms.
+    scaling::check(
+        "the menus of 3n rejected calls, literals and comparisons",
+        200,
+        |n| {
+            let out = rejected(&called(n));
+            assert_eq!(out.matches(&offered("f64(r)")).count(), n);
+            assert_eq!(out.matches(&offered("1.0")).count(), n);
+            assert_eq!(out.matches(&offered("f64(n)")).count(), n);
+        },
+    );
+}
+
+#[test]
+fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program() {
+    // As `a_cast_menu_costs_the_same_in_a_larger_program`, for the menus of a call of `max`, a
+    // `rat` literal and a comparison with a literal: the work of R functions of three
+    // rejections each, held to order n^0 as the program around them grows from m to 8m.
+    const R: usize = 100;
+    let meter = &mut Meter::new();
+    let mut rejections = |m: usize| {
+        let mut work = |r: usize| {
+            let (stmts, res) = padded_with(m, &called(r));
+            let mut errors = 0;
+            let units = meter
+                .work(|| {
+                    errors = on_a_thread(256 << 20, || zedc::check::check(&stmts, &res))
+                        .errors
+                        .iter()
+                        .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
+                        .count();
+                })
+                .units;
+            assert_eq!(errors, 3 * r, "rejections with a menu among {r} functions");
+            units
+        };
+        let without = work(0);
+        work(R)
+            .checked_sub(without)
+            .expect("the rejections add work")
+    };
+    let (m, limit) = (60_000, scaling::RATIO / scaling::FACTOR as f64);
+    let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
+    let ratio = large as f64 / small as f64;
+    assert!(
+        ratio <= limit,
+        "{R} functions beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
          times the work; for work of order n^0 the rule of low complexity allows at most \
          {limit} times (DESIGN.md Part G)",
         scaling::FACTOR * m,
