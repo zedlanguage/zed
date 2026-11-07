@@ -22,13 +22,13 @@
 //! the first time a match reads them, so matching a constant again adds nothing (COMPLEXITY.md
 //! R3, R6).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::{mem, slice};
 
 use zed_kernel::term::Pattern;
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::value::{Atom, Fields, Items, Value};
+use zed_kernel::value::{Atom, Fields, Items, SharedParts, Value};
 
 use zed_kernel::Text;
 
@@ -290,6 +290,8 @@ struct Making<'v> {
     value: &'v Value,
     /// The atom; none for a tuple.
     atom: Option<&'v Atom>,
+    /// The shared sequence it holds, whose cell later meetings take; none when held once.
+    shared: Option<SharedParts<'v>>,
     rest: slice::Iter<'v, Value>,
     parts: Vec<Word>,
 }
@@ -511,11 +513,16 @@ impl Heap {
         obj
     }
 
-    /// A fresh word for `v`, owned: its cells allocated, each part of a tuple or an atom its
-    /// own, as the counting machine allocates a value the kernel returns. Each cell keeps its
-    /// part of `v` as its kernel value, so handing it to the kernel again reads nothing.
-    pub fn fresh(&mut self, v: &Value) -> Word {
+    /// A fresh word for `v`, owned: its cells allocated as the counting machine allocates a
+    /// value the kernel returns. A tuple or an atom whose sequence `v` holds in several places is
+    /// one cell, counted once per holder, so a value whose levels each hold the one below twice
+    /// costs a cell per level, not one per path (COMPLEXITY.md R9); every other part is its
+    /// own. Each cell keeps its part of `v` as its kernel value, so handing it to the kernel
+    /// again reads nothing.
+    pub fn fresh(&mut self, v: &Value) -> Result<Word, String> {
         let mut stack: Vec<Making<'_>> = Vec::new();
+        // The cell of each shared sequence made so far, by the sequence's identity.
+        let mut made: HashMap<SharedParts<'_>, Word> = HashMap::new();
         let mut next = v;
         loop {
             let (atom, items): (_, &[Value]) = match next {
@@ -523,22 +530,32 @@ impl Heap {
                 Value::Atom(a) => (Some(a), &a.args),
                 _ => (None, &[]),
             };
+            let shared = next.shared_parts();
             let mut rest = items.iter();
-            if let Some(first) = rest.next() {
-                stack.push(Making {
-                    value: next,
-                    atom,
-                    rest,
-                    parts: Vec::with_capacity(items.len()),
-                });
-                next = first;
-                continue;
-            }
-            let mut w = self.fresh_leaf(next);
+            let mut w = match shared.and_then(|k| made.get(&k)) {
+                Some(&w) => {
+                    self.inc(w)?;
+                    w
+                }
+                None => {
+                    if let Some(first) = rest.next() {
+                        stack.push(Making {
+                            value: next,
+                            atom,
+                            shared,
+                            rest,
+                            parts: Vec::with_capacity(items.len()),
+                        });
+                        next = first;
+                        continue;
+                    }
+                    self.fresh_leaf(next)
+                }
+            };
             // Each finished value is a part of the one below it on the stack.
             loop {
                 let Some(top) = stack.last_mut() else {
-                    return w;
+                    return Ok(w);
                 };
                 top.parts.push(w);
                 if let Some(x) = top.rest.next() {
@@ -555,6 +572,9 @@ impl Heap {
                     },
                 });
                 self.cells[w.index()].value = Some(m.value.clone());
+                if let Some(k) = m.shared {
+                    made.insert(k, w);
+                }
             }
         }
     }
@@ -1081,7 +1101,7 @@ mod tests {
     fn a_pair_of_strings_is_three_cells_and_frees_whole() {
         let mut h = Heap::new();
         let v = Value::tuple(vec![Value::str("a"), Value::str("b")]);
-        let w = h.fresh(&v);
+        let w = h.fresh(&v).unwrap();
         assert_eq!((h.stats.allocations, h.live()), (3, 3));
         assert_eq!(h.value(w).unwrap(), v);
         h.dec(w).unwrap();
@@ -1099,7 +1119,7 @@ mod tests {
             "a word that is not a cell is no write"
         );
         // A shared string, then the last reference to it.
-        let s = h.fresh(&Value::str("a"));
+        let s = h.fresh(&Value::str("a")).unwrap();
         h.inc(s).unwrap();
         h.dec(s).unwrap();
         assert_eq!((h.stats.decrements, h.live()), (1, 1));
@@ -1108,12 +1128,12 @@ mod tests {
         assert_eq!(h.todo.capacity(), 0, "no stack was needed");
         // A nest of tuples: the stack grows once and is kept for the next free.
         let v = Value::tuple(vec![Value::tuple(vec![Value::str("a")]), Value::str("b")]);
-        let w = h.fresh(&v);
+        let w = h.fresh(&v).unwrap();
         h.dec(w).unwrap();
         assert_eq!(h.live(), 0);
         let cap = h.todo.capacity();
         assert!(cap > 0 && h.todo.is_empty());
-        let w = h.fresh(&v);
+        let w = h.fresh(&v).unwrap();
         h.dec(w).unwrap();
         assert_eq!((h.live(), h.todo.capacity()), (0, cap));
     }
@@ -1121,14 +1141,14 @@ mod tests {
     #[test]
     fn a_drop_after_a_free_inside_a_nest_is_an_error_and_the_next_drop_starts_clean() {
         let mut h = Heap::new();
-        let s = h.fresh(&Value::str("a"));
+        let s = h.fresh(&Value::str("a")).unwrap();
         let w = h.alloc(Obj::Tuple(vec![s, s]));
         assert_eq!(
             h.dec(w).unwrap_err(),
             format!("runtime: cell {} is dropped after it was freed", s.bits)
         );
         assert!(h.todo.is_empty());
-        let w = h.fresh(&Value::tuple(vec![Value::str("b")]));
+        let w = h.fresh(&Value::tuple(vec![Value::str("b")])).unwrap();
         h.dec(w).unwrap();
         assert_eq!(h.live(), 0);
     }
@@ -1136,7 +1156,9 @@ mod tests {
     #[test]
     fn fused_release_keeps_one_part_with_no_count_write() {
         let mut h = Heap::new();
-        let w = h.fresh(&Value::tuple(vec![Value::str("a"), Value::str("b")]));
+        let w = h
+            .fresh(&Value::tuple(vec![Value::str("a"), Value::str("b")]))
+            .unwrap();
         let mut out = Vec::new();
         let p = Pattern::Tuple(vec![Pattern::Bind("x".into()), Pattern::Wild]);
         assert!(h.matches(&p, w, &mut Vec::new(), &mut out).unwrap());

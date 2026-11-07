@@ -334,7 +334,27 @@ pub enum Value {
     Family(Family),
 }
 
+/// Which shared sequence a tuple or an atom with a payload holds, as [`Value::shared_parts`]
+/// gives it: the sequence's [`Id`], and for an atom its name and the [`Id`] of its field names,
+/// so a tuple and atoms of other names over one sequence are told apart.
+pub type SharedParts<'v> = (Id, Option<(&'v str, Id)>);
+
 impl Value {
+    /// The sequence a non-empty tuple or an atom with a payload holds, when another holder shares
+    /// it, so that a walk of a value can meet it again on another path; none for any other value
+    /// and for a sequence held once, which only its one holder reaches. Two values with the same
+    /// answer are one value, so a walk that keeps one result per answer reads each shared part
+    /// once and never merges values that are merely equal.
+    pub fn shared_parts(&self) -> Option<SharedParts<'_>> {
+        match self {
+            Value::Tuple(xs) if xs.is_shared() && !xs.is_empty() => Some((xs.id(), None)),
+            Value::Atom(a) if a.args.is_shared() && !a.args.is_empty() => {
+                Some((a.args.id(), Some((&a.name, a.fields.id()))))
+            }
+            _ => None,
+        }
+    }
+
     /// A string value.
     pub fn str(s: &str) -> Self {
         Value::Str(s.into())

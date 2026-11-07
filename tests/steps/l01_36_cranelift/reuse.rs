@@ -115,19 +115,21 @@ fn a_constant_matches_as_the_kernel_matches_it() {
 #[test]
 fn a_bare_atom_or_an_empty_tuple_made_again_adds_no_entry() {
     let mut h = Heap::new();
-    let none = h.fresh(&Value::atom("none"));
-    let unit = h.fresh(&Value::tuple(Vec::new()));
+    let none = h.fresh(&Value::atom("none")).unwrap();
+    let unit = h.fresh(&Value::tuple(Vec::new())).unwrap();
     let len = h.table_len();
     for _ in 0..100 {
-        assert_eq!(h.fresh(&Value::atom("none")), none);
-        assert_eq!(h.fresh(&Value::tuple(Vec::new())), unit);
+        assert_eq!(h.fresh(&Value::atom("none")).unwrap(), none);
+        assert_eq!(h.fresh(&Value::tuple(Vec::new())).unwrap(), unit);
     }
-    let pair = h.fresh(&Value::tuple(vec![
-        Value::atom("none"),
-        Value::tuple(Vec::new()),
-    ]));
+    let pair = h
+        .fresh(&Value::tuple(vec![
+            Value::atom("none"),
+            Value::tuple(Vec::new()),
+        ]))
+        .unwrap();
     assert_eq!(h.table_len(), len);
-    assert_ne!(h.fresh(&Value::atom("some")), none);
+    assert_ne!(h.fresh(&Value::atom("some")).unwrap(), none);
     assert_eq!(
         h.value(pair).unwrap(),
         Value::tuple(vec![Value::atom("none"), Value::tuple(Vec::new())])
@@ -138,7 +140,7 @@ fn a_bare_atom_or_an_empty_tuple_made_again_adds_no_entry() {
 fn a_string_made_and_freed_again_and_again_takes_one_cell() {
     let mut h = Heap::new();
     for i in 0..1000 {
-        let w = h.fresh(&Value::str(&format!("request {i}")));
+        let w = h.fresh(&Value::str(&format!("request {i}"))).unwrap();
         h.dec(w).unwrap();
     }
     assert_eq!(
@@ -147,7 +149,9 @@ fn a_string_made_and_freed_again_and_again_takes_one_cell() {
     );
     // A pair of strings is three cells, taken again each time.
     for _ in 0..1000 {
-        let w = h.fresh(&Value::tuple(vec![Value::str("a"), Value::str("b")]));
+        let w = h
+            .fresh(&Value::tuple(vec![Value::str("a"), Value::str("b")]))
+            .unwrap();
         h.dec(w).unwrap();
     }
     assert_eq!((h.cell_slots(), h.live()), (3, 0));
@@ -157,9 +161,9 @@ fn a_string_made_and_freed_again_and_again_takes_one_cell() {
 #[test]
 fn a_word_kept_past_the_free_of_its_cell_is_reported_after_the_cell_is_taken_again() {
     let mut h = Heap::new();
-    let old = h.fresh(&Value::str("old"));
+    let old = h.fresh(&Value::str("old")).unwrap();
     h.dec(old).unwrap();
-    let new = h.fresh(&Value::str("new"));
+    let new = h.fresh(&Value::str("new")).unwrap();
     assert_eq!(h.cell_slots(), 1, "the new string takes the freed cell");
     assert_ne!(old, new, "with another generation");
     assert_eq!(
@@ -213,7 +217,7 @@ fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
 #[test]
 fn a_literal_pattern_compares_a_tuple_part_by_part() {
     let mut h = Heap::new();
-    let x = h.fresh(&Value::str("x"));
+    let x = h.fresh(&Value::str("x")).unwrap();
     let t = h.alloc(Obj::Tuple(vec![Word::int(1), x]));
     let k = h.uncounted(Value::tuple(vec![Value::Int(1), Value::str("x")]));
     let lit = |l: Value| Pattern::Lit(l);
@@ -263,12 +267,16 @@ fn a_literal_pattern_on_a_state_word_is_an_error() {
 fn an_is_pattern_reads_a_constant_and_a_kernel_value_in_place() {
     let mut h = Heap::new();
     let name = h.uncounted(Value::str("Ada"));
-    let big = h.fresh(
-        &Value::int_text("1180591620717411303424", 10)
-            .unwrap()
-            .unwrap(),
-    );
-    let pair = h.fresh(&Value::tuple(vec![Value::Int(1), Value::str("x")]));
+    let big = h
+        .fresh(
+            &Value::int_text("1180591620717411303424", 10)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+    let pair = h
+        .fresh(&Value::tuple(vec![Value::Int(1), Value::str("x")]))
+        .unwrap();
     let is = |h: &mut Heap, t: Type, w| {
         h.matches(&Pattern::Is(t), w, &mut Vec::new(), &mut Vec::new())
             .unwrap()
@@ -286,7 +294,7 @@ fn an_is_pattern_reads_a_constant_and_a_kernel_value_in_place() {
 fn a_value_whose_parts_share_one_cell_is_read_once_per_cell() {
     // A report that pairs a summary with itself, 64 levels deep: 2^64 paths, 65 cells.
     let mut h = Heap::new();
-    let mut w = h.fresh(&Value::str("total 12"));
+    let mut w = h.fresh(&Value::str("total 12")).unwrap();
     let mut want = Value::str("total 12");
     for _ in 0..64 {
         h.inc(w).unwrap();

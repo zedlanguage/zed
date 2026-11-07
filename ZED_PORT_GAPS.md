@@ -2461,3 +2461,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `HashMap<(u64, u32), Arc<Node>>` from a digest and a probe number to the first node of each shape, filled while the tree is built, its `Entry` held across the building of the node and filled from the `Vacant` entry; the probe loop runs on over the shapes of one digest | `Numbering`, `Node::of` | Mutation; identity of a node shared by reference count (gap 1) | The table as a map in the state receiver of the post-order build; the class is a number held in the node, so no identity is needed beyond it |
+
+## Entries from HEAP-fresh-dag (`zed-rt/src/heap.rs`, `zedc-zir/src/zir/memory.rs`, `zed-kernel/src/value.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` memo filled during an explicit-stack walk of a value, keyed by `SharedParts<'v>` (the sequence's id and, for an atom, a borrowed `&str` name and the field names' id), whose values are cell words or numbers | `Heap::fresh`, `Machine::tree` | Mutation; Identity (Gap 1) for the sequence id | A map from the sequence's identity to the cell threaded through the walk's state; the identity is what the runtime exposes for a shared sequence |
+| `Arc::strong_count` to tell a sequence held once from a shared one (`Items::is_shared`, read by `Value::shared_parts`) | `Value::shared_parts` | Identity (Gap 1) | The runtime's reference count of the sequence, or a memo entry for every sequence at a constant cost |

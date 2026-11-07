@@ -71,7 +71,7 @@ fn a_record_built_natively_and_compared_many_times_is_read_from_its_cells_once()
 #[test]
 fn a_cell_read_again_gives_the_same_value_without_reading_its_parts() {
     let mut h = Heap::new();
-    let w = h.fresh(&order("rush"));
+    let w = h.fresh(&order("rush")).unwrap();
     assert_eq!(h.value(w).unwrap(), order("rush"));
     let first = h.stats.converted;
     assert_eq!(h.value(w).unwrap(), order("rush"));
@@ -81,7 +81,7 @@ fn a_cell_read_again_gives_the_same_value_without_reading_its_parts() {
 #[test]
 fn a_cell_freed_and_taken_again_gives_its_new_value() {
     let mut h = Heap::new();
-    let old = h.fresh(&order("rush"));
+    let old = h.fresh(&order("rush")).unwrap();
     assert_eq!(h.value(old).unwrap(), order("rush"));
     h.dec(old).unwrap();
     // The program builds a new record, whose cells take freed ones that kept values.
@@ -97,7 +97,7 @@ fn a_cell_freed_and_taken_again_gives_its_new_value() {
     assert_eq!(h.value(new).unwrap(), want);
     // The same through `fresh`, which keeps the value it is given.
     h.dec(new).unwrap();
-    let again = h.fresh(&order("hold"));
+    let again = h.fresh(&order("hold")).unwrap();
     assert_eq!(h.cell_slots(), 8);
     assert_eq!(h.value(again).unwrap(), order("hold"));
 }
@@ -130,7 +130,7 @@ fn a_record_built_again_from_new_parts_between_two_runs_of_the_kernel_gives_the_
 #[test]
 fn a_cell_shared_by_two_tuples_is_read_once() {
     let mut h = Heap::new();
-    let lines = h.fresh(&order("rush"));
+    let lines = h.fresh(&order("rush")).unwrap();
     h.inc(lines).unwrap();
     let a = h.alloc(Obj::Tuple(vec![lines, Word::int(1)]));
     let b = h.alloc(Obj::Tuple(vec![lines, Word::int(2)]));
@@ -159,14 +159,14 @@ fn an_empty_tuple_and_an_empty_string_read_the_same_each_time() {
         Value::str(""),
         Value::str(""),
     ]);
-    let w = h.fresh(&v);
+    let w = h.fresh(&v).unwrap();
     for _ in 0..3 {
         assert_eq!(h.value(w).unwrap(), v);
     }
-    let empty = h.fresh(&Value::str(""));
+    let empty = h.fresh(&Value::str("")).unwrap();
     assert_eq!(h.value(empty).unwrap(), Value::str(""));
     assert_eq!(h.value(empty).unwrap(), Value::str(""));
-    let none = h.fresh(&Value::tuple(Vec::new()));
+    let none = h.fresh(&Value::tuple(Vec::new())).unwrap();
     assert_eq!(h.value(none).unwrap(), Value::tuple(Vec::new()));
 }
 

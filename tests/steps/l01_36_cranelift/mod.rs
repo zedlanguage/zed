@@ -21,6 +21,7 @@ mod reuse;
 mod scalars;
 mod scaling;
 mod shared_closures;
+mod shared_values;
 mod string_length;
 mod string_scaling;
 mod strings;

@@ -411,7 +411,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
                 None => slow(t, s, ni, ins),
                 Some(sh) if ins.len() == 2 => {
                     consume(s, ni, ins)?;
-                    Ok(s.heap.fresh(&Value::atom(&sh.name)))
+                    s.heap.fresh(&Value::atom(&sh.name))
                 }
                 Some(sh) => Ok(s.heap.alloc(Obj::Atom {
                     args: sh.order.iter().map(|&i| ins[2 + i]).collect(),
@@ -429,7 +429,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
                 return Ok(kid);
             }
             let v = kernel(t, s, ni, ins)?;
-            Ok(s.heap.fresh(&v))
+            s.heap.fresh(&v)
         }
         Op::Prim(Prim::Concat) if ins.len() == 2 => match (text(s, ins[0])?, text(s, ins[1])?) {
             (Some(a), Some(b)) => {
@@ -468,7 +468,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         Op::Read(p) => match s.ev.world.inputs.get(&**p) {
             Some(v) => {
                 let v = v.clone();
-                Ok(s.heap.fresh(&v))
+                s.heap.fresh(&v)
             }
             None if s.ev.world.sources.contains_key(&**p) => Ok(Word {
                 tag: Word::SOURCE,
@@ -487,7 +487,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
 fn slow(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Word, String> {
     let v = kernel(t, s, ni, ins)?;
     consume(s, ni, ins)?;
-    Ok(s.heap.fresh(&v))
+    s.heap.fresh(&v)
 }
 
 /// Drops each input the node takes owned.
@@ -603,7 +603,7 @@ struct Lets {
 /// the value is pending as the node's result.
 fn failed(s: &mut Run, ni: &NodeInfo, ins: &[Word], v: Value) -> Result<(), String> {
     consume(s, ni, ins)?;
-    s.pending = s.heap.fresh(&v);
+    s.pending = s.heap.fresh(&v)?;
     Ok(())
 }
 

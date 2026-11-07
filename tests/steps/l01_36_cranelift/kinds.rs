@@ -19,7 +19,7 @@ fn is(h: &mut Heap, w: Word, t: &Type) -> bool {
 fn tuple_of_strings(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let xs = (0..n).map(|i| Value::str(&format!("s{i}"))).collect();
-    let w = h.fresh(&Value::tuple(xs));
+    let w = h.fresh(&Value::tuple(xs)).unwrap();
     (h, w)
 }
 
@@ -72,7 +72,9 @@ fn a_string_in_cells_is_tested_without_flattening_it() {
 #[test]
 fn an_atom_in_cells_is_tested_by_its_name() {
     let mut h = Heap::new();
-    let w = h.fresh(&Value::atom_with("some", vec![Value::str("x")]));
+    let w = h
+        .fresh(&Value::atom_with("some", vec![Value::str("x")]))
+        .unwrap();
     assert!(matches!(h.obj(w), Ok(Some(Obj::Atom { .. }))));
     let some = Type::atom_with("some", &Type::top());
     assert!(is(&mut h, w, &some));

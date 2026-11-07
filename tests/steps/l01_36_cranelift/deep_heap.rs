@@ -87,7 +87,7 @@ fn each_shape_of_deep_value_enters_and_leaves_the_heap() {
     for (what, wrap) in SHAPES {
         let v = nested(wrap, DEPTH, Value::str("end"));
         let mut h = Heap::new();
-        let w = h.fresh(&v);
+        let w = h.fresh(&v).unwrap();
         assert_eq!(h.value(w).unwrap(), v, "{what}");
         h.dec(w).unwrap();
         assert_eq!(h.live(), 0, "{what}");
@@ -103,7 +103,7 @@ fn a_deep_pattern_binds_the_last_element() {
     let cases: [Case; 3] = [(list, in_tuples), (atoms, in_atoms), (records, in_fields)];
     for (value, pattern) in cases {
         let mut h = Heap::new();
-        let w = h.fresh(&value(DEPTH, Value::str("last")));
+        let w = h.fresh(&value(DEPTH, Value::str("last"))).unwrap();
         let p = pattern(DEPTH, bind("x"));
         let (mut at, mut out) = (vec![9], Vec::new());
         assert!(h.matches(&p, w, &mut at, &mut out).unwrap());
@@ -119,7 +119,7 @@ fn a_deep_pattern_binds_the_last_element() {
 #[test]
 fn a_difference_at_the_bottom_fails_and_restores_the_path() {
     let mut h = Heap::new();
-    let w = h.fresh(&nested(in_tuple, DEPTH, Value::Int(1)));
+    let w = h.fresh(&nested(in_tuple, DEPTH, Value::Int(1))).unwrap();
     let p = in_tuples(DEPTH, Pattern::Lit(Value::Int(2)));
     let (mut at, mut out) = (vec![3, 4], Vec::new());
     assert!(!h.matches(&p, w, &mut at, &mut out).unwrap());
@@ -130,7 +130,9 @@ fn a_difference_at_the_bottom_fails_and_restores_the_path() {
 #[test]
 fn releasing_a_deep_list_keeps_only_the_last_element() {
     let mut h = Heap::new();
-    let w = h.fresh(&nested(in_tuple, DEPTH, Value::str("last")));
+    let w = h
+        .fresh(&nested(in_tuple, DEPTH, Value::str("last")))
+        .unwrap();
     let p = in_tuples(DEPTH, bind("x"));
     let (mut at, mut out) = (Vec::new(), Vec::new());
     assert!(h.matches(&p, w, &mut at, &mut out).unwrap());
@@ -145,7 +147,7 @@ fn releasing_a_deep_list_keeps_only_the_last_element() {
 fn a_shared_tail_stays_for_its_other_owner() {
     // `tail` is held by the list and by the caller; the head is released keeping `name`.
     let mut h = Heap::new();
-    let name = h.fresh(&Value::str("Ada"));
+    let name = h.fresh(&Value::str("Ada")).unwrap();
     let tail = h.alloc(Obj::Tuple(vec![name, Word::int(1)]));
     h.inc(tail).unwrap();
     let head = h.alloc(Obj::Tuple(vec![Word::int(0), tail]));
@@ -160,7 +162,7 @@ fn a_shared_tail_stays_for_its_other_owner() {
 #[test]
 fn a_record_binds_in_the_order_of_its_pattern() {
     let mut h = Heap::new();
-    let w = h.fresh(&order());
+    let w = h.fresh(&order()).unwrap();
     let lines = Pattern::Tuple(vec![bind("first"), bind("second")]);
     let p = Pattern::Fields(
         "order".into(),
@@ -190,7 +192,7 @@ fn a_record_binds_in_the_order_of_its_pattern() {
 #[test]
 fn a_missing_field_fails_after_the_fields_before_it() {
     let mut h = Heap::new();
-    let w = h.fresh(&order());
+    let w = h.fresh(&order()).unwrap();
     let p = Pattern::Fields(
         "order".into(),
         vec![
@@ -211,7 +213,9 @@ fn a_missing_field_fails_after_the_fields_before_it() {
 #[test]
 fn a_wrong_length_or_name_does_not_match() {
     let mut h = Heap::new();
-    let w = h.fresh(&Value::tuple(vec![Value::Int(1), Value::Int(2)]));
+    let w = h
+        .fresh(&Value::tuple(vec![Value::Int(1), Value::Int(2)]))
+        .unwrap();
     let (mut at, mut out) = (Vec::new(), Vec::new());
     for p in [
         Pattern::Tuple(vec![Pattern::Wild]),
@@ -243,7 +247,7 @@ fn a_function_matches_a_binder_and_no_shape() {
 fn a_part_is_made_before_the_cell_that_holds_it() {
     let mut h = Heap::new();
     let parts = vec![Value::str("a"), Value::tuple(vec![Value::str("b")])];
-    let w = h.fresh(&Value::tuple(parts));
+    let w = h.fresh(&Value::tuple(parts)).unwrap();
     assert_eq!(
         w.bits, 3,
         "the string, the inner string, its tuple, then this"
@@ -255,7 +259,7 @@ fn a_part_is_made_before_the_cell_that_holds_it() {
 fn an_empty_tuple_and_a_bare_atom_are_uncounted_at_any_depth() {
     let mut h = Heap::new();
     let v = Value::tuple(vec![Value::tuple(Vec::new()), Value::atom("none")]);
-    let w = h.fresh(&v);
+    let w = h.fresh(&v).unwrap();
     assert_eq!(h.live(), 1, "only the outer tuple is a cell");
     assert_eq!(h.value(w).unwrap(), v);
 }
@@ -306,7 +310,7 @@ fn a_closure_below_a_value_is_not_data() {
 #[test]
 fn a_freed_cell_below_a_value_is_reported() {
     let mut h = Heap::new();
-    let s = h.fresh(&Value::str("gone"));
+    let s = h.fresh(&Value::str("gone")).unwrap();
     let w = h.alloc(Obj::Tuple(vec![s]));
     h.dec(s).unwrap();
     let e = h.value(w).unwrap_err();
@@ -330,7 +334,7 @@ const RUNS: usize = 1 + 5 * scaling::TRIES;
 /// A heap holding the list of `n` cells.
 fn list_heap(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
-    let w = h.fresh(&nested(in_tuple, n, Value::Int(0)));
+    let w = h.fresh(&nested(in_tuple, n, Value::Int(0))).unwrap();
     (h, w)
 }
 
@@ -341,7 +345,7 @@ fn making_a_deep_value_scales() {
     scaling::check("Heap::fresh on a list", N, |n| {
         let v = &lists.iter().find(|(m, _)| *m == n).unwrap().1;
         let mut h = Heap::new();
-        h.fresh(v);
+        h.fresh(v).unwrap();
         used.lock().unwrap().push(h);
     });
 }

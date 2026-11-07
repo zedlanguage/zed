@@ -533,7 +533,7 @@ fn matching_one_constant_many_times_scales() {
 /// paths from the top.
 fn paired(depth: usize) -> (Heap, Word) {
     let mut h = Heap::new();
-    let mut w = h.fresh(&Value::str("total 12"));
+    let mut w = h.fresh(&Value::str("total 12")).unwrap();
     for _ in 0..depth {
         h.inc(w).unwrap();
         w = h.alloc(Obj::Tuple(vec![w, w]));

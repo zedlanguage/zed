@@ -55,7 +55,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_kernel::term::{Pattern, Prim, Shared, Term};
-use zed_kernel::value::Value;
+use zed_kernel::value::{SharedParts, Value};
 use zed_kernel::{Evaluator, KernelError};
 
 use super::legalize::{Expansion, Expansions};
@@ -1610,29 +1610,41 @@ impl<'g> Machine<'g, '_> {
         self.heap.len() - 1
     }
 
-    /// A fresh value: its cells allocated, the parts of a tuple or an atom each its own.
+    /// A fresh value: its cells allocated, a sequence the value holds in several places one
+    /// cell counted once per holder, and every other part of a tuple or an atom its own.
     fn fresh(&mut self, v: Value) -> Mv<'g> {
         let c = self.tree(&v);
         Mv::Data(v, c)
     }
 
     /// The cells of `v`, each part's before its whole's, on a stack of the tuples and atoms
-    /// entered with the cells of their parts so far: values nest as deep as the program.
+    /// entered with their shared sequence and the cells of their parts so far: values nest as
+    /// deep as the program. A shared sequence met again is the cell made for it, so a value
+    /// whose levels each hold the one below twice is a cell per level, not one per path
+    /// (COMPLEXITY.md R9).
     fn tree(&mut self, v: &Value) -> Option<usize> {
-        let mut stack: Vec<(&[Value], Vec<Option<usize>>)> = Vec::new();
+        type Entered<'v> = (&'v [Value], Option<SharedParts<'v>>, Vec<Option<usize>>);
+        let mut stack: Vec<Entered<'_>> = Vec::new();
+        // The cell of each shared sequence made so far, by the sequence's identity.
+        let mut made: HashMap<SharedParts<'_>, usize> = HashMap::new();
         let mut next = v;
         loop {
+            let shared = next.shared_parts();
             let mut got = match next {
+                _ if let Some(&c) = shared.and_then(|k| made.get(&k)) => {
+                    self.inc(Some(c));
+                    Some(c)
+                }
                 Value::Bool(_) | Value::Int(_) | Value::Float(_) => None,
                 Value::Tuple(xs) if xs.is_empty() => None,
                 Value::Atom(a) if a.args.is_empty() => None,
                 Value::Tuple(xs) => {
-                    stack.push((xs, Vec::with_capacity(xs.len())));
+                    stack.push((xs, shared, Vec::with_capacity(xs.len())));
                     next = &xs[0];
                     continue;
                 }
                 Value::Atom(a) => {
-                    stack.push((&a.args, Vec::with_capacity(a.args.len())));
+                    stack.push((&a.args, shared, Vec::with_capacity(a.args.len())));
                     next = &a.args[0];
                     continue;
                 }
@@ -1643,7 +1655,7 @@ impl<'g> Machine<'g, '_> {
                 | Value::Family(_) => Some(self.alloc(Vec::new())),
             };
             loop {
-                let Some((xs, kids)) = stack.last_mut() else {
+                let Some((xs, _, kids)) = stack.last_mut() else {
                     return got;
                 };
                 let xs: &[Value] = xs;
@@ -1652,8 +1664,12 @@ impl<'g> Machine<'g, '_> {
                     next = x;
                     break;
                 }
-                let (_, kids) = stack.pop().expect("a tuple or atom");
-                got = Some(self.alloc(kids));
+                let (_, shared, kids) = stack.pop().expect("a tuple or atom");
+                let c = self.alloc(kids);
+                if let Some(k) = shared {
+                    made.insert(k, c);
+                }
+                got = Some(c);
             }
         }
     }

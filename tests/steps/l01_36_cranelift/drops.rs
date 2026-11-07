@@ -14,7 +14,7 @@ const RUNS: usize = 1 + 5 * TRIES;
 /// A heap of `n` strings and a tuple holding them all.
 fn wide(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
-    let parts = (0..n).map(|_| h.fresh(&Value::str("a"))).collect();
+    let parts = (0..n).map(|_| h.fresh(&Value::str("a")).unwrap()).collect();
     let w = h.alloc(Obj::Tuple(parts));
     (h, w)
 }
@@ -24,7 +24,7 @@ fn deep(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let mut w = Word::int(0);
     for _ in 0..n {
-        let s = h.fresh(&Value::str("a"));
+        let s = h.fresh(&Value::str("a")).unwrap();
         w = h.alloc(Obj::Tuple(vec![s, w]));
     }
     (h, w)
@@ -35,7 +35,7 @@ fn shared(n: usize) -> (Heap, Word) {
     let mut h = Heap::new();
     let mut w = Word::int(0);
     for _ in 0..n {
-        w = h.fresh(&Value::str("a"));
+        w = h.fresh(&Value::str("a")).unwrap();
     }
     for _ in 0..n {
         h.inc(w).unwrap();

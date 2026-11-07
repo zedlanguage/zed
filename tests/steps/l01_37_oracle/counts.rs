@@ -11,7 +11,9 @@ fn live_cells_are_listed_by_type_and_allocating_node() {
     let mut h = Heap::new();
     let outside = h.alloc(Obj::Str("a".into()));
     h.allocating(Some(3));
-    let pair = h.fresh(&Value::tuple(vec![Value::str("b"), Value::str("c")]));
+    let pair = h
+        .fresh(&Value::tuple(vec![Value::str("b"), Value::str("c")]))
+        .unwrap();
     let gone = h.alloc(Obj::Str("d".into()));
     h.allocating(Some(1));
     let clo = h.alloc(Obj::Clo {
