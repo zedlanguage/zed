@@ -919,7 +919,23 @@ pub struct Scoped<'t> {
     /// numbered once for the scope, so that a kept translation that holds one serves every
     /// body (LOAD-chain-aux).
     tr: Tr,
+    /// The coordinates of each function whose relation was read, by its body: each parameter
+    /// as an atom and a constant added to it ([`Frame`]) (LOAD-chain-args).
+    frames: HashMap<*const Term, Frame>,
+    /// For the relation read last, each atom of its coordinates as its input less the
+    /// constant: `x = a + c`, so `a = x - c`, by which [`Scoped::written`] writes the relation
+    /// over the inputs. Empty when the coordinates are the inputs.
+    back: HashMap<Arc<str>, Lin>,
 }
+
+/// The coordinates a relation of [`Scoped`] is read in: for each parameter, the atom and the
+/// constant whose sum it is bound to, the atoms distinct. Each input so has one value for each
+/// value of the atoms and back, and whether the relation can hold or fail is the same in
+/// either. A caller whose call passes each of its callee's parameters one of its own plus a
+/// constant (`p(x: x + 1)`, `p(y: x)`) is read in its callee's coordinates, so the call's
+/// arguments are the terms its callee's own calls were translated under, and its translation is
+/// shared (LOAD-chain-args).
+type Frame = Vec<(Arc<str>, i64)>;
 
 /// The translation tables of a [`Memo`], kept by [`Scoped`] from one body to the next.
 #[derive(Default)]
@@ -966,6 +982,8 @@ impl<'t> Scoped<'t> {
             kept: None,
             by_name: HashMap::new(),
             tr: Tr::new(false),
+            frames: HashMap::new(),
+            back: HashMap::new(),
         }
     }
 
@@ -1002,14 +1020,15 @@ impl<'t> Scoped<'t> {
             tx.scopes.len() as Eid,
         ));
         let root = tx.terms.add(body);
+        let past = tx.terms.nodes.len() as Tid;
         // Each parameter bound to its input, read where the scope binds nothing. The input's
         // term is the body's own, so what is found of it, which reads the input, is dropped
         // with the body's entries and never meets a body of other inputs.
-        let mut scope = self.scope;
+        let mut own = self.scope;
         for (p, x) in params.iter().zip(inputs) {
             let (p, x) = (tx.terms.name(p), tx.terms.name(x));
             let to = (tx.terms.own_var(x), ROOT);
-            scope = tx.bind(scope, p, to);
+            own = tx.bind(own, p, to);
         }
         // The translations the bodies before made under the same `products`.
         let m = &mut tx.run.memo;
@@ -1021,8 +1040,30 @@ impl<'t> Scoped<'t> {
                 self.tr = Tr::new(products);
             }
         }
+        // The body read in its callee's coordinates when it has them ([`Frame`]): each
+        // parameter bound to its atom plus its constant, the atoms the inputs.
+        let frame = self.coordinates(root..past, own, inputs, products);
+        let tx = &mut self.tx;
+        let mut scope = own;
+        if frame
+            .iter()
+            .zip(inputs)
+            .any(|((a, c), x)| a != x || *c != 0)
+        {
+            scope = self.scope;
+            for (p, (a, c)) in params.iter().zip(&frame) {
+                let (p, a) = (tx.terms.name(p), tx.terms.name(a));
+                let to = (tx.terms.own_sum(a, *c), ROOT);
+                scope = tx.bind(scope, p, to);
+            }
+            tx.cx.inputs = (frame.iter())
+                .map(|(a, _)| (a.clone(), Rc::new(IntervalSet::top())))
+                .collect();
+        }
+        self.frames.insert(body as *const Term, frame.clone());
+        let m = &mut tx.run.memo;
         // O(the names held and the inputs), each dropped entry once.
-        let names: HashSet<&Arc<str>> = inputs.iter().collect();
+        let names: HashSet<&Arc<str>> = frame.iter().map(|(a, _)| a).collect();
         self.by_name.retain(|name, keys| {
             if names.contains(name) {
                 return true;
@@ -1068,7 +1109,95 @@ impl<'t> Scoped<'t> {
         }
         tx.drop_fresh();
         self.kept = Some((products, tx.run.memo.take_translations()));
+        self.back = (frame.into_iter().zip(inputs))
+            .filter(|((a, c), x)| a != *x || *c != 0)
+            .map(|((a, c), x)| {
+                let x = Lin::atom(presburger::Atom::Sym(x.clone()));
+                (a, x.minus(&Lin::constant(c)))
+            })
+            .collect();
         body
+    }
+
+    /// The coordinates to read the body of the terms `body` in ([`Frame`]): those of the first
+    /// call in it, in the order the terms are numbered, to a function whose relation was read,
+    /// whose arguments are each one of the body's parameters plus a constant, no parameter
+    /// twice, and whose coordinates leave free the names of the parameters it is not passed;
+    /// each parameter as its input when there is none. `own` binds each parameter to its
+    /// input. The arguments are translated under `own` and their entries forgotten. Time of the
+    /// body's terms and of the arguments of the calls to such functions.
+    ///
+    /// The coordinates only choose which atoms the relation is written over, so another choice
+    /// changes no answer, only which translations are shared. Complexity tradeoff: a call that
+    /// passes a multiple (`x: 2 * x`), a constant, or one parameter twice (`x: x, y: x`) leaves
+    /// the body in its own coordinates, and its callee is translated again under it, so a chain
+    /// of n such links costs O(n²) (COMPLEXITY.md row LOAD-chain-args; a map that is not a
+    /// bijection of the integers changes whether the relation holds at an integer point).
+    fn coordinates(
+        &mut self,
+        body: std::ops::Range<Tid>,
+        own: Eid,
+        inputs: &[Arc<str>],
+        products: bool,
+    ) -> Frame {
+        let identity = || inputs.iter().map(|x| (x.clone(), 0)).collect();
+        if self.frames.is_empty() {
+            return identity();
+        }
+        let at: HashMap<&Arc<str>, usize> =
+            inputs.iter().enumerate().map(|(i, x)| (x, i)).collect();
+        let tx = &mut self.tx;
+        for t in body {
+            let Node::App(f, args) = tx.node(t) else {
+                continue;
+            };
+            let Ok(Callee::Lam(ps, b, _)) = tx.callee(f, own) else {
+                continue;
+            };
+            let Some(callee) = (tx.terms.src[b as usize])
+                .and_then(|b| self.frames.get(&(b as *const Term)))
+                .filter(|c| c.len() == ps.len() && ps.len() == args.len())
+            else {
+                continue;
+            };
+            let logged = tx.run.memo.log.len();
+            let mut tr = Tr::new(products);
+            let mut frame: Vec<Option<(Arc<str>, i64)>> = vec![None; inputs.len()];
+            let mut through = || {
+                for (i, (a, d)) in callee.iter().enumerate() {
+                    // The argument is `x + c` for the parameter `x` standing for input `j`; the
+                    // callee's parameter is `a + d`, so `x` is `a + d - c`.
+                    let l = tx.lin(&mut tr, tx.arg(args, i), own)?;
+                    let mut terms = l.terms.iter();
+                    let (Some((presburger::Atom::Sym(x), one)), None) =
+                        (terms.next(), terms.next())
+                    else {
+                        return None;
+                    };
+                    let j = *at.get(x).filter(|_| *one == Int::ONE)?;
+                    let c = d.checked_sub(i64::try_from(l.constant.to_i128()?).ok()?)?;
+                    if frame[j].replace((a.clone(), c)).is_some() {
+                        return None;
+                    }
+                }
+                Some(())
+            };
+            let found = through();
+            tx.forget(logged);
+            if found.is_none() {
+                continue;
+            }
+            // The parameters the call is not passed keep their inputs, unless the callee's
+            // coordinates name one of them.
+            let named: HashSet<&Arc<str>> = frame.iter().flatten().map(|(a, _)| a).collect();
+            if (frame.iter().zip(inputs)).any(|(f, x)| f.is_none() && named.contains(x)) {
+                continue;
+            }
+            return (frame.into_iter().zip(inputs))
+                .map(|(f, x)| f.unwrap_or_else(|| (x.clone(), 0)))
+                .collect();
+        }
+        identity()
     }
 
     /// The formula that defines the auxiliary variable `n` of a relation [`Scoped::relation`]
@@ -1085,8 +1214,16 @@ impl<'t> Scoped<'t> {
         self.tr.defs[at].2.clone()
     }
 
-    /// The relation of `body`, a body [`Scoped::relation`] gave: with the definitions it
-    /// reaches, its auxiliary variables numbered from 0 in the order the scope numbered them.
+    /// Whether the relation read last was read in coordinates other than its inputs
+    /// ([`Frame`]). O(1).
+    pub fn moved(&self) -> bool {
+        !self.back.is_empty()
+    }
+
+    /// The relation of `body`, the body [`Scoped::relation`] gave last: over its inputs, each
+    /// atom of its coordinates ([`Frame`]) written as the input it stands for, with the
+    /// definitions it reaches, its auxiliary variables numbered from 0 in the order the scope
+    /// numbered them.
     /// It is the relation [`relations`] states for the body closed over the definitions it
     /// reaches, but for the numbering of the auxiliary variables when a definition was made
     /// for another body first. For a message and for tests: time of the body and of the
@@ -1124,7 +1261,7 @@ impl<'t> Scoped<'t> {
                 todo.push(n - 1);
             }
         }
-        if reached.is_empty() {
+        if reached.is_empty() && self.back.is_empty() {
             return Relation {
                 body: body.clone(),
                 defs: Vec::new(),
@@ -1135,10 +1272,11 @@ impl<'t> Scoped<'t> {
             .map(|(i, &n)| (n, i as u32))
             .collect();
         let to = |n: u32| at[&n];
+        let lin = |l: &Lin| renumbered(l, &to, &self.back);
         let renumber = |f: &Formula| {
             f.map_cons(&|c| {
                 Formula::Con(Con {
-                    lin: renumbered(&c.lin, &to),
+                    lin: lin(&c.lin),
                     rel: c.rel,
                 })
             })
@@ -1146,7 +1284,7 @@ impl<'t> Scoped<'t> {
         let defs = (reached.iter().enumerate())
             .map(|(i, &n)| {
                 let (_, what, def) = &self.tr.defs[n as usize];
-                (i as u32, what.written(Some(&to)), renumber(def))
+                (i as u32, what.written(Some(&lin)), renumber(def))
             })
             .collect();
         Relation {
@@ -1374,11 +1512,11 @@ impl What {
         matches!(self, What::ByConstant("mod", ..) | What::ByTerm("mod", ..))
     }
 
-    /// As a message writes it, each auxiliary variable `n` numbered `to(n)`, or as it is
-    /// numbered. Time of its parts.
-    fn written(&self, to: Option<&dyn Fn(u32) -> u32>) -> String {
+    /// As a message writes it, each linear term `l` written `to(l)`, or as it is. Time of
+    /// its parts.
+    fn written(&self, to: Option<&dyn Fn(&Lin) -> Lin>) -> String {
         let l = |l: &Lin| match to {
-            Some(to) => renumbered(l, to),
+            Some(to) => to(l),
             None => l.clone(),
         };
         match self {
@@ -1388,7 +1526,7 @@ impl What {
                 let g = match to {
                     Some(to) => g.map_cons(&|c| {
                         Formula::Con(Con {
-                            lin: renumbered(&c.lin, to),
+                            lin: to(&c.lin),
                             rel: c.rel,
                         })
                     }),
@@ -1409,25 +1547,27 @@ impl fmt::Display for What {
     }
 }
 
-/// `l` with each auxiliary variable `n` numbered `to(n)`.
-fn renumbered(l: &Lin, to: &dyn Fn(u32) -> u32) -> Lin {
+/// `l` with each auxiliary variable `n` numbered `to(n)` and each atom that `back` maps
+/// replaced by what it maps it to, a product of two factors by the product of what they are
+/// replaced by. Time of the terms of `l` and of what they are replaced by, times the log of
+/// their number.
+fn renumbered(l: &Lin, to: &dyn Fn(u32) -> u32, back: &HashMap<Arc<str>, Lin>) -> Lin {
     use presburger::{Atom, Factor};
     let factor = |f: &Factor| match f {
-        Factor::Aux(n) => Factor::Aux(to(*n)),
-        Factor::Sym(_) => f.clone(),
+        Factor::Aux(n) => Lin::atom(Atom::Aux(to(*n))),
+        Factor::Sym(s) => (back.get(s).cloned()).unwrap_or_else(|| Lin::atom(f.atom())),
     };
-    let terms = l.terms.iter().map(|(a, c)| {
-        let a = match a {
-            Atom::Aux(n) => Atom::Aux(to(*n)),
-            Atom::Product(f, g) => Atom::product_of(factor(f), factor(g)),
-            Atom::Sym(_) => a.clone(),
+    let mut out = Lin::constant(l.constant.clone());
+    for (a, c) in &l.terms {
+        let v = match a {
+            Atom::Aux(n) => factor(&Factor::Aux(*n)),
+            Atom::Sym(s) => factor(&Factor::Sym(s.clone())),
+            Atom::Product(f, g) => (factor(f).product(&factor(g)))
+                .expect("two factors, each an atom plus a constant, multiply"),
         };
-        (a, c.clone())
-    });
-    Lin {
-        terms: terms.collect(),
-        constant: l.constant.clone(),
+        out = out.plus(&v.times(c.clone()));
     }
+    out
 }
 /// `l` as the operand of an infix operator: in parentheses unless it is one name or a natural
 /// number.
@@ -1789,6 +1929,23 @@ impl<'t> Terms<'t> {
     fn own_var(&mut self, x: Name) -> Tid {
         let t = self.nodes.len() as Tid;
         self.nodes.push(Node::Var(x));
+        self.src.push(None);
+        t
+    }
+
+    /// `x + c` as a term shared with no other, as [`Terms::own_var`] makes `x`.
+    fn own_sum(&mut self, x: Name, c: i64) -> Tid {
+        let x = self.own_var(x);
+        if c == 0 {
+            return x;
+        }
+        let n = self.nodes.len() as Tid;
+        self.nodes.push(Node::Int(c));
+        self.src.push(None);
+        let at = self.kids.len();
+        self.kids.extend([x, n]);
+        let t = self.nodes.len() as Tid;
+        self.nodes.push(Node::Prim(Prim::Add, Span::new(at, 2)));
         self.src.push(None);
         t
     }

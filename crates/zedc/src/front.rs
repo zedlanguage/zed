@@ -239,13 +239,14 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             // (`presburger::extend`), so a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i`,
             // over one variable or several, costs O(n) in all. Complexity tradeoff: a chain
             // whose links each exclude the point found for their callee is decided whole at each
-            // link, O(n²) (at `Extending::defined`); so is one whose links pass their callee other
-            // arguments than their own names (`p{i-1}(x: x + 1)`), whose calls are each
-            // translated again. Tests `l01_38_presburger::one_scope::
+            // link, O(n²) (at `Extending::defined`). Tests `l01_38_presburger::one_scope::
             // the_questions_of_a_chain_of_tests_scale` and `..._over_two_variables_scale`.
             // COMPLEXITY.md rows LOAD-chain and LOAD-chain-share. A chain whose links define
             // auxiliary variables (`x mod 7`) costs O(n) as well: they are numbered once for the
             // scope, and each question reads the definitions its new parts reach (LOAD-chain-aux).
+            // So does one whose links pass their callee their parameters renamed or moved by a
+            // constant (`p{i-1}(x: x + 1)`, `p{i-1}(y: x)`): each body is read in its callee's
+            // coordinates (`preimage::Scoped::relation`, LOAD-chain-args).
             // The question is stated over the names the user wrote: elaboration renames a binder
             // `x` to `x@k` when another binder of the unit is named `x` too (`crate::elab`), which
             // the user cannot write, so the question, its refusal and its constraints print `x`,
@@ -254,7 +255,22 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             // which an earlier function that made one of them first may change.
             let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
             if let Some(r) = scoped.relation(body, ps, &inputs, true) {
-                let answers = extending.defined(&r, &|n| scoped.def(n));
+                let mut answers = extending.defined(&r, &|n| scoped.def(n));
+                // A relation read in its callee's coordinates (`p(x: x + 1)`, LOAD-chain-args)
+                // has the answers of the one over the inputs, but a refusal names the
+                // coordinates' atoms and constants; so a refused question is asked again over
+                // the inputs, and its refusal, if it stays, names them. Complexity tradeoff:
+                // that question is decided whole, O(the relation) and more, where its answer
+                // came from its callee's; only a refused question, which is printed whole in
+                // its note, pays it. A complete solution would write the refusal's rows back
+                // through the coordinates.
+                if scoped.moved() && (answers.holds.is_err() || answers.fails.is_err()) {
+                    let w = scoped.written(&r);
+                    let with = |f| presburger::Formula::and(vec![w.defined(), f]);
+                    answers.holds = presburger::decide(&with(w.body.clone()));
+                    answers.fails =
+                        presburger::decide(&with(presburger::Formula::negate(w.body.clone())));
+                }
                 for (can, answer) in [("hold", answers.holds), ("fail", answers.fails)] {
                     if let Err(why) = answer {
                         out.push(ast::Error {

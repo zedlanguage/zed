@@ -382,3 +382,61 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
         );
     }
 }
+
+#[test]
+fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_own_parameters() {
+    // LOAD-chain-args: `ok` passes `tie` its parameters renamed, and moved by constants, so
+    // its relation is read over `tie`'s parameters; what the checker prints for `ok` is what it
+    // prints when `ok` states the same constraints over its own parameters, with no call.
+    let [first, second] = REFUSED[2].rows;
+    // `rows` with each of `x`, `y`, `z` and `w` replaced by its argument in `args`.
+    let substituted = |rows: &str, args: [&str; 4]| -> String {
+        let mut out = String::new();
+        let mut prev = ' ';
+        for ch in rows.chars() {
+            match "xyzw".find(ch).filter(|_| !prev.is_alphanumeric()) {
+                Some(i) => out.push_str(&format!("({})", args[i])),
+                None => out.push(ch),
+            }
+            prev = ch;
+        }
+        out
+    };
+    // What the checker prints: the messages and their notes, without the source lines.
+    let printed = |name: &str, src: &str| -> String {
+        let o = run(name, src, "3\n", &[]);
+        assert_eq!(o.status, 1, "{}", o.stderr);
+        (o.stderr.lines())
+            .map(|l| l.split_once("prog.zed:").map_or(l, |(_, rest)| rest))
+            .filter(|l| {
+                l.starts_with(|c: char| c.is_ascii_digit()) || l.trim_start().starts_with('[')
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let tie = format!("tie(x, y, z, w) = {first} && {second};");
+    for (i, args) in [["b", "c", "d", "a"], ["b + 1", "c", "d - 2", "a"]]
+        .into_iter()
+        .enumerate()
+    {
+        let call = format!(
+            "ok(a, b, c, d) = tie(x: {}, y: {}, z: {}, w: {});",
+            args[0], args[1], args[2], args[3]
+        );
+        let alone = format!(
+            "ok(a, b, c, d) = {} && {};",
+            substituted(first, args),
+            substituted(second, args)
+        );
+        let through = printed(
+            &format!("coordinates-call-{i}"),
+            &program(&format!("{tie}\n{call}"), "a: a, b: a, c: a, d: a"),
+        );
+        let expected = printed(
+            &format!("coordinates-alone-{i}"),
+            &program(&format!("{tie}\n{alone}"), "a: a, b: a, c: a, d: a"),
+        );
+        assert_eq!(through, expected, "{call}");
+        assert!(through.contains("whether `tie` can hold"), "{through}");
+    }
+}

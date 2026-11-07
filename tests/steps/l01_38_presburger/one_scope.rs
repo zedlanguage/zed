@@ -324,3 +324,115 @@ fn the_questions_of_a_chain_defining_auxiliary_variables_scale() {
         |i| format!("p{i}(x: int) = p{}(x: x) && x mod 7 + {i} > 0;\n", i - 1),
     );
 }
+
+#[test]
+fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relation_whole() {
+    // LOAD-chain-args: a body whose call passes its callee a parameter moved by a constant
+    // (`x + 1`) or another parameter's name (`y: x`) is read in its callee's coordinates, so
+    // that it shares the callee's translation; each answer is the one the body closed over
+    // the definitions it reaches has, decided whole over the names the user wrote.
+    // No cycle of substitutions is written here: a function defined in terms of itself is
+    // rejected below layer L6 ("recursion arrives at layer L6").
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let units = [
+        // A chain whose links move the argument, each by another constant.
+        "s0(x: int) = x > 0 && x < 50;\ns1(x: int) = s0(x: x + 1) && x mod 3 == 0;\n\
+         s2(x: int) = s1(x: x - 4) && x > 5;\ns3(x: int) = s2(x: x + 2) || x < 0 - 10;",
+        // Links that rename the parameter, one way and back.
+        "a0(x: int) = x > 2;\na1(y: int) = a0(x: y) && y < 10;\n\
+         a2(x: int) = a1(y: x + 1) && x mod 2 == 1;\na3(y: int) = a2(x: y) && y > 4;",
+        // Links that swap and move two parameters, each link substituting twice, and a link
+        // that calls its callee at two substitutions.
+        "t0(x: int, y: int) = x > y && y >= 0;\n\
+         t1(x: int, y: int) = t0(x: y + 1, y: x - 2) && x + y < 40;\n\
+         t2(x: int, y: int) = t1(x: y - 3, y: x + 3) && x < 30;\n\
+         t3(x: int, y: int) = t2(x: x, y: y) && t2(x: x + 1, y: y);",
+        // Nested `div` and `mod` under a moved argument.
+        "d0(x: int) = (x div 3) mod 5 == 2;\nd1(x: int) = d0(x: x + 7) && (x mod 15) div 4 == 1;\n\
+         d2(x: int) = d1(x: x - 7) && x > 0;",
+        // Arguments that are no substitution of the parameters: a parameter passed twice, a
+        // multiple, a constant.
+        "k0(x: int, y: int) = x > y + 1;\nk1(x: int, y: int) = k0(x: x, y: x) || y > 0;\n\
+         k2(x: int) = k0(x: 2 * x, y: 3);\nk3(x: int, y: int) = k0(x: y, y: y + x);",
+        // A function with no call: a chain of one.
+        "e0(x: int) = x mod 3 == 1;",
+    ];
+    for src in units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let cones = Cones::new(&unit);
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+        // In the unit's order and in the reverse, so that a caller is asked before its callee.
+        for order in [
+            (0..fs.len()).collect::<Vec<_>>(),
+            (0..fs.len()).rev().collect(),
+        ] {
+            let mut scoped = Scoped::new(&lets);
+            let mut extending = Extending::new();
+            for i in order {
+                let (name, ps, body) = fs[i];
+                let (expected, r) = match (
+                    closed(&cones, ps, body),
+                    scoped.relation(body, ps, ps, true),
+                ) {
+                    (Some(e), Some(r)) => (e, r),
+                    (None, None) => continue,
+                    (e, r) => panic!("`{name}`: {e:?} whole, {} read in the scope", r.is_some()),
+                };
+                let a = extending.defined(&r, &|n| scoped.def(n));
+                let w = scoped.written(&r);
+                for (got, f) in [
+                    (&a.holds, expected.body.clone()),
+                    (&a.fails, Formula::negate(expected.body.clone())),
+                ] {
+                    assert_eq!(*got, whole(&expected, f), "`{name}` in\n{src}\n{w}");
+                }
+                assert_eq!(
+                    whole(&w, w.body.clone()),
+                    a.holds,
+                    "`{name}` as written in\n{src}\n{w}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_questions_of_a_chain_moving_its_argument_scale() {
+    // `p{i}(x) = p{i-1}(x: x + 1) && x + 2 i > 0`, the chain of LOAD-chain-args: each link
+    // passes its callee another term than its own parameter. 50 → 400: 61.5 times the bytes
+    // before (57.2 MB → 3.52 GB, each call translated again), 8.1 now (7.9 MB → 63.9 MB).
+    questions_scale(
+        "a chain of tests moving the argument",
+        50,
+        "p0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int) = p{}(x: x + 1) && x + {} > 0;\n",
+                i - 1,
+                2 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_renaming_its_argument_scale() {
+    // `p{i}(x) = p{i-1}(y: x) && x > -i`, the parameter named `x` and `y` by turns: each link
+    // passes its callee its own parameter under the callee's name. 50 → 400: 60.7 times the
+    // bytes before (45.4 MB → 2.76 GB), 8.0 now (6.3 MB → 50.9 MB).
+    questions_scale(
+        "a chain of tests renaming the argument",
+        50,
+        "p0(x: int) = x > 0;\n",
+        |i| {
+            let (own, callee) = if i % 2 == 0 { ("x", "y") } else { ("y", "x") };
+            format!(
+                "p{i}({own}: int) = p{}({callee}: {own}) && {own} > 0 - {i};\n",
+                i - 1
+            )
+        },
+    );
+}

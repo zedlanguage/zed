@@ -2032,6 +2032,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A borrowed closure `&dyn Fn(u32) -> Formula` giving the definition of an auxiliary variable | `Extending::defined`, `extend::reached`, `front::linear_questions` | None | A function value passed beside the formula |
 | An enum `What` of what an auxiliary variable stands for, written by a function that renumbers its auxiliary atoms, and `Display` | `preimage::What`, `What::written`, `Scoped::written` | Interfaces (L10) for `Display` | A union with a function writing it |
 
+## Entries from LOAD-chain-args (`zedc/src/store/preimage.rs`, `front.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A map keyed by a body's address (`HashMap<*const Term, Frame>`), the body being shared by the function's definition and its uses | `Scoped::frames`, `Scoped::relation`, `Scoped::coordinates` | Pointer identity (no Zed equivalent) | A key the elaborator gives each function body, or the function's name in its unit |
+| A type alias `Frame = Vec<(Arc<str>, i64)>` | `preimage::Frame` | None | A type definition naming a list of records |
+| A closure returning `Option` and using `?` on each step of reading an argument | `Scoped::coordinates` (`through`) | None | A function whose body chains `else` on each failure (`#none`) |
+| An optional borrowed closure `Option<&dyn Fn(&Lin) -> Lin>` passed to a writer | `What::written`, `Scoped::written` | None | An optional function value |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |
