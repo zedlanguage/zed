@@ -1222,16 +1222,13 @@ impl Maps {
     }
 }
 
-/// The stage of each definition of `unit`, by source name, in order.
+/// The stage of each definition of `unit`, by source name, in order: the stage [`mix`] binds
+/// it with, that of its mixed term, under the definitions before it, each bound mixed.
 pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
     let mut m = Mixer::default();
     unit.defs
         .iter()
-        .map(|d| {
-            let stage = m.stage(&d.term);
-            m.bind(d.kernel.clone(), stage, &d.term);
-            (d.name.clone(), stage)
-        })
+        .map(|d| (d.name.clone(), m.bind_mixed(d).1))
         .collect()
 }
 
@@ -1297,13 +1294,10 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             m.report.unread.push(d.name.clone());
             continue;
         }
-        let mixed = m.mix_top(Part::held(&d.term));
-        let term = m.hold(mixed);
+        let (term, _) = m.bind_mixed(d);
         if matches!(*term, Term::Lit(_)) && term != d.term {
             m.report.built.push(d.name.clone());
         }
-        let stage = m.known(&term);
-        m.bind(d.kernel.clone(), stage, &term);
         out.defs.push(Def {
             name: d.name.clone(),
             kernel: d.kernel.clone(),
@@ -1373,7 +1367,7 @@ pub fn split(unit: &Unit, name: &str, param: usize, d: &Domain) -> Result<(Term,
 
 /// What the Trick reads of a unit, gathered once for any number of splits: the literal
 /// arguments of the unit's calls once mixed, those of its tests' cases, and a mixer with
-/// every definition bound by its stage. Splitting `k` functions then costs one mix of the
+/// every definition bound mixed, as [`mix`] binds it. Splitting `k` functions then costs one mix of the
 /// unit and `k` mixes of their bodies, where each split mixed the whole unit again.
 pub struct Specializer<'u> {
     unit: &'u Unit,
@@ -1394,7 +1388,11 @@ impl<'u> Specializer<'u> {
             by_name.entry(d.name.as_str()).or_insert(i);
         }
         let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
-        let (mixed, _) = mix(unit, &roots);
+        // The mixer binds each definition mixed, as `mix` binds it, so the splits see what the
+        // build sees: a build-stage binding is a literal, lambda, primitive or name, and a
+        // definition whose mix fails is left to run.
+        let (mixed, mut mixer) = mix_keeping(unit, &roots);
+        mixer.report = Report::default();
         let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Value>> = HashMap::new();
         // Each part held in a node is read once, however many places reach it.
         let mut seen = HashSet::new();
@@ -1426,11 +1424,6 @@ impl<'u> Specializer<'u> {
                     cases.entry(key).or_default().insert(v.clone());
                 }
             }
-        }
-        let mut mixer = Mixer::default();
-        for d in &unit.defs {
-            let stage = mixer.stage(&d.term);
-            mixer.bind(d.kernel.clone(), stage, &d.term);
         }
         Specializer {
             unit,
@@ -2195,6 +2188,16 @@ impl Mixer {
         self.push(name, known);
     }
 
+    /// Binds the definition `d` to its term mixed under the scope, by the stage of the mixed
+    /// term ([`Mixer::known`]), and gives that term and stage.
+    fn bind_mixed(&mut self, d: &Def) -> (Shared, Stage) {
+        let mixed = self.mix_top(Part::held(&d.term));
+        let term = self.hold(mixed);
+        let stage = self.known(&term);
+        self.bind(d.kernel.clone(), stage, &term);
+        (term, stage)
+    }
+
     /// The stage a name bound to the mixed term `t` has: build when `t` is a literal or a
     /// build-stage function, run when it is left to run, so that nothing evaluates it again.
     fn known(&mut self, t: &Shared) -> Stage {
@@ -2385,43 +2388,31 @@ impl Mixer {
     /// The value of `t`, which reads `free`, with every binding it needs as written, recorded as
     /// depending on what each function at `stubs` is. A run with stubs that fails where the
     /// error as written is known ([`error_as_written`]) does not come here.
-    // Complexity tradeoff: a run as written is run under the globals of the scope
-    // ([`Mixer::run_under`]), in time linear in `t` and the bindings the run reaches, except
-    // when a binding `t` needs is no literal, lambda, primitive or name: then it is run closed
-    // under the `let`s of every binding it needs, all of them below as well as above the base,
-    // `O(n)` per such evaluation and `O(n^2)` for `n` places each calling one of a chain of `n`
-    // functions. Why: such a `let` is evaluated where it is bound and may fail, so a run that
-    // makes it only when first read could give another error than the closed run gives, which
-    // the report shows. Trigger: the Trick's mixer ([`Specializer::new`]), which binds each
-    // definition unmixed, and [`color`]; [`mix`] binds only literals, lambdas, primitives and
-    // names. Test: `l01_28_staging::cone::a_call_reading_an_unmixed_binding_is_run_as_written_closed`.
-    // COMPLEXITY.md row F43. A complete solution would bind the Trick's definitions mixed, as
-    // [`mix`] does, so that each is a value when pushed.
     fn as_written(&mut self, t: &Term, free: Set, stubs: &[usize]) -> Result<Value, String> {
         self.same(stubs);
         if !self.shows_end(t, free) {
             return Err(FORM.into());
         }
-        if let Some(out) = self.run_under(t, free) {
-            return out;
-        }
-        let (lets, _) = self.needs(free, None);
-        run_with(self.closed(t, &lets, &[]), &[], &Arc::default()).map_err(|e| e.to_string())
+        self.run_under(t, free)
     }
 
     /// The value of the build-stage term `t`, which reads `free`, run as written under the
-    /// globals of the scope ([`Evaluator::run_under`]), when each binding it reads has a
-    /// position among them ([`Entry::global`]). It gives what the run of `t` closed under the
+    /// globals of the scope ([`Evaluator::run_under`]). Each build-stage binding has a position
+    /// among them ([`Entry::global`]): every definition and `let` is bound mixed, so a
+    /// build-stage binding is a literal, lambda, primitive or name ([`Mixer::known`]), and each
+    /// name it reads is such a binding or a prelude word. It gives what the run of `t` closed under the
     /// bindings it needs ([`Mixer::closed`]) gives, since that run's `let`s bind literals,
     /// lambdas, primitives and names alone, each of which gives its value in one step and
     /// cannot fail; and in time linear in `t` and the bindings the run reaches, since a
     /// binding's value is made when the run first reads it.
-    fn run_under(&self, t: &Term, free: Set) -> Option<Result<Value, String>> {
+    fn run_under(&self, t: &Term, free: Set) -> Result<Value, String> {
         let top = self.scope.len();
-        let reads = self.scope.reads(self.frees.names_in(free), top)?;
+        let reads = self.scope.reads(self.frees.names_in(free), top);
+        let reads =
+            reads.expect("each build-stage binding is a literal, lambda, primitive or name");
         let mut ev = Evaluator::new(World::new());
         let out = ev.run_under(t, &self.scope.globals, &reads);
-        Some(out.map_err(|e| e.to_string()))
+        out.map_err(|e| e.to_string())
     }
 
     /// Whether [`ends`] would show that the build-stage term `t`, which reads `free`, ends

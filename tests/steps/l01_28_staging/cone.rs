@@ -13,7 +13,7 @@ use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::elab::{Def, Unit};
-use zedc::stage::{self, Remix};
+use zedc::stage::{self, Remix, Stage};
 
 use super::scaling::deep;
 
@@ -209,43 +209,112 @@ fn failing_calls_no_answer_table_takes_are_run_as_written_in_linear_time() {
     });
 }
 
-/// The Trick's mixer binds each definition unmixed (`Specializer::new`), so a build-stage
-/// binding may be a term that is no literal, lambda, primitive or name, here `k = 2 + 2`. A
-/// call whose run with stubs fails inside a stub and whose cone reads such a binding is run as
-/// written closed under the `let`s of what it needs, which evaluate each binding where it is
-/// bound, not under the globals (the complexity tradeoff at `Mixer::as_written`).
+/// `k = e`, `g = (y) -> if y >= 1 { k } else { 0 }`, `f = (x) -> g(-0.0) + x` and
+/// `main = (c) -> f(1)`.
+fn reading_k(k: Term) -> Unit {
+    let guard = prim(Prim::Ge, vec![var("y"), lit(1i64)]);
+    let g = def("g", lam(&["y"], if_(guard, var("k"), lit(0i64))));
+    let call = app(var("g"), vec![Term::Lit(Value::float(-0.0))]);
+    let f = def("f", lam(&["x"], prim(Prim::Add, vec![call, var("x")])));
+    let main = def("main", lam(&["c"], app(var("f"), vec![lit(1i64)])));
+    unit(vec![def("k", k), g, f, main])
+}
+
+/// The Trick's mixer binds each definition mixed, as `mix` does (`Specializer::new`), so a
+/// split sees what the build sees. `k = 2 + 2` is bound as `4`, and `g(-0.0)` fails at its own
+/// guard. `k = 1 + true` fails where it is mixed, so `k` is left to run, and so is `g`, which
+/// reads it: the split leaves `g(-0.0)` to run without evaluating it, as `mix` does, where the
+/// mixer used to bind `k` as written and give the call the error of `+`, which it never reads.
 #[test]
-fn a_call_reading_an_unmixed_binding_is_run_as_written_closed() {
+fn a_binding_the_trick_cannot_build_is_left_to_run_as_mix_leaves_it() {
     let split = |k: Term| {
-        let guard = prim(Prim::Ge, vec![var("y"), lit(1i64)]);
-        let g = def("g", lam(&["y"], if_(guard, var("k"), lit(0i64))));
-        let call = app(var("g"), vec![Term::Lit(Value::float(-0.0))]);
-        let f = def("f", lam(&["x"], prim(Prim::Add, vec![call, var("x")])));
-        let main = def("main", lam(&["c"], app(var("f"), vec![lit(1i64)])));
-        let u = unit(vec![def("k", k), g, f, main]);
+        let u = reading_k(k);
         let (lam, report) =
             stage::split(&u, "f", 0, &stage::Domain::Ints(Some(0), Some(9))).expect("split");
         (lam.to_string(), left(&report))
     };
-    let want = |error: &str| {
-        let call = format!("{:?}", app(var("g"), vec![Term::Lit(Value::float(-0.0))]));
-        let site = format!("Prim(Add, [{call}, Var(\"x\")])");
-        let lam = "x -> match x { 1 -> (g(-0.0) + x), _ -> (g(-0.0) + x) }".to_string();
-        (
-            lam,
-            vec![format!("{site}: {error}"), format!("{call}: {error}")],
-        )
-    };
+    let call = format!("{:?}", app(var("g"), vec![Term::Lit(Value::float(-0.0))]));
     let ge = "type error: `>=` applied to `f64`, `int`";
-    assert_eq!(split(prim(Prim::Add, vec![lit(2i64), lit(2i64)])), want(ge));
-    // The `let` of `k` is evaluated before the run of `g(-0.0)`, which never reads `k`, so
-    // the call fails with what `k` gives; globals made when first read would give `>=`'s
-    // error instead, which is why such a cone is not run under them.
-    let add = "type error: `+` applied to `int`, `bool`";
+    let site = format!("Prim(Add, [{call}, Var(\"x\")])");
+    let lam = "x -> match x { 1 -> (g(-0.0) + x), _ -> (g(-0.0) + x) }".to_string();
+    let errors = vec![format!("{site}: {ge}"), format!("{call}: {ge}")];
     assert_eq!(
-        split(prim(Prim::Add, vec![lit(1i64), lit(true)])),
-        want(add)
+        split(prim(Prim::Add, vec![lit(2i64), lit(2i64)])),
+        (lam, errors)
     );
+    let bad = prim(Prim::Add, vec![lit(1i64), lit(true)]);
+    let lam = "x -> match x { 1 -> (g(-0.0) + 1), _ -> (g(-0.0) + x) }".to_string();
+    assert_eq!(split(bad.clone()), (lam, vec![]));
+    // `mix` leaves `k` to run with the error of `+`, and nothing that reads it.
+    let (_, report) = stage::mix(&reading_k(bad.clone()), &["main"]);
+    let add = "type error: `+` applied to `int`, `bool`";
+    assert_eq!(left(&report), vec![format!("{bad:?}: {add}")]);
+    assert_eq!(
+        stage::color(&reading_k(bad)),
+        [
+            ("k".to_string(), Stage::Run),
+            ("g".to_string(), Stage::Run),
+            ("f".to_string(), Stage::Run),
+            ("main".to_string(), Stage::Run)
+        ]
+    );
+}
+
+/// `k = 2 + 2`, the chain of `n` functions whose first is `f0 = (y) -> y + k`, and
+/// `g = (x) -> (f1(-0.0) + x, .., fn(-0.0) + x)`, called by `main = (c) -> g(1)`.
+fn chain_reading_k(n: usize) -> Unit {
+    let mut defs = vec![def("k", prim(Prim::Add, vec![lit(2i64), lit(2i64)]))];
+    defs.extend(chain(n, F0::Ends, false));
+    defs[1] = def(
+        &f(0),
+        lam(&["y"], prim(Prim::Add, vec![var("y"), var("k")])),
+    );
+    let call = |j: usize| app(var(&f(j)), vec![Term::Lit(Value::float(-0.0))]);
+    let site = |j: usize| prim(Prim::Add, vec![call(j), var("x")]);
+    let sites = (1..=n).map(site).collect();
+    defs.push(def("g", lam(&["x"], prim(Prim::Tuple, sites))));
+    defs.push(def("main", lam(&["c"], app(var("g"), vec![lit(1i64)]))));
+    unit(defs)
+}
+
+/// Each call `fj(-0.0)` of a split is refused by the stub of `fj` and run as written. Its cone
+/// reads `k = 2 + 2`, which the Trick's mixer bound as written and which made the call run
+/// closed under every binding it needs, `O(n)` per call; bound mixed, `k` is `4`, the call
+/// runs under the globals and fails at the guard of `fj`, in constant time (COMPLEXITY.md row
+/// F43).
+#[test]
+fn calls_reading_a_definition_the_trick_builds_are_split_in_linear_time() {
+    deep(|| {
+        let ge = "type error: `>=` applied to `f64`, `int`";
+        let (_, report) = stage::split(
+            &chain_reading_k(2),
+            "g",
+            0,
+            &stage::Domain::Ints(Some(0), Some(9)),
+        )
+        .expect("split");
+        let call = |j: usize| app(var(&f(j)), vec![Term::Lit(Value::float(-0.0))]);
+        let site = |j: usize| prim(Prim::Add, vec![call(j), var("x")]);
+        // The tuple fails at its first site, and each call is left with its own error.
+        let tuple = prim(Prim::Tuple, vec![site(1), site(2)]);
+        let want: Vec<String> = [tuple, call(1), call(2)]
+            .iter()
+            .map(|t| format!("{t:?}: {ge}"))
+            .collect();
+        assert_eq!(left(&report), want);
+        let n = 100;
+        let units = scaling::inputs(n, chain_reading_k);
+        scaling::check(
+            "stage::split of a function of n calls at -0.0 of a chain of n functions reading \
+             k = 2 + 2",
+            n,
+            |n| {
+                let d = stage::Domain::Ints(Some(0), Some(9));
+                let (_, report) = stage::split(&units[&n], "g", 0, &d).expect("split");
+                assert_eq!(report.left.len(), n + 1);
+            },
+        );
+    });
 }
 
 #[test]
