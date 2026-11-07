@@ -918,7 +918,7 @@ type Counts = (
 const GUARDED: [Counts; 16] = [
     (0, (0, 0, 13), (7, &[])),
     (250, (0, 3, 15), (4, &[])),
-    (500, (0, 0, 14), (4, &[])),
+    (500, (0, 0, 13), (4, &[])),
     (750, (0, 0, 6), (8, &[])),
     (1000, (1, 0, 16), (8, &[])),
     (1250, (0, 2, 14), (1, &[])),
@@ -992,6 +992,11 @@ guarded_ranges!(
 /// the first half (97) and 15 more in the second (114), and no box is wider than the
 /// transfer before. One box of cases 3250 to 3500, exact on main, is an inexact box narrower
 /// than the transfer before (narrower 1), and sound.
+///
+/// 96, was 97, since DISJ-incremental: the transfer before, which shares the solver, now decides
+/// the question of its box of `if ((i mod 3) == 1) { -(if (i == 0) { … }) } else { -6 * … }`
+/// over `{-5} ∪ [-2, 1]` (no point of the box fails the demand), which the search through the
+/// disjunctions refused, so both are exact and alike (cases 500 to 750).
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1011,7 +1016,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (1, 6, 97, 47, vec![]));
+    assert_eq!(sum(&GUARDED[..8]), (1, 6, 96, 47, vec![]));
     assert_eq!(sum(&GUARDED[8..]), (1, 4, 114, 49, vec![]));
 }
 

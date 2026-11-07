@@ -3,10 +3,8 @@
 //! the disjuncts near it, so `n` disjunctions cost about `n log n`, not `n` solves of the
 //! whole group.
 
-use std::time::Instant;
-
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each, satisfiable};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each};
 
 fn x(i: usize) -> Lin {
     Lin::atom(Atom::Sym(format!("x{i:05}").into()))
@@ -31,7 +29,7 @@ fn step(i: usize) -> Lin {
 
 /// Which disjunct holds at the point the solver finds for the base.
 #[derive(Clone, Copy, PartialEq)]
-enum Holds {
+pub enum Holds {
     First,
     None,
 }
@@ -86,55 +84,86 @@ pub fn general_chain(n: usize, holds: Holds) -> Formula {
     Formula::and(fs)
 }
 
-/// Times of the three cases at doubling sizes on both families, printed; not a test of the
-/// suite (run with `--ignored --nocapture`).
-#[test]
-#[ignore]
-fn probe_times() {
-    let max: usize = std::env::var("PROBE_MAX")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(256);
-    for (name, fam) in [
-        ("difference", difference_chain as fn(usize, Holds) -> Formula),
-        ("general", general_chain),
-    ] {
-        let mut n = 32;
-        while n <= max {
-            let first = fam(n, Holds::First);
-            let none = fam(n, Holds::None);
-            let mid = [Atom::Sym(format!("x{:05}", n / 2).into())];
-            let t = Instant::now();
-            let a = project_each(&first, &mid).map(|e| e.0[0].clone());
-            let ta = t.elapsed();
-            let t = Instant::now();
-            let b = decide(&none);
-            let tb = t.elapsed();
-            let t = Instant::now();
-            let c = project_each(&none, &mid).map(|e| e.0[0].clone());
-            let tc = t.elapsed();
-            let s = satisfiable(&none).map(|m| m.is_some());
-            println!(
-                "{name} n={n}: project_each first {ta:?} {a:?}; decide none {tb:?} {b:?}; \
-                 project_each none {tc:?} {c:?}; satisfiable none {s:?}"
-            );
-            n *= 2;
-        }
-    }
-    let _ = scaling::FACTOR;
+/// The symbol asked for: the middle of the chain.
+fn middle(n: usize) -> [Atom; 1] {
+    [Atom::Sym(format!("x{:05}", n / 2).into())]
+}
+
+/// Projects the middle of the chain `fam(m, holds)` at each size `m` of a scaling check.
+fn projects(what: &str, n: usize, fam: fn(usize, Holds) -> Formula, holds: Holds) {
+    let inputs = scaling::inputs(n, |m| fam(m, holds));
+    scaling::check_order(what, n, 1, |m| {
+        let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
+        assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
+    });
+}
+
+/// Decides the chain `fam(m, Holds::None)` at each size `m` of a scaling check.
+fn decides(what: &str, n: usize, fam: fn(usize, Holds) -> Formula) {
+    let inputs = scaling::inputs(n, |m| fam(m, Holds::None));
+    scaling::check_order(what, n, 1, |m| {
+        assert_eq!(decide(&inputs[&m]), Ok(true));
+    });
 }
 
 #[test]
-#[ignore]
-fn probe_one() {
-    let n: usize = std::env::var("PROBE_N").ok().and_then(|s| s.parse().ok()).unwrap_or(64);
-    let general = std::env::var("PROBE_GENERAL").is_ok();
-    let case: usize = std::env::var("PROBE_CASE").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
-    let fam = if general { general_chain } else { difference_chain };
-    let holds = if case == 0 { Holds::First } else { Holds::None };
-    let f = fam(n, holds);
-    let mid = [Atom::Sym(format!("x{:05}", n / 2).into())];
-    let t = Instant::now();
-    let r = if case == 1 { format!("{:?}", decide(&f)) } else { format!("{:?}", project_each(&f, &mid).map(|e| e.0)) };
-    println!("n={n} case {case}: {:?} {r}", t.elapsed());
+fn the_middle_of_a_difference_chain_whose_disjuncts_hold_is_projected_in_n_log_n() {
+    projects(
+        "a difference chain projected, a disjunct holding",
+        64,
+        difference_chain,
+        Holds::First,
+    );
+}
+
+#[test]
+fn a_difference_chain_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
+    decides(
+        "a difference chain decided, no disjunct holding",
+        64,
+        difference_chain,
+    );
+}
+
+#[test]
+fn the_middle_of_a_difference_chain_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
+    projects(
+        "a difference chain projected, no disjunct holding",
+        64,
+        difference_chain,
+        Holds::None,
+    );
+}
+
+#[test]
+fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_hold_is_projected_in_n_log_n() {
+    projects(
+        "a chain of three-atom rows projected, a disjunct holding",
+        32,
+        general_chain,
+        Holds::First,
+    );
+}
+
+#[test]
+fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
+    decides(
+        "a chain of three-atom rows decided, no disjunct holding",
+        64,
+        general_chain,
+    );
+}
+
+/// The exact hull of the middle of the difference chain, found by the rows its disjunctions imply
+/// where the projection before them stopped wider (`[36, 221]`).
+#[test]
+fn the_middle_of_a_chain_whose_disjuncts_do_not_hold_has_its_exact_hull() {
+    let n = 64;
+    let r = project_each(&difference_chain(n, Holds::None), &middle(n)).expect("a projection");
+    let s = r.0[0].clone().expect("a hull");
+    // Every step at least 1, and at least 2 at the 8 stages of disjunctions before the
+    // middle; the 31 steps after it, 8 of them at disjunctions, end at most at `4n`.
+    let (lo, hi) = (32 + 8, 4 * 64 - (31 + 8));
+    assert!(s.contains(lo) && !s.contains(lo - 1), "{s:?}");
+    assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
 }

@@ -967,6 +967,11 @@ impl fmt::Display for Relation {
 
 /// Whether `f` holds somewhere, and where.
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
+    or_old(|| satisfiable_named(f))
+}
+
+/// [`satisfiable`] on one path ([`or_old`]).
+fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
     match Renamed::of(f) {
         Naming::Kept => satisfiable_inner(f),
         Naming::Renamed(r) => {
@@ -998,6 +1003,11 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// Whether `f` holds somewhere. A conjunction is decided without building a point; a point is
 /// built only to search the disjunctions that propagation leaves.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
+    or_old(|| decide_named(f))
+}
+
+/// [`decide`] on one path ([`or_old`]).
+fn decide_named(f: &Formula) -> Result<bool, Refusal> {
     match Renamed::of(f) {
         Naming::Kept => decide_inner(f),
         Naming::Renamed(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
@@ -1009,15 +1019,150 @@ pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     }
 }
 
+/// For each disjunction, the bounds on a linear form that every disjunct's own rows put on
+/// it, joined: when each disjunct bounds `l` from below by its rows on `l` alone, the
+/// disjunction implies the least of those bounds, and likewise above. A form is read up to
+/// its sign and constant (`s <= 1` and `s >= 3` are both rows on `s`), so the rows returned
+/// have the points of the disjunctions and more, and the formula with them has its own
+/// points. One pass over the disjuncts' rows. On `k` disjunctions such as `s == 2 || s == 3`
+/// along a chain, the rows `2 <= s <= 3` show by one solve of the base that a bound on the
+/// chain's end past what they allow leaves no point, where [`probe`] tests each disjunct by a
+/// propagation of the whole formula (COMPLEXITY.md DISJ-incremental).
+fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
+    // The bounds each disjunct's rows put on the form with the given terms, the first term's
+    // coefficient positive.
+    type Bounds = BTreeMap<Vec<(Atom, Int)>, (Option<Int>, Option<Int>)>;
+    let own = |d: &Parts| -> Bounds {
+        let mut out = Bounds::new();
+        for c in &d.cons {
+            let Some((_, first)) = c.lin.terms.iter().next() else {
+                continue;
+            };
+            let flip = first.is_negative();
+            let terms: Vec<(Atom, Int)> = (c.lin.terms.iter())
+                .map(|(a, k)| (a.clone(), if flip { -k } else { k.clone() }))
+                .collect();
+            // `form + k >= 0` (or `== 0`) with `k` the constant read with the form's sign.
+            let k = if flip {
+                -&c.lin.constant
+            } else {
+                c.lin.constant.clone()
+            };
+            let (lo, hi) = out.entry(terms).or_insert((None, None));
+            let at_least = || -&k;
+            if !flip || c.rel == Rel::Eq {
+                let v = at_least();
+                *lo = Some(lo.take().map_or(v.clone(), |l: Int| l.max(v)));
+            }
+            if flip || c.rel == Rel::Eq {
+                let v = at_least();
+                *hi = Some(hi.take().map_or(v.clone(), |h: Int| h.min(v)));
+            }
+        }
+        out
+    };
+    let mut rows = Vec::new();
+    for ds in ors {
+        let Some((first, rest)) = ds.split_first() else {
+            continue;
+        };
+        let mut join = own(first);
+        for d in rest {
+            let b = own(d);
+            join.retain(|terms, (lo, hi)| {
+                let Some((l, h)) = b.get(terms) else {
+                    return false;
+                };
+                *lo = lo.take().zip(l.clone()).map(|(a, b)| a.min(b));
+                *hi = hi.take().zip(h.clone()).map(|(a, b)| a.max(b));
+                lo.is_some() || hi.is_some()
+            });
+            if join.is_empty() {
+                break;
+            }
+        }
+        for (terms, (lo, hi)) in join {
+            let form = Lin {
+                terms: terms.into_iter().collect(),
+                constant: Int::ZERO,
+            };
+            if let Some(l) = lo {
+                rows.push(Con::ge(&form, &Lin::constant(l)));
+            }
+            if let Some(h) = hi {
+                rows.push(Con::ge(&Lin::constant(h), &form));
+            }
+        }
+    }
+    rows
+}
+
+/// Whether the projections by halves ([`by_halves`] in [`settle`], [`pick`] and
+/// [`project_parts`]) and the rows the disjunctions imply ([`disjunction_hulls`]) are left
+/// out, as before DISJ-diff-fast and DISJ-incremental: while a question that the solver
+/// refused on the new path is asked again ([`or_old`]), and in the tests that compare the
+/// two.
+fn old_path() -> bool {
+    OLD_PATH.with(Cell::get)
+}
+
+thread_local! {
+    static OLD_PATH: Cell<bool> = const { Cell::new(false) };
+}
+
+/// `run`, and when the solver refuses it, `run` again on the path before DISJ-diff-fast and
+/// DISJ-incremental ([`old_path`]), so that no question answered there is refused now. The
+/// new path changes which disjuncts a search reads and with which rows, and a different
+/// system may meet a refusal of the solver ([`Refusal::Growth`] on rows of three atoms or
+/// more) that the old one did not.
+// Complexity tradeoff: a question the new path refuses costs that refusal and the old path's
+// work, which is O(n²) solves of its groups on a chain of `n` disjunctions (COMPLEXITY.md
+// DECIDE-disj-chain). Why: which systems the solver refuses depends on their shape, which the
+// projections change, so no check before the question tells which path it answers. Trigger:
+// rows of three atoms or more whose projection the solver refuses. Test:
+// `store::presburger::by_halves_against_old::answers_are_those_of_the_old_path`.
+fn or_old<T>(run: impl Fn() -> Result<T, Refusal>) -> Result<T, Refusal> {
+    match run() {
+        Err(_) if !old_path() => {
+            OLD_PATH.with(|o| o.set(true));
+            let again = run();
+            OLD_PATH.with(|o| o.set(false));
+            again
+        }
+        r => r,
+    }
+}
+
 /// [`decide`] of a formula whose names no longer matter ([`Renamed`]): the disjunctions that
 /// [`absorb`] shows to remove no point removed, the rest settled for a search ([`settle`] with
 /// `search`) and searched ([`found`]).
+///
+/// The rows the disjunctions imply ([`disjunction_hulls`]) are asked first with the base: they
+/// change no answer, and show at once that the formula is empty with a bound past what its
+/// disjuncts allow. When the solver refuses the formula with them (a row of three terms or
+/// more joining a group may make an elimination enlarge it), it is asked as before, without
+/// them, so no answer given without them becomes a refusal.
+// Complexity tradeoff: a formula refused with the implied rows is asked twice, so it costs
+// up to twice what it cost before; the first ask stops at the refusal.
 fn decide_inner(f: &Formula) -> Result<bool, Refusal> {
-    match settle(absorbed(f, &[]).0, true)? {
-        None => Ok(false),
-        Some(p) if p.ors.is_empty() => Ok(true),
-        Some(p) => Ok(found(p)?.is_some()),
+    let p = absorbed(f, &[]).0;
+    let implied = if old_path() {
+        Vec::new()
+    } else {
+        disjunction_hulls(&p.ors)
+    };
+    let ask = |mut p: Parts, rows: Vec<Con>| -> Result<bool, Refusal> {
+        p.cons.extend(rows);
+        match settle(p, true)? {
+            None => Ok(false),
+            Some(p) if p.ors.is_empty() => Ok(true),
+            Some(p) => Ok(found(p)?.is_some()),
+        }
+    };
+    if implied.is_empty() {
+        return ask(p, implied);
     }
+    ask(p, implied).or_else(|_| ask(absorbed(f, &[]).0, Vec::new()))
 }
 
 /// The new name of `a` under the renaming `to` of [`Renamed`]; an atom not in it keeps its own,
@@ -1660,6 +1805,9 @@ fn fresh_stamp() -> u64 {
 // group of `n` rows whose point needs an earlier choice undone, O(n²), as before this plan
 // item (DISJ-incremental). No answer is given up.
 fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
+    if old_path() {
+        return pick_by(p, deep, false);
+    }
     pick_by(p, deep, true).or_else(|_| pick_by(p, deep, false))
 }
 
@@ -2081,8 +2229,14 @@ struct Side1 {
 /// Omega test", 1992, the exact shadow). It is done only when the `L·U` rows made have no more
 /// terms in all than the `L + U` rows taken out, judged in O(1) from counts kept for each atom,
 /// so the system never grows and the whole elimination costs O(m log m) for m terms, an atom
-/// being looked at again only when a row of it changes. `None` when a combination leaves a
-/// false row without atoms: `rows` has no point.
+/// being looked at again only when a row of it changes. An atom with an equality in which its
+/// coefficient is 1 or -1 is eliminated by substituting that equality (the one of fewest terms)
+/// into its other rows, which is exact over the integers, when the terms this adds are at most
+/// those of its equalities and twice their number; and of two `>=` rows on one linear form only
+/// the tighter is kept, so a substitution or a combination that writes a row again adds
+/// nothing. `None` when a combination or a substitution leaves a false row without atoms, or an
+/// equality whose terms' greatest common divisor does not divide its constant: `rows` has no
+/// point.
 // Complexity tradeoff: an atom whose elimination would add terms is kept, so the result is
 // small only where the graph of the rows is: on chains, trees and other graphs whose atoms
 // have few lower or few upper bounds it keeps little beyond `keep`, and on a graph with a core
@@ -2099,6 +2253,11 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
         hi_terms: usize,
         lo_wide: usize,
         hi_wide: usize,
+        // The equalities of the atom, and those where its coefficient is 1 or -1 with their
+        // terms in all.
+        eqs: usize,
+        unit_eqs: usize,
+        unit_eq_terms: usize,
         rows: Vec<usize>,
         gone: bool,
         queued: bool,
@@ -2141,6 +2300,18 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                     *w -= wide;
                 }
             }
+            if c.rel == Rel::Eq {
+                let unit = usize::from(k.is_unit());
+                if add {
+                    d.eqs += 1;
+                    d.unit_eqs += unit;
+                    d.unit_eq_terms += unit * n;
+                } else {
+                    d.eqs -= 1;
+                    d.unit_eqs -= unit;
+                    d.unit_eq_terms -= unit * n;
+                }
+            }
             if add {
                 d.rows.push(i);
             }
@@ -2152,39 +2323,120 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
     };
     // A combined row with its terms divided by their common divisor and its constant rounded
     // down; `None` for a row without atoms, which is false when its constant is below zero.
-    let tidy = |lin: Lin| -> Result<Option<Con>, ()> {
+    let tidy = |lin: Lin, rel: Rel| -> Result<Option<Con>, ()> {
         if lin.terms.is_empty() {
-            return if lin.constant.is_negative() { Err(()) } else { Ok(None) };
+            let holds = match rel {
+                Rel::Eq => lin.constant.is_zero(),
+                Rel::Ge => !lin.constant.is_negative(),
+            };
+            return if holds { Ok(None) } else { Err(()) };
         }
         let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
+        if rel == Rel::Eq && !lin.constant.mod_floor(&g).is_zero() {
+            return Err(());
+        }
         let lin = if g.is_unit() {
             lin
         } else {
             Lin {
-                terms: lin.terms.iter().map(|(a, k)| (a.clone(), k.div_floor(&g))).collect(),
+                terms: lin
+                    .terms
+                    .iter()
+                    .map(|(a, k)| (a.clone(), k.div_floor(&g)))
+                    .collect(),
                 constant: lin.constant.div_floor(&g),
             }
         };
-        Ok(Some(Con { lin, rel: Rel::Ge }))
+        Ok(Some(Con { lin, rel }))
     };
+    // Of two inequalities on one form only the tighter is kept, so that a bound made again
+    // (by two eliminations, or by an equality put in two rows) does not count against the
+    // elimination of its atoms; `same` gives the place of the row kept for each form.
+    let mut same: HashMap<BTreeMap<Atom, Int>, usize> = HashMap::new();
+    macro_rules! put {
+        ($c:expr) => {{
+            let c: Con = $c;
+            let i = live.len();
+            let mut fresh = true;
+            if c.rel == Rel::Ge {
+                match same.get(&c.lin.terms).copied() {
+                    Some(j) if live[j].is_some() => {
+                        let old = &live[j].as_ref().expect("a live row").lin.constant;
+                        if c.lin.constant >= *old {
+                            fresh = false;
+                        } else {
+                            let o = live[j].take().expect("a live row");
+                            count(&mut deg, &mut queue, &o, j, false);
+                            same.insert(c.lin.terms.clone(), i);
+                        }
+                    }
+                    _ => {
+                        same.insert(c.lin.terms.clone(), i);
+                    }
+                }
+            }
+            if fresh {
+                count(&mut deg, &mut queue, &c, i, true);
+                live.push(Some(c));
+            }
+        }};
+    }
     for c in rows {
-        let i = live.len();
-        count(&mut deg, &mut queue, c, i, true);
-        live.push(Some(c.clone()));
+        put!(c.clone());
     }
     while let Some(x) = queue.pop_front() {
         let d = deg.get_mut(&x).expect("a queued atom");
         d.queued = false;
         let (l, u) = (d.lo, d.hi);
         let exact = d.lo_wide == 0 || d.hi_wide == 0;
-        let small = l * u <= l + u && l * d.hi_terms + u * d.lo_terms <= d.lo_terms + d.hi_terms + 2 * l * u;
-        if d.gone || !exact || !small {
+        let small = l * u <= l + u
+            && l * d.hi_terms + u * d.lo_terms <= d.lo_terms + d.hi_terms + 2 * l * u;
+        // An equality where the atom's coefficient is 1 or -1 gives its value, which is put
+        // in each other row of the atom, exactly: `r` rows and an equality of `e` terms make
+        // `r` rows of at most `r·(e - 2)` more terms than they had, done when that is no more
+        // than the `e` terms of the equality taken out. Judged with the mean size of such
+        // equalities, which the one used is no larger than.
+        let others = (l + u).saturating_sub(d.eqs + 1);
+        let by_eq =
+            d.unit_eqs > 0 && others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs;
+        if d.gone || !(by_eq || (exact && small)) {
             continue;
         }
         d.gone = true;
         let mut ids = mem::take(&mut d.rows);
         ids.sort_unstable();
         ids.dedup();
+        if by_eq {
+            let mut taken: Vec<Con> = (ids.iter())
+                .filter_map(|&i| live[i].take().map(|c| (i, c)))
+                .map(|(i, c)| {
+                    count(&mut deg, &mut queue, &c, i, false);
+                    c
+                })
+                .collect();
+            let at = (taken.iter().enumerate())
+                .filter(|(_, c)| c.rel == Rel::Eq && c.lin.terms[&x].is_unit())
+                .min_by_key(|(_, c)| c.lin.terms.len())
+                .map(|(j, _)| j)
+                .expect("a unit equality of the atom");
+            let e = taken.swap_remove(at);
+            // `x = -(e - x)` when its coefficient in `e` is 1; `e` is turned so that it is.
+            let e = if e.lin.terms[&x].is_positive() {
+                e.lin
+            } else {
+                e.lin.times(-1)
+            };
+            for c in taken {
+                let a = c.lin.terms[&x].clone();
+                let lin = c.lin.minus(&e.times(a));
+                match tidy(lin, c.rel) {
+                    Err(()) => return None,
+                    Ok(None) => {}
+                    Ok(Some(c)) => put!(c),
+                }
+            }
+            continue;
+        }
         let (mut lows, mut highs): (Vec<Side1>, Vec<Side1>) = (Vec::new(), Vec::new());
         for i in ids {
             let Some(c) = live[i].take() else { continue };
@@ -2198,11 +2450,19 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
             };
             match (c.rel, a.is_positive()) {
                 (Rel::Eq, true) => {
-                    highs.push(Side1 { a: -&a, rest: neg(), row: i });
+                    highs.push(Side1 {
+                        a: -&a,
+                        rest: neg(),
+                        row: i,
+                    });
                     lows.push(Side1 { a, rest, row: i });
                 }
                 (Rel::Eq, false) => {
-                    lows.push(Side1 { a: -&a, rest: neg(), row: i });
+                    lows.push(Side1 {
+                        a: -&a,
+                        rest: neg(),
+                        row: i,
+                    });
                     highs.push(Side1 { a, rest, row: i });
                 }
                 (Rel::Ge, true) => lows.push(Side1 { a, rest, row: i }),
@@ -2216,7 +2476,10 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                 }
                 // `lo.a·x + r >= 0` and `hi.a·x + s >= 0` with `hi.a` below zero.
                 let b = -&hi.a;
-                let mut lin = Lin { terms: BTreeMap::new(), constant: &(&b * &lo.rest.constant) + &(&lo.a * &hi.rest.constant) };
+                let mut lin = Lin {
+                    terms: BTreeMap::new(),
+                    constant: &(&b * &lo.rest.constant) + &(&lo.a * &hi.rest.constant),
+                };
                 for (t, k) in &lo.rest.terms {
                     lin.terms.insert(t.clone(), &b * k);
                 }
@@ -2230,14 +2493,10 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                         lin.terms.insert(t.clone(), sum);
                     }
                 }
-                match tidy(lin) {
+                match tidy(lin, Rel::Ge) {
                     Err(()) => return None,
                     Ok(None) => {}
-                    Ok(Some(c)) => {
-                        let i = live.len();
-                        count(&mut deg, &mut queue, &c, i, true);
-                        live.push(Some(c));
-                    }
+                    Ok(Some(c)) => put!(c),
                 }
             }
         }
@@ -3433,20 +3692,22 @@ fn repair(m: &mut Model, gone: &[(Atom, Vec<Con>)]) {
 /// emptiness in [`probe`]) every disjunct is answered, since a disjunct kept there widens a
 /// hull or hides that the parts have no point.
 ///
-/// Complexity tradeoff: without `search`, or when no disjunct of a disjunction holds at the
-/// point, a disjunct that the local tests do not answer is solved with every base row linked
-/// to it, so `n` such disjuncts over one linked group of `n` rows cost `n` solves of the
-/// group: quadratic. What is given up: no answer, only time on such formulas: a projection of
-/// a chain whose disjunctions each have a disjunct that holds at the point still pays it, as
-/// does a search whose disjunctions have no disjunct holding there. Why: the solve shows a disjunct empty, which no point can, and testing each disjunct
-/// against one solved group kept between the tests needs an incremental solver, which
-/// [`solve`] is not. Trigger: `n` disjunctions over one group of linked rows, a disjunct of
-/// each not met by moving its own atoms. With `search`, the chain with a disjunction every
-/// fourth stage
-/// (`l01_38_presburger::names::decide_scales_over_a_chain_with_a_disjunction_every_fourth_stage`)
-/// is linear: before, 127 solves of about 513 rows at 512 stages, 52.5 times the bytes of 64
-/// stages. COMPLEXITY.md row DECIDE-disj-chain. A complete solution would settle against one
-/// solved group, adding and retracting each disjunct.
+/// Without `search`, or when no disjunct of a disjunction holds at the point, a disjunct that
+/// the local tests do not answer is asked of the base projected onto the atoms of its
+/// disjunction ([`by_halves`], [`shadow`]), with the disjuncts of a round taken by halves, so
+/// that on a chain or a tree of `n` rows `n` such disjuncts cost O(n log n), not `n` solves of
+/// the group (COMPLEXITY.md DECIDE-disj-chain, DISJ-incremental; tests in
+/// `l01_38_presburger::disj_groups`). A disjunct the solver refuses with the projection is
+/// solved with every base row linked to it, as before.
+///
+/// Complexity tradeoff: where [`shadow`] keeps a core of the group whole (a dense graph, a
+/// grid: atoms with three or more lower and three or more upper bounds), each disjunct is
+/// asked of that core, so `n` disjuncts over a core of `c` rows cost `n` solves of `c` rows,
+/// up to quadratic as before. What is given up: no answer, only time on such groups. Why: an
+/// exact projection of such a core grows it (Fourier-Motzkin), and testing each disjunct
+/// against one solved core needs an incremental solver, which [`solve`] is not. Trigger: `n`
+/// disjunctions over a group whose rows form such a core. A complete solution would settle
+/// against one solved group, adding and retracting each disjunct.
 fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
     // The base, with a bound written again (at each level of a nest, say) kept once
     // ([`Linked::meet`]), so that the groups a disjunct is tested with do not grow with the
@@ -3477,12 +3738,13 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
             let end = todo.len();
             // Whether a disjunct of these disjunctions may be asked of the solver: one that does
             // not hold at the point, in a disjunction that the point does not serve.
-            let asks = point.as_ref().is_some_and(|pt| {
-                todo[next..end].iter().any(|ds| {
-                    let holds = |d: &Rc<Parts>| d.cons.iter().all(|c| c.holds(pt));
-                    !(search && ds.iter().any(holds)) && !ds.iter().all(holds)
-                })
-            });
+            let asks = !old_path()
+                && point.as_ref().is_some_and(|pt| {
+                    todo[next..end].iter().any(|ds| {
+                        let holds = |d: &Rc<Parts>| d.cons.iter().all(|c| c.holds(pt));
+                        !(search && ds.iter().any(holds)) && !ds.iter().all(holds)
+                    })
+                });
             // The atoms of each disjunction's own constraints, onto which [`by_halves`]
             // projects the base for its questions.
             let keep: Vec<BTreeSet<Atom>> = if asks {
@@ -6400,6 +6662,35 @@ pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
 /// that a symbol whose hull is refused leaves the others projected. With them, the causes for
 /// which a disjunction was left out, which leaves each hull wider but sound.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    // Where the new path refuses a symbol or leaves a disjunction out, the old path is asked
+    // too ([`or_old`]): a refused symbol takes the old hull, every other the meet of the two
+    // (each sound, so the meet is), and the causes given are the old path's, so that no
+    // refusal or cause appears where the old path had none.
+    let refused = |e: &Each| !e.1.is_empty() || e.0.iter().any(Result::is_err);
+    let new = or_old(|| project_each_named(f, syms));
+    match new {
+        Ok(mut each) if refused(&each) && !old_path() => {
+            OLD_PATH.with(|o| o.set(true));
+            let old = project_each_named(f, syms);
+            OLD_PATH.with(|o| o.set(false));
+            if let Ok((olds, skipped)) = old {
+                for (s, o) in each.0.iter_mut().zip(olds) {
+                    match (&*s, o) {
+                        (Ok(n), Ok(o)) => *s = Ok(n.meet(&o)),
+                        (Err(_), o) => *s = o,
+                        (Ok(_), Err(_)) => {}
+                    }
+                }
+                each.1 = skipped;
+            }
+            Ok(each)
+        }
+        r => r,
+    }
+}
+
+/// [`project_each`] on one path ([`or_old`]).
+fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     let r = match Renamed::of(f) {
         Naming::Kept => return project_each_inner(f, syms),
         Naming::Renamed(r) => r,
@@ -6585,15 +6876,58 @@ fn project_parts(
     };
     // The disjunct's parts with the base groups it touches, its constraints sorted as
     // [`nnf`] sorts them and its disjunctions shared.
-    let parts_of = |d: &Parts, roots: &[usize]| -> Parts {
-        let mut fs: Vec<Formula> = roots.iter().map(|r| base_of(*r).clone()).collect();
+    // The base is given as its groups `roots`, or as rows `kernel` with the same points on
+    // the disjunct's atoms and its symbols.
+    let parts_of = |d: &Parts, roots: &[usize], kernel: Option<&[Con]>| -> Parts {
+        let mut fs: Vec<Formula> = match kernel {
+            Some(k) => k.iter().cloned().map(Formula::Con).collect(),
+            None => roots.iter().map(|r| base_of(*r).clone()).collect(),
+        };
         fs.extend(d.cons.iter().cloned().map(Formula::Con));
         let mut q = Parts::of(Formula::and(fs));
         q.cons.sort();
         q.ors.extend(d.ors.iter().cloned());
         q
     };
-    for ds in &ors {
+    // For each disjunct, the base projected ([`by_halves`]) onto the atoms of the disjunct and
+    // of the nest below it that the base has, and onto the symbols in the groups it touches:
+    // the disjunct with it has the points on those that it has with the base, so each is
+    // projected with rows about its own size where the base is a chain or a tree, not with
+    // its groups whole. The base has a point.
+    let mut kernels: Vec<Vec<Option<Vec<Con>>>> =
+        ors.iter().map(|ds| vec![None; ds.len()]).collect();
+    {
+        let mut keep: Vec<BTreeSet<Atom>> = Vec::new();
+        let mut place: Vec<(usize, usize)> = Vec::new();
+        for (j, ds) in ors.iter().enumerate() {
+            for (t, d) in ds.iter().enumerate() {
+                let atoms = d.atoms();
+                let roots = roots_of(atoms);
+                let mut set: BTreeSet<Atom> = if atoms.len() <= linked.ids.len() {
+                    (atoms.iter())
+                        .filter(|a| linked.ids.contains_key(*a))
+                        .cloned()
+                        .collect()
+                } else {
+                    (linked.ids.keys())
+                        .filter(|a| atoms.contains(*a))
+                        .cloned()
+                        .collect()
+                };
+                set.extend(touched(atoms, &roots).into_iter().map(|k| syms[k].clone()));
+                keep.push(set);
+                place.push((j, t));
+            }
+        }
+        let rows = linked.cons.clone();
+        let filled: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+            let (j, t) = place[i];
+            kernels[j][t] = k.filter(|_| !old_path());
+            Ok(Vec::new())
+        });
+        filled.expect("no leaf fails");
+    }
+    for (j, ds) in ors.iter().enumerate() {
         // For each symbol, the join of its projections over the satisfiable disjuncts that
         // touch it (`None` once one is refused), and how many touch it; a satisfiable disjunct
         // that does not touch it gives the base's hull, which leaves it as it is.
@@ -6607,15 +6941,20 @@ fn project_parts(
         // the nest below it. With `sets`, each disjunct is settled first, and each
         // that may have a point is asked for the symbols that all such disjuncts touch, which
         // no order changes; the others are not asked.
-        let mut order: Vec<&Rc<Parts>> = ds.iter().collect();
-        order.sort_by_key(|d| d.atoms().len());
+        let mut order: Vec<(usize, &Rc<Parts>)> = ds.iter().enumerate().collect();
+        order.sort_by_key(|(_, d)| d.atoms().len());
         let mut wanted: Option<Vec<usize>> = None;
         let mut pre: Vec<Option<Result<Option<Parts>, Refusal>>> = Vec::new();
         if sets {
-            for d in &order {
+            for &(t, d) in &order {
                 let roots = roots_of(d.atoms());
-                // A projection may keep a disjunct not shown to have a point.
-                let s = settle_as_sets(parts_of(d, &roots)).map(|s| s.map(|s| s.p));
+                // A projection may keep a disjunct not shown to have a point; one refused with
+                // the projected base is asked again with the base's groups.
+                let kernel = kernels[j][t].as_deref();
+                let mut s = settle_as_sets(parts_of(d, &roots, kernel)).map(|s| s.map(|s| s.p));
+                if s.is_err() && kernel.is_some() {
+                    s = settle_as_sets(parts_of(d, &roots, None)).map(|s| s.map(|s| s.p));
+                }
                 // Only a settling that leaves no point shows that a disjunct has none; a
                 // search for one would choose by name.
                 let maybe = !matches!(s, Ok(None));
@@ -6632,7 +6971,7 @@ fn project_parts(
                 pre.push(maybe.then_some(s));
             }
         }
-        for (at, d) in order.into_iter().enumerate() {
+        for (at, (t, d)) in order.into_iter().enumerate() {
             let pre_d = match pre.get_mut(at) {
                 Some(s) => match s.take() {
                     Some(s) => Some(s),
@@ -6658,21 +6997,21 @@ fn project_parts(
             // [`decide`] asks it; with `sets` it was asked above.
             // A disjunct met before, at the same base groups and asked for the same symbols,
             // is read once: its answer depends on these alone.
+            // The base as projected for this disjunct; when the solver refuses the disjunct
+            // with it, the disjunct is asked again with the base's groups, as before.
+            let kernel = kernels[j][t].take();
             let key: BelowKey = (
                 Rc::as_ptr(d),
-                (roots.iter())
-                    .flat_map(|r| linked.held[*r].iter().map(|i| linked.cons[*i].clone()))
-                    .collect(),
+                match &kernel {
+                    Some(k) => k.clone(),
+                    None => (roots.iter())
+                        .flat_map(|r| linked.held[*r].iter().map(|i| linked.cons[*i].clone()))
+                        .collect(),
+                },
                 sub.clone(),
             );
-            let found_rs = if let Some((_, r)) = memo.get(&key) {
-                r.clone()
-            } else {
-                let settled = match pre_d {
-                    Some(s) => s,
-                    None => settle(parts_of(d, &roots), false),
-                };
-                let r = settled.and_then(|q| match q {
+            let answer = |settled: Result<Option<Parts>, Refusal>, memo: &mut Below| {
+                settled.and_then(|q| match q {
                     None => Ok((no_points(&sub), false)),
                     Some(q) if ks.is_empty() => {
                         // A point of the disjunct with each disjunct below cut to its own
@@ -6688,7 +7027,25 @@ fn project_parts(
                         let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
                         (e, point)
                     }),
-                });
+                })
+            };
+            let found_rs = if let Some((_, r)) = memo.get(&key) {
+                r.clone()
+            } else {
+                let settled = match pre_d {
+                    Some(s) => s,
+                    None => settle(parts_of(d, &roots, kernel.as_deref()), false),
+                };
+                let mut r = answer(settled, memo);
+                if r.is_err() && kernel.is_some() {
+                    let base = parts_of(d, &roots, None);
+                    let settled = if sets {
+                        settle_as_sets(base).map(|s| s.map(|s| s.p))
+                    } else {
+                        settle(base, false)
+                    };
+                    r = answer(settled, memo);
+                }
                 memo.insert(key, (Rc::clone(d), r.clone()));
                 r
             };
@@ -6753,6 +7110,19 @@ fn project_parts(
             }
         }
     }
+    // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the whole
+    // formula, `w` the hull's width, and a question whose formula is empty is answered at
+    // once only when the rows its disjunctions imply ([`disjunction_hulls`]) show it so by one
+    // solve. Where the solver refuses the formula with those rows (rows of three atoms or more:
+    // `x[i + 1] - x[i] - y[i] >= 0` along a chain with `x[i + 1] - x[i] + y[i] == 4 || == 5`),
+    // the question goes to [`probe`], which tests each disjunct by a propagation of the whole
+    // formula, so `n` disjunctions cost O(n²) solves or more for each question. What is given
+    // up: no answer, only time (3.4 s at 64 stages where it was 9.2 s; past 60 s at 512). Why:
+    // which systems the solver refuses depends on their shape, and a projection that keeps the
+    // implied rows within the shapes it decides is not known. Trigger: an empty question over
+    // a group of rows of three atoms or more with `n` disjunctions whose disjuncts each have a
+    // point (COMPLEXITY.md DISJ-incremental). A complete solution is a [`settle`] that returns
+    // the constraints its refutation used, which [`probe`] names too.
     let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
     if n_ors > 1 && out.iter().any(finite) {
         let mut summary: Option<Formula> = None;
@@ -8158,7 +8528,6 @@ pub(super) mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod difference_rows {
     use super::*;
@@ -8226,11 +8595,7 @@ mod difference_rows {
             let n = 2 + rng.below(24) as usize;
             let sum_ok = case % 3 == 2;
             let k = |rng: &mut Rng, alike: bool| {
-                if alike {
-                    0
-                } else {
-                    rng.below(9) as i128 - 4
-                }
+                if alike { 0 } else { rng.below(9) as i128 - 4 }
             };
             let alike = rng.below(3) == 0;
             let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -8303,6 +8668,174 @@ mod difference_rows {
                 assert_eq!(negative_cycle(n, &edges), full.is_none(), "{cons:?}");
             }
         }
-        assert!(empty > 1000 && point > 1000, "{empty} empty, {point} with a point");
+        assert!(
+            empty > 1000 && point > 1000,
+            "{empty} empty, {point} with a point"
+        );
+    }
+}
+
+#[cfg(test)]
+mod by_halves_against_old {
+    use super::*;
+
+    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+    }
+
+    fn v(i: usize) -> Lin {
+        Lin::atom(Atom::Sym(format!("v{i}").into()))
+    }
+
+    fn ge(l: Lin) -> Formula {
+        Formula::Con(Con::ge(&l, &Lin::default()))
+    }
+
+    fn eq(l: Lin) -> Formula {
+        Formula::Con(Con::eq(&l, &Lin::default()))
+    }
+
+    /// A group of `n` atoms in `0..=20` linked by edges of a chain, a tree or a sparse random
+    /// graph, each a difference row `v[b] - v[a] + k >= 0` or, with `general`, a row of three
+    /// atoms `v[b] - v[a] - v[c] + k >= 0`, with disjunctions on the forms of some edges, each
+    /// two or three disjuncts of a bound or an equality, so that some hold at the least point,
+    /// some at none and some are empty.
+    fn group(rng: &mut Rng, general: bool) -> (Formula, Vec<Atom>) {
+        let n = 3 + rng.below(10) as usize;
+        let mut edges: Vec<(usize, usize)> = match rng.below(3) {
+            0 => (0..n - 1).map(|i| (i, i + 1)).collect(),
+            1 => (1..n).map(|i| (rng.below(i as u64) as usize, i)).collect(),
+            _ => (0..n + n / 2)
+                .map(|_| (rng.below(n as u64) as usize, rng.below(n as u64) as usize))
+                .filter(|(a, b)| a != b)
+                .collect(),
+        };
+        edges.sort_unstable();
+        edges.dedup();
+        let form = |rng: &mut Rng, (a, b): (usize, usize)| {
+            let l = v(b).minus(&v(a));
+            if general {
+                let c = rng.below(n as u64) as usize;
+                if c != a && c != b {
+                    return l.minus(&v(c));
+                }
+            }
+            l
+        };
+        let mut fs: Vec<Formula> = Vec::new();
+        for i in 0..n {
+            fs.push(ge(v(i)));
+            fs.push(ge(Lin::constant(20).minus(&v(i))));
+        }
+        for &e in &edges {
+            let k = rng.below(5) as i128 - 2;
+            fs.push(ge(form(rng, e).plus(&Lin::constant(k))));
+        }
+        for _ in 0..1 + rng.below(4) {
+            let Some(&e) = edges.get(rng.below(edges.len().max(1) as u64) as usize) else {
+                break;
+            };
+            let f = form(rng, e);
+            let ds = (0..2 + rng.below(2))
+                .map(|_| {
+                    let c = Lin::constant(rng.below(13) as i128 - 4);
+                    match rng.below(3) {
+                        0 => ge(c.minus(&f)),
+                        1 => ge(f.minus(&c)),
+                        _ => eq(f.minus(&c)),
+                    }
+                })
+                .collect();
+            fs.push(Formula::or(ds));
+        }
+        let syms = (0..n).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        (Formula::and(fs), syms)
+    }
+
+    fn old<T>(run: impl FnOnce() -> T) -> T {
+        OLD_PATH.with(|o| o.set(true));
+        let out = run();
+        OLD_PATH.with(|o| o.set(false));
+        out
+    }
+
+    /// The projections by halves (DISJ-diff-fast, DISJ-incremental) give the answers of the
+    /// path before them: [`decide`] the same answer, [`satisfiable`] a point exactly when the
+    /// old one does, and a point of the formula; [`project_each`] and [`project`] a hull within
+    /// the old one, equal to it on every symbol whose old hull was found without a refused
+    /// question, and never a refusal where the old path answered. Batch ([`project_each`]) and
+    /// single ([`project`]) projections agree on the new path.
+    #[test]
+    fn answers_are_those_of_the_old_path() {
+        let mut rng = Rng(0x0d15_6a1f);
+        let (mut cases, mut narrower) = (0, 0);
+        for case in 0..600 {
+            let general = case % 2 == 1;
+            let (f, syms) = group(&mut rng, general);
+            let (d_new, d_old) = (decide(&f), old(|| decide(&f)));
+            match (&d_new, &d_old) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "decide, case {case}: {f}"),
+                (Err(_), Ok(_)) => panic!("decide refused, case {case}: {f}"),
+                _ => {}
+            }
+            let (s_new, s_old) = (satisfiable(&f), old(|| satisfiable(&f)));
+            match (&s_new, &s_old) {
+                (Ok(a), Ok(b)) => {
+                    assert_eq!(a.is_some(), b.is_some(), "satisfiable, case {case}: {f}");
+                    if let Some(m) = a {
+                        assert!(f.holds(m), "a point that does not hold, case {case}: {f}");
+                    }
+                }
+                (Err(_), Ok(_)) => panic!("satisfiable refused, case {case}: {f}"),
+                _ => {}
+            }
+            let (e_new, e_old) = (project_each(&f, &syms), old(|| project_each(&f, &syms)));
+            match (&e_new, &e_old) {
+                (Ok((a, causes)), Ok((b, skipped))) => {
+                    assert!(
+                        causes.iter().all(|r| skipped.contains(r)),
+                        "a disjunction left out for {causes:?}, before for {skipped:?}, case {case}: {f}"
+                    );
+                    for ((x, y), sym) in a.iter().zip(b).zip(&syms) {
+                        match (x, y) {
+                            (Ok(x), Ok(y)) => {
+                                assert!(
+                                    x.is_subset(y),
+                                    "{sym} {x:?} not in {y:?}, case {case}: {f}"
+                                );
+                                if x != y {
+                                    narrower += 1;
+                                    assert!(
+                                        !skipped.is_empty() || general,
+                                        "{sym} {x:?} narrower than {y:?} with nothing refused, case {case}: {f}"
+                                    );
+                                }
+                                let one = project(&f, sym);
+                                assert_eq!(
+                                    one.as_ref().ok(),
+                                    Some(x),
+                                    "batch and single, {sym}, case {case}: {f}"
+                                );
+                            }
+                            (Err(_), Ok(_)) => panic!("{sym} refused, case {case}: {f}"),
+                            _ => {}
+                        }
+                    }
+                }
+                (Err(_), Ok(_)) => panic!("project_each refused, case {case}: {f}"),
+                _ => {}
+            }
+            cases += 1;
+        }
+        assert_eq!(cases, 600);
+        eprintln!("hulls narrower than the old path's: {narrower}");
     }
 }
