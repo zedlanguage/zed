@@ -12,9 +12,9 @@ use std::sync::Arc;
 use crate::deep;
 
 mod walk;
-use crate::value::{Id, fresh_id};
 use crate::types::Type;
 use crate::value::Value;
+use crate::value::{Id, fresh_id};
 
 /// A primitive operation. Applied to a failure atom, every primitive but `Tuple`, `Atom`,
 /// `Eq` and `Ne` returns its leftmost atom argument without computing (sec:failure): a loose

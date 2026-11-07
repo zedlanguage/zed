@@ -710,7 +710,6 @@ impl From<Family> for Value {
     }
 }
 
-
 /// The keys from a family's top level down to one of its leaves.
 pub type Keypath = Vec<Value>;
 
@@ -1113,8 +1112,6 @@ fn collision(keypath: &Keypath) -> KernelError {
         keypath: keypath.clone(),
     }
 }
-
-
 
 /// The ids of two shared sequences under comparison ([`Items::id`]).
 pub(crate) type Pair = (Id, Id);
@@ -1691,7 +1688,6 @@ impl fmt::Debug for Items {
         run(todo, f)
     }
 }
-
 
 /// Why a kernel evaluation stopped without a value.
 #[derive(Clone, PartialEq, Eq, Debug)]

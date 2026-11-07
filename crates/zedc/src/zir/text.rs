@@ -31,10 +31,10 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use unicode_ident::{is_xid_continue, is_xid_start};
-use zed_kernel::value::Family;
 use zed_kernel::num::{Rat, TooLarge, bytes_of};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Prim, Witness};
 use zed_kernel::types::{Type, Universe};
+use zed_kernel::value::Family;
 use zed_kernel::value::Value;
 
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};

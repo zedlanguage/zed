@@ -18,10 +18,10 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
-use crate::value::KernelError;
 use crate::exact::{CanonicalTree, TreeStep, exact_sum};
-use crate::value::{Family, Keypath};
 use crate::num::{Test, TooLarge, refused};
+use crate::value::KernelError;
+use crate::value::{Family, Keypath};
 use std::sync::Arc;
 
 use num_bigint::BigInt;

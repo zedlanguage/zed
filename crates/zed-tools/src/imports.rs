@@ -462,11 +462,11 @@ struct Def<'a> {
     module: usize,
     name: &'a str,
     /// Each field and the tokens of its type.
-    fields: Vec<(Field<'a>, (usize, usize))>,
+    fields: Fields<'a>,
     /// The tokens of the type an alias names.
     alias: Option<(usize, usize)>,
     /// The fields of each variant of an enum.
-    variants: HashMap<&'a str, Vec<(Field<'a>, (usize, usize))>>,
+    variants: HashMap<&'a str, Fields<'a>>,
     /// The methods of its inherent `impl` blocks, by name.
     methods: HashMap<&'a str, Vec<usize>>,
     /// The type its `Deref` gives.
@@ -521,6 +521,9 @@ struct Builder<'a> {
 
 /// A file to read: the file, and its parent module and name there, or none for a crate root.
 type Todo<'a> = (usize, Option<(usize, &'a str)>);
+
+/// Fields, each with the tokens of its type.
+type Fields<'a> = Vec<(Field<'a>, (usize, usize))>;
 
 /// The token at `k`, if any.
 fn tok<'a>(toks: &[(Tok<'a>, usize)], k: usize) -> Option<Tok<'a>> {
@@ -582,11 +585,7 @@ fn visibility<'a>(toks: &[(Tok<'a>, usize)], mate: &[usize], at: usize) -> Vec<&
 
 /// The fields of the struct or variant whose body opens at `k`, `{ name: T, … }` or
 /// `(T, …)`, each with the tokens of its type; none for any other token.
-fn field_list<'a>(
-    toks: &[(Tok<'a>, usize)],
-    mate: &[usize],
-    k: usize,
-) -> Vec<(Field<'a>, (usize, usize))> {
+fn field_list<'a>(toks: &[(Tok<'a>, usize)], mate: &[usize], k: usize) -> Fields<'a> {
     let mut fields = Vec::new();
     match tok(toks, k) {
         Some(Tok::Open) => {
@@ -623,7 +622,13 @@ fn expr_end(toks: &[(Tok<'_>, usize)], mate: &[usize], mut k: usize) -> usize {
 
 /// The first position in `k..end` whose token is `want`, stepping over bracketed groups, before
 /// any `;` or closing bracket of the group `k` is in.
-fn find(toks: &[(Tok<'_>, usize)], mate: &[usize], mut k: usize, end: usize, want: Tok<'_>) -> Option<usize> {
+fn find(
+    toks: &[(Tok<'_>, usize)],
+    mate: &[usize],
+    mut k: usize,
+    end: usize,
+    want: Tok<'_>,
+) -> Option<usize> {
     while k < end {
         let t = tok(toks, k)?;
         if t == want {
@@ -700,17 +705,15 @@ fn binder<'a>(toks: &[(Tok<'a>, usize)], k: usize) -> Option<&'a str> {
     let before = k.checked_sub(1).and_then(|p| tok(toks, p));
     (lower
         && !KEYWORDS.contains(&w)
-        && !matches!(
-            next,
-            Some(Tok::LParen | Tok::Open | Tok::Sep | Tok::Bang)
-        )
+        && !matches!(next, Some(Tok::LParen | Tok::Open | Tok::Sep | Tok::Bang))
         && !matches!(before, Some(Tok::Sep | Tok::Dot)))
     .then_some(w)
 }
 
 /// Whether the brace at `k` opens the fields of a struct pattern, after a type's name.
 fn struct_pattern(toks: &[(Tok<'_>, usize)], k: usize) -> bool {
-    k > 0 && matches!(toks[k - 1].0, Tok::Ident(w) if w.starts_with(|c: char| c.is_ascii_uppercase()))
+    k > 0
+        && matches!(toks[k - 1].0, Tok::Ident(w) if w.starts_with(|c: char| c.is_ascii_uppercase()))
 }
 
 /// Adds to `out` the type parameters the generic items of `toks` declare: the names first in
@@ -1362,7 +1365,12 @@ impl<'a> Builder<'a> {
     }
 
     /// What `segs`, written in code in `module`, names, and how many of its segments that used.
-    fn resolve(&self, module: usize, segs: &[&'a str], done: &[Option<Res<'a>>]) -> (Res<'a>, usize) {
+    fn resolve(
+        &self,
+        module: usize,
+        segs: &[&'a str],
+        done: &[Option<Res<'a>>],
+    ) -> (Res<'a>, usize) {
         let (mut pos, mut at) = (0, Res::Module(module));
         match self.advance(segs, &mut pos, &mut at, done, &[], true) {
             Step::Done(r) => (r, pos),
@@ -1476,7 +1484,9 @@ impl<'a> Builder<'a> {
                 // parameter. An associated type (`Self::Out`, `T::Item`) may be the crate's.
                 _ => {
                     let first = segs.first().copied().unwrap_or("");
-                    if first == "Self" || (self.generic.contains(first) && (given || segs.len() > 1)) {
+                    if first == "Self"
+                        || (self.generic.contains(first) && (given || segs.len() > 1))
+                    {
                         return Ty::Unknown;
                     }
                     return match self.resolve(text.module, &segs, done) {
@@ -1550,7 +1560,9 @@ impl<'a> Builder<'a> {
             // Every binding is resolved by now, so the path resolves to its end.
             if let (Res::Item(m, _), _) = self.resolve(path.module, &path.segs, &done) {
                 let from = self.modules[path.module].file;
-                found.add(from, self.modules[m].file, path.line, || path.segs.join("::"));
+                found.add(from, self.modules[m].file, path.line, || {
+                    path.segs.join("::")
+                });
             }
         }
         let open = self.openings(&done);
@@ -1608,7 +1620,11 @@ impl<'a> Builder<'a> {
         for list in &mut imports {
             list.sort_unstable_by_key(|&(g, _)| g);
         }
-        let loose_impls = self.impls.iter().filter(|m| m.inherent && m.def.is_none()).count();
+        let loose_impls = self
+            .impls
+            .iter()
+            .filter(|m| m.inherent && m.def.is_none())
+            .count();
         Ok(Graph {
             undeclared: self.files.len() - files.len(),
             placed: self.placed,
@@ -1700,7 +1716,10 @@ impl<'a> Builder<'a> {
                 }
                 None if imp.inherent => {
                     for &f in &imp.methods {
-                        loose.entry(self.fns[f].name).or_default().push((imp.file, open[f]));
+                        loose
+                            .entry(self.fns[f].name)
+                            .or_default()
+                            .push((imp.file, open[f]));
                     }
                 }
                 _ => {}
@@ -1713,6 +1732,9 @@ impl<'a> Builder<'a> {
 /// The methods written apart from their types, by name, each with the file it is written in and
 /// the module its visibility opens it to.
 type Calls<'a> = HashMap<&'a str, Vec<(usize, usize)>>;
+
+/// Names bound together, each with its type.
+type Binds<'a> = Vec<(&'a str, Ty)>;
 
 /// The imports found, each pair of files with the first place it is written.
 #[derive(Default)]
@@ -1756,10 +1778,10 @@ struct Walk<'b, 'a> {
     toks: &'b [(Tok<'a>, usize)],
     mate: &'b [usize],
     /// The names to bind when the brace at a position opens (a `for` loop's, a block's).
-    at_open: HashMap<usize, Vec<(&'a str, Ty)>>,
+    at_open: HashMap<usize, Binds<'a>>,
     /// The names to bind from a position to another (a `match` arm's, a closure's, an
     /// `if let`'s), by the first position.
-    ranges: HashMap<usize, Vec<(Vec<(&'a str, Ty)>, usize)>>,
+    ranges: HashMap<usize, Vec<(Binds<'a>, usize)>>,
     /// Where bound ranges end, each with the length of the log to go back to there.
     ends: HashMap<usize, usize>,
     /// The types of the parameters of a closure given to a standard method, by its first `|`.
@@ -1985,7 +2007,10 @@ impl<'b, 'a> Walk<'b, 'a> {
             let s = past_attrs(self.toks, self.mate, s, e);
             let colon = (s..e).find(|&k| self.toks[k].0 == Tok::Colon);
             let pattern = s..colon.unwrap_or(e);
-            if pattern.clone().any(|k| self.toks[k].0 == Tok::Ident("self")) {
+            if pattern
+                .clone()
+                .any(|k| self.toks[k].0 == Tok::Ident("self"))
+            {
                 let ty = match colon {
                     Some(c) => self.here((c + 1, e)),
                     None => self.frame().self_def.map_or(Ty::Unknown, Ty::Def),
@@ -2049,7 +2074,10 @@ impl<'b, 'a> Walk<'b, 'a> {
         let names = self.pattern(i + 1, end, ty);
         if cond {
             if let Some(open) = find(toks, mate, stop, usize::MAX, Tok::Open) {
-                self.ranges.entry(stop.max(i + 1)).or_default().push((names, mate[open]));
+                self.ranges
+                    .entry(stop.max(i + 1))
+                    .or_default()
+                    .push((names, mate[open]));
             }
             return Vec::new();
         }
@@ -2091,7 +2119,9 @@ impl<'b, 'a> Walk<'b, 'a> {
             i += 1;
         }
         match self.tok(i) {
-            Some(Tok::Ident(w)) if !KEYWORDS.contains(&w) || w == "self" || w == "Self" => self.chain(i),
+            Some(Tok::Ident(w)) if !KEYWORDS.contains(&w) || w == "self" || w == "Self" => {
+                self.chain(i)
+            }
             Some(Tok::Num(_) | Tok::Str) => {
                 self.chained[i] = true;
                 self.postfix(Ty::Foreign, i + 1)
@@ -2124,8 +2154,13 @@ impl<'b, 'a> Walk<'b, 'a> {
             )
             | (
                 Ty::Std("Seq", _),
-                "retain" | "retain_mut" | "sort_by_key" | "sort_unstable_by_key"
-                | "sort_by_cached_key" | "binary_search_by" | "binary_search_by_key"
+                "retain"
+                | "retain_mut"
+                | "sort_by_key"
+                | "sort_unstable_by_key"
+                | "sort_by_cached_key"
+                | "binary_search_by"
+                | "binary_search_by_key"
                 | "partition_point",
             ) => vec![self.elem(ty)],
             (Ty::Std("Iter" | "Pairs" | "Enumerate", _), "max_by" | "min_by")
@@ -2158,7 +2193,10 @@ impl<'b, 'a> Walk<'b, 'a> {
                 args.clone().into_iter().map(|t| self.ty(t)).collect()
             }
             Ty::Std("Indexed", args) if n == 2 => {
-                vec![Ty::Foreign, args.first().copied().map_or(Ty::Unknown, |t| self.ty(t))]
+                vec![
+                    Ty::Foreign,
+                    args.first().copied().map_or(Ty::Unknown, |t| self.ty(t)),
+                ]
             }
             _ => vec![Ty::Unknown; n],
         }
@@ -2224,7 +2262,7 @@ impl<'b, 'a> Walk<'b, 'a> {
     /// The names the pattern `toks[s..e]` binds, each with its type when the pattern's value is
     /// of type `ty`. Names in a part of the pattern not followed are bound with no type, so
     /// they hide any local of the same name. An explicit stack of parts.
-    fn pattern(&mut self, s: usize, e: usize, ty: Ty) -> Vec<(&'a str, Ty)> {
+    fn pattern(&mut self, s: usize, e: usize, ty: Ty) -> Binds<'a> {
         let (toks, mate) = (self.toks, self.mate);
         let mut out = Vec::new();
         let mut todo = vec![(s, e, ty)];
@@ -2278,9 +2316,10 @@ impl<'b, 'a> Walk<'b, 'a> {
                         _ => "",
                     };
                     let fields = match (toks[last].0, name) {
-                        (Tok::LParen, "Some" | "Ok") if last == s + 1 => {
-                            Some(vec![(Field::Pos(0), self.held(&ty, &["Option", "Result"], 0))])
-                        }
+                        (Tok::LParen, "Some" | "Ok") if last == s + 1 => Some(vec![(
+                            Field::Pos(0),
+                            self.held(&ty, &["Option", "Result"], 0),
+                        )]),
                         (Tok::LParen, "Err") if last == s + 1 => {
                             Some(vec![(Field::Pos(0), self.held(&ty, &["Result"], 1))])
                         }
@@ -2340,7 +2379,12 @@ impl<'b, 'a> Walk<'b, 'a> {
     /// The `for` loop at `i`: its pattern's names are bound in its block.
     fn for_loop(&mut self, i: usize) {
         let (toks, mate) = (self.toks, self.mate);
-        if i > 0 && matches!(toks[i - 1].0, Tok::Ident(_) | Tok::Gt | Tok::RParen | Tok::RBrack) {
+        if i > 0
+            && matches!(
+                toks[i - 1].0,
+                Tok::Ident(_) | Tok::Gt | Tok::RParen | Tok::RBrack
+            )
+        {
             return;
         }
         let mut k = i + 1;
@@ -2360,9 +2404,9 @@ impl<'b, 'a> Walk<'b, 'a> {
             (_, Some(Tok::Open), _) => self.elem(&ty),
             _ => Ty::Unknown,
         };
-        let Some(open) = find(toks, mate, stop, usize::MAX, Tok::Open).or_else(|| {
-            (stop..toks.len()).find(|&k| toks[k].0 == Tok::Open)
-        }) else {
+        let Some(open) = find(toks, mate, stop, usize::MAX, Tok::Open)
+            .or_else(|| (stop..toks.len()).find(|&k| toks[k].0 == Tok::Open))
+        else {
             return;
         };
         let names = self.pattern(i + 1, at_in, el);
@@ -2391,7 +2435,10 @@ impl<'b, 'a> Walk<'b, 'a> {
                 expr_end(toks, mate, a)
             };
             let names = self.pattern(s, guard, ty.clone());
-            self.ranges.entry(guard).or_default().push((names, end.min(close)));
+            self.ranges
+                .entry(guard)
+                .or_default()
+                .push((names, end.min(close)));
             s = end + usize::from(tok(toks, end) == Some(Tok::Comma));
         }
     }
@@ -2608,7 +2655,8 @@ impl<'b, 'a> Walk<'b, 'a> {
                         let first = fs[0];
                         if self.split.contains_key(name) {
                             for &f in fs {
-                                let to = self.b.fns[f].imp.map_or(def.file, |x| self.b.impls[x].file);
+                                let to =
+                                    self.b.fns[f].imp.map_or(def.file, |x| self.b.impls[x].file);
                                 self.edge(to, line, format!("{}::{name}", def.name));
                             }
                         }
@@ -2669,7 +2717,8 @@ impl<'b, 'a> Walk<'b, 'a> {
 
     /// The type of the standard method `name` called on the standard type `kind` holding `args`.
     fn std_call(&mut self, kind: &'static str, args: Vec<Text>, name: &str) -> Ty {
-        let one = |k: &'static str, t: Option<&Text>| t.map_or(Ty::Unknown, |&t| Ty::Std(k, vec![t]));
+        let one =
+            |k: &'static str, t: Option<&Text>| t.map_or(Ty::Unknown, |&t| Ty::Std(k, vec![t]));
         match (kind, name) {
             (
                 "Option" | "Result",
@@ -2690,7 +2739,9 @@ impl<'b, 'a> Walk<'b, 'a> {
             ("Map", "get" | "get_mut" | "remove") => one("Option", args.get(1)),
             ("Map", "values" | "values_mut" | "into_values") => one("Iter", args.get(1)),
             ("Map", "keys" | "into_keys") => one("Iter", args.first()),
-            ("Map", "iter" | "iter_mut" | "into_iter" | "drain" | "range") => Ty::Std("Pairs", args),
+            ("Map", "iter" | "iter_mut" | "into_iter" | "drain" | "range") => {
+                Ty::Std("Pairs", args)
+            }
             ("Option", "iter" | "into_iter") => one("Iter", args.first()),
             ("Iter", "enumerate") => Ty::Std("Enumerate", args),
             (

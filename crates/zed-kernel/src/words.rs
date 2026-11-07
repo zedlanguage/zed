@@ -14,10 +14,10 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 use crate::KernelError;
-use crate::value::Family;
 use crate::num::{Exact, Rat, TooLarge, exact_f64, read_decimal, room, show_f64};
 use crate::term::Prim;
 use crate::text::Text;
+use crate::value::Family;
 use crate::value::Value;
 
 /// `p(x)` for one of the words above; a type error when `x` is not of a kind `p` takes.

@@ -18,8 +18,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::value::{Family, Id};
 use crate::term::{FixKind, Shared, Term};
+use crate::value::{Family, Id};
 use crate::value::{Items, Value};
 
 /// The position of a node in a term: the child index taken at each node on the way down from

@@ -10,7 +10,6 @@ use zed_rt::{Stack, Stats, Word};
 use crate::hooks;
 use crate::tables::Tables;
 
-
 /// What one native run gives.
 #[derive(Clone, Debug)]
 pub struct Outcome {
