@@ -75,7 +75,7 @@ use std::pin::Pin;
 use num_bigint::BigUint;
 
 use super::bdd::{Bdd, Form, Part};
-use super::{Lits, Morphism, Node, Parts, Row, Type};
+use super::{Held, Lits, Morphism, Node, Parts, Row, Type};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 
@@ -259,14 +259,17 @@ fn group_verdicts(members: &[Type]) {
 }
 
 impl Type {
-    /// Drops the kept emptiness results. A unit's checker calls it first: a type equal to a
-    /// kept one but built apart from it is compared with it in full, so a result kept from
-    /// another unit costs the size of the type at each lookup.
+    /// Drops the kept emptiness results, and ends the unit of the recursive instances this
+    /// thread made (`rec::end_unit`). A unit's checker calls it first: a type equal to a kept
+    /// one but built apart from it is compared with it in full, so a result kept from another
+    /// unit costs the size of the type at each lookup; and a recursive instance is a cycle,
+    /// which only the end of its unit frees once no one holds it.
     pub fn forget_emptiness() {
         MEMO.with(|m| m.borrow_mut().clear());
         VERDICTS.with(|m| m.borrow_mut().clear());
         STORES.with(|m| m.borrow_mut().clear());
         SHARED.with(|m| m.borrow_mut().clear());
+        super::rec::end_unit();
     }
 
     /// Whether no value is in `self`.
@@ -346,13 +349,16 @@ impl Type {
         // One member of each group read by the parts of `roots`, without passing through a
         // member of another group, in the order met.
         let read = |roots: &[Type]| -> Vec<Type> {
-            let mut groups: HashSet<usize> = roots.iter().filter_map(Type::group).collect();
+            let mut groups: HashSet<u64> = roots.iter().filter_map(Type::group).collect();
             let inside: HashSet<usize> = roots.iter().map(Type::node_addr).collect();
-            let mut seen = inside.clone();
+            // Each node met, held for the walk, so that its address names no other node meanwhile.
+            let mut seen: HashMap<usize, Type> =
+                roots.iter().map(|t| (t.node_addr(), t.clone())).collect();
             let mut found = Vec::new();
             let mut stack: Vec<Type> = roots.to_vec();
-            let visit = |t: &Type, seen: &mut HashSet<usize>, stack: &mut Vec<Type>| {
-                if seen.insert(t.node_addr()) {
+            let visit = |t: &Type, seen: &mut HashMap<usize, Type>, stack: &mut Vec<Type>| {
+                if let Entry::Vacant(v) = seen.entry(t.node_addr()) {
+                    v.insert(t.clone());
                     stack.push(t.clone());
                 }
             };
@@ -388,7 +394,7 @@ impl Type {
             /// The members of a group whose read groups are all decided.
             Leave(Vec<Type>),
         }
-        let mut done: HashSet<usize> = own.iter().filter_map(Type::group).collect();
+        let mut done: HashSet<u64> = own.iter().filter_map(Type::group).collect();
         let mut stack: Vec<Step> = (read(&own).into_iter().rev()).map(Step::Enter).collect();
         while let Some(step) = stack.pop() {
             match step {
@@ -558,7 +564,7 @@ impl Simulation {
     /// Compares the pair numbered `i`, of `a` under `b`, row by row: what it needs of other
     /// pairs, which are made, and whether it fails here.
     fn compare(&mut self, i: usize, a: &Type, b: &Type) {
-        let Some(needs) = self.rows(a.p(), b.p()) else {
+        let Some(needs) = self.rows(&a.p(), &b.p()) else {
             self.nodes[i].failed = true;
             return;
         };
@@ -1751,7 +1757,7 @@ impl<'m> Searching<'m> {
                 self.s().give_up(Refusal::Residues);
                 false
             }
-            None => self.parts(ty.p()).await,
+            None => self.parts(&ty.p()).await,
         };
         let mut guard = self.s();
         let s = &mut *guard;
@@ -2462,7 +2468,7 @@ impl<'m> Searching<'m> {
     /// whose rest is the meet of pure cycles less at most one, all of one item.
     async fn cycle_meet(&'m self, t: &Type) -> Option<Meet> {
         let p = t.p();
-        if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(p) {
+        if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(&p) {
             return None;
         }
         if p.atoms.names.len() > 2 || p.atoms.cofinite {
@@ -3168,14 +3174,15 @@ impl<'m> Searching<'m> {
                     Payload(usize, &'u Type),
                     List(usize),
                 }
+                let up = u.p();
                 let shape = match &self.s().shown[v] {
                     Rep::Value(_) => unreachable!("a value was read above"),
                     Rep::Of { .. } => unreachable!("a value of another search was read in above"),
-                    Rep::Closure => Shape::Known(u.p().morphisms.is_leaf()),
-                    Rep::Struct => Shape::Known(Some(u.p().structs)),
-                    Rep::Tuple(vs) => Shape::Tuple(u.p().tuples.get(vs.len())),
-                    Rep::Atom(name, payload) => match u.p().atoms.names.get(name) {
-                        None => Shape::Known(Some(u.p().atoms.cofinite)),
+                    Rep::Closure => Shape::Known(up.morphisms.is_leaf()),
+                    Rep::Struct => Shape::Known(Some(up.structs)),
+                    Rep::Tuple(vs) => Shape::Tuple(up.tuples.get(vs.len())),
+                    Rep::Atom(name, payload) => match up.atoms.names.get(name) {
+                        None => Shape::Known(Some(up.atoms.cofinite)),
                         Some(a) => Shape::Payload(*payload, &a.payload),
                     },
                     Rep::List { item, .. } => Shape::List(*item),
@@ -3595,7 +3602,9 @@ fn classes(g: &Region, open: &[usize]) -> Option<(usize, Vec<Class>)> {
             return None;
         }
         let cells: Vec<usize> = g.open_cells(j, open).into_iter().collect();
-        let groups = overlaps(cells.iter().map(|&c| g.cells[j][c].ty.p()));
+        let held = Held::default();
+        let ps = cells.iter().map(|&c| g.cells[j][c].ty.p_held(&held));
+        let groups = overlaps(ps, &held);
         if groups.len() < 2 {
             return None;
         }
@@ -3719,6 +3728,8 @@ struct Walk<'a> {
     seen: HashMap<&'a Type, usize>,
     /// The types inside still to walk, with their nodes.
     todo: Vec<(usize, &'a Parts)>,
+    /// The unfoldings of the recursive types met.
+    held: &'a Held,
 }
 
 impl<'a> Walk<'a> {
@@ -3729,7 +3740,7 @@ impl<'a> Walk<'a> {
         match self.seen.entry(t) {
             Entry::Vacant(v) => {
                 v.insert(y);
-                self.todo.push((y, t.p()));
+                self.todo.push((y, t.p_held(self.held)));
             }
             Entry::Occupied(o) => trie.merge(*o.get(), y),
         }
@@ -3797,7 +3808,7 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
 // complete solution needs the connected parts of the graph in which two types meet: for tuples
 // that is the intersection graph of boxes, whose edges can number the square of the types, and
 // each edge an emptiness check.
-fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
+fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>, held: &'a Held) -> Vec<Vec<usize>> {
     let none = Type::empty();
     let mut trie = Trie {
         kids: vec![HashMap::new()],
@@ -3816,6 +3827,7 @@ fn overlaps<'a>(ps: impl Iterator<Item = &'a Parts>) -> Vec<Vec<usize>> {
         let mut walk = Walk {
             seen: HashMap::new(),
             todo: vec![(0, p)],
+            held,
         };
         while let Some((x, p)) = walk.todo.pop() {
             let bools = (0..2u8).filter(|b| p.bools >> b & 1 == 1);
@@ -3953,7 +3965,11 @@ type Step = (Option<std::sync::Arc<str>>, std::sync::Arc<str>, Type, Type);
 /// rest; none when `t` is not of that shape.
 fn list_step(t: &Type) -> Option<Step> {
     let p = t.p();
-    if p.structs || p.tuples.rest || !p.tuples.lens.is_empty() || !only_atoms(p) || p.atoms.cofinite
+    if p.structs
+        || p.tuples.rest
+        || !p.tuples.lens.is_empty()
+        || !only_atoms(&p)
+        || p.atoms.cofinite
     {
         return None;
     }
@@ -4035,7 +4051,10 @@ mod tests {
             Type::atom_with("b", &one(Type::atom_with("c", &one(lit(2))))), // 13
             Type::atom_with("a", &one(&Type::int() - &lit(1))), // 14, meets 4, not 3
         ];
-        let classes = overlaps(ts.iter().map(Type::p));
+        let classes = {
+            let held = Held::default();
+            overlaps(ts.iter().map(|t| t.p_held(&held)), &held)
+        };
         let expected: Vec<Vec<usize>> = vec![
             vec![0],
             vec![1, 2, 7, 8],
@@ -4065,7 +4084,10 @@ mod tests {
         let one = |t: Type| Type::tuple(vec![t]);
         let e = |t: Type| Type::atom_with("e", &one(t));
         let negated = [one(lit(1)), &one(Type::int()) - &one(lit(1)), one(lit(2))];
-        let classes = overlaps(negated.iter().map(Type::p));
+        let classes = {
+            let held = Held::default();
+            overlaps(negated.iter().map(|t| t.p_held(&held)), &held)
+        };
         assert_eq!(classes, vec![vec![0, 1, 2]]);
         let shared = lit(1);
         for twice in [
@@ -4073,7 +4095,10 @@ mod tests {
             &one(lit(1)) | &e(lit(1)),
         ] {
             let ts = [twice, one(lit(2)), e(lit(2)), one(lit(3)), e(lit(4))];
-            let classes = overlaps(ts.iter().map(Type::p));
+            let classes = {
+                let held = Held::default();
+                overlaps(ts.iter().map(|t| t.p_held(&held)), &held)
+            };
             assert_eq!(classes, vec![vec![0], vec![1, 2], vec![3], vec![4]]);
         }
         // `T = #nil | #cons((T, int))`.
@@ -4091,7 +4116,10 @@ mod tests {
             .instance(vec![])
             .remove(0);
         let ts = [t, Type::atom("nil"), Type::atom("x"), lit(5)];
-        let classes = overlaps(ts.iter().map(Type::p));
+        let classes = {
+            let held = Held::default();
+            overlaps(ts.iter().map(|t| t.p_held(&held)), &held)
+        };
         assert_eq!(classes, vec![vec![0, 1], vec![2], vec![3]]);
     }
 

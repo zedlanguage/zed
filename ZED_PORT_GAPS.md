@@ -2273,3 +2273,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `Drop` that empties a chain of nodes on an explicit stack with `Arc::try_unwrap`, so a deep chain does not overflow | `Drop for LetNode` | No finalizers; ownership | Not needed: the table is dropped whole with the walk |
 | A cache field whose `PartialEq` always says equal, so two scopes compare by their names and not by the summaries | `Summary` in `Binding` | Identity, mutation | The summary table outside the compared scope |
 | A cache rebuilt from the names with its own differing entries, so the persistent maps keep shared nodes and `diff` skips them by pointer | `Scope::seen_fresh` | Identity (gap 1): `imbl` diff compares node pointers | A version number per name, compared instead of the nodes |
+
+## Entries from REC-cycle (`zed-kernel/src/types.rs`, `types/rec.rs`, `types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A thread-local unit of work, `RefCell<Unit>`, listing by `Weak` the instances whose recursive members it made, ended by `Type::forget_emptiness` and by its `Drop` at thread exit | `rec::Unit`, `rec::UNIT`, `rec::end_unit`, `Env::register`, `Env::forget` | Shared tables across pure calls (gap 2); Zed has no weak reference or finalizer | The unit's state struct holds the instances and their members, and is dropped whole at the end of the unit, so no cycle needs breaking |
+| A recursive type's unfolding and an instance's recursive members in `Mutex<Option<Type>>` cells, cleared at the end of a unit and made again when next read | `Rec::body`, `Rec::unfolding`, `Rec::forget_unfolding`, `Env::members`, `Env::member` | Lazy cells and tied recursive types (gap 3) | The unfolding in the unit's memo table keyed by member id |
+| A guard that lends the parts of a node or of a fresh unfolding (`PartsRef`), and an append-only arena of chunks that holds the unfoldings a walk borrows from (`Held`) | `Type::p`, `Type::p_held`, `Held::put`, `classes`, `overlaps`, `Walk::enter` | References into values (Rust lifetimes); a Zed value is not freed while a binding names it | Not needed: the walk binds the unfoldings it reads |
+| An instance named by a counter, never reused, instead of its address | `Env::id`, `ENVS`, `Key::group`, `Type::group` | Identity (gap 1) | The instance's index in the unit's table |

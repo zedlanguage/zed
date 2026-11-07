@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::deep;
 use crate::num::Rat;
@@ -213,7 +213,13 @@ struct Rec {
     /// loop like any other text.
     name: OnceLock<Rope>,
     naming: Box<dyn Fn() -> Rope + Send + Sync>,
-    body: OnceLock<Type>,
+    /// The names of the unfolding's atoms, when first asked ([`Type::atom_names`]).
+    #[expect(clippy::type_complexity, reason = "a list of names, each with a flag")]
+    names: OnceLock<Option<Vec<(Arc<str>, bool)>>>,
+    /// The unfolding, made when first needed. A member's unfolding holds the member, so the
+    /// end of the unit that made it drops it (`rec::end_unit`), and it is made again if the
+    /// node is used after.
+    body: Mutex<Option<Type>>,
     make: Box<dyn Fn() -> Type + Send + Sync>,
     /// The emptiness its group decides for it, if the group is decided (module `bes`).
     judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
@@ -227,6 +233,104 @@ impl fmt::Debug for Rec {
         let name = self.name.get_or_init(|| (self.naming)()).clone();
         SHOWING.with_borrow_mut(|s| *s = outer);
         name.strs().try_for_each(|s| f.write_str(s))
+    }
+}
+
+impl Rec {
+    /// The unfolding, made by `make()` outside the lock when not kept: `make` reads other
+    /// nodes' unfoldings, and a thread that made it at the same time may have kept its own
+    /// first, which is then the one.
+    fn unfolding(&self) -> Type {
+        let cell = || self.body.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(b) = &*cell() {
+            return b.clone();
+        }
+        let made = (self.make)();
+        let kept = cell().get_or_insert_with(|| made.clone()).clone();
+        // `made` is dropped here, after the lock, when another thread kept its own.
+        drop(made);
+        kept
+    }
+
+    /// Drops the kept unfolding, after the lock is released.
+    fn forget_unfolding(&self) {
+        let old = self
+            .body
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        drop(old);
+    }
+}
+
+/// The parts of a type ([`Type::p`]): its node's own, or those of a recursive node's
+/// unfolding, which the guard holds, since the end of a unit may drop the node's copy
+/// (`rec::end_unit`) while the parts are read.
+enum PartsRef<'a> {
+    Node(&'a Parts),
+    /// A node of parts, never a recursive node.
+    Unfolded(Type),
+}
+
+impl std::ops::Deref for PartsRef<'_> {
+    type Target = Parts;
+
+    fn deref(&self) -> &Parts {
+        match self {
+            PartsRef::Node(p) => p,
+            PartsRef::Unfolded(t) => match &*t.0 {
+                Node::Parts(p, _) => p,
+                Node::Rec(_) => unreachable!("an unfolding is unfolded to a node of parts"),
+            },
+        }
+    }
+}
+
+/// Unfoldings held while their parts are borrowed ([`Type::p_held`]): each is put in through a
+/// shared reference and stays at its place until the holder is dropped, so a walk may keep
+/// borrows into the parts of every recursive type it meets. Block `k` has room for `2^k`.
+// Complexity tradeoff: a put walks to the block with room, O(log n) for the `n`th; a block
+// that knew the last block would refer into its own holder.
+#[derive(Default)]
+struct Held {
+    used: std::cell::Cell<usize>,
+    first: HeldBlock,
+}
+
+struct HeldBlock {
+    slots: Box<[std::cell::OnceCell<Type>]>,
+    next: std::cell::OnceCell<Box<HeldBlock>>,
+}
+
+impl HeldBlock {
+    fn new(room: usize) -> HeldBlock {
+        HeldBlock {
+            slots: (0..room).map(|_| std::cell::OnceCell::new()).collect(),
+            next: std::cell::OnceCell::new(),
+        }
+    }
+}
+
+impl Default for HeldBlock {
+    fn default() -> HeldBlock {
+        HeldBlock::new(1)
+    }
+}
+
+impl Held {
+    /// Holds `t` until the holder is dropped.
+    fn put(&self, t: Type) -> &Type {
+        let n = self.used.get() + 1;
+        self.used.set(n);
+        // The `n`th type goes to block `log2 n`, at `n - 2^k`.
+        let k = n.ilog2();
+        let mut block = &self.first;
+        for i in 1..=k {
+            block = block.next.get_or_init(|| Box::new(HeldBlock::new(1 << i)));
+        }
+        let slot = &block.slots[n - (1 << k)];
+        let _ = slot.set(t);
+        slot.get().expect("the slot was empty and is set")
     }
 }
 
@@ -514,7 +618,8 @@ impl Type {
             key,
             name: OnceLock::new(),
             naming,
-            body: OnceLock::new(),
+            names: OnceLock::new(),
+            body: Mutex::new(None),
             make,
             judge,
         })))
@@ -544,8 +649,8 @@ impl Type {
     }
 
     /// The group of a recursive member, as a number that two members share exactly when they
-    /// are members of one instance of a group.
-    pub(crate) fn group(&self) -> Option<usize> {
+    /// are members of one instance of a group, and that no other instance has, alive or not.
+    pub(crate) fn group(&self) -> Option<u64> {
         match &*self.0 {
             Node::Parts(..) => None,
             Node::Rec(r) => r.key.group(),
@@ -573,11 +678,42 @@ impl Type {
         matches!(&*self.0, Node::Rec(_))
     }
 
-    /// The parts, unfolding a recursive node.
-    fn p(&self) -> &Parts {
+    /// The parts, unfolding a recursive node, and its unfolding while that is recursive too.
+    fn p(&self) -> PartsRef<'_> {
+        match &*self.0 {
+            Node::Parts(p, _) => PartsRef::Node(p),
+            Node::Rec(r) => {
+                let mut t = r.unfolding();
+                while let Node::Rec(r) = &*t.0 {
+                    let next = r.unfolding();
+                    t = next;
+                }
+                PartsRef::Unfolded(t)
+            }
+        }
+    }
+
+    /// The parts, as [`Type::p`] gives them, borrowed for as long as `held`: a recursive node's
+    /// unfolding is put in `held`.
+    fn p_held<'a>(&'a self, held: &'a Held) -> &'a Parts {
         match &*self.0 {
             Node::Parts(p, _) => p,
-            Node::Rec(r) => r.body.get_or_init(|| (r.make)()).p(),
+            Node::Rec(_) => {
+                let PartsRef::Unfolded(t) = self.p() else {
+                    unreachable!("a recursive node's parts are its unfolding's")
+                };
+                let Node::Parts(p, _) = &*held.put(t).0 else {
+                    unreachable!("an unfolding is unfolded to a node of parts")
+                };
+                p
+            }
+        }
+    }
+
+    /// Drops the unfolding a recursive node keeps (`rec::end_unit`).
+    fn forget_unfolding(&self) {
+        if let Node::Rec(r) = &*self.0 {
+            r.forget_unfolding();
         }
     }
 
@@ -1147,10 +1283,26 @@ impl Type {
 
     /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its
     /// parts in name order; `None` when it holds the atoms of every name it does not list. A
-    /// listed name may hold no value, when its payload type is empty but not built as empty.
+    /// listed name may hold no value, when its payload type is empty but not built as empty. A
+    /// recursive node keeps its unfolding's names, which hold no type, so they outlive the
+    /// unfolding (`rec::end_unit`).
     pub fn atom_names(&self) -> Option<impl Iterator<Item = (&str, bool)>> {
-        let a = &self.p().atoms;
-        (!a.cofinite).then(|| a.names.iter().map(|(n, p)| (&**n, p.bare)))
+        let (map, list) = match &*self.0 {
+            Node::Parts(p, _) => match p.atoms.cofinite {
+                true => return None,
+                false => (Some(p.atoms.names.iter()), None),
+            },
+            Node::Rec(r) => {
+                let names = r.names.get_or_init(|| {
+                    let p = self.p();
+                    let names = p.atoms.names.iter();
+                    (!p.atoms.cofinite).then(|| names.map(|(n, a)| (n.clone(), a.bare)).collect())
+                });
+                (None, Some(names.as_deref()?.iter()))
+            }
+        };
+        let map = map.into_iter().flatten().map(|(n, a)| (&**n, a.bare));
+        Some(map.chain(list.into_iter().flatten().map(|(n, b)| (&**n, *b))))
     }
 
     /// `self` split into its values of each base type, its atoms and the rest: what `self & t`
@@ -2478,7 +2630,8 @@ fn place_regions(open: &[Open], (j, d, len, m): Place) -> BTreeMap<Value, usize>
         if !parents.insert(t.clone()) {
             continue;
         }
-        let Some(part) = t.p().tuples.lens.get(&len) else {
+        let tp = t.p();
+        let Some(part) = tp.tuples.lens.get(&len) else {
             continue;
         };
         for r in part.distinct_atoms() {
@@ -3085,7 +3238,7 @@ impl Maker {
         rows: BTreeMap<Row, Vec<Option<usize>>>,
     ) -> Maker {
         let p = ty.p();
-        let made = scalars(p);
+        let made = scalars(&p);
         let by_value = p
             .tuples
             .lens

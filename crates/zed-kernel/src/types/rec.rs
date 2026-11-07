@@ -19,11 +19,12 @@
 //! possibly empty when it is empty with every parameter empty, or has a parameter under a
 //! complement or to the right of `\`, where a larger argument shrinks it.
 
+use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
 use super::bes::{Answer, Bes, Kind, decide};
 use super::{Piece, Rope, Type, Verdict, bytes, mix};
@@ -89,16 +90,86 @@ pub struct Def {
 /// Each group is held weakly and leaves the table when it is dropped (step TABLE-life).
 static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Weak<Checked>>>>> = LazyLock::new(Mutex::default);
 
-/// The live instances, by the group's number and the arguments, each held weakly.
-type Instances = HashMap<(u64, Vec<Type>), Weak<Env>>;
+/// The live instances, by the unit that made them, the group's number and the arguments, each
+/// held weakly.
+type Instances = HashMap<(u64, u64, Vec<Type>), Weak<Env>>;
 
-/// The live instances, by the group's number and the arguments: one group at equal arguments
-/// gives one set of types while they live, so that equal definitions meet as equal types. The
-/// arguments hash by their digests and compare exactly, so a call costs time in its arguments
-/// only. An instance leaves the table when it is dropped (step TABLE-life). No type is dropped
-/// while this table or [`GROUPS`] is locked, since a type dropped may drop an instance or a
-/// group, which takes the lock.
+/// The live instances, by the unit that made them ([`Unit`]), the group's number and the
+/// arguments: one group at equal arguments gives one set of types in a unit while they live, so
+/// that equal definitions meet as equal types. Types of two units are equal types too, by their
+/// keys ([`Key::order`]), but no unit finds another's instance, so the end of one unit never
+/// changes the types another is reading. The arguments hash by their digests and compare
+/// exactly, so a call costs time in its arguments only. An instance leaves the table when it is
+/// dropped (step TABLE-life). No type is dropped while this table or [`GROUPS`] is locked, since
+/// a type dropped may drop an instance or a group, which takes the lock.
 static INSTANCES: LazyLock<Mutex<Instances>> = LazyLock::new(Mutex::default);
+
+/// The units begun, over all threads.
+static UNITS: AtomicU64 = AtomicU64::new(0);
+
+/// The instances made, over all threads: each instance's number ([`Key::group`]).
+static ENVS: AtomicU64 = AtomicU64::new(0);
+
+/// A thread's unit of work under way, from the end of the last (`Type::forget_emptiness`, which
+/// a unit's checker calls first, or the thread's start) to the next: its number, and the
+/// instances whose recursive members it made. A recursive member's unfolding holds the member,
+/// and the member holds its instance, which holds its members: a cycle of strong handles,
+/// which the end of the unit breaks ([`end_unit`]). The instances a unit made are its arena.
+// Complexity tradeoff: a recursive type kept past the end of its unit makes its unfolding
+// again, in the size of its body, when next read, and keeps it until the end of that unit. A
+// group no one holds past its unit is made, instantiated and decided again by the next unit
+// that names it; before, every group was kept, since no instance was freed. A cycle collector
+// would free a cycle as soon as no holder is left, but cannot see who holds a type: the maps of
+// atoms (`imbl::OrdMap`) share their nodes between types (`M | x` holds the map of `M`'s
+// unfolding), and those nodes' counts cannot be read, so a collector would free types still
+// held, or keep every recursive type with atoms. COMPLEXITY.md K68.
+struct Unit {
+    number: u64,
+    made: Vec<Weak<Env>>,
+}
+
+thread_local! {
+    static UNIT: RefCell<Unit> = RefCell::new(Unit {
+        number: UNITS.fetch_add(1, Ordering::Relaxed),
+        made: Vec::new(),
+    });
+}
+
+/// A thread's last unit ends when the thread does.
+impl Drop for Unit {
+    fn drop(&mut self) {
+        forget(std::mem::take(&mut self.made));
+    }
+}
+
+/// The number of this thread's unit under way.
+fn unit() -> u64 {
+    // Thread-locals first used after this call are dropped before the queue that frees types.
+    super::hold();
+    UNIT.with_borrow(|u| u.number)
+}
+
+/// Ends this thread's unit: breaks the cycle of each instance whose recursive members it made,
+/// so that an instance no one holds is dropped, and begins the next unit. A type held past the
+/// end still denotes what it did, and is unfolded again when read. Time linear in the instances
+/// the unit made and their members, besides what is dropped.
+pub(super) fn end_unit() {
+    let made = UNIT.try_with(|u| {
+        let mut u = u.borrow_mut();
+        u.number = UNITS.fetch_add(1, Ordering::Relaxed);
+        std::mem::take(&mut u.made)
+    });
+    if let Ok(made) = made {
+        forget(made);
+    }
+}
+
+/// Breaks the cycle of each instance of `made` still alive ([`Env::forget`]).
+fn forget(made: Vec<Weak<Env>>) {
+    for env in made.iter().filter_map(Weak::upgrade) {
+        env.forget();
+    }
+}
 
 /// A checked group of mutually recursive definitions.
 #[derive(Clone, Debug)]
@@ -552,7 +623,7 @@ impl Group {
             self.0.defs[0].params.len(),
             "one argument per parameter"
         );
-        let key = (self.0.number, args);
+        let key = (unit(), self.0.number, args);
         let lock = || {
             INSTANCES
                 .lock()
@@ -562,33 +633,24 @@ impl Group {
         if let Some(env) = live {
             return env.members();
         }
-        let args = key.1.clone();
+        let args = key.2.clone();
         let env = Arc::new(Env {
+            id: ENVS.fetch_add(1, Ordering::Relaxed),
+            unit: key.0,
+            registered: AtomicU64::new(u64::MAX),
             group: Some(self.clone()),
             digest: args
                 .iter()
                 .fold(mix(12, self.0.digest), |h, t| mix(h, t.digest())),
             args,
-            members: (0..self.0.defs.len()).map(|_| OnceLock::new()).collect(),
+            members: (0..self.0.defs.len()).map(|_| Mutex::new(None)).collect(),
             judged: OnceLock::new(),
         });
-        let plain = &self.0.plain;
-        for i in (0..self.0.defs.len()).filter(|&i| !plain[i]) {
-            let e = env.clone();
-            let named = e.clone();
-            let j = e.clone();
-            let t = Type::rec_judged(
-                Key::new(env.clone(), At::Member(i)),
-                move || named.name(i),
-                move || eval(&e.group().0.bodies[i], &e),
-                move || j.judged.get_or_init(|| judge(&j))[i],
-            );
-            env.members[i].set(t).expect("a member is set once");
-        }
-        // A plain member names only plain members, each set before it.
+        // A plain member names only plain members, each set before it. A recursive member is
+        // made when first read ([`Env::member`]).
         for &i in &self.0.order {
             let t = eval(&self.0.bodies[i], &env);
-            env.members[i].set(t).expect("a member is set once");
+            *env.cell(i) = Some(t);
         }
         // Another thread may have made the instance meanwhile: the first kept is the one.
         let mut table = lock();
@@ -811,12 +873,20 @@ fn unguarded(e: &Expr, out: &mut BTreeSet<usize>) {
 
 /// What an expression is evaluated in: the arguments, and the group's types at them.
 struct Env {
+    /// The instance's number among all instances made: never another's, so a group's members
+    /// are told from another instance's after this one is dropped ([`Key::group`]).
+    id: u64,
+    /// The unit that made it, under which it is in [`INSTANCES`].
+    unit: u64,
+    /// The last unit that made its recursive members, which ends them ([`Unit`]).
+    registered: AtomicU64,
     group: Option<Group>,
     /// A hash of the group's definitions and the arguments' digests.
     digest: u64,
     args: Vec<Type>,
-    /// Each member's type, set when the group is instantiated.
-    members: Vec<OnceLock<Type>>,
+    /// Each member's type: a plain member's set when the group is instantiated, a recursive
+    /// member's when first read and until the end of the unit that read it ([`Env::forget`]).
+    members: Vec<Mutex<Option<Type>>>,
     /// Each member's emptiness as the group decides it ([`judge`]), when first asked.
     judged: OnceLock<Vec<Option<bool>>>,
 }
@@ -826,7 +896,7 @@ struct Env {
 impl Drop for Env {
     fn drop(&mut self) {
         let Some(g) = &self.group else { return };
-        let key = (g.0.number, std::mem::take(&mut self.args));
+        let key = (self.unit, g.0.number, std::mem::take(&mut self.args));
         let removed = INSTANCES.lock().ok().and_then(|mut t| {
             let mine = t.get(&key).is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
             mine.then(|| t.remove_entry(&key)).flatten()
@@ -855,6 +925,9 @@ impl Drop for Checked {
 impl Env {
     fn ground(args: Vec<Type>) -> Env {
         Env {
+            id: ENVS.fetch_add(1, Ordering::Relaxed),
+            unit: u64::MAX,
+            registered: AtomicU64::new(u64::MAX),
             group: None,
             digest: 0,
             args,
@@ -863,11 +936,63 @@ impl Env {
         }
     }
 
-    /// The members of an instance, each set.
-    fn members(&self) -> Vec<Type> {
-        (self.members.iter())
-            .map(|m| m.get().expect("every member is set").clone())
-            .collect()
+    /// The members of an instance.
+    fn members(self: &Arc<Env>) -> Vec<Type> {
+        (0..self.members.len()).map(|i| self.member(i)).collect()
+    }
+
+    fn cell(&self, i: usize) -> std::sync::MutexGuard<'_, Option<Type>> {
+        self.members[i]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Member `i`: a recursive member is a node that unfolds to its body, made when first read
+    /// in a unit, and kept, by the instance, until the unit ends. Another thread that made it
+    /// at the same time may have kept its own first, which is then the one.
+    fn member(self: &Arc<Env>, i: usize) -> Type {
+        if let Some(t) = &*self.cell(i) {
+            return t.clone();
+        }
+        // A plain member is set when the instance is made, so this one is recursive.
+        let (e, named, j) = (self.clone(), self.clone(), self.clone());
+        let made = Type::rec_judged(
+            Key::new(self.clone(), At::Member(i)),
+            move || named.name(i),
+            move || eval(&e.group().0.bodies[i], &e),
+            move || j.judged.get_or_init(|| judge(&j))[i],
+        );
+        let kept = self.cell(i).get_or_insert_with(|| made.clone()).clone();
+        if kept.node_addr() == made.node_addr() {
+            self.register();
+        }
+        // `made` is dropped here, after the lock, when another thread kept its own.
+        drop(made);
+        kept
+    }
+
+    /// Puts the instance in this thread's unit, once per unit, which breaks its cycle when it
+    /// ends.
+    fn register(self: &Arc<Env>) {
+        let number = unit();
+        if self.registered.swap(number, Ordering::Relaxed) != number {
+            UNIT.with_borrow_mut(|u| u.made.push(Arc::downgrade(self)));
+        }
+    }
+
+    /// Drops the recursive members it keeps, and their unfoldings, which hold the members: what
+    /// is not held elsewhere is dropped. A member held elsewhere unfolds again when read, to the
+    /// members made again then.
+    fn forget(&self) {
+        let plain = &self.group().0.plain;
+        let kept: Vec<Type> = (0..self.members.len())
+            .filter(|&i| !plain[i])
+            .filter_map(|i| self.cell(i).take())
+            .collect();
+        for m in &kept {
+            m.forget_unfolding();
+        }
+        drop(kept);
     }
 
     fn group(&self) -> &Group {
@@ -926,10 +1051,12 @@ impl Key {
         self.digest
     }
 
-    /// The group of the member the key names, by the address of the instance its members share,
-    /// when the key names a member: equal for two members of one instance of a group.
-    pub(super) fn group(&self) -> Option<usize> {
-        matches!(self.at, At::Member(_)).then(|| Arc::as_ptr(&self.env) as usize)
+    /// The group of the member the key names, by the number of the instance its members share,
+    /// when the key names a member: equal for two members of one instance of a group, and never
+    /// reused, so a member of an instance made after another is dropped is not taken for one of
+    /// the other's.
+    pub(super) fn group(&self) -> Option<u64> {
+        matches!(self.at, At::Member(_)).then_some(self.env.id)
     }
 
     /// Whether the decider of the group (`judge`) has run, which a member's `judged` reads.
@@ -944,9 +1071,9 @@ impl Key {
         };
         let plain = &self.env.group().0.plain;
         Some(
-            (self.env.members.iter().zip(plain))
-                .filter(|(_, p)| !**p)
-                .map(|(m, _)| m.get().expect("every member is set").clone())
+            (0..plain.len())
+                .filter(|&i| !plain[i])
+                .map(|i| self.env.member(i))
                 .collect(),
         )
     }
@@ -1043,10 +1170,7 @@ fn eval(e: &Node, env: &Arc<Env>) -> Type {
             Step::Component(e) => component(e, env),
             Step::Eval(e) => match &e.e {
                 Shape::Param(i) => env.args[*i].clone(),
-                Shape::Ref(i, _) => env.members[*i]
-                    .get()
-                    .expect("a member is set before use")
-                    .clone(),
+                Shape::Ref(i, _) => env.member(*i),
                 Shape::Type(t) => t.clone(),
                 Shape::Union(_) | Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => {
                     todo.push(Step::Build(e));
@@ -1333,10 +1457,79 @@ mod tests {
             .contains_key(&digest)
     }
 
+    /// The instance a recursive member belongs to, held weakly.
+    fn env_of(t: &Type) -> Weak<Env> {
+        match &*t.0 {
+            super::super::Node::Rec(r) => Arc::downgrade(&r.key.env),
+            _ => panic!("a recursive member"),
+        }
+    }
+
+    #[test]
+    fn a_recursive_instance_no_one_holds_is_freed_at_the_end_of_its_unit() {
+        // Item REC-cycle: the member's unfolding holds the member, and the instance holds its
+        // members, so the instance outlives its holders until the unit ends.
+        let g = Group::new(defs("RecCycleFreed", 9_003, true)).expect("a recursive group");
+        let (number, digest) = (g.0.number, g.0.digest);
+        let t = g.instance(vec![]);
+        assert!(!t[0].is_empty());
+        let env = env_of(&t[0]);
+        drop((g, t));
+        assert!(
+            env.upgrade().is_some(),
+            "held by its cycle until the unit ends"
+        );
+        Type::forget_emptiness();
+        assert!(env.upgrade().is_none(), "freed at the end of the unit");
+        assert!(!instanced(number));
+        assert!(!grouped(digest));
+    }
+
+    #[test]
+    fn a_member_held_past_its_unit_still_denotes_its_type() {
+        // A member kept past the end of its unit unfolds again when read, to the same type.
+        let g = Group::new(defs("RecCycleKept", 9_005, true)).expect("a recursive group");
+        let t = g.instance(vec![]);
+        let before = t[0].to_string();
+        assert!(!t[0].is_empty());
+        let env = env_of(&t[0]);
+        Type::forget_emptiness();
+        assert!(env.upgrade().is_some(), "held by `t`");
+        assert!(!t[0].is_empty());
+        assert_eq!(t[0].to_string(), before);
+        let u = g.instance(vec![]);
+        assert_eq!(t[0], u[0]);
+        assert!(t[0].group().is_some());
+    }
+
+    #[test]
+    fn a_group_number_is_not_taken_by_an_instance_made_after_one_is_freed() {
+        // `Key::group` was the instance's address, which a later instance may be given once the
+        // first is freed: then members of two instances would be taken for one group's.
+        let make = || {
+            let g = Group::new(defs("RecCycleKey", 9_004, true)).expect("a recursive group");
+            g.instance(vec![])
+        };
+        let t = make();
+        let first = t[0].group().expect("a member's group");
+        let env = env_of(&t[0]);
+        drop(t);
+        Type::forget_emptiness();
+        assert!(env.upgrade().is_none());
+        let u = make();
+        let second = u[0].group().expect("a member's group");
+        assert_ne!(first, second);
+        assert_eq!(
+            u[0].group(),
+            make()[0].group(),
+            "one instance within a unit"
+        );
+    }
+
     /// Whether [`INSTANCES`] has a live instance of group `number` at no arguments.
     fn instanced(number: u64) -> bool {
         let t = INSTANCES.lock().expect("no panic under the lock");
-        t.get(&(number, vec![]))
+        t.get(&(unit(), number, vec![]))
             .is_some_and(|w| w.strong_count() > 0)
     }
 
@@ -1362,8 +1555,8 @@ mod tests {
     #[test]
     fn a_recursive_instance_is_found_again_while_it_lives() {
         // A recursive member holds its instance, which holds the group: found again by pointer
-        // while held. Such an instance is a cycle and outlives its holders (follow-up item
-        // REC-cycle).
+        // while held, within a unit. The instance and its members form a cycle until the unit
+        // ends (item REC-cycle; see the next test).
         let g = Group::new(defs("TableLifeRec", 9_002, true)).expect("a recursive group");
         let t = g.instance(vec![]);
         assert!(instanced(g.0.number));

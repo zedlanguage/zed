@@ -1,7 +1,9 @@
 //! The tables of live type nodes keep a node only while someone holds it (step TABLE-life):
 //! the tables of diagram nodes, the exclusive ors and the complements of expressions, and the
 //! tables of recursive groups and their instances. A long run of independent checks, each on
-//! types of its own, therefore holds the same memory after `8n` checks as after `n`.
+//! types of its own, therefore holds the same memory after `8n` checks as after `n`. A recursive
+//! group's instance is a cycle of strong handles (its members' unfoldings hold the members),
+//! which the end of each unit breaks (item REC-cycle).
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
@@ -39,6 +41,28 @@ fn unit(base: u64) {
     }])
     .expect("a plain group");
     assert!(!g.instance(vec![])[0].is_empty());
+}
+
+/// One independent check on a recursive group of its own, `List = () | (k, List)` with `k`
+/// from `base`: the members are unfolded by emptiness and subtyping, then dropped.
+fn rec_unit(base: u64) {
+    Type::forget_emptiness();
+    let list = |k: u64| {
+        let g = Group::new(vec![Def {
+            name: format!("TableLifeList{base}"),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Tuple(vec![]),
+                Expr::Tuple(vec![Expr::Type(lit(base + k)), Expr::Ref(0, vec![])]),
+            ]),
+        }])
+        .expect("a recursive group");
+        g.instance(vec![]).remove(0)
+    };
+    let (a, b) = (list(0), list(1));
+    assert!(!a.is_empty());
+    assert!(a.subtype(&(&a | &b)) && !a.subtype(&b));
+    assert!(Type::tuple(vec![]).subtype(&(&a & &b)));
 }
 
 /// The resident bytes of the process (`/proc/self/statm`), where Linux reports them.
@@ -81,6 +105,57 @@ fn a_long_run_of_independent_checks_holds_bounded_memory() {
         scaling::FACTOR * n,
         large.net,
         small.net
+    );
+}
+
+#[test]
+fn a_long_run_of_checks_on_recursive_groups_holds_bounded_memory() {
+    // Item REC-cycle: a recursive instance held itself, so every check on a group of its own
+    // left its instance allocated for the life of the process. The end of each unit breaks
+    // the cycle, so the bytes left stay those of the first runs.
+    let n = 256;
+    let next = AtomicU64::new(1 << 42);
+    let run = |count: usize| {
+        let (_, live) = zed_alloc_count::live(|| {
+            for _ in 0..count {
+                rec_unit(next.fetch_add(64, Relaxed));
+            }
+            // The last unit's instances end with the next unit.
+            Type::forget_emptiness();
+        });
+        live
+    };
+    run(n);
+    let small = run(n);
+    let large = run(scaling::FACTOR * n);
+    eprintln!(
+        "{n} recursive checks left {} bytes, {} left {}",
+        small.net,
+        scaling::FACTOR * n,
+        large.net
+    );
+    assert!(
+        large.net <= small.net.max(0) + 4096,
+        "{} recursive checks left {} bytes allocated, {n} left {}",
+        scaling::FACTOR * n,
+        large.net,
+        small.net
+    );
+}
+
+#[test]
+fn a_run_of_checks_on_recursive_groups_scales_by_its_length() {
+    // A check's cost does not grow with the recursive groups checked before it.
+    let next = AtomicU64::new(1 << 43);
+    scaling::check_order(
+        "a run of checks on recursive groups, by checks",
+        64,
+        1,
+        |m| {
+            for _ in 0..m {
+                rec_unit(next.fetch_add(64, Relaxed));
+            }
+        },
     );
 }
 

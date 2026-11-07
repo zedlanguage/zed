@@ -557,7 +557,7 @@ impl Printer {
             let i = self.index[&Key::Ty(ctx.clone(), t.clone())];
             let ctx_name = ctx.as_deref().unwrap_or("").to_string();
             self.forced[i] = Some((ctx_name, t.to_string(), t.clone()));
-            let body = r.body.get_or_init(|| (r.make)()).clone();
+            let body = r.unfolding();
             return self.refer(Item::Ty(ctx.clone(), body));
         }
         let p = t.p();
