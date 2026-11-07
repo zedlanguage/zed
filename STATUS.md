@@ -1492,10 +1492,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | start: worktree /home/luke/Work/wt/atom-intern from origin/main 63c865da |
-| DIAG-addr-rest | impl attempt 1 | 2026-11-07 00:39 | review fixes committed: control 50.4x vs real 8.1x; DIAG-addr-root queued; rebasing |
-| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | running affected groups, 476 pieces (load 43.57 26.25 23.75) |
-| ST-ladder-incremental | impl attempt 1 | 2026-11-05 23:41 | baseline run of the five groups started, load 27.91 25.95 23.90 |
+| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | probe on main 63c865da (instructions, least of 5, load 17-19): morphism chain built again+compared d=2000 26.40M, d=16000 257.5M (linear); union of n morphism t |
+| DIAG-addr-rest | impl attempt 1 | 2026-11-07 00:39 | ready 32eb9eb8 on ba80558c, 12 groups pass with doc check |
+| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | rebased on 1d14188f; running affected groups with doc check (load 6.50 16.65 21.64) |
+| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | started; worktree wt/st-ladder-potential from origin/main 1d14188f |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
