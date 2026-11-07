@@ -1007,6 +1007,7 @@ dependencies = [
 name = "zed-native"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",

@@ -8,6 +8,10 @@
 //! [`runtime_of`]). The linker is the system's C compiler driver.
 //! The link records no time, build path or random value, so two builds of one program give
 //! the same bytes.
+//!
+//! The executable records the key of its link, the hash of everything that entered it, as its
+//! GNU build ID (step L1.36b, see [`Identity`]); a build whose output already records the key
+//! it would link with leaves that output as it is.
 
 use std::any::TypeId;
 use std::ffi::OsString;
@@ -30,6 +34,11 @@ const SYSTEM_LIBS: &[&str] = &[
     "-ldl",
     "-lc",
 ];
+
+/// The flags of every link, after the system libraries. The runtime library holds the whole
+/// compiler; an executable needs a third of it. Without `--gc-sections`, a link took twice as
+/// long and wrote 41 MB in place of 14 MB.
+const LINK_FLAGS: &[&str] = &["-Wl,--gc-sections"];
 
 /// What a build links with: the C compiler driver that runs the linker, and the runtime
 /// library.
@@ -130,6 +139,11 @@ pub fn build(
         crate::executable_object(g, true, program.ports(), address)
     })
     .map_err(|e| (1, format!("{file}: {e}")))?;
+    let key = Identity::of(tools)?.key(&object);
+    if recorded(out).as_deref() == Some(key.as_bytes()) {
+        work::cached(Stage::Link, None);
+        return Ok(());
+    }
     let mut at = out.as_os_str().to_owned();
     at.push(".zed.o");
     let at = PathBuf::from(at);
@@ -147,19 +161,14 @@ pub fn build(
             .arg(&at)
             .arg(&tools.runtime)
             .args(SYSTEM_LIBS)
-            // The runtime library holds the whole compiler; an executable needs a third of it.
-            // Without this, a link took twice as long and wrote 41 MB in place of 14 MB.
-            .arg("-Wl,--gc-sections")
+            .args(LINK_FLAGS)
+            .arg(format!("-Wl,--build-id=0x{}", key.to_hex()))
             .output()
     });
     let _ = std::fs::remove_file(&at);
     let linker = tools.linker.to_string_lossy();
     match linked {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err((
-            2,
-            format!("the linker `{linker}` is missing: install a C compiler, or name one in CC"),
-        )),
-        Err(e) => Err((1, format!("the linker `{linker}`: {e}"))),
+        Err(e) => Err(not_run(&linker, &e)),
         Ok(o) if !o.status.success() => Err((
             1,
             format!(
@@ -170,6 +179,120 @@ pub fn build(
         )),
         Ok(_) => Ok(()),
     }
+}
+
+/// The error of a linker that could not be run: status 2 if it is missing, else status 1.
+fn not_run(linker: &str, e: &std::io::Error) -> (u8, String) {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        (
+            2,
+            format!("the linker `{linker}` is missing: install a C compiler, or name one in CC"),
+        )
+    } else {
+        (1, format!("the linker `{linker}`: {e}"))
+    }
+}
+
+/// What a link reads besides its object file (step L1.36b), each named by its content, not
+/// by its path, so that a toolchain copied or reached by another path has the same identity
+/// and a changed one has another.
+///
+/// - The linker is named by what its driver writes to standard output for `--version` and
+///   for `-Wl,--version`: the driver's version and, through it, the linker's. Two spawns
+///   that do no work, under 5 ms together; hashing the driver's file would miss the linker,
+///   the C runtime start files and `libgcc`, which the driver finds by itself.
+/// - The runtime library is named by the BLAKE3 hash of its bytes: about 0.1 s for its
+///   117 MB, once per build. Its [`BUILD`] is not enough, since it names the crate's Cargo
+///   configuration and not its source.
+///
+/// Not named: the system libraries in [`SYSTEM_LIBS`] and the start files, which a system
+/// update can change under one driver version, and the driver's environment variables.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Identity {
+    /// The driver's standard output for `--version` and for `-Wl,--version`.
+    pub linker: [Vec<u8>; 2],
+    /// The BLAKE3 hash of the runtime library's bytes.
+    pub runtime: blake3::Hash,
+}
+
+impl Identity {
+    /// The identity of `tools`. A linker that cannot be run, fails to give its version or
+    /// gives an empty one is an error, since links by two such linkers could not be told
+    /// apart.
+    pub fn of(tools: &Toolchain) -> Result<Identity, (u8, String)> {
+        let linker = tools.linker.to_string_lossy();
+        let version = |arg: &str| {
+            let o = Command::new(&tools.linker)
+                .arg(arg)
+                .output()
+                .map_err(|e| not_run(&linker, &e))?;
+            if !o.status.success() {
+                return Err((
+                    1,
+                    format!(
+                        "the linker `{linker}` gave no version: `{linker} {arg}` failed ({}):\n{}",
+                        o.status,
+                        String::from_utf8_lossy(&o.stderr).trim_end()
+                    ),
+                ));
+            }
+            if o.stdout.is_empty() {
+                return Err((
+                    1,
+                    format!(
+                        "the linker `{linker}` wrote nothing for `{linker} {arg}`, so its links \
+                         cannot be told from another linker's: name a C compiler that gives \
+                         its version in CC"
+                    ),
+                ));
+            }
+            Ok(o.stdout)
+        };
+        let linker = [version("--version")?, version("-Wl,--version")?];
+        let at = |e: std::io::Error| (1, format!("{}: {e}", tools.runtime.display()));
+        let mut runtime = blake3::Hasher::new();
+        runtime
+            .update_reader(std::fs::File::open(&tools.runtime).map_err(at)?)
+            .map_err(at)?;
+        Ok(Identity {
+            linker,
+            runtime: runtime.finalize(),
+        })
+    }
+
+    /// The key of the link of `object` with the toolchain of this identity: a BLAKE3 hash of
+    /// everything that enters the executable, which is the object file, this identity and the
+    /// link's arguments other than the paths, each preceded by its length. The link records
+    /// it as the executable's GNU build ID, so that equal executables come from equal inputs,
+    /// and a build whose output already records its key does not link again. Equal keys are
+    /// taken for equal inputs with no comparison of the inputs, so the cache rests on
+    /// BLAKE3's collision resistance (DESIGN.md sec:theories, the trusted base).
+    pub fn key(&self, object: &[u8]) -> blake3::Hash {
+        let mut key = blake3::Hasher::new_derive_key("zed-native 2026-11-07 the key of a link");
+        let mut part = |bytes: &[u8]| {
+            key.update(&bytes.len().to_le_bytes());
+            key.update(bytes);
+        };
+        part(object);
+        part(self.runtime.as_bytes());
+        for v in &self.linker {
+            part(v);
+        }
+        for a in SYSTEM_LIBS.iter().chain(LINK_FLAGS) {
+            part(a.as_bytes());
+        }
+        key.finalize()
+    }
+}
+
+/// The key the link that wrote the executable `out` recorded: its GNU build ID. `None` if
+/// `out` cannot be read, is not an object file or has no build ID, each of which the link
+/// that follows replaces or reports.
+pub fn recorded(out: &Path) -> Option<Vec<u8>> {
+    use object::Object as _;
+    let cache = object::ReadCache::new(std::fs::File::open(out).ok()?);
+    let file = object::File::parse(&cache).ok()?;
+    file.build_id().ok().flatten().map(<[u8]>::to_vec)
 }
 
 /// The runtime library in `dir` that was built with the executable `exe`: of the files

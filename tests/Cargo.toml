@@ -133,6 +133,9 @@ path = "steps/l01_36_cranelift/mod.rs"
 name = "l01_36a_executables"
 path = "steps/l01_36a_executables/mod.rs"
 [[test]]
+name = "l01_36b_link_identity"
+path = "steps/l01_36b_link_identity/mod.rs"
+[[test]]
 name = "l01_37_oracle"
 path = "steps/l01_37_oracle/mod.rs"
 [[test]]

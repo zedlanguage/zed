@@ -1957,3 +1957,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | An undo log of boxed `FnOnce(&mut Memo)` closures, each removing one memo entry a body made, run after the body; the scopes made since a mark cut off the end of their `Vec` | `Fresh`, `Walk::made`, `Tx::bind`, `Tx::drop_fresh` | Mutation (gap 11), Shared tables (gap 2) | The memo threaded as state, with the entries a body made kept in a map of their own and dropped as one value, or the tables as values taken before the body and the scope's part restored after |
 | A trait over memo keys (`Key`, implemented for `At` and `(At, D)`) giving the term and scope an entry is keyed by | `Key`, `Walk::cached`, `Walk::made`, `Walk::translated` | Interfaces (L10) | A function giving the place passed beside the table, as `Table` is |
 | A struct borrowing the given terms for its lifetime (`Scoped<'t>`), built once and asked once per body | `Scoped`, `front::linear_questions` | None | A value threaded through the fold over the functions, returned with each relation |
+
+## Entries from L1.36b (`zed-native/src/link.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `blake3::Hasher` from `new_derive_key`, fed each part of a link's key after its length (`usize::to_le_bytes`), and one fed a whole file by `update_reader` | `link::Identity::key`, `Identity::of` | Library; Bytes (gap 5) | A hash word over a byte sequence from the stdlib catalog of step L2.11, over the bytes of a `Files` read |
+| `std::process::Command` running the C compiler driver with `--version` and `-Wl,--version` and keeping its standard output as bytes | `link::Identity::of` | Command line (gap 6) | The process port the linker needs too; until then the Rust driver links |
+| `object::File::parse` over a `ReadCache` of the output and `Object::build_id`, to read the key an executable records in its GNU build-ID note | `link::recorded` | Foreign library; Bytes (gap 5) | An ELF note read from the bytes of a `Files` read once Bytes works, or the record kept beside the executable |
+| An `Option` built with `?` from each fallible step, every failure meaning "no record" | `link::recorded` | None | An `else` chain ending in `#none` |
