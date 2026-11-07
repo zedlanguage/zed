@@ -95,6 +95,10 @@ test("finished layouts are saved and a saved layout is served at startup", async
   const second = new Layouts(() => (calls++, Promise.reject(new Error("no"))), JSON.parse(JSON.stringify(saves[0])));
   assert.equal(second.request("direct", g).fresh, true);
   assert.equal(calls, 0);
+  // A layout saved by an older layout method, whose key was the graph alone, is laid out again.
+  const old = new Layouts(() => (calls++, Promise.reject(new Error("no"))), { direct: { ...saves[0].direct, key: JSON.stringify(g) } });
+  assert.equal(old.request("direct", g).fresh, false);
+  assert.equal(calls, 1);
 });
 
 test("a failed layout is reported and not retried for the same graph", async () => {

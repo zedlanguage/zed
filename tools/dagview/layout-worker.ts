@@ -2,9 +2,9 @@
 
 import { parentPort, workerData } from "node:worker_threads";
 import ELK from "elkjs/lib/elk.bundled.js";
-import { elkGraph, fromElk, graphKey } from "./layout.ts";
+import { fromElk, graphKey, layoutTwice } from "./layout.ts";
 import type { Graph } from "./layout.ts";
 
 const g = workerData as Graph;
-const out = await new ELK().layout(elkGraph(g));
+const out = await layoutTwice(new ELK(), g);
 parentPort!.postMessage(fromElk(graphKey(g), out));

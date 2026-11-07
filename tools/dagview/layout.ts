@@ -1,11 +1,13 @@
 // Lays the plan out with ELK (layered: network-simplex layering, layer-sweep
-// crossing reduction, Brandes-Koepf node placement, edges from one node merged).
-// One layout of the plan of 2026-11-07 (1,000 nodes, 1,700 direct edges) takes
-// 3 to 5 s of one core, and 12 s with all 3,450 edges. It runs in a worker, off
-// the request path, and the page shows the last finished layout until the new
-// one is ready.
+// crossing reduction, Brandes-Koepf node placement, edges from one node merged),
+// narrows the result (narrow.ts) and has ELK route the edges again for the new
+// places (layoutTwice). One layout of the plan of 2026-11-07 (1,100 nodes, 1,800
+// direct edges) takes 3 to 4 s of one core, and 15 s with all 3,650 edges. It
+// runs in a worker, off the request path, and the page shows the last finished
+// layout until the new one is ready.
 
 import { Worker } from "node:worker_threads";
+import { narrow } from "./narrow.ts";
 
 export interface Box { id: string; w: number; h: number }
 export interface Graph { nodes: Box[]; edges: [string, string][] }
@@ -43,6 +45,7 @@ const options = {
   // (29,600 px wide, but its placement grows faster than linear: 42 s of a 97 s
   // layout at 4,000 nodes) and simple placement (12,000 px wide, but most edges
   // are pushed to the sides of their layer: 10,300 bends against 4,100).
+  // narrow.ts then takes the width out of the Brandes-Koepf placement.
   "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
   // Edges leaving one node, or entering one, share a trunk, so the long edges of
   // a busy node take one lane through each layer instead of one each; fewer
@@ -67,8 +70,13 @@ const options = {
   "elk.layered.thoroughness": "2",
 };
 
+// Names the layout method in each key, so a layout saved by an older method is
+// not taken for a layout of the same graph by this one. Change it whenever the
+// layout changes.
+const METHOD = "narrowed 2026-11-07";
+
 export function graphKey(g: Graph): string {
-  return JSON.stringify(g);
+  return `${METHOD} ${JSON.stringify(g)}`;
 }
 
 // Edges to unknown nodes are dropped; a cycle in the plan is broken by ELK,
@@ -82,6 +90,57 @@ export function elkGraph(g: Graph) {
     edges: g.edges
       .filter(([a, b]) => known.has(a) && known.has(b))
       .map(([a, b], i) => ({ id: `e${i}`, sources: [a], targets: [b] })),
+  };
+}
+
+// The second pass keeps the first pass's layers and orders (interactive
+// layering and crossing reduction read them from the places narrow gave) and
+// its node places, and routes the edges. ELK reads the input bend points for
+// the order of edge lanes without turning them for direction DOWN, so the
+// second pass runs in ELK's own direction, RIGHT, on the graph turned on its
+// side, and its result is turned back.
+//
+// Complexity tradeoff: the second pass adds to the first an O(m log m)
+// placement (narrow.ts) and an ELK pass with no layering, crossing or placement
+// search: on the plan of 2026-11-07 with direct edges 0.05 s and 0.9 s to the
+// first pass's 2.4 s, with all edges 0.2 s and 2.7 s to 12.2 s, and on the
+// 4,000-node test graph 0.3 s and 4.3 s to 21 s (load 16 to 25). What it buys,
+// against the first pass alone: direct edges 14,720 x 13,050 px against
+// 56,172 x 11,504, 12,418 crossings against 12,767, 9,962 bends against 4,170;
+// all edges 14,538 x 11,362 against 43,076 x 11,324, 9,970 crossings against
+// 60,006, 62,744 bends against 36,666. Bends rise because edges bend to fit
+// the narrower width. Tried and rejected: ELK's other layerings, placements and
+// compactions in one pass (the best, simple placement, gave 15,070 x 19,076 px
+// with 17,649 crossings and 10,854 bends), and shifting Brandes-Koepf's
+// straight vertical blocks whole (the blocks alone need 56,000 px).
+export async function layoutTwice(elk: { layout(g: any): Promise<any> }, g: Graph): Promise<any> {
+  const first = await elk.layout(elkGraph(g));
+  const c = narrow(first);
+  const side = (p: Point) => ({ x: p.y, y: p.x });
+  const out = await elk.layout({
+    id: "root",
+    layoutOptions: {
+      ...options,
+      "elk.direction": "RIGHT",
+      "elk.layered.cycleBreaking.strategy": "INTERACTIVE",
+      "elk.layered.layering.strategy": "INTERACTIVE",
+      "elk.layered.crossingMinimization.strategy": "INTERACTIVE",
+      "elk.layered.nodePlacement.strategy": "INTERACTIVE",
+    },
+    children: c.children.map((k) => ({ id: k.id, x: k.y, y: k.x, width: k.height, height: k.width })),
+    edges: c.edges.map((e) => ({
+      ...e,
+      sections: (e.sections ?? []).map((s) => ({ ...s, startPoint: side(s.startPoint), endPoint: side(s.endPoint), bendPoints: (s.bendPoints ?? []).map(side) })),
+    })),
+  });
+  return {
+    width: out.height,
+    height: out.width,
+    children: out.children.map((k: any) => ({ id: k.id, x: k.y, y: k.x, width: k.height, height: k.width })),
+    edges: out.edges.map((e: any) => ({
+      ...e,
+      sections: (e.sections ?? []).map((s: any) => ({ startPoint: side(s.startPoint), endPoint: side(s.endPoint), bendPoints: (s.bendPoints ?? []).map(side) })),
+    })),
   };
 }
 
