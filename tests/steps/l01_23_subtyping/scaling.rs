@@ -1423,3 +1423,60 @@ fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
         },
     );
 }
+
+#[test]
+fn finding_the_boxes_of_a_meet_with_an_exclusive_or_scales() {
+    // `((u, 0),)`, `u = 0..n`, met with the exclusive or of `((int - (2k + 1), int),)` for
+    // `k < n`, and the exclusive or of each of those met with `((u, 0),)` first: `n` rows and a
+    // finite side of `n` values. Neither was known finite, since an expression gave each of its
+    // tuple types as a box (LIST-xor-finite). Every `x < n` is in the `n` rows but the one of
+    // `2k + 1 = x` when `x` is odd, so the even `x` are listed when `n` is odd and the odd ones
+    // when `n` is even: `ceil(n / 2)` values. Built before timing.
+    let one = |t: Type| Type::tuple(vec![t]);
+    let family = |n: usize, each: bool| -> Type {
+        let side = one(Type::tuple(vec![Type::union_all((0..n).map(lit)), lit(0)]));
+        let rows = (0..n).map(|k| {
+            one(Type::tuple(vec![
+                &Type::int() - &lit(2 * k + 1),
+                Type::int(),
+            ]))
+        });
+        let xor = |x: Type, t: Type| &(&x - &t) | &(&t - &x);
+        if each {
+            rows.fold(Type::empty(), |x, r| xor(x, &side & &r))
+        } else {
+            &side & &rows.fold(Type::empty(), xor)
+        }
+    };
+    let met = scaling::inputs(64, |n| family(n, false));
+    scaling::check(
+        "finding the boxes of a finite type met with the exclusive or",
+        64,
+        |n| assert!(met[&n].finite()),
+    );
+    // The second makes `n` boxes, each the side met with one row, and reads each made type for
+    // its finiteness; `Type::finite` of one tuple type of `n` literals costs order `n^0.6`
+    // already at the base commit (43K and 151K instructions at 64 and 512 literals), so it is
+    // bounded here by `n²`: measured 17.9M and 490M instructions at 64 and 512, 27 times. The
+    // listing of the first is order `n²`: `RowIndex::holds` reads the `n` rows of the exclusive
+    // or for each of the `n` candidates, each held by all rows but at most one; measured 9.4M,
+    // 25M, 71M, 209M, 674M and 2.5G instructions at 32 to 1024 rows, each doubling 2.7 to 3.7
+    // times. The listing of the second is a union of `n / 2` overlapping boxes of `n`
+    // values each, so it reads order `n²` candidates against `n` rows, order `n³`, and is not
+    // timed (open, item LIST-xor-finite in STATUS.md).
+    let each = scaling::inputs(64, |n| family(n, true));
+    scaling::check_order(
+        "finding the boxes of a finite type each row met first",
+        64,
+        2,
+        |n| assert!(each[&n].finite()),
+    );
+    scaling::check_order(
+        "listing a finite type met with the exclusive or",
+        64,
+        2,
+        |n| {
+            assert_eq!(met[&n].each_value().map(|v| v.count()), Some(n.div_ceil(2)));
+        },
+    );
+}

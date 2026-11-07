@@ -46,7 +46,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use crate::deep;
 use crate::num::Rat;
 use crate::value::{Id, Items, Value};
-use bdd::{Form, Part};
+use bdd::{Bdd, Form, Part};
 
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
 /// types are ordered without reading their contents unless their digests are equal, and then by
@@ -1033,13 +1033,10 @@ impl Type {
     }
 
     /// Tuple types, the boxes, whose union holds every tuple of `self`, when the rest of
-    /// `self` is finite and every tuple of it is in a tuple type the diagram takes; `None`
-    /// otherwise. A value of a diagram is in the last tuple type its path takes, and in the
-    /// meet of those the path took before; so each node that is the last tuple type taken on a
-    /// path to `true` gives the box of its tuple type met with the union of the meets on the
-    /// paths to it, one pass over the nodes, never over the paths. A node whose taken branch
-    /// meets another tuple type before `true` gives no box of its own, so a meet of tuple types
-    /// gives its meet in either order of the diagram. An expression gives each of its tuple types.
+    /// `self` is finite and every tuple of it is in a tuple type the part names; `None`
+    /// otherwise. A diagram gives its boxes as [`list_boxes`] finds them, and an expression
+    /// gives them from its operands' ([`part_boxes`]), so a meet with a finite type and an
+    /// exclusive or of finite types give finite boxes (LIST-xor-finite).
     fn boxes(&self) -> Option<Vec<Row>> {
         let Node::Parts(p, _) = &*self.0 else {
             return None;
@@ -1055,64 +1052,13 @@ impl Type {
         {
             return None;
         }
-        let meet = |r: &Row, s: &Row| {
-            Row::new(
-                r.iter()
-                    .zip(s.iter())
-                    .map(|(x, y)| meet_types(x, y))
-                    .collect(),
-            )
-        };
         let mut out = Vec::new();
         for (len, part) in &p.tuples.lens {
             // The tuples outside every tuple type of the part are not listed.
             if part.eval(&|_| false) {
                 return None;
             }
-            // The meet of a path's tuple types is kept as the meets of runs of them, each with
-            // its count, the counts falling from first to last: a run met when one as long
-            // follows it. A chain of `c` tuple types is so met in pairs, as `Type::meet_all`
-            // meets, where meeting each into the meet of those before it cost order `c²` when
-            // their columns grow with the count, as `(int - (2i + 1), 0)` do
-            // (LIST-parity-tail).
-            let met = |runs: &[(Row, usize)]| {
-                let mut runs = runs.iter().rev().map(|(r, _)| r);
-                let first = runs
-                    .next()
-                    .map_or_else(|| Row::new(vec![Type::top(); *len]), Row::clone);
-                runs.fold(first, |m, r| meet(&m, r))
-            };
-            match part {
-                Part::Bdd(b) => {
-                    b.reaching(
-                        Vec::new(),
-                        |runs: &Vec<(Row, usize)>, a| {
-                            let (mut runs, mut last) = (runs.clone(), (a.clone(), 1));
-                            while let Some((r, n)) = runs.pop_if(|(_, n)| *n <= last.1) {
-                                last = (meet(&r, &last.0), n + last.1);
-                            }
-                            runs.push(last);
-                            runs
-                        },
-                        |r, s| {
-                            let (m, n) = (met(r), met(s));
-                            let count = r.iter().chain(s).map(|(_, k)| k).sum();
-                            let join = m.iter().zip(n.iter()).map(|(x, y)| x | y).collect();
-                            vec![(Row::new(join), count)]
-                        },
-                        |a, runs| {
-                            out.push(meet(a, &met(runs)));
-                            true
-                        },
-                    );
-                }
-                Part::Expr(_) => {
-                    part.atoms(&mut |a| {
-                        out.push(a.clone());
-                        true
-                    });
-                }
-            }
+            out.extend(part_boxes(part, *len)?.iter().cloned());
         }
         Some(out)
     }
@@ -2167,6 +2113,306 @@ fn only_row(t: &Type) -> Option<Row> {
         return None;
     };
     (Type::tuple(row.to_vec()) == *t).then(|| row.clone())
+}
+
+/// The tuple type of the meets of the columns of `r` and `s`, two rows of one length.
+fn meet_rows(r: &Row, s: &Row) -> Row {
+    Row::new(r.iter().zip(s).map(|(x, y)| meet_types(x, y)).collect())
+}
+
+/// The boxes of a diagram of tuple types of length `len` ([`Type::boxes`]), or `None` when it
+/// holds a tuple outside every tuple type it takes. A value of a diagram is in the last tuple
+/// type its path takes, and in the meet of those the path took before; so each node that is
+/// the last tuple type taken on a path to `true` gives the box of its tuple type met with the
+/// union of the meets on the paths to it, one pass over the nodes, never over the paths. A node
+/// whose taken branch meets another tuple type before `true` gives no box of its own, so a meet
+/// of tuple types gives its meet in either order of the diagram.
+fn list_boxes(b: &Bdd<Row>, len: usize) -> Option<Vec<Row>> {
+    if b.eval(|_| false) {
+        return None;
+    }
+    // The meet of a path's tuple types is kept as the meets of runs of them, each with its
+    // count, the counts falling from first to last: a run met when one as long follows it. A
+    // chain of `c` tuple types is so met in pairs, as `Type::meet_all` meets, where meeting each
+    // into the meet of those before it cost order `c²` when their columns grow with the count,
+    // as `(int - (2i + 1), 0)` do (LIST-parity-tail).
+    let met = |runs: &[(Row, usize)]| {
+        let mut runs = runs.iter().rev().map(|(r, _)| r);
+        let first = runs
+            .next()
+            .map_or_else(|| Row::new(vec![Type::top(); len]), Row::clone);
+        runs.fold(first, |m, r| meet_rows(&m, r))
+    };
+    let mut out = Vec::new();
+    b.reaching(
+        Vec::new(),
+        |runs: &Vec<(Row, usize)>, a| {
+            let (mut runs, mut last) = (runs.clone(), (a.clone(), 1));
+            while let Some((r, n)) = runs.pop_if(|(_, n)| *n <= last.1) {
+                last = (meet_rows(&r, &last.0), n + last.1);
+            }
+            runs.push(last);
+            runs
+        },
+        |r, s| {
+            let (m, n) = (met(r), met(s));
+            let count = r.iter().chain(s).map(|(_, k)| k).sum();
+            let join = m.iter().zip(n.iter()).map(|(x, y)| x | y).collect();
+            vec![(Row::new(join), count)]
+        },
+        |a, runs| {
+            out.push(meet_rows(a, &met(runs)));
+            true
+        },
+    );
+    Some(out)
+}
+
+/// The boxes of a tuple part of length `len` ([`Type::boxes`]), or `None` when they are not
+/// found: a diagram's from [`list_boxes`]; an expression's from its operands', the complement
+/// taken down to the diagrams by De Morgan's laws. A first pass finds which operands, under
+/// which sign, have boxes: a diagram that holds no tuple outside its tuple types, a union of two
+/// that have, a meet of one or two that have; so a part has boxes exactly when it is `false`
+/// with every tuple type refused. A second pass reads the boxes of those operands only: a
+/// union's are those of its operands, each once, and a meet's are those of its one operand
+/// that has boxes, or, when both have, those of the operand with fewer boxes, each whose
+/// columns are not all finite met with the join of the other's, column by column
+/// ([`join_of`]). A box whose columns are finite already holds its part of the meet, and
+/// meeting it with a join of `n` tuple types made a type of `n` rows that lists order `n²`
+/// candidates. So the exclusive or `p&!q | !p&q` of the one form (module `bdd::xor`) gives the
+/// boxes of `p` and of `q`, a meet with a finite type gives finite boxes, and the boxes of a
+/// complement that is not finite are never built. Each operand, under each sign, is read once
+/// per pass, kept in a map by its id, and the expressions are read from an explicit stack,
+/// since a part's operands are shared and nested as deep as the input. The boxes are kept in
+/// persistent sets, ordered as rows are, so a union adds the smaller set to the larger, and a
+/// chain of `n` unions costs order `n log n`, not the `n²` of copying the growing set.
+// Complexity tradeoff: a meet of two operands that both have boxes is given the boxes of the
+// one with fewer, each met with the join of the other's, not the meet of every pair, which
+// costs the product of their counts at each meet and so grows exponentially along a chain of
+// meets of unions. A type whose pairs meet to finite boxes while the join does not, such as
+// `((int, 0) | (0, int)) & ((int, 1) | (1, int))` with `(0, 1)` and `(1, 0)`, is not known
+// finite, and `each_value` gives `None` for it, as `Type::finite` documents for a box read as
+// written. A complete answer needs the pairwise meets, which the product bounds. Tests:
+// l01_23_subtyping listing::finiteness_sees_through_meets_and_exclusive_ors and
+// scaling::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales; COMPLEXITY row K68.
+fn part_boxes(part: &Part<Row>, len: usize) -> Option<OrdSet<Row>> {
+    let key = |p: &Part<Row>, negated: bool| (p.expr_id().is_some(), p.id(), negated);
+    // Whether an expression read under `negated` joins its operands, by De Morgan's laws.
+    let joins = |form: &Form<Row>, negated: bool| matches!(form, Form::Or(..)) != negated;
+    enum Step<'a> {
+        Read(&'a Part<Row>, bool),
+        Combine(&'a Part<Row>, &'a Form<Row>, bool),
+    }
+    // The first pass: whether each operand under each sign has boxes.
+    let mut finite: HashMap<BoxKey, bool> = HashMap::new();
+    let mut stack = vec![Step::Read(part, false)];
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Read(p, negated) => {
+                if finite.contains_key(&key(p, negated)) {
+                    continue;
+                }
+                match p.view() {
+                    // As `list_boxes` finds: the complement of `b` holds no tuple outside its
+                    // tuple types exactly when `b` holds one.
+                    Ok(b) => {
+                        finite.insert(key(p, negated), b.eval(|_| false) == negated);
+                    }
+                    Err(form) => {
+                        stack.push(Step::Combine(p, form, negated));
+                        match form {
+                            Form::Not(q) => stack.push(Step::Read(q, !negated)),
+                            Form::Or(x, y) | Form::And(x, y) => {
+                                stack.push(Step::Read(y, negated));
+                                stack.push(Step::Read(x, negated));
+                            }
+                        }
+                    }
+                }
+            }
+            Step::Combine(p, form, negated) => {
+                let is = |q: &Part<Row>, negated: bool| finite[&key(q, negated)];
+                let has = match form {
+                    Form::Not(q) => is(q, !negated),
+                    Form::Or(x, y) | Form::And(x, y) if joins(form, negated) => {
+                        is(x, negated) && is(y, negated)
+                    }
+                    Form::Or(x, y) | Form::And(x, y) => is(x, negated) || is(y, negated),
+                };
+                finite.insert(key(p, negated), has);
+            }
+        }
+    }
+    if !finite[&key(part, false)] {
+        return None;
+    }
+    // The second pass: the boxes of the operands found to have them, and of no other.
+    let mut found: HashMap<BoxKey, Boxed> = HashMap::new();
+    let mut joined: HashMap<BoxKey, Row> = HashMap::new();
+    // Per box, whether its columns are finite.
+    let mut bounded: BTreeMap<Row, bool> = BTreeMap::new();
+    let mut stack = vec![Step::Read(part, false)];
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Read(p, negated) => {
+                if found.contains_key(&key(p, negated)) {
+                    continue;
+                }
+                match p.view() {
+                    Ok(b) => {
+                        let boxes = if negated {
+                            list_boxes(&b.not(), len)
+                        } else {
+                            list_boxes(b, len)
+                        };
+                        let boxes = boxes.expect("the first pass found boxes");
+                        let boxed = Boxed {
+                            boxes: boxes.into_iter().collect(),
+                            from: Made::Diagram,
+                        };
+                        found.insert(key(p, negated), boxed);
+                    }
+                    Err(form) => {
+                        stack.push(Step::Combine(p, form, negated));
+                        match form {
+                            Form::Not(q) => stack.push(Step::Read(q, !negated)),
+                            Form::Or(x, y) | Form::And(x, y) => {
+                                for q in [y, x] {
+                                    if finite[&key(q, negated)] {
+                                        stack.push(Step::Read(q, negated));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Step::Combine(p, form, negated) => {
+                // Each operand that has boxes is read before the expression, and a persistent
+                // set is copied in constant time.
+                let has = |q: &Part<Row>, negated: bool| {
+                    let k = key(q, negated);
+                    found.contains_key(&k).then_some(k)
+                };
+                let (boxes, from) = match form {
+                    Form::Not(q) => {
+                        let k = key(q, !negated);
+                        (found[&k].boxes.clone(), Made::Same(k))
+                    }
+                    Form::Or(x, y) | Form::And(x, y) => {
+                        match (has(x, negated), has(y, negated)) {
+                            (Some(a), Some(b)) if joins(form, negated) => {
+                                let boxes = found[&a].boxes.clone().union(found[&b].boxes.clone());
+                                (boxes, Made::Union(a, b))
+                            }
+                            (Some(a), Some(b)) => {
+                                let (few, many) =
+                                    match found[&a].boxes.len() <= found[&b].boxes.len() {
+                                        true => (a, b),
+                                        false => (b, a),
+                                    };
+                                // A box whose columns are finite holds the meet already; the others
+                                // are met with the join, made only when one needs it.
+                                let mut join = None;
+                                let mut boxes = OrdSet::new();
+                                for r in &found[&few].boxes {
+                                    let finite = bounded
+                                        .entry(r.clone())
+                                        .or_insert_with(|| r.iter().all(Type::finite));
+                                    if *finite {
+                                        boxes.insert(r.clone());
+                                    } else {
+                                        let j = join.get_or_insert_with(|| {
+                                            join_of(many, &found, &mut joined, len)
+                                        });
+                                        boxes.insert(meet_rows(r, j));
+                                    }
+                                }
+                                (boxes, Made::Meet(few, many))
+                            }
+                            (Some(k), None) | (None, Some(k)) => {
+                                (found[&k].boxes.clone(), Made::Same(k))
+                            }
+                            (None, None) => unreachable!("the first pass found boxes"),
+                        }
+                    }
+                };
+                found.insert(key(p, negated), Boxed { boxes, from });
+            }
+        }
+    }
+    found.remove(&key(part, false)).map(|b| b.boxes)
+}
+
+/// A part read under a sign ([`part_boxes`]): an expression or a diagram, its id, and whether it
+/// is negated.
+type BoxKey = (bool, u64, bool);
+
+/// The boxes of a part read under a sign, and how they were made from its operands'.
+struct Boxed {
+    boxes: OrdSet<Row>,
+    from: Made,
+}
+
+/// How the boxes of a [`Boxed`] were made.
+enum Made {
+    Diagram,
+    /// The boxes of the one operand that has them.
+    Same(BoxKey),
+    Union(BoxKey, BoxKey),
+    /// The boxes of the first, each met with the join of the second's.
+    Meet(BoxKey, BoxKey),
+}
+
+/// A tuple type that holds every box of the part at `key`, column by column: the join of a
+/// diagram's boxes, the join of a union's operands' and the meet of a meet's, each made once,
+/// when first asked for, from an explicit stack. So a meet with a union that grows along a
+/// chain joins each operand once, not the whole union at each meet.
+fn join_of(
+    key: BoxKey,
+    found: &HashMap<BoxKey, Boxed>,
+    joined: &mut HashMap<BoxKey, Row>,
+    len: usize,
+) -> Row {
+    let mut stack = vec![key];
+    while let Some(&k) = stack.last() {
+        if joined.contains_key(&k) {
+            stack.pop();
+            continue;
+        }
+        let row = match found[&k].from {
+            Made::Diagram => {
+                let boxes = &found[&k].boxes;
+                // In pairs, as `Type::pairwise` joins.
+                let column = |i: usize| {
+                    Type::pairwise(boxes.iter().map(|r| r[i].clone()), Type::empty(), |x, y| {
+                        &x | &y
+                    })
+                };
+                Some(Row::new((0..len).map(column).collect()))
+            }
+            Made::Same(a) => joined.get(&a).cloned(),
+            Made::Union(a, b) | Made::Meet(a, b) => match (joined.get(&a), joined.get(&b)) {
+                (Some(r), Some(s)) if matches!(found[&k].from, Made::Union(..)) => Some(Row::new(
+                    r.iter().zip(s.iter()).map(|(x, y)| x | y).collect(),
+                )),
+                (Some(r), Some(s)) => Some(meet_rows(r, s)),
+                _ => {
+                    stack.extend([a, b].into_iter().filter(|o| !joined.contains_key(o)));
+                    None
+                }
+            },
+        };
+        match (row, &found[&k].from) {
+            (Some(row), _) => {
+                joined.insert(k, row);
+                stack.pop();
+            }
+            (None, Made::Same(a)) => stack.push(*a),
+            (None, _) => {}
+        }
+    }
+    joined[&key].clone()
 }
 
 /// `x & y`, where both are tuple types of one row each, of one length, as the tuple type of

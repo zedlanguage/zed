@@ -590,3 +590,141 @@ fn tuples_of_one_spine_are_one_class_per_region_of_their_scalars() {
         );
     }
 }
+
+/// The exclusive or of `x` and `y`, as `(x - y) | (y - x)`.
+fn xor(x: &Type, y: &Type) -> Type {
+    &(x - y) | &(y - x)
+}
+
+#[test]
+fn finiteness_sees_through_meets_and_exclusive_ors() {
+    // `((u, u),)`, `u = 0..8`, met with the exclusive or of the infinite `((int - (2k + 1),
+    // int),)` for `k < 3`, and the exclusive or of each of those met with the square first,
+    // are finite: a meet gives the boxes of one operand met with the join of the other's, and
+    // an exclusive or the boxes of its operands (LIST-xor-finite). Both were not known finite.
+    // A pair is in all three rows unless its first component is 1, 3 or 5, when it is in two,
+    // so 5 * 8 pairs are listed.
+    let one = |t: Type| Type::tuple(vec![t]);
+    let u = span(0, 8);
+    let square = one(Type::tuple(vec![u.clone(), u.clone()]));
+    let rows: Vec<Type> = (0..3)
+        .map(|k| {
+            one(Type::tuple(vec![
+                &Type::int() - &lit(2 * k + 1),
+                Type::int(),
+            ]))
+        })
+        .collect();
+    let candidates: Vec<Value> = (0..10)
+        .flat_map(|a| (0..10).map(move |b| one_of(pair(int(a), int(b)))))
+        .collect();
+    let exact = |t: &Type| -> usize {
+        let want: BTreeSet<Value> = candidates
+            .iter()
+            .filter(|v| t.contains(v))
+            .cloned()
+            .collect();
+        assert!(t.finite(), "{t}");
+        assert_eq!(listed(t), Some(want.clone()), "{t}");
+        want.len()
+    };
+    let met = &square & &parity(rows.clone());
+    assert_eq!(exact(&met), 5 * 8);
+    let each = parity(rows.iter().map(|r| &square & r));
+    assert_eq!(exact(&each), 5 * 8);
+    // The same with the meet on the other side, through a complement, and with a union.
+    assert_eq!(exact(&(&parity(rows.clone()) & &square)), 5 * 8);
+    assert_eq!(exact(&(&square - &parity(rows.clone()))), 3 * 8);
+    let wider = &square | &one(Type::tuple(vec![lit(9), lit(9)]));
+    assert_eq!(exact(&(&wider & &parity(rows.clone()))), 5 * 8 + 1);
+    // Each still holds infinitely many tuples outside the square.
+    for t in [
+        parity(rows.clone()),
+        &parity(rows.clone()) - &square,
+        &square | &rows[0],
+    ] {
+        assert!(!t.finite(), "{t}");
+        assert!(t.each_value().is_none(), "{t}");
+    }
+}
+
+/// A small random type over the integers 0..3, `int` and its complements of one literal, pairs
+/// and one-tuples of such types nested `level` deep, joined, met, differenced and taken in
+/// exclusive or, from `seed`. Many are infinite.
+fn random_mixed(seed: &mut u64, depth: u32, level: u32) -> Type {
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let leaf = depth == 0;
+    let k = (*seed >> 33) % if leaf { 4 } else { 9 };
+    let bits = *seed >> 40;
+    match k {
+        0 => lit((bits % 3) as usize),
+        1 => Type::union_all((0..3).filter(|i| (bits >> i) & 1 == 1).map(lit)),
+        2 => Type::int(),
+        3 => &Type::int() - &lit((bits % 3) as usize),
+        4 | 5 if level > 0 => {
+            let a = random_mixed(seed, depth - 1, level - 1);
+            if k == 4 {
+                Type::tuple(vec![a, random_mixed(seed, depth - 1, level - 1)])
+            } else {
+                Type::tuple(vec![a])
+            }
+        }
+        4 | 5 => lit((bits % 3) as usize),
+        6 => &random_mixed(seed, depth - 1, level) | &random_mixed(seed, depth - 1, level),
+        7 => &random_mixed(seed, depth - 1, level) & &random_mixed(seed, depth - 1, level),
+        _ if bits & 1 == 0 => {
+            &random_mixed(seed, depth - 1, level) - &random_mixed(seed, depth - 1, level)
+        }
+        _ => xor(
+            &random_mixed(seed, depth - 1, level),
+            &random_mixed(seed, depth - 1, level),
+        ),
+    }
+}
+
+#[test]
+fn each_value_agrees_with_a_search_of_all_points() {
+    // Every value of the shapes `random_mixed` builds: the integers 0..3 and 7, pairs and
+    // one-tuples of them, and pairs and one-tuples of those. The types name only 0..3, so 7
+    // stands for every other integer: a type that holds a value with a 7 in it holds infinitely
+    // many, and must not be listed, and one that holds none is finite and must list exactly
+    // the values it holds. A type that is finite but not known finite is counted.
+    let ints: Vec<Value> = [0, 1, 2, 7].map(int).to_vec();
+    let up = |vs: &[Value]| -> Vec<Value> {
+        let mut out = ints.clone();
+        for a in vs {
+            out.push(one_of(a.clone()));
+            for b in vs {
+                out.push(pair(a.clone(), b.clone()));
+            }
+        }
+        out
+    };
+    let all = up(&up(&ints));
+    let mentions_seven = |v: &Value| v.to_string().contains('7');
+    let (mut listed_count, mut infinite, mut missed) = (0, 0, 0);
+    let mut seed = 7;
+    for _ in 0..1500 {
+        let t = random_mixed(&mut seed, 4, 2);
+        let holds: Vec<&Value> = all.iter().filter(|v| t.contains(v)).collect();
+        let finite = !holds.iter().any(|v| mentions_seven(v));
+        match listed(&t) {
+            Some(got) => {
+                assert!(finite, "an infinite type listed: {t}");
+                assert!(t.finite(), "{t}");
+                let want: BTreeSet<Value> = holds.into_iter().cloned().collect();
+                assert_eq!(got, want, "{t}");
+                listed_count += 1;
+            }
+            None if finite => missed += 1,
+            None => infinite += 1,
+        }
+    }
+    eprintln!("listed {listed_count}, infinite {infinite}, finite but not known finite {missed}");
+    assert!(
+        listed_count > 300 && infinite > 300,
+        "{listed_count} listed, {infinite} infinite"
+    );
+}

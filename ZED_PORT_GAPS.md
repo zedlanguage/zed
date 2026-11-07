@@ -2204,7 +2204,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A stack of runs, each a meet and its length, merged with `Vec::pop_if` while the top run is no longer than the new one, as a binary counter | `Type::boxes` | Mutation | A list of runs returned from each step of the fold, merged by a recursive step on its head |
+| A stack of runs, each a meet and its length, merged with `Vec::pop_if` while the top run is no longer than the new one, as a binary counter | `list_boxes` (in `Type::boxes` before LIST-xor-finite) | Mutation | A list of runs returned from each step of the fold, merged by a recursive step on its head |
 | A `HashMap<Vec<usize>, usize>` numbering each set of rows (a region) on first sight, seeded with the empty set as 0 | `RowIndex::new` | Mutation (gap 2: an intern table) | A fold over the keys with the map in its state, or the sets sorted and numbered by their rank |
 
 ## Entries from LIST-parity-keys (`zed-kernel/src/types.rs`)
@@ -2215,6 +2215,15 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashMap<Place, BTreeMap<Value, usize>>` filled on first read by `entry().or_insert_with` inside an `FnMut` closure passed to `spine` | `RowIndex::holds`, `spine` | Mutation (gap 2: a memo table), closures capturing mutable state | `spine` returns the places it reads, the regions are made for the new places and threaded back in the index state |
 | A `HashMap<Vec<usize>, usize>` numbering each set of types (a region) on first sight, and `HashSet`s of types seen | `place_regions` | Mutation (gap 2: an intern table) | A fold over the sorted keys with the map in its state |
 | `Option<Firsts>` filled on first use by `get_or_insert_with` in a class; a `Vec` of block deltas sorted and merged in place by `dedup_by` | `RowIndex::holds`, `Blocks::eval` | Mutation | The class's firsts made when the class is made; the deltas grouped by a sorted fold |
+
+## Entries from LIST-xor-finite (`zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Two passes over an expression by an explicit stack of `enum Step { Read, Combine }`, with `HashMap`s keyed by (expression or diagram, id, sign) holding each operand's finiteness and its boxes, filled once each | `part_boxes` | Mutation (gap 2: memo tables) | A fold over the operands in post order, the two maps in its state; or a recursive function over the expression with the maps threaded through |
+| `imbl::OrdSet<Row>` boxes shared between an operand and the expressions that read it, a union adding the smaller set to the larger | `part_boxes` | Persistent sets (none in the Zed prelude yet) | A persistent ordered set in the library (L2.11), or a sorted list merged smaller into larger at the cost of the larger's copy |
+| `enum Made { Diagram, Same, Union, Meet }` recording how each operand's boxes were made, read by a second explicit stack to build the column-wise join of an operand only when a meet needs it, memoized in a `HashMap` | `join_of` | Mutation (gap 2: a memo table) | A lazy join stored beside the boxes when they are made, or a recursive join with the memo threaded through |
+| A `BTreeMap<Row, bool>` of whether each box has only finite columns, filled by `entry().or_insert_with` | `part_boxes` | Mutation (gap 2: a memo table) | The flag computed once when the box is made and kept beside it |
 
 ## Entries from CHAIN-zip-size (`zed-kernel/src/types/bdd.rs` with its module `xor`, `bdd/set.rs`, `bdd/list.rs`)
 
