@@ -102,6 +102,8 @@ struct Frame {
     seen: HashMap<ContentAddress, BTreeMap<canon::Shape, usize>>,
     /// The keys of each node's regions, in node order.
     keys: Vec<Vec<ContentAddress>>,
+    /// The numbers of each node's regions in [`canon::Regions`], in node order.
+    numbers: Vec<Vec<usize>>,
 }
 
 impl Frame {
@@ -119,6 +121,7 @@ impl Frame {
             states: HashMap::new(),
             seen: HashMap::new(),
             keys: Vec::new(),
+            numbers: Vec::new(),
         }
     }
 }
@@ -131,6 +134,7 @@ struct Built {
     states: HashMap<Arc<str>, Src>,
     values: usize,
     keys: Vec<Vec<ContentAddress>>,
+    numbers: Vec<Vec<usize>>,
 }
 
 struct Lower<'t> {
@@ -143,8 +147,10 @@ struct Lower<'t> {
     bodies: Bodies,
     places: Places,
     /// The first refusal of the memory to write a constant for a key ([`canon::Shape::of`],
-    /// [`canon::region_key`]); after it no node is looked up, and [`lower`] reports it.
+    /// [`canon::Regions::enter`]); after it no node is looked up, and [`lower`] reports it.
     refused: Option<TooLarge>,
+    /// The regions finished so far, each distinct one numbered once.
+    regions: canon::Regions,
 }
 
 /// What a lambda body uses from outside it: a port it reads or pushes, or a name free in it.
@@ -233,6 +239,7 @@ pub fn lower(t: &Term) -> Result<Region, String> {
         bodies: HashMap::new(),
         places,
         refused: None,
+        regions: canon::Regions::default(),
     };
     let out = l.term(At { t, id: 0 }).and_then(|v| l.src(v));
     // A refused constant is the error, whatever lowering found after it.
@@ -396,14 +403,15 @@ impl<'t> Lower<'t> {
     /// Adds `node` to the current region, or finds the node with its content address. A node
     /// that takes a state edge never repeats one, since each state edge is used once, so the
     /// effects stay apart without a test of their own.
-    /// Adds `node`, whose regions have the keys `regions`, unless a node of equal normal form
+    /// Adds `node`, whose regions have the keys `keys` and the numbers `numbers` in
+    /// [`canon::Regions`], unless a node of equal normal form
     /// is there. The nodes of one key are kept by their [`canon::Shape`], so a key never decides
     /// equality alone and two distinct nodes whose keys collide stay two (step L1.37a). An add
     /// costs one hash lookup and `O(log k)` shape comparisons for `k` nodes of its key, each at
-    /// most the size of the smaller node: `k` is one but for a collision of 256-bit keys, and
+    /// most the bytes of the smaller node's operation, inputs and outputs: `k` is one but for a collision of 256-bit keys, and
     /// about n/256 for n nodes in the `short-addresses` build (8-bit keys).
-    fn add(&mut self, node: Node, regions: Vec<ContentAddress>) -> usize {
-        let shape = match (&self.refused, canon::Shape::of(&node)) {
+    fn add(&mut self, node: Node, keys: Vec<ContentAddress>, numbers: Vec<usize>) -> usize {
+        let shape = match (&self.refused, canon::Shape::of(&node, numbers.clone())) {
             (None, Ok(shape)) => shape,
             (refused, shape) => {
                 // A constant was refused: the graph is not returned, so the node is kept
@@ -413,17 +421,19 @@ impl<'t> Lower<'t> {
                 }
                 let f = self.frame();
                 f.region.nodes.push(node);
-                f.keys.push(regions);
+                f.keys.push(keys);
+                f.numbers.push(numbers);
                 return f.region.nodes.len() - 1;
             }
         };
-        let key = shape.key(&regions);
+        let key = shape.key(&keys);
         let f = self.frame();
         match f.seen.entry(key).or_default().entry(shape) {
             btree_map::Entry::Occupied(e) => *e.get(),
             btree_map::Entry::Vacant(e) => {
                 f.region.nodes.push(node);
-                f.keys.push(regions);
+                f.keys.push(keys);
+                f.numbers.push(numbers);
                 *e.insert(f.region.nodes.len() - 1)
             }
         }
@@ -438,6 +448,7 @@ impl<'t> Lower<'t> {
                 outputs: vec![top()],
                 regions: Vec::new(),
             },
+            Vec::new(),
             Vec::new(),
         );
         Val::Src(Src::Out(n, 0), self.top())
@@ -471,6 +482,7 @@ impl<'t> Lower<'t> {
         let values = built.first().map_or(1, |b| b.values);
         let mut regions = Vec::new();
         let mut keys = Vec::new();
+        let mut numbers = Vec::new();
         for b in built {
             let map: Vec<usize> = (0..b.fixed)
                 .chain(b.captures.iter().map(|c| b.fixed + at[&captured(c)]))
@@ -487,12 +499,16 @@ impl<'t> Lower<'t> {
                 };
                 r.results.push(fin);
             }
-            match canon::region_key(&r, &b.keys) {
-                Ok(k) => keys.push(k),
+            match self.regions.enter(&r, &b.keys, b.numbers) {
+                Ok((k, number)) => {
+                    keys.push(k);
+                    numbers.push(number);
+                }
                 Err(e) => {
-                    // Any key will do: the graph is not returned after a refusal.
+                    // Any key and number will do: the graph is not returned after a refusal.
                     self.refused.get_or_insert(e);
                     keys.push(ContentAddress([0; 32]));
+                    numbers.push(0);
                 }
             }
             regions.push(Arc::new(r));
@@ -509,6 +525,7 @@ impl<'t> Lower<'t> {
                 regions,
             },
             keys,
+            numbers,
         );
         for (j, (_, p)) in ports.iter().enumerate() {
             self.set_state(p, Src::Out(n, values + j));
@@ -826,6 +843,7 @@ impl<'t> Lower<'t> {
                         regions: Vec::new(),
                     },
                     Vec::new(),
+                    Vec::new(),
                 );
                 self.set_state(p, Src::Out(n, 1));
                 s.vals.push(Val::Src(Src::Out(n, 0), at));
@@ -1015,6 +1033,7 @@ impl<'t> Lower<'t> {
                         regions: Vec::new(),
                     },
                     Vec::new(),
+                    Vec::new(),
                 );
                 for (j, p) in c.ports.iter().enumerate() {
                     self.set_state(p, Src::Out(k, 1 + j));
@@ -1048,6 +1067,7 @@ impl<'t> Lower<'t> {
                     states: f.states,
                     values: 1,
                     keys: f.keys,
+                    numbers: f.numbers,
                 });
             }
             Job::Node { op, fixed, regions } => {
@@ -1067,6 +1087,7 @@ impl<'t> Lower<'t> {
                         outputs: vec![top(), Edge::State(p.clone())],
                         regions: Vec::new(),
                     },
+                    Vec::new(),
                     Vec::new(),
                 );
                 self.set_state(p, Src::Out(n, 1));

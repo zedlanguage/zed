@@ -59,7 +59,8 @@ fn index<T: PartialEq>(all: &[T], x: &T) -> u8 {
 // Writing
 
 /// The binary form of the graph rooted at `root`, or [`TooLarge`] when the system refuses the
-/// memory to build or write one of its exact numbers ([`Rat::built_parts`]).
+/// memory to build or write one of its exact numbers ([`Rat::built_parts`]), or to grow the
+/// bytes written.
 pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
     let mut w = W(MAGIC.to_vec(), None);
     w.0.extend_from_slice(&VERSION.to_le_bytes());
@@ -70,22 +71,42 @@ pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
     }
 }
 
-/// The bytes written, and the first refusal of the memory for a number, after which the
-/// bytes are not used.
+/// The bytes written, and the first refusal of the memory for them, after which the bytes are
+/// not used.
 struct W(Vec<u8>, Option<TooLarge>);
 
 impl W {
+    /// `bytes` at the end, once the system gives the memory to grow the bytes written for them;
+    /// a refusal is kept, naming the capacity the growth asked, and nothing more is written.
+    /// So a write after a wide number or a long string, which doubles the bytes written so far,
+    /// asks for that memory first, as the number and the string did.
+    fn put(&mut self, bytes: &[u8]) {
+        if self.1.is_some() {
+            return;
+        }
+        let (len, cap) = (self.0.len(), self.0.capacity());
+        if cap - len < bytes.len() && self.0.try_reserve(bytes.len()).is_err() {
+            // What `Vec` asks to grow: twice its capacity, or what the bytes need if more.
+            let ask = (2 * cap).max(len + bytes.len());
+            self.1 = Some(TooLarge {
+                bits: BigUint::from(ask) << 3u32,
+            });
+            return;
+        }
+        self.0.extend_from_slice(bytes);
+    }
+
     fn tag(&mut self, t: u8) {
-        self.0.push(t);
+        self.put(&[t]);
     }
 
     fn n(&mut self, n: u64) {
-        self.0.extend_from_slice(&n.to_le_bytes());
+        self.put(&n.to_le_bytes());
     }
 
     fn s(&mut self, s: &str) {
         self.n(s.len() as u64);
-        self.0.extend_from_slice(s.as_bytes());
+        self.put(s.as_bytes());
     }
 
     /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
@@ -218,10 +239,10 @@ impl W {
             }
             Value::Str(s) => {
                 self.tag(5);
-                // The text is written block by block, as `s` writes one block.
+                // The text is written block by block, as `s` writes one block, each block once
+                // the system gives the memory for it.
                 self.n(s.len() as u64);
-                s.chunks()
-                    .for_each(|c| self.0.extend_from_slice(c.as_bytes()));
+                s.chunks().for_each(|c| self.put(c.as_bytes()));
             }
             Value::Atom(a) => {
                 self.tag(6);

@@ -24,10 +24,11 @@
 //! [`key`] hashes a node from the keys of its regions, so the lowering keys each new node
 //! without walking the regions below it again.
 
-use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use zed_kernel::num::{TooLarge, bytes_of};
+use num_bigint::BigUint;
+use zed_kernel::num::TooLarge;
 use zed_kernel::term::{Pattern, Term};
 use zed_kernel::value::Value;
 
@@ -194,36 +195,101 @@ fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
 /// The key of region `r` whose nodes' regions have the keys `inner`, one list per node, or
 /// [`TooLarge`] as at `shell_bytes`.
 pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> Result<ContentAddress, TooLarge> {
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-zir-region\0");
-    h.update(&canon::VERSION.to_le_bytes());
-    h.update(&region_bytes(r)?);
-    h.update(&(r.nodes.len() as u64).to_le_bytes());
+    let mut h = region_hasher(&region_bytes(r)?, r.nodes.len());
     for (n, keys) in r.nodes.iter().zip(inner) {
         h.update(&node_key(n, keys)?.0);
     }
     Ok(ContentAddress::hashed(&h))
 }
 
+/// The hasher of a region's key, given its [`region_bytes`] and its number of nodes, before
+/// its nodes' keys.
+fn region_hasher(bytes: &[u8], nodes: usize) -> blake3::Hasher {
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-zir-region\0");
+    h.update(&canon::VERSION.to_le_bytes());
+    h.update(bytes);
+    h.update(&(nodes as u64).to_le_bytes());
+    h
+}
+
+/// The regions a lowering has finished, each distinct normal form numbered once, in the order
+/// first met. A region is held by its [`Contents`], so two regions have one number exactly when
+/// they have equal normal forms, by induction on their depth, and a [`Shape`] holds its regions
+/// by their numbers.
+// Complexity tradeoff: the contents of every distinct region are held until the lowering ends,
+// as many bytes as the graph's binary form, wide constants included. Why: a shape compared by
+// its regions' numbers costs the bytes of its own operation, inputs and outputs, and builds
+// nothing, so the order asks no memory and cannot be refused; the order it replaces wrote the
+// regions' constants again at each comparison, two at once, and a refusal there could only
+// stop the compiler. Trigger: a lowering of wide constants inside lambdas or arms, which holds
+// them twice, once in the graph and once here. Test:
+// `l01_33_lowering::asks::equal_lambdas_of_a_wide_constant_are_one_or_refused` and
+// `l01_37a_short_addresses::scaling`. A complete solution would hold each node's bytes once,
+// shared by its shape and by its region's contents, which needs them written after the
+// region's arguments are renumbered, before the node is entered.
+#[derive(Default)]
+pub struct Regions(HashMap<Contents, usize>);
+
+/// What decides a region's normal form, given its regions' numbers: the bytes [`region_key`]
+/// hashes for it besides its nodes' keys, then for each node the bytes [`node_key`] hashes for
+/// it besides its regions' keys, with the numbers of its regions.
+#[derive(PartialEq, Eq, Hash)]
+struct Contents {
+    region: Vec<u8>,
+    nodes: Vec<(Vec<u8>, Vec<usize>)>,
+}
+
+impl Regions {
+    /// The key of region `r` (what [`region_key`] gives) and its number. `keys` and `numbers`
+    /// are the keys and the numbers of each node's regions, one list per node. [`TooLarge`]
+    /// as at `shell_bytes`, or when the system refuses the memory to list the nodes.
+    pub fn enter(
+        &mut self,
+        r: &Region,
+        keys: &[Vec<ContentAddress>],
+        numbers: Vec<Vec<usize>>,
+    ) -> Result<(ContentAddress, usize), TooLarge> {
+        let region = region_bytes(r)?;
+        let mut h = region_hasher(&region, r.nodes.len());
+        let mut nodes = Vec::new();
+        nodes
+            .try_reserve_exact(r.nodes.len())
+            .map_err(|_| TooLarge {
+                bits: BigUint::from(r.nodes.len() * size_of::<(Vec<u8>, Vec<usize>)>()) << 3u32,
+            })?;
+        for ((n, keys), numbers) in r.nodes.iter().zip(keys).zip(numbers) {
+            let shell = shell_bytes(n)?;
+            h.update(&key_of(&shell, keys).0);
+            nodes.push((shell, numbers));
+        }
+        let next = self.0.len();
+        let number = *self.0.entry(Contents { region, nodes }).or_insert(next);
+        Ok((ContentAddress::hashed(&h), number))
+    }
+}
+
 /// A node's normal form as an ordered key: the bytes [`node_key`] hashes for its operation,
-/// inputs and outputs, then its regions by their contents. Two shapes are equal exactly when
-/// every pair of nodes and of regions at one place in the two has the bytes [`node_key`] and
-/// [`region_key`] hash, so equal shapes have equal keys, and a key never decides equality
-/// alone (DESIGN.md sec:theories, the trusted base; step L1.37a). The lowering keeps the
-/// nodes of one key in a map ordered by shape, so keys that collide cost `O(log k)`
-/// comparisons for `k` nodes of the key.
+/// inputs and outputs, then the numbers of its regions among the regions the lowering has
+/// finished ([`Regions`]). Two shapes are equal exactly when the nodes have equal normal forms,
+/// so equal shapes have equal keys, and a key never decides equality alone (DESIGN.md
+/// sec:theories, the trusted base; step L1.37a). The lowering keeps the nodes of one key in a
+/// map ordered by shape, so keys that collide cost `O(log k)` comparisons for `k` nodes of the
+/// key, each at most the bytes of the smaller node's own operation, inputs and outputs; a
+/// comparison builds nothing.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Shape {
     shell: Vec<u8>,
-    regions: Vec<Arc<Region>>,
+    regions: Vec<usize>,
 }
 
 impl Shape {
-    /// The shape of `n`; its regions are shared, not copied. [`TooLarge`] as at
-    /// `shell_bytes`.
-    pub fn of(n: &Node) -> Result<Shape, TooLarge> {
+    /// The shape of `n`, whose regions have the numbers `regions` in [`Regions`].
+    /// [`TooLarge`] as at `shell_bytes`.
+    pub fn of(n: &Node, regions: Vec<usize>) -> Result<Shape, TooLarge> {
         Ok(Shape {
             shell: shell_bytes(n)?,
-            regions: n.regions.clone(),
+            regions,
         })
     }
 
@@ -233,81 +299,6 @@ impl Shape {
         key_of(&self.shell, regions)
     }
 }
-
-impl Ord for Shape {
-    /// The shells' bytes, then the number of regions, then the regions pair by pair. The
-    /// regions are compared from a stack of the pairs left: each pair's node counts and
-    /// `region_bytes`, then each pair of their nodes' region counts and `shell_bytes` in
-    /// order, whose region pairs are pushed. Which pairs come next depends only on the
-    /// contents compared equal so far, so this is the lexicographic order of one fixed
-    /// sequence of counts and bytes per shape, a total order. It stops at the first pair that
-    /// differs, so it costs at most the size of the smaller shape; regions the two share are
-    /// skipped.
-    fn cmp(&self, other: &Shape) -> Ordering {
-        let o = self
-            .shell
-            .cmp(&other.shell)
-            .then(self.regions.len().cmp(&other.regions.len()));
-        if o.is_ne() {
-            return o;
-        }
-        let mut todo: Vec<(&Arc<Region>, &Arc<Region>)> =
-            self.regions.iter().zip(&other.regions).collect();
-        while let Some((r, s)) = todo.pop() {
-            if Arc::ptr_eq(r, s) {
-                continue;
-            }
-            let o = r
-                .nodes
-                .len()
-                .cmp(&s.nodes.len())
-                .then_with(|| rewritten(region_bytes(r)).cmp(&rewritten(region_bytes(s))));
-            if o.is_ne() {
-                return o;
-            }
-            for (a, b) in r.nodes.iter().zip(&s.nodes) {
-                let o = a
-                    .regions
-                    .len()
-                    .cmp(&b.regions.len())
-                    .then_with(|| rewritten(shell_bytes(a)).cmp(&rewritten(shell_bytes(b))));
-                if o.is_ne() {
-                    return o;
-                }
-                todo.extend(a.regions.iter().zip(&b.regions));
-            }
-        }
-        Ordering::Equal
-    }
-}
-
-/// The bytes of a region or node that [`Shape::cmp`] writes again. Each was written once, when
-/// the key of the region holding it was taken ([`region_key`], which lowering calls on every
-/// region), so the system gave the memory for its numbers then; a refusal now, under memory
-/// taken since, stops the compiler with a message, since an order has no error to return.
-fn rewritten(bytes: Result<Vec<u8>, TooLarge>) -> Vec<u8> {
-    bytes.unwrap_or_else(|e| {
-        panic!(
-            "the system refused the {} bytes of memory asked to write a constant again to \
-             order two nodes, after it gave them once",
-            bytes_of(&e.bits)
-        )
-    })
-}
-
-impl PartialOrd for Shape {
-    fn partial_cmp(&self, other: &Shape) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Shape {
-    fn eq(&self, other: &Shape) -> bool {
-        self.cmp(other).is_eq()
-    }
-}
-
-impl Eq for Shape {}
 
 /// The key of `g` from the bottom up: what [`region_key`] gives with every region's key, or
 /// [`TooLarge`] as at `shell_bytes`.
