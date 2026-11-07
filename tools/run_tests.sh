@@ -162,28 +162,38 @@ cores=$(nproc)
 export root out slots slot_dir cores
 take_slot() {
   while :; do
-    for i in $(seq "$slots"); do
-      exec 9>"$slot_dir/$i"
+    for slot in $(seq "$slots"); do
+      exec 9>"$slot_dir/$slot"
       flock -n 9 && return
     done
     sleep 0.1
   done
 }
+# A piece writes its output to the file of its slot, which the next piece in that slot overwrites,
+# so a passing piece leaves no log and nothing is deleted. A failed piece's output is copied to its
+# log; a passing piece empties a log left by an earlier failed run, so every log with contents is
+# of a piece that failed in the last run that ran it.
 piece() {
   name=$1 dir=$2
   shift 2
-  log=$out/$name.log
   take_slot
+  scratch=$out/slot-$slot.out
+  log=$out/$name.log
   read -r load _ </proc/loadavg
   limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 60 * l / c; print (x > 60 ? int(x + 1) : 60) }')
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    timeout -k 5 "$limit" "$@" >"$log" 2>&1)
+    timeout -k 5 "$limit" "$@" >"$scratch" 2>&1)
   rc=$?
   ms=$((($(date +%s%N) - start) / 1000000))
-  echo "$name rc=$rc ${ms}ms load=$load limit=${limit}s $(grep -E '^test result' "$log" | tail -1)"
-  [ "$rc" = 0 ] && rm -f "$log"
+  echo "$name rc=$rc ${ms}ms load=$load limit=${limit}s $(grep -E '^test result' "$scratch" | tail -1)"
+  if [ "$rc" = 0 ]; then
+    [ ! -s "$log" ] || : >"$log"
+  else
+    cp "$scratch" "$log"
+  fi
+  : >"$scratch"
   [ "$rc" = 0 ]
 }
 export -f take_slot piece
