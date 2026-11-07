@@ -919,8 +919,14 @@ impl Type {
         {
             return None;
         }
-        let meet =
-            |r: &Row, s: &Row| Row::new(r.iter().zip(s.iter()).map(|(x, y)| x & y).collect());
+        let meet = |r: &Row, s: &Row| {
+            Row::new(
+                r.iter()
+                    .zip(s.iter())
+                    .map(|(x, y)| meet_types(x, y))
+                    .collect(),
+            )
+        };
         let mut out = Vec::new();
         for (len, part) in &p.tuples.lens {
             // The tuples outside every tuple type of the part are not listed.
@@ -1999,6 +2005,53 @@ enum At {
 /// A value a maker waits for: the maker and the position.
 type Need = (usize, usize);
 
+/// The one row of `t` when `t` is the tuple type of that row and nothing else.
+fn only_row(t: &Type) -> Option<Row> {
+    let p = t.p();
+    let [(_, part)] = Vec::from_iter(&p.tuples.lens)[..] else {
+        return None;
+    };
+    let [row] = &part.distinct_atoms()[..] else {
+        return None;
+    };
+    (Type::tuple(row.to_vec()) == *t).then(|| row.clone())
+}
+
+/// `x & y`, where both are tuple types of one row each, of one length, as the tuple type of
+/// their columns' meets, column by column to any depth: the meet of two tuple types of one
+/// row is the tuple type of the meets of their columns, so a run of `c` such meets keeps one
+/// row, where `&` keeps a diagram of `c` rows. The boxes of `((2i, i),)` met with each
+/// `((int - (2k + 1), x),)` for `k < c` each held all `c` rows, order `c²` to build and to
+/// list, and order `c³` where `x` lists `c` values, met with itself at each row
+/// (LIST-parity-keys). Equal types meet as themselves. An explicit stack, since the depth
+/// follows the input.
+fn meet_types(x: &Type, y: &Type) -> Type {
+    enum Step {
+        Meet(Type, Type),
+        /// Make the tuple type of the last `n` results.
+        Tuple(usize),
+    }
+    let (mut todo, mut done) = (vec![Step::Meet(x.clone(), y.clone())], Vec::new());
+    while let Some(step) = todo.pop() {
+        match step {
+            Step::Meet(x, y) if x == y => done.push(x),
+            Step::Meet(x, y) => match (only_row(&x), only_row(&y)) {
+                (Some(r), Some(s)) if r.len() == s.len() => {
+                    todo.push(Step::Tuple(r.len()));
+                    let pairs = r.iter().cloned().zip(s.iter().cloned());
+                    todo.extend(pairs.rev().map(|(a, b)| Step::Meet(a, b)));
+                }
+                _ => done.push(&x & &y),
+            },
+            Step::Tuple(n) => {
+                let items = done.split_off(done.len() - n);
+                done.push(Type::tuple(items));
+            }
+        }
+    }
+    done.pop().expect("the first step leaves one result")
+}
+
 /// The scalars and bare atoms of `p`, as a maker lists them.
 fn scalars(p: &Parts) -> Vec<Value> {
     let mut made: Vec<Value> = [false, true]
@@ -2295,8 +2348,13 @@ enum Bone {
     Len(usize),
     /// A component other than the first, by its sequence: the same sequence is the same value.
     Seq(bool, Id),
-    /// A component other than the first that is no sequence.
+    /// A component other than the first that is no sequence and no scalar or bare atom
+    /// ([`erasable`]).
     Value(Value),
+    /// A component other than the first that is a scalar or bare atom, by its kind and its
+    /// region at its place ([`place_regions`]): scalars of one region there are in each open
+    /// row alike.
+    Region(Kind, usize),
     /// The last of the first components, a scalar or bare atom of this kind, which no row the
     /// class is read for has as a key ([`erase`]).
     Erased(Kind),
@@ -2323,20 +2381,26 @@ fn erasable(x: &Value) -> Option<Kind> {
 
 /// The spine of the column component `x`: one walk down its first components, each other
 /// component that is a sequence by its id, not its values, so a value whose parts are shared is
-/// not walked, and any other by its value.
-fn spine(x: &Value) -> Vec<Bone> {
+/// not walked, a scalar or bare atom by its region, which `region` gives from the depth, the
+/// tuple length, the position and the scalar, and any other by its value.
+fn spine(x: &Value, mut region: impl FnMut(usize, usize, usize, &Value) -> usize) -> Vec<Bone> {
     let mut out = Vec::new();
     let mut x = x;
+    let mut depth = 0;
     while let Value::Tuple(items) = x
         && let [first, rest @ ..] = items.as_slice()
     {
         out.push(Bone::Len(items.len()));
-        out.extend(rest.iter().map(|y| match y {
+        out.extend(rest.iter().enumerate().map(|(m, y)| match y {
             Value::Tuple(ys) => Bone::Seq(false, ys.id()),
             Value::Path(ys) => Bone::Seq(true, ys.id()),
-            _ => Bone::Value(y.clone()),
+            _ => match erasable(y) {
+                Some(kind) => Bone::Region(kind, region(depth, items.len(), m + 1, y)),
+                None => Bone::Value(y.clone()),
+            },
         }));
         x = first;
+        depth += 1;
     }
     out.push(match erasable(x) {
         Some(kind) => Bone::Erased(kind),
@@ -2387,6 +2451,63 @@ fn erase(x: &Value, keys: &BTreeSet<Value>) -> Value {
         out = Value::tuple(vs);
     }
     out
+}
+
+/// A place in a column component other than along first components: the column, the depth
+/// along first components, the length of the tuple there and the position in it, not 0.
+type Place = (usize, usize, usize, usize);
+
+/// The regions of the scalars and bare atoms at the place `(j, d, len, m)` ([`Place`]): per
+/// scalar that some type there lists, the region of the types there that list it, numbered
+/// from 1 per place. The types there are the components `m` of the tuple types of length
+/// `len` of the open rows' types at depth `d` of column `j`, each distinct type read once. A
+/// type holds a scalar it does not list as its kind decides, and one it lists as its kind
+/// decides the other way, so two scalars of one kind and region are in each type there alike,
+/// and a tuple type reads its components and nothing else, so tuples that differ only in such
+/// scalars there are in each open row alike (LIST-parity-keys: the `(2i, i)` of `((2i, i),)`
+/// met with each `((int - (2i + 1), 0),)` were a class each). A scalar no type there lists is
+/// in region 0. The cost is the sum of the distinct types' lists, read once per place.
+fn place_regions(open: &[Open], (j, d, len, m): Place) -> BTreeMap<Value, usize> {
+    let (mut types, mut parents) = (HashSet::new(), HashSet::new());
+    let mut by_key: BTreeMap<Value, Vec<usize>> = BTreeMap::new();
+    for t in open
+        .iter()
+        .filter_map(|row| row.levels.get(j)?.get(d))
+        .flatten()
+    {
+        if !parents.insert(t.clone()) {
+            continue;
+        }
+        let Some(part) = t.p().tuples.lens.get(&len) else {
+            continue;
+        };
+        for r in part.distinct_atoms() {
+            let u = &r[m];
+            if !types.insert(u.clone()) {
+                continue;
+            }
+            let n = types.len();
+            let p = u.p();
+            let lists = [&p.ints, &p.rats, &p.floats, &p.strings];
+            let atoms = &p.atoms;
+            let names = atoms.names.iter().filter(|(_, a)| a.bare != atoms.cofinite);
+            for k in lists
+                .into_iter()
+                .flat_map(|l| l.values.iter().cloned())
+                .chain(names.map(|(name, _)| Value::atom(name)))
+            {
+                by_key.entry(k).or_default().push(n);
+            }
+        }
+    }
+    let mut ids: HashMap<Vec<usize>, usize> = HashMap::new();
+    by_key
+        .into_iter()
+        .map(|(k, us)| {
+            let next = ids.len() + 1;
+            (k, *ids.entry(us).or_insert(next))
+        })
+        .collect()
 }
 
 /// What a tuple's class is read by: its shape, and per column an open row absorbs ([`Open`])
@@ -2461,6 +2582,105 @@ struct RowIndex {
     /// Per class, the open rows' values on a tuple of it with no key of theirs, and the part
     /// restricted to ranges of `rows`.
     classes: BTreeMap<ClassKey, Class>,
+    /// Per place of a spine, the regions of its scalars ([`place_regions`]), made when first
+    /// read.
+    places: HashMap<Place, BTreeMap<Value, usize>>,
+    /// The part's blocks, when it is a decision list ([`Blocks`]).
+    blocks: Option<Blocks>,
+}
+
+/// A part that is a decision list, by the rows of a [`RowIndex`]: its value on a tuple is that
+/// of the first block with a literal that holds, so it is read from the blocks the rows with
+/// a key of the tuple change, and the first block that holds on a tuple with no key of any
+/// row ([`Firsts`]), never by walking the list. A restriction of the list to the smallest
+/// range of halves that holds those rows reads every row in the range, and the rows are in
+/// the order of their hashes, so rows with a key of the tuple, two or more, spread over most
+/// of `rows` (LIST-parity-keys: the meet `(0..3, 0..=c) & ((int - (2i + 1), i | i + 1) | ...)`
+/// read order `c` rows per tuple).
+struct Blocks {
+    /// The value of each block, in order.
+    values: Vec<bool>,
+    /// The value when no literal holds.
+    tail: bool,
+    /// Per row of `rows`, its block and whether its literal takes the row: each atom of a list
+    /// is in one block.
+    of_row: Vec<(usize, bool)>,
+}
+
+/// The blocks of a [`Blocks`] on a tuple of a class with no key of any row.
+struct Firsts {
+    /// Per block, how many of its literals hold.
+    holding: Vec<usize>,
+    /// The blocks with a literal that holds, ascending.
+    any: Vec<usize>,
+}
+
+impl Blocks {
+    fn new(rows: &[Row], part: &Part<Row>) -> Option<Blocks> {
+        let Part::Bdd(b) = part else {
+            return None;
+        };
+        let list = b.list();
+        let mut of_row = vec![(0, false); rows.len()];
+        for (k, (_, literals)) in list.blocks.iter().enumerate() {
+            for (r, taken) in literals {
+                let i = rows
+                    .binary_search(r)
+                    .expect("every atom of the list is a row");
+                of_row[i] = (k, *taken);
+            }
+        }
+        Some(Blocks {
+            values: list.blocks.iter().map(|(v, _)| *v).collect(),
+            tail: list.tail,
+            of_row,
+        })
+    }
+
+    /// The blocks that hold on a tuple of the class whose rows have the values `default`.
+    fn firsts(&self, default: impl Fn(usize) -> bool) -> Firsts {
+        let mut holding = vec![0; self.values.len()];
+        for (i, &(k, taken)) in self.of_row.iter().enumerate() {
+            holding[k] += usize::from(default(i) == taken);
+        }
+        let any = (0..holding.len()).filter(|&k| holding[k] > 0).collect();
+        Firsts { holding, any }
+    }
+
+    /// The list's value when the rows at `changed` take the value beside each, the other of
+    /// their value on `firsts`' class, in `O(k log k)` for `k` rows: a block that held may
+    /// stop holding only where a changed row is, so the walk over the blocks that held passes
+    /// at most `k` of them.
+    fn eval(&self, firsts: &Firsts, changed: &[(usize, bool)]) -> bool {
+        // Per block a changed row is in, the change in how many of its literals hold.
+        let mut delta: Vec<(usize, isize)> = changed
+            .iter()
+            .map(|&(i, holds)| {
+                let (k, taken) = self.of_row[i];
+                (k, if holds == taken { 1 } else { -1 })
+            })
+            .collect();
+        delta.sort_unstable();
+        delta.dedup_by(|(k, d), (k0, d0)| {
+            let same = k == k0;
+            if same {
+                *d0 += *d;
+            }
+            same
+        });
+        let after = |k: usize, d: isize| firsts.holding[k] as isize + d > 0;
+        let raised = delta.iter().find(|&&(k, d)| after(k, d)).map(|&(k, _)| k);
+        let kept = firsts.any.iter().copied().find(|&k| {
+            match delta.binary_search_by_key(&k, |&(k, _)| k) {
+                Ok(at) => after(k, delta[at].1),
+                Err(_) => true,
+            }
+        });
+        match raised.into_iter().chain(kept).min() {
+            Some(k) => self.values[k],
+            None => self.tail,
+        }
+    }
 }
 
 /// The rows of a [`RowIndex`] as a class of tuples sees them.
@@ -2468,6 +2688,9 @@ struct Class {
     /// Per open row, its value on a tuple of the class none of whose components is a key of
     /// it.
     open: Vec<bool>,
+    /// The blocks that hold on such a tuple, when the part is a decision list, made when first
+    /// needed.
+    firsts: Option<Firsts>,
     /// The part restricted to the rows of a range of `rows`, the rows outside the range taken
     /// as their value on a tuple with no key of theirs, made when first needed: entry 1 for
     /// the whole range, and entries `2i` and `2i + 1` for the lower and upper halves of the
@@ -2587,6 +2810,7 @@ impl RowIndex {
                 absorbs,
             });
         }
+        let blocks = Blocks::new(&rows, part);
         RowIndex {
             rows,
             filing,
@@ -2598,6 +2822,8 @@ impl RowIndex {
             read,
             by_kinds: HashMap::new(),
             classes: BTreeMap::new(),
+            places: HashMap::new(),
+            blocks,
         }
     }
 
@@ -2669,9 +2895,13 @@ impl RowIndex {
     // `k` is at most the number of tuples, and the classes are only those the tuples have,
     // never one per row. Tuples of one kinds are one class wherever the kinds decide every
     // open row, and scalars of one region are one. Where the kinds leave a row unknown, each
-    // spine is a class: tuples that differ in a component other than one last along first
-    // components, such as the `(2i, i)` of `((2i, i),)` met with each `((int - (2i + 1),
-    // 0),)`, are one class each, and each reads the unknown rows, order `c` per tuple there.
+    // spine is a class, and a scalar or bare atom in a spine is given by its region at its
+    // place ([`place_regions`]): the `(2i, i)` of `((2i, i),)` met with each `((int - (2i +
+    // 1), x),)` are one class for any `x` that lists none or all of the `i`, and one class
+    // per set of the open rows' types listing it otherwise, never one per tuple
+    // (LIST-parity-keys: 46 times the instructions from `c` 64 to 512 per tuple class). The
+    // regions of a place cost the sum of the lists of the distinct types there, once. A
+    // decision list is read from its blocks ([`Blocks`]) and needs no restriction at all.
     // A column is absorbed only where its regions, each a class reading every open row, cost
     // no more than filing its rows by it ([`RowIndex::new`]); the verdicts are the same either
     // way.
@@ -2697,6 +2927,8 @@ impl RowIndex {
             regions,
             by_kinds,
             classes,
+            places,
+            blocks,
             ..
         } = self;
         let decided = &by_kinds[&kinds];
@@ -2711,10 +2943,28 @@ impl RowIndex {
                 .collect(),
             shape: match decided.iter().all(Option::is_some) {
                 true => Shape::Kinds(kinds),
-                false => Shape::Spine(v.iter().map(spine).collect()),
+                false => Shape::Spine(
+                    v.iter()
+                        .enumerate()
+                        .map(|(j, x)| {
+                            spine(x, |d, len, m, y| {
+                                let place = (j, d, len, m);
+                                let by = places
+                                    .entry(place)
+                                    .or_insert_with(|| place_regions(open_rows, place));
+                                by.get(y).copied().unwrap_or(0)
+                            })
+                        })
+                        .collect(),
+                ),
             },
         };
-        let Class { open, halves, none } = classes.entry(key).or_insert_with(|| {
+        let Class {
+            open,
+            firsts,
+            halves,
+            none,
+        } = classes.entry(key).or_insert_with(|| {
             let mut erased: Option<Vec<Value>> = None;
             let open = decided
                 .iter()
@@ -2745,11 +2995,22 @@ impl RowIndex {
                 .collect();
             Class {
                 open,
+                firsts: None,
                 halves: HashMap::new(),
                 none: None,
             }
         });
         let (rows, filing, open) = (&*rows, &*filing, &*open);
+        if let Some(blocks) = blocks {
+            let firsts =
+                firsts.get_or_insert_with(|| blocks.firsts(|i| row_default(filing, open, i)));
+            let changed: Vec<(usize, bool)> = at
+                .iter()
+                .map(|&i| (i, fits(&rows[i])))
+                .filter(|&(i, holds)| holds != row_default(filing, open, i))
+                .collect();
+            return blocks.eval(firsts, &changed);
+        }
         let restricted = match (at.first(), at.last()) {
             (Some(&first), Some(&last)) => {
                 let i = half(rows, filing, open, halves, part, first, last);

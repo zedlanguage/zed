@@ -2093,7 +2093,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::mem::replace` and `std::mem::take` to move a value out of a slot it is replaced in | `project_each`, `settle` | Mutation (gap 11) | The new value built from the old and bound to a new name |
 | `retain` on the map of bounds by linear form, joining each disjunct's bounds into the disjunction's | `disjunction_hulls` | Mutation (gap 11) | `where` over the bounds, or a fold that builds the joined map |
 
-## Entries from DISJ-three-atom-empty (`zedc/src/store/presburger.rs`)
+## Entries from DISJ-three-atom-empty (`zedc-presburger/src/presburger.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2177,6 +2177,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A stack of runs, each a meet and its length, merged with `Vec::pop_if` while the top run is no longer than the new one, as a binary counter | `Type::boxes` | Mutation | A list of runs returned from each step of the fold, merged by a recursive step on its head |
 | A `HashMap<Vec<usize>, usize>` numbering each set of rows (a region) on first sight, seeded with the empty set as 0 | `RowIndex::new` | Mutation (gap 2: an intern table) | A fold over the keys with the map in its state, or the sets sorted and numbered by their rank |
 
+## Entries from LIST-parity-keys (`zed-kernel/src/types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack of `enum Step { Meet, Tuple(n) }` with a results `Vec` that `Tuple(n)` takes the last `n` of by `split_off` | `meet_types` | Mutation | A recursive meet over the columns, its depth bounded by the type's depth, or a fold over a work list returning the results list |
+| A `HashMap<Place, BTreeMap<Value, usize>>` filled on first read by `entry().or_insert_with` inside an `FnMut` closure passed to `spine` | `RowIndex::holds`, `spine` | Mutation (gap 2: a memo table), closures capturing mutable state | `spine` returns the places it reads, the regions are made for the new places and threaded back in the index state |
+| A `HashMap<Vec<usize>, usize>` numbering each set of types (a region) on first sight, and `HashSet`s of types seen | `place_regions` | Mutation (gap 2: an intern table) | A fold over the sorted keys with the map in its state |
+| `Option<Firsts>` filled on first use by `get_or_insert_with` in a class; a `Vec` of block deltas sorted and merged in place by `dedup_by` | `RowIndex::holds`, `Blocks::eval` | Mutation | The class's firsts made when the class is made; the deltas grouped by a sorted fold |
+
 ## Entries from CHAIN-zip-size (`zed-kernel/src/types/bdd.rs` with its module `xor`, `bdd/set.rs`, `bdd/list.rs`)
 
 | Rust construct | Sites | Gap | At the port |
@@ -2193,7 +2202,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | The breadth-first search of a carrying test kept in a `HashMap` and resumed in place: `Carried::others` expands the queue to the depth of a name and records each other way a name is reached at its depth (`also`) | `Carried::expand`, `Carried::others` | Mutation | A search state returned by each step, the map of searches threaded through `Arms::deciding` |
 
-## Entries from NARROW-eager-scope (`zedc/src/store/conjuncts.rs`, `zedc/src/store/product.rs`, `zedc/src/check/arms.rs`)
+## Entries from NARROW-eager-scope (`zedc-presburger/src/conjuncts.rs`, `zedc-preimage/src/product.rs`, `zedc-check/src/check/arms.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|

@@ -482,3 +482,111 @@ fn a_tuple_type_with_a_complement_column_is_filed_by_it() {
     assert_eq!(listed(&met).map(|s| s.len()), Some(c));
     assert_eq!(listed(&one(met)).map(|s| s.len()), Some(c));
 }
+
+#[test]
+fn tuples_of_one_spine_are_one_class_per_region_of_their_scalars() {
+    // `((2i, i),)` met with each `((int - (2k + 1), x),)`: the tuples differ only in scalars
+    // that are not first components, and each is read by the region of its scalar there, the
+    // set of the open rows' types there that list it, not by its value (LIST-parity-keys). The
+    // meets along a path are made column by column where both sides are one row, nested ones
+    // too. Each list is checked against `contains` over the candidates below.
+    let v = |x: Value| Type::lit(&x).expect("a literal");
+    let scalars: Vec<Value> = (0..8)
+        .map(int)
+        .chain([
+            Value::Bool(true),
+            Value::str("s"),
+            Value::str("t"),
+            Value::atom("a"),
+            Value::atom("b"),
+            Value::float(0.5),
+        ])
+        .collect();
+    let mut all: Vec<Value> = Vec::new();
+    for a in &scalars {
+        for b in &scalars {
+            all.push(one_of(pair(a.clone(), b.clone())));
+            all.push(one_of(pair(one_of(a.clone()), b.clone())));
+        }
+    }
+    let exact = |t: &Type| -> usize {
+        let want: BTreeSet<Value> = all.iter().filter(|x| t.contains(x)).cloned().collect();
+        assert_eq!(listed(t), Some(want.clone()), "{t}");
+        want.len()
+    };
+    let one = |t: Type| Type::tuple(vec![t]);
+    let but = |x: Type| &Type::top() - &x;
+    let u = Type::union_all(scalars.iter().cloned().map(v));
+    let firsts = |c: usize| {
+        one(Type::union_all(
+            (0..c).map(|i| Type::tuple(vec![lit(2 * i), lit(i)])),
+        ))
+    };
+    let meet = |start: Type, xs: &[Type]| {
+        xs.iter().enumerate().fold(start, |t, (k, x)| {
+            &t & &one(Type::tuple(vec![&Type::int() - &lit(2 * k + 1), x.clone()]))
+        })
+    };
+    let c = 4;
+    // Second columns of every kind: all integers, one literal, a list shared by every row, a
+    // complement, lists of other kinds, and a column that lists strings and atoms.
+    let xs = [
+        Type::int(),
+        lit(0),
+        Type::union_all((0..c).map(lit)),
+        &Type::int() - &lit(2),
+        &v(Value::str("s")) | &lit(1),
+        but(v(Value::atom("a"))),
+        &(&v(Value::atom("b")) | &v(Value::str("t"))) | &Type::union_all((1..3).map(lit)),
+        &u - &v(Value::float(0.5)),
+    ];
+    for x in &xs {
+        let same: Vec<Type> = (0..c).map(|_| x.clone()).collect();
+        exact(&meet(firsts(c), &same));
+    }
+    // Each row its own second column, so the scalars there fall in many regions: all of them,
+    // which meet to nothing, and five that keep three of the four `(2i, i)`.
+    let own = xs.to_vec();
+    exact(&meet(firsts(c), &own));
+    let some = [0, 2, 3, 5, 7].map(|k| xs[k].clone());
+    assert_eq!(exact(&meet(firsts(c), &some)), 3);
+    // Pairs of every scalar with the first column a complement too, and its exclusive or.
+    let square = one(Type::tuple(vec![u.clone(), u.clone()]));
+    let met = meet(square.clone(), &some);
+    assert!(exact(&met) > 1);
+    exact(&meet(square.clone(), &own));
+    exact(&parity([square.clone(), met.clone()]));
+    // A nested first column, `((((i), i)),)`, met column by column at depth two, and a meet
+    // that is empty in one column.
+    let nested = one(Type::tuple(vec![one(u.clone()), u.clone()]));
+    let deep = meet(nested.clone(), &own);
+    exact(&deep);
+    exact(&(&deep & &one(Type::tuple(vec![one(lit(0)), lit(1)]))));
+    exact(&(&deep & &one(Type::tuple(vec![one(lit(0)), but(Type::int())]))));
+    assert_eq!(
+        exact(&(&meet(firsts(c), &[lit(0)]) & &one(Type::tuple(vec![lit(0), lit(1)])))),
+        0
+    );
+    // Expected counts at the sizes the scaling test checks the shape of: every `(2i, i)` is
+    // in each row where `x` holds `i`.
+    for c in [1, 2, 7] {
+        let count = |x: &dyn Fn(usize) -> Type| {
+            let xs: Vec<Type> = (0..c).map(x).collect();
+            meet(firsts(c), &xs).each_value().map(|vs| vs.count())
+        };
+        assert_eq!(count(&|_| Type::int()), Some(c), "c = {c}");
+        assert_eq!(count(&|_| lit(0)), Some(1), "c = {c}");
+        assert_eq!(
+            count(&|_| Type::union_all((0..c).map(lit))),
+            Some(c),
+            "c = {c}"
+        );
+        assert_eq!(count(&|k| &Type::int() - &lit(c + k)), Some(c), "c = {c}");
+        // `x` without `2k + 1` keeps the even `i` and the odd ones of `2k + 1 >= c`.
+        assert_eq!(
+            count(&|k| &Type::int() - &lit(2 * k + 1)),
+            Some(c.div_ceil(2)),
+            "c = {c}"
+        );
+    }
+}

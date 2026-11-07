@@ -544,13 +544,53 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     for (c, n) in [(1, 4), (2, 8), (7, 23)] {
         assert_eq!(count(c), Some(n), "c = {c}");
     }
-    scaling::check(
-        "listing a meet with tuple types of many keys each, by count",
-        64,
-        |c| {
-            assert_eq!(count(c), Some(3 * c + 2));
-        },
+    // Each tuple was checked on the decision list restricted to the smallest range of halves
+    // holding the rows with a key of it, and those rows, two per tuple, are in the order of
+    // their hashes, so the range held most rows: 20.3 times the instructions from `c` 64 to
+    // 512. The list is read from the blocks those rows change (LIST-parity-keys): 9.5 times,
+    // under the 8 log 512 / log 64 = 12 times of order `c log c`.
+    scaling::compare(
+        "listing a meet with tuple types of many keys each, by count: sizes 64 and 512",
+        "for work of order c log c, 8 log 512 / log 64 = 12 times",
+        12.0,
+        || assert_eq!(count(64), Some(3 * 64 + 2)),
+        || assert_eq!(count(512), Some(3 * 512 + 2)),
     );
+}
+
+#[test]
+fn listing_tuples_that_differ_off_their_first_components_scales() {
+    // `((2i, i),)` for `i < c` met with each `((int - (2k + 1), x),)` for `k < c`. Each box of
+    // the meet held the meet of all `c + 1` tuple types as a diagram of `c + 1` rows, order
+    // `c²` to build and to list, and each tuple was a class of its own, reading every row:
+    // from `c` 64 to 256, 16.5 times the instructions for `x` int and 0, and 17.3 times for
+    // `x` int - (c + k) (LIST-parity-keys). One-row tuple types now meet column by column, and
+    // the scalars there are read by their regions.
+    let pairs = |c: usize, which: usize| -> Type {
+        let firsts = (0..c).map(|i| Type::tuple(vec![Type::tuple(vec![lit(2 * i), lit(i)])]));
+        let x = |k: usize| match which {
+            0 => Type::int(),
+            1 => lit(0),
+            _ => &Type::int() - &lit(c + k),
+        };
+        (0..c).fold(Type::union_all(firsts), |t, k| {
+            &t & &Type::tuple(vec![Type::tuple(vec![
+                &Type::int() - &lit(2 * k + 1),
+                x(k),
+            ])])
+        })
+    };
+    for (which, x) in ["all integers", "one literal", "a complement"]
+        .into_iter()
+        .enumerate()
+    {
+        let built = scaling::inputs(64, |c| pairs(c, which));
+        let what = format!("listing pairs off their first components, the second {x}, by count");
+        scaling::check(&what, 64, |c| {
+            let want = if which == 1 { 1 } else { c };
+            assert_eq!(built[&c].each_value().map(|v| v.count()), Some(want));
+        });
+    }
 }
 
 /// The rows of a decision tree on `c` columns of `{b, b + 1, b + 2}`: on column `i`, after
