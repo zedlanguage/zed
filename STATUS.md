@@ -1482,11 +1482,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DISJ-dpll | impl attempt 1 | 2026-11-07 06:25 | hub family r=4/8/32: base f60e2220 77 ms/390 ms/21.9 s, branch b3984216 26 ms/111 ms/1.08 s (7/15/31 passes), same hull; queued DISJ-hub-passes; ready b3984216  |
+| CATALOG-followups | impl attempt 1 | 2026-11-07 00:56 | catalog rows, scoped binders, tests and iteration.zed edited; building |
+| DISJ-dpll | repair attempt 1 | 2026-11-07 06:25 | probe cases 0..4000 branch vs main 5b0aee39: 4 results differ, all in the transfer before (preimage_ref), new path identical; cases 288, 3331, 3606 become exact |
 | LIST-xor-finite | impl attempt 1 | 2026-11-07 06:40 | started: worktree wt/list-xor-finite from f60e2220 |
-| LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | rebased onto origin/main (crate split, LOAD-chain-sep): conflicts resolved, fmt+clippy clean; running groups (load 18.43) |
-| PA-let-stack | impl attempt 1 | 2026-11-07 07:51 | reproduced: arms of a 100,000-binding block on a 2 MiB thread SIGSEGV; gdb backtrace shows ~667 frames of product::walk (leaf in Scope::assume->narrow->atom_nam |
-| S22-hole-summaries | impl attempt 1 | 2026-11-07 07:27 | fix 1 (Pa::to_treap over the domain's hull) + fix 2 (pa_select gives domain holes to the stretch before, joins one arm's stretches): spread chain [-100,99] case |
+| LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | ready at 2b2daea54ab4024df03f6bdfdd9d72464dbbd6f1 after coordinator points 1-4; queued LOAD-affine-cone/-drift/-join; load 34.82 |
+| PA-let-stack | impl attempt 1 | 2026-11-07 07:51 | ready: wt/pa-let-stack 485ff593 on 5b0aee39 (rebased twice; STATUS/ZED_PORT_GAPS append conflicts kept both sides); 353 pieces pass, clippy and fmt clean; load  |
+| S22-hole-summaries | impl attempt 1 | 2026-11-07 07:27 | ready ace151de on eb84152b: 403 pieces pass after rebase, fmt and clippy clean; ctl worktree removed / load 22.07 35.39 40.19 |
+| TY-subst-stacks | impl attempt 1 | 2026-11-07 00:33 | negative control on old code (5b0aee39): F106 atoms_nested_in_atoms and ATOM-payload-open a_variable_deep_in_a_payload scaling tests without the 512 MiB stack b |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
