@@ -2990,7 +2990,7 @@ impl<'a> Ck<'_, 'a> {
         &mut self,
         b: usize,
         sum: &Rc<Summarized>,
-        names: &images::Names,
+        names: &images::Names<Product>,
     ) -> (Option<IntervalSet>, Premises) {
         let vars = sum.summary.vars();
         let limit = vars.len().min(names.len());

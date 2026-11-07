@@ -555,7 +555,7 @@ impl fmt::Debug for Held {
 /// a read finds the same whichever earlier read it starts from.
 /// What one summary read: the scope's names, the summary with the orders of the scope's
 /// bindings, and the tree of its inputs.
-type HeldRead = images::Read<(Arc<Held>, Orders)>;
+type HeldRead = images::Read<(Arc<Held>, Orders), Product>;
 
 #[derive(Clone, Default)]
 struct Reads(Arc<Mutex<HashMap<u64, HeldRead>>>);

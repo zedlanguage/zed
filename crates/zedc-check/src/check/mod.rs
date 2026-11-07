@@ -675,7 +675,7 @@ struct Ck<'t, 'a> {
     arms: arms::Arms<'a>,
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
-    reads: HashMap<usize, images::Read<Rc<arms::Summarized>>>,
+    reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::Product>>,
 }
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of

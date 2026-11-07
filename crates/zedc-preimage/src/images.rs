@@ -18,7 +18,6 @@ use imbl::ordmap::DiffItem;
 use zedc_lattice::cell::Premises;
 
 use crate::preimage::Shift;
-use crate::product::Product;
 
 /// What one input adds, or the sum of a subtree's.
 #[derive(Clone)]
@@ -162,18 +161,18 @@ fn prio(key: &str) -> u64 {
 
 /// What a summary read in one scope: the scope's names, what the caller keeps of the summary
 /// and of the scope beside them (`S`), and the tree of the inputs it read there, each with its
-/// leaf ([`Leaf`]).
-pub struct Read<S> {
+/// leaf ([`Leaf`]). The scope gives each name a `P`, its product in the walks that read here.
+pub struct Read<S, P> {
     /// The scope's names.
-    pub names: Names,
+    pub names: Names<P>,
     /// What the caller keeps of the summary and of the scope.
     pub sum: S,
     /// The inputs the summary read, each with its leaf.
     pub tree: Tree,
 }
 
-/// A scope's names and their products.
-pub type Names = imbl::OrdMap<Arc<str>, Product>;
+/// A scope's names, each with its `P`.
+pub type Names<P> = imbl::OrdMap<Arc<str>, P>;
 
 /// The names whose entries differ between `a` and `b`, found from the persistent maps, which
 /// skip the parts the two share.
@@ -192,13 +191,13 @@ pub fn changed<'a, V: PartialEq>(
 /// `changed` names: the names where the two scopes, or the two summaries, differ, each once or
 /// more. `None` when those number `limit` or more, the inputs a tree made afresh would read
 /// ([`fresh`]). `O(m log k)` for `m` names changed.
-pub fn updated<'a>(
+pub fn updated<'a, P>(
     base: &Tree,
     changed: impl Iterator<Item = &'a Arc<str>>,
     vars: &imbl::OrdSet<Arc<str>>,
-    names: &Names,
+    names: &Names<P>,
     limit: usize,
-    leaf: impl Fn(&Arc<str>, &Product) -> Leaf,
+    leaf: impl Fn(&Arc<str>, &P) -> Leaf,
 ) -> Option<Tree> {
     let mut keys = Vec::new();
     for v in changed {
@@ -222,12 +221,12 @@ pub fn updated<'a>(
 
 /// The tree of what a summary reading `vars` reads in a scope of names `names`, made afresh
 /// from the smaller of the two: `O(h log h)` for the `h` inputs the scope has.
-pub fn fresh(
+pub fn fresh<P>(
     vars: &imbl::OrdSet<Arc<str>>,
-    names: &Names,
-    leaf: impl Fn(&Arc<str>, &Product) -> Leaf,
+    names: &Names<P>,
+    leaf: impl Fn(&Arc<str>, &P) -> Leaf,
 ) -> Tree {
-    let here: Vec<(&Arc<str>, &Product)> = if vars.len() <= names.len() {
+    let here: Vec<(&Arc<str>, &P)> = if vars.len() <= names.len() {
         vars.iter().filter_map(|v| names.get_key_value(v)).collect()
     } else {
         (names.iter()).filter(|(v, _)| vars.contains(*v)).collect()
