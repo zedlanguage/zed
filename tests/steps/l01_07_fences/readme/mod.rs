@@ -9,11 +9,13 @@ mod scaling;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use zed_kernel::{Evaluator, World};
+use zed_kernel::{Evaluator, Term, World};
 use zed_tests::fences::{self, DocFence};
 use zed_tests::oracle::ENABLED;
 use zed_tests::readme::{self, Entry};
+use zedc::elab::Cones;
 use zedc::fence;
 use zedc::interp;
 use zedc::lex::lex_fence;
@@ -165,12 +167,20 @@ fn run_problems(at: &str, text: &str, checks: usize) -> Vec<String> {
     let Ok((_, u, _)) = &*front else {
         return out;
     };
+    // One index of the unit for all its checks, where `Unit::get` makes one for each.
+    let cones = Cones::new(u);
+    let kernels: HashMap<&str, &Arc<str>> = u
+        .defs
+        .iter()
+        .map(|d| (d.name.as_str(), &d.kernel))
+        .collect();
     for k in 1..=checks {
         let name = format!("readmeCheck{k}");
-        let Some(term) = u.get(&name) else {
+        let Some(&kernel) = kernels.get(name.as_str()) else {
             out.push(format!("{at}: `{name}` is not a binding of the unit"));
             continue;
         };
+        let term = cones.close(Term::Var(kernel.clone()));
         let got = run::direct(&interp::prelude(term), &mut Evaluator::new(World::new()));
         match got {
             Ok(v) if v.to_string() == "true" => {}

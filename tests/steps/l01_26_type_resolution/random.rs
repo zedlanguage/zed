@@ -1,9 +1,13 @@
 //! Soundness on random bodies: for each arrow the checker gives a random function, each value
 //! the evaluator computes at arguments of the arrow's parameter types lies in its result.
 
-use zed_kernel::{Evaluator, F64, Value, World};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use zed_kernel::{Evaluator, F64, Term, Value, World};
 use zed_tests::instances::Rng;
 use zedc::check::ty::Carrier;
+use zedc::elab::Cones;
 
 use super::info;
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
@@ -86,8 +90,15 @@ fn each_computed_value_is_in_its_arrows_result() {
             }
         }
         let u = elab(&p).unwrap_or_else(|e| panic!("{p}: {e:?}"));
+        // One index of the unit for all its calls, where `Unit::get` makes one for each.
+        let cones = Cones::new(&u);
+        let kernels: HashMap<&str, &Arc<str>> = u
+            .defs
+            .iter()
+            .map(|d| (d.name.as_str(), &d.kernel))
+            .collect();
         for (k, (call, result)) in calls.iter().enumerate() {
-            let t = u.get(&format!("r{k}")).unwrap();
+            let t = cones.close(Term::Var(kernels[format!("r{k}").as_str()].clone()));
             match Evaluator::new(World::new()).run(&with_prelude(t)) {
                 Ok(v) => {
                     assert!(result.contains(&v), "{f}{call}: {v} is not in {result}");

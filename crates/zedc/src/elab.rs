@@ -96,6 +96,12 @@ impl<'u> Cones<'u> {
             .filter_map(|x| self.by_kernel.get(&*x).copied())
     }
 
+    /// The positions of the definitions the definition at position `i` reads, found when
+    /// first asked.
+    pub fn reads(&self, i: usize) -> &[usize] {
+        self.reads[i].get_or_init(|| self.positions(&self.unit.defs[i].term).collect())
+    }
+
     /// The definitions `roots` read, and those they read in turn: their positions in the
     /// unit, in its order.
     pub fn reach(&self, roots: &[&Term]) -> Vec<usize> {
@@ -103,9 +109,7 @@ impl<'u> Cones<'u> {
         let mut todo: Vec<usize> = roots.iter().flat_map(|t| self.positions(t)).collect();
         while let Some(i) = todo.pop() {
             if seen.insert(i) {
-                let reads =
-                    self.reads[i].get_or_init(|| self.positions(&self.unit.defs[i].term).collect());
-                todo.extend(reads);
+                todo.extend(self.reads(i));
             }
         }
         seen.into_iter().collect()

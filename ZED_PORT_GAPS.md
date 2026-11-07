@@ -1889,3 +1889,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A divisor borrowed or owned (`Cow<'a, BigUint>`) beside its reciprocal, built once and used for every block | `Divisor` | None | Zed shares values; the divisor is a value and the reciprocal a field beside it |
 ## Entries from CAST-menu-check and CAST-menu-rest (`zedc/src/check/mod.rs`)
 - No new gap. The carriers of an argument are a `u8` mask with one bit per carrier, and the disjointness test runs over a `u16` with one bit per mask value; Zed writes both as sets of a four-member enum (bit operations, gap 1 where the masks are packed). The literal refusals of an application are pushed to a `Vec` on the checker and split off after it (mutation, gap 2), which the port writes as a list the application returns. A trial of a repair saves the checker's state, applies and undoes (as F6 and the CAST-menu entry).
+
+## Entries from ORACLE-chain (`tests/src/oracle.rs`, `zedc/src/elab.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `OnceCell` per definition holding its reads, filled on the first call | `Cones::reads`, `Cones::reach` | Lazy cells (gap 3) | The reads of every definition computed once when the cones are built, as one map from position to reads |
+| A visited set kept as a vector of walk numbers, one per definition, set in place by `std::mem::replace` so all walks share it without clearing | `Runs::run` | Mutation | A set of the positions met, new for each walk; each walk is over one run's cone, so the cost stays that of the walk |
+| `Vec<Known>` and `Vec<Option<String>>` written by index as definitions are run or marked, and a `loop` whose `break` gives the first stop | `Runs::outcomes`, `Runs::reads_a_stop`, `Runs::values` | Mutation | Maps from position to state and to outcome threaded through a fold over the unit's order; the doubling of the prefixes as a recursive function returning the stop |

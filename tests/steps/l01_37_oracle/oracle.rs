@@ -14,7 +14,8 @@ fn every_enabled_fence_agrees() {
             r.add(&f.at, unit(&f.text, engines));
         }
     });
-    assert_eq!(runs, 4, "native runs, each leaving no cell live");
+    // The lambda fence's two bindings run together, once under each engine.
+    assert_eq!(runs, 2, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     // The lambda fence's `five` and `seven` under each engine, and the table checks of the
     // four fences: the three rejected ones compare nothing.
