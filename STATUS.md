@@ -1536,13 +1536,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CORPUS-int-cap | impl attempt 1 | 2026-11-07 15:32 | zed-kernel dep refused by m0_04 the_references_do_not_depend_on_the_compiler, so read_digits copied into zedrt with num-bigint's product; 100k/800k digits 44.6M |
 | EMPTY-overlap-chain | impl attempt 3 | 2026-11-07 01:46 | started on origin/main 45f8a2bb, worktree wt/empty-overlap-chain, load 14.24 |
-| GROUP-admit-msg | impl attempt 1 | 2026-11-05 04:07 | started |
+| GROUP-admit-msg | impl attempt 1 | 2026-11-05 04:07 | admission refusals reworded per arm with site and path, Show prints L .. U -> V and surface leaves; spec 1bf7dde on wt/group-admit-msg-spec; building tests |
+| KERNEL-leaf-digits | impl attempt 1 | 2026-11-07 15:32 | measured read_digits leaf 32..2048 at 10^3..10^6 random digits (instructions, min of 2-20 runs, load5 28-36): 1024 fewest at every size (10^3: 47,480 vs 52,879  |
 | LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | reproduced on 26372a77: drifting chain with q=(x<10//x>20), shift +3: Extending 0.39/1.62/7.06 s at 40/80/160 links (quadratic, load ~22); shared-atom chain (x  |
-| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | random test added (follow.rs, 600 rounds, let_narrowing vs let_preimage over all inputs); negative controls run once, not committed: dropping the width, the inf |
-| PREIMAGE-or-chain | impl attempt 1 | 2026-11-07 15:35 | rebased onto b4e083a7; confirmed by reading Formula (Arc<Vec> parts, no prefix sharing): g // (!g && b) at each level holds a distinct Or vector of each prefix, |
-| PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | started in wt/preimage-ref-tests; prior commits 3630da47 and 04dd4432 present |
-| WORDS-half-layer | impl attempt 1 | 2026-11-07 15:34 | started; worktree from origin/main 581c2f56 |
+| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | ready e1849d6d on f990a010: 195/195 affected pieces pass with docs after rebase; l02_03 bf16 failure is the spec's (WORDS-half-layer) |
+| PREIMAGE-or-chain | impl attempt 1 | 2026-11-07 15:35 | reproduced on b4e083a7: new scaling test k=256->2048 for // as ifs fails, 15.6 MB -> 663 MB (42.6x, limit 24); load 26 |
+| PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | ready at d60cdd21 with TD-finite and S31b row fix: fmt, clippy -D warnings (workspace and libs without feature) ok; 129 pieces l01_25, zedc-preimage, zedc, zed- |
+| ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | stopped for decision: pendant method answers parts today's solver refuses (6 in 900 random cases); stage 1 uncommitted in wt/st-eqs-cubic |
+| TD-finite | impl attempt 1 | 2026-11-05 04:07 | committed comment at Type::finite (C22); zed-kernel lib 100, l01_23 155, l01_28 63, zedc lib 90 pass, load 20-32 |
+| WORDS-half-layer | impl attempt 1 | 2026-11-07 15:34 | ready e3d475fa on wt/words-half-layer; l02_03 91/91 (was 90/1), l01_07, l01_29, s_01, unit pieces pass, load ~20-30; allIntro failure from unpushed spec 351171f |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
