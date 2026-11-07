@@ -95,15 +95,19 @@ fn same(eager: &Scope, lazy: &Scope, all: &[Arc<str>], trace: &[String]) -> usiz
     stale
 }
 
-/// Runs `seeds` random sequences of tests drawn by `test`, joins and bindings from `start`,
-/// eagerly and lazily, and checks them the same after each step. Returns the number of names
-/// the lazy scope held unsettled, the number of states with a star of two hubs, and of those
-/// the number with a conjunct of the two hubs.
-fn run(start: &Scope, seeds: u64, test: fn(&mut Rng, usize) -> Term) -> (usize, usize, usize) {
+/// Runs, for each seed of `seeds`, a random sequence of tests drawn by `test`, joins and
+/// bindings from `start`, eagerly and lazily, and checks them the same after each step.
+/// Returns the number of names the lazy scope held unsettled, the number of states with a
+/// star of two hubs, and of those the number with a conjunct of the two hubs.
+fn run(
+    start: &Scope,
+    seeds: std::ops::Range<u64>,
+    test: fn(&mut Rng, usize) -> Term,
+) -> (usize, usize, usize) {
     let p = Premises::new();
     let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
     let (mut stale, mut two, mut related) = (0, 0, 0);
-    for seed in 0..seeds {
+    for seed in seeds {
         let mut rng = Rng::new(seed);
         let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
         let mut trace = vec![format!("seed {seed}")];
@@ -164,13 +168,13 @@ fn run(start: &Scope, seeds: u64, test: fn(&mut Rng, usize) -> Term) -> (usize, 
 #[test]
 fn a_lazy_scope_settles_each_name_to_the_eager_product() {
     let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
-    let (stale, _, _) = run(&start, 300, test);
+    let (stale, _, _) = run(&start, 0..300, test);
     // The lazy scope did leave names unsettled, so the comparison is not of two eager scopes.
     assert!(stale > 0, "the lazy scope settled every name at once");
 }
 
-#[test]
-fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() {
+/// Every name unbounded but the two hubs, each within [-20, 20].
+fn bounded_hubs() -> Scope {
     let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
     let hubs = HUBS
         .iter()
@@ -182,8 +186,12 @@ fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() 
         })
         .reduce(and)
         .expect("two hubs");
-    let start = ints(&all).assume(&hubs, true, &Premises::new());
-    let (stale, two, related) = run(&start, 100, wide);
+    ints(&all).assume(&hubs, true, &Premises::new())
+}
+
+#[test]
+fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() {
+    let (stale, two, related) = run(&bounded_hubs(), 0..100, wide);
     println!(
         "{stale} unsettled names, {two} states with a star of two hubs, {related} with a \
          conjunct of the two"
@@ -191,4 +199,80 @@ fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() 
     assert!(stale > 0, "the lazy scope settled every name at once");
     assert!(two > 0, "no state held a star of two hubs");
     assert!(related > 0, "no state held a star of two related hubs");
+}
+
+#[test]
+fn a_test_between_the_hubs_of_a_star_settles_them_as_the_eager_scope_does() {
+    // Seed 1109 of the run above, past its default seeds: a disjunction of tests on `m + n`
+    // and a star `ai >= n + m - c` over both hubs, then `n >= m`. The eager scope gave n
+    // int[1..=20] and the lazy one int[0..=20]: the disjunction was a part of the star's block
+    // and of the hubs' block under one key, so each block found the other's snapshot there and
+    // projected it again, with `n >= m` in the eager scope, which projects the star at once.
+    // Each block now keys its parts apart (item NARROW-lazy-settle). `run` panics on the first
+    // name the two scopes settle apart.
+    let (_, two, _) = run(&bounded_hubs(), 1109..1110, wide);
+    assert!(two > 0, "seed 1109 no longer makes a star of two hubs");
+}
+
+#[test]
+fn a_test_between_the_hubs_of_a_star_after_a_disjunction_on_them_is_a_known_precision_limit() {
+    // The shape of seed 1109, named: `used` and `free` in [-20, 20], a star
+    // `cap >= used + free - 3` whose leaf `cap` is unbounded above, then
+    // `used + free >= 1 || used - free >= 30`, then `used >= free`. With the disjunction the
+    // last test shows `used >= 1`, which only projecting the two together finds. The
+    // disjunction's part, keyed by its conjunct and the equalities, is not due again for a new
+    // inequality (COMPLEXITY.md S25 B4), so both scopes keep `used` int[-19..=20]; the eager
+    // scope found `used >= 1` only while the star's block and the hubs' block shared the
+    // part's key, at a cost of `k` projections for each of `k` such tests (item
+    // NARROW-lazy-settle). With the disjunction before the star, both keep int[-19..=20] too.
+    let p = Premises::new();
+    let all = names(&["used", "free", "cap"]);
+    let sum = || prim(Prim::Add, var("used"), var("free"));
+    let bounds = ["used", "free"]
+        .iter()
+        .map(|h| {
+            and(
+                prim(Prim::Ge, var(h), int(-20)),
+                prim(Prim::Le, var(h), int(20)),
+            )
+        })
+        .reduce(and)
+        .expect("two names");
+    let start = ints(&all).assume(&bounds, true, &p);
+    let room = or(prim(Prim::Ge, sum(), int(1)), diff_ge("used", "free", 30));
+    let star = prim(Prim::Ge, var("cap"), prim(Prim::Sub, sum(), int(3)));
+    let used: Arc<str> = Arc::from("used");
+    let ones = |s: &Scope| {
+        (-20..=20)
+            .filter(|v| s.settled(&used).contains(&zed_kernel::Value::Int(*v)))
+            .collect::<Vec<i64>>()
+    };
+    for (first, second, from) in [(&star, &room, -19), (&room, &star, -19)] {
+        let narrowed = |s: Scope| {
+            s.assume(first, true, &p).assume(second, true, &p).assume(
+                &diff_ge("used", "free", 0),
+                true,
+                &p,
+            )
+        };
+        let (eager, lazy) = (narrowed(start.clone()), narrowed(start.clone().lazy()));
+        let order = format!("{first:?} then {second:?}");
+        assert_eq!(
+            ones(&eager),
+            (from..=20).collect::<Vec<i64>>(),
+            "{order}: {eager}"
+        );
+        same(&eager, &lazy, &all, &[order]);
+    }
+}
+
+#[test]
+fn seed_3011_a_new_star_settles_its_leaf_as_the_eager_scope_does() {
+    // Seed 3011 of `wide`, past its default seeds: `m + n >= -2` holds (`m <= 8` rules out the
+    // other side of a disjunction), then `a0 >= n + m - 2`, then `a0 >= n + m + 1`. The eager
+    // scope kept `a0 >= -4` from the first where the lazy scope, settling `a0`, found
+    // `a0 >= -1`, on main before item NARROW-lazy-settle too; with the parts of a star's block
+    // keyed apart from the hubs' block, the two agree.
+    let (_, two, _) = run(&bounded_hubs(), 3011..3012, wide);
+    assert!(two > 0, "seed 3011 no longer makes a star of two hubs");
 }

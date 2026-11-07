@@ -356,3 +356,34 @@ fn a_value_with_no_summary_over_one_input_narrows_no_input() {
         );
     }
 }
+
+/// A known precision limit (COMPLEXITY.md S25, B4) that a program meets. Where `used + free >=
+/// 1 || used - free >= 30` holds, the test `used >= free` shows `used >= 1`, so `used - 1` is
+/// at least 0. But the test on `cap` between them projects the disjunction, and the new
+/// inequality `used >= free` does not make the disjunction's part due again, so `used` stays
+/// int[-19..=20] and the program is rejected; without the test on `cap` it is accepted.
+/// Closing B4 in O(n log n) is item ST-ladder-incremental. If this test fails because the
+/// program is accepted, the limit is closed: assert that it is accepted, with its rows.
+#[test]
+fn a_test_between_two_names_after_a_disjunction_on_both_is_a_known_precision_limit() {
+    let src = "copied(positional used: int, positional free: int, positional cap: int) =\n  \
+           if used >= -20 && used <= 20 && free >= -20 && free <= 20 {\n    \
+             if used + free >= 1 || used - free >= 30 {\n      \
+               if cap >= 0 {\n        \
+                 if used >= free { last = used - 1; popCount(last) } else { 0 }\n      \
+               } else { 0 }\n    \
+             } else { 0 }\n  \
+           } else { 0 }\n\
+         test { (5, 3, 10) -> 1, (1, 4, 10) -> 0, (8, 0, 9) -> 3, (5, 3, -1) -> 0 }\n";
+    let e = rejected(src);
+    assert!(e.contains("this `x` is int[-20..=19]"), "{e}");
+    let without = "copied(positional used: int, positional free: int) =\n  \
+           if used >= -20 && used <= 20 && free >= -20 && free <= 20 {\n    \
+             if used + free >= 1 || used - free >= 30 {\n      \
+               if used >= free { last = used - 1; popCount(last) } else { 0 }\n    \
+             } else { 0 }\n  \
+           } else { 0 }\n\
+         test { (5, 3) -> 1, (1, 4) -> 0, (8, 0) -> 3 }\n";
+    assert!(accepted(without), "{}", rejected(without));
+    assert!(rows_pass(without), "{without}");
+}

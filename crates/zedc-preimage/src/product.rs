@@ -561,13 +561,20 @@ fn syms(f: &Formula) -> Vec<Arc<str>> {
 /// constraints it is projected with, sorted; `None` in their place for a tree of blocks
 /// projected as a whole. A part is projected again when an equality joins or leaves them; a
 /// new inequality alone does not make it due (a known limit of precision, COMPLEXITY.md), so
-/// that a part costs its conjunct and not the constraints.
-pub type PartKey = (Formula, Option<Arc<[Con]>>);
+/// that a part costs its conjunct and not the constraints. Third, the leaf of the star whose
+/// block the part is projected in, `None` in the forest: a conjunct among the hubs of a star
+/// is a part of the star's block and of the hubs' block, each with other constraints and
+/// names, and one key for both made each block find the other's snapshot there and project
+/// every such part again at each test (item NARROW-lazy-settle).
+pub type PartKey = (Formula, Option<Arc<[Con]>>, Option<Arc<str>>);
 
 /// Each of `conjuncts` that is not a constraint, with the constraints, and the constraints
 /// alone when there are any; each part with its key, the conjunct it is projected for, or the
-/// constraints for theirs.
-fn split<'a>(conjuncts: impl Iterator<Item = &'a Formula>) -> Vec<(PartKey, Formula)> {
+/// constraints for theirs, in the star of leaf `leaf` if any.
+fn split<'a>(
+    conjuncts: impl Iterator<Item = &'a Formula>,
+    leaf: Option<&Arc<str>>,
+) -> Vec<(PartKey, Formula)> {
     let (cons, others): (Vec<&Formula>, Vec<&Formula>) =
         conjuncts.partition(|g| matches!(g, Formula::Con(_)));
     let mut eqs: Vec<Con> = cons
@@ -584,13 +591,13 @@ fn split<'a>(conjuncts: impl Iterator<Item = &'a Formula>) -> Vec<(PartKey, Form
         .into_iter()
         .map(|g| {
             (
-                (g.clone(), eqs.clone()),
+                (g.clone(), eqs.clone(), leaf.cloned()),
                 Formula::and(vec![g.clone(), base.clone()]),
             )
         })
         .collect();
     if base != Formula::top() {
-        parts.push(((base.clone(), eqs), base));
+        parts.push(((base.clone(), eqs, leaf.cloned()), base));
     }
     parts
 }
@@ -603,6 +610,8 @@ struct Block {
     parts: Vec<(PartKey, Formula)>,
     /// The names they mention.
     names: Vec<Arc<str>>,
+    /// The leaf, when the block is a star ([`Conjuncts::star`]).
+    leaf: Option<Arc<str>>,
 }
 
 impl Block {
@@ -611,9 +620,11 @@ impl Block {
     fn of(relation: &Conjuncts, b: BlockId) -> Block {
         let gs = relation.core(b);
         let names: BTreeSet<Arc<str>> = gs.iter().flat_map(|g| syms(g)).collect();
+        let leaf = names.iter().find(|x| relation.star(x) == Some(b)).cloned();
         Block {
-            parts: split(gs.iter().map(|g| &**g)),
+            parts: split(gs.iter().map(|g| &**g), leaf.as_ref()),
             names: names.into_iter().collect(),
+            leaf,
         }
     }
 }
@@ -2038,7 +2049,10 @@ impl Scope {
         // ([`Conjuncts::core`]): an eager scope projects the stars of each class it is among
         // again, unless the class gives its leaf the same bound as before
         // ([`Scope::same_leaf_bound`]). A lazy one finds the leaf stale when read, since the
-        // star's part is keyed by those conjuncts.
+        // star's part is keyed by those conjuncts. The star's projection gives the hubs no bound
+        // that the hubs' own block lacks: the leaf is unbounded on the side away from them, and
+        // the conjuncts among them are parts of both blocks, keyed apart ([`PartKey`]), so the
+        // two scopes hold the hubs alike (item NARROW-lazy-settle).
         let mut classes: BTreeSet<conjuncts::Class> = BTreeSet::new();
         let mut gone: Vec<Arc<Formula>> = Vec::new();
         for d in old.set().diff(self.relation.set()) {
@@ -2096,7 +2110,7 @@ impl Scope {
         for g in gone {
             let keys: Vec<PartKey> = self
                 .projected
-                .range((Formula::clone(&g), None)..)
+                .range((Formula::clone(&g), None, None)..)
                 .map(|(k, _)| k)
                 .take_while(|k| k.0 == *g)
                 .cloned()
@@ -2172,7 +2186,7 @@ impl Scope {
             }
             let parts: Vec<(PartKey, Formula)> = trees
                 .into_values()
-                .flat_map(|tree| split(tree.into_iter()))
+                .flat_map(|tree| split(tree.into_iter(), None))
                 .collect();
             for (key, g) in parts {
                 let names = syms(&g);
@@ -2275,9 +2289,16 @@ impl Scope {
         if work.is_empty() {
             return;
         }
+        // A star's leaf is unbounded on the side away from its hubs, so each part bounds it by
+        // a half-line its interval does not change, and no part's projection onto the hubs
+        // reads it ([`Conjuncts::star`]): a move of the leaf makes no other part due and is
+        // no move back and forth. Every part of a star mentions the leaf, through the star's
+        // own conjunct, so otherwise each move of it projected all of them (item
+        // NARROW-lazy-settle).
+        let leaf = b.leaf.as_ref();
         let mut users: BTreeMap<&Arc<str>, Vec<usize>> = BTreeMap::new();
         for (i, ns) in names.iter().enumerate() {
-            for n in ns {
+            for n in ns.iter().filter(|n| Some(*n) != leaf) {
                 users.entry(n).or_default().push(i);
             }
         }
@@ -2298,8 +2319,8 @@ impl Scope {
                     continue;
                 }
                 empty |= p.ints().is_empty();
-                again |= !moved.insert(n);
-                for &j in &users[n] {
+                again |= Some(n) != leaf && !moved.insert(n);
+                for &j in users.get(n).into_iter().flatten() {
                     if j != i && !queued[j] {
                         queued[j] = true;
                         work.push_back(j);
@@ -2380,7 +2401,7 @@ impl Scope {
         let leaf = Atom::Sym(Arc::from(conjuncts::LEAF));
         let bound = |core: &[Arc<Formula>]| -> Option<IntervalSet> {
             let mut out = IntervalSet::top();
-            for (_, part) in split(core.iter().map(|g| &**g)) {
+            for (_, part) in split(core.iter().map(|g| &**g), None) {
                 let (whole, syms) = self.framed(&part);
                 let one = |a: &Atom| match a {
                     Atom::Sym(n) => a == &leaf || self.get(n).ints().pieces().len() <= 1,

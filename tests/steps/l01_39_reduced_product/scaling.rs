@@ -3,6 +3,7 @@
 //! its length.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
@@ -734,4 +735,111 @@ fn tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time() {
             narrow(k);
         },
     );
+}
+
+/// The tests of [`a_lazy_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time`] at size
+/// `k`: `n + m >= 1 || n - m >= 30`, then `k` stars `ai >= n + m - i`, then `k` tests
+/// `n >= m - (k - i)` among the hubs, each stronger than the last.
+fn a_class_of_stars(k: usize) -> (Scope, Vec<Term>) {
+    let sum = || prim(Prim::Add, var("n"), var("m"));
+    let diff = || prim(Prim::Sub, var("n"), var("m"));
+    let mut tests = vec![prim(
+        Prim::Or,
+        prim(Prim::Ge, sum(), int(1)),
+        prim(Prim::Ge, diff(), int(30)),
+    )];
+    let star = |i: usize| {
+        let leaf = var(&format!("a{i}"));
+        prim(Prim::Ge, leaf, prim(Prim::Sub, sum(), int(i as i64)))
+    };
+    let hub = |i: usize| {
+        let bound = prim(Prim::Sub, var("m"), int((k - i) as i64));
+        prim(Prim::Ge, var("n"), bound)
+    };
+    tests.extend((0..k).map(star));
+    tests.extend((0..k).map(hub));
+    let names: Vec<Arc<str>> = ["n", "m"]
+        .into_iter()
+        .map(Arc::from)
+        .chain((0..k).map(|i| Arc::from(format!("a{i}"))))
+        .collect();
+    (ints(&names), tests)
+}
+
+#[test]
+fn a_lazy_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
+    // `k` stars on the hubs `n` and `m`, a disjunction on both, then `k` tests among the hubs.
+    // Each star is a class of its own, its constant differing, and each test changes the
+    // conjuncts among the hubs of all `k` classes. The lazy scope projects no star for them:
+    // a star moves no hub that the hubs' own block does not, so the leaves stay stale until
+    // read (item NARROW-lazy-settle). Projecting one star of each class, `k` projections per
+    // test, took 73.3 times the bytes for 8 times the size (negative control, not committed).
+    let inputs = scaling::inputs(16, |k| {
+        let (start, tests) = a_class_of_stars(k);
+        (start.lazy(), tests)
+    });
+    scaling::check(
+        "k tests among the hubs of a class of k stars, lazy",
+        16,
+        |k| {
+            let (start, tests) = &inputs[&k];
+            let p = Premises::new();
+            tests
+                .iter()
+                .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+}
+
+/// The tests of [`a_lazy_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales`] at
+/// size `k`: the star `a >= x + y`, then `k` tests `x + y >= j || x - y >= j` among its hubs.
+fn disjunctions_among_the_hubs_of_a_star(k: usize) -> (Scope, Vec<Term>) {
+    let sum = || prim(Prim::Add, var("x"), var("y"));
+    let diff = || prim(Prim::Sub, var("x"), var("y"));
+    let mut tests = vec![prim(Prim::Ge, var("a"), sum())];
+    tests.extend((0..k as i64).map(|j| {
+        prim(
+            Prim::Or,
+            prim(Prim::Ge, sum(), int(j)),
+            prim(Prim::Ge, diff(), int(j)),
+        )
+    }));
+    let names: Vec<Arc<str>> = ["a", "x", "y"].into_iter().map(Arc::from).collect();
+    (ints(&names), tests)
+}
+
+/// Assumes the tests of [`disjunctions_among_the_hubs_of_a_star`] at size `k`, in a lazy scope
+/// with `lazy`, under [`scaling::check`].
+fn disjunctions_scale(what: &str, lazy: bool) {
+    let inputs = scaling::inputs(16, |k| {
+        let (start, tests) = disjunctions_among_the_hubs_of_a_star(k);
+        (if lazy { start.lazy() } else { start }, tests)
+    });
+    scaling::check(what, 16, |k| {
+        let (start, tests) = &inputs[&k];
+        let p = Premises::new();
+        tests
+            .iter()
+            .fold(start.clone(), |s, t| s.assume(t, true, &p));
+    });
+}
+
+#[test]
+fn a_lazy_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales() {
+    // A lazy scope projects the star for none of them: each test costs its own part in the
+    // hubs' block (item NARROW-lazy-settle). Projecting one star of each set of hubs for each
+    // test took 25.4 times the instructions (negative control, not committed).
+    disjunctions_scale("k disjunctions among the hubs of a star, lazy", true);
+}
+
+#[test]
+#[ignore]
+fn an_eager_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales() {
+    // Fails: 26.4 times the instructions for 8 times the size. Each test projects the star
+    // again (`Scope::due`, its class), and that pass is linear in the star's block: the
+    // projections are 6k + 2 in all, but `Block::of` (`Conjuncts::core` and `split`), the
+    // names and the due check of every part, and the snapshot of every part in
+    // `Scope::project_block` run over all `k` parts at each test (COMPLEXITY.md C26; open
+    // item NARROW-eager-star-redo).
+    disjunctions_scale("k disjunctions among the hubs of a star, eager", false);
 }
