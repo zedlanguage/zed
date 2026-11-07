@@ -238,6 +238,74 @@ fn fuzz_gives_the_same_report_for_the_same_seed() {
     assert_ne!(run(5, 8).1, first);
 }
 
+/// The fuzz of `spec` with `n` sentences per ring at `seed`: its outcome and what it printed.
+fn fuzz_of(spec: &Spec, n: usize, seed: i64) -> (zed_tools::Outcome, String) {
+    let mut out = String::new();
+    (fuzz::run_on(spec, n, seed, &mut out), out)
+}
+
+/// The real syntactic grammar with the `break` of before review round 2 put back in `Primary`:
+/// an optional operand, so in `if c || break { 1 } else { 2 }` the operand takes the body.
+fn syntax_with_old_break() -> String {
+    let syn = grammar("syntax.peg");
+    let loop_line = syn
+        .lines()
+        .find(|l| l.trim_start().starts_with("| ~Loop "))
+        .expect("Primary has a Loop line");
+    let old = format!(
+        "{loop_line}\n              | 'break' Expr12?                                                    L6"
+    );
+    syn.replacen(loop_line, &old, 1)
+}
+
+/// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
+/// parser rejects. Seed 15 at five sentences per ring was found by running seeds 1 to 20 (the
+/// only one of them that finds it at this size); if a grammar change moves it, run the seeds
+/// again. The same seed on the real grammar finds nothing, so the failure comes from the change.
+#[test]
+fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
+    const N: usize = 5;
+    const SEED: i64 = 15;
+    let real = spec_dir("fuzz_real", &design(""), "");
+    let real = Spec::open(&real.root()).expect("the spec reads");
+    let (outcome, out) = fuzz_of(&real, N, SEED);
+    assert_eq!(outcome, Ok(true), "{out}");
+
+    let text = design_of(
+        &grammar("lexical.peg"),
+        &syntax_with_old_break(),
+        &grammar("notation.peg"),
+        &grammar("desugar.txt"),
+        "",
+    );
+    let old = spec_dir("fuzz_old_break", &text, "");
+    let old = Spec::open(&old.root()).expect("the spec reads");
+    let (outcome, out) = fuzz_of(&old, N, SEED);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("L6 derived but rejected: ") && l.contains("break")),
+        "{out}"
+    );
+    assert!(!out.contains("derived but rejected 0"), "{out}");
+    assert!(out.ends_with("RESULT: FAIL\n"), "{out}");
+}
+
+/// Many sentences on the real grammar: every one generated at a ring parses at it with the same
+/// tree at every ring above, and none whose derivation passed its lookaheads is rejected. Five
+/// hundred per ring take about 5 s.
+#[test]
+fn fuzz_of_the_real_grammar_at_500_per_ring_finds_no_failure() {
+    let dir = spec_dir("fuzz_500", &design(""), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let (outcome, out) = fuzz_of(&spec, 500, 1);
+    assert_eq!(outcome, Ok(true), "{out}");
+    assert!(
+        out.contains(" containment failures 0 derived but rejected 0\n"),
+        "{out}"
+    );
+}
+
 #[test]
 fn sync_writes_the_copies_and_check_finds_a_stale_one() {
     let dir = spec_dir("sync", &design(&fence(DOUBLE)), &fence(DOUBLE));
