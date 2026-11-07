@@ -121,9 +121,9 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             Ok(n) => Value::Int(n),
             Err(_) => Value::int(BigInt::from(s.char_count())),
         },
-        (Prim::Lower, Value::Str(s)) => Value::str(&s.flat().to_lowercase()),
-        (Prim::Upper, Value::Str(s)) => Value::str(&s.flat().to_uppercase()),
-        (Prim::Trim, Value::Str(s)) => Value::str(s.flat().trim()),
+        (Prim::Lower, Value::Str(s)) => lower(s)?,
+        (Prim::Upper, Value::Str(s)) => upper(s)?,
+        (Prim::Trim, Value::Str(s)) => trim(x, s)?,
         // A string of one scalar is read; a longer one is known by its count, never written out.
         (Prim::CodePoint, Value::Str(s)) => match s.char_count() {
             1 => Value::Int(i64::from(u32::from(first_char(s)))),
@@ -142,6 +142,87 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         _ => return type_err(p, x),
     };
     Ok(out)
+}
+
+/// An empty string with room for `bytes` bytes, once the system gives that memory and the
+/// memory of the value's copy of it (`Value::str`); else the error of `op`, before anything is
+/// written.
+fn reserved(op: &'static str, bytes: usize) -> Result<String, KernelError> {
+    let refused = || KernelError::StringCopyTooLarge { op, bytes };
+    let mut out = String::new();
+    out.try_reserve_exact(bytes).map_err(|_| refused())?;
+    room(BigUint::from(bytes) << 3u32).map_err(|_| refused())?;
+    Ok(out)
+}
+
+/// `upper(s)`: each character's uppercase, which depends on that character alone, written
+/// block by block into a string of the length a first pass counts, so a join is never written
+/// out first.
+fn upper(s: &Text) -> Result<Value, KernelError> {
+    let upper = || s.chunks().flat_map(str::chars).flat_map(char::to_uppercase);
+    let mut out = reserved("upper", upper().map(char::len_utf8).sum())?;
+    out.extend(upper());
+    Ok(Value::str(&out))
+}
+
+/// `lower(s)`, as `str::to_lowercase` writes it. The text is read as one `&str`, a join written
+/// out into memory asked first ([`Text::try_flat`]), and the result's length is counted
+/// first: each character's lowercase, `Σ` two bytes whether it ends a word or not.
+// Complexity tradeoff: a join is written out once more than `upper` writes it, `O(n)` time and
+// memory, asked first. Why: `Σ` lowers to `ς` at the end of a word, decided by the characters
+// around it past any that case ignores (Unicode `Final_Sigma`), which may lie in other blocks,
+// and the standard library does not expose the two properties (`Cased`, `Case_Ignorable`) a
+// reading block by block would need. Trigger: `lower` of a joined string. Test:
+// `l01_17_value_representation::string_copies` (refused at two lengths, exact when given);
+// COMPLEXITY.md K30. A complete solution would carry the two properties' tables and decide `Σ`
+// across blocks.
+fn lower(s: &Text) -> Result<Value, KernelError> {
+    let flat = s.try_flat().map_err(|_| KernelError::StringCopyTooLarge {
+        op: "lower",
+        bytes: s.len(),
+    })?;
+    let bytes: usize = flat
+        .chars()
+        .flat_map(char::to_lowercase)
+        .map(char::len_utf8)
+        .sum();
+    // `to_lowercase` starts at the length of its input and doubles, so it holds at most twice
+    // the larger of the two; the value copies the result.
+    let held = 2 * bytes.max(s.len()) + bytes;
+    room(BigUint::from(held) << 3u32)
+        .map_err(|_| KernelError::StringCopyTooLarge { op: "lower", bytes })?;
+    Ok(Value::str(&flat.to_lowercase()))
+}
+
+/// `trim(s)`: the text between the first and the last character that are not white space,
+/// found block by block. A string with none to drop is `x` itself, shared; any other is
+/// copied from the blocks into memory asked first.
+fn trim(x: &Value, s: &Text) -> Result<Value, KernelError> {
+    // The byte offsets of the first character kept and of the end of the last.
+    let (mut start, mut end, mut at) = (None, 0, 0);
+    for c in s.chunks() {
+        for (i, ch) in c.char_indices() {
+            if !ch.is_whitespace() {
+                start.get_or_insert(at + i);
+                end = at + i + ch.len_utf8();
+            }
+        }
+        at += c.len();
+    }
+    let start = start.unwrap_or(0);
+    if start == 0 && end == s.len() {
+        return Ok(x.clone());
+    }
+    let mut out = reserved("trim", end - start)?;
+    let mut at = 0;
+    for c in s.chunks() {
+        let (lo, hi) = (start.max(at), end.min(at + c.len()));
+        if lo < hi {
+            out.push_str(&c[lo - at..hi - at]);
+        }
+        at += c.len();
+    }
+    Ok(Value::str(&out))
 }
 
 /// The first character of the non-empty text `s`, read from its first block.

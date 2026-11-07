@@ -2109,6 +2109,13 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
     }
 }
 
+/// An atom's name or field name as one shared block ([`crate::text::Text::try_shared`]); a
+/// join is written out once the system gives the memory, else [`KernelError::AtomNameTooLarge`].
+fn atom_name(name: &crate::text::Text) -> Result<Arc<str>, KernelError> {
+    name.try_shared()
+        .map_err(|_| KernelError::AtomNameTooLarge { bytes: name.len() })
+}
+
 /// The error for a number that `p` must build and the system has no memory for.
 fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
     KernelError::NumberTooLarge {
@@ -2256,18 +2263,15 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
-            Value::atom_with(&name.flat(), args.to_vec())
+            Value::atom_with(atom_name(name)?, args.to_vec())
         }
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.len() == args.len() => {
-            let fields: Option<Vec<(Arc<str>, Value)>> = names
-                .iter()
-                .zip(args)
-                .map(|(n, v)| match n {
-                    Str(n) => Some((n.clone().into(), v.clone())),
-                    _ => None,
-                })
-                .collect();
-            match fields.and_then(|fs| Value::atom_named(&name.flat(), fs)) {
+            let mut fields = Vec::with_capacity(names.len());
+            for (n, v) in names.iter().zip(args) {
+                let Str(n) = n else { return ty(&vals) };
+                fields.push((atom_name(n)?, v.clone()));
+            }
+            match Value::atom_named(atom_name(name)?, fields) {
                 Some(v) => v,
                 None => return ty(&vals),
             }

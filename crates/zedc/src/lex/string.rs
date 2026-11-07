@@ -26,6 +26,7 @@
 //! `\n` and `\t` are never stripped. Any other `"""` string is kept as written.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::comment;
 use super::token::{Error, ErrorKind, Part, Span, Tok, Token};
@@ -184,7 +185,7 @@ impl Reading {
             .filter_map(|r| match r {
                 Raw::Lit(start, end) => Some(decode(text, start, end, &cuts))
                     .filter(|s| !s.is_empty())
-                    .map(Part::Text),
+                    .map(|s| Part::Text(Arc::new(s))),
                 Raw::Hole(tokens, span) => Some(Part::Hole { tokens, span }),
             })
             .collect();

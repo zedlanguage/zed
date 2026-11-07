@@ -139,7 +139,7 @@ impl Prim {
     /// atom whose first argument is its name, the string `"err"`, is `#err(..)`.
     pub fn written_with(self, first: Option<&Value>) -> Cow<'static, str> {
         match (self, first) {
-            (Prim::Atom, Some(Value::Str(name))) => Cow::Owned(format!("#{}(..)", name.flat())),
+            (Prim::Atom, Some(Value::Str(name))) => Cow::Owned(format!("#{name}(..)")),
             _ => Cow::Borrowed(self.written()),
         }
     }

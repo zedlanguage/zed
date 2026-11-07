@@ -19,7 +19,7 @@ fn parts(text: &str) -> Vec<String> {
     parts
         .iter()
         .map(|p| match p {
-            Part::Text(s) => s.clone(),
+            Part::Text(s) => s.to_string(),
             Part::Hole { tokens, .. } => {
                 let inner: Vec<String> = tokens.iter().map(|t| format!("{:?}", t.tok)).collect();
                 format!("${{{}}}", inner.join(" "))

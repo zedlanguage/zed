@@ -71,8 +71,9 @@ pub struct Doc {
 
 /// A part of a string literal.
 pub enum Part {
-    /// Text, with its escapes decoded and, in a `"""` string, its indentation stripped.
-    Text(String),
+    /// Text, with its escapes decoded and, in a `"""` string, its indentation stripped, shared
+    /// with the syntax tree ([`crate::ast::StrPart::Text`]), which copies none of it.
+    Text(Arc<String>),
     /// A `${…}` hole: the tokens of its expression, and the span of the whole hole.
     Hole {
         /// The tokens between `${` and `}`.

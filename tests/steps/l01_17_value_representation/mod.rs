@@ -14,4 +14,5 @@ mod numbers;
 mod order;
 mod powers;
 mod products;
+mod string_copies;
 mod subquadratic;

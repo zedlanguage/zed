@@ -29,7 +29,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::hash::{Hash, Hasher};
 use std::ops::Add;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use crate::KernelError;
-use crate::num::TooLarge;
+use crate::num::{TooLarge, room};
 
 /// A string's text, shared.
 #[derive(Clone)]
@@ -203,6 +203,19 @@ impl Text {
                 Ok(Cow::Owned(out))
             }
         }
+    }
+
+    /// The text as one shared block: a text held as one block is shared, and a join is
+    /// written into a new block once the system gives the memory for it ([`Text::try_flat`])
+    /// and for the copy that makes it a block; [`TooLarge`] when it refuses, naming that
+    /// memory. For an atom's name, which an atom holds in one piece.
+    pub fn try_shared(&self) -> Result<Arc<str>, TooLarge> {
+        if let Tree::Block { block, .. } = &*self.0 {
+            return Ok(Arc::clone(block));
+        }
+        let flat = self.try_flat()?;
+        room(BigUint::from(self.len()) << 3u32)?;
+        Ok(Arc::from(&*flat))
     }
 
     fn size(&self) -> Size {
@@ -637,12 +650,34 @@ impl fmt::Debug for Text {
 }
 
 impl fmt::Display for Text {
-    /// The blocks in order; a width or a precision pads or cuts the text as a `str`'s does.
+    /// The blocks in order; a width or a precision pads or cuts the text as a `str`'s does
+    /// (`Formatter::pad`), block by block, so a join is never written out first.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.width().is_some() || f.precision().is_some() {
-            return f.pad(&self.flat());
+        if f.width().is_none() && f.precision().is_none() {
+            return self.chunks().try_for_each(|c| f.write_str(c));
         }
-        self.chunks().try_for_each(|c| f.write_str(c))
+        let chars = f
+            .precision()
+            .map_or(self.char_count(), |p| p.min(self.char_count()));
+        let pad = f.width().map_or(0, |w| w.saturating_sub(chars));
+        let (before, after) = match f.align() {
+            None | Some(fmt::Alignment::Left) => (0, pad),
+            Some(fmt::Alignment::Right) => (pad, 0),
+            Some(fmt::Alignment::Center) => (pad / 2, pad.div_ceil(2)),
+        };
+        let fill = f.fill();
+        (0..before).try_for_each(|_| f.write_char(fill))?;
+        let mut left = chars;
+        for c in self.chunks() {
+            if left == 0 {
+                break;
+            }
+            // The byte after the first `left` characters of the block, or its end.
+            let end = c.char_indices().nth(left).map_or(c.len(), |(i, _)| i);
+            left -= c[..end].chars().count();
+            f.write_str(&c[..end])?;
+        }
+        (0..after).try_for_each(|_| f.write_char(fill))
     }
 }
 

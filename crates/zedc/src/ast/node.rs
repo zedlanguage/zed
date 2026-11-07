@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::address::ContentAddress;
 use crate::lex::{Digits, Span};
@@ -259,8 +260,8 @@ pub struct Update {
 /// A part of a string expression.
 #[derive(Debug)]
 pub enum StrPart {
-    /// Text.
-    Text(String),
+    /// Text, shared with the token it was read from.
+    Text(Arc<String>),
     /// A `${…}` hole.
     Hole(Expr),
 }

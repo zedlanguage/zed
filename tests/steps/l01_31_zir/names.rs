@@ -189,7 +189,7 @@ fn names(n: usize) -> Region {
     let atoms = (0..n / 8)
         .map(|i| {
             Value::atom_named(
-                &format!("a{i:07}"),
+                format!("a{i:07}"),
                 vec![(format!("f{i:07}").into(), Value::Int(0))],
             )
             .unwrap()

@@ -1928,3 +1928,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `std::fs::canonicalize` of the file and of `std::env::current_dir()`, which resolve every symbolic link and `.` and `..` step through the operating system | `InFile::of` | Library (host file system) | A `realpath` word of the `Files` port (step L1.19), and the current directory as a field of the process environment port (ENV-port) |
 | `Path::components` compared pairwise up to the first difference, then each remaining part's bytes by `OsStr::as_encoded_bytes` | `InFile::from_resolved` | None | A path as a list of `U8String` parts; the shared prefix by a fold with early exit, the rest appended to the hash input |
+
+## Entries from K30-rest (`zedc/src/zir/canon.rs`, `canon/serial.rs`, `store/int.rs`, `zed-kernel/src/words.rs`, `text.rs`, `zed-native/src/exe.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Vec::try_reserve_exact` and `num::room` (an allocation asked of the allocator and freed at once) before each growth or copy, an `Err` naming the bytes when the system refuses | `zir::binary::W::put`, `canon::serial::Out::put`, `Num::built`, `words::reserved`, `Text::try_shared`, `exe::data` | Missing (no allocation that reports failure) | The runtime's allocation returns a failure value the routine passes up; the asks become that failure |
+| A `Display` impl that reads the formatter's width, precision, fill and alignment and writes the blocks of a finger tree | `impl Display for Text` | None | A `show` with a padding record over the text's blocks |
+| `Arc<String>` shared between a token and the syntax tree | `lex::Part::Text`, `ast::StrPart::Text` | None | Zed values are shared |
+| A table numbering finished regions by their contents, read by a derived order of node shapes | `canon::Regions`, `Shape` | Gap 2 (shared tables) | A map from contents to number threaded through the lowering |

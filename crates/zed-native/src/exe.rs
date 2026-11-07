@@ -39,7 +39,8 @@ struct Program {
 
 /// The bytes of the data: `fuse` as one byte, the program's content address as its 32 bytes,
 /// the length of the ports' text as 8 bytes, little end first, the text, then the graph. An
-/// error when the system refuses the memory to write one of the graph's exact numbers.
+/// error when the system refuses the memory to write one of the graph's exact numbers, or the
+/// memory of the data, which is asked before it is written.
 pub(crate) fn data(
     fuse: bool,
     address: ContentAddress,
@@ -47,10 +48,6 @@ pub(crate) fn data(
     graph: &Region,
 ) -> Result<Vec<u8>, String> {
     let text = ports.to_text();
-    let mut out = vec![u8::from(fuse)];
-    out.extend_from_slice(&address.0);
-    out.extend_from_slice(&(text.len() as u64).to_le_bytes());
-    out.extend_from_slice(text.as_bytes());
     let zir = zedc::zir::binary::encode(graph).map_err(|e| {
         format!(
             "a constant is so large that the system refused the {} bytes of memory asked to \
@@ -58,6 +55,18 @@ pub(crate) fn data(
             zed_kernel::num::bytes_of(&e.bits)
         )
     })?;
+    let len = 1 + 32 + 8 + text.len() + zir.len();
+    let mut out = Vec::new();
+    out.try_reserve_exact(len).map_err(|_| {
+        format!(
+            "the program's data for the executable is {len} bytes, and the system refused the \
+             memory to write it"
+        )
+    })?;
+    out.push(u8::from(fuse));
+    out.extend_from_slice(&address.0);
+    out.extend_from_slice(&(text.len() as u64).to_le_bytes());
+    out.extend_from_slice(text.as_bytes());
     out.extend_from_slice(&zir);
     Ok(out)
 }

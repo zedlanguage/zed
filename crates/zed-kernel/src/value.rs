@@ -338,8 +338,9 @@ impl Value {
         })
     }
 
-    /// An atom with a tuple payload, such as `#ioError("disk full")`.
-    pub fn atom_with(name: &str, args: Vec<Value>) -> Self {
+    /// An atom with a tuple payload, such as `#ioError("disk full")`; a shared name is kept,
+    /// not copied.
+    pub fn atom_with(name: impl Into<Arc<str>>, args: Vec<Value>) -> Self {
         Value::Atom(Atom {
             name: name.into(),
             fields: Fields::default(),
@@ -359,8 +360,8 @@ impl Value {
     }
 
     /// An atom with a struct payload, such as `#err(code: 3)`, its fields in any order;
-    /// `None` when a name repeats.
-    pub fn atom_named(name: &str, fields: Vec<(Arc<str>, Value)>) -> Option<Self> {
+    /// `None` when a name repeats. A shared name is kept, not copied.
+    pub fn atom_named(name: impl Into<Arc<str>>, fields: Vec<(Arc<str>, Value)>) -> Option<Self> {
         let mut fields = fields;
         fields.sort_by(|a, b| a.0.cmp(&b.0));
         if fields.windows(2).any(|w| w[0].0 == w[1].0) {

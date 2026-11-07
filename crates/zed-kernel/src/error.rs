@@ -111,6 +111,20 @@ pub enum KernelError {
         /// The right string's length in bytes.
         right: usize,
     },
+    /// `lower`, `upper` or `trim` must write a string of `bytes` bytes, and the system refused
+    /// the memory for it and for the value's copy of it.
+    StringCopyTooLarge {
+        /// The word, as the message writes it.
+        op: &'static str,
+        /// The length of the string written, in bytes.
+        bytes: usize,
+    },
+    /// An atom's name or field name is a joined string of `bytes` bytes, which an atom holds
+    /// as one piece, and the system refused the memory to write it so.
+    AtomNameTooLarge {
+        /// The name's length in bytes.
+        bytes: usize,
+    },
 }
 
 impl fmt::Display for KernelError {
@@ -214,6 +228,17 @@ impl fmt::Display for KernelError {
                  fewer of them",
                 *left as u128 + *right as u128,
                 usize::MAX
+            ),
+            KernelError::StringCopyTooLarge { op, bytes } => write!(
+                f,
+                "`{op}` must write a string of {bytes} bytes, and the system refused the memory \
+                 for it; the string has no size limit, but this machine cannot hold the result"
+            ),
+            KernelError::AtomNameTooLarge { bytes } => write!(
+                f,
+                "an atom's name or field name is a joined string of {bytes} bytes, which an \
+                 atom holds in one piece, and the system refused the memory to write it so; \
+                 the string has no size limit, but this machine cannot hold it as a name"
             ),
         }
     }

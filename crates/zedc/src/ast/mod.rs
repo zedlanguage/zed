@@ -1014,7 +1014,7 @@ impl<'a, 's> Builder<'a, 's> {
                 let mut hole = self.first + self.holes[i];
                 for p in parts {
                     out.push(match p {
-                        Part::Text(t) => StrPart::Text(t.clone()),
+                        Part::Text(t) => StrPart::Text(Arc::clone(t)),
                         Part::Hole { .. } => {
                             let e = self.done[hole].take();
                             hole += 1;
