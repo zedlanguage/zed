@@ -1049,15 +1049,21 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
 /// 2^i` digits long and the high part no longer, and joins them as `high * 10^(LEAF_DIGITS *
 /// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring. Each level
 /// of the recursion costs about one widest product, O(M(n)) = O(n log n) with `fast::mul`,
-/// and the recursion is `log2(n / LEAF_DIGITS)` deep, so the whole is O(n log^2 n).
-fn read_digits(digits: &str) -> BigUint {
+/// and the recursion is `log2(n / LEAF_DIGITS)` deep, so the whole is O(n log^2 n). A text of
+/// at most `LEAF_DIGITS` digits is read whole, with no power of ten built.
+///
+/// # Panics
+///
+/// When `digits` is empty or holds anything but ASCII decimal digits.
+pub fn read_digits(digits: &str) -> BigUint {
+    let Some(top) = split_depth(digits.len()) else {
+        return digits.parse().expect("ASCII decimal digits");
+    };
     let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
-    if let Some(top) = split_depth(digits.len()) {
-        while tens.len() <= top {
-            let last = tens.last().expect("the first power is built");
-            let next = fast::mul(last, last);
-            tens.push(next);
-        }
+    while tens.len() <= top {
+        let last = tens.last().expect("the first power is built");
+        let next = fast::mul(last, last);
+        tens.push(next);
     }
     read_parts(digits, &tens)
 }

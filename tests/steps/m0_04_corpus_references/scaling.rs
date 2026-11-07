@@ -365,14 +365,28 @@ fn clustering_of_random_points_with_wide_coordinates() {
 
 /// The same 1000 random points with coordinates of 36 and of 288 digits (120 and 957 bits, an
 /// in-circle determinant of up to 488 and 3836 bits), held to the limit of power 1. At these
-/// sizes the cost per number is mostly fixed, so this does not show the O(b²) parse and
-/// schoolbook multiplication of num-bigint, which only larger coordinates reach (COMPLEXITY
-/// F39, item P14-bigint-parse).
+/// sizes the cost per number is mostly fixed, so this does not show the cost of num-bigint's
+/// products, which larger coordinates reach (COMPLEXITY F39, item BIGINT-fast-mul).
 #[test]
 fn clustering_of_random_points_at_eight_times_the_coordinate_size() {
     let differs = super::clustering_differs_from_oracle(&wide_random_points(1000, 4));
     assert!(differs.is_none(), "the O(n²) form differs at 36 digits");
     scales("clustering coordinate blocks", "14", 4, 1, |chunks| {
+        wide_random_points(1000, chunks)
+    });
+}
+
+/// The same random points with coordinates of 288 and of 2304 digits (957 and 7654 bits),
+/// held to the limit of power 1. It fails at about 27.9 times the instructions and 25.4 times
+/// the bytes: the in-circle tests multiply factors of up to about 1918 and 15,312 bits (30 and
+/// 240 words), which num-bigint multiplies by schoolbook (up to 32 words) and by Karatsuba (33
+/// to 256 words), O(b^1.58) (COMPLEXITY F39). Reading the coordinates is not the cause: they
+/// have at most 4300 digits, and reading them by halves changed the total by under 1% (item
+/// P14-bigint-parse).
+#[test]
+#[ignore = "COMPLEXITY.md F39, open under BIGINT-fast-mul: num-bigint's Karatsuba product, about 27.9 times"]
+fn clustering_of_random_points_with_coordinates_of_thousands_of_digits() {
+    scales("clustering coordinate blocks wide", "14", 32, 1, |chunks| {
         wide_random_points(1000, chunks)
     });
 }

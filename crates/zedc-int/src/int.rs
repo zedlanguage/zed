@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
-use zed_kernel::num::{TooLarge, room};
+use zed_kernel::num::{TooLarge, read_digits, room};
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division.
@@ -2604,12 +2604,33 @@ impl Hash for Num {
 impl std::str::FromStr for Num {
     type Err = num_bigint::ParseBigIntError;
 
-    /// Decimal text, of any length.
+    /// Decimal text, of any length, read as num-bigint reads it: an optional `-` or `+`, then a
+    /// digit, then digits and `_`. The digits are read by halves (`zed_kernel::num::read_digits`),
+    /// O(n log^2 n) for `n` digits, where num-bigint's reading is O(n^2).
     fn from_str(s: &str) -> Result<Num, Self::Err> {
-        match s.parse::<i64>() {
-            Ok(v) => Ok(Num::from(v)),
-            Err(_) => s.parse::<BigInt>().map(Num::from),
+        if let Ok(v) = s.parse::<i64>() {
+            return Ok(Num::from(v));
         }
+        // num-bigint takes off a `-` not followed by `+`, then a `+` not followed by `+`.
+        let (sign, body) = match s.strip_prefix('-') {
+            Some(tail) if !tail.starts_with('+') => (Sign::Minus, tail),
+            _ => (Sign::Plus, s),
+        };
+        let body = match body.strip_prefix('+') {
+            Some(tail) if !tail.starts_with('+') => tail,
+            _ => body,
+        };
+        let digits = body.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            && body.bytes().all(|b| b.is_ascii_digit() || b == b'_');
+        if !digits {
+            // Not decimal digits: num-bigint finds the error, in one pass over the text.
+            return s.parse::<BigInt>().map(Num::from);
+        }
+        let n = match body.contains('_') {
+            true => read_digits(&body.replace('_', "")),
+            false => read_digits(body),
+        };
+        Ok(Num::from(BigInt::from_biguint(sign, n)))
     }
 }
 
