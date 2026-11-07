@@ -30,6 +30,7 @@ zedc-int.workspace = true
 zedc-lattice.workspace = true
 zedc-solvers.workspace = true
 zedc-presburger.workspace = true
+zedc-types.workspace = true
 
 [dev-dependencies]
 # The tests of store::preimage set store::presburger::TWO_AT_A_TIME, which exists only with this
@@ -48,7 +49,7 @@ perf-event2.workspace = true
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
-printed-types = []
+printed-types = ["zedc-types/printed-types"]
 # Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
 # work of the linear programs by a count that does not depend on the load (SLABS-count). Off in a
 # release build.

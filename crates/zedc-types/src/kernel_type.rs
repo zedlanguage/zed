@@ -4,8 +4,8 @@
 use zed_kernel::Universe;
 use zed_kernel::types::Type as KType;
 
-use crate::ast::{Every, Type, TypeKind};
-use crate::lex::Span;
+use zedc_syntax::ast::{Every, Type, TypeKind};
+use zedc_syntax::lex::Span;
 
 /// The kernel type a written type denotes. A function type is curried, one level per
 /// parameter, and `->?` makes each level partial; `() -> V` has the empty tuple as its one key.
@@ -18,7 +18,7 @@ use crate::lex::Span;
 /// Types nest as deep as the source, so the types still open wait on a stack, each with the
 /// types of its parts so far; every part is elaborated, in written order, before the type that
 /// holds it, so the errors come in the order a recursion would give (step T2-mid).
-pub(crate) fn kernel_type(
+pub fn kernel_type(
     t: &Type,
     ports: &mut Vec<(Span, String)>,
     mut bounds: Option<&mut Vec<(Span, String)>>,

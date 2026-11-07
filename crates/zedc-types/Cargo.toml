@@ -1,0 +1,33 @@
+[package]
+name = "zedc-types"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A part of the compiler `zedc`, which re-exports its modules at their old paths. Also a dylib, as
+# zedc is: an edit recompiles this crate and those above it, and each test binary links one shared
+# copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+imbl.workspace = true
+zed-kernel.workspace = true
+zedc-syntax.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Records each type printed on a thread with its text, for the test that parses each back
+# (OSP-diag). Off in a release build; zedc's feature `printed-types` turns it on.
+printed-types = []
+
+# A dylib's file name does not change with its features, so `cargo test -p zedc-types` builds this
+# crate with the feature the workspace build gives it (the step tests turn on `printed-types`
+# through zedc), and does not overwrite the copy the step tests link to.
+[dev-dependencies.zedc-types]
+path = "."
+features = ["printed-types"]

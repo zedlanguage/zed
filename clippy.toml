@@ -3,10 +3,10 @@
 # text, which the lazily written-out copy of a join does not change (src/text.rs). A kept
 # root's order and equality read its radicand and index, never the approximation kept beside
 # it (zedc-int src/int.rs, `Memo`). A signature's hash and equality never read the facts of
-# its variables it fills on first use (zedc src/check/ty.rs, `Facts`).
+# its variables it fills on first use (zedc-types src/ty.rs, `Facts`).
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
   "zedc_int::int::Memo",
-  "zedc::check::ty::Facts",
+  "zedc_types::ty::Facts",
 ]

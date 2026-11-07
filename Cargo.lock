@@ -1088,6 +1088,7 @@ dependencies = [
  "zedc-presburger",
  "zedc-solvers",
  "zedc-syntax",
+ "zedc-types",
 ]
 
 [[package]]
@@ -1148,4 +1149,14 @@ dependencies = [
  "unicode-script",
  "zed-kernel",
  "zedc-base",
+]
+
+[[package]]
+name = "zedc-types"
+version = "0.0.0"
+dependencies = [
+ "imbl",
+ "zed-kernel",
+ "zedc-syntax",
+ "zedc-types",
 ]

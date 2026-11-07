@@ -14,7 +14,7 @@ use std::sync::Arc;
 use zed_kernel::types::{Type as KType, Verdict};
 use zed_kernel::{Universe, Value};
 
-use crate::lex::Span;
+use zedc_syntax::lex::Span;
 
 /// A type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -89,7 +89,7 @@ impl Row {
     }
 
     /// The row of `cs`, each checked as data.
-    pub(crate) fn of_data(cs: Vec<Ty>) -> Row {
+    pub fn of_data(cs: Vec<Ty>) -> Row {
         Row::made(cs, true, true)
     }
 
@@ -172,12 +172,12 @@ impl Row {
 
     /// Whether every type variable it holds outside functions was checked as data when the
     /// row was made.
-    pub(crate) fn data(&self) -> bool {
+    pub fn data(&self) -> bool {
         self.0.data
     }
 
     /// Its address: the same for each path to a shared row, so a walk visits it once.
-    pub(crate) fn addr(&self) -> *const () {
+    pub fn addr(&self) -> *const () {
         Arc::as_ptr(&self.0).cast()
     }
 
@@ -1792,7 +1792,7 @@ impl Ty {
 
     /// A function it may hold, at any depth, that no tuple expression has checked as data, so
     /// that no error has reported it yet.
-    pub(crate) fn unchecked_function(&self) -> Option<&Arc<Sig>> {
+    pub fn unchecked_function(&self) -> Option<&Arc<Sig>> {
         self.function_in(|r| r.0.unchecked.as_ref(), |s| s.unchecked.as_ref())
     }
 
@@ -4044,12 +4044,12 @@ impl Sig {
 }
 
 /// The class a type variable names: `$k` is class `k`.
-pub(super) fn class_id(v: &str) -> Option<usize> {
+pub fn class_id(v: &str) -> Option<usize> {
     v.strip_prefix('$')?.parse().ok()
 }
 
 /// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
-pub(super) fn var_name(n: usize) -> Arc<str> {
+pub fn var_name(n: usize) -> Arc<str> {
     match n {
         0..4 => ["T", "U", "V", "W"][n].into(),
         _ => format!("T{}", n + 1).into(),

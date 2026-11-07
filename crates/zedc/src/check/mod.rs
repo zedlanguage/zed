@@ -31,9 +31,9 @@
 //! Step L1.27: an atom of a named family is data (sec:failure). `else` strips only the loose
 //! atoms, and a family atom that selects no arrow is an error, where a loose one flows on.
 
-pub(crate) mod kernel_type;
+pub(crate) use zedc_types::kernel_type;
 pub mod read;
-pub mod ty;
+pub use zedc_types::ty;
 pub mod widen;
 
 mod arms;

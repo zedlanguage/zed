@@ -8,6 +8,7 @@ members = [
     "crates/zedc-lattice",
     "crates/zedc-solvers",
     "crates/zedc-presburger",
+    "crates/zedc-types",
     "crates/zed-kernel",
     "crates/zed-rt",
     "crates/zed-cert",
@@ -40,6 +41,7 @@ zedc-int = { path = "crates/zedc-int" }
 zedc-lattice = { path = "crates/zedc-lattice" }
 zedc-solvers = { path = "crates/zedc-solvers" }
 zedc-presburger = { path = "crates/zedc-presburger" }
+zedc-types = { path = "crates/zedc-types" }
 # The libraries the compiler crates (zedc, zedc-*) share, at one version each.
 blake3 = "1"
 imbl = "7.0.2"
