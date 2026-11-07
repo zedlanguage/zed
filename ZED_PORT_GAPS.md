@@ -2050,6 +2050,18 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A let chain `if let Some(..) = .. && let Ok(b) = ..` choosing the summaries before the fallback | `extend::decide_defined` | None | Nested matches, or `else` on `#none` |
 | A struct with methods `push`, `combine`, `dark_is_real` over one bound of a variable, used in Fourier-Motzkin elimination | `presburger::Side1`, `presburger::shadow` | None | A record type with functions over it |
 
+## Entries from LOAD-chain-affine (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger/extend.rs`, `zedc/src/front.rs`)
+
+The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer apply: both are removed.
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A map keyed by a lambda's body and scope ids, `HashMap<At, (Vec<Lin>, u32)>`, with an undo list of its keys (`claimed`) | `Tr::claims`, `Tr::claimed`, `Walk::binding` | Mutation (gap 11) | A map value returned with each binding, the undo a kept earlier value |
+| Union-find over parameter indices with path halving, `Vec<usize>` parents mutated in place, and a `Vec<HashSet<usize>>` of each class's functions merged smaller into larger | `preimage::identity_classes` | Mutation (gap 11) | A persistent map from index to parent, or a union-find in the stdlib catalog of step L2.11 |
+| A nested `fn find(parent: &mut [usize], ..)` inside a function | `identity_classes` | None | A local function over the map value |
+| An explicit stack of `(Formula, bool)` for a post-order walk, the bool marking the second visit | `Extending::defined` | None | A list value used as a stack |
+| `usize` sizes compared to choose the largest decided part | `extend::Known::size`, `Extending::extend` | None | `int` |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |

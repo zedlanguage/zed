@@ -989,32 +989,20 @@ pub struct Scoped<'t> {
     scope: Eid,
     /// The translations kept, with the `products` they were made under.
     kept: Option<(bool, Translations)>,
-    /// The kept translations of calls, by each name their arguments' terms hold: a call whose
-    /// arguments name what is not an input of the body read next is dropped before it, so what
-    /// is kept is what a body over the same names can find again, and a unit whose bodies
-    /// name their inputs apart (`x@1`, `x@2`) holds O(n) entries, not each body's calls.
-    by_name: HashMap<Arc<str>, Vec<Rc<Logged>>>,
     /// The auxiliary variables of every relation read under the `products` of `kept`, each
     /// numbered once for the scope, so that a kept translation that holds one serves every
     /// body (LOAD-chain-aux).
     tr: Tr,
-    /// The coordinates of each function whose relation was read, by its body: each parameter
-    /// as an atom and a constant added to it ([`Frame`]) (LOAD-chain-args).
-    frames: HashMap<*const Term, Frame>,
-    /// For the relation read last, each atom of its coordinates as its input less the
-    /// constant: `x = a + c`, so `a = x - c`, by which [`Scoped::written`] writes the relation
-    /// over the inputs. Empty when the coordinates are the inputs.
+    /// Each function the scope's lets bind, by the address of its body: its lambda's term and
+    /// the scope the lambda is read in, as a call of it reaches it ([`Callee::Lam`]), so that a
+    /// body's relation is the one its callers share (LOAD-chain-affine).
+    lams: HashMap<*const Term, At>,
+    /// The bodies read so far, for the names of the atoms of a body that is not one of `lams`.
+    read: usize,
+    /// For the relation read last, each atom its parameters stand for as the input it stands
+    /// for, by which [`Scoped::written`] writes the relation over the inputs.
     back: HashMap<Arc<str>, Lin>,
 }
-
-/// The coordinates a relation of [`Scoped`] is read in: for each parameter, the atom and the
-/// constant whose sum it is bound to, the atoms distinct. Each input so has one value for each
-/// value of the atoms and back, and whether the relation can hold or fail is the same in
-/// either. A caller whose call passes each of its callee's parameters one of its own plus a
-/// constant (`p(x: x + 1)`, `p(y: x)`) is read in its callee's coordinates, so the call's
-/// arguments are the terms its callee's own calls were translated under, and its translation is
-/// shared (LOAD-chain-args).
-type Frame = Vec<(Arc<str>, i64)>;
 
 /// The translation tables of a [`Memo`], kept by [`Scoped`] from one body to the next.
 #[derive(Default)]
@@ -1051,17 +1039,28 @@ impl<'t> Scoped<'t> {
         tx.start(&Domains::new(), Landmarks::none());
         let mut t = tx.terms.add(lets);
         let mut scope = ROOT;
+        let mut lams = HashMap::new();
+        let mut named = Vec::new();
         while let Node::Let(n, e, b) = tx.node(t) {
+            if let Node::Lam(_, body) = tx.node(e)
+                && let Some(src) = tx.terms.src[body as usize]
+            {
+                lams.insert(src as *const Term, (e, scope));
+            }
+            if let Node::Lam(..) = tx.node(e) {
+                named.push((n, e));
+            }
             scope = tx.let_env(n, e, scope);
             t = b;
         }
+        tx.classes = identity_classes(&tx, &named);
         Scoped {
             tx,
             scope,
             kept: None,
-            by_name: HashMap::new(),
             tr: Tr::new(false),
-            frames: HashMap::new(),
+            lams,
+            read: 0,
             back: HashMap::new(),
         }
     }
@@ -1076,6 +1075,11 @@ impl<'t> Scoped<'t> {
     /// is the input. Products of two symbols are atoms when `products` holds. `None` when the
     /// body is outside the domain. Time of the body, of the parameters and of the parts of the
     /// scope no earlier body read.
+    ///
+    /// The body of a function the scope binds is read over its parameters' canonical atoms
+    /// ([`Walk::canonical_formula`]), the relation each claimed call of it shares, so a chain
+    /// of n tests each calling the one before through affine arguments (`p(x: 2 * x)`,
+    /// `p(x: x + 1, y: x + 1)`, `p(x: x, y: 5)`) is translated in O(n) (LOAD-chain-affine).
     pub fn relation(
         &mut self,
         body: &'t Term,
@@ -1085,11 +1089,32 @@ impl<'t> Scoped<'t> {
     ) -> Option<Formula> {
         debug_assert_eq!(params.len(), inputs.len(), "one input for each parameter");
         let tx = &mut self.tx;
-        let doms: Domains = inputs
+        // The function's lambda, when the scope binds it with these parameters.
+        let lam = (self.lams.get(&(body as *const Term)).copied()).filter(|&(l, _)| {
+            let Node::Lam(ps, _) = tx.node(l) else {
+                return false;
+            };
+            ps.len() == params.len()
+                && (0..ps.len()).all(|i| tx.name(tx.param(ps, i)) == &params[i])
+        });
+        // The atom each parameter stands for: its class's atom ([`Tx::class`]), or a name of this body's own.
+        self.read += 1;
+        let atoms: Vec<Arc<str>> = match lam {
+            Some((l, env)) => {
+                let Node::Lam(ps, b) = tx.node(l) else {
+                    unreachable!("a lambda")
+                };
+                (0..ps.len()).map(|i| tx.class(ps, i, (b, env))).collect()
+            }
+            None => (params.iter())
+                .map(|p| format!("{p}#q{}", self.read).into())
+                .collect(),
+        };
+        let doms: Domains = atoms
             .iter()
             .map(|n| (n.clone(), IntervalSet::top()))
             .collect();
-        // A new run over the body's inputs, with what the runs before it found of the terms
+        // A new run over the body's atoms, with what the runs before it found of the terms
         // without reading the inputs.
         let kept = tx.run.keep();
         tx.start(&doms, Landmarks::none());
@@ -1098,185 +1123,36 @@ impl<'t> Scoped<'t> {
             tx.terms.nodes.len() as Tid,
             tx.scopes.len() as Eid,
         ));
-        let root = tx.terms.add(body);
-        let past = tx.terms.nodes.len() as Tid;
-        // Each parameter bound to its input, read where the scope binds nothing. The input's
-        // term is the body's own, so what is found of it, which reads the input, is dropped
-        // with the body's entries and never meets a body of other inputs.
-        let mut own = self.scope;
-        for (p, x) in params.iter().zip(inputs) {
-            let (p, x) = (tx.terms.name(p), tx.terms.name(x));
-            let to = (tx.terms.own_var(x), ROOT);
-            own = tx.bind(own, p, to);
-        }
         // The translations the bodies before made under the same `products`.
         let m = &mut tx.run.memo;
         m.log.clear();
         match self.kept.take() {
             Some((p, t)) if p == products => m.put_translations(t),
-            _ => {
-                self.by_name.clear();
-                self.tr = Tr::new(products);
-            }
+            _ => self.tr = Tr::new(products),
         }
-        // The body read in its callee's coordinates when it has them ([`Frame`]): each
-        // parameter bound to its atom plus its constant, the atoms the inputs.
-        let frame = self.coordinates(root..past, own, inputs, products);
-        let tx = &mut self.tx;
-        let mut scope = own;
-        if frame
-            .iter()
-            .zip(inputs)
-            .any(|((a, c), x)| a != x || *c != 0)
-        {
-            scope = self.scope;
-            for (p, (a, c)) in params.iter().zip(&frame) {
-                let (p, a) = (tx.terms.name(p), tx.terms.name(a));
-                let to = (tx.terms.own_sum(a, *c), ROOT);
-                scope = tx.bind(scope, p, to);
-            }
-            tx.cx.inputs = (frame.iter())
-                .map(|(a, _)| (a.clone(), Rc::new(IntervalSet::top())))
-                .collect();
-        }
-        self.frames.insert(body as *const Term, frame.clone());
-        let m = &mut tx.run.memo;
-        // O(the names held and the inputs), each dropped entry once.
-        let names: HashSet<&Arc<str>> = frame.iter().map(|(a, _)| a).collect();
-        self.by_name.retain(|name, keys| {
-            if names.contains(name) {
-                return true;
-            }
-            for k in keys.drain(..) {
-                match &*k {
-                    Logged::LinCall(k) => _ = m.lin_calls.remove(k),
-                    Logged::FormulaCall(k) => _ = m.formula_calls.remove(k),
-                    Logged::Lin(_) | Logged::Formula(_) => {}
+        let body = match lam {
+            Some(l) => tx.question(&mut self.tr, l),
+            None => {
+                // Each parameter bound to its atom, read where the scope binds nothing. The
+                // atom's term is the body's own, so what is found of it is dropped with the
+                // body's entries.
+                let root = tx.terms.add(body);
+                let mut scope = self.scope;
+                for (p, x) in params.iter().zip(&atoms) {
+                    let (p, x) = (tx.terms.name(p), tx.terms.name(x));
+                    let to = (tx.terms.own_var(x), ROOT);
+                    scope = tx.bind(scope, p, to);
                 }
+                tx.formula(&mut self.tr, root, scope)
             }
-            false
-        });
-        let body = tx.formula(&mut self.tr, root, scope);
-        // The calls this body translated and kept, each under the names its arguments hold:
-        // O(the size of their keys).
-        fn sym(f: &presburger::Factor) -> Option<&Arc<str>> {
-            match f {
-                presburger::Factor::Sym(s) => Some(s),
-                presburger::Factor::Aux(_) => None,
-            }
-        }
-        for e in tx.run.memo.log.drain(..) {
-            let (Logged::LinCall(k) | Logged::FormulaCall(k)) = &e else {
-                continue;
-            };
-            let mut named: Vec<&Arc<str>> = Vec::new();
-            for a in k.1.iter().flat_map(|l| l.terms.keys()) {
-                let (f, g) = match a {
-                    presburger::Atom::Sym(s) => (Some(s), None),
-                    presburger::Atom::Product(f, g) => (sym(f), sym(g)),
-                    presburger::Atom::Aux(_) => (None, None),
-                };
-                named.extend(f.into_iter().chain(g));
-            }
-            named.sort_unstable();
-            named.dedup();
-            let named: Vec<Arc<str>> = named.into_iter().cloned().collect();
-            let e = Rc::new(e);
-            for s in named {
-                self.by_name.entry(s).or_default().push(e.clone());
-            }
-        }
+        };
+        tx.run.memo.log.clear();
         tx.drop_fresh();
         self.kept = Some((products, tx.run.memo.take_translations()));
-        self.back = (frame.into_iter().zip(inputs))
-            .filter(|((a, c), x)| a != *x || *c != 0)
-            .map(|((a, c), x)| {
-                let x = Lin::atom(presburger::Atom::Sym(x.clone()));
-                (a, x.minus(&Lin::constant(c)))
-            })
+        self.back = (atoms.into_iter().zip(inputs))
+            .map(|(a, x)| (a, Lin::atom(presburger::Atom::Sym(x.clone()))))
             .collect();
         body
-    }
-
-    /// The coordinates to read the body of the terms `body` in ([`Frame`]): those of the first
-    /// call in it, in the order the terms are numbered, to a function whose relation was read,
-    /// whose arguments are each one of the body's parameters plus a constant, no parameter
-    /// twice, and whose coordinates leave free the names of the parameters it is not passed;
-    /// each parameter as its input when there is none. `own` binds each parameter to its
-    /// input. The arguments are translated under `own` and their entries forgotten. Time of the
-    /// body's terms and of the arguments of the calls to such functions.
-    ///
-    /// The coordinates only choose which atoms the relation is written over, so another choice
-    /// changes no answer, only which translations are shared. Complexity tradeoff: a call that
-    /// passes a multiple (`x: 2 * x`), a constant, or one parameter twice (`x: x, y: x`) leaves
-    /// the body in its own coordinates, and its callee is translated again under it, so a chain
-    /// of n such links costs O(n²) (COMPLEXITY.md row LOAD-chain-args; a map that is not a
-    /// bijection of the integers changes whether the relation holds at an integer point).
-    fn coordinates(
-        &mut self,
-        body: std::ops::Range<Tid>,
-        own: Eid,
-        inputs: &[Arc<str>],
-        products: bool,
-    ) -> Frame {
-        let identity = || inputs.iter().map(|x| (x.clone(), 0)).collect();
-        if self.frames.is_empty() {
-            return identity();
-        }
-        let at: HashMap<&Arc<str>, usize> =
-            inputs.iter().enumerate().map(|(i, x)| (x, i)).collect();
-        let tx = &mut self.tx;
-        for t in body {
-            let Node::App(f, args) = tx.node(t) else {
-                continue;
-            };
-            let Ok(Callee::Lam(ps, b, _)) = tx.callee(f, own) else {
-                continue;
-            };
-            let Some(callee) = (tx.terms.src[b as usize])
-                .and_then(|b| self.frames.get(&(b as *const Term)))
-                .filter(|c| c.len() == ps.len() && ps.len() == args.len())
-            else {
-                continue;
-            };
-            let logged = tx.run.memo.log.len();
-            let mut tr = Tr::new(products);
-            let mut frame: Vec<Option<(Arc<str>, i64)>> = vec![None; inputs.len()];
-            let mut through = || {
-                for (i, (a, d)) in callee.iter().enumerate() {
-                    // The argument is `x + c` for the parameter `x` standing for input `j`; the
-                    // callee's parameter is `a + d`, so `x` is `a + d - c`.
-                    let l = tx.lin(&mut tr, tx.arg(args, i), own)?;
-                    let mut terms = l.terms.iter();
-                    let (Some((presburger::Atom::Sym(x), one)), None) =
-                        (terms.next(), terms.next())
-                    else {
-                        return None;
-                    };
-                    let j = *at.get(x).filter(|_| *one == Int::ONE)?;
-                    let c = d.checked_sub(i64::try_from(l.constant.to_i128()?).ok()?)?;
-                    if frame[j].replace((a.clone(), c)).is_some() {
-                        return None;
-                    }
-                }
-                Some(())
-            };
-            let found = through();
-            tx.forget(logged);
-            if found.is_none() {
-                continue;
-            }
-            // The parameters the call is not passed keep their inputs, unless the callee's
-            // coordinates name one of them.
-            let named: HashSet<&Arc<str>> = frame.iter().flatten().map(|(a, _)| a).collect();
-            if (frame.iter().zip(inputs)).any(|(f, x)| f.is_none() && named.contains(x)) {
-                continue;
-            }
-            return (frame.into_iter().zip(inputs))
-                .map(|(f, x)| f.unwrap_or_else(|| (x.clone(), 0)))
-                .collect();
-        }
-        identity()
     }
 
     /// The formula that defines the auxiliary variable `n` of a relation [`Scoped::relation`]
@@ -1293,39 +1169,35 @@ impl<'t> Scoped<'t> {
         self.tr.defs[at].2.clone()
     }
 
-    /// Whether the relation read last was read in coordinates other than its inputs
-    /// (`Frame`). O(1).
-    pub fn moved(&self) -> bool {
-        !self.back.is_empty()
-    }
-
     /// The relation of `body`, the body [`Scoped::relation`] gave last: over its inputs, each
-    /// atom of its coordinates (`Frame`) written as the input it stands for, with the
+    /// canonical atom written as what its call binds it to and the atom of a parameter as the
+    /// input it stands for, a value a claimed call binds written as its callee's term, with the
     /// definitions it reaches, its auxiliary variables numbered from 0 in the order the scope
-    /// numbered them.
+    /// numbered them; a binding's own variable is no definition, and its constraint, `b`
+    /// equal to its own number, holds.
     /// It is the relation [`relations`] states for the body closed over the definitions it
     /// reaches, but for the numbering of the auxiliary variables when a definition was made
-    /// for another body first. For a message and for tests: time of the body and of the
-    /// definitions it reaches.
+    /// for another body first. For a message and for tests: time of the body, of the
+    /// definitions it reaches and of the terms the bindings give.
     pub fn written(&self, body: &Formula) -> Relation {
-        use presburger::Atom;
-        let auxes = |f: &Formula| -> Vec<u32> {
-            let mut out = Vec::new();
-            for a in f.atoms() {
-                match a {
-                    Atom::Aux(n) => out.push(n),
-                    Atom::Product(f, g) => {
-                        for h in [f, g] {
-                            if let presburger::Factor::Aux(n) = h {
-                                out.push(n);
-                            }
-                        }
-                    }
-                    Atom::Sym(_) => {}
-                }
+        use presburger::{Atom, Factor};
+        let factors = |a: &Atom| -> Vec<Factor> {
+            match a {
+                Atom::Aux(n) => vec![Factor::Aux(*n)],
+                Atom::Sym(s) => vec![Factor::Sym(s.clone())],
+                Atom::Product(f, g) => vec![f.clone(), g.clone()],
             }
-            out
         };
+        let auxes = |f: &Formula| -> Vec<u32> {
+            (f.atoms().iter().flat_map(factors))
+                .filter_map(|f| match f {
+                    Factor::Aux(n) => Some(n),
+                    Factor::Sym(_) => None,
+                })
+                .collect()
+        };
+        // The definitions reached, a binding's among them: its definition reaches what its
+        // arguments and its callee's term are made of.
         let mut reached: Vec<u32> = Vec::new();
         let mut seen: HashSet<u32> = HashSet::new();
         let mut todo = auxes(body);
@@ -1340,20 +1212,81 @@ impl<'t> Scoped<'t> {
                 todo.push(n - 1);
             }
         }
-        if reached.is_empty() && self.back.is_empty() {
-            return Relation {
-                body: body.clone(),
-                defs: Vec::new(),
-            };
-        }
+        // What each canonical atom is bound to, and each value a claimed call binds.
+        let mut bound: HashMap<&Arc<str>, &Lin> = HashMap::new();
+        let mut values: HashMap<u32, &Lin> = HashMap::new();
+        reached.retain(|&n| match &self.tr.defs[n as usize].1 {
+            What::Bind(pairs) | What::Value(_, pairs) => {
+                bound.extend(pairs.iter().map(|(c, a)| (c, a)));
+                if let What::Value(l, _) = &self.tr.defs[n as usize].1 {
+                    values.insert(n, l);
+                }
+                false
+            }
+            _ => true,
+        });
         reached.sort_unstable();
         let at: HashMap<u32, u32> = (reached.iter().enumerate())
             .map(|(i, &n)| (n, i as u32))
             .collect();
-        let to = |n: u32| at[&n];
-        let lin = |l: &Lin| renumbered(l, &to, &self.back);
+        // Each bound atom and value written over the inputs, each after the atoms its term is
+        // made of: depth first on an explicit stack, each once (a chain of calls is as deep
+        // as the chain). The bindings run from caller to callee, so they hold no cycle.
+        let mut done: HashMap<Factor, Lin> = HashMap::new();
+        let term = |f: &Factor| -> Option<&Lin> {
+            match f {
+                Factor::Sym(s) => bound.get(s).copied(),
+                Factor::Aux(n) => values.get(n).copied(),
+            }
+        };
+        let mut stack: Vec<(Factor, bool)> = Vec::new();
+        let mut open: HashSet<Factor> = HashSet::new();
+        for f in bound.keys().map(|&s| Factor::Sym(s.clone())) {
+            stack.push((f, false));
+        }
+        stack.extend(values.keys().map(|&n| (Factor::Aux(n), false)));
+        let plain = |f: &Factor, done: &HashMap<Factor, Lin>| -> Lin {
+            if let Some(l) = done.get(f) {
+                return l.clone();
+            }
+            match f {
+                Factor::Aux(n) => Lin::atom(Atom::Aux(at[n])),
+                Factor::Sym(s) => {
+                    (self.back.get(s).cloned()).unwrap_or_else(|| Lin::atom(f.atom()))
+                }
+            }
+        };
+        while let Some((f, ready)) = stack.pop() {
+            if done.contains_key(&f) {
+                continue;
+            }
+            let l = term(&f).expect("a bound atom or value");
+            if ready {
+                let out = renumbered(l, &|g| plain(g, &done));
+                done.insert(f, out);
+                continue;
+            }
+            if !open.insert(f.clone()) {
+                continue;
+            }
+            stack.push((f, true));
+            for g in l.terms.keys().flat_map(factors) {
+                if term(&g).is_some() && !done.contains_key(&g) && !open.contains(&g) {
+                    stack.push((g, false));
+                }
+            }
+        }
+        let lin = |l: &Lin| renumbered(l, &|g| plain(g, &done));
+        let binds = |c: &Con| {
+            let mut terms = c.lin.terms.iter();
+            matches!((terms.next(), terms.next()), (Some((Atom::Aux(n), _)), None)
+                if matches!(self.tr.defs[*n as usize].1, What::Bind(_)))
+        };
         let renumber = |f: &Formula| {
             f.map_cons(&|c| {
+                if binds(c) {
+                    return Formula::top();
+                }
                 Formula::Con(Con {
                     lin: lin(&c.lin),
                     rel: c.rel,
@@ -1493,6 +1426,12 @@ struct Tr {
     cases: HashMap<(Tid, Eid), u32>,
     /// The keys of `cases`, in the order made, for [`Tr::truncate`].
     cased: Vec<(Tid, Eid)>,
+    /// The claimed call of each function, by its lambda's body and scope: the arguments'
+    /// linear terms its canonical atoms are bound to, and the variable of the binding. A
+    /// function has one, so each canonical atom has one binding (LOAD-chain-affine).
+    claims: HashMap<At, (Vec<Lin>, u32)>,
+    /// The keys of `claims`, in the order made, as `made` is for `pairs`.
+    claimed: Vec<At>,
 }
 
 impl Tr {
@@ -1505,6 +1444,8 @@ impl Tr {
             by_class: false,
             cases: HashMap::new(),
             cased: Vec::new(),
+            claims: HashMap::new(),
+            claimed: Vec::new(),
         }
     }
 
@@ -1515,7 +1456,7 @@ impl Tr {
             .collect()
     }
 
-    /// Undoes the definitions from `mark` on, and the pairs among them.
+    /// Undoes the definitions from `mark` on, and the pairs and claims among them.
     fn truncate(&mut self, mark: usize) {
         self.defs.truncate(mark);
         while let Some(key) = self.made.last()
@@ -1530,6 +1471,19 @@ impl Tr {
             self.cases.remove(key);
             self.cased.pop();
         }
+        while let Some(lam) = self.claimed.last()
+            && self.claims[lam].1 as usize >= mark
+        {
+            self.claims.remove(lam);
+            self.claimed.pop();
+        }
+    }
+
+    /// Records the call `args` of the lambda `lam` as its claimed call, bound by the variable
+    /// `n`.
+    fn claim(&mut self, lam: At, args: Vec<Lin>, n: u32) {
+        self.claims.insert(lam, (args, n));
+        self.claimed.push(lam);
     }
 
     fn aux(&mut self, what: What, def: Formula) -> presburger::Atom {
@@ -1603,6 +1557,14 @@ enum What {
     Max(Lin, Lin),
     /// `a1 if g1, a2 if g2, …`: the value `ai` where `gi` holds, the `gi` disjoint.
     Cases(Vec<(Formula, Lin)>),
+    /// The binding of a claimed call of a test ([`Tr::claims`]): each canonical atom of its
+    /// callee and the argument it is bound to. Its variable `b` is its own number, so that no
+    /// two bindings look alike to the solver, and the call is its callee's relation and that
+    /// equality.
+    Bind(Vec<(Arc<str>, Lin)>),
+    /// The value of a claimed call of an integer function: its callee's term over the
+    /// canonical atoms, and the binding of each.
+    Value(Lin, Vec<(Arc<str>, Lin)>),
 }
 
 impl What {
@@ -1639,8 +1601,16 @@ impl What {
             What::Abs(a) => format!("abs({})", l(a)),
             What::Min(a, b) => format!("min({}, {})", l(a), l(b)),
             What::Max(a, b) => format!("max({}, {})", l(a), l(b)),
+            What::Bind(pairs) => bindings(pairs, &l),
+            What::Value(v, pairs) => format!("{} where {}", l(v), bindings(pairs, &l)),
         }
     }
+}
+
+/// The bindings `pairs`, as a message writes them: `c = a`, each argument written `l(a)`.
+fn bindings(pairs: &[(Arc<str>, Lin)], l: &dyn Fn(&Lin) -> Lin) -> String {
+    let each = pairs.iter().map(|(c, a)| format!("{c} = {}", l(a)));
+    each.collect::<Vec<_>>().join(", ")
 }
 
 impl fmt::Display for What {
@@ -1649,23 +1619,18 @@ impl fmt::Display for What {
     }
 }
 
-/// `l` with each auxiliary variable `n` numbered `to(n)` and each atom that `back` maps
-/// replaced by what it maps it to, a product of two factors by the product of what they are
-/// replaced by. Time of the terms of `l` and of what they are replaced by, times the log of
-/// their number.
-fn renumbered(l: &Lin, to: &dyn Fn(u32) -> u32, back: &HashMap<Arc<str>, Lin>) -> Lin {
+/// `l` with each atom's factor `f` replaced by `to(f)`, a product of two factors by the product
+/// of what they are replaced by. Time of the terms of `l` and of what they are replaced by,
+/// times the log of their number.
+fn renumbered(l: &Lin, to: &dyn Fn(&presburger::Factor) -> Lin) -> Lin {
     use presburger::{Atom, Factor};
-    let factor = |f: &Factor| match f {
-        Factor::Aux(n) => Lin::atom(Atom::Aux(to(*n))),
-        Factor::Sym(s) => (back.get(s).cloned()).unwrap_or_else(|| Lin::atom(f.atom())),
-    };
     let mut out = Lin::constant(l.constant.clone());
     for (a, c) in &l.terms {
         let v = match a {
-            Atom::Aux(n) => factor(&Factor::Aux(*n)),
-            Atom::Sym(s) => factor(&Factor::Sym(s.clone())),
-            Atom::Product(f, g) => (factor(f).product(&factor(g)))
-                .expect("two factors, each an atom plus a constant, multiply"),
+            Atom::Aux(n) => to(&Factor::Aux(*n)),
+            Atom::Sym(s) => to(&Factor::Sym(s.clone())),
+            Atom::Product(f, g) => (to(f).product(&to(g)))
+                .expect("two factors, each replaced by a term with no product, multiply"),
         };
         out = out.plus(&v.times(c.clone()));
     }
@@ -2035,23 +2000,6 @@ impl<'t> Terms<'t> {
         t
     }
 
-    /// `x + c` as a term shared with no other, as [`Terms::own_var`] makes `x`.
-    fn own_sum(&mut self, x: Name, c: i64) -> Tid {
-        let x = self.own_var(x);
-        if c == 0 {
-            return x;
-        }
-        let n = self.nodes.len() as Tid;
-        self.nodes.push(Node::Int(c));
-        self.src.push(None);
-        let at = self.kids.len();
-        self.kids.extend([x, n]);
-        let t = self.nodes.len() as Tid;
-        self.nodes.push(Node::Prim(Prim::Add, Span::new(at, 2)));
-        self.src.push(None);
-        t
-    }
-
     /// The primitive application the call `app` of a word bound to `p` stands for.
     fn call(&mut self, app: Tid, p: Prim, args: Span) -> Tid {
         let key = Made::Call(app, std::mem::discriminant(&p));
@@ -2374,6 +2322,203 @@ type Unheld = Box<dyn FnOnce(&mut Memo)>;
 /// A call to translate: the lambda, by its body and scope, and its arguments' linear terms.
 type CallKey = (At, Vec<Lin>);
 
+/// The classes of the parameters of the functions `lams` binds (each its name and lambda):
+/// a call that passes a parameter of its caller as it is, `p(x: x)`, joins that parameter to
+/// its callee's, and each class of two or more is given one atom, by its first parameter's
+/// body and place (`x#5c0`), which no canonical atom ([`Tx::canonical`]) and no written name
+/// holds. A function whose callers pass it their own parameters is then read once over the
+/// class's atom for all of them, its callers' diamonds among them, `h(x: x)` called by both
+/// `h2` and `p` (LOAD-chain-affine).
+///
+/// Two parameters of one function are never joined, since they would share an atom; nor is a
+/// function that some call passes an argument not as it is (`p(x: x + 1)`, `p(x: 5)`): that
+/// call binds its canonical atoms ([`Walk::binding`]), so its relation is read over them, and
+/// a class holding it would read it a second time over the class's atom, its callees under
+/// both reads, whose claims the two reads would then dispute, so each would be read again at
+/// each call. Which join of two parameters of one function is refused depends on the order of
+/// the calls; the class atoms are never bound, so any classes are sound.
+///
+/// Time of the functions' bodies, each part once (the terms share parts), and of the joins:
+/// each set moves to a larger one, O(n log n) moves in all.
+// Complexity tradeoff: a refused join looks through the smaller class's functions, and is not
+// remembered, so k refused joins between two classes of m functions each cost O(k m). Why: a
+// join is refused for a function in both classes, and it is found by looking. Trigger: many
+// calls passing one parameter as two, `p(x: x, y: x)`, between two large classes. Test
+// `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale`
+// (no refusal) and `..._the_questions_of_a_chain_passing_a_parameter_twice_scale` (one refusal per
+// link). COMPLEXITY.md row LOAD-chain-affine.
+fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<str>> {
+    // Each function by its name, each parameter by its name, and the first node of each
+    // function's parameters. A name bound twice is left out: its calls are not followed.
+    let mut by_name: HashMap<Name, Option<usize>> = HashMap::new();
+    let mut by_param: HashMap<Name, Option<(usize, usize)>> = HashMap::new();
+    let mut first = Vec::with_capacity(lams.len() + 1);
+    first.push(0);
+    for (k, &(n, l)) in lams.iter().enumerate() {
+        let Node::Lam(ps, _) = tx.node(l) else {
+            unreachable!("a lambda")
+        };
+        by_name
+            .entry(n)
+            .and_modify(|e| *e = None)
+            .or_insert(Some(k));
+        for i in 0..ps.len() {
+            (by_param.entry(tx.param(ps, i)))
+                .and_modify(|e| *e = None)
+                .or_insert(Some((k, i)));
+        }
+        first.push(first[k] + ps.len());
+    }
+    // The calls: each pair of parameters a call passes as it is, and each function a call
+    // passes another argument. Each part once (`seen`).
+    let mut joins: Vec<(usize, usize)> = Vec::new();
+    let mut moved = vec![false; lams.len()];
+    let mut seen: HashSet<Tid> = HashSet::new();
+    for (k, &(_, l)) in lams.iter().enumerate() {
+        let mut todo = vec![l];
+        while let Some(t) = todo.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let kids = |s: Span| (0..s.len()).map(move |i| tx.arg(s, i));
+            match tx.node(t) {
+                Node::Lam(_, b) => todo.push(b),
+                Node::App(f, args) => {
+                    todo.push(f);
+                    todo.extend(kids(args));
+                    let callee = match tx.node(f) {
+                        Node::Var(g) => by_name.get(&g).copied().flatten(),
+                        _ => None,
+                    };
+                    let Some(c) = callee else { continue };
+                    let Node::Lam(cps, _) = tx.node(lams[c].1) else {
+                        unreachable!("a lambda")
+                    };
+                    if cps.len() != args.len() {
+                        continue;
+                    }
+                    for j in 0..args.len() {
+                        let own = match tx.node(tx.arg(args, j)) {
+                            Node::Var(v) => by_param.get(&v).copied().flatten(),
+                            _ => None,
+                        };
+                        match own {
+                            Some((k2, i)) if k2 == k => joins.push((first[k] + i, first[c] + j)),
+                            _ => moved[c] = true,
+                        }
+                    }
+                }
+                Node::Prim(_, args) => todo.extend(kids(args)),
+                Node::Let(_, e, b) => todo.extend([e, b]),
+                Node::If(g, a, b) => todo.extend([g, a, b]),
+                Node::Follow(v, own, _) => todo.extend([v, own]),
+                Node::Int(_)
+                | Node::Bool(_)
+                | Node::Lit(_)
+                | Node::Var(_)
+                | Node::PrimFn(_)
+                | Node::Other => {}
+            }
+        }
+    }
+    // Union by the size of the classes, each class's functions held at its root.
+    let nodes = first[lams.len()];
+    let mut parent: Vec<usize> = (0..nodes).collect();
+    let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
+    let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
+    fn find(parent: &mut [usize], mut v: usize) -> usize {
+        while parent[v] != v {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        v
+    }
+    let mut joined = vec![false; nodes];
+    for (a, b) in joins {
+        if moved[owner(a)] || moved[owner(b)] {
+            continue;
+        }
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        let (big, small) = match funs[ra].len() >= funs[rb].len() {
+            true => (ra, rb),
+            false => (rb, ra),
+        };
+        if ra == rb || funs[small].iter().any(|x| funs[big].contains(x)) {
+            continue;
+        }
+        parent[small] = big;
+        let f = std::mem::take(&mut funs[small]);
+        funs[big].extend(f);
+        joined[big] = true;
+    }
+    // Each class of two or more parameters named by its root.
+    let mut out = HashMap::new();
+    for v in 0..nodes {
+        let r = find(&mut parent, v);
+        if !joined[r] {
+            continue;
+        }
+        let (k, i) = (owner(v), v - first[owner(v)]);
+        let (rk, ri) = (owner(r), r - first[owner(r)]);
+        let Node::Lam(_, body) = tx.node(lams[k].1) else {
+            unreachable!("a lambda")
+        };
+        let Node::Lam(rps, rbody) = tx.node(lams[rk].1) else {
+            unreachable!("a lambda")
+        };
+        out.insert(
+            (body, i),
+            format!("{}#{rbody}c{ri}", tx.name(tx.param(rps, ri))).into(),
+        );
+    }
+    out
+}
+
+/// The term `l`, over the canonical atoms of the canonical key `key` ([`Walk::claimable`]),
+/// with each of them replaced by its argument among `args`, when every atom of `l` is a
+/// symbol: a callee whose relation is one such constraint, or whose value is one such term,
+/// is written at its arguments, which costs O(the term and the arguments), and no binding is
+/// needed, so the constraint joins those beside the call, and of two on one term the tighter
+/// is kept ([`Formula::and`]): `p{i}(x) = p{i-1}(x: x) && x > i` stays one constraint at each
+/// link. `None` when an atom is an auxiliary variable or a product, whose definitions read
+/// the canonical atoms.
+fn at_arguments(l: &Lin, key: &[Lin], args: &[Lin]) -> Option<Lin> {
+    use presburger::Atom;
+    let to: HashMap<&Arc<str>, &Lin> = (key.iter().zip(args))
+        .filter_map(|(c, a)| match c.terms.keys().next()? {
+            Atom::Sym(c) => Some((c, a)),
+            _ => None,
+        })
+        .collect();
+    // Each term added in place, O(log) for each atom of each argument.
+    let mut terms = BTreeMap::new();
+    let mut constant = l.constant.clone();
+    let mut add = |a: &Atom, k: Int| {
+        let v = match terms.remove(a) {
+            Some(o) => &o + &k,
+            None => k,
+        };
+        if !v.is_zero() {
+            terms.insert(a.clone(), v);
+        }
+    };
+    for (a, c) in &l.terms {
+        let Atom::Sym(s) = a else {
+            return None;
+        };
+        match to.get(s) {
+            Some(arg) => {
+                for (b, d) in &arg.terms {
+                    add(b, c * d);
+                }
+                constant = &constant + &(c * &arg.constant);
+            }
+            None => add(a, c.clone()),
+        }
+    }
+    Some(Lin { terms, constant })
+}
+
 /// An entry of a translation memo.
 enum Logged {
     Lin(At),
@@ -2415,6 +2560,10 @@ struct Tx<'t> {
     lets: Lets,
     /// What the body being read by [`Scoped::relation`] made, which [`Tx::drop_fresh`] drops.
     fresh: Option<Fresh>,
+    /// The atom of each parameter, by its lambda's body and its place, that one class of
+    /// parameters passed as they are shares ([`identity_classes`]); a parameter of no class
+    /// has its canonical atom ([`Tx::canonical`]).
+    classes: HashMap<(Tid, usize), Arc<str>>,
 }
 
 /// What a body read under a [`Scoped`] scope made that depends on the body: the scopes made
@@ -2481,6 +2630,7 @@ impl<'t> Tx<'t> {
             },
             fresh: None,
             lets: Lets::new(),
+            classes: HashMap::new(),
         }
     }
 
@@ -3097,6 +3247,39 @@ impl<'t> Tx<'t> {
         self.formula(tr, t, env)
     }
 
+    /// The relation of the function whose lambda is `lam`, its parameters its canonical atoms,
+    /// on a new stack ([`Walk::canonical_formula`]).
+    fn question(&mut self, tr: &mut Tr, (l, env): At) -> Option<Formula> {
+        let Node::Lam(ps, body) = self.node(l) else {
+            unreachable!("a lambda")
+        };
+        let key = (0..ps.len())
+            .map(|i| Lin::atom(presburger::Atom::Sym(self.class(ps, i, (body, env)))))
+            .collect();
+        let w = Walk::translating(self, tr);
+        w.stack
+            .run(w.canonical_formula(l, ps, (body, env), None, key))
+    }
+
+    /// The canonical atom of the `i`-th parameter of the lambda whose body and scope are
+    /// `(body, lam)`: the parameter's name, `#`, and the two numbers, which no written name
+    /// holds (`crate::lex::name`).
+    fn canonical(&self, ps: Span, i: usize, (body, lam): At) -> Arc<str> {
+        format!("{}#{body}.{lam}", self.name(self.param(ps, i))).into()
+    }
+
+    /// The atom of the `i`-th parameter of the lambda whose body and scope are `(body, lam)`
+    /// that its question and a call passing it the atom as it is read it as: its class's
+    /// ([`identity_classes`]), or its canonical atom. A class's atom is never bound, so the
+    /// calls of a function from callers that pass it their own parameters as they are share
+    /// one translation, with no binding (LOAD-chain-affine).
+    fn class(&self, ps: Span, i: usize, (body, lam): At) -> Arc<str> {
+        match self.classes.get(&(body, i)) {
+            Some(c) => c.clone(),
+            None => self.canonical(ps, i, (body, lam)),
+        }
+    }
+
     /// [`Walk::formula`] on a new stack, adding to the translation `tr`.
     fn formula(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
         let w = Walk::translating(self, tr);
@@ -3203,6 +3386,24 @@ impl<'m, 't> Walk<'m, 't> {
 
     fn callee(&self, f: Tid, env: Eid) -> Result<Callee, Option<Arc<str>>> {
         self.with(|tx| tx.callee(f, env))
+    }
+
+    /// Whether `f` is the formula of a claimed call ([`Walk::formula_called`]): a conjunction
+    /// whose last part is `b == n` for a binding `b` numbered n. As an operand of `&&` its parts are added,
+    /// so its callee's relation is the kept part of the conjunction and the binding one of the
+    /// new parts, which [`presburger::extend`] decides beside it. O(1).
+    fn claimed(&self, f: &Formula) -> bool {
+        let Formula::And(gs) = f else {
+            return false;
+        };
+        let Some(Formula::Con(c)) = gs.last() else {
+            return false;
+        };
+        let mut terms = c.lin.terms.iter();
+        let (Some((presburger::Atom::Aux(n), _)), None) = (terms.next(), terms.next()) else {
+            return false;
+        };
+        self.tr(|tr| matches!(tr.defs[*n as usize].1, What::Bind(_)))
     }
 
     /// Whether the formula of `t`, an operand of `&&` or `||`, is kept whole
@@ -5351,9 +5552,9 @@ impl<'m, 't> Walk<'m, 't> {
                         Some(k) => {
                             let call = self.translated(
                                 |m| &mut m.lin_calls,
-                                k,
+                                k.clone(),
                                 Logged::LinCall,
-                                move || self.lin_call(t, ps, (body, lam), args, env),
+                                move || self.lin_called(t, ps, (body, lam), args, env, k),
                             );
                             call.await
                         }
@@ -5513,6 +5714,281 @@ impl<'m, 't> Walk<'m, 't> {
         f
     }
 
+    /// The canonical key of the call `k` of a lambda of parameters `ps`, when the call may be
+    /// claimed (LOAD-chain-affine): the run reads a body under a [`Scoped`] scope, the lambda
+    /// is one of the scope's, an argument is not a constant, and no argument holds a product;
+    /// whether the lambda's claim is free is [`Walk::binding`]'s question. Each constant is
+    /// itself, so constants still fold in the callee, and so is the atom of the parameter's
+    /// class ([`Tx::class`]); each other argument is the canonical atom of its parameter
+    /// ([`Tx::canonical`]).
+    fn claimable(&self, ps: Span, (lam, args): &CallKey) -> Option<Vec<Lin>> {
+        use presburger::Atom;
+        let free = self.with(|tx| {
+            tx.fresh.as_ref().is_some_and(|f| !f.of_body(*lam))
+                && args.iter().any(|l| !l.terms.is_empty())
+                && !(args.iter().flat_map(|l| l.terms.keys()))
+                    .any(|a| matches!(a, Atom::Product(..)))
+        });
+        free.then(|| {
+            self.with(|tx| {
+                (args.iter().enumerate())
+                    .map(|(i, l)| {
+                        let class = Lin::atom(Atom::Sym(tx.class(ps, i, *lam)));
+                        match l.terms.is_empty() || *l == class {
+                            true => l.clone(),
+                            false => Lin::atom(Atom::Sym(tx.canonical(ps, i, *lam))),
+                        }
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    /// The variable binding the canonical atoms of `key`, the canonical key of the call `args`
+    /// of the lambda `lam`, to the arguments: the claim's own when the call holds it, a new one
+    /// claiming the lambda when it is free, and `None` when another call holds it. Its
+    /// definition is `b == n` for its number n, or `b == value` for the value of an integer
+    /// function, and each
+    /// canonical atom equal to its argument: a binding holds for one value of `b` and of the
+    /// atoms whatever the values of the arguments' atoms, and each canonical atom has one, so
+    /// the relations of the callee read under it hold where the callee's relation holds at
+    /// the arguments.
+    fn binding(&self, lam: At, args: &[Lin], key: &[Lin], value: Option<Lin>) -> Option<u32> {
+        use presburger::Atom;
+        self.tr(|tr| {
+            if let Some((a, n)) = tr.claims.get(&lam) {
+                return (a.as_slice() == args).then_some(*n);
+            }
+            let pairs: Vec<(Arc<str>, Lin)> = (key.iter().zip(args))
+                .filter(|(c, a)| c != a)
+                .filter_map(|(c, a)| match c.terms.keys().next()? {
+                    Atom::Sym(c) => Some((c.clone(), a.clone())),
+                    _ => None,
+                })
+                .collect();
+            // An atom bound to a term over itself or another bound atom would equate them.
+            let atoms: HashSet<Atom> = pairs.iter().map(|(c, _)| Atom::Sym(c.clone())).collect();
+            if (pairs.iter()).any(|(_, a)| a.terms.keys().any(|x| atoms.contains(x))) {
+                return None;
+            }
+            let n = tr.defs.len() as u32;
+            let b = Lin::atom(Atom::Aux(n));
+            let at = value.clone().unwrap_or_else(|| Lin::constant(n as i64));
+            let mut parts = vec![Formula::Con(Con::eq(&b, &at))];
+            parts.extend(
+                (pairs.iter())
+                    .map(|(c, a)| Formula::Con(Con::eq(&Lin::atom(Atom::Sym(c.clone())), a))),
+            );
+            let what = match value {
+                Some(l) => What::Value(l, pairs),
+                None => What::Bind(pairs),
+            };
+            tr.aux(what, Formula::and(parts));
+            tr.claim(lam, args.to_vec(), n);
+            Some(n)
+        })
+    }
+
+    /// The scope the body of the lambda `(body, lam)` of parameters `ps` is read in under the
+    /// canonical key `key`: each parameter whose key is a constant bound to its argument, read
+    /// in the caller's scope (`args` and that scope, as [`Tx::call_env`] binds it), and each
+    /// other to its atom in the key, an input of the run.
+    fn canonical_env(&self, ps: Span, lam: Eid, args: Option<(Span, Eid)>, key: &[Lin]) -> Eid {
+        use presburger::Atom;
+        self.with(|tx| {
+            let mut e = lam;
+            for (i, l) in key.iter().enumerate() {
+                let p = tx.param(ps, i);
+                let to = match (args, l.terms.keys().next()) {
+                    (Some((args, caller)), None) => (tx.arg(args, i), caller),
+                    (_, Some(Atom::Sym(c))) => {
+                        tx.cx.inputs.insert(c.clone(), Rc::new(IntervalSet::top()));
+                        let c = tx.terms.name(c);
+                        (tx.terms.own_var(c), ROOT)
+                    }
+                    _ => unreachable!("a key holds constants and atoms of parameters"),
+                };
+                e = tx.bind(e, p, to);
+            }
+            e
+        })
+    }
+
+    /// The relation of the lambda `(body, lam)` of parameters `ps` over its canonical atoms, as
+    /// the canonical key `key` gives them, remembered under that key, so every claimed call of
+    /// it and its own question share one translation (LOAD-chain-affine). `t` is the call, or
+    /// the lambda for its own question, where a stop under recursion is reported.
+    fn canonical_formula(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Option<(Span, Eid)>,
+        key: Vec<Lin>,
+    ) -> Deep<'m, Option<Formula>> {
+        let k = ((body, lam), key.clone());
+        self.translated(
+            |m| &mut m.formula_calls,
+            k,
+            Logged::FormulaCall,
+            move || self.canonical_formula_read(t, ps, (body, lam), args, key),
+        )
+    }
+
+    /// What [`Walk::canonical_formula`] remembers: the body read under [`Walk::canonical_env`].
+    async fn canonical_formula_read(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Option<(Span, Eid)>,
+        key: Vec<Lin>,
+    ) -> Option<Formula> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.canonical_env(ps, lam, args, &key);
+        let f = self.formula(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        f
+    }
+
+    /// [`Walk::canonical_formula`] for an integer function.
+    fn canonical_lin(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+        key: Vec<Lin>,
+    ) -> Deep<'m, Option<Lin>> {
+        let k = ((body, lam), key.clone());
+        self.translated(
+            |m| &mut m.lin_calls,
+            k,
+            Logged::LinCall,
+            move || self.canonical_lin_read(t, ps, (body, lam), args, env, key),
+        )
+    }
+
+    /// What [`Walk::canonical_lin`] remembers.
+    async fn canonical_lin_read(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+        key: Vec<Lin>,
+    ) -> Option<Lin> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.canonical_env(ps, lam, Some((args, env)), &key);
+        let l = self.lin(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        l
+    }
+
+    /// The formula of the call at `t` of the lambda `(body, lam)`, under the key `k`: when the
+    /// call may be claimed ([`Walk::claimable`]), its callee's canonical relation, shared, and
+    /// `b == n` for the binding `b`, numbered n, of its canonical atoms to the arguments (each
+    /// binding at its own number: two fixed to one value share every row, a tie the solver
+    /// refuses), so a call costs
+    /// O(its arguments) once its callee is translated, whatever map of the parameters the
+    /// arguments are (LOAD-chain-affine); otherwise the callee's body read with each parameter
+    /// bound to its argument ([`Walk::formula_call`]), as it is when the callee's canonical
+    /// relation is outside the domain.
+    ///
+    /// A canonical relation that is one constraint over symbols is written at the arguments
+    /// instead ([`at_arguments`]), with no binding and no claim.
+    // Complexity tradeoff: a function has one claimed call, the first read, and each call of it
+    // with other arguments reads its body again, and the calls in it whose arguments then
+    // differ from their callees' claimed ones, so a function called with k argument lists is
+    // read k times, O(k times its cone). Why: the claimed call binds the callee's canonical
+    // atoms, which one relation can bind once, and a caller's relation holds its callees', with
+    // their bindings. Trigger: one function with a large cone called with another argument
+    // list by each link of a chain, as `h(x: x)` in `p{i}(x) = h(x: x) && p{i-1}(x: x + 1)` with
+    // `h` a chain of n links: 62.9 times the bytes from 50 to 400 links (measured once).
+    // A small callee read again (`q(x: x)` there, `q` of a few constraints or calling its
+    // class) is O(1) a call: tests
+    // `l01_38_presburger::one_scope::the_relations_of_a_chain_with_a_second_call_of_a_call_scale`
+    // and `..._of_two_constraints_scale`. COMPLEXITY.md row LOAD-chain-affine (open). A complete
+    // solution would index the canonical atoms by the call, so each call binds its own copy of
+    // them without copying the relation: a relation node instantiated at the call, which the
+    // solver reads with the call's atoms.
+    async fn formula_called(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+        k: CallKey,
+    ) -> Option<Formula> {
+        use presburger::Atom;
+        if let Some(key) = self.claimable(ps, &k) {
+            // A key equal to the call's own is the entry being made, so read it here.
+            if key == k.1 {
+                return self
+                    .canonical_formula_read(t, ps, (body, lam), Some((args, env)), key)
+                    .await;
+            }
+            let canonical =
+                self.canonical_formula(t, ps, (body, lam), Some((args, env)), key.clone());
+            let r = canonical.await;
+            let one = r.as_ref().and_then(|r| match r {
+                Formula::Con(c) => at_arguments(&c.lin, &key, &k.1),
+                _ => None,
+            });
+            if let (Some(lin), Some(Formula::Con(c))) = (one, &r) {
+                return Some(Formula::Con(Con { lin, rel: c.rel }));
+            }
+            if let Some(r) = r
+                && let Some(b) = self.binding((body, lam), &k.1, &key, None)
+            {
+                let b = Formula::Con(Con::eq(&Lin::atom(Atom::Aux(b)), &Lin::constant(b as i64)));
+                return Some(Formula::and_keeping(vec![r, b], |i| i == 0));
+            }
+        }
+        self.formula_call(t, ps, (body, lam), args, env).await
+    }
+
+    /// [`Walk::formula_called`] for an integer function: when the call may be claimed and its
+    /// callee's canonical term holds no product, the variable `v` of the binding, defined by
+    /// `v == ` that term; otherwise the callee's body read with each parameter bound to its
+    /// argument ([`Walk::lin_call`]). A product in the term is left to the substitution, since
+    /// [`Scoped::written`] writes `v` as the term, and a product of `v` would be a product of
+    /// products.
+    /// A canonical term over symbols alone is written at the arguments ([`at_arguments`]).
+    async fn lin_called(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+        k: CallKey,
+    ) -> Option<Lin> {
+        use presburger::Atom;
+        if let Some(key) = self.claimable(ps, &k) {
+            if key == k.1 {
+                return self
+                    .canonical_lin_read(t, ps, (body, lam), args, env, key)
+                    .await;
+            }
+            let canonical = self.canonical_lin(t, ps, (body, lam), args, env, key.clone());
+            let l = canonical.await;
+            if let Some(s) = l.as_ref().and_then(|l| at_arguments(l, &key, &k.1)) {
+                return Some(s);
+            }
+            if let Some(l) = l
+                && !l.terms.keys().any(|a| matches!(a, Atom::Product(..)))
+                && let Some(v) = self.binding((body, lam), &k.1, &key, Some(l))
+            {
+                return Some(Lin::atom(Atom::Aux(v)));
+            }
+        }
+        self.lin_call(t, ps, (body, lam), args, env).await
+    }
+
     async fn formula_at(&'m self, t: Tid, env: Eid) -> Option<Formula> {
         use Prim::*;
         if let Some(v) = self.constant(t, env).await {
@@ -5537,9 +6013,9 @@ impl<'m, 't> Walk<'m, 't> {
                         Some(k) => {
                             let call = self.translated(
                                 |m| &mut m.formula_calls,
-                                k,
+                                k.clone(),
                                 Logged::FormulaCall,
-                                move || self.formula_call(t, ps, (body, lam), args, env),
+                                move || self.formula_called(t, ps, (body, lam), args, env, k),
                             );
                             call.await
                         }
@@ -5553,10 +6029,14 @@ impl<'m, 't> Walk<'m, 't> {
                 Callee::Lam(..) => None,
             },
             Node::If(g, a, b) => {
-                // The formula of a name is kept whole, as for `&&` below.
-                let named = [g, a, b].map(|t| self.whole(t, env));
+                // The formula of a name is kept whole, as for `&&` below, and a claimed call's
+                // parts are added ([`Walk::claimed`]).
+                let mut named = [g, a, b].map(|t| self.whole(t, env));
                 let g = self.formula(g, env).await?;
                 let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
+                for (i, f) in [&g, &fa, &fb].into_iter().enumerate() {
+                    named[i] = named[i] && !self.claimed(f);
+                }
                 Some(Formula::or(vec![
                     Formula::and_keeping(vec![g.clone(), fa], |i| named[i]),
                     Formula::and_keeping(vec![Formula::negate(g), fb], |i| i == 1 && named[2]),
@@ -5653,7 +6133,8 @@ impl<'m, 't> Walk<'m, 't> {
                 continue;
             }
             let f = self.formula(u, env).await?;
-            j.operand(f, self.whole(u, env));
+            let keep = self.whole(u, env) && !self.claimed(&f);
+            j.operand(f, keep);
         }
         Some(j.finish())
     }

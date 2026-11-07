@@ -20,7 +20,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::formula::Id;
+use super::formula::{Id, Rel};
 use super::{Atom, Con, Factor, Formula, Lin, Model, Refusal, decide, satisfiable, shadow};
 use zedc_int::int::Int;
 
@@ -45,6 +45,12 @@ type Point = imbl::OrdMap<Atom, Int>;
 struct Known {
     answers: Answers,
     point: Option<Point>,
+    /// A point where its negation and its definitions hold, when it fails and the solver or
+    /// an extension gave one, every atom of them given a value as in `point`.
+    miss: Option<Point>,
+    /// How many atoms it holds, its parts' counted once for each part they are in: which of
+    /// two kept parts is the larger ([`Extending::extend`]).
+    size: usize,
 }
 
 /// The answers of conjunctions decided so far, by the part each is, and the summaries of the
@@ -68,10 +74,15 @@ struct Summaries {
 /// points of `rows` are those of the conjunction read on these atoms (exact, [`shadow`] with its
 /// dark shadows). Made only where each definition reads the variables of one definition at
 /// most, so the definitions reached form a path down to the one that reads none, `bottom`; two
-/// summaries with different bottoms share no definition.
+/// summaries with different bottoms share no definition. The symbols a definition binds, an
+/// equality with none of its variables that sets a symbol its input's summary reads (`c ==
+/// x + 1` of a claimed call, LOAD-chain-affine: `c` a canonical atom of the callee), are
+/// projected out too, `hidden`: the summary stands for the definitions only where nothing
+/// else read with it reads them ([`Summaries::read`]).
 struct Summary {
     rows: Formula,
     bottom: Id,
+    hidden: HashSet<Atom>,
 }
 
 impl Extending {
@@ -91,30 +102,34 @@ impl Extending {
     /// of `n` whatever their values, and whose own auxiliary variables are defined the same
     /// way): [`decide`] of `defs && f` and of `defs && !f`, with `defs` the definitions `f`
     /// reaches. But a conjunction one of whose parts is a conjunction kept whole is decided from
-    /// that part's answers, which are found first and remembered, and its other parts with the
-    /// definitions they reach:
+    /// that part's answers (of several, the one with the most atoms; [`Extending::extend`]),
+    /// which are found first and remembered, and its other parts with the definitions they
+    /// reach:
     ///
     /// - it holds nowhere when the part holds nowhere; it holds where the part's point meets
     ///   every other part, or where the other parts hold with the atoms the part's point gives
     ///   a value fixed to it and their other atoms free; otherwise it is decided whole;
-    /// - its negation holds somewhere when the part's negation does; when the part holds
-    ///   everywhere, it is the negation of the other parts that is decided: first with only the
-    ///   definitions they reach past the part's point, which settles it when that never holds
-    ///   or holds at a point extending the part's, then with all they reach; otherwise it is
-    ///   decided whole.
+    /// - its negation holds somewhere when the part's point of negation extends to the
+    ///   definitions the other parts reach past it, or when the negation of the other parts
+    ///   holds with the definitions it reaches, since a definition binding the part's atoms to
+    ///   a call's arguments gives them one value at each point (LOAD-chain-affine); otherwise
+    ///   it is decided whole; when the part holds everywhere, it is the negation of the other
+    ///   parts that is decided: first with only the definitions they reach past the part's
+    ///   point, which settles it when that never holds or holds at a point extending the
+    ///   part's, then with all they reach; otherwise it is decided whole.
     ///
     /// The definitions of the other parts may be left out of the part's questions, and those of
     /// the part out of the other parts', since a definition holds for some value of its variable
     /// whatever the values of the atoms it is made of. Each answer is the one [`decide`] gives
     /// the whole, where [`decide`] answers it: a conjunction that holds nowhere because a part
     /// does, or holds at a point, holds there. The answer of a conjunction does not depend on
-    /// the order in which conjunctions are asked, since its kept part is always decided first,
-    /// the same way. The time is that of the parts beside each kept part and the definitions
-    /// they reach past the part's point (LOAD-chain-defs), for a chain of conjunctions each
-    /// extending the one before whose point meets the next part and whose negation holds or
-    /// never holds; a conjunction decided whole costs what [`decide`] costs on it. Every formula
-    /// asked of one `Extending` is read with the same `def`, since the answers it remembers are
-    /// those under it.
+    /// the order in which conjunctions are asked, since its kept parts are always decided first,
+    /// the same way, and the one kept is chosen by their sizes alone. The time is that of the
+    /// parts beside each kept part and the definitions they reach past the part's point
+    /// (LOAD-chain-defs), for a chain of conjunctions each extending the one before whose point
+    /// meets the next part and whose negation holds or never holds; a conjunction decided whole
+    /// costs what [`decide`] costs on it. Every formula asked of one `Extending` is read with
+    /// the same `def`, since the answers it remembers are those under it.
     // Complexity tradeoff: a conjunction whose new parts exclude the point found for the part it
     // extends, or whose part's question was refused, is decided whole, in time of the whole
     // conjunction and not of its new parts; the answer is [`decide`]'s. Why: deciding integer
@@ -133,24 +148,31 @@ impl Extending {
     // of n definitions read O(n) rows in all; where a summary is not made, with every
     // definition they reach (the tradeoff at [`Summaries::summary`]). A conjunction with no
     // kept part finds its point with every definition it reaches, as above, since a summary
-    // gives no value to the atoms it projects out.
+    // gives no value to the atoms it projects out. The same holds for the negation of a
+    // conjunction whose part fails only at points its call's arguments do not reach (`p(x) =
+    // q(x: 2 * x)`, `q` failing at odd values alone) and whose other parts never fail: decided
+    // whole (LOAD-chain-affine).
     pub fn defined(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Answers {
-        // The chain of kept conjunctions from `f` down to the first one known or with no kept
-        // part, each decided after the one it holds: an explicit stack, since the chain is as
-        // deep as the chain of calls.
-        let mut chain: Vec<Formula> = Vec::new();
-        let mut g = f.clone();
-        while matches!(g, Formula::And(_)) && !self.known.contains_key(&Id::any(&g)) {
-            let next = kept(&g).cloned();
-            chain.push(g);
-            match next {
-                Some(h) => g = h,
-                None => break,
+        // The kept conjunctions under `f` not yet known, each decided after every one it holds
+        // (LOAD-chain-affine: `q(x: x) && p(x: x + 1)` holds two), so that the largest is kept:
+        // an explicit stack, since the conjunctions nest as deep as the chain of calls. The
+        // known ones are the visited set; one met twice before it is decided is decided once.
+        let mut todo = vec![(f.clone(), false)];
+        while let Some((g, after)) = todo.pop() {
+            if !matches!(g, Formula::And(_)) || self.known.contains_key(&Id::any(&g)) {
+                continue;
             }
-        }
-        while let Some(g) = chain.pop() {
-            let k = self.extend(&g, def);
-            self.known.insert(Id::any(&g), k);
+            if after {
+                let k = self.extend(&g, def);
+                self.known.insert(Id::any(&g), k);
+                continue;
+            }
+            let kids: Vec<Formula> = (g.kids().iter())
+                .filter(|h| matches!(h, Formula::And(_)) && !self.known.contains_key(&Id::any(h)))
+                .cloned()
+                .collect();
+            todo.push((g, true));
+            todo.extend(kids.into_iter().rev().map(|h| (h, false)));
         }
         match f {
             Formula::And(_) => self.known[&Id::any(f)].answers.clone(),
@@ -161,13 +183,25 @@ impl Extending {
         }
     }
 
-    /// The answers of the conjunction `g`, its kept part's answers known when it has one.
+    /// The answers of the conjunction `g`, from those of its kept part when it has one: the
+    /// part, among its conjunctions kept whole, with the most atoms, the first of those with as
+    /// many, so that a call of a small function beside a long chain (`q(x: x) && p(x: x + 1)`)
+    /// extends the chain and reads `q` beside it (LOAD-chain-affine). O(its parts).
     fn extend(&mut self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
-        let Some(at) = kept_at(g) else {
-            return whole(&mut self.sums, g, def);
-        };
         let kids = g.kids();
-        let Some(part) = self.known.get(&Id::any(&kids[at])) else {
+        let mut kept: Option<(usize, &Known)> = None;
+        for (i, h) in kids.iter().enumerate() {
+            if !matches!(h, Formula::And(_)) {
+                continue;
+            }
+            let Some(k) = self.known.get(&Id::any(h)) else {
+                return whole(&mut self.sums, g, def);
+            };
+            if kept.is_none_or(|(_, best)| k.size > best.size) {
+                kept = Some((i, k));
+            }
+        }
+        let Some((at, part)) = kept else {
             return whole(&mut self.sums, g, def);
         };
         // The other parts, O(their number), and the definitions they reach; a refusal on them
@@ -194,21 +228,40 @@ impl Extending {
         // variables left free), so it never holding settles it; one point of it that extends
         // the part's point satisfies every definition, so that settles it too; otherwise it is
         // decided with all the definitions it reaches.
-        let fails = match part.answers.fails {
-            Ok(true) => Ok(true),
+        let not = Formula::negate(rest.clone());
+        let (fails, miss) = match part.answers.fails {
+            // The part fails somewhere, but a call binds the part's atoms to its arguments
+            // (LOAD-chain-affine), and arguments whose map is not onto, as `x: 2 * x`, may reach
+            // no point where it fails. So the whole fails where the part's point of negation
+            // extends to the definitions the other parts reach past it, which bind the part's
+            // atoms to the whole's: the part fails there, whatever the other parts do.
+            // Otherwise it fails where the other parts fail, with the definitions they reach:
+            // each binding gives the part's atoms one value at any point of the whole's own
+            // atoms, and the part's definitions hold there for some value of their variables.
+            // Otherwise it is decided whole.
+            Ok(true) => {
+                let extended = (part.miss.as_ref())
+                    .and_then(|m| met(m, &with(&reached_past(&rest, def, m), Formula::top())));
+                match extended {
+                    Some(p) => (Ok(true), Some(p)),
+                    None => match decide_defined(&mut self.sums, not, def) {
+                        Ok(true) => (Ok(true), None),
+                        _ => fails_whole(&mut self.sums, g, def),
+                    },
+                }
+            }
             Ok(false) => {
-                let not = Formula::negate(rest);
                 let short = part.point.as_ref().and_then(|m| {
                     let f = new(&not, m);
                     match decide(&f) {
-                        Ok(false) => Some(false),
-                        _ => met(m, &f).map(|_| true),
+                        Ok(false) => Some((false, None)),
+                        _ => met(m, &f).map(|p| (true, Some(p))),
                     }
                 });
                 match short {
-                    Some(b) => Ok(b),
+                    Some((b, miss)) => (Ok(b), miss),
                     None => match decide_defined(&mut self.sums, not, def) {
-                        Ok(b) => Ok(b),
+                        Ok(b) => (Ok(b), None),
                         Err(_) => fails_whole(&mut self.sums, g, def),
                     },
                 }
@@ -218,19 +271,10 @@ impl Extending {
         Known {
             answers: Answers { holds, fails },
             point,
+            miss,
+            size: part.size + rest.atoms().len(),
         }
     }
-}
-
-/// Where the first part of the conjunction `g` that is a conjunction kept whole lies among
-/// its parts.
-fn kept_at(g: &Formula) -> Option<usize> {
-    g.kids().iter().position(|h| matches!(h, Formula::And(_)))
-}
-
-/// The first part of the conjunction `g` that is a conjunction kept whole.
-fn kept(g: &Formula) -> Option<&Formula> {
-    kept_at(g).map(|i| &g.kids()[i])
 }
 
 /// The auxiliary variables of an atom.
@@ -334,40 +378,53 @@ fn holds_whole(
     g: &Formula,
     def: &dyn Fn(u32) -> Formula,
 ) -> (Result<bool, Refusal>, Option<Point>) {
-    let f = with(&reached(g, def), g.clone());
-    match decide(&f) {
-        Ok(true) => {
-            let point = satisfiable(&f).ok().flatten().map(|m| {
-                let mut p: Point = m.into_iter().collect();
-                for a in f.atoms() {
-                    p.entry(a).or_default();
-                }
-                p
-            });
-            (Ok(true), point)
-        }
+    found(&with(&reached(g, def), g.clone()))
+}
+
+/// Whether `f` holds somewhere, with a point when it does and the solver gives one, every atom
+/// of `f` given a value.
+fn found(f: &Formula) -> (Result<bool, Refusal>, Option<Point>) {
+    match decide(f) {
+        Ok(true) => (Ok(true), point(f)),
         other => (other, None),
     }
 }
 
-/// Whether the negation of `g` and its definitions hold somewhere, decided whole.
+/// A point where `f` holds, every atom of `f` given a value, when the solver gives one.
+fn point(f: &Formula) -> Option<Point> {
+    satisfiable(f).ok().flatten().map(|m| {
+        let mut p: Point = m.into_iter().collect();
+        for a in f.atoms() {
+            p.entry(a).or_default();
+        }
+        p
+    })
+}
+
+/// Whether the negation of `g` and its definitions hold somewhere, decided whole (with the
+/// summaries of the definitions where they answer, [`decide_defined`]), with a point where it
+/// holds as [`holds_whole`] gives one, found with every definition it reaches.
 fn fails_whole(
     sums: &mut Summaries,
     g: &Formula,
     def: &dyn Fn(u32) -> Formula,
-) -> Result<bool, Refusal> {
-    decide_defined(sums, Formula::negate(g.clone()), def)
+) -> (Result<bool, Refusal>, Option<Point>) {
+    let not = Formula::negate(g.clone());
+    match decide_defined(sums, not.clone(), def) {
+        Ok(true) => (Ok(true), point(&with(&reached(g, def), not))),
+        other => (other, None),
+    }
 }
 
 /// The answers of `g`, decided whole.
 fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
     let (holds, point) = holds_whole(g, def);
+    let (fails, miss) = fails_whole(sums, g, def);
     Known {
-        answers: Answers {
-            holds,
-            fails: fails_whole(sums, g, def),
-        },
+        answers: Answers { holds, fails },
         point,
+        miss,
+        size: g.atoms().len(),
     }
 }
 
@@ -393,10 +450,14 @@ impl Summaries {
     /// The summaries of the definitions of `f`'s auxiliary variables, one for each definition,
     /// in place of every definition `f` reaches: `None` when one has none, or when two have the
     /// same bottom, so that they may share definitions and their projections, each exact, may
-    /// not be together. Time of `f` and of the summaries made, each made once.
+    /// not be together, or when a symbol one summary projects out ([`Summary::hidden`]) is
+    /// read by `f` or by another summary. Time of `f` and of the summaries made, each made
+    /// once.
     fn read(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Option<Vec<Formula>> {
         let mut seen: HashSet<Id> = HashSet::new();
         let mut bottoms: HashSet<Id> = HashSet::new();
+        let mut read: HashSet<Atom> = f.atoms().into_iter().collect();
+        let mut hidden: HashSet<Atom> = HashSet::new();
         let mut out = Vec::new();
         for n in f.atoms().iter().flat_map(auxes) {
             let d = def(n);
@@ -414,9 +475,15 @@ impl Summaries {
             if !bottoms.insert(s.bottom.clone()) {
                 return None;
             }
+            for h in &s.hidden {
+                if !hidden.insert(h.clone()) {
+                    return None;
+                }
+            }
+            read.extend(s.rows.atoms());
             out.push(s.rows.clone());
         }
-        Some(out)
+        hidden.is_disjoint(&read).then_some(out)
     }
 
     /// The summary of the definition `d`, a conjunction, made from the summary of the one
@@ -518,6 +585,7 @@ impl Summaries {
             return Made::Done(Some(Summary {
                 rows: d.clone(),
                 bottom: id.clone(),
+                hidden: HashSet::new(),
             }));
         };
         let Some(known) = self.by.get(&gid) else {
@@ -535,6 +603,28 @@ impl Summaries {
                 keep.insert(a);
             }
         }
+        // The symbols `d` binds: each set with coefficient ±1 by an equality of `d` that holds
+        // no variable `d` defines, and read by the input's summary. A question is asked of
+        // the summaries and `f` together, existentially, so projecting a symbol out of one
+        // summary is exact when no other part reads it: `read` checks `f` and the other
+        // summaries' rows. The definitions a summary projected out are on its own path, which
+        // another summary reaches only with the same bottom, refused there. Only `d`'s own
+        // symbols are kept, not those of the summaries below, which are on the same path, so a
+        // path of n bindings holds n symbols in all and not n²/2.
+        let below_atoms = below.rows.atoms();
+        let mut hidden = HashSet::new();
+        let own = |a: &Atom| matches!(a, Atom::Aux(n) if Id::any(&def(*n)) == *id);
+        for c in &rows {
+            if c.rel != Rel::Eq || c.lin.terms.keys().any(own) {
+                continue;
+            }
+            for (a, k) in &c.lin.terms {
+                if matches!(a, Atom::Sym(_)) && k.is_unit() && below_atoms.contains(a) {
+                    keep.remove(a);
+                    hidden.insert(a.clone());
+                }
+            }
+        }
         rows.extend(below.rows.cons().into_iter().cloned());
         let Some(out) = shadow(&rows, &|a| keep.contains(a), true) else {
             return none;
@@ -548,6 +638,7 @@ impl Summaries {
         Made::Done(Some(Summary {
             rows: Formula::and(out.into_iter().map(Formula::Con).collect()),
             bottom: below.bottom.clone(),
+            hidden,
         }))
     }
 }

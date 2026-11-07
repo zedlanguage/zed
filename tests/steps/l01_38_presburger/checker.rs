@@ -360,6 +360,11 @@ fn the_linear_questions_of_a_unit_scale() {
 fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints() {
     // `ok` holds `base`'s relation as one shared part (LOAD-chain-share); the refusal, its
     // cause and the constraints it prints are those of `ok` with `base`'s rows written in it.
+    // But for the tie: `main` passes `ok` a local, so `ok` is read over its canonical atoms
+    // and its call of `base` binds `base`'s to them (LOAD-chain-affine); the solver removes
+    // those equalities first, and no longer meets the tie of four names alike that refuses
+    // the rows written out. It decides the question (it holds, at large values), and `ok`
+    // is false at 3.
     const ARGS: &str = "x: a, y: a, z: a, w: a";
     for r in &REFUSED {
         let [first, second] = r.rows;
@@ -371,6 +376,12 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
             ARGS,
         );
         let written = program(&format!("ok(x, y, z, w) = {first} && {second};"), ARGS);
+        if r.name == "tie" {
+            let o = run("tie-called", &called, "3\n", &[]);
+            assert_eq!((o.status, o.stdout.as_str()), (0, "out\n"), "{}", o.stderr);
+            rejection("tie-written", &written);
+            continue;
+        }
         let called = rejection(&format!("{}-called", r.name), &called)
             .replace("2:1: ", "1:1: ")
             .replace("2:18: ", "1:18: ");
@@ -439,4 +450,63 @@ fn a_question_read_in_its_callees_coordinates_is_answered_and_printed_over_its_o
         assert_eq!(through, expected, "{call}");
         assert!(through.contains("whether `tie` can hold"), "{through}");
     }
+}
+
+#[test]
+fn a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parameters() {
+    // LOAD-chain-affine: `ok` passes `base` its `x` doubled or negated, so `base`'s relation
+    // is read once, over its own atoms, and the call binds them to `ok`'s terms. The rejection
+    // of `ok`'s question, its cause and constraints, are those of `ok` with `base`'s rows
+    // written in it at those terms, over `ok`'s own parameters.
+    const ARGS: &str = "x: a, y: a, z: a, w: a";
+    let mut refused = 0;
+    for r in &REFUSED[..2] {
+        let [first, second] = r.rows;
+        for (i, x) in ["2 * x", "0 - x"].into_iter().enumerate() {
+            // `first` with each `x` replaced by `(x)`.
+            let mut at = String::new();
+            let mut prev = ' ';
+            for ch in first.chars() {
+                match ch == 'x' && !prev.is_alphanumeric() {
+                    true => at.push_str(&format!("({x})")),
+                    false => at.push(ch),
+                }
+                prev = ch;
+            }
+            let called = program(
+                &format!(
+                    "base(x, y, z, w) = {first};\nok(x, y, z, w) = base(x: {x}, y: y, z: z, w: w) \
+                     && {second};"
+                ),
+                ARGS,
+            );
+            let written = program(&format!("ok(x, y, z, w) = {at} && {second};"), ARGS);
+            let (o, w) = (
+                run(&format!("{}-map-{i}-called", r.name), &called, "3\n", &[]),
+                run(&format!("{}-map-{i}-written", r.name), &written, "3\n", &[]),
+            );
+            assert_eq!(
+                (o.status, &o.stdout),
+                (w.status, &w.stdout),
+                "{x}: {}",
+                o.stderr
+            );
+            if o.status != 1 {
+                continue;
+            }
+            refused += 1;
+            let called = rejection(&format!("{}-map-{i}-called", r.name), &called)
+                .replace("2:1: ", "1:1: ")
+                .replace("2:18: ", "1:18: ");
+            assert!(called.contains("whether `ok` can hold"), "{called}");
+            assert!(!called.contains(['#', '@']), "{called}");
+            assert_eq!(
+                called,
+                rejection(&format!("{}-map-{i}-written", r.name), &written),
+                "{} at {x}",
+                r.name
+            );
+        }
+    }
+    assert!(refused > 0, "no question refused");
 }

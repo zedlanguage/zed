@@ -45,6 +45,75 @@ fn closed(cones: &Cones<'_>, ps: &[Arc<str>], body: &Term) -> Option<Relation> {
     relations(&[&body], ps, true).map(|mut rs| rs.remove(0))
 }
 
+/// `r` written with its auxiliary variables numbered in the order they are first met: in the
+/// body, then in the definitions met, each after the one before. A relation one body reads
+/// through definitions made for another numbers them in the order they were made
+/// (`Scoped::written`), so two relations equal but for that numbering have one shape.
+fn shape(r: &Relation) -> String {
+    use std::collections::HashMap;
+    // Each `Aux(n)`, and each `q{n}` that a definition's written term names, renamed by `at`,
+    // numbering a new one in order.
+    fn renamed(s: &str, at: &mut HashMap<u32, usize>, order: &mut Vec<u32>) -> String {
+        let (mut out, mut rest) = (String::new(), s);
+        while !rest.is_empty() {
+            let named = |p: &str| -> Option<(usize, usize)> {
+                let digits = rest.strip_prefix(p)?;
+                let k = digits
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(digits.len());
+                (k > 0).then_some((p.len(), k))
+            };
+            let start = out
+                .chars()
+                .last()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            let hit = named("Aux(").or_else(|| named("q").filter(|_| start));
+            match hit {
+                Some((p, k)) => {
+                    let n: u32 = rest[p..p + k].parse().unwrap();
+                    let i = *at.entry(n).or_insert_with(|| {
+                        order.push(n);
+                        order.len() - 1
+                    });
+                    out.push_str(&format!("{}{i}", &rest[..p]));
+                    rest = &rest[p + k..];
+                }
+                None => {
+                    let c = rest.chars().next().unwrap();
+                    out.push(c);
+                    rest = &rest[c.len_utf8()..];
+                }
+            }
+        }
+        out
+    }
+    let defs: HashMap<u32, String> = (r.defs.iter())
+        .map(|(n, w, f)| (*n, format!("{w}: {f:?}")))
+        .collect();
+    let (mut at, mut order) = (HashMap::new(), Vec::new());
+    let mut out = vec![renamed(&format!("{:?}", r.body), &mut at, &mut order)];
+    let mut next = 0;
+    loop {
+        while next < order.len() {
+            let d = &defs[&order[next]];
+            out.push(format!("{next} = {}", renamed(d, &mut at, &mut order)));
+            next += 1;
+        }
+        // A definition no formula met names, but whose own formula names one met (the `div`
+        // holding the constraints of a `mod`), taken by the first met atom it names.
+        let more = order.iter().find_map(|m| {
+            (r.defs.iter()).find(|(n, _, f)| {
+                !at.contains_key(n) && format!("{f:?}").contains(&format!("Aux({m})"))
+            })
+        });
+        let Some((n, _, _)) = more else { break };
+        at.insert(*n, order.len());
+        order.push(*n);
+    }
+    assert_eq!(order.len(), r.defs.len(), "every definition met: {r:?}");
+    out.join("\n")
+}
+
 const UNITS: &[&str] = &[
     // A helper with `div` and `mod`, whose auxiliary variables each relation numbers afresh.
     "h(x: int) = x div 3 + x mod 5;\nok(x: int, y: int) = h(x: x) <= y && y < h(x: y + 1);\n\
@@ -77,7 +146,10 @@ fn a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body() {
         none += expected.iter().filter(|r| r.is_none()).count();
         let lets = lets(&unit);
         // The bodies in the unit's order and in the reverse, so that each definition is read
-        // first from another body, and from its own.
+        // first from another body, and from its own. A body that takes a callee's definitions
+        // as another body made them numbers them as they were made (LOAD-chain-affine: `k`
+        // reads `f(y: z + 1)` through `g`'s translation), so the relations are compared by
+        // their shape.
         for order in [
             (0..fs.len()).collect::<Vec<_>>(),
             (0..fs.len()).rev().collect(),
@@ -87,8 +159,8 @@ fn a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body() {
                 let (name, ps, body) = fs[i];
                 let got = scoped.relation(body, ps, ps, true);
                 assert_eq!(
-                    got.map(|b| scoped.written(&b)),
-                    expected[i],
+                    got.map(|b| shape(&scoped.written(&b))),
+                    expected[i].as_ref().map(shape),
                     "`{name}` in\n{src}"
                 );
             }
@@ -357,6 +429,16 @@ fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relatio
          k2(x: int) = k0(x: 2 * x, y: 3);\nk3(x: int, y: int) = k0(x: y, y: y + x);",
         // A function with no call: a chain of one.
         "e0(x: int) = x mod 3 == 1;",
+        // LOAD-chain-affine: a callee called with two keys by two callers, a map that is not
+        // one-to-one, and a callee read over its parameters' class and bound by another call.
+        "q(x: int) = x mod 2 == 0;\nm0(x: int) = q(x: x) && x < 9;\nm1(x: int) = q(x: x) && m0(x: x + 1);\n\
+         m2(x: int) = m1(x: 2 * x) && q(x: x + 3) && m0(x: x);",
+        // A function whose parameter, read in its question, is bound in a relation the same
+        // question reaches: `a`'s question must not bind its own atom through `e`.
+        "b(x: int) = x > 2 && x < 7;\ne(x: int) = b(x: x);\na(x: int) = b(x: x) && e(x: x + 1);",
+        // A diamond: `h0` reached by `h1` and through `p1`, each passing its parameter.
+        "h0(x: int) = x mod 3;\nh1(x: int) = h0(x: x) div 2 + 1;\np0(x: int) = h0(x: x) > 0;\n\
+         p1(x: int) = p0(x: x) && h1(x: x) > 1 && h0(x: x + 1) == 2;",
     ];
     for src in units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
@@ -702,4 +784,248 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
             assert_eq!(forward[i], ask(vec![i])[i], "{src}: `{}` alone", fs[i].0);
         }
     }
+}
+
+/// Times the relations, translated alone, of a unit of `first` and the links `link(1)` to
+/// `link(m - 1)`, at m = `n` and 8n, on units elaborated before the timing: for chains whose
+/// questions are decided whole because each link's constraints exclude the point found for
+/// the link it calls (`presburger::extend`, COMPLEXITY.md row LOAD-chain-share).
+fn relations_scale(what: &str, n: usize, first: &str, link: fn(usize) -> String) {
+    let units: std::collections::BTreeMap<usize, Unit> = [n, n * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let src: String = std::iter::once(first.to_string())
+                .chain((1..m).map(link))
+                .collect();
+            (m, elab(&src).unwrap())
+        })
+        .collect();
+    zed_tests::scaling::check(what, n, |m| {
+        let unit = &units[&m];
+        let lets = lets(unit);
+        let mut scoped = Scoped::new(&lets);
+        for (name, ps, body) in functions(unit) {
+            assert!(scoped.relation(body, ps, ps, true).is_some(), "{name}");
+        }
+    });
+}
+
+#[test]
+fn the_questions_of_a_chain_doubling_its_argument_scale() {
+    // `p{i}(x) = p{i-1}(x: 2 * x) && x < 1000 i`, LOAD-chain-affine: a map of the parameter
+    // that is not a move. 50 → 400: 59.3 times the bytes when each call was translated again
+    // at its argument; each body is now read once over its canonical atom, and a call binds
+    // that atom to its argument.
+    questions_scale(
+        "a chain of tests doubling the argument",
+        50,
+        "p0(x: int) = x > 0;\n",
+        |i| format!("p{i}(x: int) = p{}(x: 2 * x) && x < {};\n", i - 1, 1000 * i),
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_negating_its_argument_scale() {
+    // `p{i}(x) = p{i-1}(x: 0 - x) && x < 1000 i`: a map with a negative factor. Linear before
+    // LOAD-chain-affine too; kept so that the canonical reading stays so.
+    questions_scale(
+        "a chain of tests negating the argument",
+        50,
+        "p0(x: int) = x > 0;\n",
+        |i| format!("p{i}(x: int) = p{}(x: 0 - x) && x < {};\n", i - 1, 1000 * i),
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_passing_a_constant_scale() {
+    // `p{i}(x, y) = p{i-1}(x: x, y: 5) && x + y < 1000 i`: a constant argument beside a
+    // parameter passed as it is. Linear before LOAD-chain-affine too (the moved case is
+    // `the_relations_of_a_chain_passing_a_moved_parameter_and_a_constant_scale`).
+    questions_scale(
+        "a chain of tests passing a constant",
+        50,
+        "p0(x: int, y: int) = x > y;\n",
+        |i| {
+            format!(
+                "p{i}(x: int, y: int) = p{}(x: x, y: 5) && x + y < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_passing_a_parameter_twice_scale() {
+    // `p{i}(x, y) = p{i-1}(x: x, y: x) && x + y < 1000 i`: a map that is not one-to-one; the
+    // join of `x` to both of the callee's parameters is refused once per link
+    // (`preimage::identity_classes`). Linear before LOAD-chain-affine too (the moved case is
+    // `the_relations_of_a_chain_passing_a_moved_parameter_twice_scale`).
+    questions_scale(
+        "a chain of tests passing a parameter twice",
+        50,
+        "p0(x: int, y: int) = x >= y;\n",
+        |i| {
+            format!(
+                "p{i}(x: int, y: int) = p{}(x: x, y: x) && x + y < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_with_a_second_call_scale() {
+    // `p{i}(x) = q(x: x) && p{i-1}(x: x + 1) && x < 1000 i`: one function, `q`, called by
+    // every link with another argument; its relation, one constraint, is written at each
+    // call's argument. 50 → 400: 60.1 times the bytes when each link read the chain below
+    // it again.
+    questions_scale(
+        "a chain of tests with a second call",
+        50,
+        "q(x: int) = x < 1000000;\np0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_calling_its_helpers_in_a_diamond_scale() {
+    // `h{i}(x) = h{i-1}(x: x) div 2 + 1; p{i}(x) = p{i-1}(x: x) && h{i}(x: x) > 0`: `h{i-1}`
+    // is called by `h{i}` and through `p{i-1}`, each passing its parameter as it is; one class
+    // of parameters holds them all (`preimage::identity_classes`), so each body is read once.
+    // Linear before LOAD-chain-affine too; kept so that the classes keep it so.
+    questions_scale(
+        "a chain of tests calling its helpers in a diamond",
+        25,
+        "h0(x: int) = x;\np0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && h{i}(x: x) > 0;\n",
+                i - 1,
+                i - 1
+            )
+        },
+    );
+}
+
+// Chains whose questions are decided whole, because each link's constraints exclude the point
+// of the link it calls (COMPLEXITY.md row LOAD-chain-share): their translation alone is O(n).
+
+#[test]
+fn the_relations_of_a_chain_with_a_second_call_whose_points_move_scale() {
+    // 50 → 400: 62.5 times the bytes when each call was translated again.
+    relations_scale(
+        "the relations of a chain with a second call whose points move",
+        50,
+        "q(x: int) = x > 0;\np0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_relations_of_a_chain_passing_a_moved_parameter_twice_scale() {
+    // A map that is not one-to-one, of a moved parameter. 50 → 400: 62.5 times the bytes when
+    // each call was translated again.
+    relations_scale(
+        "the relations of a chain passing a moved parameter twice",
+        50,
+        "p0(x: int, y: int) = x >= y;\n",
+        |i| {
+            format!(
+                "p{i}(x: int, y: int) = p{}(x: x + 1, y: x + 1) && x + y < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_relations_of_a_chain_passing_a_moved_parameter_and_a_constant_scale() {
+    // A constant beside a moved parameter. 50 → 400: 62.4 times the bytes when each call was
+    // translated again.
+    relations_scale(
+        "the relations of a chain passing a moved parameter and a constant",
+        50,
+        "p0(x: int, y: int) = x > y;\n",
+        |i| {
+            format!(
+                "p{i}(x: int, y: int) = p{}(x: x + 1, y: 5) && x + y < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_relations_of_a_chain_with_a_second_call_of_two_constraints_scale() {
+    // `q` of two constraints is claimed by its first call and bound by each other. 50 → 400:
+    // 61.1 times the bytes when each call was translated again.
+    relations_scale(
+        "the relations of a chain with a second call of two constraints",
+        50,
+        "q(x: int) = x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_relations_of_a_chain_with_a_second_call_of_a_call_scale() {
+    // `q` calls `r` with its parameter as it is, so the two are one class
+    // (`preimage::identity_classes`), read once. 50 → 400: 59.2 times the bytes when each call
+    // was translated again.
+    relations_scale(
+        "the relations of a chain with a second call of a call",
+        50,
+        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
+         p0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_with_a_second_call_of_a_call_scale() {
+    // `p{i}(x) = q(x: x) && p{i-1}(x: x + 1) && x < 1000 i`, `q` calling `r`, with upper bounds
+    // alone, so each link's point extends its callee's. Each conjunction keeps its largest
+    // part, `p{i-1}`'s relation, and reads `q`'s beside it (`presburger::extend`); keeping the
+    // first, `q`'s, read the chain again at each link. 50 → 400: 59.1 times the bytes when each
+    // link translated the chain below it again.
+    questions_scale(
+        "a chain of tests with a second call of a call",
+        50,
+        "r(x: int) = x < 2000000;\nq(x: int) = r(x: x) && x < 1000000;\np0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
 }
