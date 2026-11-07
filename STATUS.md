@@ -1499,11 +1499,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | started: worktree from origin/main, reading extend.rs and drift probe |
-| LOAD-join-disjoint | impl attempt 1 | 2026-11-07 10:39 | probe measured (load 9-21): unite alone on h(k params)+k chains of k+k query fns, k=57/160/452/1280 (params 3.4k/26k/205k/1.64M): 24.8M/370M/6.48G/133G instr, x |
-| PA-let-multi | impl attempt 1 | 2026-11-07 10:18 | the probe's family (one test, d remainders) is quadratic on base too: 44.9x bytes at d=64->512 (load 16), 42.3x with the fix; with_bound binds every input of ea |
-| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | cross-check (old path vs new on every reduce) over 361 pieces: 0 mismatches; tests written; mutations caught; temp code removed / load 10.73 |
-| TY-sub-stack | impl attempt 1 | 2026-11-07 10:47 | baseline on 340ea743: ^l01_2[0-9]/zedc_types 205 pieces, 0 failed (load 16-23); starting the explicit-stack rewrite of ty.rs comparison |
+| LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | resumed for option (a): conjunction faces; load 13.14 11.93 15.50 |
+| PA-let-multi | impl attempt 1 | 2026-11-07 10:18 | negative control 2 failed as required: pa_bounds 2210 at d=64, 132354 at d=512, 59.89x (limit 9); control 1 (base) rejects the chain; fix restored |
+| SCALE-ratio | impl attempt 1 | 2026-11-07 11:08 | recording added to scaling.rs (ZED_SCALING_RATIOS); run 1 of all groups with scaling tests starting, load 21.67 |
+| STAGE-store-probes | impl attempt 1 | 2026-11-07 10:13 | started; worktree from origin/main d798ac47 / load 6.32 11.88 15.95 |
+| STAGE-stub-env | impl attempt 1 | 2026-11-07 10:48 | measured main at -0.0 chain n=60..960 doubling: instr ratios 2.76 3.10 3.54 3.80, bytes 3.01 3.44 3.80 3.93: quadratic, building a fix (load 43) |
+| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | ready 86ac734d on d798ac47; 364 pieces 0 failed with doc check / load 30.07 |
+| TY-sub-stack | impl attempt 1 | 2026-11-07 10:47 | after conversion: ^l01_2[0-9]/^zedc_types$ 205 pieces 0 failed, result lines same as baseline, load 34-52 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
