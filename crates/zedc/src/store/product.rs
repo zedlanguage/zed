@@ -20,7 +20,7 @@
 //!   that meets them is kept; a constraint new since the last reduction, or on a name that
 //!   has changed, is searched over its names the point does not give ([`witness`]), and only
 //!   when that finds nothing is the group of constraints that share names with it searched
-//!   whole ([`Scope::enumerate_exactly`]). Nothing lists the points, so the scope stays the
+//!   whole (`Scope::enumerate_exactly`). Nothing lists the points, so the scope stays the
 //!   size of the source, and a question about the exact set is a test assumed in the scope:
 //!   whether `p == 4` can hold is whether the scope assuming it is bottom.
 //!
@@ -502,7 +502,7 @@ pub struct Scope {
     pub exact: bool,
     /// Under `@exact`, a point that meets the written constraints the last enumeration took: a
     /// value for each open name of each group of them whose search found a point, and none for
-    /// the names of a group whose search gave no answer ([`Scope::enumerate_exactly`]).
+    /// the names of a group whose search gave no answer (`Scope::enumerate_exactly`).
     pub exactly: imbl::OrdMap<Arc<str>, Num>,
     /// Each question the integer solver left undecided while this scope was narrowed or
     /// projected, with the constraint it was asked of and how the scope came to ask it; each
@@ -1373,7 +1373,7 @@ impl Scope {
     /// names as they were, with `bottom` set, and [`Scope::get`] gives the bottom for each, so
     /// that a test that fails costs what it narrows and not the names in scope. A nest of `k`
     /// tests that each fail in one case, on `k` names, is then `O(k)` narrowings and not
-    /// `O(k²)` ([`Scope::reduce_case`]).
+    /// `O(k²)` (`Scope::reduce_case`).
     pub fn assume_case(&self, test: &Term, outcome: bool, premises: &Premises) -> Scope {
         let mut s = self.clone();
         s.settle_test(test);

@@ -441,7 +441,7 @@ fn spans(cell: &str) -> Option<(Vec<&str>, String)> {
 
 /// The problem with one Zed column, if any: `missing`, plan rows of `rows`, or Zed texts that
 /// parse as expressions of `spec`, use no defined word above Zed₀, and call each word with the
-/// arguments it takes ([`check_words`]). `cell` is as the table holds it, so `\|` is read as `|`.
+/// arguments it takes (`check_words`). `cell` is as the table holds it, so `\|` is read as `|`.
 pub fn check_zed(
     cell: &str,
     spec: &Spec,

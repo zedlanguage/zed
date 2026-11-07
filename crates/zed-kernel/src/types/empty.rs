@@ -210,7 +210,7 @@ impl Type {
     /// empty, and no value found. Kept results are not read, since those of `is_empty` carry no
     /// value and would make the outcome depend on the queries before it. A member of a recursive
     /// group that its decider decides gets its verdict with the other members
-    /// ([`group_verdicts`]).
+    /// (`group_verdicts`).
     pub fn verdict(&self) -> Verdict {
         let kept = || VERDICTS.with(|m| m.borrow().get(self).copied());
         if let Some(v) = kept() {

@@ -1734,7 +1734,7 @@ impl Num {
     pub const ONE: Num = Num(Word::Small(1));
 
     /// The value, written out when kept, once the system gives a byte for each bit of the
-    /// widest number the writing builds ([`Kept::widths`]); [`TooLarge`] names that memory when
+    /// widest number the writing builds (`Kept::widths`); [`TooLarge`] names that memory when
     /// it refuses. A value not kept is borrowed, or built from its one word.
     // Complexity tradeoff: the memory asked for is a byte for each bit of a bound on the widest
     // number built (each power, product, sum and radicand), the factor `Rat::built_parts`

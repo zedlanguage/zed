@@ -336,7 +336,7 @@ fn not_run(linker: &str, e: &std::io::Error) -> (u8, String) {
 ///   117 MB, once per build. Its [`BUILD`] is not enough, since it names the crate's Cargo
 ///   configuration and not its source.
 ///
-/// Not named: the system libraries in [`SYSTEM_LIBS`] and the start files, which a system
+/// Not named: the system libraries in `SYSTEM_LIBS` and the start files, which a system
 /// update can change under one driver version, and the driver's environment variables.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {

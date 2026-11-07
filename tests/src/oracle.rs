@@ -85,7 +85,7 @@ fn printed(r: Result<Value, String>) -> String {
 
 /// Compares each binding of the elaborated unit `u` with no function component under each of
 /// `engines`: the interpreter and each engine give each binding's outcome as a run of that
-/// binding alone, closed over the definitions it reaches, would give it ([`outcomes`]), and
+/// binding alone, closed over the definitions it reaches, would give it (`outcomes`), and
 /// each pair is compared, binding by binding.
 pub fn bindings(u: &Unit, engines: &[Engine<'_>]) -> Report {
     let mut r = Report::default();

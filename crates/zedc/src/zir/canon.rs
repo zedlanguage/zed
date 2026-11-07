@@ -214,7 +214,7 @@ fn region_hasher(bytes: &[u8], nodes: usize) -> blake3::Hasher {
 }
 
 /// The regions a lowering has finished, each distinct normal form numbered once, in the order
-/// first met. A region is held by its [`Contents`], so two regions have one number exactly when
+/// first met. A region is held by its `Contents`, so two regions have one number exactly when
 /// they have equal normal forms, by induction on their depth, and a [`Shape`] holds its regions
 /// by their numbers.
 // Complexity tradeoff: the contents of every distinct region are held until the lowering ends,

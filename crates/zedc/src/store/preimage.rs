@@ -854,8 +854,8 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// relation [`relations`] gives for the body closed over the definitions it reaches, with
 /// its own numbering of auxiliary variables. The scope is numbered once, and what the
 /// transfer finds of a term without reading the inputs (whether it reads one, its constant
-/// value, its forward values: [`Run::keep`]) is kept from one body's run to the next, as
-/// [`split_residues`] keeps it from one class of remainders to the next. A term of the scope
+/// value, its forward values: `Run::keep`) is kept from one body's run to the next, as
+/// `split_residues` keeps it from one class of remainders to the next. A term of the scope
 /// reads none of a body's inputs: the scope binds every name it reads but a lambda's
 /// parameters, which the transfer binds where it reads the lambda, and each body is numbered
 /// afresh; so an entry keyed by a term of the scope holds for every body.
@@ -864,7 +864,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// (LOAD-chain). The translations are made again for each body, whose auxiliary variables
 /// they number. Each body's run also makes entries that depend on the body: its terms, the
 /// scopes its calls bind, and what is found of a term in those scopes. These are dropped once
-/// the body is read ([`Fresh`]), at a cost of what the body made, so that what is kept from
+/// the body is read (`Fresh`), at a cost of what the body made, so that what is kept from
 /// body to body is found of the scope alone: a chain of n tests, each calling the one before,
 /// held O(n²) entries when every entry was kept, and holds O(n).
 pub struct Scoped<'t> {
