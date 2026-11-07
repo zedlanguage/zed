@@ -1841,6 +1841,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `impl Drop for ShapeData` that moves its components out and frees them with the rows' explicit stack (`drop_types`, `Arc::into_inner` on each shape no other type holds) | `check::ty::{ShapeData::drop, drop_types}` | Missing (user-defined destructors) | As for `RowData::drop`: the runtime frees shared values, on a stack of its own |
 | A visited set of shape addresses (`HashSet<*const ShapeData>` from `Arc::as_ptr`, `Shape::as_ptr`) so a walk enters a shared shape once | `check::ty::Ty::{vars_in, vars_outside}`, `check::Ck::data`; and a memo of what a rebuilding walk made of each shape (`Made::shapes`, `Memo`) | Identity (gap 1) | As for rows: the shape's digest as the key, confirmed by contents, or its kept facts read in place of the walk |
 
+## Entries from ATOM-payload-open (`zedc/src/check/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack of a borrowing enum (`Walk<'a>`: a type, a row or a shape) whose newly pushed items are reversed in place (`stack[from..].reverse()`) so they pop in the order a recursive walk visits them | `check::ty::Ty::vars_outside`, `Sig::first_seen` | Mutation | A fold over a list used as a stack, items prepended in visit order; the borrowed references are shared values |
+| A visited set of row and shape addresses (`HashSet<*const ()>` from `Row::addr`, `Shape::as_ptr`) local to one walk | `check::ty::Sig::first_seen` | Identity (gap 1) | As for ATOM-nested-sq: the node's digest as the key, confirmed by contents |
+
 ## Entries from ORACLE-cones (`tests/src/oracle.rs`, `tests/steps/l01_37_oracle/scaling.rs`)
 
 | Rust construct | Sites | Gap | At the port |

@@ -53,9 +53,9 @@ struct RowData {
     /// The hash of the components.
     digest: u64,
     /// Whether a component holds a type variable or the unknown, outside functions, at any
-    /// depth: whether [`Ty::closed`] fails on one.
+    /// depth, in payloads too: whether [`Ty::closed`] fails on one.
     open: bool,
-    /// Whether a component holds the unknown, outside functions, at any depth.
+    /// Whether a component holds the unknown, outside functions, at any depth, in payloads too.
     dynamic: bool,
     /// The first function, not a family, that a component holds at any depth.
     held: Option<Arc<Sig>>,
@@ -103,12 +103,10 @@ impl Row {
     fn made(cs: Vec<Ty>, data: bool, checked: bool) -> Row {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one(&cs);
-        let open = cs
-            .iter()
-            .any(|c| !c.vars.is_empty() || c.dynamic || c.tuples.iter().any(|r| r.0.open));
-        let dynamic = cs
-            .iter()
-            .any(|c| c.dynamic || c.tuples.iter().any(|r| r.0.dynamic));
+        // Each component's rows and payload shapes keep what they hold at any depth, so this
+        // reads the components' outer levels.
+        let open = cs.iter().any(|c| !c.closed());
+        let dynamic = cs.iter().any(Ty::holds_unknown);
         let held = cs.iter().find_map(|c| c.held_function().cloned());
         let unchecked = match checked {
             true => None,
@@ -162,12 +160,12 @@ impl Row {
     }
 
     /// Whether a component holds a type variable or the unknown, outside functions, at any
-    /// depth.
+    /// depth, in payloads too.
     pub fn open(&self) -> bool {
         self.0.open
     }
 
-    /// Whether a component holds the unknown, outside functions, at any depth.
+    /// Whether a component holds the unknown, outside functions, at any depth, in payloads too.
     pub fn dynamic(&self) -> bool {
         self.0.dynamic
     }
@@ -259,6 +257,9 @@ pub struct ShapeData {
     /// Whether a component or field holds a type variable or the unknown, outside functions,
     /// at any depth, in payloads too.
     open: bool,
+    /// Whether a component or field holds the unknown, outside functions, at any depth, in
+    /// payloads too.
+    dynamic: bool,
     /// The first function, not a family, that a component or field holds at any depth.
     held: Option<Arc<Sig>>,
     /// The first function, not a family, that a component or field holds at any depth and no
@@ -355,12 +356,8 @@ impl Shape {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one((&items, &fields));
         let cs = || items.iter().chain(fields.values());
-        let open = cs().any(|c| {
-            !c.vars.is_empty()
-                || c.dynamic
-                || c.tuples.iter().any(|r| r.0.open)
-                || c.payload_shapes().any(|s| s.open)
-        });
+        let open = cs().any(|c| !c.closed());
+        let dynamic = cs().any(Ty::holds_unknown);
         let fixed = cs().all(|c| {
             c.vars.is_empty()
                 && c.fns.is_empty()
@@ -378,6 +375,7 @@ impl Shape {
             held,
             unchecked,
             open,
+            dynamic,
             fixed,
             vars,
         }))
@@ -1762,9 +1760,22 @@ impl Ty {
         }
     }
 
-    /// Whether it holds no variable and no unknown, at any depth.
+    /// Whether it holds no variable and no unknown, outside functions, at any depth, in its
+    /// tuples and its atoms' payloads: read at its outer level, since each row and payload
+    /// shape keeps whether it holds one.
     pub fn closed(&self) -> bool {
-        self.vars.is_empty() && !self.dynamic && self.tuples.iter().all(|r| !r.open())
+        self.vars.is_empty()
+            && !self.dynamic
+            && self.tuples.iter().all(|r| !r.open())
+            && self.payload_shapes().all(|s| !s.open)
+    }
+
+    /// Whether it holds the unknown, outside functions, at any depth, in its tuples and its
+    /// atoms' payloads: read at its outer level, as [`Self::closed`] is.
+    fn holds_unknown(&self) -> bool {
+        self.dynamic
+            || self.tuples.iter().any(Row::dynamic)
+            || self.payload_shapes().any(|s| s.dynamic)
     }
 
     /// Whether it holds no function at any depth (a variable or the unknown may still stand
@@ -1866,9 +1877,12 @@ impl Ty {
         if !self.fns.is_empty() || !self.vars.is_empty() || self.dynamic {
             return None;
         }
-        // A row knows whether it holds a variable, the unknown or a function at any depth, so a
-        // type that does is refused at its outer level, not at the bottom of its tuples.
-        if (self.tuples.iter()).any(|r| r.open() || r.0.held.is_some()) {
+        // A row and a payload shape know whether they hold a variable, the unknown or a
+        // function at any depth, so a type that does is refused at its outer level, not at the
+        // bottom of its tuples and payloads.
+        if (self.tuples.iter()).any(|r| r.open() || r.0.held.is_some())
+            || self.payload_shapes().any(|s| s.open || s.held.is_some())
+        {
             return None;
         }
         // Each row's kernel type is made once and kept in the row ([`Row::kernel`]).
@@ -2235,23 +2249,42 @@ impl Ty {
     }
 
     /// Every variable in it outside the functions it holds, in order of first appearance: a
-    /// tuple that holds none there is not entered.
+    /// tuple or payload that holds none there is not entered, nor is one `out` has entered.
+    ///
+    /// A type nests as deep as the program, so the walk keeps its own stack, and marks each
+    /// row and shape when it enters it, in the order a recursive walk would.
     pub fn vars_outside(&self, out: &mut Vars) {
-        for v in &self.vars {
-            if out.seen.insert(v.clone()) {
-                out.order.push(v.clone());
-            }
+        enum Walk<'a> {
+            Ty(&'a Ty),
+            Row(&'a Row),
+            Shape(&'a Shape),
         }
-        for r in self.tuples.iter().filter(|r| r.open()) {
-            if out.outside.insert(r.addr()) {
-                r.iter().for_each(|c| c.vars_outside(out));
+        let mut stack = vec![Walk::Ty(self)];
+        while let Some(w) = stack.pop() {
+            let from = stack.len();
+            match w {
+                Walk::Row(r) => {
+                    if out.outside.insert(r.addr()) {
+                        stack.extend(r.iter().map(Walk::Ty));
+                    }
+                }
+                Walk::Shape(s) => {
+                    if out.outside.insert(s.as_ptr().cast()) {
+                        stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
+                    }
+                }
+                Walk::Ty(t) => {
+                    for v in &t.vars {
+                        if out.seen.insert(v.clone()) {
+                            out.order.push(v.clone());
+                        }
+                    }
+                    stack.extend(t.tuples.iter().filter(|r| r.open()).map(Walk::Row));
+                    let open = t.payload_shapes().filter(|s| s.open);
+                    stack.extend(open.map(Walk::Shape));
+                }
             }
-        }
-        for s in self.payload_shapes().filter(|s| s.open) {
-            if out.outside.insert(s.as_ptr().cast()) {
-                s.items.iter().for_each(|t| t.vars_outside(out));
-                s.fields.values().for_each(|t| t.vars_outside(out));
-            }
+            stack[from..].reverse();
         }
     }
 
@@ -3599,17 +3632,23 @@ impl Sig {
     /// The class variables of `want` that its arrows and needs hold, in the order in which
     /// [`Ty::vars_in`] meets them. The walk enters no function whose facts hold none of those
     /// still unseen, and it stops once all are seen, so it costs no more than replacing them.
+    /// A row or payload shape met again is shared and was walked whole the first time, so it
+    /// is entered once.
     pub fn first_seen(&self, want: &HashSet<Arc<str>>) -> Vec<Arc<str>> {
         enum Item<'a> {
             Ty(&'a Ty),
+            Row(&'a Row),
+            Shape(&'a Shape),
             Sig(&'a Sig),
         }
         let mut out = Vec::new();
         let mut left = want.clone();
+        let mut entered: HashSet<*const ()> = HashSet::new();
         let mut stack = vec![Item::Sig(self)];
         while let Some(item) = stack.pop()
             && !left.is_empty()
         {
+            let at = stack.len();
             match item {
                 Item::Sig(s) => {
                     // `self` may still change, so its facts are not kept; it is entered.
@@ -3628,22 +3667,26 @@ impl Sig {
                         .iter()
                         .flat_map(|a| a.params.iter().chain([&a.result]));
                     let needs = s.needs.iter().flat_map(Need::tys);
-                    let at = stack.len();
                     stack.extend(tys.chain(needs).map(Item::Ty));
-                    stack[at..].reverse();
+                }
+                Item::Row(r) => {
+                    if entered.insert(r.addr()) {
+                        stack.extend(r.iter().map(Item::Ty));
+                    }
+                }
+                Item::Shape(s) => {
+                    if entered.insert(s.as_ptr().cast()) {
+                        stack.extend(s.items.iter().chain(s.fields.values()).map(Item::Ty));
+                    }
                 }
                 Item::Ty(t) => {
                     out.extend(t.vars.iter().filter(|v| left.remove(*v)).cloned());
-                    let at = stack.len();
-                    stack.extend(t.tuples.iter().flatten().map(Item::Ty));
-                    let shapes = t.payloads.values().flatten().flatten();
-                    stack.extend(
-                        shapes.flat_map(|s| s.items.iter().chain(s.fields.values()).map(Item::Ty)),
-                    );
+                    stack.extend(t.tuples.iter().map(Item::Row));
+                    stack.extend(t.payloads.values().flatten().flatten().map(Item::Shape));
                     stack.extend(t.fns.iter().map(|s| Item::Sig(s)));
-                    stack[at..].reverse();
                 }
             }
+            stack[at..].reverse();
         }
         out
     }
@@ -4990,5 +5033,65 @@ mod tests {
         t.vars_in(&mut vars);
         let order: Vec<&str> = vars.order.iter().map(|v| &**v).collect();
         assert_eq!(order, ["$5", "$7"]);
+    }
+
+    /// The atom `#a` with `inner` as its one payload component.
+    fn atom_of(inner: Ty) -> Ty {
+        let mut t = Ty::set(KType::atom_with("a", &KType::top()));
+        (t.payloads).insert(
+            "a".into(),
+            Some(vec![Shape::new(vec![inner], BTreeMap::new())]),
+        );
+        t
+    }
+
+    /// A tuple whose first component is an atom whose payload holds `inner`, the second `int`.
+    fn row_of_atom(inner: Ty) -> Ty {
+        Ty::tuple(vec![atom_of(inner), Ty::set(KType::int())])
+    }
+
+    /// A variable or the unknown in an atom's payload, inside a tuple, is held by the tuple at
+    /// any depth, as one in a component is (ATOM-payload-open): the row is open, the type is
+    /// not closed and has no kernel type, and a walk outside functions reaches the variable.
+    #[test]
+    fn a_variable_in_a_payload_inside_a_tuple_is_held_by_the_tuple() {
+        let x: Arc<str> = "$3".into();
+        for t in [
+            row_of_atom(Ty::var(x.clone())),
+            row_of_atom(row_of_atom(Ty::var(x.clone()))),
+        ] {
+            assert!(t.tuples[0].open(), "{t}");
+            assert!(!t.tuples[0].dynamic(), "{t}");
+            assert!(!t.closed(), "{t}");
+            assert!(t.kernel().is_none(), "{t}");
+            let mut vars = Vars::default();
+            t.vars_outside(&mut vars);
+            assert_eq!(vars.order, std::slice::from_ref(&x), "{t}");
+            let int = Ty::set(KType::int());
+            let binds: Binds = [(x.clone(), int.clone())].into_iter().collect();
+            for done in [
+                t.replace_outside(&binds),
+                t.settle(&|v| (v == &*x).then(|| int.clone())),
+            ] {
+                assert!(done.closed(), "{done}");
+                assert!(done.var_facts().classes.is_empty(), "{done}");
+            }
+        }
+        let unknown = row_of_atom(Ty::dynamic());
+        assert!(
+            unknown.tuples[0].open() && unknown.tuples[0].dynamic(),
+            "{unknown}"
+        );
+        assert!(!unknown.closed() && unknown.kernel().is_none(), "{unknown}");
+        let data = row_of_atom(Ty::set(KType::int()));
+        assert!(!data.tuples[0].open() && data.closed() && data.kernel().is_some());
+    }
+
+    /// A function in a payload is held at any depth, so the type has no kernel type.
+    #[test]
+    fn a_function_in_a_payload_leaves_no_kernel_type() {
+        let s = Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::set(KType::int())));
+        assert!(atom_of(Ty::func(s.clone())).kernel().is_none());
+        assert!(row_of_atom(Ty::func(s)).kernel().is_none());
     }
 }

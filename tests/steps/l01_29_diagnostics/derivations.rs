@@ -339,3 +339,27 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
   [6] 1:7: this expression is ((int) -> int)"
     );
 }
+
+#[test]
+fn equality_on_a_payload_that_holds_a_parameter_shows_the_need_it_puts_on_the_argument() {
+    // `g` compares a tuple whose atom's payload holds `g`'s parameter, so `==` needs the
+    // parameter to be data; the call with a function is refused, with the need's place and
+    // the declaration of `g` (ATOM-payload-open: the variable in the payload was not seen).
+    let out = rejected(
+        "h(positional x) = x * 2;
+f(positional x) { return #a(x), 1; }
+g(positional x) { p = f(x); return p == p; }
+s = g(h);
+",
+    );
+    assert_eq!(
+        out,
+        "4:5: `==` takes data, and this value may hold a function, `(int) -> int`
+  [1] 3:36: `g` needs this of its argument here
+      3 | g(positional x) { p = f(x); return p == p; }
+        |                                    ^^^^^^
+  [2] 3:1: `g` is declared here, `(_) -> bool`
+      3 | g(positional x) { p = f(x); return p == p; }
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+    );
+}

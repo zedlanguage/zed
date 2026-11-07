@@ -118,3 +118,48 @@ fn atoms_whose_payloads_are_data_still_compare() {
     assert_eq!(value(src, "same"), "true");
     assert_eq!(value(src, "differ"), "false");
 }
+
+/// `scale`, a generic `wrap` that returns `body` with its parameter `x` in it, and `use`, which
+/// compares what `wrap` gives with itself, called with `arg`.
+fn compared_after_a_call(body: &str, arg: &str) -> String {
+    format!(
+        "scale(positional x) = x * 2;\nwrap(positional x) {{ return {body}; }}\n\
+         use(positional x) {{ p = wrap(x); return p == p; }}\nsame = use({arg});\n"
+    )
+}
+
+#[test]
+fn a_function_reaching_a_payload_through_a_generic_call_is_refused_by_equality() {
+    // `use` compares a tuple whose atom holds `use`'s parameter in its payload, so `==` needs
+    // that parameter to be data, and `scale` is a function (ATOM-payload-open: the variable
+    // inside the payload was not seen, so the call was accepted).
+    // A tuple expression inside `wrap` checks its components as data, so there the need is
+    // the tuple's.
+    let refused = |what: &str| {
+        [format!(
+            "{what} takes data, and this value may hold a function, `(int) -> int` [use(scale)]"
+        )]
+    };
+    for (body, what) in [
+        ("#a(x), 1", "`==`"),
+        ("1, #a(n: 1, f: x)", "`==`"),
+        ("#a(#b(#c(x))), 1", "`==`"),
+        ("(1, #a(x)), 1", "a tuple"),
+        ("#a((x, 1)), 1", "a tuple"),
+    ] {
+        assert_eq!(
+            errors(&compared_after_a_call(body, "scale")),
+            refused(what),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn data_reaching_a_payload_through_a_generic_call_still_compares() {
+    // `value` panics on any error, so these are accepted.
+    for body in ["#a(x), 1", "1, #a(n: 1, f: x)", "#a(#b(#c(x))), 1"] {
+        let src = compared_after_a_call(body, "2");
+        assert_eq!(value(&src, "same"), "true", "{body}");
+    }
+}

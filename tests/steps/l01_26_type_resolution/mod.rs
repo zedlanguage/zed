@@ -17,6 +17,7 @@ mod held_functions;
 mod literals;
 mod named_calls;
 mod narrowing;
+mod payload_variables;
 mod random;
 mod scaling;
 mod shared_tuples;
