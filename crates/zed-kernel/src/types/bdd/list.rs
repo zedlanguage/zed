@@ -20,8 +20,8 @@
 use std::sync::atomic::Ordering as Atomic;
 use std::sync::{Arc, OnceLock, Weak};
 
-use super::set::{self, Key, Set, Tree};
-use super::{Bdd, Literal, NEXT, Owned, Part, mix};
+use super::set::{self, Key, NEXT, Set, Tree};
+use super::{Bdd, Literal, Owned, Part, mix};
 
 /// A block of a list and the cell of the next block: a list, with the value of its first block
 /// beside it ([`Bdd::List`]).

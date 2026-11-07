@@ -2177,7 +2177,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A stack of runs, each a meet and its length, merged with `Vec::pop_if` while the top run is no longer than the new one, as a binary counter | `Type::boxes` | Mutation | A list of runs returned from each step of the fold, merged by a recursive step on its head |
 | A `HashMap<Vec<usize>, usize>` numbering each set of rows (a region) on first sight, seeded with the empty set as 0 | `RowIndex::new` | Mutation (gap 2: an intern table) | A fold over the keys with the map in its state, or the sets sorted and numbered by their rank |
 
-## Entries from CHAIN-zip-size (`zed-kernel/src/types/bdd.rs`, `bdd/set.rs`, `bdd/list.rs`, `bdd/xor.rs`)
+## Entries from CHAIN-zip-size (`zed-kernel/src/types/bdd.rs` with its module `xor`, `bdd/set.rs`, `bdd/list.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
@@ -2185,6 +2185,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `OnceLock` fields of a shared cell filled on first use: the atoms of a list's blocks, the first node of each value, the complement of an exclusive or set both ways | `Cell::atoms`, `Bdd::view`, `xor::xor2` | Mutation of shared data | Lazy values computed when the cell is made, or a memo table keyed by cell id in the state struct |
 | Treap walks that keep `Vec<&Arc<Set>>` stacks of the path and rebuild it bottom up; an `Iterator` struct holding its own stack | `set::split`, `set::insert`, `set::remove`, `set::Iter`, `xor::node` | Mutation, iterators | A fold over the path list returned by a loop; the iterator as a recursive list builder |
 | A slice pattern binding the last two elements of a `Vec` mutably inside a let chain | `Bdd::assemble` | Mutation | Take the last two elements off the list, rebuild them, and put them back |
+| A blanket `impl<A: Literal> set::Atom for A`: the treap module states the four operations it needs of an atom (its table of set nodes to look up and insert, the same table to remove a dropped node, its digest, freeing a node) as a trait of its own, so it imports nothing of the diagrams (KERNEL-bdd-cycle) | `set::Atom`, `impl set::Atom for A` in `bdd.rs` | Interfaces (L10) | A record of the four functions passed to the set functions, or an interface of the set unit that the diagram unit implements |
 
 ## Entries from NARROW-notes-name (`zedc-check/src/check/arms.rs`)
 
@@ -2219,7 +2220,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A module of another crate republished at its old path (`pub use zedc_check::check;`), so callers keep writing `zedc::check` after the compiler is split into crates | `zedc` `lib.rs`, `store/mod.rs` | Missing (a re-export is a definition of one name, DESIGN.md sec:units) | Not needed in the port: each unit imports the unit that defines what it uses; the Rust paths are kept only so the split changes no caller |
 | A cargo feature, `two-at-a-time`, that keeps a `thread_local!` switch and the joins it selects in the build of `zedc-presburger`, so the unit tests of another crate (`zedc-preimage`) can set it; before the split it was `#[cfg(test)]` in the same crate | `presburger::TWO_AT_A_TIME`, `and_keeping`, `or_keeping` | No conditional compilation; global state (gap 2) | A build mode of the unit, as for `printed-types`, or the join order passed as a parameter in the test |
 
-## Entries from TABLE-life (`zed-kernel/src/types/bdd.rs`, `bdd/set.rs`, `bdd/list.rs`, `bdd/xor.rs`, `types/rec.rs`)
+## Entries from TABLE-life (`zed-kernel/src/types/bdd.rs`, `bdd/set.rs`, `bdd/list.rs`, `bdd.rs` module `xor`, `types/rec.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|

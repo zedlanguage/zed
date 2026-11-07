@@ -13,13 +13,32 @@
 use std::sync::atomic::Ordering as Atomic;
 use std::sync::{Arc, Weak};
 
-use super::{Literal, NEXT, Owned, mix};
+use crate::types::hash::mix;
+
+/// The atoms of sets, each kind with its thread's table of set nodes. Every atom of a diagram
+/// (`bdd::Literal`) is one; the module needs no more of the atoms, so it imports nothing of the
+/// diagrams that hold its sets.
+pub(in crate::types) trait Atom: Ord + Clone + 'static {
+    /// Runs `f` on the thread's table of set nodes.
+    fn sets<R>(f: impl FnOnce(&mut SetTable<Self>) -> R) -> R;
+    /// Runs `f` on the thread's table of set nodes to remove a dropped node's entry; nothing is
+    /// done while the thread is ending or the table is borrowed (`bdd::Literal::untable`).
+    fn unsets(f: impl FnOnce(&mut SetTable<Self>));
+    /// A hash of the atom, equal for equal atoms.
+    fn digest(&self) -> u64;
+    /// Drops a set node in the thread's loop of type parts (module `deep`).
+    fn free_set(set: Arc<Set<Self>>);
+}
+
+/// The next node id. Cells, sets and expressions take their ids from one counter, so an id
+/// names one node among them; ids key the maps of a walk, never addresses.
+pub(super) static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(2);
 
 /// A literal: an atom and whether it is taken.
 pub(in crate::types) type Key<A> = (A, bool);
 
 /// A node of a set: its literal, and the sets of the literals before and after it.
-pub(in crate::types) struct Set<A: Literal> {
+pub(in crate::types) struct Set<A: Atom> {
     /// The node's id, unique among the nodes of the process.
     pub(super) id: u64,
     /// A hash of the set's literals, equal for equal sets.
@@ -40,55 +59,52 @@ pub(in crate::types) type SetTable<A> =
 
 /// A set node leaves its thread's table, and its children are freed in a loop (module `deep`),
 /// as a diagram's cells are.
-impl<A: Literal> Drop for Set<A> {
+impl<A: Atom> Drop for Set<A> {
     fn drop(&mut self) {
         let k = (
             self.key.clone(),
             id(self.left.as_ref()),
             id(self.right.as_ref()),
         );
-        A::untable(|t| {
+        A::unsets(|t| {
             // Another node of the key may have taken the entry since, or none was made here.
-            if t.sets
-                .get(&k)
-                .is_some_and(|w| std::ptr::eq(w.as_ptr(), self))
-            {
-                t.sets.remove(&k);
+            if t.get(&k).is_some_and(|w| std::ptr::eq(w.as_ptr(), self)) {
+                t.remove(&k);
             }
         });
         for c in [self.left.take(), self.right.take()].into_iter().flatten() {
-            A::free(Owned::Set(c));
+            A::free_set(c);
         }
     }
 }
 
-fn priority<A: Literal>(key: &Key<A>) -> u64 {
+fn priority<A: Atom>(key: &Key<A>) -> u64 {
     mix(mix(13, key.0.digest()), u64::from(key.1))
 }
 
 /// Whether a node of literal `key` and priority `prio` stands above `n`.
-fn above<A: Literal>(prio: u64, key: &Key<A>, n: &Set<A>) -> bool {
+fn above<A: Atom>(prio: u64, key: &Key<A>, n: &Set<A>) -> bool {
     (prio, key) > (n.prio, &n.key)
 }
 
-fn id<A: Literal>(t: Option<&Arc<Set<A>>>) -> u64 {
+fn id<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
     t.map_or(0, |s| s.id)
 }
 
 /// The digest of a set, `t` its root.
-pub(super) fn digest<A: Literal>(t: Option<&Arc<Set<A>>>) -> u64 {
+pub(super) fn digest<A: Atom>(t: Option<&Arc<Set<A>>>) -> u64 {
     t.map_or(mix(14, 0), |s| s.digest)
 }
 
 /// The number of literals.
-pub(super) fn len<A: Literal>(t: Option<&Arc<Set<A>>>) -> usize {
+pub(super) fn len<A: Atom>(t: Option<&Arc<Set<A>>>) -> usize {
     t.map_or(0, |s| s.len)
 }
 
 /// The node of `key` over `left` and `right`, the one in the table if there is one.
-fn make<A: Literal>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
+fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
     let k = (key, id(left.as_ref()), id(right.as_ref()));
-    if let Some(s) = A::table(|t| t.sets.get(&k).and_then(Weak::upgrade)) {
+    if let Some(s) = A::sets(|t| t.get(&k).and_then(Weak::upgrade)) {
         return s;
     }
     let (key, ..) = &k;
@@ -108,17 +124,17 @@ fn make<A: Literal>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
         right,
     });
     // An entry left by a node dropped on another thread is replaced.
-    A::table(|t| t.sets.insert(k, Arc::downgrade(&s)));
+    A::sets(|t| t.insert(k, Arc::downgrade(&s)));
     s
 }
 
 /// The set of the one literal `key`.
-pub(super) fn single<A: Literal>(key: Key<A>) -> Arc<Set<A>> {
+pub(super) fn single<A: Atom>(key: Key<A>) -> Arc<Set<A>> {
     make(key, None, None)
 }
 
 /// Whether `atom` is in the set, and the literal's `taken` if so.
-pub(super) fn get<A: Literal>(t: Option<&Arc<Set<A>>>, atom: &A) -> Option<bool> {
+pub(super) fn get<A: Atom>(t: Option<&Arc<Set<A>>>, atom: &A) -> Option<bool> {
     let mut cur = t;
     while let Some(n) = cur {
         cur = match atom.cmp(&n.key.0) {
@@ -131,7 +147,7 @@ pub(super) fn get<A: Literal>(t: Option<&Arc<Set<A>>>, atom: &A) -> Option<bool>
 }
 
 /// The smallest literal.
-pub(super) fn min<A: Literal>(t: &Arc<Set<A>>) -> &Key<A> {
+pub(super) fn min<A: Atom>(t: &Arc<Set<A>>) -> &Key<A> {
     let mut n = t;
     while let Some(l) = &n.left {
         n = l;
@@ -140,7 +156,7 @@ pub(super) fn min<A: Literal>(t: &Arc<Set<A>>) -> &Key<A> {
 }
 
 /// The set split into its literals before `key` and those after; `key` is not in it.
-fn split<A: Literal>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
+fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
     let (mut lefts, mut rights) = (Vec::new(), Vec::new());
     let mut cur = t;
     while let Some(n) = cur {
@@ -165,7 +181,7 @@ fn split<A: Literal>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>
 
 /// The set with the nodes of `path` rebuilt over `node`, the last of `path` its parent; each
 /// entry says whether the child is the node's left.
-fn rebuild<A: Literal>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<A> {
+fn rebuild<A: Atom>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<A> {
     for (n, left) in path.into_iter().rev() {
         node = Some(if left {
             make(n.key.clone(), node, n.right.clone())
@@ -177,7 +193,7 @@ fn rebuild<A: Literal>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tr
 }
 
 /// The set with `key` added; its atom is not in the set.
-pub(super) fn insert<A: Literal>(t: Option<&Arc<Set<A>>>, key: Key<A>) -> Arc<Set<A>> {
+pub(super) fn insert<A: Atom>(t: Option<&Arc<Set<A>>>, key: Key<A>) -> Arc<Set<A>> {
     let prio = priority(&key);
     let mut path = Vec::new();
     let mut cur = t;
@@ -198,7 +214,7 @@ pub(super) fn insert<A: Literal>(t: Option<&Arc<Set<A>>>, key: Key<A>) -> Arc<Se
 }
 
 /// The set without `key`, which is in it.
-pub(super) fn remove<A: Literal>(t: &Arc<Set<A>>, key: &Key<A>) -> Tree<A> {
+pub(super) fn remove<A: Atom>(t: &Arc<Set<A>>, key: &Key<A>) -> Tree<A> {
     let mut path = Vec::new();
     let mut n = t;
     loop {
@@ -235,17 +251,17 @@ pub(super) fn remove<A: Literal>(t: &Arc<Set<A>>, key: &Key<A>) -> Tree<A> {
 }
 
 /// The literals in order, from a stack.
-pub(super) fn iter<A: Literal>(t: Option<&Arc<Set<A>>>) -> Iter<'_, A> {
+pub(super) fn iter<A: Atom>(t: Option<&Arc<Set<A>>>) -> Iter<'_, A> {
     let mut it = Iter { stack: Vec::new() };
     it.descend(t);
     it
 }
 
-pub(super) struct Iter<'a, A: Literal> {
+pub(super) struct Iter<'a, A: Atom> {
     stack: Vec<&'a Set<A>>,
 }
 
-impl<'a, A: Literal> Iter<'a, A> {
+impl<'a, A: Atom> Iter<'a, A> {
     fn descend(&mut self, mut t: Option<&'a Arc<Set<A>>>) {
         while let Some(n) = t {
             self.stack.push(n);
@@ -254,7 +270,7 @@ impl<'a, A: Literal> Iter<'a, A> {
     }
 }
 
-impl<'a, A: Literal> Iterator for Iter<'a, A> {
+impl<'a, A: Atom> Iterator for Iter<'a, A> {
     type Item = &'a Key<A>;
     fn next(&mut self) -> Option<&'a Key<A>> {
         let n = self.stack.pop()?;
@@ -264,7 +280,7 @@ impl<'a, A: Literal> Iterator for Iter<'a, A> {
 }
 
 /// The union of two sets with no atom in common: the smaller's literals added to the larger.
-pub(super) fn union<A: Literal>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Arc<Set<A>> {
+pub(super) fn union<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Arc<Set<A>> {
     let (big, small) = if x.len >= y.len { (x, y) } else { (y, x) };
     let mut out = big.clone();
     for k in iter(Some(small)) {
@@ -275,7 +291,7 @@ pub(super) fn union<A: Literal>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Arc<Set<A>>
 
 /// The literals in exactly one of the two sets: each of the smaller's added to the larger, or
 /// removed from it when there.
-pub(super) fn symmetric<A: Literal>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
+pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
     let (big, small) = if len(x.as_ref()) >= len(y.as_ref()) {
         (x, y)
     } else {
@@ -292,6 +308,6 @@ pub(super) fn symmetric<A: Literal>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
 }
 
 /// The one literal of a set of one.
-pub(super) fn single_key<A: Literal>(t: &Arc<Set<A>>) -> Option<&Key<A>> {
+pub(super) fn single_key<A: Atom>(t: &Arc<Set<A>>) -> Option<&Key<A>> {
     (t.len == 1).then_some(&t.key)
 }
