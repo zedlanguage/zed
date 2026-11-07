@@ -5,6 +5,7 @@
 
 mod borrow;
 mod cells;
+mod chains;
 mod checks;
 mod corpus;
 mod fusion;

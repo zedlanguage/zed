@@ -811,7 +811,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Open values, patterns and types on a `Vec` while a graph is read or written, each frame counting the parts it has | `zir::text`, `zir::binary` | Mutation | A fold over the parts with a list of open frames in the receiver |
 | An open type (`OpenType { t, parts: Vec<&Type>, done: Vec<Option<KType>> }`) per level, and an open pattern (`OpenPattern<'p>`) whose step matches `(frame, finished.take())`, `Option::take` handing one result up | `elab::kernel_type`, `Elab::pattern` | Mutation | A state receiver holding the open list; the handed-up result as a value returned by the step |
 | The kernel `Pattern`'s `Clone` and `PartialEq` are written by hand as loops over explicit stacks since T2-types-rest part 1 (`term/walk.rs`, entry under T2-types-rest; they were derived and recursed), and its `Drop`, and `Type`'s, are loops since T2-types | `zed_kernel::term::Pattern` | None (a Rust limit) | Removed: the runtime frees and compares values without recursion |
-| Plan keys that are the path from the root region, so a region `d` deep stores `d` indices and all keys take O(d^2) bytes | `zir::memory::Planner` | None | One id per region (T12-Z4) |
+| Plan keys that are the path from the root region, so a region `d` deep stores `d` indices and all keys take O(d^2) bytes | `zir::memory::Planner` | None | One id per region (T14-paths) |
 
 ## Entries from L2.1 (`zedc-syntax/src/ast/`, `format.rs`)
 

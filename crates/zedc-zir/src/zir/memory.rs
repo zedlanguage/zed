@@ -142,21 +142,29 @@ pub const EXPANSIONS: Expansions = Expansions::of(&[Expansion::Derived]);
 ///
 /// Regions nest as deep as the program, so the planner keeps its work on the heap: the regions
 /// still to plan on a list, and the questions a mode asks of the regions under it (whether an
-/// arm or a lambda body consumes an argument) on a stack (step T2-mid). Its contexts are the
-/// chain of regions from the root to the one being planned, then those a question has entered.
+/// arm or a lambda body consumes an argument) on a stack (step T2-mid). Each region occurrence
+/// the planner meets, the root or a region of a node of one met before, gets a number the first
+/// time it is met, and what the planner works out about an occurrence is kept by that number
+/// (T12-Z4): its edges' uses, whether it consumes each argument it owns, how a lambda body takes
+/// its parameters, and which lambda each of its arguments is captured from. Each is worked out
+/// once, so a question asked again, from a branch nested above or a second call, costs O(1),
+/// and planning is linear in the occurrences and their edges.
 pub fn plan(g: &Region, fuse: bool) -> Plan {
     let mut p = Planner {
-        ctxs: vec![Ctx {
+        occs: vec![Occ {
             r: g,
             path: "r".into(),
             up: None,
+            uses: None,
+            params: None,
         }],
-        params: HashMap::new(),
+        ids: HashMap::new(),
+        consumes: HashMap::new(),
+        resolved: HashMap::new(),
     };
     let mut regions = BTreeMap::new();
-    // Each region still to plan: the context of the region holding it (the last of the chain
-    // when it is planned, since the list is taken last in first out), the node and region it
-    // is, and how its arguments are held.
+    // Each region still to plan: the occurrence of the region holding it, the node and region
+    // it is, and how its arguments are held.
     let mut todo: Vec<(usize, usize, usize, Vec<Mode>)> = Vec::new();
     p.region(
         0,
@@ -165,25 +173,28 @@ pub fn plan(g: &Region, fuse: bool) -> Plan {
         &mut todo,
     );
     while let Some((c, k, i, args)) = todo.pop() {
-        p.ctxs.truncate(c + 1);
-        let ctx = p.sub_ctx(c, k, i);
-        p.ctxs.push(ctx);
-        p.region(c + 1, args, &mut regions, &mut todo);
+        let o = p.sub(c, k, i);
+        p.region(o, args, &mut regions, &mut todo);
     }
     Plan { regions, fuse }
 }
 
-/// A region with the way to its enclosing one.
-struct Ctx<'a> {
+/// A region occurrence: the region, its path, the way to its enclosing occurrence, and what
+/// the planner has worked out about it so far.
+struct Occ<'a> {
     r: &'a Region,
     path: String,
     up: Option<Up<'a>>,
+    /// Its edges and their uses, once a question has needed them.
+    uses: Option<Uses>,
+    /// How it takes its parameters, for a lambda body, once a question has asked.
+    params: Option<Vec<Mode>>,
 }
 
 /// Where a region's captures come from: argument `first_arg` on is the node's input
-/// `first_input` on, in the enclosing region, context `ctx` of the planner.
+/// `first_input` on, in the enclosing region, occurrence `occ`.
 struct Up<'a> {
-    ctx: usize,
+    occ: usize,
     node: &'a Node,
     first_arg: usize,
     first_input: usize,
@@ -249,17 +260,21 @@ impl Uses {
 }
 
 struct Planner<'a> {
-    /// The contexts: the chain from the root to the region being planned, then the regions
-    /// the questions being answered have entered, each taken off when its question ends.
-    ctxs: Vec<Ctx<'a>>,
-    /// How each lambda body, by path, takes its parameters.
-    params: HashMap<String, Vec<Mode>>,
+    /// The region occurrences met, by number: the root is 0.
+    occs: Vec<Occ<'a>>,
+    /// The number of region `i` of node `k` of occurrence `o`, by `(o, k, i)`.
+    ids: HashMap<(usize, usize, usize), usize>,
+    /// Whether occurrence `o` consumes its argument `a` when it owns it, by `(o, a)`.
+    consumes: HashMap<(usize, usize), bool>,
+    /// The lambda argument `a` of occurrence `o` is captured from, as in [`Planner::resolve`],
+    /// by `(o, a)`.
+    resolved: HashMap<(usize, usize), Option<(usize, usize)>>,
 }
 
-/// A question the planner answers: how the use at input `j` of node `k` of region `ctx`
-/// takes an edge (`Owned` is true), whether region `ctx` consumes its argument `a` when it
-/// owns it, or how the lambda body `body` takes its parameters (the answer goes in
-/// `Planner::params`).
+/// A question the planner answers: how the use at input `j` of node `k` of occurrence `ctx`
+/// takes an edge (`Owned` is true), whether occurrence `ctx` consumes its argument `a` when it
+/// owns it (the answer goes in `Planner::consumes`), or how the lambda body `body` takes its
+/// parameters (the answer goes in its `Occ::params`).
 enum Ask {
     Mode {
         ctx: usize,
@@ -279,37 +294,34 @@ enum Ask {
 
 /// A question waiting for the answer to one it asked.
 enum Wait<'a> {
-    /// Whether region `ctx` consumes argument `a`: use `next` on is still to ask about.
+    /// Whether occurrence `ctx` consumes argument `a`, whose last use is at node `last`: use
+    /// `next` on is still to ask about.
     Consumes {
         ctx: usize,
         a: usize,
-        uses: Uses,
         next: usize,
         last: Option<usize>,
     },
-    /// The mode of argument `j` of an `apply` whose callee is the lambda body at context
-    /// `body`, the last.
+    /// The mode of argument `j` of an `apply` whose callee is the lambda body `body`.
     Callee { body: usize, j: usize },
-    /// The mode of capture `j` of the `if` or `match` at node `k` of region `ctx`, with `n`
-    /// arms: arm `i` on is still to ask; the arm asked last was entered at context `mark`.
+    /// The mode of capture `j` of the `if` or `match` at node `k` of occurrence `ctx`, with
+    /// `n` arms: arm `i` on is still to ask.
     Arms {
         ctx: usize,
         k: usize,
         j: usize,
         i: usize,
         n: usize,
-        mark: usize,
     },
-    /// The mode of the scrutinee of the `match` at node `k` of region `ctx`: binder `b` on of
-    /// arm `i` is still to ask; the arm, when entered, is at context `mark`, with its uses.
+    /// The mode of the scrutinee of the `match` at node `k` of occurrence `ctx`: binder `b` on
+    /// of arm `i`, occurrence `arm` once entered, is still to ask.
     Scrutinee {
         ctx: usize,
         k: usize,
         ps: &'a [Pattern],
         i: usize,
         b: usize,
-        arm: Option<Uses>,
-        mark: usize,
+        arm: Option<usize>,
     },
     /// How lambda body `body` takes its parameters: parameter `modes.len()` on, of `k`, is
     /// still to ask.
@@ -343,15 +355,20 @@ impl<'a> Planner<'a> {
         }))
     }
 
-    /// How the lambda at node `n` of region `ctx` takes its parameters.
+    /// How the lambda at node `n` of occurrence `ctx` takes its parameters.
     fn params(&mut self, ctx: usize, n: usize) -> Vec<Mode> {
-        let mark = self.ctxs.len();
-        let body = self.sub_ctx(ctx, n, 0);
-        self.ctxs.push(body);
-        self.answer(Ask::Params { body: mark });
-        let m = self.params[&self.ctxs[mark].path].clone();
-        self.ctxs.truncate(mark);
-        m
+        let body = self.sub(ctx, n, 0);
+        self.answer(Ask::Params { body });
+        self.occs[body]
+            .params
+            .clone()
+            .expect("a Params question records the body's parameters")
+    }
+
+    /// The uses of occurrence `o`'s edges, worked out the first time they are asked for.
+    fn uses(&mut self, o: usize) -> &Uses {
+        let r = self.occs[o].r;
+        self.occs[o].uses.get_or_insert_with(|| Uses::of(r))
     }
 
     /// Answers `ask` on a stack of the questions waiting: questions about the regions under a
@@ -380,7 +397,7 @@ impl<'a> Planner<'a> {
                 owned,
                 last,
             } => {
-                let node: &'a Node = &self.ctxs[ctx].r.nodes[k];
+                let node: &'a Node = &self.occs[ctx].r.nodes[k];
                 match &node.op {
                     Op::Prim(Prim::Tuple) | Op::Lambda => Step::Done(true),
                     Op::Prim(Prim::Atom) => Step::Done(j >= 2),
@@ -388,11 +405,9 @@ impl<'a> Planner<'a> {
                     Op::Apply | Op::If if j == 0 => Step::Done(false),
                     Op::Apply => match self.resolve(ctx, &node.inputs[0]) {
                         Some((c, n)) => {
-                            let mark = self.ctxs.len();
-                            let body = self.sub_ctx(c, n, 0);
-                            self.ctxs.push(body);
-                            waits.push(Wait::Callee { body: mark, j });
-                            Step::Ask(Ask::Params { body: mark })
+                            let body = self.sub(c, n, 0);
+                            waits.push(Wait::Callee { body, j });
+                            Step::Ask(Ask::Params { body })
                         }
                         None => Step::Done(true),
                     },
@@ -405,7 +420,6 @@ impl<'a> Planner<'a> {
                             i: 0,
                             b: 0,
                             arm: None,
-                            mark: self.ctxs.len(),
                         };
                         self.resume(w, None, waits)
                     }
@@ -414,37 +428,30 @@ impl<'a> Planner<'a> {
                             Op::Match(ps) => ps.len(),
                             _ => 2,
                         };
-                        let mark = self.ctxs.len();
-                        let w = Wait::Arms {
-                            ctx,
-                            k,
-                            j,
-                            i: 0,
-                            n,
-                            mark,
-                        };
+                        let w = Wait::Arms { ctx, k, j, i: 0, n };
                         self.resume(w, None, waits)
                     }
                     _ => Step::Done(false),
                 }
             }
             Ask::Consumes { ctx, a } => {
-                let uses = Uses::of(self.ctxs[ctx].r);
-                let last = uses.last(a);
+                if let Some(&b) = self.consumes.get(&(ctx, a)) {
+                    return Step::Done(b);
+                }
+                let last = self.uses(ctx).last(a);
                 let w = Wait::Consumes {
                     ctx,
                     a,
-                    uses,
                     next: 0,
                     last,
                 };
                 self.resume(w, None, waits)
             }
             Ask::Params { body } => {
-                if self.params.contains_key(&self.ctxs[body].path) {
+                if self.occs[body].params.is_some() {
                     return Step::Done(false);
                 }
-                let k = self.ctxs[body].up.as_ref().map_or(0, |u| u.first_arg);
+                let k = self.occs[body].up.as_ref().map_or(0, |u| u.first_arg);
                 let w = Wait::Params {
                     body,
                     k,
@@ -462,43 +469,39 @@ impl<'a> Planner<'a> {
             Wait::Consumes {
                 ctx,
                 a,
-                uses,
                 mut next,
                 last,
             } => {
-                if got == Some(true) {
-                    return Step::Done(true);
-                }
-                let Some(&at) = uses.uses[a].get(next) else {
-                    return Step::Done(false);
+                let at = match got {
+                    Some(true) => None,
+                    _ => self.uses(ctx).uses[a].get(next).copied(),
                 };
-                next += 1;
-                match at {
-                    At::Result(_) => Step::Done(true),
-                    At::Node(k, j) => {
-                        waits.push(Wait::Consumes {
-                            ctx,
-                            a,
-                            uses,
-                            next,
-                            last,
-                        });
-                        Step::Ask(Ask::Mode {
+                let consumed = match at {
+                    None => got == Some(true),
+                    Some(At::Result(_)) => true,
+                    Some(At::Node(k, j)) => {
+                        next += 1;
+                        waits.push(Wait::Consumes { ctx, a, next, last });
+                        return Step::Ask(Ask::Mode {
                             ctx,
                             k,
                             j,
                             owned: true,
                             last: last == Some(k),
-                        })
+                        });
                     }
-                }
+                };
+                self.consumes.insert((ctx, a), consumed);
+                Step::Done(consumed)
             }
             Wait::Callee { body, j } => {
-                let m = self.params[&self.ctxs[body].path]
+                let m = self.occs[body]
+                    .params
+                    .as_ref()
+                    .expect("a Params question records the body's parameters")
                     .get(j - 1)
                     .copied()
                     .unwrap_or(Mode::Owned);
-                self.ctxs.truncate(body);
                 Step::Done(m == Mode::Owned)
             }
             Wait::Arms {
@@ -507,28 +510,18 @@ impl<'a> Planner<'a> {
                 j,
                 mut i,
                 n,
-                mark,
             } => {
-                self.ctxs.truncate(mark);
                 if got == Some(true) {
                     return Step::Done(true);
                 }
                 if i == n {
                     return Step::Done(false);
                 }
-                let arm = self.sub_ctx(ctx, k, i);
-                let a = arm.up.as_ref().map_or(0, |u| u.first_arg) + j - 1;
-                self.ctxs.push(arm);
+                let arm = self.sub(ctx, k, i);
+                let a = self.occs[arm].up.as_ref().map_or(0, |u| u.first_arg) + j - 1;
                 i += 1;
-                waits.push(Wait::Arms {
-                    ctx,
-                    k,
-                    j,
-                    i,
-                    n,
-                    mark,
-                });
-                Step::Ask(Ask::Consumes { ctx: mark, a })
+                waits.push(Wait::Arms { ctx, k, j, i, n });
+                Step::Ask(Ask::Consumes { ctx: arm, a })
             }
             Wait::Scrutinee {
                 ctx,
@@ -537,26 +530,22 @@ impl<'a> Planner<'a> {
                 mut i,
                 mut b,
                 mut arm,
-                mark,
             } => {
                 if got == Some(true) {
-                    self.ctxs.truncate(mark);
                     return Step::Done(true);
                 }
                 loop {
-                    let Some(u) = &arm else {
+                    let Some(o) = arm else {
                         if i == ps.len() {
                             return Step::Done(false);
                         }
-                        let c = self.sub_ctx(ctx, k, i);
-                        arm = Some(Uses::of(c.r));
-                        self.ctxs.push(c);
+                        arm = Some(self.sub(ctx, k, i));
                         b = 0;
                         continue;
                     };
                     if b < binds(&ps[i]) {
                         b += 1;
-                        if u.uses[b - 1].is_empty() {
+                        if self.uses(o).uses[b - 1].is_empty() {
                             continue;
                         }
                         waits.push(Wait::Scrutinee {
@@ -566,14 +555,9 @@ impl<'a> Planner<'a> {
                             i,
                             b,
                             arm,
-                            mark,
                         });
-                        return Step::Ask(Ask::Consumes {
-                            ctx: mark,
-                            a: b - 1,
-                        });
+                        return Step::Ask(Ask::Consumes { ctx: o, a: b - 1 });
                     }
-                    self.ctxs.truncate(mark);
                     arm = None;
                     i += 1;
                 }
@@ -583,7 +567,7 @@ impl<'a> Planner<'a> {
                     modes.push(mode_of(g));
                 }
                 // A state argument holds no value, so it is borrowed, as in an arm.
-                while modes.len() < k && self.ctxs[body].r.args[modes.len()].is_state() {
+                while modes.len() < k && self.occs[body].r.args[modes.len()].is_state() {
                     modes.push(Mode::Borrowed);
                 }
                 if modes.len() < k {
@@ -591,13 +575,13 @@ impl<'a> Planner<'a> {
                     waits.push(Wait::Params { body, k, modes });
                     return Step::Ask(Ask::Consumes { ctx: body, a });
                 }
-                self.params.insert(self.ctxs[body].path.clone(), modes);
+                self.occs[body].params = Some(modes);
                 Step::Done(false)
             }
         }
     }
 
-    /// Plans region `ctx`, its arguments held as `args`, and puts the regions it holds on
+    /// Plans occurrence `ctx`, its arguments held as `args`, and puts the regions it holds on
     /// `todo`.
     fn region(
         &mut self,
@@ -606,7 +590,7 @@ impl<'a> Planner<'a> {
         out: &mut BTreeMap<String, RegionPlan>,
         todo: &mut Vec<(usize, usize, usize, Vec<Mode>)>,
     ) {
-        let r: &'a Region = self.ctxs[ctx].r;
+        let r: &'a Region = self.occs[ctx].r;
         let u = Uses::of(r);
         let owned = |e: usize| !u.state[e] && args.get(e).is_none_or(|m| *m == Mode::Owned);
         let mut nodes: Vec<NodePlan> = Vec::with_capacity(r.nodes.len());
@@ -621,7 +605,7 @@ impl<'a> Planner<'a> {
             let callee = match (&n.op, n.inputs.first()) {
                 (Op::Apply, Some(f)) => self
                     .resolve(ctx, f)
-                    .map(|(c, m)| format!("{}.{m}/0", self.ctxs[c].path)),
+                    .map(|(c, m)| format!("{}.{m}/0", self.occs[c].path)),
                 _ => None,
             };
             nodes.push(NodePlan {
@@ -722,52 +706,76 @@ impl<'a> Planner<'a> {
         }
         todo.extend(subs.into_iter().rev());
         plan.nodes = nodes;
-        out.insert(self.ctxs[ctx].path.clone(), plan);
+        out.insert(self.occs[ctx].path.clone(), plan);
     }
 
-    /// The context of region `i` of node `k` of region `ctx`: a lambda's body, or an arm of
-    /// an `if` or a `match`.
-    fn sub_ctx(&self, ctx: usize, k: usize, i: usize) -> Ctx<'a> {
-        let c = &self.ctxs[ctx];
-        let node: &'a Node = &c.r.nodes[k];
-        let (first_arg, first_input) = match &node.op {
-            Op::Lambda => (
-                node.regions[0].args.len().saturating_sub(node.inputs.len()),
-                0,
-            ),
-            Op::Match(ps) => (binds(&ps[i]), 1),
-            _ => (0, 1),
-        };
-        Ctx {
-            r: &node.regions[i],
-            path: format!("{}.{k}/{i}", c.path),
-            up: Some(Up {
-                ctx,
-                node,
-                first_arg,
-                first_input,
-            }),
+    /// The occurrence of region `i` of node `k` of occurrence `ctx`, a lambda's body or an arm
+    /// of an `if` or a `match`, numbered the first time it is met.
+    fn sub(&mut self, ctx: usize, k: usize, i: usize) -> usize {
+        let next = self.occs.len();
+        let o = *self.ids.entry((ctx, k, i)).or_insert(next);
+        if o == next {
+            let c = &self.occs[ctx];
+            let node: &'a Node = &c.r.nodes[k];
+            let (first_arg, first_input) = match &node.op {
+                Op::Lambda => (
+                    node.regions[0].args.len().saturating_sub(node.inputs.len()),
+                    0,
+                ),
+                Op::Match(ps) => (binds(&ps[i]), 1),
+                _ => (0, 1),
+            };
+            let path = format!("{}.{k}/{i}", c.path);
+            self.occs.push(Occ {
+                r: &node.regions[i],
+                path,
+                up: Some(Up {
+                    occ: ctx,
+                    node,
+                    first_arg,
+                    first_input,
+                }),
+                uses: None,
+                params: None,
+            });
         }
+        o
     }
 
-    /// The lambda node `s` of region `ctx` is, as its region and index, when the plan can see
-    /// it. A capture is followed out through the regions holding it, in a loop.
-    fn resolve(&self, mut ctx: usize, mut s: &'a Src) -> Option<(usize, usize)> {
-        loop {
-            let c = &self.ctxs[ctx];
+    /// The lambda node `s` of occurrence `ctx` is, as its occurrence and index, when the plan
+    /// can see it. A capture is followed out through the regions holding it, in a loop, and
+    /// each argument passed on the way keeps the answer, so a capture `d` regions deep is
+    /// followed once and not once per call.
+    fn resolve(&mut self, mut ctx: usize, mut s: &'a Src) -> Option<(usize, usize)> {
+        let mut passed = Vec::new();
+        let found = loop {
+            let c = &self.occs[ctx];
             match s {
-                Src::Out(n, 0) if matches!(c.r.nodes[*n].op, Op::Lambda) => return Some((ctx, *n)),
+                Src::Out(n, 0) if matches!(c.r.nodes[*n].op, Op::Lambda) => break Some((ctx, *n)),
                 Src::Arg(i) => {
-                    let up = c.up.as_ref()?;
-                    s = up
-                        .node
-                        .inputs
-                        .get(up.first_input + i.checked_sub(up.first_arg)?)?;
-                    ctx = up.ctx;
+                    if let Some(&f) = self.resolved.get(&(ctx, *i)) {
+                        break f;
+                    }
+                    passed.push((ctx, *i));
+                    let Some(up) = c.up.as_ref() else {
+                        break None;
+                    };
+                    let Some(next) = i
+                        .checked_sub(up.first_arg)
+                        .and_then(|x| up.node.inputs.get(up.first_input + x))
+                    else {
+                        break None;
+                    };
+                    s = next;
+                    ctx = up.occ;
                 }
-                _ => return None,
+                _ => break None,
             }
+        };
+        for at in passed {
+            self.resolved.insert(at, found);
         }
+        found
     }
 }
 
@@ -1179,7 +1187,6 @@ impl<'g> Machine<'g, '_> {
                 Mv::Clo(c)
                     if c.node.regions[0].args.len() == c.node.inputs.len() + ins.len() - 1 =>
                 {
-                    let c = c.clone();
                     if let Some(want) = &np.callee
                         && *want != c.path
                     {
