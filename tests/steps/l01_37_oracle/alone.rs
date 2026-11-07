@@ -289,3 +289,72 @@ fn bindings_that_share_a_cone_scale() {
         assert!(r.mismatches[k].contains("the interpreter gives the error"));
     });
 }
+
+/// `n` functions as in [`shared_cone`], then `n` pairs of bindings, `c_j = f(j)` and
+/// `b_j = f(j) + (true + 1)` with `f` the last function: `n` stops, each reaching every
+/// function.
+fn stops_reaching_functions(n: usize) -> Unit {
+    let mut u = shared_cone(n);
+    u.defs.truncate(n);
+    let last = Shared::new(var(&format!("f{}", n - 1)));
+    for j in 0..n {
+        let call = Term::App(last.clone(), vec![int(j as i64)]);
+        u.defs.push(def(&format!("c{j}"), call.clone(), true));
+        u.defs
+            .push(def(&format!("b{j}"), add(call, stops(Prim::Add)), true));
+    }
+    u
+}
+
+/// Why the bindings of [`stops_reaching_functions`] from `b1` on have no outcome.
+const AFTER_B0: &str = "no outcome, as the run of the definitions from `b1` on, after the \
+                        stop at `b0`, binds again definitions with a function component, and \
+                        stops";
+
+#[test]
+fn stops_that_reach_functions_scale() {
+    // Run to each stop, the bindings would bind every function once per stop: n² in all.
+    // The walk ends at the second stop, so `b0`, whose error differs, is the one mismatch,
+    // `c0` and `c1` are compared, and the 2n − 3 bindings from `b1` on are not.
+    let units = inputs(100, stops_reaching_functions);
+    check("n stops each reaching n functions", 100, |k| {
+        let r = bindings(&units[&k], &[("marked", &marked)]);
+        assert_eq!(r.mismatches.len(), 1, "{:?}", r.mismatches);
+        assert_eq!(r.compared, 3);
+        assert_eq!(r.not_compared.len(), 2 * k - 3);
+    });
+}
+
+#[test]
+fn a_second_stop_through_functions_is_not_compared() {
+    // The unit of the test above at 3, and `z`, which reads `b0` and so stops with its error
+    // though it comes after the end of the walk, and `y`, which reads only a function.
+    let mut u = stops_reaching_functions(3);
+    u.defs.push(def("z", add(var("b0"), int(1)), true));
+    u.defs.push(def("y", var("f0"), false));
+    let error = "the error `type error: `+` applied to `bool`, `int``";
+    let r = bindings(&u, &[("refuse", &refuse)]);
+    let expected = |b: &str, want: &str| {
+        format!("binding `{b}`: the interpreter gives {want}, and refuse gives the error `refused`")
+    };
+    assert_eq!(
+        r.mismatches,
+        vec![
+            expected("c0", "the value 0"),
+            expected("b0", error),
+            expected("c1", "the value 1"),
+            expected("b1", AFTER_B0),
+            expected("c2", AFTER_B0),
+            expected("b2", AFTER_B0),
+            expected("z", error),
+        ]
+    );
+    let not = |b: &str| format!("binding `{b}`: not compared, as {}", &AFTER_B0[15..]);
+    assert_eq!(r.not_compared, vec![not("b1"), not("c2"), not("b2")]);
+    // An engine that gives what the interpreter gives leaves the same bindings with no
+    // outcome, and so differs nowhere. Not natively: a native run that stops leaves the
+    // closures it holds live (item NATIVE-stop-cells), and `native` refuses that.
+    let r = bindings(&u, &[("same", &same)]);
+    assert!(r.mismatches.is_empty(), "{:?}", r.mismatches);
+    assert_eq!((r.compared, r.not_compared.len()), (4, 3));
+}

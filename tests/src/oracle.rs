@@ -37,6 +37,9 @@ pub struct Report {
     pub compared: usize,
     /// Each disagreement, with both outcomes.
     pub mismatches: Vec<String>,
+    /// Each binding the interpreter's runs leave without an outcome, with why (see `Runs`):
+    /// it is not compared, unless an engine gives it one.
+    pub not_compared: Vec<String>,
 }
 
 impl Report {
@@ -54,6 +57,8 @@ impl Report {
         self.compared += other.compared;
         self.mismatches
             .extend(other.mismatches.into_iter().map(|m| format!("{at}: {m}")));
+        self.not_compared
+            .extend(other.not_compared.into_iter().map(|m| format!("{at}: {m}")));
     }
 }
 
@@ -76,17 +81,36 @@ pub fn native<R>(f: impl FnOnce(&[Engine<'_>]) -> R) -> (R, u64) {
 }
 
 /// The outcome of a run, as the oracle compares it.
-fn printed(r: Result<Value, String>) -> String {
-    match r {
+fn printed(r: Result<Value, String>) -> Outcome {
+    Outcome::Gives(match r {
         Ok(v) => format!("the value {v}"),
         Err(e) => format!("the error `{e}`"),
+    })
+}
+
+/// What an engine's runs give a binding.
+#[derive(Clone, PartialEq, Eq)]
+enum Outcome {
+    /// The value or the error a run of the binding alone gives, printed.
+    Gives(String),
+    /// None, as [`Runs`] stopped before the binding, for the reason given.
+    NotCompared(String),
+}
+
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Gives(o) => f.write_str(o),
+            Outcome::NotCompared(why) => write!(f, "no outcome, as {why}"),
+        }
     }
 }
 
 /// Compares each binding of the elaborated unit `u` with no function component under each of
 /// `engines`: the interpreter and each engine give each binding's outcome as a run of that
 /// binding alone, closed over the definitions it reaches, would give it (`outcomes`), and
-/// each pair is compared, binding by binding.
+/// each pair is compared, binding by binding. A binding the interpreter gives no outcome is
+/// listed in the report's `not_compared`; an engine that gives it one is a mismatch.
 pub fn bindings(u: &Unit, engines: &[Engine<'_>]) -> Report {
     let mut r = Report::default();
     let firsts: Vec<usize> = (0..u.defs.len())
@@ -106,14 +130,21 @@ pub fn bindings(u: &Unit, engines: &[Engine<'_>]) -> Report {
         )),
     );
     let want = outcomes(u, &cones, &all, firsts.len(), &run::direct);
-    let got: Vec<Vec<String>> = engines
+    let got: Vec<Vec<Outcome>> = engines
         .iter()
         .map(|(_, engine)| outcomes(u, &cones, &all, firsts.len(), engine))
         .collect();
     for (k, &i) in firsts.iter().enumerate() {
+        let what = format!("binding `{}`", u.defs[i].name);
+        if let Outcome::NotCompared(why) = &want[k] {
+            r.not_compared
+                .push(format!("{what}: not compared, as {why}"));
+        }
         for ((name, _), got) in engines.iter().zip(&got) {
-            let what = format!("binding `{}`", u.defs[i].name);
-            r.compare(&what, name, &want[k], &got[k]);
+            match (&want[k], &got[k]) {
+                (Outcome::NotCompared(_), g) if *g == want[k] => {}
+                (w, g) => r.compare(&what, name, &w.to_string(), &g.to_string()),
+            }
         }
     }
     r
@@ -128,18 +159,20 @@ pub fn bindings(u: &Unit, engines: &[Engine<'_>]) -> Report {
 /// one before, costs its length and not the sum of its cones. Each element of the tuple is
 /// the value its binding's own run gives, since a definition's value depends only on those
 /// it reads. Where the run of `all` stops, or gives no tuple of `n` values, as when a binding
-/// the checker types `_` is a function, the outcomes come from [`Runs`].
+/// the checker types `_` is a function, the outcomes come from [`Runs`], which may leave a
+/// binding with none.
 fn outcomes(
     u: &Unit,
     cones: &Cones<'_>,
     all: &Term,
     n: usize,
     engine: &Through<'_>,
-) -> Vec<String> {
+) -> Vec<Outcome> {
     match engine(all, &mut Evaluator::new(World::new())) {
-        Ok(Value::Tuple(values)) if values.len() == n => {
-            values.iter().map(|v| format!("the value {v}")).collect()
-        }
+        Ok(Value::Tuple(values)) if values.len() == n => values
+            .iter()
+            .map(|v| Outcome::Gives(format!("the value {v}")))
+            .collect(),
         _ => Runs::new(u, cones, engine).outcomes(),
     }
 }
@@ -156,6 +189,19 @@ enum Known {
     Stops(String),
     /// It reads, at any depth, a definition whose let stops: the first such, at this position.
     After(usize),
+    /// Not run, as the walk ended before it, and reads no stop: its outcome is unknown.
+    Unrun,
+}
+
+/// How the runs of the definitions from one stop, or the start, to the next end.
+enum End {
+    /// They all run.
+    Ran,
+    /// The definition at this position in the prefix stops, with this error.
+    Stops(usize, String),
+    /// A run of them stops, binding again a definition with no literal that a run before the
+    /// last stop bound: the walk ends.
+    Again,
 }
 
 /// One engine's runs of the definitions of a unit, in its order, for the outcomes of its
@@ -173,12 +219,31 @@ enum Known {
 /// their own terms. The bindings of the definitions that ran get their values from one run of
 /// their tuple, split in halves where it gives no tuple of data, down to a binding run alone,
 /// whose run gives its own outcome, as for a function the checker typed `_`.
+///
+/// The walk ends at a run, after a stop, that stops and binds again a definition with no
+/// literal (one with a function component, or a binding whose value is a function) that a run
+/// before that stop bound. The bindings of the prefix before that run get their values; each
+/// definition after it that reads a known stop takes that stop's error, as above; every other
+/// is left unrun, and a binding among them has no outcome, with the reason (see below).
 //
-// Complexity tradeoff: a run stops at its first stop, so each stop costs a run of its own,
-// and each such run binds the definitions with a function component the stop reaches, which
-// have no literal: `s` stops that reach `F` such definitions cost O((n + s·F) log n) for a
-// unit of `n` definitions. The kernel has no form that catches an error and goes on, so no
-// order of runs through the engines does better than s·F (author question A32).
+// Complexity tradeoff: what is given up is the outcome of each binding left unrun, which the
+// report lists as not compared, with the reason, where it would have compared it. Why: a run
+// stops at its first stop, so each stop costs a run of its own, and that run binds again the
+// definitions with a function component the stop reaches, which have no literal: going on
+// would cost O((n + s·F) log n) for `s` stops reaching `F` such definitions in a unit of `n`
+// definitions. No order of runs does better: the kernel has no form that catches an error and
+// goes on, and neither engine keeps an environment from one run to the next (`run::Through`
+// takes a closed term, and the native code compiles each term into a JIT module freed after
+// its run). Trigger: a second stop whose run binds definitions with a function component that
+// a run before the first stop bound, as `n` bindings that each call a function of the unit and
+// each stop. With the walk ended there, it costs O(n log n): each run before the end binds the
+// definitions between one stop and the next, which run there for the first time, and literals
+// for the bindings before them, and these runs are O(log n) prefixes and halvings of that
+// stretch. Tests: `l01_37_oracle::alone::stops_that_reach_functions_scale` and
+// `a_second_stop_through_functions_is_not_compared`; COMPLEXITY.md F107. A complete solution
+// builds the unit's function definitions once, in an environment each run starts from: both
+// engines would have to take one, the interpreter keeping closures beyond a run and the native
+// code keeping a JIT module of them, and their cells, from run to run (see NATIVE-stop-cells).
 // Likewise each binding that is a function, which the checker typed `_`, costs O(log n) runs in
 // `values`, as no tuple holding it gives data.
 // A unit with no stop and no function in a binding runs as one tuple in `outcomes` instead.
@@ -190,8 +255,11 @@ struct Runs<'a> {
     /// The walk that last met each definition: one visited set for all the walks.
     met: Vec<usize>,
     walks: usize,
+    /// Whether the last run bound a definition with no literal that it does not run for the
+    /// first time: one run before it bound that definition already.
+    again: bool,
     /// The outcome of each binding, by position, once known.
-    out: Vec<Option<String>>,
+    out: Vec<Option<Outcome>>,
 }
 
 impl<'a> Runs<'a> {
@@ -204,12 +272,13 @@ impl<'a> Runs<'a> {
             known: vec![Known::Term; n],
             met: vec![0; n],
             walks: 0,
+            again: false,
             out: vec![None; n],
         }
     }
 
     /// The outcome of each binding with no function component, in the unit's order.
-    fn outcomes(mut self) -> Vec<String> {
+    fn outcomes(mut self) -> Vec<Outcome> {
         let n = self.unit.defs.len();
         let mut at = 0;
         // The definitions from `at` on that read no stop, as far as the prefixes have gone.
@@ -217,7 +286,7 @@ impl<'a> Runs<'a> {
         while at < n {
             ready.clear();
             let (mut next, mut ran, mut want) = (at, 0, 1);
-            let stop = loop {
+            let end = loop {
                 while ready.len() < want && next < n {
                     if !self.reads_a_stop(next) {
                         ready.push(next);
@@ -226,24 +295,32 @@ impl<'a> Runs<'a> {
                 }
                 if ready.len() > ran {
                     if let Err(e) = self.run(&ready, Self::nothing()) {
-                        break Some(self.first_stop(&ready, ran, e));
+                        if self.again {
+                            break End::Again;
+                        }
+                        let (q, e) = self.first_stop(&ready, ran, e);
+                        break End::Stops(q, e);
                     }
                     ran = ready.len();
                 }
                 if next == n {
-                    break None;
+                    break End::Ran;
                 }
                 want *= 2;
             };
-            let ran = stop.as_ref().map_or(ready.len(), |(q, _)| *q);
+            let ran = match &end {
+                End::Ran => ready.len(),
+                End::Stops(q, _) => *q,
+                End::Again => ran,
+            };
             let bindings: Vec<usize> = ready[..ran]
                 .iter()
                 .copied()
                 .filter(|&i| self.unit.defs[i].first_order)
                 .collect();
             self.values(&bindings);
-            match stop {
-                Some((q, e)) => {
+            match end {
+                End::Stops(q, e) => {
                     let q = ready[q];
                     if self.unit.defs[q].first_order {
                         self.out[q] = Some(printed(Err(e.clone())));
@@ -251,7 +328,11 @@ impl<'a> Runs<'a> {
                     self.known[q] = Known::Stops(e);
                     at = q + 1;
                 }
-                None => at = n,
+                End::Ran => at = n,
+                End::Again => {
+                    self.leave(at - 1, ready[ran]);
+                    at = n;
+                }
             }
         }
         (0..n)
@@ -259,7 +340,7 @@ impl<'a> Runs<'a> {
             .map(|i| {
                 self.out[i]
                     .take()
-                    .expect("each binding is run, or reads a stop")
+                    .expect("each binding is run, reads a stop or is left unrun")
             })
             .collect()
     }
@@ -279,7 +360,7 @@ impl<'a> Runs<'a> {
             .filter_map(|&r| match self.known[r] {
                 Known::Stops(_) => Some(r),
                 Known::After(p) => Some(p),
-                Known::Term | Known::Value(_) => None,
+                Known::Term | Known::Value(_) | Known::Unrun => None,
             })
             .min();
         let Some(p) = first else { return false };
@@ -291,6 +372,27 @@ impl<'a> Runs<'a> {
         }
         self.known[i] = Known::After(p);
         true
+    }
+
+    /// Ends the walk at a run that binds again definitions a run before the stop at `stop`
+    /// bound, and stops: each definition from `from` on that is not yet known is left unrun,
+    /// unless it reads a stop. A stop it reads comes first in its own run, before any
+    /// definition left unrun, since every stop known lies before `from`.
+    fn leave(&mut self, stop: usize, from: usize) {
+        let defs = &self.unit.defs[..];
+        let why = Outcome::NotCompared(format!(
+            "the run of the definitions from `{}` on, after the stop at `{}`, binds again \
+             definitions with a function component, and stops",
+            defs[from].name, defs[stop].name
+        ));
+        for (i, d) in defs.iter().enumerate().skip(from) {
+            if matches!(self.known[i], Known::Term) && !self.reads_a_stop(i) {
+                self.known[i] = Known::Unrun;
+                if d.first_order {
+                    self.out[i] = Some(why.clone());
+                }
+            }
+        }
     }
 
     /// The position in `ready` of the first definition whose let stops, and its error, given
@@ -335,7 +437,7 @@ impl<'a> Runs<'a> {
                             for (&b, v) in part.iter().zip(values.iter()) {
                                 let lit = Shared::new(Term::Lit(v.clone()));
                                 self.known[b] = Known::Value(lit);
-                                self.out[b] = Some(format!("the value {v}"));
+                                self.out[b] = Some(Outcome::Gives(format!("the value {v}")));
                             }
                         }
                         _ => {
@@ -351,7 +453,8 @@ impl<'a> Runs<'a> {
 
     /// Runs `body` under `targets`, each as its own term, and the definitions they reach, each
     /// a let in the unit's order: a binding already run as the literal of its value, which
-    /// ends the walk there, and the others as their own terms.
+    /// ends the walk there, and the others as their own terms. Sets `again` when one of those
+    /// others is not among `targets`.
     fn run(&mut self, targets: &[usize], body: Term) -> Result<Value, String> {
         self.walks += 1;
         let walk = self.walks;
@@ -362,6 +465,7 @@ impl<'a> Runs<'a> {
             self.met[t] = walk;
             todo.extend(cones.reads(t));
         }
+        self.again = false;
         while let Some(i) = todo.pop() {
             if std::mem::replace(&mut self.met[i], walk) == walk {
                 continue;
@@ -369,9 +473,12 @@ impl<'a> Runs<'a> {
             lets.push(i);
             match self.known[i] {
                 Known::Value(_) => {}
-                Known::Term => todo.extend(cones.reads(i)),
-                Known::Stops(_) | Known::After(_) => {
-                    unreachable!("a run holds no definition that reads a stop")
+                Known::Term => {
+                    self.again = true;
+                    todo.extend(cones.reads(i));
+                }
+                Known::Stops(_) | Known::After(_) | Known::Unrun => {
+                    unreachable!("a run holds no definition that reads a stop or is left unrun")
                 }
             }
         }

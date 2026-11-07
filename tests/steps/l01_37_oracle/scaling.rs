@@ -44,6 +44,7 @@ fn mismatched(n: usize) -> Report {
     Report {
         compared: n,
         mismatches: (0..n).map(|i| format!("m{i}")).collect(),
+        ..Report::default()
     }
 }
 
