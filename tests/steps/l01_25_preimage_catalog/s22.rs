@@ -958,22 +958,22 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 23), (9, &[]), 2),
+    (0, (0, 0, 23), (10, &[]), 5),
     (250, (1, 3, 22), (5, &[]), 1),
-    (500, (1, 1, 19), (5, &[]), 3),
-    (750, (0, 1, 16), (8, &[]), 4),
-    (1000, (2, 0, 24), (9, &[]), 4),
-    (1250, (2, 2, 20), (2, &[]), 3),
+    (500, (1, 3, 19), (5, &[]), 1),
+    (750, (0, 2, 17), (8, &[]), 3),
+    (1000, (2, 2, 24), (9, &[]), 4),
+    (1250, (2, 5, 20), (2, &[]), 4),
     (1500, (0, 1, 16), (8, &[]), 5),
-    (1750, (0, 1, 22), (9, &[]), 4),
-    (2000, (0, 2, 33), (11, &[]), 3),
-    (2250, (0, 1, 18), (13, &[]), 0),
-    (2500, (2, 0, 23), (7, &[]), 4),
-    (2750, (0, 0, 18), (5, &[]), 2),
-    (3000, (2, 1, 27), (6, &[]), 5),
-    (3250, (1, 1, 26), (4, &[]), 4),
+    (1750, (0, 4, 25), (9, &[]), 3),
+    (2000, (0, 4, 33), (11, &[]), 2),
+    (2250, (0, 1, 18), (13, &[]), 1),
+    (2500, (2, 1, 23), (7, &[]), 4),
+    (2750, (0, 1, 18), (5, &[]), 1),
+    (3000, (2, 3, 27), (7, &[]), 5),
+    (3250, (1, 3, 29), (4, &[]), 2),
     (3500, (0, 0, 25), (3, &[]), 1),
-    (3750, (0, 2, 21), (9, &[]), 4),
+    (3750, (0, 2, 22), (9, &[]), 6),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -1065,6 +1065,15 @@ guarded_ranges!(
 /// narrower, reflected, exact and split counts are PRODUCT-nested-chain's, and 49 results
 /// differ from the transfer before only in the names of their variables (26 in the first
 /// half, 23 in the second), measured by the run of each row.
+///
+/// Since S22-linear-rem, which writes an `if` on the remainder of an input by its summaries
+/// over the remainder's classes in the linear stage, one variable for every copy of such an
+/// `if`, no box is wider than before and none is less exact: 4 more boxes are exact in each
+/// half (166 and 195); 11 more in the first half and 8 more in the second count as
+/// reflected (20 and 15), each an inexact box narrower than before or the same box with the
+/// refusal gone, its relation changed; one more case in each half is answered by a split
+/// over many periods (56 and 59); and 26 and 22 results differ only in the names of their
+/// variables, measured by the run of each row.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1085,8 +1094,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (6, 9, 162, 55, vec![], 26));
-    assert_eq!(sum(&GUARDED[8..]), (5, 7, 191, 58, vec![], 23));
+    assert_eq!(sum(&GUARDED[..8]), (6, 20, 166, 56, vec![], 26));
+    assert_eq!(sum(&GUARDED[8..]), (5, 15, 195, 59, vec![], 22));
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -1724,9 +1733,40 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
         Shared::new(i()),
         Shared::new(int(0)),
     );
-    for (t, ds, d) in [(both, two.clone(), ints(0, 10)), (other, two, ints(0, 10))] {
+    // Since S22-linear-rem the linear stage writes `other` by its summaries over the classes
+    // of `i mod 3`, one case for each range of classes: the same box, exactness and
+    // relation body, with that definition.
+    for (t, ds, d, def) in [
+        (both, two.clone(), ints(0, 10), None),
+        (
+            other,
+            two,
+            ints(0, 10),
+            Some("j if q1 <= 0, j + 1 if q1 >= 1"),
+        ),
+    ] {
         let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
-        assert_eq!(format!("{now:?}"), format!("{then:?}"), "{t}");
+        match def {
+            None => assert_eq!(format!("{now:?}"), format!("{then:?}"), "{t}"),
+            Some(def) => {
+                let (rel, was) = (
+                    now.relation.as_ref().unwrap(),
+                    then.relation.as_ref().unwrap(),
+                );
+                assert_eq!(rel.body, was.body, "{t}");
+                assert_eq!(rel.defs[..2], was.defs[..2], "{t}");
+                assert_eq!(rel.defs[2].1, def, "{t}");
+                let rest = format!(
+                    "{:?} {} {} {:?} {:?}",
+                    now.domains, now.exact, now.enumerated, now.stops, now.refusal
+                );
+                let was = format!(
+                    "{:?} {} {} {:?} {:?}",
+                    then.domains, then.exact, then.enumerated, then.stops, then.refusal
+                );
+                assert_eq!(rest, was, "{t}");
+            }
+        }
         check(&t, &ds, &d, &now, (-60, 60));
     }
     let (ds, d) = (i_in(-1000, 1000), ints(10, 2000));
@@ -2445,7 +2485,9 @@ fn remainder_shape_matches_the_interpreter(shape: &str) {
 /// One test per shape of [`REMAINDER_SHAPES`]. The five shapes in one test took 56.5 s at load
 /// 10, nearly all of it in `preimage` (the interpreter takes 5 ms to 28 ms a case), and most of
 /// that on the chain of seed 2 at `k = 13`: 10 s to 22 s a shape at load 22, spent in the
-/// Presburger solver the linear stage calls (COMPLEXITY.md S22-transfer-rem, "Not fixed").
+/// Presburger solver the linear stage calls. Since S22-linear-rem the linear stage writes such
+/// a chain by its summaries over the classes (COMPLEXITY.md S22-linear-rem), and that chain
+/// takes 0.05 s to 0.11 s a shape.
 macro_rules! remainder_shapes {
     ($($name:ident $shape:literal),* $(,)?) => {
         $(
@@ -2524,6 +2566,28 @@ fn remainder_reads_outside_a_split_scale() {
             let n = 8;
             let terms = scaling::inputs(n, |k| {
                 remainder_shape(shape, moved_remainder_chain(1, k, "x", 3))
+            });
+            scaling::check(shape, n, |k| {
+                preimage(&terms[&k], &ds, &d);
+            });
+        }
+    });
+}
+
+/// COMPLEXITY.md S22-linear-rem: the linear stage on what the counted chain of `k` guards
+/// `x mod 3 == j mod 3` leaves, in `c <= 2 && y mod 2 == 0` and `c <= 2 && x mod 2 == 0` over
+/// `x` and `y` in `[-100000, 100000]`, does work of order `k` from `k` to `8k`. Level by
+/// level, one variable for each guard read together by the solver, it took 0.66 s at
+/// `k = 15` and 24.6 s at `k = 120`; written by the chain's summaries over the classes of
+/// `x mod 3`, it is one variable with a case for each piece of each range of classes.
+#[test]
+fn remainder_chains_in_the_linear_stage_scale() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(100000), Demand::Bool(true));
+        for (shape, at) in [("c <= 2 && y mod 2 == 0", 3), ("c <= 2 && x mod 2 == 0", 4)] {
+            let n = 5;
+            let terms = scaling::inputs(n, |k| {
+                counted_shapes(counted_remainder_chain(k, 3))[at].clone()
             });
             scaling::check(shape, n, |k| {
                 preimage(&terms[&k], &ds, &d);

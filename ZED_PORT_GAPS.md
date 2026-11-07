@@ -2228,3 +2228,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `Mutex<Weak<Expr>>` beside a `OnceLock<Part>` so that an expression and its complement hold each other one way only | `Expr::back`, `Expr::link`, `Expr::known` | Lazy cells and tied recursive types (gap 3) | The complement in the unit's memo table keyed by expression id, both ways |
 | A weak table of rows, each row removed by `Drop for RowNode` on a pointer match | `Row::new`, `ROWS`, `Drop for RowNode` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A row table in the unit's state struct, dropped whole at the end of a unit |
 | The form an expression was the complement of, kept so a freed source is made again alike | `Expr::source`, `Source`, `Connect::negate` | Lazy cells (gap 3) | Not needed when the unit's memo table keeps both sides for the unit |
+
+## Entries from S22-linear-rem (`crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap` from the form of a term and its scope to an auxiliary variable, with a `Vec` of its keys in the order made, popped back to a mark to undo a scope | `Tr::cases`, `Tr::cased`, `Tr::truncate`, `Walk::lin_by_class` | Mutation, undo by hand | A persistent map carried down the translation, so leaving a scope drops its entries with no undo |

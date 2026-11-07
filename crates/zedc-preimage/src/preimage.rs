@@ -1328,6 +1328,7 @@ fn linear(
 ) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
     tx.start(dom, Landmarks::none());
     let mut tr = Tr::new(false);
+    tr.by_class = true;
     let body = match demand {
         Demand::Bool(w) => {
             let f = tx.formula(&mut tr, root, ROOT)?;
@@ -1405,6 +1406,15 @@ struct Tr {
     /// The keys of `pairs`, in the order made, so that [`Tr::truncate`] removes the pairs it
     /// undoes from the end.
     made: Vec<(Lin, Lin)>,
+    /// Whether an `if` whose guard tests the remainder of an input by a constant is written by
+    /// its summaries over the remainder's classes ([`Walk::lin_by_class`]): in the linear
+    /// stage, whose inputs have the domains the summaries are read over.
+    by_class: bool,
+    /// For each form of an `if` [`Walk::lin_by_class`] wrote (its first term, [`Terms::form`]) and
+    /// scope, the number of its variable: a copy of the term is the same variable.
+    cases: HashMap<(Tid, Eid), u32>,
+    /// The keys of `cases`, in the order made, for [`Tr::truncate`].
+    cased: Vec<(Tid, Eid)>,
 }
 
 impl Tr {
@@ -1414,6 +1424,9 @@ impl Tr {
             products,
             pairs: HashMap::new(),
             made: Vec::new(),
+            by_class: false,
+            cases: HashMap::new(),
+            cased: Vec::new(),
         }
     }
 
@@ -1432,6 +1445,12 @@ impl Tr {
         {
             self.pairs.remove(key);
             self.made.pop();
+        }
+        while let Some(key) = self.cased.last()
+            && self.cases[key] as usize >= mark
+        {
+            self.cases.remove(key);
+            self.cased.pop();
         }
     }
 
@@ -1504,6 +1523,8 @@ enum What {
     Min(Lin, Lin),
     /// `max(a, b)`.
     Max(Lin, Lin),
+    /// `a1 if g1, a2 if g2, …`: the value `ai` where `gi` holds, the `gi` disjoint.
+    Cases(Vec<(Formula, Lin)>),
 }
 
 impl What {
@@ -1520,21 +1541,23 @@ impl What {
             Some(to) => to(l),
             None => l.clone(),
         };
+        let f = |g: &Formula| match to {
+            Some(to) => g.map_cons(&|c| {
+                Formula::Con(Con {
+                    lin: to(&c.lin),
+                    rel: c.rel,
+                })
+            }),
+            None => g.clone(),
+        };
         match self {
             What::ByConstant(op, a, c) => format!("{} {op} {c}", operand(&l(a))),
             What::ByTerm(op, a, n) => format!("{} {op} {}", operand(&l(a)), operand(&l(n))),
-            What::If(g, a, b) => {
-                let g = match to {
-                    Some(to) => g.map_cons(&|c| {
-                        Formula::Con(Con {
-                            lin: to(&c.lin),
-                            rel: c.rel,
-                        })
-                    }),
-                    None => g.clone(),
-                };
-                format!("if {g} then {} else {}", l(a), l(b))
-            }
+            What::If(g, a, b) => format!("if {} then {} else {}", f(g), l(a), l(b)),
+            What::Cases(cases) => (cases.iter())
+                .map(|(g, a)| format!("{} if {}", l(a), f(g)))
+                .collect::<Vec<_>>()
+                .join(", "),
             What::Abs(a) => format!("abs({})", l(a)),
             What::Min(a, b) => format!("min({}, {})", l(a), l(b)),
             What::Max(a, b) => format!("max({}, {})", l(a), l(b)),
@@ -2987,6 +3010,8 @@ impl<'t> Tx<'t> {
         m.log.clear();
         tr.pairs.clear();
         tr.made.clear();
+        tr.cases.clear();
+        tr.cased.clear();
         self.formula(tr, t, env)
     }
 
@@ -4846,7 +4871,7 @@ impl<'m, 't> Walk<'m, 't> {
         if self.with(|tx| tx.run.residue.is_some()) {
             return None;
         }
-        let (x, m, _) = self.remainder_test(g, env).await?;
+        let (x, m, _, _) = self.remainder_test(g, env).await?;
         let fwd = self.fwd(t, env).await;
         let z = match d {
             Demand::Ints(z) if !fwd.has_bools() => z.clone(),
@@ -4890,7 +4915,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// [`Walk::back_compare`] reads as a demand on the remainder, so that in each class the
     /// transfer finds the test true throughout or false throughout ([`Walk::back_arith`]).
     async fn residue_test(&'m self, g: Tid, env: Eid) -> Option<Vec<(usize, usize)>> {
-        let (x, m, z) = self.remainder_test(g, env).await?;
+        let (x, m, z, _) = self.remainder_test(g, env).await?;
         self.with(|tx| {
             let res = tx.classes()?;
             if res.x != x || res.m != m {
@@ -4917,10 +4942,11 @@ impl<'m, 't> Walk<'m, 't> {
         })
     }
 
-    /// The input `x`, the modulus `m` and the set of remainders `z` of a test `g` that compares
-    /// `x mod c` (`m = |c|`) with a constant in the way [`Walk::back_compare`] reads as a
-    /// demand on the remainder: `g` holds where `x mod c` lies in `z`.
-    async fn remainder_test(&'m self, g: Tid, env: Eid) -> Option<(Name, i128, IntervalSet)> {
+    /// The input `x`, the modulus `m`, the set of remainders `z` and the term `x mod c` of a test
+    /// `g` that compares `x mod c` (`m = |c|`) with a constant in the way
+    /// [`Walk::back_compare`] reads as a demand on the remainder: `g` holds where `x mod c` lies
+    /// in `z`.
+    async fn remainder_test(&'m self, g: Tid, env: Eid) -> Option<(Name, i128, IntervalSet, Tid)> {
         let Node::Prim(p @ (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne), args) =
             self.node(g)
         else {
@@ -4950,7 +4976,7 @@ impl<'m, 't> Walk<'m, 't> {
             return None;
         }
         let c = self.constant_int(self.arg(margs, 1), env).await?;
-        Some((x, c.unsigned_abs() as i128, z))
+        Some((x, c.unsigned_abs() as i128, z, r))
     }
 
     // ---- Into the linear-relation domain ------------------------------------------------
@@ -5038,6 +5064,91 @@ impl<'m, 't> Walk<'m, 't> {
         l
     }
 
+    /// The linear term, in the linear stage ([`Tr::by_class`]) of a run that is not split, of
+    /// the `if` `t` whose guard `g` tests the remainder `x mod m` of an input by a constant:
+    /// one auxiliary variable `v` defined by the summaries of `t` over the classes the terms
+    /// cut `x mod m` into ([`Walk::by_class`], as [`Walk::back_by_class`] reads them), one
+    /// case for each piece ([`pa_pieces`]) of each range of classes that holds one summary:
+    /// `r` in those classes, the summary's input in the piece, and `v == a * u + b`, for the
+    /// remainder `r` of the pair `x mod m` names. Every copy of `t` in the same scope is the
+    /// same `v` ([`Tr::cases`]). `None` where no summary is found, and the `if` is translated
+    /// level by level.
+    ///
+    /// Level by level, a chain of `k` such guards is `k` auxiliary variables, each defined by a
+    /// disjunction of its two arms, which the solver reads together: 2.1 s at k = 30 and 4.3 s
+    /// at k = 60 for `c <= 2 && y mod 2 == 0` with the counted chain `c`, and 22 s for the
+    /// chain of seed 2 at k = 13 (COMPLEXITY.md row S22-linear-rem). Now it is one variable
+    /// whose definition has a disjunct for each piece of the summaries, `O(k)` of them, and
+    /// the summary costs `O(k log k)`.
+    async fn lin_by_class(&'m self, t: Tid, g: Tid, env: Eid) -> Option<Lin> {
+        if !self.tr(|tr| tr.by_class) || self.with(|tx| tx.run.residue.is_some()) {
+            return None;
+        }
+        // Complexity tradeoff: the solver projects each case to its hull, so a hole of the
+        // congruence that the level-by-level form cut out at the end of another class's piece
+        // can be lost: in the shape tests 4 inexact boxes of 60 are 1 to 3 points wider than
+        // level by level, 3 differ both ways, and 22 are narrower and 5 exact. Why: cutting
+        // every case at the ends of every other class's pieces keeps those holes, but makes
+        // `L * C` cases for `L` ranges of classes and `C` ends, `O(k^2)` for a chain of `k`
+        // guards of a large modulus. Test:
+        // `l01_25_preimage_catalog::s22::remainder_reads_outside_a_split_match_the_interpreter_*`.
+        // COMPLEXITY.md row S22-linear-rem.
+        let key = (self.with(|tx| tx.terms.form(t)), env);
+        if let Some(n) = self.tr(|tr| tr.cases.get(&key).copied()) {
+            return Some(Lin::atom(presburger::Atom::Aux(n)));
+        }
+        let (x, m, _, r) = self.remainder_test(g, env).await?;
+        let classes = self.with(|tx| tx.classes_of(x, m))?;
+        let outer = self.with(|tx| tx.run.classes.replace(classes.clone()));
+        let by = self.by_class(t, env).await;
+        self.with(|tx| tx.run.classes = outer);
+        let leaves = by?.leaves()?;
+        let rem = self.lin(r, env).await?;
+        let mut cases = Vec::new();
+        for ((i, j), pa) in leaves {
+            let (lo, hi) = (classes.cuts[i], classes.cuts[j] - 1);
+            let mut within = Vec::new();
+            if lo > 0 {
+                within.push(Formula::Con(Con::ge(&rem, &Lin::constant(lo))));
+            }
+            if hi < m - 1 {
+                within.push(Formula::Con(Con::ge(&Lin::constant(hi), &rem)));
+            }
+            let u = pa
+                .var()
+                .map(|v| Lin::atom(presburger::Atom::Sym(v.clone())));
+            for (piece, a, b) in pa_pieces(&pa)? {
+                let mut g = within.clone();
+                if let (Some(u), Some((lo, hi))) = (&u, piece) {
+                    if let Fin(lo) = &lo {
+                        g.push(Formula::Con(Con::ge(u, &Lin::constant(small(lo)))));
+                    }
+                    if let Fin(hi) = &hi {
+                        g.push(Formula::Con(Con::ge(&Lin::constant(small(hi)), u)));
+                    }
+                }
+                let value = match &u {
+                    Some(u) => u.times(a).plus(&Lin::constant(b)),
+                    None => Lin::constant(b),
+                };
+                cases.push((Formula::and(g), value));
+            }
+        }
+        self.tr(|tr| {
+            let n = tr.defs.len() as u32;
+            let v = Lin::atom(presburger::Atom::Aux(n));
+            let def = Formula::or(
+                (cases.iter())
+                    .map(|(g, l)| Formula::and(vec![g.clone(), Formula::Con(Con::eq(&v, l))]))
+                    .collect(),
+            );
+            tr.aux(What::Cases(cases), def);
+            tr.cases.insert(key, n);
+            tr.cased.push(key);
+            Some(v)
+        })
+    }
+
     async fn lin_at(&'m self, t: Tid, env: Eid) -> Option<Lin> {
         use Prim::*;
         if let Some(v) = self.constant(t, env).await {
@@ -5081,6 +5192,9 @@ impl<'m, 't> Walk<'m, 't> {
                 Callee::Lam(..) => None,
             },
             Node::If(g, a, b) => {
+                if let Some(l) = self.lin_by_class(t, g, env).await {
+                    return Some(l);
+                }
                 let g = self.formula(g, env).await?;
                 let (la, lb) = (self.lin(a, env).await?, self.lin(b, env).await?);
                 // One level: the parts are shown by their linear forms, in which an auxiliary
@@ -6069,6 +6183,35 @@ fn map_vals((lo, hi): (i128, i128), (mul, add): (i128, i128)) -> Option<(i128, i
         Some((f(lo)?, f(hi)?))
     } else {
         Some((f(hi)?, f(lo)?))
+    }
+}
+
+/// A piece of a summary: the inputs `lo..=hi` it covers, none for the whole domain, and the
+/// line `(a, b)` of its values `a * u + b` ([`pa_pieces`]).
+type Piece = (Option<(End, End)>, i128, i128);
+
+/// The pieces of the summary `pa` in the order of its input, each the inputs `lo..=hi` it
+/// covers (none for a constant or a line, which hold on the whole domain) and the line
+/// `(a, b)` of its values `a * u + b`: `O(p)` for `p` pieces, `None` when a map leaves `i128`.
+fn pa_pieces(pa: &Pa) -> Option<Vec<Piece>> {
+    fn walk(node: &Tree, f: (i128, i128), out: &mut Vec<Piece>) -> Option<()> {
+        let Some(n) = node else {
+            return Some(());
+        };
+        let below = compose(n.tag, f)?;
+        walk(&n.left, below, out)?;
+        let (a, b) = compose((n.a, n.b), f)?;
+        out.push((Some((n.lo.clone(), n.hi.clone())), a, b));
+        walk(&n.right, below, out)
+    }
+    match pa {
+        Pa::Const(c) => Some(vec![(None, 0, i128::from(*c))]),
+        Pa::Linear { a, b, .. } => Some(vec![(None, *a, *b)]),
+        Pa::Piecewise { root, .. } => {
+            let mut out = Vec::new();
+            walk(root, (1, 0), &mut out)?;
+            Some(out)
+        }
     }
 }
 
