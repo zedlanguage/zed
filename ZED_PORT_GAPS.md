@@ -2484,3 +2484,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A labeled `'round: loop` around a Dijkstra search on a `BinaryHeap<Reverse<..>>`, restarted with `continue 'round` from inside the heap loop when a cycle of weight 0 is tied, and left with `return` on a negative cycle (moved here from `Scope::repair`) | `product::put_in`, called by `Scope::repair` and `Scope::raise` | Mutation (gap 11), Early exit (gap 12) | A recursive function per round over a persistent heap, its result a sum of "put in", "tie these edges and go again" and "negative cycle" |
 | A `BTreeMap` of bounds filled at first read through a closure taking it as `&mut`, so the search reads each name's ends once | `Scope::bound_pass` (`read`, `label`) | Mutation (gap 11) | The map threaded through the search's fold and returned with each read |
+
+## Entries from PREIMAGE-and-chain (`crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `hash_map::Entry` matched as occupied or vacant, inserting into a second `HashSet<Tid>` (`Terms::shared`) on the occupied side while numbering a term | `Terms::id` | Mutation (gap 11) | A lookup in the map of seen terms, then either the set with the term added or the map with the new number, both returned |
+| A local `enum Step` work list (operand, memo read, close at a `Mark`) popped in a `while let` loop inside an `async fn`, a closure giving each inner node's steps | `Walk::chain` | Mutation (gap 11), Early exit (gap 12) | A fold over the work list in a state receiver, ending in `#none` at the first operand with no formula |

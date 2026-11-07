@@ -493,6 +493,37 @@ fn long_shared_chains() {
     );
 }
 
+/// `a0 >= 0 && a1 >= 1 && … && a(k-1) >= k - 1` as the elaborator writes it, each `a && b` as
+/// `if a { b } else { false }`, nested to the left: a chain of k `&&` on k names. Read as an
+/// `if`, the conjunction of each prefix was made in turn, copying the prefix's constraints
+/// again at each `&&` (PREIMAGE-and-chain).
+fn and_ifs(k: usize) -> Term {
+    let ge = |j: usize| prim(Prim::Ge, var(&format!("a{j}")), int(j as i64));
+    let no = || Shared::new(Term::Lit(Value::Bool(false)));
+    (1..k).fold(ge(0), |t, j| {
+        Term::If(Shared::new(t), Shared::new(ge(j)), no())
+    })
+}
+
+#[test]
+fn a_chain_of_and_written_as_ifs_is_joined_in_one_pass() {
+    // On origin/main 32654e93 this test fails: k = 256 to 2048 took 0.27 to 22.8 G instructions
+    // (86 times) and 0.07 to 4.40 GB (60.1 times; limit 24). Read as a chain (`Walk::chain`):
+    // 15.6 to 132 M instructions (8.5 times) and 8.0 times the bytes.
+    let measure = || {
+        let made = scaling::inputs(256, |k| {
+            let names: Vec<Arc<str>> = (0..k).map(|j| format!("a{j}").into()).collect();
+            (and_ifs(k), names)
+        });
+        scaling::check("a chain of k `&&` on k names, written as `if`s", 256, |k| {
+            let (t, names) = &made[&k];
+            relations(&[t], names, false).expect("in the domain");
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
 /// `w = (g, v) -> let ok = i >= 0 && i >= 1 && … && i >= k - 2 && seen(g(g, v)) in ok && (i
 /// >= 1 || ok) && … && (i >= r - 1 || ok)`, read as `w(w, i)` with `seen = (u) -> i <= 1000`:
 /// a check that calls itself, by self-application, through a function that ignores what the

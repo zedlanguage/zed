@@ -1997,6 +1997,9 @@ struct Terms<'t> {
     ints: Vec<Num>,
     /// Each term's first term of the same form ([`Terms::form`]).
     forms: HashMap<Tid, Tid>,
+    /// The given subterms reached more than once in one given term (one [`Shared`] held in
+    /// two places), so that [`Walk::chain`] reads each through once.
+    shared: HashSet<Tid>,
     by_form: HashMap<Form, Tid>,
 }
 
@@ -2078,7 +2081,14 @@ impl<'t> Terms<'t> {
         seen: &mut HashMap<u64, Tid>,
         todo: &mut Vec<(&'t Term, Tid)>,
     ) -> Tid {
-        *seen.entry(s.id()).or_insert_with(|| self.number(s, todo))
+        use std::collections::hash_map::Entry as Seen;
+        match seen.entry(s.id()) {
+            Seen::Occupied(e) => {
+                self.shared.insert(*e.get());
+                *e.get()
+            }
+            Seen::Vacant(e) => *e.insert(self.number(s, todo)),
+        }
     }
 
     /// A new number for `t`, its parts left to `todo`.
@@ -6880,6 +6890,11 @@ impl<'m, 't> Walk<'m, 't> {
                 }
                 Callee::Lam(..) => None,
             },
+            // `g && a` as the elaborator writes it, read as a chain ([`Walk::chain`]); the
+            // translation two at a time reads it as any other `if`, below.
+            Node::If(..) if self.and_if(t).is_some() && !two_at_a_time() => {
+                self.chain(Prim::And, t, env).await
+            }
             Node::If(g, a, b) => {
                 // The formula of a name is kept whole, as for `&&` below, and a claimed call's
                 // parts are added ([`Walk::claimed`]).
@@ -6902,12 +6917,13 @@ impl<'m, 't> Walk<'m, 't> {
                 match p {
                     Not => Some(Formula::negate(self.formula(a, env).await?)),
                     And | Or => {
-                        let b = b.expect("two operands");
                         #[cfg(test)]
                         if presburger::TWO_AT_A_TIME.get() {
-                            return self.two_at_a_time(p, a, b, env).await;
+                            return self
+                                .two_at_a_time(p, a, b.expect("two operands"), env)
+                                .await;
                         }
-                        self.chain(p, [a, b], env).await
+                        self.chain(p, t, env).await
                     }
                     Lt | Le | Gt | Ge | Eq | Ne => {
                         let b = b.expect("two operands");
@@ -6946,42 +6962,70 @@ impl<'m, 't> Walk<'m, 't> {
         }
     }
 
-    /// The formula of a `&&` (`p` is `And`) or a `||` with the given operands: the operands
-    /// of the chain of `p` it heads, each operand that is itself a `p` with no constant value
+    /// The formula of a `&&` (`p` is `And`) or a `||` whose term is `head`: the operands of
+    /// the chain of `p` it heads, each operand that is itself a `p` with no constant value
     /// read through, joined as [`Formula::and_keeping`] or [`Formula::or_keeping`] would join
     /// them two at a time, but in one [`Joining`], so a chain of k operands costs O(k log k)
-    /// and not O(k²) (ST-formula-k2). The formula of a name is kept whole, so a named part
-    /// used at many places is one node and not copied into each (COMPLEXITY.md S31b). The
-    /// operands are read in order, as the two-at-a-time translation reads them, and the
-    /// first that has no formula gives none for the whole. An operand of a primitive is held
-    /// in its parent alone ([`Terms::ids`]), so the chain is a tree, and each of its nodes is
-    /// met once without a visited set.
-    async fn chain(&'m self, p: Prim, operands: [Tid; 2], env: Eid) -> Option<Formula> {
-        /// An operand to read, or the end of an inner `p`, with where the joining was before
-        /// its operands ([`Joining::close`]).
+    /// and not O(k²) (ST-formula-k2). A `&&` is the primitive or, as the elaborator writes
+    /// `a && b`, `if a { b } else { false }` ([`Walk::and_if`]), whose formula made apart is
+    /// the disjunction of the conjunction of `a` and `b` with `false`, which is that
+    /// conjunction: `false` is dropped, and a disjunction that [`Joining::finish`] made, as
+    /// every one the translator meets is, is itself when its disjuncts are joined again (one
+    /// level deep, [`Formula::into_parts`]). Before the `if` was read through, a chain of k
+    /// `&&` made the conjunction of each prefix in turn, O(k²) (PREIMAGE-and-chain). The
+    /// formula of a name is kept whole, so a named part used at many places is one node and
+    /// not copied into each (COMPLEXITY.md S31b). The operands are read in order, as the
+    /// two-at-a-time translation reads them, and the first that has no formula gives none for
+    /// the whole. An operand of a primitive is held in its parent alone
+    /// ([`Terms::ids`]), but one of an `if` may be shared ([`Terms::shared`]): an inner `p` that
+    /// is shared is read as an operand, by its remembered formula, as the translation two at a
+    /// time reads it, so that the chain read through is a tree, each of whose nodes is met once
+    /// without a visited set. Read through at each place, a chain that shares its halves would
+    /// take time of its size written out.
+    async fn chain(&'m self, p: Prim, head: Tid, env: Eid) -> Option<Formula> {
+        /// An operand to read, a term read for its memo entry alone (the `false` of an `if`
+        /// that is a `&&`, which the translation two at a time reads), or the end of an inner
+        /// `p`, with where the joining was before its operands ([`Joining::close`]).
         enum Step {
             Operand(Tid),
+            Read(Tid),
             Close(Mark),
         }
+        // The steps of `u`'s operands, last first, where `u` is a `p` of the chain.
+        let inner = |u: Tid| -> Option<Vec<Step>> {
+            match self.node(u) {
+                Node::Prim(q, args) if q == p && q.arity().is_none_or(|n| n == args.len()) => {
+                    Some(vec![
+                        Step::Operand(self.arg(args, 1)),
+                        Step::Operand(self.arg(args, 0)),
+                    ])
+                }
+                _ if p == Prim::And => self
+                    .and_if(u)
+                    .map(|(g, a, b)| vec![Step::Read(b), Step::Operand(a), Step::Operand(g)]),
+                _ => None,
+            }
+        };
         let mut j = Joining::new(p == Prim::And);
-        let mut todo = vec![Step::Operand(operands[1]), Step::Operand(operands[0])];
+        let mut todo = inner(head).expect("a chain's head");
         while let Some(step) = todo.pop() {
             let u = match step {
                 Step::Close(mark) => {
                     j.close(mark);
                     continue;
                 }
+                Step::Read(u) => {
+                    self.formula(u, env).await?;
+                    continue;
+                }
                 Step::Operand(u) => u,
             };
-            let node = self.node(u);
-            if let Node::Prim(q, args) = node
-                && q == p
-                && q.arity().is_none_or(|n| n == args.len())
+            if let Some(steps) = inner(u)
                 && self.constant(u, env).await.is_none()
+                && !self.with(|tx| tx.terms.shared.contains(&u))
             {
                 todo.push(Step::Close(j.mark()));
-                todo.push(Step::Operand(self.arg(args, 1)));
-                todo.push(Step::Operand(self.arg(args, 0)));
+                todo.extend(steps);
                 continue;
             }
             let f = self.formula(u, env).await?;
@@ -6989,6 +7033,15 @@ impl<'m, 't> Walk<'m, 't> {
             j.operand(f, keep);
         }
         Some(j.finish())
+    }
+
+    /// The guard, the then arm and the `false` of `u` where `u` is `if g { a } else { false }`,
+    /// as the elaborator writes `g && a`.
+    fn and_if(&self, u: Tid) -> Option<(Tid, Tid, Tid)> {
+        match self.node(u) {
+            Node::If(g, a, b) if matches!(self.node(b), Node::Bool(false)) => Some((g, a, b)),
+            _ => None,
+        }
     }
 
     /// The formula of a `&&` or `||` as the translator made it before [`Walk::chain`]
@@ -7004,6 +7057,15 @@ impl<'m, 't> Walk<'m, 't> {
             Formula::or_keeping(vec![a, b], |i| named[i])
         })
     }
+}
+
+/// Whether the tests have chosen the translation of `&&` and `||` two at a time
+/// (`presburger::TWO_AT_A_TIME`), which they compare with [`Walk::chain`].
+fn two_at_a_time() -> bool {
+    #[cfg(test)]
+    return presburger::TWO_AT_A_TIME.get();
+    #[cfg(not(test))]
+    false
 }
 
 /// An integer operator over its operands' forward values.
@@ -10199,6 +10261,10 @@ mod tests {
         /// Whether a test may also compare a chain of `if`s over one input with a constant
         /// ([`Gen::chain`]); [`Gen::new`] makes it false, so the programs are as before.
         chains: bool,
+        /// Whether a `&&` may also be written `if a { b } else { false }`, as the elaborator
+        /// writes it ([`Walk::and_if`]); [`Gen::new`] makes it false, so the programs are as
+        /// before.
+        and_ifs: bool,
     }
 
     impl Gen {
@@ -10211,7 +10277,17 @@ mod tests {
                 rec,
                 frames: Vec::new(),
                 chains: false,
+                and_ifs: false,
             }
+        }
+
+        /// `a p b`, a `&&` written as the elaborator writes it half the time where `and_ifs`.
+        fn join(&mut self, p: Prim, a: Term, b: Term) -> Term {
+            if p == Prim::And && self.and_ifs && self.rng.below(2) == 0 {
+                let no = Term::Lit(Value::Bool(false));
+                return Term::If(Shared::new(a), Shared::new(b), Shared::new(no));
+            }
+            Term::Prim(p, vec![a, b])
         }
 
         fn name(&mut self) -> Arc<str> {
@@ -10316,7 +10392,8 @@ mod tests {
                     } else {
                         Prim::Or
                     };
-                    Term::Prim(p, vec![self.test(d), self.test(d)])
+                    let (a, b) = (self.test(d), self.test(d));
+                    self.join(p, a, b)
                 }
                 10 | 18 | 19 => match self.some(Kind::Test) {
                     Some(n) => Term::Var(n),
@@ -10372,8 +10449,10 @@ mod tests {
                 } else {
                     Prim::Or
                 };
-                let inner = Term::Prim(p, vec![self.cmp(1), self.cmp(1)]);
-                let rhs = Term::Prim(p, vec![self.cmp(1), inner]);
+                let (a, b) = (self.cmp(1), self.cmp(1));
+                let inner = self.join(p, a, b);
+                let a = self.cmp(1);
+                let rhs = self.join(p, a, inner);
                 let x = self.name();
                 self.bound.push((x.clone(), Kind::Test));
                 lets.push((x, Shared::new(rhs)));
@@ -10383,7 +10462,8 @@ mod tests {
             } else {
                 Prim::Or
             };
-            let mut t = Term::Prim(p, vec![self.test(3), self.test(3)]);
+            let (a, b) = (self.test(3), self.test(3));
+            let mut t = self.join(p, a, b);
             for (x, rhs) in lets.into_iter().rev() {
                 self.bound.pop();
                 t = Term::Let(x, rhs, Shared::new(t));
@@ -10644,7 +10724,11 @@ mod tests {
         let f = tx.formula(&mut tr, root, ROOT);
         TWO_AT_A_TIME.set(false);
         let chains: BTreeSet<Tid> = (0..tx.terms.nodes.len() as Tid)
-            .filter(|&u| matches!(tx.node(u), Node::Prim(Prim::And | Prim::Or, _)))
+            .filter(|&u| match tx.node(u) {
+                Node::Prim(Prim::And | Prim::Or, _) => true,
+                Node::If(_, _, b) => matches!(tx.node(b), Node::Bool(false)),
+                _ => false,
+            })
             .collect();
         let chain = |e: &Logged| match e {
             Logged::Formula(k) if chains.contains(&k.0) => Some(*k),
@@ -10686,7 +10770,19 @@ mod tests {
     /// all of those in two parts. Every round's program is generated, so that a round checks
     /// the same program whichever part it is in.
     fn joins_as_two_at_a_time(part: usize) {
-        let mut g = Gen::new(0x9e37_79b9_7f4a_7c15, false);
+        joins_as_two_at_a_time_from(Gen::new(0x9e37_79b9_7f4a_7c15, false), part);
+    }
+
+    /// [`joins_as_two_at_a_time`], with programs whose `&&` is written half the time as the
+    /// elaborator writes it, `if a { b } else { false }` ([`Walk::and_if`];
+    /// PREIMAGE-and-chain), and another seed.
+    fn joins_ifs_as_two_at_a_time(part: usize) {
+        let mut g = Gen::new(0xd1b5_4a32_d192_ed03, false);
+        g.and_ifs = true;
+        joins_as_two_at_a_time_from(g, part);
+    }
+
+    fn joins_as_two_at_a_time_from(mut g: Gen, part: usize) {
         let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
         let only = part * 4000 / PARTS..(part + 1) * 4000 / PARTS;
         for round in 0..only.end {
@@ -10700,7 +10796,8 @@ mod tests {
                     } else {
                         Prim::Or
                     };
-                    Term::Prim(p, vec![g.test(4), g.test(4)])
+                    let (a, b) = (g.test(4), g.test(4));
+                    g.join(p, a, b)
                 }
             };
             if round < only.start {
@@ -10815,6 +10912,104 @@ mod tests {
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time_8() {
         joins_as_two_at_a_time(7);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_1() {
+        joins_ifs_as_two_at_a_time(0);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_2() {
+        joins_ifs_as_two_at_a_time(1);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_3() {
+        joins_ifs_as_two_at_a_time(2);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_4() {
+        joins_ifs_as_two_at_a_time(3);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_5() {
+        joins_ifs_as_two_at_a_time(4);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_6() {
+        joins_ifs_as_two_at_a_time(5);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_7() {
+        joins_ifs_as_two_at_a_time(6);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_ifs_as_it_joined_it_two_at_a_time_8() {
+        joins_ifs_as_two_at_a_time(7);
+    }
+
+    /// Chains of `&&` written as `if`s that test one name again, hold one `if` in two places,
+    /// mix `if`s with the primitive, hold a `||` or a constant, or end in a disjunction: the
+    /// same formula, definitions, entries and preimages as two at a time (PREIMAGE-and-chain).
+    #[test]
+    fn chains_of_ifs_on_repeated_names_and_shared_parts_join_as_two_at_a_time() {
+        use Prim::{And, Eq, Ge, Le, Ne};
+        let n = |s: &str| Term::Var(s.into());
+        let c = |p: Prim, s: &str, i: i64| Term::Prim(p, vec![n(s), Term::Lit(Value::Int(i))]);
+        let and = |a: Term, b: Term| {
+            let no = Shared::new(Term::Lit(Value::Bool(false)));
+            Term::If(Shared::new(a), Shared::new(b), no)
+        };
+        let or = |a: Term, b: Term| Term::Prim(Prim::Or, vec![a, b]);
+        let repeated = [c(Ge, "x", 1), c(Le, "y", 3), c(Ge, "x", 0), c(Ge, "x", 1)]
+            .into_iter()
+            .fold(c(Ge, "x", 0), and);
+        let s = Shared::new(and(c(Ge, "x", 1), c(Ge, "y", 0)));
+        let twice = Term::If(
+            Shared::new(and(
+                Term::If(s.clone(), Shared::new(c(Le, "x", 4)), s.clone()),
+                c(Ne, "y", 2),
+            )),
+            s.clone(),
+            Shared::new(Term::Lit(Value::Bool(false))),
+        );
+        let mixed = and(
+            Term::Prim(
+                And,
+                vec![and(c(Ge, "x", -2), c(Le, "y", 5)), c(Ge, "x", -2)],
+            ),
+            and(or(c(Ge, "x", 3), c(Le, "y", -3)), c(Ne, "x", 4)),
+        );
+        let constant = and(and(c(Ge, "x", 7), c(Ge, "y", 1)), c(Le, "x", 2));
+        let ends_in_or = and(
+            and(
+                Term::Lit(Value::Bool(true)),
+                or(c(Eq, "x", 1), c(Eq, "y", 1)),
+            ),
+            or(c(Eq, "x", 2), c(Eq, "x", 1)),
+        );
+        for t in [repeated, twice, mixed, constant, ends_in_or] {
+            let (old, new) = (translate(&t, true), translate(&t, false));
+            assert_eq!(new.formula, old.formula, "{t:?}");
+            assert!(new.formula.is_some(), "{t:?}");
+            assert_eq!(new.defs, old.defs, "{t:?}");
+            assert_eq!(new.log, old.log, "{t:?}");
+            for (k, v) in &new.memo {
+                assert_eq!(old.memo.get(k), Some(v), "entry {k:?}: {t:?}");
+            }
+            for w in [true, false] {
+                TWO_AT_A_TIME.set(true);
+                let po = preimage(&t, &domains(), &Demand::Bool(w));
+                TWO_AT_A_TIME.set(false);
+                assert_eq!(preimage(&t, &domains(), &Demand::Bool(w)), po, "{w}: {t:?}");
+            }
+        }
     }
 
     /// What `t` gives with `x` and `y` at `at`, `Some(None)` for a failure; `None` when the run
