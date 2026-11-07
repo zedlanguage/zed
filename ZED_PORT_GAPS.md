@@ -2383,3 +2383,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | The inputs of a summary in a persistent `imbl::OrdMap`, merged by `union`, which puts the smaller map into the larger and shares the rest | `Summarized::inputs`, `Ck::summarize_value` | Shared structure of persistent maps; Zed's maps are values, but a union that costs the smaller side is not specified | A map union of cost `O(m log n)` for the smaller side `m`, or a table of inputs keyed by binder |
 | The type of each parameter at each binder bound under a narrowing, in a `HashMap` keyed by `(binder, parameter)`, and a counter of narrowings in place | `Ck::narrowed_at`, `Ck::unnarrowed`, `Ck::narrowings`, `Ck::param_type` | Mutation of the checker state | A field of each binder's record, written when it is bound |
+
+## Entries from PA-let-multi (`crates/zedc-check/src/check/walk.rs`, `crates/zedc-preimage/src/preimage.rs`, `product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The domain of each input passed as a borrowed closure, `&dyn Fn(&Arc<str>) -> Option<&IntervalSet>`, with two lifetimes (`Dom<'f, 'd>`) | `Sep::add`, `Sep::add_pa`, `Sep::take_bounds`, `LetPa::sum`, `LetPa::form` | Borrowed trait objects and lifetimes; Zed passes a function value | A function argument, or the map of inputs itself |
+| A running total kept beside a persistent map and updated as entries are put in and taken out, with counts of infinite ends | `Sep::tot`, `Tot::put`, `Sep::bounds_over` | None beyond a record field updated with the map | The same record |
