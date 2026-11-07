@@ -463,6 +463,9 @@ impl<'a, 's> Builder<'a, 's> {
                 span: self.span(n),
             }),
             "For" => self.for_expr(n),
+            // `Prefix = AnnotExpr`, an annotation on an operand, `@fpsafe (x - y)`: not built
+            // yet, so its node gives the error naming its layer.
+            "Prefix" if self.tree.name(kids[0]) == "AnnotExpr" => self.node(kids[0]),
             "Prefix" => {
                 let op = self.op(self.tree.nodes[n].start);
                 let e = self.node(kids[0])?;
