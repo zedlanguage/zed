@@ -34,6 +34,7 @@ use crate::store::cell::Premises;
 use crate::store::lattice::Lattice;
 use crate::store::product::{self, Product, Scope};
 use imbl::ordmap::DiffItem;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use zed_kernel::Shared;
 
@@ -62,16 +63,28 @@ struct Translated {
     vars: Vec<(Arc<str>, usize)>,
 }
 
-/// For one node, each name to the nearest node at or above it where a lookup of that name
-/// continues: in `narrowed`, a test that changed the name's product ([`Arms::narrows`]); in
-/// `read`, a test that reads the name. An `Assume` maps its names to itself; a `Join` the names
-/// its two sides map differently, found by the maps' difference as [`Scope::join`] finds its
-/// names.
+/// For one node, each name to the nearest node at or above it where a search of the tests
+/// that read that name continues: a test that reads the name. An `Assume` maps its names to
+/// itself; a `Join` the names its two sides map differently, found by the maps' difference as
+/// [`Scope::join`] finds its names.
 #[derive(Clone)]
 struct Chains {
-    narrowed: imbl::OrdMap<Arc<str>, usize>,
     read: imbl::OrdMap<Arc<str>, usize>,
 }
+
+/// A name's product in a node's scope, as a lookup compares them ([`Arms::lookup`]).
+#[derive(PartialEq)]
+enum Held {
+    /// The scope is unreachable.
+    Bottom,
+    /// The scope has no product of the name.
+    Absent,
+    /// The name's product, settled ([`Scope::settled`]).
+    Is(Box<Product>),
+}
+
+/// Each node and name looked up, with what [`Arms::lookup`] found.
+type Found = HashMap<(usize, Arc<str>), Option<usize>>;
 
 /// What a scope or a binder's product waits on.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,12 +98,18 @@ pub(super) struct Arms<'a> {
     nodes: Vec<Node<'a>>,
     /// Each node's scope, once a read has needed it.
     scopes: Vec<Option<Scope>>,
-    /// For each `Assume` whose scope is computed, the names whose products its test changed:
-    /// the difference of the scope it was narrowed from and its own, or every name of its test
-    /// when it made a reachable scope unreachable.
-    narrows: Vec<Option<Vec<Arc<str>>>>,
-    /// For each node, once a rejection under it has needed it, the two chains a lookup
-    /// follows ([`Chains`]).
+    /// For each `Assume` whose scope is computed, the scope its test narrowed: its parent's,
+    /// told of the names of the test and the values of the binders it reads.
+    before: Vec<Option<Scope>>,
+    /// For each node, the number of `Assume` nodes from it up to the first `Join` or the
+    /// root, and a node on that way to jump to ([`Arms::add`]).
+    depth: Vec<usize>,
+    jump: Vec<usize>,
+    /// Each name looked up under a node, with the nearest test at or above it that changed
+    /// the name's product, or the join whose two sides differ there ([`Arms::lookup`]).
+    found: RefCell<Found>,
+    /// For each node, once a rejection under it has needed it, the chain a search of the
+    /// tests that read a name follows ([`Chains`]).
     chains: Vec<Option<Chains>>,
     /// For each test a rejection found had changed a name it does not read, the search of
     /// the relation that carried the change ([`Carried`]).
@@ -114,7 +133,10 @@ impl<'a> Arms<'a> {
         Arms {
             nodes: vec![Node::Root],
             scopes: vec![None],
-            narrows: vec![None],
+            before: vec![None],
+            depth: vec![0],
+            jump: vec![0],
+            found: RefCell::new(HashMap::new()),
             chains: vec![None],
             carried: HashMap::new(),
             active: Vec::new(),
@@ -131,12 +153,33 @@ impl<'a> Arms<'a> {
         self.active.last().copied().unwrap_or(0)
     }
 
+    /// Adds node `n`, with its depth and jump: a `Join` is depth 0 and jumps to itself; an
+    /// `Assume` under `p` is one deeper than `p` and jumps to where `p`'s jump jumps, when the
+    /// two jumps below it are of one length, else to `p`. So a jump goes up `2^j - 1` nodes
+    /// for some `j`, and a search up a chain of `d` tests takes O(log d) jumps and steps
+    /// (Myers 1983, the skew-binary jump pointers).
     fn add(&mut self, n: Node<'a>) -> usize {
+        let k = self.nodes.len();
+        let (depth, jump) = match &n {
+            Node::Assume { parent, .. } => {
+                let (p, j) = (*parent, self.jump[*parent]);
+                let jump =
+                    if self.depth[p] - self.depth[j] == self.depth[j] - self.depth[self.jump[j]] {
+                        self.jump[j]
+                    } else {
+                        p
+                    };
+                (self.depth[p] + 1, jump)
+            }
+            _ => (0, k),
+        };
         self.nodes.push(n);
         self.scopes.push(None);
-        self.narrows.push(None);
+        self.before.push(None);
+        self.depth.push(depth);
+        self.jump.push(jump);
         self.chains.push(None);
-        self.nodes.len() - 1
+        k
     }
 
     /// The two nodes of the condition `test` checked here: where it holds and where it fails.
@@ -190,7 +233,7 @@ impl<'a> Arms<'a> {
     /// The tests that bear on a read of `starts`, each a name with the node it is read under,
     /// innermost first, with the outcome each gave and whether it gave it in one case of a join
     /// only. A test is listed when it changed the product of a name looked up
-    /// ([`Arms::narrows`]); then, unless the test alone gives the name that product
+    /// ([`Arms::lookup`]); then, unless the test alone gives the name that product
     /// ([`Arms::explains`]), the lookup goes on above it, from its parent, for each name of the
     /// test. A test that reads a name and leaves its product as it was is passed over: under
     /// `n >= 0`, the tests `ai >= n - 3` change no product of `n`, so a rejection on `ai` lists
@@ -200,22 +243,15 @@ impl<'a> Arms<'a> {
     /// then `c >= -2` for a read of `a`; under `ai >= n` for each `i`, then `n >= -1`, a read of
     /// `a0` lists `a0 >= n` and `n >= -1`, not the other tests on `n`; the lookup stops there when
     /// the test and its path alone give the name its product ([`Arms::explains`]), so weaker
-    /// tests `n >= -2`, … around them are not listed. Each step is a lookup in
-    /// a persistent map, O(log n), each item is visited once, and the search of each carrying
-    /// test is kept and resumed, so the cost is that of the tests listed and their names, and
-    /// of each relation searched once, not of the tests the walk is in.
+    /// tests `n >= -2`, … around them are not listed. Each step is a lookup of O(log d) scopes
+    /// for a chain of `d` tests, kept for later rejections, each item is visited once, and the
+    /// search of each carrying test is kept and resumed, so the cost is that of the tests
+    /// listed and their names, and of each relation searched once, not of the tests the walk
+    /// is in.
     pub(super) fn deciding(&mut self, starts: Vec<(Arc<str>, usize)>) -> Vec<(Span, bool, bool)> {
         for (_, s) in &starts {
             self.settle_chains(*s);
         }
-        let chain = |n: usize, x: &Arc<str>| {
-            self.chains[n]
-                .as_ref()
-                .expect("an ancestor of a settled node is settled")
-                .narrowed
-                .get(x)
-                .copied()
-        };
         // Each node listed, with whether every way it was reached passed through a join.
         let mut listed: HashMap<usize, bool> = HashMap::new();
         // A node to look at, the name looked up and whether a join was passed.
@@ -223,7 +259,7 @@ impl<'a> Arms<'a> {
         let mut visited: HashSet<At> = HashSet::new();
         let mut stack: Vec<At> = Vec::new();
         for (x, s) in starts {
-            if let Some(k) = chain(s, &x) {
+            if let Some(k) = self.lookup(s, &x) {
                 stack.push((k, x, false));
             }
         }
@@ -240,17 +276,8 @@ impl<'a> Arms<'a> {
                     if self.explains(k, &[], &x) {
                         continue;
                     }
-                    let push_names = |q: usize, case: bool, stack: &mut Vec<At>| {
-                        if let Node::Assume { parent, fresh, .. } = &self.nodes[q] {
-                            for (y, _) in fresh.iter() {
-                                if let Some(r) = chain(*parent, y) {
-                                    stack.push((r, y.clone(), case));
-                                }
-                            }
-                        }
-                    };
                     if fresh.iter().any(|(y, _)| *y == x) {
-                        push_names(k, case, &mut stack);
+                        self.push_names(k, case, &mut stack);
                         continue;
                     }
                     let search = self
@@ -267,17 +294,17 @@ impl<'a> Arms<'a> {
                     if self.explains(k, &path, &x) {
                         continue;
                     }
-                    push_names(k, case, &mut stack);
-                    if let Some(q) = chain(*parent, &x) {
+                    self.push_names(k, case, &mut stack);
+                    if let Some(q) = self.lookup(*parent, &x) {
                         stack.push((q, x.clone(), case));
                     }
                     for &(q, joined) in &path {
-                        push_names(q, case || joined, &mut stack);
+                        self.push_names(q, case || joined, &mut stack);
                     }
                 }
                 Node::Join(a, b) => {
                     for side in [*b, *a] {
-                        if let Some(q) = chain(side, &x) {
+                        if let Some(q) = self.lookup(side, &x) {
                             stack.push((q, x.clone(), true));
                         }
                     }
@@ -340,7 +367,7 @@ impl<'a> Arms<'a> {
         };
         let alone = Scope::new(names);
         let alone = alone.assume_case(&test, outcome, &Premises::new());
-        alone.get(x) == at.get(x)
+        alone.get(x) == at.settled(x)
     }
 
     /// Computes [`Arms::chains`] of `n` and of every node it is computed from, each once, on an
@@ -368,7 +395,6 @@ impl<'a> Arms<'a> {
             let settled = |d: usize| self.chains[d].as_ref().expect("settled first");
             let chains = match &self.nodes[k] {
                 Node::Root => Chains {
-                    narrowed: imbl::OrdMap::new(),
                     read: imbl::OrdMap::new(),
                 },
                 Node::Assume { parent, fresh, .. } => {
@@ -376,31 +402,169 @@ impl<'a> Arms<'a> {
                     for (x, _) in fresh.iter() {
                         c.read.insert(x.clone(), k);
                     }
-                    // A scope no read computed is taken to change every name of its test.
-                    match &self.narrows[k] {
-                        Some(changed) => {
-                            for x in changed.iter() {
-                                c.narrowed.insert(x.clone(), k);
-                            }
-                        }
-                        None => {
-                            for (x, _) in fresh.iter() {
-                                c.narrowed.insert(x.clone(), k);
-                            }
-                        }
-                    }
                     c
                 }
-                Node::Join(a, b) => {
-                    let (ca, cb) = (settled(*a), settled(*b));
-                    Chains {
-                        narrowed: joined(&ca.narrowed, &cb.narrowed, k),
-                        read: joined(&ca.read, &cb.read, k),
-                    }
-                }
+                Node::Join(a, b) => Chains {
+                    read: joined(&settled(*a).read, &settled(*b).read, k),
+                },
             };
             self.chains[k] = Some(chains);
         }
+    }
+
+    /// Pushes, for each name of the test of node `q`, the nearest test above `q` that changed
+    /// its product ([`Arms::lookup`]).
+    fn push_names(&self, q: usize, case: bool, stack: &mut Vec<(usize, Arc<str>, bool)>) {
+        if let Node::Assume { parent, fresh, .. } = &self.nodes[q] {
+            for (y, _) in fresh.iter() {
+                if let Some(r) = self.lookup(*parent, y) {
+                    stack.push((r, y.clone(), case));
+                }
+            }
+        }
+    }
+
+    /// The node a lookup of `x` under `s` answers with: the nearest test at or above `s` that
+    /// changed `x`'s product ([`Arms::changes`]), where a join whose two sides answer
+    /// differently answers itself; none at the root. Each answer is kept, so a node and a name
+    /// are looked up once over all rejections, and the joins above are looked up on an
+    /// explicit stack.
+    ///
+    /// Up a chain of tests, the products of a name only narrow, and a test changes a name only
+    /// where its product differs from its parent's, so the search goes by the jumps of
+    /// [`Arms::add`] to the highest node of the chain where `x`'s product is as at `s`
+    /// ([`Arms::step`]): O(log d) settled products for a chain of `d` tests. So `k` tests on a
+    /// hub of `k` spokes, each moving every leaf, cost no list of the leaves each changed,
+    /// where a list per test costs `k²`.
+    fn lookup(&self, s: usize, x: &Arc<str>) -> Option<usize> {
+        let key = |n: usize| (n, x.clone());
+        let known = |n: usize| self.found.borrow().get(&key(n)).copied();
+        if let Some(r) = known(s) {
+            return r;
+        }
+        let mut steps: HashMap<usize, Step> = HashMap::new();
+        let mut stack = vec![s];
+        while let Some(&n) = stack.last() {
+            if known(n).is_some() {
+                stack.pop();
+                continue;
+            }
+            let step = *steps.entry(n).or_insert_with(|| self.step(n, x));
+            let answer = match step {
+                Step::Done(r) => Some(r),
+                Step::Via(m) => {
+                    let r = known(m);
+                    if r.is_none() {
+                        stack.push(m);
+                    }
+                    r
+                }
+                Step::Join(a, b) => match (known(a), known(b)) {
+                    (Some(la), Some(lb)) => Some(if la == lb { la } else { Some(n) }),
+                    (ka, kb) => {
+                        if ka.is_none() {
+                            stack.push(a);
+                        }
+                        if kb.is_none() {
+                            stack.push(b);
+                        }
+                        None
+                    }
+                },
+            };
+            if let Some(r) = answer {
+                self.found.borrow_mut().insert(key(n), r);
+                stack.pop();
+            }
+        }
+        known(s).expect("looked up")
+    }
+
+    /// One step of a lookup of `x` under node `n` ([`Arms::lookup`]). At a test, the highest
+    /// node `u` of its chain where `x`'s product is as at `n`, found by jumps: the products
+    /// only narrow up the chain, so they are as at `n` from `n` up to `u` and not above, and
+    /// no test strictly below `u` changed `x`. Then `u` answers if its test changed `x`, and
+    /// the lookup goes on from its parent if not. A scope no read computed is taken to change
+    /// every name of its test.
+    fn step(&self, n: usize, x: &Arc<str>) -> Step {
+        let up = |k: usize| match &self.nodes[k] {
+            Node::Assume { parent, .. } => *parent,
+            _ => unreachable!("a node of depth 1 or more is a test"),
+        };
+        match &self.nodes[n] {
+            Node::Root => Step::Done(None),
+            Node::Join(a, b) => Step::Join(*a, *b),
+            Node::Assume { parent, fresh, .. } => {
+                let Some(here) = self.held(n, x) else {
+                    return match fresh.iter().any(|(y, _)| y == x) {
+                        true => Step::Done(Some(n)),
+                        false => Step::Via(*parent),
+                    };
+                };
+                let same = |k: usize| self.held(k, x).as_ref() == Some(&here);
+                let mut u = n;
+                while self.depth[u] > 0 {
+                    let (j, p) = (self.jump[u], up(u));
+                    if j != p && same(j) {
+                        u = j;
+                    } else if same(p) {
+                        u = p;
+                    } else {
+                        break;
+                    }
+                }
+                match &self.nodes[u] {
+                    Node::Assume { parent, .. } => match self.changes(u, x) {
+                        true => Step::Done(Some(u)),
+                        false => Step::Via(*parent),
+                    },
+                    Node::Root => Step::Done(None),
+                    Node::Join(..) => Step::Via(u),
+                }
+            }
+        }
+    }
+
+    /// `x`'s product in the scope of node `k`, if a read computed it.
+    fn held(&self, k: usize, x: &Arc<str>) -> Option<Held> {
+        self.scopes[k].as_ref().map(|s| held_in(s, x))
+    }
+
+    /// Whether the test of node `k`, whose scope is computed, changed `x`'s product: `x`'s
+    /// product differs in the scope the test narrowed and in its own; a test that made a
+    /// reachable scope unreachable changed each name it reads, and one under an unreachable
+    /// scope none.
+    fn changes(&self, k: usize, x: &Arc<str>) -> bool {
+        let Node::Assume { fresh, .. } = &self.nodes[k] else {
+            return false;
+        };
+        match (&self.before[k], &self.scopes[k]) {
+            (Some(p), Some(s)) if !p.bottom && !s.bottom => held_in(p, x) != held_in(s, x),
+            (Some(p), Some(_)) if p.bottom => false,
+            _ => fresh.iter().any(|(y, _)| y == x),
+        }
+    }
+}
+
+/// A step of [`Arms::lookup`].
+#[derive(Clone, Copy)]
+enum Step {
+    /// The answer.
+    Done(Option<usize>),
+    /// The answer is that of this node.
+    Via(usize),
+    /// The answer is that of the two sides if they agree, else the join itself.
+    Join(usize, usize),
+}
+
+/// `x`'s product in scope `s`, settled.
+fn held_in(s: &Scope, x: &Arc<str>) -> Held {
+    if s.bottom {
+        Held::Bottom
+    } else if s.names.contains_key(x) {
+        Held::Is(Box::new(s.settled(x)))
+    } else {
+        Held::Absent
     }
 }
 
@@ -648,6 +812,7 @@ impl<'a> Ck<'_, 'a> {
         self.settle(wanted);
         let s = self.arms.scopes[here].clone().expect("settled");
         let mut s = self.with_bound(s, &t.binders);
+        s.eager_on(&t.term);
         product::forward(&t.term, &mut s).ints().clone()
     }
 
@@ -729,7 +894,7 @@ impl<'a> Ck<'_, 'a> {
         match item {
             Item::Scope(n) => {
                 let s = match self.arms.nodes[n] {
-                    Node::Root => Scope::new([]),
+                    Node::Root => Scope::new([]).lazy(),
                     Node::Assume {
                         parent,
                         test,
@@ -754,37 +919,30 @@ impl<'a> Ck<'_, 'a> {
                         // Not shown, so a failing test leaves the names as they were
                         // (`assume_case`): emptying each costs the names in scope.
                         //
-                        // Complexity tradeoff: the scope is settled whole, every name the test
-                        // changes through the relation reduced, though a read needs only its own
-                        // names. What is given up is time, not an answer: under `k` tests
-                        // `ai >= n`, each of `k` tests on `n` that moves `n` projects all `k`
-                        // blocks `ai >= n`, so the nest costs `k²` projections while one read
-                        // needs `2k` (0.29 to 24.1 s at `k` = 25 to 200, 82 times for 8 times).
-                        // Why: a scope is one reduced product, and settling it per name read
-                        // needs a reduction that projects only the blocks on the path of the
-                        // block-cut forest (`conjuncts::Blocks`) from the read name to those the
-                        // new test touched, and that decides `bottom` without the whole scope.
-                        // Trigger: many tests that move a name that many relations mention.
-                        // Test: `l01_39a_bit_words::scaling::a_hub_settles_its_scopes_in_time_linear_in_the_tests`
-                        // (ignored). COMPLEXITY.md C26, open item NARROW-hub-settle. A complete
-                        // solution settles a scope lazily per name read along that path, at
-                        // O(path log n) a read.
+                        // The scopes are lazy ([`Scope::lazy`]): a test that moves a hub, a name
+                        // many spokes `ai >= n` mention, leaves the leaves `ai` to be settled
+                        // where a read needs them, so `k` tests on a hub of `k` spokes cost `k`
+                        // narrowings and the reads, not `k²` projections; a rejection's notes
+                        // find the tests that changed a name by [`Arms::lookup`], not by a list
+                        // per test of the names it changed, which is `k` names a test there.
+                        //
+                        // Complexity tradeoff: only a spoke, a difference of two names whose
+                        // leaf no other conjunct mentions, is left to a read. What is given up
+                        // is time, not an answer: two hubs on one leaf, `ai >= n && ai >= m`,
+                        // make each `ai` mentioned twice, so a test that moves `n` projects all
+                        // `k` blocks still, `k²` projections in all: 1.27, 4.71 and 20.6 s at
+                        // `k` = 96, 192 and 384 (2026-11-07, load 18). `ai >= n + m` is not a
+                        // spoke either, about `k³`: 0.34, 2.11 and 18.3 s at `k` = 12, 24, 48.
+                        // Why: a leaf of two hubs lies on a cycle of the relation, and its
+                        // product is not a cut through one hub's bound but the projection of
+                        // the cycle. Trigger: many tests on two
+                        // names that many conjuncts relate. Test:
+                        // `l01_39a_bit_words::scaling::two_hubs_on_one_block_settle_as_the_whole_scope`.
+                        // COMPLEXITY.md C26. A complete solution keeps a feasible point and
+                        // settles the cone of a read on demand (the design note of
+                        // NARROW-hub-settle, revision of 2026-11-04).
                         let s = p.assume_case(&t.term, outcome, &Premises::new());
-                        // The names the test changed, for a rejection's notes: the two maps
-                        // share all but what the test wrote, which the difference skips to.
-                        let changed: Vec<Arc<str>> = match (p.bottom, s.bottom) {
-                            (true, _) => Vec::new(),
-                            (false, true) => t.vars.iter().map(|(x, _)| x.clone()).collect(),
-                            (false, false) => p
-                                .names
-                                .diff(&s.names)
-                                .map(|d| match d {
-                                    DiffItem::Add(x, _) | DiffItem::Remove(x, _) => x.clone(),
-                                    DiffItem::Update { old: (x, _), .. } => x.clone(),
-                                })
-                                .collect(),
-                        };
-                        self.arms.narrows[n] = Some(changed);
+                        self.arms.before[n] = Some(p);
                         s
                     }
                     Node::Join(a, b) => self.scope_or_root(a).join(&self.scope_or_root(b)),
@@ -799,6 +957,7 @@ impl<'a> Ck<'_, 'a> {
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let s = self.scope_or_root(at);
                 let mut s = self.with_bound(s, &t.binders);
+                s.eager_on(&t.term);
                 let mut p = product::forward(&t.term, &mut s);
                 if let Some(ty) = self.arms.bound_ty.get(&b) {
                     p.ty.element = p.ty.element.meet(ty);
@@ -811,7 +970,7 @@ impl<'a> Ck<'_, 'a> {
     fn scope_or_root(&self, n: usize) -> Scope {
         self.arms.scopes[n]
             .clone()
-            .unwrap_or_else(|| Scope::new([]))
+            .unwrap_or_else(|| Scope::new([]).lazy())
     }
 
     /// `e` as a kernel term ([`Translated`]): its int and bool literals and the values its text

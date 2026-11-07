@@ -485,24 +485,100 @@ fn a_test_the_relation_carries_names_its_path_and_not_the_weaker_tests_around_it
     );
 }
 
-#[test]
-#[ignore = "quadratic, open item NARROW-hub-settle (COMPLEXITY.md C26)"]
-fn a_hub_settles_its_scopes_in_time_linear_in_the_tests() {
-    // `k` tests `ai >= n`, then `k` tests on `n`, each stronger, then one read of `a0`: one
-    // rejection with `2` notes, but each scope of a test on `n` projects all `k` blocks
-    // `ai >= n`, since its test moved `n`, which every block mentions. Measured on wt/narrow-if
-    // at fd8e5a29: 0.29, 1.26, 5.08 and 24.1 s at `k` = 25 to 200 (82 times for 8 times).
-    // NARROW-hub-settle is to settle a scope per name read, along the forest of blocks.
-    let srcs: HashMap<usize, String> = [25, scaling::FACTOR * 25]
-        .into_iter()
-        .map(|m| (m, hub_strengthened(m, m, 1)))
-        .collect();
+/// Runs the checker on `src` at sizes `n` and `8n` and checks that each is rejected, in work
+/// and bytes linear in the size, on a stack that holds the nest.
+fn check_rejected_in_linear_work(what: &'static str, n: usize, src: impl Fn(usize) -> String) {
+    let srcs = scaling::inputs(n, src);
     let t = std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(move || {
-            scaling::check_order("settling the scopes of k tests on a hub", 25, 1, |m| {
+            scaling::check_order(what, n, 1, |m| {
                 assert!(zedc::run::load(srcs[&m].as_bytes()).is_err())
             });
         });
     t.unwrap().join().unwrap();
+}
+
+#[test]
+fn a_hub_settles_its_scopes_in_time_linear_in_the_tests() {
+    // `k` tests `ai >= n`, then `k` tests on `n`, each stronger, then one read of `a0`: one
+    // rejection with `2` notes. Each test on `n` moved `n`, which every `ai >= n` mentions,
+    // and projected all `k` of them: 0.29, 1.26, 5.08 and 24.1 s at `k` = 25 to 200 (82 times
+    // for 8 times, wt/narrow-if at fd8e5a29). The scopes are lazy now (`Scope::lazy`): each
+    // `ai >= n` is a spoke whose leaf `ai` is settled where a read needs it.
+    check_rejected_in_linear_work("settling the scopes of k tests on a hub", 25, |m| {
+        hub_strengthened(m, m, 1)
+    });
+}
+
+/// `k` levels, level `i` the test `ai >= n`, then `n >= -(k - i)`, then a read of `ai` added
+/// to the level inside it: each test on `n` moves `n` under all the `ai >= n` above it.
+fn hub_interleaved(k: usize) -> String {
+    let params: Vec<String> = (0..k).map(|i| format!("positional a{i}: int")).collect();
+    let mut body = String::from("0");
+    for i in (0..k).rev() {
+        body = format!(
+            "if a{i} >= n {{\nif n >= -{} {{\npopCount(a{i}) + {body}\n}} else {{ 0 }}\n}} else {{ 0 }}",
+            k - i
+        );
+    }
+    with_main(format!(
+        "f(\npositional n: int,\n{}\n) =\n{body};\n",
+        params.join(",\n")
+    ))
+}
+
+#[test]
+fn a_hub_tested_between_its_spokes_settles_in_time_linear_in_the_tests() {
+    // Each level relates `ai` to `n`, strengthens `n` and reads `ai`: `k` rejections, each
+    // naming its level's two tests. Settling every scope whole cost 0.19 to 12.9 s at `k` =
+    // 25 to 200 (wt/narrow-if, NARROW-hub-settle ledger).
+    check_notes(
+        "checking k readings each related to n, each under a stronger test on n",
+        25,
+        2,
+        hub_interleaved,
+    );
+}
+
+/// `k` levels `ai >= n && ai >= m`, then `k` tests on `n` and `k` on `m`, each stronger, then
+/// one read of `a0`.
+fn two_hubs(k: usize) -> String {
+    let params: Vec<String> = (0..k).map(|i| format!("positional a{i}: int")).collect();
+    let mut body = String::from("popCount(a0)");
+    for j in 1..=k {
+        body = format!("if m >= -{j} {{\n{body}\n}} else {{ 0 }}");
+    }
+    for j in 1..=k {
+        body = format!("if n >= -{j} {{\n{body}\n}} else {{ 0 }}");
+    }
+    for i in (0..k).rev() {
+        body = format!("if a{i} >= n && a{i} >= m {{\n{body}\n}} else {{ 0 }}");
+    }
+    with_main(format!(
+        "f(\npositional n: int,\npositional m: int,\n{}\n) =\n{body};\n",
+        params.join(",\n")
+    ))
+}
+
+#[test]
+fn two_hubs_on_one_block_settle_as_the_whole_scope() {
+    // Each `ai` is related to two hubs, so no `ai >= n` is a spoke and every scope is
+    // settled whole: the answer and the notes are those of the eager scope, `a0` int[-1..]
+    // under `a0 >= n` and the strongest test on `n`, which is enough without one on `m`. The
+    // time is not checked here: about `k²`, 20.6 s at `k` = 384 (COMPLEXITY.md C26, the
+    // tradeoff at `Ck::compute`).
+    for k in [1, 2, 5] {
+        let src = two_hubs(k);
+        let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
+            .expect("a0 may be negative");
+        assert!(e.contains("this `x` is int[-1..]"), "k = {k}:\n{e}");
+        assert!(e.contains("if n >= -1 {"), "k = {k}:\n{e}");
+        assert_eq!(
+            e.matches("this test is true here").count(),
+            2,
+            "k = {k}:\n{e}"
+        );
+        assert!(e.contains("if a0 >= n && a0 >= m {"), "k = {k}:\n{e}");
+    }
 }

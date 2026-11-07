@@ -21,15 +21,15 @@ use zedc::store::product::Scope;
 
 use super::ints;
 
-fn var(x: &str) -> Term {
+pub(super) fn var(x: &str) -> Term {
     Term::Var(x.into())
 }
 
-fn prim(p: Prim, a: Term, b: Term) -> Term {
+pub(super) fn prim(p: Prim, a: Term, b: Term) -> Term {
     Term::Prim(p, vec![a, b])
 }
 
-fn int(n: i64) -> Term {
+pub(super) fn int(n: i64) -> Term {
     Term::Lit(Value::Int(n))
 }
 
@@ -41,25 +41,25 @@ fn if_(c: Term, a: Term, b: Term) -> Term {
     Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
 }
 
-fn and(a: Term, b: Term) -> Term {
+pub(super) fn and(a: Term, b: Term) -> Term {
     prim(Prim::And, a, b)
 }
 
-fn or(a: Term, b: Term) -> Term {
+pub(super) fn or(a: Term, b: Term) -> Term {
     prim(Prim::Or, a, b)
 }
 
 /// `a - b >= c`.
-fn diff_ge(a: &str, b: &str, c: i64) -> Term {
+pub(super) fn diff_ge(a: &str, b: &str, c: i64) -> Term {
     prim(Prim::Ge, prim(Prim::Sub, var(a), var(b)), int(c))
 }
 
-fn names(ns: &[&str]) -> Vec<Arc<str>> {
+pub(super) fn names(ns: &[&str]) -> Vec<Arc<str>> {
     ns.iter().map(|n| Arc::from(*n)).collect()
 }
 
 /// The integers `ns`, each in `-b..=b`.
-fn boxed(ns: &[&str], b: i64) -> Scope {
+pub(super) fn boxed(ns: &[&str], b: i64) -> Scope {
     let t = ns
         .iter()
         .map(|n| {

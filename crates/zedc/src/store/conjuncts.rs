@@ -47,6 +47,16 @@ impl<T: Ord + Clone> Uses<T> {
         self.0.get(name).into_iter().flatten()
     }
 
+    /// The number of values that use `name`, in O(log n).
+    pub fn count(&self, name: &str) -> usize {
+        self.0.get(name).map_or(0, OrdSet::len)
+    }
+
+    /// Whether `t` uses `name`.
+    pub fn has(&self, name: &str, t: &T) -> bool {
+        self.0.get(name).is_some_and(|s| s.contains(t))
+    }
+
     /// The names that are used.
     pub fn names(&self) -> impl Iterator<Item = &Arc<str>> {
         self.0.keys()
@@ -70,6 +80,38 @@ pub struct Conjuncts {
     users: Uses<Arc<Formula>>,
     /// The blocks of the conjuncts.
     blocks: Blocks,
+    /// The spokes ([`Conjuncts::spoke`]), each by its leaf.
+    leaves: OrdMap<Arc<str>, Arc<Formula>>,
+    /// The spokes at each hub.
+    hangs: Uses<Arc<Formula>>,
+    /// The conjuncts that mention each name, but the spokes at it as a hub: those a move of
+    /// the name makes due in a lazy scope ([`Conjuncts::moving`]).
+    moving: Uses<Arc<Formula>>,
+    /// The names a written constraint holds of, which are no leaves (`Scope::write`).
+    pinned: OrdSet<Arc<str>>,
+}
+
+/// The two names of `g` when it is `x - y + c >= 0` or `y - x + c >= 0`, each name of
+/// coefficient one: a difference of two names with a bound. The negation of one,
+/// `!(x - y + c >= 0)`, is one as well, `y - x - c - 1 >= 0`.
+pub fn difference(g: &Formula) -> Option<[Arc<str>; 2]> {
+    let c = match g {
+        Formula::Con(c) => c,
+        Formula::Not(n) => match &**n {
+            Formula::Con(c) => c,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if c.rel != Rel::Ge || c.lin.terms.len() != 2 {
+        return None;
+    }
+    let mut it = c.lin.terms.iter();
+    let (Some((Atom::Sym(a), p)), Some((Atom::Sym(b), q))) = (it.next(), it.next()) else {
+        return None;
+    };
+    let (one, minus) = (Int::ONE, Int::from(-1i64));
+    ((*p == one && *q == minus) || (*p == minus && *q == one)).then(|| [a.clone(), b.clone()])
 }
 
 impl PartialEq for Conjuncts {
@@ -128,6 +170,109 @@ impl Conjuncts {
     /// The blocks of the conjuncts.
     pub fn blocks(&self) -> &Blocks {
         &self.blocks
+    }
+
+    /// The spoke of which `x` is the leaf, if any. A spoke is a conjunct `x - y + c >= 0` or
+    /// `y - x + c >= 0` whose leaf `x` no other conjunct mentions and no written constraint
+    /// holds of ([`Conjuncts::pin`]), and whose hub `y` another conjunct mentions. Its leaf
+    /// lies on no cycle, so it is a block of its own, and its projection onto `x` is a
+    /// half-line through `y`'s least or greatest value that holds `x`'s greatest or least
+    /// member: a move of `y` changes `x` alone, and empties nothing.
+    pub fn spoke(&self, x: &str) -> Option<&Arc<Formula>> {
+        self.leaves.get(x)
+    }
+
+    /// The spokes whose hub is `y`.
+    pub fn hanging(&self, y: &str) -> impl Iterator<Item = &Arc<Formula>> {
+        self.hangs.of(y)
+    }
+
+    /// The conjuncts that mention `name` but the spokes whose hub it is: those a move of
+    /// `name` makes due in a scope that leaves its spokes' leaves to be settled when read.
+    pub fn moving(&self, name: &str) -> impl Iterator<Item = &Arc<Formula>> {
+        self.moving.of(name)
+    }
+
+    /// The conjuncts a move of `name` makes due: [`Conjuncts::moving`] when `lazy`, else
+    /// [`Conjuncts::mentioning`].
+    pub fn moved(&self, name: &str, lazy: bool) -> impl Iterator<Item = &Arc<Formula>> {
+        if lazy { &self.moving } else { &self.users }.of(name)
+    }
+
+    /// Records whether a written constraint holds of `name`: such a name is no leaf, since an
+    /// enumeration reads it.
+    pub fn pin(&mut self, name: &Arc<str>, on: bool) {
+        let changed = if on {
+            self.pinned.insert(name.clone()).is_none()
+        } else {
+            self.pinned.remove(name).is_some()
+        };
+        if changed {
+            self.restate(name);
+        }
+    }
+
+    /// The leaf and hub `g` is a spoke of, by the counts and pins as they are.
+    fn classify(&self, g: &Formula) -> Option<(Arc<str>, Arc<str>)> {
+        let [a, b] = difference(g)?;
+        let leaf = |x: &Arc<str>, y: &Arc<str>| {
+            self.users.count(x) == 1 && !self.pinned.contains(x) && self.users.count(y) >= 2
+        };
+        if leaf(&a, &b) {
+            Some((a, b))
+        } else if leaf(&b, &a) {
+            Some((b, a))
+        } else {
+            None
+        }
+    }
+
+    /// The leaf and hub `g` is indexed as a spoke of, if any.
+    fn indexed(&self, g: &Arc<Formula>) -> Option<(Arc<str>, Arc<str>)> {
+        let [a, b] = difference(g)?;
+        if self.leaves.get(&a) == Some(g) {
+            Some((a, b))
+        } else if self.leaves.get(&b) == Some(g) {
+            Some((b, a))
+        } else {
+            None
+        }
+    }
+
+    /// Indexes `g` as a spoke or not, as the counts and pins now say.
+    fn reclassify(&mut self, g: &Arc<Formula>) {
+        let old = self.indexed(g);
+        let new = if self.set.contains(g) {
+            self.classify(g)
+        } else {
+            None
+        };
+        if old == new {
+            return;
+        }
+        if let Some((x, y)) = old {
+            self.leaves.remove(&x);
+            self.hangs.remove(&y, g);
+            self.moving.add(&y, g);
+        }
+        if let Some((x, y)) = new {
+            self.leaves.insert(x, g.clone());
+            self.hangs.add(&y, g);
+            self.moving.remove(&y, g);
+        }
+    }
+
+    /// Reclassifies the conjuncts that mention `name` when they are one or two: a count of one
+    /// or two is the only one whose change can make a conjunct a spoke or not, so a name
+    /// mentioned more often costs nothing here.
+    fn restate(&mut self, name: &Arc<str>) {
+        if self.users.count(name) > 2 {
+            return;
+        }
+        let gs: Vec<Arc<Formula>> = self.users.of(name).cloned().collect();
+        for g in &gs {
+            self.reclassify(g);
+        }
     }
 
     /// The conjunction as one formula, as [`Formula::and`] gives it.
@@ -252,8 +397,10 @@ impl Conjuncts {
         if self.set.contains(&g) {
             return;
         }
-        for n in names(&g) {
-            self.users.add(&n, &g);
+        let ns = names(&g);
+        for n in &ns {
+            self.users.add(n, &g);
+            self.moving.add(n, &g);
         }
         if let Formula::Con(c) = &*g {
             self.tight.insert((c.lin.terms.clone(), c.rel), g.clone());
@@ -272,6 +419,9 @@ impl Conjuncts {
             None => self.blocks.add(&g),
         }
         self.set.insert(g);
+        for n in &ns {
+            self.restate(n);
+        }
     }
 
     /// Removes `g` from the set and from every index but the blocks; whether it was there.
@@ -279,8 +429,14 @@ impl Conjuncts {
         if self.set.remove(g).is_none() {
             return false;
         }
-        for n in names(g) {
-            self.users.remove(&n, g);
+        self.reclassify(g);
+        let ns = names(g);
+        for n in &ns {
+            self.users.remove(n, g);
+            self.moving.remove(n, g);
+        }
+        for n in &ns {
+            self.restate(n);
         }
         if let Formula::Con(c) = &**g {
             let key = (c.lin.terms.clone(), c.rel);

@@ -57,6 +57,10 @@ fn units() -> Vec<(String, Vec<u8>)> {
         b"f(positional x: f64 | rat) = x == 1n;\nmain() = f(1.0);\n".to_vec(),
     ));
     out.push((
+        "readings related to a hub, settled where read".into(),
+        b"f(positional n: int, positional a0: int, positional a1: int) =\n  if a0 >= n { if n >= -2 { if a1 >= n { if n >= -1 { popCount(a0) + popCount(a1) } else { 0 } } else { 0 } } else { 0 } } else { 0 };\nmain() = 0;\n".to_vec(),
+    ));
+    out.push((
         "literals in a tuple compared with a union of tuple shapes".into(),
         b"isAt(positional p: (f64, f64) | (String, f64)) = p == (1, 2);\nmain() = isAt((1.0, 2.0));\n".to_vec(),
     ));
