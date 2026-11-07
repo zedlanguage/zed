@@ -222,7 +222,16 @@ pub fn try_parse_int(s: &str) -> Option<BigInt> {
 }
 
 /// The digits `read_digits` hands to num-bigint whole. The value read does not depend on it.
-const LEAF_DIGITS: usize = 512;
+//
+// Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
+// given up: num-bigint's `parse`, O(n^2), up to `LEAF_DIGITS` digits, and the reading by
+// halves above. The value is `zed_kernel::num::LEAF_DIGITS`, set from the timings in the
+// comment there (2026-11-07, item KERNEL-leaf-digits; COMPLEXITY.md, "Crossovers"): leaf 1024
+// had the fewest instructions, or tied, at every size from 700 to 10^6 digits but 1,500. Those
+// timings used the kernel's products, which are num-bigint's below 1024 words (about 19,700
+// digits), so the products the leaf decides between are the same here; not measured here. To
+// be measured again at the Zed port, with the kernel's.
+const LEAF_DIGITS: usize = 1024;
 
 /// The value of a nonempty text of ASCII decimal digits.
 ///

@@ -1011,7 +1011,32 @@ fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
 }
 
 /// The digits `read_decimal` hands to num-bigint whole. The value read does not depend on it.
-const LEAF_DIGITS: usize = 512;
+//
+// Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
+// given up. A text of at most `LEAF_DIGITS` digits is read by num-bigint's `parse`, O(n^2), one
+// word of digits at a time; a longer one is split by halves (`read_parts`), O(n log^2 n). Both
+// give the same number for every text (test `num::tests::the_leaf_does_not_change_the_value`,
+// leaf 1 against `LEAF_DIGITS` and against num-bigint; COMPLEXITY.md K41). Measured on
+// 2026-11-07 (item KERNEL-leaf-digits, not committed): `read_digits` with each leaf on random
+// texts, the test build (opt-level 2), the fewest instructions of 2 to 20 runs, load5 28 to 36:
+//
+//   digits      leaf 32     64     128     256     512    1024    2048
+//   700          64,526  50,065  43,054  38,847  36,664  30,667  30,667
+//   1,000        94,516  73,183  62,109  56,689  52,879  47,480  47,480
+//   1,500       150,409 120,772 103,724  95,565  91,004  90,112  81,143
+//   3,000       351,391 291,238 258,980 242,832 233,841 232,414 236,825
+//   6,000       879,929 759,963 694,248 663,420 645,131 642,638 657,250
+//   10^4 (M)      1.906   1.705   1.597   1.544   1.514   1.511   1.536
+//   10^5 (M)     66.877  64.892  63.801  63.276  62.979  62.959  63.215
+//   10^6 (M)     1,314.2 1,294.4 1,283.4 1,278.2 1,275.3 1,275.1 1,277.6
+//
+// 1024 has the fewest at every size but 700 and 1,000 (tied with 2048, which reads them
+// whole) and 1,500 (2048, 10% fewer); from 3,000 digits 2048 costs 0.2% to 2.3% more, as the
+// O(n^2) leaves grow. Processor time agreed within its noise at this load (10^6: 153 to 157
+// ms for leaves 128 to 2048). The peak heap is the same at 512 and 1024, 23.6 bits per digit
+// on 2^16 to 2^22 nines, within the 48 that `read_decimal` asks for. To be measured again at
+// the Zed port, where both sides of the crossover change.
+const LEAF_DIGITS: usize = 1024;
 
 /// The sign of a text and the rest of it after an optional `-` or `+`.
 pub(crate) fn sign_of(text: &str) -> (Sign, &str) {
@@ -1056,31 +1081,36 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
 ///
 /// When `digits` is empty or holds anything but ASCII decimal digits.
 pub fn read_digits(digits: &str) -> BigUint {
-    let Some(top) = split_depth(digits.len()) else {
+    read_digits_by(digits, LEAF_DIGITS)
+}
+
+/// [`read_digits`] with texts of at most `leaf` digits read whole; `leaf` is at least 1.
+fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
+    let Some(top) = split_depth(digits.len(), leaf) else {
         return digits.parse().expect("ASCII decimal digits");
     };
-    let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
+    let mut tens = vec![BigUint::from(10u32).pow(leaf as u32)];
     while tens.len() <= top {
         let last = tens.last().expect("the first power is built");
         let next = fast::mul(last, last);
         tens.push(next);
     }
-    read_parts(digits, &tens)
+    read_parts(digits, &tens, leaf)
 }
 
-/// The `i` for which a text of `len` digits splits into a low part of `LEAF_DIGITS * 2^i`
-/// digits and a high part of at least one and at most as many; `None` when it is read whole.
-fn split_depth(len: usize) -> Option<usize> {
-    (len > LEAF_DIGITS).then(|| ((len - 1) / LEAF_DIGITS).ilog2() as usize)
+/// The `i` for which a text of `len` digits splits into a low part of `leaf * 2^i` digits and
+/// a high part of at least one and at most as many; `None` when it is read whole.
+fn split_depth(len: usize, leaf: usize) -> Option<usize> {
+    (len > leaf).then(|| ((len - 1) / leaf).ilog2() as usize)
 }
 
-/// [`read_decimal`] of checked digits, `tens[i]` being `10^(LEAF_DIGITS * 2^i)`.
-fn read_parts(digits: &str, tens: &[BigUint]) -> BigUint {
-    let Some(i) = split_depth(digits.len()) else {
+/// [`read_decimal`] of checked digits, `tens[i]` being `10^(leaf * 2^i)`.
+fn read_parts(digits: &str, tens: &[BigUint], leaf: usize) -> BigUint {
+    let Some(i) = split_depth(digits.len(), leaf) else {
         return digits.parse().expect("ASCII decimal digits");
     };
-    let (high, low) = digits.split_at(digits.len() - (LEAF_DIGITS << i));
-    fast::mul(&read_parts(high, tens), &tens[i]) + read_parts(low, tens)
+    let (high, low) = digits.split_at(digits.len() - (leaf << i));
+    fast::mul(&read_parts(high, tens, leaf), &tens[i]) + read_parts(low, tens, leaf)
 }
 
 /// The power of the prime `p` in `n`, and `n` without it ([`valuation_upto`] with no cap).
@@ -1671,4 +1701,48 @@ pub(crate) fn exact_f64(r: &Rat) -> Result<Option<f64>, TooLarge> {
         Exact::Finite(f) => (*f == *r).then_some(x),
         Exact::NegInf | Exact::PosInf | Exact::NaN => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `len` digits from splitmix64 started at `seed`.
+    fn digits(seed: u64, len: usize) -> String {
+        let mut x = seed;
+        (0..len)
+            .map(|_| {
+                x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                let mut z = x;
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                char::from(b'0' + ((z ^ (z >> 31)) % 10) as u8)
+            })
+            .collect()
+    }
+
+    /// The reading by halves gives num-bigint's value whatever the leaf: leaf 1 splits down to
+    /// single digits and `LEAF_DIGITS` reads the shortest texts whole. Random texts of every
+    /// length from 1 to 1,200 and some on either side of `LEAF_DIGITS * 2^i`, with leading
+    /// zeros, all nines and all zeros.
+    #[test]
+    fn the_leaf_does_not_change_the_value() {
+        let edges = (1..=3).flat_map(|i| {
+            let at = LEAF_DIGITS << i;
+            [at - 1, at, at + 1]
+        });
+        for (seed, len) in (1..=1200).chain(edges).chain([5000]).enumerate() {
+            let random = digits(seed as u64, len);
+            let padded = format!("{}{}", "0".repeat(seed % 7), random);
+            for text in [random, padded, "9".repeat(len), "0".repeat(len)] {
+                let expected: BigUint = text.parse().expect("ASCII decimal digits");
+                assert_eq!(read_digits_by(&text, 1), expected, "leaf 1, {len} digits");
+                assert_eq!(
+                    read_digits(&text),
+                    expected,
+                    "leaf {LEAF_DIGITS}, {len} digits"
+                );
+            }
+        }
+    }
 }

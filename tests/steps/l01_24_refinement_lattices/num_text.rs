@@ -21,7 +21,7 @@ fn digits(rng: &mut Rng, len: usize) -> String {
 }
 
 /// Every length from 1 to 1500 digits and some up to 20,000, either side of where the text is
-/// split (512 digits and its doublings), each plain, with leading zeros, with a sign and with
+/// split (1024 digits and its doublings), each plain, with leading zeros, with a sign and with
 /// `_` between some digits.
 #[test]
 fn a_decimal_end_reads_as_num_bigint_reads_it_at_every_length() {
