@@ -2440,7 +2440,9 @@ impl Mixer {
                 let read = self.frees.summary(Part::held(b)).free;
                 let read = self.frees.sets.contains(read, name);
                 if self.build(bound, names) && !read {
-                    self.report.unread.push(x.to_string());
+                    self.report
+                        .unread
+                        .push(crate::elab::written_name(x).to_string());
                     todo.push(Mix::Part(body));
                 } else {
                     let (e, _) = parts.pop().expect("the bound term");

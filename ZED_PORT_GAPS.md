@@ -1992,3 +1992,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::process::Command` running the C compiler driver with `--version` and `-Wl,--version` and keeping its standard output as bytes | `link::Identity::of` | Command line (gap 6) | The process port the linker needs too; until then the Rust driver links |
 | `object::File::parse` over a `ReadCache` of the output and `Object::build_id`, to read the key an executable records in its GNU build-ID note | `link::recorded` | Foreign library; Bytes (gap 5) | An ELF note read from the bytes of a `Files` read once Bytes works, or the record kept beside the executable |
 | An `Option` built with `?` from each fallible step, every failure meaning "no record" | `link::recorded` | None | An `else` chain ending in `#none` |
+
+## Entries from NAME-at-print-warnings (`zed-kernel/src/print.rs`, `zedc/src/store/presburger.rs`, `presburger/deep.rs`, `elab.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A plain function pointer `fn(&str) -> &str` held in the printer's state (`Option<fn(..)>`) and passed down the `show` of each formula part, whose result borrows from its argument (a prefix of the name) | `print::written`, `Pieces::name`; `Formula::written`, `Factor::show`, `Atom::show`, `Lin::show`, `Con::show`; `elab::written_name` | None | A function value passed as an argument; the written name is the string's `slice` before `@`, shared and not borrowed |

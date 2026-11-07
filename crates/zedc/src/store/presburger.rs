@@ -125,12 +125,28 @@ impl Factor {
     }
 }
 
-impl fmt::Display for Factor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// How a symbol is written: [`as_is`], or the function a message gives to write each symbol
+/// by the name the program wrote ([`Formula::written`]).
+type Names = fn(&str) -> &str;
+
+/// A symbol written as it is.
+fn as_is(s: &str) -> &str {
+    s
+}
+
+impl Factor {
+    /// Writes the factor, each symbol through `name`.
+    fn show(&self, f: &mut fmt::Formatter<'_>, name: Names) -> fmt::Result {
         match self {
-            Factor::Sym(s) => write!(f, "{s}"),
+            Factor::Sym(s) => f.write_str(name(s)),
             Factor::Aux(n) => write!(f, "q{n}"),
         }
+    }
+}
+
+impl fmt::Display for Factor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.show(f, as_is)
     }
 }
 
@@ -150,13 +166,24 @@ impl Atom {
     }
 }
 
-impl fmt::Display for Atom {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Atom {
+    /// Writes the atom, each symbol through `name`.
+    fn show(&self, f: &mut fmt::Formatter<'_>, name: Names) -> fmt::Result {
         match self {
-            Atom::Sym(s) => write!(f, "{s}"),
-            Atom::Product(a, b) => write!(f, "{a} * {b}"),
+            Atom::Sym(s) => f.write_str(name(s)),
+            Atom::Product(a, b) => {
+                a.show(f, name)?;
+                f.write_str(" * ")?;
+                b.show(f, name)
+            }
             Atom::Aux(n) => write!(f, "q{n}"),
         }
+    }
+}
+
+impl fmt::Display for Atom {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.show(f, as_is)
     }
 }
 
@@ -366,8 +393,9 @@ impl Lin {
     }
 }
 
-impl fmt::Display for Lin {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Lin {
+    /// Writes the term, each symbol through `name`.
+    fn show(&self, f: &mut fmt::Formatter<'_>, name: Names) -> fmt::Result {
         let mut first = true;
         for (a, c) in &self.terms {
             let (sign, m) = if c.is_negative() {
@@ -381,9 +409,10 @@ impl fmt::Display for Lin {
                 (false, s) => write!(f, " {s} ")?,
             }
             if m == Int::ONE {
-                write!(f, "{a}")?;
+                a.show(f, name)?;
             } else {
-                write!(f, "{m} * {a}")?;
+                write!(f, "{m} * ")?;
+                a.show(f, name)?;
             }
             first = false;
         }
@@ -396,6 +425,12 @@ impl fmt::Display for Lin {
         } else {
             Ok(())
         }
+    }
+}
+
+impl fmt::Display for Lin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.show(f, as_is)
     }
 }
 
@@ -428,9 +463,16 @@ impl Con {
 }
 
 impl fmt::Display for Con {
-    /// The terms with the sign of the first atom's on the left, positive, and the rest on the
-    /// right: `a + b <= 49`, `i <= n - 2`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.show(f, as_is)
+    }
+}
+
+impl Con {
+    /// Writes the constraint, each symbol through `name`: the terms with the sign of the
+    /// first atom's on the left, positive, and the rest on the right: `a + b <= 49`,
+    /// `i <= n - 2`.
+    fn show(&self, f: &mut fmt::Formatter<'_>, name: Names) -> fmt::Result {
         let Some((_, first)) = self.lin.terms.iter().next() else {
             return write!(
                 f,
@@ -459,7 +501,9 @@ impl fmt::Display for Con {
             (Rel::Ge, false) => ">=",
             (Rel::Ge, true) => "<=",
         };
-        write!(f, "{left} {op} {right}")
+        left.show(f, name)?;
+        write!(f, " {op} ")?;
+        right.show(f, name)
     }
 }
 

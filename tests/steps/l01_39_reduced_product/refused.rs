@@ -97,7 +97,10 @@ fn a_refused_test_gives_one_warning_at_its_test() {
 
 /// A test that calls a helper is narrowed through the helper's body as one test, whose preimage
 /// asks the solver the helper's four constraints at once: refused, it gives a warning for
-/// each outcome, which names the test as closed over the helper and the outcome assumed.
+/// each outcome, which names the test and the outcome assumed. The test is named as the
+/// program wrote it, `g(x, y, z, w)`, and the constraints by the names it wrote: neither by the
+/// names elaboration gave the binders (`x@2`, the `x` of `ok` beside the `x` of `g`) nor
+/// closed over the helper, a let of a lambda that is not syntax the program can write.
 #[test]
 fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
     let src = format!(
@@ -106,11 +109,7 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
         growth_test(["x", "y", "z", "w"])
     );
     let (_, _, arms) = super::arms_of(&src);
-    let test = "{ g = (x@1, y@1, z@1, w@1) -> if if if ((((((4 * x@1) - (12 * w@1)) - (10 * y@1)) \
-                - (12 * z@1)) + 11) >= 0) { ((((((4 * w@1) + (10 * x@1)) - (10 * y@1)) - (11 * z@1)) \
-                - 28) >= 0) } else { false } { ((((((11 * w@1) + (4 * x@1)) - y@1) + (12 * z@1)) - 28) \
-                >= 0) } else { false } { ((((((0 - (8 * w@1)) - (5 * x@1)) + (12 * y@1)) - z@1) + 31) \
-                >= 0) } else { false }; g(x@2, y@2, z@2, w@2) }";
+    let test = "g(x, y, z, w)";
     let at = |outcome: bool| {
         format!(
             "warning: the scope is wider than its constraints make it\
@@ -121,10 +120,10 @@ fn a_refused_test_through_a_helper_names_the_test_and_its_outcome() {
     };
     // Taken true, the helper's constraints also hold in the scope, and their projection is
     // refused too, which gives a second warning; taken false, only the preimage is refused.
-    let constraints = "12 * w@2 + 10 * y@2 + 12 * z@2 <= 4 * x@2 + 11 \
-                       && 8 * w@2 + 5 * x@2 + z@2 <= 12 * y@2 + 31 \
-                       && 4 * w@2 + 10 * x@2 >= 10 * y@2 + 11 * z@2 + 28 \
-                       && 11 * w@2 + 4 * x@2 + 12 * z@2 >= y@2 + 28";
+    let constraints = "12 * w + 10 * y + 12 * z <= 4 * x + 11 \
+                       && 8 * w + 5 * x + z <= 12 * y + 31 \
+                       && 4 * w + 10 * x >= 10 * y + 11 * z + 28 \
+                       && 11 * w + 4 * x + 12 * z >= y + 28";
     let projection = format!(
         "warning: the scope is wider than its constraints make it\
          \n  [1] the constraints `{constraints}` hold in the scope\
@@ -164,6 +163,19 @@ fn a_refused_projection_onto_each_name_gives_one_warning_for_each() {
         })
         .into();
     assert_eq!(texts(&arm_scope(test, true)), expected);
+    // Through a helper whose parameters have the names of the caller's, so that elaboration
+    // renames both (`x@1`, `x@2`): the constraints and the name projected onto are written
+    // as the program wrote them.
+    let src = format!(
+        "g(positional x: int, positional y: int, positional z: int, positional w: int) = {test};\n\
+         ok(x, y, z, w) = if g(x, y, z, w) {{ 1 }} else {{ 0 }};"
+    );
+    let (_, _, arms) = super::arms_of(&src);
+    let through = texts(&super::arm(&arms, "g(", true).scope);
+    for w in &expected {
+        assert!(through.contains(w), "{through:#?}");
+    }
+    assert!(through.iter().all(|w| !w.contains('@')), "{through:#?}");
 }
 
 /// The join of two scopes reports each one's refusal, in an order that depends neither on

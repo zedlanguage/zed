@@ -13,6 +13,11 @@
 //! A term is laid out as a sequence of tokens, not a tree, and each pass over it (laying out,
 //! writing, measuring, breaking) is a loop with a stack of its own, so that a term of any depth
 //! prints on a small call stack (step T2-types-rest).
+//!
+//! [`written`] writes a term as the program it came from wrote it, as far as the term shows:
+//! each name through a function the caller gives, which maps a name elaboration made back to
+//! the one the program wrote, and the `if` forms that elaboration gives `&&` and `||` as those
+//! operators, for a message about the term (sec:diagnostics).
 
 use std::borrow::Cow;
 use std::fmt;
@@ -20,22 +25,40 @@ use std::fmt;
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
 use crate::value::Value;
 
+/// How a name is written: as it is (`None`), or through the function a message gives
+/// ([`written`]).
+type Names = Option<fn(&str) -> &str>;
+
 /// `t` broken into lines of at most `width` columns where its parts allow.
 pub fn pretty(t: &Term, width: usize) -> String {
     let mut out = String::new();
-    Doc::of(Piece::Term(t)).render(width, &mut out);
+    Doc::of(Piece::Term(t), None).render(width, &mut out);
+    out
+}
+
+/// `t` on one line as the program wrote it, for a message: each name a variable, a binder or
+/// a call's head writes is `name` of it, and `if c { b } else { false }` and
+/// `if c { true } else { b }`, the terms elaboration gives `c && b` and `c || b`, are written
+/// `(c && b)` and `(c || b)`, parenthesized as every binary operator is. A program that wrote
+/// the `if` itself reads the operator, which means the same. Otherwise the text is that of
+/// `Display`, and costs the same: linear in the text.
+pub fn written(t: &Term, name: fn(&str) -> &str) -> String {
+    let mut out = String::new();
+    Doc::of(Piece::Term(t), Some(name))
+        .write_flat(&mut out)
+        .expect("writing to a string does not fail");
     out
 }
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Doc::of(Piece::Term(self)).write_flat(f)
+        Doc::of(Piece::Term(self), None).write_flat(f)
     }
 }
 
 impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Doc::of(Piece::Pattern(self)).write_flat(f)
+        Doc::of(Piece::Pattern(self), None).write_flat(f)
     }
 }
 
@@ -216,10 +239,15 @@ enum Piece<'a> {
     Pattern(&'a Pattern),
 }
 
-/// The pieces one term or pattern is laid out as, in order.
-struct Pieces<'a>(Vec<Piece<'a>>);
+/// The pieces one term or pattern is laid out as, in order, and how names are written.
+struct Pieces<'a>(Vec<Piece<'a>>, Names);
 
 impl<'a> Pieces<'a> {
+    /// How the name `x` is written.
+    fn name(&self, x: &'a str) -> &'a str {
+        self.1.map_or(x, |f| f(x))
+    }
+
     fn text(&mut self, s: impl Into<Cow<'a, str>>) -> &mut Self {
         self.0.push(Piece::Tok(Tok::Text(s.into())));
         self
@@ -324,14 +352,16 @@ impl<'a> Pieces<'a> {
                 self.text(v.to_string());
             }
             Term::Var(x) => {
-                self.text(&**x);
+                let x = self.name(x);
+                self.text(x);
             }
             Term::Lam(params, body) => {
-                let ps: Vec<&str> = params.iter().map(|p| &**p).collect();
+                let ps: Vec<&str> = params.iter().map(|p| self.name(p)).collect();
                 self.lambda(&ps, body);
             }
             Term::App(f, args) => match &**f {
                 Term::Var(x) => {
+                    let x = self.name(x);
                     self.call(x).items(args).end();
                 }
                 Term::PrimFn(p) => {
@@ -427,6 +457,7 @@ impl<'a> Pieces<'a> {
                 self.list("{", " ", "}");
                 let mut t = t;
                 while let Term::Let(x, e, body) = t {
+                    let x = self.name(x);
                     self.cat()
                         .text(format!("{x} = "))
                         .term(e)
@@ -436,6 +467,19 @@ impl<'a> Pieces<'a> {
                     t = body;
                 }
                 self.term(t).end();
+            }
+            // `c && b` and `c || b` as elaboration gives them, written as the operators when
+            // the text is for a message ([`written`]).
+            Term::If(c, a, b)
+                if self.1.is_some()
+                    && (matches!(**b, Term::Lit(Value::Bool(false)))
+                        || matches!(**a, Term::Lit(Value::Bool(true)))) =>
+            {
+                let (sep, rhs) = match **b {
+                    Term::Lit(Value::Bool(false)) => (" && ", a),
+                    _ => (" || ", b),
+                };
+                self.list("(", sep, ")").term(c).sep().term(rhs).end();
             }
             Term::If(c, a, b) => {
                 self.cat()
@@ -460,10 +504,11 @@ impl<'a> Pieces<'a> {
                 self.end().end();
             }
             Term::Fam { domain, var, body } => {
+                let var = self.name(var);
                 self.call("fam")
                     .term(domain)
                     .sep()
-                    .lambda(&[&**var], body)
+                    .lambda(&[var], body)
                     .end();
             }
             Term::Reindex {
@@ -516,9 +561,8 @@ impl<'a> Pieces<'a> {
                         self.term(step).sep().named("join").term(join).end();
                     }
                     FixKind::Definedness => {
-                        self.lambda(&[&**this, &**key], step)
-                            .sep()
-                            .text("definedness");
+                        let names = [self.name(this), self.name(key)];
+                        self.lambda(&names, step).sep().text("definedness");
                     }
                 }
                 self.sep().evidence(ev).end();
@@ -555,7 +599,7 @@ impl<'a> Pieces<'a> {
     fn pattern_out(&mut self, pat: &'a Pattern) {
         match pat {
             Pattern::Wild => self.text("_"),
-            Pattern::Bind(x) => self.text(&**x),
+            Pattern::Bind(x) => self.text(self.name(x)),
             Pattern::Lit(v) => self.text(v.to_string()),
             Pattern::Atom(name, ps) if ps.is_empty() => self.text(format!("#{name}")),
             Pattern::Atom(name, ps) => self
@@ -654,14 +698,14 @@ enum Frame {
 impl<'a> Doc<'a> {
     /// The doc of what `root` lays out, one group. Each term and pattern is laid out once, its
     /// pieces taken from a stack.
-    fn of(root: Piece<'a>) -> Doc<'a> {
+    fn of(root: Piece<'a>, names: Names) -> Doc<'a> {
         let mut toks = Vec::new();
         let mut todo = vec![
             Piece::Tok(Tok::End),
             root,
             Piece::Tok(Tok::Start(Group::Cat)),
         ];
-        let mut out = Pieces(Vec::new());
+        let mut out = Pieces(Vec::new(), names);
         while let Some(piece) = todo.pop() {
             match piece {
                 Piece::Tok(t) => {

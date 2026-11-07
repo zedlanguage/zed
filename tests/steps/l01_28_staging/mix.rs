@@ -194,3 +194,17 @@ fn a_staged_program_keeps_the_warnings_of_its_source() {
     assert_eq!(p.warnings().len(), 1);
     assert_eq!(s.warnings(), p.warnings());
 }
+
+/// An unread local definition is reported by the name the program wrote, also when
+/// elaboration renamed it (`inc@k`) because another binder has the same name: here the
+/// parameter of `twice`.
+#[test]
+fn an_unread_local_definition_is_reported_by_its_written_name() {
+    let src = "twice(positional inc: int) = inc * 2;\nmain(stdin: Lines) -> (stdout: Lines) {\n  \
+               inc(y: int) = y + 1;\n  n = int(stdin[1]) else 0;\n  \
+               stdout <- String(twice(n));\n}\n";
+    let (p, s, report) = staged(src);
+    assert_eq!(report.unread, ["inc"], "{report:?}");
+    assert_eq!(out(&s, "8\n"), "16\n");
+    assert_eq!(out(&s, "8\n"), out(&p, "8\n"));
+}

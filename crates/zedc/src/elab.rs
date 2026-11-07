@@ -158,6 +158,17 @@ impl<'u> Cones<'u> {
     }
 }
 
+/// The name the program wrote for the binder whose kernel name is `kernel`: the kernel name
+/// itself, or the part before `@k` where elaboration renamed the binder (`Elab::new`). A
+/// written name holds no `@` (`crate::lex::name`), and neither does a temporary `$k`, which
+/// is kept as it is. A message names a binder by it (sec:diagnostics). Linear in the length
+/// of the name.
+pub fn written_name(kernel: &str) -> &str {
+    kernel
+        .split_once('@')
+        .map_or(kernel, |(written, _)| written)
+}
+
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {
     elaborate_in(unit, res, None).map(|(unit, _)| unit)

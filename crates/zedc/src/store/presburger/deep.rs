@@ -16,6 +16,7 @@ use std::slice;
 use std::sync::Arc;
 
 use super::formula::{Con, Formula, Id, Lin, Model, Rel};
+use super::{Names, as_is};
 
 mod canon;
 
@@ -612,10 +613,11 @@ enum Piece<'a> {
     Text(&'static str),
 }
 
-/// Shows the formula with `show` for each node, as the derived form does when `debug`; each
-/// node pushes the pieces it is made of, in reverse, onto one list. A shared part is written
-/// out at each place it is held, so the text is as long as the tree written out.
-fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool) -> fmt::Result {
+/// Shows the formula with `show` for each node, as the derived form does when `debug`, each
+/// symbol of a constraint written through `name`; each node pushes the pieces it is made of,
+/// in reverse, onto one list. A shared part is written out at each place it is held, so the
+/// text is as long as the tree written out.
+fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool, name: Names) -> fmt::Result {
     let mut stack = vec![Piece::Formula(root)];
     while let Some(piece) = stack.pop() {
         let g = match piece {
@@ -651,7 +653,7 @@ fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool) -> fmt::Result 
             continue;
         }
         match g {
-            Formula::Con(c) => write!(f, "{c}")?,
+            Formula::Con(c) => c.show(f, name)?,
             Formula::Not(h) => {
                 f.write_str("!")?;
                 match &**h {
@@ -697,13 +699,34 @@ fn show(root: &Formula, f: &mut fmt::Formatter<'_>, debug: bool) -> fmt::Result 
 
 impl fmt::Display for Formula {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        show(self, f, false)
+        show(self, f, false, as_is)
+    }
+}
+
+/// A formula shown with each symbol written through a function ([`Formula::written`]).
+struct Written<'a>(&'a Formula, Names);
+
+impl fmt::Display for Written<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        show(self.0, f, false, self.1)
+    }
+}
+
+impl Formula {
+    /// The text of `Display` with each symbol written as `name` of it, for a message that names
+    /// a symbol by the name the program wrote and not the one elaboration made of it. The
+    /// order of the terms and the parts is the formula's own, which follows the symbols as
+    /// they are and not as they are written: so it is the order of the written names, except
+    /// where one written name is another followed by digits (`a` and `a1`, `a@2` sorting after
+    /// `a1`). Linear in the text.
+    pub fn written(&self, name: fn(&str) -> &str) -> String {
+        Written(self, name).to_string()
     }
 }
 
 impl fmt::Debug for Formula {
     /// The derived form, `And([Con(..), Not(..)])`, on one line also under `{:#?}`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        show(self, f, true)
+        show(self, f, true, as_is)
     }
 }

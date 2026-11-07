@@ -198,7 +198,7 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     let mut defs: std::collections::HashMap<Key, Lams> = std::collections::HashMap::new();
     for d in unit.defs.iter().rev() {
         if let Term::Lam(ps, body) = &*d.term {
-            let written = ps.iter().map(|k| k.split('@').next().unwrap_or(k));
+            let written = ps.iter().map(|k| crate::elab::written_name(k));
             (defs
                 .entry((d.name.as_str(), written.collect()))
                 .or_default())

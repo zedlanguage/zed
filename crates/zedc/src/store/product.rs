@@ -40,6 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
+use zed_kernel::print;
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
@@ -55,6 +56,7 @@ use super::lattice::{Congruence, FiniteSet, Lattice};
 use super::preimage::{Classes, Demand, Domains, Point, follow_own, preimage, relations, witness};
 use super::presburger::{self, Atom, Con, Formula, Lin, Rel};
 use super::revision::{self, Op, reduce_congruence};
+use crate::elab::written_name;
 use crate::stage;
 
 /// When a value is known.
@@ -1400,7 +1402,7 @@ impl Scope {
             }
             Kind::Atom => {
                 let t = substitute(node.term, &self.statics_of(&stage::free(node.term)));
-                self.atom_names(&t, value, true, prem);
+                self.atom_names(&t, node.term, value, true, prem);
             }
             Kind::Nest(and, sides) if *and == value => {
                 for &(k, p) in sides {
@@ -1413,6 +1415,7 @@ impl Scope {
 
     /// Narrows by one atomic test.
     fn atom(&mut self, test: &Term, outcome: bool, prem: &Premises) {
+        let written = test;
         let closed = self.close(test);
         let test = closed.as_ref().unwrap_or(test);
         // An integer name keeps its place: its interval holds its one value, and the
@@ -1425,7 +1428,7 @@ impl Scope {
                 .is_some_and(|p| p.ty.element.subtype(&int))
         }));
         let t = substitute(test, &statics);
-        let (exact, inputs, free) = self.atom_names(&t, outcome, false, prem);
+        let (exact, inputs, free) = self.atom_names(&t, written, outcome, false, prem);
         // The linear relation, when the test needs no auxiliary variable and says more than
         // the intervals: a test of one name whose preimage is exact is the interval itself.
         if !inputs.is_empty()
@@ -1461,10 +1464,13 @@ impl Scope {
     /// the test's integer names, and its free names. With `convex`, as for what a later case
     /// knows of the cases before it, each name keeps a convex hull: the complement of a value
     /// is not taken, and a preimage gives only its hull, so that a case of a nest of `k` sides
-    /// holds no more pieces than one side gives.
+    /// holds no more pieces than one side gives. A refused preimage names the test as
+    /// `written`, the test as the program wrote it: neither closed over its helpers nor with
+    /// its static names substituted, each binder by its written name.
     fn atom_names(
         &mut self,
         t: &Term,
+        written: &Term,
         outcome: bool,
         convex: bool,
         prem: &Premises,
@@ -1530,7 +1536,7 @@ impl Scope {
             exact = pre.exact;
             if let Some(cause) = pre.refusal {
                 self.refuse(Refused {
-                    constraint: t.to_string().into(),
+                    constraint: print::written(written, written_name).into(),
                     asked: Asked::Test { outcome },
                     cause,
                 });
@@ -1931,10 +1937,13 @@ impl Scope {
             .into_iter()
             .filter(|a| matches!(a, Atom::Sym(_)))
             .collect();
-        // The text of `part`, printed once, and only when a question about it is refused.
+        // The text of `part`, each name as written, printed once, and only when a question
+        // about it is refused.
         let mut text: Option<Arc<str>> = None;
         let mut refuse = |s: &mut Scope, asked: Asked, cause| {
-            let constraint = text.get_or_insert_with(|| part.to_string().into()).clone();
+            let constraint = text
+                .get_or_insert_with(|| part.written(written_name).into())
+                .clone();
             s.refuse(Refused {
                 constraint,
                 asked,
@@ -1958,7 +1967,7 @@ impl Scope {
                 Ok(x) => x,
                 Err(cause) => {
                     if let Atom::Sym(n) = a {
-                        refuse(self, Asked::Onto(n.clone()), cause);
+                        refuse(self, Asked::Onto(written_name(n).into()), cause);
                     }
                     continue;
                 }
