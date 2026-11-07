@@ -958,22 +958,22 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 23), (9, &[]), 3),
-    (250, (1, 3, 22), (5, &[]), 2),
-    (500, (1, 1, 19), (5, &[]), 4),
-    (750, (0, 1, 16), (8, &[]), 5),
-    (1000, (2, 1, 24), (9, &[]), 4),
-    (1250, (2, 2, 20), (2, &[]), 4),
-    (1500, (0, 1, 17), (8, &[]), 5),
-    (1750, (0, 1, 22), (9, &[]), 5),
+    (0, (0, 0, 23), (9, &[]), 2),
+    (250, (1, 3, 22), (5, &[]), 1),
+    (500, (1, 1, 19), (5, &[]), 3),
+    (750, (0, 1, 16), (8, &[]), 4),
+    (1000, (2, 0, 24), (9, &[]), 4),
+    (1250, (2, 2, 20), (2, &[]), 3),
+    (1500, (0, 1, 16), (8, &[]), 5),
+    (1750, (0, 1, 22), (9, &[]), 4),
     (2000, (0, 2, 33), (11, &[]), 3),
-    (2250, (0, 2, 18), (13, &[]), 2),
+    (2250, (0, 1, 18), (13, &[]), 0),
     (2500, (2, 0, 23), (7, &[]), 4),
     (2750, (0, 0, 18), (5, &[]), 2),
     (3000, (2, 1, 27), (6, &[]), 5),
     (3250, (1, 1, 26), (4, &[]), 4),
-    (3500, (0, 0, 25), (3, &[]), 2),
-    (3750, (0, 3, 21), (9, &[]), 4),
+    (3500, (0, 0, 25), (3, &[]), 1),
+    (3750, (0, 2, 21), (9, &[]), 4),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -1059,6 +1059,12 @@ guarded_ranges!(
 /// the linear stage decides it where it refused before (reflected 7, was 6); and two boxes of
 /// the second half are narrower, `[2, +inf)` for `[-1, +inf)` and `[-22, 18]` for `[-43, 18]`,
 /// which count as reflected since their relation changed too (6, was 4).
+///
+/// With PRODUCT-nested-chain and S22-transfer-rem merged together (batch 17), the four boxes
+/// S22-transfer-rem improved are improved by PRODUCT-nested-chain's summary already, so the
+/// narrower, reflected, exact and split counts are PRODUCT-nested-chain's, and 49 results
+/// differ from the transfer before only in the names of their variables (26 in the first
+/// half, 23 in the second), measured by the run of each row.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1079,8 +1085,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (6, 10, 163, 55, vec![], 32));
-    assert_eq!(sum(&GUARDED[8..]), (5, 9, 191, 58, vec![], 26));
+    assert_eq!(sum(&GUARDED[..8]), (6, 9, 162, 55, vec![], 26));
+    assert_eq!(sum(&GUARDED[8..]), (5, 7, 191, 58, vec![], 23));
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
