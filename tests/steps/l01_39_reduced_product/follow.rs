@@ -547,7 +547,7 @@ fn random_blocks_of_lets_are_read_exactly() {
 /// test in a ramp reduced every name bound since the last reduction, `Θ(d²)` (32 to 256: 27.6
 /// times the instructions), and the final test read every `n` (repair of PA-let-block). A
 /// block of 512 overflows the stack of a run: the walk of the arms recurses on the bound terms
-/// (item PRE-stack).
+/// (item PA-let-stack; PRE-stack covers only the transfer).
 #[test]
 fn a_block_of_sums_of_ramps_scales() {
     let (scope, terms) = sizes(32, let_chain);

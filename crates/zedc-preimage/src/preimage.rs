@@ -5896,9 +5896,14 @@ impl LetPa {
     ///
     /// Complexity tradeoff: a test reading the name forms its whole summary, as many pieces as
     /// it has, so a block of `d` bindings `x_k = x_(k-1) + y_k`, `y_k = y_(k-1) + ramp_k`, with
-    /// a test of every `x_k`, forms `d` summaries of up to `d` pieces, `Θ(d²)`. Why: each
-    /// summary is inverted piece by piece ([`invert_treap`]), and the sum of two summaries of
-    /// `k` pieces each is a summary of `O(k)` pieces that shares no node with either. Trigger:
+    /// a test of every `x_k`, forms `d` summaries of up to `d + 1` pieces, `Θ(d²)`. The cost is
+    /// the size of these summaries, not work done again: `x_k` has `k + 1` pieces (measured at
+    /// `d` = 32, 64, 128, 256: `x_1` 2, `x_(d/2)` `d/2 + 1`, `x_d` `d + 1`, all `x_k` together
+    /// 561, 2,145, 8,385, 33,153 pieces, formed in 2.7, 15, 55, 245 ms), and no two of them
+    /// can share a piece, since `y_k` is not 0 on any piece of `x_(k-1)` with `n > 0`, so every
+    /// piece of `x_k` there has a slope or offset that `x_(k-1)` lacks. Why: each summary is
+    /// inverted piece by piece ([`invert_treap`]), and the sum of two summaries of `k` pieces
+    /// each is a summary of `O(k)` pieces that shares no node with either. Trigger:
     /// tests of many names of a chain of sums of piecewise summaries. Test:
     /// `l01_39_reduced_product::follow::a_block_of_sums_of_ramps_scales`. COMPLEXITY.md row
     /// PA-let-block. A complete solution would invert a sum without forming it, from bounds of
