@@ -1499,9 +1499,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | DIAG-addr-root | impl attempt 1 | 2026-11-07 10:10 | ready 9a9e3d38 on 691a4927, spec 08a19a2; 14 pieces 0 failed with doc check; clippy, fmt clean; load 20.91 20.61 20.65 |
 | LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | started: worktree from origin/main, reading extend.rs and drift probe |
+| LOAD-join-disjoint | impl attempt 1 | 2026-11-07 10:39 | probe measured (load 9-21): unite alone on h(k params)+k chains of k+k query fns, k=57/160/452/1280 (params 3.4k/26k/205k/1.64M): 24.8M/370M/6.48G/133G instr, x |
 | PA-let-multi | impl attempt 1 | 2026-11-07 10:18 | the probe's family (one test, d remainders) is quadratic on base too: 44.9x bytes at d=64->512 (load 16), 42.3x with the fix; with_bound binds every input of ea |
-| STACK-big-tests | impl attempt 1 | 2026-11-07 09:39 | ready: 377070e0 on 691a4927; l01_23+l01_26 74 pieces pass, same counts before/after (load 18-34); fmt, clippy clean; TY-sub-stack queued for the real recursion |
-| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | design settled (CM-2006 potential repair + Dijkstra bounds per qualifying tree, per-tree counters in Blocks); baseline run of the six groups started / load 26.5 |
+| STACK-big-tests | impl attempt 1 | 2026-11-07 09:39 | rebased over STATUS-only 340ea743: ready at e71879f7 |
+| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | cross-check (old path vs new on every reduce) over 361 pieces: 0 mismatches; tests written; mutations caught; temp code removed / load 10.73 |
+| TY-sub-stack | impl attempt 1 | 2026-11-07 10:47 | baseline on 340ea743: ^l01_2[0-9]/zedc_types 205 pieces, 0 failed (load 16-23); starting the explicit-stack rewrite of ty.rs comparison |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
