@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Refusal, Type, Verdict};
+use zed_kernel::types::{Type, Verdict};
 use zed_tests::scaling;
 
 fn r(i: usize) -> Expr {
@@ -468,12 +468,53 @@ fn a_morphism_cycle_through_an_empty_part_is_empty() {
         Verdict::Inhabited,
         "N = V -> empty is inhabited"
     );
-    // A key type that is not recursive, which only a search proves empty, gets no such closure
-    // yet, so `(bool -> empty) -> empty` is refused, never called empty (ledger item
-    // EMPTY-key-search).
+    // A key type that is not recursive, which only a search proves empty, gets the same closure:
+    // the search that builds it proves its key type empty (plan item EMPTY-key-search).
     let m = Type::morphism(bool_to_empty.clone(), bool_to_empty, Type::empty());
     assert!(!m.is_empty(), "(bool -> empty) -> empty is inhabited");
-    assert_eq!(m.verdict(), Verdict::Refused(Refusal::NoWitness));
+    assert_eq!(m.verdict(), Verdict::Inhabited);
     // The same answers with the kept results of the other type in place.
     assert!(v.is_empty() && !n.is_empty() && !w.is_empty());
+}
+
+/// `bool -> empty` under `depth` more morphism types, each the key type of the next with the
+/// value type `empty`: empty at an even depth, inhabited at an odd one, by a closure that is
+/// never called since its key type is empty.
+fn key_nest(depth: usize) -> Type {
+    let mut t = Type::morphism(Type::bool(), Type::bool(), Type::empty());
+    for _ in 0..depth {
+        t = Type::morphism(t.clone(), t, Type::empty());
+    }
+    t
+}
+
+#[test]
+fn a_key_type_only_a_search_proves_empty_gives_a_closure() {
+    for depth in 0..8 {
+        Type::forget_emptiness();
+        let t = key_nest(depth);
+        let (verdict, empty) = if depth % 2 == 0 {
+            (Verdict::Empty, true)
+        } else {
+            (Verdict::Inhabited, false)
+        };
+        assert_eq!(t.verdict(), verdict, "depth {depth}");
+        Type::forget_emptiness();
+        assert_eq!(t.is_empty(), empty, "depth {depth}");
+    }
+}
+
+#[test]
+fn a_nest_of_key_types_is_decided_in_one_search() {
+    let n = 128;
+    let nests = scaling::inputs(n, key_nest);
+    scaling::check("the verdict of a nest of n key types", n, |m| {
+        Type::forget_emptiness();
+        let verdict = if m % 2 == 0 {
+            Verdict::Empty
+        } else {
+            Verdict::Inhabited
+        };
+        assert_eq!(nests[&m].verdict(), verdict);
+    });
 }

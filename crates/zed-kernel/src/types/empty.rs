@@ -263,18 +263,18 @@ impl Type {
             // wrong; it gives up the answer itself. Why: the search is incomplete (the tradeoffs
             // at the Fork, Residues, TupleSplit and MorphismSplit sites), and the value builder
             // shows only values it can check: a closure is built only when a value of its value
-            // type is built, or when its key type is known empty without a search (the empty
-            // type, or a recursive type its group decided empty), so it is never called. A key
-            // type only a search proves empty, such as `bool -> empty`, gets no closure, so
-            // `(bool -> empty) -> empty` is refused. Trigger: no refusal was named, and neither
-            // search built a value. Tests:
+            // type is built or decided by its group, or when its key type is empty, so it is never
+            // called: known so without a search, or proved so in this one (`Searching::no_key`).
+            // A key type whose emptiness rests on a type still being decided when the closure is
+            // sought is proved empty only when a phase of `solve` ends, so a search that only
+            // builds values (the second one here) gives it no closure. Trigger: no refusal was
+            // named, and neither search built a value. Tests:
             // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_between`),
             // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
             // `l01_23_subtyping::judgments::a_morphism_cycle_through_an_empty_part_is_empty`.
             // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
             // complete solution needs a value builder for every kind of type (closures included,
-            // L2), the emptiness of each key type decided within the search that reads it, and a
-            // complete search.
+            // L2) and a complete search.
             Verdict::Refused(s.refused.or(s.gave_up).unwrap_or(Refusal::NoWitness))
         }
     }
@@ -499,7 +499,7 @@ struct Search {
     waiting: BTreeMap<Type, Vec<Type>>,
     /// Whether a closure was tested against a type that holds some morphisms.
     unsure: bool,
-    /// Whether a type was settled in the first walk, after answers that read it as inhabited.
+    /// Whether a type was settled in this phase, after answers that read it as inhabited.
     settled: bool,
     /// Whether kept results are left unread and each place a part counts as inhabited with
     /// nothing shown is noted, for a caller that takes `Refused`.
@@ -1177,8 +1177,13 @@ impl Search {
     }
 
     /// Takes as dead the empty types `v` rests on, unless one rests on a type still being
-    /// decided: an empty type read is what a proof rests on, and an inhabited one is not.
+    /// decided: an empty type read is what a proof rests on, and an inhabited one is not. A
+    /// type already dead changes nothing, so the phase that settles it again does not start
+    /// another: each new phase takes at least one more type as dead, which bounds their number.
     fn settle(&mut self, v: usize) {
+        if self.dead.contains(&v) {
+            return;
+        }
         let (mut seen, mut stack) = (BTreeSet::from([v]), vec![v]);
         while let Some(x) = stack.pop() {
             for &y in &self.reads[x] {
@@ -2318,6 +2323,34 @@ impl<'m> Searching<'m> {
         Some(vs)
     }
 
+    /// Whether each of `keys` is empty: known empty without a search, or proved so here
+    /// ([`Searching::no_key`]).
+    async fn no_keys(&'m self, keys: &[Type]) -> bool {
+        for k in keys {
+            if !known_empty(k) && !self.no_key(k).await {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether the key type `k` of a closure is proved empty for good in this search, so the
+    /// closure is never called and needs no return value. `k` is decided as the value type of
+    /// a morphism is ([`Searching::no_value`]): a decision that reads nothing still being
+    /// decided is settled at once, so a nest of morphisms, each the key type of the next, is
+    /// decided in the one walk of the search, each key type once. A key type whose decision
+    /// reads a type still being decided is proved empty, if it is, at the end of the phase.
+    /// While a seed is sought nothing is decided, since that search keeps no answer.
+    async fn no_key(&'m self, k: &Type) -> bool {
+        if self.s().seeding {
+            return false;
+        }
+        let walking = std::mem::replace(&mut self.s().walking, true);
+        let b = self.no_value(k).await;
+        self.s().walking = walking;
+        b
+    }
+
     /// Whether a closure can return a value of `v`: one built here, one being built (the closure
     /// may be part of it), or one its group decided `v` has, which the closure, never called
     /// here, does not need built.
@@ -2411,7 +2444,10 @@ impl<'m> Searching<'m> {
             // A closure is shown only for a meet of morphism types whose keys are all
             // permitted as written and whose value type has a value, which may be one being
             // built here, holding this closure: a closure can return itself. A closure whose
-            // keys are known empty is shown for any value type, since it is never called. The
+            // keys are empty, known so or proved so in this search, is shown for any value type,
+            // since it is never called; its keys are decided only when they are not permitted as
+            // written or its value type has no value, so a closure that returns a value costs no
+            // decision of its keys. The
             // keys of a meet are the union of its morphism types' keys, so they are empty when
             // each of those is; each is read as written, since a recursive type and its
             // unfolding are compared as different types. A meet of one morphism type is that type
@@ -2419,30 +2455,33 @@ impl<'m> Searching<'m> {
             // type, which is neither the type being built nor one its group decided.
             let (taken, refused) = p.morphisms.forced();
             let whole = refused.is_empty() && taken.len() == p.morphisms.distinct_atoms().len();
-            let meets: Vec<(Morphism, bool)> = match (whole, p.morphisms.union_rows()) {
+            let meets: Vec<(Morphism, Vec<Type>)> = match (whole, p.morphisms.union_rows()) {
                 (true, _) => vec![(
                     match taken.split_first() {
                         Some((a, rest)) => rest.iter().fold(a.clone(), |r, b| meet(&r, b)),
                         None => top,
                     },
-                    taken.iter().all(|a| known_empty(&a.guarantee)),
+                    taken.iter().map(|a| a.guarantee.clone()).collect(),
                 )],
                 (false, Some(rows)) => (rows.into_iter())
                     .map(|m| {
-                        let keyless = known_empty(&m.guarantee);
-                        (m, keyless)
+                        let keys = vec![m.guarantee.clone()];
+                        (m, keys)
                     })
                     .collect(),
                 (false, None) => Vec::new(),
             };
-            for (m, keyless) in &meets {
-                if *keyless {
+            for (m, keys) in &meets {
+                if keys.iter().all(known_empty) {
                     return Some(self.s().show(Rep::Closure));
                 }
                 let permitted = m.guarantee == m.permission
                     || m.guarantee == Type::empty()
                     || m.permission == Type::top();
                 if !permitted {
+                    if self.no_keys(keys).await {
+                        return Some(self.s().show(Rep::Closure));
+                    }
                     continue;
                 }
                 // What the closure returns may hold the closure, at any depth.
@@ -2454,13 +2493,18 @@ impl<'m> Searching<'m> {
                     mark
                 };
                 let returns = self.returnable(&m.value).await;
-                let mut s = self.s();
-                s.reps.insert(t.clone(), None);
-                if returns {
-                    return Some(s.show(Rep::Closure));
+                {
+                    let mut s = self.s();
+                    s.reps.insert(t.clone(), None);
+                    if returns {
+                        return Some(s.show(Rep::Closure));
+                    }
+                    for x in s.built.split_off(mark) {
+                        s.reps.remove(&x);
+                    }
                 }
-                for x in s.built.split_off(mark) {
-                    s.reps.remove(&x);
+                if self.no_keys(keys).await {
+                    return Some(self.s().show(Rep::Closure));
                 }
             }
         }

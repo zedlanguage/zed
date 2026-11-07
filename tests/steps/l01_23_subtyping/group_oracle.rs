@@ -1293,12 +1293,12 @@ fn partial_morphism_groups_agree_with_the_values_1() {
 
 #[test]
 fn layered_groups_agree_with_the_values_0() {
-    on_a_big_stack(|| sweep("layer", gen_layer, 0..100, 28));
+    on_a_big_stack(|| sweep("layer", gen_layer, 0..100, 4));
 }
 
 #[test]
 fn layered_groups_agree_with_the_values_1() {
-    on_a_big_stack(|| sweep("layer", gen_layer, 100..200, 51));
+    on_a_big_stack(|| sweep("layer", gen_layer, 100..200, 3));
 }
 
 #[test]
@@ -1663,5 +1663,40 @@ fn a_closure_returns_a_member_built_or_decided_inhabited() {
                 "{tag}: {tally:?}"
             );
         }
+    });
+}
+
+/// A layered group (seed 1335) whose member `R4 = (R3) -> empty` is a closure never called: its
+/// key type `R3` is empty, which only a search proves, since the group holds `R1 \ R1` and its
+/// decider does not decide it (plan item EMPTY-key-search). Each phase of that search proves
+/// `R3` empty again; a type proved empty again must not start another phase, or the search
+/// never ends.
+#[test]
+fn a_key_type_proved_empty_again_ends_the_search() {
+    let int_to_empty = || exact(E::Int, E::Empty);
+    let sys = vec![
+        E::Union(vec![int_to_empty(), int_to_empty()]),
+        tup(vec![
+            exact(r(0), E::Empty),
+            tup(vec![r(1), exact(E::Bool, E::Empty)]),
+        ]),
+        exact(
+            E::Int,
+            tup(vec![r(2), E::Diff(Box::new(r(1)), Box::new(r(1)))]),
+        ),
+        E::Union(vec![
+            tup(vec![E::Int, r(0)]),
+            exact(E::Int, tup(vec![r(1), r(2)])),
+        ]),
+        exact(r(3), E::Empty),
+    ];
+    on_a_big_stack(|| {
+        let mut tally = Tally::default();
+        compare(&sys, "layer1335", &mut tally);
+        assert_eq!(
+            (tally.empty, tally.inhabited, tally.missed),
+            (4, 1, 0),
+            "{tally:?}"
+        );
     });
 }
