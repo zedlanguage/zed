@@ -2418,26 +2418,46 @@ fn remainder_reads_outside_a_split_have_their_preimages() {
     });
 }
 
-/// COMPLEXITY.md S22-transfer-rem: on each shape of [`remainder_shape`], three chains of `k`
-/// guards `x mod 3 == r` with arms drawn at random, over `x` and `y` in `[-60, 60]`, agree
-/// with the interpreter: every point that meets the demand lies in the box, and when the
-/// box is exact every point in it meets the demand.
-#[test]
-fn remainder_reads_outside_a_split_match_the_interpreter() {
+/// COMPLEXITY.md S22-transfer-rem: on the shape `shape` of [`remainder_shape`], three chains of
+/// `k` guards `x mod 3 == r` with arms drawn at random, over `x` and `y` in `[-60, 60]`, agree
+/// with the interpreter: every point that meets the demand lies in the box, and when the box
+/// is exact every point in it meets the demand.
+fn remainder_shape_matches_the_interpreter(shape: &str) {
     on_big_stack(|| {
         let (ds, d) = (xy_in(60), Demand::Bool(true));
-        for shape in REMAINDER_SHAPES {
-            for seed in 1..=3 {
-                for k in [1, 2, 5, 13] {
-                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
-                    let p = preimage(&t, &ds, &d);
-                    check(&t, &ds, &d, &p, (-20, 20));
-                    check(&t, &ds, &d, &p, (45, 60));
-                }
+        for seed in 1..=3 {
+            for k in [1, 2, 5, 13] {
+                let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
+                let p = preimage(&t, &ds, &d);
+                check(&t, &ds, &d, &p, (-20, 20));
+                check(&t, &ds, &d, &p, (45, 60));
             }
         }
     });
 }
+
+/// One test per shape of [`REMAINDER_SHAPES`]. The five shapes in one test took 56.5 s at load
+/// 10, nearly all of it in `preimage` (the interpreter takes 5 ms to 28 ms a case), and most of
+/// that on the chain of seed 2 at `k = 13`: 10 s to 22 s a shape at load 22, spent in the
+/// Presburger solver the linear stage calls (COMPLEXITY.md S22-transfer-rem, "Not fixed").
+macro_rules! remainder_shapes {
+    ($($name:ident $shape:literal),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                remainder_shape_matches_the_interpreter(REMAINDER_SHAPES[$shape]);
+            }
+        )*
+    };
+}
+
+remainder_shapes!(
+    remainder_reads_outside_a_split_match_the_interpreter_arms_of_x_and_y 0,
+    remainder_reads_outside_a_split_match_the_interpreter_arms_over_x 1,
+    remainder_reads_outside_a_split_match_the_interpreter_a_test_of_the_chain 2,
+    remainder_reads_outside_a_split_match_the_interpreter_remainders_of_two_inputs 3,
+    remainder_reads_outside_a_split_match_the_interpreter_two_moduli_of_one_input 4,
+);
 
 /// The shapes of [`counted_shapes`] at their corners, each agreeing with the interpreter: the
 /// moduli 1, -3, 1024 (one period), `2^62` and `i64::MIN`, whose classes do not fit `i64`, so
