@@ -14,7 +14,8 @@ fn program(def: &str, args: &str) -> String {
 }
 
 /// The standard error of a rejected run, with the program's path removed from its first line,
-/// and without the source lines the steps underline.
+/// and without the source lines the steps underline. The program is written in test directory
+/// `name`, so two tests, which may run at once, give two names.
 fn rejection(name: &str, src: &str) -> String {
     let o = run(name, src, "3\n", &[]);
     assert_eq!((o.status, o.stdout.as_str()), (1, ""), "{}", o.stderr);
@@ -233,7 +234,7 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
         "x: a, y: a, z: a, w: a",
     );
     assert_eq!(
-        rejection("growth", &src),
+        rejection("growth-alone", &src),
         format!(
             "1:1: whether `ok` can hold is not decided: the integer constraints have four \
              variables or more, each of whose elimination would enlarge them, so whether they \
@@ -258,7 +259,7 @@ fn a_refused_question_names_the_parameters_as_written_when_other_functions_share
         "x: a, y: a, z: a, w: a",
     );
     assert_eq!(
-        rejection("tie", &src),
+        rejection("tie-alone", &src),
         format!(
             "1:1: whether `ok` can hold is not decided: variables that no structure tells apart \
              would be eliminated in an order chosen by name: `w`, `x`, `z`, `y` occur alike in \
@@ -281,7 +282,7 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
         "x: a, y: a, z: a, w: a",
     );
     assert_eq!(
-        rejection("shadows", &src),
+        rejection("shadows-alone", &src),
         format!(
             "1:1: whether `ok` can hold is not decided: an integer point of the integer \
              constraints could lie only in a splinter of a splinter of their projection, so \
