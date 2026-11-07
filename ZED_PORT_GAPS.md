@@ -2058,6 +2058,17 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Vec::retain` whose closure advances a captured counter to read a `Vec<bool>` of removed positions | `absorb` | Mutation (gap 11) | `where` over the disjunctions zipped with their positions |
 | `Option::is_none_or`, `Option::is_some_and` | `repair`, `settle` | None | A `match`, or `x is #none or ..` |
 
+## Entries from DISJ-diff-fast and DISJ-incremental (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `thread_local!` `Cell<bool>` (`OLD_PATH`) set around a second run of a question, read deep in the solver to choose the old path | `old_path`, `or_old`, `project_each`, `settle`, `pick`, `decide_inner`, `project_parts` | No global mutable state | A `path` argument, or a field of the solver's context, passed down from the public entry points |
+| `macro_rules! put` that inserts a row or keeps the tighter of two rows on one form, mutating a `Vec` and a `HashMap` of the enclosing function | `shadow` | Mutation (gap 11); no macros | A local function over the rows and the map that returns both |
+| Per-atom counts in a `HashMap` updated in place (`Deg`: lower, upper, equalities, unit equalities and their terms) as rows are added and removed | `shadow` | Mutation (gap 11) | A map threaded through a fold, or the solver's mutable-cell port if it has one by then |
+| An explicit stack of ranges with their projected rows (`Vec<(usize, usize, Option<Vec<Con>>)>`) for the divide and conquer over disjuncts | `by_halves` | None | A `loop` over a list used as a stack, or plain recursion once Zed's lowering manages the stack |
+| `std::mem::replace` and `std::mem::take` to move a value out of a slot it is replaced in | `project_each`, `settle` | Mutation (gap 11) | The new value built from the old and bound to a new name |
+| `retain` on the map of bounds by linear form, joining each disjunct's bounds into the disjunction's | `disjunction_hulls` | Mutation (gap 11) | `where` over the bounds, or a fold that builds the joined map |
+
 ## Entries from LINK-obj-leftover (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |
