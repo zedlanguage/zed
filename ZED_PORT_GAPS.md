@@ -2477,3 +2477,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A `HashMap` memo filled during an explicit-stack walk of a value, keyed by `SharedParts<'v>` (the sequence's id and, for an atom, a borrowed `&str` name and the field names' id), whose values are cell words or numbers | `Heap::fresh`, `Machine::tree` | Mutation; Identity (Gap 1) for the sequence id | A map from the sequence's identity to the cell threaded through the walk's state; the identity is what the runtime exposes for a shared sequence |
 | `Arc::strong_count` to tell a sequence held once from a shared one (`Items::is_shared`, read by `Value::shared_parts`) | `Value::shared_parts` | Identity (Gap 1) | The runtime's reference count of the sequence, or a memo entry for every sequence at a constant cost |
+
+## Entries from ST-holes-many (`crates/zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A labeled `'round: loop` around a Dijkstra search on a `BinaryHeap<Reverse<..>>`, restarted with `continue 'round` from inside the heap loop when a cycle of weight 0 is tied, and left with `return` on a negative cycle (moved here from `Scope::repair`) | `product::put_in`, called by `Scope::repair` and `Scope::raise` | Mutation (gap 11), Early exit (gap 12) | A recursive function per round over a persistent heap, its result a sum of "put in", "tie these edges and go again" and "negative cycle" |
+| A `BTreeMap` of bounds filled at first read through a closure taking it as `&mut`, so the search reads each name's ends once | `Scope::bound_pass` (`read`, `label`) | Mutation (gap 11) | The map threaded through the search's fold and returned with each read |

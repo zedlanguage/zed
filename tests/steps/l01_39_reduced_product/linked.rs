@@ -1412,8 +1412,12 @@ fn holes_in_a_tree_of_differences_give_the_projection_from_scratch() {
 #[test]
 fn holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch() {
     let n = holes_in_trees(0x9a1e, true);
-    eprintln!("{n:?}");
-    assert!(n.piled > 0, "{n:?}");
+    assert!(n.moved > 5000, "{n:?}");
+    assert!(n.holes > 4000, "{n:?}");
+    assert!(n.piled > 2000, "{n:?}");
+    assert!(n.empty > 500, "{n:?}");
+    assert!(n.tied > 30, "{n:?}");
+    assert!(n.joined > 30, "{n:?}");
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
