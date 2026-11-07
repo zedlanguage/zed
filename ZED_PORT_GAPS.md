@@ -2105,3 +2105,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `Peekable` over a `Vec`'s owning iterator, with `next_if` taking the next leaf only when its range lies inside the node being built | `cls_build` | Mutation, iterators | A recursive build over the list of leaves that returns the rest of the list |
 | A `&mut Vec` passed down a recursion that pushes the leaf pairs of two trees walked together | `cls_zip` | Mutation | A fold that returns the list, or the two walks' leaf lists merged by their ranges |
 | `if … && let Split::Exact(..) = …` (a let chain) taking a second split's answer only when it is exact | `preimage_in` | None | `match` with an `is` test |
+
+## Entries from NARROW-hub-rest (`zedc/src/store/conjuncts.rs`, `zedc/src/store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Box<StarIndex>`, the star indexes of a conjunction behind one pointer, so a `Scope` moved on the checker's stack stays small (an unboxed index made `check::walk`'s frame 0x1278 bytes against 0xbe8, and `follow::following_tests_scale` overflowed) | `Conjuncts::index` | None | Removed: Zed values are shared, and size is not the programmer's concern |
+| The relation cloned to forget a name on the copy, and its stars compared with the original's by `OrdMap::diff`, before the scope settles and forgets in place | `Scope::bind` | Mutation | `forget` returns the new relation; the clone is the persistent maps' sharing, which Zed values have |

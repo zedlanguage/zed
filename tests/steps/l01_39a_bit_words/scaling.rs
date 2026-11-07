@@ -613,7 +613,8 @@ fn hub_sum(k: usize) -> String {
 #[test]
 fn a_bound_on_a_sum_of_two_hubs_settles_to_the_eager_answer() {
     // `a0 >= n + m` with `n >= -1` and `m >= -1`: `a0` is int[-2..]. The notes are those the
-    // eager scope gave: the tests on `m` and the sum, without `n >= -1` (QUESTIONS.md).
+    // eager scope gave: the tests on `m` and the sum, without `n >= -1`, which the full
+    // derivation needs (a follow-up item; this one keeps the notes as they were).
     for k in [1, 2, 5] {
         let src = hub_sum(k);
         let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
