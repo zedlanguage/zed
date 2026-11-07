@@ -298,7 +298,7 @@ law monoTwice(M: MonoInt, a: int, b: int) = (a <= b).implies(M.f(M.f(a)) <= M.f(
 }
 ```
 
-<!-- DESIGN.md:1554 layer L7: ring L7, word L7 (terminated), label none; section [sec:ffi] 1 -->
+<!-- DESIGN.md:1554 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 1 -->
 ```zed
 @foreign struct SockAddr { family: int with bits(16), data: [u8] with length(14) }
 @foreign struct AddrInfo {

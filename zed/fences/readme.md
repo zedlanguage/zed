@@ -519,7 +519,7 @@ Number.eval = int(this) else 0;
 value = Sum.parse("2*(3+4)")?.eval;     // 14, or #syntaxError
 ```
 
-<!-- README.md:2278 layer L20: ring L20, word L7 (length), label none; section [Grammars] 3 -->
+<!-- README.md:2278 layer L20: ring L20, word L7 (u8), label none; section [Grammars] 3 -->
 ```zed
 struct Chunk grammar {
   n: int with bits(32) with endian(#big)

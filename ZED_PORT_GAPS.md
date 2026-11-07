@@ -265,7 +265,7 @@ literals 20; `to_le_bytes` and `from_le_bytes` 17 (`Out::word`, `canon/serial.rs
 
 Fix, three parts. (a) Spans become scalar offsets: mechanical, as ZED0.md says "lex by code
 point", but the columns of diagnostics must agree with Rust at S.2, so the differential test
-decides. (b) An L1 word `utf8 : String -> [byte]`, and `int` to little-endian bytes as a
+decides. (b) An L1 word `utf8 : String -> [u8]`, and `int` to little-endian bytes as a
 library function, which hashing needs. (c) For files, the binary ZIR and wave records
 (`zir/binary.rs`, `Record::to_bytes` at `run.rs:476`) either get a `Bytes` file port, or use the text form that
 `zir/text.rs` already has. Recommended: the port, since content-addressed caches should not pay

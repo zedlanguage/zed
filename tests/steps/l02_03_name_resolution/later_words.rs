@@ -86,6 +86,46 @@ fn a_later_type_is_reported_with_its_layer() {
     );
 }
 
+/// `u8 = int[0..=255]` and `i8` to `i64` are the fixed-width aliases of L7 (DESIGN.md
+/// sec:domains, step L7.4), and `byte` is no type at any layer (author decision 2026-11-04: the
+/// type `byte` is renamed `u8`).
+#[test]
+fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
+    assert_eq!(
+        errors("checksum(b: u8) = b;\n"),
+        ["the type `u8` is a prelude type of layer L7 [u8]"]
+    );
+    assert_eq!(
+        errors("status(rc: i32, flags: i8) = rc;\n"),
+        [
+            "the type `i32` is a prelude type of layer L7 [i32]",
+            "the type `i8` is a prelude type of layer L7 [i8]"
+        ]
+    );
+    assert_eq!(
+        errors("checksum(b: byte) = b;\n"),
+        ["the type `byte` is not defined [byte]"]
+    );
+    assert_eq!(
+        errors("checksum(b: u8 | byte) = b;\n"),
+        [
+            "the type `u8` is a prelude type of layer L7 [u8]",
+            "the type `byte` is not defined [byte]"
+        ]
+    );
+    // The aliases are no value words: `u8(300)` builds nothing, so it is told the layer of the
+    // type and not offered as a cast.
+    assert_eq!(
+        errors("f() = u8(300);\n"),
+        ["`u8` is a prelude type of layer L7 [u8]"]
+    );
+    // A program's own name `byte`, `u8` or `i32` is an ordinary binding.
+    assert_eq!(
+        errors("f(byte) = byte + 1;\ng(u8) = u8 * 2;\ni32 = 7;\nh() = i32;\n"),
+        Vec::<String>::new()
+    );
+}
+
 /// The names of the table that the resolver does not hold, each with the reason: a name the
 /// program declares, a port a program names in `main`'s header, a compiler mode, which is no name
 /// in source, and a word of L1 that a later layer extends to more types.
@@ -105,6 +145,10 @@ const UNLISTED: &[(&str, u32)] = &[("count", 3)];
 /// The lower-case names of the table that are types as well as words: the number algebras
 /// and float formats of L14, which are applied to build a value as `int(…)` is.
 const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
+
+/// The lower-case names of the table that are types and not words: the fixed-width aliases of L7
+/// (DESIGN.md sec:domains), which no program applies to a value.
+const ALIASES: &[&str] = &["i8", "i16", "i32", "i64", "u8"];
 
 /// The facets of the table's third column that a program defines, as examples of the rule
 /// "every facet a program defines": names of the program, not of the prelude.
@@ -223,10 +267,11 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
                 continue;
             }
             let upper = f.chars().next().is_some_and(char::is_uppercase);
-            if !upper {
+            let alias = ALIASES.contains(&f.as_str());
+            if !upper && !alias {
                 words.entry(f.clone()).or_insert(*layer);
             }
-            if upper || LOWER_TYPES.contains(&f.as_str()) {
+            if upper || alias || LOWER_TYPES.contains(&f.as_str()) {
                 types.entry(f.clone()).or_insert(*layer);
             }
         }

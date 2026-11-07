@@ -62,7 +62,7 @@ f(x) {
 }
 ```
 
-<!-- EXAMPLES.md:92 layer L10: ring L10, word L1 (shl), label none; section [3. Numbers] 1 -->
+<!-- EXAMPLES.md:92 layer L10: ring L10, word L7 (u8), label none; section [3. Numbers] 1 -->
 ```zed
 // [d4] sec:domains, sec:lexical
 x   = 3;
