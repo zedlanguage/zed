@@ -9,9 +9,11 @@
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Shared, Term, Value, World, on_stack};
+use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
+use zedc::store::interval::IntervalSet;
+use zedc::store::preimage::{Demand, Domains, LetIn, Lets, let_preimage, let_summary};
 use zedc::store::product::{Product, Scope, arms};
 
 use super::{arm, arms_of, ints};
@@ -394,4 +396,213 @@ fn nested_sums_of_one_input_scale() {
         let (scope, terms) = sizes(n, src);
         scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
     }
+}
+
+/// `ok` with the block `y0 = 0; x0 = 0; y_k = y_(k-1) + ramp_k; x_k = x_(k-1) + y_k` for
+/// `k = 1..=d`, `ramp_k = if n > k - 1 { n } else { 0 }`, then `if x_d == 1 { 1 } else { 2 }`.
+/// `x_d` is 0 for `n <= 0` and `d (d + 1) / 2 * n` at `n >= d`, so at `d >= 2` no `n` meets
+/// the test, and at `d = 1` only `n = 1`.
+fn let_chain(d: usize) -> String {
+    let mut s = String::from("y0 = 0; x0 = 0; ");
+    for k in 1..=d {
+        let j = k - 1;
+        s += &format!("y{k} = y{j} + (if n > {j} {{ n }} else {{ 0 }}); x{k} = x{j} + y{k}; ");
+    }
+    format!("ok(positional n: int) = {{ {s}if x{d} == 1 {{ 1 }} else {{ 2 }} }};")
+}
+
+/// As [`exact_on_window`], for the `if` that ends a block of `let`s: its arms are the last
+/// two, after those of the tests in the bound terms, and its own arms hold no test. Without
+/// `exact`, only that each arm holds every `n` that reaches it.
+fn block_on_window(src: &str, exact: bool) -> Result<(), String> {
+    const WINDOW: i64 = 30;
+    let (_, body, a) = arms_of(src);
+    let holds = outer_test_at(&body);
+    let [.., yes, no] = &a[..] else {
+        return Err(format!("{src}: fewer than two arms"));
+    };
+    assert!(
+        yes.outcome && !no.outcome,
+        "{src}: the last two arms are the final test's"
+    );
+    let (yes, no) = (yes.scope.get("n"), no.scope.get("n"));
+    let (yes, no) = (yes.ints(), no.ints());
+    for x in -WINDOW..=WINDOW {
+        let h = holds(x);
+        let (y, n) = (yes.contains(x), no.contains(x));
+        if (h && !y) || (!h && !n) || (exact && (y != h || n == h)) {
+            return Err(format!(
+                "{src}: at n = {x} the test gives {h}, the arms read [{yes}] and [{no}]"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn block_exact_on_window(src: &str) -> Result<(), String> {
+    block_on_window(src, true)
+}
+
+/// A name bound by a `let` carries the summary of its value, over the input it is computed
+/// from, into the tests that read it: `x == 1` after `y = n + 1; x = y + n` narrows `n` to
+/// 0, where before the name was read as an input of its own and `n` kept every integer
+/// (repair of PA-let-block).
+#[test]
+fn a_name_bound_by_let_carries_its_summary() {
+    let src = "ok(positional n: int) = { y = n + 1; x = y + n; if x == 1 { 1 } else { 2 } };";
+    assert_eq!(
+        readings(src, &["n"]),
+        ["true: n [0..=0]", "false: n [..=-1, 1..]"]
+    );
+    for src in [
+        src,
+        // A price with a fee above ten items.
+        "ok(positional n: int) = { base = 3 * n + 2; fee = if n > 10 { 5 } else { 0 }; \
+         total = base + fee; if total == 20 { 1 } else { 2 } };",
+        // An offset of a clamped index.
+        "ok(positional n: int) = { lo = if n < 0 { 0 } else { n }; hi = lo - 4; \
+         if hi >= 3 { 1 } else { 2 } };",
+        // A name bound again in a nested block, and the binding it shadows after it.
+        "ok(positional n: int) = { y = n + 1; z = { y = 2 * n; y + 3 }; w = z + y; \
+         if w == 10 { 1 } else { 2 } };",
+        // A difference of two names of one input.
+        "ok(positional n: int) = { a = 2 * n - 1; b = n + 4; d = a - b; \
+         if d < 0 { 1 } else { 2 } };",
+        // A literal binding and a name bound to a name.
+        "ok(positional n: int) = { k = 7; m = n; s = m + k; t = -s; \
+         if t != -9 { 1 } else { 2 } };",
+        // Tests inside the bound terms and of names bound inside an `if`.
+        "ok(positional n: int) = { s = if n > 2 { u = n - 2; u * 3 } else { 0 }; \
+         t = s + n; if t == 14 { 1 } else { 2 } };",
+    ] {
+        block_exact_on_window(src).unwrap();
+    }
+    // A bound term the summary does not cover: its name is an input of its own, and each
+    // arm keeps every `n` that reaches it.
+    for src in [
+        "ok(positional n: int) = { q = n * n; r = q + n; if r == 6 { 1 } else { 2 } };",
+        "ok(positional n: int) = { q = n div 3; r = q + n; if r == 9 { 1 } else { 2 } };",
+        "ok(positional n: int) = { q = n * n; r = q + n; s = r + 1; if s == 7 { 1 } else { 2 } };",
+    ] {
+        block_on_window(src, false).unwrap();
+    }
+}
+
+/// The chain of sums of ramps ([`let_chain`]) reads its answer exactly: only `n = 1` at
+/// `d = 1`, and no `n` from `d = 2`, where before the final test's true arm kept every `n`.
+#[test]
+fn a_block_of_sums_of_ramps_reads_no_n() {
+    let last = |d: usize| readings(&let_chain(d), &["n"]).split_off(2 * d);
+    assert_eq!(last(1), ["true: n [1..=1]", "false: n [..=0, 2..]"]);
+    for d in 2..=48 {
+        assert_eq!(last(d), ["true: n []", "false: n [..]"], "at d = {d}");
+        block_exact_on_window(&let_chain(d)).unwrap();
+    }
+}
+
+/// A random block of one to five `let`s, each a sum of one to three of an earlier name, a
+/// multiple of one, a multiple of `n`, an `if` of two lines of `n` and a literal, then a test
+/// of the last name against a literal.
+fn random_block(rng: &mut Rng) -> String {
+    let mut s = String::new();
+    let k = 1 + rng.below(5);
+    for i in 0..k {
+        let mut terms = Vec::new();
+        for _ in 0..1 + rng.below(3) {
+            let pick = rng.below(5);
+            terms.push(match pick {
+                0 if i > 0 => format!("v{}", rng.below(i)),
+                1 if i > 0 => format!("{} * v{}", rng.int(-2, 2), rng.below(i)),
+                2 => format!("{} * n", rng.int(-3, 3)),
+                3 => random_if(rng),
+                _ => format!("{}", rng.int(-9, 9)),
+            });
+        }
+        let op = if rng.below(2) == 0 { " + " } else { " - " };
+        s += &format!("v{i} = {}; ", terms.join(op));
+    }
+    let cmp = rng.pick(&["==", "!=", "<", ">="]);
+    format!(
+        "ok(positional n: int) = {{ {s}if v{} {cmp} {} {{ 1 }} else {{ 2 }} }};",
+        k - 1,
+        rng.int(-20, 20)
+    )
+}
+
+/// Random blocks of `let`s ([`random_block`]) read exactly on a window by the interpreter.
+#[test]
+fn random_blocks_of_lets_are_read_exactly() {
+    let mut rng = Rng::new(0x1e7_b10c);
+    for round in 0..400 {
+        let src = random_block(&mut rng);
+        if let Err(e) = block_exact_on_window(&src) {
+            panic!("round {round}: {e}");
+        }
+    }
+}
+
+/// A block of `d` bindings `y_k = y_(k-1) + ramp_k; x_k = x_(k-1) + y_k` and a test of `x_d`
+/// ([`let_chain`]) costs `O(d log d)`: each binding is summarized once, as the sum of the
+/// summaries it adds kept unsummed, and the test forms the sum of `x_d` once. Before, each
+/// test in a ramp reduced every name bound since the last reduction, `Θ(d²)` (32 to 256: 27.6
+/// times the instructions), and the final test read every `n` (repair of PA-let-block). A
+/// block of 512 overflows the stack of a run: the walk of the arms recurses on the bound terms
+/// (item PRE-stack).
+#[test]
+fn a_block_of_sums_of_ramps_scales() {
+    let (scope, terms) = sizes(32, let_chain);
+    scaling::check("the arms of a block of d sums of ramps", 32, |k| {
+        _ = arms(at(&terms, k), &scope)
+    });
+}
+
+/// The summary of `x_d` in the chain `x_0 = n; x_k = x_(k-1) + 1`, built one binding at a
+/// time ([`let_summary`]), and the inputs where `x_d == d + 5` read through it
+/// ([`let_preimage`]).
+fn deep_chain(d: usize) -> Domains {
+    let n: Arc<str> = "n".into();
+    let inputs: Domains = [(n.clone(), IntervalSet::top())].into();
+    let var = |x: &Arc<str>| Term::Var(x.clone());
+    let mut x: Arc<str> = "x0".into();
+    let mut summary = let_summary(&Term::Var(n), &inputs, Lets::new()).expect("a summary of n");
+    for k in 1..=d {
+        let next: Arc<str> = format!("x{k}").into();
+        let e = Term::Prim(Prim::Add, vec![var(&x), Term::Lit(Value::Int(1))]);
+        let lets = Lets::from([(
+            x.clone(),
+            LetIn {
+                summary,
+                ints: IntervalSet::top(),
+            },
+        )]);
+        summary = let_summary(&e, &inputs, lets).expect("a summary of a sum");
+        x = next;
+    }
+    let target = Term::Lit(Value::Int(d as i64 + 5));
+    let test = Term::Prim(Prim::Eq, vec![var(&x), target]);
+    let lets = Lets::from([(
+        x,
+        LetIn {
+            summary,
+            ints: IntervalSet::top(),
+        },
+    )]);
+    let_preimage(&test, &inputs, lets, &Demand::Bool(true))
+}
+
+/// A chain of summaries as deep as a block of 200 000 bindings is formed and dropped on
+/// explicit stacks, with no overflow, and reads `n = 5`.
+#[test]
+fn a_deep_chain_of_summaries_is_formed_and_dropped() {
+    let got = on_stack(|| deep_chain(200_000));
+    assert_eq!(got["n"].to_string(), "[5..=5]");
+}
+
+/// Forming the summary of `x_d` in a chain of `d` bindings costs `O(d)`: one sum per binding,
+/// each a constant added to a line.
+#[test]
+fn a_deep_chain_of_summaries_scales() {
+    scaling::check("forming a chain of d summaries", 10_000, |d| {
+        _ = deep_chain(d)
+    });
 }

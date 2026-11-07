@@ -2264,3 +2264,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 ## Entries from S22-case-cuts (`crates/zedc-preimage/src/preimage.rs`)
 
 - No new gap. `neighbor_cuts` merges two sorted lists by index; `lin_by_class` finds the cuts inside a piece with `slice::partition_point` (as `docs::check`) and tests ends with `Option::is_some_and` and `Option::is_none_or` (as `repair`).
+
+## Entries from PA-let-block (`crates/zedc-preimage/src/preimage.rs`, `product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A graph of `Arc` nodes, each with a `OnceLock` holding its sum once a test reads it, and an id from a global `AtomicU64` counter for the visited set | `LetPa`, `LetNode`, `LetPa::force`, `LetPa::sum`, `LET_IDS` | Lazy cells (gap 3), global state (gap 2), shared ownership | The summaries in a table of the walk keyed by binding order, each sum memoized in the table; the binding order is the id |
+| A `Drop` that empties a chain of nodes on an explicit stack with `Arc::try_unwrap`, so a deep chain does not overflow | `Drop for LetNode` | No finalizers; ownership | Not needed: the table is dropped whole with the walk |
+| A cache field whose `PartialEq` always says equal, so two scopes compare by their names and not by the summaries | `Summary` in `Binding` | Identity, mutation | The summary table outside the compared scope |
+| A cache rebuilt from the names with its own differing entries, so the persistent maps keep shared nodes and `diff` skips them by pointer | `Scope::seen_fresh` | Identity (gap 1): `imbl` diff compares node pointers | A version number per name, compared instead of the nodes |

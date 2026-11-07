@@ -66,7 +66,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
@@ -220,6 +221,83 @@ pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Optio
         let pa = tx.pa(root, ROOT)?;
         let r = tx.invert_pa(&pa, z)?;
         Some(tx.whole(&r))
+    })
+}
+
+/// The box over `inputs` of the points where `term` meets `demand`, read by the backward
+/// transfer alone, the names of `lets` read through their summaries ([`LetPa`]): a name of
+/// `lets` is no input, and the input its summary reads is one of `inputs`. A test of a name
+/// bound by a `let` (`x == 1` after `y = n + 1; x = y + n`) narrows the input the name is
+/// computed from (`n` to 0). The stages after the transfer (the split by remainders, the
+/// linear relation, enumeration) read the term itself, whose names of `lets` they would take
+/// for inputs, and are not run: the caller meets this box with the preimage of the term over
+/// the names themselves ([`preimage`]).
+pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) -> Domains {
+    on_stack(|| {
+        let mut tx = Tx::new();
+        tx.lets = lets;
+        let root = tx.terms.add(term);
+        let marks = tx.landmarks(inputs, demand);
+        tx.start(inputs, marks);
+        let r = tx.back(root, ROOT, demand);
+        tx.whole(&r)
+    })
+}
+
+/// The summary of the term `e` a `let` binds ([`LetPa`]), its free names in `inputs` ranging
+/// over their domains and those of `lets` read through their summaries; `None` when its value
+/// has no summary over one input. Its sums of names of `lets` are kept unsummed, so that each
+/// binding costs its own term and not the summaries it adds ([`LetPa`]).
+pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
+    on_stack(|| {
+        let mut parts: Vec<(Int, LetPa)> = Vec::new();
+        let mut rest: Vec<(Int, &Term)> = Vec::new();
+        let mut constant = Int::ZERO;
+        let mut todo: Vec<(Int, &Term)> = vec![(Int::ONE, e)];
+        while let Some((c, t)) = todo.pop() {
+            let lit = |t: &Term| match t {
+                Term::Lit(Value::Int(k)) => Some(Int::from(*k)),
+                _ => None,
+            };
+            match t {
+                Term::Prim(Prim::Add, a) if a.len() == 2 => {
+                    todo.extend([(c.clone(), &a[0]), (c, &a[1])]);
+                }
+                Term::Prim(Prim::Sub, a) if a.len() == 2 => {
+                    todo.extend([(c.clone(), &a[0]), (-&c, &a[1])]);
+                }
+                Term::Prim(Prim::Neg, a) if a.len() == 1 => todo.push((-&c, &a[0])),
+                Term::Prim(Prim::Mul, a) if a.len() == 2 && lit(&a[0]).is_some() => {
+                    todo.push((&c * &lit(&a[0])?, &a[1]));
+                }
+                Term::Prim(Prim::Mul, a) if a.len() == 2 && lit(&a[1]).is_some() => {
+                    todo.push((&c * &lit(&a[1])?, &a[0]));
+                }
+                Term::Lit(Value::Int(k)) => constant = &constant + &(&c * &Int::from(*k)),
+                Term::Var(x) if let Some(l) = lets.get(x) => parts.push((c, l.summary.clone())),
+                _ => rest.push((c, t)),
+            }
+        }
+        let mut sum = Pa::Const(constant);
+        if !rest.is_empty() {
+            let mut tx = Tx::new();
+            tx.lets = lets;
+            let roots: Vec<Tid> = rest.iter().map(|(_, t)| tx.terms.add(t)).collect();
+            let marks = tx.landmarks(inputs, &Demand::Bool(true));
+            tx.start(inputs, marks);
+            for ((c, _), root) in rest.iter().zip(roots) {
+                sum = sum.plus(&tx.pa(root, ROOT)?.affine(c.clone(), 0), 1)?;
+            }
+        }
+        let mut var = sum.var().cloned();
+        for (_, p) in &parts {
+            match (&var, &p.0.var) {
+                (Some(v), Some(w)) if v != w => return None,
+                (None, w) => var = w.clone(),
+                _ => {}
+            }
+        }
+        Some(LetPa::new(var, parts, sum))
     })
 }
 
@@ -2332,6 +2410,9 @@ struct Tx<'t> {
     powers: HashMap<At, Power>,
     run: Run,
     cx: Cx,
+    /// The names bound by `let`s around the term, read through their summaries
+    /// ([`let_preimage`]).
+    lets: Lets,
     /// What the body being read by [`Scoped::relation`] made, which [`Tx::drop_fresh`] drops.
     fresh: Option<Fresh>,
 }
@@ -2399,6 +2480,7 @@ impl<'t> Tx<'t> {
                 cut: usize::MAX,
             },
             fresh: None,
+            lets: Lets::new(),
         }
     }
 
@@ -3253,7 +3335,7 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.mentions(bt, be).await,
                 None => Some(self.with(|tx| {
                     let x = tx.name(x);
-                    tx.cx.inputs.contains_key(x)
+                    tx.cx.inputs.contains_key(x) || tx.lets.contains_key(x)
                 })),
             },
             Node::Let(n, e, b) => {
@@ -3614,9 +3696,13 @@ impl<'m, 't> Walk<'m, 't> {
             },
             Node::Var(x) => match self.lookup(env, x) {
                 Some((bt, be)) => self.fwd(bt, be).await,
-                None => self.with(|tx| match tx.cx.inputs.get(tx.name(x)) {
-                    Some(dom) => Fwd::int((**dom).clone()),
-                    None => Fwd::top(),
+                None => self.with(|tx| {
+                    let x = tx.name(x);
+                    match (tx.cx.inputs.get(x), tx.lets.get(x)) {
+                        (Some(dom), _) => Fwd::int((**dom).clone()),
+                        (None, Some(l)) => Fwd::int(l.ints.clone()),
+                        (None, None) => Fwd::top(),
+                    }
                 }),
             },
             Node::Let(n, e, b) => {
@@ -3757,7 +3843,13 @@ impl<'m, 't> Walk<'m, 't> {
         if let Node::Var(x) = self.node(t) {
             return match self.lookup(env, x) {
                 Some((bt, be)) => self.clip(bt, be).await,
-                None => self.with(|tx| tx.cx.inputs.get(tx.name(x)).map(|dom| dom.hull())),
+                None => self.with(|tx| {
+                    let x = tx.name(x);
+                    match tx.cx.inputs.get(x) {
+                        Some(dom) => Some(dom.hull()),
+                        None => tx.lets.get(x).map(|l| l.ints.hull()),
+                    }
+                }),
             };
         }
         // As in [`Walk::back_in`], a term that reads no input is decided by running it.
@@ -3877,6 +3969,16 @@ impl<'m, 't> Walk<'m, 't> {
                             r
                         }
                         (Some(_), Demand::Bool(_)) => Res::none(),
+                        // A name bound by a `let` outside the term: the inputs where its
+                        // summary meets the demand.
+                        (None, d) if let Some(l) = tx.lets.get(x) => match d {
+                            Demand::Ints(z) => l
+                                .summary
+                                .force()
+                                .and_then(|pa| tx.invert_pa(&pa, z))
+                                .unwrap_or_else(Res::unknown),
+                            Demand::Bool(_) => Res::none(),
+                        },
                         (None, _) => {
                             let kind = StopKind::Foreign(x.clone());
                             tx.stop(kind, t)
@@ -4411,11 +4513,16 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.pa(bt, be).await,
                 None => self.with(|tx| {
                     let name = tx.name(x);
-                    tx.cx.inputs.contains_key(name).then(|| Pa::Linear {
-                        var: name.clone(),
-                        a: Int::ONE,
-                        b: Int::ZERO,
-                    })
+                    if tx.cx.inputs.contains_key(name) {
+                        return Some(Pa::Linear {
+                            var: name.clone(),
+                            a: Int::ONE,
+                            b: Int::ZERO,
+                        });
+                    }
+                    // A name bound by a `let` outside the term, summarized once
+                    // ([`LetPa::force`]).
+                    tx.lets.get(name)?.summary.force()
                 }),
             },
             Node::Let(n, e, b) => {
@@ -5716,6 +5823,156 @@ impl Pa {
     }
 }
 
+/// The names bound by `let`s around a term that the transfer reads through their summaries,
+/// each with the integers its product holds where the term is read ([`let_preimage`]).
+pub type Lets = HashMap<Arc<str>, LetIn>;
+
+/// A name of [`Lets`]: its summary and the integers its product holds.
+#[derive(Clone, Debug)]
+pub struct LetIn {
+    /// The summary of the value bound.
+    pub summary: LetPa,
+    /// The integers the name's product holds.
+    pub ints: IntervalSet,
+}
+
+/// The piecewise-affine summary ([`Pa`]) of the value a `let` binds, over the one input it
+/// reads, kept as the sum `Σ c_i * s_i + rest` of the summaries `s_i` of the bound names it
+/// adds and the summary of the rest of its term ([`let_summary`]). Each binding is summarized
+/// once, in its own term's size, when it is bound, and the sum is formed when a test reads
+/// the name ([`LetPa::force`]), so that a block of bindings each adding the one before
+/// (`x_k = x_(k-1) + y_k`) costs no more than the summaries a test reads.
+///
+/// The summaries form a graph without cycles: a binding's parts were bound before it. Two
+/// summaries are equal when they are one binding's.
+#[derive(Clone)]
+pub struct LetPa(Arc<LetNode>);
+
+struct LetNode {
+    /// A number no other summary has, for the visited set of [`LetPa::sum`].
+    id: u64,
+    /// The input the summary reads, if any.
+    var: Option<Arc<str>>,
+    parts: Vec<(Int, LetPa)>,
+    rest: Pa,
+    /// The sum, once a test has read it.
+    forced: OnceLock<Option<Pa>>,
+}
+
+static LET_IDS: AtomicU64 = AtomicU64::new(0);
+
+impl LetPa {
+    fn new(var: Option<Arc<str>>, parts: Vec<(Int, LetPa)>, rest: Pa) -> LetPa {
+        LetPa(Arc::new(LetNode {
+            id: LET_IDS.fetch_add(1, Ordering::Relaxed),
+            var,
+            parts,
+            rest,
+            forced: OnceLock::new(),
+        }))
+    }
+
+    /// The input the summary reads, if any.
+    pub fn var(&self) -> Option<&Arc<str>> {
+        self.0.var.as_ref()
+    }
+
+    /// The summary as one [`Pa`], formed the first time it is read and kept: `None` when a
+    /// part has no summary over the input's domain.
+    fn force(&self) -> Option<Pa> {
+        self.0.forced.get_or_init(|| self.sum()).clone()
+    }
+
+    /// The summary's parts summed. Each node of the graph below it gets the sum of the
+    /// coefficients of its paths from this one, in topological order (a node after every node
+    /// that adds it), and the sum adds each node's rest times its coefficient: so a node shared
+    /// by many paths is added once. A node already formed by an earlier test is added as its
+    /// sum and not entered. A rest whose coefficient comes to 0 is still added, at 0, since
+    /// where it has no value the sum has none.
+    ///
+    /// Cost: the nodes and edges reached, and one [`Pa::plus`] per node, each
+    /// `O(m log(n / m + 1))` for a rest of `m` pieces added to a sum of `n` ([`add_treaps`]):
+    /// `O(d log d)` for a chain of `d` bindings that each add a summary of one test.
+    ///
+    /// Complexity tradeoff: a test reading the name forms its whole summary, as many pieces as
+    /// it has, so a block of `d` bindings `x_k = x_(k-1) + y_k`, `y_k = y_(k-1) + ramp_k`, with
+    /// a test of every `x_k`, forms `d` summaries of up to `d` pieces, `Θ(d²)`. Why: each
+    /// summary is inverted piece by piece ([`invert_treap`]), and the sum of two summaries of
+    /// `k` pieces each is a summary of `O(k)` pieces that shares no node with either. Trigger:
+    /// tests of many names of a chain of sums of piecewise summaries. Test:
+    /// `l01_39_reduced_product::follow::a_block_of_sums_of_ramps_scales`. COMPLEXITY.md row
+    /// PA-let-block. A complete solution would invert a sum without forming it, from bounds of
+    /// the parts on each range of the input.
+    fn sum(&self) -> Option<Pa> {
+        // Postorder of the graph, on an explicit stack: a node is entered once (`entered`)
+        // and listed after every node it adds.
+        let mut order: Vec<&LetNode> = Vec::new();
+        let mut entered: HashSet<u64> = HashSet::new();
+        let mut stack: Vec<(&LetNode, bool)> = vec![(&*self.0, false)];
+        while let Some((n, done)) = stack.pop() {
+            if done {
+                order.push(n);
+                continue;
+            }
+            if !entered.insert(n.id) {
+                continue;
+            }
+            stack.push((n, true));
+            if n.id == self.0.id || n.forced.get().is_none() {
+                for (_, p) in &n.parts {
+                    if !entered.contains(&p.0.id) {
+                        stack.push((&*p.0, false));
+                    }
+                }
+            }
+        }
+        let mut weight: HashMap<u64, Int> = HashMap::from([(self.0.id, Int::ONE)]);
+        let mut sum = Pa::Const(Int::ZERO);
+        for n in order.into_iter().rev() {
+            let w = weight.remove(&n.id).unwrap_or(Int::ZERO);
+            if n.id != self.0.id
+                && let Some(formed) = n.forced.get()
+            {
+                sum = sum.plus(&formed.as_ref()?.affine(w, 0), 1)?;
+                continue;
+            }
+            sum = sum.plus(&n.rest.affine(w.clone(), 0), 1)?;
+            for (c, p) in &n.parts {
+                let e = weight.entry(p.0.id).or_insert(Int::ZERO);
+                *e = &*e + &(&w * c);
+            }
+        }
+        Some(sum)
+    }
+}
+
+/// Dropped on an explicit stack: a chain of `d` bindings is a chain of `d` nodes.
+impl Drop for LetNode {
+    fn drop(&mut self) {
+        let mut stack: Vec<LetPa> = std::mem::take(&mut self.parts)
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect();
+        while let Some(p) = stack.pop() {
+            if let Ok(mut n) = Arc::try_unwrap(p.0) {
+                stack.extend(std::mem::take(&mut n.parts).into_iter().map(|(_, p)| p));
+            }
+        }
+    }
+}
+
+impl PartialEq for LetPa {
+    fn eq(&self, other: &LetPa) -> bool {
+        self.0.id == other.0.id
+    }
+}
+
+impl fmt::Debug for LetPa {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LetPa({:?}, {} parts)", self.0.var, self.0.parts.len())
+    }
+}
+
 /// The summaries ([`Pa`]) of one term in each of the `n` classes of remainders of a split
 /// ([`Walk::by_class`]), as a persistent tree over the class numbers `0..n`: a node covers a
 /// range of classes, halved at its middle, and either holds one summary for all of them or
@@ -6095,7 +6352,7 @@ fn same_pa(u: &Pa, v: &Pa) -> bool {
         (Pa::Piecewise { var, root }, Pa::Piecewise { var: w, root: r }) => {
             var == w
                 && match (root, r) {
-                    (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                    (Some(x), Some(y)) => Arc::ptr_eq(x, y),
                     (None, None) => true,
                     _ => false,
                 }
@@ -6157,7 +6414,7 @@ fn cls_splice(
 /// A persistent treap of the pieces of a [`Pa`], in the order of the input, each node
 /// shared by every summary built from it. Splitting, joining and adding a line to every
 /// value, or scaling every value ([`Tag`]), each take `O(log n)` expected time.
-type Tree = Option<Rc<PaNode>>;
+type Tree = Option<Arc<PaNode>>;
 
 /// One piece of a [`Pa`] and the subtree it roots.
 #[derive(Clone)]
@@ -6495,7 +6752,7 @@ fn widen(vals: &mut (Val, Val), o: &(Val, Val)) {
 
 /// The node for the piece `lo..=hi` with value `a * x + b` over two subtrees with no tag
 /// above them.
-fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Rc<PaNode> {
+fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Arc<PaNode> {
     let (u, v) = (value_at(&lo, &a, &b), value_at(&hi, &a, &b));
     let mut vals = if u <= v { (u, v) } else { (v, u) };
     let mut span = (lo.clone(), hi.clone());
@@ -6515,7 +6772,7 @@ fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Rc<Pa
         len += r.len;
     }
     let prio = prio_of(&lo, &hi);
-    Rc::new(PaNode {
+    Arc::new(PaNode {
         lo,
         hi,
         a,
@@ -6532,12 +6789,12 @@ fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Rc<Pa
 }
 
 /// The subtree with every value mapped by `f`, in `O(1)` steps on its numbers.
-fn apply_tag(node: &Rc<PaNode>, f: &Tag) -> Rc<PaNode> {
+fn apply_tag(node: &Arc<PaNode>, f: &Tag) -> Arc<PaNode> {
     if *f == Tag::ID {
         return node.clone();
     }
     let (a, b) = f.line(&node.a, &node.b);
-    Rc::new(PaNode {
+    Arc::new(PaNode {
         lo: node.lo.clone(),
         hi: node.hi.clone(),
         a,

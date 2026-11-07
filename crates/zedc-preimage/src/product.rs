@@ -46,7 +46,10 @@ use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
-use super::preimage::{Classes, Demand, Domains, follow_own, preimage, relations, witness};
+use super::preimage::{
+    Classes, Demand, Domains, LetIn, LetPa, Lets, follow_own, let_preimage, let_summary, preimage,
+    relations, witness,
+};
 use zedc_int::int::Int;
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
@@ -456,6 +459,27 @@ struct Binding {
     order: u64,
     /// The lambda the name is bound to, when it is one.
     function: Option<Shared>,
+    /// The summary of the integer the name is bound to, over one input ([`Scope::summary`]).
+    summary: Summary,
+}
+
+/// The summary of the value of a `let` ([`LetPa`]), with the order of the binding of the input
+/// it reads and that input's integers when it was made: it holds while the input is that
+/// binding and its integers lie within these ([`Scope::summary`]). A cache, equal in every
+/// binding, as [`Reduced`] is.
+#[derive(Clone, Default)]
+struct Summary(Option<(LetPa, Option<u64>, IntervalSet)>);
+
+impl PartialEq for Summary {
+    fn eq(&self, _: &Summary) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Summary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
 }
 
 /// The names as a reduction left them: a cache, equal in every scope, so that two scopes are
@@ -848,11 +872,14 @@ impl Scope {
         let binding = Binding {
             order: self.clock,
             function: matches!(**e, Term::Lam(..)).then(|| e.clone()),
+            summary: self.summarize(e, &p),
         };
         self.clock += 1;
         if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
+            let before = self.names.clone();
             self.names.insert(x.clone(), p);
             self.bindings.insert(x.clone(), binding);
+            self.seen_fresh(x, &before);
             return Unbind::Fresh(x.clone());
         }
         let saved = Unbind::Saved(Box::new(self.clone()));
@@ -904,11 +931,124 @@ impl Scope {
     pub fn unbind(&mut self, u: Unbind) {
         match u {
             Unbind::Fresh(x) => {
+                let before = self.names.clone();
                 self.names.remove(&x);
                 self.bindings.remove(&x);
+                self.seen_fresh(&x, &before);
             }
             Unbind::Saved(s) => *self = *s,
         }
+    }
+
+    /// Tells the caches of the last reduction, projection and enumeration that the fresh name
+    /// `x` came into scope or left it, the names having been `before`. A fresh name is
+    /// mentioned by no conjunct and no written constraint, and [`Scope::bind`] reduced its
+    /// product to its fixed point, so a reduction would only have synchronized its bounds: the
+    /// caches take it as reduced, and the next reduction costs the names that changed since,
+    /// not every name bound since the last reduction of this scope. A walk reduces the scope
+    /// of each test (a clone), never the scope it binds in, so without this a block of `d`
+    /// bindings with a test in each cost `Θ(d²)` (repair of PA-let-block).
+    ///
+    /// Each cache is rebuilt from the names as they now are, with its own entries where it
+    /// differed from `before`: a cache that shares the names' persistent nodes is compared
+    /// with them in the entries that differ ([`changed`]), and one that took `x` by its own
+    /// insertion would share none of them after a few bindings. The cost is the entries that
+    /// differ, each `O(log n)`.
+    fn seen_fresh(&mut self, x: &Arc<str>, before: &imbl::OrdMap<Arc<str>, Product>) {
+        let now = &self.names;
+        let rebase = |cache: &mut imbl::OrdMap<Arc<str>, Product>| {
+            if cache.ptr_eq(before) {
+                *cache = now.clone();
+                return;
+            }
+            let mut out = now.clone();
+            for d in cache.diff(before) {
+                match d {
+                    DiffItem::Add(n, _) if n != x => _ = out.remove(n),
+                    DiffItem::Remove(n, p) | DiffItem::Update { old: (n, p), .. } if n != x => {
+                        _ = out.insert(n.clone(), p.clone())
+                    }
+                    _ => {}
+                }
+            }
+            *cache = out;
+        };
+        rebase(&mut self.reduced.0);
+        if let Some((names, _)) = &mut self.seen.projection {
+            rebase(names);
+        }
+        if let Some((names, _, _)) = &mut self.seen.enumeration {
+            rebase(names);
+        }
+        self.sync_bounds([x]);
+    }
+
+    /// The summary of `e`, an integer bound to a name of product `p` ([`let_summary`]), over
+    /// the names it reads: those bound by `let`s with a summary that holds are read through it,
+    /// and the others are inputs. Costs `e`'s size and its names' domains, not the summaries
+    /// of the names it reads.
+    fn summarize(&self, e: &Term, p: &Product) -> Summary {
+        if self.bottom || !p.ty.element.subtype(&Type::int()) {
+            return Summary::default();
+        }
+        let (inputs, lets) = self.inputs_and_lets(&stage::free(e));
+        let Some(s) = let_summary(e, &inputs, lets) else {
+            return Summary::default();
+        };
+        let held = s.var().map_or(Some((None, IntervalSet::empty())), |v| {
+            let dom = inputs.get(v)?.clone();
+            Some((self.bindings.get(v).map(|b| b.order), dom))
+        });
+        match held {
+            Some((order, dom)) => Summary(Some((s, order, dom))),
+            None => Summary::default(),
+        }
+    }
+
+    /// The summary of the integer `x` is bound to, when it has one and it holds: the input
+    /// it reads is still the binding it was made over, and that input's integers lie within
+    /// those it was made over (a scope's integers only narrow while a name is bound, but a
+    /// name bound again is another binding).
+    fn summary(&self, x: &Arc<str>) -> Option<LetPa> {
+        let (s, order, dom) = self.bindings.get(x)?.summary.0.as_ref()?;
+        if let Some(v) = s.var() {
+            let now = self.names.get(v)?;
+            if self.bindings.get(v).map(|b| b.order) != *order || !now.ints().is_subset(dom) {
+                return None;
+            }
+        }
+        Some(s.clone())
+    }
+
+    /// The integer names of `free`, as inputs over their integers, or, when bound by a `let`
+    /// with a summary that holds ([`Scope::summary`]), as names read through it, the input it
+    /// reads then an input.
+    fn inputs_and_lets(&self, free: &BTreeSet<Arc<str>>) -> (Domains, Lets) {
+        let int = Type::int();
+        let mut inputs = Domains::new();
+        let mut lets = Lets::new();
+        for n in free {
+            let p = self.get(n);
+            if !self.names.contains_key(n) || !p.ty.element.subtype(&int) {
+                continue;
+            }
+            match self.summary(n) {
+                Some(summary) => {
+                    if let Some(v) = summary.var() {
+                        inputs.insert(v.clone(), self.get(v).ints().clone());
+                    }
+                    lets.insert(
+                        n.clone(),
+                        LetIn {
+                            summary,
+                            ints: p.ints().clone(),
+                        },
+                    );
+                }
+                None => _ = inputs.insert(n.clone(), p.ints().clone()),
+            }
+        }
+        (inputs, lets)
     }
 
     /// Records `t` as a written constraint that holds.
@@ -1676,7 +1816,15 @@ impl Scope {
                     cause,
                 });
             }
-            for (n, d) in &pre.domains {
+            // The names bound by `let`s read through their summaries: the test narrows the
+            // inputs they are computed from as well as the names.
+            let (over, lets) = self.inputs_and_lets(&free);
+            let through = if lets.is_empty() {
+                Domains::new()
+            } else {
+                let_preimage(t, &over, lets, &Demand::Bool(outcome))
+            };
+            for (n, d) in pre.domains.iter().chain(&through) {
                 if let Some(p) = self.names.get_mut(n) {
                     if convex {
                         p.meet_ints(d.hull(), prem);
