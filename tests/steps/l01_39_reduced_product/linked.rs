@@ -227,14 +227,18 @@ pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<
     }
     let owner = |g: &Arc<Formula>| shaped.keys().find(|x| names(g).contains(*x));
     let alone = |g: &Arc<Formula>, h: &Arc<str>| g.atoms().into_iter().eq([Atom::Sym(h.clone())]);
-    let clean = |h: &Arc<str>| {
-        at(h)
-            .iter()
-            .all(|g| owner(g).is_some_and(|x| x != h) || alone(g, h))
+    // A hub admits a leaf when each conjunct at it is another leaf's, of it alone, or of the
+    // leaf's hubs alone.
+    let admits = |h: &Arc<str>, hubs: &BTreeSet<Arc<str>>| {
+        at(h).iter().all(|g| {
+            owner(g).is_some_and(|x| x != h)
+                || alone(g, h)
+                || names(g).iter().all(|n| hubs.contains(n))
+        })
     };
     shaped
         .iter()
-        .filter(|(_, hubs)| hubs.len() == 1 || hubs.iter().all(&clean))
+        .filter(|(_, hubs)| hubs.len() == 1 || hubs.iter().all(|h| admits(h, hubs)))
         .map(|(x, _)| (x.clone(), at(x).into_iter().collect()))
         .collect()
 }
@@ -338,6 +342,8 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
     // How many states had a star of two hubs or more, and a star of two conjuncts or more.
     let mut starred = 0;
     let mut wide = 0;
+    // How many states had a star of two hubs that a conjunct of no leaf relates.
+    let mut related = 0;
     for case in 0..200 {
         let mut c = Conjuncts::default();
         let mut log: Vec<String> = Vec::new();
@@ -411,6 +417,18 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
                     > 2
             }));
             wide += usize::from(stars.values().any(|gs| gs.len() > 1));
+            related += usize::from(stars.iter().any(|(x, gs)| {
+                let hubs: BTreeSet<Arc<str>> = gs
+                    .iter()
+                    .flat_map(|g| names(g))
+                    .filter(|n| n != x)
+                    .collect();
+                hubs.len() > 1
+                    && c.set().iter().any(|g| {
+                        let ns = names(g);
+                        ns.len() > 1 && ns.iter().all(|n| hubs.contains(n))
+                    })
+            }));
             for (x, gs) in &stars {
                 let b = c
                     .star(x)
@@ -450,6 +468,10 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
     assert!(mixed > 500, "{mixed} states with mixed blocks");
     assert!(starred > 75, "{starred} states with a star of two hubs");
     assert!(wide > 40, "{wide} states with a star of two conjuncts");
+    assert!(
+        related > 100,
+        "{related} states with a star of related hubs"
+    );
 }
 
 /// As a join of two arms does: many conjuncts go at once, often most of a block, and the
@@ -799,8 +821,8 @@ fn a_ladder_grown_by_k_if_statements_is_quadratic() {
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
 /// `a + f <= 1` is the star of `f` while `a` has more conjuncts than `f`, and a swap of the
 /// other conjunct at `a` for `f >= a` leaves each of them two, so that neither is a leaf.
-/// Two hubs need both clean: with `b` beside `a`, `a + b + f <= 1` is no star while `a` has
-/// a conjunct no star holds.
+/// Two hubs need both to admit the leaf: with `b` beside `a`, `a + b + f <= 1` is no star while
+/// `a` has a conjunct no star holds that mentions `d`, no hub of `f`.
 #[test]
 fn a_star_goes_when_one_step_moves_its_counts() {
     let s = |x: &str| Lin::atom(Atom::Sym(x.into()));

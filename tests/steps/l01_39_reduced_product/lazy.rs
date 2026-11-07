@@ -52,15 +52,21 @@ fn sum3(a: &str, b: &str, c: &str, k: i64, sum: bool) -> Term {
 
 /// A random test of nesting `depth` at most, most often of the shape of a star of two hubs:
 /// `ai - n - m >= c` or `ai - n >= c`, a lower bound on a leaf or a bound on a hub; now and
-/// then one that undoes such a star: `n + m - ai >= c`, an upper bound on a leaf, or a test
-/// of a hub against the other.
+/// then one that undoes such a star: `n + m - ai >= c` or an upper bound on a leaf; or a test
+/// among the hubs, `n - m >= c` or `n + m >= c`, which a star of the two hubs is projected
+/// with.
 fn wide(rng: &mut Rng, depth: usize) -> Term {
     let (leaf, hub) = (rng.pick(&LEAVES), rng.pick(&HUBS));
     match rng.below(if depth == 0 { 12 } else { 14 }) {
         0..4 => sum3(leaf, "n", "m", rng.int(-3, 3), false),
         4 => sum3(leaf, "n", "m", rng.int(-3, 3), true),
         5 | 6 => diff_ge(leaf, hub, rng.int(-3, 3)),
-        7 => diff_ge(hub, if hub == "n" { "m" } else { "n" }, rng.int(-3, 3)),
+        7 if rng.below(2) == 0 => diff_ge(hub, if hub == "n" { "m" } else { "n" }, rng.int(-3, 3)),
+        7 => prim(
+            Prim::Ge,
+            prim(Prim::Add, var("n"), var("m")),
+            int(rng.int(-3, 3)),
+        ),
         8 => prim(Prim::Ge, var(leaf), int(rng.int(-15, 15))),
         9 => prim(Prim::Le, var(leaf), int(rng.int(-15, 15))),
         10 | 11 => prim(
@@ -91,11 +97,12 @@ fn same(eager: &Scope, lazy: &Scope, all: &[Arc<str>], trace: &[String]) -> usiz
 
 /// Runs `seeds` random sequences of tests drawn by `test`, joins and bindings from `start`,
 /// eagerly and lazily, and checks them the same after each step. Returns the number of names
-/// the lazy scope held unsettled and the number of states with a star of two hubs.
-fn run(start: &Scope, seeds: u64, test: fn(&mut Rng, usize) -> Term) -> (usize, usize) {
+/// the lazy scope held unsettled, the number of states with a star of two hubs, and of those
+/// the number with a conjunct of the two hubs.
+fn run(start: &Scope, seeds: u64, test: fn(&mut Rng, usize) -> Term) -> (usize, usize, usize) {
     let p = Premises::new();
     let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
-    let (mut stale, mut two) = (0, 0);
+    let (mut stale, mut two, mut related) = (0, 0, 0);
     for seed in 0..seeds {
         let mut rng = Rng::new(seed);
         let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
@@ -131,25 +138,33 @@ fn run(start: &Scope, seeds: u64, test: fn(&mut Rng, usize) -> Term) -> (usize, 
                 }
             }
             stale += same(&eager, &lazy, &all, &trace);
-            two += usize::from(stars_by_definition(&lazy.relation).values().any(|gs| {
+            let multi = stars_by_definition(&lazy.relation).values().any(|gs| {
                 gs.iter()
                     .flat_map(|g| mentioned(g))
                     .collect::<BTreeSet<_>>()
                     .len()
                     > 2
-            }));
+            });
+            two += usize::from(multi);
+            related += usize::from(
+                multi
+                    && lazy.relation.set().iter().any(|g| {
+                        let ns = mentioned(g);
+                        ns.len() == 2 && ns.iter().all(|n| &**n == "n" || &**n == "m")
+                    }),
+            );
             if eager.bottom {
                 break;
             }
         }
     }
-    (stale, two)
+    (stale, two, related)
 }
 
 #[test]
 fn a_lazy_scope_settles_each_name_to_the_eager_product() {
     let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
-    let (stale, _) = run(&start, 300, test);
+    let (stale, _, _) = run(&start, 300, test);
     // The lazy scope did leave names unsettled, so the comparison is not of two eager scopes.
     assert!(stale > 0, "the lazy scope settled every name at once");
 }
@@ -168,8 +183,12 @@ fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() 
         .reduce(and)
         .expect("two hubs");
     let start = ints(&all).assume(&hubs, true, &Premises::new());
-    let (stale, two) = run(&start, 100, wide);
-    println!("{stale} unsettled names, {two} states with a star of two hubs");
+    let (stale, two, related) = run(&start, 100, wide);
+    println!(
+        "{stale} unsettled names, {two} states with a star of two hubs, {related} with a \
+         conjunct of the two"
+    );
     assert!(stale > 0, "the lazy scope settled every name at once");
     assert!(two > 0, "no state held a star of two hubs");
+    assert!(related > 0, "no state held a star of two related hubs");
 }

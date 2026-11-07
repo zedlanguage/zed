@@ -108,6 +108,9 @@ pub struct Conjuncts {
     index: Box<StarIndex>,
 }
 
+/// Two names, in order.
+type NamePair = (Arc<str>, Arc<str>);
+
 /// The stars of a conjunction ([`Conjuncts::star`]) and the indexes that keep them current.
 #[derive(Clone, Debug, Default)]
 struct StarIndex {
@@ -119,14 +122,23 @@ struct StarIndex {
     witnessed: Uses<(usize, Arc<str>)>,
     /// The names of `shapes` of each hub, by their own counts.
     shaped: Uses<(usize, Arc<str>)>,
-    /// The names of `shapes` of two hubs or more, at each hub.
-    multi: Uses<Arc<str>>,
     /// The conjuncts at each name that a name of `shapes` other than it holds.
     owned: Uses<Arc<Formula>>,
     /// The conjuncts at each name of that name alone ([`alone`]).
     solo: Uses<Arc<Formula>>,
-    /// The names every conjunct at which is in `owned` or `solo`, as last found.
-    clean: OrdSet<Arc<str>>,
+    /// The conjuncts at each name in neither `owned` nor `solo`, as last found.
+    free: Uses<Arc<Formula>>,
+    /// The other names each hub's `free` conjuncts mention, each with how many mention it;
+    /// kept only at the hubs of `level`, so that a conjunct of many names costs no more than
+    /// its names unless they are such hubs.
+    near: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
+    /// Of each hub and name of `shapes` of two hubs or more at it, how many of the hub's
+    /// `near` names are the name's hubs: the hub admits the leaf when that is all of them.
+    hits: OrdMap<NamePair, usize>,
+    /// The names of `shapes` of two hubs or more at each hub, by their `hits` there.
+    level: Uses<(usize, Arc<str>)>,
+    /// The names of `shapes` of two hubs or more of each ordered pair of their hubs.
+    pair: OrdMap<NamePair, OrdSet<Arc<str>>>,
     /// The stars ([`Conjuncts::star`]): each leaf's block.
     stars: OrdMap<Arc<str>, BlockId>,
     /// The conjuncts of the stars at each hub.
@@ -175,8 +187,9 @@ struct Why {
 struct Pending {
     /// The names whose shape may have changed.
     eval: BTreeSet<Arc<str>>,
-    /// The names whose conjuncts or owned conjuncts changed: whether they are clean may have.
-    touched: BTreeSet<Arc<str>>,
+    /// The conjuncts whose use or ownership changed: whether each is free at its names may
+    /// have.
+    free: BTreeSet<Arc<Formula>>,
     /// The conjuncts added, not yet in a block, each with the one it takes the place of.
     placed: Vec<(Arc<Formula>, Option<Arc<Formula>>)>,
 }
@@ -276,21 +289,58 @@ impl Conjuncts {
     /// `a` is of one sign at every conjunct, so is each hub's coefficient, each hub is
     /// mentioned by more conjuncts than `x`, and where a conjunct mentions two hubs or more,
     /// `x` is unbounded on the side away from it ([`Conjuncts::bound`]). The leaf's conjuncts
-    /// are a star when it has one hub or each of its hubs is clean: every conjunct at the hub
-    /// is a leaf's or of the hub alone (`alone`), such as a bound on it. A conjunct is the
+    /// are a star when it has one hub or each of its hubs admits it: every conjunct at the hub
+    /// is a leaf's, or of the hub alone (`alone`), such as a bound on it, or mentions only
+    /// hubs of `x`, such as `n >= m` for the hubs of `x >= n && x >= m`. A conjunct is the
     /// leaf's of one name at most, since its hubs have more conjuncts than it.
     ///
     /// A star bounds its leaf on one side only, the side its hubs' least or greatest values
     /// bound it from, and a conjunct of two hubs or more holds for a large enough `x`: the
     /// star's projection onto its hubs is a bound on each hub alone, and so is the projection
-    /// of the leaves' conjuncts at a clean hub, and its other conjuncts hold of it alone. The
-    /// hubs of a star of clean hubs then range over a box, whose corners their products hold,
-    /// and a star of one hub lies on no cycle, so in both the star's projection onto `x` is
-    /// the projection of the whole relation, and a move of a hub changes `x` alone
-    /// and cuts it to a half-line that holds its greatest or least member, which empties
-    /// nothing. A star is a block of its own outside the forest ([`Blocks::detach`]).
+    /// of the leaves' conjuncts at a hub, and its other conjuncts hold of it alone or of the
+    /// leaf's hubs. The hubs of a star of more than one then range over their products and
+    /// the conjuncts among them ([`Conjuncts::core`]), with which the star is projected, and a
+    /// star of one hub lies on no cycle, so in both the projection onto `x` is the projection
+    /// of the whole relation, and a move of a hub changes `x` alone and cuts it to a
+    /// half-line that holds its greatest or least member, which empties nothing. A star is a
+    /// block of its own outside the forest ([`Blocks::detach`]).
     pub fn star(&self, x: &str) -> Option<BlockId> {
         self.index.stars.get(x).copied()
+    }
+
+    /// The conjuncts block `b` is projected with: its own, and when it is a star of two hubs
+    /// or more, the conjuncts among its hubs, which are free at them ([`Conjuncts::star`]).
+    /// In time near their number.
+    pub fn core(&self, b: BlockId) -> Vec<Arc<Formula>> {
+        let mut gs: BTreeSet<Arc<Formula>> = self.blocks.members(b).cloned().collect();
+        if self.blocks.is_apart(b) {
+            let ns: BTreeSet<Arc<str>> = gs.iter().flat_map(|g| names(g)).collect();
+            // The leaf's conjuncts are free at it; a star of one hub has two names.
+            if ns.len() > 2 {
+                for n in &ns {
+                    gs.extend(self.index.free.of(n).cloned());
+                }
+            }
+        }
+        gs.into_iter().collect()
+    }
+
+    /// The blocks of the stars of two hubs or more whose projection reads `g` as a conjunct
+    /// among their hubs ([`Conjuncts::core`]): those at each name `g` is free at. In time near
+    /// the stars at those names.
+    pub fn cored(&self, g: &Arc<Formula>) -> BTreeSet<BlockId> {
+        let mut out = BTreeSet::new();
+        for n in names(g) {
+            if !self.index.free.has(&n, g) {
+                continue;
+            }
+            for (_, x) in self.index.level.0.get(&n).into_iter().flatten() {
+                if let Some(&b) = self.index.stars.get(x) {
+                    out.insert(b);
+                }
+            }
+        }
+        out
     }
 
     /// The leaf and block of each star ([`Conjuncts::star`]).
@@ -464,21 +514,38 @@ impl Conjuncts {
         })
     }
 
-    /// Takes `x`'s shape or `Why` out of the indexes; the names whose owned conjuncts change
-    /// are touched. Every name to be found again is taken out first ([`Conjuncts::flush`]):
-    /// a conjunct whose leaf changes in one flush is then owned by the new leaf alone.
+    /// Takes `x`'s shape or `Why` out of the indexes; each conjunct whose ownership changes is
+    /// put in `p` at its names. Every name to be found again is taken out first
+    /// ([`Conjuncts::flush`]): a conjunct whose leaf changes in one flush is then owned by the
+    /// new leaf alone.
     fn unshape(&mut self, x: &Arc<str>, p: &mut Pending) {
         if let Some(old) = self.index.shapes.remove(x) {
             for g in &old.gs {
                 for h in names(g).into_iter().filter(|h| h != x) {
                     self.index.owned.remove(&h, g);
-                    p.touched.insert(h);
                 }
+                p.free.insert(g.clone());
             }
             for h in &old.hubs {
                 self.index.shaped.remove(h, &(old.count, x.clone()));
-                if old.hubs.len() > 1 {
-                    self.index.multi.remove(h, x);
+            }
+            if old.hubs.len() > 1 {
+                for h in &old.hubs {
+                    if let Some(k) = self.index.hits.remove(&(h.clone(), x.clone())) {
+                        self.index.level.remove(h, &(k, x.clone()));
+                    }
+                    if self.index.level.count(h) == 0 {
+                        self.index.near.remove(h);
+                    }
+                    for y in old.hubs.iter().filter(|y| *y != h) {
+                        let key = (h.clone(), y.clone());
+                        if let Some(s) = self.index.pair.get_mut(&key) {
+                            s.remove(x);
+                            if s.is_empty() {
+                                self.index.pair.remove(&key);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -489,8 +556,8 @@ impl Conjuncts {
         }
     }
 
-    /// Finds `x`'s shape, its old one taken out ([`Conjuncts::unshape`]), and indexes it; the
-    /// names whose owned conjuncts change are touched.
+    /// Finds `x`'s shape, its old one taken out ([`Conjuncts::unshape`]), and indexes it; each
+    /// conjunct whose ownership changes is put in `p` at its names.
     fn reshape(&mut self, x: &Arc<str>, p: &mut Pending) {
         if self.users.count(x) == 0 {
             return;
@@ -500,13 +567,40 @@ impl Conjuncts {
                 for g in &s.gs {
                     for h in names(g).into_iter().filter(|h| h != x) {
                         self.index.owned.add(&h, g);
-                        p.touched.insert(h);
                     }
+                    p.free.insert(g.clone());
                 }
                 for h in &s.hubs {
                     self.index.shaped.add(h, &(s.count, x.clone()));
-                    if s.hubs.len() > 1 {
-                        self.index.multi.add(h, x);
+                }
+                if s.hubs.len() > 1 {
+                    for h in &s.hubs {
+                        // A hub of no such name before: its near names are counted now, from
+                        // its free conjuncts as last found, which `refree` then keeps.
+                        if !self.index.near.contains_key(h) {
+                            let mut near: OrdMap<Arc<str>, usize> = OrdMap::new();
+                            for g in self.index.free.of(h) {
+                                for y in names(g).into_iter().filter(|y| y != h) {
+                                    *near.entry(y).or_default() += 1;
+                                }
+                            }
+                            self.index.near.insert(h.clone(), near);
+                        }
+                        let near = self.index.near.get(h);
+                        let k = s
+                            .hubs
+                            .iter()
+                            .filter(|y| *y != h && near.is_some_and(|m| m.contains_key(*y)))
+                            .count();
+                        self.index.hits.insert((h.clone(), x.clone()), k);
+                        self.index.level.add(h, &(k, x.clone()));
+                        for y in s.hubs.iter().filter(|y| *y != h) {
+                            self.index
+                                .pair
+                                .entry((h.clone(), y.clone()))
+                                .or_default()
+                                .insert(x.clone());
+                        }
                     }
                 }
                 self.index.shapes.insert(x.clone(), Arc::new(s));
@@ -520,13 +614,97 @@ impl Conjuncts {
         }
     }
 
+    /// Whether hub `h` admits `x`, a name of `shapes` of two hubs or more at it: every name
+    /// its free conjuncts mention is a hub of `x` ([`Conjuncts::star`]).
+    fn admits(&self, h: &Arc<str>, x: &Arc<str>) -> bool {
+        let near = self.index.near.get(h).map_or(0, OrdMap::len);
+        self.index.hits.get(&(h.clone(), x.clone())) == Some(&near)
+    }
+
+    /// Finds again whether each conjunct `p` names is free at each of its names, and keeps
+    /// `near`, `hits` and `level` with it: the names of `shapes` of two hubs or more that a
+    /// hub may admit or no longer admit are put in `check`. In O(log n) for each conjunct and
+    /// name of it, and for each hub of `level` among them, O(log n) for each other name; for
+    /// each name a hub's `near` gains or loses, the leaves of both; and for each hub whose
+    /// number of `near` names changes, the leaves it admitted and admits.
+    fn refree(&mut self, p: &mut Pending, check: &mut BTreeSet<Arc<str>>) {
+        // Whether each pair of names was near, and each hub's number of near names, before.
+        let mut was: BTreeMap<NamePair, bool> = BTreeMap::new();
+        let mut sizes: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+        for g in std::mem::take(&mut p.free) {
+            let ns = names(&g);
+            for h in &ns {
+                let want = self.users.has(h, &g)
+                    && !self.index.owned.has(h, &g)
+                    && !self.index.solo.has(h, &g);
+                if want == self.index.free.has(h, &g) {
+                    continue;
+                }
+                if want {
+                    self.index.free.add(h, &g);
+                } else {
+                    self.index.free.remove(h, &g);
+                }
+                let Some(near) = self.index.near.get_mut(h) else {
+                    continue;
+                };
+                sizes.entry(h.clone()).or_insert(near.len());
+                for y in ns.iter().filter(|y| *y != h) {
+                    let c = near.get(y).copied().unwrap_or(0);
+                    was.entry((h.clone(), y.clone())).or_insert(c > 0);
+                    match (want, c) {
+                        (true, _) => {
+                            near.insert(y.clone(), c + 1);
+                        }
+                        (false, 1) => {
+                            near.remove(y);
+                        }
+                        (false, _) => {
+                            near.insert(y.clone(), c - 1);
+                        }
+                    }
+                }
+            }
+        }
+        for ((h, y), before) in was {
+            let now = self.index.near.get(&h).is_some_and(|m| m.contains_key(&y));
+            if now == before {
+                continue;
+            }
+            let xs: Vec<Arc<str>> = self
+                .index
+                .pair
+                .get(&(h.clone(), y))
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect();
+            for x in xs {
+                let key = (h.clone(), x.clone());
+                let k = self.index.hits[&key];
+                let k2 = if now { k + 1 } else { k - 1 };
+                self.index.level.remove(&h, &(k, x.clone()));
+                self.index.level.add(&h, &(k2, x.clone()));
+                self.index.hits.insert(key, k2);
+                check.insert(x);
+            }
+        }
+        for (h, before) in sizes {
+            let after = self.index.near.get(&h).map_or(0, OrdMap::len);
+            if after != before {
+                check.extend(self.index.level.within(&h, before..=before));
+                check.extend(self.index.level.within(&h, after..=after));
+            }
+        }
+    }
+
     /// Notes that `g` came to (`added`) or left each of the names `ns`, whose counts are
     /// already changed: the names whose shape that may change are put in `p`. A name of no
     /// shape stays so as long as what its `Why` names stands, which costs O(log n) here: so a
     /// hub of many conjuncts is not looked at again for each conjunct that comes.
     fn counted(&mut self, g: &Arc<Formula>, ns: &BTreeSet<Arc<str>>, added: bool, p: &mut Pending) {
+        p.free.insert(g.clone());
         for n in ns {
-            p.touched.insert(n.clone());
             let count = self.users.count(n);
             let Some(w) = self.index.whys.get(n).cloned() else {
                 p.eval.insert(n.clone());
@@ -563,8 +741,9 @@ impl Conjuncts {
     }
 
     /// Finds the shapes `p` names again; then the stars of the names whose shape changed or
-    /// whose hub became clean or not; then places each conjunct added and not yet in a block,
-    /// in the forest in place of the one it replaces when it can.
+    /// that a hub came to admit or no longer admits ([`Conjuncts::refree`]); then places each
+    /// conjunct added and not yet in a block, in the forest in place of the one it replaces
+    /// when it can.
     fn flush(&mut self, mut p: Pending) {
         if self.is_bottom() {
             return;
@@ -576,26 +755,17 @@ impl Conjuncts {
         for x in &check {
             self.reshape(x, &mut p);
         }
-        for h in &p.touched {
-            let (all, held) = (self.users.count(h), self.index.owned.count(h));
-            let now = all > 0 && all == held + self.index.solo.count(h);
-            if now != self.index.clean.contains(h) {
-                if now {
-                    self.index.clean.insert(h.clone());
-                } else {
-                    self.index.clean.remove(h);
-                }
-                check.extend(self.index.multi.of(h).cloned());
-            }
-        }
+        self.refree(&mut p, &mut check);
         // The stars that go or change first, so that a conjunct moving from one leaf's star to
         // another's is out of its block when the second takes it.
         let mut loose: Vec<Arc<Formula>> = Vec::new();
         let mut new: Vec<(Arc<str>, Arc<Shape>)> = Vec::new();
         for x in &check {
-            let shape = self.index.shapes.get(x).filter(|s| {
-                s.hubs.len() == 1 || s.hubs.iter().all(|h| self.index.clean.contains(h))
-            });
+            let shape = self
+                .index
+                .shapes
+                .get(x)
+                .filter(|s| s.hubs.len() == 1 || s.hubs.iter().all(|h| self.admits(h, x)));
             let old = self.index.stars.get(x).copied();
             if let (Some(b), Some(s)) = (old, shape)
                 && self.blocks.members(b).eq(s.gs.iter())

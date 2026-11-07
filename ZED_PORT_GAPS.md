@@ -2131,3 +2131,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `Box<StarIndex>`, the star indexes of a conjunction behind one pointer, so a `Scope` moved on the checker's stack stays small (an unboxed index made `check::walk`'s frame 0x1278 bytes against 0xbe8, and `follow::following_tests_scale` overflowed) | `Conjuncts::index` | None | Removed: Zed values are shared, and size is not the programmer's concern |
 | The relation cloned to forget a name on the copy, and its stars compared with the original's by `OrdMap::diff`, before the scope settles and forgets in place | `Scope::bind` | Mutation | `forget` returns the new relation; the clone is the persistent maps' sharing, which Zed values have |
+
+## Entries from NARROW-hub-related (`zedc/src/store/conjuncts.rs`, `zedc/src/store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A hub's map of near names updated in place through `OrdMap::get_mut`, its size before and each pair's presence before kept in `BTreeMap`s, so that the leaves are rechecked only for net changes | `Conjuncts::refree` | Mutation | A fold over the changed conjuncts that returns the new map and the two maps of what was before |

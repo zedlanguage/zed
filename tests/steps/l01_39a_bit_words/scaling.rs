@@ -667,3 +667,97 @@ fn a_bound_on_a_sum_of_any_signs_or_a_wider_coefficient_settles_to_the_eager_ans
         assert!(e.contains(&format!("if {test} {{")), "{test}:\n{e}");
     }
 }
+
+/// `link` above `k` levels `ai >= n && ai >= m` (or `ai >= n + m` with `sum`), then `k` tests
+/// on `n` and `k` on `m`, each stronger, then one read of `a0`.
+fn related_hubs(k: usize, link: &str, sum: bool) -> String {
+    let params: Vec<String> = (0..k).map(|i| format!("positional a{i}: int")).collect();
+    let mut body = String::from("popCount(a0)");
+    for j in 1..=k {
+        body = format!("if m >= -{j} {{\n{body}\n}} else {{ 0 }}");
+    }
+    for j in 1..=k {
+        body = format!("if n >= -{j} {{\n{body}\n}} else {{ 0 }}");
+    }
+    for i in (0..k).rev() {
+        body = match sum {
+            false => format!("if a{i} >= n && a{i} >= m {{\n{body}\n}} else {{ 0 }}"),
+            true => format!("if a{i} >= n + m {{\n{body}\n}} else {{ 0 }}"),
+        };
+    }
+    body = format!("if {link} {{\n{body}\n}} else {{ 0 }}");
+    with_main(format!(
+        "f(\npositional n: int,\npositional m: int,\n{}\n) =\n{body};\n",
+        params.join(",\n")
+    ))
+}
+
+#[test]
+fn related_hubs_settle_to_the_eager_answer() {
+    // A test among the hubs, `n` and `m`, above the stars of the `ai`: each `ai` is still a
+    // star's leaf, projected with that test ([`Conjuncts::core`]), and the answer is the eager
+    // scope's. With `n + m >= 0` a box of the hubs' bounds would give `a0` int[-1..]; the
+    // test among them gives int[0..].
+    for k in [1, 2, 5] {
+        for (link, low, sum_low) in [
+            ("n >= m", Some(-1), Some(-2)),
+            ("m >= n", Some(-1), Some(-2)),
+            ("n == m", Some(-1), Some(-2)),
+            ("n - m <= 2", Some(-1), Some(-2)),
+            ("n >= m && m >= n - 4", Some(-1), Some(-2)),
+            ("n >= m + 3", None, None),
+            ("n + m >= 0", None, None),
+        ] {
+            for (sum, low) in [(false, low), (true, sum_low)] {
+                let src = related_hubs(k, link, sum);
+                let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err());
+                let Some(low) = low else {
+                    assert_eq!(e, None, "k = {k}, {link}, sum {sum}");
+                    continue;
+                };
+                let e =
+                    e.unwrap_or_else(|| panic!("k = {k}, {link}, sum {sum}: a0 may be negative"));
+                assert!(
+                    e.contains(&format!("this `x` is int[{low}..]")),
+                    "k = {k}, {link}, sum {sum}:\n{e}"
+                );
+                let test = if sum {
+                    "a0 >= n + m"
+                } else {
+                    "a0 >= n && a0 >= m"
+                };
+                assert!(
+                    e.contains(&format!("if {test} {{")),
+                    "k = {k}, {link}:\n{e}"
+                );
+                if !sum {
+                    assert!(e.contains("if n >= -1 {"), "k = {k}, {link}:\n{e}");
+                    assert_eq!(
+                        e.matches("this test is true here").count(),
+                        2,
+                        "k = {k}, {link}:\n{e}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn related_hubs_settle_in_time_linear_in_the_tests() {
+    // With `n >= m` above them, the hubs of the `ai` were not clean, so no `ai` was a star's
+    // leaf, all were one block, and each of the `2k` tests on a hub projected all `k` levels:
+    // about `k²`, 0.09, 0.31, 1.16 and 4.91 s at `k` = 24 to 192 (wt/narrow-hub-rest at
+    // 68a03534). A hub now admits a leaf whose hubs are all its free conjuncts mention, and
+    // the star is projected with those conjuncts (COMPLEXITY.md C26).
+    check_rejected_in_linear_work(
+        "settling k levels each related to two related hubs",
+        12,
+        |k| related_hubs(k, "n >= m", false),
+    );
+    check_rejected_in_linear_work(
+        "settling k levels each a bound on a sum of two related hubs",
+        6,
+        |k| related_hubs(k, "n >= m", true),
+    );
+}

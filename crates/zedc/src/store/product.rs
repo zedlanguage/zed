@@ -669,12 +669,13 @@ struct Block {
 }
 
 impl Block {
-    /// Block `b` of `relation`.
+    /// Block `b` of `relation`, with the conjuncts among its hubs when it is a star of two
+    /// hubs or more ([`Conjuncts::core`]).
     fn of(relation: &Conjuncts, b: BlockId) -> Block {
-        let names: BTreeSet<Arc<str>> =
-            relation.blocks().members(b).flat_map(|g| syms(g)).collect();
+        let gs = relation.core(b);
+        let names: BTreeSet<Arc<str>> = gs.iter().flat_map(|g| syms(g)).collect();
         Block {
-            parts: split(relation.blocks().members(b).map(|g| &**g)),
+            parts: split(gs.iter().map(|g| &**g)),
             names: names.into_iter().collect(),
         }
     }
@@ -828,8 +829,9 @@ impl Scope {
     ///
     /// The invariant: a lazy scope differs from the eager scope of the same tests only at
     /// stale leaves, the leaves whose star was last projected at other intervals or classes
-    /// of its names than they now have, and there settling the leaf, projecting its star and
-    /// reducing as [`Scope::reduce`] does, gives the eager product. No written constraint
+    /// of its names than they now have, or with other conjuncts among its hubs
+    /// ([`Conjuncts::core`]), and there settling the leaf, projecting its star with those
+    /// conjuncts and reducing as [`Scope::reduce`] does, gives the eager product. No written constraint
     /// holds of a leaf, so its product reaches no other name but through its star, whose
     /// projection onto its hubs is a bound on each alone, through the leaf's greatest or least
     /// member, which a cut of the leaf by the hubs' moves keeps, so no hub moves; and the cut
@@ -854,7 +856,6 @@ impl Scope {
                 continue;
             }
             let block = Block::of(&self.relation, b);
-            debug_assert_eq!(block.parts.len(), 1, "a star is one part");
             if block
                 .parts
                 .iter()
@@ -1925,9 +1926,25 @@ impl Scope {
         let mut gone: Vec<Arc<Formula>> = Vec::new();
         for d in old.set().diff(self.relation.set()) {
             any = true;
+            // A conjunct among the hubs of a star of two hubs or more is projected with it
+            // ([`Conjuncts::core`]): an eager scope projects the star again. A lazy one finds
+            // the leaf stale when read, since the star's part is keyed by those conjuncts.
             match d {
-                imbl::ordset::DiffItem::Add(g) => out.extend(blocks.of(g)),
+                imbl::ordset::DiffItem::Add(g) => {
+                    out.extend(blocks.of(g));
+                    if !self.lazy {
+                        out.extend(self.relation.cored(g));
+                    }
+                }
                 imbl::ordset::DiffItem::Remove(g) => {
+                    if !self.lazy {
+                        out.extend(
+                            old.cored(g)
+                                .into_iter()
+                                .flat_map(|b| old.blocks().members(b))
+                                .filter_map(|h| blocks.of(h)),
+                        );
+                    }
                     let was = old.blocks().of(g);
                     let mates = was.into_iter().flat_map(|b| old.blocks().members(b));
                     out.extend(mates.filter_map(|h| blocks.of(h)));
