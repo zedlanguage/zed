@@ -817,3 +817,59 @@ fn a_longer_path_names_the_tests_that_bound_a_name() {
         );
     }
 }
+/// A chain `w1 <= n + 1` … `wk <= w(k-1) + 1`, then `x <= wk + 100`, which reaches `x` from `n`
+/// in `k + 1` tests and gives it no lower bound; a chain `y1 >= n` … `y(k+1) >= yk`, one test
+/// longer; then `x >= y(k+1)` and `k` tests `x <= y(k+1) + i` below it; then `n >= -1` and a
+/// read of `x`. The `k + 1` tests that read `x` and `y(k+1)` are each reached from `n` by a
+/// path of `k + 2` tests, and only `x >= y(k+1)` gives `x` its lower bound.
+fn longer_paths(k: usize) -> String {
+    let mut src = String::from("f(\npositional n: int,\npositional x: int");
+    for i in 1..=k {
+        src.push_str(&format!(",\npositional w{i}: int"));
+    }
+    for i in 1..=k + 1 {
+        src.push_str(&format!(",\npositional y{i}: int"));
+    }
+    src.push_str("\n) =\n");
+    let mut from = String::from("n");
+    for i in 1..=k {
+        src.push_str(&format!("if w{i} <= {from} + 1 {{\n"));
+        from = format!("w{i}");
+    }
+    src.push_str(&format!("if x <= {from} + 100 {{\n"));
+    let mut from = String::from("n");
+    for i in 1..=k + 1 {
+        src.push_str(&format!("if y{i} >= {from} {{\n"));
+        from = format!("y{i}");
+    }
+    src.push_str(&format!("if x >= {from} {{\n"));
+    for i in 1..=k {
+        src.push_str(&format!("if x <= {from} + {i} {{\n"));
+    }
+    src.push_str("if n >= -1 {\npopCount(x)\n} else { 0 }\n");
+    for _ in 0..3 * k + 3 {
+        src.push_str("} else { 0 }\n");
+    }
+    src.push_str(";\n");
+    with_main(src)
+}
+
+#[test]
+fn the_longer_paths_to_a_name_are_searched_in_linear_time() {
+    // Each of the `k` tests `x <= y(k+1) + i` was tried as a path of its own, back along the
+    // chain to `n`, before `x >= y(k+1)`: `k` paths of `k + 2` tests, 0.236, 0.720, 2.72 and
+    // 10.6 s at `k` = 25 to 200, 46.1 times the bytes at 8 times `k` (item NARROW-eager-scope).
+    let e = zedc::run::load(longer_paths(3).as_bytes())
+        .err()
+        .expect("x may be negative");
+    assert!(e.contains("this `x` is int[-1..]"), "{e}");
+    let tests = [
+        "n >= -1", "y1 >= n", "y2 >= y1", "y3 >= y2", "y4 >= y3", "x >= y4",
+    ];
+    notes_are(&e, &tests, "k = 3");
+    check_rejected_in_linear_work(
+        "naming the tests of a longer path among k",
+        25,
+        longer_paths,
+    );
+}

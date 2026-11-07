@@ -2189,7 +2189,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | The class index of stars (`classes`, `class_of`, `class_at`) updated in place in `flush` by `enclass` and `unclass` | `Conjuncts::enclass`, `Conjuncts::unclass` | Mutation | A fold over the changed stars that returns the three maps |
-| The search of a carrying test drained to the end in place, recording for each name the tests that read it and for each test the names it was reached from | `Carried::longer`, `Carried::expand` | Mutation | The search state returned by each step, as for `Carried::others` |
+| The search of a carrying test drained to the end in place, recording for each name the tests that read it and for each test the names it was reached from | `Carried::drain`, `Carried::expand` (read by `Carried::around` and `Arms::longer`) | Mutation | The search state returned by each step, as for `Carried::others` |
 
 ## Entries from EMPTY-nonstrict-unsound (`zed-kernel/src/types/empty.rs`)
 

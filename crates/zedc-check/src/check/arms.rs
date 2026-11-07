@@ -318,26 +318,14 @@ impl<'a> Arms<'a> {
                             .find(|path| self.explains(k, path, &x, false)),
                     };
                     // Else the first path, if it gives `x` its product from the other names'
-                    // products here; else the first longer path that gives it with the test.
-                    //
-                    // Complexity tradeoff: the longer paths are searched over the whole relation
-                    // above the test, and each tried costs its length, so `k` tests reading `x`
-                    // reached by paths of length `k` cost `k²`. Why: which tests together give
-                    // `x` its product is a search over sets of tests; a path at a time keeps it
-                    // to the tests reading `x`. Trigger: no shortest path gives `x` its
-                    // product, alone or with the other names' products, as `x <= n + 100` under
-                    // `y >= n`, `x >= y`. Test: `l01_39a_bit_words::scaling::a_longer_path_names_the_tests_that_bound_a_name`.
-                    // A complete solution projects the relation onto the names once and reads
-                    // the tests each bound rests on from the projection's derivation.
+                    // products here; else the longer paths that give it with the test.
                     let given = explained.is_none() && self.explains(k, &first, &x, true);
                     if explained.is_none() && !given {
-                        explained = self
-                            .carried
+                        self.carried
                             .get_mut(&k)
                             .expect("searched above")
-                            .longer(&self.nodes, &self.chains, &x)
-                            .into_iter()
-                            .find(|path| self.explains(k, path, &x, false));
+                            .drain(&self.nodes, &self.chains);
+                        explained = self.longer(k, &x);
                     }
                     let path = explained.clone().unwrap_or(first);
                     for &(q, joined) in &path {
@@ -438,6 +426,86 @@ impl<'a> Arms<'a> {
         let alone = Scope::new(names);
         let alone = alone.assume_case(&test, outcome, &Premises::new());
         alone.get(x) == at.settled(x)
+    }
+
+    /// The tests of the longer paths that give `x`, with the test of node `k`, its product
+    /// there, when no shortest path does. Each test reading `x` and each other name of it as far
+    /// from the carrying test as `x` or farther is a step, followed back by
+    /// [`Carried::around`], which does not pass `x`; the steps are taken shortest first. Under
+    /// `x <= n + 100`, `y >= n`, `x >= y`, then `n >= -1`, the first test reaches `x` from `n`
+    /// and gives it no bound; `y >= n` then `x >= y` give it int[-1..]. The tests of the first
+    /// steps together are narrowed at O(log s) prefixes of the `s` steps, halving, to the first
+    /// step whose prefix gives `x` its product; that step's path, if it gives it alone, else
+    /// the prefix. Each prefix is the union of its paths, each name followed back once, so the
+    /// cost is O(log s) times that of the relation. One narrowing of all the steps would tell
+    /// only that together they bound `x`, and would name every test reading `x`, as each
+    /// `x <= y + i` beside `x >= y`; one narrowing for each step costs `s` times the length of a
+    /// path, `k²` for `k` steps on paths of length `k`.
+    fn longer(&self, k: usize, x: &Arc<str>) -> Option<Vec<(usize, bool)>> {
+        let search = &self.carried[&k];
+        let Node::Assume { fresh, .. } = &self.nodes[k] else {
+            return None;
+        };
+        let &far = search.depth.get(x)?;
+        let around = search.around(fresh, x);
+        let mut steps: Vec<(usize, usize, &Arc<str>, bool)> = search
+            .readers
+            .get(x)
+            .into_iter()
+            .flatten()
+            .flat_map(|q| {
+                search.from[q]
+                    .iter()
+                    .map(move |(y, joined)| (*q, y, *joined))
+            })
+            .filter_map(|(q, y, joined)| match around.get(y) {
+                Some(&(_, d)) if y != x && d >= far => Some((d, q, y, joined)),
+                _ => None,
+            })
+            .collect();
+        steps.sort_by_key(|s| s.0);
+        // The tests of the paths of `steps`, each test once, each name followed back once.
+        let paths = |steps: &[(usize, usize, &Arc<str>, bool)]| {
+            let mut tests: HashSet<usize> = HashSet::new();
+            let mut names: HashSet<&Arc<str>> = HashSet::new();
+            let mut out = Vec::new();
+            for &(_, q, y, joined) in steps {
+                if tests.insert(q) {
+                    out.push((q, joined));
+                }
+                let mut at = y;
+                while names.insert(at) {
+                    let Some(&(Some((q, from, joined)), _)) = around.get(at) else {
+                        break;
+                    };
+                    if tests.insert(q) {
+                        out.push((q, joined));
+                    }
+                    at = from;
+                }
+            }
+            out
+        };
+        let mut found = paths(&steps);
+        if steps.is_empty() || !self.explains(k, &found, x, false) {
+            return None;
+        }
+        // The prefix of `hi` steps gives `x` its product, that of `lo` does not: none does
+        // alone, as the lookup that searched for paths found.
+        let (mut lo, mut hi) = (0, steps.len());
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            let prefix = paths(&steps[..mid]);
+            match self.explains(k, &prefix, x, false) {
+                true => (hi, found) = (mid, prefix),
+                false => lo = mid,
+            }
+        }
+        let one = paths(&steps[hi - 1..hi]);
+        Some(match self.explains(k, &one, x, false) {
+            true => one,
+            false => found,
+        })
     }
 
     /// Computes [`Arms::chains`] of `n` and of every node it is computed from, each once, on an
@@ -654,6 +722,10 @@ fn held_in(s: &Scope, x: &Arc<str>) -> Held {
 /// from and whether a join was passed.
 type Reached = (usize, Arc<str>, bool);
 
+/// [`Carried::around`]: each name reached, with the test that reached it, the name that test
+/// was reached from and whether a join was passed (none for a start), and its distance.
+type Around<'s> = HashMap<&'s Arc<str>, (Option<(usize, &'s Arc<str>, bool)>, usize)>;
+
 /// For a test that changed names it does not read, which the scope's relation carried its
 /// change to, a breadth-first search of the relation above it: from the names the test reads,
 /// over the tests above it, each test joining the names it reads. Each name the search reached
@@ -753,46 +825,49 @@ impl Carried {
             .collect()
     }
 
-    /// The longer paths from `x`, shortest first: one for each test that reads `x` and each
-    /// other name it was reached from farther than `x` is, followed back as [`Carried::path`]
-    /// does. Under `x <= n + 100`, `y >= n`, `x >= y`, then `n >= -1`, the first test reaches
-    /// `x` from `n` and gives it no bound; `y >= n` then `x >= y` give it int[-1..]. Called
-    /// after [`Carried::others`]; searches the whole relation above, as later lookups would.
-    fn longer(
-        &mut self,
-        nodes: &[Node<'_>],
-        chains: &[Option<Chains>],
-        x: &Arc<str>,
-    ) -> Vec<Vec<(usize, bool)>> {
-        let Some(&far) = self.depth.get(x) else {
-            return Vec::new();
-        };
+    /// Expands every name reached and not yet expanded: after it, [`Carried::readers`] and
+    /// [`Carried::from`] hold the whole relation above, each test with all its names.
+    fn drain(&mut self, nodes: &[Node<'_>], chains: &[Option<Chains>]) {
         while let Some((y, joined)) = self.queue.pop_front() {
             self.expand(nodes, chains, &y, joined);
         }
-        let mut steps: Vec<(usize, usize, &Arc<str>, bool)> = self
-            .readers
-            .get(x)
-            .into_iter()
-            .flatten()
-            .flat_map(|q| self.from[q].iter().map(move |(y, joined)| (*q, y, *joined)))
-            // Not a name the test itself reached: its path would hold the test twice.
-            .filter(|(q, y, _)| {
-                *y != x
-                    && self.depth[*y] >= far
-                    && !matches!(self.via.get(*y), Some(Some((p, ..))) if p == q)
-            })
-            .map(|(q, y, joined)| (self.depth[y], q, y, joined))
-            .collect();
-        steps.sort_by_key(|s| s.0);
-        steps
-            .into_iter()
-            .map(|(_, q, from, joined)| {
-                let mut out = vec![(q, joined)];
-                out.extend(self.back(from));
-                out
-            })
-            .collect()
+    }
+
+    /// A breadth-first search of the whole relation above, from the names `starts` the
+    /// carrying test reads, that does not go on from `x`: each name reached, with the test that
+    /// reached it, the name that test was reached from and whether a join was passed (none for
+    /// a start), and its distance. A path back from a name never passes `x`, as the search's
+    /// own paths may: under `x >= y3`, `x <= y3 + 1`, `y3` is reached from `x` by the second.
+    /// Each test is visited once, from the first of its names reached, so the cost is that of
+    /// the relation. Called after [`Carried::drain`].
+    fn around<'s>(&'s self, starts: &'s [(Arc<str>, Product)], x: &Arc<str>) -> Around<'s> {
+        let mut out: Around<'s> = HashMap::new();
+        let mut queue: VecDeque<&Arc<str>> = VecDeque::new();
+        for (y, _) in starts {
+            out.insert(y, (None, 0));
+            queue.push_back(y);
+        }
+        let mut tests: HashSet<usize> = HashSet::new();
+        while let Some(y) = queue.pop_front() {
+            if y == x {
+                continue;
+            }
+            let far = out[y].1 + 1;
+            for &q in self.readers.get(y).into_iter().flatten() {
+                if !tests.insert(q) {
+                    continue;
+                }
+                let names = &self.from[&q];
+                let joined = names.iter().any(|(z, joined)| z == y && *joined);
+                for (z, _) in names {
+                    if !out.contains_key(z) {
+                        out.insert(z, (Some((q, y, joined)), far));
+                        queue.push_back(z);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// The tests from `x` back to a name the carrying test reads, by the first test that
