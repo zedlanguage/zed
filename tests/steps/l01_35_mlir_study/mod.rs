@@ -1,7 +1,7 @@
 //! Step L1.35: the MLIR study, `zed/compiler/MLIR.md`. The record decides how ZIR lowers to
 //! MLIR's dialects; this step holds it to the node inventory, so an operation or a region
 //! kind added later without a lowering fails here. The inventory is read from the text of
-//! `crates/zedc/src/zir/mod.rs` (item L1.35-inventory), so no list in this file has to be
+//! `crates/zedc-zir/src/zir/mod.rs` (item L1.35-inventory), so no list in this file has to be
 //! extended when a variant is added: the new variant needs a row, and that is all.
 
 use std::collections::BTreeSet;
@@ -21,7 +21,7 @@ fn record() -> String {
 }
 
 fn zir_source() -> String {
-    read("../crates/zedc/src/zir/mod.rs")
+    read("../crates/zedc-zir/src/zir/mod.rs")
 }
 
 /// The first cells of the rows of the table under heading `##` `title`, without backticks.

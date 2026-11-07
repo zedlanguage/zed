@@ -53,8 +53,8 @@ use zed_kernel::types::Type;
 use super::legalize::{Swapped, written};
 use super::validate::validate;
 use super::{Edge, Node, Op, Region, RegionKind, Src, canon, kind_name, op_name};
-use crate::address::ContentAddress;
 use crate::canon::Facet;
+use zedc_base::address::ContentAddress;
 
 /// The binding of each name in scope while lowering, kept persistently so that a closure keeps
 /// the scope it was defined in at no cost.
@@ -223,7 +223,7 @@ impl Places {
 }
 
 /// The graph of the closed term `t`, validated. A prelude word is read only where the term
-/// binds it, as [`crate::interp::prelude`] does.
+/// binds it, as [`zedc_base::interp::prelude`] does.
 pub fn lower(t: &Term) -> Result<Region, String> {
     let mut uses: HashMap<Arc<str>, usize> = HashMap::new();
     let places = Places::new(t, &mut |s| {

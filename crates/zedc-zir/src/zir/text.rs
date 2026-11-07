@@ -40,9 +40,9 @@ use zed_kernel::value::Value;
 use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};
 use crate::canon::Facet;
 use crate::canon::binders::level_of;
-use crate::lex;
-use crate::store::interval::{End, IntervalSet, Num};
-use crate::store::lattice::{Congruence, FiniteSet, Lattice};
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::{Congruence, FiniteSet, Lattice};
+use zedc_syntax::lex;
 
 /// The version of the text and binary forms.
 pub const VERSION: u32 = 1;

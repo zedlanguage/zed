@@ -8,12 +8,12 @@
 
 pub use zedc_base::address;
 pub use zedc_base::axioms;
-pub use zedc_syntax::ast;
-pub mod canon;
 pub use zedc_base::cost;
 pub use zedc_check::check;
 pub use zedc_resolve::docs;
 use zedc_stage::defs;
+pub use zedc_syntax::ast;
+pub use zedc_zir::canon;
 pub mod elab;
 pub use zedc_base::fence;
 pub use zedc_syntax::format;
@@ -34,4 +34,4 @@ pub mod suppress;
 pub mod testing;
 pub mod unit;
 pub use zedc_base::work;
-pub mod zir;
+pub use zedc_zir::zir;

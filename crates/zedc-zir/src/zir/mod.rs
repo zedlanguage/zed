@@ -62,7 +62,7 @@ use zed_kernel::types::Type;
 use zed_kernel::value::Value;
 
 use crate::canon::{Domain, Facet};
-use crate::store::interval::IntervalSet;
+use zedc_lattice::interval::IntervalSet;
 
 /// The kind of a region (DESIGN.md sec:ir, "Shape").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

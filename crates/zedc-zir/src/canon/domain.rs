@@ -7,9 +7,9 @@
 //! members. A finite set is always expressible this way, so `int[0..=10]` with `1 mod 4`,
 //! `int[1..=9]` with `1 mod 4` and the set `{1, 5, 9}` share one normal form.
 
-use crate::store::interval::{End, IntervalSet, Num};
-use crate::store::lattice::{Congruence, FiniteSet, Lattice};
-use crate::store::revision::{reduce_congruence, reduce_finite};
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::{Congruence, FiniteSet, Lattice};
+use zedc_lattice::revision::{reduce_congruence, reduce_finite};
 
 /// The integer facts of a declaration.
 #[derive(Clone, Debug, PartialEq, Eq)]

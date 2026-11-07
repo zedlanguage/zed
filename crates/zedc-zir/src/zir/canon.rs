@@ -33,9 +33,9 @@ use zed_kernel::term::{Pattern, Term};
 use zed_kernel::value::Value;
 
 use super::{Edge, Node, Op, Region, RegionKind, binary};
-use crate::address::ContentAddress;
 use crate::canon::binders::{level_name, level_of};
 use crate::canon::{self, Def, Facet, RULES};
+use zedc_base::address::ContentAddress;
 
 /// The ranks of the four rules on `g`, in rule order.
 pub fn ranks(g: &Region) -> [u64; 4] {

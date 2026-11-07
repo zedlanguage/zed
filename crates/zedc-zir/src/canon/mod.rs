@@ -34,9 +34,9 @@ mod serial;
 use zed_kernel::num::TooLarge;
 use zed_kernel::value::Value;
 
-use crate::address::ContentAddress;
 pub use def::{Def, Facet};
 pub use domain::Domain;
+use zedc_base::address::ContentAddress;
 
 /// The version of the rule set and the serialization, hashed into every address. Version 3
 /// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name;

@@ -1089,6 +1089,7 @@ dependencies = [
  "zedc-stage",
  "zedc-syntax",
  "zedc-types",
+ "zedc-zir",
 ]
 
 [[package]]
@@ -1212,4 +1213,19 @@ dependencies = [
  "zed-kernel",
  "zedc-syntax",
  "zedc-types",
+]
+
+[[package]]
+name = "zedc-zir"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "imbl",
+ "num-bigint",
+ "unicode-ident",
+ "zed-kernel",
+ "zedc-base",
+ "zedc-int",
+ "zedc-lattice",
+ "zedc-syntax",
 ]

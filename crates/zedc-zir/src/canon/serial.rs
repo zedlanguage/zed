@@ -16,10 +16,10 @@ use zed_kernel::value::Value;
 use super::binders::level_of;
 use super::def::Def;
 use super::domain::Domain;
-use crate::address::ContentAddress;
-use crate::store::int::Num;
-use crate::store::interval::End;
-use crate::store::lattice::Congruence;
+use zedc_base::address::ContentAddress;
+use zedc_int::int::Num;
+use zedc_lattice::interval::End;
+use zedc_lattice::lattice::Congruence;
 
 type Refs<'a> = &'a dyn Fn(&str) -> Option<ContentAddress>;
 
