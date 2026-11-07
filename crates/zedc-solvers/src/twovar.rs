@@ -14,8 +14,8 @@
 //! constant, one period of the two lines, past which the counts repeat. A point is found by
 //! bisection on the counts of the prefixes of a range with points.
 
-use super::int::Int;
 use super::linear::{Q, Term};
+use zedc_int::int::Int;
 
 /// The line `(p·x + q) / r`, with `r` above zero.
 #[derive(Clone)]
@@ -131,7 +131,7 @@ fn narrow(range: &mut (Option<Int>, Option<Int>), lo2: Option<Int>, hi2: Option<
 
 /// An integer point of the rows, over `x[x]` and, when given, `x[y]`, or `None` when they have
 /// none. Without `want` a point found is answered by zeros.
-pub(crate) fn point(
+pub fn point(
     rows: &[(&[Term], &Int)],
     x: usize,
     y: Option<usize>,

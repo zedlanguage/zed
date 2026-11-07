@@ -27,7 +27,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::ops::Range;
 
-use super::int::Int;
+use zedc_int::int::Int;
 
 const NONE: usize = usize::MAX;
 

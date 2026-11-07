@@ -1085,6 +1085,7 @@ dependencies = [
  "zedc-base",
  "zedc-int",
  "zedc-lattice",
+ "zedc-solvers",
  "zedc-syntax",
 ]
 
@@ -1113,6 +1114,13 @@ version = "0.0.0"
 dependencies = [
  "zed-kernel",
  "zedc-base",
+ "zedc-int",
+]
+
+[[package]]
+name = "zedc-solvers"
+version = "0.0.0"
+dependencies = [
  "zedc-int",
 ]
 

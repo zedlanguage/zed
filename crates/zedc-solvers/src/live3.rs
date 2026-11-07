@@ -33,9 +33,9 @@
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 
-use super::int::Int;
 use super::linear::{Q, Term};
 use super::twovar;
+use zedc_int::int::Int;
 
 /// A row `a·x + k >= 0` over three variables.
 pub type Row3 = ([Int; 3], Int);
@@ -1050,7 +1050,7 @@ pub fn point(rows: &[Row3]) -> Option<[Int; 3]> {
 }
 
 /// [`point`] for rows of the Omega test over the variables `vs`.
-pub(crate) fn decide(rows: &[(&[Term], &Int)], vs: &[usize; 3]) -> Option<[Int; 3]> {
+pub fn decide(rows: &[(&[Term], &Int)], vs: &[usize; 3]) -> Option<[Int; 3]> {
     let rs: Vec<Row3> = rows
         .iter()
         .map(|(a, k)| {

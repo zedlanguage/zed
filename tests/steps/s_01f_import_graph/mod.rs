@@ -68,7 +68,6 @@ const KNOWN_CYCLES: &[&str] = &[
     "zedc/check/walk.rs",
     "zedc/elab.rs",
     "zedc/elab/walk.rs",
-    "zedc/store/live3.rs",
     "zedc/store/presburger.rs",
     "zedc/store/presburger/deep.rs",
     "zedc/store/presburger/deep/canon.rs",

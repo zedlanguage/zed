@@ -1,0 +1,25 @@
+[package]
+name = "zedc-solvers"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A part of the compiler `zedc`, which re-exports its modules at their old paths. Also a dylib, as
+# zedc is: an edit recompiles this crate and those above it, and each test binary links one shared
+# copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+zedc-int.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Counts the calls of `Lin2::minus` in `live3` on a thread, for the test that bounds the work of
+# the linear programs by a count that does not depend on the load (SLABS-count). Off in a release
+# build; zedc's feature `counts` turns it on.
+counts = []

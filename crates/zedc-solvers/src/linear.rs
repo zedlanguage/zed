@@ -1,14 +1,14 @@
 //! The rationals and the coefficient terms of the linear-relation domain (DESIGN.md
 //! sec:domains, step L1.38), shared by the Omega test, `twovar` and `utvpi`.
 
-use super::int::Int;
+use zedc_int::int::Int;
 
 /// A coefficient at a variable.
-pub(crate) type Term = (usize, Int);
+pub type Term = (usize, Int);
 
 /// A rational, in lowest terms with a positive denominator.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) struct Q {
+pub struct Q {
     pub(crate) n: Int,
     pub(crate) d: Int,
 }
@@ -18,7 +18,8 @@ impl Q {
         Q { n, d: Int::ONE }
     }
 
-    pub(crate) fn new(n: Int, d: Int) -> Q {
+    /// The rational `n / d`, in lowest terms with a positive denominator; `d` is not 0.
+    pub fn new(n: Int, d: Int) -> Q {
         let g = n.gcd(&d);
         let (mut n, mut d) = if g == Int::ONE {
             (n, d)

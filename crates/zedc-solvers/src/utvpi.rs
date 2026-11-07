@@ -34,9 +34,9 @@
 //! \[BFCT\]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
 //! Mathematical Programming 85 (1999), 277–311.
 
-use super::int::Int;
 use super::linear::Term;
 use super::negsssp;
+use zedc_int::int::Int;
 
 /// Which search finds the potential.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -510,7 +510,7 @@ impl<'a> GoldbergRadzik<'a> {
 }
 
 /// The strongly connected component of each node (Tarjan), with an explicit stack.
-pub(super) fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
+pub fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
     const NONE: usize = usize::MAX;
     let n = out.len();
     let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);

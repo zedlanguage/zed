@@ -15,9 +15,9 @@ pub use zedc_lattice::interval;
 pub use zedc_lattice::iterate;
 pub use zedc_lattice::landmarks;
 pub use zedc_lattice::lattice;
-pub mod linear;
-pub mod live3;
-pub mod negsssp;
+pub use zedc_solvers::linear;
+pub use zedc_solvers::live3;
+pub use zedc_solvers::negsssp;
 pub mod preimage;
 /// The backward transfer before S22a, which tests compare [`preimage`] with.
 #[doc(hidden)]
@@ -25,6 +25,6 @@ pub mod preimage_ref;
 pub mod presburger;
 pub mod product;
 pub use zedc_lattice::revision;
-pub mod twovar;
-pub mod utvpi;
 pub use zedc_lattice::wto;
+pub use zedc_solvers::twovar;
+pub use zedc_solvers::utvpi;

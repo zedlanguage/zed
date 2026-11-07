@@ -28,6 +28,7 @@ zedc-base.workspace = true
 zedc-syntax.workspace = true
 zedc-int.workspace = true
 zedc-lattice.workspace = true
+zedc-solvers.workspace = true
 
 [dev-dependencies]
 rustix.workspace = true
@@ -44,7 +45,7 @@ printed-types = []
 # Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
 # work of the linear programs by a count that does not depend on the load (SLABS-count). Off in a
 # release build.
-counts = []
+counts = ["zedc-solvers/counts"]
 # Truncates content addresses so that they collide (step L1.37a); see zed-kernel src/address.rs.
 short-addresses = ["zed-kernel/short-addresses"]
 
