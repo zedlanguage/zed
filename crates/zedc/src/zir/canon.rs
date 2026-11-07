@@ -172,7 +172,7 @@ fn region_bytes(r: &Region) -> Result<Vec<u8>, TooLarge> {
 
 /// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
 /// forms of the one-node regions holding the nodes (up to the hash; [`Shape`] decides it
-/// without the hash), or [`TooLarge`] as at [`shell_bytes`].
+/// without the hash), or [`TooLarge`] as at `shell_bytes`.
 pub fn node_key(n: &Node, regions: &[ContentAddress]) -> Result<ContentAddress, TooLarge> {
     Ok(key_of(&shell_bytes(n)?, regions))
 }
@@ -192,7 +192,7 @@ fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
 }
 
 /// The key of region `r` whose nodes' regions have the keys `inner`, one list per node, or
-/// [`TooLarge`] as at [`shell_bytes`].
+/// [`TooLarge`] as at `shell_bytes`.
 pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir-region\0");
@@ -219,7 +219,7 @@ pub struct Shape {
 
 impl Shape {
     /// The shape of `n`; its regions are shared, not copied. [`TooLarge`] as at
-    /// [`shell_bytes`].
+    /// `shell_bytes`.
     pub fn of(n: &Node) -> Result<Shape, TooLarge> {
         Ok(Shape {
             shell: shell_bytes(n)?,
@@ -310,7 +310,7 @@ impl PartialEq for Shape {
 impl Eq for Shape {}
 
 /// The key of `g` from the bottom up: what [`region_key`] gives with every region's key, or
-/// [`TooLarge`] as at [`shell_bytes`].
+/// [`TooLarge`] as at `shell_bytes`.
 pub fn key(g: &Region) -> Result<ContentAddress, TooLarge> {
     // Each open region with the keys of its nodes' regions found so far, one list per node
     // begun.
@@ -337,7 +337,7 @@ pub fn key(g: &Region) -> Result<ContentAddress, TooLarge> {
     }
 }
 
-/// The content address of `g`, or [`TooLarge`] as at [`shell_bytes`].
+/// The content address of `g`, or [`TooLarge`] as at `shell_bytes`.
 pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir\0");

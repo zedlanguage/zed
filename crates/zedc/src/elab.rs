@@ -429,7 +429,7 @@ impl<'a> Elab<'a> {
         }
     }
 
-    /// The type a type expression denotes ([`kernel_type`]); each name of a port in it is an
+    /// The type a type expression denotes ([`kernel_type()`]); each name of a port in it is an
     /// error. Its bounds were checked by the checker, which reads every written type.
     fn ty(&mut self, t: &Type) -> Option<KType> {
         let mut ports = Vec::new();

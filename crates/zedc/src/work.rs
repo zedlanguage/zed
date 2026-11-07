@@ -3,7 +3,7 @@
 //! standard error after the command. The port to Zed (row S) is compared with these numbers.
 //!
 //! The compiler marks each stage with [`stage`], naming the definition it works on where it
-//! works on one at a time, and each unit with [`unit`]; a recorder installed by [`with`] counts
+//! works on one at a time, and each unit with [`unit()`]; a recorder installed by [`with`] counts
 //! the work between the marks. With no recorder installed on the thread, a mark only calls its
 //! closure, so a compilation that is not reported does no more than read a thread-local cell
 //! per mark.
