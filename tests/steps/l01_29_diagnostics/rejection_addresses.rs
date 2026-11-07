@@ -188,12 +188,13 @@ fn a_problem_of_a_package_prints_its_address() {
         .filter(|l| l.starts_with(&d.display().to_string()));
     assert_eq!(problems.count(), addresses(&err).len(), "{err}");
     assert_eq!(zedc(&["run", main]).2, err);
-    // The same package in another directory prints another address.
+    // A copy of the package in another directory prints the same address: the file's part is
+    // its path from the package root (item DIAG-addr-root).
     let other = shop("shop2", SHOP_MAIN);
     let other = other.join("app/main.zed");
     let other = other.to_str().unwrap();
     let (_, _, there) = zedc(&["run", other]);
-    assert_ne!(
+    assert_eq!(
         address_after(
             &there,
             &format!("{other}:1:1: the unit `pricing` defines no `gross`")
@@ -275,7 +276,7 @@ fn addressing_the_problems_of_a_package_scales() {
                 &zedc::unit::Dir(d.clone()),
                 &["main"],
             );
-            let lines = pkg.report_on_disk(&d, &mut Suppress::default()).unwrap();
+            let lines = pkg.report_on_disk(&d, &mut Suppress::default());
             assert!(lines.len() >= m, "{}", lines.len());
             let words = lines
                 .iter()
@@ -289,7 +290,7 @@ fn addressing_the_problems_of_a_package_scales() {
         let (_, d, pkg, words) = made.iter().find(|(k, ..)| *k == m).expect("a size");
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
         let (mut suppress, _) = Suppress::take(&words).unwrap();
-        let lines = pkg.report_on_disk(d, &mut suppress).unwrap();
+        let lines = pkg.report_on_disk(d, &mut suppress);
         assert!(suppress.unmatched().is_empty());
         // Each problem, and the line refusing its suppression.
         assert_eq!(lines.len(), words.len());
@@ -317,29 +318,65 @@ fn refused_at_counts_its_address_as_matched() {
 }
 
 /// A root unit with no file is reported in the file it would have, with an address; that
-/// file's part of the address is found from the resolved root, so two paths to the root give
-/// one, and two names give two.
+/// file's part of the address is found from its path under the package root alone (item
+/// DIAG-addr-root), so any path to the root gives one, the file once written gives the same
+/// part, and two names give two.
 #[test]
-fn a_root_unit_with_no_file_has_an_address_from_its_resolved_root() {
+fn a_root_unit_with_no_file_has_an_address_from_its_name_under_the_root() {
     let d = package("rootless", &[("zed.manifest", ""), ("sub/keep.zed", "")]);
     let gone = d.join("gone.zed");
     assert!(!gone.exists());
-    let before = InFile::under(&d, "gone.zed").unwrap();
-    let pkg = zedc::unit::load(
-        &mut zedc::query::Db::new(),
-        &zedc::unit::Dir(d.clone()),
-        &["gone"],
-    );
-    let lines = pkg.report_on_disk(&d, &mut Suppress::default()).unwrap();
+    let report = |root: &std::path::Path| {
+        zedc::unit::load(
+            &mut zedc::query::Db::new(),
+            &zedc::unit::Dir(root.to_path_buf()),
+            &["gone"],
+        )
+        .report_on_disk(root, &mut Suppress::default())
+    };
+    let lines = report(&d);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(
         lines[0].starts_with(&format!("{}: ", gone.display())),
         "{lines:?}"
     );
-    assert_eq!(addresses(&lines[0]).len(), 1, "{lines:?}");
+    let a = addresses(&lines[0]);
+    assert_eq!(a.len(), 1, "{lines:?}");
+    // Another path to the root prints another file name and the same address.
+    assert_eq!(addresses(&report(&d.join("sub/..")).join("\n")), a);
+    // The file `gone.zed` of a copy of the package that has it has the part the name gives.
+    let full = package("rootful", &[("zed.manifest", ""), ("gone.zed", "")]);
     assert_eq!(
-        InFile::under(&d.join("sub/.."), "gone.zed").unwrap(),
-        before
+        InFile::of(&full.join("gone.zed")).unwrap(),
+        InFile::named("gone.zed")
     );
-    assert_ne!(InFile::under(&d, "gone2.zed").unwrap(), before);
+    assert_ne!(InFile::named("gone2.zed"), InFile::named("gone.zed"));
+}
+
+/// The file's part of an address (`InFile::of`) for a file `n` directories deep, with no
+/// manifest above it, so every directory up to the file system's root is probed: within n log n
+/// in instructions and bytes at n and 8n. The directories are made before the timing. Work in
+/// the kernel, which resolves each probe's path, is not counted (`zed_tests::scaling`).
+#[test]
+fn the_file_part_of_an_address_scales_with_the_depth_of_the_file() {
+    let n = 40;
+    let files: Vec<(usize, PathBuf)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let mut d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+                .join("l01_29_rejection_addresses")
+                .join(format!("deep{m}"));
+            for _ in 0..m {
+                d.push("d");
+            }
+            std::fs::create_dir_all(&d).unwrap();
+            let file = d.join("deep.zed");
+            std::fs::write(&file, "").unwrap();
+            (m, file)
+        })
+        .collect();
+    scaling::check("the file part of an address, n directories deep", n, |m| {
+        let (_, file) = files.iter().find(|(k, _)| *k == m).expect("a size");
+        InFile::of(file).unwrap();
+    });
 }

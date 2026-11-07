@@ -281,8 +281,8 @@ fn mark_failure(ds: &[&front::Diagnostic], named: Option<Row>) -> Option<String>
 /// run, those with a line marked ✗. A file with no table row and no ✗ mark fails, so a run
 /// that finds no tests fails. Returns the exit status: 0 when every check passes, 1 when
 /// one fails (a unit that does not compile, a row that fails or aborts, a marked line), 2 for
-/// a usage error, a file that cannot be read, or a file or current directory that cannot be
-/// resolved to the path the addresses name ([`InFile`]).
+/// a usage error, a file that cannot be read, or a file that cannot be resolved to the place
+/// its addresses name ([`InFile::of`]).
 ///
 /// `zedc test --mutate <file> …` then runs the tables against each mutant of each unit that
 /// compiles (step L25.8, [`crate::mutate`]) when every check passes, and writes each mutant

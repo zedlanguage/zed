@@ -1,5 +1,5 @@
-//! Items DIAG-suppress and DIAG-suppress-rest (DESIGN.md sec:diagnostics): each diagnostic
-//! prints its address, the same on every run of the same file from the same directory and
+//! Items DIAG-suppress, DIAG-suppress-rest and DIAG-addr-root (DESIGN.md sec:diagnostics): each
+//! diagnostic prints its address, the same on every run of the same file from any directory and
 //! different in each file; `--suppress <address>` leaves that warning unprinted and the program
 //! unchanged; naming a rejection is an error and the run still fails; an address that names
 //! nothing is reported.
@@ -159,8 +159,9 @@ fn relative(to: &Path) -> PathBuf {
 
 #[test]
 fn a_file_named_by_several_paths_has_one_address() {
-    // The rule: a file's part of the address is its path from the current directory once
-    // every link and every `.` and `..` step is resolved, so any path to it gives the same.
+    // The rule: a file's part of the address is its path from its package root or, with no
+    // manifest above it, its absolute path, once every link and every `.` and `..` step is
+    // resolved, so any path to it gives the same.
     let src = area();
     let file = unit("suppress/paths", "one.zed", &src);
     let dir = Path::new(&file).parent().unwrap();

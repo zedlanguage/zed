@@ -27,6 +27,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, openat, statat};
+
 use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
 use crate::front::{self, Diagnostic, Parsed, error};
 use crate::lex::{self, Span, Tok};
@@ -299,35 +301,24 @@ impl Package {
         self.reported(root).into_iter().map(|r| r.text).collect()
     }
 
-    /// Each problem as `zedc` prints it, the package's files lying under `root`, a path from
-    /// the current directory: as [`Package::report`], each followed by its address on a line
-    /// of its own, `  address: <hex>`, as every diagnostic prints it; then a line for each
-    /// problem whose address `suppress` names, since a rejection cannot be suppressed. Or why
-    /// the root or the current directory cannot be resolved ([`InFile::under`]). O(p) for p
-    /// problems, after O(f) path resolutions for the f files they are in.
-    pub fn report_on_disk(
-        &self,
-        root: &Path,
-        suppress: &mut Suppress,
-    ) -> Result<Vec<String>, String> {
-        let mut files: HashMap<&str, InFile> = HashMap::new();
+    /// Each problem as `zedc` prints it, the package's files lying under `root`, the path the
+    /// command line reached the root by: as [`Package::report`], each followed by its address on
+    /// a line of its own, `  address: <hex>`, as every diagnostic prints it, its file's part
+    /// found from the file's path under the package root ([`InFile::named`]), never from
+    /// `root`; then a line for each problem whose address `suppress` names, since a rejection
+    /// cannot be suppressed. After [`Package::report`], O(t) for problems whose files' names
+    /// total t bytes, each name counted once per problem: a hash of it, one BLAKE3 hash and one
+    /// lookup in the suppressed set per problem.
+    pub fn report_on_disk(&self, root: &Path, suppress: &mut Suppress) -> Vec<String> {
         let mut out = Vec::with_capacity(self.problems.len());
         let mut refused = Vec::new();
         for (p, r) in self.problems.iter().zip(self.reported(root)) {
-            let at = match files.get(p.file.as_str()) {
-                Some(&at) => at,
-                None => {
-                    let at = InFile::under(root, &p.file)?;
-                    files.insert(&p.file, at);
-                    at
-                }
-            };
-            let address = at.join(r.part);
+            let address = InFile::named(&p.file).join(r.part);
             out.push(format!("{}\n  address: {address}", r.text));
             refused.extend(suppress.refused_at(&r.place, address));
         }
         out.extend(refused);
-        Ok(out)
+        out
     }
 
     /// Each problem as [`Package::report`] prints it, with its place and the part of its
@@ -866,43 +857,90 @@ impl Units for Linked {
     }
 }
 
-/// The package root of the file `file`: the nearest directory at or above it that holds a
-/// manifest, and the file's path under it with `/` between its parts; `None` when no directory
-/// above holds one.
-pub fn root_of(file: &Path) -> Result<Option<(PathBuf, String)>, String> {
-    let full = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let mut dir = full.parent();
-    while let Some(d) = dir {
-        if d.join(MANIFEST).is_file() {
-            let rel = full.strip_prefix(d).expect("the root is above the file");
-            let rel: Vec<&str> = rel
-                .components()
-                .map(|c| c.as_os_str().to_str())
-                .collect::<Option<_>>()
-                .ok_or_else(|| format!("{}: the path is not UTF-8", file.display()))?;
-            return Ok(Some((d.to_path_buf(), rel.join("/"))));
-        }
-        dir = d.parent();
-    }
-    Ok(None)
+/// Where a file lies, after every symbolic link and every `.` and `..` step of its path is
+/// resolved: which package it is a unit of, if any. Its diagnostics' addresses name it by this
+/// ([`InFile::at`]), so by nothing that depends on the directory `zedc` runs in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// A file under a manifest: its package root, the nearest directory above it that holds a
+    /// manifest, and its path under that root with `/` between its parts.
+    Unit {
+        /// The package root, resolved.
+        root: PathBuf,
+        /// The file's path under the root, which names its unit (DESIGN.md sec:units).
+        name: String,
+    },
+    /// A file with no manifest in any directory above it: its absolute path, resolved.
+    Loose(PathBuf),
 }
 
-/// What `zedc run` reports of the package of the unit `file`, read as `text`: `None` when the
-/// unit compiles alone, since it has no manifest above it, or it imports nothing and its
-/// manifest names no prelude unit; otherwise each problem of the package its unit reaches,
-/// the files written under the root as `file`'s directory names it, with its address, and a
-/// line for each problem whose address `suppress` names ([`Package::report_on_disk`]).
+impl Place {
+    /// Where the file `file` lies; or why it, or a directory above it, cannot be resolved, or
+    /// its path under its package root is not UTF-8. O(parts of the path): the directories
+    /// above the file are walked by opening each one's `..` from the one below, so each probe
+    /// for a manifest names one part, and neither this process nor the kernel goes over the
+    /// whole path again per directory.
+    pub fn of(file: &Path) -> Result<Place, String> {
+        let full = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let Some(parent) = full.parent() else {
+            return Ok(Place::Loose(full));
+        };
+        // Opened for its place only (`O_PATH`), so a directory that may be passed through and
+        // not read still is.
+        let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC;
+        let cannot = |e| {
+            format!(
+                "{}: a directory above it cannot be opened: {e}",
+                file.display()
+            )
+        };
+        let mut dir = openat(CWD, parent, flags, Mode::empty()).map_err(cannot)?;
+        let above = parent.components().count() - 1;
+        let mut up = 0;
+        loop {
+            // As `Path::is_file`: a regular file once links are followed, and no error.
+            let manifest = statat(&dir, MANIFEST, AtFlags::empty())
+                .is_ok_and(|s| FileType::from_raw_mode(s.st_mode) == FileType::RegularFile);
+            if manifest {
+                let root = parent.ancestors().nth(up).expect("one ancestor per level");
+                let rel = full.strip_prefix(root).expect("the root is above the file");
+                let name: Vec<&str> = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_str())
+                    .collect::<Option<_>>()
+                    .ok_or_else(|| format!("{}: the path is not UTF-8", file.display()))?;
+                return Ok(Place::Unit {
+                    root: root.to_path_buf(),
+                    name: name.join("/"),
+                });
+            }
+            if up == above {
+                return Ok(Place::Loose(full));
+            }
+            dir = openat(&dir, "..", flags, Mode::empty()).map_err(cannot)?;
+            up += 1;
+        }
+    }
+}
+
+/// What `zedc run` reports of the package of the unit `file`, read as `text` and lying at
+/// `place`: `None` when the unit compiles alone, since it has no manifest above it, or it
+/// imports nothing and its manifest names no prelude unit; otherwise each problem of the
+/// package its unit reaches, the files written under the root as `file`'s directory names it,
+/// with its address, and a line for each problem whose address `suppress` names
+/// ([`Package::report_on_disk`]).
 pub fn package_report(
     file: &Path,
+    place: Place,
     text: &str,
     suppress: &mut Suppress,
 ) -> Result<Option<Vec<String>>, String> {
-    let Some((root, rel)) = root_of(file)? else {
+    let Place::Unit { root, name } = place else {
         return Ok(None);
     };
     let mut db = Db::new();
     let imports = matches!(&*db.parse(text), Ok((_, i)) if !i.is_empty());
-    let dir = Dir(root.clone());
+    let dir = Dir(root);
     let prelude = match dir.read(MANIFEST) {
         Some(Ok(m)) => !matches!(manifest(&m), Ok(Manifest { prelude: None })),
         _ => true,
@@ -910,13 +948,12 @@ pub fn package_report(
     if !imports && !prelude {
         return Ok(None);
     }
-    let path = unit_of(&rel)?;
+    let path = unit_of(&name)?;
     let pkg = load(&mut db, &dir, &[&path]);
     // The root as the command line reached it: the file's directory, and up from there.
     let depth = path.matches('.').count();
     let shown = file.parent().and_then(|p| p.ancestors().nth(depth));
-    pkg.report_on_disk(shown.unwrap_or(&root), suppress)
-        .map(Some)
+    Ok(Some(pkg.report_on_disk(shown.unwrap_or(&dir.0), suppress)))
 }
 
 #[cfg(test)]
