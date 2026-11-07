@@ -259,8 +259,8 @@ fn loaded(bytes: &[u8]) -> Result<Program, Unloaded> {
     let text = work::stage(Stage::Load, None, || source::load(bytes))
         .map_err(|e| Unloaded::Refused(e.render(bytes)))?;
     let (stmts, unit, warnings) = compile(&text).map_err(Unloaded::Rejected)?;
-    let mut program = work::stage(Stage::Program, None, || program(&stmts, unit))
-        .map_err(Unloaded::Refused)?;
+    let mut program =
+        work::stage(Stage::Program, None, || program(&stmts, unit)).map_err(Unloaded::Refused)?;
     program.warnings = warnings.into();
     Ok(program)
 }

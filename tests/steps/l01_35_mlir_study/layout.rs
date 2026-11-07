@@ -86,8 +86,8 @@ fn the_step_units_are_measured_and_each_node_takes_at_least_its_inline_size() {
             s.per_node()
         );
     }
-    // The four units whose lines are marked as refused are refused; every other unit is measured.
-    assert_eq!((r.units, refused), (step_units().len() - 4, 4));
+    // The three units whose lines are marked as refused are refused; every other unit is measured.
+    assert_eq!((r.units, refused), (step_units().len() - 3, 3));
     assert!(r.ast.bytes >= (r.ast.nodes * size_of::<Expr>().min(size_of::<Stmt>())) as u64);
     assert!(r.term.bytes >= (r.term.nodes * size_of::<Term>()) as u64);
     assert!(r.zir.bytes >= (r.zir.nodes * size_of::<Node>()) as u64);

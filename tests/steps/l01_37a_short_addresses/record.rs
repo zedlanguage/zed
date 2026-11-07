@@ -46,7 +46,7 @@ fn every_enabled_fence() {
     {
         writeln!(out, "{}\n{}", f.key, verdict(&f.text)).expect("a String takes any write");
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn every_fence_front_verdict() {
         };
         writeln!(out, "{}: {v}", f.key).expect("a String takes any write");
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn every_rejected_variant() {
     for v in zed_tests::fences::variants() {
         writeln!(out, "{}\n{}", v.name, verdict(&v.text)).expect("a String takes any write");
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn every_step_unit() {
             .expect("a step unit under the steps directory");
         writeln!(out, "{}\n{}", name.display(), verdict(&text)).expect("a String takes any write");
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn every_corpus_program() {
         let name = path.file_name().expect("a file name").to_string_lossy();
         writeln!(out, "{name} (L{layer}): {v}").expect("a String takes any write");
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn every_step_program_on_every_corpus_input() {
                 .expect("a String takes any write");
         }
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
 }
 
 #[test]
@@ -152,5 +152,30 @@ fn printed_types() {
         }
         writeln!(out, "  {less}").expect("a String takes any write");
     }
-    insta::assert_snapshot!(out);
+    insta::assert_snapshot!(without_addresses(&out));
+}
+
+/// `out` without the address of each diagnostic. The build with `short-addresses` keeps one
+/// byte of each address, so the two builds print different addresses for the same diagnostic,
+/// and the snapshots they share leave them out: a line `address: #…,` of a pretty-printed
+/// diagnostic and `, address: #…` of one printed on a line. One pass over `out`.
+fn without_addresses(out: &str) -> String {
+    const FIELD: &str = ", address: #";
+    let mut kept = String::with_capacity(out.len());
+    for line in out.split_inclusive('\n') {
+        if line.trim_start().starts_with("address: #") {
+            continue;
+        }
+        let mut rest = line;
+        while let Some(i) = rest.find(FIELD) {
+            kept.push_str(&rest[..i]);
+            let tail = &rest[i + FIELD.len()..];
+            let hex = tail
+                .find(|c: char| !c.is_ascii_hexdigit())
+                .unwrap_or(tail.len());
+            rest = &tail[hex..];
+        }
+        kept.push_str(rest);
+    }
+    kept
 }

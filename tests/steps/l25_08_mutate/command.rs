@@ -103,7 +103,10 @@ fn several_files_report_as_each_file_alone() {
         "limit = 10;\nscale(positional x) = x * (2 + 0) test { 3 -> 6 }\n",
     );
     // A rejection unit has no mutants.
-    let c = unit("batch-c.zed", "x = 1 ++ 2;  // ✗\n");
+    let c = unit(
+        "batch-c.zed",
+        "x = 1 ++ 2;  // ✗ Operator with no arrow at its operands' carrier: `++` joins strings\n",
+    );
     let mutant_lines = |out: &str| -> Vec<String> {
         out.lines()
             .filter(|l| l.contains(" replaced by "))

@@ -130,7 +130,7 @@ const NEAR_MISSES: &[NearMiss] = &[
              drops",
         ),
     ),
-    // Its menu is plan item MENU-linear's.
+    // Its menu is plan item MENU-linear's (`NON_LINEAR_MENU` in crates/zedc/src/front.rs).
     (
         Row::NonLinearQuestion,
         "",
@@ -140,7 +140,10 @@ const NEAR_MISSES: &[NearMiss] = &[
          -7 * x - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && \
          -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0;\n",
         "1:1",
-        None,
+        Some(
+            "state an equality on one of the names, as `x == 4 && …`, so the solver removes \
+             that name from the question",
+        ),
     ),
 ];
 
