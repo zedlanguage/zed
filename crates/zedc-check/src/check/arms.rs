@@ -1,5 +1,5 @@
 //! The ints the tests around an expression allow it: the scope of the reduced product
-//! ([`crate::store::product`]) at each arm of an `if`, at the second side of `&&` and `||`
+//! ([`zedc_preimage::product`]) at each arm of an `if`, at the second side of `&&` and `||`
 //! and in each case of a condition. A bit word's operand (L1.39a) and the exponent of `**`
 //! (L1.17) are read through it, so `if n >= 0 { popCount(n) }` is accepted (DESIGN.md L1.39:
 //! a test narrows a scope).
@@ -38,10 +38,10 @@ use imbl::ordmap::DiffItem;
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Prim, Term};
 
-use crate::ast::Expr;
-use crate::lex::Span;
-use crate::store::cell::Premises;
-use crate::store::product::{Product, Scope};
+use zedc_lattice::cell::Premises;
+use zedc_preimage::product::{Product, Scope};
+use zedc_syntax::ast::Expr;
+use zedc_syntax::lex::Span;
 
 /// One node: a scope the walk is in, or was.
 pub(super) enum Node<'a> {

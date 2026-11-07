@@ -1079,6 +1079,7 @@ dependencies = [
  "zed-kernel",
  "zedc",
  "zedc-base",
+ "zedc-check",
  "zedc-int",
  "zedc-lattice",
  "zedc-preimage",
@@ -1097,6 +1098,24 @@ dependencies = [
  "blake3",
  "unicode-normalization",
  "zed-kernel",
+]
+
+[[package]]
+name = "zedc-check"
+version = "0.0.0"
+dependencies = [
+ "imbl",
+ "zed-kernel",
+ "zedc-base",
+ "zedc-check",
+ "zedc-int",
+ "zedc-lattice",
+ "zedc-preimage",
+ "zedc-presburger",
+ "zedc-resolve",
+ "zedc-solvers",
+ "zedc-syntax",
+ "zedc-types",
 ]
 
 [[package]]

@@ -14,9 +14,9 @@ use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, Ty};
 use super::{carrier_mask, denoted_with};
-use crate::ast::{self, Type, TypeKind};
-use crate::lex::{self, Part, Tok};
-use crate::parse::{self, TOP};
+use zedc_syntax::ast::{self, Type, TypeKind};
+use zedc_syntax::lex::{self, Part, Tok};
+use zedc_syntax::parse::{self, TOP};
 
 /// The type `text` states. Text that is no type is an error, as is a form `denoted` has no
 /// meaning for at layer L1 other than an atom with its payload type, and a leaf of layer L10
@@ -80,7 +80,7 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
     // The names the resolver finds, as in a written type: a variable no clause bounds is not
     // defined.
     let leaves = binds.keys().cloned().collect();
-    if let Err(es) = crate::resolve::printed_type(&t, leaves) {
+    if let Err(es) = zedc_resolve::resolve::printed_type(&t, leaves) {
         let why: Vec<String> = es.into_iter().map(|e| e.message).collect();
         return Err(format!("`{text}`: {}", why.join("; ")));
     }

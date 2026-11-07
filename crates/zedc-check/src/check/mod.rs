@@ -50,20 +50,20 @@ use zed_kernel::num::TooLarge;
 use zed_kernel::types::{Type as KType, Verdict};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
-use crate::ast::{
-    Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
-    Type, TypeKind, shown,
-};
-use crate::lex::{Span, unread_literal};
-use crate::rejection::Row;
-use crate::resolve::tables::Tables;
-use crate::resolve::{Handle, Ref, Resolution};
-use crate::store::int::Int;
-use crate::store::interval::{
+use zedc_base::rejection::Row;
+use zedc_int::int::Int;
+use zedc_lattice::interval::{
     End::{self, Fin, NegInf, PosInf},
     IntervalSet, Num, bit_word,
 };
-use crate::store::revision::{Op, forward};
+use zedc_lattice::revision::{Op, forward};
+use zedc_resolve::resolve::tables::Tables;
+use zedc_resolve::resolve::{Handle, Ref, Resolution};
+use zedc_syntax::ast::{
+    Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
+    Type, TypeKind, shown,
+};
+use zedc_syntax::lex::{Span, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
@@ -95,7 +95,7 @@ pub enum Fit {
 /// elaboration both report these, each from its own pass over the arguments, with the
 /// message and row given here, so that the two agree on every call.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Misfit<'s> {
+pub enum Misfit<'s> {
     /// A receiver for a function of no parameters.
     NoReceiver,
     /// A positional argument after the parameters run out; the function takes this many.
@@ -121,7 +121,7 @@ pub(crate) enum Misfit<'s> {
 
 impl Misfit<'_> {
     /// The row of the rejection table the misfit is a case of, if any.
-    pub(crate) fn row(self) -> Option<Row> {
+    pub fn row(self) -> Option<Row> {
         match self {
             Misfit::NoReceiver | Misfit::TooMany(_) | Misfit::NoParam(_) | Misfit::Supplied(_) => {
                 None
@@ -133,7 +133,7 @@ impl Misfit<'_> {
     }
 
     /// The message, for the function called `who`.
-    pub(crate) fn message(self, who: &str) -> String {
+    pub fn message(self, who: &str) -> String {
         match self {
             Misfit::NoReceiver => format!("`{who}` has no parameter for a receiver"),
             Misfit::TooMany(n) => format!("too many arguments: `{who}` takes {n}"),
@@ -229,7 +229,8 @@ pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
     check_with(&Tables::new(unit, res), unit)
 }
 
-pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
+/// Checks a unit whose binder tables are `t`, as [`check`] does with tables it builds.
+pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     KType::forget_emptiness();
     let mut ck = Ck::new(t);
     ck.bounds();
@@ -245,7 +246,7 @@ pub(crate) fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
 /// The type of the binary operator `op` applied to arguments of the types `args`, with the
 /// errors the application reports: how an operator treats loose and family atoms.
 pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
-    let res = crate::resolve::resolve(&[]).expect("the empty unit resolves");
+    let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
     let t = Tables::new(&[], &res);
     let mut ck = Ck::new(&t);
     let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
@@ -279,7 +280,7 @@ impl Operands {
     /// number of literals that adopt a carrier.
     #[doc(hidden)]
     pub fn adoptions(&self) -> usize {
-        let res = crate::resolve::resolve(&[]).expect("the empty unit resolves");
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
         let mut ck = Ck::new(&t);
         let (lit, parts) = (literal(&self.e), parts(&self.e));
@@ -1456,7 +1457,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             return match self.t.res.uses.get(&e.span) {
                 Some(Ref::Bound(_)) => None,
-                _ if crate::resolve::prelude_layer(name) == Some(1)
+                _ if zedc_resolve::resolve::prelude_layer(name) == Some(1)
                     && name != "sum"
                     && bit_prim(name).is_none()
                     && word_arity(name) == 1 =>
@@ -1489,7 +1490,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 [],
             ) => match self.t.res.uses.get(&callee.span) {
                 Some(Ref::Bound(_)) => return None,
-                _ if crate::resolve::prelude_layer(name) == Some(1) => (name, of.span),
+                _ if zedc_resolve::resolve::prelude_layer(name) == Some(1) => (name, of.span),
                 _ => return None,
             },
             _ => return None,
@@ -3864,7 +3865,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let word = what
             .strip_prefix('`')
             .and_then(|w| w.strip_suffix('`'))
-            .is_some_and(|w| crate::resolve::prelude_layer(w).is_some() && *word_sig(w) == *sig);
+            .is_some_and(|w| {
+                zedc_resolve::resolve::prelude_layer(w).is_some() && *word_sig(w) == *sig
+            });
         let kept = pass || word;
         for (i, a) in args.iter().enumerate() {
             let Some(Arg {
@@ -5994,7 +5997,7 @@ fn bytes() -> Ty {
 
 /// The primitive of the bit word `w`, if it is one (step L1.39a).
 fn bit_prim(w: &str) -> Option<Prim> {
-    crate::interp::prim(w).filter(|&p| zed_kernel::bits::is_bit_word(p))
+    zedc_base::interp::prim(w).filter(|&p| zed_kernel::bits::is_bit_word(p))
 }
 
 /// A bit word's signature: its parameters, every one positional but `width`, each an `int` but
@@ -6254,7 +6257,7 @@ impl<'a> Ck<'_, 'a> {
                 name,
                 safe: false,
             } if !matches!(uses.get(&callee.span), Some(Ref::Bound(_)))
-                && crate::resolve::prelude_layer(name) == Some(1) =>
+                && zedc_resolve::resolve::prelude_layer(name) == Some(1) =>
             {
                 (bit_prim(name)?, Some(&**of))
             }
@@ -6420,7 +6423,7 @@ fn handled(res: &Resolution) -> Handled {
 }
 
 /// The atom `#name` with any payload or none: what a bare pattern `#name` matches.
-pub(crate) fn any_payload(name: &str) -> KType {
+pub fn any_payload(name: &str) -> KType {
     KType::union_all([KType::atom(name), KType::atom_with(name, &KType::top())])
 }
 
@@ -6787,7 +6790,7 @@ mod tests {
     /// after it.
     #[test]
     fn a_rolled_back_branch_restores_the_passed_atoms() {
-        let res = crate::resolve::resolve(&[]).expect("the empty unit resolves");
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
         let mut ck = Ck::new(&t);
         let (a, b, c) = (KType::atom("a"), KType::atom("b"), KType::atom("c"));

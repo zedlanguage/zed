@@ -28,12 +28,12 @@ use std::collections::HashMap;
 
 use zed_kernel::Value;
 
-use crate::ast::{Error, Expr, ExprKind, Note, Param, Stmt, StmtKind, StrPart, Target};
 use crate::check::Info;
 use crate::check::ty::Carrier;
-use crate::lex::Span;
-use crate::resolve::tables::Tables;
-use crate::resolve::{Ref, Resolution};
+use zedc_resolve::resolve::tables::Tables;
+use zedc_resolve::resolve::{Ref, Resolution};
+use zedc_syntax::ast::{Error, Expr, ExprKind, Note, Param, Stmt, StmtKind, StrPart, Target};
+use zedc_syntax::lex::Span;
 
 /// A closed interval of integers, both ends in the word.
 type Word = (i64, i64);
@@ -140,7 +140,7 @@ pub fn of(unit: &[Stmt], res: &Resolution, info: &Info) -> Vec<Error> {
 }
 
 /// The widening warnings of `unit`, sorted by place.
-pub(crate) fn warnings(t: &Tables, unit: &[Stmt], info: &Info) -> Vec<Error> {
+pub fn warnings(t: &Tables, unit: &[Stmt], info: &Info) -> Vec<Error> {
     let mut w = Walk {
         t,
         adopt: &info.adopt,

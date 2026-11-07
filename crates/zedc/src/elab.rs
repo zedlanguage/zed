@@ -34,10 +34,10 @@ use crate::work::{self, Stage};
 
 mod walk;
 
-pub use crate::stage::Cones;
-pub(crate) use crate::check::kernel_type::kernel_type;
-pub use crate::resolve::topo::{topo, topo_joined};
 pub use crate::defs::{Def, Test, Unit, written_name};
+pub use crate::resolve::topo::{topo, topo_joined};
+pub use crate::stage::Cones;
+pub(crate) use zedc_types::kernel_type::kernel_type;
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {

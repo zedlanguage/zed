@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use super::arms::{Item, Node, Translated, prim_of, var};
 use super::*;
-use crate::store::cell::Premises;
-use crate::store::lattice::Lattice;
-use crate::store::product::{self, Product, Scope};
 use zed_kernel::Shared;
+use zedc_lattice::cell::Premises;
+use zedc_lattice::lattice::Lattice;
+use zedc_preimage::product::{self, Product, Scope};
 
 /// What a job gives back.
 pub(super) enum Ret<'a> {
@@ -2435,7 +2435,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             Some(Ref::Bound(_)) => m.ty(Ty::empty()),
-            _ => match crate::resolve::prelude_layer(name) {
+            _ => match zedc_resolve::resolve::prelude_layer(name) {
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
                 }

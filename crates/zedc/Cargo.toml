@@ -34,6 +34,7 @@ zedc-types.workspace = true
 zedc-resolve.workspace = true
 zedc-stage.workspace = true
 zedc-preimage.workspace = true
+zedc-check.workspace = true
 
 [dev-dependencies]
 # A dylib's file name does not change with its features, so `cargo test -p zedc` builds
@@ -45,7 +46,7 @@ zedc-solvers = { workspace = true, features = ["counts"] }
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
-printed-types = ["zedc-types/printed-types"]
+printed-types = ["zedc-check/printed-types", "zedc-types/printed-types"]
 # Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
 # work of the linear programs by a count that does not depend on the load (SLABS-count). Off in a
 # release build.

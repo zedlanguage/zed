@@ -1,0 +1,47 @@
+[package]
+name = "zedc-check"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A part of the compiler `zedc`, which re-exports its modules at their old paths. Also a dylib, as
+# zedc is: an edit recompiles this crate and those above it, and each test binary links one shared
+# copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+imbl.workspace = true
+zed-kernel.workspace = true
+zedc-base.workspace = true
+zedc-int.workspace = true
+zedc-lattice.workspace = true
+zedc-preimage.workspace = true
+zedc-resolve.workspace = true
+zedc-syntax.workspace = true
+zedc-types.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# A dylib's file name does not change with its features, so `cargo test -p zedc-check` builds
+# zedc-presburger and zedc-solvers, which it reaches through zedc-preimage, with the features the
+# workspace build gives them (zedc-preimage's tests turn on `two-at-a-time`, the step tests
+# `counts`), and does not overwrite their copies.
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+zedc-solvers = { workspace = true, features = ["counts"] }
+
+[features]
+# Records each type the checker prints on a thread with its text, for the test that parses each back
+# (OSP-diag). Off in a release build; zedc's feature `printed-types` turns it on.
+printed-types = ["zedc-types/printed-types"]
+
+# A dylib's file name does not change with its features, so `cargo test -p zedc-check` builds this
+# crate and zedc-types with the feature the workspace build gives them (the step tests turn on
+# `printed-types` through zedc), and does not overwrite the copies the step tests link to.
+[dev-dependencies.zedc-check]
+path = "."
+features = ["printed-types"]
