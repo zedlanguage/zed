@@ -1533,10 +1533,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| P14-bigint-parse | impl attempt 1 | 2026-11-07 14:59 | started; worktree /home/luke/Work/wt/p14-bigint-parse from wt/p14-bits cb5854a8 |
+| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | started; worktree from 26372a77 |
+| P14-bigint-parse | impl attempt 1 | 2026-11-07 14:59 | measured: 288->2304 digits ref 14 is 27.9x instr from num-bigint multiply (parse-only 9.2x old parser, 8.3x by parts); by-parts reader no faster than whole read |
 | PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | base measured: product walk 3,200/204,800 term bounds at k=40/320, checker 1,680/103,040 (61.3x); probes added |
+| PREIMAGE-and-chain | impl attempt 1 | 2026-11-03 21:23 | reproduced on main 32654e93 through zedc::run::load (the checker alone is linear): k && sides, else arm plain, k=75..600: 76M,198M,583M,2082M instr (3.57x per 2 |
 | ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | rebased onto f813fa34 (batch 46); state fixing |
-| T14-paths | impl attempt 1 | 2026-11-05 04:07 | negative control (path strings put back, not committed; load 15.54): nest4 plan 41.0x bytes, capture arms 41.0x, deep nest plan 57.1x and run 50.7x (limit 24),  |
+| T14-paths | impl attempt 1 | 2026-11-05 04:07 | ready: wt/t14-paths 10e7ae1f on main 26372a77; plan regions by index; nest4 plan 8.0x instr and bytes at d=200→1600 (was 11.8x, 24.0x); 9 groups 62 pieces 317 p |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
