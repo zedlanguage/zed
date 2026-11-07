@@ -1505,11 +1505,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | MAIN-red | impl attempt 1 | 2026-11-07 11:37 | l01_37a blamed: passes at d516c04f^, 3 snapshots fail at d516c04f (DIAG-addr-rest added Outcome.address, printed as address: Some(#..)/None, which without_addre |
-| PA-let-narrow-many | impl attempt 1 | 2026-11-07 11:31 | measured (a): d=32..512 term_bounds 627/2275/8643/33667/132867 (Theta(d^2)), cause Ck::with_bound_read reads all k narrowed inputs of x_(k-1) per binding |
-| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | started: worktree /home/luke/Work/wt/scale-fix-kernel from wt/scale-ratio cd98182c; 10 findings to fit, profile and fix; load 35.52 |
-| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | started; worktree from wt/scale-ratio cd98182c; load 41.15 |
-| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | kept power: cause is MUL_LEAF 1024 mixing (build 3^n 10.83 at 2^18..2^21; with leaf 48 as an uncommitted experiment 9.53, compare 9.14); load 21.36 22.26 26.47 |
-| STAGE-store-probes | impl attempt 1 | 2026-11-07 10:13 | design chosen: shared records (Part items) + recall memo keyed by stamp map; capturing baseline / load 13.14 21.53 26.47 |
+| PA-let-narrow-many | impl attempt 1 | 2026-11-07 11:31 | fix built (images.rs persistent tree of leaves per read, LetPa::shift/image_shifted/changed_since): probe term_bounds d=32..512 163/323/643/1283/2563 (linear) |
+| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | node tables to HashMap (KeyHasher) and zip_chain of two long chains by treap union; running zed_kernel group / load 20.32 23.08 25.87 |
+| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | cause found: split_at put the halves of a cut piece under ancestors of lower priority, breaking heap order (501 of 2049 nodes); split_around fix makes probe_all |
+| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | cube and equality fixed in zedc-int (one-word root, carried inverse, power-residue filter, power-of-2 strip); negative control fails 12.93/17.23, fixed 9.16/7.7 |
+| STAGE-store-probes | impl attempt 1 | 2026-11-07 10:13 | negative control (old stage.rs, not committed): loops family n=400/3200 61.1x bytes (limit 24), ends and ends+lets families did not finish within 60 s; new code |
+| TY-refuse-exp | impl attempt 1 | 2026-11-07 11:38 | started: worktree /home/luke/Work/wt/ty-refuse-exp from origin/main 338e92f6, seeded |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
