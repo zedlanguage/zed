@@ -1466,13 +1466,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | LIST-parity-keys | impl attempt 1 | 2026-11-07 04:37 | perf of regions shape at c=2048 (3.2G instr, c 1024->2048 5.4x): 80% in RowIndex::holds eval of the halves restriction; rows sort by hash, so the 2-3 rows with  |
 | LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | resumed after context compaction; measuring base cases; load 52.61 31.34 24.64 |
-| LOAD-chain-defs | impl attempt 1 | 2026-11-07 05:06 | committed tests: 3 scaling tests red on base (66.8x, 98.4x, 73.0x bytes), green now; answer test red with new defs dropped; COMPLEXITY and STATUS rows written;  |
 | NARROW-eager-scope | impl attempt 1 | 2026-11-07 04:43 | new eager scaling test fails on base e88c9c35: 57.4 times the bytes at k=16 vs 128 (limit 24) |
 | NUMERICS-spec2 | impl attempt 1 | 2026-11-07 03:42 | done in batch 15 (folded into NUMERICS-spec, zed 6728767) |
 | PA-plus-if | impl attempt 1 | 2026-11-07 05:08 | traced depth 4: transfer widens n to all ints at the first sum with an if operand (HC4 projection, fwd of n is every int) from depth 2; linear stage recovers [1 |
-| S1F-arms-cycle | impl attempt 2 (item ZEDC-split) | 2026-11-07 02:18 | still running: ten paired l01_33 timing rounds (orchestrator note) |
-| VERDICT-meet-cost | impl attempt 1 | 2026-11-07 04:22 | ready e95098c8 on wt/verdict-meet-cost, rebased on origin/main (row renumbered K65), fmt+clippy clean, 184 affected pieces pass incl doc check; perf data delete |
-| ZEDC-split | impl attempt 2 | 2026-11-05 23:52 | still running: ten paired l01_33 timing rounds (orchestrator note) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
