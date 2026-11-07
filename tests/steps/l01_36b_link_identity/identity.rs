@@ -16,6 +16,7 @@ fn with_runtime(name: &str, runtime: &str, bytes: &str) -> Toolchain {
     Toolchain {
         linker: "cc".into(),
         runtime: path,
+        env: zed_native::link::driver_env(),
     }
 }
 
@@ -40,8 +41,8 @@ fn the_runtime_library_is_named_by_its_bytes_not_its_path() {
     assert_eq!(monday, copy);
     assert_ne!(monday, tuesday);
     let object = b"the object file of a program";
-    assert_eq!(monday.key(object), copy.key(object));
-    assert_ne!(monday.key(object), tuesday.key(object));
+    assert_eq!(monday.key(object, &[]), copy.key(object, &[]));
+    assert_ne!(monday.key(object, &[]), tuesday.key(object, &[]));
 }
 
 #[test]
@@ -50,8 +51,8 @@ fn the_object_file_is_named_by_its_bytes() {
     let object = b"price = 120".to_vec();
     let mut edited = object.clone();
     *edited.last_mut().unwrap() = b'5';
-    assert_eq!(tools.key(&object), tools.key(&object.clone()));
-    assert_ne!(tools.key(&object), tools.key(&edited));
+    assert_eq!(tools.key(&object, &[]), tools.key(&object.clone(), &[]));
+    assert_ne!(tools.key(&object, &[]), tools.key(&edited, &[]));
 }
 
 #[test]
@@ -77,7 +78,7 @@ fn the_linker_is_named_by_its_drivers_reports() {
         ]
     );
     assert_eq!(reported.runtime, system.runtime);
-    assert_ne!(reported.key(b"o"), system.key(b"o"));
+    assert_ne!(reported.key(b"o", &[]), system.key(b"o", &[]));
 }
 
 #[test]
@@ -130,6 +131,7 @@ fn a_missing_runtime_library_is_named() {
     let tools = Toolchain {
         linker: "cc".into(),
         runtime: dir("missing").join("libnone.a"),
+        env: zed_native::link::driver_env(),
     };
     let (status, why) = Identity::of(&tools).expect_err("no library");
     assert_eq!(status, 1);

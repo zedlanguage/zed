@@ -303,7 +303,7 @@ fn a_build_killed_while_linking_blocks_no_later_build() {
     build.wait().unwrap();
     let left = working(&d, "killed");
     assert_eq!(left.len(), 1, "{left:?}");
-    assert!(d.join(&left[0]).join("program.o").is_file(), "{left:?}");
+    assert!(d.join(&left[0]).join("killed.o").is_file(), "{left:?}");
     assert!(!out.exists());
 
     assert_eq!(

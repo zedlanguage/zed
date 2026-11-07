@@ -2053,6 +2053,16 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `MetadataExt::dev` and `ino` compared after `symlink_metadata` and `File::metadata`, to check a name still names the locked directory | `link::names` | File identity from the OS (gap 5, Bytes and foreign calls) | A file-system port call returning a file's identity |
 | `std::fs::rename` of the linked executable over the output | `link::build` | File system port | The port's atomic replace |
 
+## Entries from LINK-key-deps (`zed-native/src/link.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::collections::HashSet<(u64, u64)>` of (device, inode) from `MetadataExt::dev` and `ino`, to hash each file once | `link::Inputs::of` | File identity from the OS (gap 5, Bytes and foreign calls) | A file-system port call returning a file's identity, kept in a Zed set |
+| `FileExt::write_all_at` on a file opened read-write, and `object::ReadCache` over `&mut File`, to patch the build-ID note in place | `link::write_build_id` | File system port (positioned writes); foreign crate | Port calls for a positioned read and write; an ELF note reader in Zed |
+| `blake3::Hasher::update_reader` over a `File`, and `blake3::derive_key` contexts | `link::hash_file`, `link::Inputs::of`, `link::Identity::key` | Foreign library (BLAKE3) | The BLAKE3 the kernel's content addresses use, behind the same port |
+| `Command::env` and `env_remove` per variable, and `std::env::var_os` | `link::driver_env`, `Toolchain::driver` | Process port (environment) | The process port's environment map, passed to the spawn |
+| `OsStr::as_encoded_bytes` and `OsStr::from_bytes` (`OsStrExt`) to read paths from the linker's list and the record | `link::dependencies`, `link::Record::read`, `Record::to_bytes` | Bytes as paths (gap 5) | Paths as byte strings in the file-system port |
+
 ## Entries from S22-order (`zedc/src/store/preimage.rs` tests, `zedc/src/lib.rs`)
 
 | Rust construct | Sites | Gap | At the port |

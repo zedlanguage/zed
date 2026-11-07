@@ -6,7 +6,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use zed_native::link::{Toolchain, build, runtime_of};
+use zed_native::link::{Toolchain, build, driver_env, runtime_of};
 
 /// A directory of its own for test `name`, under the test target's scratch directory; files
 /// in it are overwritten by each run, never deleted.
@@ -26,6 +26,7 @@ pub fn toolchain() -> Toolchain {
     Toolchain {
         linker: "cc".into(),
         runtime,
+        env: driver_env(),
     }
 }
 

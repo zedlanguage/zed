@@ -75,6 +75,6 @@ fn the_key_of_an_object_file_scales() {
     let (small, large) = (vec![7u8; n], vec![7u8; FACTOR * n]);
     scaling::check_instructions_only("the key of an object file of n bytes", n, 1, |m| {
         let object = if m == n { &small } else { &large };
-        std::hint::black_box(tools.key(object));
+        std::hint::black_box(tools.key(object, &[]));
     });
 }

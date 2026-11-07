@@ -11,7 +11,8 @@
 //!
 //! The executable records the key of its link, the hash of everything that entered it, as its
 //! GNU build ID (step L1.36b, see [`Identity`]); a build whose output already records the key
-//! it would link with leaves that output as it is.
+//! it would link with, and still has the bytes its link wrote, leaves that output as it is
+//! (LINK-key-deps, see [`Record`]).
 
 use std::any::TypeId;
 use std::ffi::OsString;
@@ -41,8 +42,39 @@ const SYSTEM_LIBS: &[&str] = &[
 /// long and wrote 41 MB in place of 14 MB.
 const LINK_FLAGS: &[&str] = &["-Wl,--gc-sections"];
 
-/// What a build links with: the C compiler driver that runs the linker, and the runtime
-/// library.
+/// The environment variables that the C compiler driver or its linker reads and that can change
+/// which files a link reads or what it writes: GCC's `GCC_EXEC_PREFIX`, `COMPILER_PATH` and
+/// `LIBRARY_PATH` (Clang reads the last two too), and the linker's `LD_RUN_PATH`,
+/// `LD_LIBRARY_PATH` (where GNU ld looks for the libraries a shared library needs),
+/// `LDEMULATION` (GNU ld's default emulation) and `GNUTARGET` (GNU ld's default input object
+/// format). Not in the key: `/etc/ld.so.conf` and the files it includes, which GNU ld reads
+/// only for a library a shared library needs that it found in no directory before them (a
+/// `zedc build` link read none, traced 2026-11-07); the library found that way is listed and
+/// hashed, and a change to them alone is a change of search path, the limit [`kept`] names.
+/// Not named: `PATH`, through which the driver may find its linker, since the linker's version
+/// enters the key in its place, and variables that change only the language of messages or
+/// where scratch files go.
+pub const DRIVER_ENV: &[&str] = &[
+    "GCC_EXEC_PREFIX",
+    "COMPILER_PATH",
+    "LIBRARY_PATH",
+    "LD_RUN_PATH",
+    "LD_LIBRARY_PATH",
+    "LDEMULATION",
+    "GNUTARGET",
+];
+
+/// The values of [`DRIVER_ENV`] in this process's environment, in that order; `None` for one
+/// that is not set.
+pub fn driver_env() -> Vec<(&'static str, Option<OsString>)> {
+    DRIVER_ENV
+        .iter()
+        .map(|&name| (name, std::env::var_os(name)))
+        .collect()
+}
+
+/// What a build links with: the C compiler driver that runs the linker, the runtime
+/// library, and the driver's environment.
 #[derive(Clone, Debug)]
 pub struct Toolchain {
     /// The linker's driver: `CC`, or `cc`.
@@ -50,9 +82,25 @@ pub struct Toolchain {
     /// The runtime library: `ZED_RUNTIME`, or `libzed_native.a` beside the running
     /// executable.
     pub runtime: PathBuf,
+    /// The variables of [`DRIVER_ENV`] the driver runs with, `None` for one removed from its
+    /// environment, as [`driver_env`] gives them: every run of the driver has exactly these,
+    /// so the key of a link names the environment the link had.
+    pub env: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl Toolchain {
+    /// A command that runs the driver, with [`Toolchain::env`] set in its environment.
+    fn driver(&self) -> Command {
+        let mut command = Command::new(&self.linker);
+        for (name, value) in &self.env {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
+        command
+    }
+
     /// The toolchain the environment names, with the defaults above.
     pub fn from_env() -> Toolchain {
         let linker = std::env::var_os("CC").unwrap_or_else(|| "cc".into());
@@ -64,7 +112,11 @@ impl Toolchain {
             },
             PathBuf::from,
         );
-        Toolchain { linker, runtime }
+        Toolchain {
+            linker,
+            runtime,
+            env: driver_env(),
+        }
     }
 }
 
@@ -140,45 +192,325 @@ pub fn build(
         crate::executable_object(g, true, program.ports(), address)
     })
     .map_err(|e| (1, format!("{file}: {e}")))?;
-    let key = Identity::of(tools)?.key(&object);
-    if recorded(out).as_deref() == Some(key.as_bytes()) {
+    let identity = Identity::of(tools)?;
+    if kept(out, &identity, &object, tools) {
         work::cached(Stage::Link, None);
         return Ok(());
     }
     sweep(out);
     let scratch = Scratch::new(out)?;
-    let (at, linked_at) = (
-        scratch.path.join("program.o"),
+    // The linker's output takes `out`'s name, and the files beside it that name with a suffix,
+    // so no output name meets another file here.
+    let named = |suffix: &str| {
+        let mut name = scratch.name.clone();
+        name.push(suffix);
+        scratch.path.join(name)
+    };
+    let (at, linked_at, listed_at, record_at) = (
+        named(".o"),
         scratch.path.join(&scratch.name),
+        named(".d"),
+        named(".zed-link"),
     );
     std::fs::write(&at, &object).map_err(|e| (1, format!("{}: {e}", at.display())))?;
+    // The files the link reads are known only once it has read them, so the link writes the
+    // key without them in its build ID, and the key with them replaces it after.
+    let partial = identity.key(&object, &[]);
+    let mut list = OsString::from("--dependency-file=");
+    list.push(&listed_at);
     let linked = work::stage(Stage::Link, None, || {
-        Command::new(&tools.linker)
+        tools
+            .driver()
             .arg("-o")
             .arg(&linked_at)
             .arg(&at)
             .arg(&tools.runtime)
             .args(SYSTEM_LIBS)
             .args(LINK_FLAGS)
-            .arg(format!("-Wl,--build-id=0x{}", key.to_hex()))
+            .arg(format!("-Wl,--build-id=0x{}", partial.to_hex()))
+            // `-Xlinker`, not `-Wl,`, which would split a path at its commas.
+            .arg("-Xlinker")
+            .arg(list)
             .output()
     });
     let linker = tools.linker.to_string_lossy();
     match linked {
-        Err(e) => Err(not_run(&linker, &e)),
-        Ok(o) if !o.status.success() => Err((
+        Err(e) => return Err(not_run(&linker, &e)),
+        Ok(o) if !o.status.success() => {
+            return Err((
+                1,
+                format!(
+                    "the linker `{linker}` failed ({}):\n{}",
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim_end()
+                ),
+            ));
+        }
+        Ok(_) => {}
+    }
+    let listed = std::fs::read(&listed_at).map_err(|e| {
+        (
             1,
             format!(
-                "the linker `{linker}` failed ({}):\n{}",
-                o.status,
-                String::from_utf8_lossy(&o.stderr).trim_end()
+                "the linker `{linker}` wrote no list of the files it read for {} ({e}): name in \
+                 CC a C compiler whose linker takes --dependency-file, as GNU ld 2.35 and later \
+                 and LLD do",
+                out.display()
             ),
-        )),
-        // In one step, so that a build reading `out` at the same time, for its key or to run
-        // it, reads the executable before or the one after, never one half written.
-        Ok(_) => {
-            std::fs::rename(&linked_at, out).map_err(|e| (1, format!("{}: {e}", out.display())))
+        )
+    })?;
+    let inputs = Inputs::of(dependencies(&listed), &[&at, &tools.runtime]).map_err(|e| {
+        (
+            1,
+            format!("{e}: the linker `{linker}` read this file, and it cannot be read now"),
+        )
+    })?;
+    let key = identity.key(&object, &inputs.hashes);
+    if !write_build_id(&linked_at, &partial, &key).map_err(|e| (1, e))? {
+        return Err((
+            1,
+            format!(
+                "the linker `{linker}` wrote its output for {} without the build ID it was \
+                 given: name in CC a C compiler whose linker takes --build-id",
+                out.display()
+            ),
+        ));
+    }
+    let record = Record {
+        output: hash_file(&linked_at).map_err(|e| (1, e))?,
+        inputs: inputs.paths,
+    };
+    std::fs::write(&record_at, record.to_bytes())
+        .map_err(|e| (1, format!("{}: {e}", record_at.display())))?;
+    // Each in one step, so that a build reading `out` at the same time, for its key or to run
+    // it, reads the executable before or the one after, never one half written. The record
+    // follows the executable: a build that finds one with the other's predecessor, after a
+    // build stopped between the two, or two builds of `out` at once, finds that the
+    // executable's bytes are not the record's, and links again.
+    let rename = |from: &Path, to: &Path| {
+        std::fs::rename(from, to).map_err(|e| (1, format!("{}: {e}", to.display())))
+    };
+    rename(&linked_at, out)?;
+    rename(&record_at, &Record::path(out))
+}
+
+/// Whether the executable `out` can be kept as the link of `object` by the toolchain of
+/// `identity`: the record beside it ([`Record`]) names the files its link read, the key of the
+/// link with those files as they are now is the one `out` records as its build ID, and `out`'s
+/// bytes are the ones the link wrote. No record, a file it names that cannot be read, another
+/// key, or other bytes: it cannot, and the build links again. The cost is a hash of every
+/// file the record names and of `out`, each once: linear in their bytes. A new file that appears
+/// earlier on a search path, while every file the record names is unchanged, is not seen: the
+/// limit of any cache that works from lists of the files a build read.
+fn kept(out: &Path, identity: &Identity, object: &[u8], tools: &Toolchain) -> bool {
+    let Some(record) = Record::read(out) else {
+        return false;
+    };
+    let Ok(inputs) = Inputs::of(record.inputs, &[&tools.runtime]) else {
+        return false;
+    };
+    let key = identity.key(object, &inputs.hashes);
+    recorded(out).as_deref() == Some(key.as_bytes())
+        && hash_file(out).is_ok_and(|h| h == record.output)
+}
+
+/// The BLAKE3 hash of the bytes of the file at `path`.
+fn hash_file(path: &Path) -> Result<blake3::Hash, String> {
+    let at = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut hasher = blake3::Hasher::new();
+    hasher
+        .update_reader(std::fs::File::open(path).map_err(at)?)
+        .map_err(at)?;
+    Ok(hasher.finalize())
+}
+
+/// Replaces the build ID `partial` that a link wrote in the executable `exe` with `key`, in
+/// place: the bytes of the note's descriptor, which nothing else in the file depends on. The
+/// note is found by its section, and the descriptor in it by its bytes. False if `exe` has no
+/// such note.
+fn write_build_id(exe: &Path, partial: &blake3::Hash, key: &blake3::Hash) -> Result<bool, String> {
+    use object::{Object as _, ObjectSection as _};
+    use std::os::unix::fs::FileExt as _;
+    let at = |e: &dyn std::fmt::Display| format!("{}: {e}", exe.display());
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(exe)
+        .map_err(|e| at(&e))?;
+    let offset = {
+        let cache = object::ReadCache::new(&mut file);
+        let elf = object::File::parse(&cache).map_err(|e| at(&e))?;
+        elf.section_by_name(".note.gnu.build-id").and_then(|note| {
+            let (start, _) = note.file_range()?;
+            let k = note
+                .data()
+                .ok()?
+                .windows(blake3::OUT_LEN)
+                .position(|w| w == partial.as_bytes())?;
+            Some(start + k as u64)
+        })
+    };
+    let Some(offset) = offset else {
+        return Ok(false);
+    };
+    file.write_all_at(key.as_bytes(), offset)
+        .map_err(|e| at(&e))?;
+    Ok(true)
+}
+
+/// The paths a linker's dependency file (`--dependency-file`) lists as the files it read, in
+/// the order it lists them: a make rule, `<output>: \` followed by one line for each file,
+/// each but the last ending in ` \`, then an empty line and a rule of its own for each file,
+/// which is not read. GNU ld writes each path after two spaces, as it is; LLD writes each
+/// after one space, with a space, `#` and `$` escaped. A path that names a file as it is
+/// written is taken so; else it is read with LLD's escapes removed. A path holding a line
+/// break cannot be listed in this form. One pass over the text.
+pub fn dependencies(list: &[u8]) -> impl Iterator<Item = PathBuf> + '_ {
+    use std::os::unix::ffi::OsStrExt as _;
+    const TARGET_END: &[u8] = b": \\\n";
+    let start = list
+        .windows(TARGET_END.len())
+        .position(|w| w == TARGET_END)
+        .map(|k| k + TARGET_END.len());
+    let mut more = start.is_some();
+    list[start.unwrap_or(list.len())..]
+        .split(|&b| b == b'\n')
+        .map_while(move |line| {
+            if !more {
+                return None;
+            }
+            let line = line.strip_suffix(b" \\").unwrap_or_else(|| {
+                more = false;
+                line
+            });
+            let line = line.strip_prefix(b" ").unwrap_or(line);
+            let line = line.strip_prefix(b" ").unwrap_or(line);
+            let raw = Path::new(std::ffi::OsStr::from_bytes(line));
+            if raw.symlink_metadata().is_ok() {
+                return Some(raw.to_path_buf());
+            }
+            let mut path = Vec::with_capacity(line.len());
+            let mut bytes = line.iter().peekable();
+            while let Some(&b) = bytes.next() {
+                match (b, bytes.peek()) {
+                    (b'\\', Some(&&next)) if matches!(next, b' ' | b'#' | b'\\') => {
+                        path.push(next);
+                        bytes.next();
+                    }
+                    (b'$', Some(&&b'$')) => {
+                        path.push(b'$');
+                        bytes.next();
+                    }
+                    _ => path.push(b),
+                }
+            }
+            Some(PathBuf::from(std::ffi::OsStr::from_bytes(&path)))
+        })
+}
+
+/// The files a link read besides its object file and its runtime library, which the key
+/// names by their bytes already: each named once, by the first of its paths in the order the
+/// linker read them, with the BLAKE3 hash of its bytes, in the same order.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Inputs {
+    /// The paths.
+    pub paths: Vec<PathBuf>,
+    /// The hash of the file at each path.
+    pub hashes: Vec<blake3::Hash>,
+}
+
+impl Inputs {
+    /// The files at `paths` with their hashes, in order, but for a file named before by any
+    /// path, and the files at `skip`. A file is told by its device and inode, so a file a
+    /// linker reads more than once, or by two paths, is hashed once: the cost is linear in the
+    /// number of paths and in the bytes of the distinct files. A path that cannot be opened
+    /// or read is an error naming it.
+    pub fn of(paths: impl IntoIterator<Item = PathBuf>, skip: &[&Path]) -> Result<Inputs, String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let mut seen = std::collections::HashSet::new();
+        for path in skip {
+            if let Ok(m) = std::fs::metadata(path) {
+                seen.insert((m.dev(), m.ino()));
+            }
         }
+        let mut inputs = Inputs {
+            paths: Vec::new(),
+            hashes: Vec::new(),
+        };
+        for path in paths {
+            let at = |e: std::io::Error| format!("{}: {e}", path.display());
+            let file = std::fs::File::open(&path).map_err(at)?;
+            let m = file.metadata().map_err(at)?;
+            if !seen.insert((m.dev(), m.ino())) {
+                continue;
+            }
+            let mut hasher = blake3::Hasher::new();
+            hasher.update_reader(file).map_err(at)?;
+            inputs.hashes.push(hasher.finalize());
+            inputs.paths.push(path);
+        }
+        Ok(inputs)
+    }
+}
+
+/// What a link of `out` leaves beside it, at [`Record::path`]: the hash of the executable's
+/// bytes as the link wrote them, and the paths of the files the link read ([`Inputs`]). A
+/// later build reads it to find the files whose bytes its key needs before it can link, and
+/// keeps `out` only if `out` still has those bytes: a stripped or edited executable keeps its
+/// build ID, but not its hash. A file of its own, since a hash of the executable cannot be
+/// held in the bytes it covers.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Record {
+    /// The BLAKE3 hash of the executable's bytes.
+    pub output: blake3::Hash,
+    /// The files the link read.
+    pub inputs: Vec<PathBuf>,
+}
+
+impl Record {
+    /// The first line of a record, which names its form.
+    const FORM: &'static [u8] = b"zed-link 1\n";
+
+    /// The record of the executable `out`: `<out>.zed-link`.
+    pub fn path(out: &Path) -> PathBuf {
+        let mut path = out.as_os_str().to_owned();
+        path.push(".zed-link");
+        PathBuf::from(path)
+    }
+
+    /// The record's bytes: [`Record::FORM`], the output's hash in hexadecimal and a line
+    /// break, then each path followed by a zero byte, which no path holds.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        use std::os::unix::ffi::OsStrExt as _;
+        let mut bytes = Self::FORM.to_vec();
+        bytes.extend_from_slice(self.output.to_hex().as_bytes());
+        bytes.push(b'\n');
+        for path in &self.inputs {
+            bytes.extend_from_slice(path.as_os_str().as_bytes());
+            bytes.push(0);
+        }
+        bytes
+    }
+
+    /// The record of the executable `out`, if there is one and it has the form
+    /// [`Record::to_bytes`] writes; `None` otherwise, and the build links again.
+    pub fn read(out: &Path) -> Option<Record> {
+        use std::os::unix::ffi::OsStrExt as _;
+        let bytes = std::fs::read(Self::path(out)).ok()?;
+        let rest = bytes.strip_prefix(Self::FORM)?;
+        let (hex, rest) = rest.split_at_checked(64)?;
+        let output = blake3::Hash::from_hex(hex).ok()?;
+        let paths = rest.strip_prefix(b"\n")?;
+        let inputs = if paths.is_empty() {
+            Vec::new()
+        } else {
+            paths
+                .strip_suffix(&[0])?
+                .split(|&b| b == 0)
+                .map(|p| PathBuf::from(std::ffi::OsStr::from_bytes(p)))
+                .collect()
+        };
+        Some(Record { output, inputs })
     }
 }
 
@@ -330,20 +662,24 @@ fn not_run(linker: &str, e: &std::io::Error) -> (u8, String) {
 ///
 /// - The linker is named by what its driver writes to standard output for `--version` and
 ///   for `-Wl,--version`: the driver's version and, through it, the linker's. Two spawns
-///   that do no work, under 5 ms together; hashing the driver's file would miss the linker,
-///   the C runtime start files and `libgcc`, which the driver finds by itself.
+///   that do no work, under 5 ms together.
 /// - The runtime library is named by the BLAKE3 hash of its bytes: about 0.1 s for its
 ///   117 MB, once per build. Its [`BUILD`] is not enough, since it names the crate's Cargo
 ///   configuration and not its source.
+/// - The driver's environment is named by the values of [`DRIVER_ENV`] it runs with.
 ///
-/// Not named: the system libraries in `SYSTEM_LIBS` and the start files, which a system
-/// update can change under one driver version, and the driver's environment variables.
+/// The other files the linker reads, the system libraries in `SYSTEM_LIBS`, the C start
+/// files and `libgcc`, which the driver finds by itself and a system update can change under
+/// one driver version, are known only from a link; [`Identity::key`] takes their hashes
+/// ([`Inputs`]) from the link, or from the [`Record`] of the link before.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     /// The driver's standard output for `--version` and for `-Wl,--version`.
     pub linker: [Vec<u8>; 2],
     /// The BLAKE3 hash of the runtime library's bytes.
     pub runtime: blake3::Hash,
+    /// The variables of [`DRIVER_ENV`] the driver runs with ([`Toolchain::env`]).
+    pub env: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl Identity {
@@ -353,7 +689,8 @@ impl Identity {
     pub fn of(tools: &Toolchain) -> Result<Identity, (u8, String)> {
         let linker = tools.linker.to_string_lossy();
         let version = |arg: &str| {
-            let o = Command::new(&tools.linker)
+            let o = tools
+                .driver()
                 .arg(arg)
                 .output()
                 .map_err(|e| not_run(&linker, &e))?;
@@ -379,27 +716,28 @@ impl Identity {
             }
             Ok(o.stdout)
         };
-        let linker = [version("--version")?, version("-Wl,--version")?];
-        let at = |e: std::io::Error| (1, format!("{}: {e}", tools.runtime.display()));
-        let mut runtime = blake3::Hasher::new();
-        runtime
-            .update_reader(std::fs::File::open(&tools.runtime).map_err(at)?)
-            .map_err(at)?;
         Ok(Identity {
-            linker,
-            runtime: runtime.finalize(),
+            linker: [version("--version")?, version("-Wl,--version")?],
+            runtime: hash_file(&tools.runtime).map_err(|e| (1, e))?,
+            env: tools.env.clone(),
         })
     }
 
-    /// The key of the link of `object` with the toolchain of this identity: a BLAKE3 hash of
-    /// everything that enters the executable, which is the object file, this identity and the
-    /// link's arguments other than the paths, each preceded by its length. The link records
-    /// it as the executable's GNU build ID, so that equal executables come from equal inputs,
-    /// and a build whose output already records its key does not link again. Equal keys are
-    /// taken for equal inputs with no comparison of the inputs, so the cache rests on
-    /// BLAKE3's collision resistance (DESIGN.md sec:theories, the trusted base).
-    pub fn key(&self, object: &[u8]) -> blake3::Hash {
-        let mut key = blake3::Hasher::new_derive_key("zed-native 2026-11-07 the key of a link");
+    /// The key of the link of `object` with the toolchain of this identity, which read the
+    /// files of `inputs` ([`Inputs::hashes`]): a BLAKE3 hash of everything that enters the
+    /// executable, which is the object file, this identity, the link's arguments other than
+    /// the paths, and the bytes of the other files the linker read, in the order it read
+    /// them, each preceded by its length. The link records it as the executable's GNU build
+    /// ID, so that equal executables come from equal inputs, and a build whose output already
+    /// records its key does not link again. Equal keys are taken for equal inputs with no
+    /// comparison of the inputs, so the cache rests on BLAKE3's collision resistance
+    /// (DESIGN.md sec:theories, the trusted base). Linear in the bytes of `object` and in the
+    /// number of `inputs`.
+    pub fn key(&self, object: &[u8], inputs: &[blake3::Hash]) -> blake3::Hash {
+        use std::os::unix::ffi::OsStrExt as _;
+        let mut key = blake3::Hasher::new_derive_key(
+            "zed-native 2026-11-07 the key of a link and the files it read",
+        );
         let mut part = |bytes: &[u8]| {
             key.update(&bytes.len().to_le_bytes());
             key.update(bytes);
@@ -411,6 +749,20 @@ impl Identity {
         }
         for a in SYSTEM_LIBS.iter().chain(LINK_FLAGS) {
             part(a.as_bytes());
+        }
+        for (name, value) in &self.env {
+            part(name.as_bytes());
+            match value {
+                Some(value) => {
+                    part(b"set");
+                    part(value.as_bytes());
+                }
+                None => part(b"unset"),
+            }
+        }
+        part(&inputs.len().to_le_bytes());
+        for input in inputs {
+            part(input.as_bytes());
         }
         key.finalize()
     }

@@ -9,6 +9,7 @@
 #![cfg(target_os = "linux")]
 
 mod cache;
+mod deps;
 mod identity;
 mod leftover;
 mod scaling;

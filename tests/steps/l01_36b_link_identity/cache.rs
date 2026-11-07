@@ -109,6 +109,7 @@ fn the_same_toolchain_on_other_paths_keeps_the_executable() {
     let moved = Toolchain {
         linker: on_path("cc").into(),
         runtime: elsewhere,
+        env: zed_native::link::driver_env(),
     };
     assert_ne!(moved.linker, system.linker);
     assert_eq!(link(&src, &out, &moved), Link::Kept);

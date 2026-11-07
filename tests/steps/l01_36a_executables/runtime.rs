@@ -149,6 +149,7 @@ fn a_build_refuses_a_library_of_another_build() {
         let tools = Toolchain {
             linker: "cc".into(),
             runtime: decoy.clone(),
+            env: zed_native::link::driver_env(),
         };
         assert_eq!(
             build(
