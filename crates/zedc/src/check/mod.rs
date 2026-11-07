@@ -53,7 +53,7 @@ use crate::ast::{
     Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind, StrPart, Target,
     Type, TypeKind, shown,
 };
-use crate::elab::Tables;
+use crate::resolve::tables::Tables;
 use crate::lex::{Span, unread_literal};
 use crate::rejection::Row;
 use crate::resolve::{Handle, Ref, Resolution};

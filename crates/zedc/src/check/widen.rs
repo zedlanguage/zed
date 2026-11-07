@@ -31,8 +31,8 @@ use zed_kernel::Value;
 use crate::ast::{Error, Expr, ExprKind, Note, Param, Stmt, StmtKind, StrPart, Target};
 use crate::check::Info;
 use crate::check::ty::Carrier;
-use crate::elab::Tables;
 use crate::lex::Span;
+use crate::resolve::tables::Tables;
 use crate::resolve::{Ref, Resolution};
 
 /// A closed interval of integers, both ends in the word.

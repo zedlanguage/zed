@@ -28,20 +28,18 @@ use crate::ast::{Error, Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPa
 use crate::check::{self, Fit, Info, Misfit};
 use crate::lex::{Span, unread_literal};
 use crate::rejection::Row;
+use crate::resolve::tables::Tables;
 use crate::resolve::{Kind, Ref, Resolution, prelude_layer};
 use crate::work::{self, Stage};
 
 mod defs;
 mod kernel_type;
-mod tables;
-mod topo;
 mod walk;
 
 pub use crate::stage::Cones;
 pub use defs::{Def, Test, Unit, written_name};
 pub(crate) use kernel_type::kernel_type;
-pub(crate) use tables::Tables;
-pub use topo::{topo, topo_joined};
+pub use crate::resolve::topo::{topo, topo_joined};
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
 pub fn elaborate(unit: &[Stmt], res: &Resolution) -> Result<Unit, Vec<Error>> {

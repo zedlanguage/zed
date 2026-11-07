@@ -40,6 +40,9 @@ use crate::ast::{Every, Note, Type, TypeBound, TypeKind};
 use crate::lex::Span;
 use crate::rejection::Row;
 
+pub(crate) mod tables;
+pub(crate) mod topo;
+
 /// What binds a name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
