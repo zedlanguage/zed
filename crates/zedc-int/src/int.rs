@@ -1857,6 +1857,12 @@ impl Num {
         }
     }
 
+    /// The value as an [`Int`], when it is written out: a kept power is not built, since that
+    /// costs time and memory in its digits.
+    pub fn to_int(&self) -> Option<Int> {
+        self.scalar().map(|v| Int::from(v.into_owned()))
+    }
+
     /// The value, when it fits in `i128`.
     pub fn to_i128(&self) -> Option<i128> {
         match &self.0 {

@@ -180,6 +180,12 @@ enum Same {
     Equal,
     /// They differ, and the interpreter refutes the one before.
     RefutedBefore,
+    /// The box lies strictly inside the one before.
+    Narrower,
+    /// The same box, exact now and inexact before.
+    NowExact,
+    /// The same exact box, found now without running each input and before by running them.
+    NotEnumerated,
     Differ,
 }
 
@@ -203,6 +209,12 @@ fn compared(t: &Term, ds: &Domains, d: &Demand, near: &[Num]) -> Same {
         Same::Equal
     } else if refuted(t, ds, d, &then.domains["i"], then.exact, near).is_some() {
         Same::RefutedBefore
+    } else if now.domains["i"] != then.domains["i"] {
+        Same::Narrower
+    } else if now.exact && !then.exact {
+        Same::NowExact
+    } else if now.exact && then.enumerated && !now.enumerated {
+        Same::NotEnumerated
     } else {
         Same::Differ
     }
@@ -212,7 +224,8 @@ fn compared(t: &Term, ds: &Domains, d: &Demand, near: &[Num]) -> Same {
 /// `2^62` and past `i64` at `2^70`, over domains with ends at the same places and unbounded:
 /// every preimage is sound, lies inside the one before and is exact wherever it is. The summary
 /// and the clip now read these; the one before reads each arm by the catalog. Every preimage
-/// equals the one before but for the reflections the one before got wrong.
+/// equals the one before but for the reflections the one before got wrong, and the chains whose
+/// values pass `i128`, which the summary now reads (counts held below).
 #[test]
 fn chains_over_wide_domains_keep_their_preimages() {
     let wide = pow2(62, 0);
@@ -245,12 +258,16 @@ fn chains_over_wide_domains_keep_their_preimages() {
         past.clone(),
     ];
     let (mut cases, mut refuted_before, mut differ) = (0, Vec::new(), Vec::new());
+    let (mut narrower, mut now_exact, mut not_enumerated) = (Vec::new(), Vec::new(), Vec::new());
     let mut note = |t: &Term, ds: &Domains, d: &Demand, near: &[Num]| {
         cases += 1;
         let what = format!("{t} over {ds:?}, {d:?}");
         match compared(t, ds, d, near) {
             Same::Equal => {}
             Same::RefutedBefore => refuted_before.push(what),
+            Same::Narrower => narrower.push(what),
+            Same::NowExact => now_exact.push(what),
+            Same::NotEnumerated => not_enumerated.push(what),
             Same::Differ => differ.push(what),
         }
     };
@@ -285,6 +302,17 @@ fn chains_over_wide_domains_keep_their_preimages() {
             .iter()
             .all(|w| w.contains("(9223372036854775807 - i)")),
         "{refuted_before:?}"
+    );
+    // The summary reads values past `i128` (its numbers are unbounded), where the transfer
+    // before read the `if` arm by arm: its box is the same or narrower, exact more often, and found
+    // without running each input where the one before ran them.
+    // Each is sound by the interpreter, inside the box before and exact wherever it was.
+    assert_eq!(
+        (narrower.len(), now_exact.len(), not_enumerated.len()),
+        (20, 245, 1),
+        "narrower:\n{}\nnow exact:\n{}",
+        narrower[..narrower.len().min(3)].join("\n"),
+        now_exact[..now_exact.len().min(3)].join("\n")
     );
     assert!(
         differ.is_empty(),
@@ -365,39 +393,61 @@ fn a_reflection_over_all_integers_falls_to_minus_infinity() {
 }
 
 /// `if i >= 0 { i * f * f } else { i }` with `f * f` past `i128` (`f = 2^64`), and with
-/// `f * f = 2^120` over a domain where the then arm's values pass `i128`: the summary gives
-/// up and the `if` is read arm by arm, exactly as before S22.
+/// `f * f = 2^120` over a domain where the then arm's values pass `i128`: the summary's
+/// coefficients and values are unbounded integers, so it reads every case, exactly: over a finite
+/// domain every input is run, and every preimage is compared with the transfer before S22.
 #[test]
-fn values_past_i128_take_the_transfer_before() {
+fn values_past_i128_are_summarized_exactly() {
     let times = |f: &Num| {
         let guard = prim(Prim::Ge, i(), Term::Lit(Value::Int(0)));
         let then = prim(Prim::Mul, prim(Prim::Mul, i(), lit(f)), lit(f));
         Term::If(Shared::new(guard), Shared::new(then), Shared::new(i()))
     };
     let cases = [
-        (times(&pow2(64, 0)), on(End::of(-50), End::of(50)), false),
-        (times(&pow2(60, 0)), on(End::of(-50), End::of(300)), false),
-        // Unbounded above, the then arm tends to plus infinity and takes no finite value past
-        // `i128`: the summary reads it.
-        (times(&pow2(60, 0)), on(End::NegInf, End::PosInf), true),
+        (times(&pow2(64, 0)), Some((-50, 50))),
+        (times(&pow2(60, 0)), Some((-50, 300))),
+        (times(&pow2(60, 0)), None),
     ];
-    for (t, ds, summarized) in cases {
+    let mut kinds = Vec::new();
+    for (t, range) in cases {
+        let ds = match range {
+            Some((lo, hi)) => on(End::of(lo), End::of(hi)),
+            None => on(End::NegInf, End::PosInf),
+        };
         for (_, d) in demands().into_iter().skip(1) {
             let Demand::Ints(z) = &d else { unreachable!() };
-            assert_eq!(
+            assert!(
                 summary_preimage(&t, &ds, z).is_some(),
-                summarized,
                 "{t} over {ds:?}, {d:?}"
             );
-            let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
-            assert_eq!(
-                format!("{now:?}"),
-                format!("{then:?}"),
-                "{t} over {ds:?}, {d:?}"
-            );
-            sound(&t, &ds, &d, &now, &[num(0), num(256), num(257)]);
+            kinds.push(compared(&t, &ds, &d, &[num(0), num(256), num(257)]));
+            let now = preimage(&t, &ds, &d);
+            assert!(now.exact, "{t} over {ds:?}, {d:?}: {}", shown(&now));
+            // Over a finite domain, every input is run.
+            for v in range.into_iter().flat_map(|(lo, hi)| lo..=hi) {
+                let v = num(v.into());
+                assert_eq!(
+                    now.domains["i"].contains_end(&End::Fin(v.clone())),
+                    meets(&t, &v, &d),
+                    "{t} over {ds:?}, {d:?} at {v}: {}",
+                    shown(&now)
+                );
+            }
         }
     }
+    let count = |s: Same| kinds.iter().filter(|k| **k == s).count();
+    // Of the 18, the transfer before gave the same preimage in 14; in 1 the same box inexact, in
+    // 2 a wider box, and in 1 the same exact box by running each input. None differs otherwise.
+    assert_eq!(
+        (
+            count(Same::Equal),
+            count(Same::NowExact),
+            count(Same::Narrower),
+            count(Same::NotEnumerated),
+            count(Same::Differ),
+        ),
+        (14, 1, 2, 1, 0)
+    );
 }
 
 /// The chain over a domain whose ends lie past `i128` (`2^130`): the summary gives up and the

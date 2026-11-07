@@ -353,7 +353,9 @@ fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 /// over many periods answers with the classes' relation in place of the linear stage's
 /// (COMPLEXITY.md S22e-wide), each shown with its box now and before when wider, and the cases
 /// that differ only in the names of the variables of their relation or refusal
-/// (COMPLEXITY.md S22-transfer-rem).
+/// (COMPLEXITY.md S22-transfer-rem), and the exact preimages the transfer before found by
+/// listing their points that are now the same set, exact, read without a listing
+/// (COMPLEXITY.md F70, PA-plus-if).
 #[derive(Default)]
 struct Diffs {
     cases: usize,
@@ -364,6 +366,7 @@ struct Diffs {
     wide: usize,
     wider: Vec<String>,
     renamed: usize,
+    unlisted: usize,
 }
 
 /// Whether `p`, not exact, holds the relation of a split by remainders over many periods
@@ -550,8 +553,27 @@ impl Diffs {
 
     /// Compares the exact preimage of `d` under `t` over `ds` and `cs` with the one before.
     fn exact(&mut self, what: &str, t: &Term, ds: &Domains, cs: &Classes, d: &Demand) {
-        let new = format!("{:?}", exact_preimage(t, ds, cs, d));
-        let old = format!("{:?}", before::exact_preimage(t, ds, cs, &old(d)));
+        let now = exact_preimage(t, ds, cs, d);
+        let then = before::exact_preimage(t, ds, cs, &old(d));
+        // Item PA-plus-if: the summary reads a sum of two summaries of one input, so a preimage
+        // the transfer before found exact by listing its points is read exact without a
+        // listing. The set, the stops, the relation and the refusal are those before.
+        let rest = |e: bool,
+                    s: &dyn std::fmt::Debug,
+                    r: &dyn std::fmt::Debug,
+                    f: &dyn std::fmt::Debug| format!("{e:?} {s:?} {r:?} {f:?}");
+        if now.domains == then.domains
+            && now.exact
+            && !now.enumerated
+            && then.enumerated
+            && rest(now.exact, &now.stops, &now.relation, &now.refusal)
+                == rest(then.exact, &then.stops, &then.relation, &then.refusal)
+        {
+            self.cases += 1;
+            self.unlisted += 1;
+            return;
+        }
+        let (new, old) = (format!("{now:?}"), format!("{then:?}"));
         self.note(what, t, ds, d, new, old);
     }
 
@@ -602,6 +624,10 @@ impl Diffs {
             self.renamed, 0,
             "a result differs from the one before only in the names of its variables"
         );
+        assert_eq!(
+            self.unlisted, 0,
+            "an exact preimage listed before is read without a listing"
+        );
     }
 
     /// Checks that a split over many periods answered `wide` cases with the classes'
@@ -628,6 +654,17 @@ impl Diffs {
             "the number of results that differ only in the names of their variables changed"
         );
         self.renamed = 0;
+        self
+    }
+
+    /// Checks that `unlisted` exact preimages the transfer before found by listing their points
+    /// are the same set, read without a listing (item PA-plus-if).
+    fn unlisted(mut self, unlisted: usize) -> Diffs {
+        assert_eq!(
+            self.unlisted, unlisted,
+            "the number of exact preimages read without the listing before changed"
+        );
+        self.unlisted = 0;
         self
     }
 }
@@ -879,9 +916,14 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
 /// demand included, so an inexact box depends on the demand's pieces outside the hull. Here
 /// the demand on `x` through `x + x` is met with `x`'s hull `[-17, inf)`, the cap then merges
 /// less, and the box shrinks from `[-10] | [-2, 10]` to `[-10] | [-2, 3] | [10]`; the true set
-/// is `{-10} | [1, 3] | {10}`. Both boxes are inexact and hold every point that meets the
-/// demand. The transfer before cannot be kept on such demands without reading both the met
-/// and the whole demand at each term, which doubles the demands per level.
+/// is `{-10} | [1, 3] | {10}`. Both boxes held every point that meets the demand. The transfer
+/// before cannot be kept on such demands without reading both the met and the whole demand at
+/// each term, which doubles the demands per level.
+///
+/// Since PA-plus-if, `x + x` has a summary (the sum of two summaries of one input), which is
+/// inverted in place of the map2 cap, so the preimage is now that true set, exact; the box
+/// before is as it was. The narrower kind of difference is still met in
+/// `random_terms_keep_their_preimages` (6 cases).
 #[test]
 fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let i = || var("i");
@@ -899,13 +941,13 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let ds = over(&[("i", IntervalSet::range(End::NegInf, End::of(12)))]);
     let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
     let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
-    assert!(!now.exact && !then.exact);
-    assert_eq!(now.domains["i"], pieces(&[(-10, -10), (-2, 3), (10, 10)]));
+    assert!(now.exact && !then.exact);
+    assert_eq!(now.domains["i"], pieces(&[(-10, -10), (1, 3), (10, 10)]));
     assert_eq!(then.domains["i"], pieces(&[(-10, -10), (-2, 10)]));
-    assert!(!refuted(&t, &ds, &d, &now.domains, false));
+    assert!(!refuted(&t, &ds, &d, &now.domains, true));
     let mut diffs = Diffs::default();
     diffs.preimage("the narrowed case", &t, &ds, &d);
-    assert_eq!((diffs.cases, diffs.narrower, diffs.found.len()), (1, 1, 0));
+    assert_eq!((diffs.cases, diffs.exact, diffs.found.len()), (1, 1, 0));
 }
 
 /// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
@@ -958,22 +1000,22 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 23), (10, &[]), 5),
-    (250, (1, 3, 22), (5, &[]), 1),
-    (500, (1, 3, 19), (5, &[]), 1),
-    (750, (0, 2, 17), (8, &[]), 3),
-    (1000, (2, 2, 24), (9, &[]), 4),
-    (1250, (2, 5, 20), (2, &[]), 4),
-    (1500, (0, 1, 16), (8, &[]), 5),
-    (1750, (0, 4, 25), (9, &[]), 3),
-    (2000, (0, 4, 33), (11, &[]), 2),
-    (2250, (0, 1, 18), (13, &[]), 1),
-    (2500, (2, 1, 23), (7, &[]), 4),
-    (2750, (0, 1, 18), (5, &[]), 1),
-    (3000, (2, 3, 27), (7, &[]), 5),
-    (3250, (1, 3, 29), (4, &[]), 2),
-    (3500, (0, 0, 25), (3, &[]), 1),
-    (3750, (0, 2, 22), (9, &[]), 6),
+    (0, (0, 0, 53), (10, &[]), 0),
+    (250, (0, 3, 41), (9, &[]), 0),
+    (500, (0, 0, 45), (8, &[]), 0),
+    (750, (0, 0, 46), (11, &[]), 0),
+    (1000, (0, 0, 53), (14, &[]), 0),
+    (1250, (0, 2, 50), (4, &[]), 0),
+    (1500, (0, 0, 42), (12, &[]), 0),
+    (1750, (0, 1, 49), (13, &[]), 0),
+    (2000, (0, 1, 55), (17, &[]), 0),
+    (2250, (0, 1, 42), (15, &[]), 0),
+    (2500, (0, 0, 53), (10, &[]), 0),
+    (2750, (0, 0, 48), (5, &[]), 0),
+    (3000, (0, 0, 57), (10, &[]), 0),
+    (3250, (0, 0, 54), (7, &[]), 0),
+    (3500, (0, 0, 51), (5, &[]), 0),
+    (3750, (0, 2, 57), (11, &[]), 0),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -1074,6 +1116,20 @@ guarded_ranges!(
 /// refusal gone, its relation changed; one more case in each half is answered by a split
 /// over many periods (56 and 59); and 26 and 22 results differ only in the names of their
 /// variables, measured by the run of each row.
+///
+/// Since PA-plus-if, which summarizes the sum or difference of any two summaries of one input
+/// (an `if` among them, `x + x` with `x` an `if`) and inverts such a sum where the transfer
+/// projected it, the summary reads most of what the linear stage read. Against the counts of
+/// S22-linear-rem: in the first half 213 more boxes are exact (379), 25 more are answered by
+/// a split over many periods or listed (81), narrower 0 (was 6) and reflected 6 (was 20); in
+/// the second half 222 more are exact (417), 21 more answered by a split (80), narrower 0
+/// (was 5) and reflected 4 (was 15). The counts are the same as on main before S22-linear-rem
+/// merged: the cases it changed are read by the summary here. The cases that left the
+/// narrower and reflected counts were not traced one by one; every case of a row is in one
+/// of its counts. No result differs from the one before only in the names of its variables
+/// any more (renamed 0, was 26 and 22): those were results of the linear stage, which is no
+/// longer run on them. Each is checked against the interpreter, none differs otherwise, and
+/// none is wider.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1094,8 +1150,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (6, 20, 166, 56, vec![], 26));
-    assert_eq!(sum(&GUARDED[8..]), (5, 15, 195, 59, vec![], 22));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 379, 81, vec![], 0));
+    assert_eq!(sum(&GUARDED[8..]), (0, 4, 417, 80, vec![], 0));
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -1169,7 +1225,13 @@ fn random_terms_keep_their_preimages() {
         // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
         // One more is made exact since PRODUCT-nested-chain summarizes the sum or difference
         // of two lines of one input.
-        diffs.none_but(6800, 0, 0, 2);
+        //
+        // Since PA-plus-if, which summarizes the sum or difference of any two summaries of one
+        // input (an `if` among them) and inverts such a sum where the transfer projected it,
+        // 22 more boxes are exact (24), 6 inexact boxes are narrower than the transfer
+        // before and sound, and one exact preimage the transfer before listed point by point,
+        // `(x <= x) || …`, is the same set read without a listing.
+        diffs.unlisted(1).none_but(6800, 6, 0, 24);
     });
 }
 
@@ -1546,8 +1608,9 @@ fn chain_neg_scales() {
 }
 
 /// Else arm `-2 * t`, under an integer demand of two pieces on both signs: `tk` reaches
-/// `50 * 2^k`, which passes `i128` from `k = 122`, where the summary is given up (COMPLEXITY.md
-/// S22, `mul`). From 32 to 256 the chain crosses that size.
+/// `50 * 2^k`, which passes `i128` from `k = 122`, where the summary's coefficients and values
+/// become big integers (`Int`; COMPLEXITY.md S22, `mul`). From 32 to 256 the chain crosses that
+/// size.
 #[test]
 fn chain_mul_across_i128_scales() {
     scales("mul", 32);
