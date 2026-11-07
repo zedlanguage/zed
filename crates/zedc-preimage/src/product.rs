@@ -622,40 +622,60 @@ impl fmt::Debug for Seen {
     }
 }
 
-/// A value of names at which every difference constraint among them holds: under it no edge
-/// has a negative reduced weight, so a Dijkstra search finds the bounds of a tree of blocks
-/// projected by shortest paths ([`Scope::shortest`]). It holds at every edge of the relation
-/// as of its last projection, except the edges of names it lacks: each edge added is put in
-/// it at the next projection, whichever way its tree is projected ([`Scope::repair`]), and a
-/// projection of every block ([`Due::All`]) empties it. A cache, equal in every scope, and
-/// checked at every edge it is read at.
+/// A value of names at which every difference constraint among them holds, each edge's weight
+/// lowered by the gap of the name it enters: under it no edge has a negative reduced weight,
+/// so a Dijkstra search finds the bounds of a tree of blocks projected by shortest paths
+/// ([`Scope::shortest`]). It holds at every edge of the relation as of its last projection,
+/// except the edges of names it lacks: each edge added is put in it at the next projection,
+/// whichever way its tree is projected ([`Scope::repair`]), and a projection of every block
+/// ([`Due::All`]) empties it. A cache, equal in every scope, and checked at every edge it is
+/// read at.
+///
+/// A name's gap is the length of the longest run of integers its interval leaves out between
+/// its ends ([`hole_gap`]); the potential holds with the gap in `gap`, which is at least the
+/// name's own unless the relation records the name as keeping its tree from shortest paths
+/// ([`Conjuncts::gapped`], [`Scope::sync_bounds`]). Every cycle `C` of edges then has a
+/// weight of at least the sum of the gaps of its names, which is what makes shortest paths
+/// with holes the projection ([`Scope::shortest`]).
 ///
 /// Each value is a pair, compared first by its first part: an edge of weight `k` weighs
-/// `(k, -1)`, or `(k, 0)` when it is tied, and no edge has a reduced weight below `(0, 0)`.
-/// The first parts are then a point as above. A cycle of weight 0 weighs `(0, -j)` for its
-/// `j` edges not tied, which no such point allows unless `j` is 0: each edge of a cycle of
-/// weight 0 is tied, and a name with no tied edge lies on no such cycle, so that no other
-/// name differs from it by a constant ([`Scope::lone_hole`]). An edge is tied when it is
-/// found on a cycle of weight 0 ([`Scope::repair`], [`Scope::reseed`]); one whose cycle has
-/// gone since stays tied, which only keeps a hole from projection by shortest paths.
+/// `(k, -1)`, or `(k, 0)` when it is tied, less the gap in both cases, and no edge has a
+/// reduced weight below `(0, 0)`. The first parts are then a point as above. A cycle of such
+/// weight 0 weighs `(0, -j)` for its `j` edges not tied, which no such point allows unless
+/// `j` is 0, so each edge of such a cycle is tied. An edge is tied when it is found on such a
+/// cycle ([`Scope::repair`], [`Scope::reseed`]); one whose cycle has gone since stays tied.
 #[derive(Clone, Default)]
 struct Potential {
     /// Each name's value.
     at: imbl::OrdMap<Arc<str>, (Int, i64)>,
     /// The tied edges, each a conjunct and whether it is its back edge ([`conjuncts::edges`]).
     tied: imbl::OrdSet<(Arc<Formula>, bool)>,
+    /// The gap each name's edges in are lowered by; none for 0.
+    gap: imbl::OrdMap<Arc<str>, Int>,
+}
+
+impl Potential {
+    /// The gap the edges into `n` are lowered by.
+    fn gap_of(&self, n: &str) -> Int {
+        self.gap.get(n).cloned().unwrap_or(Int::ZERO)
+    }
 }
 
 /// The weight in a [`Potential`] of the edge `e` of conjunct `g`, its back edge with `back`,
-/// under the tied edges `tied`.
+/// under the tied edges `tied` and the gaps `gap`.
 fn pair_weight(
     tied: &imbl::OrdSet<(Arc<Formula>, bool)>,
+    gap: &imbl::OrdMap<Arc<str>, Int>,
     g: &Arc<Formula>,
     back: bool,
     e: &Edge,
 ) -> (Int, i64) {
     let tied = tied.contains(&(g.clone(), back));
-    (e.weight.clone(), if tied { 0 } else { -1 })
+    let w = match e.to.as_ref().and_then(|v| gap.get(v)) {
+        Some(d) => &e.weight - d,
+        None => e.weight.clone(),
+    };
+    (w, if tied { 0 } else { -1 })
 }
 
 /// `a + b` and `a - b` on the pairs of a [`Potential`].
@@ -715,7 +735,7 @@ enum Fall {
     /// it reads has a negative reduced weight under it: it is found again after
     /// ([`Scope::reseed`]).
     Potential,
-    /// A name it reads has holes or a class, or no product.
+    /// A name it reads has a class, or no product.
     Name,
     /// A seed was in a tree of other conjuncts at the last projection ([`Seeds::unsure`]).
     Unsure,
@@ -745,6 +765,147 @@ fn tree_edges(relation: &Conjuncts, t: BlockId, name: &str) -> Vec<(Arc<Formula>
         }
     }
     out
+}
+
+/// The search of [`Scope::repair`]: puts each edge of `pending` in the potential `pot` of
+/// tree `t` of the forest, with the tied edges `tied` and the gaps `gap` ([`Potential`]). A
+/// name `pot` lacks takes a value from an edge only when every edge at it is among `added`.
+/// `Ok(Some(u))` when an edge closes a cycle of negative weight, and `Err` when the search
+/// reads a name `pot` lacks, an edge of negative reduced weight, or a cycle negative only
+/// with the gaps; `pot` and `tied` are then to be dropped.
+fn put_in(
+    relation: &Conjuncts,
+    t: BlockId,
+    added: &BTreeSet<Arc<Formula>>,
+    pending: &[(Arc<Formula>, bool, Edge)],
+    pot: &mut imbl::OrdMap<Arc<str>, (Int, i64)>,
+    tied: &mut imbl::OrdSet<(Arc<Formula>, bool)>,
+    gap: &imbl::OrdMap<Arc<str>, Int>,
+) -> Result<Option<Arc<str>>, Fall> {
+    // A name the potential lacks may take a value from an edge added only when every edge
+    // at it was added: those are put in after.
+    let new_name = |n: &Arc<str>| -> Result<(), Fall> {
+        let all_added = tree_edges(relation, t, n)
+            .iter()
+            .all(|(g, _, e)| e.from.is_none() || e.to.is_none() || added.contains(g));
+        if all_added {
+            Ok(())
+        } else {
+            Err(Fall::Potential)
+        }
+    };
+    let gap_of = |n: &Arc<str>| gap.get(n).cloned().unwrap_or(Int::ZERO);
+    let zero = (Int::ZERO, 0i64);
+    let mut waiting: BTreeSet<(Arc<Formula>, bool)> = pending
+        .iter()
+        .map(|(g, back, _)| (g.clone(), *back))
+        .collect();
+    for (g, back, e) in pending {
+        waiting.remove(&(g.clone(), *back));
+        let (Some(u), Some(v)) = (&e.from, &e.to) else {
+            continue;
+        };
+        // Each round puts the edge in, or finds a cycle of weight 0 through it, whose
+        // edges are then tied, and the edge is put in again with their weights raised.
+        'round: loop {
+            let w = pair_weight(tied, gap, g, *back, e);
+            let gamma = match (pot.get(u).cloned(), pot.get(v).cloned()) {
+                (None, None) => {
+                    new_name(u)?;
+                    new_name(v)?;
+                    pot.insert(u.clone(), zero.clone());
+                    pot.insert(v.clone(), w);
+                    break 'round;
+                }
+                (Some(pu), None) => {
+                    new_name(v)?;
+                    pot.insert(v.clone(), pair_plus(&pu, &w));
+                    break 'round;
+                }
+                (None, Some(pv)) => {
+                    new_name(u)?;
+                    pot.insert(u.clone(), pair_minus(&pv, &w));
+                    break 'round;
+                }
+                (Some(pu), Some(pv)) => pair_minus(&pair_plus(&pu, &w), &pv),
+            };
+            if gamma >= zero {
+                break 'round;
+            }
+            // Each name's potential falls by the least reduced distance from `v` below
+            // zero; the new values are kept apart until the search ends, so that the old
+            // ones check the edges read. Each name reached keeps the edge it was last
+            // reached by, so that a cycle found can be followed back.
+            let mut fall: BTreeMap<Arc<str>, (Int, i64)> =
+                BTreeMap::from([(v.clone(), gamma.clone())]);
+            let mut via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)> = BTreeMap::new();
+            let mut heap = BinaryHeap::from([Reverse((gamma, v.clone()))]);
+            let mut new: BTreeMap<Arc<str>, (Int, i64)> = BTreeMap::new();
+            while let Some(Reverse((gs, s))) = heap.pop() {
+                if new.contains_key(&s) || fall.get(&s) != Some(&gs) {
+                    continue;
+                }
+                let ps = pot.get(&s).ok_or(Fall::Potential)?;
+                let to_s = pair_plus(ps, &gs);
+                for (h, hb, f) in tree_edges(relation, t, &s) {
+                    let (Some(from), Some(x)) = (&f.from, &f.to) else {
+                        continue;
+                    };
+                    if *from != s || new.contains_key(x) || waiting.contains(&(h.clone(), hb)) {
+                        continue;
+                    }
+                    let px = pot.get(x).ok_or(Fall::Potential)?;
+                    let fw = pair_weight(tied, gap, &h, hb, &f);
+                    if pair_minus(&pair_plus(ps, &fw), px) < zero {
+                        return Err(Fall::Potential);
+                    }
+                    let gx = pair_minus(&pair_plus(&to_s, &fw), px);
+                    if gx >= zero {
+                        continue;
+                    }
+                    if x == u {
+                        if gx.0 < Int::ZERO {
+                            // The cycle's weight without the gaps: each of its names
+                            // lowered the edge into it by its gap.
+                            let mut weight = &gx.0 + &gap_of(u);
+                            let mut at = s.clone();
+                            weight = &weight + &gap_of(&at);
+                            while let Some((before, _, _)) = via.get(&at) {
+                                at = before.clone();
+                                weight = &weight + &gap_of(&at);
+                            }
+                            return if weight < Int::ZERO {
+                                Ok(Some(u.clone()))
+                            } else {
+                                Err(Fall::Potential)
+                            };
+                        }
+                        // A cycle of weight 0: the edge, the one into `u`, and those
+                        // back to `v`.
+                        tied.insert((g.clone(), *back));
+                        tied.insert((h, hb));
+                        let mut at = s.clone();
+                        while let Some((before, k, kb)) = via.get(&at) {
+                            tied.insert((k.clone(), *kb));
+                            at = before.clone();
+                        }
+                        continue 'round;
+                    }
+                    if fall.get(x).is_none_or(|c| gx < *c) {
+                        fall.insert(x.clone(), gx.clone());
+                        via.insert(x.clone(), (s.clone(), h.clone(), hb));
+                        heap.push(Reverse((gx, x.clone())));
+                    }
+                }
+                new.insert(s, to_s);
+            }
+            for (s, ps) in new {
+                pot.insert(s, ps);
+            }
+            break 'round;
+        }
+    }
+    Ok(None)
 }
 
 /// The intervals and classes of a part's names when it was last projected.
@@ -2526,9 +2687,15 @@ impl Scope {
     /// each other conjunct with them.
     fn project(&mut self, due: Due, whole: bool) {
         // A projection of every block puts no edge in the potential, which may then fail at
-        // the edges added since the last projection: it is found again where it is read.
+        // the edges added since the last projection: it is found again where it is read. Each
+        // name with holes then keeps its tree from shortest paths until the potential is found
+        // again with its gap ([`Scope::repair`], [`Scope::reseed`]); this reads every name, as
+        // the projection reads every block.
         if matches!(due, Due::All) {
             self.potential = Potential::default();
+            for (n, p) in &self.names {
+                self.relation.gapped(n, gapped(p));
+            }
         }
         if self.relation.is_top() {
             self.projected = imbl::OrdMap::new();
@@ -2583,56 +2750,70 @@ impl Scope {
             return;
         }
         // A projection narrows the names and neither reads nor changes the relation, which is
-        // taken out while the worklist reads its blocks and put back after.
-        let relation = std::mem::take(&mut self.relation);
-        let blocks = relation.blocks();
+        // taken out while the worklist reads its blocks and put back after; only whether each
+        // name keeps its tree from shortest paths is recorded in it ([`Scope::sync_gap`]).
+        let mut relation = std::mem::take(&mut self.relation);
         // Every block, as after a change of every name, is projected block by block.
         let every = matches!(due, Due::All);
         let (due, seeds): (Vec<BlockId>, Seeds) = match due {
-            Due::All => (blocks.all().collect(), Seeds::default()),
+            Due::All => (relation.blocks().all().collect(), Seeds::default()),
             Due::Blocks(bs, seeds) => (bs.into_iter().collect(), seeds),
         };
         // What changed in each tree of the forest, for those projected by shortest paths.
         let mut fresh: BTreeMap<BlockId, Seeds> = BTreeMap::new();
-        for n in &seeds.names {
-            if let Some(t) = blocks.tree_of_name(n) {
-                let at = fresh.entry(t).or_default();
-                at.names.insert(n.clone());
-                if seeds.unsure.contains(n) {
-                    at.unsure.insert(n.clone());
-                }
-            }
-        }
-        for g in &seeds.added {
-            if let Some(b) = blocks.of(g).filter(|b| !blocks.is_apart(*b)) {
-                fresh
-                    .entry(blocks.tree(b))
-                    .or_default()
-                    .added
-                    .insert(g.clone());
-            }
-        }
         // The trees projected block by block in this projection, each with a block of it when
         // its potential is to be found again ([`Scope::reseed`]).
         let mut fallen: BTreeMap<BlockId, Option<BlockId>> = BTreeMap::new();
-        // Each edge added is put in the potential before any tree is projected, whichever way
-        // its tree is, so that the potential holds at every edge it has ([`Scope::repair`]).
-        for (&t, at) in &fresh {
-            if at.added.is_empty() {
-                continue;
-            }
-            match self.repair(&relation, t, &at.added) {
-                Ok(None) => {}
-                Ok(Some(n)) => {
-                    self.empty_at(&n);
-                    self.relation = relation;
-                    return;
+        {
+            let blocks = relation.blocks();
+            for n in &seeds.names {
+                if let Some(t) = blocks.tree_of_name(n) {
+                    let at = fresh.entry(t).or_default();
+                    at.names.insert(n.clone());
+                    if seeds.unsure.contains(n) {
+                        at.unsure.insert(n.clone());
+                    }
                 }
-                Err(_) => {
-                    fallen.insert(t, at.added.iter().find_map(|g| blocks.of(g)));
+            }
+            for g in &seeds.added {
+                if let Some(b) = blocks.of(g).filter(|b| !blocks.is_apart(*b)) {
+                    fresh
+                        .entry(blocks.tree(b))
+                        .or_default()
+                        .added
+                        .insert(g.clone());
+                }
+            }
+            // Each edge added is put in the potential before any tree is projected, whichever
+            // way its tree is, so that the potential holds at every edge it has
+            // ([`Scope::repair`]); then the gap of each seed whose interval's gap has grown
+            // past the one the potential holds with, as when a test leaves a hole in it
+            // ([`Scope::raise`]).
+            for (&t, at) in &fresh {
+                if !at.added.is_empty() {
+                    match self.repair(&relation, t, &at.added) {
+                        Ok(None) => {}
+                        Ok(Some(n)) => {
+                            self.empty_at(&n);
+                            self.relation = relation;
+                            return;
+                        }
+                        Err(_) => {
+                            fallen.insert(t, at.added.iter().find_map(|g| blocks.of(g)));
+                            continue;
+                        }
+                    }
+                }
+                for n in &at.names {
+                    self.raise(&relation, t, n);
                 }
             }
         }
+        // Whether each seed keeps its tree from shortest paths, now that the gaps are raised.
+        for n in &seeds.names {
+            self.sync_gap(&mut relation, n);
+        }
+        let blocks = relation.blocks();
         // The trees a name of which has come to have holes or a class in this projection.
         let mut holed: BTreeSet<BlockId> = BTreeSet::new();
         let mut order: Vec<(&Arc<Formula>, BlockId)> = due
@@ -2654,17 +2835,26 @@ impl Scope {
             if whole_trees.contains(&t) {
                 continue;
             }
-            // A tree of difference constraints and bounds whose names each have one interval
-            // and no class, but for at most one name with holes ([`Scope::lone_hole`]), is
-            // projected by shortest paths from what changed in it, once for all its blocks on
-            // the worklist, and again for each move that reaches it from a star; otherwise, or
-            // when that cannot be done, block by block as below.
-            let gaps =
-                (!every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t))
-                    .then(|| blocks.gaps(t))
-                    .flatten()
-                    .filter(|gaps| *gaps <= 1);
-            if let Some(gaps) = gaps {
+            // A tree of difference constraints and bounds whose names have no class, and holes
+            // only within the gaps the potential holds with ([`Potential`]), is projected by
+            // shortest paths from what changed in it, once for all its blocks on the worklist,
+            // and again for each move that reaches it from a star; otherwise, or when that
+            // cannot be done, block by block as below.
+            //
+            // Complexity tradeoff: a tree with a class in a name, or holes in names that no
+            // potential holds with (a cycle of edges of weight less than the sum of its names'
+            // gaps, as `x <= z <= x + 1` with a hole in each, or an equality with a name with
+            // holes), is projected block by block, from the blocks due, with the whole tree
+            // projected at an echo. Why: shortest paths over the names' hulls are then not the
+            // projection (`x, z` in `[w, w + 1]`, `x <= z <= x + 1`, `x != 5`, `z != 6` leave
+            // out `w = 5`), and no exact incremental rule for such holes is known here; the
+            // holes of one name then leave holes in the others. Trigger: tests that each leave
+            // a hole in another name of such a cycle: TBD_RESIDUAL. Tests that leave holes in
+            // many names of a tree no such cycle passes through are projected by shortest
+            // paths: TBD_LINEAR. COMPLEXITY.md row S25.
+            let shortest =
+                !every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t);
+            if shortest && blocks.gaps(t) == Some(0) {
                 let mut at = fresh.remove(&t).unwrap_or_default();
                 at.names.extend(from.iter().cloned());
                 if at.names.is_empty() && at.added.is_empty() {
@@ -2672,28 +2862,8 @@ impl Scope {
                 }
                 let found = if !at.unsure.is_empty() {
                     Err(Fall::Unsure)
-                } else if gaps == 0 {
-                    self.shortest(&relation, t, &at.names, None)
                 } else {
-                    // Complexity tradeoff: a tree with holes or a class in more than one name,
-                    // a hole of more than one integer, a class, or a cycle of weight 0 through
-                    // the name with holes is projected block by block, from the blocks due,
-                    // with the whole tree projected at an echo. Why: shortest paths over the
-                    // names' hulls are then not the projection (two holed names, `x, z` in
-                    // `[w, w+1]`, `x <= z <= x+1`, `x != 5`, `z != 6`; and the cycle at
-                    // `linked::a_name_with_holes_keeps_its_tree_from_shortest_paths`), and
-                    // no exact incremental rule for them is known here. Trigger: tests that
-                    // each leave a hole in another name of one tree, so that the holes pile
-                    // up: `k` tests `x_i != 5` that each hold, between rungs of a ladder,
-                    // read 0.46 G, 3.3 G and 25.6 G instructions at k = 10, 20 and 40, as on
-                    // the base before this item (cubic). A hole that a join drops, as an
-                    // `if`'s arms do, costs nothing after: 9.4 times the work at k = 40 to
-                    // 320, `linked::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear`.
-                    // COMPLEXITY.md row S25, where the piled-up holes are left open.
-                    match self.lone_hole(&relation, t, &at.names) {
-                        Some(x) => self.project_lone(&relation, t, &at.names, &x),
-                        None => Err(Fall::Name),
-                    }
+                    self.shortest(&relation, t, &at.names)
                 };
                 match found {
                     Ok(Shortest::Moved(ns)) => {
@@ -2770,37 +2940,56 @@ impl Scope {
         }
         for (t, b) in fallen {
             if let Some(b) = b {
-                self.reseed(&relation, t, b);
+                self.reseed(&mut relation, t, b);
             }
         }
         self.relation = relation;
     }
 
     /// Projects tree `t` of the forest, a tree of difference constraints and bounds whose
-    /// names each have one interval and no class ([`conjuncts::Blocks::differences_only`]),
-    /// after the names `seeds` changed, by shortest paths: `y <= x + k` is an edge `x → y` of
-    /// weight `k`, a name's greatest value is its least distance from a bound, and its least
-    /// the negated least distance to one (Shostak, "Deciding linear inequalities by computing
-    /// loop residues", J. ACM 28, 1981). Such rows are totally unimodular, so these are the
-    /// ends of the name's projection, an interval, and an empty one is bottom.
+    /// names have no class and holes only within the gaps the potential holds with
+    /// ([`conjuncts::Blocks::differences_only`], [`Potential`]), after the names `seeds`
+    /// changed, by shortest paths: `y <= x + k` is an edge `x → y` of weight `k`, a name's
+    /// greatest value is its least distance from a bound, and its least the negated least
+    /// distance to one (Shostak, "Deciding linear inequalities by computing loop residues",
+    /// J. ACM 28, 1981), each moved off a hole to the nearest integer of the name inward. An
+    /// empty interval is bottom; otherwise each name is met with the interval between its new
+    /// ends, and keeps its holes.
+    ///
+    /// Why the ends are those of the projection: each constraint `y <= x + k` holds at the
+    /// greatest values of `x` and `y` among those of any two points, so a greatest bound of
+    /// each name taken to its own integers, the search's fixed point, is at or above every
+    /// point, and is a point when no bound crosses the least (Jeavons and Cooper, "Tractable
+    /// constraints on ordered domains", Artificial Intelligence 79, 1995); the same holds of
+    /// the least bounds. Why no name takes other holes than its own: write `g_y` for the gap of
+    /// `y` the potential holds with, at least the longest run of integers it leaves out between
+    /// its ends `L_y` and `H_y`, and `d(y)` for the least weight of a path from `v` to `y`
+    /// with each edge out of a name `x` other than `v` lowered by `g_x`. A cycle weighs at least
+    /// the sum of its names' gaps ([`Potential`]), so `d` meets no negative cycle. For `a` an
+    /// integer of `v` in `[L_v, H_v]`, take `v` to `a` and each other `y` to the greatest of
+    /// its integers at or below `m_y = min(H_y, a + d(y))`, or to `L_y` when `m_y < L_y`: at
+    /// least `m_y - g_y` in the first case, and `H_y` itself when `m_y = H_y`. An edge
+    /// `x → y` of weight `k` holds there: at `y = L_y`, by `L_y <= L_x + k`; at `x = H_x`, by
+    /// `H_y <= H_x + k`; otherwise `y <= a + d(y) <= a + d(x) + k - g_x`, and `x` is at least
+    /// `a + d(x) - g_x`, or `a` at `x = v`, where `d(x)` is 0 and the edge is not lowered. So
+    /// the projection onto `v` is its integers in `[L_v, H_v]`.
     ///
     /// The bounds were a fixed point of the tree's other conjuncts at the last projection, so
     /// only paths from the seeds can move one: each seed takes the least bound its edges in
     /// give it, and a Dijkstra search from the seeds moves the names its paths reach, with the
-    /// weights reduced by the scope's potential ([`Potential`]), which [`Scope::repair`] has
-    /// put the edges added in. In O((s + m) log n) for the `s` seeds and the `m` edges at the
-    /// names whose bound moves, of `n` names; the tree's other names are not read. `Err` says
-    /// why the tree is to be projected block by block, and nothing has changed. With `lone`,
-    /// that name's holes are not read, as [`Scope::lone_hole`] allows.
+    /// weights reduced by the scope's potential ([`Potential`]), which [`Scope::repair`] and
+    /// [`Scope::raise`] have put the edges added and the gaps grown in. In O((s + m) log n)
+    /// for the `s` seeds and the `m` edges at the names whose bound moves, of `n` names, and
+    /// the pieces of each name moved; the tree's other names are not read. `Err` says why the
+    /// tree is to be projected block by block, and nothing has changed.
     fn shortest(
         &mut self,
         relation: &Conjuncts,
         t: BlockId,
         seeds: &BTreeSet<Arc<str>>,
-        lone: Option<&Arc<str>>,
     ) -> Result<Shortest, Fall> {
-        let up = self.bound_pass(relation, t, seeds, lone, true)?;
-        let down = self.bound_pass(relation, t, seeds, lone, false)?;
+        let up = self.bound_pass(relation, t, seeds, true)?;
+        let down = self.bound_pass(relation, t, seeds, false)?;
         let mut moved: BTreeMap<Arc<str>, (Option<Int>, Option<Int>)> = BTreeMap::new();
         for (n, hi) in up {
             moved.entry(n).or_default().1 = Some(hi);
@@ -2808,11 +2997,10 @@ impl Scope {
         for (n, lo) in down {
             moved.entry(n).or_default().0 = Some(-&lo);
         }
-        // Every name moved was read, so has one interval, or is `lone`, whose holes the meet
-        // below keeps.
+        // Every name moved was read; the meet below keeps its holes.
         let mut out = Vec::with_capacity(moved.len());
         for (n, (lo, hi)) in &moved {
-            let (was_lo, was_hi) = self.ends(n, lone)?;
+            let (was_lo, was_hi) = self.ends(n)?;
             let lo = lo.clone().or(was_lo);
             let hi = hi.clone().or(was_hi);
             if let (Some(lo), Some(hi)) = (&lo, &hi)
@@ -2829,101 +3017,6 @@ impl Scope {
                 let prem = p.premises();
                 p.meet_ints(IntervalSet::range(lo, hi), &prem);
                 ns.push(n);
-            }
-        }
-        Ok(Shortest::Moved(ns))
-    }
-
-    /// The one name of tree `t` of the forest with holes, when the tree may be projected by
-    /// shortest paths with that name's holes left out ([`Scope::project_lone`]): the tree holds
-    /// only difference constraints and bounds, and of its names only this one, among `seeds`,
-    /// has holes ([`conjuncts::Blocks::gaps`]); it has no class, each hole is one integer, and
-    /// it has no tied edge ([`Potential`]), so that it lies on no cycle of weight 0. Each edge
-    /// at it is checked to have both ends in the potential and a reduced weight of zero or
-    /// more, as the search checks each edge it reads. In O(d log n) for its `d` edges.
-    fn lone_hole(
-        &self,
-        relation: &Conjuncts,
-        t: BlockId,
-        seeds: &BTreeSet<Arc<str>>,
-    ) -> Option<Arc<str>> {
-        let blocks = relation.blocks();
-        if blocks.gaps(t) != Some(1) {
-            return None;
-        }
-        let x = seeds.iter().find(|n| blocks.is_gapped(n))?;
-        let p = self.names.get(x)?;
-        if !matches!(&p.cell.congruence.element, Congruence::Class { modulus, .. } if *modulus == Num::ONE)
-        {
-            return None;
-        }
-        let one_each = p
-            .ints()
-            .pieces()
-            .windows(2)
-            .all(|w| match (&w[0].1, &w[1].0) {
-                (End::Fin(a), End::Fin(b)) => &Int::from(b) - &Int::from(a) == Int::from(2),
-                _ => false,
-            });
-        if !one_each {
-            return None;
-        }
-        let zero = (Int::ZERO, 0i64);
-        for (g, back, e) in tree_edges(relation, t, x) {
-            let (Some(u), Some(v)) = (&e.from, &e.to) else {
-                continue;
-            };
-            if self.potential.tied.contains(&(g.clone(), back)) {
-                return None;
-            }
-            let (Some(pu), Some(pv)) = (self.potential.at.get(u), self.potential.at.get(v)) else {
-                return None;
-            };
-            let w = pair_weight(&self.potential.tied, &g, back, &e);
-            if pair_minus(&pair_plus(pu, &w), pv) < zero {
-                return None;
-            }
-        }
-        Some(x.clone())
-    }
-
-    /// Projects tree `t` of the forest, whose one name with holes is `x` ([`Scope::lone_hole`]),
-    /// after the names `seeds` changed, by shortest paths with the holes of `x` left out
-    /// ([`Scope::shortest`]): `x` is then met with the interval found for it, and when that
-    /// moves an end of `x` off a hole, the tree is projected again from `x` alone.
-    ///
-    /// Why this is the projection: each value `v` of `x` in the interval found for it extends
-    /// to a point of the tree's constraints with every other name in its interval, since the
-    /// projection of such a system onto `x` is that interval; so `x` takes the interval met
-    /// with its own integers, and its holes stay. Given `x = v`, another name `y` ranges over
-    /// `[max(l, v - d(y, x)), min(h, v + d(x, y))]`, with `d` the least weight of a path
-    /// between them and `l`, `h` the ends `y` has from paths not through `x`; both ends rise by
-    /// 0 or 1 when `v` rises by 1. The values of `y` over two values `c - 1`, `c + 1` of `x`
-    /// about a hole `c` then leave a gap only when both ends rise by 1 and the interval is
-    /// one value wide, so that `d(x, y) + d(y, x)` is 0, a cycle of weight 0 through `x`,
-    /// which [`Scope::lone_hole`] excludes. So each other name's projection is one interval,
-    /// and the one shortest paths give from the ends of `x`. Those ends are the ends of the
-    /// interval met with the integers of `x`, which the second pass takes; a path back to `x`
-    /// has a weight above 0, so it does not move `x` again. Two holes interact without such a
-    /// cycle (`x, z` in `w..=w + 1`, `x <= z <= x + 1`, `x != 5`, `z != 6` leave out `w = 5`),
-    /// so one name with holes is the most this reads.
-    ///
-    /// In O((s + m) log n), as [`Scope::shortest`], twice.
-    fn project_lone(
-        &mut self,
-        relation: &Conjuncts,
-        t: BlockId,
-        seeds: &BTreeSet<Arc<str>>,
-        x: &Arc<str>,
-    ) -> Result<Shortest, Fall> {
-        let mut ns = match self.shortest(relation, t, seeds, Some(x))? {
-            Shortest::Moved(ns) => ns,
-            bottom => return Ok(bottom),
-        };
-        if ns.contains(x) {
-            match self.shortest(relation, t, &BTreeSet::from([x.clone()]), Some(x))? {
-                Shortest::Moved(more) => ns.extend(more),
-                bottom => return Ok(bottom),
             }
         }
         Ok(Shortest::Moved(ns))
@@ -2958,13 +3051,16 @@ impl Scope {
     /// tree is found again from the solver ([`Scope::reseed`]). The check of each edge read
     /// therefore fails only at a name the potential lacks.
     ///
-    /// The weights and distances are the pairs of [`Potential`]: the search reaches `u` with a
-    /// distance whose first part is zero when the edge closes a cycle of weight 0, and then
-    /// the edges of the cycle, the new one, the one by which `u` was reached and those of the
-    /// search's path back to `v`, are tied and the edge is put in again, so that a cycle of
-    /// weight 0 is never mistaken for a negative one. The two edges of an equality are tied
-    /// before either is put in: otherwise each equality of a chain would tie its cycle by a
-    /// search over the names tied before it, `O(k²)` for a chain of `k`.
+    /// The weights and distances are the pairs of [`Potential`], with each edge's weight lowered
+    /// by the gap of the name it enters: the search reaches `u` with a distance whose first
+    /// part is zero when the edge closes a cycle of such weight 0, and then the edges of the
+    /// cycle, the new one, the one by which `u` was reached and those of the search's path back
+    /// to `v`, are tied and the edge is put in again, so that a cycle of weight 0 is never
+    /// mistaken for a negative one. The two edges of an equality are tied before either is put
+    /// in: otherwise each equality of a chain would tie its cycle by a search over the names
+    /// tied before it, `O(k²)` for a chain of `k`. A cycle negative with the gaps but not
+    /// without them is no bottom: no potential holds with those gaps, and the tree is found
+    /// again from the solver ([`Scope::reseed`]).
     ///
     /// In O(m log n) for the `m` edges at the names whose potential falls, of `n` names, and
     /// once more for each cycle of weight 0 tied.
@@ -2977,6 +3073,11 @@ impl Scope {
         let blocks = relation.blocks();
         let mut pot = self.potential.at.clone();
         let mut tied = self.potential.tied.clone();
+        let gap = &self.potential.gap;
+        let lowered = |e: &Edge| match e.to.as_ref().and_then(|v| gap.get(v)) {
+            Some(d) => &e.weight - d,
+            None => e.weight.clone(),
+        };
         // The edges added and not yet in the potential's graph.
         let mut pending: Vec<(Arc<Formula>, bool, Edge)> = Vec::new();
         for g in added {
@@ -2993,7 +3094,7 @@ impl Scope {
             if let Some(b) = &back
                 && e.from.is_some()
                 && e.to.is_some()
-                && (&e.weight + &b.weight).is_zero()
+                && (&lowered(&e) + &lowered(b)).is_zero()
             {
                 tied.insert((g.clone(), false));
                 tied.insert((g.clone(), true));
@@ -3003,118 +3104,57 @@ impl Scope {
                 pending.push((g.clone(), true, e));
             }
         }
-        // A name the potential lacks may take a value from an edge added only when every edge
-        // at it was added: those are put in after.
-        let new_name = |n: &Arc<str>| -> Result<(), Fall> {
-            let all_added = tree_edges(relation, t, n)
-                .iter()
-                .all(|(g, _, e)| e.from.is_none() || e.to.is_none() || added.contains(g));
-            if all_added {
-                Ok(())
-            } else {
-                Err(Fall::Potential)
-            }
-        };
-        let zero = (Int::ZERO, 0i64);
-        let mut waiting: BTreeSet<(Arc<Formula>, bool)> = pending
-            .iter()
-            .map(|(g, back, _)| (g.clone(), *back))
-            .collect();
-        for (g, back, e) in &pending {
-            waiting.remove(&(g.clone(), *back));
-            let (Some(u), Some(v)) = (&e.from, &e.to) else {
-                continue;
-            };
-            // Each round puts the edge in, or finds a cycle of weight 0 through it, whose
-            // edges are then tied, and the edge is put in again with their weights raised.
-            'round: loop {
-                let w = pair_weight(&tied, g, *back, e);
-                let gamma = match (pot.get(u).cloned(), pot.get(v).cloned()) {
-                    (None, None) => {
-                        new_name(u)?;
-                        new_name(v)?;
-                        pot.insert(u.clone(), zero.clone());
-                        pot.insert(v.clone(), w);
-                        break 'round;
-                    }
-                    (Some(pu), None) => {
-                        new_name(v)?;
-                        pot.insert(v.clone(), pair_plus(&pu, &w));
-                        break 'round;
-                    }
-                    (None, Some(pv)) => {
-                        new_name(u)?;
-                        pot.insert(u.clone(), pair_minus(&pv, &w));
-                        break 'round;
-                    }
-                    (Some(pu), Some(pv)) => pair_minus(&pair_plus(&pu, &w), &pv),
-                };
-                if gamma >= zero {
-                    break 'round;
-                }
-                // Each name's potential falls by the least reduced distance from `v` below
-                // zero; the new values are kept apart until the search ends, so that the old
-                // ones check the edges read. Each name reached keeps the edge it was last
-                // reached by, so that a cycle found can be followed back.
-                let mut fall: BTreeMap<Arc<str>, (Int, i64)> =
-                    BTreeMap::from([(v.clone(), gamma.clone())]);
-                let mut via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)> = BTreeMap::new();
-                let mut heap = BinaryHeap::from([Reverse((gamma, v.clone()))]);
-                let mut new: BTreeMap<Arc<str>, (Int, i64)> = BTreeMap::new();
-                while let Some(Reverse((gs, s))) = heap.pop() {
-                    if new.contains_key(&s) || fall.get(&s) != Some(&gs) {
-                        continue;
-                    }
-                    let ps = pot.get(&s).ok_or(Fall::Potential)?;
-                    let to_s = pair_plus(ps, &gs);
-                    for (h, hb, f) in tree_edges(relation, t, &s) {
-                        let (Some(from), Some(x)) = (&f.from, &f.to) else {
-                            continue;
-                        };
-                        if *from != s || new.contains_key(x) || waiting.contains(&(h.clone(), hb)) {
-                            continue;
-                        }
-                        let px = pot.get(x).ok_or(Fall::Potential)?;
-                        let fw = pair_weight(&tied, &h, hb, &f);
-                        if pair_minus(&pair_plus(ps, &fw), px) < zero {
-                            return Err(Fall::Potential);
-                        }
-                        let gx = pair_minus(&pair_plus(&to_s, &fw), px);
-                        if gx >= zero {
-                            continue;
-                        }
-                        if x == u {
-                            if gx.0 < Int::ZERO {
-                                return Ok(Some(u.clone()));
-                            }
-                            // A cycle of weight 0: the edge, the one into `u`, and those
-                            // back to `v`.
-                            tied.insert((g.clone(), *back));
-                            tied.insert((h, hb));
-                            let mut at = s.clone();
-                            while let Some((before, k, kb)) = via.get(&at) {
-                                tied.insert((k.clone(), *kb));
-                                at = before.clone();
-                            }
-                            continue 'round;
-                        }
-                        if fall.get(x).is_none_or(|c| gx < *c) {
-                            fall.insert(x.clone(), gx.clone());
-                            via.insert(x.clone(), (s.clone(), h.clone(), hb));
-                            heap.push(Reverse((gx, x.clone())));
-                        }
-                    }
-                    new.insert(s, to_s);
-                }
-                for (s, ps) in new {
-                    pot.insert(s, ps);
-                }
-                break 'round;
-            }
+        let found = put_in(relation, t, added, &pending, &mut pot, &mut tied, gap)?;
+        if found.is_none() {
+            self.potential.at = pot;
+            self.potential.tied = tied;
         }
-        self.potential.at = pot;
-        self.potential.tied = tied;
-        Ok(None)
+        Ok(found)
+    }
+
+    /// Raises the gap the potential holds with at name `x` of tree `t` of the forest to the
+    /// gap of its interval ([`hole_gap`]), when that has grown, as after a test that leaves a
+    /// hole in it: lowering the potential of `x` by the growth keeps every edge into `x` as it
+    /// was, and lowers each edge out of `x` by the growth, which are then put in again as
+    /// edges added are ([`Scope::repair`]). When that finds a cycle negative with the gaps,
+    /// nothing changes, and `x` keeps its tree from shortest paths ([`Scope::sync_gap`]): the
+    /// holes of `x` may then leave holes in the other names. A name the potential lacks takes
+    /// the gap alone, with no edge to read. In O(m log n) as [`Scope::repair`].
+    fn raise(&mut self, relation: &Conjuncts, t: BlockId, x: &Arc<str>) {
+        let Some(p) = self.names.get(x).filter(|p| !classed(p)) else {
+            return;
+        };
+        let g = hole_gap(p.ints());
+        let was = self.potential.gap_of(x);
+        if g <= was {
+            return;
+        }
+        let Some(px) = self.potential.at.get(x).cloned() else {
+            self.potential.gap.insert(x.clone(), g);
+            return;
+        };
+        let mut pot = self.potential.at.clone();
+        let mut tied = self.potential.tied.clone();
+        let mut gap = self.potential.gap.clone();
+        pot.insert(x.clone(), (&px.0 - &(&g - &was), px.1));
+        gap.insert(x.clone(), g);
+        let out: Vec<(Arc<Formula>, bool, Edge)> = tree_edges(relation, t, x)
+            .into_iter()
+            .filter(|(_, _, e)| e.from.as_ref() == Some(x) && e.to.is_some())
+            .collect();
+        if let Ok(None) = put_in(
+            relation,
+            t,
+            &BTreeSet::new(),
+            &out,
+            &mut pot,
+            &mut tied,
+            &gap,
+        ) {
+            self.potential.at = pot;
+            self.potential.tied = tied;
+            self.potential.gap = gap;
+        }
     }
 
     /// Empties the interval of `n`, or the scope when it has no product of `n`.
@@ -3129,11 +3169,11 @@ impl Scope {
     }
 
     /// The least and greatest integers of `n`, `None` for an infinite end, when `n` has a
-    /// product of one interval and no class ([`gapped`]), or is the name `lone`, whose holes
-    /// are not read ([`Scope::lone_hole`]).
-    fn ends(&self, n: &str, lone: Option<&Arc<str>>) -> Result<(Option<Int>, Option<Int>), Fall> {
+    /// product with no class ([`classed`]) whose holes are within the gap the potential holds
+    /// with ([`Potential`]). In O(p) for its `p` pieces.
+    fn ends(&self, n: &str) -> Result<(Option<Int>, Option<Int>), Fall> {
         let p = self.names.get(n).ok_or(Fall::Name)?;
-        if gapped(p) && lone.is_none_or(|x| **x != *n) {
+        if classed(p) || hole_gap(p.ints()) > self.potential.gap_of(n) {
             return Err(Fall::Name);
         }
         let (lo, hi) = p.ints().bounds().ok_or(Fall::Name)?;
@@ -3145,23 +3185,26 @@ impl Scope {
     }
 
     /// One side of [`Scope::shortest`]: with `up` the greatest values, along the edges, with
-    /// the scope's potential; otherwise the least values negated, along the edges reversed,
-    /// with the potential negated, under which the reduced weights are the same. Each seed
-    /// first takes the least bound its edges in give it, then a Dijkstra search from the seeds
-    /// lowers the names its paths reach. The names lowered, with their new bounds on this side.
+    /// the scope's potential; otherwise the least values negated, along the edges reversed.
+    /// Each seed first takes the least bound its edges in give it, then a Dijkstra search from
+    /// the seeds lowers the names its paths reach, each bound taken to the nearest integer of
+    /// the name at or inside it ([`snap_down`], [`snap_up`]), or kept where the name has none
+    /// there, which is bottom. The names lowered, with their new bounds on this side.
     ///
     /// The bounds found do not depend on the potential: a name lowered is pushed again, and
     /// each name popped at its latest bound lowers along each of its edges, so the search
     /// stops at a fixed point of the edges at the names it lowers, and the others' bounds were
-    /// one already. The potential bounds the cost: each edge read is checked to have a reduced
-    /// weight of zero or more, so each key pushed is at least the key popped, and each name
-    /// is popped at its latest bound once.
+    /// one already. The potential bounds the cost: a bound moved to an integer of `x` falls by
+    /// at most the gap `g_x` the potential holds with, so the key of a name is its bound less
+    /// `q`, the potential up, and the potential plus the gap, negated, down; an edge `s → x`
+    /// of weight `k` read is checked to have `q_s + k - q_x - g_x` of zero or more, which is
+    /// its reduced weight in the potential on either side ([`Potential`]). Each key pushed is
+    /// then at least the key popped, and each name is popped at its latest bound once.
     fn bound_pass(
         &self,
         relation: &Conjuncts,
         t: BlockId,
         seeds: &BTreeSet<Arc<str>>,
-        lone: Option<&Arc<str>>,
         up: bool,
     ) -> Result<BTreeMap<Arc<str>, Int>, Fall> {
         // An edge on this side, from and to.
@@ -3172,22 +3215,37 @@ impl Scope {
                 (e.to.clone(), e.from.clone())
             }
         };
+        let gap = |n: &Arc<str>| self.potential.gap_of(n);
         let q = |n: &Arc<str>| -> Result<Int, Fall> {
             let v = &self.potential.at.get(n).ok_or(Fall::Potential)?.0;
-            Ok(if up { v.clone() } else { -v })
+            Ok(if up { v.clone() } else { -&(v + &gap(n)) })
         };
+        // A bound `by` on this side of `n` taken to the nearest integer of `n` inside it.
+        let snap = |n: &Arc<str>, by: Int| -> Int {
+            let Some(p) = self.names.get(n) else {
+                return by;
+            };
+            if up {
+                snap_down(p.ints(), &by).unwrap_or(by)
+            } else {
+                snap_up(p.ints(), &-&by).map_or(by, |m| -&m)
+            }
+        };
+        // Each name's bound on this side, once read.
         let mut label: BTreeMap<Arc<str>, Option<Int>> = BTreeMap::new();
-        let read = |label: &BTreeMap<Arc<str>, Option<Int>>, n: &Arc<str>| {
+        let read = |label: &mut BTreeMap<Arc<str>, Option<Int>>, n: &Arc<str>| {
             if let Some(l) = label.get(n) {
                 return Ok(l.clone());
             }
-            let (lo, hi) = self.ends(n, lone)?;
-            Ok(if up { hi } else { lo.map(|l| -&l) })
+            let (lo, hi) = self.ends(n)?;
+            let l = if up { hi } else { lo.map(|l| -&l) };
+            label.insert(n.clone(), l.clone());
+            Ok(l)
         };
         let mut moved: BTreeMap<Arc<str>, Int> = BTreeMap::new();
         let mut heap: BinaryHeap<Reverse<(Int, Arc<str>)>> = BinaryHeap::new();
         for s in seeds {
-            let was = read(&label, s)?;
+            let was = read(&mut label, s)?;
             let mut l = was.clone();
             for (_, _, e) in tree_edges(relation, t, s) {
                 let (a, b) = way(&e);
@@ -3196,7 +3254,7 @@ impl Scope {
                 }
                 let by = match &a {
                     None => Some(e.weight.clone()),
-                    Some(r) => read(&label, r)?.map(|lr| &lr + &e.weight),
+                    Some(r) => read(&mut label, r)?.map(|lr| &lr + &e.weight),
                 };
                 if let Some(c) = by
                     && l.as_ref().is_none_or(|x| c < *x)
@@ -3205,9 +3263,11 @@ impl Scope {
                 }
             }
             if l != was
-                && let Some(l) = &l
+                && let Some(by) = l.take()
             {
-                moved.insert(s.clone(), l.clone());
+                let at = snap(s, by);
+                moved.insert(s.clone(), at.clone());
+                l = Some(at);
             }
             label.insert(s.clone(), l);
         }
@@ -3233,14 +3293,15 @@ impl Scope {
                     continue;
                 }
                 let qx = q(&x)?;
-                if &(&qs + &e.weight) - &qx < Int::ZERO {
+                if &(&(&qs + &e.weight) - &qx) - &gap(&x) < Int::ZERO {
                     return Err(Fall::Potential);
                 }
                 let by = &ls + &e.weight;
-                if read(&label, &x)?.is_none_or(|c| by < c) {
-                    moved.insert(x.clone(), by.clone());
-                    heap.push(Reverse((&by - &qx, x.clone())));
-                    label.insert(x, Some(by));
+                if read(&mut label, &x)?.is_none_or(|c| by < c) {
+                    let at = snap(&x, by);
+                    moved.insert(x.clone(), at.clone());
+                    heap.push(Reverse((&at - &qx, x.clone())));
+                    label.insert(x, Some(at));
                 }
             }
         }
@@ -3269,7 +3330,7 @@ impl Scope {
     /// `l01_39_reduced_product::linked::if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear`.
     /// COMPLEXITY.md row S25. A complete solution keeps the point the projection's own solver
     /// finds for each tree (`presburger::difference_hulls` reads one) and passes it back.
-    fn reseed(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId) {
+    fn reseed(&mut self, relation: &mut Conjuncts, t: BlockId, b: BlockId) {
         let blocks = relation.blocks();
         let mut names: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut cons: BTreeSet<Arc<Formula>> = BTreeSet::new();
@@ -3296,17 +3357,66 @@ impl Scope {
                 }
             }
         }
-        // The potential is of the edges alone, so the point is of the difference constraints and
-        // bounds alone, where the tree holds other conjuncts.
-        let edges = cons.iter().filter(|g| conjuncts::edges(g).is_some());
-        let all = Formula::and(edges.map(|g| Formula::clone(g)).collect());
-        if let Ok(Some(point)) = presburger::satisfiable(&all) {
+        // Each name's gap, from its interval; a name with a class keeps the tree from shortest
+        // paths whatever its gap.
+        let gaps: BTreeMap<Arc<str>, Int> = names
+            .iter()
+            .filter_map(|n| {
+                let p = self.names.get(n).filter(|p| !classed(p))?;
+                let g = hole_gap(p.ints());
+                g.is_positive().then(|| (n.clone(), g))
+            })
+            .collect();
+        let gap_of = |n: &Arc<str>| gaps.get(n).cloned().unwrap_or(Int::ZERO);
+        // The edges between names, each lowered by the gap of the name it enters: a point of
+        // them is a potential with the names' gaps ([`Potential`]), and there is none when a
+        // cycle weighs less than the sum of its names' gaps. Then the point is of the
+        // difference constraints and bounds as they are, and the names with holes keep the
+        // tree from shortest paths.
+        let lowered: Vec<Formula> = cons
+            .iter()
+            .filter_map(|g| conjuncts::edges(g))
+            .flat_map(|(e, back)| std::iter::once(e).chain(back))
+            .filter_map(|e| {
+                let (Some(u), Some(v)) = (&e.from, &e.to) else {
+                    return None;
+                };
+                let from =
+                    Lin::atom(Atom::Sym(u.clone())).plus(&Lin::constant(&e.weight - &gap_of(v)));
+                Some(Formula::Con(Con::ge(
+                    &from,
+                    &Lin::atom(Atom::Sym(v.clone())),
+                )))
+            })
+            .collect();
+        let found = if gaps.is_empty() {
+            None
+        } else {
+            presburger::satisfiable(&Formula::and(lowered))
+                .ok()
+                .flatten()
+        };
+        let (point, gaps) = match found {
+            Some(point) => (Some(point), gaps),
+            None => {
+                // The potential is of the edges alone, so the point is of the difference
+                // constraints and bounds alone, where the tree holds other conjuncts.
+                let edges = cons.iter().filter(|g| conjuncts::edges(g).is_some());
+                let all = Formula::and(edges.map(|g| Formula::clone(g)).collect());
+                (
+                    presburger::satisfiable(&all).ok().flatten(),
+                    BTreeMap::new(),
+                )
+            }
+        };
+        let gap_of = |n: &Arc<str>| gaps.get(n).cloned().unwrap_or(Int::ZERO);
+        if let Some(point) = point {
             let mut at: BTreeMap<Arc<str>, usize> = BTreeMap::new();
             let mut main: Vec<(Arc<str>, Int)> = Vec::new();
-            for n in names {
+            for n in &names {
                 if let Some(v) = point.get(&Atom::Sym(n.clone())) {
                     at.insert(n.clone(), main.len());
-                    main.push((n, v.clone()));
+                    main.push((n.clone(), v.clone()));
                 }
             }
             // The tight edges, of reduced weight 0 under the point: a cycle of weight 0 is one
@@ -3325,7 +3435,7 @@ impl Scope {
                     let (Some(&i), Some(&j)) = (at.get(u), at.get(v)) else {
                         continue;
                     };
-                    if &(&main[i].1 + &e.weight) - &main[j].1 == Int::ZERO {
+                    if &(&(&main[i].1 + &e.weight) - &gap_of(v)) - &main[j].1 == Int::ZERO {
                         tight.push((i, j, g.clone(), b));
                     }
                 }
@@ -3349,7 +3459,30 @@ impl Scope {
             for (i, (n, v)) in main.into_iter().enumerate() {
                 self.potential.at.insert(n, (v, height[comp[i]]));
             }
+            for n in &names {
+                match gaps.get(n) {
+                    Some(g) => self.potential.gap.insert(n.clone(), g.clone()),
+                    None => self.potential.gap.remove(n),
+                };
+            }
         }
+        for n in &names {
+            self.sync_gap(relation, n);
+        }
+    }
+
+    /// Records in `relation` whether `n` keeps its tree from projection by shortest paths
+    /// ([`Conjuncts::gapped`]): when it has a class, or holes past the gap the potential
+    /// holds with at it ([`Potential`]). In O(p + log n) for its `p` pieces.
+    fn sync_gap(&self, relation: &mut Conjuncts, n: &Arc<str>) {
+        relation.gapped(n, self.off_paths(n));
+    }
+
+    /// Whether `n` has a class, or holes past the gap the potential holds with at it.
+    fn off_paths(&self, n: &str) -> bool {
+        self.names
+            .get(n)
+            .is_some_and(|p| classed(p) || hole_gap(p.ints()) > self.potential.gap_of(n))
     }
 
     /// Projects the parts of `b` that are due, then marks every part of `b` projected. A
@@ -3452,15 +3585,14 @@ impl Scope {
 
     /// Tells the relation whether each of `names` is bounded below and above, as its product
     /// is now: a leaf is a star's only while unbounded on the side away from a conjunct of
-    /// two hubs or more ([`Conjuncts::star`]). And whether each has holes or a class
-    /// ([`gapped`]), which keeps its tree from projection by shortest paths
-    /// ([`Scope::shortest`]).
+    /// two hubs or more ([`Conjuncts::star`]). And whether each keeps its tree from projection
+    /// by shortest paths ([`Scope::sync_gap`]).
     fn sync_bounds<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
         for n in names {
             let (below, above) = sides(&self.names, n);
             self.relation.bound(n, below, above);
-            let gap = self.names.get(n).is_some_and(gapped);
-            self.relation.gapped(n, gap);
+            let on = self.off_paths(n);
+            self.relation.gapped(n, on);
         }
     }
 
@@ -4749,6 +4881,54 @@ pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
     let run = Run::new(&mut scope);
     run.stack.run(run.walk(term));
     run.out.take()
+}
+
+/// Whether `p` has a class other than all integers, or than the one value its interval is.
+fn classed(p: &Product) -> bool {
+    match &p.cell.congruence.element {
+        Congruence::Class { modulus, .. } if *modulus == Num::ONE => false,
+        Congruence::Class { modulus, residue } if *modulus == Num::ZERO => {
+            p.ints().bounds() != Some((&End::Fin(residue.clone()), &End::Fin(residue.clone())))
+        }
+        _ => true,
+    }
+}
+
+/// The length of the longest run of integers `ints` leaves out between its ends, 0 for one
+/// interval or none. In O(p) for its `p` pieces.
+fn hole_gap(ints: &IntervalSet) -> Int {
+    let mut most = Int::ZERO;
+    for w in ints.pieces().windows(2) {
+        if let (End::Fin(a), End::Fin(b)) = (&w[0].1, &w[1].0) {
+            let run = &(&Int::from(b) - &Int::from(a)) - &Int::ONE;
+            if run > most {
+                most = run;
+            }
+        }
+    }
+    most
+}
+
+/// The greatest integer of `ints` at or below `z`, if any, in O(log p) for its `p` pieces.
+fn snap_down(ints: &IntervalSet, z: &Int) -> Option<Int> {
+    let v = End::Fin(Num::from(z));
+    let pieces = ints.pieces();
+    let (_, hi) = pieces.get(pieces.partition_point(|(lo, _)| *lo <= v).checked_sub(1)?)?;
+    Some(match hi {
+        End::Fin(h) if *hi < v => Int::from(h),
+        _ => z.clone(),
+    })
+}
+
+/// The least integer of `ints` at or above `z`, if any, in O(log p) for its `p` pieces.
+fn snap_up(ints: &IntervalSet, z: &Int) -> Option<Int> {
+    let v = End::Fin(Num::from(z));
+    let pieces = ints.pieces();
+    let (lo, _) = pieces.get(pieces.partition_point(|(_, hi)| *hi < v))?;
+    Some(match lo {
+        End::Fin(l) if *lo > v => Int::from(l),
+        _ => z.clone(),
+    })
 }
 
 /// Whether the integers of `p` are other than one interval with no class: such a name keeps a
