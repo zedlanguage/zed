@@ -1487,8 +1487,14 @@ fn point(f: &Formula) -> Option<Point> {
 /// `l01_38_presburger::one_scope::a_link_decided_whole_is_answered_where_its_relation_is`).
 // Complexity tradeoff: a question the solver refuses is asked twice, so it costs that refusal,
 // the substitution (time of `f`, times a logarithm) and the second ask. Why: neither shape is
-// refused less often in general, since the search depends on the rows it is given, so the
-// form asked first is the one asked before and the second runs only on a refusal. Trigger: a
+// refused less often, since the search depends on the rows it is given: over every whole
+// question of l01_38 (measured once, both forms asked), the answers never differ, the form
+// with bindings in place answers 42 that the form with them as rows refuses, and refuses 34
+// that it answers (the tie of
+// `checker::a_refused_question_through_a_call_prints_what_the_question_written_out_prints`:
+// with its bindings as rows, eight variables that the structure tells apart; in place, four
+// that tie). Asking the bound form alone would refuse those and print its own atoms in a tie,
+// so the form asked first is the one asked before and the second runs only on a refusal. Trigger: a
 // whole question refused with its bindings as rows. Tests
 // `l01_38_presburger::one_scope::a_link_decided_whole_is_answered_where_its_relation_is` and
 // `no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided`.
