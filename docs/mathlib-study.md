@@ -1,8 +1,8 @@
 # Mathlib study: data for the L33.3 benchmark
 
-This file keeps the data of the 2026-11-03 proofs study (ledger item PROOFS) that step L33.3 relies on: the sixteen Mathlib theorems stated in Zed, the helper definitions, the pinned Mathlib and Lean commits, the Lean line counts, and the study's section A rejections. The study's files are in `/home/luke/Work/wt/proofs`, which is not a git repository; item MATHLIB-seed copies these pieces here so that they are kept. Every piece below is copied verbatim from the file named in its header. In the copied text, `D:n` means line n of the zed spec's DESIGN.md at commit 8456c46 (`REPORT.md` line 4), and "section 5" means the section "Helper definitions and other code" below.
+This file keeps the data of the 2026-11-03 proofs study (ledger item PROOFS) that step L33.3 relies on: the sixteen Mathlib theorems stated in Zed, the helper definitions, the pinned Mathlib and Lean commits, the Lean line counts, and the study's section A rejections. The study's files are in `/home/luke/Work/wt/proofs`, which is not a git repository; item MATHLIB-seed copies these pieces here so that they are kept. Every piece below is copied verbatim from the file named in its header, except the section "`minFac` and its laws". In the copied text, `D:n` means line n of the zed spec's DESIGN.md at commit 8456c46 (`REPORT.md` line 4), and "section 5" means the section "Helper definitions and other code" below.
 
-`minFac` and the laws `minFacPrime`, `minFacDvd` and `dvdFact` are cited by the `euclid` proof (theorem 11) but not yet written anywhere; item MATHLIB-minfac covers them.
+`minFac` and the laws `minFacPrime`, `minFacDvd` and `dvdFact`, cited by the `euclid` proof (theorem 11), are written in the section "`minFac` and its laws" below (item MATHLIB-minfac, 2026-11-07). That section is new text, not a copy from the study. zed-impl can only parse it today: a test lexes and parses every `zed` fence of this file (`l01_07_fences::mathlib`). Running `minFac`'s test table needs recursion (step L6.7) and, with its parameter types, layer L10, and checking its laws needs laws and proofs (layer L15, step L22.5 and step L33.3).
 
 ## The two commits
 
@@ -208,6 +208,45 @@ proof {
 
 - `gcdCommChain` is 14 lines; `using` plus automatic claims makes it 1. Its helper laws need `byStrongInduction`.
 - `isPrime` is the slow textbook test. It serves as the specification, and the library would prove it equal to a faster test.
+
+## `minFac` and its laws
+
+Written for item MATHLIB-minfac on 2026-11-07; this section is not copied from the study. The Mathlib source is the pinned commit 296b5b4ac142878b519837d1ba8024ef92961e92, read from GitHub (`raw.githubusercontent.com/leanprover-community/mathlib4/<commit>/<path>`), since the study's local clones are deleted (`REPORT.md` line 441). Only the two files that lean_counts.txt cites were read: `Mathlib/Data/Nat/Prime/Defs.lean` (written `Defs` below) and `Mathlib/Data/Nat/Prime/Infinite.lean` (written `Infinite`). Their line numbers agree with lean_counts.txt: `Nat.minFac_prime` at `Defs`:286-288, `Nat.Prime.two_le` at `Defs`:72-75, `Nat.exists_infinite_primes` at `Infinite`:36-45. `D:n` in this section means line n of DESIGN.md at zed spec commit d3c2da0.
+
+```zed
+@measure(n - k) minFacAux(positional n: int[2..], positional k: int[3..]) -> int[2..] =
+  if n < k * k { n } else if n mod k == 0 { k } else { minFacAux(n, k + 2) };
+minFac(positional n: int[2..]) -> int[2..] = if n mod 2 == 0 { 2 } else { minFacAux(n, 3) }
+test { 2 -> 2, 3 -> 3, 4 -> 2, 9 -> 3, 15 -> 3, 25 -> 5, 91 -> 7, 97 -> 97, 121 -> 11, 7917 -> 3, 7919 -> 7919 }
+
+law minFacAuxDvd(n: int[2..], k: int[3..]) = dvd(minFacAux(n, k), n);
+law minFacAuxLe(n: int[2..], k: int[3..], m: int[2..]) = (k mod 2 == 1 && (2..<k).all(j -> n mod j != 0) && dvd(m, n)).implies(minFacAux(n, k) <= m);
+
+law minFacDvd(n: int[2..]) = dvd(minFac(n), n) proof { using(minFacAuxDvd) }
+law minFacLe(n: int[2..], m: int[2..]) = dvd(m, n).implies(minFac(n) <= m) proof { using(minFacAuxLe) }
+law minFacPrime(n: int[2..]) = isPrime(minFac(n)) proof { using(minFacDvd, minFacLe, dvdTrans) }
+law dvdFact(m: int[1..], n: int[0..]) = (m <= n).implies(dvd(m, fact(n))) proof { byInduction(n) }
+```
+
+**Definitions.** `minFacAux` and `minFac` follow `Nat.minFacAux` (`Defs`:207-215) and `Nat.minFac` (`Defs`:217-220) line for line: test 2 first, then the odd numbers from 3, and stop at n itself once `k * k` passes n. A call costs O(√n) steps.
+- **Domain.** Mathlib's `minFac` is total on ℕ: `minFac 0 = 2` (`Defs`:222-224) and `minFac 1 = 1` (`Defs`:226-228). These are junk values; the docstring at `Defs`:217 calls it "the smallest prime factor of `n ≠ 1`", and its OEIS attribute (`Defs`:218) calls `n = 0` a junk value. Zed's `minFac` takes `n: int[2..]` instead, the domain restriction that sec:failure calls the fully checked special case of totality (D:515). A call at 0 or 1 is then not a value: the checker rejects a call whose argument it cannot place in `int[2..]` [I: the argument-fit rule of sec:type_resolution, not checked against an implementation, since parameter types are built from layer L10]. The result type `int[2..]` states `Nat.minFac_prime`'s `2 ≤ p` part once, in the signature.
+- **Laws.** Because of the domain, `minFacPrime` needs no premise `n ≠ 1`, and Mathlib's laws at 0 (`minFac_dvd` at `n = 0`, `2 ∣ 0`) have no Zed counterpart. Every law here has binders `int[2..]`, which is the set where Mathlib's laws carry information.
+- **Termination.** Mathlib uses `termination_by k => sqrt n + 2 - k` (`Defs`:214). No entry of the closed catalog of descent evidence (D:966) fits, since `k` rises, and D:1270 lets a law that demands `minFacAux` reach proof grade only with evidence, so the definition carries `@measure(n - k)` (step L17.1). It falls by 2 at each call, a linear obligation. That it stays at least 0 at the call needs `k <= n` from `!(n < k * k)` and `k >= 3`, which is nonlinear; whether interval revision settles it is [I] (a nonlinear predicate is kept as written and read by interval revision, D:660 and D:716). If it does not, the guard `n < k || n < k * k` makes the bound linear and returns the same values.
+
+**Laws and their Mathlib sources.**
+- `minFacDvd` is `Nat.minFac_dvd` (`Defs`:283-284). The even branch is `n mod 2 == 0`, which is `dvd(2, n)` unfolded; the odd branch cites `minFacAuxDvd` at `(n, 3)`.
+- `minFacLe` is `Nat.minFac_le_of_dvd` (`Defs`:296-299). `minFacPrime` needs it, and `euclid` needs it at `m = n` for its witness's upper end (below). The odd branch cites `minFacAuxLe` at `(n, 3, m)`, whose premise `(2..<3).all(j -> n mod j != 0)` is the branch's `n mod 2 != 0`.
+- `minFacAuxDvd` and `minFacAuxLe` together are the private `minFacAux_has_prop` (`Defs`:239-268). Its premise `k = 2 * i + 3` becomes `k mod 2 == 1`, which the step uses to skip the even `k + 1`. Its premise "every divisor m ≥ 2 of n is at least k" becomes `(2..<k).all(j -> n mod j != 0)`, in the form of `isPrime`. Both laws are proved by induction read off `minFacAux`'s recursion (rung 4, step L6.12) under the termination evidence above, so they have no `proof` clause. In the case `n < k * k` of `minFacAuxLe`, a divisor m with `m < n` would give the divisor `n div m`, also at least k, so `n >= k * k`; Mathlib proves this case through `prime_def_le_sqrt`. That step is nonlinear [I].
+- `minFacPrime` is `Nat.minFac_prime` (`Defs`:286-288), 1 statement line and 2 proof lines in lean_counts.txt. Mathlib's proof: `prime_def_lt'` with `minFac_has_prop` and `Nat.dvd_trans`. In Zed: `isPrime(p)` unfolds to `p >= 2 && (2..<p).all(d -> p mod d != 0)`; the first conjunct is the result type; for the second, a d in `2..<p` with `p mod d == 0` divides n by `dvdTrans`, so `minFacLe` gives `p <= d`, against `d < p`.
+- `dvdFact` is `Nat.dvd_factorial`, used at `Infinite`:41 (`dvd_factorial (minFac_pos _) h`, so its premises are `0 < m` and `m ≤ n`, hence `m: int[1..]`). It is defined in `Mathlib/Data/Nat/Factorial/Basic.lean` (imported at `Infinite`:11), which this item did not read because the study does not cite it; its line numbers and line counts are not recorded here.
+- **`dvdFact`'s proof is `byInduction(n)`, not `using`.** `using` only instantiates cited laws at subterms of the goal and hypotheses (D:1122), so it cannot supply the claim at `n - 1`. The step unfolds `fact(n)` to `n * fact(n - 1)`: at `m == n` it needs `dvd(n, n * x)`, and at `m <= n - 1` the claim at `n - 1` and `dvd(m, x).implies(dvd(m, n * x))`. With `dvd` defined through `mod`, both are nonlinear, so the induction step needs these two divisibility laws [I].
+
+**Still missing.**
+- The helper laws `dvdTrans` (Lean's `Nat.dvd_trans`) and the two divisibility laws of `dvdFact`'s step are cited but not written, like `gcdDvd`, `dvdGcd` and `dvdAntisymm` in theorems 9 and 10.
+- `minFacPrime` proves a `.all` over `2..<p`. The prelude states `allElim` but no introduction rule for `.all` (D:1122). Whether rung 5 or a `#cases` covers this is [I].
+- Theorem 11's list `using(anyIntro, minFacPrime, minFacDvd, dvdFact)` is not enough as copied. `Infinite`:42-43 also use `Nat.dvd_add_iff_right` and `Prime.not_dvd_one`: a p ≥ 2 that divides `fact(n)` cannot divide `fact(n) + 1`. `anyIntro` also needs `p <= fact(n) + 1`, which is `minFacLe` at `m = n`. The fix is to add `minFacLe` and a law such as `law notDvdSucc(d: int[2..], x: int[0..]) = !(dvd(d, x) && dvd(d, x + 1))` to theorem 11's list. The list above is left as the study wrote it.
+
+**What checks this.** zed-impl parses every `zed` fence of this file at the top ring (test `l01_07_fences::mathlib`), so the code above is checked for syntax only. Nothing runs or checks its meaning yet. `zedc test` refuses the unit for three reasons: parameter types are built from layer L10, recursion arrives at layer L6 (steps L6.4 and L6.7), and `law` is built from layer L15. Measured on 2026-11-07 with the types removed, `minFac`'s table still did not run, because of the recursion. The first step that can run `minFac`'s test table with the types removed is L6.7; with them it also needs layer L10. The laws are checked from L15.2 (laws enter the obligation record), with `using` at L15.7, `byInduction` on `int[lo..]` at L22.5, `@measure` at L17.1, and the theorems at proof grade at L33.3, whose test proves `isPrime` equal to a `minFac`-based test.
 
 ## Lean line counts (lean_counts.txt)
 
