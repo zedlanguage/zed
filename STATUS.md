@@ -1445,27 +1445,23 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
 | DISJ-diff-fast | impl attempt 1 | 2026-11-07 02:12 | WIP committed: shadow + by_halves in settle and pick (a failed perl splice emptied presburger.rs; restored from HEAD and re-applied from the transcript) / load  |
 | DISJ-incremental | impl attempt 1 | 2026-11-07 01:57 | TEST-heavy-zero ready (d14aa416, docs 89a906e8); DISJ-incremental counted (settle/project_parts/pick solve whole group per disjunct; none-holds projection O(n^3 |
-| EMPTY-overlap-chain | impl attempt 2 | 2026-11-07 01:46 | started; rebasing wt/empty-overlap onto origin/main; load 16.64 18.95 24.18 |
-| LINK-key-deps | impl attempt 1 | 2026-11-07 01:09 | ready 8b0b29f2 (spec 1b111d5): GNUTARGET added + test; ld.so.conf read 0 times by a zedc link (strace), gap documented; l01_36b 30, l01_07 26, l07_03 19 pass |
-| LIST-parity-quad | impl attempt 1 | 2026-11-07 01:46 | ready 59248d88 on wt/list-parity-quad (rebased on e023ad8b); 8 groups pass, clippy and fmt clean; ledger ready |
 | LIST-parity-rest | impl attempt 1 | 2026-11-07 02:41 | worktree wt/list-parity-rest on 59248d88 seeded; reading Keyed/RowIndex for filing by parts |
-| LOAD-chain-share | impl attempt 1 | 2026-11-07 02:15 | started; worktree wt/load-chain-share from origin/main e023ad8b |
+| LOAD-chain-share | impl attempt 1 | 2026-11-07 02:15 | baseline on main e023ad8b (load 15-26): chain of tests p{i} 100->800 62.6x bytes (176M->11.06G); two-variable chain x + i*y < 1000i 50->400 195.6x bytes; both f |
 | main | running | 2026-11-06 23:47 | KERNEL-sum-tower ready d4cbf628 (bound.rs uses fast::pow/mul); POW-tower held on A29; A28 asked; load 26.94 23.48 17.66 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NAME-ties-orient+DECIDE-disj-chain | impl attempt 1 | 2026-11-07 01:00 | started in /home/luke/Work/wt/decide-disj from origin/main ca529f21; load 27.72 23.48 21.48 |
-| NARROW-hub-rest | impl attempt 1 | 2026-11-07 01:48 | causes confirmed by perf (fp build): two hubs 78% and sum 95% in project_block -> project_part -> presburger::project_each of the one base part holding every ai |
-| ORACLE-stop-share | impl attempt 1 | 2026-11-07 02:15 | green: walk ends at a second stop whose run binds functions again (Known::Unrun, Outcome::NotCompared, Report.not_compared); 100/800 10.1x bytes, instructions u |
+| NARROW-hub-rest | impl attempt 1 | 2026-11-07 01:48 | stars implemented (incremental leaf shapes, detached star blocks); linked oracle test passes; star index boxed to keep Scope small (follow:: stack overflow fixe |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | POW-tower | impl attempt 1 | 2026-11-05 22:47 | returned for cross-review: no exact O(n log n) tower order known (Baker bound exponential for towers, log log forms, PosSLP); candidates a/b/c in ledger / load  |
 | PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | both commits on wt/preimage-ref-tests (3630da47, 04dd4432); waiting for BUILD-feature-match on origin/main to rebase and add preimage-ref to the three dependent |
 | REP-path-memo+EMPTY-key-search | impl attempt 1 | 2026-11-07 00:55 | started by orchestrator in wt/empty-search; load5 22.62 |
 | S1F-arms-cycle | running | 2026-11-07 02:18 |  |
-| S22-chain-cost | impl attempt 1 | 2026-11-07 02:02 | ready 1da0c42a on wt/s22-order: chain(k)<=2 at k=80 from 1.67 s to 2.2 ms (seed 5851), seed 2 6.68G to 46.5M instructions; cause 13,990 demands per shared term  |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | TD-finite | impl attempt 1 | 2026-11-05 04:07 | committed comment at Type::finite (C22); zed-kernel lib 100, l01_23 155, l01_28 63, zedc lib 90 pass, load 20-32 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | returned with author question A30 (crate granularity: per-task ~310 crates doubles all-crates rebuild after a zedc edit, 21-26 s -> 45-49 s; lib edit 6-7 s -> 2 |
-| VERDICT-group-roots | impl attempt 1 | 2026-11-07 02:15 | started; creating worktree from origin/main |
+| U8-rename | impl attempt 1 | 2026-11-04 14:14 | ready cc6a0a61 (spec fc1fba4); 6 groups pass, fmt and clippy clean, board-check ok (S.1f flag not this row); load 13.45 17.55 22.75 |
+| VERDICT-group-roots | impl attempt 1 | 2026-11-07 02:15 | group_verdicts now decides members with judged none by one Search::solve_all over all of them (forks blamed per type via readers); verdicts of 16993 sweep membe |
 | ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 13 zedc-elab committed (last boundary); build, clippy, doc; 16 groups pass (zedc-lib 2, l01_15/16/17/18/19/19a/21/26/28/29/30/39b/39c, s_01f) load 13-1 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
