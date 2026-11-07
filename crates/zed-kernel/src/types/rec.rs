@@ -861,6 +861,12 @@ impl Key {
         self.digest
     }
 
+    /// The group of the member the key names, by the address of the instance its members share,
+    /// when the key names a member: equal for two members of one instance of a group.
+    pub(super) fn group(&self) -> Option<usize> {
+        matches!(self.at, At::Member(_)).then(|| Arc::as_ptr(&self.env) as usize)
+    }
+
     /// The recursive members of the group, in definition order, when the key names a member.
     pub(super) fn members(&self) -> Option<Vec<Type>> {
         let At::Member(_) = self.at else {

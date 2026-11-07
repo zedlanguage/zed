@@ -515,6 +515,20 @@ impl Type {
         }
     }
 
+    /// Whether this is a recursive member of a group, which its group's decider is asked about.
+    pub(crate) fn is_member(&self) -> bool {
+        matches!(&*self.0, Node::Rec(r) if r.judge.is_some())
+    }
+
+    /// The group of a recursive member, as a number that two members share exactly when they
+    /// are members of one instance of a group.
+    pub(crate) fn group(&self) -> Option<usize> {
+        match &*self.0 {
+            Node::Parts(..) => None,
+            Node::Rec(r) => r.key.group(),
+        }
+    }
+
     /// The recursive members of the group of a recursive member, in definition order.
     pub(crate) fn group_members(&self) -> Option<Vec<Type>> {
         match &*self.0 {

@@ -1237,3 +1237,71 @@ fn a_tuple_that_no_shapes_hold_is_rejected_in_the_size_of_the_union() {
         assert!(zedc::run::load(program(n).as_bytes()).is_err());
     });
 }
+
+#[test]
+fn the_members_of_two_cycles_are_decided_in_the_size_of_their_types() {
+    // Every member of a group is decided together, and each reads the cycle through the next
+    // member: a cycle walked is kept for every type on it, so each group is walked once, order
+    // `n`; walked again for each member, it was order `n^2` (VERDICT-group-readers).
+    scaling::check(
+        "the members of cycles of n and n + 1 definitions, by n",
+        128,
+        |n| {
+            Type::forget_emptiness();
+            let (a, b) = (period(n, n - 1), period(n + 1, n));
+            assert_eq!(a.verdict(), Verdict::Inhabited);
+            assert_eq!(b.verdict(), Verdict::Inhabited);
+        },
+    );
+}
+
+/// Every member of the group of [`period`]: member `i` holds the lists whose length is
+/// `k - i` modulo `p`.
+fn periods(p: usize, k: usize) -> Vec<Type> {
+    use zed_kernel::types::rec::{Def, Expr, Group};
+    let defs = (0..p)
+        .map(|i| {
+            let cons = Expr::Atom(
+                "cons".into(),
+                vec![Expr::Type(Type::int()), Expr::Ref((i + 1) % p, vec![])],
+            );
+            let body = match i == k {
+                true => Expr::Union(vec![Expr::Type(Type::atom("nil")), cons]),
+                false => cons,
+            };
+            Def {
+                name: format!("P{i}"),
+                params: vec![],
+                body,
+            }
+        })
+        .collect();
+    Group::new(defs).unwrap().instance(vec![])
+}
+
+#[test]
+fn a_cycle_kept_for_each_type_on_it_gives_each_its_own_lengths() {
+    // In one search, the meet `P_0 & Q_0` walks both cycles and keeps them for every type on
+    // them; the meet `P_i & Q_j` beside it then reads the kept cycles of the types after
+    // `P_i` and `Q_j`, whose stops are nearer. A meet is inhabited exactly when some length is
+    // `k - i` modulo `p` and `r - j` modulo `q`.
+    let meets = |p: usize, k: usize, i: usize, q: usize, r: usize, j: usize| {
+        (0..p * q).any(|l| (l + i) % p == k && (l + j) % q == r)
+    };
+    for p in 2..=5 {
+        for q in 2..=5 {
+            for (k, r) in (0..p).flat_map(|k| (0..q).map(move |r| (k, r))) {
+                let (ps, qs) = (periods(p, k), periods(q, r));
+                for (i, j) in (0..p).flat_map(|i| (0..q).map(move |j| (i, j))) {
+                    Type::forget_emptiness();
+                    let t = Type::tuple(vec![&ps[0] & &qs[0], &ps[i] & &qs[j]]);
+                    let want = match meets(p, k, 0, q, r, 0) && meets(p, k, i, q, r, j) {
+                        true => Verdict::Inhabited,
+                        false => Verdict::Empty,
+                    };
+                    assert_eq!(t.verdict(), want, "p {p} k {k} i {i}, q {q} r {r} j {j}");
+                }
+            }
+        }
+    }
+}

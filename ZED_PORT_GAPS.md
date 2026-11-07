@@ -138,6 +138,10 @@ three ways, all confirmed:
   the union that builds a chain's `#errs(E ->? E)` costs the entries that differ, not the
   smaller map. A port needs a diff of two persistent maps that skips shared nodes, from the
   runtime or by the content digests of gap 1.
+  VERDICT-group-readers added one: `Type::group` (`zed-kernel/types.rs`, `rec::Key::group`)
+  names a recursive group by the address of the `rec::Env` its members share, so the walk of
+  `decide_groups_read` (`types/empty.rs`) notes each group once in O(1) per member met. A port
+  needs a group number issued when the group is built, as `Type::rec` issues ids.
 - **Hand-written equality and order.** 12 `Ord` and 12 `PartialEq` impls (`Type`, `Row`, `Rec`,
   `Bdd`, `Part`, `Expr`, `Text`, `Rope`, `Shown`, `Rat`, `F64`, `Value`, `Premises`), and 2 of
   `Hash`. Zed's `==` and natural order are structural and cannot be replaced by a program.
@@ -173,7 +177,9 @@ Rust can adopt digest keys now where equally efficient, which would shrink this 
 Confirmed: `RefCell` 52 matches, in `Memo` (preimage.rs:580 on) and the `thread_local!` tables
 `TUPLES`, `MORPHISMS` (`zed-kernel/types/bdd.rs:65`), `MEMO` (`types/empty.rs:44`), `EMPTY`, `TOP`
 (`types.rs:335`), `ROUNDED` (`zedc/store/interval.rs:17`), plus `STATE` (`zed-native/hooks.rs:60`,
-retained). Two `AtomicU64` counters issue fresh ids: `Type::rec` (types.rs:375), `Bdd::node`
+retained); VERDICT-group-readers added `DECIDING`, `STORES` and `SHARED` (`types/empty.rs`), which
+keep the groups being decided and the values each decided group built, for the unit.
+Two `AtomicU64` counters issue fresh ids: `Type::rec` (types.rs:375), `Bdd::node`
 (bdd.rs:108). Neither has a form: Zed has no global state, and a closure captures values
 (line 1333). `@memoized` does not help: it is an assertion on the plan, "never a request that
 changes it" (step L18.2).

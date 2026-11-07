@@ -67,7 +67,7 @@
 
 use std::cell::{RefCell, RefMut};
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::ops::{ControlFlow, Range};
 use std::pin::Pin;
@@ -86,6 +86,20 @@ thread_local! {
     /// a function of the type alone, and keeping it changes no answer: these
     /// are the types proved empty and those with a checked value, and the refusals.
     static VERDICTS: RefCell<BTreeMap<Type, Verdict>> = const { RefCell::new(BTreeMap::new()) };
+    /// The members of the groups whose verdicts are being decided ([`group_verdicts`]): a search
+    /// decides such a member itself, where it reads the verdict of any other member.
+    static DECIDING: RefCell<BTreeSet<Type>> = const { RefCell::new(BTreeSet::new()) };
+    /// The values the searches of [`group_verdicts`] built, one list per search, each value by
+    /// its number there, as [`Search::shown`] holds them: read, never changed, by the searches
+    /// that read a member's value ([`Rep::Of`]), until `Type::forget_emptiness`.
+    // Complexity tradeoff: every value a group's searches built is kept until the unit ends,
+    // those no reader reads too, so the memory is that of every group's searches together,
+    // O(total values built), where a search's values were dropped when it ended; it buys reads
+    // with no copy. Trigger: any group decided by `group_verdicts`. COMPLEXITY.md K62.
+    static STORES: RefCell<Vec<Vec<Rep>>> = const { RefCell::new(Vec::new()) };
+    /// For each member given `Inhabited` by [`group_verdicts`] with a value its searches built:
+    /// the list in `STORES` and the value's number there.
+    static SHARED: RefCell<BTreeMap<Type, (usize, usize)>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// The outcomes of a check; each has its own message.
@@ -160,6 +174,7 @@ impl std::fmt::Display for Refusal {
 /// group n times. Each verdict is a function of the group, which every member names,
 /// whichever member is asked first.
 fn group_verdicts(members: &[Type]) {
+    DECIDING.with(|d| d.borrow_mut().extend(members.iter().cloned()));
     let open: Vec<Type> = (members.iter())
         .filter(|m| m.judged().is_none())
         .cloned()
@@ -214,6 +229,33 @@ fn group_verdicts(members: &[Type]) {
         };
         VERDICTS.with(|k| k.borrow_mut().insert(m.clone(), v));
     }
+    // The values built here, kept for the searches that read a member ([`Searching::shared`]):
+    // a member shown inhabited by a value of the search for values, else of the first search.
+    STORES.with(|st| {
+        let mut st = st.borrow_mut();
+        let (first, values) = (st.len(), st.len() + 1);
+        SHARED.with(|sh| {
+            let mut sh = sh.borrow_mut();
+            for m in members {
+                if VERDICTS.with(|k| k.borrow().get(m) != Some(&Verdict::Inhabited)) {
+                    continue;
+                }
+                if let Some(Some(r)) = s.reps.get(m) {
+                    sh.insert(m.clone(), (values, *r));
+                } else if let Some(Some(r)) = d.reps.get(m) {
+                    sh.insert(m.clone(), (first, *r));
+                }
+            }
+        });
+        st.push(std::mem::take(&mut d.shown));
+        st.push(std::mem::take(&mut s.shown));
+    });
+    DECIDING.with(|d| {
+        let mut d = d.borrow_mut();
+        for m in members {
+            d.remove(m);
+        }
+    });
 }
 
 impl Type {
@@ -223,6 +265,8 @@ impl Type {
     pub fn forget_emptiness() {
         MEMO.with(|m| m.borrow_mut().clear());
         VERDICTS.with(|m| m.borrow_mut().clear());
+        STORES.with(|m| m.borrow_mut().clear());
+        SHARED.with(|m| m.borrow_mut().clear());
     }
 
     /// Whether no value is in `self`.
@@ -255,20 +299,107 @@ impl Type {
         if let Some(v) = kept() {
             return v;
         }
+        self.decide_groups_read();
         if let Some(members) = self.group_members() {
             group_verdicts(&members);
             if let Some(v) = kept() {
                 return v;
             }
         }
-        // Complexity tradeoff: a type outside a group that reads a member the decider leaves
-        // open gets a search of its own, which reads no kept result and so decides again the
-        // part of the group it reaches; the verdicts of m such types cost m searches of that
-        // part, O(m n). Trigger: a type that is no member reads a member whose `judged` is none.
-        // COMPLEXITY.md K61.
+        // A type outside a group gets a search of its own, which reads each member of a group by
+        // the group's verdict and value, kept above (`Searching::group_verdict`,
+        // `Searching::shared`), so the verdicts of m types that read a group of n cost one
+        // search of the group and one of each type's own part, not m searches of the group.
+        // COMPLEXITY.md K62.
         let v = self.verdict_alone();
         VERDICTS.with(|m| m.borrow_mut().insert(self.clone(), v));
         v
+    }
+
+    /// Keeps the verdicts of every group of recursive members that `self` reads, and of those
+    /// they read, each group after the groups it reads, from a stack on the heap. A search reads
+    /// the verdict of a member of another group ([`Searching::group_verdict`],
+    /// [`Searching::shared`]); decided here first, that verdict is kept when it is read, so no
+    /// search starts inside another, and a chain of groups each reading the next is decided
+    /// with no more of the thread's stack than one group. A group is found by a walk of the
+    /// parts its members read, which stops at the members of other groups and notes each group
+    /// once (`Type::group`); each type is walked once per walk, a group already kept is not
+    /// walked, and the others are walked once, so a walk costs no more than the search that
+    /// reads the same parts. Groups form no cycle (a group is a set of definitions that read
+    /// each other), and the order is the walk's, which is a function of `self`.
+    fn decide_groups_read(&self) {
+        let own = self.group_members().unwrap_or_else(|| vec![self.clone()]);
+        let kept = |m: &Type| VERDICTS.with(|k| k.borrow().contains_key(m));
+        // One member of each group read by the parts of `roots`, without passing through a
+        // member of another group, in the order met.
+        let read = |roots: &[Type]| -> Vec<Type> {
+            let mut groups: HashSet<usize> = roots.iter().filter_map(Type::group).collect();
+            let inside: HashSet<usize> = roots.iter().map(Type::node_addr).collect();
+            let mut seen = inside.clone();
+            let mut found = Vec::new();
+            let mut stack: Vec<Type> = roots.to_vec();
+            let visit = |t: &Type, seen: &mut HashSet<usize>, stack: &mut Vec<Type>| {
+                if seen.insert(t.node_addr()) {
+                    stack.push(t.clone());
+                }
+            };
+            while let Some(t) = stack.pop() {
+                if let Some(g) = t.group().filter(|_| t.is_member())
+                    && !inside.contains(&t.node_addr())
+                {
+                    if groups.insert(g) {
+                        found.push(t);
+                    }
+                    continue;
+                }
+                let p = t.p();
+                for a in p.atoms.names.values() {
+                    visit(&a.payload, &mut seen, &mut stack);
+                }
+                p.tuples.atoms(&mut |row| {
+                    row.iter().for_each(|x| visit(x, &mut seen, &mut stack));
+                    true
+                });
+                p.morphisms.atoms(&mut |m| {
+                    for x in [&m.guarantee, &m.permission, &m.value] {
+                        visit(x, &mut seen, &mut stack);
+                    }
+                    true
+                });
+            }
+            found
+        };
+        enum Step {
+            /// A member of a group to walk, unless it is kept, being decided or walked.
+            Enter(Type),
+            /// The members of a group whose read groups are all decided.
+            Leave(Vec<Type>),
+        }
+        let mut done: HashSet<usize> = own.iter().filter_map(Type::group).collect();
+        let mut stack: Vec<Step> = (read(&own).into_iter().rev()).map(Step::Enter).collect();
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Leave(g) => {
+                    if !kept(&g[0]) {
+                        group_verdicts(&g);
+                    }
+                }
+                Step::Enter(m) => {
+                    let deciding = || DECIDING.with(|d| d.borrow().contains(&m));
+                    let fresh = m.group().is_some_and(|g| done.insert(g));
+                    if !fresh || kept(&m) || deciding() {
+                        continue;
+                    }
+                    let g = m.group_members().unwrap_or_default();
+                    if g.is_empty() {
+                        continue;
+                    }
+                    let reads = read(&g);
+                    stack.push(Step::Leave(g));
+                    stack.extend(reads.into_iter().rev().map(Step::Enter));
+                }
+            }
+        }
     }
 
     /// The verdict of `self` by a search of its own.
@@ -515,6 +646,12 @@ struct Search {
     reps: BTreeMap<Type, Option<usize>>,
     /// The values shown, each once, by number.
     shown: Vec<Rep>,
+    /// The number here of each value of another search read ([`Rep::Of`]), by its list in
+    /// `STORES` and its number there, so a value shared within that one is shared here too.
+    foreign: HashMap<(usize, usize), usize>,
+    /// For each such value whose parts were read in ([`Search::local`]), the number of the value
+    /// made of them.
+    expanded: HashMap<usize, usize>,
     members: BTreeMap<(usize, Type), Option<bool>>,
     /// Each type read as the value type of a morphism.
     value_reads: BTreeSet<usize>,
@@ -1064,6 +1201,14 @@ enum Rep {
         item: usize,
         len: BigUint,
     },
+    /// The value numbered `at` in the list `store` of `STORES`, built by the search of another
+    /// group's verdicts; `of`, when it is the value of that member, so it is in that type with
+    /// no test. It is read in ([`Search::local`]) one level at a time, when a test needs its parts.
+    Of {
+        store: usize,
+        at: usize,
+        of: Option<Type>,
+    },
     /// A closure; it may be recursive. Whether it is in a type is known only when that type
     /// holds all morphisms or none.
     Closure,
@@ -1335,19 +1480,82 @@ impl Search {
                 break;
             }
         }
-        Some(Cycle {
+        let c = Cycle {
             stop: stop?,
             link: link?,
             item: item?,
             period: steps,
             at: at?,
-        })
+        };
+        // Every type on the cycle is on the same cycle, `j` steps on, so its stop is `j` steps
+        // nearer: each is recorded, and the members of one cycle asked in turn walk it once in
+        // all, not once each.
+        for (j, y) in (path.into_iter().enumerate()).skip(1) {
+            let at = (c.at + c.period - j as u64 % c.period) % c.period;
+            self.cycles.insert(y, Some(Cycle { at, ..c.clone() }));
+        }
+        Some(c)
     }
 
     /// Keeps `v` among the values shown, and gives its number.
     fn show(&mut self, v: Rep) -> usize {
         self.shown.push(v);
         self.shown.len() - 1
+    }
+
+    /// The number of the value of another search at `at` in the list `store` of `STORES`.
+    fn foreign(&mut self, store: usize, at: usize, of: Option<Type>) -> usize {
+        if let Some(&v) = self.foreign.get(&(store, at)) {
+            return v;
+        }
+        let v = self.show(Rep::Of { store, at, of });
+        self.foreign.insert((store, at), v);
+        v
+    }
+
+    /// The value numbered `v`, with its outer level read in when it is a value of another
+    /// search: the same value, whose parts are values of that search ([`Search::foreign`]).
+    /// Each is read in once, and only the levels a test reads are, so a search reads no more of
+    /// a shared value than it would have built.
+    fn local(&mut self, v: usize) -> usize {
+        let Rep::Of { store, at, .. } = self.shown[v] else {
+            return v;
+        };
+        if let Some(&e) = self.expanded.get(&v) {
+            return e;
+        }
+        let (mut store, mut at) = (store, at);
+        let rep = loop {
+            match STORES.with(|s| s.borrow()[store][at].clone()) {
+                Rep::Of {
+                    store: s, at: a, ..
+                } => (store, at) = (s, a),
+                r => break r,
+            }
+        };
+        let rep = match rep {
+            Rep::Tuple(vs) => Rep::Tuple(
+                vs.into_iter()
+                    .map(|i| self.foreign(store, i, None))
+                    .collect(),
+            ),
+            Rep::Atom(name, p) => Rep::Atom(name, self.foreign(store, p, None)),
+            Rep::List {
+                stop,
+                link,
+                item,
+                len,
+            } => Rep::List {
+                stop,
+                link,
+                item: self.foreign(store, item, None),
+                len,
+            },
+            r => r,
+        };
+        let e = self.show(rep);
+        self.expanded.insert(v, e);
+        e
     }
 
     /// Component `i` of the tuple numbered `v` among the values shown.
@@ -1517,9 +1725,46 @@ impl<'m> Searching<'m> {
         b
     }
 
+    /// For a search that takes `Refused`, the emptiness of `t` read off its verdict when `t` is a
+    /// member of a group its decider leaves open and that group is not the one being decided:
+    /// the group's one search ([`group_verdicts`]) decides it, once for every type that reads
+    /// it, where each reader's search would decide again the part of the group it reaches. A
+    /// verdict is a function of the group, so the answer read is the same whichever type asks
+    /// first. A member refused for a fork refuses the reader as a fork met here does; one
+    /// refused for another cause counts as inhabited with nothing shown, under that cause.
+    fn group_verdict(&'m self, t: &Type) -> Option<bool> {
+        if !t.is_member() || !self.s().strict || DECIDING.with(|d| d.borrow().contains(t)) {
+            return None;
+        }
+        let r = match t.verdict() {
+            Verdict::Empty => return Some(true),
+            Verdict::Inhabited => return Some(false),
+            Verdict::Refused(r) => r,
+        };
+        let mut guard = self.s();
+        let s = &mut *guard;
+        match r {
+            Refusal::Fork if s.refuse_forks && !s.seeding => {
+                match (&mut s.blame, s.current) {
+                    (Some(blame), Some(c)) => blame.push((c, Refusal::Fork)),
+                    _ => s.refused = Some(Refusal::Fork),
+                }
+                Some(true)
+            }
+            Refusal::NoWitness => Some(false),
+            r => {
+                s.give_up(r);
+                Some(false)
+            }
+        }
+    }
+
     fn empty(&'m self, t: &Type) -> Deep<'m, bool> {
         // A member of a recursive group is answered by the group's decider (module `rec`).
         if let Some(b) = t.judged() {
+            return Stack::ready(b);
+        }
+        if let Some(b) = self.group_verdict(t) {
             return Stack::ready(b);
         }
         // A scalar in the type is a checked value, read off before the type is compared with
@@ -2336,6 +2581,25 @@ impl<'m> Searching<'m> {
         }
     }
 
+    /// The value of the member `t` of another group built by the search of its group's verdicts
+    /// ([`group_verdicts`]), read here with no copy ([`Rep::Of`]), so each reader of a group does
+    /// not build its values again. Each is a function of the group, whichever type asks first.
+    /// Only a strict search reads it, as only one reads verdicts ([`Searching::group_verdict`]).
+    fn shared(&'m self, t: &Type) -> Option<usize> {
+        if !t.is_member() || !self.s().strict || DECIDING.with(|d| d.borrow().contains(t)) {
+            return None;
+        }
+        if let Some(&r) = self.s().reps.get(t) {
+            return r;
+        }
+        t.verdict();
+        let (store, at) = SHARED.with(|m| m.borrow().get(t).copied())?;
+        let mut s = self.s();
+        let r = s.foreign(store, at, Some(t.clone()));
+        s.reps.insert(t.clone(), Some(r));
+        Some(r)
+    }
+
     /// A value in `t`, if one is found: a scalar or bare atom of it, or a tuple or atom payload
     /// whose components have representatives and which `t` holds. The tuples tried at each
     /// length are two: the box the tuple types narrow the part to, and its meet with the first
@@ -2349,6 +2613,9 @@ impl<'m> Searching<'m> {
     /// representative against a type is made once, so a value nested in shared types is never
     /// copied out.
     fn rep(&'m self, t: &Type) -> Deep<'m, Option<usize>> {
+        if let Some(r) = self.shared(t) {
+            return Stack::ready(Some(r));
+        }
         {
             let mut s = self.s();
             if let Some(&r) = s.reps.get(t) {
@@ -2541,7 +2808,11 @@ impl<'m> Searching<'m> {
                 return Some(self.s().show(Rep::Value(Value::atom(name))));
             }
             if let Some(r) = self.rep(&a.payload).await {
-                let tuple = matches!(self.s().shown[r], Rep::Tuple(_));
+                let tuple = {
+                    let mut s = self.s();
+                    let l = s.local(r);
+                    matches!(s.shown[l], Rep::Tuple(_))
+                };
                 if tuple {
                     return Some(self.s().show(Rep::Atom(name.clone(), r)));
                 }
@@ -2832,6 +3103,13 @@ impl<'m> Searching<'m> {
     /// Whether the value numbered `v` is in `u`, or `None` when that is not known. What is not
     /// known is kept as such, so a second test of the pair is not read as a sure "no".
     fn member_known(&'m self, v: usize, u: &Type) -> Deep<'m, Option<bool>> {
+        let v = {
+            let mut s = self.s();
+            if matches!(&s.shown[v], Rep::Of { of: Some(m), .. } if m == u) {
+                return Stack::ready(Some(true));
+            }
+            s.local(v)
+        };
         {
             let s = self.s();
             if let Rep::Value(x) = &s.shown[v] {
@@ -2854,6 +3132,7 @@ impl<'m> Searching<'m> {
                 }
                 let shape = match &self.s().shown[v] {
                     Rep::Value(_) => unreachable!("a value was read above"),
+                    Rep::Of { .. } => unreachable!("a value of another search was read in above"),
                     Rep::Closure => Shape::Known(u.p().morphisms.is_leaf()),
                     Rep::Struct => Shape::Known(Some(u.p().structs)),
                     Rep::Tuple(vs) => Shape::Tuple(u.p().tuples.get(vs.len())),

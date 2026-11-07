@@ -1883,7 +1883,8 @@ fn largest_group(sys: &[E]) -> Vec<usize> {
 /// The verdicts of every member of one group of `n` that the decider refuses, of the chain
 /// family and of the X14 family, at `n` and `8n`, the groups built before the runs: one search
 /// with every member as a root decides them all (plan item VERDICT-group-roots), where a search
-/// for each member read the group n times.
+/// for each member read the group n times. Then the verdicts of every definition of the X14
+/// system, which read the group by its verdicts and values (plan item VERDICT-group-readers).
 #[test]
 fn verdicts_of_undecided_groups_scale() {
     let chain = |n: usize| -> Vec<Type> {
@@ -1895,10 +1896,6 @@ fn verdicts_of_undecided_groups_scale() {
         .map(|t| t.expect("a chain group is admitted"))
         .collect()
     };
-    // Only the members of the largest group: a definition outside it that reads it gets a
-    // search of its own (`Type::verdict_alone`), which decides again the part of the group it
-    // reaches, so the verdicts of such definitions cost the square of the group; COMPLEXITY.md
-    // K61.
     let one = |n: usize| -> Vec<Type> {
         let sys = undecided(claude_of(&mut Rng::new(3), n));
         let group = largest_group(&sys);
@@ -1910,6 +1907,19 @@ fn verdicts_of_undecided_groups_scale() {
                     .expect("every definition of the X14 family is admitted")
             })
             .collect()
+    };
+    // Every definition, those outside the largest group too: such a definition reads the
+    // members of that group by their group's verdicts, so the system's verdicts cost one search
+    // of the group and one of each definition's own part (plan item VERDICT-group-readers),
+    // where a search for each definition decided again the part of the group it reaches.
+    let all = |n: usize| -> Vec<Type> {
+        kernel(
+            &undecided(claude_of(&mut Rng::new(3), n)),
+            &format!("allu{n}"),
+        )
+        .into_iter()
+        .map(|t| t.expect("every definition of the X14 family is admitted"))
+        .collect()
     };
     let every = |ts: &[Type]| {
         Type::forget_emptiness();
@@ -1931,5 +1941,100 @@ fn verdicts_of_undecided_groups_scale() {
             n,
             |m| every(&ones[&m]),
         );
+        let alls = scaling::inputs(n, all);
+        scaling::check(
+            "the verdicts of every definition of an undecided X14 system of n",
+            n,
+            |m| every(&alls[&m]),
+        );
     });
+}
+
+/// A definition outside a group the decider refuses reads each member of it by the group's
+/// verdict and the value the group's search built (plan item VERDICT-group-readers): its
+/// verdict agrees with the values, and with every order of the questions. In the layered system
+/// of seed 316, `R3 = (int, R0) | ((R2) -> empty)` holds the function on the empty `R2`, and
+/// reads the open member `R0` through `R2` and `R1`; a search of its own that decided `R0`
+/// again called `R3` empty, where the same system with the decider's verdicts called it
+/// inhabited.
+#[test]
+fn readers_of_undecided_groups_agree_with_the_values() {
+    on_a_big_stack(|| {
+        let sys = undecided(gen_layer(&mut Rng::new(316)));
+        let types = kernel(&sys, "readers316");
+        assert_eq!(
+            alone(&types),
+            [
+                Verdict::Empty,
+                Verdict::Inhabited,
+                Verdict::Empty,
+                Verdict::Inhabited
+            ]
+            .map(Some),
+            "{}",
+            show_system(&sys)
+        );
+        let gens: [fn(&mut Rng) -> Vec<E>; 4] = [gen_claude, gen_mixed, gen_layer, gen_cells];
+        for (name, g) in ["claude", "mixed", "layer", "cells"].into_iter().zip(gens) {
+            for seed in 0..100 {
+                let sys = undecided(g(&mut Rng::new(seed)));
+                let tag = format!("readers-{name}{seed}");
+                let types = kernel(&sys, &tag);
+                let got = alone(&types);
+                let truth = truth(&sys, CAP);
+                for (i, v) in got.iter().enumerate() {
+                    let at = || format!("{tag}: R{i} of {}", show_system(&sys));
+                    match (&truth.seen[i], v) {
+                        (Seen::Member(w), Some(Verdict::Empty)) => {
+                            panic!("{}: Empty, but holds {w}", at())
+                        }
+                        (Seen::None, Some(Verdict::Inhabited)) if truth.exhaustive => {
+                            panic!("{}: Inhabited, but the pool shows no value", at())
+                        }
+                        _ => {}
+                    }
+                }
+                let n = types.len();
+                let forward: Vec<usize> = (0..n).collect();
+                let backward: Vec<usize> = (0..n).rev().collect();
+                for order in [forward, backward] {
+                    assert_eq!(
+                        in_order(&types, &order),
+                        got,
+                        "{tag}: in the order {order:?}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// A chain of 1000 groups, each one definition `Ri = (Ri, #stop) | (R(i+1), int)` that reads the
+/// next, as the decider decides them and with every body written `b \ #none`, is decided on a
+/// thread of 1 MiB. Each group is decided before the group that reads it
+/// (`Type::decide_groups_read`), so no search starts inside another: deciding each group as the
+/// search above it reads it nested one search per group on the thread's stack, as the decider's
+/// verdicts of the parts it reads already did (plan item VERDICT-group-readers).
+#[test]
+fn a_chain_of_groups_is_decided_on_a_small_stack() {
+    let n = 1000;
+    for open in [false, true] {
+        let sys: Vec<E> = (0..n)
+            .map(|i| {
+                let next = if i + 1 < n {
+                    tup(vec![E::Ref(i + 1), E::Int])
+                } else {
+                    E::Atom("stop")
+                };
+                let b = E::Union(vec![tup(vec![E::Ref(i), E::Atom("stop")]), next]);
+                if open { diff(b, E::Atom("none")) } else { b }
+            })
+            .collect();
+        let first = on_a_big_stack(|| kernel(&sys, "chain")[0].clone().expect("admitted"));
+        let v = scaling::on_a_thread(1 << 20, move || {
+            Type::forget_emptiness();
+            first.verdict()
+        });
+        assert_eq!(v, Verdict::Inhabited, "with every body \\ #none: {open}");
+    }
 }
