@@ -2492,6 +2492,20 @@ pub(super) fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, dark: bool) -> 
     shadow_logged(rows, keep, dark, None)
 }
 
+/// The conjunction `rows` with every atom outside `keep` eliminated, exactly over the integers
+/// (Fourier–Motzkin with the dark shadow, `shadow`): rows over the atoms of `keep` alone that
+/// hold at a point exactly where `rows` hold at some values of the other atoms there, the
+/// single row `-1 >= 0` where `rows` hold nowhere. `None` when an atom outside `keep` cannot be
+/// eliminated so.
+pub fn eliminated(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    match shadow(rows, keep, true) {
+        None => Some(vec![Con::ge(&Lin::constant(0), &Lin::constant(1))]),
+        Some(out) => (out.iter())
+            .all(|c| c.lin.terms.keys().all(keep))
+            .then_some(out),
+    }
+}
+
 /// An atom eliminated by [`shadow`] and its rows when it was: a point of the rows left gives
 /// the atom a value by them, the atoms eliminated after it having theirs ([`point_of`]).
 type Eliminated = (Atom, Vec<Con>);

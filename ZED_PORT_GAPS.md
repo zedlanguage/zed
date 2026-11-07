@@ -2072,6 +2072,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `usize` sizes compared to choose the largest decided part | `extend::Known::size`, `Extending::extend` | None | `int` |
 | A loop over the kept parts that sets an `Option` and leaves at the first part whose point extends or that holds nowhere | `Extending::extend` | Mutation (gap 11), Early exit (gap 12) | A search over the list of parts returning the first answer it finds |
 
+## Entries from LOAD-affine-cone (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack of `&Formula` with a `HashSet<u32>` visited set over auxiliary numbers, pushing each definition reached once and leaving early with `return None` | `preimage::projected` | Mutation (gap 11), Early exit (gap 12) | A fold over a work list carrying the visited set, ending in `#none` |
+| A memo table of `Arc<[Con]>` keyed by `CallKey`, with an undo log entry `Logged::Projection` | `Memo::projections`, `Walk::projection` | Mutation (gap 11) | A map value threaded through the translation, the undo a kept earlier value |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |

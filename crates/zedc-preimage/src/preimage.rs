@@ -1011,6 +1011,7 @@ struct Translations {
     formula: HashMap<At, Entry<Option<Formula>>>,
     lin_calls: HashMap<CallKey, Entry<Option<Lin>>>,
     formula_calls: HashMap<CallKey, Entry<Option<Formula>>>,
+    projections: HashMap<CallKey, Entry<Option<Projection>>>,
 }
 
 impl Memo {
@@ -1021,6 +1022,7 @@ impl Memo {
             formula: std::mem::take(&mut self.formula),
             lin_calls: std::mem::take(&mut self.lin_calls),
             formula_calls: std::mem::take(&mut self.formula_calls),
+            projections: std::mem::take(&mut self.projections),
         }
     }
 
@@ -1028,6 +1030,7 @@ impl Memo {
     fn put_translations(&mut self, t: Translations) {
         (self.lin, self.formula) = (t.lin, t.formula);
         (self.lin_calls, self.formula_calls) = (t.lin_calls, t.formula_calls);
+        self.projections = t.projections;
     }
 }
 
@@ -1310,7 +1313,11 @@ impl<'t> Scoped<'t> {
     pub fn held(&self) -> usize {
         let (tx, m) = (&self.tx, &self.tx.run.memo);
         let kept = self.kept.as_ref().map_or(0, |(_, t)| {
-            t.lin.len() + t.formula.len() + t.lin_calls.len() + t.formula_calls.len()
+            t.lin.len()
+                + t.formula.len()
+                + t.lin_calls.len()
+                + t.formula_calls.len()
+                + t.projections.len()
         });
         kept + tx.scopes.len()
             + tx.scope_ids.len()
@@ -2297,6 +2304,9 @@ struct Memo {
     /// arguments translate alike translate alike, however they are reached.
     lin_calls: HashMap<CallKey, Entry<Option<Lin>>>,
     formula_calls: HashMap<CallKey, Entry<Option<Formula>>>,
+    /// The relations of callees with every variable but their canonical atoms eliminated
+    /// ([`Walk::projection`]), by the same keys as `formula_calls`.
+    projections: HashMap<CallKey, Entry<Option<Projection>>>,
     /// The translation entries in the order they were made, which a translation that is
     /// undone removes.
     log: Vec<Logged>,
@@ -2321,6 +2331,74 @@ type Unheld = Box<dyn FnOnce(&mut Memo)>;
 
 /// A call to translate: the lambda, by its body and scope, and its arguments' linear terms.
 type CallKey = (At, Vec<Lin>);
+
+/// A callee's relation with every variable but its canonical atoms and the inputs it reads
+/// eliminated ([`Walk::projection`]): constraints over symbols alone.
+type Projection = Arc<[Con]>;
+
+/// The relation `r` of a callee over the canonical atoms of the canonical key `key`
+/// ([`Walk::claimable`]) with each other variable eliminated ([`presburger::eliminated`]):
+/// the auxiliary variables `r` reads, through the definitions in `tr` that define them, one
+/// level after another, and the canonical atoms of the claimed calls in it, which their
+/// bindings define. Each such variable has one value, or some, at each value of the atoms
+/// kept, so the result holds at a value of the canonical atoms exactly where `r` holds with
+/// the definitions at some values of the others: written at a call's arguments, it is the
+/// callee's relation at them. Each definition is read once (a visited set over the numbers).
+/// `None` when `r` or a definition chooses (a disjunction or a negation), an atom is a
+/// product or an auxiliary variable without a definition, a binding binds an atom of `key`,
+/// or an atom stays ([`presburger::eliminated`]).
+fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
+    use presburger::Atom;
+    let own: HashSet<&Arc<str>> = (key.iter().flat_map(|l| l.terms.keys()))
+        .filter_map(|a| match a {
+            Atom::Sym(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    let (mut rows, mut bound, mut seen) = (Vec::new(), HashSet::new(), HashSet::new());
+    let mut todo = vec![r];
+    while let Some(f) = todo.pop() {
+        if f.chooses() {
+            return None;
+        }
+        for c in f.cons() {
+            for a in c.lin.terms.keys() {
+                match a {
+                    Atom::Product(..) => return None,
+                    Atom::Aux(n) if seen.insert(*n) => {
+                        let (m, what, _) = tr.defs.get(*n as usize)?;
+                        // A remainder is defined by its quotient's formula, numbered before it.
+                        let at = match what.remainder() {
+                            true => n.checked_sub(1)?,
+                            false => *n,
+                        };
+                        if m != n {
+                            return None;
+                        }
+                        if at != *n && !seen.insert(at) {
+                            continue;
+                        }
+                        let (_, what, def) = tr.defs.get(at as usize)?;
+                        if matches!(def, Formula::And(gs) if gs.is_empty()) {
+                            return None;
+                        }
+                        if let What::Bind(pairs) | What::Value(_, pairs) = what {
+                            bound.extend(pairs.iter().map(|(c, _)| c.clone()));
+                        }
+                        todo.push(def);
+                    }
+                    Atom::Aux(_) | Atom::Sym(_) => {}
+                }
+            }
+            rows.push(c.clone());
+        }
+    }
+    if bound.iter().any(|c| own.contains(c)) {
+        return None;
+    }
+    let keep = |a: &Atom| matches!(a, Atom::Sym(s) if !bound.contains(s));
+    presburger::eliminated(&rows, &keep).map(Projection::from)
+}
 
 /// The classes of the parameters of the functions `lams` binds (each its name and lambda):
 /// a call that passes a parameter of its caller as it is, `p(x: x)`, joins that parameter to
@@ -2525,6 +2603,7 @@ enum Logged {
     Formula(At),
     LinCall(CallKey),
     FormulaCall(CallKey),
+    Projection(CallKey),
 }
 
 /// One of the memo's tables.
@@ -2976,6 +3055,7 @@ impl<'t> Tx<'t> {
                 Logged::Formula(k) => _ = m.formula.remove(&k),
                 Logged::LinCall(k) => _ = m.lin_calls.remove(&k),
                 Logged::FormulaCall(k) => _ = m.formula_calls.remove(&k),
+                Logged::Projection(k) => _ = m.projections.remove(&k),
             }
         }
     }
@@ -3239,6 +3319,7 @@ impl<'t> Tx<'t> {
         m.formula.clear();
         m.lin_calls.clear();
         m.formula_calls.clear();
+        m.projections.clear();
         m.log.clear();
         tr.pairs.clear();
         tr.made.clear();
@@ -5926,6 +6007,31 @@ impl<'m, 't> Walk<'m, 't> {
         )
     }
 
+    /// The relation of the lambda `(body, lam)` over its canonical atoms with every other
+    /// variable eliminated ([`projected`]), remembered under the canonical key `key`, so it
+    /// is made once from the callee's canonical relation ([`Walk::canonical_formula`]) for
+    /// all the calls of it that do not hold its claim (LOAD-affine-cone).
+    fn projection(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Option<(Span, Eid)>,
+        key: Vec<Lin>,
+    ) -> Deep<'m, Option<Projection>> {
+        let k = ((body, lam), key.clone());
+        self.translated(
+            |m| &mut m.projections,
+            k,
+            Logged::Projection,
+            move || async move {
+                let r = self.canonical_formula(t, ps, (body, lam), args, key.clone());
+                let r = r.await?;
+                self.tr(|tr| projected(tr, &r, &key))
+            },
+        )
+    }
+
     /// What [`Walk::canonical_formula`] remembers: the body read under [`Walk::canonical_env`].
     async fn canonical_formula_read(
         &'m self,
@@ -5984,27 +6090,36 @@ impl<'m, 't> Walk<'m, 't> {
     /// binding at its own number: two fixed to one value share every row, a tie the solver
     /// refuses), so a call costs
     /// O(its arguments) once its callee is translated, whatever map of the parameters the
-    /// arguments are (LOAD-chain-affine); otherwise the callee's body read with each parameter
-    /// bound to its argument ([`Walk::formula_call`]), as it is when the callee's canonical
-    /// relation is outside the domain.
+    /// arguments are (LOAD-chain-affine); when another call holds the claim, the callee's
+    /// relation with every other variable eliminated ([`Walk::projection`]), made once for the
+    /// callee and written at the arguments ([`at_arguments`]), so such a call costs O(the rows
+    /// left) (LOAD-affine-cone); otherwise the callee's body read with each parameter bound to
+    /// its argument ([`Walk::formula_call`]), as it is when the callee's canonical relation is
+    /// outside the domain or the elimination leaves a variable.
     ///
     /// A canonical relation that is one constraint over symbols is written at the arguments
     /// instead ([`at_arguments`]), with no binding and no claim.
-    // Complexity tradeoff: a function has one claimed call, the first read, and each call of it
-    // with other arguments reads its body again, and the calls in it whose arguments then
-    // differ from their callees' claimed ones, so a function called with k argument lists is
-    // read k times, O(k times its cone). Why: the claimed call binds the callee's canonical
-    // atoms, which one relation can bind once, and a caller's relation holds its callees', with
-    // their bindings. Trigger: one function with a large cone called with another argument
-    // list by each link of a chain, as `h(x: x)` in `p{i}(x) = h(x: x) && p{i-1}(x: x + 1)` with
-    // `h` a chain of n links: 62.9 times the bytes from 50 to 400 links (measured once).
-    // A small callee read again (`q(x: x)` there, `q` of a few constraints or calling its
-    // class) is O(1) a call: tests
-    // `l01_38_presburger::one_scope::the_relations_of_a_chain_with_a_second_call_of_a_call_scale`
-    // and `..._of_two_constraints_scale`. COMPLEXITY.md row LOAD-chain-affine (open). A complete
-    // solution would index the canonical atoms by the call, so each call binds its own copy of
-    // them without copying the relation: a relation node instantiated at the call, which the
-    // solver reads with the call's atoms.
+    // Complexity tradeoff: a call that holds no claim is its callee's relation with every
+    // variable but the canonical atoms eliminated, written at its arguments; where the
+    // elimination is not exact without new variables, a call of it with other arguments reads
+    // its body again, and the calls in it whose arguments then differ from their callees'
+    // claimed ones, so a function called with k argument lists is read k times, O(k times its
+    // cone): a callee that chooses (a disjunction or a negation: `x != j` in each link), a
+    // product, a congruence left by a `mod` or `div` (`x mod 4 == 1`: `x` is 1 more than a
+    // multiple of 4, which no rows over `x` alone state), or an auxiliary variable of no
+    // definition. Where it is exact, the rows left are one for each linear form over the
+    // canonical atoms, the tighter kept: O(1) for one parameter, and up to the cone's for two or
+    // more, written at each call. Why: the claimed call binds the callee's canonical atoms,
+    // which one relation can bind once, and an exact elimination over the integers needs new
+    // variables for those cases. Trigger: one function with a large cone of such constraints
+    // called with another argument list by each link of a chain, as `h(x: x)` in `p{i}(x) =
+    // h(x: x) && p{i-1}(x: x + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x !=
+    // j`: 0.30 s at 50 links, 12.8 s at 400 (measured once). Bounds through `div` and `mod`
+    // are eliminated: test `l01_38_presburger::one_scope::
+    // the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale`. COMPLEXITY.md row
+    // LOAD-affine-cone. A complete solution would index the canonical atoms by the call, so
+    // each call binds its own copy of them without copying the relation: a relation node
+    // instantiated at the call, which the solver reads with the call's atoms.
     async fn formula_called(
         &'m self,
         t: Tid,
@@ -6032,11 +6147,23 @@ impl<'m, 't> Walk<'m, 't> {
             if let (Some(lin), Some(Formula::Con(c))) = (one, &r) {
                 return Some(Formula::Con(Con { lin, rel: c.rel }));
             }
-            if let Some(r) = r
-                && let Some(b) = self.binding((body, lam), &k.1, &key, None)
-            {
-                let b = Formula::Con(Con::eq(&Lin::atom(Atom::Aux(b)), &Lin::constant(b as i64)));
-                return Some(Formula::and_keeping(vec![r, b], |i| i == 0));
+            if let Some(r) = r {
+                if let Some(b) = self.binding((body, lam), &k.1, &key, None) {
+                    let b =
+                        Formula::Con(Con::eq(&Lin::atom(Atom::Aux(b)), &Lin::constant(b as i64)));
+                    return Some(Formula::and_keeping(vec![r, b], |i| i == 0));
+                }
+                let p = self.projection(t, ps, (body, lam), Some((args, env)), key.clone());
+                let p = p.await;
+                if let Some(p) = p {
+                    let at = (p.iter()).map(|c| {
+                        let lin = at_arguments(&c.lin, &key, &k.1)?;
+                        Some(Formula::Con(Con { lin, rel: c.rel }))
+                    });
+                    if let Some(parts) = at.collect::<Option<Vec<_>>>() {
+                        return Some(Formula::and(parts));
+                    }
+                }
             }
         }
         self.formula_call(t, ps, (body, lam), args, env).await
@@ -6049,6 +6176,13 @@ impl<'m, 't> Walk<'m, 't> {
     /// [`Scoped::written`] writes `v` as the term, and a product of `v` would be a product of
     /// products.
     /// A canonical term over symbols alone is written at the arguments ([`at_arguments`]).
+    // Complexity tradeoff: a call that holds no claim reads its callee's body again, O(its
+    // cone), as [`Walk::formula_called`] does where no elimination is exact: the value of an
+    // integer function read through its auxiliary variables needs a variable of its own at each
+    // call, which no elimination writes. Trigger: an integer function with a large cone called
+    // with another argument list by each link of a chain. Not measured apart: chains of
+    // `div` and `mod` terms nested so are refused by the solver from about 12 links
+    // (`Growth`). COMPLEXITY.md row LOAD-affine-cone.
     async fn lin_called(
         &'m self,
         t: Tid,

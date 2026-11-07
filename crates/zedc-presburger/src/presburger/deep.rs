@@ -243,7 +243,7 @@ impl Formula {
 
     /// Whether the formula has a disjunction or a negation, which pushed in may make one.
     /// A shared part is read at its first place alone.
-    pub(super) fn chooses(&self) -> bool {
+    pub fn chooses(&self) -> bool {
         let mut seen: HashSet<Id> = HashSet::new();
         let mut stack = vec![self];
         while let Some(g) = stack.pop() {

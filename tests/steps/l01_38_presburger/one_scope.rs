@@ -445,6 +445,29 @@ fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relatio
         "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\np0(x: int) = x > 0;\n\
          p1(x: int) = q(x: x) && p0(x: x + 3) && x < 1000;\np2(x: int) = q(x: x) && p1(x: x + 3) && x < 2000;\n\
          p3(x: int) = q(x: x) && p2(x: x + 3) && x < 3000;\np4(x: int) = q(x: x) && p3(x: x + 3) && x < 4;",
+        // LOAD-affine-cone: a callee of several constraints over `div` and `mod`, claimed by
+        // its first call and written at each other call's arguments with its quotients and
+        // remainders and the bindings of its own calls eliminated; a call at a moved
+        // argument, and one whose callee holds no point.
+        "g0(x: int) = x < 50;\ng1(x: int) = g0(x: x) && x mod 3 + 1 < 3;\n\
+         g2(x: int) = g1(x: x) && x div 2 > 1;\nc0(x: int) = x > 0;\n\
+         c1(x: int) = g2(x: x) && c0(x: x + 1) && x < 30;\n\
+         c2(x: int) = g2(x: x) && c1(x: x + 1) && x mod 5 != 2;\n\
+         c3(x: int) = g2(x: x + 7) && c2(x: x - 3);\n\
+         z(x: int) = x mod 2 == 0 && x mod 4 == 1;\nc4(x: int) = z(x: x) || x > 3;\n\
+         c5(x: int) = z(x: x + 1) || c4(x: x - 2);",
+        // A callee of one point (22) called by each link of a chain whose links move the
+        // argument, so that the calls below the first are written at their arguments and each
+        // answer turns on those rows: no point, every point, one point.
+        "n0(x: int) = x div 3 == 7 && x mod 3 == 1;\nn1(x: int) = n0(x: x) && x > 0;\n\
+         r0(x: int) = x > 0;\nr1(x: int) = n1(x: x) && r0(x: x + 1);\n\
+         r2(x: int) = n1(x: x) && r1(x: x + 4);\nr3(x: int) = n1(x: x) || r2(x: x - 1);\n\
+         r4(x: int) = n1(x: x) && r1(x: x - 1) || r3(x: x + 2) && x > 18;",
+        // Two parameters, one of them a constant at one call and a term of the other at
+        // another, and a callee with a disjunction, which no elimination writes, read again.
+        "w0(x: int, y: int) = x div 2 == y && y > 0;\nw1(x: int, y: int) = w0(x: x, y: y) && x < 20;\n\
+         u1(x: int) = w1(x: x, y: 3) && w1(x: x + 1, y: x - 4);\n\
+         v0(x: int) = x != 2 && x != 5;\nv1(x: int) = v0(x: x) && v0(x: x + 1) && x > 0 && x < 9;",
     ];
     for src in units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
@@ -1032,6 +1055,53 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_call_scale() {
                 i - 1,
                 1000 * i
             )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale() {
+    // `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + 1) && x < 1000 i`, `h{j}(x) = h{j-1}(x: x) &&
+    // x mod 3 + j < 2000000` a chain of n links (LOAD-affine-cone): one callee whose cone
+    // grows with the chain, called by every link with another argument. Its first call claims
+    // it; each other is its relation with the quotients and remainders and the bindings of its
+    // calls eliminated, made once and written at the call's argument in O(its rows). 50 → 400:
+    // 51.6 times the bytes when each such call read the callee's cone again (304 MB → 15.7 GB,
+    // measured once), 8.0 now (45.2 MB → 361 MB).
+    let unit = |n: usize| {
+        let mut src = String::from("h0(x: int) = x < 2000000;\n");
+        for j in 1..n {
+            src.push_str(&format!(
+                "h{j}(x: int) = h{}(x: x) && x mod 3 + {j} < 2000000;\n",
+                j - 1
+            ));
+        }
+        src.push_str("p0(x: int) = x > 0;\n");
+        for i in 1..n {
+            src.push_str(&format!(
+                "p{i}(x: int) = h{}(x: x) && p{}(x: x + 1) && x < {};\n",
+                n - 1,
+                i - 1,
+                1000 * i
+            ));
+        }
+        src
+    };
+    let n = 50;
+    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let src = unit(m);
+            (m, (zed_tests::deep::statements(&src), elab(&src).unwrap()))
+        })
+        .collect();
+    zed_tests::scaling::check(
+        "the linear questions of a chain with a second call of a large callee",
+        n,
+        |m| {
+            let (stmts, unit) = &units[&m];
+            let refused = zedc::front::linear_questions(stmts, unit);
+            assert!(refused.is_empty(), "{refused:?}");
         },
     );
 }
