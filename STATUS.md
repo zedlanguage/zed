@@ -1529,9 +1529,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| HEAP-fresh-dag | impl attempt 1 | 2026-11-05 04:07 | after fix (load 11-18): same port d=10..20 allocates d+2 cells on both paths, machine ~19 us, native ~0.31 ms flat; scaling 2000->16000 levels: machine 8.19x, n |
-| LOAD-extend-refuses | impl attempt 1 | 2026-11-07 13:11 | negated random test settled at seed 0x5eed1, 10 chains (old code: 5 red), ~9 s; scaling bindings_put_in_place_scale green, control with a quadratic pass in thro |
-| ST-holes-many | impl attempt 1 | 2026-11-07 13:25 | negative control: base 2433d52d+b4850062 code, chain ladder test k=320 past 120 s (timeout); new code 168 M to 2,527 M instr (15.0x), 33 M to 398 M bytes (12.0x |
+| HEAP-fresh-dag | impl attempt 1 | 2026-11-05 04:07 | ready: wt/heap-fresh-dag 89139dc4 on base 32654e93; 64 pieces pass after rebase, clippy and fmt clean; load 32.88 24.69 24.48 |
+| LOAD-extend-refuses | impl attempt 1 | 2026-11-07 13:11 | ready 1fc431c5 again: substituted-only form refuses 34 the scoped form answers, fallback kept; 196 pieces pass; load 25.52 |
+| P14-bits | impl attempt 1 | 2026-11-05 04:07 | started in /home/luke/Work/wt/p14-bits (branch wt/p14-bits from origin/main 32654e93), load 20.26 |
+| P14-coord-scale | impl attempt 1 | 2026-11-05 08:27 | negative control (not committed): extra O(n^2) BigInt distances over all pairs, wide-coordinate test at 1000 and 8000 fails at 51.0x instructions and 50.7x byte |
+| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | base measured: product walk 3,200/204,800 term bounds at k=40/320, checker 1,680/103,040 (61.3x); probes added |
+| ST-eqs-cubic | impl attempt 1 | 2026-11-07 14:15 | started; worktree wt/st-eqs-cubic from 6c3b8f88 |
+| ST-holes-many | impl attempt 1 | 2026-11-07 13:25 | residual probe (band 10<=x_i-x_(i+1)<=11, hole each name, joined rungs x_i-x_(i+2)>=20): 138 M/4,115 M/110,524 M at k=5/10/20, base identical (pre-existing); wi |
+| ST-holes-moves | running | 2026-11-07 14:32 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
