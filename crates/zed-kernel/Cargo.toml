@@ -14,6 +14,11 @@ workspace = true
 # (step L1.37a; see src/address.rs). Off in a release build.
 short-addresses = []
 
+# Also a dylib, so that a build with `-C prefer-dynamic` (the local zrun builds) links each test
+# binary against one shared copy instead of a static copy per binary.
+[lib]
+crate-type = ["rlib", "dylib"]
+
 [dependencies]
 imbl = "7.0.2"
 num-bigint = "0.4"

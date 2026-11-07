@@ -9,6 +9,11 @@ publish.workspace = true
 # natively for `zedc build` (step L1.36a) and depends on this package.
 autobins = false
 
+# Also a dylib, so that a build with `-C prefer-dynamic` (the local zrun builds) links each test
+# binary against one shared copy instead of a static copy per binary.
+[lib]
+crate-type = ["rlib", "dylib"]
+
 [dependencies]
 blake3 = "1"
 imbl = "7.0.2"

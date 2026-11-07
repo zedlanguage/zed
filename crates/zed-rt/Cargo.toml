@@ -15,6 +15,11 @@ unsafe_code = "deny"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# Also a dylib, so that a build with `-C prefer-dynamic` (the local zrun builds) links each test
+# binary against one shared copy instead of a static copy per binary.
+[lib]
+crate-type = ["rlib", "dylib"]
+
 [dependencies]
 libc = "0.2.191"
 psm = "0.1.32"
