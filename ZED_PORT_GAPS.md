@@ -2348,3 +2348,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `async fn` methods of a struct holding a `frames::Stack`, called through `fn`s returning `Deep` that answer a leaf at once (`Stack::ready`) or start a frame (`Stack::call`), so the walk of the arms and the forward transfer keep their nesting on the heap in plain-recursion order | `Run::forward`, `Run::forward_at`, `Run::walk`, `Run::walk_at` | No `async` or compiler-written state machines (as for PRE-stack-explicit) | Each walk's frames as a sum type with an explicit stack |
 | The scope of the current arm as the top of a `RefCell<Vec<Scope>>` over a `RefCell<&mut Scope>` of the caller, and the arms gathered in a `RefCell<Vec<Arm>>`, shared by all frames | `Run::scope`, `Run::inner`, `Run::outer`, `Run::out` | Mutation shared by frames (gap 1) | State threaded through the frame loop: a list of scopes and a list of arms |
+
+## Entries from S22-hole-summaries (`crates/zedc-preimage/src/preimage.rs`)
+
+- No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).

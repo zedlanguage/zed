@@ -4794,26 +4794,43 @@ impl<'m, 't> Walk<'m, 't> {
                 };
             };
             let dom = tx.cx.inputs.get(var)?;
-            let mut slices = Vec::new();
+            // Each arm's treap, and the stretches of inputs that take each arm, in order.
+            let mut trees = Vec::with_capacity(2);
+            let mut spans: Vec<(&End, &End, usize)> = Vec::new();
             for (taken, r, arm) in [(yes, &gt, pa), (no, &gf, pb)] {
                 if !taken {
                     continue;
                 }
                 let set = r.dom.get(var).map_or(&**dom, |s| &**s);
-                let tree = arm.to_treap(dom)?;
                 if !in_range(set) {
                     return None;
                 }
-                for (lo, hi) in set.pieces() {
-                    if let Some(s) = slice_treap(tree.clone(), lo, hi) {
-                        slices.push((key(lo), s));
-                    }
-                }
+                spans.extend(set.pieces().iter().map(|(lo, hi)| (lo, hi, trees.len())));
+                trees.push(arm.to_treap(dom)?);
             }
-            slices.sort_by_key(|&(lo, _)| lo);
+            spans.sort_by_key(|&(lo, ..)| key(lo));
+            // A hole of the domain between two stretches, where no input lies, is given to
+            // the stretch before it, and two stretches of one arm so joined are one slice, so
+            // that the summary is cut where the arm changes and not at each hole of the
+            // domain ([`Pa::to_treap`]): its values there are read by no one.
+            let mut slices: Vec<(End, End, usize)> = Vec::with_capacity(spans.len());
+            for (lo, hi, arm) in spans {
+                if let Some(last) = slices.last_mut()
+                    && no_input_between(dom, &last.1, lo)
+                {
+                    if last.2 == arm {
+                        last.1 = hi.clone();
+                        continue;
+                    }
+                    last.1 = lo.pred();
+                }
+                slices.push((lo.clone(), hi.clone(), arm));
+            }
             let mut root = None;
-            for (_, s) in slices {
-                root = join_treap(root, Some(s));
+            for (lo, hi, arm) in slices {
+                if let Some(s) = slice_treap(trees[arm].clone(), &lo, &hi) {
+                    root = join_treap(root, Some(s));
+                }
             }
             Some(Pa::Piecewise {
                 var: var.clone(),
@@ -5425,15 +5442,20 @@ impl<'m, 't> Walk<'m, 't> {
         // Each case is cut at the starts of the two ranges next to it (`x mod m` of `x - 1`
         // and `x + 1`), not of every range: with three ranges or fewer, as for every modulus
         // 3, those are all the other ranges, the same cases as cutting at every start (in the
-        // five shape tests every box of `x` lies within the level-by-level box, 17 of 60
+        // five shape tests every box of `x` lay within the level-by-level box, 17 of 60
         // strictly); with more, a hole only a farther range's start cuts out is lost, and
         // the box keeps those points (sound, inexact): at moduli 5 and 7, 2 of 120 shape boxes
         // are 1 point wider than level by level and 1 differs both ways, and the boxes hold
-        // 0.2% and 0.6% more points than cut at every range. Meeting the box with the union of
+        // 0.2% and 0.6% more points than cut at every range. Since no summary is cut at a hole
+        // of the domain ([`Pa::to_treap`]), a case no longer splits at one either: 7 of 180
+        // shape boxes at moduli 3, 5, 7 grew by 2 to 4 points, 10, 8 and 0 points in all
+        // against 1648, 1469 and 1315 points above the exact projection, and one box at
+        // modulus 3 is 2 points wider than level by level (COMPLEXITY.md S22-hole-summaries).
+        // Meeting the box with the union of
         // the pieces does not help: a range whose summary is one line has one piece over the
         // whole domain. Why: cutting at every other range's starts makes `L * S` cases for `L`
-        // ranges and `S` starts, `2k^2 + 3k + 1` for the chain of `k` guards of
-        // `spread_remainder_chain`; cutting at the neighbors makes at most `C + 2S`, `5k + 1`
+        // ranges and `S` starts, `O(k^2)` for the chain of `k` guards of
+        // `spread_remainder_chain`; cutting at the neighbors makes at most `C + 2S`, `O(k)`
         // there. Tests:
         // `l01_25_preimage_catalog::s22::remainder_cases_cut_at_their_neighbors_*`.
         // COMPLEXITY.md rows S22-linear-rem and S22-case-cuts. A complete solution keeps the
@@ -6257,8 +6279,12 @@ impl Pa {
         })
     }
 
-    /// The treap over `dom`, the domain of the input, or `None` when an end of `dom` lies
-    /// outside [`in_range`].
+    /// The treap over the hull of `dom`, the domain of the input, or `None` when an end of
+    /// `dom` lies outside [`in_range`]. A hole of `dom` is no cut: the values there are read by
+    /// no one, since each reader meets what it finds with `dom` ([`Tx::invert_pa`]) or slices
+    /// it to a part of `dom` ([`Walk::pa_select`]), and cut at the holes, the summary of each
+    /// class of a split carried every hole another class made, `O(k^2)` pieces for a chain of
+    /// `k` guards (COMPLEXITY.md S22-hole-summaries).
     fn to_treap(&self, dom: &IntervalSet) -> Option<Tree> {
         let (a, b) = match self {
             Pa::Piecewise { root, .. } => return Some(root.clone()),
@@ -6269,7 +6295,7 @@ impl Pa {
             return None;
         }
         let mut root = None;
-        for (lo, hi) in dom.pieces() {
+        for (lo, hi) in dom.hull().pieces() {
             root = join_treap(
                 root,
                 Some(make_node(
@@ -7073,6 +7099,14 @@ fn key(e: &End) -> i128 {
         Fin(v) => small(v),
         PosInf => i128::MAX,
     }
+}
+
+/// Whether no member of `dom` lies strictly between `a` and `b`, for `a < b`: `O(log P)` for
+/// the `P` pieces of `dom`.
+fn no_input_between(dom: &IntervalSet, a: &End, b: &End) -> bool {
+    let ps = dom.pieces();
+    let next = ps.partition_point(|(_, hi)| hi <= a);
+    ps.get(next).is_none_or(|(lo, _)| lo >= b)
 }
 
 /// An end of an input's domain as an input, for the bounds of [`ByClass`]: the infinities are

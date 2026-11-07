@@ -2689,7 +2689,8 @@ type Boxes = &'static [(i64, i64)];
 /// that the hull of each case made wider than the level-by-level translation, or wider at some
 /// points and narrower at others, as `(shape, seed, k, box, level-by-level box)`. Each case of
 /// the remainder `if` is now cut at the starts of the pieces of the class ranges next to it,
-/// which cuts out the holes again; every box lies within the level-by-level one.
+/// which cuts out the holes again; every box but [`HOLE_WIDER`] lies within the level-by-level
+/// one.
 const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
     (3, 1, 2, &[(-4, -4), (-1, 59)], &[(-4, -4), (-1, 59)]),
     (
@@ -2711,7 +2712,7 @@ const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
         4,
         1,
         5,
-        &[(-58, -58), (-52, -16), (-10, -4), (-2, 58)],
+        &[(-58, -58), (-54, -16), (-10, -4), (-2, 58)],
         &[(-58, -58), (-52, -4), (-2, 58)],
     ),
     (
@@ -2725,24 +2726,34 @@ const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
         4,
         3,
         5,
-        &[(-60, -60), (-54, -6), (-4, -4), (-2, 58)],
+        &[(-60, -60), (-56, -6), (-4, -4), (-2, 58)],
         &[(-60, -60), (-56, -4), (-2, 58)],
     ),
 ];
 
-/// COMPLEXITY.md S22-case-cuts: the boxes of [`CUT_BOXES`], each within its level-by-level
-/// box, and agreeing with the interpreter.
+/// The `(shape, seed, k)` of [`CUT_BOXES`] whose box is wider than level by level at `-54` and
+/// `-53`, 2 points (COMPLEXITY.md S22-hole-summaries): a hole of the domain of `x` cut each
+/// summary there, which narrowed the hull of a case; the summaries no longer cut at holes.
+const HOLE_WIDER: (usize, u64, usize) = (4, 1, 5);
+
+/// COMPLEXITY.md S22-case-cuts: the boxes of [`CUT_BOXES`], each but [`HOLE_WIDER`] within its
+/// level-by-level box, and agreeing with the interpreter.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(60), Demand::Bool(true));
-        for (shape, seed, k, want, level) in CUT_BOXES {
-            let shape = REMAINDER_SHAPES[shape];
+        for (s, seed, k, want, level) in CUT_BOXES {
+            let shape = REMAINDER_SHAPES[s];
             let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
             let p = preimage(&t, &ds, &d);
             let (want, level) = (pieces(want), pieces(level));
             assert_eq!(p.domains["x"], want, "{shape}, seed {seed}, k = {k}: {t}");
-            assert!(want.is_subset(&level), "{shape}, seed {seed}, k = {k}");
+            let within = (s, seed, k) != HOLE_WIDER;
+            assert_eq!(
+                want.is_subset(&level),
+                within,
+                "{shape}, seed {seed}, k = {k}"
+            );
             check(&t, &ds, &d, &p, (-20, 20));
             check(&t, &ds, &d, &p, (45, 60));
         }
@@ -2793,7 +2804,9 @@ const FARTHER_HOLES: [(i64, usize, u64, usize, Boxes, Boxes); 3] = [
 /// hold `points` points in all. Measured when this was written: at modulus 5, 6951 points,
 /// against 7030 level by level and 6936 cut at every range's starts; at modulus 7, 6906
 /// against 6951 and 6864. Level by level, a box is wider than cut at the neighbors only in
-/// [`FARTHER_HOLES`]. A change that loses more holes raises `points`.
+/// [`FARTHER_HOLES`]. Since row S22-hole-summaries no summary is cut at a hole of the domain
+/// of `x`, which widened 3 boxes at modulus 5 by 2 to 4 points, 6959 points (exact: 5482),
+/// and none at modulus 7. A change that loses more holes raises `points`.
 fn boxes_at_modulus(m: i64, points: usize) {
     on_big_stack(|| {
         let (ds, d) = (xy_in(60), Demand::Bool(true));
@@ -2822,7 +2835,7 @@ fn boxes_at_modulus(m: i64, points: usize) {
 
 #[test]
 fn remainder_cases_cut_at_their_neighbors_at_modulus_5() {
-    boxes_at_modulus(5, 6951);
+    boxes_at_modulus(5, 6959);
 }
 
 #[test]
@@ -2830,16 +2843,41 @@ fn remainder_cases_cut_at_their_neighbors_at_modulus_7() {
     boxes_at_modulus(7, 6906);
 }
 
-/// The chain of `k` guards `x mod 1024 != r(j)`, else `max(t, c(j))`, the `r(j)` distinct and
-/// the `c(j)` spread over `[-100, -1]`: in class `r(j)` the chain is `max(x, c(j))`, two
-/// pieces, and `x` in every other class, so `2k + 1` ranges of classes each with a start no
-/// other range has. Cutting each case at every other range's starts would make `O(k^2)`
-/// cases.
+/// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and
+/// [`select_remainder_chain`], spread over `[-100, 99]`.
+fn spread_constant(j: i64) -> i64 {
+    (53 * j) % 200 - 100
+}
+
+/// The guard `x mod 1024 != r(j)` of level `j`, the `r(j)` distinct for `j < 1024`.
+fn spread_guard(j: i64) -> Term {
+    let r = (37 * j) % 1024;
+    prim(Prim::Ne, prim(Prim::Mod, var("x"), int(1024)), int(r))
+}
+
+/// The chain of `k` guards `x mod 1024 != r(j)`, else `max(t, c(j))` ([`spread_constant`]):
+/// in class `r(j)` the chain is `max(x, c(j))`, and `x` in every other class, so `2k + 1`
+/// ranges of classes. Under `c <= 2` ([`below_three_and_even_y`]) the domain of `x` narrows
+/// to `x <= 2`, where `max(x, c(j))` is two pieces when `c(j) <= 1` and the constant `c(j)`
+/// otherwise; each class with `c(j) > 2` meets the demand nowhere, so the narrowed domain has
+/// a hole at each of its members in the first period of `[-100000, 2]`, about `k / 2` holes.
+/// Cutting each case at every other range's starts would make `O(k^2)` cases, and so would
+/// cutting each class's summary at every hole (COMPLEXITY.md S22-hole-summaries).
 fn spread_remainder_chain(k: usize) -> Term {
-    let r = |j: i64| (37 * j) % 1024;
-    let g = move |j: i64| prim(Prim::Ne, prim(Prim::Mod, var("x"), int(1024)), int(r(j)));
-    chain(k, var("x"), g, |j, t| {
-        prim(Prim::Max, t, int((53 * j) % 100 - 100))
+    chain(k, var("x"), spread_guard, |j, t| {
+        prim(Prim::Max, t, int(spread_constant(j)))
+    })
+}
+
+/// The chain of `k` guards `x mod 1024 != r(j)` of [`spread_remainder_chain`], else `if x <=
+/// -50 { max(t, c(j)) } else { t }`: an `if` on a test that reads no remainder, whose arms
+/// read it in different ways, so that each range of classes is sliced at `-50` by itself
+/// ([`Walk::pa_select`]). The holes are those of [`spread_remainder_chain`].
+fn select_remainder_chain(k: usize) -> Term {
+    chain(k, var("x"), spread_guard, |j, t| {
+        let low = prim(Prim::Le, var("x"), int(-50));
+        let clamped = prim(Prim::Max, t.clone(), int(spread_constant(j)));
+        Term::If(Shared::new(low), Shared::new(clamped), Shared::new(t))
     })
 }
 
@@ -2860,11 +2898,13 @@ fn remainder_cases(p: &Preimage) -> usize {
     cases[0]
 }
 
-/// COMPLEXITY.md S22-case-cuts: the cases of the chain of [`spread_remainder_chain`] stay
-/// linear in `k`, `5k + 1` here: `k` ranges of two pieces and `k + 1` ranges of one, `3k + 1`
-/// cases uncut, and each range of one piece cut at the start of the second piece of each
-/// neighbor, `2k` cuts. Cut at every other range's starts they would be `k^2 + 3k + 1`. The
-/// answer agrees with the interpreter.
+/// COMPLEXITY.md S22-case-cuts and S22-hole-summaries: the cases of the chain of
+/// [`spread_remainder_chain`] stay linear in `k`, `2k + 1 + 3T` for the `T` levels with
+/// `c(j) <= 1`: `2k + 1` ranges, the second piece of each of the `T` ranges of two pieces, and
+/// each of their two neighbors, ranges of one piece, cut at its start. The ranges of a
+/// constant are not cut, and no case is cut at a hole of the domain. Cut at every other
+/// range's starts they would be `O(k^2)`, and cut at every hole they were 229 and 953 at
+/// k = 16 and 32. The answer agrees with the interpreter, also at the holes.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_stay_linear() {
     on_big_stack(|| {
@@ -2872,24 +2912,60 @@ fn remainder_cases_cut_at_their_neighbors_stay_linear() {
         for k in [1, 4, 16, 64] {
             let t = below_three_and_even_y(spread_remainder_chain(k));
             let p = preimage(&t, &ds, &d);
-            let cases = remainder_cases(&p);
-            assert_eq!(cases, 5 * k + 1, "k = {k}");
+            let two = (1..=k as i64).filter(|&j| spread_constant(j) <= 1).count();
+            assert_eq!(remainder_cases(&p), 2 * k + 1 + 3 * two, "k = {k}");
             check(&t, &ds, &d, &p, (-110, -90));
             check(&t, &ds, &d, &p, (90, 110));
+            check(&t, &ds, &d, &p, (-100000, -99900));
         }
     });
 }
 
-/// COMPLEXITY.md S22-case-cuts: the linear stage on the chain of [`spread_remainder_chain`],
-/// whose cases would be `O(k^2)` cut at every other range's starts, does work of order `k`
-/// from `k` to `8k`.
+/// COMPLEXITY.md S22-hole-summaries: the cases of the chain of [`select_remainder_chain`],
+/// whose ranges of classes are each sliced at `-50`, stay within `5k + 1` (21, 78, 306 at
+/// k = 4, 16, 64; cut at every hole of the domain they were 278 and 3798 at k = 16 and 64).
+/// The answer agrees with the interpreter, also at the holes.
+#[test]
+fn remainder_cases_sliced_by_a_test_stay_linear() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(100000), Demand::Bool(true));
+        for k in [1, 4, 16, 64] {
+            let t = below_three_and_even_y(select_remainder_chain(k));
+            let p = preimage(&t, &ds, &d);
+            let cases = remainder_cases(&p);
+            assert!(cases <= 5 * k + 1, "k = {k}: {cases} cases");
+            check(&t, &ds, &d, &p, (-110, -90));
+            check(&t, &ds, &d, &p, (-60, -40));
+            check(&t, &ds, &d, &p, (-100000, -99900));
+        }
+    });
+}
+
+/// COMPLEXITY.md S22-case-cuts and S22-hole-summaries: the linear stage on the chain of
+/// [`spread_remainder_chain`], whose cases would be `O(k^2)` cut at every other range's starts
+/// or at every hole of the domain, does work of order `k` from `k` to `8k`.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_scale() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        let n = 16;
+        let n = 8;
         let terms = scaling::inputs(n, |k| below_three_and_even_y(spread_remainder_chain(k)));
         scaling::check("cases of a spread remainder chain", n, |k| {
+            preimage(&terms[&k], &ds, &d);
+        });
+    });
+}
+
+/// COMPLEXITY.md S22-hole-summaries: the linear stage on the chain of
+/// [`select_remainder_chain`], whose slices would be `O(k^2)` cut at every hole of the
+/// domain, does work of order `k` from `k` to `8k`.
+#[test]
+fn remainder_cases_sliced_by_a_test_scale() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(100000), Demand::Bool(true));
+        let n = 8;
+        let terms = scaling::inputs(n, |k| below_three_and_even_y(select_remainder_chain(k)));
+        scaling::check("cases of a sliced remainder chain", n, |k| {
             preimage(&terms[&k], &ds, &d);
         });
     });
