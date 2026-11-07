@@ -876,7 +876,7 @@ fn command_inner(
 /// The program in `file`, its warnings that `suppress` does not name written to `stderr` as
 /// `zedc run` writes them, then a line for each address `suppress` names that no warning has;
 /// or the exit status and message: 2 when the file cannot be read or resolved to the place its
-/// addresses name ([`crate::unit::Place`]), 1 when the program is rejected (by its package, by
+/// addresses name ([`crate::place::Place`]), 1 when the program is rejected (by its package, by
 /// the front end or by `program`), each rejection as `file:line:col: why` and its derivation,
 /// followed by its address, and then a line for each rejection `suppress` names, since a
 /// rejection cannot be suppressed.
@@ -888,7 +888,7 @@ pub fn load_file(
     work::unit(file);
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
     let path = std::path::Path::new(file);
-    let place = crate::unit::Place::of(path).map_err(|e| (2, e))?;
+    let place = crate::place::Place::of(path).map_err(|e| (2, e))?;
     let at = InFile::at(&place);
     // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
     // package (step L2.3); linking it to the units it imports is step L2.4.

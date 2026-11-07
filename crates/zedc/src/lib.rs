@@ -22,6 +22,7 @@ pub mod front;
 pub use zedc_base::interp;
 pub use zedc_syntax::lex;
 pub mod mutate;
+pub mod place;
 pub use zedc_syntax::parse;
 pub mod query;
 pub use zedc_base::rejection;

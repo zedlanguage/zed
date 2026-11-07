@@ -27,19 +27,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, openat, statat};
-
 use crate::ast::{self, Error, ExprKind, Note, StmtKind, StrPart, Target};
 use crate::front::{self, Diagnostic, Parsed, error};
 use crate::lex::{self, Span, Tok};
 use crate::parse::{TOP, parse};
+use crate::place::{MANIFEST, Place};
 use crate::query::{self, Db};
 use crate::resolve::{self, Exports, Refused, Resolved, Units};
 use crate::source;
 use crate::suppress::{InFile, Severity, Suppress, addresses};
-
-/// The name of the manifest file, which marks the package root.
-pub const MANIFEST: &str = "zed.manifest";
 
 /// The files under a package root.
 pub trait Files {
@@ -854,72 +850,6 @@ impl Units for Linked {
 
     fn prelude(&self) -> Option<(&Arc<str>, &Exports)> {
         self.prelude.as_ref().map(|(p, r)| (p, &r.res.exports))
-    }
-}
-
-/// Where a file lies, after every symbolic link and every `.` and `..` step of its path is
-/// resolved: which package it is a unit of, if any. Its diagnostics' addresses name it by this
-/// ([`InFile::at`]), so by nothing that depends on the directory `zedc` runs in.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Place {
-    /// A file under a manifest: its package root, the nearest directory above it that holds a
-    /// manifest, and its path under that root with `/` between its parts.
-    Unit {
-        /// The package root, resolved.
-        root: PathBuf,
-        /// The file's path under the root, which names its unit (DESIGN.md sec:units).
-        name: String,
-    },
-    /// A file with no manifest in any directory above it: its absolute path, resolved.
-    Loose(PathBuf),
-}
-
-impl Place {
-    /// Where the file `file` lies; or why it, or a directory above it, cannot be resolved, or
-    /// its path under its package root is not UTF-8. O(parts of the path): the directories
-    /// above the file are walked by opening each one's `..` from the one below, so each probe
-    /// for a manifest names one part, and neither this process nor the kernel goes over the
-    /// whole path again per directory.
-    pub fn of(file: &Path) -> Result<Place, String> {
-        let full = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let Some(parent) = full.parent() else {
-            return Ok(Place::Loose(full));
-        };
-        // Opened for its place only (`O_PATH`), so a directory that may be passed through and
-        // not read still is.
-        let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC;
-        let cannot = |e| {
-            format!(
-                "{}: a directory above it cannot be opened: {e}",
-                file.display()
-            )
-        };
-        let mut dir = openat(CWD, parent, flags, Mode::empty()).map_err(cannot)?;
-        let above = parent.components().count() - 1;
-        let mut up = 0;
-        loop {
-            // As `Path::is_file`: a regular file once links are followed, and no error.
-            let manifest = statat(&dir, MANIFEST, AtFlags::empty())
-                .is_ok_and(|s| FileType::from_raw_mode(s.st_mode) == FileType::RegularFile);
-            if manifest {
-                let root = parent.ancestors().nth(up).expect("one ancestor per level");
-                let rel = full.strip_prefix(root).expect("the root is above the file");
-                let name: Vec<&str> = rel
-                    .components()
-                    .map(|c| c.as_os_str().to_str())
-                    .collect::<Option<_>>()
-                    .ok_or_else(|| format!("{}: the path is not UTF-8", file.display()))?;
-                return Ok(Place::Unit {
-                    root: root.to_path_buf(),
-                    name: name.join("/"),
-                });
-            }
-            if up == above {
-                return Ok(Place::Loose(full));
-            }
-            dir = openat(&dir, "..", flags, Mode::empty()).map_err(cannot)?;
-            up += 1;
-        }
     }
 }
 

@@ -18,7 +18,7 @@ use std::path::Path;
 
 use crate::address::ContentAddress;
 use crate::front::Diagnostic;
-use crate::unit::Place;
+use crate::place::Place;
 
 pub use addresses::Severity;
 pub(crate) use addresses::addresses;

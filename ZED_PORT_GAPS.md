@@ -2008,7 +2008,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `Vec<Option<Reported>>` written by index from each file's group and unwrapped in problem order | `Package::reported` | Mutation (gap 11) | The groups' results merged by problem index, as a sorted list or a map from index |
 | An enum `Accepted` whose variant `Refused` carries the rejection that `run::program` gave | `testing::checks`, `testing::command` | None | A union with a payload |
 
-## Entries from DIAG-addr-root (`zedc/src/unit.rs`, `suppress.rs`, `run.rs`)
+## Entries from DIAG-addr-root (`zedc/src/place.rs`, `unit.rs`, `suppress.rs`, `run.rs`)
 
 These replace the DIAG-suppress-rest rows (that section is now empty and removed) on `InFile::of` and `InFile::from_resolved` and the DIAG-addr-rest rows on `InFile::under` and the `HashMap` in `Package::report_on_disk`, whose code is gone.
 
