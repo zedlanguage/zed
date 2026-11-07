@@ -1330,9 +1330,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
-| ATOM-payload-open | impl attempt 1 | 2026-11-05 18:35 | ready 47fc2320; follow-up TY-subst-stacks queued / L1.36b:impl#1 started by orchestrator; load5 17.61 |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| DIAG-suppress-rest | impl attempt 1 | 2026-11-05 23:16 | committed 1ce2c0e5 (spec c2e1f5f on wt/diag-suppress-rest-spec); groups pass: l01_29_diagnostics 155+1 ignored, l01_21 54, l25_08 20, l01_36a 21, l01_19a 16, l0 |
 | K30-rest | impl attempt 1 | 2026-11-05 22:20 | negative control string copies (old words.rs/eval.rs/value.rs/Text Display/zedc literal Text): 6 of 6 refusal children in l01_17 string_copies aborted (memory a |
 | L1.36b | impl attempt 1 | 2026-11-05 04:07 | started: linker, runtime and toolchain identity in cache keys and stage records |
 | LOAD-chain | impl attempt 1 | 2026-11-05 23:25 | final numbers (linear stage total instr, debug zedc): int chain 7.2M@100 58.4M@800 (8.1x), 14.6M@200 117.1M@1600 (8.0x); main 270M/14.6G (54x), 974M/59.0G (60.6 |
