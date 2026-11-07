@@ -1471,9 +1471,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | canonical atoms + claims written in preimage.rs, first build / load 18.07 23.49 25.31 |
-| NUMERICS-spec2 | impl attempt 1 | 2026-11-07 03:42 | done in batch 15 (folded into NUMERICS-spec, zed 6728767) |
+| LOAD-chain-sep | impl attempt 1 | 2026-11-07 05:38 | negative control on base 397eab68: separate tests t{i}=h{i}>0, 25->200 links: 80.4x bytes (34.4M->2766M), test red; load 25 |
 | PA-plus-if | impl attempt 1 | 2026-11-07 05:08 | ready: f1d432ff on wt/pa-plus-if (rebased on main 655cd816); groups l01_25 l01_39 zedc- 120 pieces pass; negative control (old Pa::plus) fails depth 4 and rando |
-| ROW-intern | running | 2026-11-07 05:45 |  |
+| REC-cycle | impl attempt 1 | 2026-11-07 05:45 | start: worktree wt/rec-cycle from origin/main 397eab68 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
