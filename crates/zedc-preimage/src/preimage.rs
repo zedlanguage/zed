@@ -5836,11 +5836,11 @@ pub struct LetIn {
     pub ints: IntervalSet,
 }
 
-/// The piecewise-affine summary ([`Pa`]) of the value a `let` binds, over the one input it
+/// The piecewise-affine summary (`Pa`) of the value a `let` binds, over the one input it
 /// reads, kept as the sum `Σ c_i * s_i + rest` of the summaries `s_i` of the bound names it
 /// adds and the summary of the rest of its term ([`let_summary`]). Each binding is summarized
 /// once, in its own term's size, when it is bound, and the sum is formed when a test reads
-/// the name ([`LetPa::force`]), so that a block of bindings each adding the one before
+/// the name (`LetPa::force`), so that a block of bindings each adding the one before
 /// (`x_k = x_(k-1) + y_k`) costs no more than the summaries a test reads.
 ///
 /// The summaries form a graph without cycles: a binding's parts were bound before it. Two
