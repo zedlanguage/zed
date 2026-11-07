@@ -1098,52 +1098,64 @@ fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
 }
 
 /// Removes from `ors` each disjunct that has no point with `rows` and the rows that the
-/// disjunctions imply ([`disjunction_hulls`]), until none is removed; `false` when a
-/// disjunction is left with no disjunct or the rows show there is no point. `rows` and the
-/// disjunctions are the parts of a formula, so the implied rows hold at each of its points,
-/// and a disjunct removed has none: the formula's points are as they were. A pass asks each
-/// disjunction's disjuncts of the rows projected onto their atoms ([`by_halves`], [`shadow`],
-/// exact over the integers), and a disjunction that loses a disjunct adds its narrower
-/// implied rows to the projections of the disjunctions after it in the pass; the passes run
-/// forward and backward in turn until one removes nothing. The result does not depend on the
-/// order of the disjunctions or of their disjuncts: a disjunct is removed only when it is
+/// disjunctions imply ([`disjunction_hulls`]), until none is removed, and gives the number of
+/// passes; `None` when a disjunction is left with no disjunct or the rows show there is no
+/// point. `rows` and the disjunctions are the parts of a formula, so the implied rows hold at
+/// each of its points, and a disjunct removed has none: the formula's points are as they were.
+/// A pass asks each disjunction's disjuncts of the rows projected onto their atoms
+/// ([`by_halves`], [`shadow`], exact over the integers), and a disjunction that loses a
+/// disjunct adds its narrower implied rows to the projections of the disjunctions after it in
+/// the pass. The disjunctions are taken in the order of their structure ([`by_structure`]),
+/// forward and backward in turn, until a pass removes nothing. The result does not depend on
+/// the order of the disjunctions or of their disjuncts: a disjunct is removed only when it is
 /// empty with rows that the disjuncts still there imply, fewer disjuncts imply narrower rows,
 /// so a disjunct removed in one order is removed in any, and the last pass, which removes
 /// nothing, asks every disjunct of the same rows (the greatest set of disjuncts closed under
-/// this test). A disjunct the solver refuses with its projection is kept, so only there can
-/// the order matter. Two disjunctions on one stage of a chain, `x[i + 1] - x[i]` in {3, 7}
-/// and `x[i + 1] - x[i] + y[i]` in {6, 9} with `1 <= y[i] <= 2`, lose 3 (the sum's rows allow
-/// 4 to 8 for the step) and then 6 (the step is 7), and then imply the stage exactly: rows
-/// that [`project_parts`] reads for its hulls and [`tighten`] for a point at each end, so that
-/// no question is asked whose answer is no point (COMPLEXITY.md DISJ-incremental).
-// Complexity tradeoff: a pass costs one projection by halves, O((m + k) log k) on a chain or a
-// tree of `m` terms and `k` disjunctions, and removals that each need the one before run in
-// one pass when they follow the order of the pass, forward or backward, so a chain of them
-// costs O(1) passes either way (4 on `x[i + 1] - x[i]` in {0, 10} with `x[i + 1]` in {0, 15},
-// at every size). What is given up: no answer, only time, where such a chain turns back on
-// itself `t` times: `t` passes, O(k) at most. Why: a removal narrows the projections around
-// it, and [`by_halves`] keeps none of them to remake. Trigger: removals each needing the one
-// before, whose disjunctions alternate in their order. Tests: `l01_38_presburger::disj_groups`
-// (the two chains above at `n` and `8n`, each in both orders). A complete method would keep
-// the projections as a tree of halves and, after a removal, remake them along one path.
-// Also not done here: a disjunct empty only with a choice of disjuncts in other disjunctions
-// (case reasoning, a search that backtracks over the disjuncts) is kept; see the comment on
-// the questions in [`project_parts`].
-fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> bool {
-    let mut backward = false;
+/// this test). The one exception is a disjunct whose question the solver refuses (`solve`
+/// gives `Err`, a [`Refusal`] such as one for growth): it is kept, and since a refusal depends
+/// on the rows asked with, not only on whether they have a point, the same disjunct asked with
+/// narrower rows in another order could be answered and removed. Running to a fixed point does
+/// not remove this, because the refused test is not monotone in the rows. Both results are
+/// sound; the one with the disjunct kept can have a wider hull. In the tests this happens only
+/// in `by_halves_against_old::answers_are_those_of_the_old_path`, 61 refused questions in 781
+/// calls, and the disjuncts kept were the same in both orders in every call. Two
+/// disjunctions on one stage of a chain, `x[i + 1] - x[i]` in {3, 7} and
+/// `x[i + 1] - x[i] + y[i]` in {6, 9} with `1 <= y[i] <= 2`, lose 3 (the sum's rows allow 4 to
+/// 8 for the step) and then 6 (the step is 7), and then imply the stage exactly: rows that
+/// [`project_parts`] reads for its hulls and [`tighten`] for a point at each end, so that no
+/// question is asked whose answer is no point (COMPLEXITY.md DISJ-incremental).
+// Complexity tradeoff: a pass costs one projection by halves, O((m + k) log k) for `m` terms
+// and `k` disjunctions where the projections of the ranges of the order stay small, as on a
+// chain in its own order. Removals that each need the one before run in one pass while they
+// follow the order of the pass. On a chain (each part sharing atoms with the one before and
+// the one after only) the structural order runs from one end to the other, so such removals
+// cost O(1) passes, whatever the names or the order given (4 or fewer on the chain of
+// `jointly_empty_order`, in six orders at 16 and 128 stages). What is given up: time only,
+// where the removals turn back in the structural order: each turn costs a pass, O(k) passes
+// at most since each pass but the last removes a disjunct, so O(k (m + k) log k) in all. A hub
+// with `r` arms whose removals run out along each arm and back through the hub turns twice per
+// arm: 9, 17 and 31 passes at 4, 8 and 32 arms (25 ms, 108 ms and 977 ms). Why: the test of a
+// disjunct reads the whole projection, and a removal reaches every disjunction linked to it
+// by rows, not only those sharing an atom with it (the next arm shares none), so asking again
+// only the disjunctions that share an atom misses removals, and asking every linked one is a
+// pass. A method with a bound would keep the projections as a tree of halves, remake one path
+// after a removal and ask again only the disjunctions whose projection changed; on the hub
+// that is still `r` projections changed per arm. Trigger: removals that pass back and forth
+// through shared atoms. Tests: `jointly_empty_order` (both families, in several orders) and
+// `l01_38_presburger::disj_groups` (the chains at `n` and `8n`). Also not done here: a
+// disjunct empty only with a choice of disjuncts in other disjunctions (case reasoning, a
+// search that backtracks over the disjuncts) is kept; see the comment on the questions in
+// [`project_parts`].
+fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> Option<usize> {
+    let mut order = by_structure(rows, ors);
+    let mut passes = 0;
     loop {
         let implied = disjunction_hulls(ors);
         if implied.is_empty() {
-            return true;
+            return Some(passes);
         }
-        // The disjunctions with a disjunct that has constraints of its own, in the order of
-        // this pass, each with the atoms of those constraints.
-        let mut order: Vec<usize> = (0..ors.len())
-            .filter(|&j| ors[j].iter().any(|d| !d.cons.is_empty()))
-            .collect();
-        if backward {
-            order.reverse();
-        }
+        passes += 1;
+        // The atoms of the constraints of each disjunction asked, in the order of this pass.
         let keep: Vec<BTreeSet<Atom>> = (order.iter())
             .map(|&j| {
                 let cons = ors[j].iter().flat_map(|d| d.cons.iter());
@@ -1172,13 +1184,78 @@ fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> bool {
             Ok(disjunction_hulls(std::slice::from_ref(ds)))
         });
         if ran.is_err() {
-            return false;
+            return None;
         }
         if !removed {
-            return true;
+            return Some(passes);
         }
-        backward = !backward;
+        order.reverse();
     }
+}
+
+/// The places in `ors` of the disjunctions with a disjunct that has constraints of its own, in
+/// breadth-first order over the parts, two parts (a row of `rows` or a disjunction) being
+/// neighbors when they share an atom, from a part that a first breadth-first search from the
+/// first disjunction of its group reaches last (the start that Cuthill and McKee's order takes,
+/// "Reducing the bandwidth of sparse symmetric matrices", ACM '69, 157-172). Each group of
+/// parts linked by shared atoms comes whole. On a chain, where each part shares atoms with the
+/// one before and the one after only, the order runs from one end to the other, whatever the
+/// names of the atoms or the order of `ors`. O(t) hash operations for `t` terms.
+fn by_structure<'a>(rows: &'a [Con], ors: &'a [Vec<Rc<Parts>>]) -> Vec<usize> {
+    let asked: Vec<usize> = (0..ors.len())
+        .filter(|&j| ors[j].iter().any(|d| !d.cons.is_empty()))
+        .collect();
+    let mut atoms: Vec<Vec<&Atom>> = rows.iter().map(|c| c.lin.terms.keys().collect()).collect();
+    for &j in &asked {
+        let cons = ors[j].iter().flat_map(|d| d.cons.iter());
+        let mut xs: Vec<&Atom> = cons.flat_map(|c| c.lin.terms.keys()).collect();
+        xs.sort_unstable();
+        xs.dedup();
+        atoms.push(xs);
+    }
+    let mut by_atom: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    for (u, xs) in atoms.iter().enumerate() {
+        for &a in xs {
+            by_atom.entry(a).or_default().push(u);
+        }
+    }
+    // The parts in breadth-first order from `start`, over the parts not yet `seen`, with the
+    // atoms whose parts are already queued in `done`.
+    let breadth_first = |start: usize, seen: &mut [bool], done: &mut HashSet<&'a Atom>| {
+        seen[start] = true;
+        let mut out = vec![start];
+        let mut head = 0;
+        while let Some(&u) = out.get(head) {
+            for &a in &atoms[u] {
+                if done.insert(a) {
+                    for &v in &by_atom[a] {
+                        if !seen[v] {
+                            seen[v] = true;
+                            out.push(v);
+                        }
+                    }
+                }
+            }
+            head += 1;
+        }
+        out
+    };
+    // Each search covers a group of linked parts, so each part is reached once by each.
+    let (mut seen_first, mut done_first) = (vec![false; atoms.len()], HashSet::new());
+    let (mut seen, mut done) = (vec![false; atoms.len()], HashSet::new());
+    let mut order = Vec::with_capacity(asked.len());
+    for start in rows.len()..atoms.len() {
+        if seen[start] {
+            continue;
+        }
+        let first = breadth_first(start, &mut seen_first, &mut done_first);
+        let far = *first.last().expect("the start");
+        let group = breadth_first(far, &mut seen, &mut done);
+        order.extend(
+            (group.into_iter()).filter_map(|u| u.checked_sub(rows.len()).map(|k| asked[k])),
+        );
+    }
+    order
 }
 
 /// Whether the projections by halves ([`by_halves`] in [`settle`], [`pick`] and
@@ -7004,7 +7081,7 @@ fn project_parts(
     // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), so that the
     // implied rows read below for the hulls and for a point at each end are those of the
     // disjuncts left. With `sets`, the parts are projected as they are.
-    if !sets && n_ors > 1 && !old_path() && !drop_jointly_empty(&linked.cons, &mut ors) {
+    if !sets && n_ors > 1 && !old_path() && drop_jointly_empty(&linked.cons, &mut ors).is_none() {
         return Ok(none());
     }
     let bases: HashMap<usize, Formula> = (0..linked.held.len())
@@ -9326,5 +9403,132 @@ mod dark_shadow {
         ];
         let out = shadow(&rows, &|x| *x != a("r"), true).expect("a point");
         assert!(points(&out, 4, 0) && !points(&out, 2, 0), "{out:?}");
+    }
+}
+
+#[cfg(test)]
+mod jointly_empty_order {
+    use super::*;
+
+    fn x(i: usize) -> Lin {
+        Lin::atom(Atom::Sym(format!("x{i:05}").into()))
+    }
+
+    fn any_of(l: &Lin, vs: &[i128]) -> Vec<Rc<Parts>> {
+        (vs.iter())
+            .map(|v| {
+                let mut p = Parts::default();
+                p.cons = vec![Con::eq(l, &Lin::constant(*v))];
+                Rc::new(p)
+            })
+            .collect()
+    }
+
+    /// The values each disjunction keeps, by the constant of its first disjunct's row.
+    fn kept(ors: &[Vec<Rc<Parts>>]) -> Vec<Vec<String>> {
+        let row = |d: &Rc<Parts>| d.cons.iter().map(|c| format!("{c:?}")).collect::<String>();
+        ors.iter().map(|ds| ds.iter().map(row).collect()).collect()
+    }
+
+    /// The orders of `0..n` (`n` a power of two) that the stages of a chain are given in.
+    fn orders(n: usize) -> Vec<(&'static str, Vec<usize>)> {
+        let bits = n.trailing_zeros();
+        let mut random: Vec<usize> = (0..n).collect();
+        let mut s = 0x9e37_79b9_7f4a_7c15_u64;
+        for i in (1..n).rev() {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            random.swap(i, (s % (i as u64 + 1)) as usize);
+        }
+        vec![
+            ("in order", (0..n).collect()),
+            ("reversed", (0..n).rev().collect()),
+            (
+                "bit reversal",
+                (0..n)
+                    .map(|i| i.reverse_bits() >> (usize::BITS - bits))
+                    .collect(),
+            ),
+            ("odd forward, even backward", {
+                let odd = (0..n).filter(|i| i % 2 == 1);
+                odd.chain((0..n).filter(|i| i % 2 == 0).rev()).collect()
+            }),
+            (
+                "from both ends",
+                (0..n)
+                    .map(|i| if i % 2 == 0 { i / 2 } else { n - 1 - i / 2 })
+                    .collect(),
+            ),
+            ("random", random),
+        ]
+    }
+
+    /// `x[0] == 0` with, at each stage `i`, `x[i + 1] - x[i]` in {0, 10} and `x[i + 1]` in
+    /// {0, 15}, the two disjunctions of stage `i` placed at `at[i]`: each value 15 and each step
+    /// 10 has no point once the stage before is 0, so the removals run along the chain, and the
+    /// order of the disjunctions is that of `at`, not of the chain. Before the disjunctions were
+    /// put in the order of their structure ([`by_structure`]) the passes were 4 in the chain's
+    /// order and 17 and 129 (`n + 1`) at 16 and 128 stages by bit reversal, 16.4 s at 128.
+    #[test]
+    fn a_chain_of_removals_takes_the_same_passes_in_any_order() {
+        for n in [16, 128] {
+            let mut first: Option<Vec<Vec<String>>> = None;
+            for (name, at) in orders(n) {
+                let mut slots: Vec<Vec<Vec<Rc<Parts>>>> = vec![Vec::new(); n];
+                for i in 0..n {
+                    slots[at[i]].push(any_of(&x(i + 1).minus(&x(i)), &[0, 10]));
+                    slots[at[i]].push(any_of(&x(i + 1), &[0, 15]));
+                }
+                let mut ors: Vec<Vec<Rc<Parts>>> = slots.into_iter().flatten().collect();
+                let rows = vec![Con::eq(&x(0), &Lin::default())];
+                let passes = drop_jointly_empty(&rows, &mut ors).expect("a point");
+                assert!(passes <= 4, "{name}, {n} stages: {passes} passes");
+                assert!(ors.iter().all(|ds| ds.len() == 1), "{name}, {n} stages");
+                let mut k = kept(&ors);
+                k.sort();
+                assert_eq!(
+                    first.get_or_insert_with(|| k.clone()),
+                    &k,
+                    "{name}, {n} stages"
+                );
+            }
+        }
+    }
+
+    fn a(i: usize, k: usize) -> Lin {
+        Lin::atom(Atom::Sym(format!("a{i:03}_{k:02}").into()))
+    }
+
+    /// A hub `h` in `[0, r]` and `r` arms, each the chain above from `a[i][0]` to `a[i][4]`,
+    /// with `(r - i + 1) a[i][0] <= 15 h` (the value 15 at the start of arm `i` needs
+    /// `h > r - i`) and `h <= r - i - 1 + a[i][4]` (the end of arm `i` at 0 moves the hub to
+    /// `r - i - 1`). Arm `i + 1` shares no atom with arm `i`: its removals follow arm `i`'s
+    /// through the rows on `h` alone. The removals run out along each arm and back through the
+    /// hub, so the passes grow with `r` (9, 17 and 31 at 4, 8 and 32 arms); every order still
+    /// reaches the same disjuncts, every 15 and every 10 removed.
+    #[test]
+    fn removals_through_a_hub_keep_the_same_disjuncts_in_both_orders() {
+        let h = Lin::atom(Atom::Sym("h".into()));
+        let c = |v: i128| Lin::constant(v);
+        let r = 8;
+        let mut rows = vec![Con::ge(&h, &c(0)), Con::ge(&c(r as i128), &h)];
+        let mut ors: Vec<Vec<Rc<Parts>>> = Vec::new();
+        for i in 0..r {
+            let ri = (r - i) as i128;
+            rows.push(Con::ge(&h.times(15), &a(i, 0).times(ri + 1)));
+            rows.push(Con::ge(&a(i, 4).plus(&c(ri - 1)), &h));
+            ors.push(any_of(&a(i, 0), &[0, 15]));
+            for k in 0..4 {
+                ors.push(any_of(&a(i, k + 1).minus(&a(i, k)), &[0, 10]));
+                ors.push(any_of(&a(i, k + 1), &[0, 15]));
+            }
+        }
+        let mut back: Vec<Vec<Rc<Parts>>> = ors.iter().rev().cloned().collect();
+        assert!(drop_jointly_empty(&rows, &mut ors).is_some());
+        assert!(drop_jointly_empty(&rows, &mut back).is_some());
+        assert!(ors.iter().all(|ds| ds.len() == 1));
+        back.reverse();
+        assert_eq!(kept(&ors), kept(&back));
     }
 }
