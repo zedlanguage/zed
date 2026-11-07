@@ -50,7 +50,7 @@
 //! end only the result is live.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Write as _;
+use std::fmt::{Display, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -82,13 +82,21 @@ pub struct NodePlan {
     pub drops: Vec<Src>,
     /// The edges whose last use is the node.
     pub last: Vec<Src>,
-    /// The body of the lambda an `apply` calls, when the plan sees it.
-    pub callee: Option<String>,
+    /// The body of the lambda an `apply` calls, when the plan sees it, as its index in
+    /// [`Plan::regions`].
+    pub callee: Option<usize>,
+    /// The plans of the node's regions, as indices in [`Plan::regions`]: a lambda's body, or
+    /// each arm of an `if` or a `match`; none for any other node, whose regions the kernel
+    /// runs.
+    pub regions: Vec<usize>,
 }
 
 /// The plan of one region.
 #[derive(Clone, PartialEq, Debug)]
 pub struct RegionPlan {
+    /// Where the region is: region `i` of node `k` of the region at index `up` of
+    /// [`Plan::regions`], as `(up, k, i)`; none for the root.
+    pub up: Option<(usize, usize, usize)>,
     /// How each argument is held.
     pub args: Vec<Mode>,
     /// The arguments dropped on entry, having no use.
@@ -99,14 +107,98 @@ pub struct RegionPlan {
     pub result_dups: Vec<usize>,
 }
 
-/// A memory plan: one [`RegionPlan`] per region the machine runs, by path (`r`, then
-/// `r.3/0` for node 3's first region), and whether `match` fuses its release.
+/// A memory plan: one [`RegionPlan`] per region the machine runs, and whether `match` fuses
+/// its release.
+///
+/// The regions are numbered in preorder, the root 0, and each region links to the region
+/// holding it and each node to its regions, so a region is found from its parent's in O(1).
+/// A region's path (`r`, then `r.3/0` for node 3's first region), O(depth) bytes, is worked
+/// out from the links for a message only (T14-paths).
 #[derive(Clone, PartialEq, Debug)]
 pub struct Plan {
-    /// The regions' plans.
-    pub regions: BTreeMap<String, RegionPlan>,
+    /// The regions' plans, in preorder: a region, then the regions of its nodes in order.
+    pub regions: Vec<RegionPlan>,
     /// Whether a `match` that owns its scrutinee releases it fused with its binders' dups.
     pub fuse: bool,
+}
+
+impl Plan {
+    /// The path of region `at` (`r`, `r.3/0`), worked out from the links up.
+    pub fn path(&self, at: usize) -> String {
+        PathOf { plan: self, at }.to_string()
+    }
+
+    /// The index of the region at `path` (`r`, `r.3/0`), when the plan has one.
+    pub fn find(&self, path: &str) -> Option<usize> {
+        let mut steps = path.strip_prefix('r')?;
+        let mut at = 0;
+        self.regions.first()?;
+        while !steps.is_empty() {
+            let (k, rest) = steps.strip_prefix('.')?.split_once('/')?;
+            let (i, rest) = rest.split_at(rest.find('.').unwrap_or(rest.len()));
+            let (k, i): (usize, usize) = (k.parse().ok()?, i.parse().ok()?);
+            at = *self.regions.get(at)?.nodes.get(k)?.regions.get(i)?;
+            steps = rest;
+        }
+        Some(at)
+    }
+}
+
+/// The plan of the region at a path, as [`Plan::find`] finds it; panics if there is none.
+impl std::ops::Index<&str> for Plan {
+    type Output = RegionPlan;
+
+    fn index(&self, path: &str) -> &RegionPlan {
+        let at = self.find(path);
+        &self.regions[at.unwrap_or_else(|| panic!("the plan has no region `{path}`"))]
+    }
+}
+
+/// The plan of the region at a path, as [`Plan::find`] finds it; panics if there is none.
+impl std::ops::IndexMut<&str> for Plan {
+    fn index_mut(&mut self, path: &str) -> &mut RegionPlan {
+        let at = self.find(path);
+        &mut self.regions[at.unwrap_or_else(|| panic!("the plan has no region `{path}`"))]
+    }
+}
+
+/// The path of region `at` of `plan`, printed from the links up: O(depth), for a message.
+struct PathOf<'p> {
+    plan: &'p Plan,
+    at: usize,
+}
+
+impl Display for PathOf<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut steps = Vec::new();
+        let mut at = self.at;
+        while let Some((up, k, i)) = self.plan.regions.get(at).and_then(|r| r.up) {
+            steps.push((k, i));
+            at = up;
+        }
+        f.write_str("r")?;
+        for (k, i) in steps.into_iter().rev() {
+            write!(f, ".{k}/{i}")?;
+        }
+        Ok(())
+    }
+}
+
+/// The path of node `k` of region `at` of `plan` (`r.3`, `r.3/0.1`), for a message.
+struct NodeAt<'p> {
+    plan: &'p Plan,
+    at: usize,
+    k: usize,
+}
+
+impl Display for NodeAt<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let path = PathOf {
+            plan: self.plan,
+            at: self.at,
+        };
+        write!(f, "{path}.{}", self.k)
+    }
 }
 
 /// The counts of one run.
@@ -153,7 +245,7 @@ pub fn plan(g: &Region, fuse: bool) -> Plan {
     let mut p = Planner {
         occs: vec![Occ {
             r: g,
-            path: "r".into(),
+            at: None,
             up: None,
             uses: None,
             params: None,
@@ -162,28 +254,45 @@ pub fn plan(g: &Region, fuse: bool) -> Plan {
         consumes: HashMap::new(),
         resolved: HashMap::new(),
     };
-    let mut regions = BTreeMap::new();
+    let mut regions = Vec::new();
     // Each region still to plan: the occurrence of the region holding it, the node and region
-    // it is, and how its arguments are held.
+    // it is, and how its arguments are held. They are planned in preorder, so a region's index
+    // is known before the regions under it are planned.
     let mut todo: Vec<(usize, usize, usize, Vec<Mode>)> = Vec::new();
-    p.region(
-        0,
-        vec![Mode::Borrowed; g.args.len()],
-        &mut regions,
-        &mut todo,
-    );
+    // Each `apply` whose callee the plan sees, as its region's index, its node and the
+    // occurrence of the callee's body, which may be planned after it.
+    let mut calls = Vec::new();
+    let args = vec![Mode::Borrowed; g.args.len()];
+    p.region(0, args, None, &mut regions, &mut todo, &mut calls);
     while let Some((c, k, i, args)) = todo.pop() {
         let o = p.sub(c, k, i);
-        p.region(o, args, &mut regions, &mut todo);
+        let up = p.occs[c]
+            .at
+            .expect("a region is planned before the regions under it");
+        p.region(
+            o,
+            args,
+            Some((up, k, i)),
+            &mut regions,
+            &mut todo,
+            &mut calls,
+        );
+    }
+    for (at, k, body) in calls {
+        regions[at].nodes[k].callee = Some(
+            p.occs[body]
+                .at
+                .expect("a lambda's body is planned with the region holding the lambda"),
+        );
     }
     Plan { regions, fuse }
 }
 
-/// A region occurrence: the region, its path, the way to its enclosing occurrence, and what
-/// the planner has worked out about it so far.
+/// A region occurrence: the region, its index in the plan once planned, the way to its
+/// enclosing occurrence, and what the planner has worked out about it so far.
 struct Occ<'a> {
     r: &'a Region,
-    path: String,
+    at: Option<usize>,
     up: Option<Up<'a>>,
     /// Its edges and their uses, once a question has needed them.
     uses: Option<Uses>,
@@ -581,15 +690,19 @@ impl<'a> Planner<'a> {
         }
     }
 
-    /// Plans occurrence `ctx`, its arguments held as `args`, and puts the regions it holds on
-    /// `todo`.
+    /// Plans occurrence `ctx`, its arguments held as `args`, region `i` of node `k` of the
+    /// region at index `up` of `out` as `(up, k, i)`, or the root: pushes its plan on `out`, the
+    /// regions it holds on `todo` and the calls whose callee it sees on `calls`.
     fn region(
         &mut self,
         ctx: usize,
         args: Vec<Mode>,
-        out: &mut BTreeMap<String, RegionPlan>,
+        up: Option<(usize, usize, usize)>,
+        out: &mut Vec<RegionPlan>,
         todo: &mut Vec<(usize, usize, usize, Vec<Mode>)>,
+        calls: &mut Vec<(usize, usize, usize)>,
     ) {
+        let at = out.len();
         let r: &'a Region = self.occs[ctx].r;
         let u = Uses::of(r);
         let owned = |e: usize| !u.state[e] && args.get(e).is_none_or(|m| *m == Mode::Owned);
@@ -602,24 +715,17 @@ impl<'a> Planner<'a> {
                     None => self.mode(ctx, k, j, false, false),
                 })
                 .collect();
-            let callee = match (&n.op, n.inputs.first()) {
-                (Op::Apply, Some(f)) => self
-                    .resolve(ctx, f)
-                    .map(|(c, m)| format!("{}.{m}/0", self.occs[c].path)),
-                _ => None,
-            };
+            if let (Op::Apply, Some(f)) = (&n.op, n.inputs.first())
+                && let Some((c, m)) = self.resolve(ctx, f)
+            {
+                calls.push((at, k, self.sub(c, m, 0)));
+            }
             nodes.push(NodePlan {
                 modes,
-                callee,
                 ..NodePlan::default()
             });
         }
-        let mut plan = RegionPlan {
-            args: args.clone(),
-            entry_drops: Vec::new(),
-            nodes: Vec::new(),
-            result_dups: Vec::new(),
-        };
+        let (mut entry_drops, mut result_dups) = (Vec::new(), Vec::new());
         // The node whose outputs hold edge `e`, found by binary search: `base` never decreases.
         let src = |e: usize| match u.base.partition_point(|b| *b <= e).checked_sub(1) {
             Some(k) if e >= r.args.len() => Src::Out(k, e - u.base[k]),
@@ -637,7 +743,7 @@ impl<'a> Planner<'a> {
             let Some(&end) = us.last() else {
                 if owned(e) {
                     match src(e) {
-                        Src::Arg(a) => plan.entry_drops.push(a),
+                        Src::Arg(a) => entry_drops.push(a),
                         s @ Src::Out(k, _) => nodes[k].drops.push(s),
                         Src::Const(_) => unreachable!("an edge is not a constant"),
                     }
@@ -667,7 +773,7 @@ impl<'a> Planner<'a> {
                     _ if Some(*at) == moved => {}
                     At::Node(k, j) if nodes[k].modes[j] == Mode::Owned => nodes[k].dups.push(j),
                     At::Node(..) => {}
-                    At::Result(i) => plan.result_dups.push(i),
+                    At::Result(i) => result_dups.push(i),
                 }
             }
         }
@@ -705,8 +811,20 @@ impl<'a> Planner<'a> {
             }
         }
         todo.extend(subs.into_iter().rev());
-        plan.nodes = nodes;
-        out.insert(self.occs[ctx].path.clone(), plan);
+        let plan = RegionPlan {
+            up,
+            args,
+            entry_drops,
+            nodes,
+            result_dups,
+        };
+        if let Some((up, k, i)) = up {
+            let subs = &mut out[up].nodes[k].regions;
+            debug_assert_eq!(subs.len(), i, "a node's regions are planned in order");
+            subs.push(at);
+        }
+        self.occs[ctx].at = Some(at);
+        out.push(plan);
     }
 
     /// The occurrence of region `i` of node `k` of occurrence `ctx`, a lambda's body or an arm
@@ -725,10 +843,9 @@ impl<'a> Planner<'a> {
                 Op::Match(ps) => (binds(&ps[i]), 1),
                 _ => (0, 1),
             };
-            let path = format!("{}.{k}/{i}", c.path);
             self.occs.push(Occ {
                 r: &node.regions[i],
-                path,
+                at: None,
                 up: Some(Up {
                     occ: ctx,
                     node,
@@ -786,13 +903,14 @@ struct Cell {
     shared: bool,
 }
 
-/// A closure: its cell, its lambda node and that node's occurrence id, the path of its body
-/// and its captures.
+/// A closure: its cell, its lambda node and that node's occurrence id, where the node is (node
+/// `k` of the region at index `at` of the plan) and its captures.
 struct Clo<'g> {
     cell: usize,
     node: &'g Node,
     id: usize,
-    path: String,
+    at: usize,
+    k: usize,
     caps: Vec<Mv<'g>>,
 }
 
@@ -852,11 +970,11 @@ struct Machine<'g, 'e> {
     touched: Vec<usize>,
     stats: Stats,
     live: u64,
-    /// Each planned region by its path, with the occurrence id of its first node: the regions
-    /// are numbered by one walk of the plan in path order, and node `k` of a region is its
-    /// first id plus `k`, so an id depends only on where the node stands in the graph, never
-    /// on where it is in memory (step ADDR-memory).
-    places: HashMap<&'g str, (usize, &'g RegionPlan)>,
+    /// The occurrence id of the first node of each planned region, by its index in the plan:
+    /// the regions are numbered in the plan's order, and node `k` of a region is its first id
+    /// plus `k`, so an id depends only on where the node stands in the graph, never on where it
+    /// is in memory (step ADDR-memory).
+    first: Vec<usize>,
     /// The one-node region of each node occurrence the kernel has run, by its occurrence id.
     alone: Vec<Option<Region>>,
 }
@@ -864,10 +982,10 @@ struct Machine<'g, 'e> {
 /// Runs graph `g` under `plan`, the kernel running each scalar and family node in `ev`, and
 /// checks every count; returns the value and the counts.
 pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats), String> {
-    let mut places = HashMap::with_capacity(plan.regions.len());
+    let mut first = Vec::with_capacity(plan.regions.len());
     let mut ids = 0;
-    for (path, rp) in &plan.regions {
-        places.insert(path.as_str(), (ids, rp));
+    for rp in &plan.regions {
+        first.push(ids);
         ids += rp.nodes.len();
     }
     let mut m = Machine {
@@ -880,14 +998,14 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
         touched: Vec::new(),
         stats: Stats::default(),
         live: 0,
-        places,
+        first,
         alone: (0..ids).map(|_| None).collect(),
     };
     let args = g.args.iter().map(|_| (Mv::State, false)).collect();
     let mut out = m.region(g, args)?;
     let v = out.swap_remove(0);
     m.push_frame(vec![Some((v.clone(), true))]);
-    m.check("the end of the run")?;
+    m.check(&"the end of the run")?;
     m.pop_frame();
     m.dec(v.cell())?;
     if m.live != 0 {
@@ -908,28 +1026,26 @@ enum Part<'p> {
     Keep(Option<usize>, Vec<&'p [usize]>),
 }
 
-/// A region the machine is running: its plan, under its path, its edges' uses, the node it is
-/// at, that node's path, and whether that node, an `apply`, holds a frame of the arguments it
-/// passes owned to a callee that borrows them.
+/// A region the machine is running: its index `at` in the plan, its plan, the occurrence id of
+/// its first node, its edges' uses, the node it is at, and whether that node, an `apply`, holds
+/// a frame of the arguments it passes owned to a callee that borrows them.
 struct Running<'g> {
     r: &'g Region,
-    path: &'g str,
+    at: usize,
     first: usize,
     rp: &'g RegionPlan,
     u: Uses,
     k: usize,
-    at: String,
     held: bool,
 }
 
-/// What a node gives: its outputs, or a region to run whose results are its outputs.
+/// What a node gives: its outputs, or a region to run, at index `at` in the plan, whose
+/// results are its outputs.
 enum Out<'g> {
     Done(Vec<Mv<'g>>),
     Call {
         r: &'g Region,
-        path: &'g str,
-        first: usize,
-        rp: &'g RegionPlan,
+        at: usize,
         args: Vec<(Mv<'g>, bool)>,
         held: bool,
     },
@@ -939,8 +1055,12 @@ impl<'g> Machine<'g, '_> {
     /// Runs region `r` on `args`, and the regions its nodes call, on a stack of running
     /// regions: calls and arms nest as deep as the program and its run (step T2-mid).
     fn region(&mut self, r: &'g Region, args: Vec<(Mv<'g>, bool)>) -> Result<Vec<Mv<'g>>, String> {
-        let (path, first, rp) = self.plan_of("r")?;
-        let mut stack = vec![self.enter(r, path, first, rp, args)?];
+        if self.plan.regions.is_empty() {
+            return Err(
+                "memory: region `r` has no plan; only the root, lambda bodies and arms do".into(),
+            );
+        }
+        let mut stack = vec![self.enter(r, 0, args)?];
         loop {
             let top = stack.last_mut().expect("a running region");
             if top.k == top.r.nodes.len() {
@@ -954,47 +1074,57 @@ impl<'g> Machine<'g, '_> {
             }
             let ins = self.inputs(top)?;
             let node = &top.r.nodes[top.k];
-            match self.node(node, top.first + top.k, &top.rp.nodes[top.k], &top.at, ins)? {
+            match self.node(node, top.first + top.k, top.at, top.k, ins)? {
                 Out::Done(outs) => self.finish(top, outs)?,
-                Out::Call {
-                    r,
-                    path,
-                    first,
-                    rp,
-                    args,
-                    held,
-                } => {
+                Out::Call { r, at, args, held } => {
                     top.held = held;
-                    let callee = self.enter(r, path, first, rp, args)?;
+                    let callee = self.enter(r, at, args)?;
                     stack.push(callee);
                 }
             }
         }
     }
 
-    /// The plan of the region at `path`, with the path as the plan holds it and the occurrence
-    /// id of the region's first node.
-    fn plan_of(&self, path: &str) -> Result<(&'g str, usize, &'g RegionPlan), String> {
-        self.places
-            .get_key_value(path)
-            .map(|(p, &(first, rp))| (*p, first, rp))
+    /// The index in the plan of region `i` of node `k` of the region at index `at`.
+    fn sub(&self, at: usize, k: usize, i: usize) -> Result<usize, String> {
+        self.plan.regions[at].nodes[k]
+            .regions
+            .get(i)
+            .copied()
             .ok_or_else(|| {
                 format!(
-                    "memory: region `{path}` has no plan; only the root, lambda bodies and arms do"
+                    "memory: region `{}/{i}` has no plan; only the root, lambda bodies and arms do",
+                    self.node_at(at, k)
                 )
             })
     }
 
-    /// Enters region `r`, at `path` with first node occurrence `first`, under plan `rp`, on
-    /// `args`: checks how they arrive, and makes its frame.
+    /// The path of the region at index `at` of the plan, for a message.
+    fn path(&self, at: usize) -> PathOf<'g> {
+        PathOf {
+            plan: self.plan,
+            at,
+        }
+    }
+
+    /// The path of node `k` of the region at index `at` of the plan, for a message.
+    fn node_at(&self, at: usize, k: usize) -> NodeAt<'g> {
+        NodeAt {
+            plan: self.plan,
+            at,
+            k,
+        }
+    }
+
+    /// Enters region `r`, at index `at` of the plan, on `args`: checks how they arrive, and
+    /// makes its frame.
     fn enter(
         &mut self,
         r: &'g Region,
-        path: &'g str,
-        first: usize,
-        rp: &'g RegionPlan,
+        at: usize,
         args: Vec<(Mv<'g>, bool)>,
     ) -> Result<Running<'g>, String> {
+        let (rp, path) = (&self.plan.regions[at], self.path(at));
         for (i, (_, owned)) in args.iter().enumerate() {
             if !r.args[i].is_state() && *owned != (rp.args[i] == Mode::Owned) {
                 return Err(format!(
@@ -1011,29 +1141,28 @@ impl<'g> Machine<'g, '_> {
         }
         self.push_frame(frame);
         for &a in &rp.entry_drops {
-            let (v, _) = self.take(&u, &Src::Arg(a), path, "an entry drop")?;
+            let (v, _) = self.take(&u, &Src::Arg(a), &path, &"an entry drop")?;
             self.dec(v.cell())?;
         }
-        self.check(&format!("the entry of `{path}`"))?;
+        self.check(&format_args!("the entry of `{path}`"))?;
         Ok(Running {
             r,
-            path,
-            first,
+            at,
+            first: self.first[at],
             rp,
             u,
             k: 0,
-            at: String::new(),
             held: false,
         })
     }
 
     /// Reads the inputs of the node region `run` is at, as its plan takes them.
-    fn inputs(&mut self, run: &mut Running<'g>) -> Result<Vec<Mv<'g>>, String> {
-        run.at = format!("{}.{}", run.path, run.k);
-        let (node, np, u, at) = (&run.r.nodes[run.k], &run.rp.nodes[run.k], &run.u, &run.at);
+    fn inputs(&mut self, run: &Running<'g>) -> Result<Vec<Mv<'g>>, String> {
+        let (node, np, u) = (&run.r.nodes[run.k], &run.rp.nodes[run.k], &run.u);
+        let at = self.node_at(run.at, run.k);
         let mut ins = Vec::new();
         for s in &node.inputs {
-            ins.push(self.read(u, s, at)?);
+            ins.push(self.read(u, s, &at)?);
         }
         let mut dup = vec![false; node.inputs.len()];
         for &j in &np.dups {
@@ -1042,7 +1171,7 @@ impl<'g> Machine<'g, '_> {
         }
         for (j, s) in node.inputs.iter().enumerate() {
             if np.modes[j] == Mode::Owned && !dup[j] && u.slot(s).is_some() {
-                self.take(u, s, at, &format!("input {j}, taken owned"))?;
+                self.take(u, s, &at, &format_args!("input {j}, taken owned"))?;
             }
         }
         Ok(ins)
@@ -1063,19 +1192,14 @@ impl<'g> Machine<'g, '_> {
     /// Stores the outputs `outs` of the node region `run` is at, drops what its plan drops
     /// after it, checks the counts, and moves to the next node.
     fn finish(&mut self, run: &mut Running<'g>, outs: Vec<Mv<'g>>) -> Result<(), String> {
-        let (k, node, np, u, at) = (
-            run.k,
-            &run.r.nodes[run.k],
-            &run.rp.nodes[run.k],
-            &run.u,
-            &run.at,
-        );
+        let (k, node, np, u) = (run.k, &run.r.nodes[run.k], &run.rp.nodes[run.k], &run.u);
+        let at = self.node_at(run.at, k);
         for (p, v) in outs.into_iter().enumerate() {
             let owned = !node.outputs[p].is_state();
             self.set(u.base[k] + p, Some((v, owned)));
         }
         for s in &np.drops {
-            let (v, _) = self.take(u, s, at, "a drop")?;
+            let (v, _) = self.take(u, s, &at, &"a drop")?;
             self.dec(v.cell())?;
         }
         for s in &np.last {
@@ -1088,22 +1212,22 @@ impl<'g> Machine<'g, '_> {
             }
             self.set(e, None);
         }
-        self.check(&format!("node {at}"))?;
+        self.check(&format_args!("node {at}"))?;
         run.k += 1;
         Ok(())
     }
 
     /// Leaves region `run`, all its nodes run: gives its results and drops its frame.
     fn leave(&mut self, run: &Running<'g>) -> Result<Vec<Mv<'g>>, String> {
-        let (r, rp, u, path) = (run.r, run.rp, &run.u, run.path);
+        let (r, rp, u, path) = (run.r, run.rp, &run.u, self.path(run.at));
         let dup: HashSet<usize> = rp.result_dups.iter().copied().collect();
         let mut out = Vec::new();
         for (i, s) in r.results.iter().enumerate() {
-            let v = self.read(u, s, &format!("{path} result {i}"))?;
+            let v = self.read(u, s, &format_args!("{path} result {i}"))?;
             if dup.contains(&i) {
                 self.inc(v.cell());
             } else if u.slot(s).is_some() && !u.state[u.slot(s).expect("an edge")] {
-                self.take(u, s, path, &format!("result {i}"))?;
+                self.take(u, s, &path, &format_args!("result {i}"))?;
             }
             out.push(v);
         }
@@ -1116,16 +1240,19 @@ impl<'g> Machine<'g, '_> {
         Ok(out)
     }
 
-    /// Runs one node, occurrence `id`, on its inputs, as the plan takes them; returns its
-    /// outputs, owned.
+    /// Runs one node, occurrence `id`, node `k` of the region at index `at` of the plan, on its
+    /// inputs, as the plan takes them; returns its outputs, owned.
     fn node(
         &mut self,
         node: &'g Node,
         id: usize,
-        np: &NodePlan,
-        at: &str,
+        at: usize,
+        k: usize,
         ins: Vec<Mv<'g>>,
     ) -> Result<Out<'g>, String> {
+        let plan = self.plan;
+        let np = &plan.regions[at].nodes[k];
+        let here = self.node_at(at, k);
         let data = |m: &Mv<'g>| matches!(m, Mv::Data(..));
         Ok(Out::Done(match &node.op {
             Op::Prim(p) if ins.is_empty() && p.arity().is_some() => vec![Mv::Prim(*p)],
@@ -1179,7 +1306,8 @@ impl<'g> Machine<'g, '_> {
                     cell,
                     node,
                     id,
-                    path: format!("{at}/0"),
+                    at,
+                    k,
                     caps: ins,
                 }))]
             }
@@ -1187,15 +1315,18 @@ impl<'g> Machine<'g, '_> {
                 Mv::Clo(c)
                     if c.node.regions[0].args.len() == c.node.inputs.len() + ins.len() - 1 =>
                 {
-                    if let Some(want) = &np.callee
-                        && *want != c.path
+                    let body = plan.regions[c.at].nodes[c.k].regions.first().copied();
+                    if let Some(want) = np.callee
+                        && Some(want) != body
                     {
                         return Err(format!(
-                            "memory: {at}: the plan calls `{want}`, and the callee is `{}`",
-                            c.path
+                            "memory: {here}: the plan calls `{}`, and the callee is `{}/0`",
+                            self.path(want),
+                            self.node_at(c.at, c.k)
                         ));
                     }
-                    let (path, first, rp) = self.plan_of(&c.path)?;
+                    let body = self.sub(c.at, c.k, 0)?;
+                    let rp = &plan.regions[body];
                     let mut args = Vec::new();
                     let mut held = Vec::new();
                     for (i, v) in ins[1..].iter().enumerate() {
@@ -1208,9 +1339,9 @@ impl<'g> Machine<'g, '_> {
                             (Mode::Borrowed, Mode::Borrowed) => args.push((v.clone(), false)),
                             (Mode::Borrowed, Mode::Owned) => {
                                 return Err(format!(
-                                    "memory: {at}: argument {i} is passed borrowed to `{}`, \
+                                    "memory: {here}: argument {i} is passed borrowed to `{}`, \
                                      which consumes it",
-                                    c.path
+                                    self.path(body)
                                 ));
                             }
                         }
@@ -1220,9 +1351,7 @@ impl<'g> Machine<'g, '_> {
                     let callee: &'g Node = c.node;
                     return Ok(Out::Call {
                         r: &callee.regions[0],
-                        path,
-                        first,
-                        rp,
+                        at: body,
                         args,
                         held: true,
                     });
@@ -1256,12 +1385,9 @@ impl<'g> Machine<'g, '_> {
                         let args = (1..ins.len())
                             .map(|j| (ins[j].clone(), np.modes[j] == Mode::Owned))
                             .collect();
-                        let (path, first, rp) = self.plan_of(&format!("{at}/{i}"))?;
                         return Ok(Out::Call {
                             r: &node.regions[i],
-                            path,
-                            first,
-                            rp,
+                            at: self.sub(at, k, i)?,
                             args,
                             held: false,
                         });
@@ -1269,7 +1395,7 @@ impl<'g> Machine<'g, '_> {
                     Err(v) => self.failed(node, np, &ins, v)?,
                 }
             }
-            Op::Match(ps) => return self.matched(node, ps, np, at, ins),
+            Op::Match(ps) => return self.matched(node, ps, at, k, ins),
             Op::Read(p) => {
                 let v = match self.ev.world.inputs.get(&**p) {
                     Some(v) => {
@@ -1308,10 +1434,12 @@ impl<'g> Machine<'g, '_> {
         &mut self,
         node: &'g Node,
         ps: &[Pattern],
-        np: &NodePlan,
-        at: &str,
+        at: usize,
+        k: usize,
         ins: Vec<Mv<'g>>,
     ) -> Result<Out<'g>, String> {
+        let plan = self.plan;
+        let np = &plan.regions[at].nodes[k];
         let data = matches!(ins[0], Mv::Data(..));
         let mut lets = Lets::default();
         let s = self.term(&ins[0], &mut lets)?;
@@ -1344,8 +1472,8 @@ impl<'g> Machine<'g, '_> {
             }
             v => return self.failed(node, np, &ins, v).map(Out::Done),
         };
-        let path = format!("{at}/{i}");
-        let (key, first, arm) = self.plan_of(&path)?;
+        let sub = self.sub(at, k, i)?;
+        let arm = &plan.regions[sub];
         let mut paths = Vec::new();
         match &ins[0] {
             Mv::Data(v, _) => binder_paths(&ps[i], v, &mut Vec::new(), &mut paths),
@@ -1388,7 +1516,8 @@ impl<'g> Machine<'g, '_> {
             for (b, v) in vals.into_iter().enumerate() {
                 if arm.args[b] == Mode::Owned {
                     return Err(format!(
-                        "memory: {at}: the scrutinee is borrowed, and arm {i} owns binder {b}"
+                        "memory: {}: the scrutinee is borrowed, and arm {i} owns binder {b}",
+                        self.node_at(at, k)
                     ));
                 }
                 args.push((bound(v, cells[b]), false));
@@ -1397,9 +1526,7 @@ impl<'g> Machine<'g, '_> {
         args.extend((1..ins.len()).map(|j| (ins[j].clone(), np.modes[j] == Mode::Owned)));
         Ok(Out::Call {
             r: &node.regions[i],
-            path: key,
-            first,
-            rp: arm,
+            at: sub,
             args,
             held: false,
         })
@@ -1549,7 +1676,7 @@ impl<'g> Machine<'g, '_> {
         }
     }
 
-    fn read(&self, u: &Uses, s: &Src, at: &str) -> Result<Mv<'g>, String> {
+    fn read(&self, u: &Uses, s: &Src, at: &dyn Display) -> Result<Mv<'g>, String> {
         let Some(e) = u.slot(s) else {
             let Src::Const(v) = s else {
                 unreachable!("a constant")
@@ -1576,7 +1703,13 @@ impl<'g> Machine<'g, '_> {
     }
 
     /// Takes the frame's reference to edge `s`, which the frame must own.
-    fn take(&mut self, u: &Uses, s: &Src, at: &str, why: &str) -> Result<(Mv<'g>, bool), String> {
+    fn take(
+        &mut self,
+        u: &Uses,
+        s: &Src,
+        at: &dyn Display,
+        why: &dyn Display,
+    ) -> Result<(Mv<'g>, bool), String> {
         let e = u.slot(s).expect("an edge");
         match self.set(e, None) {
             Some((v, true)) => Ok((v, true)),
@@ -1749,7 +1882,7 @@ impl<'g> Machine<'g, '_> {
 
     /// Checks the cells touched since the last check, which passed: no other cell's count or
     /// references changed. When one is wrong, the full audit names every fault.
-    fn check(&mut self, when: &str) -> Result<(), String> {
+    fn check(&mut self, when: &dyn Display) -> Result<(), String> {
         let touched = std::mem::take(&mut self.touched);
         let wrong = touched.iter().any(|&c| {
             self.heap[c].count != self.refs[c] || (self.heap[c].count == 0 && self.holds[c] > 0)
@@ -1759,7 +1892,7 @@ impl<'g> Machine<'g, '_> {
 
     /// Checks that each live cell's count is the number of references to it, from owned
     /// slots in every frame and from live cells, and that no slot holds a freed cell.
-    fn audit(&self, when: &str) -> Result<(), String> {
+    fn audit(&self, when: &dyn Display) -> Result<(), String> {
         let mut refs = vec![0u32; self.heap.len()];
         for (f, frame) in self.frames.iter().enumerate() {
             for (e, slot) in frame.iter().enumerate() {

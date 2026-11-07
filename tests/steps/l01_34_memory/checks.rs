@@ -25,7 +25,7 @@ fn reads_twice() -> zed_kernel::Term {
 #[test]
 fn a_missed_drop_is_a_leak() {
     let (g, mut p) = planned(&reads_twice(), true);
-    p.regions.get_mut("r").unwrap().nodes[2].drops.clear();
+    p["r"].nodes[2].drops.clear();
     let e = run(&g, &p).unwrap_err();
     assert_eq!(
         e,
@@ -36,7 +36,7 @@ fn a_missed_drop_is_a_leak() {
 #[test]
 fn an_extra_dup_is_a_count_above_its_references() {
     let (g, mut p) = planned(&reads_twice(), true);
-    p.regions.get_mut("r").unwrap().nodes[1].dups.push(0);
+    p["r"].nodes[1].dups.push(0);
     let e = run(&g, &p).unwrap_err();
     assert!(
         e.starts_with("memory: at node r.1, cell 0 has count 2 and 1 reference"),
@@ -52,7 +52,7 @@ fn a_missing_dup_consumes_an_edge_twice() {
         prim(Prim::Tuple, vec![var("s"), var("s")]),
     );
     let (g, mut p) = planned(&t, true);
-    p.regions.get_mut("r").unwrap().nodes[1].dups.clear();
+    p["r"].nodes[1].dups.clear();
     let e = run(&g, &p).unwrap_err();
     assert_eq!(
         e,
@@ -66,7 +66,7 @@ fn a_borrowed_argument_to_a_consuming_parameter_is_refused() {
     let g = lam(&["x"], prim(Prim::Tuple, vec![var("x"), lit(1)]));
     let t = let_("g", g, app(var("g"), vec![cat("a", "b")]));
     let (g, mut p) = planned(&t, true);
-    p.regions.get_mut("r").unwrap().nodes[2].modes[1] = Mode::Borrowed;
+    p["r"].nodes[2].modes[1] = Mode::Borrowed;
     let e = run(&g, &p).unwrap_err();
     assert_eq!(
         e,

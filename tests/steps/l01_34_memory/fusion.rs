@@ -36,8 +36,8 @@ fn a_fresh_pair_destructured_costs_one_write_fused_and_four_unfused() {
     // after the run adds one write to each.
     let t = first(prim(Prim::Tuple, vec![cat("a", "b"), cat("c", "d")]));
     let (g, p) = planned(&t, true);
-    assert_eq!(p.regions["r"].nodes[3].modes, [Mode::Owned]);
-    assert_eq!(p.regions["r.3/0"].args, [Mode::Owned]);
+    assert_eq!(p["r"].nodes[3].modes, [Mode::Owned]);
+    assert_eq!(p["r.3/0"].args, [Mode::Owned]);
     drop(g);
     assert_eq!(writes(&t), (1 + 1, 4 + 1, r#""ab""#.into()));
 }

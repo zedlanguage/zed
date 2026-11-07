@@ -5,15 +5,14 @@
 //! design review Q10: nested `if`s reading `k` names, a chain of functions each calling the one
 //! before twice, and a function called twice in each of `d` nested arms or lambdas.
 //!
-//! The plan names each region by its path from the root, which is O(d) bytes `d` regions deep,
-//! so the plan of a nest `d` deep holds O(d^2) bytes of paths (T14-paths). The scaling tests of
-//! nests count instructions only, at sizes where the paths' copies are under half the work.
+//! The plan finds a region from its parent's by index, not by its path from the root, so a nest
+//! `d` deep plans in O(d) instructions and bytes (T14-paths).
 
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, World};
-use zed_tests::scaling::{check_instructions_only, check_order, inputs};
+use zed_tests::scaling::{check_order, inputs};
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{self, Mode};
 use zedc::zir::{Op, Region};
@@ -133,9 +132,9 @@ fn a_call_chain_borrows_down_to_a_borrowing_leaf_and_owns_down_to_a_consuming_on
         let (g, p) = planned(&t, true);
         // `f0` to `f4` are the root's lambdas 0 to 4, and each takes `x`, its first argument, as
         // `f0` does; `f1` to `f4` also take the function they capture.
-        assert_eq!(p.regions[&body_path(&g, 0)].args, [want]);
+        assert_eq!(p[body_path(&g, 0).as_str()].args, [want]);
         for i in 1..=4 {
-            assert_eq!(p.regions[&body_path(&g, i)].args[0], want, "f{i}");
+            assert_eq!(p[body_path(&g, i).as_str()].args[0], want, "f{i}");
         }
         let (v, _) = run(&g, &p).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(v, kernel(&t));
@@ -151,13 +150,13 @@ fn capture_chains_borrow_the_captured_string_for_every_call() {
     assert_eq!(v, kernel(&t));
     assert_eq!(v, "4");
     let g = lower(&t).unwrap();
-    assert_eq!(p.regions[&body_path(&g, 0)].args, [Mode::Borrowed]);
+    assert_eq!(p[body_path(&g, 0).as_str()].args, [Mode::Borrowed]);
     assert_eq!(s.increments, 0);
     // The nested lambdas are planned, not run: the program's value is a function.
     let (g, p) = planned(&capture_chain(3, true), true);
-    assert_eq!(p.regions[&body_path(&g, 0)].args, [Mode::Borrowed]);
+    assert_eq!(p[body_path(&g, 0).as_str()].args, [Mode::Borrowed]);
     // The outer lambda's body takes its parameter and the captured `f` and `s`.
-    assert_eq!(p.regions[&body_path(&g, 1)].args.len(), 3);
+    assert_eq!(p[body_path(&g, 1).as_str()].args.len(), 3);
 }
 
 #[test]
@@ -168,16 +167,11 @@ fn nested_ifs_hand_each_name_owned_down_to_the_tuple() {
     assert_eq!(v, r#"("av0", "av1", "av2", "av3")"#);
     // Every then arm owns the four names it captures, since the tuple at the bottom takes them;
     // the names are never shared.
-    let mut path = String::from("r");
+    let mut at = 0;
     for _ in 0..5 {
-        let r = p.regions.keys().find(|k| {
-            let rest = k
-                .strip_prefix(path.as_str())
-                .and_then(|r| r.strip_prefix('.'));
-            rest.is_some_and(|r| !r.contains('.') && r.ends_with("/0"))
-        });
-        path = r.expect("a then arm under the last").clone();
-        assert_eq!(p.regions[&path].args, [Mode::Owned; 4], "{path}");
+        let r = p.regions[at].nodes.iter().find_map(|n| n.regions.first());
+        at = *r.expect("a then arm under the last");
+        assert_eq!(p.regions[at].args, [Mode::Owned; 4], "{}", p.path(at));
     }
     assert_eq!(s.increments, 0);
 }
@@ -210,8 +204,8 @@ fn wrappers_sharing_one_body_take_their_argument_as_their_callee_does() {
         for fuse in [true, false] {
             let (pa, ps) = (memory::plan(&apart, fuse), memory::plan(&shared, fuse));
             assert_eq!(ps, pa);
-            assert_eq!(ps.regions[&borrows].args[0], Mode::Borrowed);
-            assert_eq!(ps.regions[&consumes].args[0], Mode::Owned);
+            assert_eq!(ps[borrows.as_str()].args[0], Mode::Borrowed);
+            assert_eq!(ps[consumes.as_str()].args[0], Mode::Owned);
             let (va, sa) = run(&apart, &pa).unwrap_or_else(|e| panic!("{e}"));
             let (vs, ss) = run(&shared, &ps).unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(va, kernel(&t));
@@ -223,8 +217,7 @@ fn wrappers_sharing_one_body_take_their_argument_as_their_callee_does() {
 #[test]
 fn nested_ifs_reading_four_names_plan_in_linear_time() {
     let gs = inputs(200, |d| lower(&nest(4, d)).unwrap());
-    // Instructions only: the plan's paths are O(d^2) bytes (T14-paths, COMPLEXITY.md Z4).
-    check_instructions_only("planning 4 names read under n nested `if`s", 200, 1, |d| {
+    check_order("planning 4 names read under n nested `if`s", 200, 1, |d| {
         memory::plan(&gs[&d], true);
     });
 }
@@ -250,8 +243,7 @@ fn capture_chains_plan_in_linear_time() {
         ),
     ] {
         let gs = inputs(200, |d| lower(&capture_chain(d, lambdas)).unwrap());
-        // Instructions only: the plan's paths are O(d^2) bytes (T14-paths, COMPLEXITY.md Z4).
-        check_instructions_only(what, 200, 1, |d| {
+        check_order(what, 200, 1, |d| {
             memory::plan(&gs[&d], true);
         });
     }
@@ -267,7 +259,7 @@ fn call_chains_plan_in_linear_time() {
         |d| {
             let g = &gs[&d];
             let p = memory::plan(g, true);
-            assert_eq!(p.regions[&body_path(g, 0)].args, [Mode::Borrowed]);
+            assert_eq!(p[body_path(g, 0).as_str()].args, [Mode::Borrowed]);
         },
     );
 }

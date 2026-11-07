@@ -35,7 +35,7 @@ fn the_right_plan_runs() {
 #[test]
 fn a_missed_drop_leaves_a_cell_live() {
     let (g, mut p) = planned(&reads_twice());
-    p.regions.get_mut("r").unwrap().nodes[2].drops.clear();
+    p["r"].nodes[2].drops.clear();
     assert_eq!(
         run(&g, &p).unwrap_err(),
         "memory: 1 cell live after the result is dropped: 1 String allocated by node r.0"
@@ -50,7 +50,7 @@ fn a_missing_dup_frees_a_cell_still_in_use() {
         prim(Prim::Tuple, vec![var("s"), var("s")]),
     );
     let (g, mut p) = planned(&t);
-    let r = p.regions.get_mut("r").unwrap();
+    let r = &mut p["r"];
     let k = r
         .nodes
         .iter()
@@ -79,20 +79,21 @@ fn a_borrowed_argument_to_a_consuming_parameter_is_the_machines_error() {
         ),
     );
     let (g, mut p) = planned(&t);
-    let (path, k) = p
+    let (at, k) = p
         .regions
         .iter()
-        .find_map(|(path, r)| {
+        .enumerate()
+        .find_map(|(at, r)| {
             r.nodes
                 .iter()
                 .position(|n| n.callee.is_some())
-                .map(|k| (path.clone(), k))
+                .map(|k| (at, k))
         })
         .expect("a resolved call");
-    let n = &mut p.regions.get_mut(&path).unwrap().nodes[k];
+    let n = &mut p.regions[at].nodes[k];
     n.modes[1] = Mode::Borrowed;
-    let callee = n.callee.clone().unwrap();
-    p.regions.get_mut(&callee).unwrap().args[0] = Mode::Owned;
+    let callee = n.callee.unwrap();
+    p.regions[callee].args[0] = Mode::Owned;
     let mut ev = Evaluator::new(World::new());
     let want = zedc::zir::memory::run(g.graph(), &p, &mut ev).unwrap_err();
     assert_eq!(run(&g, &p).unwrap_err(), want);
@@ -113,7 +114,7 @@ fn a_body_returning_its_capture_dups_it_and_without_the_dup_frees_it_early() {
     );
     let (g, mut p) = planned(&t);
     assert_eq!(run(&g, &p).unwrap(), "(\"abc\",)");
-    let body = p.regions.get_mut("r.1/0").unwrap();
+    let body = &mut p["r.1/0"];
     assert_eq!(body.result_dups, vec![0]);
     body.result_dups.clear();
     let e = run(&g, &p).unwrap_err();

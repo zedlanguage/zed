@@ -417,7 +417,10 @@ fn a_wrong_plan_deep_in_the_term_names_the_path() {
     ));
     let (g, mut p) = planned(&t);
     let arm = "r.1/0.0/0";
-    assert!(p.regions.remove(arm).is_some(), "{:?}", p.regions.keys());
+    // The node holding the arm loses the plans of its arms.
+    let at = p.find(arm).expect("the arm's plan");
+    let (up, k, _) = p.regions[at].up.expect("an arm is under a node");
+    p.regions[up].nodes[k].regions.clear();
     assert_eq!(
         zed_native::object(&g, &p).unwrap_err(),
         format!("native: arm `{arm}` has no plan")

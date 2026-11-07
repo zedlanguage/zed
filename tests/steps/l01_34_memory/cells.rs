@@ -16,7 +16,7 @@ fn a_value_used_once_is_never_counted() {
     let t = prim(Prim::Tuple, vec![cat("a", "b"), cat("c", "d")]);
     let (v, s, p) = machine(&t);
     assert_eq!(v, r#"("ab", "cd")"#);
-    let r = &p.regions["r"];
+    let r = &p["r"];
     assert!(
         r.nodes
             .iter()
@@ -46,7 +46,7 @@ fn a_borrowed_value_is_dropped_at_its_last_use() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, r#"(3, "ABC")"#);
-    let r = &p.regions["r"];
+    let r = &p["r"];
     assert_eq!(r.nodes[1].drops, []);
     assert_eq!(r.nodes[2].drops, [Src::Out(0, 0)]);
     assert_eq!((s.increments, s.peak), (0, 2));
@@ -62,7 +62,7 @@ fn each_owned_use_but_the_last_gets_a_dup() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, r#"("abc", "abc")"#);
-    assert_eq!(p.regions["r"].nodes[1].dups, [0]);
+    assert_eq!(p["r"].nodes[1].dups, [0]);
     assert_eq!((s.increments, s.shared, s.allocations), (1, 1, 2));
 }
 
@@ -102,7 +102,7 @@ fn an_arm_that_ignores_an_owned_capture_drops_it_on_entry() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, "0");
-    assert_eq!(p.regions["r.3/1"].entry_drops, [0]);
+    assert_eq!(p["r.3/1"].entry_drops, [0]);
     assert_eq!((s.allocations, s.frees, s.increments), (1, 1, 0));
 }
 
@@ -114,6 +114,6 @@ fn a_borrowed_value_returned_gets_a_dup() {
     let t = let_("s", cat("ab", "c"), let_("f", f, call));
     let (v, s, p) = machine(&t);
     assert_eq!(v, r#""abc""#);
-    assert_eq!(p.regions["r.1/0"].result_dups, [0]);
+    assert_eq!(p["r.1/0"].result_dups, [0]);
     assert_eq!(s.increments, 1);
 }

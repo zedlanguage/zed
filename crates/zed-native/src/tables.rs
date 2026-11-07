@@ -97,13 +97,13 @@ pub(crate) struct Tables {
 
 /// A region being numbered. Regions nest as deep as the term, so the regions in progress are
 /// on a stack, each with its next node.
-struct Visit<'g, 'p> {
+struct Visit<'g> {
     /// Its number.
     at: usize,
     /// The region.
     region: &'g Arc<Region>,
-    /// Its path, the plan's own key.
-    path: &'p str,
+    /// Its index in [`Plan::regions`].
+    pat: usize,
     /// The next node.
     k: usize,
 }
@@ -124,7 +124,7 @@ impl Tables {
             swapped: g.swapped().clone(),
         };
         let mut plans = Vec::new();
-        let mut lambda_at = HashMap::new();
+        let mut lambda_at = vec![None; plan.regions.len()];
         let numbered = t.visit(g.graph(), plan, &mut plans, &mut lambda_at)?;
         debug_assert_eq!(
             numbered,
@@ -133,7 +133,7 @@ impl Tables {
         );
         // An `apply` may call a lambda the generator visits after it.
         for id in 0..t.nodes.len() {
-            t.resolve(id, &plans, &lambda_at)?;
+            t.resolve(id, plan, &plans, &lambda_at)?;
         }
         Ok((t, plans))
     }
@@ -146,9 +146,9 @@ impl Tables {
         g: &Arc<Region>,
         plan: &'p Plan,
         plans: &mut Vec<&'p RegionPlan>,
-        lambda_at: &mut HashMap<&'p str, usize>,
+        lambda_at: &mut [Option<usize>],
     ) -> Result<usize, String> {
-        let (path, rp) = plan.regions.get_key_value("r").ok_or_else(|| {
+        let rp = plan.regions.first().ok_or_else(|| {
             "native: region `r` has no plan; only the root, lambda bodies and arms do".to_string()
         })?;
         plans.push(rp);
@@ -160,10 +160,9 @@ impl Tables {
         let mut stack = vec![Visit {
             at: 0,
             region: g,
-            path,
+            pat: 0,
             k: 0,
         }];
-        let mut sub = String::new();
         let mut number = 0;
         while let Some(v) = stack.last_mut() {
             if v.k == 0 {
@@ -175,7 +174,7 @@ impl Tables {
                 stack.pop();
                 continue;
             }
-            let (at, region, path, k) = (v.at, v.region, v.path, v.k);
+            let (at, region, pat, k) = (v.at, v.region, v.pat, v.k);
             v.k += 1;
             let node = &region.nodes[k];
             let id = self.nodes.len();
@@ -212,15 +211,15 @@ impl Tables {
                     // The first region is numbered first, so it is last on the stack.
                     let first = stack.len();
                     for (i, r) in node.regions.iter().enumerate() {
-                        sub.clear();
-                        write!(sub, "{path}.{k}/{i}").expect("a write to a string");
-                        let (path, rp) = plan.regions.get_key_value(&sub).ok_or_else(|| {
+                        let sub = plan.regions[pat].nodes[k].regions.get(i).copied();
+                        let sub = sub.ok_or_else(|| {
                             let what = match node.op {
                                 Op::Lambda => "lambda body",
                                 _ => "arm",
                             };
-                            format!("native: {what} `{sub}` has no plan")
+                            format!("native: {what} `{}.{k}/{i}` has no plan", plan.path(pat))
                         })?;
+                        let rp = &plan.regions[sub];
                         let at = self.regions.len();
                         info.subs.push(at);
                         plans.push(rp);
@@ -232,12 +231,12 @@ impl Tables {
                         stack.push(Visit {
                             at,
                             region: r,
-                            path,
+                            pat: sub,
                             k: 0,
                         });
                         if matches!(node.op, Op::Lambda) {
                             let params = r.args.len() - node.inputs.len();
-                            lambda_at.insert(path.as_str(), self.lambdas.len());
+                            lambda_at[sub] = Some(self.lambdas.len());
                             info.lambda = Some(self.lambdas.len());
                             self.lambdas.push(LambdaInfo {
                                 node: id,
@@ -264,21 +263,23 @@ impl Tables {
     fn resolve(
         &mut self,
         id: usize,
+        plan: &Plan,
         plans: &[&RegionPlan],
-        lambda_at: &HashMap<&str, usize>,
+        lambda_at: &[Option<usize>],
     ) -> Result<(), String> {
         let ni = &self.nodes[id];
         let node = ni.node();
         if node.op != Op::Apply {
             return Ok(());
         }
-        let Some(want) = &plans[ni.at].nodes[ni.k].callee else {
+        let Some(want) = plans[ni.at].nodes[ni.k].callee else {
             return Ok(());
         };
-        let li = *lambda_at.get(want.as_str()).ok_or_else(|| {
+        let li = lambda_at.get(want).copied().flatten().ok_or_else(|| {
             format!(
-                "native: {}: the plan calls `{want}`, no lambda",
-                self.path(id)
+                "native: {}: the plan calls `{}`, no lambda",
+                self.path(id),
+                plan.path(want)
             )
         })?;
         let l = &self.lambdas[li];
@@ -287,8 +288,9 @@ impl Tables {
             for i in 0..l.params {
                 if ni.modes[1 + i] == Mode::Borrowed && l.modes[i] == Mode::Owned {
                     error = Some(format!(
-                        "memory: {}: argument {i} is passed borrowed to `{want}`, which consumes it",
-                        self.path(id)
+                        "memory: {}: argument {i} is passed borrowed to `{}`, which consumes it",
+                        self.path(id),
+                        plan.path(want)
                     ));
                     break;
                 }

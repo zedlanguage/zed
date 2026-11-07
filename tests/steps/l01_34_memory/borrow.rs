@@ -30,9 +30,9 @@ fn a_parameter_only_read_is_borrowed() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, r#"(2, 2, "ab")"#);
-    assert_eq!(p.regions["r.0/0"].args, [Mode::Borrowed]);
-    let call = &p.regions["r"].nodes[2];
-    assert_eq!(call.callee.as_deref(), Some("r.0/0"));
+    assert_eq!(p["r.0/0"].args, [Mode::Borrowed]);
+    let call = &p["r"].nodes[2];
+    assert_eq!(call.callee.map(|c| p.path(c)).as_deref(), Some("r.0/0"));
     assert_eq!(call.modes, [Mode::Borrowed, Mode::Borrowed]);
     assert_eq!(s.increments, 0);
 }
@@ -59,8 +59,8 @@ fn a_parameter_consumed_is_owned() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, r#"(("ab", 1), 2)"#);
-    assert_eq!(p.regions["r.0/0"].args, [Mode::Owned]);
-    let call = &p.regions["r"].nodes[2];
+    assert_eq!(p["r.0/0"].args, [Mode::Owned]);
+    let call = &p["r"].nodes[2];
     assert_eq!((call.modes[1], &call.dups[..]), (Mode::Owned, &[1][..]));
     assert_eq!(s.increments, 1);
 }
@@ -81,8 +81,11 @@ fn a_call_through_a_capture_sees_the_callee() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, "2");
-    let arm = &p.regions["r.4/0"];
-    assert_eq!(arm.nodes[0].callee.as_deref(), Some("r.0/0"));
+    let arm = &p["r.4/0"];
+    assert_eq!(
+        arm.nodes[0].callee.map(|c| p.path(c)).as_deref(),
+        Some("r.0/0")
+    );
     assert_eq!(arm.nodes[0].modes, [Mode::Borrowed, Mode::Borrowed]);
     assert_eq!(s.increments, 0);
 }
@@ -96,7 +99,7 @@ fn an_unknown_callee_takes_its_arguments_owned() {
     let t = let_("ap", ap, app(var("ap"), vec![len, cat("abc", "d")]));
     let (v, _, p) = machine(&t);
     assert_eq!(v, "4");
-    let body = &p.regions["r.0/0"];
+    let body = &p["r.0/0"];
     assert_eq!(body.args, [Mode::Borrowed, Mode::Owned]);
     assert_eq!(body.nodes[0].callee, None);
     assert_eq!(body.nodes[0].modes, [Mode::Borrowed, Mode::Owned]);
@@ -124,7 +127,7 @@ fn a_closure_holds_its_captures() {
     );
     let (v, s, p) = machine(&t);
     assert_eq!(v, "(4, 5)");
-    assert_eq!(p.regions["r"].nodes[1].modes, [Mode::Owned]);
-    assert_eq!(p.regions["r.1/0"].args, [Mode::Borrowed, Mode::Borrowed]);
+    assert_eq!(p["r"].nodes[1].modes, [Mode::Owned]);
+    assert_eq!(p["r.1/0"].args, [Mode::Borrowed, Mode::Borrowed]);
     assert_eq!((s.increments, s.allocations, s.frees, s.peak), (0, 3, 3, 2));
 }

@@ -2,10 +2,11 @@
 //! values nest and closures capture closures as deep as the program, on a thread of the
 //! default 2 MiB stack.
 //!
-//! The plan names each region by its path from the root, so a nest `d` deep holds paths of
-//! O(d²) bytes in all, and planning and running it are of order d² (COMPLEXITY.md F62 and Z4; the
-//! keys are T14-paths's to change). The nests here are 8,000 deep, four times the depth at
-//! which the recursive planner and machine overflowed a 2 MiB stack, and not 100,000.
+//! The plan numbers its regions and links each to the region holding it, so a region is found
+//! from its parent's in O(1) and a path is printed for a message only: planning and running a
+//! nest `d` deep are of order d (T14-paths; COMPLEXITY.md F62 and Z4). The nests here are 8,000
+//! deep, four times the depth at which the recursive planner and machine overflowed a 2 MiB
+//! stack.
 
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::value::Value;
@@ -48,15 +49,15 @@ fn a_push_8000_regions_deep_is_planned_and_run_on_a_2_mib_stack() {
 }
 
 #[test]
-fn planning_and_running_a_deep_nest_is_of_order_its_paths() {
+fn planning_and_running_a_deep_nest_is_linear_in_its_depth() {
     on_small_stack(|| {
         let (small, large) = (lower(&nest(500)).unwrap(), lower(&nest(4_000)).unwrap());
         let pick = |d: usize| if d == 500 { &small } else { &large };
-        check_order("planning nested `if`s, paths O(d) long", 500, 2, |d| {
+        check_order("planning n nested `if`s", 500, 1, |d| {
             memory::plan(pick(d), true);
         });
         let (ps, pl) = (memory::plan(&small, true), memory::plan(&large, true));
-        check_order("running nested `if`s, paths O(d) long", 500, 2, |d| {
+        check_order("running n nested `if`s", 500, 1, |d| {
             let (g, p) = if d == 500 {
                 (&small, &ps)
             } else {
