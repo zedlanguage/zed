@@ -669,3 +669,69 @@ fn a_failing_case_costs_its_test_and_not_the_names_in_scope() {
         },
     );
 }
+
+/// An eager scope of `n`, `m` and `a0`..`a(k-1)` under `n >= -1 && m >= -1` and `k` tests
+/// `ai >= n && ai >= m`: `k` stars of the two hubs, each leaf `int[-1..]`.
+fn stars_of_two_hubs(k: usize) -> Scope {
+    let mut all: Vec<std::sync::Arc<str>> = vec!["n".into(), "m".into()];
+    all.extend((0..k).map(|i| format!("a{i}").into()));
+    let p = Premises::new();
+    let bounds = prim(
+        Prim::And,
+        prim(Prim::Ge, var("n"), int(-1)),
+        prim(Prim::Ge, var("m"), int(-1)),
+    );
+    (0..k).fold(ints(&all).assume(&bounds, true, &p), |s, i| {
+        let a = format!("a{i}");
+        let star = prim(
+            Prim::And,
+            prim(Prim::Ge, var(&a), var("n")),
+            prim(Prim::Ge, var(&a), var("m")),
+        );
+        s.assume(&star, true, &p)
+    })
+}
+
+/// `n - m <= c`, a test among the hubs of the stars of [`stars_of_two_hubs`].
+fn hubs_within(c: i64) -> Term {
+    prim(Prim::Le, prim(Prim::Sub, var("n"), var("m")), int(c))
+}
+
+#[test]
+fn tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time() {
+    // `k` tests `n - m <= k`, …, `n - m <= 1` under the `k` stars: each replaces the one
+    // before as the tighter (`Conjuncts::tight`), so each removes a conjunct among the hubs
+    // and adds one, and neither moves a leaf, since `n = m = -1` meets them all. Each
+    // projected every star again: `k` projections per test, 57.4 times the bytes for 8 times
+    // the size (item NARROW-eager-scope). The stars of one class, the same conjuncts but for
+    // the leaf, are now projected again only when the class's bound on its leaf changes
+    // (`Scope::same_leaf_bound`).
+    let p = Premises::new();
+    let built: BTreeMap<usize, Scope> = [16, 128]
+        .into_iter()
+        .map(|k| (k, stars_of_two_hubs(k)))
+        .collect();
+    let narrow = |k: usize| {
+        (1..=k as i64).rev().fold(built[&k].clone(), |s, c| {
+            s.assume(&hubs_within(c), true, &p)
+        })
+    };
+    let s = narrow(16);
+    for i in 0..16 {
+        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[-1..]", "a{i}");
+    }
+    // A test that moves every leaf still reaches each: `n + m >= 4` with `n - m <= 1` puts
+    // the least `max(n, m)` at 2.
+    let up = prim(Prim::Ge, prim(Prim::Add, var("n"), var("m")), int(4));
+    let s = s.assume(&up, true, &p);
+    for i in 0..16 {
+        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[2..]", "a{i}");
+    }
+    scaling::check(
+        "k tests among the hubs of k stars of two hubs, in an eager scope",
+        16,
+        |k| {
+            narrow(k);
+        },
+    );
+}

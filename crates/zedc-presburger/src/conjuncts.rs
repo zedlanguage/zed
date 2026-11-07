@@ -111,6 +111,37 @@ pub struct Conjuncts {
 /// Two names, in order.
 type NamePair = (Arc<str>, Arc<str>);
 
+/// The class of a star of two hubs or more ([`Conjuncts::star`]): its conjuncts with the leaf
+/// written [`LEAF`], in order. Two stars of one class have the same hubs and the same
+/// conjuncts among them ([`Conjuncts::core`]), so their leaves differ only in their own
+/// products ([`Conjuncts::class_core`]).
+pub type Class = Arc<[Arc<Formula>]>;
+
+/// The name of the leaf in a [`Class`]: one no program writes, since `#` begins no name.
+pub const LEAF: &str = "#leaf";
+
+/// `g` with the name `x` written `to`.
+fn renamed(g: &Formula, x: &str, to: &Arc<str>) -> Formula {
+    g.map_cons(&|c| {
+        let terms = c
+            .lin
+            .terms
+            .iter()
+            .map(|(a, k)| match a {
+                Atom::Sym(n) if &**n == x => (Atom::Sym(to.clone()), k.clone()),
+                _ => (a.clone(), k.clone()),
+            })
+            .collect();
+        Formula::Con(Con {
+            lin: Lin {
+                terms,
+                constant: c.lin.constant.clone(),
+            },
+            rel: c.rel,
+        })
+    })
+}
+
 /// The stars of a conjunction ([`Conjuncts::star`]) and the indexes that keep them current.
 #[derive(Clone, Debug, Default)]
 struct StarIndex {
@@ -141,6 +172,12 @@ struct StarIndex {
     pair: OrdMap<NamePair, OrdSet<Arc<str>>>,
     /// The stars ([`Conjuncts::star`]): each leaf's block.
     stars: OrdMap<Arc<str>, BlockId>,
+    /// The leaves of the stars of two hubs or more of each class ([`Class`]).
+    classes: OrdMap<Class, OrdSet<Arc<str>>>,
+    /// The class of each leaf of `classes`.
+    class_of: OrdMap<Arc<str>, Class>,
+    /// The classes of `classes` at each of their hubs.
+    class_at: Uses<Class>,
     /// The conjuncts of the stars at each hub.
     hangs: Uses<Arc<Formula>>,
     /// The conjuncts that mention each name, but those of the stars at it as a hub: those a
@@ -325,22 +362,74 @@ impl Conjuncts {
         gs.into_iter().collect()
     }
 
-    /// The blocks of the stars of two hubs or more whose projection reads `g` as a conjunct
+    /// The classes of the stars of two hubs or more whose projection reads `g` as a conjunct
     /// among their hubs ([`Conjuncts::core`]): those at each name `g` is free at. In time near
-    /// the stars at those names.
-    pub fn cored(&self, g: &Arc<Formula>) -> BTreeSet<BlockId> {
+    /// the classes at those names, not their stars.
+    pub fn classed(&self, g: &Arc<Formula>) -> BTreeSet<Class> {
         let mut out = BTreeSet::new();
         for n in names(g) {
-            if !self.index.free.has(&n, g) {
-                continue;
-            }
-            for (_, x) in self.index.level.0.get(&n).into_iter().flatten() {
-                if let Some(&b) = self.index.stars.get(x) {
-                    out.insert(b);
-                }
+            if self.index.free.has(&n, g) {
+                out.extend(self.index.class_at.of(&n).cloned());
             }
         }
         out
+    }
+
+    /// The conjuncts each star of class `c` is projected with ([`Conjuncts::core`]), its leaf
+    /// written [`LEAF`]: the class's conjuncts and those among its hubs. `None` when no star is
+    /// of the class. In time near their number.
+    pub fn class_core(&self, c: &Class) -> Option<Vec<Arc<Formula>>> {
+        self.index.classes.get(c)?;
+        let mut gs: BTreeSet<Arc<Formula>> = c.iter().cloned().collect();
+        let ns: BTreeSet<Arc<str>> = c.iter().flat_map(|g| names(g)).collect();
+        for n in ns.iter().filter(|n| &***n != LEAF) {
+            gs.extend(self.index.free.of(n).cloned());
+        }
+        Some(gs.into_iter().collect())
+    }
+
+    /// The leaves of the stars of class `c`.
+    pub fn class_leaves(&self, c: &Class) -> impl Iterator<Item = &Arc<str>> {
+        self.index.classes.get(c).into_iter().flatten()
+    }
+
+    /// Records the star of leaf `x` and conjuncts `gs` in its class, when it has two hubs or
+    /// more ([`Class`]). In O(log n) per conjunct, and per hub when the class is new.
+    fn enclass(&mut self, x: &Arc<str>, gs: &[Arc<Formula>], hubs: &[Arc<str>]) {
+        if hubs.len() < 2 {
+            return;
+        }
+        let leaf: Arc<str> = Arc::from(LEAF);
+        let mut key: Vec<Arc<Formula>> =
+            gs.iter().map(|g| Arc::new(renamed(g, x, &leaf))).collect();
+        key.sort_unstable();
+        let key: Class = key.into();
+        let leaves = self.index.classes.entry(key.clone()).or_default();
+        if leaves.is_empty() {
+            for h in hubs {
+                self.index.class_at.add(h, &key);
+            }
+        }
+        leaves.insert(x.clone());
+        self.index.class_of.insert(x.clone(), key);
+    }
+
+    /// Forgets the class of the star of leaf `x`, if it has one ([`Conjuncts::enclass`]).
+    fn unclass(&mut self, x: &str) {
+        let Some(key) = self.index.class_of.remove(x) else {
+            return;
+        };
+        let Some(leaves) = self.index.classes.get_mut(&key) else {
+            return;
+        };
+        leaves.remove(x);
+        if leaves.is_empty() {
+            self.index.classes.remove(&key);
+            let hubs: BTreeSet<Arc<str>> = key.iter().flat_map(|g| names(g)).collect();
+            for h in hubs.iter().filter(|h| &***h != LEAF) {
+                self.index.class_at.remove(h, &key);
+            }
+        }
     }
 
     /// The leaf and block of each star ([`Conjuncts::star`]).
@@ -777,6 +866,7 @@ impl Conjuncts {
             }
             if let Some(b) = old {
                 self.index.stars.remove(x);
+                self.unclass(x);
                 let gs: Vec<Arc<Formula>> = self.blocks.members(b).cloned().collect();
                 self.blocks.undetach(b);
                 for g in &gs {
@@ -801,6 +891,7 @@ impl Conjuncts {
             }
             let b = self.blocks.detach(s.gs.iter().cloned());
             self.index.stars.insert(x.clone(), b);
+            self.enclass(&x, &s.gs, &s.hubs);
             for g in &s.gs {
                 for h in names(g).into_iter().filter(|h| *h != x) {
                     self.index.hangs.add(&h, g);

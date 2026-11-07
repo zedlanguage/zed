@@ -1830,33 +1830,40 @@ impl Scope {
         }
         // A leaf whose star went or changed may be stale ([`Scope::lazy`]) where nothing else
         // makes it due: its conjuncts' blocks now are.
+        // An eager scope projects a new star at once, with the conjuncts among its hubs
+        // ([`Conjuncts::core`]), so that the classes below hold only stars so projected.
         for d in old.stars().diff(self.relation.stars()) {
-            if let DiffItem::Remove(x, _) | DiffItem::Update { new: (x, _), .. } = d {
-                any = true;
-                out.extend(self.relation.mentioning(x).filter_map(|g| blocks.of(g)));
+            match d {
+                DiffItem::Remove(x, _) | DiffItem::Update { new: (x, _), .. } => {
+                    any = true;
+                    out.extend(self.relation.mentioning(x).filter_map(|g| blocks.of(g)));
+                }
+                DiffItem::Add(_, &b) if !self.lazy => {
+                    any = true;
+                    out.insert(b);
+                }
+                DiffItem::Add(..) => {}
             }
         }
+        // A conjunct among the hubs of a star of two hubs or more is projected with it
+        // ([`Conjuncts::core`]): an eager scope projects the stars of each class it is among
+        // again, unless the class gives its leaf the same bound as before
+        // ([`Scope::same_leaf_bound`]). A lazy one finds the leaf stale when read, since the
+        // star's part is keyed by those conjuncts.
+        let mut classes: BTreeSet<conjuncts::Class> = BTreeSet::new();
         let mut gone: Vec<Arc<Formula>> = Vec::new();
         for d in old.set().diff(self.relation.set()) {
             any = true;
-            // A conjunct among the hubs of a star of two hubs or more is projected with it
-            // ([`Conjuncts::core`]): an eager scope projects the star again. A lazy one finds
-            // the leaf stale when read, since the star's part is keyed by those conjuncts.
             match d {
                 imbl::ordset::DiffItem::Add(g) => {
                     out.extend(blocks.of(g));
                     if !self.lazy {
-                        out.extend(self.relation.cored(g));
+                        classes.extend(self.relation.classed(g));
                     }
                 }
                 imbl::ordset::DiffItem::Remove(g) => {
                     if !self.lazy {
-                        out.extend(
-                            old.cored(g)
-                                .into_iter()
-                                .flat_map(|b| old.blocks().members(b))
-                                .filter_map(|h| blocks.of(h)),
-                        );
+                        classes.extend(old.classed(g));
                     }
                     let was = old.blocks().of(g);
                     let mates = was.into_iter().flat_map(|b| old.blocks().members(b));
@@ -1864,6 +1871,38 @@ impl Scope {
                     gone.push(g.clone());
                 }
             }
+        }
+        // A class with no star now held only stars that went or changed, made due above; a
+        // star of a class that had none before is new, made due above too. The stars of a class
+        // with stars before and now are the same stars, each projected with the class's
+        // conjuncts as they were.
+        //
+        // Complexity tradeoff: when the class's bound on its leaf changes, or is not shown to
+        // stay ([`Scope::same_leaf_bound`]), every star of the class is projected again, though
+        // a leaf whose own product lies within both bounds keeps its product. Why: finding only
+        // the leaves whose own bound lies past the class's needs them ordered by their own
+        // products, which every narrowing of a leaf would have to keep. Trigger: a test among
+        // the hubs of `k` stars of one class that moves the class's bound, or one of the cases
+        // `same_leaf_bound` leaves out: `k` projections, as the `k` leaves that move cost.
+        // Test: `l01_39_reduced_product::scaling::tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time`.
+        // COMPLEXITY.md row C26. A complete solution keeps the leaves of each class ordered by
+        // their own bound on the side the class bounds, in each scope, and projects only those
+        // the class's new bound cuts.
+        for c in &classes {
+            let Some(now) = self.relation.class_core(c) else {
+                continue;
+            };
+            if old
+                .class_core(c)
+                .is_some_and(|then| self.same_leaf_bound(&then, &now))
+            {
+                continue;
+            }
+            out.extend(
+                self.relation
+                    .class_leaves(c)
+                    .filter_map(|x| self.relation.star(x)),
+            );
         }
         for g in gone {
             let keys: Vec<PartKey> = self
@@ -2126,8 +2165,56 @@ impl Scope {
             .collect()
     }
 
-    /// Meets each name `part` mentions with its projection, within every interval.
-    fn project_part(&mut self, part: &Formula) {
+    /// Whether the conjuncts `then` and `now` of a class of stars ([`conjuncts::Class`]) give
+    /// its leaf the same bound, in the names' products as they are, shown by projecting each
+    /// onto the leaf, written [`conjuncts::LEAF`], as [`Scope::project_block`] projects a star
+    /// of the class, but with the leaf's own product left whole. A star bounds its leaf on one
+    /// side only, by a half-line ([`Conjuncts::star`]), so when the projection is exact a leaf
+    /// `x` of the class projects to its own product cut by that half-line, and keeps its
+    /// product when the half-line stays. The projection is exact when every conjunct is a
+    /// constraint or the negation of a bound and every name but the leaf has one interval: a
+    /// leaf's own product of many intervals is then the one disjunction, which the solver
+    /// projects exactly ([`presburger::project`]). Otherwise, or when the solver refuses, this
+    /// says no. In time near the conjuncts' size.
+    fn same_leaf_bound(&self, then: &[Arc<Formula>], now: &[Arc<Formula>]) -> bool {
+        if then == now {
+            return true;
+        }
+        let literal = |g: &Arc<Formula>| match &**g {
+            Formula::Con(_) => true,
+            Formula::Not(n) => matches!(&**n, Formula::Con(c) if c.rel == Rel::Ge),
+            _ => false,
+        };
+        if !then.iter().chain(now).all(literal) {
+            return false;
+        }
+        let leaf = Atom::Sym(Arc::from(conjuncts::LEAF));
+        let bound = |core: &[Arc<Formula>]| -> Option<IntervalSet> {
+            let mut out = IntervalSet::top();
+            for (_, part) in split(core.iter().map(|g| &**g)) {
+                let (whole, syms) = self.framed(&part);
+                let one = |a: &Atom| match a {
+                    Atom::Sym(n) => a == &leaf || self.get(n).ints().pieces().len() <= 1,
+                    _ => true,
+                };
+                if !syms.iter().all(one) {
+                    return None;
+                }
+                let i = syms.iter().position(|a| a == &leaf)?;
+                let (mut each, skipped) = presburger::project_each(&whole, &syms).ok()?;
+                if !skipped.is_empty() {
+                    return None;
+                }
+                out = out.meet(&each.swap_remove(i).ok()?);
+            }
+            Some(out)
+        };
+        matches!((bound(then), bound(now)), (Some(a), Some(b)) if a == b)
+    }
+
+    /// `part` with each name it mentions met with its interval and class, the congruence
+    /// `x == m * k + r` with `k` free, and the names, to project onto ([`Scope::project_part`]).
+    fn framed(&self, part: &Formula) -> (Formula, Vec<Atom>) {
         let mentioned = part.atoms();
         let mut parts: Vec<Formula> = mentioned
             .iter()
@@ -2157,6 +2244,12 @@ impl Scope {
             .into_iter()
             .filter(|a| matches!(a, Atom::Sym(_)))
             .collect();
+        (whole, syms)
+    }
+
+    /// Meets each name `part` mentions with its projection, within every interval.
+    fn project_part(&mut self, part: &Formula) {
+        let (whole, syms) = self.framed(part);
         // The text of `part`, each name as written, printed once, and only when a question
         // about it is refused.
         let mut text: Option<Arc<str>> = None;
