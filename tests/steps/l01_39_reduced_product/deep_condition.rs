@@ -476,17 +476,19 @@ fn moving(d: usize) -> Term {
     })
 }
 
-/// At each level `i` of `d`: `(100 <= x <= 200 && v >= i) || ((y >= 0 || z >= 0) && ((20 <= x
+/// At each level `i` of `d`: `(100 <= x <= 200 && v >= i) || ((y >= 0 || z <= 0) && ((20 <= x
 /// <= 30 && w >= i) || (0 <= x <= 10 && level i + 1)))`, the last level `w >= d`. The small
 /// choice `20..=30` misses the bound `10` that the deep choice holds, so a point at that bound
-/// is found only below every level.
+/// is found only below every level. `y` and `z` are bounded on opposite sides: with `y >= 0 ||
+/// z >= 0` the two share a color, and a formula whose atoms share one is settled as sets and
+/// never searched for a point (`presburger::Naming::Tied`).
 fn heavy(d: usize) -> Term {
     let ge = |n, v: usize| cmp(Prim::Ge, n, v as i64);
     let le = |n, v: i64| cmp(Prim::Le, n, v);
     (0..d).rev().fold(ge("w", d), |inner, i| {
         let deep = all(vec![ge("x", 0), le("x", 10), inner]);
         let small = all(vec![ge("x", 20), le("x", 30), ge("w", i)]);
-        let body = all(vec![either(ge("y", 0), ge("z", 0)), either(small, deep)]);
+        let body = all(vec![either(ge("y", 0), le("z", 0)), either(small, deep)]);
         either(all(vec![ge("x", 100), le("x", 200), ge("v", i)]), body)
     })
 }
@@ -616,8 +618,10 @@ fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
 fn the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times() {
     // The search marks a part it finds not to hold and does not test it again while its values
     // are unchanged (`Parts::failed`). Without the marks a nest that fails deep is tested again
-    // below each level: 516 parts per level at d = 60 and 3876 at d = 480 for `heavy`. With
-    // them both nests measure 24 to 41 parts per level at both depths.
+    // below each level: 516 parts per level at d = 60 and 3876 at d = 480 for `heavy`, 152 and
+    // 992 for `moving`. With them `heavy` measures 40 parts per level and `moving` 34, at both
+    // depths (2026-11-07). Each nest is searched at every level, so fewer than `d` parts tested
+    // means the search was not reached (as when `heavy`'s atoms shared a color).
     on_a_deep_stack(|| {
         let scope = ints(&level_names());
         for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
@@ -626,6 +630,10 @@ fn the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_tim
                 presburger::parts_tested();
                 std::hint::black_box(arms(&test, &scope));
                 let tested = presburger::parts_tested();
+                assert!(
+                    tested >= d as u64,
+                    "{name}, d = {d}: {tested} parts tested, fewer than one per level"
+                );
                 assert!(
                     tested <= 48 * d as u64,
                     "{name}, d = {d}: {tested} parts tested, more than 48 per level"
