@@ -2,7 +2,8 @@
 //! and parses as a unit at the top ring, and each law that the proofs of `euclid`, `euclidChain`,
 //! `minFacPrime` and `minFacMin` cite outside the prelude is written in one of them. This checks
 //! syntax only: `minFac`'s test table needs recursion (step L6.7) and its laws need layer L15, as
-//! the page says.
+//! the page says. Item MATHLIB-allintro-spec: the prelude laws are those step L15.7 of DESIGN.md
+//! names and sec:verification states, and DESIGN.md states `allIntro` as the page writes it.
 
 use std::path::PathBuf;
 
@@ -133,9 +134,9 @@ fn cited(text: &str) -> Vec<&str> {
     uses.chain(usings).collect()
 }
 
-/// The laws the prelude states (DESIGN.md sec:verification, the `using` tactic), which the page
-/// does not define.
-const PRELUDE: &[&str] = &["anyIntro", "anyElim", "allElim"];
+/// The laws the prelude states (DESIGN.md sec:verification, the `using` tactic) and step L15.7
+/// builds, in the order step L15.7 names them. The page writes `allIntro` too, with its proof.
+const PRELUDE: &[&str] = &["anyIntro", "anyElim", "allElim", "allIntro"];
 
 #[test]
 fn every_fence_of_the_mathlib_study_parses() {
@@ -273,5 +274,59 @@ fn parsing_the_fences_of_a_page_scales() {
             let text = law_text(page, "euclid").expect("`euclid` is on the last line");
             assert_eq!(cited(&text), ["anyIntro", "dvdFact"]);
         },
+    );
+}
+
+/// The names in the first list of laws after `head` in `text`: each backquoted name up to the
+/// `;` that ends the list.
+fn named_after<'a>(text: &'a str, head: &str) -> Vec<&'a str> {
+    let (_, rest) = text
+        .split_once(head)
+        .unwrap_or_else(|| panic!("`{head}` is in the text"));
+    let list = rest.split_once(';').map_or(rest, |(list, _)| list);
+    list.split('`').skip(1).step_by(2).collect()
+}
+
+#[test]
+fn the_prelude_laws_are_those_design_states() {
+    let Some(spec) = zed_tests::spec::dir("the prelude laws against DESIGN.md") else {
+        return;
+    };
+    let design = std::fs::read_to_string(spec.join("DESIGN.md")).expect("DESIGN.md is readable");
+    // Step L15.7 builds the prelude laws (item MATHLIB-allintro-spec added `allIntro`).
+    let step = design
+        .lines()
+        .find(|l| l.starts_with("L15.7. "))
+        .expect("DESIGN.md has step L15.7");
+    assert_eq!(named_after(step, "the prelude laws "), PRELUDE);
+    let reach = step
+        .split_once(" reach proof grade")
+        .expect("step L15.7's test names the laws that reach proof grade")
+        .0;
+    let reach = reach.rsplit_once(';').map_or(reach, |(_, r)| r);
+    let reach: Vec<&str> = reach.split('`').skip(1).step_by(2).collect();
+    assert_eq!(reach, PRELUDE);
+    // sec:verification states each law, `allIntro` as the page writes it, without its proof.
+    let states = design
+        .lines()
+        .find_map(|l| l.split_once("The prelude also states ").map(|(_, r)| r))
+        .expect("DESIGN.md states the prelude laws");
+    let states = states.split_once(". ").map_or(states, |(s, _)| s);
+    for name in PRELUDE {
+        assert!(
+            states.contains(&format!("`{name}`")) || states.contains(&format!("law {name}(")),
+            "DESIGN.md does not state `{name}`"
+        );
+    }
+    let page = page();
+    let written = page
+        .lines()
+        .find(|l| l.starts_with("law allIntro("))
+        .and_then(|l| l.split_once(" proof {"))
+        .expect("the page writes `allIntro` with a proof")
+        .0;
+    assert!(
+        states.contains(&format!("`{written}`")),
+        "DESIGN.md states `allIntro` otherwise than the page: `{written}`"
     );
 }

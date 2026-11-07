@@ -432,6 +432,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("anyIntro", 15),
     ("anyElim", 15),
     ("allElim", 15),
+    ("allIntro", 15),
     ("reflect", 15),
     ("unique", 16),
     ("compile", 19),
