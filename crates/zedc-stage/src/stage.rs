@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Shared, Term, Value, World};
+use zed_kernel::{Evaluator, KernelError, Lookup, Pattern, Prim, Shared, Term, Value, World};
 
 use crate::defs::{Def, Unit};
 use zedc_base::interp;
@@ -1625,7 +1625,7 @@ const FORM: &str = "its form does not show that it ends";
 
 /// The value of the closed term `t` under the prelude, its calls of the functions of `stubs`
 /// answered by their ports for the run `calls`.
-fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, String> {
+fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, KernelError> {
     let world = stubs.iter().fold(World::new(), |w, s| {
         let port = Port {
             stub: s.clone(),
@@ -1633,9 +1633,38 @@ fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, Str
         };
         w.source(&s.port, Arc::new(port))
     });
-    Evaluator::new(world)
-        .run(&interp::prelude(t))
-        .map_err(|e| e.to_string())
+    Evaluator::new(world).run(&interp::prelude(t))
+}
+
+/// A run's value, or its failure with the error the run as written stops with when that is
+/// known.
+type Said = Result<Value, Option<String>>;
+
+/// The error the run `calls` with stubs, which stopped with `e`, stops with as written, when
+/// that is known. A run with stubs takes the steps of the run as written but at the calls of
+/// stubbed functions, and a stub's call that gives a value gives the value the call as written
+/// gives, so the two runs differ only where a stub's call fails. A stub's call fails where the
+/// call as written fails, and its error is then the as-written error kept in the stub's table
+/// ([`Run::failed`]); or where the stub itself fails: at a call inside a pure region, an
+/// argument holding a function, one a key cannot tell apart or an answer that cannot be
+/// compared, which the call as written may not meet, and then the error is not known. Any other
+/// error is met outside the stubs' bodies, where the two runs agree. An error the evaluator
+/// gives for want of memory is treated as not known, since the run as written holds other
+/// values than the run with stubs.
+fn error_as_written(e: KernelError, calls: &Run) -> Option<String> {
+    match e {
+        KernelError::Port(..) => calls.failed.lock().expect("one thread").take(),
+        KernelError::Type(m)
+            if m.ends_with("applied to a function") || m.ends_with("used inside a pure region") =>
+        {
+            None
+        }
+        KernelError::UnknownPort(_)
+        | KernelError::OutOfFuel
+        | KernelError::NumberTooLarge { .. }
+        | KernelError::TextTooLarge { .. } => None,
+        e => Some(e.to_string()),
+    }
 }
 
 /// Whether the value `v` is compared in time linear in the memory it holds, and, as the
@@ -1682,8 +1711,8 @@ struct Stub {
     lets: Vec<(Arc<str>, Shared)>,
     /// The stubs of the functions among them.
     reads: Vec<Arc<Stub>>,
-    /// The answer at each argument tuple asked so far: `None` where the call fails.
-    table: Mutex<BTreeMap<Value, Option<Value>>>,
+    /// The answer at each argument tuple asked so far.
+    table: Mutex<BTreeMap<Value, Said>>,
 }
 
 impl Stub {
@@ -1700,7 +1729,7 @@ impl Stub {
         })
     }
 
-    fn answer(&self, key: &Value) -> Option<Option<Value>> {
+    fn answer(&self, key: &Value) -> Option<Said> {
         self.table.lock().expect("one thread").get(key).cloned()
     }
 }
@@ -1724,7 +1753,8 @@ fn fill(stub: &Arc<Stub>, key: &Value) {
         match calls.need.lock().expect("one thread").take() {
             Some(need) => todo.push(need),
             None => {
-                s.table.lock().expect("one thread").insert(k, out.ok());
+                let said = out.map_err(|e| error_as_written(e, &calls));
+                s.table.lock().expect("one thread").insert(k, said);
                 todo.pop();
             }
         }
@@ -1738,6 +1768,9 @@ struct Run {
     need: Mutex<Option<(Arc<Stub>, Value)>>,
     log: Mutex<Vec<(Probe, Answer)>>,
     stop: bool,
+    /// The error as written of the failing call a stub answered, when it is known. A port's
+    /// error ends the run, so the run ended at that call.
+    failed: Mutex<Option<String>>,
 }
 
 /// The port of a stub in one run.
@@ -1766,17 +1799,20 @@ impl Lookup for Port {
             }
         };
         // An answer that cannot be compared is not recorded, and the run fails.
-        if answer.as_ref().is_some_and(|v| !compared(v, false)) {
+        if answer.as_ref().is_ok_and(|v| !compared(v, false)) {
             return Err("an answer that cannot be compared".into());
         }
         if !self.run.stop {
             let log = (
                 Probe::Call(self.stub.name.clone(), key.clone()),
-                Answer::Gives(answer.clone()),
+                Answer::Gives(answer.as_ref().ok().cloned()),
             );
             self.run.log.lock().expect("one thread").push(log);
         }
-        answer.ok_or_else(|| "the call fails".into())
+        answer.map_err(|why| {
+            *self.run.failed.lock().expect("one thread") = why;
+            "the call fails".into()
+        })
     }
 }
 
@@ -2147,7 +2183,9 @@ impl Mixer {
     /// outside the part that `t` reads is called through its stub, and each call, its
     /// arguments and its answer, is recorded as what the part asked ([`Probe::Call`]); when
     /// one of those has no stub, or the run with stubs fails, the part is recorded as
-    /// depending on what each of them is ([`Probe::Same`]) and `t` is evaluated as written.
+    /// depending on what each of them is ([`Probe::Same`]), and `t` gives the error as written
+    /// the failed run kept ([`error_as_written`]) or, where that is not known, is evaluated as
+    /// written.
     // Complexity tradeoff: what is given up is sharing, not exactness. A part that calls a
     // function bound outside it is keyed by what it asked of the function only when the
     // function's calls are shown to end (each function it calls through a name has a stub,
@@ -2191,7 +2229,8 @@ impl Mixer {
             if !self.shows_end(t, free) {
                 return Err(FORM.into());
             }
-            return run_with(self.closed(t, &lets, &[]), &[], &Arc::default());
+            return run_with(self.closed(t, &lets, &[]), &[], &Arc::default())
+                .map_err(|e| e.to_string());
         }
         let entries = &self.scope.entries;
         if stubs.iter().any(|&i| entries[i].stub.is_none()) {
@@ -2212,43 +2251,58 @@ impl Mixer {
         for (p, a) in log {
             self.record(p, a);
         }
-        match out {
+        match out.map_err(|e| error_as_written(e, &calls)) {
             Ok(v) => Ok(v),
-            Err(_) => self.as_written(t, free, &stubs),
+            // The error as written depends on what each function is, as when it is run.
+            Err(Some(why)) => {
+                self.same(&stubs);
+                Err(why)
+            }
+            Err(None) => self.as_written(t, free, &stubs),
         }
     }
 
-    /// The value of `t`, which reads `free`, with every binding it needs as written, recorded as
-    /// depending on what each function at `stubs` is.
-    // Complexity tradeoff: a run as written takes time linear in the bindings `t` needs, all of
-    // them below as well as above the base, since the evaluator runs only a closed term: what
-    // is given up is time, `O(n)` per such evaluation and `O(n^2)` for `n` places each calling
-    // one of a chain of `n` functions. Whether the form shows that it ends no longer costs
-    // that ([`Mixer::shows_end`]), so a term whose form does not show it is left to run at once;
-    // the run itself still closes `t` over every binding it needs. Why: the kernel's
-    // evaluator takes a closed term and its values borrow it, so it cannot run under an
-    // environment kept from one evaluation to the next, and the error a run as written gives
-    // is the one the report shows, which the failed run with stubs cannot be trusted to give
-    // (a stub refuses a call it cannot key, and a key holding a function fails inside the
-    // stub). Trigger: a build-stage call whose run with stubs fails, by a real error, a call
-    // at an argument no answer table takes ([`compared`]), or a function with no stub.
-    // Tests: `l01_28_staging::cone::failing_calls_of_a_long_chain_are_left_to_run_in_quadratic_time`
-    // (at n and 8n, power 2), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written`,
-    // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F43. A
-    // complete solution would give the evaluator an environment of the bindings in scope, each
-    // entry's closure made once when it is pushed, and run `t` under it in time linear in `t`
-    // and the bindings the run reaches.
-    fn as_written(&mut self, t: &Term, free: Set, stubs: &[usize]) -> Result<Value, String> {
+    /// Records that the part being mixed depends on what each function at `stubs` is.
+    fn same(&mut self, stubs: &[usize]) {
         for &i in stubs {
             let e = &self.scope.entries[i];
             let (x, fine) = (e.name.clone(), e.fine);
             self.record(Probe::Same(x), Answer::Is(fine));
         }
+    }
+
+    /// The value of `t`, which reads `free`, with every binding it needs as written, recorded as
+    /// depending on what each function at `stubs` is. A run with stubs that fails where the
+    /// error as written is known ([`error_as_written`]) does not come here.
+    // Complexity tradeoff: a run as written takes time linear in the bindings `t` needs, all of
+    // them below as well as above the base, since the evaluator runs only a closed term: what
+    // is given up is time, `O(n)` per such evaluation and `O(n^2)` for `n` places each calling
+    // one of a chain of `n` functions at an argument no answer table takes. Measured on the
+    // test below at n = 60 and 480: 39.4 times the bytes. Why: the kernel's evaluator takes a
+    // closed term and its values borrow it, so it cannot run under an environment kept from
+    // one evaluation to the next, and the error a run with stubs gives where a stub itself
+    // fails need not be the error the run as written gives, which the report shows. Trigger: a
+    // build-stage call whose run with stubs fails inside a stub (a call at an argument no answer
+    // table takes, [`compared`], an argument holding a function, a call inside a pure region,
+    // an answer that cannot be compared), or a function with no stub; a call whose run with
+    // stubs fails anywhere else, or at a stub whose call fails as written, is left with the
+    // error the stubs kept, in time linear in its own run
+    // (`l01_28_staging::cone::failing_calls_of_a_long_chain_are_left_to_run_in_linear_time`).
+    // Tests: `l01_28_staging::cone::failing_calls_no_answer_table_takes_are_run_as_written_in_quadratic_time`
+    // (at n and 8n, power 2), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written`,
+    // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F43. A
+    // complete solution would give the evaluator an environment of the bindings in scope, each
+    // entry's closure made once when it is pushed, and run `t` under it in time linear in `t`
+    // and the bindings the run reaches; a run as written that itself walks the chain (a function
+    // of it passed as an argument and called) would still take time linear in the chain, which
+    // only answer tables keyed by such functions would share.
+    fn as_written(&mut self, t: &Term, free: Set, stubs: &[usize]) -> Result<Value, String> {
+        self.same(stubs);
         if !self.shows_end(t, free) {
             return Err(FORM.into());
         }
         let (lets, _) = self.needs(free, None);
-        run_with(self.closed(t, &lets, &[]), &[], &Arc::default())
+        run_with(self.closed(t, &lets, &[]), &[], &Arc::default()).map_err(|e| e.to_string())
     }
 
     /// Whether [`ends`] would show that the build-stage term `t`, which reads `free`, ends

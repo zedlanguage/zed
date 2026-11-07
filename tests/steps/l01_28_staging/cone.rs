@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
-use zed_kernel::{Prim, Shared, Term};
+use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::elab::{Def, Unit};
@@ -147,21 +147,58 @@ fn mixing_calls_of_functions_that_each_call_the_two_before_scales() {
     );
 }
 
-/// A call of a chain whose every call fails is run with stubs, fails, and is run again as
-/// written, closed over the whole chain below it: time linear in the chain per call, quadratic
-/// in all (the complexity tradeoff at `Mixer::as_written`, COMPLEXITY.md row F43). The test
-/// holds it to that order, so that it grows no worse.
+/// A call of a chain whose every call fails is run with stubs and fails at the stub of the
+/// function below it, whose table keeps the error that call gives as written, so the call is
+/// left to run with that error and is not run again as written: each function's call is run
+/// once, in time linear in the chain over all the calls (COMPLEXITY.md row F43).
 #[test]
-fn failing_calls_of_a_long_chain_are_left_to_run_in_quadratic_time() {
+fn failing_calls_of_a_long_chain_are_left_to_run_in_linear_time() {
     deep(|| {
         let (_, report) = stage::mix(&with_main(2, F0::Fails, false), &["main"]);
         let error = "type error: `+` applied to `int`, `bool`";
         let call = |j: usize| format!("{:?}: {error}", app(var(&f(j)), vec![lit(0i64)]));
         assert_eq!(left(&report), vec![call(1), call(2)]);
-        let n = 60;
+        let n = 100;
         let units = scaling::inputs(n, |n| with_main(n, F0::Fails, false));
-        scaling::check_order(
+        scaling::check(
             "stage::mix on n calls of a chain of n functions whose every call fails",
+            n,
+            |n| {
+                let (_, report) = stage::mix(&units[&n], &["main"]);
+                assert_eq!(report.left.len(), n);
+            },
+        );
+    });
+}
+
+/// The chain of `n` functions and `main = (c) -> (f1(-0.0) + c, .., fn(-0.0) + c)`.
+fn at_minus_zero(n: usize, f0: F0) -> Unit {
+    let mut defs = chain(n, f0, false);
+    let call = |j: usize| app(var(&f(j)), vec![Term::Lit(Value::float(-0.0))]);
+    let site = |j: usize| prim(Prim::Add, vec![call(j), var("c")]);
+    let sites = (1..=n).map(site).collect();
+    defs.push(def("main", lam(&["c"], prim(Prim::Tuple, sites))));
+    unit(defs)
+}
+
+/// A call at an argument no answer table takes (`-0.0`, which a key reads as `0.0`) is refused
+/// by the stub and run again as written, closed over the chain below it: time linear in the
+/// chain per call, quadratic in all (the complexity tradeoff at `Mixer::as_written`,
+/// COMPLEXITY.md row F43). The test holds it to that order, so that it grows no worse.
+#[test]
+fn failing_calls_no_answer_table_takes_are_run_as_written_in_quadratic_time() {
+    deep(|| {
+        let (_, report) = stage::mix(&at_minus_zero(2, F0::Fails), &["main"]);
+        let error = "type error: `>=` applied to `f64`, `int`";
+        let call = |j: usize| {
+            let t = app(var(&f(j)), vec![Term::Lit(Value::float(-0.0))]);
+            format!("{t:?}: {error}")
+        };
+        assert_eq!(left(&report), vec![call(1), call(2)]);
+        let n = 60;
+        let units = scaling::inputs(n, |n| at_minus_zero(n, F0::Fails));
+        scaling::check_order(
+            "stage::mix on n calls at -0.0 of a chain of n functions whose every call fails",
             n,
             2,
             |n| {
@@ -337,6 +374,107 @@ fn what_a_mix_keeps_across_evaluations_does_not_change_what_they_give() {
                     assert_eq!(r.mix(&roots[i]).to_string(), alone[i], "seed {seed}");
                 }
             }
+        }
+    });
+}
+
+/// `h = (g, y) -> g(y) + 1`, then `f0`, `f1`, .. each `(y) -> ..` built from `y + a`,
+/// `y + true` (which fails), calls of earlier functions at `y`, `y + 1`, `y - 1` or a literal,
+/// `if`s over those, a call whose value `+ true` fails after it, and `h(fj, y)`, whose function
+/// argument no answer table takes; and `main = (c) -> (s1 + c, ..)`, each `s` a call `fj(a)` or
+/// `h(fj, a)`. Every function ends; many calls fail, at the function itself or below it.
+fn stub_fail_unit(rng: &mut Rng, n: usize) -> (Unit, Vec<Term>) {
+    fn body(rng: &mut Rng, k: usize, depth: usize) -> Term {
+        let y = || var("y");
+        let call = |rng: &mut Rng| {
+            let arg = match rng.below(4) {
+                0 => y(),
+                1 => prim(Prim::Add, vec![y(), lit(1i64)]),
+                2 => prim(Prim::Sub, vec![y(), lit(1i64)]),
+                _ => lit(rng.int(-2, 3)),
+            };
+            app(var(&f(rng.below(k))), vec![arg])
+        };
+        match rng.below(if k == 0 || depth == 0 { 2 } else { 7 }) {
+            0 => prim(Prim::Add, vec![y(), lit(rng.int(-2, 2))]),
+            1 => prim(Prim::Add, vec![y(), lit(true)]),
+            2 | 3 => call(rng),
+            4 => {
+                let guard = prim(Prim::Ge, vec![y(), lit(rng.int(-1, 2))]);
+                let a = body(rng, k, depth - 1);
+                let b = body(rng, k, depth - 1);
+                if_(guard, a, b)
+            }
+            5 => prim(Prim::Add, vec![call(rng), lit(true)]),
+            _ => app(var("h"), vec![var(&f(rng.below(k))), y()]),
+        }
+    }
+    let h = lam(
+        &["g", "y"],
+        prim(Prim::Add, vec![app(var("g"), vec![var("y")]), lit(1i64)]),
+    );
+    let mut defs = vec![def("h", h)];
+    for k in 0..n {
+        let b = body(rng, k, 3);
+        defs.push(def(&f(k), lam(&["y"], b)));
+    }
+    let calls: Vec<Term> = (0..rng.int(2, 6))
+        .map(|_| {
+            let (j, a) = (rng.below(n), lit(rng.int(-2, 3)));
+            match rng.below(4) {
+                0 => app(var("h"), vec![var(&f(j)), a]),
+                _ => app(var(&f(j)), vec![a]),
+            }
+        })
+        .collect();
+    let site = |t: &Term| prim(Prim::Add, vec![t.clone(), var("c")]);
+    let sites = calls.iter().map(site).collect();
+    defs.push(def("main", lam(&["c"], prim(Prim::Tuple, sites))));
+    (unit(defs), calls)
+}
+
+/// On random chains of functions whose calls fail at many depths, a call whose run with stubs
+/// fails gives what it gives as written: the mixed `main` holds each call's value as written,
+/// or the call itself, left to run with the error the call as written stops with.
+#[test]
+fn calls_that_fail_in_a_chain_give_what_they_give_as_written() {
+    deep(|| {
+        for seed in 0..400u64 {
+            let mut rng = Rng::new(seed);
+            let n = 1 + rng.below(16);
+            let (u, calls) = stub_fail_unit(&mut rng, n);
+            let (mixed, report) = stage::mix(&u, &["main"]);
+            let mut sites = Vec::new();
+            let mut want_left = std::collections::BTreeSet::new();
+            for t in &calls {
+                let closed = u.close(t.clone());
+                let out = match stage::ends(&closed) {
+                    true => {
+                        zed_kernel::eval(&zedc::interp::prelude(closed)).map_err(|e| e.to_string())
+                    }
+                    false => Err(FORM.to_string()),
+                };
+                match out {
+                    Ok(v) => sites.push(prim(Prim::Add, vec![Term::Lit(v), var("c")])),
+                    Err(e) => {
+                        want_left.insert(format!("{t:?}: {e}"));
+                        sites.push(prim(Prim::Add, vec![t.clone(), var("c")]));
+                    }
+                }
+            }
+            let want = lam(&["c"], prim(Prim::Tuple, sites)).to_string();
+            let main = mixed.defs.last().expect("main");
+            assert_eq!(
+                main.term.to_string(),
+                want,
+                "seed {seed} {:?}",
+                left(&report)
+            );
+            // Calls inside the functions are mixed too; only the sites are compared.
+            let site = |s: &String| calls.iter().any(|t| s.starts_with(&format!("{t:?}: ")));
+            let got: std::collections::BTreeSet<String> =
+                left(&report).into_iter().filter(site).collect();
+            assert_eq!(got, want_left, "seed {seed}");
         }
     });
 }
