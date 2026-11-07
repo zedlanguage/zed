@@ -83,12 +83,10 @@ fn a_variable_deep_in_a_payload_in_a_tuple_is_checked_in_linear_time() {
             0,
         ),
     ] {
-        scaling::on_a_thread(1 << 29, || {
-            let units = scaling::inputs(500, |n| Resolved::new(&text(n, arg)));
-            scaling::check_order(what, 500, 1, |n| {
-                let info = units[&n].check();
-                assert_eq!(info.errors.len(), errors, "{what} at {n}");
-            });
+        let units = scaling::inputs(500, |n| Resolved::new(&text(n, arg)));
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), errors, "{what} at {n}");
         });
     }
 }

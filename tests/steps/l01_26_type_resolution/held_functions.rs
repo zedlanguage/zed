@@ -291,15 +291,13 @@ fn atoms_nested_in_atoms_are_checked_in_linear_time() {
             in_atoms_twice_in_a_function,
         ),
     ] {
-        scaling::on_a_thread(1 << 29, || {
-            let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-                .into_iter()
-                .map(|n| (n, Resolved::new(&text(n, "1"))))
-                .collect();
-            scaling::check_order(what, 500, 1, |n| {
-                let info = units[&n].check();
-                assert!(info.errors.is_empty(), "{what} at {n}");
-            });
+        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n, "1"))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{what} at {n}");
         });
     }
 }

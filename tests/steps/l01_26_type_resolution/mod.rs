@@ -9,6 +9,7 @@ mod bounds;
 mod calls;
 mod curried_classes;
 mod deep_scaling;
+mod deep_types;
 mod docs;
 mod fits;
 mod given;

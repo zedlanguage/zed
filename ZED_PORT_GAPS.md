@@ -1853,11 +1853,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A memo keyed by the address of a shared row (`HashMap<*const RowData, Row>`), valid because the input holds every row for the whole walk | `check::ty::Replacer::row`, `once`, `Ty::subst_in`, `Ty::settle_in`, `Sig::settle` | Gap 1 (identity) | The row's content digest as the key, which costs a hash of the outer level per row, or the identity the runtime gives (L6.13a) |
-| A memo keyed by the address of a signature (`HashMap<*const Sig, Arc<Sig>>`) | `Replacer::held` | Gap 1 | As above, with the signature's digest (`Facts`) |
+| A memo keyed by the address of a shared row (`HashMap<*const RowData, Row>`), valid because the input holds every row for the whole walk | `check::ty::Replacer`, `Subst` and `Settle` (the `Rebuild` policies of `rebuild`), `once` | Gap 1 (identity) | The row's content digest as the key, which costs a hash of the outer level per row, or the identity the runtime gives (L6.13a) |
+| A memo keyed by the address of a signature (`HashMap<*const Sig, Arc<Sig>>`) | `Replacer::known_held` | Gap 1 | As above, with the signature's digest (`Facts`) |
 | A set of row addresses as the visited set of a walk (`HashSet<*const ()>`, `Row::addr`) | `Ck::data`, `Ty::vars_outside` (`Vars::outside`) | Gap 1 | As above |
-| A stack of memo frames, pushed when the walk enters a signature that hides variables and popped when it leaves, with a counting map of the hidden variables | `Replacer::held`, `Replacer::hidden`, `Replacer::memos` | Expressible | A list of maps threaded as state, and a map from variable to count; no new form |
-| Closures that change captured state, passed as `impl FnMut` to `Shape::map`, `Ty::map_payloads` and `Need::map_tys`, so a walk's memo is shared by its calls | `check::ty` | Workaround (gap 2) | Thread the memo as an argument and result through the map, or a state receiver |
+| A stack of memo frames, pushed when the walk enters a signature that hides variables and popped when it leaves, with a counting map of the hidden variables | `Replacer::known_held`, `made_held`, `Replacer::hidden`, `Replacer::memos` | Expressible | A list of maps threaded as state, and a map from variable to count; no new form |
+| Closures that change captured state, passed as `impl FnMut` to `Ty::map_payloads` and `Need::map_tys`, so a walk's memo, or the stack of results it draws from, is shared by its calls | `check::ty` | Workaround (gap 2) | Thread the memo as an argument and result through the map, or a state receiver |
 
 ## Entries from FLOAT-minmax (`zed-kernel/src/eval.rs`, `zedc-base/src/axioms.rs`, `zed-native/src/codegen.rs`)
 
@@ -1921,6 +1921,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | An explicit stack of a borrowing enum (`Walk<'a>`: a type, a row or a shape) whose newly pushed items are reversed in place (`stack[from..].reverse()`) so they pop in the order a recursive walk visits them | `check::ty::Ty::vars_outside`, `Sig::first_seen` | Mutation | A fold over a list used as a stack, items prepended in visit order; the borrowed references are shared values |
 | A visited set of row and shape addresses (`HashSet<*const ()>` from `Row::addr`, `Shape::as_ptr`) local to one walk | `check::ty::Sig::first_seen` | Identity (gap 1) | As for ATOM-nested-sq: the node's digest as the key, confirmed by contents |
+
+## Entries from TY-subst-stacks (`zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A trait with one hook per node kind (`Rebuild`: `known_ty`, `known_row`, `made_row`, `known_shape`, `made_shape`, `known_held`, `made_held`, `binding`), implemented by three local structs and passed as `&mut impl Rebuild` to one walk | `rebuild`, `rebuild_ty`, `rebuild_held`, `rebuild_tys`; `Replacer`, `Subst`, `Settle` | Interfaces (L10) | A record of functions over the walk's state, the state returned with each result |
+| An explicit stack of a borrowing enum of steps and done steps (`Step<'a>`), its new items reversed in place, with one result stack per node kind (`Rebuilt`) drained by `split_off` and `drain` when a done step is popped | `rebuild` | Mutation | A fold over a list used as a stack, items prepended in visit order, the results a list per kind threaded as state |
+| `Cow<'_, Ty>` for a binding that is either borrowed from the map or made | `Rebuild::binding` | Expressible | A shared value; the copy is free |
+| Moving fields out of a shared node in drop: `Arc::into_inner` of a signature destructured by fields, `OnceLock::take` of its settled form and `Option::take` of a row's or shape's held and unchecked signatures, so the explicit drop stack owns them | `drop_types`, `Drop for RowData`, `Drop for ShapeData`, `Need::into_tys` | Mutation; no destructors | No code: the runtime frees the type, and its free must not recurse in the depth of the data, as for the drops of K39 |
 
 ## Entries from ORACLE-cones (`tests/src/oracle.rs`, `tests/steps/l01_37_oracle/scaling.rs`)
 
