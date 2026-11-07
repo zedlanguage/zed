@@ -2165,7 +2165,7 @@ impl Keyed {
     }
 }
 
-/// The keys of each column of `row` ([`file`]), and the column with fewest keys among those
+/// The keys of each column of `row` ([`file()`]), and the column with fewest keys among those
 /// that list every value they hold: a tuple none of whose components there is a key is not in
 /// the row. A column is first filed by its tuple types, and by its boxes only when that does
 /// not list its values, since a box is made by walking the type's diagram.
