@@ -819,19 +819,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         let plain = result
             .without_loose()
             .union(&result.of_piece(&Piece::Set(kept)));
-        Sig {
-            arrows: vec![
-                Arrow {
-                    params: tys,
-                    result: plain,
-                },
-                Arrow {
-                    params: wide,
-                    result,
-                },
-            ],
-            ..Sig::one(params, Vec::new(), Ty::empty())
-        }
+        let mut sig = Sig::one(params, Vec::new(), Ty::empty());
+        sig.arrows = vec![
+            Arrow {
+                params: tys,
+                result: plain,
+            },
+            Arrow {
+                params: wide,
+                result,
+            },
+        ];
+        sig
     }
 
     /// The loose atoms that may reach the value of `body`, a function's body, from elsewhere
@@ -2295,10 +2294,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         span: Span,
     ) -> bool {
-        let bare = Sig {
-            needs: Vec::new(),
-            ..(**s).clone()
-        };
+        let mut bare = (**s).clone();
+        bare.needs = Vec::new();
         let [q] = p.fns.iter().collect::<Vec<_>>()[..] else {
             return false;
         };
@@ -6666,28 +6663,77 @@ struct Reading {
     params: bool,
 }
 
+/// A step of [`Denote::ty`], on the stack it keeps: a written type nests as deep as the program,
+/// so the walk keeps its own stack rather than the thread's.
+enum Step<'a> {
+    /// Denote this type, pushing its value or the steps that make it.
+    Ty(&'a Type),
+    /// Make the value of this type from the values of its parts, the last on the value stack.
+    Make(&'a Type),
+    /// Make the value of an intersection from the values of its operands, the given number
+    /// last on the value stack, as one function's arrows if the flag says so.
+    And(usize, bool),
+    /// [`Denote::open_params`].
+    Open,
+    /// [`Denote::close_params`].
+    Close,
+    /// Restore what the variables of a `for` clause were bounded by around it.
+    Unbind(Vec<(&'a str, Option<(u8, usize)>)>),
+}
+
 impl<'a> Denote<'a> {
+    /// The type `t` denotes. The parts of each type are denoted in written order and each type
+    /// is made after its parts, as a recursive walk would, on a stack of steps and a stack of
+    /// values: the time is linear in the size of `t`, and the thread's stack does not grow with
+    /// its depth.
     fn ty(&mut self, t: &'a Type) -> Ty {
-        match &t.kind {
+        // Complexity tradeoff: the same order, at a constant factor in instructions. With
+        // `Sig::facts`, `Sig::digest` and the drop of a signature, which keep stacks of their own
+        // too (TY-write-stack), checking three function types written 64,000 deep took 54.1 G
+        // instructions against 52.8 G recursive (+2.6%, perf stat, whole test, 2026-11-07).
+        let mut steps = vec![Step::Ty(t)];
+        let mut vals: Vec<Ty> = Vec::new();
+        while let Some(step) = steps.pop() {
+            match step {
+                Step::Ty(t) => self.enter(t, &mut steps, &mut vals),
+                Step::Make(t) => {
+                    let v = self.make(t, &mut vals);
+                    vals.push(v);
+                }
+                Step::And(n, overload) => {
+                    let ts = vals.split_off(vals.len() - n);
+                    vals.push(and(ts, overload));
+                }
+                Step::Open => self.open_params(),
+                Step::Close => self.close_params(),
+                Step::Unbind(outer) => {
+                    for (v, was) in outer {
+                        match was {
+                            Some(was) => self.bound.insert(v, was),
+                            None => self.bound.remove(v),
+                        };
+                    }
+                }
+            }
+        }
+        let t = vals.pop().expect("a type denotes one value");
+        debug_assert!(vals.is_empty(), "each part's value is taken by its type");
+        t
+    }
+
+    /// Pushes the value of `t` to `vals` if it has no parts, or else the steps that denote its
+    /// parts and make it to `steps`, last step first.
+    fn enter(&mut self, t: &'a Type, steps: &mut Vec<Step<'a>>, vals: &mut Vec<Ty>) {
+        let leaf = match &t.kind {
             TypeKind::Apply(..) | TypeKind::Record(_) => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             // Resolve rejects a written one until L2.5; the reader of printed types reads one,
             // since the checker builds atoms with payloads from L1 on (L29-print).
-            TypeKind::AtomApply(a, ps) => {
-                let (mut items, mut fields) = (Vec::new(), BTreeMap::new());
-                for p in ps {
-                    match &p.name {
-                        Some(n) if !p.positional => {
-                            fields.insert(n.as_str().into(), self.ty(&p.ty));
-                        }
-                        _ => items.push(self.ty(&p.ty)),
-                    }
-                }
-                let mut t = Ty::set(KType::atom_with(a, &KType::top()));
-                t.payloads
-                    .insert(a.as_str().into(), Some(vec![Shape::new(items, fields)]));
-                t
+            TypeKind::AtomApply(_, ps) => {
+                steps.push(Step::Make(t));
+                steps.extend(ps.iter().rev().map(|p| Step::Ty(&p.ty)));
+                return;
             }
             TypeKind::Array(_) => unreachable!("resolve rejects the forms of layer L3"),
             TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
@@ -6722,10 +6768,10 @@ impl<'a> Denote<'a> {
             TypeKind::Every(Every::Struct) => Ty::set(KType::universe(Universe::Struct)),
             // The kernel set holds the atom with any payload, and no shape is known.
             TypeKind::AtomAny(a) => Ty::set(KType::atom_with(a, &KType::top())),
-            TypeKind::Tuple(ts) => Ty::tuple(ts.iter().map(|t| self.ty(t)).collect()),
-            TypeKind::Union(ts) => {
-                let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
-                Ty::union_all(&ts)
+            TypeKind::Tuple(ts) | TypeKind::Union(ts) => {
+                steps.push(Step::Make(t));
+                steps.extend(ts.iter().rev().map(Step::Ty));
+                return;
             }
             // Function types that share a parameter list are one function's arrows, in written
             // order, an intersection in parentheses among them included; resolve rejects
@@ -6733,67 +6779,26 @@ impl<'a> Denote<'a> {
             // gathered in one list.
             TypeKind::And(ts) => {
                 let ts = Type::and_operands(ts);
-                if Type::overload(&ts) == Ok(true) {
-                    let mut sigs = ts.iter().map(|t| self.ty(t)).map(|mut t| {
-                        let s = t.fns.pop().expect("a function type denotes one signature");
-                        Arc::unwrap_or_clone(s)
-                    });
-                    let mut sig = sigs.next().expect("an intersection has operands");
-                    for s in sigs {
-                        sig.arrows.extend(s.arrows);
-                        sig.bounds.extend(s.bounds);
-                        sig.own.extend(s.own);
-                        sig.held.extend(s.held);
-                    }
-                    return Ty::func(Arc::new(sig));
-                }
-                let ts: Vec<Ty> = ts.iter().map(|t| self.ty(t)).collect();
-                // An intersection of function types of one arity is one function with each
-                // of their arrows, in order, as a signature of several arrows prints.
-                let sigs: Option<Vec<Arc<Sig>>> = ts.iter().map(only_fn).collect();
-                if let Some([first, rest @ ..]) = sigs.as_deref()
-                    && rest.iter().all(|s| s.params.len() == first.params.len())
-                {
-                    let mut sig = (**first).clone();
-                    for s in rest {
-                        sig.arrows.extend(s.arrows.iter().cloned());
-                        sig.bounds
-                            .extend(s.bounds.iter().map(|(v, m)| (v.clone(), *m)));
-                        sig.own.extend(s.own.iter().cloned());
-                        sig.held.extend(s.held.iter().cloned());
-                        sig.needs.extend(s.needs.iter().cloned());
-                    }
-                    return Ty::func(Arc::new(sig));
-                }
-                let mut ts = ts.into_iter();
-                let first = ts.next().unwrap_or_else(Ty::dynamic);
-                ts.fold(first, |a, b| a.meet(&b))
+                steps.push(Step::And(ts.len(), Type::overload(&ts) == Ok(true)));
+                steps.extend(ts.into_iter().rev().map(Step::Ty));
+                return;
             }
             TypeKind::Diff(a, b) => {
-                let (a, b) = (self.ty(a), self.ty(b));
-                a.diff(&b)
+                steps.extend([Step::Make(t), Step::Ty(b), Step::Ty(a)]);
+                return;
             }
             TypeKind::Arrow { params, result, .. } => {
-                self.open_params();
-                let tys = params.iter().map(|p| self.ty(&p.ty)).collect();
-                self.close_params();
-                let result = self.ty(result);
-                let names = params
-                    .iter()
-                    .map(|p| SParam {
-                        name: p.name.clone().unwrap_or_default().into(),
-                        positional: p.positional || p.name.is_none(),
-                        default: None,
-                    })
-                    .collect();
-                self.sig(names, tys, result)
+                steps.extend([Step::Make(t), Step::Ty(result), Step::Close]);
+                steps.extend(params.iter().rev().map(|p| Step::Ty(&p.ty)));
+                steps.push(Step::Open);
+                return;
             }
             // Each variable is bounded on the outermost signature that names it, which resolve
             // found to hold its every use: a call of that function binds it to one carrier of
             // the bound (DESIGN.md sec:type_language, sec:type_resolution).
             TypeKind::For { ty, bounds } => {
                 let depth = self.open.len();
-                let outer: Vec<(&'a str, Option<(u8, usize)>)> = bounds
+                let outer = bounds
                     .iter()
                     .map(|b| {
                         let mask = carrier_mask(&b.carriers)
@@ -6804,28 +6809,79 @@ impl<'a> Denote<'a> {
                         )
                     })
                     .collect();
-                let t = self.ty(ty);
-                for (v, was) in outer {
-                    match was {
-                        Some(was) => self.bound.insert(v, was),
-                        None => self.bound.remove(v),
-                    };
-                }
-                t
+                steps.extend([Step::Unbind(outer), Step::Ty(ty)]);
+                return;
             }
             // This checker keeps one domain per function: the permission.
             TypeKind::Bounded { upper, result, .. } => {
-                self.open_params();
+                steps.extend([
+                    Step::Make(t),
+                    Step::Ty(result),
+                    Step::Close,
+                    Step::Ty(upper),
+                    Step::Open,
+                ]);
+                return;
+            }
+        };
+        vals.push(leaf);
+    }
+
+    /// The value of `t`, a type with parts, made from the values of its parts, which are the
+    /// last on `vals` and are taken from it.
+    fn make(&mut self, t: &'a Type, vals: &mut Vec<Ty>) -> Ty {
+        match &t.kind {
+            TypeKind::AtomApply(a, ps) => {
+                let (mut items, mut fields) = (Vec::new(), BTreeMap::new());
+                for (p, v) in ps.iter().zip(vals.drain(vals.len() - ps.len()..)) {
+                    match &p.name {
+                        Some(n) if !p.positional => {
+                            fields.insert(n.as_str().into(), v);
+                        }
+                        _ => items.push(v),
+                    }
+                }
+                let mut t = Ty::set(KType::atom_with(a, &KType::top()));
+                t.payloads
+                    .insert(a.as_str().into(), Some(vec![Shape::new(items, fields)]));
+                t
+            }
+            TypeKind::Tuple(ts) => Ty::tuple(vals.split_off(vals.len() - ts.len())),
+            TypeKind::Union(ts) => {
+                let from = vals.len() - ts.len();
+                let t = Ty::union_all(&vals[from..]);
+                vals.truncate(from);
+                t
+            }
+            TypeKind::Diff(..) => {
+                let b = vals.pop().expect("a difference's operands are denoted");
+                let a = vals.pop().expect("a difference's operands are denoted");
+                a.diff(&b)
+            }
+            TypeKind::Arrow { params, .. } => {
+                let result = vals.pop().expect("a function type's result is denoted");
+                let tys = vals.split_off(vals.len() - params.len());
+                let names = params
+                    .iter()
+                    .map(|p| SParam {
+                        name: p.name.clone().unwrap_or_default().into(),
+                        positional: p.positional || p.name.is_none(),
+                        default: None,
+                    })
+                    .collect();
+                self.sig(names, tys, result)
+            }
+            TypeKind::Bounded { .. } => {
+                let result = vals.pop().expect("a bounded function's result is denoted");
+                let upper = vals.pop().expect("a bounded function's bound is denoted");
                 let names = vec![SParam {
                     name: String::new().into(),
                     positional: true,
                     default: None,
                 }];
-                let tys = vec![self.ty(upper)];
-                self.close_params();
-                let result = self.ty(result);
-                self.sig(names, tys, result)
+                self.sig(names, vec![upper], result)
             }
+            _ => unreachable!("only a type with parts is made from them"),
         }
     }
 
@@ -6855,6 +6911,46 @@ impl<'a> Denote<'a> {
         sig.held = open.held;
         Ty::func(Arc::new(sig))
     }
+}
+
+/// The value of an intersection of the types `ts`, its operands in written order: one function
+/// with each operand's arrows if `overload` says they share a parameter list ([`Type::overload`]),
+/// and otherwise their meet.
+fn and(ts: Vec<Ty>, overload: bool) -> Ty {
+    if overload {
+        let mut sigs = ts.into_iter().map(|mut t| {
+            let s = t.fns.pop().expect("a function type denotes one signature");
+            Arc::unwrap_or_clone(s)
+        });
+        let mut sig = sigs.next().expect("an intersection has operands");
+        for mut s in sigs {
+            sig.arrows.append(&mut s.arrows);
+            sig.bounds.append(&mut s.bounds);
+            sig.own.append(&mut s.own);
+            sig.held.append(&mut s.held);
+        }
+        return Ty::func(Arc::new(sig));
+    }
+    // An intersection of function types of one arity is one function with each of their
+    // arrows, in order, as a signature of several arrows prints.
+    let sigs: Option<Vec<Arc<Sig>>> = ts.iter().map(only_fn).collect();
+    if let Some([first, rest @ ..]) = sigs.as_deref()
+        && rest.iter().all(|s| s.params.len() == first.params.len())
+    {
+        let mut sig = (**first).clone();
+        for s in rest {
+            sig.arrows.extend(s.arrows.iter().cloned());
+            sig.bounds
+                .extend(s.bounds.iter().map(|(v, m)| (v.clone(), *m)));
+            sig.own.extend(s.own.iter().cloned());
+            sig.held.extend(s.held.iter().cloned());
+            sig.needs.extend(s.needs.iter().cloned());
+        }
+        return Ty::func(Arc::new(sig));
+    }
+    let mut ts = ts.into_iter();
+    let first = ts.next().unwrap_or_else(Ty::dynamic);
+    ts.fold(first, |a, b| a.meet(&b))
 }
 
 #[cfg(test)]

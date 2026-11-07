@@ -333,19 +333,8 @@ fn drop_types(mut tys: Vec<Ty>, sigs: impl IntoIterator<Item = Arc<Sig>>) {
     let mut sigs: Vec<Arc<Sig>> = sigs.into_iter().collect();
     loop {
         if let Some(s) = sigs.pop() {
-            if let Some(s) = Arc::into_inner(s) {
-                let Sig {
-                    arrows,
-                    needs,
-                    mut facts,
-                    ..
-                } = s;
-                for a in arrows {
-                    tys.extend(a.params);
-                    tys.push(a.result);
-                }
-                tys.extend(needs.into_iter().flat_map(Need::into_tys));
-                sigs.extend(facts.1.take());
+            if let Some(mut s) = Arc::into_inner(s) {
+                s.take_parts(&mut tys, &mut sigs);
             }
             continue;
         }
@@ -368,6 +357,34 @@ fn drop_types(mut tys: Vec<Ty>, sigs: impl IntoIterator<Item = Arc<Sig>>) {
                 sigs.extend([d.held.take(), d.unchecked.take()].into_iter().flatten());
             }
         }
+    }
+}
+
+impl Drop for Sig {
+    /// Drops its arrows, needs and settled signature on a stack of their own, as a row does:
+    /// a function type nests functions as deep as the program, and the drop glue would recurse
+    /// once per level through `Arc<Sig>` (8,000 nested lambdas overflowed a 2 MiB stack).
+    fn drop(&mut self) {
+        let (mut tys, mut sigs) = (Vec::new(), Vec::new());
+        self.take_parts(&mut tys, &mut sigs);
+        drop_types(tys, sigs);
+    }
+}
+
+impl Sig {
+    /// Moves the types and signatures it holds to `tys` and `sigs`, for [`drop_types`]: the
+    /// types of its arrows and needs, and the signature it was settled into.
+    fn take_parts(&mut self, tys: &mut Vec<Ty>, sigs: &mut Vec<Arc<Sig>>) {
+        for a in std::mem::take(&mut self.arrows) {
+            tys.extend(a.params);
+            tys.push(a.result);
+        }
+        tys.extend(
+            std::mem::take(&mut self.needs)
+                .into_iter()
+                .flat_map(Need::into_tys),
+        );
+        sigs.extend(self.facts.1.take());
     }
 }
 
@@ -1413,6 +1430,30 @@ impl Need {
             .chain(positional)
             .chain(named.iter().map(|(_, t)| t))
             .chain(&self.result)
+    }
+
+    /// Every type in it, those [`Need::tys`] leaves out too, as its hash reads them.
+    fn every_ty(&self) -> Vec<&Ty> {
+        let more: Vec<&Ty> = match &self.kind {
+            NeedKind::Destructure { .. }
+            | NeedKind::Data(_)
+            | NeedKind::Payload { .. }
+            | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
+            NeedKind::Component { key: t, .. }
+            | NeedKind::Index(t)
+            | NeedKind::Into { ty: t, .. }
+            | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
+            NeedKind::Call {
+                positional, named, ..
+            } => positional
+                .iter()
+                .chain(named.iter().map(|(_, t)| t))
+                .collect(),
+        };
+        std::iter::once(&self.on)
+            .chain(more)
+            .chain(&self.result)
+            .collect()
     }
 
     /// Every type in it, its own, for [`drop_types`].
@@ -4131,17 +4172,72 @@ impl Sig {
     /// whole, a set of the functions of `g(0)(1)…(n)` cost the depth of each (CHK-carrier).
     pub fn digest(&self) -> u64 {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        *self.facts.2.get_or_init(|| {
-            let parts = (&self.params, &self.arrows, &self.bounds, self.data);
-            let more = (&self.needs, &self.own, &self.held, self.named);
-            BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
-        })
+        let hash = |s: &Sig| {
+            *s.facts.2.get_or_init(|| {
+                let parts = (&s.params, &s.arrows, &s.bounds, s.data);
+                let more = (&s.needs, &s.own, &s.held, s.named);
+                BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
+            })
+        };
+        if let Some(&d) = self.facts.2.get() {
+            return d;
+        }
+        // The hashes of the functions it holds that lack one are made first, deepest first, as
+        // for its facts ([`Sig::facts`]).
+        for s in self.held_without(true, |s| s.facts.2.get().is_none()) {
+            hash(s);
+        }
+        hash(self)
     }
 
     /// The variables it holds at any depth: worked out at the first call, so it is asked of
     /// a signature held in a type, which no longer changes.
     pub fn facts(&self) -> &VarFacts {
+        if let Some(f) = self.facts.0.get() {
+            return f;
+        }
+        // The facts of a signature are made from those of the functions it holds, so those
+        // that lack them are worked out first, deepest first, on a stack of its own: asked of
+        // the outermost of a nest of n functions, the facts would otherwise recurse n deep.
+        for s in self.held_without(false, |s| s.facts.0.get().is_none()) {
+            s.facts.0.get_or_init(|| VarFacts::of(s));
+        }
         self.facts.0.get_or_init(|| VarFacts::of(self))
+    }
+
+    /// The signatures of the functions it holds at any depth for which `lacks` holds, each
+    /// after those it holds and once: the walk stops at a signature for which `lacks` fails,
+    /// so it costs the signatures returned and their parts. It looks in the types of the
+    /// arrows and in those of the needs that [`Need::tys`] gives, or in every type of each
+    /// need if `whole`. A row or payload keeps what it holds worked out when it is built.
+    fn held_without<'s>(&'s self, whole: bool, lacks: impl Fn(&Sig) -> bool) -> Vec<&'s Sig> {
+        let fns = |s: &'s Sig| -> Vec<&'s Sig> {
+            let arrows = s
+                .arrows
+                .iter()
+                .flat_map(|a| a.params.iter().chain([&a.result]));
+            let needs = s.needs.iter().flat_map(|n| match whole {
+                true => n.every_ty(),
+                false => n.tys().collect(),
+            });
+            arrows
+                .chain(needs)
+                .flat_map(|t| t.fns.iter().map(|f| &**f))
+                .collect()
+        };
+        let (mut seen, mut order) = (HashSet::new(), Vec::new());
+        // Each signature is entered with the signatures it holds still to visit, and left
+        // once they are done.
+        let mut stack: Vec<(&Sig, Vec<&Sig>)> = vec![(self, fns(self))];
+        while let Some((_, todo)) = stack.last_mut() {
+            match todo.pop() {
+                Some(s) if lacks(s) && seen.insert(s as *const Sig) => stack.push((s, fns(s))),
+                Some(_) => {}
+                None => order.extend(stack.pop().map(|(s, _)| s)),
+            }
+        }
+        order.pop(); // `self`, left last.
+        order
     }
 
     /// It with each class variable `solve` gives a type replaced by that type at every depth:
@@ -5017,16 +5113,12 @@ mod tests {
             ("rotated", rotated),
             ("shuffled", shuffled),
         ] {
-            let p = Sig {
-                arrows,
-                ..s.clone()
-            };
+            let mut p = s.clone();
+            p.arrows = arrows;
             assert_eq!(fits_sig(&p, q), verdict, "{what}: s {how}: {q} in {s}");
         }
-        let q_reversed = Sig {
-            arrows: q.arrows.iter().rev().cloned().collect(),
-            ..q.clone()
-        };
+        let mut q_reversed = q.clone();
+        q_reversed.arrows.reverse();
         assert_eq!(
             fits_sig(s, &q_reversed),
             verdict,

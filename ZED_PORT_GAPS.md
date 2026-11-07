@@ -2430,3 +2430,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashSet<Atom>` per part merged small into large inside a fold that also inserts into a captured set, and `HashMap::entry(..).or_insert(..)` counters per atom | `extend::joined`, `extend::split` | Mutation (gap 11) | A fold returning the set or map with the result |
 | A local `#[derive(PartialEq, Eq, Hash)] struct Congruence` turned into a `Con` key with a placeholder atom `Atom::Product(Aux(u32::MAX), Aux(u32::MAX))` | `Congruence::key`, `extend::clause_key` | None | A record or union value used as the key directly |
 | `Model` (`HashMap<Atom, Int>`) filled in place by `solved` before a check | `extend::solved`, `extend::met` | Mutation (gap 11) | `solved` returns the extended map |
+
+## Entries from TY-write-stack (`crates/zedc-check/src/check/mod.rs`, `crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A post-order walk of a written type on a `Vec` of steps (`enum Step<'a>` borrowing the type's nodes) and a `Vec` of values, the parts of each node taken off the value stack with `split_off`, `drain` and `truncate` | `Denote::ty`, `Denote::enter`, `Denote::make`, `and` | Borrowed references with a lifetime in a sum type; mutation of growable vectors (gap 11) | A fold over the type with the step stack as a list value, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)) |
+| `impl Drop for Sig` that moves its fields out with `std::mem::take` and drops the `Arc`s whose count is 1 in a loop (`Arc::into_inner`) | `Drop for Sig`, `Sig::take_parts`, `drop_types` | No destructors and no reference counts in Zed's surface; the drop of a deep value is the runtime's | The runtime frees nested values without recursion; nothing at the port |
+| Values worked out at first use in `OnceLock`s, filled for the held signatures first by a post-order walk with an explicit stack and a `HashSet` of `*const Sig` as the visited set | `Sig::facts`, `Sig::digest`, `Sig::held_without` | Interior mutation of a shared value; identity by pointer | A memo keyed by the signature's identity in the runtime, or the facts made when the signature is built |

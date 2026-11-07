@@ -460,24 +460,17 @@ fn passing_a_function_of_many_bounded_variables_scales() {
 
 #[test]
 fn nested_bounds_clauses_scale() {
-    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
-    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            assert!(
-                resolve_errors(&nested(3)).is_empty(),
-                "{:?}",
-                resolve_errors(&nested(3))
-            );
-            assert_eq!(fmt(&nested(400)), nested(400));
-            // The check alone is timed: the formatter's linear work would hide a walk of each
-            // clause's whole type, quadratic in the depth.
-            check_scales("n nested bounds clauses", 400, nested);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
+    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
+    assert!(
+        resolve_errors(&nested(3)).is_empty(),
+        "{:?}",
+        resolve_errors(&nested(3))
+    );
+    assert_eq!(fmt(&nested(400)), nested(400));
+    // The check alone is timed: the formatter's linear work would hide a walk of each
+    // clause's whole type, quadratic in the depth.
+    check_scales("n nested bounds clauses", 400, nested);
 }
 
 /// `p` calls its argument on an int; `p_wide` on an int and on an f64.
@@ -554,31 +547,24 @@ fn a_bounded_variable_only_in_the_result_gives_its_whole_bound() {
 fn printing_a_deep_function_type_scales() {
     // Each function type is written in place: building each part as a string and copying it
     // into the whole cost O(n^2) for n nested function types.
-    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
-    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            let inputs: std::collections::HashMap<usize, _> = [800, 6400]
-                .into_iter()
-                .map(|n| {
-                    let (info, names) = info(&nested(n));
-                    let (_, s) = info
-                        .sigs
-                        .iter()
-                        .find(|(id, _)| names[**id] == "h")
-                        .expect("h");
-                    (n, s.clone())
-                })
-                .collect();
-            assert!(inputs[&800].to_string().ends_with(" -> 0"));
-            zed_tests::scaling::check("printing n nested function types", 800, |n| {
-                assert!(!inputs[&n].to_string().is_empty());
-            });
+    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
+    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
+    let inputs: std::collections::HashMap<usize, _> = [800, 6400]
+        .into_iter()
+        .map(|n| {
+            let (info, names) = info(&nested(n));
+            let (_, s) = info
+                .sigs
+                .iter()
+                .find(|(id, _)| names[**id] == "h")
+                .expect("h");
+            (n, s.clone())
         })
-        .unwrap()
-        .join()
-        .unwrap();
+        .collect();
+    assert!(inputs[&800].to_string().ends_with(" -> 0"));
+    zed_tests::scaling::check("printing n nested function types", 800, |n| {
+        assert!(!inputs[&n].to_string().is_empty());
+    });
 }
 
 #[test]
@@ -670,38 +656,24 @@ fn passed_deep(n: usize, bounded: bool) -> String {
 
 #[test]
 fn passing_a_deep_function_type_as_itself_scales() {
-    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
-    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            check_scales("a function type n deep passed as itself", 400, |n| {
-                passed_deep(n, false)
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
+    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
+    check_scales("a function type n deep passed as itself", 400, |n| {
+        passed_deep(n, false)
+    });
 }
 
 #[test]
 fn passing_a_deep_bounded_function_type_as_itself_scales() {
-    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
-    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            let e = type_errors(&passed_deep(3, true));
-            assert!(e.is_empty(), "{e:?}");
-            check_scales(
-                "a function type n deep, a bound at each level, passed as itself",
-                400,
-                |n| passed_deep(n, true),
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
+    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
+    let e = type_errors(&passed_deep(3, true));
+    assert!(e.is_empty(), "{e:?}");
+    check_scales(
+        "a function type n deep, a bound at each level, passed as itself",
+        400,
+        |n| passed_deep(n, true),
+    );
 }
 
 /// Functions with bounded variables passed where other bounded function types are expected.

@@ -61,37 +61,26 @@ fn negations_and_calls_8000_deep_check_on_a_2_mib_stack() {
     checks_deep(&["nested negations", "nested calls"], 1_000);
 }
 
-/// Checks the program of `shape` 1,000 deep on a 2 MiB stack, then `n` and `8n` deep and
-/// checks the time is linear, on a 512 MiB stack: printing a type recurses on its nesting
-/// (`Ty::write`, for the text of each binding's origin), and overflows 2 MiB below 8,000 deep;
-/// at 8,000 nested lambdas the drop of their type, recursive through `Arc<Sig>`, overflows it
-/// too (gdb, TY-sub-stack, 2026-11-07). Nested tuples fit 2 MiB.
+/// Checks the program of `shape` `n` and `8n` deep on a 2 MiB stack and checks the time is
+/// linear. Until TY-write-stack this ran on a 512 MiB stack: at 8,000 nested lambdas the drop
+/// of their type recursed through each `Arc<Sig>` and overflowed 2 MiB (gdb, TY-sub-stack);
+/// a signature is now dropped on a stack of its own (`Drop for Sig`).
 fn checks_linear(shape: &str, n: usize) {
     use zed_tests::deep::{on_small_stack, program, statements};
-    let stmts = statements(&program(shape, 1_000).text);
-    let res = zedc::resolve::resolve(&stmts).unwrap();
-    on_small_stack(|| assert!(zedc::check::check(&stmts, &res).errors.is_empty()));
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(1 << 29);
-        thread
-            .spawn_scoped(scope, || {
-                let small = statements(&program(shape, n).text);
-                let large = statements(&program(shape, 8 * n).text);
-                let small_res = zedc::resolve::resolve(&small).unwrap();
-                let large_res = zedc::resolve::resolve(&large).unwrap();
-                scaling::check_order(&format!("checking {shape}"), n, 1, |k| {
-                    let (stmts, res) = if k == n {
-                        (&small, &small_res)
-                    } else {
-                        (&large, &large_res)
-                    };
-                    let info = zedc::check::check(stmts, res);
-                    assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
-                });
-            })
-            .unwrap()
-            .join()
-            .unwrap()
+    on_small_stack(|| {
+        let small = statements(&program(shape, n).text);
+        let large = statements(&program(shape, 8 * n).text);
+        let small_res = zedc::resolve::resolve(&small).unwrap();
+        let large_res = zedc::resolve::resolve(&large).unwrap();
+        scaling::check_order(&format!("checking {shape}"), n, 1, |k| {
+            let (stmts, res) = if k == n {
+                (&small, &small_res)
+            } else {
+                (&large, &large_res)
+            };
+            let info = zedc::check::check(stmts, res);
+            assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
+        });
     });
 }
 
@@ -149,22 +138,6 @@ fn curried_type(n: usize, result: zedc::check::ty::Ty) -> zedc::check::ty::Ty {
     })
 }
 
-/// Takes `t` apart level by level: dropping it whole recurses through each `Arc<Sig>` and
-/// overflows a 2 MiB stack near 8,000 deep, which is not what the test below is about.
-fn take_apart(t: zedc::check::ty::Ty) {
-    let mut stack = vec![t];
-    while let Some(mut t) = stack.pop() {
-        for s in std::mem::take(&mut t.fns) {
-            if let Ok(s) = std::sync::Arc::try_unwrap(s) {
-                for a in s.arrows {
-                    stack.push(a.result);
-                    stack.extend(a.params);
-                }
-            }
-        }
-    }
-}
-
 #[test]
 fn function_types_nested_16000_deep_compare_on_a_2_mib_stack() {
     // The comparison of function types (`Ty::sub`, `fits_sig` and the cover of rule 6 of
@@ -187,11 +160,60 @@ fn function_types_nested_16000_deep_compare_on_a_2_mib_stack() {
             let (narrow, wide) = &built[&m];
             assert!(narrow.subtype(wide), "{m} deep");
         });
-        for (narrow, wide) in built.into_values() {
-            take_apart(narrow);
-            take_apart(wide);
-        }
     });
+}
+
+/// Programs with a function type written `n` deep: `p(g: t) = 0; q(f: t) = p(g: f);` for `t`
+/// the type `(h: … (x: int) -> int …) -> int`, the same with a bounded result variable at each
+/// level, and `h(g: t)` for `t` a nest of `n` bounds clauses `(… T0 -> T0 for T0 in int …) ->
+/// Tk for Tk in f64`.
+fn written_deep(n: usize) -> [String; 3] {
+    let (mut plain, mut bounded) = (String::from("(x: int) -> int"), String::new());
+    bounded.push_str(&plain);
+    for i in 0..n {
+        plain = format!("(h{i}: {plain}) -> int");
+        bounded = format!("((h{i}: {bounded}) -> T{i} for T{i} in int)");
+    }
+    let mut clauses = "(".repeat(n - 1);
+    clauses.push_str("T0 -> T0 for T0 in int");
+    for i in 1..n {
+        clauses.push_str(&format!(") -> T{i} for T{i} in f64"));
+    }
+    let passed = |t: &str| format!("p(g: {t}) = 0;\nq(f: {t}) = p(g: f);\n");
+    [
+        passed(&plain),
+        passed(&bounded),
+        format!("h(g: {clauses}) = 0;\n"),
+    ]
+}
+
+/// Resolves and checks each of [`written_deep`]`(n)`, its types denoted, their variables
+/// gathered, printed and dropped, on the thread it is called on.
+fn checks_written(n: usize) {
+    for text in written_deep(n) {
+        let stmts = zed_tests::deep::statements(&text);
+        let res = zedc::resolve::resolve(&stmts).unwrap();
+        let info = zedc::check::check(&stmts, &res);
+        assert!(info.errors.is_empty(), "{n} deep: {:?}", info.errors);
+        assert!(info.sigs.values().all(|s| !s.to_string().is_empty()));
+    }
+}
+
+#[test]
+fn function_types_written_16000_deep_check_on_a_2_mib_stack() {
+    // The denotation of a written type (`Denote::ty`, zedc-check) recursed once per level of
+    // its nesting, and so did the variables of a signature, gathered from those of the
+    // functions it holds (`Sig::facts`): each overflowed this stack at 3,200 deep and needed
+    // 1 GiB (TY-sub-stack). Each now keeps a stack of its own (TY-write-stack).
+    zed_tests::deep::on_small_stack(|| checks_written(16_000));
+}
+
+#[test]
+fn function_types_written_64000_deep_check_on_an_8_mib_stack() {
+    // The 8 MiB stack of a main thread, on which zedc checks a program (the post-batch TODO):
+    // four times as deep as on 2 MiB, so a recursion of one frame of 128 bytes a level would
+    // overflow it too.
+    zed_tests::deep::on_main_sized_stack(|| checks_written(64_000));
 }
 
 /// `x = bitAnd(bitAnd(… bitAnd(1, 1) …, 1), 1);`, `n` calls of the bit word nested.
@@ -250,10 +272,6 @@ fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
             let (narrow, wide) = &built[&m];
             assert!(!wide.subtype(narrow), "{m} deep");
         });
-        for (narrow, wide) in built.into_values() {
-            take_apart(narrow);
-            take_apart(wide);
-        }
     });
 }
 
