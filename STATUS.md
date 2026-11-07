@@ -1488,9 +1488,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CATALOG-followups | impl attempt 1 | 2026-11-07 00:56 | ready 428acfaf on 4de1fa22; groups s_01_port_catalog 12, l01_13_formatter 24, m0_11 22, m0_03 55 pass; clippy and fmt clean |
-| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | start: reading brief, ledger, walk.rs |
+| CATALOG-followups | impl attempt 1 | 2026-11-07 00:56 | ready again at 36d097dd on 9bbc89d7: Int floor fix, dependencyGraph tradeoff + PRELUDE-depgraph queued; 326 pieces pass |
+| DIAG-addr-rest | impl attempt 1 | 2026-11-07 00:39 | started; worktree wt/diag-addr-rest from origin/main 9bbc89d7 |
+| LOAD-affine-cone | impl attempt 1 | 2026-11-07 09:20 | worktree at 9bbc89d7, writing probe (h chain m, p{i} = h{m-1}(x:x) && p{i-1}(x:x+1) && x<1000i); load 17.75 16.77 22.72 |
+| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | built multi-input summaries, let narrowing, is-narrowed params; running narrowing tests (load 17.58 22.34 23.37) |
 | S22-hole-summaries | impl attempt 1 | 2026-11-07 07:27 | ready ace151de on eb84152b: 403 pieces pass after rebase, fmt and clippy clean; ctl worktree removed / load 22.07 35.39 40.19 |
+| STAGE-ends-cone | impl attempt 1 | 2026-11-05 04:07 | probe (release, load 23): 3 quadratic families found, f_j(0) at n sites over a chain f_k -> f_(k-1): call fails (as_written) 162/630/3294/11152 ms at n=250..200 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
