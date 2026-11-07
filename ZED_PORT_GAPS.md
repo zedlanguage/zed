@@ -2260,3 +2260,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `HashMap` from the form of a term and its scope to an auxiliary variable, with a `Vec` of its keys in the order made, popped back to a mark to undo a scope | `Tr::cases`, `Tr::cased`, `Tr::truncate`, `Walk::lin_by_class` | Mutation, undo by hand | A persistent map carried down the translation, so leaving a scope drops its entries with no undo |
+
+## Entries from S22-case-cuts (`crates/zedc-preimage/src/preimage.rs`)
+
+- No new gap. `neighbor_cuts` merges two sorted lists by index; `lin_by_class` finds the cuts inside a piece with `slice::partition_point` (as `docs::check`) and tests ends with `Option::is_some_and` and `Option::is_none_or` (as `repair`).

@@ -2658,3 +2658,135 @@ fn remainder_chains_in_the_linear_stage_scale() {
         }
     });
 }
+
+/// A box of `x` as its pieces `(lo, hi)`.
+type Boxes = &'static [(i64, i64)];
+
+/// COMPLEXITY.md S22-case-cuts: in the five shapes of [`REMAINDER_SHAPES`], the boxes of `x`
+/// that the hull of each case made wider than the level-by-level translation, or wider at some
+/// points and narrower at others, as `(shape, seed, k, box, level-by-level box)`. Each case of
+/// the remainder `if` is now cut at the starts of the pieces of the class ranges next to it,
+/// which cuts out the holes again; every box lies within the level-by-level one.
+const CUT_BOXES: [(usize, u64, usize, Boxes, Boxes); 7] = [
+    (3, 1, 2, &[(-4, -4), (-1, 59)], &[(-4, -4), (-1, 59)]),
+    (
+        3,
+        1,
+        5,
+        &[(-58, -58), (-55, -13), (-10, -4), (-2, 59)],
+        &[(-58, -58), (-55, -4), (-2, 59)],
+    ),
+    (
+        4,
+        1,
+        1,
+        &[(-60, -60), (-58, -4), (-2, 58), (60, 60)],
+        &[(-60, -60), (-58, -4), (-2, 58), (60, 60)],
+    ),
+    (4, 1, 2, &[(-4, -4), (2, 56)], &[(-4, -4), (2, 56)]),
+    (
+        4,
+        1,
+        5,
+        &[(-58, -58), (-52, -16), (-10, -4), (-2, 58)],
+        &[(-58, -58), (-52, -4), (-2, 58)],
+    ),
+    (
+        4,
+        1,
+        13,
+        &[(-56, -14), (-10, -10), (-8, -8), (-4, -4), (-2, 58)],
+        &[(-56, -4), (-2, 58)],
+    ),
+    (
+        4,
+        3,
+        5,
+        &[(-60, -60), (-54, -6), (-4, -4), (-2, 58)],
+        &[(-60, -60), (-56, -4), (-2, 58)],
+    ),
+];
+
+/// COMPLEXITY.md S22-case-cuts: the boxes of [`CUT_BOXES`], each within its level-by-level
+/// box, and agreeing with the interpreter.
+#[test]
+fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(60), Demand::Bool(true));
+        for (shape, seed, k, want, level) in CUT_BOXES {
+            let shape = REMAINDER_SHAPES[shape];
+            let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
+            let p = preimage(&t, &ds, &d);
+            let (want, level) = (pieces(want), pieces(level));
+            assert_eq!(p.domains["x"], want, "{shape}, seed {seed}, k = {k}: {t}");
+            assert!(want.is_subset(&level), "{shape}, seed {seed}, k = {k}");
+            check(&t, &ds, &d, &p, (-20, 20));
+            check(&t, &ds, &d, &p, (45, 60));
+        }
+    });
+}
+
+/// The chain of `k` guards `x mod 1024 != r(j)`, else `max(t, c(j))`, the `r(j)` distinct and
+/// the `c(j)` spread over `[-100, -1]`: in class `r(j)` the chain is `max(x, c(j))`, two
+/// pieces, and `x` in every other class, so `2k + 1` ranges of classes each with a start no
+/// other range has. Cutting each case at every other range's starts would make `O(k^2)`
+/// cases.
+fn spread_remainder_chain(k: usize) -> Term {
+    let r = |j: i64| (37 * j) % 1024;
+    let g = move |j: i64| prim(Prim::Ne, prim(Prim::Mod, var("x"), int(1024)), int(r(j)));
+    chain(k, var("x"), g, |j, t| {
+        prim(Prim::Max, t, int((53 * j) % 100 - 100))
+    })
+}
+
+/// `c <= 2 && y mod 2 == 0` for the chain `c`.
+fn below_three_and_even_y(c: Term) -> Term {
+    let even = prim(Prim::Eq, prim(Prim::Mod, var("y"), int(2)), int(0));
+    prim(Prim::And, prim(Prim::Le, c, int(2)), even)
+}
+
+/// The number of cases of the definition of the remainder `if` in the relation of `p`.
+fn remainder_cases(p: &Preimage) -> usize {
+    let rel = p.relation.as_ref().expect("a relation");
+    let cases = (rel.defs.iter())
+        .filter(|(_, what, _)| what.contains(" if "))
+        .map(|(_, what, _)| what.matches(" if ").count());
+    let cases: Vec<usize> = cases.collect();
+    assert_eq!(cases.len(), 1, "one remainder `if`: {:?}", rel.defs);
+    cases[0]
+}
+
+/// COMPLEXITY.md S22-case-cuts: the cases of the chain of [`spread_remainder_chain`] stay
+/// linear in `k`, `5k + 1` here: `k` ranges of two pieces and `k + 1` ranges of one, `3k + 1`
+/// cases uncut, and each range of one piece cut at the start of the second piece of each
+/// neighbor, `2k` cuts. Cut at every other range's starts they would be `k^2 + 3k + 1`. The
+/// answer agrees with the interpreter.
+#[test]
+fn remainder_cases_cut_at_their_neighbors_stay_linear() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(100000), Demand::Bool(true));
+        for k in [1, 4, 16, 64] {
+            let t = below_three_and_even_y(spread_remainder_chain(k));
+            let p = preimage(&t, &ds, &d);
+            let cases = remainder_cases(&p);
+            assert_eq!(cases, 5 * k + 1, "k = {k}");
+            check(&t, &ds, &d, &p, (-110, -90));
+            check(&t, &ds, &d, &p, (90, 110));
+        }
+    });
+}
+
+/// COMPLEXITY.md S22-case-cuts: the linear stage on the chain of [`spread_remainder_chain`],
+/// whose cases would be `O(k^2)` cut at every other range's starts, does work of order `k`
+/// from `k` to `8k`.
+#[test]
+fn remainder_cases_cut_at_their_neighbors_scale() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(100000), Demand::Bool(true));
+        let n = 16;
+        let terms = scaling::inputs(n, |k| below_three_and_even_y(spread_remainder_chain(k)));
+        scaling::check("cases of a spread remainder chain", n, |k| {
+            preimage(&terms[&k], &ds, &d);
+        });
+    });
+}

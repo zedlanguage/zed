@@ -5092,31 +5092,40 @@ impl<'m, 't> Walk<'m, 't> {
     /// the `if` `t` whose guard `g` tests the remainder `x mod m` of an input by a constant:
     /// one auxiliary variable `v` defined by the summaries of `t` over the classes the terms
     /// cut `x mod m` into ([`Walk::by_class`], as [`Walk::back_by_class`] reads them), one
-    /// case for each piece ([`pa_pieces`]) of each range of classes that holds one summary:
-    /// `r` in those classes, the summary's input in the piece, and `v == a * u + b`, for the
-    /// remainder `r` of the pair `x mod m` names. Every copy of `t` in the same scope is the
-    /// same `v` ([`Tr::cases`]). `None` where no summary is found, and the `if` is translated
-    /// level by level.
+    /// case for each piece ([`pa_pieces`]) of each range of classes that holds one summary,
+    /// cut where a piece of a range next to it starts ([`neighbor_cuts`]): `r` in those
+    /// classes, the summary's input in the piece, and `v == a * u + b`, for the remainder `r`
+    /// of the pair `x mod m` names. Every copy of `t` in the same scope is the same `v`
+    /// ([`Tr::cases`]). `None` where no summary is found, and the `if` is translated level by
+    /// level.
     ///
     /// Level by level, a chain of `k` such guards is `k` auxiliary variables, each defined by a
     /// disjunction of its two arms, which the solver reads together: 2.1 s at k = 30 and 4.3 s
     /// at k = 60 for `c <= 2 && y mod 2 == 0` with the counted chain `c`, and 22 s for the
     /// chain of seed 2 at k = 13 (COMPLEXITY.md row S22-linear-rem). Now it is one variable
-    /// whose definition has a disjunct for each piece of the summaries, `O(k)` of them, and
-    /// the summary costs `O(k log k)`.
+    /// whose definition has a disjunct for each piece of the summaries and each cut, at most
+    /// `C + 2S` for `C` pieces with `S` starts between them, and the summary costs
+    /// `O(k log k)`.
     async fn lin_by_class(&'m self, t: Tid, g: Tid, env: Eid) -> Option<Lin> {
         if !self.tr(|tr| tr.by_class) || self.with(|tx| tx.run.residue.is_some()) {
             return None;
         }
-        // Complexity tradeoff: the solver projects each case to its hull, so a hole of the
-        // congruence that the level-by-level form cut out at the end of another class's piece
-        // can be lost: in the shape tests 4 inexact boxes of 60 are 1 to 3 points wider than
-        // level by level, 3 differ both ways, and 22 are narrower and 5 exact. Why: cutting
-        // every case at the ends of every other class's pieces keeps those holes, but makes
-        // `L * C` cases for `L` ranges of classes and `C` ends, `O(k^2)` for a chain of `k`
-        // guards of a large modulus. Test:
-        // `l01_25_preimage_catalog::s22::remainder_reads_outside_a_split_match_the_interpreter_*`.
-        // COMPLEXITY.md row S22-linear-rem.
+        // Complexity tradeoff: the solver takes each case to its hull in the input, and the
+        // hull of a range's members over a piece holds the points of the other classes
+        // between them, so where another range's summary changes inside the piece, a hole that
+        // the level-by-level form cut out there is lost unless the case is cut at that start.
+        // Each case is cut at the starts of the two ranges next to it (`x mod m` of `x - 1`
+        // and `x + 1`), not of every range: with three ranges or fewer, as for every modulus
+        // 3, those are all the other ranges, the same cases as cutting at every start (in the
+        // five shape tests every box of `x` lies within the level-by-level box, 17 of 60
+        // strictly); with more, a hole only a farther range's start cuts out is lost, and
+        // the box keeps those points (sound, inexact). Why: cutting at every other range's
+        // starts makes `L * S` cases for `L` ranges and `S` starts, `2k^2 + 3k + 1` for the
+        // chain of `k` guards of `spread_remainder_chain`; cutting at the neighbors makes at
+        // most `C + 2S`, `5k + 1` there. Tests:
+        // `l01_25_preimage_catalog::s22::remainder_cases_cut_at_their_neighbors_*`.
+        // COMPLEXITY.md rows S22-linear-rem and S22-case-cuts. A complete solution keeps the
+        // congruence in the solver's projection of each case instead of its hull.
         let key = (self.with(|tx| tx.terms.form(t)), env);
         if let Some(n) = self.tr(|tr| tr.cases.get(&key).copied()) {
             return Some(Lin::atom(presburger::Atom::Aux(n)));
@@ -5126,9 +5135,12 @@ impl<'m, 't> Walk<'m, 't> {
         let outer = self.with(|tx| tx.run.classes.replace(classes.clone()));
         let by = self.by_class(t, env).await;
         self.with(|tx| tx.run.classes = outer);
-        let leaves = by?.leaves()?;
+        let by = by?;
+        let cut_on = by.var.clone().map(|v| Lin::atom(presburger::Atom::Sym(v)));
+        let leaves = by.leaves()?;
         let rem = self.lin(r, env).await?;
-        let mut cases = Vec::new();
+        // Each range of classes: what holds `r` in it, its summary's input and its pieces.
+        let mut ranges = Vec::with_capacity(leaves.len());
         for ((i, j), pa) in leaves {
             let (lo, hi) = (classes.cuts[i], classes.cuts[j] - 1);
             let mut within = Vec::new();
@@ -5141,21 +5153,49 @@ impl<'m, 't> Walk<'m, 't> {
             let u = pa
                 .var()
                 .map(|v| Lin::atom(presburger::Atom::Sym(v.clone())));
-            for (piece, a, b) in pa_pieces(&pa) {
-                let mut g = within.clone();
-                if let (Some(u), Some((lo, hi))) = (&u, piece) {
-                    if let Fin(lo) = &lo {
-                        g.push(Formula::Con(Con::ge(u, &Lin::constant(small(lo)))));
-                    }
-                    if let Fin(hi) = &hi {
-                        g.push(Formula::Con(Con::ge(&Lin::constant(small(hi)), u)));
-                    }
-                }
-                let value = match &u {
-                    Some(u) => u.times(a).plus(&Lin::constant(b)),
-                    None => Lin::constant(b),
+            ranges.push((within, u, pa_pieces(&pa)));
+        }
+        let starts: Vec<Vec<i128>> = (ranges.iter())
+            .map(|(_, _, pieces)| piece_starts(pieces))
+            .collect();
+        let near = neighbor_cuts(&starts);
+        let mut cases = Vec::new();
+        for ((within, u, pieces), near) in ranges.iter().zip(&near) {
+            // A constant summary holds on every input, so it is cut on the tree's input too.
+            let cut = cut_on.is_some() && (u.is_none() || *u == cut_on);
+            let on = if cut { &cut_on } else { u };
+            for (piece, a, b) in pieces {
+                let value = match u {
+                    Some(u) => u.times(a.clone()).plus(&Lin::constant(b.clone())),
+                    None => Lin::constant(b.clone()),
                 };
-                cases.push((Formula::and(g), value));
+                let (lo, hi) = match piece {
+                    Some((lo, hi)) => (end_of(lo), end_of(hi)),
+                    None => (None, None),
+                };
+                // The neighbors' starts inside `lo + 1..=hi`.
+                let inside = match cut {
+                    true => {
+                        let from = near.partition_point(|&c| lo.is_some_and(|lo| c <= lo));
+                        let to = near.partition_point(|&c| hi.is_none_or(|hi| c <= hi));
+                        &near[from..to]
+                    }
+                    false => &[][..],
+                };
+                let mut first = lo;
+                for last in (inside.iter().map(|&c| Some(c - 1))).chain([hi]) {
+                    let mut g = within.clone();
+                    if let Some(on) = on {
+                        if let Some(first) = first {
+                            g.push(Formula::Con(Con::ge(on, &Lin::constant(first))));
+                        }
+                        if let Some(last) = last {
+                            g.push(Formula::Con(Con::ge(&Lin::constant(last), on)));
+                        }
+                    }
+                    cases.push((Formula::and(g), value.clone()));
+                    first = last.map(|l| l + 1);
+                }
             }
         }
         self.tr(|tr| {
@@ -6347,6 +6387,68 @@ fn pa_pieces(pa: &Pa) -> Vec<Piece> {
             out
         }
     }
+}
+
+/// A finite end of a piece of a summary as an `i128`, none for an infinite one.
+fn end_of(e: &End) -> Option<i128> {
+    match e {
+        Fin(v) => Some(small(v)),
+        NegInf | PosInf => None,
+    }
+}
+
+/// The inputs at which a piece of `pieces` (in the order of their input, [`pa_pieces`]) or a
+/// gap between two pieces starts, after the first piece and before the end of the last, in
+/// increasing order: `O(p)` for `p` pieces.
+fn piece_starts(pieces: &[Piece]) -> Vec<i128> {
+    let mut out = Vec::new();
+    let ends = pieces.iter().filter_map(|(piece, ..)| piece.as_ref());
+    for ((_, hi), (lo, _)) in ends.clone().zip(ends.skip(1)) {
+        out.extend(end_of(hi).map(|hi| hi + 1));
+        out.extend(end_of(lo));
+    }
+    out.dedup();
+    out
+}
+
+/// For each range of classes `l` of [`Walk::lin_by_class`], the starts (`starts`, each in
+/// increasing order, [`piece_starts`]) of the ranges next to it, `l - 1` and `l + 1` with the
+/// last range next to the first, as `x mod m` runs from `m - 1` to 0 between `x` and `x + 1`;
+/// merged into one increasing list: `O(S)` for `S` starts in all.
+fn neighbor_cuts(starts: &[Vec<i128>]) -> Vec<Vec<i128>> {
+    let n = starts.len();
+    (0..n)
+        .map(|l| {
+            let (before, after) = ((l + n - 1) % n, (l + 1) % n);
+            let (a, b): (&[i128], &[i128]) = match (before == l, before == after) {
+                (true, _) => (&[], &[]),
+                (false, true) => (&starts[before], &[]),
+                (false, false) => (&starts[before], &starts[after]),
+            };
+            let mut out = Vec::with_capacity(a.len() + b.len());
+            let (mut i, mut j) = (0, 0);
+            while i < a.len() || j < b.len() {
+                let c = match (a.get(i), b.get(j)) {
+                    (Some(&x), Some(&y)) if x <= y => {
+                        i += 1;
+                        j += usize::from(x == y);
+                        x
+                    }
+                    (_, Some(&y)) => {
+                        j += 1;
+                        y
+                    }
+                    (Some(&x), None) => {
+                        i += 1;
+                        x
+                    }
+                    (None, None) => unreachable!("the loop runs while one list has more"),
+                };
+                out.push(c);
+            }
+            out
+        })
+        .collect()
 }
 
 /// The map `inner` followed by `outer`, for the maps of a [`ByClass`], whose [`Bound`] keeps
