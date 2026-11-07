@@ -1541,15 +1541,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DAGVIEW-narrow | impl attempt 1 | 2026-11-07 15:58 | ready f95a835a: live direct 51,123x11,558 -> 14,783x13,880, all 14,463x11,304; tests 48+2 pass |
-| EMPTY-overlap-chain | impl attempt 3 | 2026-11-07 01:46 | ready 899ff174 on wt/empty-overlap-chain (rebased on 00c9fe4b): one-pass exact path linear on xor/chain families, may_cover kept (A46); groups pass except unrel |
-| GROUP-admit-msg | impl attempt 1 | 2026-11-05 04:07 | ready 84946ca8 on wt/group-admit-msg (base 00c9fe4b), spec f13973f on wt/group-admit-msg-spec; l01_23+l01_22+zed_kernel 76 pieces 0 failed (load 19-28), spec gr |
-| KERNEL-leaf-digits | impl attempt 1 | 2026-11-07 15:32 | ready 964b8047 rebased on ccb8ddfb (STATUS conflict, both rows kept); zedrt.rs copy set to 1024 with pointer comment; 7 pieces incl m0_04 pass, 0 failed, load 3 |
 | LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | STOPPED: answers change vs main in 3 random chains (one_scope.rs:557): faces now answer holds Ok(true) where the relation whole refuses Err(Shadows); e.g. q=!(x |
-| NAN-inf-atom | spec attempt 1 | 2026-11-07 15:57 | returning: ready spec 34286da + impl dcde9a40; board-check shows DANGLING EDGE NAN-inf-atom->KNOWN-mix until the KNOWN-mix row merges (first ready line named it |
-| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | ready again at 2be6273a on 31dc18db: bottom scope, one-input and other-domain inputs on structural paths, three scaling tests with negative controls, groups 195 |
-| PREIMAGE-or-chain | impl attempt 1 | 2026-11-07 15:35 | ready wt/preimage-or-chain 62f640da; fmt, clippy clean; 383+192+124 test pieces pass except l02_03 later_words (allIntro spec drift, not this branch) |
-| ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | ready 5e7448b9 on 31dc18db: 388 pieces pass, 146 after rebase / load 18.79 16.44 22.84 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
