@@ -18,8 +18,9 @@ pub(super) enum Ret {
     None,
     Ty(Ty),
     Arg(Arg),
-    /// A condition's type and the facts it makes when it holds and when it does not.
-    Cond(Ty, Facts, Facts),
+    /// A condition's type, the facts it makes when it holds and when it does not, and the
+    /// nodes of [`super::arms::Arms`] where it holds and where it does not.
+    Cond(Ty, Facts, Facts, Sides),
     Sig(Arc<Sig>),
 }
 
@@ -149,6 +150,8 @@ pub(super) enum Frame<'a> {
         otherwise: &'a Expr,
         out: Ty,
         no: Facts,
+        /// The node where the condition fails.
+        fails: usize,
     },
     If3 {
         then: &'a Expr,
@@ -166,7 +169,7 @@ pub(super) enum Frame<'a> {
         span: Span,
     },
     CondAnd2(Box<CondAnd<'a>>),
-    CondOf,
+    CondOf(&'a Expr),
     Logic1 {
         op: &'static str,
         b: &'a Expr,
@@ -277,7 +280,12 @@ pub(super) struct CondAnd<'a> {
     ya: Facts,
     na: Facts,
     saved: Saved<'a>,
+    /// The nodes where the first side holds and where it fails.
+    sa: Sides,
 }
+
+/// The nodes of [`super::arms::Arms`] where a condition holds and where it fails.
+pub(super) type Sides = (usize, usize);
 
 pub(super) struct ScopeF<'a> {
     items: Vec<&'a Stmt>,
@@ -451,9 +459,9 @@ impl<'a> M<'a> {
         }
     }
 
-    fn take_cond(&mut self) -> (Ty, Facts, Facts) {
+    fn take_cond(&mut self) -> (Ty, Facts, Facts, Sides) {
         match self.take() {
-            Ret::Cond(t, y, n) => (t, y, n),
+            Ret::Cond(t, y, n, s) => (t, y, n, s),
             _ => unreachable!("the job above gives a condition"),
         }
     }
@@ -610,7 +618,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ty(t);
             }
             Frame::If1(e) => {
-                let (c, yes, no) = m.take_cond();
+                let (c, yes, no, (holds, fails)) = m.take_cond();
                 let ExprKind::If {
                     cond,
                     then,
@@ -639,14 +647,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     otherwise,
                     out,
                     no,
+                    fails,
                 });
-                self.under(m, &yes, then);
+                self.under(m, &yes, holds, then);
             }
             Frame::If2 {
                 then,
                 otherwise,
                 out,
                 no,
+                fails,
             } => {
                 let a = m.take_ty();
                 m.k(Frame::If3 {
@@ -655,7 +665,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out,
                     a: Box::new(a),
                 });
-                self.under(m, &no, otherwise);
+                self.under(m, &no, fails, otherwise);
             }
             Frame::If3 {
                 then,
@@ -670,6 +680,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::Widen(saved) => {
                 let r = m.take();
                 self.widen(saved);
+                self.arms.leave();
                 m.ret = r;
             }
             Frame::CondIs(e) => {
@@ -679,35 +690,38 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let t = denoted(ty);
                 let bool_ = Ty::carrier(Carrier::Bool);
+                let here = self.arms.here();
                 let b = match (&of.kind, self.t.res.uses.get(&of.span)) {
                     (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => ids[0],
                     _ => {
-                        m.ret = Ret::Cond(bool_, Vec::new(), Vec::new());
+                        m.ret = Ret::Cond(bool_, Vec::new(), Vec::new(), (here, here));
                         return;
                     }
                 };
                 // The meet keeps the functions of `v` whole; the difference compares them with
                 // those of `t`, reading the classes solved inside them ([`Ck::stale`]).
+                // The reduced product reads no `is`: its scope is the one it is checked in.
                 let yes = v.meet(&t);
                 let no = self.narrowed(&v, &Narrow::Not(t), e.span);
                 let (yes, no) = (vec![(b, yes, e.span)], vec![(b, no, e.span)]);
                 m.ret = match negated {
-                    false => Ret::Cond(bool_, yes, no),
-                    true => Ret::Cond(bool_, no, yes),
+                    false => Ret::Cond(bool_, yes, no, (here, here)),
+                    true => Ret::Cond(bool_, no, yes, (here, here)),
                 };
             }
             Frame::CondNot(span) => {
-                let (t, yes, no) = m.take_cond();
+                let (t, yes, no, (holds, fails)) = m.take_cond();
                 let sig = op_sig("!");
                 let t = self
                     .apply("`!`", &sig, vec![Some(Arg::of(t))], true, span)
                     .0;
-                m.ret = Ret::Cond(t, no, yes);
+                m.ret = Ret::Cond(t, no, yes, (fails, holds));
             }
             Frame::CondAnd1 { op, b, span } => {
-                let (ta, ya, na) = m.take_cond();
+                let (ta, ya, na, sa) = m.take_cond();
                 let first = if op == "&&" { &ya } else { &na };
                 let saved = self.narrow(first);
+                self.arms.enter(if op == "&&" { sa.0 } else { sa.1 });
                 m.k(Frame::CondAnd2(Box::new(CondAnd {
                     op,
                     span,
@@ -715,11 +729,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ya,
                     na,
                     saved,
+                    sa,
                 })));
                 m.job(Job::Cond(b));
             }
             Frame::CondAnd2(s) => {
-                let (tb, yb, nb) = m.take_cond();
+                let (tb, yb, nb, sb) = m.take_cond();
                 let CondAnd {
                     op,
                     span,
@@ -727,9 +742,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ya,
                     na,
                     saved,
-                    ..
+                    sa,
                 } = *s;
                 self.widen(saved);
+                self.arms.leave();
+                // `b` is checked where `a` holds for `&&`, and fails for `||`, so its nodes
+                // are already within that one.
+                let sides = match op {
+                    "&&" => (sb.0, self.arms.join(sa.1, sb.1)),
+                    _ => (self.arms.join(sa.0, sb.0), sb.1),
+                };
                 let sig = op_sig("&&");
                 let t = self
                     .apply(
@@ -741,20 +763,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                     )
                     .0;
                 m.ret = if op == "&&" {
-                    Ret::Cond(t, [ya, yb].concat(), Vec::new())
+                    Ret::Cond(t, [ya, yb].concat(), Vec::new(), sides)
                 } else {
-                    Ret::Cond(t, Vec::new(), [na, nb].concat())
+                    Ret::Cond(t, Vec::new(), [na, nb].concat(), sides)
                 };
             }
-            Frame::CondOf => {
+            Frame::CondOf(e) => {
                 let t = m.take_ty();
-                m.ret = Ret::Cond(t, Vec::new(), Vec::new());
+                let sides = self.test_nodes(e);
+                m.ret = Ret::Cond(t, Vec::new(), Vec::new(), sides);
             }
             Frame::Logic1 { op, b, span } => {
-                let (ta, ya, na) = m.take_cond();
-                let first = if op == "&&" { ya } else { na };
+                let (ta, ya, na, (holds, fails)) = m.take_cond();
+                let (first, at) = if op == "&&" { (ya, holds) } else { (na, fails) };
                 m.k(Frame::Logic2 { op, span, ta });
-                self.under(m, &first, b);
+                self.under(m, &first, at, b);
             }
             Frame::Logic2 { op, span, ta } => {
                 let tb = m.take_ty();
@@ -980,9 +1003,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// `e` checked with the binders of `facts` narrowed.
-    fn under(&mut self, m: &mut M<'a>, facts: &Facts, e: &'a Expr) {
+    /// `e` checked with the binders of `facts` narrowed, in node `at` of [`super::arms::Arms`].
+    fn under(&mut self, m: &mut M<'a>, facts: &Facts, at: usize, e: &'a Expr) {
         let saved = self.narrow(facts);
+        self.arms.enter(at);
         m.k(Frame::Widen(saved));
         m.job(Job::Expr(e));
     }
@@ -1152,6 +1176,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.origin(id, value.span, Why::Defined(v.clone()), Some(value.span));
                 self.alias.insert(id, value.span);
                 self.facts.insert(id, value);
+                self.arms.bind(id, &v);
                 self.env.insert(id, v);
             }
             [Target::Wild] => {
@@ -1605,7 +1630,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.job(Job::Cond(a));
             }
             _ => {
-                m.k(Frame::CondOf);
+                m.k(Frame::CondOf(e));
                 m.job(Job::Expr(e));
             }
         }

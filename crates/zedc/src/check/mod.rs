@@ -35,6 +35,7 @@ pub mod read;
 pub mod ty;
 pub mod widen;
 
+mod arms;
 mod walk;
 
 use std::borrow::Cow;
@@ -641,6 +642,9 @@ struct Ck<'t, 'a> {
     /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
     /// takes the entry.
     tried: HashMap<Span, Option<KType>>,
+    /// The scopes the tests the walk is in make, which narrow the ints a bit word or `**`
+    /// reads.
+    arms: arms::Arms<'a>,
 }
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of
@@ -692,6 +696,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             widened: HashSet::new(),
             outside: HashMap::new(),
             tried: HashMap::new(),
+            arms: arms::Arms::new(),
         }
     }
 
@@ -2870,10 +2875,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let zero = Value::Int(0);
         let listed = ns.ints_listed();
-        let at_least_zero = self
-            .known(e)
-            .ints
-            .is_subset(&IntervalSet::range(End::of(0), PosInf))
+        let (ints, narrowed) = self.ints_here(e);
+        let at_least_zero = ints.is_subset(&IntervalSet::range(End::of(0), PosInf))
             || listed.is_some_and(|vs| {
                 vs.iter().all(|v| {
                     v.surface_cmp(&zero)
@@ -2881,8 +2884,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
             });
         if !at_least_zero {
-            let shown = self.show(&Ty::set(ns));
-            let notes = self.derive(&[n.at.unwrap_or(span)]);
+            let shown = match narrowed {
+                true => format!("int{ints}"),
+                false => self.show(&Ty::set(ns)),
+            };
+            let mut notes = Vec::new();
+            if narrowed {
+                notes.extend(self.deciding_notes(e));
+            }
+            notes.extend(self.derive(&[n.at.unwrap_or(span)]));
             self.error_with(
                 span,
                 format!("`**` on an int needs an exponent of at least 0, and this one is {shown}"),
@@ -3303,6 +3313,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 span: at,
                 text: format!("`{name}` is this operand, {shown}"),
             }];
+            if r.narrowed {
+                notes.extend(self.deciding_notes(e));
+            }
             self.derive_into(&[at], &mut notes);
             self.error_with(
                 span,
@@ -3351,7 +3364,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The integers an argument may be, when its type has an int part: an interval holding them,
     /// the values themselves when its type lists them or its text shows its value, and how to
-    /// show them. The interval is what the text shows (see [`Known`]), met with the listed
+    /// show them. The interval is what the text shows (see [`Known`]), met with what the tests
+    /// the walk is in show of it ([`Ck::ints_here`]) and with the listed
     /// values, a value past `i64` read as the end of the interval on its side.
     fn int_range(&mut self, a: &Arg, e: &'a Expr) -> Option<IntRange> {
         let ns = &a.ty.set & &KType::int();
@@ -3359,7 +3373,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         let k = self.known(e);
-        let mut ints = k.ints;
+        let (mut ints, narrowed) = self.ints_here(e);
         let listed = ns.ints_listed();
         let shown_as_type = listed.is_some();
         let values = match listed {
@@ -3383,6 +3397,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ints,
             values,
             shown,
+            narrowed,
         })
     }
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
@@ -6028,6 +6043,8 @@ struct IntRange {
     values: Option<Vec<Value>>,
     /// How a message shows them.
     shown: String,
+    /// Whether a test the walk is in narrowed them.
+    narrowed: bool,
 }
 
 impl IntRange {
@@ -6106,16 +6123,17 @@ impl<'a> Ck<'_, 'a> {
     /// once, by its span, children before parents on an explicit stack, so a nest of `n`
     /// operators or a chain of `n` bindings costs O(n) and no stack depth.
     ///
-    /// Complexity tradeoff: the text is read, not the reduced product's cell, so an int that
-    /// only a test narrows (`if n >= 0 { popCount(n) }`), a parameter or input is read as any
-    /// int, and a bit word on it is rejected as possibly outside its domain. Why: the checker
-    /// runs before the store's iteration, and asking the store at each call would run a
-    /// fixpoint per call; reading the text is O(1) per node. Trigger: an operand whose sign or
-    /// width only a test, a parameter or a component of a tuple shows. Test:
-    /// `l01_39a_bit_words::errors::an_operand_not_shown_in_its_domain_is_rejected`. COMPLEXITY.md
-    /// row C26. A complete solution needs int-range types on parameters and results (step
-    /// L10, ledger BIT-checker-ranges), so a signature can state the domain, or the checker
-    /// querying the reduced product's cell for the operand once the store's fixpoint has run.
+    /// Complexity tradeoff: the text is read, not the reduced product's cell after the store's
+    /// fixpoint, so a parameter, an input or a tuple component is read as any int where no test
+    /// bounds it, and a bit word on it is rejected as possibly outside its domain. Under a test
+    /// the read is met with the scope that the tests make ([`Ck::ints_here`], `arms.rs`), so
+    /// `if n >= 0 { popCount(n) }` is accepted. Why: the checker runs before the store's
+    /// iteration, and asking the store at each call would run a fixpoint per call; reading the
+    /// text is O(1) per node, and each test's scope is one narrowing of its parent's. Trigger:
+    /// an operand whose sign or width only a caller, the input or a tuple component shows.
+    /// Test: `l01_39a_bit_words::errors::an_operand_not_shown_in_its_domain_is_rejected`.
+    /// COMPLEXITY.md row C26. A complete solution needs int-range types on parameters and
+    /// results (step L10, ledger BIT-checker-ranges), so a signature can state the domain.
     fn known(&mut self, e: &'a Expr) -> Known {
         if !self.known.contains_key(&e.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements

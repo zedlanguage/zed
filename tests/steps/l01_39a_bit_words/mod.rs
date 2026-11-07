@@ -7,6 +7,7 @@ mod corners;
 mod deep;
 mod errors;
 mod kept_ends;
+mod narrowing;
 mod reference;
 mod scaling;
 mod transfer;

@@ -1553,6 +1553,24 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Two per-device accumulators updated in place through `&mut out[d]` and `&mut kept[d]` in one loop over the regions | `per_device` | Mutation (gap 11) | `zed/prelude/cost.zed` `peak`: a fold over the device's regions with a pair (peak, retained so far) as its value |
 | `saturating_add` on the retained bytes and the peak | `per_device` | Machine integers (see the mechanical rewrites) | Vanishes on an unbounded `int`; the peak then does not stop at the maximum |
 
+## Entries from NARROW-if (`zedc/src/check/arms.rs`, `store/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Rc<Vec<..>>` of a test's fresh names, shared by the node where it holds and the one where it fails | `Arms::test`, `Node::Assume` | None | A list value; values are shared |
+| `scopes: Vec<Option<Scope>>` filled on first read and kept, written through `&mut self` | `Arms::compute`, `Arms::scope_or_root` | Mutation (gap 11) | A map from node to scope in the walk's state, updated in place by provable last use (L6.13) |
+| `if let Node::Assume { fresh, .. } = &nodes[n] && !p.bottom` (a let chain) | `Arms::compute` | None | `if nodes[n] is #assume(..) && !p.bottom`, narrowing by `is` |
+| A `bottom` flag that `Scope::get` reads before the names, so a scope no state reaches keeps its names unchanged | `Scope::assume_case`, `Scope::get` | None | A field of the scope struct read first by `get` |
+| `chains: Vec<Option<Chains>>`, each node's two persistent maps from a name to the nearest node that changed it and that reads it, filled on first read through `&mut self` | `Arms::settle_chains`, `Arms::deciding` | Mutation (gap 11) | A persistent map value per node in the walk's state, updated in place by provable last use (L6.13); maps are shared values |
+| `narrows: Vec<Option<Vec<Arc<str>>>>`, the names each test changed, from `OrdMap::diff` of the scope it was narrowed from and its own | `Arms::compute` (through `Ck::compute`) | Mutation (gap 11) | A list per node in the walk's state; the diff as `Scope::join` uses it |
+| `enum Kind { Narrowed, Read }` choosing a field of `Chains` in a `match` | `Arms::deciding` | None | Removed by repair 7: `deciding` reads the changed-name chain, `Carried` the read chain |
+| `OrdMap::diff` of a join's two maps, to find the names the two sides map differently | `Arms::settle_chains` | None | A diff over two persistent maps, as `Scope::join` uses |
+| `HashSet<(usize, Arc<str>, bool)>` visited set (a local `type At`) and an explicit stack in the chain walk | `Arms::deciding` | Mutation (gap 11) | A set value in the loop state, with a `gen` loop in place of the stack |
+| `let ... else { return false }` on two `Option`s in a tuple | `Arms::explains` | None | A `match` on the pair, `(some(a), some(t)) -> …, _ -> false` |
+| `Carried`, a breadth-first search kept in `HashMap<usize, Carried>` and resumed by later lookups: a `VecDeque` FIFO of names, a `HashMap` from each name reached to the test that reached it, and parent pointers followed back by `while let Some(Some(..))` | `Arms::deciding`, `Carried::path`, `Carried::expand` | Mutation (gap 11) | A search state value per carrying test in the walk's state, updated in place by provable last use (L6.13); the queue a list consumed from the front |
+| A closure `push_names` that borrows `self.nodes` and the chain lookup (disjoint field captures) while `self.carried` is borrowed mutably, and takes the stack as `&mut Vec` | `Arms::deciding` (repair 8) | Mutation (gap 11) | A local function returning the entries to push, appended to the stack in the loop state |
+| `Iterator::reduce` folding a path's tests into one `&&` term, each failing outcome wrapped in `!`; `BTreeMap::entry(..).or_insert_with` for the first product of each name | `Arms::explains` (repair 8) | None | A `fold` over the list of sides; a map insert that keeps an existing key |
+
 ## Entries from BIT-axioms (`zedc/src/axioms.rs`, `tests/steps/m0_11_prelude_axioms_and_limits/`)
 
 | Rust construct | Sites | Gap | At the port |

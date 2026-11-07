@@ -84,13 +84,16 @@ fn an_operand_not_shown_in_its_domain_is_rejected() {
         out.contains("`popCount` takes `x` in int[0..], and this `x` is int"),
         "{out}"
     );
-    // A test narrows the cell of the reduced product, not the text the checker reads
-    // (COMPLEXITY.md row C26).
+    // A test narrows the operand in the arm where it holds (`narrowing`), and in the other arm
+    // shows it is negative.
     let out = rejected(
         "main(stdin: Lines) -> (stdout: Lines) {\n  n = int(stdin[1]) else 0;\n  \
-         stdout <- if n >= 0 { String(popCount(n)) } else { \"\" };\n}\n",
+         stdout <- if n >= 0 { \"\" } else { String(popCount(n)) };\n}\n",
     );
-    assert!(out.contains("`popCount` takes `x` in int[0..]"), "{out}");
+    assert!(
+        out.contains("`popCount` takes `x` in int[0..], and this `x` is int[..=-1]"),
+        "{out}"
+    );
 }
 
 #[test]

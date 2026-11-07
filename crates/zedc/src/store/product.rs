@@ -955,8 +955,12 @@ impl Scope {
         )
     }
 
-    /// The product of `name`; the top for a name not in scope.
+    /// The product of `name`; the top for a name not in scope, and the bottom for any name of
+    /// a scope no state reaches, whose names [`Scope::assume_case`] leaves as they were.
     pub fn get(&self, name: &str) -> Product {
+        if self.bottom {
+            return Product::bottom();
+        }
         self.names.get(name).cloned().unwrap_or_else(Product::top)
     }
 
@@ -1203,6 +1207,19 @@ impl Scope {
         let plain = plain_test(test, &s);
         s.narrow(plain.as_ref().unwrap_or(test), outcome, premises);
         s.reduce();
+        s
+    }
+
+    /// [`Scope::assume`] for a scope that is read and not shown: one no state reaches keeps its
+    /// names as they were, with `bottom` set, and [`Scope::get`] gives the bottom for each, so
+    /// that a test that fails costs what it narrows and not the names in scope. A nest of `k`
+    /// tests that each fail in one case, on `k` names, is then `O(k)` narrowings and not
+    /// `O(k²)` ([`Scope::reduce_case`]).
+    pub fn assume_case(&self, test: &Term, outcome: bool, premises: &Premises) -> Scope {
+        let mut s = self.clone();
+        let plain = plain_test(test, &s);
+        s.narrow(plain.as_ref().unwrap_or(test), outcome, premises);
+        s.reduce_case();
         s
     }
 

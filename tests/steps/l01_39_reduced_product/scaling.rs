@@ -617,3 +617,55 @@ fn many_reductions_under_exact_scale() {
         });
     }
 }
+
+/// `x0 >= 0`, `x1 >= 1`, … `x{k-1} >= k - 1` holding one after another, and at each the test
+/// `xi < i` that fails there: what a checker reading a nest of `k` tests on `k` names meets
+/// when one case of each test is unreachable.
+#[test]
+fn a_failing_case_costs_its_test_and_not_the_names_in_scope() {
+    let ge = |i: usize| prim(Prim::Ge, var(&format!("x{i}")), int(i as i64));
+    let lt = |i: usize| prim(Prim::Lt, var(&format!("x{i}")), int(i as i64));
+    let names =
+        |k: usize| -> Vec<std::sync::Arc<str>> { (0..k).map(|i| format!("x{i}").into()).collect() };
+    let built: BTreeMap<usize, (Scope, Vec<(Term, Term)>)> = [300, 2400]
+        .into_iter()
+        .map(|k| {
+            (
+                k,
+                (ints(&names(k)), (0..k).map(|i| (ge(i), lt(i))).collect()),
+            )
+        })
+        .collect();
+    let p = Premises::new();
+    let nest = |s: &Scope, tests: &[(Term, Term)]| {
+        let mut failed = Vec::with_capacity(tests.len());
+        let s = tests.iter().fold(s.clone(), |s, (holds, fails)| {
+            failed.push(
+                s.assume_case(holds, false, &p)
+                    .assume_case(fails, false, &p),
+            );
+            s.assume_case(holds, true, &p)
+        });
+        (s, failed)
+    };
+    // Each failing case is unreachable, and every name reads as empty there, its own and the
+    // others, though the case kept them as they were.
+    let (s, tests) = &built[&300];
+    let (last, failed) = nest(s, tests);
+    assert!(!last.bottom);
+    assert_eq!(last.get("x7").ints().to_string(), "[7..]");
+    for (i, f) in failed.iter().enumerate() {
+        assert!(f.bottom, "case {i}");
+        assert!(f.get(&format!("x{i}")).is_empty(), "x{i} in case {i}");
+        assert!(f.get("x0").is_empty() && f.get("y").is_empty(), "case {i}");
+    }
+    // Emptying each name of a failing case costs the names in scope: O(k²) for the nest.
+    scaling::check(
+        "a nest of k tests on k names, each failing in one case",
+        300,
+        |k| {
+            let (s, tests) = &built[&k];
+            nest(s, tests);
+        },
+    );
+}
