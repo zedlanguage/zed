@@ -1097,6 +1097,90 @@ fn disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
     rows
 }
 
+/// Removes from `ors` each disjunct that has no point with `rows` and the rows that the
+/// disjunctions imply ([`disjunction_hulls`]), until none is removed; `false` when a
+/// disjunction is left with no disjunct or the rows show there is no point. `rows` and the
+/// disjunctions are the parts of a formula, so the implied rows hold at each of its points,
+/// and a disjunct removed has none: the formula's points are as they were. A pass asks each
+/// disjunction's disjuncts of the rows projected onto their atoms ([`by_halves`], [`shadow`],
+/// exact over the integers), and a disjunction that loses a disjunct adds its narrower
+/// implied rows to the projections of the disjunctions after it in the pass; the passes run
+/// forward and backward in turn until one removes nothing. The result does not depend on the
+/// order of the disjunctions or of their disjuncts: a disjunct is removed only when it is
+/// empty with rows that the disjuncts still there imply, fewer disjuncts imply narrower rows,
+/// so a disjunct removed in one order is removed in any, and the last pass, which removes
+/// nothing, asks every disjunct of the same rows (the greatest set of disjuncts closed under
+/// this test). A disjunct the solver refuses with its projection is kept, so only there can
+/// the order matter. Two disjunctions on one stage of a chain, `x[i + 1] - x[i]` in {3, 7}
+/// and `x[i + 1] - x[i] + y[i]` in {6, 9} with `1 <= y[i] <= 2`, lose 3 (the sum's rows allow
+/// 4 to 8 for the step) and then 6 (the step is 7), and then imply the stage exactly: rows
+/// that [`project_parts`] reads for its hulls and [`tighten`] for a point at each end, so that
+/// no question is asked whose answer is no point (COMPLEXITY.md DISJ-incremental).
+// Complexity tradeoff: a pass costs one projection by halves, O((m + k) log k) on a chain or a
+// tree of `m` terms and `k` disjunctions, and removals that each need the one before run in
+// one pass when they follow the order of the pass, forward or backward, so a chain of them
+// costs O(1) passes either way (4 on `x[i + 1] - x[i]` in {0, 10} with `x[i + 1]` in {0, 15},
+// at every size). What is given up: no answer, only time, where such a chain turns back on
+// itself `t` times: `t` passes, O(k) at most. Why: a removal narrows the projections around
+// it, and [`by_halves`] keeps none of them to remake. Trigger: removals each needing the one
+// before, whose disjunctions alternate in their order. Tests: `l01_38_presburger::disj_groups`
+// (the two chains above at `n` and `8n`, each in both orders). A complete method would keep
+// the projections as a tree of halves and, after a removal, remake them along one path.
+// Also not done here: a disjunct empty only with a choice of disjuncts in other disjunctions
+// (case reasoning, a search that backtracks over the disjuncts) is kept; see the comment on
+// the questions in [`project_parts`].
+fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> bool {
+    let mut backward = false;
+    loop {
+        let implied = disjunction_hulls(ors);
+        if implied.is_empty() {
+            return true;
+        }
+        // The disjunctions with a disjunct that has constraints of its own, in the order of
+        // this pass, each with the atoms of those constraints.
+        let mut order: Vec<usize> = (0..ors.len())
+            .filter(|&j| ors[j].iter().any(|d| !d.cons.is_empty()))
+            .collect();
+        if backward {
+            order.reverse();
+        }
+        let keep: Vec<BTreeSet<Atom>> = (order.iter())
+            .map(|&j| {
+                let cons = ors[j].iter().flat_map(|d| d.cons.iter());
+                cons.flat_map(|c| c.lin.terms.keys().cloned()).collect()
+            })
+            .collect();
+        let mut all = rows.to_vec();
+        all.extend(implied);
+        let mut removed = false;
+        // `Err` when a projection or a disjunction is left with no point.
+        let ran: Result<(), ()> = by_halves(all, &keep, |i, k| {
+            let k = k.ok_or(())?;
+            let ds = &mut ors[order[i]];
+            let n = ds.len();
+            ds.retain(|d| {
+                let cs: Vec<&Con> = k.iter().chain(d.cons.iter()).collect();
+                d.cons.is_empty() || !matches!(solve(&cs, false), Ok(None))
+            });
+            if ds.is_empty() {
+                return Err(());
+            }
+            if ds.len() == n {
+                return Ok(Vec::new());
+            }
+            removed = true;
+            Ok(disjunction_hulls(std::slice::from_ref(ds)))
+        });
+        if ran.is_err() {
+            return false;
+        }
+        if !removed {
+            return true;
+        }
+        backward = !backward;
+    }
+}
+
 /// Whether the projections by halves ([`by_halves`] in [`settle`], [`pick`] and
 /// [`project_parts`]) and the rows the disjunctions imply ([`disjunction_hulls`]) are left
 /// out, as before DISJ-diff-fast and DISJ-incremental: while a question that the solver
@@ -6913,9 +6997,16 @@ fn project_parts(
     // disjunct touches, not the whole base for each disjunct and each symbol.
     // With two disjunctions or more, a hull with two finite bounds, the only hull a tightening
     // moves, is tightened: at the top over the whole formula, below it over [`summarize`].
-    let ors = std::mem::take(&mut p.ors);
+    let mut ors = std::mem::take(&mut p.ors);
     let n_ors = ors.len();
     let linked = Linked::of(std::mem::take(&mut p.cons));
+    // With two disjunctions or more, each disjunct that has no point with the base and the
+    // rows the other disjunctions imply is removed first ([`drop_jointly_empty`]), so that the
+    // implied rows read below for the hulls and for a point at each end are those of the
+    // disjuncts left. With `sets`, the parts are projected as they are.
+    if !sets && n_ors > 1 && !old_path() && !drop_jointly_empty(&linked.cons, &mut ors) {
+        return Ok(none());
+    }
     let bases: HashMap<usize, Formula> = (0..linked.held.len())
         .filter(|r| !linked.held[*r].is_empty())
         .map(|r| {
@@ -7248,27 +7339,28 @@ fn project_parts(
     }
     // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the whole
     // formula, `w` the hull's width, unless a point of the formula at the end shows it (see
-    // [`tighten`]). The hull is first met with the bounds that the base and the rows the
-    // disjunctions imply ([`disjunction_hulls`]) give, below; where those rows are exact
-    // (each disjunction alone decides what its form may be) the point at each end is found
-    // and no question is asked, so a chain of `n` three-atom stages costs O(n log n)
+    // [`tighten`]). First each disjunct that the base and the rows the disjunctions imply show
+    // empty is removed ([`drop_jointly_empty`]), and the hull is met with the bounds that the
+    // base and the rows the disjunctions left imply ([`disjunction_hulls`]) give, below; where
+    // those rows are exact (each disjunction alone, or a few on one stage once their empty
+    // disjuncts are gone, decide what its forms may be) the point at each end is found and no
+    // question is asked, so a chain of `n` three-atom stages costs O(n log n)
     // (`x[i + 1] - x[i] - y[i] >= 0`, `1 <= y[i] <= 2`, `x[i + 1] - x[i] + y[i] == 4 || == 5`:
-    // 0.16 s at 128 stages, where it was 41.6 s). What is given up: no answer, only time,
-    // where two disjunctions or more together leave out values that the rows each implies
-    // allow (`x[i + 1] - x[i]` in {3, 7} with `x[i + 1] - x[i] + y[i]` in {6, 9} forces 7, the
-    // rows allowing 4): the bound of the rows has no point, the bisection asks empty
-    // questions, the solver refuses each with the implied rows (its count of an elimination
-    // does not make [`shadow`]'s trial) and [`probe`] tests each disjunct by a propagation of
-    // the whole formula, O(n²) solves or more for each question: 0.17, 1.26 and 7.7 s at 16, 32
-    // and 64 stages, as before this item (0.12, 0.96 and 8.7 s). Why: showing that a
-    // disjunct has no point jointly with other disjunctions is case reasoning, and finding a
-    // point of a conjunction of disjunctions of linear rows is NP-complete. Trigger:
-    // disjunctions that jointly leave out the end of a hull that the rows each implies allow.
-    // Test: `l01_38_presburger::disj_groups::hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points`
-    // (its cases with `steps`) checks the answers; COMPLEXITY.md row DISJ-incremental. A
-    // complete solution backtracks over the disjuncts (DPLL(T)), exponential in the worst case;
-    // the case of one stage would go by dropping each disjunct that its own atoms' rows and the
-    // rows the other disjunctions imply show empty, repeated until none is dropped.
+    // 0.16 s at 128 stages, where it was 41.6 s; with `x[i + 1] - x[i]` in {3, 7} and
+    // `x[i + 1] - x[i] + y[i]` in {6, 9}, which force 7 where the rows allow 4: 0.08, 0.16 and
+    // 2.0 s at 64, 128 and 1024 stages, where it was 7.7 s at 64, plan item DISJ-dpll). What is
+    // given up: no answer, only time, where disjunctions leave out the end of a hull only by
+    // case reasoning, a disjunct empty with each choice of disjuncts elsewhere but not with
+    // their hulls (`x` in {0, 2} with `y` in {0, 2} and `x + y` in {1, 3}): the bound of the
+    // rows has no point, the bisection asks empty questions, the solver may refuse each with
+    // the implied rows (its count of an elimination does not make [`shadow`]'s trial) and
+    // [`probe`] tests each disjunct by a propagation of the whole formula, O(n²) solves or more
+    // for each question. Why: finding a point of a conjunction of disjunctions of linear rows
+    // is NP-complete, and a search that backtracks over the disjuncts (DPLL(T)) is exponential
+    // in the worst case. Trigger: disjunctions that only by cases leave out the end of a hull
+    // that their rows allow. Tests: `l01_38_presburger::disj_groups` (the hulls of small chains
+    // against their points counted one by one, and the two chains above at `n` and `8n`);
+    // COMPLEXITY.md row DISJ-incremental.
     let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
     // Before the questions, each hull to be tightened is met with the symbol's hull over the
     // base and the rows the disjunctions imply ([`disjunction_hulls`]), all symbols at once by
@@ -7281,31 +7373,35 @@ fn project_parts(
     // A bound is read from the rows of the projection with the symbol alone, so a projection
     // that keeps other atoms (a core, see [`shadow`]) gives what it gives and the questions
     // the rest. Rows with no point show the parts have none.
-    if !sets && n_ors > 1 && !old_path() && out.iter().any(finite) {
-        let implied = disjunction_hulls(&ors);
+    // The rows the disjuncts left imply, read below for the hulls and by [`tighten`] for a
+    // point at each end.
+    let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(finite) {
+        disjunction_hulls(&ors)
+    } else {
+        Vec::new()
+    };
+    if !implied.is_empty() {
         let ks: Vec<usize> = (0..syms.len()).filter(|&k| finite(&out[k])).collect();
-        if !implied.is_empty() {
-            let keep: Vec<BTreeSet<Atom>> = (ks.iter())
-                .map(|&k| BTreeSet::from([syms[k].clone()]))
-                .collect();
-            let mut rows = linked.cons.clone();
-            rows.extend(implied);
-            let mut empty = false;
-            let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
-                match k {
-                    None => empty = true,
-                    Some(rows) => {
-                        if let Ok(o) = &mut out[ks[i]] {
-                            *o = o.meet(&bounds_alone(&syms[ks[i]], &rows));
-                        }
+        let keep: Vec<BTreeSet<Atom>> = (ks.iter())
+            .map(|&k| BTreeSet::from([syms[k].clone()]))
+            .collect();
+        let mut rows = linked.cons.clone();
+        rows.extend(implied.iter().cloned());
+        let mut empty = false;
+        let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+            match k {
+                None => empty = true,
+                Some(rows) => {
+                    if let Ok(o) = &mut out[ks[i]] {
+                        *o = o.meet(&bounds_alone(&syms[ks[i]], &rows));
                     }
                 }
-                Ok(Vec::new())
-            });
-            ran.expect("no leaf fails");
-            if empty {
-                return Ok(none());
             }
+            Ok(Vec::new())
+        });
+        ran.expect("no leaf fails");
+        if empty {
+            return Ok(none());
         }
     }
     if n_ors > 1 && out.iter().any(finite) {
@@ -7319,7 +7415,8 @@ fn project_parts(
                 Some(f) => f,
                 None => summary.get_or_insert_with(|| summarize(&linked.cons, &seen, syms)),
             };
-            *o = tighten(f, sym, s.clone(), if sets { decide } else { decide_inner });
+            let ask = if sets { decide } else { decide_inner };
+            *o = tighten(f, sym, s.clone(), &implied, ask);
         }
     }
     skipped.sort_unstable();
@@ -7388,11 +7485,13 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 /// lowered by bisection to the nearest value at which `f` with `sym` past it is shown to have
 /// no point. A bound moves only on such a proof, so a refused question leaves it sound. Each
 /// question is asked of `ask`, [`decide_inner`] for a formula renamed or [`decide`] when its
-/// atoms may share a color.
+/// atoms may share a color. `hint` holds rows that the parts `f` stands for imply, read with
+/// `f`'s own to find a point at each end.
 fn tighten(
     f: &Formula,
     sym: &Atom,
     set: IntervalSet,
+    hint: &[Con],
     ask: fn(&Formula) -> Result<bool, Refusal>,
 ) -> Result<IntervalSet, Refusal> {
     let Some((End::Fin(lo), End::Fin(hi))) = set.bounds() else {
@@ -7409,14 +7508,15 @@ fn tighten(
     let (lo, hi) = (Int::from(lo), Int::from(hi));
     // A point of `f` where `sym` is at an end of `set` shows that end is its bound: each
     // question of that side has a point, so none is asked, and the bound is the one the
-    // questions give. The point is one of `f`'s rows and the rows its disjunctions imply
-    // ([`disjunction_hulls`]), found by [`point_of`] and read on `f`. Where the implied rows
+    // questions give. The point is one of `f`'s rows, the rows its disjunctions imply
+    // ([`disjunction_hulls`]) and `hint`, found by [`point_of`] and read on `f`. Where these
     // are exact (each disjunct one stage of a chain) and give the bounds of `set`, the points
     // are found, and no question is asked that the solver would refuse with the implied rows
     // and send to a [`probe`] of every disjunct.
     let mut parts = absorbed(f, &[]).0;
     let mut rows = mem::take(&mut parts.cons);
     rows.extend(disjunction_hulls(&parts.ors));
+    rows.extend(hint.iter().cloned());
     let mut at_end = |v: &Int| {
         rows.push(Con::eq(&x, &Lin::constant(v.clone())));
         let held = point_of(&rows).is_some_and(|m| f.holds(&m));

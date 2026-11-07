@@ -215,6 +215,62 @@ fn small_chain(n: usize, every: usize, end: i128, sums: &[i128], steps: &[i128])
     Formula::and(fs)
 }
 
+/// A chain of three-atom rows of `n` stages (plan item DISJ-dpll) as [`small_chain`] with
+/// `x[n - 1] <= 8n` and, at every fourth stage, two disjunctions that together leave one step
+/// where the rows each implies allow more: `x[i + 1] - x[i]` in {3, 7} and `x[i + 1] - x[i] +
+/// y[i]` in {6, 9}, with `1 <= y[i] <= 2`, force the step 7 (and `y[i] == 2`), where the
+/// implied rows allow 4. `flipped` lists each disjunction's values and all the parts in the
+/// reverse order, which must not change any answer.
+fn joint_chain(n: usize, flipped: bool) -> Formula {
+    let end = 8 * n as i128;
+    if !flipped {
+        return small_chain(n, 4, end, &[6, 9], &[3, 7]);
+    }
+    let f = small_chain(n, 4, end, &[9, 6], &[7, 3]);
+    let Formula::And(fs) = &f else {
+        panic!("a conjunction");
+    };
+    Formula::and(fs.iter().rev().cloned().collect())
+}
+
+/// The exact hull of the middle of [`joint_chain`]: every step at least 1, and 7 at the 8
+/// stages of disjunctions before the middle; the 31 steps after it, 8 of them at
+/// disjunctions, end at most at `8n`.
+const JOINT_MIDDLE_64: (i64, i64) = (32 + 6 * 8, 8 * 64 - (31 + 6 * 8));
+
+#[test]
+fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n() {
+    let inputs = scaling::inputs(16, |m| joint_chain(m, false));
+    scaling::check_order(
+        "a chain whose disjunctions jointly leave one step, projected",
+        16,
+        1,
+        |m| {
+            let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
+            assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
+        },
+    );
+}
+
+#[test]
+fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_has_its_exact_hull() {
+    let n = 64;
+    for flipped in [false, true] {
+        let r = project_each(&joint_chain(n, flipped), &middle(n)).expect("a projection");
+        let s = r.0[0].clone().expect("a hull");
+        let (lo, hi) = JOINT_MIDDLE_64;
+        assert!(
+            s.contains(lo) && !s.contains(lo - 1),
+            "flipped {flipped}: {s:?}"
+        );
+        assert!(
+            s.contains(hi) && !s.contains(hi + 1),
+            "flipped {flipped}: {s:?}"
+        );
+        assert!(r.1.is_empty(), "flipped {flipped}: {:?}", r.1);
+    }
+}
+
 /// The least and greatest value of each `x[i]` over the points of `f`, a chain of `n` stages
 /// ending at most at `end`, by trying every `x[0]` and every step and `y[i]` the rows of a
 /// stage allow (`x` rising by at least `y[i]`, up to `end`), each point read on `f` itself.
@@ -269,13 +325,17 @@ type Small<'a> = (usize, usize, i128, &'a [i128], &'a [i128]);
 /// with sums `6` or `9`, so 7: the rows each implies allow 4), and none at all.
 #[test]
 fn hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points() {
-    let cases: [Small; 6] = [
+    let cases: [Small; 8] = [
         (6, 2, 14, &[4, 5], &[]),
         (6, 2, 14, &[4, 6], &[]),
         (7, 3, 16, &[4, 5], &[]),
         (5, 2, 18, &[6, 9], &[3, 7]),
         (5, 2, 17, &[6, 9], &[3, 7]),
         (5, 2, 5, &[4, 5], &[]),
+        // [`joint_chain`]'s stride, with room past its one least point, and at that point
+        // with each disjunction's values in the reverse order.
+        (6, 4, 20, &[6, 9], &[3, 7]),
+        (6, 4, 17, &[9, 6], &[7, 3]),
     ];
     for (n, every, end, sums, steps) in cases {
         let f = small_chain(n, every, end, sums, steps);
@@ -301,5 +361,42 @@ fn hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points() {
                 }
             }
         }
+    }
+}
+
+/// A chain of `n` stages (plan item DISJ-dpll) where each disjunction is shown empty only
+/// once the one before it is gone: `x[0] == 0`, `x[i + 1] - x[i]` in {0, 10} and `x[i + 1]`
+/// in {0, 15}. Step 10 leaves `x[1]` at 10, so `x[1]` is 0 and the step 0, and so on to the
+/// end: every `x[i]` is 0. `flipped` lists the parts in the reverse order, so that the
+/// removals run against the order of the disjunctions.
+fn cascade(n: usize, flipped: bool) -> Formula {
+    let any_of = |l: &Lin, vs: &[i128]| {
+        Formula::or(vs.iter().map(|v| eq(l.minus(&Lin::constant(*v)))).collect())
+    };
+    let mut fs = vec![eq(x(0))];
+    for i in 0..n - 1 {
+        fs.push(any_of(&step(i), &[0, 10]));
+        fs.push(any_of(&x(i + 1), &[0, 15]));
+    }
+    if flipped {
+        fs.reverse();
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in_n_log_n() {
+    for flipped in [false, true] {
+        let inputs = scaling::inputs(16, |m| cascade(m, flipped));
+        scaling::check_order(
+            &format!("a chain of removals each needing the one before, flipped {flipped}"),
+            16,
+            1,
+            |m| {
+                let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
+                let s = r.0[0].clone().expect("a hull");
+                assert!(s.contains(0) && !s.contains(-1) && !s.contains(1), "{s:?}");
+            },
+        );
     }
 }

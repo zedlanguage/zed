@@ -2123,6 +2123,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A closure that pushes a row onto a captured `Vec`, solves, and pops it again | `tighten` (`at_end`) | Mutation (gap 11) | The rows with the one row added, built for each end (two per symbol) |
 | `Vec::dedup_by` after a sort, keeping the first row of each linear form | `shadow` (the trial) | Mutation (gap 11) | A fold over the sorted rows that keeps a row when its form differs from the last kept |
 
+## Entries from DISJ-dpll (`zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An `FnMut` closure passed to `by_halves` that captures the disjunctions by `&mut` and a `removed` flag, removes disjuncts with `Vec::retain`, and returns rows that `by_halves` adds to the projections still to run | `drop_jointly_empty` | Mutation (gap 11); closures capturing by mutable reference | `by_halves` as a fold whose leaf takes and returns its state (the disjunctions left and the flag) with the rows to add |
+| `Err(())` returned from the leaf as an early exit, read as "no point" by the caller | `drop_jointly_empty` | Error as control flow | The fold's state carries "no point", and the fold stops on it |
+| `std::slice::from_ref` to pass one disjunction as a slice of one | `drop_jointly_empty` | References | A list of one |
+
 ## Entries from LINK-obj-leftover (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |
