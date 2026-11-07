@@ -7,6 +7,7 @@
 //! types are disjoint. A product of tuple types covered by many negated ones is split into disjoint pieces, and
 //! a negated type disjoint from a piece is passed over.
 
+use std::sync::Mutex;
 use std::sync::atomic::Ordering::Relaxed;
 use zed_kernel::Value;
 use zed_kernel::types::{Type, Universe, Verdict};
@@ -304,13 +305,105 @@ fn literal_and_atom_sets_combine_exactly() {
     assert_eq!(&(&a - &b) | &both, a);
 }
 
-/// The exclusive or of `c` tuple types `(b + i, _)`, `(b + i, b + i)` among them: a diagram of
-/// about `2c` nodes with `2^(c - 1)` paths to `true`, holding `c` values.
+/// The exclusive or of `types`, taken in order as `x = (x - t) | (t - x)`: the values in an odd
+/// number of them.
+fn parity(types: impl IntoIterator<Item = Type>) -> Type {
+    types
+        .into_iter()
+        .fold(Type::empty(), |x, t| &(&x - &t) | &(&t - &x))
+}
+
+/// The exclusive or of the `c` tuple types `(b + i, b + i)`: a diagram of about `2c` nodes with
+/// `2^(c - 1)` paths to `true`, holding `c` values.
 fn odd_tuples(c: usize, b: usize) -> Type {
-    (0..c).fold(Type::empty(), |x, i| {
-        let t = Type::tuple(vec![lit(b + i), lit(b + i)]);
-        &(&x - &t) | &(&t - &x)
-    })
+    parity((0..c).map(|i| Type::tuple(vec![lit(b + i), lit(b + i)])))
+}
+
+/// [`odd_tuples`] with its tuple types taken in the reverse order: the same set, built apart.
+fn odd_tuples_reversed(c: usize, b: usize) -> Type {
+    parity(
+        (0..c)
+            .rev()
+            .map(|i| Type::tuple(vec![lit(b + i), lit(b + i)])),
+    )
+}
+
+#[test]
+fn exclusive_ors_of_none_one_and_more_tuple_types_are_compared_exactly() {
+    // A set of switches, each a tuple type: a value is on when an odd number of the types
+    // hold it. The parity of no type is empty and that of one is the type itself.
+    let one = Type::tuple(vec![lit(0), lit(0)]);
+    assert!(odd_tuples(0, 0).is_empty());
+    assert!(odd_tuples(1, 0).equiv(&one));
+    for c in [0, 1, 2, 7] {
+        let (x, y) = (odd_tuples(c, 0), odd_tuples(c + 1, 0));
+        // One more tuple type adds its one value: `x <: y` holds and `y <: x` does not.
+        assert!(x.subtype(&y), "c = {c}");
+        assert!(!y.subtype(&x), "c = {c}");
+        assert!(!x.equiv(&y), "c = {c}");
+        assert!(x.equiv(&odd_tuples_reversed(c, 0)), "c = {c}");
+        assert_eq!(x.each_value().map(|v| v.count()), Some(c), "c = {c}");
+    }
+    // Tuple types of one column, overlapping: `(0 | 1)` and `(1 | 2)` share `(1)`, which is in
+    // both and so in neither's parity; `(0 | 1) ^ (1 | 2) ^ (1)` holds all three values.
+    let row = |vs: &[usize]| Type::tuple(vec![Type::union_all(vs.iter().map(|&v| lit(v)))]);
+    let two = parity([row(&[0, 1]), row(&[1, 2])]);
+    assert!(two.equiv(&(&row(&[0]) | &row(&[2]))));
+    assert!(!two.equiv(&row(&[0, 1, 2])));
+    assert!(parity([row(&[0, 1]), row(&[1, 2]), row(&[1])]).equiv(&row(&[0, 1, 2])));
+    assert!(parity([row(&[0, 1]), row(&[0, 1])]).is_empty());
+}
+
+/// The `runs` inputs `make` builds for count `c` in case `k` of a test, each at a base no other
+/// input uses, so that no run reads a result another kept.
+fn pool<T>(c: usize, runs: usize, k: usize, make: impl Fn(usize, usize) -> T) -> Mutex<Vec<T>> {
+    let base = |i: usize| 100_000_000 * k + 1_000_000 * (i + 1) + 1_000 * c;
+    Mutex::new((0..runs).map(|i| make(c, base(i))).collect())
+}
+
+#[test]
+fn comparing_exclusive_ors_of_tuple_types_scales() {
+    // `odd_tuples(c)` and `odd_tuples(c + 1)` differ by the one value `(b + c, b + c)`, so they
+    // are not equal, and `odd_tuples(c)` built in the reverse order is equal to it. Each run
+    // compares a pair built before any run is timed, at bases no other run uses. Cross-review
+    // xe round 3 (docs/reviews/xe-round3.md, Q7) proposed exclusive-or nodes for diagrams that
+    // are pure parities, on a measurement of the false comparison at 12.9 s at `c = 512`; on
+    // main the split of a tuple part into classes of disjoint cells (COMPLEXITY.md K36)
+    // decides the false comparison in time about linear in `c` and the equal one in about
+    // `c log c` (about 8 and 12 times the instructions at 8 times `c`), so the diagrams have no
+    // such nodes (COMPLEXITY.md K57).
+    let (n, (small_runs, large_runs)) = (64, scaling::Meter::new().runs());
+    // Builds the second type of a pair from the count and the base.
+    type Other = fn(usize, usize) -> Type;
+    let cases: [(&str, Other, bool); 2] = [
+        (
+            "an exclusive or of tuple types against one with one more, by count",
+            |c, b| odd_tuples(c + 1, b),
+            false,
+        ),
+        (
+            "an exclusive or of tuple types against itself built in reverse, by count",
+            odd_tuples_reversed,
+            true,
+        ),
+    ];
+    for (k, (what, other, equal)) in cases.into_iter().enumerate() {
+        let make = |c, b| (odd_tuples(c, b), other(c, b));
+        let pools = [
+            (n, pool(n, small_runs, k, make)),
+            (8 * n, pool(8 * n, large_runs, k, make)),
+        ];
+        scaling::check(what, n, |c| {
+            let (_, pool) = pools.iter().find(|(size, _)| *size == c).expect("a size");
+            let (x, y) = pool
+                .lock()
+                .expect("the pool")
+                .pop()
+                .expect("one pair per run");
+            Type::forget_emptiness();
+            assert_eq!(x.equiv(&y), equal, "c = {c}");
+        });
+    }
 }
 
 #[test]
@@ -327,8 +420,11 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
         .into_iter()
         .map(|c| (c, odd_tuples(c, 0)))
         .collect();
-    // One pass over the nodes lists the candidates, but each of the `c` rows is still checked
-    // along a path of up to `c` nodes: order `c²`, an open item (DESIGN.md L1.23).
+    // One pass over the nodes lists the candidates, but each of the `c` values is still checked
+    // along a path of the diagram, and every path of a parity tests each of the `c` tuple
+    // types: order `c²` (BDD-xor-parity measured 33 M and 2,088 M instructions at `c` 64 and
+    // 512). An exclusive-or node would not lower it, since a value's check would still test
+    // each tuple type the node holds. Open item LIST-parity-quad, COMPLEXITY.md K57.
     scaling::check_order(
         "listing an exclusive or of tuple types, by count",
         64,

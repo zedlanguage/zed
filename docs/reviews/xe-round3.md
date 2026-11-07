@@ -55,7 +55,7 @@ Base: Claude's search with the strict verdict (0 wrong; the others are unsound: 
 
 Base: Claude's search, for soundness and determinism. The Q1Q7 cross-check recommends Gemini's tree as base for speed, but Gemini answers "inhabited" on unsatisfiable pigeonhole n=4 and 5 when warm (it reads MEMO), and Q2Q3 shows it unsound both ways. So port Gemini's fast parts into Claude's tree:
 - Gemini's one-pass `forced` with Claude's split (each alone is quadratic in the other's half).
-- XOR nodes for parity diagrams only (n=48: 71 nodes, width 6, against 8105 without). Gemini's 2n(n+1) bound is refuted at Part level.
+- XOR nodes for parity diagrams only (n=48: 71 nodes, width 6, against 8105 without). Gemini's 2n(n+1) bound is refuted at Part level. Rejected 2026-11-07 (BDD-xor-parity, COMPLEXITY.md K57): the split of a tuple part into classes of disjoint cells (K36) already decides `odd_tuples(c) equiv odd_tuples(c + 1)` at 7.1 to 8.4 times the instructions from c 64 to 512, and the equal comparison at 11.8 times.
 - The chain rule and `Expr` sharing.
 - verdict and subtype_verdict must agree on every case (Claude's tree disagrees on 3): one route.
 - 2-SAT parts are decided (linear), not refused.
