@@ -42,6 +42,7 @@ l01_34_memory
 l01_35_mlir_study
 l01_36_cranelift
 l01_36a_executables
+l01_36b_link_identity
 l01_37_oracle
 l01_37a_short_addresses
 l01_38_presburger
