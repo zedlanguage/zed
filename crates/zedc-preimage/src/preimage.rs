@@ -229,7 +229,7 @@ pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Optio
 /// `lets` is no input, and the inputs its summary reads are among `inputs`. A test of a name
 /// bound by a `let` (`x == 1` after `y = n + 1; x = y + n`) narrows the input the name is
 /// computed from (`n` to 0), and one of a name over several inputs (`x >= 0` after
-/// `x = n + k`) narrows each by the bounds of the others ([`Tx::invert_sep`]). The stages
+/// `x = n + k`) narrows each by the bounds of the others (`Tx::invert_sep`). The stages
 /// after the transfer (the split by remainders, the linear relation, enumeration) read the
 /// term itself, whose names of `lets` they would take for inputs, and are not run: the caller
 /// meets this box with the preimage of the term over the names themselves ([`preimage`]).
@@ -248,8 +248,9 @@ pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) 
 /// The summary of the term `e` a `let` binds ([`LetPa`]), its free names in `inputs` ranging
 /// over their domains and those of `lets` read through their summaries; `None` when a term it
 /// adds has no summary over one input. The summaries of the terms it adds are summed by input
-/// ([`Sep`]): `n + k` is a summary over `n` and `k`. Its sums of names of `lets` are kept unsummed, so that each
-/// binding costs its own term and not the summaries it adds ([`LetPa`]).
+/// (`Sep`): `n + k` is a summary over `n` and `k`. Its sums of names of `lets` are kept
+/// unsummed, so that each binding costs its own term and not the summaries it adds
+/// ([`LetPa`]).
 pub fn let_summary(e: &Term, inputs: &Domains, lets: Lets) -> Option<LetPa> {
     on_stack(|| {
         let mut parts: Vec<(Int, LetPa)> = Vec::new();
@@ -6745,7 +6746,7 @@ fn pa_bounds(pa: &Pa, dom: &IntervalSet) -> Option<(Val, Val)> {
     }
 }
 
-/// The piecewise-affine summary of the value a `let` binds, over the inputs it reads ([`Sep`]),
+/// The piecewise-affine summary of the value a `let` binds, over the inputs it reads (`Sep`),
 /// kept as the sum `Σ c_i * s_i + rest` of the summaries `s_i` of the bound names it adds and
 /// the summary of the rest of its term ([`let_summary`]). Each binding is summarized once, in
 /// its own term's size, when it is bound, and the sum is formed when a test reads the name
@@ -6807,7 +6808,7 @@ impl LetPa {
         self.formed().single()
     }
 
-    /// Forms the summary now ([`LetPa::sum`]). A caller that makes the summaries of a block of
+    /// Forms the summary now (`LetPa::sum`). A caller that makes the summaries of a block of
     /// bindings children first and forms each as it is made adds to each the formed sums of
     /// its parts, `O(1)` merges a binding, so that the names are then read in any order at
     /// no cost but their own.
@@ -6817,7 +6818,7 @@ impl LetPa {
 
     /// Bounds on the value where each input `v` lies in `ints(v)`, as one interval; the empty
     /// set where it has no value; `None` when an input has no integers given. `O(k)` for `k`
-    /// inputs, the summary formed ([`LetPa::formed`]).
+    /// inputs, the summary formed (`LetPa::formed`).
     pub fn image<'d>(
         &self,
         ints: impl Fn(&Arc<str>) -> Option<&'d IntervalSet>,

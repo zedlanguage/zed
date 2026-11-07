@@ -886,7 +886,7 @@ impl Scope {
     /// make: for a caller that summarizes each binding once and binds it in many scopes, as
     /// the checker binds a name in the scope of each test that reads it. The summary holds
     /// here while each input is the binding it now is and its integers lie within those of
-    /// `doms` ([`Scope::holds`]). Where it holds, `p`'s integers are met with the summary's
+    /// `doms` (`Scope::holds`). Where it holds, `p`'s integers are met with the summary's
     /// values over the inputs' integers here ([`LetPa::image`]): with `y = n + 1`, `y` bound
     /// where a test has narrowed `n` to `0..=3` lies in `1..=4`. `O(k)` for `k` inputs, beside
     /// the binding.
