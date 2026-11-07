@@ -21,6 +21,7 @@ mod lazy;
 mod linked;
 mod named_test;
 mod nests;
+mod pendants;
 mod random;
 mod refused;
 mod scaling;

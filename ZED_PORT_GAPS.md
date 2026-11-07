@@ -2511,3 +2511,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `#[cfg(test)]` `thread_local!` `Cell<bool>` that turns off the reading of `if g { true } else { b }` as `g \|\| b`, read by a function that is `false` outside tests | `OR_IF_AS_IF`, `or_if_as_if` | Not ported | Tests only; the port's test would pass the reading as a parameter of the walk |
+
+## Entries from ST-eqs-cubic (`crates/zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `?` on `Option` from inside a `for` loop and after calls, leaving with `None` when a conjunct is not of the route's form or a projection refuses, so the caller takes the whole projection | `Scope::project_by_pendants`, `Scope::pendant`, `one_disjunction` | Early exit (gap 12) | A fold over the conjuncts whose result is an option, matched once after it |
+| A `BTreeMap` entry met in place (`*d = d.meet(..)` through `entry().or_insert_with`), and a counter map filled by `*count.entry(n).or_default() += 1` | `Scope::project_by_pendants` (`forms`, `count`) | Mutation (gap 11) | A fold building a persistent map, each step returning the map with the entry replaced |

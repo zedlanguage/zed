@@ -3698,8 +3698,195 @@ impl Scope {
         (whole, syms)
     }
 
+    /// The projection of `part` onto each name it mentions, as `Scope::project_part` gives
+    /// it, found by eliminating its pendants first; `None` where `part` is not of the form
+    /// below, or the projection of what is left refuses a question, and today's projection of
+    /// the whole part is to be asked.
+    ///
+    /// A pendant is a top-level constraint `s·x + σ·F + k == 0`, or `>= 0`, of names alone,
+    /// where `x`, of coefficient `s` one or minus one, is mentioned by no other top-level
+    /// conjunct of `part` and holds one interval with no class, and `F`, the form, is a linear
+    /// term of two names or more with its first coefficient positive (`σ` one or minus one).
+    /// The pendants of each form are replaced by one new name `w == F` with `w` in the values
+    /// of the form at which each of them has a value of its `x` (`Pendant::allows`); the rest
+    /// of `part`, with these, is projected as today, and each `x` takes the values its
+    /// constraint gives from those of `w` (`Pendant::takes`). Eliminating `x` this way is
+    /// exact: in each disjunct, `x` ranges over the image of the form's values under its
+    /// constraint, so its hull is the image of the form's hull.
+    ///
+    /// The route is taken by structure alone: `part` has a pendant, every other top-level
+    /// conjunct is a constraint, a negated constraint, or a disjunction of constraints and
+    /// conjunctions of constraints, and the disjunctions, counting `!(t == 0)` and each name
+    /// other than a pendant's `x` whose integers are more than one interval, number at most
+    /// one, so that the projection is the hull in each disjunct, and the hull of the image is
+    /// the image of the hull. With fewer names, the integer solver refuses fewer questions
+    /// (Growth, Tie) than on the whole part; where it refuses none on either, the answers are
+    /// the same.
+    // Complexity tradeoff: a part with two disjunctions or more, or whose would-be pendants
+    // have a coefficient other than one or minus one at `x`, or an `x` with holes or a class,
+    // is projected whole, at O(k) names per question: for k such constraints added one at a
+    // time to one part, O(k^3) in all. Eliminating `x` there is not exact by an image of
+    // hulls: with two disjunctions the projection is not the hull in each disjunct, and a
+    // coefficient other than one or minus one, or holes or a class at `x`, give an image of
+    // the form with gaps, not an interval. A form of one name, `x - a >= k` and the like, a
+    // difference constraint, is left to the whole projection too, which keeps the parts of
+    // difference constraints on their present route; its elimination would be exact. Test
+    // `l01_39_reduced_product::pendants`, COMPLEXITY.md S43. A complete solution would project
+    // each combination of disjuncts with the pendants eliminated, exponential in the number
+    // of disjunctions.
+    pub fn project_by_pendants(&self, part: &Formula) -> Option<Vec<(Arc<str>, IntervalSet)>> {
+        let mut tops: Vec<&Formula> = Vec::new();
+        let mut stack = vec![part];
+        while let Some(f) = stack.pop() {
+            match f {
+                Formula::And(gs) => stack.extend(gs.iter().rev()),
+                f => tops.push(f),
+            }
+        }
+        let mut count: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+        for t in &tops {
+            for n in conjuncts::names(t) {
+                *count.entry(n).or_default() += 1;
+            }
+        }
+        let mut hung: Vec<Pendant> = Vec::new();
+        let mut rest: Vec<Formula> = Vec::new();
+        for t in &tops {
+            match self.pendant(t, |n| count.get(n).copied().unwrap_or(0)) {
+                Some(p) => hung.push(p),
+                None => rest.push((*t).clone()),
+            }
+        }
+        if hung.is_empty() {
+            return None;
+        }
+        let xs: BTreeSet<&Arc<str>> = hung.iter().map(|p| &p.x).collect();
+        let mut disjunctions = 0usize;
+        for t in &rest {
+            disjunctions += one_disjunction(t)?;
+        }
+        for n in count.keys().filter(|n| !xs.contains(n)) {
+            let pieces = self.get(n).ints().pieces().len();
+            if pieces == 0 {
+                return None;
+            }
+            disjunctions += usize::from(pieces > 1);
+        }
+        if disjunctions > 1 {
+            return None;
+        }
+        // Each form, with a new name for it and the values at which each of its pendants has
+        // a value of its `x`. A name begins with `#` here, which no program writes.
+        let mut forms: BTreeMap<Lin, (Atom, IntervalSet)> = BTreeMap::new();
+        for p in &hung {
+            let i = forms.len();
+            let (_, d) = forms
+                .entry(p.form.clone())
+                .or_insert_with(|| (Atom::Sym(format!("#w{i}").into()), IntervalSet::top()));
+            *d = d.meet(&p.allows(self.get(&p.x).ints()));
+        }
+        let mut left = rest;
+        for (f, (w, d)) in &forms {
+            left.push(Formula::Con(Con::eq(f, &Lin::atom(w.clone()))));
+            left.push(presburger::member(w, d));
+        }
+        let (whole, syms) = self.framed(&Formula::and(left));
+        let mut out: Vec<(Arc<str>, IntervalSet)> = Vec::new();
+        if matches!(&whole, Formula::Or(v) if v.is_empty()) {
+            // The pendants of a form allow no common value of it, or what is left has no
+            // point: neither has `part`, and each of its names is empty. The conjunction is
+            // `false` then, with no name left in it to project onto.
+            for n in count.into_keys() {
+                out.push((n, IntervalSet::empty()));
+            }
+            return Some(out);
+        }
+        let (each, skipped) = presburger::project_each(&whole, &syms).ok()?;
+        if !skipped.is_empty() {
+            return None;
+        }
+        let mut forms_at: BTreeMap<&Atom, IntervalSet> = BTreeMap::new();
+        for (a, x) in syms.iter().zip(each) {
+            let x = x.ok()?;
+            match a {
+                Atom::Sym(n) if n.starts_with('#') => {
+                    forms_at.insert(a, x);
+                }
+                Atom::Sym(n) if count.contains_key(n) => out.push((n.clone(), x)),
+                _ => {}
+            }
+        }
+        for p in &hung {
+            out.push((p.x.clone(), p.takes(&forms_at[&forms[&p.form].0])));
+        }
+        Some(out)
+    }
+
+    /// `t` as a pendant of a part whose names have the counts `count`: a constraint of names
+    /// alone, one of which, `x`, of coefficient one or minus one, no other conjunct mentions,
+    /// with two names or more besides, and `x` of one interval and no class.
+    fn pendant(&self, t: &Formula, count: impl Fn(&str) -> usize) -> Option<Pendant> {
+        let Formula::Con(c) = t else { return None };
+        let mut x: Option<(&Arc<str>, &Int)> = None;
+        for (a, k) in &c.lin.terms {
+            let Atom::Sym(n) = a else { return None };
+            if count(n) == 1 {
+                if x.is_some() {
+                    return None;
+                }
+                x = Some((n, k));
+            }
+        }
+        let (x, k) = x?;
+        let s: i8 = if *k == Int::ONE {
+            1
+        } else if *k == -&Int::ONE {
+            -1
+        } else {
+            return None;
+        };
+        if c.lin.terms.len() < 3 || gapped(&self.get(x)) {
+            return None;
+        }
+        let mut form: BTreeMap<Atom, Int> = c
+            .lin
+            .terms
+            .iter()
+            .filter(|(a, _)| !matches!(a, Atom::Sym(n) if n == x))
+            .map(|(a, k)| (a.clone(), k.clone()))
+            .collect();
+        let sigma: i8 = if form.values().next().is_some_and(Int::is_negative) {
+            for v in form.values_mut() {
+                *v = -&*v;
+            }
+            -1
+        } else {
+            1
+        };
+        Some(Pendant {
+            x: x.clone(),
+            s,
+            sigma,
+            k: Num::from(&c.lin.constant),
+            eq: c.rel == Rel::Eq,
+            form: Lin {
+                terms: form,
+                constant: Int::ZERO,
+            },
+        })
+    }
+
     /// Meets each name `part` mentions with its projection, within every interval.
     fn project_part(&mut self, part: &Formula) {
+        if let Some(out) = self.project_by_pendants(part) {
+            for (n, x) in out {
+                if let Some(p) = self.names.get_mut(&n) {
+                    let prem = p.premises();
+                    p.meet_ints(x, &prem);
+                }
+            }
+            return;
+        }
         let (whole, syms) = self.framed(part);
         // The text of `part`, each name as written, printed once, and only when a question
         // about it is refused.
@@ -4956,6 +5143,108 @@ fn gapped(p: &Product) -> bool {
         _ => false,
     };
     !(plain && ints.pieces().len() == 1)
+}
+
+/// A pendant of a part ([`Scope::project_by_pendants`]): `s·x + σ·w + k == 0`, or `>= 0`, for `w`
+/// its form, a linear term of the other names with its first coefficient positive.
+struct Pendant {
+    x: Arc<str>,
+    s: i8,
+    sigma: i8,
+    k: Num,
+    eq: bool,
+    form: Lin,
+}
+
+/// `e + v`.
+fn shift(e: &End, v: &Num) -> End {
+    match e {
+        End::Fin(a) => End::Fin(a + v),
+        e => e.clone(),
+    }
+}
+
+/// `{a·v + b : v in set}` for `a` one or minus one.
+fn affine(set: &IntervalSet, a: i8, b: &Num) -> IntervalSet {
+    set.lift1(|(lo, hi)| {
+        if a > 0 {
+            vec![(shift(lo, b), shift(hi, b))]
+        } else {
+            vec![(shift(&-hi, b), shift(&-lo, b))]
+        }
+    })
+}
+
+impl Pendant {
+    /// The values of the form at which some value of `x` in `ints`, one interval, holds.
+    fn allows(&self, ints: &IntervalSet) -> IntervalSet {
+        let Some((lo, hi)) = ints.bounds() else {
+            return IntervalSet::empty();
+        };
+        if self.eq {
+            // σ·w == -k - s·x.
+            return affine(
+                ints,
+                -self.sigma * self.s,
+                &-&(&Num::from(self.sigma as i64) * &self.k),
+            );
+        }
+        // σ·w >= -k - s·x for some x: σ·w >= -k - max(s·x).
+        let most = if self.s > 0 { hi.clone() } else { -lo };
+        let bound = shift(&-&most, &-&self.k);
+        if self.sigma > 0 {
+            IntervalSet::range(bound, End::PosInf)
+        } else {
+            IntervalSet::range(End::NegInf, -&bound)
+        }
+    }
+
+    /// The values of `x` at which some value of the form in `f` holds.
+    fn takes(&self, f: &IntervalSet) -> IntervalSet {
+        if self.eq {
+            // x == -s·σ·w - s·k.
+            return affine(
+                f,
+                -self.s * self.sigma,
+                &-&(&Num::from(self.s as i64) * &self.k),
+            );
+        }
+        let Some((lo, hi)) = f.bounds() else {
+            return IntervalSet::empty();
+        };
+        // s·x >= -k - σ·w for some w: s·x >= -k - max(σ·w).
+        let most = if self.sigma > 0 { hi.clone() } else { -lo };
+        let bound = shift(&-&most, &-&self.k);
+        if self.s > 0 {
+            IntervalSet::range(bound, End::PosInf)
+        } else {
+            IntervalSet::range(End::NegInf, -&bound)
+        }
+    }
+}
+
+/// The number of disjunctions `t`, a conjunct of a part, adds to its projection, when known
+/// to be at most one: a constraint none, a disjunction of constraints and conjunctions of
+/// constraints one, `!(t == 0)` one.
+fn one_disjunction(t: &Formula) -> Option<usize> {
+    let con = |f: &Formula| match f {
+        Formula::Con(_) => true,
+        Formula::Not(n) => matches!(&**n, Formula::Con(c) if c.rel == Rel::Ge),
+        _ => false,
+    };
+    match t {
+        f if con(f) => Some(0),
+        Formula::Not(n) if matches!(&**n, Formula::Con(_)) => Some(1),
+        Formula::Or(gs)
+            if gs.iter().all(|g| match g {
+                Formula::And(hs) => hs.iter().all(con),
+                g => con(g),
+            }) =>
+        {
+            Some(1)
+        }
+        _ => None,
+    }
 }
 
 /// Whether `n` is bounded below and above in `names`: a name not there is unbounded, and an
