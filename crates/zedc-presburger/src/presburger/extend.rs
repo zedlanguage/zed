@@ -189,7 +189,8 @@ impl Extending {
     /// extends the chain and reads `q` beside it (LOAD-chain-affine). O(its parts).
     fn extend(&mut self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
         let kids = g.kids();
-        let mut kept: Option<(usize, &Known)> = None;
+        // The kept parts, the largest first, the first of those with as many.
+        let mut parts: Vec<(usize, &Known)> = Vec::new();
         for (i, h) in kids.iter().enumerate() {
             if !matches!(h, Formula::And(_)) {
                 continue;
@@ -197,11 +198,10 @@ impl Extending {
             let Some(k) = self.known.get(&Id::any(h)) else {
                 return whole(&mut self.sums, g, def);
             };
-            if kept.is_none_or(|(_, best)| k.size > best.size) {
-                kept = Some((i, k));
-            }
+            parts.push((i, k));
         }
-        let Some((at, part)) = kept else {
+        parts.sort_by_key(|&(i, k)| (std::cmp::Reverse(k.size), i));
+        let Some(&(at, part)) = parts.first() else {
             return whole(&mut self.sums, g, def);
         };
         // The other parts, O(their number), and the definitions they reach; a refusal on them
@@ -215,14 +215,46 @@ impl Extending {
         // a long chain of definitions (`h{i}(x: x) > 0`, `h{i} = h{i-1} div 2`) reads only the
         // definitions its link added, not the chain again (LOAD-chain-defs).
         let new = |f: &Formula, m: &Point| with(&reached_past(f, def, m), f.clone());
-        let (holds, point) = match (&part.answers.holds, &part.point) {
-            (Ok(false), _) => (Ok(false), None),
-            (Ok(true), Some(m)) => match met(m, &new(&rest, m)) {
-                Some(p) => (Ok(true), Some(p)),
-                None => holds_whole(g, def),
-            },
-            _ => holds_whole(g, def),
-        };
+        // A point of the whole that extends some kept part's point: the largest part's first,
+        // then each other's, so that a link whose callee's point lies outside it (`q(x: x) &&
+        // p(x: x + 3)`, `p`'s point at its lowest `x`, below `q`'s range once moved) extends the
+        // point of `q` with the callee's constraints fixed there, as it did when `p` was
+        // translated at `x + 3`, instead of being decided whole twice, once for the answer and
+        // once for the point (80 links: 1.6 to 2.2 s with the largest part alone, 0.39 s now, 0.44 s
+        // when each link translated its callee again). A part that holds nowhere settles it.
+        // Otherwise it is decided whole.
+        // Complexity tradeoff: each other part tried reads the rest of the conjunction, the
+        // largest part among it, so a link that extends none costs O(its kept parts times the
+        // whole) before it is decided whole. Why: which part's point extends is not known
+        // before it is tried. Trigger: a link whose callees' points all fall outside it; a link
+        // calls few functions, so the factor is small. Test
+        // `l01_38_presburger::one_scope::each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relation_whole`
+        // (the chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3)`).
+        // COMPLEXITY.md row LOAD-chain-affine.
+        let mut holds = None;
+        for &(j, k) in &parts {
+            let (Ok(true), Some(m)) = (&k.answers.holds, &k.point) else {
+                if matches!(k.answers.holds, Ok(false)) {
+                    holds = Some((Ok(false), None));
+                    break;
+                }
+                continue;
+            };
+            let rest_j = match j == at {
+                true => rest.clone(),
+                false => Formula::and(
+                    (kids.iter().enumerate())
+                        .filter(|&(i, _)| i != j)
+                        .map(|(_, h)| h.clone())
+                        .collect(),
+                ),
+            };
+            if let Some(p) = met(m, &new(&rest_j, m)) {
+                holds = Some((Ok(true), Some(p)));
+                break;
+            }
+        }
+        let (holds, point) = holds.unwrap_or_else(|| holds_whole(g, def));
         // The part holds everywhere, so the whole fails where the other parts do. Their
         // negation with only the new definitions holds where the full one does (the others'
         // variables left free), so it never holding settles it; one point of it that extends

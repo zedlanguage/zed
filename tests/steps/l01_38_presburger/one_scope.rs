@@ -439,6 +439,12 @@ fn each_answer_through_arguments_that_are_not_names_is_the_answer_of_the_relatio
         // A diamond: `h0` reached by `h1` and through `p1`, each passing its parameter.
         "h0(x: int) = x mod 3;\nh1(x: int) = h0(x: x) div 2 + 1;\np0(x: int) = h0(x: x) > 0;\n\
          p1(x: int) = p0(x: x) && h1(x: x) > 1 && h0(x: x + 1) == 2;",
+        // A chain whose link moves its callee's point below a test beside it: `p{i-1}`'s point
+        // is its lowest `x`, which `x + 3` takes below `q`'s range, so the link extends `q`'s
+        // point instead (`Extending::extend`).
+        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\np0(x: int) = x > 0;\n\
+         p1(x: int) = q(x: x) && p0(x: x + 3) && x < 1000;\np2(x: int) = q(x: x) && p1(x: x + 3) && x < 2000;\n\
+         p3(x: int) = q(x: x) && p2(x: x + 3) && x < 3000;\np4(x: int) = q(x: x) && p3(x: x + 3) && x < 4;",
     ];
     for src in units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));

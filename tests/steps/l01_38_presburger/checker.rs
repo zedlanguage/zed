@@ -360,11 +360,13 @@ fn the_linear_questions_of_a_unit_scale() {
 fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints() {
     // `ok` holds `base`'s relation as one shared part (LOAD-chain-share); the refusal, its
     // cause and the constraints it prints are those of `ok` with `base`'s rows written in it.
-    // But for the tie: `main` passes `ok` a local, so `ok` is read over its canonical atoms
-    // and its call of `base` binds `base`'s to them (LOAD-chain-affine); the solver removes
-    // those equalities first, and no longer meets the tie of four names alike that refuses
-    // the rows written out. It decides the question (it holds, at large values), and `ok`
-    // is false at 3.
+    // But for the tie: `main` passes `ok` a local, so `ok`'s parameters join no class with
+    // `base`'s, and `ok`'s call of `base` binds `base`'s canonical atoms to `ok`'s
+    // (LOAD-chain-affine). The question is then over eight variables and four equalities, whose
+    // structure tells every variable apart, and the solver decides it (it holds, at 5 for all
+    // four) with no choice falling to a name; written over four names alike, the rows tie and
+    // are refused. The answer is the same under renamings of the four names, both ways round,
+    // checked below; `ok` is false at 3.
     const ARGS: &str = "x: a, y: a, z: a, w: a";
     for r in &REFUSED {
         let [first, second] = r.rows;
@@ -377,9 +379,49 @@ fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints
         );
         let written = program(&format!("ok(x, y, z, w) = {first} && {second};"), ARGS);
         if r.name == "tie" {
-            let o = run("tie-called", &called, "3\n", &[]);
-            assert_eq!((o.status, o.stdout.as_str()), (0, "out\n"), "{}", o.stderr);
-            rejection("tie-written", &written);
+            // `src` with the names x, y, z, w renamed to `to`, where they stand alone.
+            let renamed = |src: &str, to: [&str; 4]| {
+                let mut out = String::new();
+                let cs: Vec<char> = src.chars().collect();
+                for (i, &c) in cs.iter().enumerate() {
+                    let alone = |j: Option<&char>| !j.is_some_and(|c| c.is_alphanumeric());
+                    match "xyzw".find(c) {
+                        Some(k)
+                            if alone(i.checked_sub(1).map(|j| &cs[j])) && alone(cs.get(i + 1)) =>
+                        {
+                            out.push_str(to[k])
+                        }
+                        _ => out.push(c),
+                    }
+                }
+                out
+            };
+            for (i, to) in [
+                ["x", "y", "z", "w"],
+                ["w", "z", "y", "x"],
+                ["p4", "p3", "p2", "p1"],
+                ["p1", "p2", "p3", "p4"],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                for input in ["3\n", "5\n"] {
+                    let o = run(
+                        &format!("tie-called-{i}"),
+                        &renamed(&called, to),
+                        input,
+                        &[],
+                    );
+                    let want = if input == "3\n" { "out\n" } else { "in\n" };
+                    assert_eq!(
+                        (o.status, o.stdout.as_str()),
+                        (0, want),
+                        "{to:?}: {}",
+                        o.stderr
+                    );
+                }
+                rejection(&format!("tie-written-{i}"), &renamed(&written, to));
+            }
             continue;
         }
         let called = rejection(&format!("{}-called", r.name), &called)

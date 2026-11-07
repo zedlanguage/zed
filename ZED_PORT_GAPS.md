@@ -2061,6 +2061,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A nested `fn find(parent: &mut [usize], ..)` inside a function | `identity_classes` | None | A local function over the map value |
 | An explicit stack of `(Formula, bool)` for a post-order walk, the bool marking the second visit | `Extending::defined` | None | A list value used as a stack |
 | `usize` sizes compared to choose the largest decided part | `extend::Known::size`, `Extending::extend` | None | `int` |
+| A loop over the kept parts that sets an `Option` and leaves at the first part whose point extends or that holds nowhere | `Extending::extend` | Mutation (gap 11), Early exit (gap 12) | A search over the list of parts returning the first answer it finds |
 
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
