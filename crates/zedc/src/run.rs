@@ -877,7 +877,7 @@ fn command_inner(
 /// `zedc run` writes them, then a line for each address `suppress` names that no warning has;
 /// or the exit status and message: 2 when the file cannot be read, or it or the current
 /// directory cannot be resolved to the path its addresses name ([`InFile`]), 1 when the
-/// program is rejected (by its package, by the front end or by [`program`]), each rejection
+/// program is rejected (by its package, by the front end or by `program`), each rejection
 /// as `file:line:col: why` and its derivation, followed by its address, and then a line for
 /// each rejection `suppress` names, since a rejection cannot be suppressed.
 pub fn load_file(
