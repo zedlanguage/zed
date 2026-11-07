@@ -1086,6 +1086,7 @@ dependencies = [
  "zedc-int",
  "zedc-lattice",
  "zedc-presburger",
+ "zedc-resolve",
  "zedc-solvers",
  "zedc-syntax",
  "zedc-types",
@@ -1130,6 +1131,15 @@ dependencies = [
  "zedc-lattice",
  "zedc-presburger",
  "zedc-solvers",
+]
+
+[[package]]
+name = "zedc-resolve"
+version = "0.0.0"
+dependencies = [
+ "imbl",
+ "zedc-base",
+ "zedc-syntax",
 ]
 
 [[package]]

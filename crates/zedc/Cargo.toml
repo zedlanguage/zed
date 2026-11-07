@@ -31,6 +31,7 @@ zedc-lattice.workspace = true
 zedc-solvers.workspace = true
 zedc-presburger.workspace = true
 zedc-types.workspace = true
+zedc-resolve.workspace = true
 
 [dev-dependencies]
 # The tests of store::preimage set store::presburger::TWO_AT_A_TIME, which exists only with this

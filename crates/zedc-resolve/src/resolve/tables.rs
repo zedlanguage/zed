@@ -6,19 +6,20 @@ use std::hash::{Hash, Hasher};
 
 use imbl::Vector;
 
-use crate::ast::{Expr, ExprKind, Function, Param, Stmt, StmtKind, StrPart, Target, Type};
-use crate::lex::Span;
 use crate::resolve::{Ref, Resolution};
+use zedc_syntax::ast::{Expr, ExprKind, Function, Param, Stmt, StmtKind, StrPart, Target, Type};
+use zedc_syntax::lex::Span;
 
 use super::topo::topo_joined;
 
 /// The binders of a unit, shared by the checker and elaboration.
-pub(crate) struct Tables<'a> {
-    pub(crate) res: &'a Resolution,
+pub struct Tables<'a> {
+    /// The unit's resolution, which the tables index.
+    pub res: &'a Resolution,
     /// Each binder's index, by its span and name.
-    pub(crate) ids: HashMap<(Span, &'a str), usize>,
+    pub ids: HashMap<(Span, &'a str), usize>,
     /// Each function binder's declaration.
-    pub(crate) funcs: HashMap<usize, &'a Function>,
+    pub funcs: HashMap<usize, &'a Function>,
     /// The uses of the unit's binders, grouped by the list of binders each may name (one
     /// binder, or the arrows of an overload set), each use once, in the order of the text: `U`
     /// uses of a set of `K` arrows are `U + K` entries, not `U·K`.
@@ -28,7 +29,7 @@ pub(crate) struct Tables<'a> {
     /// Every written type of the unit, each once, in the order of the text: a parameter's, a
     /// lambda parameter's, an output port's and an `is` test's. The checker checks their
     /// bounds.
-    pub(crate) written: Vec<&'a Type>,
+    pub written: Vec<&'a Type>,
 }
 
 /// The uses of one list of binders.
@@ -113,7 +114,8 @@ fn collect_expr<'a>(e: &'a Expr, todo: &mut Vec<Collect<'a>>) {
 }
 
 impl<'a> Tables<'a> {
-    pub(crate) fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
+    /// The tables of the unit `unit`, whose resolution is `res`.
+    pub fn new(unit: &'a [Stmt], res: &'a Resolution) -> Self {
         let ids = res
             .binders
             .iter()
@@ -200,12 +202,13 @@ impl<'a> Tables<'a> {
         }
     }
 
-    pub(crate) fn id(&self, span: Span, name: &str) -> usize {
+    /// The index of the binder named `name` declared at `span`.
+    pub fn id(&self, span: Span, name: &str) -> usize {
         self.ids[&(span, name)]
     }
 
     /// The binders used in `span`, outside the spans in `skip`.
-    pub(crate) fn uses_in(&self, span: Span, skip: &[Span]) -> Vec<usize> {
+    pub fn uses_in(&self, span: Span, skip: &[Span]) -> Vec<usize> {
         let from = Span {
             start: span.start,
             end: 0,
@@ -228,7 +231,7 @@ impl<'a> Tables<'a> {
             .collect()
     }
 
-    pub(crate) fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
+    fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
         match &s.kind {
             StmtKind::Bind { targets, .. } => targets
                 .iter()
@@ -261,7 +264,7 @@ impl<'a> Tables<'a> {
     /// reads the uses of the scope's own binders only, not those of the scopes inside it.
     /// A use of an overload set waits on one join node, which waits on the set's statements,
     /// so `U` uses of `K` overloads make `U + K` dependencies, not `U·K`.
-    pub(crate) fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<Vec<usize>>> {
+    pub fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<Vec<usize>>> {
         let bound: Vec<(usize, usize)> = (items.iter().enumerate())
             .flat_map(|(i, s)| self.binders_of(s).into_iter().map(move |b| (b, i)))
             .collect();

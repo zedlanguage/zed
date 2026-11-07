@@ -4,9 +4,9 @@
 
 use std::collections::HashSet;
 
-use crate::ast::Error;
-use crate::lex::{Doc, Span, Token};
 use crate::resolve::{Resolution, is_prelude_name};
+use zedc_syntax::ast::Error;
+use zedc_syntax::lex::{Doc, Span, Token};
 
 /// The errors of the doc comments `docs` of `text`, lexed as `tokens` and resolved as `res`,
 /// in text order. A block is the doc comments that the same token follows; it attaches when

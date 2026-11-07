@@ -32,16 +32,16 @@ use std::sync::Arc;
 
 use imbl::Vector;
 
-use crate::ast::{
+use zedc_base::rejection::Row;
+use zedc_syntax::ast::{
     Annot, Arm, Error, Expr, ExprKind, Field, Import, ImportKind, Param, Pattern, Port, RangeEnd,
     Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
-use crate::ast::{Every, Note, Type, TypeBound, TypeKind};
-use crate::lex::Span;
-use crate::rejection::Row;
+use zedc_syntax::ast::{Every, Note, Type, TypeBound, TypeKind};
+use zedc_syntax::lex::Span;
 
-pub(crate) mod tables;
-pub(crate) mod topo;
+pub mod tables;
+pub mod topo;
 
 /// What binds a name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
