@@ -252,6 +252,68 @@ pub fn unit_sum(g: &Formula) -> bool {
             .all(|(a, k)| matches!(a, Atom::Sym(_)) && (*k == one || *k == minus))
 }
 
+/// An edge of a difference constraint: `to <= from + weight`, `None` standing for the value 0
+/// (Shostak's node `z`), so that a bound is an edge to or from it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Edge {
+    /// The name the edge leaves, or `None` for 0.
+    pub from: Option<Arc<str>>,
+    /// The name the edge enters, or `None` for 0.
+    pub to: Option<Arc<str>>,
+    /// The weight.
+    pub weight: Int,
+}
+
+/// The edges of `g` when it is a difference constraint or a bound: `x - y + k >= 0`,
+/// `±x + k >= 0`, their equalities, each an edge both ways, and the negation of one of the
+/// inequalities, `!(t >= 0)` being `-t - 1 >= 0`. `None` for any other conjunct.
+pub fn edges(g: &Formula) -> Option<(Edge, Option<Edge>)> {
+    let (lin, rel) = match g {
+        Formula::Con(c) => (c.lin.clone(), c.rel),
+        Formula::Not(n) => match &**n {
+            Formula::Con(c) if c.rel == Rel::Ge => (
+                c.lin.times(Int::from(-1i64)).plus(&Lin::constant(-1)),
+                Rel::Ge,
+            ),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut ends: [(Option<Arc<str>>, bool); 2] = [(None, true), (None, false)];
+    let mut found = [false; 2];
+    for (a, k) in &lin.terms {
+        let Atom::Sym(n) = a else { return None };
+        if !k.is_unit() {
+            return None;
+        }
+        let side = usize::from(!k.is_positive());
+        if found[side] {
+            return None;
+        }
+        found[side] = true;
+        ends[side].0 = Some(n.clone());
+    }
+    if !found.contains(&true) {
+        return None;
+    }
+    // `x - y + k` with `x` or `y` possibly 0: the edge `x → y` of weight `k`.
+    let [(x, _), (y, _)] = ends;
+    let k = lin.constant;
+    let back = (rel == Rel::Eq).then(|| Edge {
+        from: y.clone(),
+        to: x.clone(),
+        weight: -&k,
+    });
+    Some((
+        Edge {
+            from: x,
+            to: y,
+            weight: k,
+        },
+        back,
+    ))
+}
+
 impl PartialEq for Conjuncts {
     fn eq(&self, other: &Conjuncts) -> bool {
         self.set == other.set
@@ -472,6 +534,21 @@ impl Conjuncts {
             p.eval.insert(name.clone());
             self.flush(p);
         }
+    }
+
+    /// Records whether the integers the scope's product gives `name` are other than one
+    /// interval with no class ([`Blocks::differences_only`]), in O(log n).
+    pub fn gapped(&mut self, name: &Arc<str>, on: bool) {
+        self.blocks.gap(name, on);
+    }
+
+    /// Whether the tree of blocks that holds `name` holds only difference constraints and
+    /// bounds of names each one interval with no class ([`Blocks::differences_only`]); true
+    /// when no conjunct of the forest mentions `name`.
+    pub fn differences_only_at(&self, name: &str) -> bool {
+        self.blocks
+            .tree_of_name(name)
+            .is_none_or(|t| self.blocks.differences_only(t))
     }
 
     /// Records whether `name` is bounded below and above, as the scope's product of it says:
@@ -1211,6 +1288,25 @@ pub struct Blocks {
     shared: OrdMap<Atom, OrdSet<Arc<Formula>>>,
     /// The blocks apart from the forest, each its own tree ([`Blocks::detach`]).
     apart: OrdSet<BlockId>,
+    /// The number of conjuncts of each tree that are not difference constraints or bounds
+    /// ([`edges`]), at its representative; none when zero.
+    others: OrdMap<BlockId, usize>,
+    /// The names whose integers are not one interval or lie in a class ([`Blocks::gap`]).
+    gapped: OrdSet<Arc<str>>,
+    /// The number of such names of each tree, at its representative; none when zero.
+    gaps: OrdMap<BlockId, usize>,
+}
+
+/// Adds `by` to the count of `r` in `counts`, which holds no zero.
+fn tally(counts: &mut OrdMap<BlockId, usize>, r: BlockId, by: isize) {
+    let n = counts.get(&r).copied().unwrap_or(0).checked_add_signed(by);
+    debug_assert!(n.is_some(), "a count of a tree below zero");
+    let n = n.unwrap_or(0);
+    if n == 0 {
+        counts.remove(&r);
+    } else {
+        counts.insert(r, n);
+    }
 }
 
 impl Blocks {
@@ -1243,6 +1339,33 @@ impl Blocks {
     /// ([`Blocks::detach`]).
     pub fn placed(&self, g: &Arc<Formula>) -> bool {
         self.of(g).is_some_and(|b| !self.is_apart(b))
+    }
+
+    /// The tree of the forest that holds `name`, if a conjunct of the forest mentions it.
+    pub fn tree_of_name(&self, name: &str) -> Option<BlockId> {
+        self.name.get(name).map(|&id| self.find(id))
+    }
+
+    /// Whether the tree `t` of the forest holds only difference constraints and bounds
+    /// ([`edges`]) and none of its names has holes or a class ([`Blocks::gap`]): read from
+    /// two counts kept as conjuncts come and go, in O(log n).
+    pub fn differences_only(&self, t: BlockId) -> bool {
+        let r = self.find(t);
+        !self.is_apart(r) && !self.others.contains_key(&r) && !self.gaps.contains_key(&r)
+    }
+
+    /// Records whether the integers of `name` are other than one interval with no class, as
+    /// [`Blocks::differences_only`] reads them, in O(log n).
+    pub fn gap(&mut self, name: &Arc<str>, on: bool) {
+        let changed = if on {
+            self.gapped.insert(name.clone()).is_none()
+        } else {
+            self.gapped.remove(name).is_some()
+        };
+        if changed && let Some(&id) = self.name.get(name) {
+            let r = self.find(id);
+            tally(&mut self.gaps, r, if on { 1 } else { -1 });
+        }
     }
 
     /// A new block of the conjuncts `gs`, none in a block, apart from the forest: no name or
@@ -1297,6 +1420,11 @@ impl Blocks {
         self.link.insert(small, big);
         self.size.remove(&small);
         self.size.insert(big, sa + sb);
+        for counts in [&mut self.others, &mut self.gaps] {
+            if let Some(n) = counts.remove(&small) {
+                tally(counts, big, n as isize);
+            }
+        }
     }
 
     /// Makes `x` the root of its tree, reversing the parent links on its path to the root.
@@ -1444,6 +1572,9 @@ impl Blocks {
         let b = self.fresh();
         self.members.insert(b, OrdSet::unit(g.clone()));
         self.of.insert(g.clone(), b);
+        if edges(g).is_none() {
+            tally(&mut self.others, b, 1);
+        }
         let atoms = g.atoms();
         let mut met: Vec<BlockId> = Vec::new();
         for a in &atoms {
@@ -1455,6 +1586,10 @@ impl Blocks {
                         self.name.insert(n.clone(), id);
                         self.up.insert(id, b);
                         self.union(id, b);
+                        if self.gapped.contains(n) {
+                            let r = self.find(b);
+                            tally(&mut self.gaps, r, 1);
+                        }
                     }
                 }
             }
@@ -1505,6 +1640,11 @@ impl Blocks {
         if let Some(m) = self.members.get_mut(&b) {
             m.remove(old);
             m.insert(new.clone());
+        }
+        let by = isize::from(edges(new).is_none()) - isize::from(edges(old).is_none());
+        if by != 0 && !self.is_apart(b) {
+            let r = self.find(b);
+            tally(&mut self.others, r, by);
         }
         for a in old.atoms() {
             match a {
@@ -1599,12 +1739,20 @@ impl Blocks {
         if !(alone && apart && kept.len() <= 1) {
             return false;
         }
+        let r = self.find(b);
+        let counted = !self.is_apart(r);
+        if counted && edges(g).is_none() {
+            tally(&mut self.others, r, -1);
+        }
         for a in &atoms {
             if let Atom::Sym(n) = a
                 && kept.first() != Some(&n)
                 && let Some(id) = self.name.remove(n)
             {
                 self.up.remove(&id);
+                if counted && self.gapped.contains(n) {
+                    tally(&mut self.gaps, r, -1);
+                }
             }
         }
         if let Some(s) = kept.first()
@@ -1703,6 +1851,9 @@ impl Blocks {
         let mut piece: BTreeMap<BlockId, BlockId> = BTreeMap::new();
         let mut count: BTreeMap<BlockId, usize> = BTreeMap::new();
         let mut removed = 1usize;
+        // The conjuncts and names the tree loses that its counts hold.
+        let others = out.iter().filter(|g| edges(g).is_none()).count();
+        let mut gaps = 0usize;
         for n in index.keys() {
             let Some(&id) = self.name.get(n) else {
                 continue;
@@ -1711,6 +1862,7 @@ impl Blocks {
                 self.name.remove(n);
                 self.up.remove(&id);
                 removed += 1;
+                gaps += usize::from(self.gapped.contains(n));
                 continue;
             }
             if self.up.get(&id) == Some(&b) {
@@ -1758,6 +1910,8 @@ impl Blocks {
         let r = self.find(any);
         let s = self.tree_size(r) + rest.len();
         self.size.insert(r, s.saturating_sub(removed).max(1));
+        tally(&mut self.others, r, -(others as isize));
+        tally(&mut self.gaps, r, -(gaps as isize));
         true
     }
 
@@ -1799,6 +1953,15 @@ impl Blocks {
                         visit(a, &mut names, &mut atoms);
                     }
                 }
+            }
+        }
+        // The trees built again lose every node, so their counts go, and placing the conjuncts
+        // counts them afresh.
+        for g in gs.iter().chain(&found) {
+            if let Some(&b) = self.of.get(g) {
+                let r = self.find(b);
+                self.others.remove(&r);
+                self.gaps.remove(&r);
             }
         }
         for g in gs.iter().chain(&found) {
