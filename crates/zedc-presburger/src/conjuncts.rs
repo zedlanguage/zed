@@ -1354,6 +1354,21 @@ impl Blocks {
         !self.is_apart(r) && !self.others.contains_key(&r) && !self.gaps.contains_key(&r)
     }
 
+    /// The number of names of tree `t` of the forest with holes or a class ([`Blocks::gap`])
+    /// when it holds only difference constraints and bounds ([`edges`]), otherwise `None`; in
+    /// O(log n). [`Blocks::differences_only`] is a count of 0.
+    pub fn gaps(&self, t: BlockId) -> Option<usize> {
+        let r = self.find(t);
+        let only = !self.is_apart(r) && !self.others.contains_key(&r);
+        only.then(|| self.gaps.get(&r).copied().unwrap_or(0))
+    }
+
+    /// Whether the integers of `name` were recorded as other than one interval with no class
+    /// ([`Blocks::gap`]), in O(log n).
+    pub fn is_gapped(&self, name: &str) -> bool {
+        self.gapped.contains(name)
+    }
+
     /// Records whether the integers of `name` are other than one interval with no class, as
     /// [`Blocks::differences_only`] reads them, in O(log n).
     pub fn gap(&mut self, name: &Arc<str>, on: bool) {

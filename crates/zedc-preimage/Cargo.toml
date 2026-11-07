@@ -18,6 +18,7 @@ zed-kernel.workspace = true
 zedc-int.workspace = true
 zedc-lattice.workspace = true
 zedc-presburger.workspace = true
+zedc-solvers.workspace = true
 zedc-stage.workspace = true
 
 [lints]

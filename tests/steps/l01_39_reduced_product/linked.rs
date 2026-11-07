@@ -11,6 +11,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::{Conjuncts, edges, names};
+use zedc::store::interval::End;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc::store::product::{Product, Scope};
 
@@ -997,8 +998,9 @@ fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
     // constraint, with w_i unbounded. The edges that come while the tree goes block by block
     // are put in the potential all the same (`Scope::repair`), so no later test finds it again
     // from the whole tree (`Scope::reseed`). The same mix with a hole, `x_i != 5`, in place of
-    // the sum grows 58 times from k = 40 to 320, as on the code before this test: the
-    // projection of the holed tree, not the potential (COMPLEXITY.md row S25).
+    // the sum, is quadratic in its output: the arm where x_i is 5 moves the bounds of the
+    // names below it, which the ladder bounds from x0 alone (COMPLEXITY.md row S25).
+    // `if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear` bounds each name.
     let p = Premises::new();
     let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
         .into_iter()
@@ -1026,6 +1028,49 @@ fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
         let (s, tests) = &built[&k];
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+            j.reduce();
+            j
+        });
+    });
+}
+
+#[test]
+fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
+    // The chain from x0 with each x_i within its own ten values, 10 (k - i) to 10 (k - i) + 9,
+    // so that no edge moves a bound, each rung's `if` after an `if` that puts a hole in a name,
+    // `x_i != 10 (k - i) + 5`. The arms are taken as the checker takes them
+    // (`Scope::assume_case`), since the arm where a rung fails is empty. The arm where the
+    // hole holds projects the tree by shortest paths with the hole left out
+    // (`Scope::lone_hole`), and the join keeps that arm's last projection, whose tree had a
+    // hole and is still read by shortest paths (`Seeds::unsure`). 9.4 times the work and 8.5
+    // times the bytes from k = 40 to 320; on the code before, which projected the tree's
+    // blocks one by one at each test, 62.2 times the bytes (COMPLEXITY.md row S25).
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
+        .into_iter()
+        .map(|k| {
+            let n = named(k + 1, "x");
+            let base = |i: usize| (10 * (k - i)) as i64;
+            let s = (0..=k).fold(ints(&n), |s, i| {
+                s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
+                    .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
+            });
+            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+            let mut tests: Vec<Term> = Vec::new();
+            for i in 0..k - 1 {
+                tests.push(prim(Prim::Ne, var(&n[i]), int(base(i) + 5)));
+                tests.push(ge(&n[i], &n[i + 2], 2));
+            }
+            (k, (s, tests))
+        })
+        .collect();
+    let name = "a ladder grown by k if statements, each after an if that puts a hole in a name";
+    scaling::check_order(name, 40, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| {
+            let mut j = s
+                .assume_case(t, true, &p)
+                .join(&s.assume_case(t, false, &p));
             j.reduce();
             j
         });
@@ -1230,6 +1275,106 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
     assert!(moved > 500, "{moved} steps moved an interval");
     assert!(empty > 50, "{empty} ladders became empty");
     assert!(holes > 200, "{holes} steps left a name with holes");
+}
+
+#[test]
+fn a_hole_in_one_name_of_a_tree_of_differences_gives_the_projection_block_by_block() {
+    // Trees of difference constraints, each step a test `x != c` asked both ways on the scope
+    // so far, which then takes the step's own test: one name with a hole of one integer, and
+    // no cycle of weight 0 through it, is projected by shortest paths with the hole left out
+    // (`Scope::lone_hole`). The rest gives holes of two integers, holes in two names, and
+    // cycles of weight 0 from equalities and from two inequalities, which go block by block.
+    let mut r = Rng::new(0x1e4e);
+    let p = Premises::new();
+    let (mut moved, mut empty, mut holes, mut tied, mut joined) = (0, 0, 0, 0, 0);
+    for case in 0..150 {
+        let k = 3 + r.below(6);
+        let ns = named(k, "x");
+        let mut s = ints(&ns);
+        for n in &ns {
+            let lo = r.int(-6, 0);
+            s = s.assume(&prim(Prim::Ge, var(n), int(lo)), true, &p);
+            s = s.assume(&prim(Prim::Le, var(n), int(lo + r.int(2, 12))), true, &p);
+        }
+        for step in 0..2 * k + r.below(3 * k) {
+            let (i, j) = (r.below(k), r.below(k));
+            let c = r.int(-2, 2);
+            // Mostly inside the name's interval, so that the test makes a hole; with a
+            // difference constraint in the same test, the end the bounds move it to may be one.
+            let hole = |r: &mut Rng| {
+                let n = r.below(k);
+                let c = match s.get(&ns[n]).ints().bounds() {
+                    Some((End::Fin(lo), End::Fin(hi))) if r.below(4) != 0 => {
+                        let (lo, hi) = (lo.to_i64().unwrap_or(0), hi.to_i64().unwrap_or(0));
+                        r.int(lo, hi)
+                    }
+                    _ => r.int(-4, 6),
+                };
+                let h = prim(Prim::Ne, var(&ns[n]), int(c));
+                let m = r.below(k);
+                match r.below(3) {
+                    0 if m != n => prim(Prim::And, h, ge(&ns[m], &ns[n], r.int(-2, 2))),
+                    _ => h,
+                }
+            };
+            let asked = [hole(&mut r), hole(&mut r), hole(&mut r)];
+            for (hole, holds) in asked.iter().flat_map(|h| [(h, true), (h, false)]) {
+                let got = s.assume(hole, holds, &p);
+                let mut fresh = s.clone();
+                fresh.forget_projections();
+                let mut want = fresh.assume(hole, holds, &p);
+                want.forget_projections();
+                want.reduce();
+                assert_eq!(
+                    intervals(&got, &ns),
+                    intervals(&want, &ns),
+                    "case {case} step {step} {holds}: {hole:?} on {:?}",
+                    s.relation
+                );
+                moved += usize::from(intervals(&got, &ns) != intervals(&s, &ns));
+                holes += usize::from(ns.iter().any(|n| got.get(n).ints().pieces().len() > 1));
+                empty += usize::from(got.bottom);
+            }
+            let t = match r.below(12) {
+                0 => asked[0].clone(),
+                1 if i != j => prim(Prim::Eq, prim(Prim::Sub, var(&ns[i]), var(&ns[j])), int(c)),
+                // An `if` whose arms join: the join keeps the last projection of the arm that
+                // held, with the hole, and the next steps are projected from it.
+                3 => {
+                    joined += 1;
+                    let mut j = s
+                        .assume(&asked[1], true, &p)
+                        .join(&s.assume(&asked[1], false, &p));
+                    j.reduce();
+                    if j.bottom {
+                        break;
+                    }
+                    s = j;
+                    continue;
+                }
+                2 if i != j => {
+                    tied += 1;
+                    s = s.assume(&ge(&ns[i], &ns[j], c), true, &p);
+                    ge(&ns[j], &ns[i], -c)
+                }
+                _ if i != j => ge(&ns[i], &ns[j], c),
+                _ => continue,
+            };
+            let next = s.assume(&t, r.below(8) != 0, &p);
+            if next.bottom {
+                break;
+            }
+            s = next;
+        }
+    }
+    assert!(moved > 5000, "{moved} tests moved an interval");
+    assert!(holes > 2000, "{holes} tests left a name with holes");
+    assert!(empty > 500, "{empty} tests made the scope empty");
+    assert!(
+        tied > 60,
+        "{tied} pairs of inequalities made a cycle of weight 0"
+    );
+    assert!(joined > 80, "{joined} tests joined both arms");
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
