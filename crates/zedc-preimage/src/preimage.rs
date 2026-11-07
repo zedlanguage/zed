@@ -71,15 +71,15 @@ use std::sync::Arc;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval, on_stack};
 
-use super::int::Int;
-use super::interval::{End, IntervalSet, Num};
-use super::landmarks::Landmarks;
-use super::lattice::{Congruence, Lattice};
-use super::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusal, Relation};
-use super::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
-use crate::stage;
 use End::{Fin, NegInf, PosInf};
 use zed_kernel::frames::{Deep, Stack};
+use zedc_int::int::Int;
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::landmarks::Landmarks;
+use zedc_lattice::lattice::{Congruence, Lattice};
+use zedc_lattice::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
+use zedc_presburger::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusal, Relation};
+use zedc_stage::stage;
 
 /// The box of a term whose value `v` is known: every point when `v` meets the demand, none
 /// otherwise.
@@ -7175,10 +7175,10 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::presburger::TWO_AT_A_TIME;
     use super::*;
     use std::cell::Cell;
     use std::collections::BTreeSet;
+    use zedc_presburger::presburger::TWO_AT_A_TIME;
 
     thread_local! {
         /// Whether [`Walk::cached`] remembers nothing a call stopped below ([`none_held`]).

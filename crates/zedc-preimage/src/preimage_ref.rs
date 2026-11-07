@@ -66,9 +66,9 @@
 //! which can have as many pieces as the box has points; it asks [`witness`] for one point
 //! that meets the demand, and the same search stops at the first.
 //!
-//! [`super::preimage`]: crate::store::preimage
-//! [`exact_preimage`]: crate::store::preimage_ref::exact_preimage
-//! [`witness`]: crate::store::preimage_ref::witness
+//! [`super::preimage`]: crate::preimage
+//! [`exact_preimage`]: crate::preimage_ref::exact_preimage
+//! [`witness`]: crate::preimage_ref::witness
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -78,14 +78,14 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval, on_stack};
 
-use super::int::Int;
-use super::interval::{End, IntervalSet, Num};
-use super::landmarks::Landmarks;
-use super::lattice::{Congruence, Lattice};
-use super::presburger::{self, Con, Formula, Lin, Refusal, Relation};
-use super::revision::{self, Op, Tonicity, reduce_congruence};
-use crate::stage;
 use End::{Fin, NegInf, PosInf};
+use zedc_int::int::Int;
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::landmarks::Landmarks;
+use zedc_lattice::lattice::{Congruence, Lattice};
+use zedc_lattice::revision::{self, Op, Tonicity, reduce_congruence};
+use zedc_presburger::presburger::{self, Con, Formula, Lin, Refusal, Relation};
+use zedc_stage::stage;
 
 /// An interval per input name.
 pub type Domains = BTreeMap<Arc<str>, IntervalSet>;

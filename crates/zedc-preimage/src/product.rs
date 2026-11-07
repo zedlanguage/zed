@@ -46,19 +46,19 @@ use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
-use super::affine::Bounds;
-use super::cell::{Cell, Entry, Premise, Premises};
-use super::conjuncts::{self, BlockId, Conjuncts, Uses};
-use super::hull::Hull;
-use super::int::Int;
-use super::interval::{End, IntervalSet, Num};
-use super::landmarks::Landmarks;
-use super::lattice::{Congruence, FiniteSet, Lattice};
 use super::preimage::{Classes, Demand, Domains, follow_own, preimage, relations, witness};
-use super::presburger::{self, Atom, Con, Formula, Lin, Rel};
-use super::revision::{self, Op, reduce_congruence};
-use crate::elab::written_name;
-use crate::stage;
+use zedc_int::int::Int;
+use zedc_lattice::affine::Bounds;
+use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::landmarks::Landmarks;
+use zedc_lattice::lattice::{Congruence, FiniteSet, Lattice};
+use zedc_lattice::revision::{self, Op, reduce_congruence};
+use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Uses};
+use zedc_presburger::hull::Hull;
+use zedc_presburger::presburger::{self, Atom, Con, Formula, Lin, Rel};
+use zedc_stage::defs::written_name;
+use zedc_stage::stage;
 
 /// When a value is known.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -3160,7 +3160,7 @@ fn forward_prim(op: Prim, args: &[Term], scope: &mut Scope) -> Product {
     {
         let ints: Vec<IntervalSet> = xs.iter().map(|x| x.ints().clone()).collect();
         p.ty.element = Type::int();
-        p.cell.ints.element = Bounds::ints(super::interval::bit_word(op, &ints));
+        p.cell.ints.element = Bounds::ints(zedc_lattice::interval::bit_word(op, &ints));
         p.reduce_domains();
     }
     p

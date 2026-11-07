@@ -1073,18 +1073,15 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "perf-event2",
- "rustix",
- "stacker",
  "unicode-ident",
  "unicode-normalization",
  "unicode-script",
- "zed-alloc-count",
  "zed-kernel",
  "zedc",
  "zedc-base",
  "zedc-int",
  "zedc-lattice",
+ "zedc-preimage",
  "zedc-presburger",
  "zedc-resolve",
  "zedc-solvers",
@@ -1119,6 +1116,23 @@ dependencies = [
  "zed-kernel",
  "zedc-base",
  "zedc-int",
+]
+
+[[package]]
+name = "zedc-preimage"
+version = "0.0.0"
+dependencies = [
+ "imbl",
+ "perf-event2",
+ "rustix",
+ "stacker",
+ "zed-alloc-count",
+ "zed-kernel",
+ "zedc-int",
+ "zedc-lattice",
+ "zedc-presburger",
+ "zedc-solvers",
+ "zedc-stage",
 ]
 
 [[package]]

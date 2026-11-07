@@ -18,12 +18,12 @@ pub use zedc_presburger::hull;
 pub use zedc_solvers::linear;
 pub use zedc_solvers::live3;
 pub use zedc_solvers::negsssp;
-pub mod preimage;
+pub use zedc_preimage::preimage;
 /// The backward transfer before S22a, which tests compare [`preimage`] with.
 #[doc(hidden)]
-pub mod preimage_ref;
+pub use zedc_preimage::preimage_ref;
 pub use zedc_presburger::presburger;
-pub mod product;
+pub use zedc_preimage::product;
 pub use zedc_lattice::revision;
 pub use zedc_lattice::wto;
 pub use zedc_solvers::twovar;

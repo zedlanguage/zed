@@ -33,20 +33,14 @@ zedc-presburger.workspace = true
 zedc-types.workspace = true
 zedc-resolve.workspace = true
 zedc-stage.workspace = true
+zedc-preimage.workspace = true
 
 [dev-dependencies]
-# The tests of store::preimage set store::presburger::TWO_AT_A_TIME, which exists only with this
-# feature.
-zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 # A dylib's file name does not change with its features, so `cargo test -p zedc` builds
-# zedc-solvers with the feature `counts` the step tests give it, and does not overwrite their copy.
+# zedc-presburger and zedc-solvers with the features the workspace build gives them (zedc-preimage's
+# tests turn on `two-at-a-time`, the step tests `counts`), and does not overwrite their copies.
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 zedc-solvers = { workspace = true, features = ["counts"] }
-rustix.workspace = true
-zed-alloc-count.workspace = true
-stacker.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
