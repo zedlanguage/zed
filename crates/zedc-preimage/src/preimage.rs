@@ -1077,7 +1077,7 @@ impl<'t> Scoped<'t> {
     /// scope no earlier body read.
     ///
     /// The body of a function the scope binds is read over its parameters' canonical atoms
-    /// ([`Walk::canonical_formula`]), the relation each claimed call of it shares, so a chain
+    /// (`Walk::canonical_formula`), the relation each claimed call of it shares, so a chain
     /// of n tests each calling the one before through affine arguments (`p(x: 2 * x)`,
     /// `p(x: x + 1, y: x + 1)`, `p(x: x, y: 5)`) is translated in O(n) (LOAD-chain-affine).
     pub fn relation(

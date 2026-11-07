@@ -102,7 +102,7 @@ impl Extending {
     /// of `n` whatever their values, and whose own auxiliary variables are defined the same
     /// way): [`decide`] of `defs && f` and of `defs && !f`, with `defs` the definitions `f`
     /// reaches. But a conjunction one of whose parts is a conjunction kept whole is decided from
-    /// that part's answers (of several, the one with the most atoms; [`Extending::extend`]),
+    /// that part's answers (of several, the one with the most atoms; `Extending::extend`),
     /// which are found first and remembered, and its other parts with the definitions they
     /// reach:
     ///
