@@ -1001,7 +1001,7 @@ type Counts = (
 
 const GUARDED: [Counts; 16] = [
     (0, (0, 0, 53), (10, &[]), 0),
-    (250, (0, 3, 41), (9, &[]), 0),
+    (250, (0, 3, 40), (9, &[]), 0),
     (500, (0, 0, 45), (8, &[]), 0),
     (750, (0, 0, 46), (11, &[]), 0),
     (1000, (0, 0, 53), (14, &[]), 0),
@@ -1013,9 +1013,14 @@ const GUARDED: [Counts; 16] = [
     (2500, (0, 0, 53), (10, &[]), 0),
     (2750, (0, 0, 48), (5, &[]), 0),
     (3000, (0, 0, 57), (10, &[]), 0),
-    (3250, (0, 0, 54), (7, &[]), 0),
-    (3500, (0, 0, 51), (5, &[]), 0),
-    (3750, (0, 2, 57), (11, &[]), 0),
+    (3250, (0, 0, 53), (7, &[]), 0),
+    (3500, (0, 0, 50), (5, &[]), 0),
+    (
+        3750,
+        (0, 2, 57),
+        (11, &["i [4..] before i [4..=5, 7..]"]),
+        0,
+    ),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -1130,6 +1135,21 @@ guarded_ranges!(
 /// any more (renamed 0, was 26 and 22): those were results of the linear stage, which is no
 /// longer run on them. Each is checked against the interpreter, none differs otherwise, and
 /// none is wider.
+///
+/// Since DISJ-dpll, which removes each disjunct that the base and the rows the disjunctions
+/// imply show empty before the hulls are tightened, four results of the transfer before,
+/// which shares the solver, are better; no new result changes. Three inexact boxes before
+/// are now exact and equal to the new result, so they leave the exact count (378, was 379, in
+/// the first half; 415, was 417, in the second): `if (i <= -7) { min(i, 2) } else { (i + i) }`
+/// (cases 250 to 500), `if (4 < i) { (i + i) } else { (i * 1) }` (cases 3250 to 3500) and
+/// `if (i == 6) { … } else { if (-8 < i) { (-6 * i) } else { (i + i) } }` (cases 3500 to 3750),
+/// each of which had kept a half-line its disjunctions leave empty. In the fourth, the
+/// demand false of `(if ((i mod 3) == 1) { … } else { min(…, -4) } < 2)` (cases 3750 to
+/// 4000), the box before is `i [4..=5, 7..]` where it was `i [3..]`, narrower than the split
+/// over many periods' `i [4..]`, which is now listed as wider; the split's relation is exact
+/// on its box. Each changed box holds every point that meets the demand and, where exact, no
+/// point that fails it, over `-60..=60`. Measured on main 5b0aee39 against the rebased branch
+/// over all 4000 cases.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1150,8 +1170,11 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 379, 81, vec![], 0));
-    assert_eq!(sum(&GUARDED[8..]), (0, 4, 417, 80, vec![], 0));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 378, 81, vec![], 0));
+    assert_eq!(
+        sum(&GUARDED[8..]),
+        (0, 4, 415, 80, vec!["i [4..] before i [4..=5, 7..]"], 0)
+    );
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
