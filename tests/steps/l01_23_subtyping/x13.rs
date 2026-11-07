@@ -85,14 +85,24 @@ const NTH_SIZES: (usize, usize) = (64, 186);
 
 /// A tuple type of width `w` that fixes column `k` to 1 and no other.
 fn row(k: usize, w: usize) -> Type {
+    row_at(k, w, 1)
+}
+
+/// A tuple type of width `w` that fixes column `k` to `v` and no other.
+fn row_at(k: usize, w: usize, v: i64) -> Type {
     let mut c = vec![Type::top(); w];
-    c[k] = lit(1);
+    c[k] = lit(v);
     Type::tuple(c)
 }
 
 /// The choice chain `t = t & u | !t & v`, `d` times, on independent rows.
 fn mux(d: usize) -> Type {
-    let w = 2 * d + 1;
+    mux_at(d, 1)
+}
+
+/// `mux(d)` on rows that fix their column to `v`.
+fn mux_at(d: usize, v: i64) -> Type {
+    let (w, row) = (2 * d + 1, |k, w| row_at(k, w, v));
     (0..d).fold(row(0, w), |t, i| {
         &(&t & &row(2 * i + 1, w)) | &(&!&t & &row(2 * i + 2, w))
     })
@@ -100,7 +110,12 @@ fn mux(d: usize) -> Type {
 
 /// The same chain written `(!t | u) & (t | v)`.
 fn mux2(d: usize) -> Type {
-    let w = 2 * d + 1;
+    mux2_at(d, 1)
+}
+
+/// `mux2(d)` on rows that fix their column to `v`.
+fn mux2_at(d: usize, v: i64) -> Type {
+    let (w, row) = (2 * d + 1, |k, w| row_at(k, w, v));
     (0..d).fold(row(0, w), |t, i| {
         &(&!&t | &row(2 * i + 1, w)) & &(&t | &row(2 * i + 2, w))
     })
@@ -108,7 +123,12 @@ fn mux2(d: usize) -> Type {
 
 /// `mux2(d)` with its last choice swapped: not equal to `mux(d)`.
 fn swapped(d: usize) -> Type {
-    let (y, w) = (mux2(d), 2 * d + 1);
+    swapped_at(d, 1)
+}
+
+/// `swapped(d)` on rows that fix their column to `v`.
+fn swapped_at(d: usize, v: i64) -> Type {
+    let (y, w, row) = (mux2_at(d, v), 2 * d + 1, |k, w| row_at(k, w, v));
     &(&y & &row(0, w)) | &(&!&y & &row(1, w))
 }
 
@@ -234,9 +254,14 @@ fn the_choice_chain_scales() {
 #[test]
 fn the_choice_chain_with_a_choice_swapped_scales() {
     big(|| {
+        // The rows fix their column to one of `SHAPES` values, each giving the hash-consed
+        // nodes another random shape, so the work at each size is summed over the shapes.
+        const SHAPES: i64 = 8;
         scaling::check_order("the choice chain against a swapped one, by d", 4, 2, |d| {
-            Type::forget_emptiness();
-            assert!(!mux(d).equiv(&swapped(d)));
+            for v in 1..=SHAPES {
+                Type::forget_emptiness();
+                assert!(!mux_at(d, v).equiv(&swapped_at(d, v)));
+            }
         })
     });
 }

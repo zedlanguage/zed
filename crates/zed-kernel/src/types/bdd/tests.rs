@@ -693,7 +693,6 @@ fn list_of_alternating_literals_scales() {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 12.6 times the work at 2,048 and 16,384 literals, over the n log n limit 11.2 since SCALE-ratio; open"]
 fn joining_chains_to_lists_scales() {
     // `((x_0 | x_1) & !x_2 | x_3) & !x_4 …` built a literal at a time, each new literal last
     // in the order of the atoms: the diagram the chain rule built had up to `k` nodes on
@@ -731,14 +730,26 @@ fn joining_chains_to_lists_scales() {
     // A chain grown a literal at a time stays a chain, so both operands of each step are
     // chains; listing the long one too at each step took `O(m²)` (59 s for the forced atoms
     // of a chain of 32768 literals).
+    // Each literal goes into the chain's one block, so the work follows the right spine of
+    // the block's treap; it is summed over `SHAPES` offsets of the atoms.
+    let shapes = scaling::inputs(n, |m| {
+        (0..SHAPES)
+            .map(|j| {
+                let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(j * SHAPE_STRIDE + i)).collect();
+                xs.sort();
+                xs.into_iter().map(Part::literal).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    });
     for op in [Op::Or, Op::And] {
         scaling::check("a chain built a literal at a time, by literals", n, |m| {
-            let xs = &lits[&m];
-            let f = (xs[1..].iter()).fold(xs[0].0.clone(), |f, (x, _)| f.zip(x, op));
-            assert!(
-                matches!(&f, Part::Bdd(b) if b.chain_len(op) == Some(m)),
-                "{f:?}"
-            );
+            for xs in &shapes[&m] {
+                let f = (xs[1..].iter()).fold(xs[0].clone(), |f, x| f.zip(x, op));
+                assert!(
+                    matches!(&f, Part::Bdd(b) if b.chain_len(op) == Some(m)),
+                    "{f:?}"
+                );
+            }
         });
     }
     scaling::check(
@@ -849,24 +860,31 @@ fn exclusive_ors_agree_with_their_values() {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 12.0 times the bytes at 1,024 and 8,192 literals, over the n log n limit 11.4 since SCALE-ratio; open"]
 fn exclusive_ors_scale() {
     // Parity built a literal at a time, as the type operations build it: each step takes a
     // literal into the set of the one form in `O(log n)`, and makes the expressions of the
     // `O(log n)` new tree nodes. Two halves of `n` atoms each are joined in `O(n log n)`.
     // Each size has atoms of its own.
     let n = 1 << 10;
+    // Each literal rebuilds the nodes on its path in the set's treap, so the work follows
+    // that path; parity is built over `SHAPES` offsets of the atoms.
     let lits = scaling::inputs(n, |m| {
-        (0..m as u64)
-            .map(|i| Part::literal(atom(16 * m as u64 + i)))
+        (0..SHAPES)
+            .map(|j| {
+                (0..m as u64)
+                    .map(|i| Part::literal(atom(j * SHAPE_STRIDE + 16 * m as u64 + i)))
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>()
     });
     scaling::check("parity built a literal at a time, by literals", n, |m| {
-        let x = (lits[&m].iter()).fold(Part::leaf(false), |f, l| xor_by_or(&f, l));
-        assert!(x.xor_tag().is_some());
+        for ls in &lits[&m] {
+            let x = ls.iter().fold(Part::leaf(false), |f, l| xor_by_or(&f, l));
+            assert!(x.xor_tag().is_some());
+        }
     });
     let halves = scaling::inputs(n, |m| {
-        let ls = &lits[&m];
+        let ls = &lits[&m][0];
         let half = |r: std::ops::Range<usize>| {
             ls[r]
                 .iter()
@@ -1132,7 +1150,6 @@ fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 14.7 times the work at depths 4,096 and 32,768, over the n log n limit 11.0 since SCALE-ratio; open"]
 fn the_connectives_on_parts_scale_by_depth() {
     // Inputs Θ(m) deep, built before any run is timed; each connective meets each node or
     // expression a constant number of times.
@@ -1349,6 +1366,15 @@ fn batch_and_single_file_agree_on_a_complement_whose_holder_was_freed() {
     assert_eq!(complement_of_a_kept_complement(true), alone);
 }
 
+/// The offsets of the atoms a scaling test runs at each size when its work follows the
+/// path or spine of one treap: a priority is a hash of a literal, so each offset gives the
+/// treaps another random shape, and the work summed over the offsets measures the expected
+/// path rather than one sample of it. Every size runs all of them.
+const SHAPES: u64 = 8;
+
+/// The distance between the atoms of two offsets, above the atoms any one offset uses.
+const SHAPE_STRIDE: u64 = 1 << 32;
+
 /// The block of the two literals on the atoms `a` and `a + 1`, each taken.
 fn pair_block(a: u64) -> Arc<Set<Row>> {
     set::insert(Some(&set::single((atom(a), true))), (atom(a + 1), true))
@@ -1364,32 +1390,39 @@ fn blocks(base: u64, m: usize) -> Bdd<Row> {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 15.5 times the bytes at 512 and 4,096 blocks, over the n log n limit 11.7 since SCALE-ratio; open"]
 fn restricting_lists_that_share_a_tail_scales() {
     // Item CHAIN-restrict-memo: `m` lists, each a block of its own before one tail of `m`
     // blocks, restricted on an atom of the tail's last block with one memo. Memoized by
     // list, each walked and rebuilt the whole tail again, `O(m²)` in all; memoized by cell,
     // the cells of the tail are restricted once.
     let n = 1 << 9;
+    // Each list rebuilds the tail's right spine where its last block shrinks, so the work
+    // follows that spine; it is summed over the tails of `SHAPES` offsets of the atoms.
     let lists = scaling::inputs(n, |m| {
-        let tail = blocks(8000, m);
-        let Bdd::List(_, v) = &tail else {
-            unreachable!("a list of blocks has a cell")
-        };
-        let heads: Vec<Bdd<Row>> = (0..m as u64)
-            .map(|i| {
-                let head = (!*v, Some(pair_block(30000 + 2 * i)));
-                Bdd::assemble(vec![head], &tail)
+        (0..SHAPES)
+            .map(|j| {
+                let o = j * SHAPE_STRIDE;
+                let tail = blocks(o + 8000, m);
+                let Bdd::List(_, v) = &tail else {
+                    unreachable!("a list of blocks has a cell")
+                };
+                let heads: Vec<Bdd<Row>> = (0..m as u64)
+                    .map(|i| {
+                        let head = (!*v, Some(pair_block(o + 30000 + 2 * i)));
+                        Bdd::assemble(vec![head], &tail)
+                    })
+                    .collect();
+                (atom(o + 8000 + 2 * (m as u64 - 1)), heads)
             })
-            .collect();
-        (atom(8000 + 2 * (m as u64 - 1)), heads)
+            .collect::<Vec<_>>()
     });
     scaling::check("lists sharing a tail of m blocks, restricted", n, |m| {
-        let (last, heads) = &lists[&m];
-        let fix = |a: &Row| (a == last).then_some(false);
-        let mut memo = list::Memo::default();
-        for l in heads {
-            assert_ne!(l.restrict(&fix, &mut memo).id(), l.id());
+        for (last, heads) in &lists[&m] {
+            let fix = |a: &Row| (a == last).then_some(false);
+            let mut memo = list::Memo::default();
+            for l in heads {
+                assert_ne!(l.restrict(&fix, &mut memo).id(), l.id());
+            }
         }
     });
 }

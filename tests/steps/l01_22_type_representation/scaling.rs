@@ -58,7 +58,6 @@ fn union(n: usize) -> String {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 12.9 times the work at 250 and 2,000 pairs, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn a_union_of_many_tuple_types_scales() {
     // Elaboration is timed alone: parsing and checking the unit did nearly three times its
     // work at 250 pairs, enough to hide a quadratic added to it (COMPLEXITY.md F85).

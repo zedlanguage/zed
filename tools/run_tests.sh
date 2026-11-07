@@ -239,9 +239,13 @@ done < <(awk '
           # This test took 35 to 39 s alone (46 s at load 26), so the rest of the
           # crate's tests ran past 60 s with it in one process (LIST-xor-finite,
           # 2026-11-07); it gets a process of its own.
+          # The parity scaling test sums 8 random shapes per size and takes 38 to 46 s
+          # alone, so it gets one too (SCALE-fix-kernel, 2026-11-07).
           slow=types::bdd::tests::exclusive_ors_agree_with_their_values
-          echo "$n crates/zed-kernel $p --skip $slow"
+          parity=types::bdd::tests::exclusive_ors_scale
+          echo "$n crates/zed-kernel $p --skip $slow --skip $parity"
           echo "$n::exclusive_ors crates/zed-kernel $p --exact $slow"
+          echo "$n::exclusive_ors_scale crates/zed-kernel $p --exact $parity"
           ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;

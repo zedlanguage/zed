@@ -532,7 +532,6 @@ fn payloads_with_a_variable_are_compared_shape_by_shape() {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 12.8 times the work at 256 and 2,048 payloads, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn payloads_that_hold_functions_are_compared_in_the_size_of_the_union() {
     // `#a0((int) -> #r0, 0) | … ` against the same with `(int) -> #r_i | #s` and `int`: one
     // function on each side at each place, so each is compared once; trying each payload
@@ -581,7 +580,6 @@ fn payloads_that_hold_functions_are_compared_in_the_size_of_the_union() {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 12.4 times the work at 256 and 2,048 payloads, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_of_the_union() {
     // `#a(x: 0, f: (int) -> int) | … | #a(x: n-1, …)` against `#a(x: int, f: (int) -> int)`,
     // and `(#a0 | … | #a(n-1), (int) -> int)` against the n shapes `(#a_i, (int) -> int)`,
@@ -634,7 +632,6 @@ fn bound(l: &Ty, r: &Ty) -> Option<Vec<(String, String)>> {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 13.1 times the work at 256 and 2,048 payloads, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn payloads_with_a_variable_are_searched_by_their_keys() {
     // `#a(String, 0) | … | #a(String, n-1)` against `#a(T, n-1) | … | #a(T, 0)`: each payload
     // is found by its second component, not tried against each shape before it (n²).
@@ -653,7 +650,6 @@ fn payloads_with_a_variable_are_searched_by_their_keys() {
 }
 
 #[test]
-#[ignore = "SCALE-fix-kernel: 12.4 times the work at 256 and 2,048 tuples, over the n log n limit 12.1 since SCALE-ratio; open"]
 fn tuples_with_a_variable_are_searched_by_their_keys() {
     // The same with tuples: `(String, i)` against `(T, i)` in the reverse order.
     let inputs = scaling::inputs(256, |n| {
