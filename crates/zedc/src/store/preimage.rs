@@ -4400,7 +4400,8 @@ impl<'m, 't> Walk<'m, 't> {
     }
 
     /// `-u`, `u + c`, `c + u`, `u - c`, `c - u` and `c * u` for a summarized `u` and a
-    /// constant `c`; the arity was checked by the caller.
+    /// constant `c`, and `u + v` and `u - v` for two lines of one input ([`Pa::plus`]); the
+    /// arity was checked by the caller.
     async fn pa_prim(&'m self, t: Tid, p: Prim, args: Span, env: Eid) -> Option<Pa> {
         let a = self.arg(args, 0);
         match p {
@@ -4410,16 +4411,22 @@ impl<'m, 't> Walk<'m, 't> {
                 if let Some(c) = self.constant_int(a, env).await {
                     return self.pa(b, env).await?.affine(1, c.into());
                 }
-                let c = self.constant_int(b, env).await?;
-                self.pa(a, env).await?.affine(1, c.into())
+                if let Some(c) = self.constant_int(b, env).await {
+                    return self.pa(a, env).await?.affine(1, c.into());
+                }
+                let pa = self.pa(a, env).await?;
+                pa.plus(&self.pa(b, env).await?, 1)
             }
             Prim::Sub => {
                 let b = self.arg(args, 1);
                 if let Some(c) = self.constant_int(b, env).await {
                     return self.pa(a, env).await?.affine(1, -i128::from(c));
                 }
-                let c = self.constant_int(a, env).await?;
-                self.pa(b, env).await?.affine(-1, c.into())
+                if let Some(c) = self.constant_int(a, env).await {
+                    return self.pa(b, env).await?.affine(-1, c.into());
+                }
+                let pa = self.pa(a, env).await?;
+                pa.plus(&self.pa(b, env).await?, -1)
             }
             Prim::Mul => {
                 if self.with(|tx| tx.power(t, env)).is_some() {
@@ -5231,14 +5238,15 @@ fn arith(o: &Op, a: &Fwd, b: &Fwd, by_zero: bool) -> Fwd {
 
 /// An integer term as a function of one input `var` (R1_GEMINI Thm 3.1: the value of a term
 /// built from one input by `if`s on that input, constants, negation, adding a constant and
-/// multiplying by one is affine on each of finitely many intervals of the input, cut at the
-/// domain's and the guards' ends). The coefficients, constants and values lie in `i128`, every
-/// step checked there, so an affine step ([`Pa::affine`], [`apply_tag`]) is given up only when
-/// one leaves `i128`. Kernel integers are unbounded, so a value outside `i64` is a value of the
-/// term, and the summary reads it as one: `i64::MIN - (u + 3)` is summarized, although its
-/// constant `i64::MIN - 3` lies outside `i64`, and so is `u + 1` at `u = i64::MAX`. At an
-/// infinite end of the domain a piece takes the infinity its line tends to ([`value_at`]),
-/// never the value at an end of `i64`.
+/// multiplying by one, and adding two such terms each affine over the whole domain, is affine
+/// on each of finitely many intervals of the input, cut at the domain's and the guards'
+/// ends). The coefficients, constants and values lie in `i128`, every step checked there, so
+/// an affine step ([`Pa::affine`], [`apply_tag`]) is given up only when one leaves `i128`.
+/// Kernel integers are unbounded, so a value outside `i64` is a value of the term, and the
+/// summary reads it as one: `i64::MIN - (u + 3)` is summarized, although its constant
+/// `i64::MIN - 3` lies outside `i64`, and so is `u + 1` at `u = i64::MAX`. At an infinite end
+/// of the domain a piece takes the infinity its line tends to ([`value_at`]), never the value
+/// at an end of `i64`.
 #[derive(Clone)]
 enum Pa {
     /// The constant `c` everywhere.
@@ -5278,6 +5286,37 @@ impl Pa {
                     None => None,
                 },
             }),
+        }
+    }
+
+    /// `self + sign * other` when both are lines of one input, `a * var + b` over its whole
+    /// domain (`n + n`, `n - 2 * n`), `O(1)`; `None` when a coefficient or a constant leaves
+    /// `i128`, and for any other pair: a constant operand is read by the caller
+    /// ([`Pa::affine`]), and two summaries of different inputs read two inputs.
+    ///
+    /// Complexity tradeoff: a sum with a [`Pa::Piecewise`] operand gets no summary, so its
+    /// backward transfer is the inexact projection and the scope widens: `d` nested tests
+    /// `if (…) == 1 { n } else { n + (if n > 0 { n } else { 0 }) }` hold at `n = 1` alone, and
+    /// from depth 4 their true arm reads `n` as every integer, as before sums of lines were
+    /// summarized; the cost stays `O(d)` (8 to 64 levels: 10 ms to 59 ms). What is given up:
+    /// the exact preimage of such a sum. Why: adding two treaps piece by piece costs the
+    /// pieces of both, and a chain whose sum at each level reads the `if` below could cost
+    /// `O(d^2)`; lines are the sums the nested chains of COMPLEXITY.md row F70 read.
+    /// Trigger: an `if` among the operands of a sum of two non-constant terms of one input.
+    /// Test: `l01_39_reduced_product::follow::nested_sums_keep_their_arms`. A complete
+    /// solution would add a line to every piece by a lazy tag on the treap (a tag
+    /// `(mul, add, slope)`), `O(log p)` for `p` pieces, and add two treaps by merging their
+    /// cuts, `O(p + q)`.
+    fn plus(&self, other: &Pa, sign: i128) -> Option<Pa> {
+        match (self, other) {
+            (Pa::Linear { var, a, b }, Pa::Linear { var: w, a: c, b: e }) if var == w => {
+                Some(Pa::Linear {
+                    var: var.clone(),
+                    a: a.checked_add(c.checked_mul(sign)?)?,
+                    b: b.checked_add(e.checked_mul(sign)?)?,
+                })
+            }
+            _ => None,
         }
     }
 

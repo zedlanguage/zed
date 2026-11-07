@@ -916,22 +916,22 @@ type Counts = (
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 13), (7, &[])),
-    (250, (0, 3, 15), (4, &[])),
-    (500, (0, 0, 13), (4, &[])),
-    (750, (0, 0, 6), (8, &[])),
-    (1000, (1, 0, 16), (8, &[])),
-    (1250, (0, 2, 14), (1, &[])),
-    (1500, (0, 0, 10), (8, &[])),
-    (1750, (0, 1, 9), (7, &[])),
-    (2000, (0, 1, 19), (11, &[])),
-    (2250, (0, 1, 11), (10, &[])),
-    (2500, (0, 0, 14), (6, &[])),
-    (2750, (0, 0, 10), (5, &[])),
-    (3000, (0, 0, 20), (4, &[])),
-    (3250, (1, 0, 13), (3, &[])),
-    (3500, (0, 0, 16), (3, &[])),
-    (3750, (0, 2, 11), (7, &[])),
+    (0, (0, 0, 23), (9, &[])),
+    (250, (1, 3, 22), (5, &[])),
+    (500, (1, 1, 19), (5, &[])),
+    (750, (0, 1, 16), (8, &[])),
+    (1000, (2, 0, 24), (9, &[])),
+    (1250, (2, 2, 20), (2, &[])),
+    (1500, (0, 1, 16), (8, &[])),
+    (1750, (0, 1, 22), (9, &[])),
+    (2000, (0, 2, 33), (11, &[])),
+    (2250, (0, 1, 18), (13, &[])),
+    (2500, (2, 0, 23), (7, &[])),
+    (2750, (0, 0, 18), (5, &[])),
+    (3000, (2, 1, 27), (6, &[])),
+    (3250, (1, 1, 26), (4, &[])),
+    (3500, (0, 0, 25), (3, &[])),
+    (3750, (0, 2, 21), (9, &[])),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -997,6 +997,17 @@ guarded_ranges!(
 /// the question of its box of `if ((i mod 3) == 1) { -(if (i == 0) { … }) } else { -6 * … }`
 /// over `{-5} ∪ [-2, 1]` (no point of the box fails the demand), which the search through the
 /// disjunctions refused, so both are exact and alike (cases 500 to 750).
+///
+/// Since PRODUCT-nested-chain, which summarizes the sum or difference of two lines of one
+/// input (`i + i`, `(i + 1) - 2 * i`) as a line, more preimages are read by the summary and
+/// fewer by the linear stage: in the first half 66 more boxes are exact (162), 8 more are
+/// answered by a split over many periods or listed (55), 5 more are narrower inexact boxes
+/// (6) and 3 more boxes of `c - x` are narrowed (9); in the second half 77 more are exact
+/// (191), 9 more answered by a split (58), 4 more narrower (5) and 3 more of `c - x`
+/// narrowed (7). Each is checked against the interpreter, none differs otherwise, and none
+/// is wider. Measured on main 62ea3f02, cases 3500 to 3750 had one more exact box (26); on
+/// main 6532d51e the transfer before decides it too (DISJ-incremental, as at cases 500 to
+/// 750), so both are exact and alike (inferred from the count; the case was not isolated).
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1016,8 +1027,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (1, 6, 96, 47, vec![]));
-    assert_eq!(sum(&GUARDED[8..]), (1, 4, 114, 49, vec![]));
+    assert_eq!(sum(&GUARDED[..8]), (6, 9, 162, 55, vec![]));
+    assert_eq!(sum(&GUARDED[8..]), (5, 7, 191, 58, vec![]));
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -1089,7 +1100,9 @@ fn random_terms_keep_their_preimages() {
         // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
         // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is
         // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
-        diffs.none_but(6800, 0, 0, 1);
+        // One more is made exact since PRODUCT-nested-chain summarizes the sum or difference
+        // of two lines of one input.
+        diffs.none_but(6800, 0, 0, 2);
     });
 }
 

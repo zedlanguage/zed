@@ -175,3 +175,96 @@ fn following_tests_scale() {
         scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
     }
 }
+
+/// `ok(positional n: int, …) = if (if (… n …) == 1 { n } else { e }) == 1 { n } else { e }`,
+/// `d` deep, with the parameters `ps`.
+fn nested(d: usize, e: &str, ps: &str) -> String {
+    let inner = (0..d).fold("n".to_string(), |x, _| {
+        format!("if ({x}) == 1 {{ n }} else {{ {e} }}")
+    });
+    format!("ok({ps}) = {inner};")
+}
+
+/// Each sum of the chains read below: its parameters and the names whose integers are read.
+const SUMS: [(&str, &str, &[&str]); 6] = [
+    ("n + n", "positional n: int", &["n"]),
+    ("n - n", "positional n: int", &["n"]),
+    ("n + n + n", "positional n: int", &["n"]),
+    ("2 * n - n", "positional n: int", &["n"]),
+    ("n - 3 * n + 4", "positional n: int", &["n"]),
+    ("n + m", "positional n: int, positional m: int", &["n", "m"]),
+];
+
+/// A sum of one input with itself is a line of it, so each test of the chain reads its
+/// preimage exactly: the outer test holds at `n = 1` alone, at every depth. The readings are
+/// those of the reading before sums of lines were summarized, at depths 1 to 12 (repair of
+/// PRODUCT-nested-chain; COMPLEXITY.md row F70). A sum of two inputs is no summary, and keeps
+/// its readings: from depth 2 its true arm reads every `n`; so does that of a sum with an `if`
+/// among its operands from depth 4.
+#[test]
+fn nested_sums_keep_their_arms() {
+    for (e, ps, names) in SUMS {
+        for d in 1..=12 {
+            let want = match (e, d) {
+                ("n + m", 1) => ["true: n [1..=1], m [..]", "false: n [..=0, 2..], m [..]"],
+                ("n + m", _) => ["true: n [..], m [..]", "false: n [..=0, 2..], m [..]"],
+                _ => ["true: n [1..=1]", "false: n [..=0, 2..]"],
+            };
+            assert_eq!(readings(&nested(d, e, ps), names), want, "{e} at depth {d}");
+        }
+    }
+    // A sum with an `if` among its operands is no summary (`Pa::plus`): from depth 4 the true
+    // arm reads every `n`, as before.
+    let e = "n + (if n > 0 { n } else { 0 })";
+    for d in 1..=12 {
+        let outer = if d < 4 { "1..=1" } else { ".." };
+        let want = [
+            format!("true: n [{outer}]"),
+            "false: n [..=0, 2..]".to_owned(),
+            "true: n [2..]".to_owned(),
+            "false: n [..=0]".to_owned(),
+        ];
+        let src = nested(d, e, "positional n: int");
+        assert_eq!(readings(&src, &["n"]), want, "{e} at depth {d}");
+    }
+}
+
+fn twice(d: usize) -> String {
+    nested(d, "n + n", "positional n: int")
+}
+
+fn line(d: usize) -> String {
+    nested(d, "n - 3 * n + 4", "positional n: int")
+}
+
+fn two(d: usize) -> String {
+    nested(d, "n + m", "positional n: int, positional m: int")
+}
+
+fn following(d: usize) -> String {
+    chain(d, false)
+}
+
+/// The arms of `d` nested tests of sums cost `O(d)`: each `if` is summarized once, as a
+/// function of `n` affine on each of a few intervals, where the sum `n + n` had no summary
+/// and each test fell to the linear stage, `O(d^3)` (16 to 128 levels: 12 ms to 1.53 s).
+#[test]
+fn nested_sums_of_one_input_scale() {
+    for (what, n, src) in [
+        (
+            "the arms of nested tests of n + n",
+            16,
+            twice as fn(usize) -> String,
+        ),
+        (
+            "the arms of nested tests of n + n, following",
+            16,
+            following,
+        ),
+        ("the arms of nested tests of n - 3 * n + 4", 16, line),
+        ("the arms of nested tests of n + m", 16, two),
+    ] {
+        let (scope, terms) = sizes(n, src);
+        scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
+    }
+}
