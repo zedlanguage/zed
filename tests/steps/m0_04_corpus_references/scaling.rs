@@ -333,6 +333,50 @@ fn clustering_of_points_on_two_parabolas_by_turns() {
     });
 }
 
+/// A coordinate of `chunks` blocks of nine decimal digits, block j the hash of `(seed, j)`: the
+/// first blocks do not depend on `chunks`, so with more blocks the points scale up by a power of
+/// 10 and move by less than one unit of the shorter ones.
+fn wide(seed: usize, chunks: usize) -> String {
+    (0..chunks).fold(String::new(), |mut s, j| {
+        let block = hash(seed * 64 + j);
+        if j == 0 {
+            write!(s, "{}", block % 900_000_000 + 100_000_000)
+        } else {
+            write!(s, "{:09}", block % 1_000_000_000)
+        }
+        .expect("writing to a String");
+        s
+    })
+}
+
+/// `n` random points whose coordinates have `chunks` blocks of nine digits.
+fn wide_random_points(n: usize, chunks: usize) -> String {
+    let point = |i: usize| format!("{} {}", wide(2 * i + 1, chunks), wide(2 * i + 2, chunks));
+    format!("1\n{}", lines(n, point))
+}
+
+/// Random points with coordinates of 72 digits (240 bits): every product and sum in the
+/// predicates is several 64-bit words long, and the in-circle determinant up to 4b + 8 = 968 bits
+/// (COMPLEXITY F39). At a fixed coordinate size the bound O(L + n log n · M(b)) is O(n log n).
+#[test]
+fn clustering_of_random_points_with_wide_coordinates() {
+    clustering_scales("clustering random wide", 1000, |n| wide_random_points(n, 8));
+}
+
+/// The same 1000 random points with coordinates of 36 and of 288 digits (120 and 957 bits, an
+/// in-circle determinant of up to 488 and 3836 bits), held to the limit of power 1. At these
+/// sizes the cost per number is mostly fixed, so this does not show the O(b²) parse and
+/// schoolbook multiplication of num-bigint, which only larger coordinates reach (COMPLEXITY
+/// F39, item P14-bigint-parse).
+#[test]
+fn clustering_of_random_points_at_eight_times_the_coordinate_size() {
+    let differs = super::clustering_differs_from_oracle(&wide_random_points(1000, 4));
+    assert!(differs.is_none(), "the O(n²) form differs at 36 digits");
+    scales("clustering coordinate blocks", "14", 4, 1, |chunks| {
+        wide_random_points(1000, chunks)
+    });
+}
+
 /// Every edit prints every cell, so the output is quadratic.
 #[test]
 fn spreadsheet_prints_every_cell_after_every_edit() {

@@ -21,6 +21,24 @@ fn ccw(a: &Point, b: &Point, c: &Point) -> bool {
 }
 
 /// Whether d lies strictly inside the circle through a, b, c, which turn counterclockwise.
+///
+/// The sign of the 3 by 3 determinant of the rows (x, y, x² + y²) of a - d, b - d and c - d,
+/// expanded along its last column. Every number in it has at most 4b + 8 bits when every
+/// coordinate has at most b bits, |x| < 2^b (COMPLEXITY.md F39):
+/// - each difference, such as ax = a.x - d.x: |ax| ≤ 2(2^b - 1) < 2^(b + 1), so b + 1 bits;
+/// - each product of two differences, such as bx · cy or ax · ax: < 2^(b + 1) · 2^(b + 1) =
+///   2^(2b + 2), so 2b + 2 bits;
+/// - each 2 by 2 minor, such as bx · cy - cx · by, and each lift ax² + ay²: a sum or difference
+///   of two such products, < 2 · 2^(2b + 2) = 2^(2b + 3), so 2b + 3 bits;
+/// - each of the three cofactor terms, a lift times a minor: < 2^(2b + 3) · 2^(2b + 3) =
+///   2^(4b + 6), so 4b + 6 bits; the two sums on the way to the total are below 2 · 2^(4b + 6)
+///   and 3 · 2^(4b + 6);
+/// - the determinant, the sum of the three terms: < 3 · 2^(4b + 6) < 4 · 2^(4b + 6) = 2^(4b + 8),
+///   so 4b + 8 bits, and a sign.
+///
+/// The numbers are `BigInt`, so no width is fixed and none can overflow; the bound is the cost
+/// of each test, O(M(4b + 8)) = O(M(b)) bit operations with M(b) the cost of multiplying b-bit
+/// integers.
 fn in_circle(a: &Point, b: &Point, c: &Point, d: &Point) -> bool {
     let (ax, ay) = (&a.0 - &d.0, &a.1 - &d.1);
     let (bx, by) = (&b.0 - &d.0, &b.1 - &d.1);
