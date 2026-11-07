@@ -524,6 +524,38 @@ fn a_chain_of_and_written_as_ifs_is_joined_in_one_pass() {
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
+/// `a0 >= 0 || a1 >= 1 || … || a(k-1) >= k - 1` as the elaborator writes it, each `a || b` as
+/// `if a { true } else { b }`, nested to the left: a chain of k `||` on k names. Read as an
+/// `if`, each level made `g || (!g && b)` and copied the disjuncts of `g` into a new
+/// disjunction (PREIMAGE-or-chain).
+fn or_ifs(k: usize) -> Term {
+    let ge = |j: usize| prim(Prim::Ge, var(&format!("a{j}")), int(j as i64));
+    let yes = || Shared::new(Term::Lit(Value::Bool(true)));
+    (1..k).fold(ge(0), |t, j| {
+        Term::If(Shared::new(t), yes(), Shared::new(ge(j)))
+    })
+}
+
+#[test]
+fn a_chain_of_or_written_as_ifs_is_joined_in_one_pass() {
+    // Read as an `if` (b4e083a7, or `Walk::or_if` turned off) this test fails: k = 256 to 2048
+    // took 28.8 to 784 M instructions (27.2 times) and 15.6 to 663 MB (42.6 times; limit 24).
+    // Read as `g || b`, a chain (`Walk::chain`): 15.8 to 128 M instructions (8.1 times) and
+    // 4.8 to 38.1 MB (8.0 times).
+    let measure = || {
+        let made = scaling::inputs(256, |k| {
+            let names: Vec<Arc<str>> = (0..k).map(|j| format!("a{j}").into()).collect();
+            (or_ifs(k), names)
+        });
+        scaling::check("a chain of k `||` on k names, written as `if`s", 256, |k| {
+            let (t, names) = &made[&k];
+            relations(&[t], names, false).expect("in the domain");
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(2 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
 /// `w = (g, v) -> let ok = i >= 0 && i >= 1 && … && i >= k - 2 && seen(g(g, v)) in ok && (i
 /// >= 1 || ok) && … && (i >= r - 1 || ok)`, read as `w(w, i)` with `seen = (u) -> i <= 1000`:
 /// a check that calls itself, by self-application, through a function that ignores what the

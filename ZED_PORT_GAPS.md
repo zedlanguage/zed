@@ -2505,3 +2505,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashMap<u64, Known>` memo keyed by a part node's id, filled during an explicit-stack walk whose entries carry a "children done" flag, each node's components held as an `Rc<[usize]>` shared with its `!` parent | `Choices::decide` | Mutation (gap 11); Identity (gap 1) for the node id | A map from the node's identity threaded through the walk's fold; the components as an immutable shared sequence |
 | A `HashMap<usize, Pick>` of the choices along a decision list, each `Pick` holding a `HashSet` of refused cells, updated in place block by block and read hypothetically before each update (`Picks::fits`) | `Choices::list`, `Picks::fix` | Mutation (gap 11) | Persistent maps threaded through the fold over the blocks |
 | A `&dyn Fn(&Row) -> (usize, usize)` closure over the region's index, read for every atom | `Choices::at`, `Searching::one_pass` | none | A function value |
+
+## Entries from PREIMAGE-or-chain (`crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `#[cfg(test)]` `thread_local!` `Cell<bool>` that turns off the reading of `if g { true } else { b }` as `g \|\| b`, read by a function that is `false` outside tests | `OR_IF_AS_IF`, `or_if_as_if` | Not ported | Tests only; the port's test would pass the reading as a parameter of the walk |

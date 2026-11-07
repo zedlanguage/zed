@@ -6895,6 +6895,21 @@ impl<'m, 't> Walk<'m, 't> {
             Node::If(..) if self.and_if(t).is_some() && !two_at_a_time() => {
                 self.chain(Prim::And, t, env).await
             }
+            // `g || b` as the elaborator writes it, `if g { true } else { b }`, has the formula
+            // of `g || b` ([`Walk::or_if`]), read as a chain ([`Walk::chain`]); the translation
+            // two at a time joins its two operands at once.
+            Node::If(..) if self.or_if(t).is_some() && !or_if_as_if() => {
+                #[cfg(test)]
+                if presburger::TWO_AT_A_TIME.get() {
+                    let (g, a, b) = self.or_if(t).expect("an `if` that is a `||`");
+                    let named = [g, b].map(|t| self.whole(t, env));
+                    let fg = self.formula(g, env).await?;
+                    self.formula(a, env).await?;
+                    let fb = self.formula(b, env).await?;
+                    return Some(Formula::or_keeping(vec![fg, fb], |i| named[i]));
+                }
+                self.chain(Prim::Or, t, env).await
+            }
             Node::If(g, a, b) => {
                 // The formula of a name is kept whole, as for `&&` below, and a claimed call's
                 // parts are added ([`Walk::claimed`]).
@@ -6972,9 +6987,16 @@ impl<'m, 't> Walk<'m, 't> {
     /// conjunction: `false` is dropped, and a disjunction that [`Joining::finish`] made, as
     /// every one the translator meets is, is itself when its disjuncts are joined again (one
     /// level deep, [`Formula::into_parts`]). Before the `if` was read through, a chain of k
-    /// `&&` made the conjunction of each prefix in turn, O(k²) (PREIMAGE-and-chain). The
-    /// formula of a name is kept whole, so a named part used at many places is one node and
-    /// not copied into each (COMPLEXITY.md S31b). The operands are read in order, as the
+    /// `&&` made the conjunction of each prefix in turn, O(k²) (PREIMAGE-and-chain). A `||` is
+    /// the primitive or, as the elaborator writes `a || b`, `if a { true } else { b }`
+    /// ([`Walk::or_if`]), whose formula is that of `a || b` in both translations. Read as an
+    /// `if`, its formula was `a || (!a && b)`, which holds at the same points but cannot be
+    /// made in one pass: at each level of a chain of k `||` it is a new disjunction of the
+    /// disjuncts of `a` and of `!a && b`, and `!a` holds `a` whole, so the formula of each
+    /// prefix is a node of its own and the formula has O(k²) parts however they are shared
+    /// (PREIMAGE-or-chain). The `true` is read for its memo entry, as the `false` of a `&&`
+    /// is. The formula of a name is kept whole, so a named part used at many places is one node
+    /// and not copied into each (COMPLEXITY.md S31b). The operands are read in order, as the
     /// two-at-a-time translation reads them, and the first that has no formula gives none for
     /// the whole. An operand of a primitive is held in its parent alone
     /// ([`Terms::ids`]), but one of an `if` may be shared ([`Terms::shared`]): an inner `p` that
@@ -6984,8 +7006,9 @@ impl<'m, 't> Walk<'m, 't> {
     /// take time of its size written out.
     async fn chain(&'m self, p: Prim, head: Tid, env: Eid) -> Option<Formula> {
         /// An operand to read, a term read for its memo entry alone (the `false` of an `if`
-        /// that is a `&&`, which the translation two at a time reads), or the end of an inner
-        /// `p`, with where the joining was before its operands ([`Joining::close`]).
+        /// that is a `&&` or the `true` of one that is a `||`, which the translation two at a
+        /// time reads), or the end of an inner `p`, with where the joining was before its
+        /// operands ([`Joining::close`]).
         enum Step {
             Operand(Tid),
             Read(Tid),
@@ -7003,6 +7026,9 @@ impl<'m, 't> Walk<'m, 't> {
                 _ if p == Prim::And => self
                     .and_if(u)
                     .map(|(g, a, b)| vec![Step::Read(b), Step::Operand(a), Step::Operand(g)]),
+                _ if p == Prim::Or && !or_if_as_if() => self
+                    .or_if(u)
+                    .map(|(g, a, b)| vec![Step::Operand(b), Step::Read(a), Step::Operand(g)]),
                 _ => None,
             }
         };
@@ -7044,6 +7070,21 @@ impl<'m, 't> Walk<'m, 't> {
         }
     }
 
+    /// The guard, the `true` and the else arm of `u` where `u` is `if g { true } else { b }`,
+    /// as the elaborator writes `g || b`, and `b` is not `false`: `if g { true } else { false }`
+    /// is read as `g && true` ([`Walk::and_if`]), whose formula is that of `g` too.
+    fn or_if(&self, u: Tid) -> Option<(Tid, Tid, Tid)> {
+        match self.node(u) {
+            Node::If(g, a, b)
+                if matches!(self.node(a), Node::Bool(true))
+                    && !matches!(self.node(b), Node::Bool(false)) =>
+            {
+                Some((g, a, b))
+            }
+            _ => None,
+        }
+    }
+
     /// The formula of a `&&` or `||` as the translator made it before [`Walk::chain`]
     /// (64781908): each operand by [`Walk::formula`], an inner `&&` with its own memo entry,
     /// and the two joined at once; for the tests that compare the two (ST-formula-k2).
@@ -7064,6 +7105,23 @@ impl<'m, 't> Walk<'m, 't> {
 fn two_at_a_time() -> bool {
     #[cfg(test)]
     return presburger::TWO_AT_A_TIME.get();
+    #[cfg(not(test))]
+    false
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether the tests have chosen the translation of `if g { true } else { b }` as any other
+    /// `if`, `g || (!g && b)`, as it was before [`Walk::or_if`], to compare the points at which
+    /// the two formulas hold (PREIMAGE-or-chain).
+    static OR_IF_AS_IF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the tests have chosen the translation of `if g { true } else { b }` as any other
+/// `if` (`OR_IF_AS_IF`).
+fn or_if_as_if() -> bool {
+    #[cfg(test)]
+    return OR_IF_AS_IF.get();
     #[cfg(not(test))]
     false
 }
@@ -10265,6 +10323,10 @@ mod tests {
         /// writes it ([`Walk::and_if`]); [`Gen::new`] makes it false, so the programs are as
         /// before.
         and_ifs: bool,
+        /// Whether a `||` may also be written `if a { true } else { b }`, as the elaborator
+        /// writes it ([`Walk::or_if`]); [`Gen::new`] makes it false, so the programs are as
+        /// before.
+        or_ifs: bool,
     }
 
     impl Gen {
@@ -10278,14 +10340,20 @@ mod tests {
                 frames: Vec::new(),
                 chains: false,
                 and_ifs: false,
+                or_ifs: false,
             }
         }
 
-        /// `a p b`, a `&&` written as the elaborator writes it half the time where `and_ifs`.
+        /// `a p b`, a `&&` written as the elaborator writes it half the time where `and_ifs`, and
+        /// a `||` half the time where `or_ifs`.
         fn join(&mut self, p: Prim, a: Term, b: Term) -> Term {
             if p == Prim::And && self.and_ifs && self.rng.below(2) == 0 {
                 let no = Term::Lit(Value::Bool(false));
                 return Term::If(Shared::new(a), Shared::new(b), Shared::new(no));
+            }
+            if p == Prim::Or && self.or_ifs && self.rng.below(2) == 0 {
+                let yes = Term::Lit(Value::Bool(true));
+                return Term::If(Shared::new(a), Shared::new(yes), Shared::new(b));
             }
             Term::Prim(p, vec![a, b])
         }
@@ -10693,7 +10761,8 @@ mod tests {
         defs: Vec<String>,
         /// The formula memo, each entry's formula built.
         memo: BTreeMap<At, Option<String>>,
-        /// The `&&` and `||` primitive nodes.
+        /// The `&&` and `||` primitive nodes, and the `if`s that are one ([`Walk::and_if`],
+        /// [`Walk::or_if`]).
         chains: BTreeSet<Tid>,
         /// Whether the formula holds a conjunction kept whole in a conjunction, or a disjunction
         /// in a disjunction.
@@ -10726,7 +10795,10 @@ mod tests {
         let chains: BTreeSet<Tid> = (0..tx.terms.nodes.len() as Tid)
             .filter(|&u| match tx.node(u) {
                 Node::Prim(Prim::And | Prim::Or, _) => true,
-                Node::If(_, _, b) => matches!(tx.node(b), Node::Bool(false)),
+                Node::If(_, a, b) => {
+                    matches!(tx.node(b), Node::Bool(false))
+                        || matches!(tx.node(a), Node::Bool(true))
+                }
                 _ => false,
             })
             .collect();
@@ -10782,24 +10854,30 @@ mod tests {
         joins_as_two_at_a_time_from(g, part);
     }
 
+    /// A program of a round of the comparison tests: a test that calls itself, named tests,
+    /// or a `&&` or `||` of two tests.
+    fn program(g: &mut Gen) -> Term {
+        g.pool.clear();
+        match g.rng.below(4) {
+            0 => g.itself(4),
+            1 => g.named(),
+            _ => {
+                let p = if g.rng.below(2) == 0 {
+                    Prim::And
+                } else {
+                    Prim::Or
+                };
+                let (a, b) = (g.test(4), g.test(4));
+                g.join(p, a, b)
+            }
+        }
+    }
+
     fn joins_as_two_at_a_time_from(mut g: Gen, part: usize) {
         let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
         let only = part * 4000 / PARTS..(part + 1) * 4000 / PARTS;
         for round in 0..only.end {
-            g.pool.clear();
-            let t = match g.rng.below(4) {
-                0 => g.itself(4),
-                1 => g.named(),
-                _ => {
-                    let p = if g.rng.below(2) == 0 {
-                        Prim::And
-                    } else {
-                        Prim::Or
-                    };
-                    let (a, b) = (g.test(4), g.test(4));
-                    g.join(p, a, b)
-                }
-            };
+            let t = program(&mut g);
             if round < only.start {
                 continue;
             }
@@ -11009,6 +11087,344 @@ mod tests {
                 TWO_AT_A_TIME.set(false);
                 assert_eq!(preimage(&t, &domains(), &Demand::Bool(w)), po, "{w}: {t:?}");
             }
+        }
+    }
+
+    /// [`joins_as_two_at_a_time`], with programs whose `&&` and `||` are each written half the
+    /// time as the elaborator writes them, `if a { b } else { false }` and
+    /// `if a { true } else { b }` ([`Walk::or_if`]; PREIMAGE-or-chain), and another seed.
+    fn joins_or_ifs_as_two_at_a_time(part: usize) {
+        let mut g = Gen::new(0x2545_f491_4f6c_dd1d, false);
+        g.and_ifs = true;
+        g.or_ifs = true;
+        joins_as_two_at_a_time_from(g, part);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_1() {
+        joins_or_ifs_as_two_at_a_time(0);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_2() {
+        joins_or_ifs_as_two_at_a_time(1);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_3() {
+        joins_or_ifs_as_two_at_a_time(2);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_4() {
+        joins_or_ifs_as_two_at_a_time(3);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_5() {
+        joins_or_ifs_as_two_at_a_time(4);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_6() {
+        joins_or_ifs_as_two_at_a_time(5);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_7() {
+        joins_or_ifs_as_two_at_a_time(6);
+    }
+
+    #[test]
+    fn the_translator_joins_a_chain_of_or_ifs_as_it_joined_it_two_at_a_time_8() {
+        joins_or_ifs_as_two_at_a_time(7);
+    }
+
+    /// The formula of `t` and the definitions of its auxiliary variables, with each
+    /// `if g { true } else { b }` read as any other `if` where `as_if`, as before
+    /// [`Walk::or_if`].
+    fn formula_of(t: &Term, as_if: bool) -> (Option<Formula>, Vec<Formula>) {
+        OR_IF_AS_IF.set(as_if);
+        let mut tx = Tx::new();
+        let root = tx.terms.add(t);
+        tx.start(&domains(), Landmarks::none());
+        let mut tr = Tr::new(false);
+        let f = tx.formula(&mut tr, root, ROOT);
+        OR_IF_AS_IF.set(false);
+        (f, tr.defs.into_iter().map(|(_, _, f)| f).collect())
+    }
+
+    /// Whether `a` and `b` hold at the same points of [`domains`], each point read with every
+    /// auxiliary variable at the one value its definition in `defs` gives it there, found by
+    /// the solver; a point where the definitions do not hold is no point of either.
+    fn same_points(a: &Formula, b: &Formula, defs: &[Formula]) -> Result<bool, Refusal> {
+        let sym = |x: &str| presburger::Atom::Sym(x.into());
+        for x in -6..=6i64 {
+            for y in -6..=6i64 {
+                let at = [(sym("x"), Int::from(x)), (sym("y"), Int::from(y))];
+                let mut m: presburger::Model = at.iter().cloned().collect();
+                if !defs.is_empty() {
+                    let mut fixed: Vec<Formula> = defs.to_vec();
+                    for (v, k) in &at {
+                        let c = Con::eq(&Lin::atom(v.clone()), &Lin::constant(k.clone()));
+                        fixed.push(Formula::Con(c));
+                    }
+                    match presburger::satisfiable(&Formula::and(fixed))? {
+                        Some(found) => m.extend(found),
+                        None => continue,
+                    }
+                    m.extend(at.iter().cloned());
+                }
+                if a.holds(&m) != b.holds(&m) {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Formulas and preimages of `t` with `if g { true } else { b }` read as `g || b`
+    /// ([`Walk::or_if`]) and as any other `if`, `g || (!g && b)`: the same definitions, and
+    /// the formulas, and the preimages' relations where both have one with the same
+    /// definitions, hold at the same points; each preimage holds every point of `x, y` in
+    /// `-6..=6` at which the interpreter meets the demand, and only those where it is exact.
+    /// The two preimages may still differ, since the hull of a relation and whether the solver
+    /// decides it depend on its shape ([`presburger::decide`] does not undo the choice of a
+    /// disjunct): gives whether the formulas differ as built, whether the solver decided the
+    /// points of each pair compared, and how the preimages differ.
+    fn holds_where_it_held_as_ifs(
+        t: &Term,
+        preimages: bool,
+    ) -> (bool, Vec<bool>, Vec<&'static str>) {
+        let mut decided = Vec::new();
+        let mut same = |a: &Formula, b: &Formula, defs: &[Formula], what: &str| match same_points(
+            a, b, defs,
+        ) {
+            Ok(s) => {
+                assert!(s, "{what}: {} and {}: {t:?}", built(a), built(b));
+                decided.push(true);
+            }
+            Err(_) => decided.push(false),
+        };
+        let (new, old) = (formula_of(t, false), formula_of(t, true));
+        let built_all = |fs: &[Formula]| fs.iter().map(built).collect::<Vec<_>>();
+        assert_eq!(built_all(&new.1), built_all(&old.1), "{t:?}");
+        assert_eq!(new.0.is_some(), old.0.is_some(), "{t:?}");
+        let mut changed = false;
+        if let (Some(a), Some(b)) = (&new.0, &old.0) {
+            changed = built(a) != built(b);
+            same(a, b, &new.1, "formula");
+        }
+        let doms = domains();
+        let mut differ = Vec::new();
+        for w in [true, false].into_iter().filter(|_| preimages) {
+            let d = Demand::Bool(w);
+            OR_IF_AS_IF.set(true);
+            let po = preimage(t, &doms, &d);
+            OR_IF_AS_IF.set(false);
+            let pn = preimage(t, &doms, &d);
+            let inside = |p: &Preimage, x: i64, y: i64| {
+                p.domains["x"].contains(x) && p.domains["y"].contains(y)
+            };
+            let (mut tighter, mut looser) = (false, false);
+            'points: for x in -6..=6 {
+                for y in -6..=6 {
+                    let Some(v) = run_at(t, (x, y)) else {
+                        break 'points;
+                    };
+                    let met = v.as_ref().is_some_and(|v| d.holds(v));
+                    for p in [&pn, &po] {
+                        if met {
+                            assert!(inside(p, x, y), "demand {w} at {x}, {y}: {t:?}");
+                        } else {
+                            let fails = !(p.exact && inside(p, x, y));
+                            assert!(fails, "demand {w} exact at {x}, {y}: {t:?}");
+                        }
+                    }
+                    tighter |= inside(&po, x, y) && !inside(&pn, x, y);
+                    looser |= inside(&pn, x, y) && !inside(&po, x, y);
+                }
+            }
+            differ.extend(
+                [
+                    (tighter && !looser, "tighter"),
+                    (looser && !tighter, "looser"),
+                    (looser && tighter, "neither"),
+                    (pn.exact && !po.exact, "now exact"),
+                    (po.exact && !pn.exact, "no longer exact"),
+                    (pn.enumerated != po.enumerated, "enumerated"),
+                    (pn.stops != po.stops, "stops"),
+                    (pn.refusal.is_some() && po.refusal.is_none(), "refused now"),
+                    (
+                        po.refusal.is_some() && pn.refusal.is_none(),
+                        "no longer refused",
+                    ),
+                ]
+                .into_iter()
+                .filter_map(|(b, s)| b.then_some(s)),
+            );
+            match (&pn.relation, &po.relation) {
+                (Some(a), Some(b)) if a.defs == b.defs => {
+                    let defs: Vec<Formula> = a.defs.iter().map(|(_, _, f)| f.clone()).collect();
+                    same(&a.body, &b.body, &defs, "relation");
+                }
+                (Some(_), Some(_)) => differ.push("relation definitions"),
+                (a, b) if a.is_some() != b.is_some() => differ.push("relation"),
+                _ => {}
+            }
+        }
+        (changed, decided, differ)
+    }
+
+    /// The formulas and preimages of part `part` ([`PARTS`]) of 4,000 random programs whose
+    /// `&&` and `||` are each written half the time as the elaborator writes them, with
+    /// `if g { true } else { b }` read as `g || b` and as before [`Walk::or_if`], when it was
+    /// read as any other `if`: [`holds_where_it_held_as_ifs`].
+    fn or_ifs_hold_where_they_held_as_ifs(part: usize) {
+        let mut g = Gen::new(0x5851_f42d_4c95_7f2d, false);
+        g.and_ifs = true;
+        g.or_ifs = true;
+        let (mut changed, mut decided, mut refused) = (0, 0, 0);
+        let mut differ = std::collections::BTreeMap::<&str, usize>::new();
+        let only = part * 4000 / PARTS..(part + 1) * 4000 / PARTS;
+        for round in 0..only.end {
+            let t = program(&mut g);
+            if round < only.start {
+                continue;
+            }
+            let (c, d, how) = holds_where_it_held_as_ifs(&t, round % 4 == 0);
+            changed += usize::from(c);
+            decided += d.iter().filter(|&&d| d).count();
+            refused += d.iter().filter(|&&d| !d).count();
+            assert!(!how.contains(&"no longer exact"), "{t:?}");
+            for h in how {
+                *differ.entry(h).or_default() += 1;
+            }
+        }
+        eprintln!("changed {changed}, decided {decided}, refused {refused}, preimages {differ:?}");
+        // Each part's 500 rounds have formulas that changed, and the solver decides nearly
+        // every comparison. Over the eight parts, about 1,000 pairs of preimages, the new
+        // shape gave 3 tighter domains and 1 looser, 2 fewer refusals and 1 more, and 1
+        // preimage exact that was not.
+        assert!(changed > 50, "changed {changed}");
+        assert!(
+            refused * 50 < decided,
+            "decided {decided}, refused {refused}"
+        );
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_1() {
+        or_ifs_hold_where_they_held_as_ifs(0);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_2() {
+        or_ifs_hold_where_they_held_as_ifs(1);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_3() {
+        or_ifs_hold_where_they_held_as_ifs(2);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_4() {
+        or_ifs_hold_where_they_held_as_ifs(3);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_5() {
+        or_ifs_hold_where_they_held_as_ifs(4);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_6() {
+        or_ifs_hold_where_they_held_as_ifs(5);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_7() {
+        or_ifs_hold_where_they_held_as_ifs(6);
+    }
+
+    #[test]
+    fn or_ifs_hold_where_they_held_as_ifs_8() {
+        or_ifs_hold_where_they_held_as_ifs(7);
+    }
+
+    /// Chains of `||` written as `if`s that test one name again, hold one `if` in two places,
+    /// mix `if`s with the primitive, hold a `&&` or are held in one, hold a constant, or an
+    /// `if g { true } else { false }`: the same formula, definitions, entries and preimages as
+    /// two at a time, and the same points and preimages as when such an `if` was read as any
+    /// other `if` (PREIMAGE-or-chain).
+    #[test]
+    fn mixed_chains_of_and_and_or_ifs_on_repeated_names_and_shared_parts() {
+        use Prim::{Eq, Ge, Le, Ne, Or};
+        let n = |s: &str| Term::Var(s.into());
+        let c = |p: Prim, s: &str, i: i64| Term::Prim(p, vec![n(s), Term::Lit(Value::Int(i))]);
+        let b = |v: bool| Shared::new(Term::Lit(Value::Bool(v)));
+        let and = |a: Term, x: Term| Term::If(Shared::new(a), Shared::new(x), b(false));
+        let or = |a: Term, x: Term| Term::If(Shared::new(a), b(true), Shared::new(x));
+        let repeated = [c(Ge, "x", 1), c(Le, "y", 3), c(Ge, "x", 0), c(Ge, "x", 1)]
+            .into_iter()
+            .fold(c(Ge, "x", 0), or);
+        let s = Shared::new(or(c(Ge, "x", 1), c(Ge, "y", 0)));
+        let twice = Term::If(
+            Shared::new(or(
+                Term::If(s.clone(), Shared::new(c(Le, "x", 4)), s.clone()),
+                c(Ne, "y", 2),
+            )),
+            b(true),
+            s.clone(),
+        );
+        let mixed = or(
+            Term::Prim(Or, vec![or(c(Ge, "x", -2), c(Le, "y", 5)), c(Ge, "x", -2)]),
+            or(and(c(Ge, "x", 3), c(Le, "y", -3)), c(Ne, "x", 4)),
+        );
+        let inside_and = and(
+            or(c(Eq, "x", 1), c(Eq, "y", 1)),
+            or(and(c(Ge, "x", 0), c(Ge, "y", 0)), c(Eq, "x", 2)),
+        );
+        let constant = or(
+            or(Term::Lit(Value::Bool(false)), c(Ge, "x", 7)),
+            or(Term::Lit(Value::Bool(true)), c(Le, "y", 2)),
+        );
+        let boolish = or(
+            Term::If(Shared::new(c(Ge, "x", 2)), b(true), b(false)),
+            or(c(Le, "y", -1), c(Eq, "x", 0)),
+        );
+        let head = Shared::new(or(or(c(Le, "x", -4), c(Ge, "y", 4)), c(Eq, "x", 0)));
+        let shared_head = and(
+            Term::If(head.clone(), b(true), Shared::new(c(Eq, "y", 3))),
+            Term::If(head.clone(), b(true), head.clone()),
+        );
+        for t in [
+            repeated,
+            twice,
+            mixed,
+            inside_and,
+            constant,
+            boolish,
+            shared_head,
+        ] {
+            let (old, new) = (translate(&t, true), translate(&t, false));
+            assert_eq!(new.formula, old.formula, "{t:?}");
+            assert!(new.formula.is_some(), "{t:?}");
+            assert_eq!(new.defs, old.defs, "{t:?}");
+            assert_eq!(new.log, old.log, "{t:?}");
+            for (k, v) in &new.memo {
+                assert_eq!(old.memo.get(k), Some(v), "entry {k:?}: {t:?}");
+            }
+            for w in [true, false] {
+                TWO_AT_A_TIME.set(true);
+                let po = preimage(&t, &domains(), &Demand::Bool(w));
+                TWO_AT_A_TIME.set(false);
+                assert_eq!(preimage(&t, &domains(), &Demand::Bool(w)), po, "{w}: {t:?}");
+            }
+            let (_, decided, differ) = holds_where_it_held_as_ifs(&t, true);
+            assert!(decided.iter().all(|&d| d), "{t:?}");
+            assert_eq!(differ, Vec::<&str>::new(), "{t:?}");
         }
     }
 
