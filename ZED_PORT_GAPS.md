@@ -2165,3 +2165,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | The breadth-first search of a carrying test kept in a `HashMap` and resumed in place: `Carried::others` expands the queue to the depth of a name and records each other way a name is reached at its depth (`also`) | `Carried::expand`, `Carried::others` | Mutation | A search state returned by each step, the map of searches threaded through `Arms::deciding` |
+
+## Entries from EMPTY-nonstrict-unsound (`zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `BTreeSet` round of types popped one at a time (`pop_first`) from the search's state, refilled by `std::mem::take` of `again`, and read by drains started inside the decisions it runs | `Searching::drain`, `Search::round` | Mutation | The round is search state threaded through each decision, as the other `Search` fields; a nested drain returns the round it leaves |

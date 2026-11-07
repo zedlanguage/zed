@@ -2038,3 +2038,165 @@ fn a_chain_of_groups_is_decided_on_a_small_stack() {
         assert_eq!(v, Verdict::Inhabited, "with every body \\ #none: {open}");
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// `is_empty` against the values (plan item EMPTY-nonstrict-unsound)
+// ---------------------------------------------------------------------------------------------
+
+/// `R3 = (R2) -> empty` over `R2 = (R1) -> empty`, `R1 = (R0) -> empty` and the empty
+/// `R0 = ((int) -> (R0, (bool) -> empty)) \ #none`, which the decider leaves to the search. `R1`
+/// holds a closure that is never called, as `R0` is empty; so `R2`, whose key type `R1` has a
+/// value and whose value type has none, is empty, and `R3` holds a closure that is never called.
+/// `R0` is proved empty only when the first phase of the search ends; in the next one each
+/// answer starts again from empty, and `R1` was read as empty before it was decided again, and
+/// taken as empty for good, which made `R2` hold a closure and `R3` empty.
+#[test]
+fn a_type_decided_again_is_not_read_as_empty_before_it_is() {
+    on_a_big_stack(|| {
+        let sys = vec![
+            diff(
+                exact(E::Int, tup(vec![E::Ref(0), exact(E::Bool, E::Empty)])),
+                E::Atom("none"),
+            ),
+            exact(E::Ref(0), E::Empty),
+            exact(E::Ref(1), E::Empty),
+            exact(E::Ref(2), E::Empty),
+        ];
+        let types = kernel(&sys, "late");
+        let empty: Vec<bool> = (types.iter())
+            .map(|t| {
+                Type::forget_emptiness();
+                t.as_ref().expect("admitted").is_empty()
+            })
+            .collect();
+        assert_eq!(empty, [true, false, true, false], "{}", show_system(&sys));
+        assert_eq!(
+            alone(&types),
+            [
+                Verdict::Empty,
+                Verdict::Inhabited,
+                Verdict::Empty,
+                Verdict::Inhabited
+            ]
+            .map(Some),
+            "{}",
+            show_system(&sys)
+        );
+    });
+}
+
+/// The layered system of seed 316 with every body written `b \ #none`: `R3 = (int, R0) |
+/// ((R2) -> empty)` holds the closure on the empty `R2`, and `is_empty` says so, as the verdict
+/// does (plan item VERDICT-group-readers).
+#[test]
+fn the_layered_system_316_is_not_called_empty() {
+    on_a_big_stack(|| {
+        let sys = undecided(gen_layer(&mut Rng::new(316)));
+        let types = kernel(&sys, "empty316");
+        let empty: Vec<bool> = (types.iter())
+            .map(|t| {
+                Type::forget_emptiness();
+                t.as_ref().expect("admitted").is_empty()
+            })
+            .collect();
+        assert_eq!(empty, [true, false, true, false], "{}", show_system(&sys));
+    });
+}
+
+/// Each system `generate` gives for `seeds`, as written and with every body `b \ #none` (so the
+/// search decides each group, not the decider): `is_empty` never calls a member empty that the
+/// pool shows a value of. Gives how many members were checked.
+fn never_empty_with_a_value(
+    name: &str,
+    generate: fn(&mut Rng) -> Vec<E>,
+    seeds: std::ops::Range<u64>,
+) -> usize {
+    let mut checked = 0;
+    for seed in seeds.clone() {
+        let sys = generate(&mut Rng::new(seed));
+        // `b \ #none` holds the values of `b`, so one pool shows both forms.
+        let seen = truth(&sys, CAP).seen;
+        for (form, sys) in [("", sys.clone()), ("-", undecided(sys))] {
+            let tag = format!("never-{name}{form}{seed}");
+            for (i, t) in kernel(&sys, &tag).iter().enumerate() {
+                let (Some(t), Seen::Member(w)) = (t, &seen[i]) else {
+                    continue;
+                };
+                Type::forget_emptiness();
+                assert!(
+                    !t.is_empty(),
+                    "{tag}: R{i} of {}: is_empty, but holds {w}",
+                    show_system(&sys)
+                );
+                checked += 1;
+            }
+        }
+    }
+    eprintln!("{name} {seeds:?}: {checked} members with a value checked");
+    checked
+}
+
+#[test]
+fn x14_family_is_never_called_empty_with_a_value() {
+    assert!(on_a_big_stack(|| never_empty_with_a_value("claude", gen_claude, 0..600)) > 0);
+}
+
+#[test]
+fn partial_morphisms_are_never_called_empty_with_a_value() {
+    assert!(on_a_big_stack(|| never_empty_with_a_value("mixed", gen_mixed, 0..600)) > 0);
+}
+
+#[test]
+fn layered_systems_are_never_called_empty_with_a_value() {
+    assert!(on_a_big_stack(|| never_empty_with_a_value("layer", gen_layer, 0..600)) > 0);
+}
+
+#[test]
+fn meets_and_differences_are_never_called_empty_with_a_value() {
+    assert!(on_a_big_stack(|| never_empty_with_a_value("cells", gen_cells, 0..600)) > 0);
+}
+
+/// The system of [`a_type_decided_again_is_not_read_as_empty_before_it_is`] with `n` morphism
+/// types above `R0`, each the key type of the next: `R(k)` is empty at an even `k` and holds a
+/// closure at an odd one. The types above `R0` are decided again in the phase after `R0` is
+/// proved empty, and `is_empty` of `R(n - 1)`, which holds a closure, does work of order
+/// `n log n`.
+fn key_chain(n: usize) -> Vec<Type> {
+    let mut sys = vec![diff(
+        exact(E::Int, tup(vec![E::Ref(0), exact(E::Bool, E::Empty)])),
+        E::Atom("none"),
+    )];
+    sys.extend((0..n).map(|k| exact(E::Ref(k), E::Empty)));
+    (kernel(&sys, "key_chain").into_iter())
+        .map(|t| t.expect("admitted"))
+        .collect()
+}
+
+#[test]
+fn a_chain_decided_again_scales() {
+    on_a_big_stack(|| {
+        let chains = scaling::inputs(64, key_chain);
+        for m in 1..=16 {
+            let ts = key_chain(m);
+            let empty: Vec<usize> = (0..=m)
+                .filter(|&k| {
+                    Type::forget_emptiness();
+                    ts[k].is_empty()
+                })
+                .collect();
+            assert_eq!(
+                empty,
+                (0..=m).step_by(2).collect::<Vec<_>>(),
+                "a key chain of {m}"
+            );
+        }
+        for (&m, ts) in &chains {
+            Type::forget_emptiness();
+            assert!(!ts[m - 1].is_empty(), "R{} of a key chain of {m}", m - 1);
+        }
+        scaling::check("is_empty of R(n - 1) of a key chain of n", 64, |m| {
+            Type::forget_emptiness();
+            std::hint::black_box(chains[&m][m - 1].is_empty());
+        });
+    });
+}

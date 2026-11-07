@@ -641,6 +641,11 @@ struct Search {
     readers: Vec<BTreeSet<usize>>,
     /// Types to decide again, since an answer they read changed.
     again: BTreeSet<usize>,
+    /// The types of the round of [`Searching::drain`] under way not yet decided again, taken from
+    /// `again` when the round starts. Their answers are not decisions: at the start of a phase
+    /// each is `true` again, until it is decided. A drain started inside a decision takes them
+    /// first, so a type is read as settled only once it is decided.
+    round: BTreeSet<usize>,
     /// Types shown inhabited by a checked value; permanent.
     witnessed: BTreeSet<usize>,
     reps: BTreeMap<Type, Option<usize>>,
@@ -658,7 +663,8 @@ struct Search {
     /// Types proved empty for good: a morphism with such a value type has no value. All other
     /// value types read as inhabited, since a closure can return itself.
     dead: BTreeSet<usize>,
-    /// The types being decided, on the stack.
+    /// The types being decided, on the stack: met for the first time, or decided again by
+    /// [`Searching::drain`].
     deciding: BTreeSet<usize>,
     /// For each type, the types it read.
     reads: Vec<Vec<usize>>,
@@ -1403,7 +1409,9 @@ impl Search {
     }
 
     /// Takes as dead the empty types `v` rests on, unless one rests on a type still being
-    /// decided: an empty type read is what a proof rests on, and an inhabited one is not. A
+    /// decided: an empty type read is what a proof rests on, and an inhabited one is not. Every
+    /// type waiting to be decided again was decided first ([`Searching::no_value`]), so each
+    /// answer read here is a decision of this phase, not the `true` a phase starts from. A
     /// type already dead changes nothing, so the phase that settles it again does not start
     /// another: each new phase takes at least one more type as dead, which bounds their number.
     fn settle(&mut self, v: usize) {
@@ -1664,18 +1672,32 @@ impl<'m> Searching<'m> {
         }
     }
 
-    /// Decides again, in rounds, each type an answer it read has changed under.
+    /// Decides again, in rounds, each type an answer it read has changed under. The round under
+    /// way is kept in the search (`round`), so a drain started inside a decision decides the
+    /// types still waiting in it before any answer is settled on ([`Searching::no_value`]); and a
+    /// type being decided again is among those being decided (`deciding`), so no type is settled
+    /// on its answer while it may still change. Taking `again` whole into the drain's own list
+    /// hid both: a type of a later phase, `true` again until decided, was settled empty on that
+    /// answer (plan item EMPTY-nonstrict-unsound).
     async fn drain(&'m self) {
         loop {
-            let again = std::mem::take(&mut self.s().again);
-            if again.is_empty() {
-                return;
-            }
-            for t in again {
-                let open = self.s().answer[t];
-                if open {
-                    self.decide(t).await;
+            let (t, fresh) = {
+                let mut guard = self.s();
+                let s = &mut *guard;
+                if s.round.is_empty() {
+                    s.round = std::mem::take(&mut s.again);
                 }
+                let Some(t) = s.round.pop_first() else {
+                    return;
+                };
+                if !s.answer[t] {
+                    continue;
+                }
+                (t, s.deciding.insert(t))
+            };
+            self.decide(t).await;
+            if fresh {
+                self.s().deciding.remove(&t);
             }
         }
     }
