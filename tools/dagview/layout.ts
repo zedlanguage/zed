@@ -61,11 +61,11 @@ export function fromElk(key: string, out: any): Layout {
 }
 
 // Runs one layout in a fresh worker, so a slow layout never holds up a poll.
-// Aborting the signal terminates the worker and rejects.
-export function layoutInWorker(g: Graph, signal?: AbortSignal): Promise<Layout> {
+// ELK recurses deeply: on the plan of 2026-11-07 with all edges (991 nodes, 3,400 edges) it overflowed the
+// worker's default stack after 10 s; with 64 MB it ran for 60 s without overflowing.
+export function layoutInWorker(g: Graph): Promise<Layout> {
   return new Promise((resolve, reject) => {
-    const w = new Worker(new URL("./layout-worker.ts", import.meta.url), { workerData: g });
-    signal?.addEventListener("abort", () => (void w.terminate(), reject(new Error("layout stopped"))), { once: true });
+    const w = new Worker(new URL("./layout-worker.ts", import.meta.url), { workerData: g, resourceLimits: { stackSizeMb: 64 } });
     w.once("message", (l: Layout) => resolve(l));
     w.once("error", reject);
     w.once("exit", (code) => code !== 0 && reject(new Error(`layout worker exited with ${code}`)));
@@ -73,22 +73,23 @@ export function layoutInWorker(g: Graph, signal?: AbortSignal): Promise<Layout> 
 }
 
 // Keeps, for each edge mode, the newest finished layout and the newest graph
-// asked for. One layout runs at a time; a graph asked for while another runs
-// replaces any older request for its mode, and a newer graph for the mode being
-// laid out terminates that layout, so no stale layout is computed.
+// asked for. One layout runs at a time and always runs to the end, because the
+// live graph changes more often than it can be laid out: stopping a layout for a
+// newer graph would never publish one. A graph asked for while another runs
+// replaces any older request for its mode, so the next layout is of the newest graph.
 // The finished layouts are passed to `save` and given back at startup, so a
 // restarted server shows the last chart while it lays out the current one.
 export class Layouts {
   private done = new Map<string, Layout>();
   private want = new Map<string, { key: string; graph: Graph }>();
   private failed = new Map<string, string>();
-  private running: { mode: string; key: string; stop: AbortController } | null = null;
+  private running: { mode: string; key: string } | null = null;
 
-  private compute: (g: Graph, signal: AbortSignal) => Promise<Layout>;
+  private compute: (g: Graph) => Promise<Layout>;
   private save: (done: Record<string, Layout>) => void;
 
   constructor(
-    compute: (g: Graph, signal: AbortSignal) => Promise<Layout>,
+    compute: (g: Graph) => Promise<Layout>,
     saved: Record<string, Layout> = {},
     save: (done: Record<string, Layout>) => void = () => {},
   ) {
@@ -102,8 +103,9 @@ export class Layouts {
     const have = this.done.get(mode) ?? null;
     if (have?.key === key) return { layout: have, fresh: true };
     if (this.failed.get(mode) === key) return { layout: have, fresh: false, error: "layout failed; see the server log" };
-    this.want.set(mode, { key, graph });
-    if (this.running?.mode === mode && this.running.key !== key) this.running.stop.abort();
+    // The graph being laid out is the newest asked for, so nothing waits behind it.
+    if (this.running?.mode === mode && this.running.key === key) this.want.delete(mode);
+    else this.want.set(mode, { key, graph });
     void this.pump();
     return { layout: have, fresh: false };
   }
@@ -113,21 +115,16 @@ export class Layouts {
     const next = this.want.entries().next();
     if (next.done) return;
     const [mode, { key, graph }] = next.value;
-    const stop = new AbortController();
-    this.running = { mode, key, stop };
+    this.want.delete(mode);
+    this.running = { mode, key };
     try {
-      const l = await this.compute(graph, stop.signal);
-      if (!stop.signal.aborted) {
-        this.done.set(mode, { ...l, key });
-        this.save(Object.fromEntries(this.done));
-      }
+      const l = await this.compute(graph);
+      this.done.set(mode, { ...l, key });
+      this.save(Object.fromEntries(this.done));
     } catch (err) {
-      if (!stop.signal.aborted) {
-        console.error(`layout of ${mode} failed:`, err);
-        this.failed.set(mode, key);
-      }
+      console.error(`layout of ${mode} failed:`, err);
+      this.failed.set(mode, key);
     } finally {
-      if (this.want.get(mode)?.key === key) this.want.delete(mode);
       this.running = null;
     }
     void this.pump();

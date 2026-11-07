@@ -32,24 +32,12 @@ test("the same graph gives the same layout", async () => {
   assert.deepEqual(await layoutInWorker(graph), await layoutInWorker(graph));
 });
 
-test("aborting a layout terminates its worker", async () => {
-  const stop = new AbortController();
-  const run = layoutInWorker(graph, stop.signal);
-  stop.abort();
-  await assert.rejects(run, /layout stopped/);
-});
-
-test("the last layout is served while a newer graph is laid out, and a newer graph stops the running layout", async () => {
+test("the last layout is served while a newer graph is laid out; a running layout finishes, then the newest graph asked for meanwhile is laid out", async () => {
   const started: string[] = [];
-  const stopped: string[] = [];
   const finish: (() => void)[] = [];
-  const layouts = new Layouts((g, signal) => {
-    const id = g.nodes[0].id;
-    started.push(id);
-    return new Promise<Layout>((resolve, reject) => {
-      signal.addEventListener("abort", () => (stopped.push(id), reject(new Error("stopped"))));
-      finish.push(() => resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] }));
-    });
+  const layouts = new Layouts((g) => {
+    started.push(g.nodes[0].id);
+    return new Promise<Layout>((resolve) => finish.push(() => resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] })));
   });
   const g = (id: string): Graph => ({ nodes: [{ id, w: 1, h: 1 }], edges: [] });
   const settle = () => new Promise((r) => setImmediate(r));
@@ -60,29 +48,38 @@ test("the last layout is served while a newer graph is laid out, and a newer gra
   assert.equal(layouts.request("direct", g("one")).fresh, true);
   layouts.request("direct", g("two"));
   layouts.request("direct", g("three"));
-  // "two" stopped as soon as "three" was asked for, and "three" started in its place.
-  assert.deepEqual(stopped, ["two"]);
-  await settle();
-  assert.deepEqual(started, ["one", "two", "three"]);
-  const stale = layouts.request("direct", g("three"));
+  layouts.request("direct", g("four"));
+  // "two" keeps running; only the newest graph asked for meanwhile waits.
+  assert.deepEqual(started, ["one", "two"]);
+  const stale = layouts.request("direct", g("four"));
   assert.equal(stale.fresh, false);
   assert.equal(stale.layout?.key, graphKey(g("one")));
-  // Asking again for the graph being laid out does not stop it.
-  assert.deepEqual(stopped, ["two"]);
-  // A stopped layout that resolves anyway is not kept.
   finish.shift()!();
   await settle();
-  assert.equal(layouts.request("direct", g("three")).layout?.key, graphKey(g("one")));
+  // "two" is served as the last finished layout while "four" is laid out.
+  assert.equal(layouts.request("direct", g("four")).layout?.key, graphKey(g("two")));
+  assert.deepEqual(started, ["one", "two", "four"]);
   finish.shift()!();
   await settle();
-  const now = layouts.request("direct", g("three"));
+  const now = layouts.request("direct", g("four"));
   assert.equal(now.fresh, true);
-  assert.equal(now.layout?.key, graphKey(g("three")));
-  assert.deepEqual(started, ["one", "two", "three"]);
-  // A stopped layout is not reported as failed.
-  assert.equal(layouts.request("direct", g("two")).error, undefined);
+  assert.equal(now.layout?.key, graphKey(g("four")));
+  assert.deepEqual(started, ["one", "two", "four"]);
   // Each edge mode keeps its own layout.
-  assert.deepEqual(layouts.request("all", g("three")), { layout: null, fresh: false });
+  assert.deepEqual(layouts.request("all", g("four")), { layout: null, fresh: false });
+});
+
+test("a graph that changes faster than it is laid out still gets a layout within two layout times", async () => {
+  const T = 90;
+  const layouts = new Layouts(() => new Promise<Layout>((resolve) => setTimeout(() => resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] }), T)));
+  const g = (id: number): Graph => ({ nodes: [{ id: `n${id}`, w: 1, h: 1 }], edges: [] });
+  const t0 = Date.now();
+  let served: Layout | null = null;
+  for (let i = 0; Date.now() - t0 < 2 * T && served === null; i++) {
+    served = layouts.request("direct", g(i)).layout;
+    await new Promise((r) => setTimeout(r, T / 3));
+  }
+  assert.ok(served, `no layout published within ${2 * T} ms`);
 });
 
 test("finished layouts are saved and a saved layout is served at startup", async () => {
