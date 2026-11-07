@@ -27,6 +27,7 @@ zed-kernel.workspace = true
 zedc-base.workspace = true
 zedc-syntax.workspace = true
 zedc-int.workspace = true
+zedc-lattice.workspace = true
 
 [dev-dependencies]
 rustix.workspace = true

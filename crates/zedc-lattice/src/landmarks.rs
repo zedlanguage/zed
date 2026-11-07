@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use zed_kernel::Value;
 
-use super::int::Num;
+use zedc_int::int::Num;
 
 /// The values written in a program, at which a widening stops a bound and a narrowing stops a
 /// descent (step M0.5): each integer literal and each declared bound `k`, as `k - 1`, `k` and

@@ -5,16 +5,16 @@
 //! premises each rests on (step L1.24). Step M0.5 fixes the constants and algorithms these
 //! sections leave open; each module names its prelude source.
 
-pub mod affine;
-pub mod cell;
+pub use zedc_lattice::affine;
+pub use zedc_lattice::cell;
 pub mod conjuncts;
-pub mod float;
+pub use zedc_lattice::float;
 pub mod hull;
 pub use zedc_int::int;
-pub mod interval;
-pub mod iterate;
-pub mod landmarks;
-pub mod lattice;
+pub use zedc_lattice::interval;
+pub use zedc_lattice::iterate;
+pub use zedc_lattice::landmarks;
+pub use zedc_lattice::lattice;
 pub mod linear;
 pub mod live3;
 pub mod negsssp;
@@ -24,7 +24,7 @@ pub mod preimage;
 pub mod preimage_ref;
 pub mod presburger;
 pub mod product;
-pub mod revision;
+pub use zedc_lattice::revision;
 pub mod twovar;
 pub mod utvpi;
-pub mod wto;
+pub use zedc_lattice::wto;

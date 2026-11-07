@@ -15,8 +15,8 @@ use std::ops::Neg;
 
 use zed_kernel::{Prim, Value};
 
-pub use super::int::Num;
 use super::landmarks::Landmarks;
+pub use zedc_int::int::Num;
 
 /// An endpoint: an integer or one of the two infinities.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

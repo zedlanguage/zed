@@ -1084,6 +1084,7 @@ dependencies = [
  "zedc",
  "zedc-base",
  "zedc-int",
+ "zedc-lattice",
  "zedc-syntax",
 ]
 
@@ -1104,6 +1105,15 @@ dependencies = [
  "num-integer",
  "num-traits",
  "zed-kernel",
+]
+
+[[package]]
+name = "zedc-lattice"
+version = "0.0.0"
+dependencies = [
+ "zed-kernel",
+ "zedc-base",
+ "zedc-int",
 ]
 
 [[package]]

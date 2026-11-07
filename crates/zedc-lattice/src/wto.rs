@@ -14,7 +14,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use crate::address::ContentAddress;
+use zedc_base::address::ContentAddress;
 
 /// What the traversal orders a vertex by (DESIGN.md step M0.5): the binding name that ends the
 /// vertex's fact address (a node inside an expression takes its binding's), then the content

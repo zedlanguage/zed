@@ -13,10 +13,10 @@
 
 use std::cmp::Ordering;
 
-use super::int::Int;
 use super::interval::{End, IntervalSet, Num};
 use super::lattice::{Congruence, FiniteSet, Lattice};
 use End::{Fin, NegInf, PosInf};
+use zedc_int::int::Int;
 
 /// An integer operator of the revision table.
 #[derive(Clone, Debug)]
