@@ -1523,7 +1523,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | LITERAL-carrier-spec | spec attempt 1 | 2026-11-07 13:07 | started: worktree /home/luke/Work/wt/literal-carrier-spec on origin/main 08a19a2 |
-| PA-walk-multi | impl attempt 1 | 2026-11-07 12:26 | coordinator kept the precise results; concrete check (random.rs, kept, 25.7 s): 2700 bodies (seeds 0x1_39, 0x1_39_33, 7; shapes z, h, u), 3079105 (arm, point) c |
+| MATHLIB-minfac | impl attempt 1 | 2026-11-07 12:32 | started: worktree wt/mathlib-minfac; Mathlib Prime/Defs.lean and Prime/Infinite.lean read at pinned commit 296b5b4 from GitHub raw (local clones deleted) |
+| PA-walk-multi | impl attempt 1 | 2026-11-07 12:26 | first group run: 398 pieces, 0 failed; l01_39 split into pieces (49.5 s whole); COMPLEXITY, STATUS, ZED_PORT_GAPS written; final run with doc check / load 19.96 |
 | SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | ready a86b89ee6c62b57cad0925b69802f7e29c751088: averaged tests, all 75 pieces pass / load 13.94 19.35 22.74 |
 | SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | ready at 36708513: 5 of 6 fixed, grid returned, 4 reruns and hull edge case recorded; load 13.50 19.36 22.76 |
 
