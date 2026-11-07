@@ -612,21 +612,41 @@ fn hub_sum(k: usize) -> String {
 
 #[test]
 fn a_bound_on_a_sum_of_two_hubs_settles_to_the_eager_answer() {
-    // `a0 >= n + m` with `n >= -1` and `m >= -1`: `a0` is int[-2..]. The notes are those the
-    // eager scope gave: the tests on `m` and the sum, without `n >= -1`, which the full
-    // derivation needs (a follow-up item; this one keeps the notes as they were).
+    // `a0 >= n + m` with `n >= -1` and `m >= -1`: `a0` is int[-2..]. The notes name every
+    // test the bound rests on (DESIGN step L1.29): the sum, `m >= -1`, which the relation
+    // carried to `a0` by the sum, and `n >= -1`, the product of `n` the sum was read with,
+    // which lies below the sum and was missing (item NARROW-notes-name).
     for k in [1, 2, 5] {
         let src = hub_sum(k);
         let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
             .expect("a0 may be negative");
         assert!(e.contains("this `x` is int[-2..]"), "k = {k}:\n{e}");
-        assert!(e.contains("if a0 >= n + m {"), "k = {k}:\n{e}");
+        sum_notes(&e, k, &format!("k = {k}"));
+    }
+}
+
+/// The notes of a read of `a0` under `a0 >= n + m` and the tests `n >= -j`, `m >= -j` of
+/// [`hub_sum`]: the sum, the strongest test on each hub, and `m >= -2`, the bound `m` had
+/// before `m >= -1`, which reads `m`; each once. The weaker tests `n >= -2`, `m >= -3`, …
+/// are not listed: the sum gives `a0` its product from those of `n` and `m` where `m >= -1`
+/// is, so `a0`'s product above it is not looked up.
+fn sum_notes(e: &str, k: usize, what: &str) {
+    let mut tests = vec!["a0 >= n + m", "n >= -1", "m >= -1"];
+    if k > 1 {
+        tests.push("m >= -2");
+    }
+    for t in &tests {
         assert_eq!(
-            e.matches("this test is true here").count(),
-            k + 1,
-            "k = {k}:\n{e}"
+            e.matches(&format!("if {t} {{")).count(),
+            1,
+            "{what}, {t}:\n{e}"
         );
     }
+    assert_eq!(
+        e.matches("this test is true here").count(),
+        tests.len(),
+        "{what}:\n{e}"
+    );
 }
 
 #[test]
@@ -635,7 +655,7 @@ fn a_bound_on_a_sum_of_two_hubs_settles_in_time_linear_in_the_tests() {
     // test on a hub enumerated the levels: about `k³`, 0.31 to 19.4 s at `k` = 12 to 48
     // (wt/narrow-hub-settle at a18089b5). A bound on a sum of names of coefficients one and
     // minus one is now the relation's alone (`Scope::atom`), and `ai` a star's leaf. The
-    // `k + 1` notes give text of order `k`, read once.
+    // four notes are read once ([`sum_notes`]).
     check_rejected_in_linear_work(
         "settling k levels each a bound on a sum of two hubs",
         6,
@@ -730,8 +750,18 @@ fn related_hubs_settle_to_the_eager_answer() {
                     e.contains(&format!("if {test} {{")),
                     "k = {k}, {link}:\n{e}"
                 );
-                if !sum {
-                    assert!(e.contains("if n >= -1 {"), "k = {k}, {link}:\n{e}");
+                // Every test the bound rests on is named (DESIGN step L1.29): `n >= -1`, and
+                // with the sum the bound on `m`, from `m >= -1` or, where the link bounds `m`
+                // by `n`, from the link, which carried `n >= -1` to `m`.
+                assert!(
+                    e.contains("if n >= -1 {"),
+                    "k = {k}, {link}, sum {sum}:\n{e}"
+                );
+                if sum {
+                    let m_by_n = matches!(link, "m >= n" | "n == m");
+                    let m = if m_by_n { link } else { "m >= -1" };
+                    assert!(e.contains(&format!("if {m} {{")), "k = {k}, {link}:\n{e}");
+                } else {
                     assert_eq!(
                         e.matches("this test is true here").count(),
                         2,
@@ -760,4 +790,14 @@ fn related_hubs_settle_in_time_linear_in_the_tests() {
         6,
         |k| related_hubs(k, "n >= m", true),
     );
+}
+
+#[test]
+fn notes_through_a_link_among_many_sums_take_time_linear_in_the_tests() {
+    // Under `m >= n`, the `k` sums `ai >= n + m` and the link each reach `m` from `n`, and only
+    // the link gives `m` the product `n >= -1` carried to it: the notes try the other shortest
+    // paths to `m` ([`Carried::others`]), each once, for the one rejection.
+    check_rejected_in_linear_work("naming a link among k sums of two related hubs", 6, |k| {
+        related_hubs(k, "m >= n", true)
+    });
 }

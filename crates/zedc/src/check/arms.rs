@@ -239,11 +239,19 @@ impl<'a> Arms<'a> {
     /// `n >= 0`, the tests `ai >= n - 3` change no product of `n`, so a rejection on `ai` lists
     /// its own test and `n >= 0`. A test that changed a name it does not read, which the
     /// scope's relation carried it to, also brings in the tests of one shortest path of the
-    /// relation from that name to a name the test reads ([`Carried`]): `a == b`, `b == c`,
-    /// then `c >= -2` for a read of `a`; under `ai >= n` for each `i`, then `n >= -1`, a read of
-    /// `a0` lists `a0 >= n` and `n >= -1`, not the other tests on `n`; the lookup stops there when
-    /// the test and its path alone give the name its product ([`Arms::explains`]), so weaker
-    /// tests `n >= -2`, … around them are not listed. Each step is a lookup of O(log d) scopes
+    /// relation from that name to a name the test reads ([`Carried`]), one that gives the name
+    /// its product where the first found does not ([`Carried::others`]), and for each name of
+    /// those tests the lookup from the carrying test ([`Arms::push_names`]): `a == b`, `b == c`,
+    /// then `c >= -2` for a read of `a`; under `a0 >= n + m`, then `n >= -1`, then `m >= -1`, a
+    /// read of `a0` lists all three, and under `m >= n` above the sum, a read after `n >= -1`
+    /// lists the sum, `m >= n` and `n >= -1`. Under `ai >= n` for each `i`, then `n >= -1`, a
+    /// read of `a0` lists `a0 >= n` and `n >= -1`, not the other tests on `n`; the lookup stops
+    /// there when the test and its path alone give the name its product ([`Arms::explains`]),
+    /// so weaker tests `n >= -2`, … around them are not listed. Nor is the name looked up above
+    /// a carrying test whose path gives it its product from the other names' products there:
+    /// under the sum and `n >= -1`, the tests `m >= -3`, `m >= -2`, `m >= -1` each move `a0`;
+    /// `m >= -3` is not listed, and `m >= -2` only as the bound `m >= -1` read. Each step is a
+    /// lookup of O(log d) scopes
     /// for a chain of `d` tests, kept for later rejections, each item is visited once, and the
     /// search of each carrying test is kept and resumed, so the cost is that of the tests
     /// listed and their names, and of each relation searched once, not of the tests the walk
@@ -273,33 +281,50 @@ impl<'a> Arms<'a> {
                 Node::Assume { parent, fresh, .. } => {
                     let all = listed.entry(k).or_insert(case);
                     *all &= case;
-                    if self.explains(k, &[], &x) {
+                    if self.explains(k, &[], &x, false) {
                         continue;
                     }
                     if fresh.iter().any(|(y, _)| *y == x) {
-                        self.push_names(k, case, &mut stack);
+                        self.push_names(k, *parent, case, &mut stack);
                         continue;
                     }
                     let search = self
                         .carried
                         .entry(k)
                         .or_insert_with(|| Carried::new(*parent, fresh));
-                    let path = search.path(&self.nodes, &self.chains, &x);
+                    let first = search.path(&self.nodes, &self.chains, &x);
+                    // The first shortest path that gives `x` its product with the test, else
+                    // the first found; the others are searched only when that one does not.
+                    let explained = match self.explains(k, &first, &x, false) {
+                        true => Some(first.clone()),
+                        false => self
+                            .carried
+                            .get_mut(&k)
+                            .expect("searched above")
+                            .others(&self.nodes, &self.chains, &x)
+                            .into_iter()
+                            .find(|path| self.explains(k, path, &x, false)),
+                    };
+                    let path = explained.clone().unwrap_or(first);
                     for &(q, joined) in &path {
                         let case = case || joined;
                         let all = listed.entry(q).or_insert(case);
                         *all &= case;
                     }
                     // The test and its path alone give `x` its product: no test above bears.
-                    if self.explains(k, &path, &x) {
+                    if explained.is_some() {
                         continue;
                     }
-                    self.push_names(k, case, &mut stack);
-                    if let Some(q) = self.lookup(*parent, &x) {
+                    self.push_names(k, *parent, case, &mut stack);
+                    // The path gives `x` its product from the other names' products here:
+                    // `x`'s product above is not used.
+                    if !self.explains(k, &path, &x, true)
+                        && let Some(q) = self.lookup(*parent, &x)
+                    {
                         stack.push((q, x.clone(), case));
                     }
                     for &(q, joined) in &path {
-                        self.push_names(q, case || joined, &mut stack);
+                        self.push_names(q, k, case || joined, &mut stack);
                     }
                 }
                 Node::Join(a, b) => {
@@ -326,8 +351,11 @@ impl<'a> Arms<'a> {
     /// gives `x` the product it has at `k`: then no test above `k` bears on `x` there, as under
     /// `n >= 0`, `n >= 1` the second gives `n` int[1..] alone, and under `ai >= n`, then
     /// `n >= -2`, `n >= -1`, the last with `ai >= n` gives `ai` int[-1..]. The tests are narrowed
-    /// once more, together, on a scope of their names, which costs the size of the tests.
-    fn explains(&self, k: usize, path: &[(usize, bool)], x: &Arc<str>) -> bool {
+    /// once more, together, on a scope of their names, which costs the size of the tests. With
+    /// `given`, the names other than `x` have the products they have at `k` instead: then the
+    /// tests give `x` its product from those of the other names, which their own lookups
+    /// explain, and `x`'s product above `k` is not used.
+    fn explains(&self, k: usize, path: &[(usize, bool)], x: &Arc<str>, given: bool) -> bool {
         let Some(at) = &self.scopes[k] else {
             return false;
         };
@@ -347,7 +375,12 @@ impl<'a> Arms<'a> {
                 return false;
             };
             for (y, p) in fresh.iter() {
-                names.entry(y.clone()).or_insert_with(|| p.clone());
+                names
+                    .entry(y.clone())
+                    .or_insert_with(|| match given && y != x {
+                        true => at.settled(y),
+                        false => p.clone(),
+                    });
             }
             sides.push((t.term.clone(), *outcome));
         }
@@ -412,12 +445,24 @@ impl<'a> Arms<'a> {
         }
     }
 
-    /// Pushes, for each name of the test of node `q`, the nearest test above `q` that changed
-    /// its product ([`Arms::lookup`]).
-    fn push_names(&self, q: usize, case: bool, stack: &mut Vec<(usize, Arc<str>, bool)>) {
-        if let Node::Assume { parent, fresh, .. } = &self.nodes[q] {
+    /// Pushes, for each name of the test of node `q`, the nearest test at or above `from` that
+    /// changed its product ([`Arms::lookup`]). `from` is where `q`'s names were read: `q`'s own
+    /// parent, or, for a test on the path of a carrying test, the carrying test itself, since
+    /// the relation carried the change with the products the names have there. Under
+    /// `a0 >= n + m`, then `n >= -1`, then `m >= -1`, the last carries to `a0` by the sum, with
+    /// the product of `n` from the test below the sum; under `m >= n`, `a0 >= n + m`, then
+    /// `n >= -1`, the test on `n` carries to `a0` by the sum, with the product it gave `m` by
+    /// `m >= n`, so the lookup of `m` answers with the test on `n` and lists its path to `m`.
+    fn push_names(
+        &self,
+        q: usize,
+        from: usize,
+        case: bool,
+        stack: &mut Vec<(usize, Arc<str>, bool)>,
+    ) {
+        if let Node::Assume { fresh, .. } = &self.nodes[q] {
             for (y, _) in fresh.iter() {
-                if let Some(r) = self.lookup(*parent, y) {
+                if let Some(r) = self.lookup(from, y) {
                     stack.push((r, y.clone(), case));
                 }
             }
@@ -578,13 +623,20 @@ type Reached = (usize, Arc<str>, bool);
 /// keeps the test it was reached by and the name that test was reached from, so a lookup of a
 /// name follows these back to the test and lists one shortest path. The search goes only as
 /// far as a lookup needs, and later lookups resume it, so over all lookups each test above is
-/// expanded once for each name it reads.
+/// expanded once for each name it reads. A name reached again by another test from a name
+/// as far from the carrying test keeps that test too, as a last step of another shortest
+/// path ([`Carried::others`]).
 struct Carried {
     /// Where the tests above are looked up from: the carrying test's parent.
     above: usize,
     /// Each name reached: `None` for a name the carrying test reads, else the test that
     /// reached it, the name that test was reached from and whether a join was passed.
     via: HashMap<Arc<str>, Option<Reached>>,
+    /// Each name reached, with its distance in tests from the names the carrying test reads.
+    depth: HashMap<Arc<str>, usize>,
+    /// Each name reached by more than one test at its distance: the tests after the first, in
+    /// the order reached, as in `via`.
+    also: HashMap<Arc<str>, Vec<Reached>>,
     /// The names reached and not yet expanded, in the order reached.
     queue: VecDeque<(Arc<str>, bool)>,
     /// The tests whose names have been reached.
@@ -596,6 +648,8 @@ impl Carried {
         Carried {
             above,
             via: fresh.iter().map(|(y, _)| (y.clone(), None)).collect(),
+            depth: fresh.iter().map(|(y, _)| (y.clone(), 0)).collect(),
+            also: HashMap::new(),
             queue: fresh.iter().map(|(y, _)| (y.clone(), false)).collect(),
             expanded: HashSet::new(),
         }
@@ -616,6 +670,49 @@ impl Carried {
             };
             self.expand(nodes, chains, &y, joined);
         }
+        self.back(x)
+    }
+
+    /// The other shortest paths from `x` that [`Carried::path`] did not take, one for each
+    /// other test that reached `x` ([`Carried::also`]), each followed back as `path` is. Under
+    /// `m >= n`, `a0 >= n + m`, then `n >= -1`, the sum and the link each reach `m` from `n`;
+    /// the sum is found first, and only the link gives `m` its product. Called after
+    /// `path(x)`; the names as near as those `x` was reached from are expanded first, so every
+    /// test reaching `x` at its distance is kept.
+    fn others(
+        &mut self,
+        nodes: &[Node<'_>],
+        chains: &[Option<Chains>],
+        x: &Arc<str>,
+    ) -> Vec<Vec<(usize, bool)>> {
+        let Some(&far) = self.depth.get(x) else {
+            return Vec::new();
+        };
+        while let Some((y, joined)) = self
+            .queue
+            .front()
+            .filter(|(y, _)| self.depth[y] < far)
+            .cloned()
+        {
+            self.queue.pop_front();
+            self.expand(nodes, chains, &y, joined);
+        }
+        let Some(steps) = self.also.get(x) else {
+            return Vec::new();
+        };
+        steps
+            .iter()
+            .map(|(q, from, joined)| {
+                let mut out = vec![(*q, *joined)];
+                out.extend(self.back(from));
+                out
+            })
+            .collect()
+    }
+
+    /// The tests from `x` back to a name the carrying test reads, by the first test that
+    /// reached each name.
+    fn back(&self, x: &Arc<str>) -> Vec<(usize, bool)> {
         let mut out = Vec::new();
         let mut at = x;
         while let Some(Some((q, from, joined))) = self.via.get(at) {
@@ -642,6 +739,7 @@ impl Carried {
                 .get(y)
                 .copied()
         };
+        let far = self.depth[y] + 1;
         let mut seen = HashSet::new();
         let mut stack: Vec<(usize, bool)> =
             read(self.above).map(|q| (q, joined)).into_iter().collect();
@@ -654,9 +752,17 @@ impl Carried {
                 Node::Assume { parent, fresh, .. } => {
                     if self.expanded.insert(k) {
                         for (z, _) in fresh.iter() {
-                            if !self.via.contains_key(z) {
-                                self.via.insert(z.clone(), Some((k, y.clone(), case)));
-                                self.queue.push_back((z.clone(), case));
+                            match self.depth.get(z) {
+                                None => {
+                                    self.via.insert(z.clone(), Some((k, y.clone(), case)));
+                                    self.depth.insert(z.clone(), far);
+                                    self.queue.push_back((z.clone(), case));
+                                }
+                                Some(&d) if d == far => {
+                                    let step = (k, y.clone(), case);
+                                    self.also.entry(z.clone()).or_default().push(step);
+                                }
+                                Some(_) => {}
                             }
                         }
                     }

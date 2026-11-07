@@ -2159,3 +2159,9 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `OnceLock` fields of a shared cell filled on first use: the atoms of a list's blocks, the first node of each value, the complement of an exclusive or set both ways | `Cell::atoms`, `Bdd::view`, `xor::xor2` | Mutation of shared data | Lazy values computed when the cell is made, or a memo table keyed by cell id in the state struct |
 | Treap walks that keep `Vec<&Arc<Set>>` stacks of the path and rebuild it bottom up; an `Iterator` struct holding its own stack | `set::split`, `set::insert`, `set::remove`, `set::Iter`, `xor::node` | Mutation, iterators | A fold over the path list returned by a loop; the iterator as a recursive list builder |
 | A slice pattern binding the last two elements of a `Vec` mutably inside a let chain | `Bdd::assemble` | Mutation | Take the last two elements off the list, rebuild them, and put them back |
+
+## Entries from NARROW-notes-name (`zedc/src/check/arms.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The breadth-first search of a carrying test kept in a `HashMap` and resumed in place: `Carried::others` expands the queue to the depth of a name and records each other way a name is reached at its depth (`also`) | `Carried::expand`, `Carried::others` | Mutation | A search state returned by each step, the map of searches threaded through `Arms::deciding` |
