@@ -1490,10 +1490,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DIAG-addr-rest | impl attempt 1 | 2026-11-07 00:39 | started; worktree wt/diag-addr-rest from origin/main 9bbc89d7 |
-| LOAD-affine-cone | impl attempt 1 | 2026-11-07 09:20 | worktree at 9bbc89d7, writing probe (h chain m, p{i} = h{m-1}(x:x) && p{i-1}(x:x+1) && x<1000i); load 17.75 16.77 22.72 |
-| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | built multi-input summaries, let narrowing, is-narrowed params; running narrowing tests (load 17.58 22.34 23.37) |
-| STAGE-ends-cone | impl attempt 1 | 2026-11-05 04:07 | probe (release, load 23): 3 quadratic families found, f_j(0) at n sites over a chain f_k -> f_(k-1): call fails (as_written) 162/630/3294/11152 ms at n=250..200 |
+| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | start: worktree /home/luke/Work/wt/atom-intern from origin/main 63c865da |
+| DIAG-addr-rest | impl attempt 1 | 2026-11-07 00:39 | review fixes committed: control 50.4x vs real 8.1x; DIAG-addr-root queued; rebasing |
+| LOAD-affine-cone | impl attempt 1 | 2026-11-07 09:20 | fix built (projection of claimed callee per key); fmt+clippy clean; running groups; load 26.59 19.97 21.69 |
+| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | running affected groups, 476 pieces (load 43.57 26.25 23.75) |
+| STAGE-ends-cone | impl attempt 1 | 2026-11-05 04:07 | negative control (old stage.rs, release, load 29.7): chain 56.7x bytes, two-before DAG 57.7x bytes (limit 24), inline-root Remix over 60 s; new code all 5 cone  |
+| ST-ladder-incremental | impl attempt 1 | 2026-11-05 23:41 | baseline run of the five groups started, load 27.91 25.95 23.90 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
