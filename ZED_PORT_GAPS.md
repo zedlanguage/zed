@@ -2093,6 +2093,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::mem::replace` and `std::mem::take` to move a value out of a slot it is replaced in | `project_each`, `settle` | Mutation (gap 11) | The new value built from the old and bound to a new name |
 | `retain` on the map of bounds by linear form, joining each disjunct's bounds into the disjunction's | `disjunction_hulls` | Mutation (gap 11) | `where` over the bounds, or a fold that builds the joined map |
 
+## Entries from DISJ-three-atom-empty (`zedc/src/store/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An optional log of eliminations passed as `Option<&mut Vec<_>>` and reborrowed with `as_deref_mut` at each elimination | `shadow_logged`, `point_of` | Mutation (gap 11); references | `shadow` returns the eliminations with the rows left, and `shadow`'s callers that do not read them drop them |
+| A closure that pushes a row onto a captured `Vec`, solves, and pops it again | `tighten` (`at_end`) | Mutation (gap 11) | The rows with the one row added, built for each end (two per symbol) |
+| `Vec::dedup_by` after a sort, keeping the first row of each linear form | `shadow` (the trial) | Mutation (gap 11) | A fold over the sorted rows that keeps a row when its form differs from the last kept |
+
 ## Entries from LINK-obj-leftover (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |

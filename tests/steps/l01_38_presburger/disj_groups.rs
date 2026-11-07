@@ -167,3 +167,139 @@ fn the_middle_of_a_chain_whose_disjuncts_do_not_hold_has_its_exact_hull() {
     assert!(s.contains(lo) && !s.contains(lo - 1), "{s:?}");
     assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
 }
+
+#[test]
+fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
+    projects(
+        "a chain of three-atom rows projected, no disjunct holding",
+        32,
+        general_chain,
+        Holds::None,
+    );
+}
+
+/// The exact hull of the middle of the chain of three-atom rows (plan item
+/// DISJ-three-atom-empty), where the projection before it stopped wider (`[36, 477]`).
+#[test]
+fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_has_its_exact_hull() {
+    let n = 64;
+    let r = project_each(&general_chain(n, Holds::None), &middle(n)).expect("a projection");
+    let s = r.0[0].clone().expect("a hull");
+    // Every step at least 1, and at least 2 at the 8 stages of disjunctions before the
+    // middle (`y <= 2` with `s >= 4`); the 31 steps after it, 8 of them at disjunctions, end
+    // at most at `8n`.
+    let (lo, hi) = (32 + 8, 8 * 64 - (31 + 8));
+    assert!(s.contains(lo) && !s.contains(lo - 1), "{s:?}");
+    assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
+}
+
+/// A chain of three-atom rows of `n` stages as [`general_chain`] with `x[n - 1] <= end`, and
+/// at every `every`-th stage `x[i + 1] - x[i] + y[i]` in `sums` and, unless `steps` is empty,
+/// `x[i + 1] - x[i]` in `steps`.
+fn small_chain(n: usize, every: usize, end: i128, sums: &[i128], steps: &[i128]) -> Formula {
+    let mut fs = vec![ge(x(0)), ge(Lin::constant(end).minus(&x(n - 1)))];
+    for i in 0..n - 1 {
+        fs.push(ge(step(i).minus(&y(i))));
+        fs.push(ge(y(i).minus(&Lin::constant(1))));
+        fs.push(ge(Lin::constant(2).minus(&y(i))));
+    }
+    let any_of = |l: &Lin, vs: &[i128]| {
+        Formula::or(vs.iter().map(|v| eq(l.minus(&Lin::constant(*v)))).collect())
+    };
+    for i in (0..n - 1).step_by(every) {
+        fs.push(any_of(&step(i).plus(&y(i)), sums));
+        if !steps.is_empty() {
+            fs.push(any_of(&step(i), steps));
+        }
+    }
+    Formula::and(fs)
+}
+
+/// The least and greatest value of each `x[i]` over the points of `f`, a chain of `n` stages
+/// ending at most at `end`, by trying every `x[0]` and every step and `y[i]` the rows of a
+/// stage allow (`x` rising by at least `y[i]`, up to `end`), each point read on `f` itself.
+fn brute_hulls(f: &Formula, n: usize, end: i128) -> Option<Vec<(i128, i128)>> {
+    fn walk(
+        f: &Formula,
+        n: usize,
+        end: i128,
+        at: &mut Vec<(i128, i128)>,
+        hulls: &mut Option<Vec<(i128, i128)>>,
+    ) {
+        let i = at.len() - 1;
+        if i == n - 1 {
+            let mut m = zedc::store::presburger::Model::new();
+            for (k, (xv, yv)) in at.iter().enumerate() {
+                m.insert(Atom::Sym(format!("x{k:05}").into()), (*xv).into());
+                if k < n - 1 {
+                    m.insert(Atom::Sym(format!("y{k:05}").into()), (*yv).into());
+                }
+            }
+            if f.holds(&m) {
+                let h = hulls.get_or_insert_with(|| at.iter().map(|p| (p.0, p.0)).collect());
+                for (h, p) in h.iter_mut().zip(at.iter()) {
+                    *h = (h.0.min(p.0), h.1.max(p.0));
+                }
+            }
+            return;
+        }
+        let xi = at[i].0;
+        for yv in 1..=2 {
+            at[i].1 = yv;
+            for next in xi + yv..=end {
+                at.push((next, 0));
+                walk(f, n, end, at, hulls);
+                at.pop();
+            }
+        }
+    }
+    let mut hulls = None;
+    for x0 in 0..=end {
+        walk(f, n, end, &mut vec![(x0, 0)], &mut hulls);
+    }
+    hulls
+}
+
+/// A case of [`small_chain`]: its stages, its stride of disjunctions, its end, sums and steps.
+type Small<'a> = (usize, usize, i128, &'a [i128], &'a [i128]);
+
+/// The hull of each `x[i]` that [`project_each`] gives, against the points counted one by
+/// one: disjunctions with no disjunct holding at the base's point, with a value missing from
+/// the hull of their form (`4` or `6`), two on one stage that leave one step only (`3` or `7`
+/// with sums `6` or `9`, so 7: the rows each implies allow 4), and none at all.
+#[test]
+fn hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points() {
+    let cases: [Small; 6] = [
+        (6, 2, 14, &[4, 5], &[]),
+        (6, 2, 14, &[4, 6], &[]),
+        (7, 3, 16, &[4, 5], &[]),
+        (5, 2, 18, &[6, 9], &[3, 7]),
+        (5, 2, 17, &[6, 9], &[3, 7]),
+        (5, 2, 5, &[4, 5], &[]),
+    ];
+    for (n, every, end, sums, steps) in cases {
+        let f = small_chain(n, every, end, sums, steps);
+        let syms: Vec<Atom> = (0..n)
+            .map(|i| Atom::Sym(format!("x{i:05}").into()))
+            .collect();
+        let got = project_each(&f, &syms).expect("a projection");
+        let want = brute_hulls(&f, n, end);
+        let case = format!("n {n}, every {every}, end {end}, sums {sums:?}, steps {steps:?}");
+        for (i, r) in got.0.iter().enumerate() {
+            let s = r.as_ref().expect("a hull");
+            match &want {
+                None => assert!(s.is_empty(), "{case}: x{i} {s:?}, no point"),
+                Some(h) => {
+                    let (lo, hi) = (h[i].0 as i64, h[i].1 as i64);
+                    assert!(
+                        s.contains(lo)
+                            && !s.contains(lo - 1)
+                            && s.contains(hi)
+                            && !s.contains(hi + 1),
+                        "{case}: x{i} {s:?}, points from {lo} to {hi}"
+                    );
+                }
+            }
+        }
+    }
+}

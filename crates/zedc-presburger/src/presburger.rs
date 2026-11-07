@@ -2229,7 +2229,13 @@ struct Side1 {
 /// Omega test", 1992, the exact shadow). It is done only when the `L·U` rows made have no more
 /// terms in all than the `L + U` rows taken out, judged in O(1) from counts kept for each atom,
 /// so the system never grows and the whole elimination costs O(m log m) for m terms, an atom
-/// being looked at again only when a row of it changes. An atom with an equality in which its
+/// being looked at again only when a row of it changes. Where the counts do not show it but
+/// at most `L + U` rows can be made once the pairs of two bounds of one term (which make no
+/// row) are left out, the rows are made, and the elimination is done when they, one kept for
+/// each linear form, are no more rows and terms than those taken out: so `y` with `1 <= y <=
+/// 2`, `y <= d` and `4 <= d + y <= 5` goes, leaving `2 <= d <= 4`. This is tried for an atom
+/// with two bounds or more on each side, which then has `(L - 1)(U - 1) <= 2`: at most five
+/// rows read and six made. An atom with an equality in which its
 /// coefficient is 1 or -1 is eliminated by substituting that equality (the one of fewest terms)
 /// into its other rows, which is exact over the integers, when the terms this adds are at most
 /// those of its equalities and twice their number; and of two `>=` rows on one linear form only
@@ -2245,6 +2251,19 @@ struct Side1 {
 // (Fourier-Motzkin is doubly exponential in general), so no smaller exact result is known;
 // the callers then solve the kept core with each question, as they did the whole group.
 fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    shadow_logged(rows, keep, None)
+}
+
+/// An atom eliminated by [`shadow`] and its rows when it was: a point of the rows left gives
+/// the atom a value by them, the atoms eliminated after it having theirs ([`point_of`]).
+type Eliminated = (Atom, Vec<Con>);
+
+/// [`shadow`], each elimination written to `log` in turn when there is one.
+fn shadow_logged(
+    rows: &[Con],
+    keep: &dyn Fn(&Atom) -> bool,
+    mut log: Option<&mut Vec<Eliminated>>,
+) -> Option<Vec<Con>> {
     #[derive(Default)]
     struct Deg {
         lo: usize,
@@ -2253,6 +2272,10 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
         hi_terms: usize,
         lo_wide: usize,
         hi_wide: usize,
+        // Its bounds of one term, `±x + k >= 0`: at most one on each side, the tighter of two
+        // being kept, so a pair of them combines into a row without atoms.
+        lo_unary: usize,
+        hi_unary: usize,
         // The equalities of the atom, and those where its coefficient is 1 or -1 with their
         // terms in all.
         eqs: usize,
@@ -2285,19 +2308,22 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                 if !on {
                     continue;
                 }
-                let (cnt, terms, w) = if lower {
-                    (&mut d.lo, &mut d.lo_terms, &mut d.lo_wide)
+                let (cnt, terms, w, one) = if lower {
+                    (&mut d.lo, &mut d.lo_terms, &mut d.lo_wide, &mut d.lo_unary)
                 } else {
-                    (&mut d.hi, &mut d.hi_terms, &mut d.hi_wide)
+                    (&mut d.hi, &mut d.hi_terms, &mut d.hi_wide, &mut d.hi_unary)
                 };
+                let unary = usize::from(n == 1 && c.rel == Rel::Ge);
                 if add {
                     *cnt += 1;
                     *terms += n;
                     *w += wide;
+                    *one += unary;
                 } else {
                     *cnt -= 1;
                     *terms -= n;
                     *w -= wide;
+                    *one -= unary;
                 }
             }
             if c.rel == Rel::Eq {
@@ -2391,6 +2417,16 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
         let exact = d.lo_wide == 0 || d.hi_wide == 0;
         let small = l * u <= l + u
             && l * d.hi_terms + u * d.lo_terms <= d.lo_terms + d.hi_terms + 2 * l * u;
+        // A pair of bounds of one term makes a row without atoms, so at most `l·u - 1` rows
+        // are made when the atom has both. Where that is no more than the rows taken out but
+        // the count of terms above is, the rows are made and counted (`trial`): terms of the
+        // two sides may cancel (`y >= 4 - d` with `y <= 5 - d`), and a row made twice is kept
+        // once, which no count from the sides foresees. With two bounds or more on each side,
+        // `(l - 1)(u - 1) <= 2`, so a trial reads at most five rows of the atom and makes at
+        // most six.
+        let made = l * u - d.lo_unary * d.hi_unary;
+        let trial = !small && l >= 2 && u >= 2 && made <= l + u;
+        let (out_rows, out_terms) = (l + u, d.lo_terms + d.hi_terms);
         // An equality where the atom's coefficient is 1 or -1 gives its value, which is put
         // in each other row of the atom, exactly: `r` rows and an equality of `e` terms make
         // `r` rows of at most `r·(e - 2)` more terms than they had, done when that is no more
@@ -2399,7 +2435,7 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
         let others = (l + u).saturating_sub(d.eqs + 1);
         let by_eq =
             d.unit_eqs > 0 && others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs;
-        if d.gone || !(by_eq || (exact && small)) {
+        if d.gone || !(by_eq || (exact && (small || trial))) {
             continue;
         }
         d.gone = true;
@@ -2414,6 +2450,9 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                     c
                 })
                 .collect();
+            if let Some(log) = log.as_deref_mut() {
+                log.push((x.clone(), taken.clone()));
+            }
             let at = (taken.iter().enumerate())
                 .filter(|(_, c)| c.rel == Rel::Eq && c.lin.terms[&x].is_unit())
                 .min_by_key(|(_, c)| c.lin.terms.len())
@@ -2438,9 +2477,8 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
             continue;
         }
         let (mut lows, mut highs): (Vec<Side1>, Vec<Side1>) = (Vec::new(), Vec::new());
-        for i in ids {
-            let Some(c) = live[i].take() else { continue };
-            count(&mut deg, &mut queue, &c, i, false);
+        for &i in &ids {
+            let Some(c) = &live[i] else { continue };
             let a = c.lin.terms.get(&x).expect("a row of the atom").clone();
             let mut rest = c.lin.clone();
             rest.terms.remove(&x);
@@ -2469,6 +2507,9 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                 (Rel::Ge, false) => highs.push(Side1 { a, rest, row: i }),
             }
         }
+        // The rows made, each tidied; a row without atoms that is false shows that `rows` has
+        // no point, whether the elimination is then done or not.
+        let mut made: Vec<Con> = Vec::with_capacity(lows.len() * highs.len());
         for lo in &lows {
             for hi in &highs {
                 if lo.row == hi.row {
@@ -2496,9 +2537,36 @@ fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
                 match tidy(lin, Rel::Ge) {
                     Err(()) => return None,
                     Ok(None) => {}
-                    Ok(Some(c)) => put!(c),
+                    Ok(Some(c)) => made.push(c),
                 }
             }
+        }
+        if !small {
+            // Of the rows on one form the tighter (least constant) is the one kept.
+            made.sort_unstable_by(|a, b| {
+                (a.lin.terms.cmp(&b.lin.terms)).then_with(|| a.lin.constant.cmp(&b.lin.constant))
+            });
+            made.dedup_by(|later, first| later.lin.terms == first.lin.terms);
+            let terms: usize = made.iter().map(|c| c.lin.terms.len()).sum();
+            if made.len() > out_rows || terms > out_terms {
+                let d = deg.get_mut(&x).expect("a queued atom");
+                d.gone = false;
+                d.rows = ids;
+                continue;
+            }
+        }
+        let mut taken = Vec::with_capacity(ids.len());
+        for &i in &ids {
+            if let Some(c) = live[i].take() {
+                count(&mut deg, &mut queue, &c, i, false);
+                taken.push(c);
+            }
+        }
+        if let Some(log) = log.as_deref_mut() {
+            log.push((x.clone(), taken));
+        }
+        for c in made {
+            put!(c);
         }
     }
     Some(live.into_iter().flatten().collect())
@@ -7111,19 +7179,67 @@ fn project_parts(
         }
     }
     // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the whole
-    // formula, `w` the hull's width, and a question whose formula is empty is answered at
-    // once only when the rows its disjunctions imply ([`disjunction_hulls`]) show it so by one
-    // solve. Where the solver refuses the formula with those rows (rows of three atoms or more:
-    // `x[i + 1] - x[i] - y[i] >= 0` along a chain with `x[i + 1] - x[i] + y[i] == 4 || == 5`),
-    // the question goes to [`probe`], which tests each disjunct by a propagation of the whole
-    // formula, so `n` disjunctions cost O(n²) solves or more for each question. What is given
-    // up: no answer, only time (3.4 s at 64 stages where it was 9.2 s; past 60 s at 512). Why:
-    // which systems the solver refuses depends on their shape, and a projection that keeps the
-    // implied rows within the shapes it decides is not known. Trigger: an empty question over
-    // a group of rows of three atoms or more with `n` disjunctions whose disjuncts each have a
-    // point (COMPLEXITY.md DISJ-incremental). A complete solution is a [`settle`] that returns
-    // the constraints its refutation used, which [`probe`] names too.
+    // formula, `w` the hull's width, unless a point of the formula at the end shows it (see
+    // [`tighten`]). The hull is first met with the bounds that the base and the rows the
+    // disjunctions imply ([`disjunction_hulls`]) give, below; where those rows are exact
+    // (each disjunction alone decides what its form may be) the point at each end is found
+    // and no question is asked, so a chain of `n` three-atom stages costs O(n log n)
+    // (`x[i + 1] - x[i] - y[i] >= 0`, `1 <= y[i] <= 2`, `x[i + 1] - x[i] + y[i] == 4 || == 5`:
+    // 0.16 s at 128 stages, where it was 41.6 s). What is given up: no answer, only time,
+    // where two disjunctions or more together leave out values that the rows each implies
+    // allow (`x[i + 1] - x[i]` in {3, 7} with `x[i + 1] - x[i] + y[i]` in {6, 9} forces 7, the
+    // rows allowing 4): the bound of the rows has no point, the bisection asks empty
+    // questions, the solver refuses each with the implied rows (its count of an elimination
+    // does not make [`shadow`]'s trial) and [`probe`] tests each disjunct by a propagation of
+    // the whole formula, O(n²) solves or more for each question: 0.17, 1.26 and 7.7 s at 16, 32
+    // and 64 stages, as before this item (0.12, 0.96 and 8.7 s). Why: showing that a
+    // disjunct has no point jointly with other disjunctions is case reasoning, and finding a
+    // point of a conjunction of disjunctions of linear rows is NP-complete. Trigger:
+    // disjunctions that jointly leave out the end of a hull that the rows each implies allow.
+    // Test: `l01_38_presburger::disj_groups::hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points`
+    // (its cases with `steps`) checks the answers; COMPLEXITY.md row DISJ-incremental. A
+    // complete solution backtracks over the disjuncts (DPLL(T)), exponential in the worst case;
+    // the case of one stage would go by dropping each disjunct that its own atoms' rows and the
+    // rows the other disjunctions imply show empty, repeated until none is dropped.
     let finite = |o: &Result<IntervalSet, Refusal>| matches!(o, Ok(s) if matches!(s.bounds(), Some((End::Fin(_), End::Fin(_)))));
+    // Before the questions, each hull to be tightened is met with the symbol's hull over the
+    // base and the rows the disjunctions imply ([`disjunction_hulls`]), all symbols at once by
+    // [`by_halves`]: the rows hold at every point of the parts, so the bounds are sound, and
+    // where the disjunctions act on the symbol only through the forms they bound (each
+    // disjunct one stage of a chain), they are its exact bounds, so no question of the
+    // bisection below is empty. An empty question costs the most: the solver may refuse the
+    // formula with the implied rows (rows of three atoms whose eliminations it counts as
+    // growing), and [`probe`] then tests each disjunct by a propagation of the whole formula.
+    // A bound is read from the rows of the projection with the symbol alone, so a projection
+    // that keeps other atoms (a core, see [`shadow`]) gives what it gives and the questions
+    // the rest. Rows with no point show the parts have none.
+    if !sets && n_ors > 1 && !old_path() && out.iter().any(finite) {
+        let implied = disjunction_hulls(&ors);
+        let ks: Vec<usize> = (0..syms.len()).filter(|&k| finite(&out[k])).collect();
+        if !implied.is_empty() {
+            let keep: Vec<BTreeSet<Atom>> = (ks.iter())
+                .map(|&k| BTreeSet::from([syms[k].clone()]))
+                .collect();
+            let mut rows = linked.cons.clone();
+            rows.extend(implied);
+            let mut empty = false;
+            let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+                match k {
+                    None => empty = true,
+                    Some(rows) => {
+                        if let Ok(o) = &mut out[ks[i]] {
+                            *o = o.meet(&bounds_alone(&syms[ks[i]], &rows));
+                        }
+                    }
+                }
+                Ok(Vec::new())
+            });
+            ran.expect("no leaf fails");
+            if empty {
+                return Ok(none());
+            }
+        }
+    }
     if n_ors > 1 && out.iter().any(finite) {
         let mut summary: Option<Formula> = None;
         for (o, sym) in out.iter_mut().zip(syms) {
@@ -7222,22 +7338,49 @@ fn tighten(
         )
     };
     let (one, two) = (Int::ONE, Int::from(2));
+    let (lo, hi) = (Int::from(lo), Int::from(hi));
+    // A point of `f` where `sym` is at an end of `set` shows that end is its bound: each
+    // question of that side has a point, so none is asked, and the bound is the one the
+    // questions give. The point is one of `f`'s rows and the rows its disjunctions imply
+    // ([`disjunction_hulls`]), found by [`point_of`] and read on `f`. Where the implied rows
+    // are exact (each disjunct one stage of a chain) and give the bounds of `set`, the points
+    // are found, and no question is asked that the solver would refuse with the implied rows
+    // and send to a [`probe`] of every disjunct.
+    let mut parts = absorbed(f, &[]).0;
+    let mut rows = mem::take(&mut parts.cons);
+    rows.extend(disjunction_hulls(&parts.ors));
+    let mut at_end = |v: &Int| {
+        rows.push(Con::eq(&x, &Lin::constant(v.clone())));
+        let held = point_of(&rows).is_some_and(|m| f.holds(&m));
+        rows.pop();
+        held
+    };
     // The least `v` in `lo..=hi` with no proof that `f` has no point where `sym <= v`, and the
     // greatest with none where `sym >= v`.
-    let (mut a, mut b) = (Int::from(lo), Int::from(hi));
-    while a < b {
-        let mid = &a + &(&b - &a).div_floor(&two);
-        if none(Con::ge(&Lin::constant(mid.clone()), &x)) {
-            a = &mid + &one
-        } else {
-            b = mid
+    let new_lo = if at_end(&lo) {
+        lo
+    } else {
+        let (mut a, mut b) = (lo, hi.clone());
+        while a < b {
+            let mid = &a + &(&b - &a).div_floor(&two);
+            if none(Con::ge(&Lin::constant(mid.clone()), &x)) {
+                a = &mid + &one
+            } else {
+                b = mid
+            }
         }
+        if none(Con::ge(&Lin::constant(a.clone()), &x)) {
+            return Ok(IntervalSet::empty());
+        }
+        a
+    };
+    if at_end(&hi) {
+        return Ok(set.meet(&IntervalSet::range(
+            End::Fin(Num::from(&new_lo)),
+            End::Fin(Num::from(&hi)),
+        )));
     }
-    let new_lo = a;
-    if none(Con::ge(&Lin::constant(new_lo.clone()), &x)) {
-        return Ok(IntervalSet::empty());
-    }
-    let (mut a, mut b) = (new_lo.clone(), Int::from(hi));
+    let (mut a, mut b) = (new_lo.clone(), hi);
     while a < b {
         let mid = &b - &(&b - &a).div_floor(&two);
         if none(Con::ge(&x, &Lin::constant(mid.clone()))) {
@@ -7250,6 +7393,80 @@ fn tighten(
         End::Fin(Num::from(&new_lo)),
         End::Fin(Num::from(&a)),
     )))
+}
+
+/// The values of `sym` that the rows of `rows` with `sym` alone allow; the other rows are not
+/// read, so the set holds every value of `sym` over `rows`. One pass over the rows.
+fn bounds_alone(sym: &Atom, rows: &[Con]) -> IntervalSet {
+    let alone = (rows.iter())
+        .filter(|c| c.lin.terms.len() == 1)
+        .filter_map(|c| Some((c.lin.terms.get(sym)?.clone(), c.lin.constant.clone(), c.rel)));
+    let Some((lo, hi)) = int_bounds(alone) else {
+        return IntervalSet::empty();
+    };
+    let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
+    IntervalSet::range(end(lo, End::NegInf), end(hi, End::PosInf))
+}
+
+/// The least and greatest integers `x` (`None`: unbounded) with `a·x + k >= 0`, or `== 0` by
+/// its relation, for each `(a, k, rel)` of `rows`, `a` not zero; `None` when there is none.
+fn int_bounds(
+    rows: impl IntoIterator<Item = (Int, Int, Rel)>,
+) -> Option<(Option<Int>, Option<Int>)> {
+    let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);
+    let mut raise = |v: Int| lo = Some(lo.take().map_or(v.clone(), |l| l.max(v)));
+    let mut lower = |v: Int| hi = Some(hi.take().map_or(v.clone(), |h| h.min(v)));
+    for (a, k, rel) in rows {
+        // `x >= -k / a` rounded up when `a` is above zero, `x <= k / -a` rounded down when
+        // below; an equality is both.
+        match rel {
+            Rel::Ge if a.is_positive() => raise(-&k.div_floor(&a)),
+            Rel::Ge => lower(k.div_floor(&-&a)),
+            Rel::Eq => {
+                if !k.mod_floor(&a).is_zero() {
+                    return None;
+                }
+                let v = -&k.div_floor(&a);
+                raise(v.clone());
+                lower(v);
+            }
+        }
+    }
+    if let (Some(l), Some(h)) = (&lo, &hi)
+        && l > h
+    {
+        return None;
+    }
+    Some((lo, hi))
+}
+
+/// An integer point of `rows`, or `None` when none is found so: [`shadow`] eliminates every
+/// atom it can, [`solve`] finds a point of the rows left, and each atom eliminated, the last
+/// first, takes the least value (or the greatest, with no least) that its rows allow at the
+/// values of the atoms eliminated after it and of those left. Each elimination is exact over
+/// the integers, so such a value exists; `None` comes when the rows have no point or the
+/// solver refuses the rows left. Each atom of a row, a product too, is read as its own value,
+/// as the solver reads it. The cost is that of [`shadow`] and of one solve of the rows left.
+fn point_of(rows: &[Con]) -> Option<Model> {
+    let mut log = Vec::new();
+    let left = shadow_logged(rows, &|_| false, Some(&mut log))?;
+    let mut model = solve(&left, true).ok()??;
+    for (x, rows) in log.into_iter().rev() {
+        let at = rows.iter().map(|c| {
+            let mut k = c.lin.constant.clone();
+            for (b, v) in c.lin.terms.iter().filter(|(b, _)| **b != x) {
+                k = &k + &(v * model.get(b).unwrap_or(&Int::ZERO));
+            }
+            (c.lin.terms[&x].clone(), k, c.rel)
+        });
+        let v = match int_bounds(at)? {
+            (Some(lo), _) => lo,
+            (None, Some(hi)) => hi,
+            (None, None) => Int::ZERO,
+        };
+        model.insert(x, v);
+    }
+    Some(model)
 }
 
 /// The least and greatest values of a symbol over a formula.
