@@ -529,6 +529,14 @@ impl Type {
         }
     }
 
+    /// Whether `self` is a recursive member whose group's decider has run, so `judged` is O(1).
+    pub(crate) fn judged_known(&self) -> bool {
+        match &*self.0 {
+            Node::Parts(..) => false,
+            Node::Rec(r) => r.key.judged_known(),
+        }
+    }
+
     /// The recursive members of the group of a recursive member, in definition order.
     pub(crate) fn group_members(&self) -> Option<Vec<Type>> {
         match &*self.0 {

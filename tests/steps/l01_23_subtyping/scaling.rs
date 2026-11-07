@@ -1359,3 +1359,27 @@ fn a_cycle_kept_for_each_type_on_it_gives_each_its_own_lengths() {
         }
     }
 }
+
+#[test]
+fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
+    // The meet of two cycles is decided by the rule on residues and reads no member's verdict
+    // or value, so its verdict decides neither group and does the work `is_empty` does; at n
+    // 1024, 13.1M instructions and 0.90M bytes against 13.1M and 0.90M. Deciding every member
+    // of both groups first (VERDICT-group-readers) cost 87.5M and 10.5M, 6.7 and 11.7 times
+    // the emptiness (plan item VERDICT-meet-cost).
+    let n = 1024;
+    let t = &period(n, n - 1) & &period(n + 1, n);
+    scaling::compare(
+        "the verdict against the emptiness of the lists of lengths -1 modulo 1024 and 1025",
+        "the verdict reads no group of a type that reads no member's verdict or value",
+        1.5,
+        || {
+            Type::forget_emptiness();
+            assert!(!t.is_empty());
+        },
+        || {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        },
+    );
+}

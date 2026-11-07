@@ -867,6 +867,11 @@ impl Key {
         matches!(self.at, At::Member(_)).then(|| Arc::as_ptr(&self.env) as usize)
     }
 
+    /// Whether the decider of the group (`judge`) has run, which a member's `judged` reads.
+    pub(super) fn judged_known(&self) -> bool {
+        self.env.judged.get().is_some()
+    }
+
     /// The recursive members of the group, in definition order, when the key names a member.
     pub(super) fn members(&self) -> Option<Vec<Type>> {
         let At::Member(_) = self.at else {

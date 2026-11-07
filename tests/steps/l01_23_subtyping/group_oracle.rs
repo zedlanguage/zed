@@ -129,42 +129,42 @@ fn refs(e: &E, out: &mut Vec<usize>) {
     }
 }
 
-/// `e` as a kernel expression: a definition of the component `comp` is a reference into the
-/// group, any other one its type, which must have been built.
-fn expr(e: &E, comp: &[usize], built: &[Option<Type>]) -> Option<Expr> {
+/// `e` as a kernel expression: a definition with a place `pos` in the component being built is a
+/// reference into the group, any other one its type, which must have been built.
+fn expr(e: &E, pos: &[Option<usize>], built: &[Option<Type>]) -> Option<Expr> {
     Some(match e {
         E::Atom(a) => Expr::Type(Type::atom(a)),
         E::Int => Expr::Type(Type::int()),
         E::Bool => Expr::Type(Type::bool()),
         E::Empty => Expr::Type(Type::empty()),
         E::Top => Expr::Type(Type::top()),
-        E::Ref(i) => match comp.iter().position(|x| x == i) {
+        E::Ref(i) => match pos[*i] {
             Some(k) => Expr::Ref(k, vec![]),
             None => Expr::Type(built[*i].clone()?),
         },
         E::Tup(xs) => Expr::Tuple(
             xs.iter()
-                .map(|x| expr(x, comp, built))
+                .map(|x| expr(x, pos, built))
                 .collect::<Option<_>>()?,
         ),
         E::Union(xs) => Expr::Union(
             xs.iter()
-                .map(|x| expr(x, comp, built))
+                .map(|x| expr(x, pos, built))
                 .collect::<Option<_>>()?,
         ),
         E::And(xs) => Expr::And(
             xs.iter()
-                .map(|x| expr(x, comp, built))
+                .map(|x| expr(x, pos, built))
                 .collect::<Option<_>>()?,
         ),
         E::Diff(a, b) => Expr::Diff(
-            Box::new(expr(a, comp, built)?),
-            Box::new(expr(b, comp, built)?),
+            Box::new(expr(a, pos, built)?),
+            Box::new(expr(b, pos, built)?),
         ),
         E::Mor(l, u, v) => Expr::Morphism(
-            Box::new(expr(l, comp, built)?),
-            Box::new(expr(u, comp, built)?),
-            Box::new(expr(v, comp, built)?),
+            Box::new(expr(l, pos, built)?),
+            Box::new(expr(u, pos, built)?),
+            Box::new(expr(v, pos, built)?),
         ),
     })
 }
@@ -172,7 +172,10 @@ fn expr(e: &E, comp: &[usize], built: &[Option<Type>]) -> Option<Expr> {
 /// The kernel type of each definition: one `Group` per strongly connected component, each
 /// after those it names, as a source file's mutually recursive `type` declarations are
 /// grouped. `None` for a definition its group's admission rejects, and for every definition
-/// that names one. Definition `i` is named `{tag}_{i}`, so systems do not share names.
+/// that names one. Definition `i` is named `{tag}_{i}`, so systems do not share names. The
+/// components are found by Tarjan's algorithm on an explicit stack, which emits each after
+/// every component it reaches, so the whole costs the definitions and their references, where a
+/// search from each definition cost their square and a pass per component their cube.
 fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
     let n = sys.len();
     let edges: Vec<Vec<usize>> = sys
@@ -183,37 +186,56 @@ fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
             out
         })
         .collect();
-    // What each definition reaches, by a search from each: the systems have a few definitions.
-    let reach: Vec<Vec<bool>> = (0..n)
-        .map(|s| {
-            let mut seen = vec![false; n];
-            let mut stack = edges[s].clone();
-            while let Some(v) = stack.pop() {
-                if !std::mem::replace(&mut seen[v], true) {
-                    stack.extend(&edges[v]);
-                }
-            }
-            seen
-        })
-        .collect();
     let mut built: Vec<Option<Type>> = vec![None; n];
-    let mut done = vec![false; n];
-    loop {
-        let mut progressed = false;
-        for i in 0..n {
-            if done[i] {
+    // The place of each definition in the component being built, `None` outside it.
+    let mut pos: Vec<Option<usize>> = vec![None; n];
+    let (mut index, mut low) = (vec![usize::MAX; n], vec![0; n]);
+    let (mut on_stack, mut stack) = (vec![false; n], Vec::new());
+    let mut next = 0;
+    for root in 0..n {
+        if index[root] != usize::MAX {
+            continue;
+        }
+        // Each frame is a definition and the number of its references followed so far.
+        let mut frames = vec![(root, 0)];
+        (index[root], low[root], next) = (next, next, next + 1);
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some(&(v, i)) = frames.last() {
+            if let Some(&w) = edges[v].get(i) {
+                let top = frames.len() - 1;
+                frames[top].1 += 1;
+                if index[w] == usize::MAX {
+                    (index[w], low[w], next) = (next, next, next + 1);
+                    stack.push(w);
+                    on_stack[w] = true;
+                    frames.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
                 continue;
             }
-            let comp: Vec<usize> = (0..n)
-                .filter(|&j| j == i || (reach[i][j] && reach[j][i]))
-                .collect();
-            if !(0..n).all(|j| !reach[i][j] || comp.contains(&j) || done[j]) {
+            frames.pop();
+            if let Some(&(u, _)) = frames.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] != index[v] {
                 continue;
+            }
+            let at = stack
+                .iter()
+                .rposition(|&x| x == v)
+                .expect("v is on the stack");
+            let mut comp = stack.split_off(at);
+            comp.sort_unstable();
+            for (k, &d) in comp.iter().enumerate() {
+                on_stack[d] = false;
+                pos[d] = Some(k);
             }
             let defs: Option<Vec<Def>> = comp
                 .iter()
                 .map(|&d| {
-                    expr(&sys[d], &comp, &built).map(|body| Def {
+                    expr(&sys[d], &pos, &built).map(|body| Def {
                         name: format!("{tag}_{d}"),
                         params: vec![],
                         body,
@@ -226,14 +248,11 @@ fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
                 }
             }
             for &d in &comp {
-                done[d] = true;
+                pos[d] = None;
             }
-            progressed = true;
-        }
-        if !progressed {
-            return built;
         }
     }
+    built
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2009,33 +2028,46 @@ fn readers_of_undecided_groups_agree_with_the_values() {
     });
 }
 
-/// A chain of 1000 groups, each one definition `Ri = (Ri, #stop) | (R(i+1), int)` that reads the
-/// next, as the decider decides them and with every body written `b \ #none`, is decided on a
-/// thread of 1 MiB. Each group is decided before the group that reads it
+/// A chain of n groups, each one definition `Ri = (Ri, #stop) | (R(i+1), int)` that reads the
+/// next, ending in `#stop`; with `open`, every body is written `b \ #none`, which the decider
+/// leaves open.
+fn chain_of_groups(n: usize, open: bool) -> Vec<E> {
+    (0..n)
+        .map(|i| {
+            let next = if i + 1 < n {
+                tup(vec![E::Ref(i + 1), E::Int])
+            } else {
+                E::Atom("stop")
+            };
+            let b = E::Union(vec![tup(vec![E::Ref(i), E::Atom("stop")]), next]);
+            if open { diff(b, E::Atom("none")) } else { b }
+        })
+        .collect()
+}
+
+/// A chain of 1000 groups (`chain_of_groups`), as the decider decides them and with every body
+/// written `b \ #none`, is decided on a thread of 1 MiB, asked of the first member and of a
+/// tuple outside the groups that holds it. Each group is decided before the group that reads it
 /// (`Type::decide_groups_read`), so no search starts inside another: deciding each group as the
 /// search above it reads it nested one search per group on the thread's stack, as the decider's
-/// verdicts of the parts it reads already did (plan item VERDICT-group-readers).
+/// verdicts of the parts it reads already did (plan item VERDICT-group-readers). The tuple runs
+/// first only the groups' deciders, and the groups' verdicts are decided when its search reads
+/// the first member (plan item VERDICT-meet-cost); asked first of the member's group, the
+/// deciders called each other one group deep at a time and overflowed the stack.
 #[test]
 fn a_chain_of_groups_is_decided_on_a_small_stack() {
     let n = 1000;
     for open in [false, true] {
-        let sys: Vec<E> = (0..n)
-            .map(|i| {
-                let next = if i + 1 < n {
-                    tup(vec![E::Ref(i + 1), E::Int])
-                } else {
-                    E::Atom("stop")
-                };
-                let b = E::Union(vec![tup(vec![E::Ref(i), E::Atom("stop")]), next]);
-                if open { diff(b, E::Atom("none")) } else { b }
-            })
-            .collect();
+        let sys = chain_of_groups(n, open);
         let first = on_a_big_stack(|| kernel(&sys, "chain")[0].clone().expect("admitted"));
-        let v = scaling::on_a_thread(1 << 20, move || {
-            Type::forget_emptiness();
-            first.verdict()
-        });
-        assert_eq!(v, Verdict::Inhabited, "with every body \\ #none: {open}");
+        let outside = Type::tuple(vec![first.clone(), Type::int()]);
+        for t in [first, outside] {
+            let v = scaling::on_a_thread(1 << 20, move || {
+                Type::forget_emptiness();
+                t.verdict()
+            });
+            assert_eq!(v, Verdict::Inhabited, "with every body \\ #none: {open}");
+        }
     }
 }
 
@@ -2198,5 +2230,30 @@ fn a_chain_decided_again_scales() {
             Type::forget_emptiness();
             std::hint::black_box(chains[&m][m - 1].is_empty());
         });
+    });
+}
+
+/// `kernel` builds the groups of a system in time linear in its definitions and references
+/// (plan item VERDICT-meet-cost): a chain of n groups, each reading the next, and one group of
+/// n definitions (`chain_of`), at n and 8n, the systems written before the runs and each run
+/// under names of its own, so no run finds the groups of another. A search from each definition
+/// for what it reaches cost the square of the definitions, and a pass over every definition for
+/// each group built their cube: 1.57 s for a chain of 1000 groups.
+#[test]
+fn the_groups_of_a_system_are_built_in_its_size() {
+    let runs = std::sync::atomic::AtomicUsize::new(0);
+    let build = |sys: &[E]| {
+        let run = runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let types = kernel(sys, &format!("built{run}"));
+        assert!(types.iter().all(Option::is_some), "every group is admitted");
+    };
+    on_a_big_stack(|| {
+        let n = 128;
+        let chains = scaling::inputs(n, |m| chain_of_groups(m, false));
+        scaling::check("the groups of a chain of n groups", n, |m| {
+            build(&chains[&m])
+        });
+        let groups = scaling::inputs(n, |m| chain_of(&mut Rng::new(7), m));
+        scaling::check("one group of n definitions", n, |m| build(&groups[&m]));
     });
 }

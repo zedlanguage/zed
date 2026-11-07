@@ -293,14 +293,20 @@ impl Type {
     /// Whether `self` is empty, shown inhabited by a checked value, or refused: not proved
     /// empty, and no value found. Kept results are not read, since those of `is_empty` carry no
     /// value and would make the outcome depend on the queries before it. A member of a recursive
-    /// group gets its verdict with the other members (`group_verdicts`).
+    /// group gets its verdict with the other members (`group_verdicts`), after the groups it
+    /// reads. A type outside a group runs first only the deciders of the groups it reads; the
+    /// verdict of a group is decided when a search first reads one of its members, so a type
+    /// whose search reads no member's verdict or value decides no group: the meet of two cycles
+    /// is decided by the rule on residues and reads neither group's values (plan item
+    /// VERDICT-meet-cost).
     pub fn verdict(&self) -> Verdict {
         let kept = || VERDICTS.with(|m| m.borrow().get(self).copied());
         if let Some(v) = kept() {
             return v;
         }
-        self.decide_groups_read();
-        if let Some(members) = self.group_members() {
+        let members = self.group_members();
+        self.decide_groups_read(members.is_some());
+        if let Some(members) = members {
             group_verdicts(&members);
             if let Some(v) = kept() {
                 return v;
@@ -316,18 +322,25 @@ impl Type {
         v
     }
 
-    /// Keeps the verdicts of every group of recursive members that `self` reads, and of those
-    /// they read, each group after the groups it reads, from a stack on the heap. A search reads
-    /// the verdict of a member of another group ([`Searching::group_verdict`],
-    /// [`Searching::shared`]); decided here first, that verdict is kept when it is read, so no
-    /// search starts inside another, and a chain of groups each reading the next is decided
-    /// with no more of the thread's stack than one group. A group is found by a walk of the
-    /// parts its members read, which stops at the members of other groups and notes each group
-    /// once (`Type::group`); each type is walked once per walk, a group already kept is not
-    /// walked, and the others are walked once, so a walk costs no more than the search that
-    /// reads the same parts. Groups form no cycle (a group is a set of definitions that read
-    /// each other), and the order is the walk's, which is a function of `self`.
-    fn decide_groups_read(&self) {
+    /// Runs the decider (`Type::judged`) of every group of recursive members that `self` reads,
+    /// and of those they read, each group after the groups it reads, from a stack on the heap;
+    /// with `verdicts`, which a member of a group asks, it keeps their verdicts too. A decider
+    /// reads the verdicts of the parts its members read, and a search reads the decider of a
+    /// member it meets and the verdict and value of a member of another group
+    /// ([`Searching::group_verdict`], [`Searching::shared`]); run here first, what is read is
+    /// kept when it is read, so a decider or a search starts inside another at most one level
+    /// deep (a search of a type outside a group, and below it the searches of the groups whose
+    /// verdicts it reads, which find what they read kept), and a chain of groups each reading
+    /// the next is decided with no more of the thread's stack than two. A type outside a group
+    /// keeps no group's verdict here: a group whose members its search never reads costs only its
+    /// decider, not a search for each member's value (plan item VERDICT-meet-cost). A group is
+    /// found by a walk of the parts its members read, which stops at the members of other groups
+    /// and notes each group once (`Type::group`); each type is walked once per walk, a group
+    /// already kept, or with its decider run when `verdicts` is false, is not walked, and the
+    /// others are walked once, so a walk costs no more than the search that reads the same
+    /// parts. Groups form no cycle (a group is a set of definitions that read each other), and
+    /// the order is the walk's, which is a function of `self`.
+    fn decide_groups_read(&self, verdicts: bool) {
         let own = self.group_members().unwrap_or_else(|| vec![self.clone()]);
         let kept = |m: &Type| VERDICTS.with(|k| k.borrow().contains_key(m));
         // One member of each group read by the parts of `roots`, without passing through a
@@ -379,15 +392,18 @@ impl Type {
         let mut stack: Vec<Step> = (read(&own).into_iter().rev()).map(Step::Enter).collect();
         while let Some(step) = stack.pop() {
             match step {
-                Step::Leave(g) => {
+                Step::Leave(g) if verdicts => {
                     if !kept(&g[0]) {
                         group_verdicts(&g);
                     }
                 }
+                Step::Leave(g) => {
+                    g[0].judged();
+                }
                 Step::Enter(m) => {
                     let deciding = || DECIDING.with(|d| d.borrow().contains(&m));
                     let fresh = m.group().is_some_and(|g| done.insert(g));
-                    if !fresh || kept(&m) || deciding() {
+                    if !fresh || kept(&m) || deciding() || !verdicts && m.judged_known() {
                         continue;
                     }
                     let g = m.group_members().unwrap_or_default();
