@@ -217,6 +217,7 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             }),
     );
     let mut scoped = preimage::Scoped::new(&lets);
+    let mut extending = presburger::extend::Extending::new();
     let mut out = Vec::new();
     for s in stmts {
         let StmtKind::Function(f) = &s.kind else {
@@ -233,25 +234,40 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             continue;
         };
         work::stage(Stage::Linear, Some(&f.name), || {
-            // Complexity tradeoff: each function's relation is built and decided on its own, so
-            // a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i` costs O(n²): the relation of
-            // `p{i}` holds i constraints, and the n relations n²/2, the size of the answers.
-            // Why: deciding a caller's relation from its callee's answer needs an incremental
-            // decision procedure, which the Presburger solver does not have. Trigger: a chain
-            // of tests over integers. Test: `l01_38_presburger::one_scope` (the chain of sums,
-            // O(n)). COMPLEXITY.md row LOAD-chain; QUESTIONS.md A35.
+            // A caller's relation holds its callee's as one shared part (`preimage::Scoped`), and
+            // is decided from the callee's answers and its own new constraints
+            // (`presburger::extend`), so a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i`,
+            // over one variable or several, costs O(n) in all. Complexity tradeoff: a chain
+            // whose links each exclude the point found for their callee is decided whole at each
+            // link, O(n²) (at `Extending::answers`); so is a chain whose links define auxiliary
+            // variables (at `Scoped::relation`), and one whose links pass their callee other
+            // arguments than their own names (`p{i-1}(x: x + 1)`), whose calls are each
+            // translated again. Tests `l01_38_presburger::one_scope::
+            // the_questions_of_a_chain_of_tests_scale` and `..._over_two_variables_scale`.
+            // COMPLEXITY.md rows LOAD-chain and LOAD-chain-share.
             // The question is stated over the names the user wrote: elaboration renames a binder
             // `x` to `x@k` when another binder of the unit is named `x` too (`crate::elab`), which
             // the user cannot write, so the question, its refusal and its constraints print `x`,
             // and their text does not change with the other functions of the unit.
             let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
             if let Some(r) = scoped.relation(body, ps, &inputs, true) {
-                for (can, question) in [
-                    ("hold", r.body.clone()),
-                    ("fail", presburger::Formula::negate(r.body.clone())),
-                ] {
-                    let q = presburger::Formula::and(vec![r.defined(), question]);
-                    if let Err(why) = presburger::decide(&q) {
+                let answers = if r.defs.is_empty() {
+                    extending.answers(&r.body)
+                } else {
+                    let defined = r.defined();
+                    presburger::extend::Answers {
+                        holds: presburger::decide(&presburger::Formula::and(vec![
+                            defined.clone(),
+                            r.body.clone(),
+                        ])),
+                        fails: presburger::decide(&presburger::Formula::and(vec![
+                            defined,
+                            presburger::Formula::negate(r.body.clone()),
+                        ])),
+                    }
+                };
+                for (can, answer) in [("hold", answers.holds), ("fail", answers.fails)] {
+                    if let Err(why) = answer {
                         out.push(ast::Error {
                             row: Some(crate::rejection::Row::NonLinearQuestion),
                             span: s.span,

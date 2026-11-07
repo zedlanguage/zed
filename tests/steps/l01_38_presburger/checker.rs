@@ -355,3 +355,30 @@ fn the_linear_questions_of_a_unit_scale() {
         assert!(refused.is_empty(), "{refused:?}");
     });
 }
+
+#[test]
+fn a_refused_question_through_a_call_prints_what_the_question_written_out_prints() {
+    // `ok` holds `base`'s relation as one shared part (LOAD-chain-share); the refusal, its
+    // cause and the constraints it prints are those of `ok` with `base`'s rows written in it.
+    const ARGS: &str = "x: a, y: a, z: a, w: a";
+    for r in &REFUSED {
+        let [first, second] = r.rows;
+        let called = program(
+            &format!(
+                "base(x, y, z, w) = {first};\nok(x, y, z, w) = base(x: x, y: y, z: z, w: w) && \
+                 {second};"
+            ),
+            ARGS,
+        );
+        let written = program(&format!("ok(x, y, z, w) = {first} && {second};"), ARGS);
+        let called = rejection(&format!("{}-called", r.name), &called)
+            .replace("2:1: ", "1:1: ")
+            .replace("2:18: ", "1:18: ");
+        assert_eq!(
+            called,
+            rejection(&format!("{}-written", r.name), &written),
+            "{}",
+            r.name
+        );
+    }
+}

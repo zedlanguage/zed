@@ -893,9 +893,51 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// the body is read (`Fresh`), at a cost of what the body made, so that what is kept from
 /// body to body is found of the scope alone: a chain of n tests, each calling the one before,
 /// held O(n²) entries when every entry was kept, and holds O(n).
+///
+/// The translations into the linear-relation domain are kept from body to body as well
+/// ([`Translations`]), each a function of its key alone: a call by its lambda and the linear
+/// terms of its arguments, over the inputs' names, and a term of the scope, which reads no
+/// input. A caller's relation so takes its callee's translation as made for an earlier body,
+/// shared and not read again, and a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i` is
+/// translated in O(n), where translating each body afresh read the chain once per body,
+/// O(n²) (LOAD-chain-share).
 pub struct Scoped<'t> {
     tx: Tx<'t>,
     scope: Eid,
+    /// The translations kept, with the `products` they were made under.
+    kept: Option<(bool, Translations)>,
+    /// The kept translations of calls, by each name their arguments' terms hold: a call whose
+    /// arguments name what is not an input of the body read next is dropped before it, so what
+    /// is kept is what a body over the same names can find again, and a unit whose bodies
+    /// name their inputs apart (`x@1`, `x@2`) holds O(n) entries, not each body's calls.
+    by_name: HashMap<Arc<str>, Vec<Rc<Logged>>>,
+}
+
+/// The translation tables of a [`Memo`], kept by [`Scoped`] from one body to the next.
+#[derive(Default)]
+struct Translations {
+    lin: HashMap<At, Entry<Option<Lin>>>,
+    formula: HashMap<At, Entry<Option<Formula>>>,
+    lin_calls: HashMap<CallKey, Entry<Option<Lin>>>,
+    formula_calls: HashMap<CallKey, Entry<Option<Formula>>>,
+}
+
+impl Memo {
+    /// Takes the translation tables.
+    fn take_translations(&mut self) -> Translations {
+        Translations {
+            lin: std::mem::take(&mut self.lin),
+            formula: std::mem::take(&mut self.formula),
+            lin_calls: std::mem::take(&mut self.lin_calls),
+            formula_calls: std::mem::take(&mut self.formula_calls),
+        }
+    }
+
+    /// Puts back the tables [`Memo::take_translations`] took.
+    fn put_translations(&mut self, t: Translations) {
+        (self.lin, self.formula) = (t.lin, t.formula);
+        (self.lin_calls, self.formula_calls) = (t.lin_calls, t.formula_calls);
+    }
 }
 
 impl<'t> Scoped<'t> {
@@ -910,7 +952,12 @@ impl<'t> Scoped<'t> {
             scope = tx.let_env(n, e, scope);
             t = b;
         }
-        Scoped { tx, scope }
+        Scoped {
+            tx,
+            scope,
+            kept: None,
+            by_name: HashMap::new(),
+        }
     }
 
     /// The relation the linear-relation domain states for the test `body` of parameters
@@ -953,9 +1000,79 @@ impl<'t> Scoped<'t> {
             let to = (tx.terms.own_var(x), ROOT);
             scope = tx.bind(scope, p, to);
         }
+        // The translations the bodies before made under the same `products`.
+        let m = &mut tx.run.memo;
+        m.log.clear();
+        match self.kept.take() {
+            Some((p, t)) if p == products => m.put_translations(t),
+            _ => self.by_name.clear(),
+        }
+        // O(the names held and the inputs), each dropped entry once.
+        let names: HashSet<&Arc<str>> = inputs.iter().collect();
+        self.by_name.retain(|name, keys| {
+            if names.contains(name) {
+                return true;
+            }
+            for k in keys.drain(..) {
+                match &*k {
+                    Logged::LinCall(k) => _ = m.lin_calls.remove(k),
+                    Logged::FormulaCall(k) => _ = m.formula_calls.remove(k),
+                    Logged::Lin(_) | Logged::Formula(_) => {}
+                }
+            }
+            false
+        });
         let mut tr = Tr::new(products);
-        let body = tx.relation(&mut tr, root, scope);
+        let body = tx.formula(&mut tr, root, scope);
+        // An auxiliary variable is numbered in the relation that made it, so a translation
+        // that holds one cannot serve another relation: when this one made any, every
+        // translation it made is dropped (they are in the log, which was empty at its start).
+        // An entry kept from an earlier body holds none, since each earlier body that made
+        // one dropped its own, so what is kept holds none either.
+        // Complexity tradeoff: a chain whose links each define an auxiliary variable (`div`
+        // or `mod` by a term, `x div 3` in a test) translates each link again for each
+        // caller, O(n²) for a chain of n; what each relation states is unchanged. Renumbering
+        // a kept translation's auxiliary variables into the next relation would rewrite it
+        // whole, the same cost. Trigger: a call of a function whose test needs an auxiliary
+        // variable. Test `l01_38_presburger::one_scope::a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body`
+        // (its first unit calls a helper with `div` and `mod`).
+        // COMPLEXITY.md row LOAD-chain-share. A complete solution needs the auxiliary
+        // variables numbered once for the scope and each relation's definitions shared with
+        // its callee's.
+        if !tr.defs.is_empty() {
+            tx.forget(0);
+        }
+        // The calls this body translated and kept, each under the names its arguments hold:
+        // O(the size of their keys).
+        fn sym(f: &presburger::Factor) -> Option<&Arc<str>> {
+            match f {
+                presburger::Factor::Sym(s) => Some(s),
+                presburger::Factor::Aux(_) => None,
+            }
+        }
+        for e in tx.run.memo.log.drain(..) {
+            let (Logged::LinCall(k) | Logged::FormulaCall(k)) = &e else {
+                continue;
+            };
+            let mut named: Vec<&Arc<str>> = Vec::new();
+            for a in k.1.iter().flat_map(|l| l.terms.keys()) {
+                let (f, g) = match a {
+                    presburger::Atom::Sym(s) => (Some(s), None),
+                    presburger::Atom::Product(f, g) => (sym(f), sym(g)),
+                    presburger::Atom::Aux(_) => (None, None),
+                };
+                named.extend(f.into_iter().chain(g));
+            }
+            named.sort_unstable();
+            named.dedup();
+            let named: Vec<Arc<str>> = named.into_iter().cloned().collect();
+            let e = Rc::new(e);
+            for s in named {
+                self.by_name.entry(s).or_default().push(e.clone());
+            }
+        }
         tx.drop_fresh();
+        self.kept = Some((products, tx.run.memo.take_translations()));
         Some(Relation {
             body: body?,
             defs: tr.defs,
@@ -966,7 +1083,10 @@ impl<'t> Scoped<'t> {
     /// O(n) after n bodies, whatever the bodies read (LOAD-chain).
     pub fn held(&self) -> usize {
         let (tx, m) = (&self.tx, &self.tx.run.memo);
-        tx.scopes.len()
+        let kept = self.kept.as_ref().map_or(0, |(_, t)| {
+            t.lin.len() + t.formula.len() + t.lin_calls.len() + t.formula_calls.len()
+        });
+        kept + tx.scopes.len()
             + tx.scope_ids.len()
             + tx.powers.len()
             + tx.run.sums.len()
@@ -2593,6 +2713,18 @@ impl<'m, 't> Walk<'m, 't> {
 
     fn callee(&self, f: Tid, env: Eid) -> Result<Callee, Option<Arc<str>>> {
         self.with(|tx| tx.callee(f, env))
+    }
+
+    /// Whether the formula of `t`, an operand of `&&` or `||`, is kept whole
+    /// ([`Formula::and_keeping`]): that of a name (COMPLEXITY.md S31b), and that of a call of a
+    /// function, so a caller's relation holds its callee's as one shared part and is decided
+    /// from the callee's answers (`presburger::extend`, LOAD-chain-share).
+    fn whole(&self, t: Tid, env: Eid) -> bool {
+        match self.node(t) {
+            Node::Var(_) => true,
+            Node::App(f, _) => matches!(self.callee(f, env), Ok(Callee::Lam(..))),
+            _ => false,
+        }
     }
 
     /// The answer of `f()`, remembered under `k` in `table`: wherever it is reached, or, when a
@@ -4650,7 +4782,7 @@ impl<'m, 't> Walk<'m, 't> {
             },
             Node::If(g, a, b) => {
                 // The formula of a name is kept whole, as for `&&` below.
-                let named = [g, a, b].map(|t| matches!(self.node(t), Node::Var(_)));
+                let named = [g, a, b].map(|t| self.whole(t, env));
                 let g = self.formula(g, env).await?;
                 let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
                 Some(Formula::or(vec![
@@ -4749,7 +4881,7 @@ impl<'m, 't> Walk<'m, 't> {
                 continue;
             }
             let f = self.formula(u, env).await?;
-            j.operand(f, matches!(node, Node::Var(_)));
+            j.operand(f, self.whole(u, env));
         }
         Some(j.finish())
     }
@@ -4759,7 +4891,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// and the two joined at once; for the tests that compare the two (ST-formula-k2).
     #[cfg(test)]
     async fn two_at_a_time(&'m self, p: Prim, a: Tid, b: Tid, env: Eid) -> Option<Formula> {
-        let named = [a, b].map(|t| matches!(self.node(t), Node::Var(_)));
+        let named = [a, b].map(|t| self.whole(t, env));
         let (a, b) = (self.formula(a, env).await?, self.formula(b, env).await?);
         Some(if p == Prim::And {
             Formula::and_keeping(vec![a, b], |i| named[i])

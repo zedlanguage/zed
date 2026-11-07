@@ -96,6 +96,7 @@ use super::linear::{Q, Term};
 use super::{live3, twovar, utvpi};
 
 mod deep;
+pub mod extend;
 mod formula;
 
 use formula::Id;

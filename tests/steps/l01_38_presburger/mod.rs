@@ -15,6 +15,7 @@ mod checker;
 mod controls;
 mod deep;
 mod entailment;
+mod extend;
 mod live3;
 mod mod_symbol;
 mod names;
