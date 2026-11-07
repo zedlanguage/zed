@@ -2150,3 +2150,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | A stack of runs, each a meet and its length, merged with `Vec::pop_if` while the top run is no longer than the new one, as a binary counter | `Type::boxes` | Mutation | A list of runs returned from each step of the fold, merged by a recursive step on its head |
 | A `HashMap<Vec<usize>, usize>` numbering each set of rows (a region) on first sight, seeded with the empty set as 0 | `RowIndex::new` | Mutation (gap 2: an intern table) | A fold over the keys with the map in its state, or the sets sorted and numbered by their rank |
+
+## Entries from CHAIN-zip-size (`zed-kernel/src/types/bdd.rs`, `bdd/set.rs`, `bdd/list.rs`, `bdd/xor.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Thread-local tables that hash-cons treap nodes, list cells and exclusive ors by the ids of their children, the ids taken from one global `AtomicU64` | `set::make`, `list::cell`, `xor::node`, `NEXT` | Shared tables across pure calls (gap 2) | A state struct of the three tables passed by primed receiver, ids issued from a counter in it; or keys by digest (gap 1) |
+| `OnceLock` fields of a shared cell filled on first use: the atoms of a list's blocks, the first node of each value, the complement of an exclusive or set both ways | `Cell::atoms`, `Bdd::view`, `xor::xor2` | Mutation of shared data | Lazy values computed when the cell is made, or a memo table keyed by cell id in the state struct |
+| Treap walks that keep `Vec<&Arc<Set>>` stacks of the path and rebuild it bottom up; an `Iterator` struct holding its own stack | `set::split`, `set::insert`, `set::remove`, `set::Iter`, `xor::node` | Mutation, iterators | A fold over the path list returned by a loop; the iterator as a recursive list builder |
+| A slice pattern binding the last two elements of a `Vec` mutably inside a let chain | `Bdd::assemble` | Mutation | Take the last two elements off the list, rebuild them, and put them back |
