@@ -460,3 +460,9 @@ test("a log label alone makes no node, and one not written by the orchestrator i
     'LABEL WITH NO ITEM: R (from "R"; give it a ledger line or an override)',
   ]);
 });
+
+test("a ledger line without an id is reported, not fatal", () => {
+  const g = buildGraph(inputs("", '{"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}\n{"id":"A","state":"open"}\n'));
+  assert.equal(by(g.nodes).get("A")!.state, "unstarted");
+  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}']);
+});

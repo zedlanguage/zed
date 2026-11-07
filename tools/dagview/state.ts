@@ -303,6 +303,11 @@ export function buildGraph(inp: Inputs): BoardState {
   const ledger = new Map<string, LedgerEntry[]>();
   const named = new Set<string>();
   for (const e of inp.ledger) {
+    // A line without a string id (an agent wrote "item" for "id") names no item; report it, do not fail.
+    if (typeof e.id !== "string") {
+      problems.push(`LEDGER LINE WITH NO ID: ${JSON.stringify(e).slice(0, 120)}`);
+      continue;
+    }
     const ids = ledgerItems(e.id, known);
     for (const id of ids) {
       if (!ledger.has(id)) ledger.set(id, []);
