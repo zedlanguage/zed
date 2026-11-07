@@ -266,7 +266,7 @@ fn names(path: &Path, file: &std::fs::File) -> bool {
 }
 
 /// Removes the working directories that builds of `out` stopped by a signal left beside it
-/// (see [`Scratch`]): each directory in `out`'s directory named `<out>.zed-build.<n>.<n>`,
+/// (see `Scratch`): each directory in `out`'s directory named `<out>.zed-build.<n>.<n>`,
 /// with `<n>` digits, whose lock this process can take. A running build holds its own locked,
 /// so it is kept. One read of the directory, and one open and lock of each such name: linear
 /// in the directory's entries. Best effort: a directory that cannot be read, opened or
