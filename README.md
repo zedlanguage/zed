@@ -2468,6 +2468,18 @@ The same program compiles to several kinds of hardware and platform.
 
 A program states dependencies and names no threads, addresses or machines, and that is what lets it move between targets. One intermediate representation (the form a compiler holds a program in) sits under everything. Back ends (the compiler stages that generate code) compile it to native multicore code through the MLIR and LLVM compiler toolkits, and to WebAssembly (portable code for browsers and other runtimes), GPUs, distributed dataflow (running parts of the graph on several machines, where the keys of your data decide which machine holds what), hardware synthesis (circuit designs) and microcontrollers. The compiler is written in Zed itself, on top of a small kernel, the core everything else is built on. A program that needs a port its target doesn't have is rejected at build time, and the error names the port and how the program reached it.
 
+## FAQ: You should change the name. Don't you know there's a Zed IDE?
+
+Yes, I know there's a Zed IDE. People remind me of this every day. I have had the zedlang.org domain and @ZedLang Twitter handle since 2012, and I'm not changing the name.
+
+There is enough room in this world for two Zeds. I wish the Zed IDE people all the success in the world, and we can coexist. "I developed it in Zed using Zed" will catch on!
+
+## Creator of Zed
+
+Zed was created by [Luke Hutchison](https://x.com/LH). The design ideas started to coalesce in detail around 2006, with some code developed in intervening years, along with a very detailed and complex spec, which as of the advent of Opus 5.5 became a perfect prompt. Zed is being fully built-out in 2026 from this complex design doc developed over the last 20 years.
+
+The official X account for Zed is [@ZedLang](https://x.com/ZedLang).
+
 ## License
 
 Zed is released under the [MIT License](LICENSE).
