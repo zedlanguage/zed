@@ -1536,12 +1536,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | EMPTY-overlap-chain | impl attempt 3 | 2026-11-07 01:46 | started on origin/main 45f8a2bb, worktree wt/empty-overlap-chain, load 14.24 |
+| GROUP-admit-msg | impl attempt 1 | 2026-11-05 04:07 | started |
 | LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | reproduced on 26372a77: drifting chain with q=(x<10//x>20), shift +3: Extending 0.39/1.62/7.06 s at 40/80/160 links (quadratic, load ~22); shared-atom chain (x  |
-| MATHLIB-allintro-spec | impl attempt 1 | 2026-11-07 14:34 | started; spec worktree /home/luke/Work/wt/mathlib-allintro-spec-spec, impl worktree /home/luke/Work/wt/mathlib-allintro-spec |
+| MATHLIB-allintro-spec | impl attempt 1 | 2026-11-07 14:34 | ready: spec 18c9b6d, impl ffc914d4; l01_07 33 pass, l07_03 19 pass (load 22); l02_03 later_words fails on bf16, pre-existing on main (spec 52ba595 moved bf16/f1 |
 | NAN-spell-l139g | impl attempt 2 | 2026-11-07 14:30 | resumed for author decision f64(#NaN)/f64(#inf) casts |
 | PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | random test added (follow.rs, 600 rounds, let_narrowing vs let_preimage over all inputs); negative controls run once, not committed: dropping the width, the inf |
-| PREIMAGE-and-chain | impl attempt 1 | 2026-11-03 21:23 | negative control (if route off, not committed): l01_25 scaling a_chain_of_and_written_as_ifs k=256->2048 265.5M->22.76G instr (85.7x), 73.2MB->4.40GB (60.1x), f |
-| ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | rebased onto f813fa34 (batch 46); state fixing |
+| PREIMAGE-and-chain | impl attempt 1 | 2026-11-03 21:23 | ready b4e083a7 on 581c2f56 (clean rebase, no preimage code changed upstream); returning / load 38.40 34.09 30.63 |
+| PREIMAGE-or-chain | impl attempt 1 | 2026-11-07 15:35 | rebased onto b4e083a7; confirmed by reading Formula (Arc<Vec> parts, no prefix sharing): g // (!g && b) at each level holds a distinct Or vector of each prefix, |
+| PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | started in wt/preimage-ref-tests; prior commits 3630da47 and 04dd4432 present |
+| WORDS-half-layer | impl attempt 1 | 2026-11-07 15:34 | started; worktree from origin/main 581c2f56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
