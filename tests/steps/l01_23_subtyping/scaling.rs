@@ -1426,57 +1426,81 @@ fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
 
 #[test]
 fn finding_the_boxes_of_a_meet_with_an_exclusive_or_scales() {
-    // `((u, 0),)`, `u = 0..n`, met with the exclusive or of `((int - (2k + 1), int),)` for
+    // `((u, 0),)`, `u = 0..w`, met with the exclusive or of `((int - (2k + 1), int),)` for
     // `k < n`, and the exclusive or of each of those met with `((u, 0),)` first: `n` rows and a
-    // finite side of `n` values. Neither was known finite, since an expression gave each of its
-    // tuple types as a box (LIST-xor-finite). Every `x < n` is in the `n` rows but the one of
-    // `2k + 1 = x` when `x` is odd, so the even `x` are listed when `n` is odd and the odd ones
-    // when `n` is even: `ceil(n / 2)` values. Built before timing.
+    // finite side of `w` values. Neither was known finite, since an expression gave each of its
+    // tuple types as a box (LIST-xor-finite). Every `x < w` is in the `n` rows but the one of
+    // `2k + 1 = x` when `x` is odd, so for `w ≤ 2n` the even `x` are listed when `n` is odd and
+    // the odd ones when `n` is even. Built before timing.
     let one = |t: Type| Type::tuple(vec![t]);
-    let family = |n: usize, each: bool| -> Type {
-        let side = one(Type::tuple(vec![Type::union_all((0..n).map(lit)), lit(0)]));
+    let xor = |x: Type, t: Type| &(&x - &t) | &(&t - &x);
+    let family = |n: usize, w: usize, each: bool| -> Type {
+        let side = one(Type::tuple(vec![Type::union_all((0..w).map(lit)), lit(0)]));
         let rows = (0..n).map(|k| {
             one(Type::tuple(vec![
                 &Type::int() - &lit(2 * k + 1),
                 Type::int(),
             ]))
         });
-        let xor = |x: Type, t: Type| &(&x - &t) | &(&t - &x);
         if each {
             rows.fold(Type::empty(), |x, r| xor(x, &side & &r))
         } else {
             &side & &rows.fold(Type::empty(), xor)
         }
     };
-    let met = scaling::inputs(64, |n| family(n, false));
+    let listed = |n: usize, w: usize| {
+        if n.is_multiple_of(2) {
+            w / 2
+        } else {
+            w.div_ceil(2)
+        }
+    };
+    // The boxes of the second are `n` of `w - 1` values each, order `n²` at `w = n`, where
+    // finding them took 10.4M and 174M instructions at 64 and 512 rows and listing them 95M
+    // and 5.8G; so its side is held at 64 values. Measured at 64, 512 and 4096 rows: finding
+    // the first finite 3.4M, 26.7M, 221M; the second 10.4M, 82M, 665M; listing the first 13.2M,
+    // 122M, 1.12G; the second 95M, 546M, 4.29G.
+    let met = scaling::inputs(128, |n| family(n, n, false));
     scaling::check(
         "finding the boxes of a finite type met with the exclusive or",
-        64,
+        128,
         |n| assert!(met[&n].finite()),
     );
-    // The second makes `n` boxes, each the side met with one row, and reads each made type for
-    // its finiteness; `Type::finite` of one tuple type of `n` literals costs order `n^0.6`
-    // already at the base commit (43K and 151K instructions at 64 and 512 literals), so it is
-    // bounded here by `n²`: measured 17.9M and 490M instructions at 64 and 512, 27 times. The
-    // listing of the first is order `n²`: `RowIndex::holds` reads the `n` rows of the exclusive
-    // or for each of the `n` candidates, each held by all rows but at most one; measured 9.4M,
-    // 25M, 71M, 209M, 674M and 2.5G instructions at 32 to 1024 rows, each doubling 2.7 to 3.7
-    // times. The listing of the second is a union of `n / 2` overlapping boxes of `n`
-    // values each, so it reads order `n²` candidates against `n` rows, order `n³`, and is not
-    // timed (open, item LIST-xor-finite in STATUS.md).
-    let each = scaling::inputs(64, |n| family(n, true));
-    scaling::check_order(
-        "finding the boxes of a finite type each row met first",
-        64,
-        2,
-        |n| assert!(each[&n].finite()),
-    );
-    scaling::check_order(
+    scaling::check(
         "listing a finite type met with the exclusive or",
-        64,
-        2,
+        128,
         |n| {
-            assert_eq!(met[&n].each_value().map(|v| v.count()), Some(n.div_ceil(2)));
+            assert_eq!(met[&n].each_value().map(|v| v.count()), Some(listed(n, n)));
         },
     );
+    let each = scaling::inputs(128, |n| family(n, 64, true));
+    scaling::check(
+        "finding the boxes of a finite type each row met first",
+        128,
+        |n| assert!(each[&n].finite()),
+    );
+    scaling::check("listing a finite type each row met first", 128, |n| {
+        assert_eq!(
+            each[&n].each_value().map(|v| v.count()),
+            Some(listed(n, 64))
+        );
+    });
+    // The union of `n` exclusive ors `((3k | 3k + 1, 0),) ^ ((3k + 1 | 3k + 2, 0),)`, made one
+    // at a time: a chain of `n` unions, whose boxes are kept as a union of persistent sets, and
+    // whose listing reads the chain as one union. Each lists `3k` and `3k + 2`. Measured at
+    // 128 and 1024: finding it finite 17.4M and 144M instructions, listing it 47M and 396M;
+    // copying both sets at each union took 28M and 1.05G, and evaluating each union of the
+    // chain again for each tuple 67M and 1.68G.
+    let pair = |a: usize, b: usize| one(Type::tuple(vec![&lit(a) | &lit(b), lit(0)]));
+    let chain = scaling::inputs(128, |n| {
+        (0..n).fold(Type::empty(), |u, k| {
+            &u | &xor(pair(3 * k, 3 * k + 1), pair(3 * k + 1, 3 * k + 2))
+        })
+    });
+    scaling::check("finding the boxes of a chain of unions", 128, |n| {
+        assert!(chain[&n].finite())
+    });
+    scaling::check("listing a chain of unions", 128, |n| {
+        assert_eq!(chain[&n].each_value().map(|v| v.count()), Some(2 * n));
+    });
 }

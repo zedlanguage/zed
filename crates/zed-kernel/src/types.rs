@@ -959,10 +959,10 @@ impl Type {
     /// on the type's part restricted to the tuple types that may hold it, found by its
     /// components: each tuple type is filed by the scalars, bare atoms and empty tuples its
     /// columns list, at any depth of first components, and one no column of which lists all it
-    /// holds is decided by the kinds of a tuple that has none of its keys (`RowIndex`); and it
-    /// is checked against the earlier boxes that may hold it (`BoxIndex`): the exclusive or of
-    /// `c` tuple types lists its `c` values in about `c log² c` steps, not `c²`
-    /// (LIST-parity-quad, LIST-parity-rest). Its user is the type facet of a
+    /// holds is decided by the kinds of a tuple that has none of its keys (`RowIndex`), the part
+    /// read again only where those rows change it (`Graph`); and a tuple is tried once, in the
+    /// first box that gives it: the exclusive or of `c` tuple types lists its `c` values in
+    /// about `c log c` steps, not `c²` (LIST-parity-quad, LIST-parity-rest, LIST-xor-finite). Its user is the type facet of a
     /// product cell (`zedc::store::product`).
     pub fn each_value(&self) -> Option<Values> {
         let (types, boxes): (Vec<Type>, Vec<Vec<Row>>) = self.finite_order()?.into_iter().unzip();
@@ -2072,15 +2072,19 @@ pub struct Values {
 /// The values of one type of a [`Values`], made one at a time on demand and kept, since every
 /// box that reads the type reads them by position.
 struct Maker {
-    ty: Type,
     /// Each box with the maker of each of its components.
     boxes: Vec<(Vec<usize>, Row)>,
     /// The rows of the type's diagrams, each with the maker of each of its types, if any.
     rows: BTreeMap<Row, Vec<Option<usize>>>,
     /// Per length, the type's part of that length with its rows by the values they may hold.
     by_value: BTreeMap<usize, RowIndex>,
-    /// Per length, the boxes by the values they may hold.
-    by_box: BTreeMap<usize, BoxIndex>,
+    /// The tuples tried so far, each once: a tuple an earlier box gave was tried there.
+    // Complexity tradeoff: the set holds each distinct tuple tried, memory order the tuples
+    // tried, where testing a tuple against the earlier boxes that may hold it kept nothing but
+    // cost order `n` per tuple when `n` boxes overlap; a lookup costs order `log t`
+    // comparisons, each reading the two tuples (order the size of their shared parts), so the
+    // set is kept only by a type of more than one box.
+    tried: BTreeSet<Vec<Value>>,
     /// The box being listed.
     next: usize,
     at: At,
@@ -2194,7 +2198,7 @@ fn list_boxes(b: &Bdd<Row>, len: usize) -> Option<Vec<Row>> {
 // finite, and `each_value` gives `None` for it, as `Type::finite` documents for a box read as
 // written. A complete answer needs the pairwise meets, which the product bounds. Tests:
 // l01_23_subtyping listing::finiteness_sees_through_meets_and_exclusive_ors and
-// scaling::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales; COMPLEXITY row K68.
+// scaling::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales; COMPLEXITY row K69.
 fn part_boxes(part: &Part<Row>, len: usize) -> Option<OrdSet<Row>> {
     let key = |p: &Part<Row>, negated: bool| (p.expr_id().is_some(), p.id(), negated);
     // Whether an expression read under `negated` joins its operands, by De Morgan's laws.
@@ -2421,9 +2425,12 @@ fn join_of(
 /// row, where `&` keeps a diagram of `c` rows. The boxes of `((2i, i),)` met with each
 /// `((int - (2k + 1), x),)` for `k < c` each held all `c` rows, order `c²` to build and to
 /// list, and order `c³` where `x` lists `c` values, met with itself at each row
-/// (LIST-parity-keys). Equal types meet as themselves. An explicit stack, since the depth
-/// follows the input.
+/// (LIST-parity-keys). Equal types meet as themselves, and a type met with `top` is itself: a
+/// type equal to it built apart made a row that `Row::new` compared with the live one literal
+/// by literal, so a tuple type of `n` literals took order `n` to be found finite
+/// (LIST-xor-finite). An explicit stack, since the depth follows the input.
 fn meet_types(x: &Type, y: &Type) -> Type {
+    let top = Type::top();
     enum Step {
         Meet(Type, Type),
         /// Make the tuple type of the last `n` results.
@@ -2432,7 +2439,8 @@ fn meet_types(x: &Type, y: &Type) -> Type {
     let (mut todo, mut done) = (vec![Step::Meet(x.clone(), y.clone())], Vec::new());
     while let Some(step) = todo.pop() {
         match step {
-            Step::Meet(x, y) if x == y => done.push(x),
+            Step::Meet(x, y) if x == y || y == top => done.push(x),
+            Step::Meet(x, y) if x == top => done.push(y),
             Step::Meet(x, y) => match (only_row(&x), only_row(&y)) {
                 (Some(r), Some(s)) if r.len() == s.len() => {
                     todo.push(Step::Tuple(r.len()));
@@ -2984,11 +2992,11 @@ struct RowIndex {
     /// Per place of a spine, the regions of its scalars ([`place_regions`]), made when first
     /// read.
     places: HashMap<Place, BTreeMap<Value, usize>>,
-    /// The part's blocks, when it is a decision list ([`Blocks`]).
-    blocks: Option<Blocks>,
+    /// The part's nodes ([`Graph`]).
+    graph: Graph,
 }
 
-/// A part that is a decision list, by the rows of a [`RowIndex`]: its value on a tuple is that
+/// A decision list of a part, by the rows of a [`RowIndex`]: its value on a tuple is that
 /// of the first block with a literal that holds, so it is read from the blocks the rows with
 /// a key of the tuple change, and the first block that holds on a tuple with no key of any
 /// row ([`Firsts`]), never by walking the list. A restriction of the list to the smallest
@@ -3001,9 +3009,44 @@ struct Blocks {
     values: Vec<bool>,
     /// The value when no literal holds.
     tail: bool,
-    /// Per row of `rows`, its block and whether its literal takes the row: each atom of a list
-    /// is in one block.
-    of_row: Vec<(usize, bool)>,
+    /// The list's rows by their position in `rows`, ascending, each with its block and whether
+    /// its literal takes the row: each atom of a list is in one block.
+    of_row: Vec<(usize, usize, bool)>,
+}
+
+/// A part as the graph of its distinct lists and expressions, each once, operands before the
+/// expressions that read them and the part last, so that a tuple's value is read by
+/// evaluating again only the nodes the rows with a key of the tuple change ([`Graph::eval`]).
+/// Evaluating the whole part read every row of an exclusive or for each tuple, `O(n)` for `n`
+/// rows (LIST-xor-finite: `(0..n, 0) & ((int - 1, int) ^ (int - 3, int) ^ ...)`, whose rows
+/// with a key of a tuple are the side's and one other, far apart in `rows`).
+struct Graph {
+    nodes: Vec<Vertex>,
+    /// Per node, the expressions that read it.
+    parents: Vec<Vec<usize>>,
+    /// The lists, each with its node.
+    lists: Vec<(Blocks, usize)>,
+    /// Per row of `rows`, the lists it is in.
+    lists_of_row: Vec<Vec<usize>>,
+}
+
+/// A node of a [`Graph`]: a list, by its position in `lists`, or a connective on nodes, a
+/// union or a meet of any number of them.
+enum Vertex {
+    List(usize),
+    Not(usize),
+    Or(Vec<usize>),
+    And(Vec<usize>),
+}
+
+/// A [`Graph`] on a tuple of a class with no key of any row.
+struct Base {
+    /// Per list, its blocks that hold.
+    firsts: Vec<Firsts>,
+    /// Per node, its value.
+    values: Vec<bool>,
+    /// Per union, how many of its operands hold; per meet, how many do not.
+    counts: Vec<usize>,
 }
 
 /// The blocks of a [`Blocks`] on a tuple of a class with no key of any row.
@@ -3015,47 +3058,48 @@ struct Firsts {
 }
 
 impl Blocks {
-    fn new(rows: &[Row], part: &Part<Row>) -> Option<Blocks> {
-        let Part::Bdd(b) = part else {
-            return None;
-        };
+    fn new(rows: &[Row], b: &Bdd<Row>) -> Blocks {
         let list = b.list();
-        let mut of_row = vec![(0, false); rows.len()];
+        let mut of_row = Vec::new();
         for (k, (_, literals)) in list.blocks.iter().enumerate() {
             for (r, taken) in literals {
                 let i = rows
                     .binary_search(r)
                     .expect("every atom of the list is a row");
-                of_row[i] = (k, *taken);
+                of_row.push((i, k, *taken));
             }
         }
-        Some(Blocks {
+        of_row.sort_unstable();
+        Blocks {
             values: list.blocks.iter().map(|(v, _)| *v).collect(),
             tail: list.tail,
             of_row,
-        })
+        }
     }
 
     /// The blocks that hold on a tuple of the class whose rows have the values `default`.
     fn firsts(&self, default: impl Fn(usize) -> bool) -> Firsts {
         let mut holding = vec![0; self.values.len()];
-        for (i, &(k, taken)) in self.of_row.iter().enumerate() {
+        for &(i, k, taken) in &self.of_row {
             holding[k] += usize::from(default(i) == taken);
         }
         let any = (0..holding.len()).filter(|&k| holding[k] > 0).collect();
         Firsts { holding, any }
     }
 
-    /// The list's value when the rows at `changed` take the value beside each, the other of
-    /// their value on `firsts`' class, in `O(k log k)` for `k` rows: a block that held may
-    /// stop holding only where a changed row is, so the walk over the blocks that held passes
-    /// at most `k` of them.
+    /// The list's value when its rows at `changed` take the value beside each, the other of
+    /// their value on `firsts`' class, in `O(k log n)` for `k` rows of `n`: a block that held
+    /// may stop holding only where a changed row is, so the walk over the blocks that held
+    /// passes at most `k` of them.
     fn eval(&self, firsts: &Firsts, changed: &[(usize, bool)]) -> bool {
         // Per block a changed row is in, the change in how many of its literals hold.
         let mut delta: Vec<(usize, isize)> = changed
             .iter()
             .map(|&(i, holds)| {
-                let (k, taken) = self.of_row[i];
+                let at = (self.of_row)
+                    .binary_search_by_key(&i, |&(i, _, _)| i)
+                    .expect("a changed row of a list is in it");
+                let (_, k, taken) = self.of_row[at];
                 (k, if holds == taken { 1 } else { -1 })
             })
             .collect();
@@ -3082,21 +3126,224 @@ impl Blocks {
     }
 }
 
+impl Graph {
+    /// The graph of `part`, whose atoms are among `rows`, from a stack: each node once, kept in
+    /// a visited set by its id. A union read by one union only is merged into it, and so a
+    /// meet into a meet ([`Graph::merged`]).
+    fn new(rows: &[Row], part: &Part<Row>) -> Graph {
+        let mut graph = Graph {
+            nodes: Vec::new(),
+            parents: Vec::new(),
+            lists: Vec::new(),
+            lists_of_row: vec![Vec::new(); rows.len()],
+        };
+        // A list's id and an expression's may be equal, so each is keyed with its sort.
+        let key = |p: &Part<Row>| (p.expr_id().is_some(), p.id());
+        let mut at: HashMap<(bool, u64), usize> = HashMap::new();
+        let mut stack = vec![(part, false)];
+        while let Some((p, ready)) = stack.pop() {
+            if at.contains_key(&key(p)) {
+                continue;
+            }
+            let operands: Vec<&Part<Row>> = match p.view() {
+                Ok(_) => Vec::new(),
+                Err(Form::Not(a)) => vec![a],
+                Err(Form::Or(a, b) | Form::And(a, b)) => vec![a, b],
+            };
+            if !ready {
+                stack.push((p, true));
+                stack.extend(operands.into_iter().map(|q| (q, false)));
+                continue;
+            }
+            let n = graph.nodes.len();
+            let of = |q: &Part<Row>| at[&key(q)];
+            let node = match p.view() {
+                Ok(b) => {
+                    let blocks = Blocks::new(rows, b);
+                    for &(i, _, _) in &blocks.of_row {
+                        graph.lists_of_row[i].push(graph.lists.len());
+                    }
+                    graph.lists.push((blocks, n));
+                    Vertex::List(graph.lists.len() - 1)
+                }
+                Err(Form::Not(a)) => Vertex::Not(of(a)),
+                Err(Form::Or(a, b)) => Vertex::Or(vec![of(a), of(b)]),
+                Err(Form::And(a, b)) => Vertex::And(vec![of(a), of(b)]),
+            };
+            graph.nodes.push(node);
+            at.insert(key(p), n);
+        }
+        graph.merged()
+    }
+
+    /// The graph with each union read by one union only merged into it, and each meet read by
+    /// one meet only into it, each operand of a union or meet once, and the readers of each
+    /// node. A union of `n` parts made one at a time is a chain of `n` unions, whose every node
+    /// a changed row of the first part changed ([`Graph::eval`]); merged, the chain is one
+    /// union that counts its operands that hold.
+    // Complexity tradeoff: a merged node takes the operand list of its largest merged operand
+    // and adds the others to it, so each operand moves order `log n` times; the lists are then
+    // sorted, order `n log n` for `n` nodes.
+    fn merged(mut self) -> Graph {
+        let mut readers = vec![0usize; self.nodes.len()];
+        for node in &self.nodes {
+            match node {
+                Vertex::List(_) => {}
+                Vertex::Not(a) => readers[*a] += 1,
+                Vertex::Or(xs) | Vertex::And(xs) => {
+                    xs.iter().for_each(|&x| readers[x] += 1);
+                }
+            }
+        }
+        let alike = |a: &Vertex, b: &Vertex| {
+            matches!(
+                (a, b),
+                (Vertex::Or(_), Vertex::Or(_)) | (Vertex::And(_), Vertex::And(_))
+            )
+        };
+        // Operands come before their readers, so a merged operand is merged already.
+        for n in 0..self.nodes.len() {
+            let operands = match &mut self.nodes[n] {
+                Vertex::Or(xs) | Vertex::And(xs) => std::mem::take(xs),
+                Vertex::List(_) | Vertex::Not(_) => continue,
+            };
+            let (mut kept, mut taken): (Vec<usize>, Vec<Vec<usize>>) = (Vec::new(), Vec::new());
+            for x in operands {
+                if readers[x] == 1 && alike(&self.nodes[x], &self.nodes[n]) {
+                    // `x` is read by `n` alone, and is read no more.
+                    readers[x] = 0;
+                    match &mut self.nodes[x] {
+                        Vertex::Or(ys) | Vertex::And(ys) => taken.push(std::mem::take(ys)),
+                        Vertex::List(_) | Vertex::Not(_) => unreachable!("x is like n"),
+                    }
+                } else {
+                    kept.push(x);
+                }
+            }
+            taken.push(kept);
+            let largest = (0..taken.len())
+                .max_by_key(|&i| taken[i].len())
+                .expect("taken holds `kept`");
+            let mut all = taken.swap_remove(largest);
+            taken.into_iter().for_each(|ys| all.extend(ys));
+            match &mut self.nodes[n] {
+                Vertex::Or(xs) | Vertex::And(xs) => *xs = all,
+                Vertex::List(_) | Vertex::Not(_) => unreachable!("n is a union or a meet"),
+            }
+        }
+        // `p | p` reads its operand once. A merged node is read by none and reads none.
+        self.parents = vec![Vec::new(); self.nodes.len()];
+        for n in 0..self.nodes.len() {
+            match &mut self.nodes[n] {
+                Vertex::List(_) => {}
+                Vertex::Not(a) => self.parents[*a].push(n),
+                Vertex::Or(xs) | Vertex::And(xs) => {
+                    xs.sort_unstable();
+                    xs.dedup();
+                    xs.iter().for_each(|&x| self.parents[x].push(n));
+                }
+            }
+        }
+        self
+    }
+
+    /// Each node's value on a tuple of the class whose rows have the values `default`.
+    fn base(&self, default: impl Fn(usize) -> bool) -> Base {
+        let firsts: Vec<Firsts> = (self.lists.iter())
+            .map(|(b, _)| b.firsts(&default))
+            .collect();
+        let mut values: Vec<bool> = Vec::with_capacity(self.nodes.len());
+        let mut counts: Vec<usize> = Vec::with_capacity(self.nodes.len());
+        for node in &self.nodes {
+            let (v, count) = match node {
+                Vertex::List(l) => (self.lists[*l].0.eval(&firsts[*l], &[]), 0),
+                Vertex::Not(a) => (!values[*a], 0),
+                Vertex::Or(xs) => {
+                    let holding = xs.iter().filter(|&&x| values[x]).count();
+                    (holding > 0, holding)
+                }
+                Vertex::And(xs) => {
+                    let failing = xs.iter().filter(|&&x| !values[x]).count();
+                    (failing == 0, failing)
+                }
+            };
+            values.push(v);
+            counts.push(count);
+        }
+        Base {
+            firsts,
+            values,
+            counts,
+        }
+    }
+
+    /// The part's value when the rows at `changed` take the value beside each, the other of
+    /// their value on `base`'s class: the lists those rows are in are read from their blocks
+    /// ([`Blocks::eval`]), and a node whose operand changed is evaluated again, operands first,
+    /// a union by how many of its operands hold and a meet by how many do not, so a changed
+    /// operand costs its reader order 1. The exclusive or of `n` rows is a tree of depth
+    /// `O(log n)` in expectation (module `xor` of `bdd`), so a changed row changes `O(log n)`
+    /// expressions, and a union of `n` parts is one node ([`Graph::merged`]).
+    // Complexity tradeoff: a tuple costs the nodes whose value its changed rows change, each
+    // with its readers; a node read by many expressions, such as the side of a meet distributed
+    // over a union, sends the change to each. Evaluating the whole part costs every node for
+    // every tuple.
+    fn eval(&self, base: &Base, changed: &[(usize, bool)]) -> bool {
+        let mut by_list: BTreeMap<usize, Vec<(usize, bool)>> = BTreeMap::new();
+        for &(i, holds) in changed {
+            for &l in &self.lists_of_row[i] {
+                by_list.entry(l).or_default().push((i, holds));
+            }
+        }
+        type Pending = (HashMap<usize, bool>, HashMap<usize, isize>, BTreeSet<usize>);
+        let change = |n: usize, v: bool, (now, delta, dirty): &mut Pending| {
+            now.insert(n, v);
+            for &p in &self.parents[n] {
+                let d = match (&self.nodes[p], v) {
+                    (Vertex::Or(_), true) | (Vertex::And(_), false) => 1,
+                    (Vertex::Or(_), false) | (Vertex::And(_), true) => -1,
+                    (Vertex::List(_) | Vertex::Not(_), _) => 0,
+                };
+                *delta.entry(p).or_default() += d;
+                dirty.insert(p);
+            }
+        };
+        // The changed values, per union or meet the change in its count, and the nodes to read
+        // again.
+        let mut pending: Pending = Default::default();
+        for (l, rows) in by_list {
+            let (blocks, n) = &self.lists[l];
+            if blocks.eval(&base.firsts[l], &rows) != base.values[*n] {
+                change(*n, !base.values[*n], &mut pending);
+            }
+        }
+        // Operands come before their readers, so a node taken lowest first has its operands'
+        // values settled.
+        while let Some(n) = pending.2.pop_first() {
+            let (now, delta, _) = &pending;
+            let count = || base.counts[n] as isize + delta.get(&n).copied().unwrap_or(0);
+            let v = match &self.nodes[n] {
+                Vertex::List(_) => unreachable!("a list reads no node"),
+                Vertex::Not(a) => !now.get(a).copied().unwrap_or(base.values[*a]),
+                Vertex::Or(_) => count() > 0,
+                Vertex::And(_) => count() == 0,
+            };
+            if v != base.values[n] {
+                change(n, v, &mut pending);
+            }
+        }
+        let root = self.nodes.len() - 1;
+        pending.0.get(&root).copied().unwrap_or(base.values[root])
+    }
+}
+
 /// The rows of a [`RowIndex`] as a class of tuples sees them.
 struct Class {
     /// Per open row, its value on a tuple of the class none of whose components is a key of
     /// it.
     open: Vec<bool>,
-    /// The blocks that hold on such a tuple, when the part is a decision list, made when first
-    /// needed.
-    firsts: Option<Firsts>,
-    /// The part restricted to the rows of a range of `rows`, the rows outside the range taken
-    /// as their value on a tuple with no key of theirs, made when first needed: entry 1 for
-    /// the whole range, and entries `2i` and `2i + 1` for the lower and upper halves of the
-    /// range of entry `i`.
-    halves: HashMap<usize, Part<Row>>,
-    /// The part with every row so taken, made when first needed.
-    none: Option<Part<Row>>,
+    /// The part's nodes on such a tuple, made when first needed.
+    base: Option<Base>,
 }
 
 /// Whether the kinds `chain` of a component are those of a scalar ([`whole`]).
@@ -3209,7 +3456,7 @@ impl RowIndex {
                 absorbs,
             });
         }
-        let blocks = Blocks::new(&rows, part);
+        let graph = Graph::new(&rows, part);
         RowIndex {
             rows,
             filing,
@@ -3222,7 +3469,7 @@ impl RowIndex {
             by_kinds: HashMap::new(),
             classes: BTreeMap::new(),
             places: HashMap::new(),
-            blocks,
+            graph,
         }
     }
 
@@ -3279,10 +3526,10 @@ impl RowIndex {
             .collect()
     }
 
-    /// Whether the tuple `v` is in `part`, the part indexed; `fits` tells whether a row holds
-    /// `v`. The part is restricted, for the class of `v`, to the smallest range of halves that
-    /// holds every row of `rows` that has a key of `v`: `O(log n)` steps for `n` rows, each
-    /// restriction made once per class, and one check of the restricted part. A tuple's kinds
+    /// Whether the tuple `v` is in the part indexed; `fits` tells whether a row holds `v`. The
+    /// rows with a key of `v` whose value on it is not their value on its class change the
+    /// part's nodes on the class, made once per class, and only the nodes they change are
+    /// evaluated again ([`Graph::eval`]). A tuple's kinds
     /// decide most open rows, and are its shape when they decide all; when they leave one
     /// unknown, as for a column of pairs whose first column is given by its complement, the
     /// shape is the tuple's spine ([`spine`]), and each row the kinds leave unknown is read
@@ -3299,12 +3546,11 @@ impl RowIndex {
     // 1), x),)` are one class for any `x` that lists none or all of the `i`, and one class
     // per set of the open rows' types listing it otherwise, never one per tuple
     // (LIST-parity-keys: 46 times the instructions from `c` 64 to 512 per tuple class). The
-    // regions of a place cost the sum of the lists of the distinct types there, once. A
-    // decision list is read from its blocks ([`Blocks`]) and needs no restriction at all.
+    // regions of a place cost the sum of the lists of the distinct types there, once.
     // A column is absorbed only where its regions, each a class reading every open row, cost
     // no more than filing its rows by it ([`RowIndex::new`]); the verdicts are the same either
     // way.
-    fn holds(&mut self, part: &Part<Row>, v: &[Value], fits: impl Fn(&Row) -> bool) -> bool {
+    fn holds(&mut self, v: &[Value], fits: impl Fn(&Row) -> bool) -> bool {
         let mut at = self.keyed.at(v);
         self.absorbed.extend_at(v, true, &mut at);
         at.sort_unstable();
@@ -3327,7 +3573,7 @@ impl RowIndex {
             by_kinds,
             classes,
             places,
-            blocks,
+            graph,
             ..
         } = self;
         let decided = &by_kinds[&kinds];
@@ -3358,12 +3604,7 @@ impl RowIndex {
                 ),
             },
         };
-        let Class {
-            open,
-            firsts,
-            halves,
-            none,
-        } = classes.entry(key).or_insert_with(|| {
+        let Class { open, base } = classes.entry(key).or_insert_with(|| {
             let mut erased: Option<Vec<Value>> = None;
             let open = decided
                 .iter()
@@ -3392,89 +3633,19 @@ impl RowIndex {
                     }
                 })
                 .collect();
-            Class {
-                open,
-                firsts: None,
-                halves: HashMap::new(),
-                none: None,
-            }
+            Class { open, base: None }
         });
         let (rows, filing, open) = (&*rows, &*filing, &*open);
-        if let Some(blocks) = blocks {
-            let firsts =
-                firsts.get_or_insert_with(|| blocks.firsts(|i| row_default(filing, open, i)));
-            let changed: Vec<(usize, bool)> = at
-                .iter()
-                .map(|&i| (i, fits(&rows[i])))
-                .filter(|&(i, holds)| holds != row_default(filing, open, i))
-                .collect();
-            return blocks.eval(firsts, &changed);
-        }
-        let restricted = match (at.first(), at.last()) {
-            (Some(&first), Some(&last)) => {
-                let i = half(rows, filing, open, halves, part, first, last);
-                &halves[&i]
-            }
-            _ => none.get_or_insert_with(|| {
-                part.restrict(&|r| {
-                    rows.binary_search(r)
-                        .ok()
-                        .map(|i| row_default(filing, open, i))
-                })
-            }),
-        };
+        let base = base.get_or_insert_with(|| graph.base(|i| row_default(filing, open, i)));
         // A row that may hold `v` either has a key of `v`, and is in `at`, or holds it as its
         // value on a tuple of the class with no key of it.
-        restricted.eval(&|r| match rows.binary_search(r) {
-            Ok(i) if at.binary_search(&i).is_err() => row_default(filing, open, i),
-            _ => fits(r),
-        })
+        let changed: Vec<(usize, bool)> = at
+            .iter()
+            .map(|&i| (i, fits(&rows[i])))
+            .filter(|&(i, holds)| holds != row_default(filing, open, i))
+            .collect();
+        graph.eval(base, &changed)
     }
-}
-
-/// The entry of `halves` for the smallest range of halves that holds the rows `first` to
-/// `last` of `rows`, its part made from its enclosing range's part when first needed.
-fn half(
-    rows: &[Row],
-    filing: &[Filing],
-    open: &[bool],
-    halves: &mut HashMap<usize, Part<Row>>,
-    part: &Part<Row>,
-    first: usize,
-    last: usize,
-) -> usize {
-    let (mut i, mut lo, mut hi) = (1, 0, rows.len());
-    halves.entry(1).or_insert_with(|| part.clone());
-    while hi - lo > 1 {
-        let mid = lo + (hi - lo) / 2;
-        let (j, l, h) = if last < mid {
-            (2 * i, lo, mid)
-        } else if first >= mid {
-            (2 * i + 1, mid, hi)
-        } else {
-            break;
-        };
-        if !halves.contains_key(&j) {
-            let inner = halves[&i].restrict(&|r| match rows.binary_search(r) {
-                Ok(k) if !(l..h).contains(&k) => Some(row_default(filing, open, k)),
-                _ => None,
-            });
-            halves.insert(j, inner);
-        }
-        (i, lo, hi) = (j, l, h);
-    }
-    i
-}
-
-/// The boxes of one length of a maker, by the values they may hold, so that whether an earlier
-/// box gave a tuple is checked against those boxes alone. A box is a meet of tuple types of a
-/// finite type, so each of its columns is finite and lists every value it holds, its tuples
-/// read by its boxes ([`file_row`]).
-struct BoxIndex {
-    /// The positions in the maker's boxes of the boxes filed under a column's keys.
-    keyed: Keyed,
-    /// The positions of the others, ascending: each is checked for every tuple.
-    open: Vec<usize>,
 }
 
 impl Maker {
@@ -3491,23 +3662,11 @@ impl Maker {
             .iter()
             .map(|(&len, part)| (len, RowIndex::new(len, part)))
             .collect();
-        let mut by_box: BTreeMap<usize, BoxIndex> = BTreeMap::new();
-        for (b, (_, r)) in boxes.iter().enumerate() {
-            let index = by_box.entry(r.len()).or_insert_with(|| BoxIndex {
-                keyed: Keyed::new(r.len()),
-                open: Vec::new(),
-            });
-            match file_row(r) {
-                (filed, Some(j)) => index.keyed.add(b, j, &filed[j].keys),
-                (_, None) => index.open.push(b),
-            }
-        }
         Maker {
-            ty,
             boxes,
             rows,
             by_value,
-            by_box,
+            tried: BTreeSet::new(),
             next: 0,
             at: At::Start,
             made,
@@ -3553,6 +3712,15 @@ impl Maker {
                     .zip(&pos)
                     .map(|(&c, &i)| below[c].made[i].clone())
                     .collect();
+                // A tuple is given by the first box that has it, and is tried there. Within one
+                // box the positions give distinct tuples, since each maker gives each value
+                // once, and a box's makers give every value of its columns.
+                // With one box no tuple repeats, and the set, whose comparisons read the values,
+                // is not kept: a value deep in shared parts is not compared at each level.
+                m.at = At::Past(pos);
+                if m.boxes.len() > 1 && !m.tried.insert(v.clone()) {
+                    return Ok(());
+                }
                 // A component's value is in the type that made it, so only a row whose type
                 // differs there reads the value: a value deep in shared parts is not walked
                 // again at each level that holds it.
@@ -3567,30 +3735,7 @@ impl Maker {
                         .all(|((t, &by), (&c, x))| by == Some(c) || t.contains(x))
                 };
                 let index = m.by_value.get_mut(&row.len()).expect("an index per length");
-                let holds = index.holds(&m.ty.p().tuples.lens[&row.len()], &v, fits);
-                // A tuple is given by the first box that has it. Within one box the positions
-                // give distinct tuples, since each maker gives each value once. Only the earlier
-                // boxes that may hold the tuple are read.
-                let earlier = holds && {
-                    let within = |b: usize| {
-                        let (cs, r) = &m.boxes[b];
-                        r.iter()
-                            .zip(cs)
-                            .zip(cols.iter().zip(&v))
-                            .all(|((t, &c), (&made_by, x))| c == made_by || t.contains(x))
-                    };
-                    let index = &m.by_box[&row.len()];
-                    let before = |b: &usize| *b < m.next;
-                    index.open.iter().copied().take_while(before).any(within)
-                        || index
-                            .keyed
-                            .at(&v)
-                            .into_iter()
-                            .take_while(before)
-                            .any(within)
-                };
-                m.at = At::Past(pos);
-                if holds && !earlier {
+                if index.holds(&v, fits) {
                     m.made.push(Value::tuple(v));
                 }
             }
