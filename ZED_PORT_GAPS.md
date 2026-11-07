@@ -2352,3 +2352,4 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 ## Entries from S22-hole-summaries (`crates/zedc-preimage/src/preimage.rs`)
 
 - No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).
+- `preimage::CLASS_READS`, read and reset by a test through `class_domain_reads`, is a `thread_local!` `Cell<u64>` counter, the gap of row `preimage::EXACT` above (the count returned with the answer at the port); `meets` uses `partition_point` as `no_input_between`.
