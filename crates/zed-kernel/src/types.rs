@@ -176,10 +176,10 @@ impl Drop for Node {
                 free(Freed::Lens(std::mem::take(&mut p.tuples.lens)));
             }
             if p.morphisms.is_leaf().is_none() {
-                free(Freed::Morphisms(std::mem::replace(
+                free(Freed::Morphisms(bdd::Owned::Part(std::mem::replace(
                     &mut p.morphisms,
                     Part::leaf(false),
-                )));
+                ))));
             }
             if let Some(r) = shown.0.take() {
                 free(Freed::Rope(r));
@@ -195,8 +195,8 @@ enum Freed {
     Atoms(OrdMap<Arc<str>, AtomPart>),
     Lens(BTreeMap<usize, Part<Row>>),
     Rope(Rope),
-    Tuples(Part<Row>),
-    Morphisms(Part<Morphism>),
+    Tuples(bdd::Owned<Row>),
+    Morphisms(bdd::Owned<Morphism>),
 }
 
 thread_local! {
@@ -1913,15 +1913,8 @@ fn clauses<A: bdd::Literal>(
             zeros.extend(lits.iter().map(|(a, t)| (a, *t)));
         }
     }
-    match &list.tail {
-        Ok(true) => clause(&[], &[], &zeros),
-        Ok(false) => {}
-        Err(rest) => {
-            rest.paths(&mut |pos, neg| {
-                clause(pos, neg, &zeros);
-                true
-            });
-        }
+    if list.tail {
+        clause(&[], &[], &zeros);
     }
     found.sort();
     items.extend(found);

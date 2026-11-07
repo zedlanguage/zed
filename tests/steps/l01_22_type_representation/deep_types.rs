@@ -116,7 +116,9 @@ fn unshared(text: &str) -> String {
 
 #[test]
 fn debug_writes_the_derived_text_with_each_shared_node_once() {
-    // debug_text.txt is the text the derived `Debug`s wrote, a recursion, for these types.
+    // debug_text.txt is the text the derived `Debug`s wrote, a recursion, for these types; it
+    // was written again by `unshared` when step CHAIN-zip-size changed the diagrams (decision
+    // lists, with other digests) and the exclusive ors (one form, module `bdd::xor`).
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());
@@ -564,11 +566,14 @@ const XORS: usize = 16_000;
 #[test]
 fn the_debug_text_of_an_expression_writes_each_shared_operand_once() {
     let text = format!("{:?}", xor_chain(0, XORS));
-    // Each step but the first two names its operand `t` once and refers to it once.
-    assert_eq!(text.matches('=').count(), XORS - 2);
+    // The chain is taken to the one form of the exclusive or of its atoms, built over a tree of
+    // them (module `bdd::xor`): a few expressions for each atom, each shared one named once and
+    // referred to once.
+    let shared = text.matches('=').count();
+    assert!(shared > XORS && shared < 4 * XORS);
     assert_eq!(text.matches("#0#").count(), 1);
-    assert_eq!(text.matches('#').count(), 3 * (XORS - 2));
-    assert!(text.len() < 1_000 * XORS);
+    assert_eq!(text.matches('#').count(), 3 * shared);
+    assert!(text.len() < 2_000 * XORS);
 }
 
 #[test]
@@ -582,8 +587,9 @@ fn the_debug_text_of_an_xor_chain_scales() {
 }
 
 /// The parity of `n` one-tuples of the literals from `leaf`, built as `t = (t - r) | (r - t)`
-/// for each tuple `r` in turn: an expression whose operand `t` is reached by two edges at each
-/// step, `2^n` paths through `2n` expressions.
+/// for each tuple `r` in turn. Built as it stands, its operand `t` is reached by two edges at
+/// each step, `2^n` paths through `2n` expressions; the kernel keeps the one form of the
+/// exclusive or instead, whose expressions share their operands too.
 fn xor_chain(leaf: usize, n: usize) -> Type {
     let row = |i: usize| Type::tuple(vec![Type::lit(&Value::Int((leaf + i) as i64)).unwrap()]);
     (1..n).fold(row(0), |t, i| {

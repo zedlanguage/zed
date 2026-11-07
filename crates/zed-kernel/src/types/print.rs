@@ -763,7 +763,7 @@ impl Printer {
             None => me.refer(item(q)),
         };
         match p.view() {
-            Ok(b) => self.list(b, lit, all, item),
+            Ok(b) => self.list(b, lit, all),
             Err(Form::Not(q)) => {
                 let q = operand(self, q);
                 let mut segs = Vec::new();
@@ -792,10 +792,9 @@ impl Printer {
     /// depend on the order of the atoms. A block of value `true` is the union of its literals
     /// and the rest, `a | (all \ b) | rest`; a block of value `false` is the rest without its
     /// literals, `b & rest \ a`, `a` an atom the block's literals take and `b` one they refuse.
-    /// The literals of a block are a group. A diagram that is no decision list has none such,
-    /// so what is left after the blocks is printed node by node ([`Printer::node`]). The text
-    /// is written from the first block on into one list of segments, with a stack of what
-    /// closes the blocks begun, so that no block's text is copied into the text before it.
+    /// The literals of a block are a group. The text is written from the first block on into
+    /// one list of segments, with a stack of what closes the blocks begun, so that no block's
+    /// text is copied into the text before it.
     // Complexity tradeoff: each diagram prints its own list, so the text is linear in the
     // lists of the distinct parts printed, where printing nodes was linear in their union.
     fn list<A: super::bdd::Literal>(
@@ -803,16 +802,11 @@ impl Printer {
         b: &Bdd<A>,
         lit: &dyn Fn(&mut Printer, &A) -> Text,
         all: &dyn Fn(&mut Printer) -> Text,
-        item: &dyn Fn(&Part<A>) -> Item,
     ) -> Text {
         let list = b.list();
         let m = list.blocks.len();
-        let every = matches!(list.tail, Ok(true));
-        let mut tail = match &list.tail {
-            Ok(true) => Some(all(self)),
-            Ok(false) => None,
-            Err(rest) => Some(self.node(rest, lit, all, item)),
-        };
+        let every = list.tail;
+        let mut tail = every.then(|| all(self));
         // The texts of each block's literals: of value `true`, `a` and `all \ b` in the order
         // of the literals; of value `false`, the atoms refused and those taken.
         let mut texts: Vec<(Vec<Text>, Vec<Text>)> = Vec::with_capacity(m);
@@ -929,63 +923,6 @@ impl Printer {
         Text {
             segs,
             class: class[0].expect("a diagram that is no leaf has values"),
-        }
-    }
-
-    /// A diagram node over the atom `a`, with `hi` and `lo`, as `a & hi | (lo \ a)`, its
-    /// sides nodes of their own.
-    fn node<A: super::bdd::Literal>(
-        &mut self,
-        b: &Bdd<A>,
-        lit: &dyn Fn(&mut Printer, &A) -> Text,
-        all: &dyn Fn(&mut Printer) -> Text,
-        item: &dyn Fn(&Part<A>) -> Item,
-    ) -> Text {
-        let Ok((_, a, hi, lo)) = b.branch() else {
-            unreachable!("a diagram is printed node by node only where it is no decision list")
-        };
-        let side = |me: &mut Printer, d: &Bdd<A>| match d.branch() {
-            Err(true) => all(me),
-            Err(false) => Text::word("!_", Class::Prim),
-            Ok(_) => me.refer(item(&Part::Bdd(d.clone()))),
-        };
-        let taken = |me: &mut Printer| lit(me, a);
-        let (hi_leaf, lo_leaf) = (hi.branch().err(), lo.branch().err());
-        // `a & hi`, or `a` when `hi` is every value.
-        let with = |me: &mut Printer| match hi_leaf {
-            Some(true) => taken(me),
-            _ => {
-                let a = taken(me);
-                let h = side(me, hi);
-                Text::joined(vec![a, h], " & ", At::And, Class::And, "_")
-            }
-        };
-        // `lo \ a`.
-        let without = |me: &mut Printer| {
-            let l = side(me, lo);
-            let a = taken(me);
-            let mut segs = Vec::new();
-            put(&mut segs, l, At::DiffLeft);
-            segs.push(Seg::Str(" \\ ".into()));
-            put(&mut segs, a, At::Prim);
-            Text {
-                segs,
-                class: Class::Diff,
-            }
-        };
-        match (hi_leaf, lo_leaf) {
-            (_, Some(false)) => with(self),
-            (Some(false), _) => without(self),
-            (Some(true), _) => {
-                let a = taken(self);
-                let l = side(self, lo);
-                Text::joined(vec![a, l], " | ", At::Union, Class::Union, "!_")
-            }
-            _ => {
-                let w = with(self);
-                let wo = without(self);
-                Text::joined(vec![w, wo], " | ", At::Union, Class::Union, "!_")
-            }
         }
     }
 

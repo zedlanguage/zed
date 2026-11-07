@@ -1,33 +1,27 @@
-//! Reduced ordered binary decision diagrams over the types of one universe (DESIGN.md
-//! sec:type_language): the form of the tuple and morphism parts.
+//! Boolean functions of the types of one universe (DESIGN.md sec:type_language): the form of the
+//! tuple and morphism parts.
 //!
-//! A diagram is a leaf, no value of the universe or every value, or a node `(atom & hi) |
-//! (!atom & lo)`, with each atom smaller than every atom below it and `hi` and `lo` distinct.
-//! Two diagrams over one order of atoms denote one Boolean function of their atoms exactly when
-//! they are equal. The complement swaps the leaves, in time linear in the size of the diagram,
-//! and a union or intersection takes each pair of nodes at most once, in time the product of
-//! the two sizes: a union of clauses would make the complement of a union of `C` clauses of two
-//! types each a union of `2^C` clauses.
+//! A part is a decision list (`Bdd`, module `list`) or an expression over parts (`Part::Expr`).
+//! A list is a leaf, no value of the universe or every value, or blocks of literals, the first
+//! literal that holds giving its block's value. Only literals and chains of them grow a list
+//! (`Part::zip`): a chain joined to a list adds its literals one at a time, each in `O(log n)`
+//! expected time when the list does not hold its atom, so a chain of `n` literals is built in
+//! `O(n log n)`. Lists are in one form, so two lists of one function are one cell; the
+//! complement flips the value of the first block. An exclusive or of literals, or of two others,
+//! is kept in its one form, one node for one set of atoms (module `xor`). Any other union or
+//! intersection keeps the expression, built in constant time.
 //!
-//! Nodes are shared: the nodes of a thread are kept in a table, so that one atom with one pair
-//! of children is one node, and two equal diagrams built on one thread are one pointer. Each
-//! node and expression keeps a hash of its contents made from its children's, and two are
+//! Cells and expressions keep a hash of their contents made from their children's, and two are
 //! ordered by it first, so a comparison reads their contents only when the hashes are equal,
-//! and reads each pair of nodes or expressions at most once ([`order`]).
+//! and reads each pair of cells, sets or expressions at most once ([`order`]).
 //!
-//! A diagram is canonical, so some functions have only diagrams exponential in the number of
-//! their atoms: `(m1 & !n1) | … | (mC & !nC)`, with every `m` ordered before every `n`, has
-//! `2^C` nodes. A union or intersection therefore keeps its diagram only when it has no more
-//! nodes than its two operands together, and otherwise keeps the expression (`Part::Expr`),
-//! built in constant time; so a diagram has no more nodes than the atoms written to build it.
 //! A part is decided (module `empty`) by three-valued operations: it is evaluated with some
 //! atoms known (`Part::eval3`) and restricted to them (`Part::restrict`), each in time linear in
-//! its nodes; asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
-//! on a diagram and one evaluation per atom on an expression; and settled on its shared
+//! its literals; asked which atoms every value takes or refuses (`Part::forced`), in `O(n log n)`
+//! on a list and one evaluation per atom on an expression; and settled on its shared
 //! subexpressions (`Part::settle`), one evaluation per shared subexpression in each round. The
-//! last two are above the rule of low complexity, an open item (DESIGN.md L1.23). None of them
-//! walks paths, whose number can be exponential in the nodes. Listing values takes one pass over the nodes (`Bdd::reaching`);
-//! `Bdd::paths` remains for display.
+//! last two are above the rule of low complexity, an open item (DESIGN.md L1.23). Listing values
+//! takes one pass over a list's first nodes, as a diagram would have them (`Bdd::reaching`).
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -41,57 +35,80 @@ use crate::frames::{Deep, Stack};
 use super::{AtomPart, Morphism, Node, Op, Row, Type, mix};
 
 mod list;
+mod set;
+mod xor;
 
-/// The next node id. Diagram nodes and expressions take their ids from one counter, so an id
-/// names one node among both; ids key the maps of a walk, never addresses.
+use list::Cell;
+use set::{Key, Set};
+
+/// The next node id. Cells, sets and expressions take their ids from one counter, so an id
+/// names one node among them; ids key the maps of a walk, never addresses.
 static NEXT: AtomicU64 = AtomicU64::new(2);
 
 #[derive(Clone)]
 pub(super) enum Bdd<A: Literal> {
     Leaf(bool),
-    Node(Arc<Branch<A>>),
+    /// A decision list (module `list`): its first cell and the value of its first block.
+    List(Arc<Cell<A>>, bool),
 }
 
-pub(super) struct Branch<A: Literal> {
-    id: u64,
-    digest: u64,
-    atom: A,
-    hi: Bdd<A>,
-    lo: Bdd<A>,
-}
-
-type Table<A> = BTreeMap<(A, u64, u64), Arc<Branch<A>>>;
-
-/// A node's id, atom, `hi` and `lo`.
+/// A node's id, atom, `hi` and `lo`, as [`Bdd::branch`] shows a list.
 pub(super) type NodeView<'a, A> = (u64, &'a A, &'a Bdd<A>, &'a Bdd<A>);
 
-/// The atoms of a universe, each kind with its thread's table of nodes.
+/// The sets, cells and exclusive ors of a thread.
+pub(super) struct Tables<A: Literal> {
+    sets: set::SetTable<A>,
+    cells: list::CellTable<A>,
+    xors: xor::XorTable<A>,
+}
+
+impl<A: Literal> Tables<A> {
+    const fn new() -> Tables<A> {
+        Tables {
+            sets: BTreeMap::new(),
+            cells: BTreeMap::new(),
+            xors: BTreeMap::new(),
+        }
+    }
+}
+
+/// What a part, cell or set holds that is dropped in the thread's loop of type parts (module
+/// `deep`).
+#[expect(dead_code, reason = "a part is held only to be dropped")]
+pub(super) enum Owned<A: Literal> {
+    Part(Part<A>),
+    Set(Arc<Set<A>>),
+    Cell(Arc<Cell<A>>),
+}
+
+/// The atoms of a universe, each kind with its thread's tables of sets and cells.
 pub(super) trait Literal: Ord + Clone + super::debug::Queue + 'static {
-    fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R;
+    fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R;
     /// A hash of the atom, equal for equal atoms.
     fn digest(&self) -> u64;
-    /// Drops a part in the thread's loop of type parts (module `deep`).
-    fn free(part: Part<Self>);
+    /// Drops a part, cell or set in the thread's loop of type parts (module `deep`).
+    fn free(part: Owned<Self>);
     /// The step of [`order`] that compares two atoms.
     fn atoms<'a>(a: &'a Self, b: &'a Self) -> Step<'a>;
-    /// The step of [`order`] that compares two diagrams, expressions or parts of the universe.
+    /// The step of [`order`] that compares two lists, cells, sets, expressions or parts of the
+    /// universe.
     fn walk(w: Walk<'_, Self>) -> Step<'_>;
 }
 
 thread_local! {
-    static TUPLES: RefCell<Table<Row>> = const { RefCell::new(BTreeMap::new()) };
-    static MORPHISMS: RefCell<Table<Morphism>> = const { RefCell::new(BTreeMap::new()) };
+    static TUPLES: RefCell<Tables<Row>> = const { RefCell::new(Tables::new()) };
+    static MORPHISMS: RefCell<Tables<Morphism>> = const { RefCell::new(Tables::new()) };
 }
 
 impl Literal for Row {
-    fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R {
+    fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
         super::hold();
         TUPLES.with(|t| f(&mut t.borrow_mut()))
     }
     fn digest(&self) -> u64 {
         Row::digest(self)
     }
-    fn free(part: Part<Row>) {
+    fn free(part: Owned<Row>) {
         super::free(super::Freed::Tuples(part));
     }
     fn atoms<'a>(a: &'a Row, b: &'a Row) -> Step<'a> {
@@ -103,7 +120,7 @@ impl Literal for Row {
 }
 
 impl Literal for Morphism {
-    fn table<R>(f: impl FnOnce(&mut Table<Self>) -> R) -> R {
+    fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
         super::hold();
         MORPHISMS.with(|t| f(&mut t.borrow_mut()))
     }
@@ -111,7 +128,7 @@ impl Literal for Morphism {
         let m = mix(6, self.guarantee.digest());
         mix(mix(m, self.permission.digest()), self.value.digest())
     }
-    fn free(part: Part<Morphism>) {
+    fn free(part: Owned<Morphism>) {
         super::free(super::Freed::Morphisms(part));
     }
     fn atoms<'a>(a: &'a Morphism, b: &'a Morphism) -> Step<'a> {
@@ -122,19 +139,7 @@ impl Literal for Morphism {
     }
 }
 
-/// A diagram node's children are freed in a loop (module `deep`), not by recursion: a node's
-/// last owner is the thread's table, so a long diagram is freed when the thread ends.
-impl<A: Literal> Drop for Branch<A> {
-    fn drop(&mut self) {
-        for b in [&mut self.hi, &mut self.lo] {
-            if let Bdd::Node(_) = b {
-                A::free(Part::Bdd(std::mem::replace(b, Bdd::Leaf(false))));
-            }
-        }
-    }
-}
-
-/// An expression's operands and complement are freed in a loop, as a node's children are.
+/// An expression's operands and complement are freed in a loop, as a cell's next cell is.
 impl<A: Literal> Drop for Expr<A> {
     fn drop(&mut self) {
         let (p, q) = match &mut self.form {
@@ -143,102 +148,111 @@ impl<A: Literal> Drop for Expr<A> {
         };
         for part in std::iter::once(p).chain(q) {
             if part.is_leaf().is_none() {
-                A::free(std::mem::replace(part, Part::leaf(false)));
+                A::free(Owned::Part(std::mem::replace(part, Part::leaf(false))));
             }
         }
         if let Some(c) = self.complement.take() {
-            A::free(c);
+            A::free(Owned::Part(c));
+        }
+        if let Some((s, _)) = self.xor.take() {
+            A::free(Owned::Set(s));
         }
     }
 }
 
 impl<A: Literal> Bdd<A> {
     pub(super) fn literal(a: A) -> Bdd<A> {
-        Bdd::node(a, Bdd::Leaf(true), Bdd::Leaf(false))
+        Bdd::literal_key((a, true))
     }
 
-    /// The id of the diagram's node, unique among the nodes of the process; a leaf's is its value.
+    /// The id of the list, unique among the nodes of the process; a leaf's is its value.
     pub(super) fn id(&self) -> u64 {
         match self {
             Bdd::Leaf(b) => u64::from(*b),
-            Bdd::Node(n) => n.id,
+            Bdd::List(c, v) => c.id + u64::from(*v),
         }
     }
 
     fn digest(&self) -> u64 {
         match self {
             Bdd::Leaf(b) => mix(7, u64::from(*b)),
-            Bdd::Node(n) => n.digest,
+            Bdd::List(c, v) => mix(mix(18, c.digest), u64::from(*v)),
         }
     }
 
-    fn node(atom: A, hi: Bdd<A>, lo: Bdd<A>) -> Bdd<A> {
-        if hi == lo {
-            return hi;
-        }
-        let key = (atom, hi.id(), lo.id());
-        if let Some(n) = A::table(|t| t.get(&key).cloned()) {
-            return Bdd::Node(n);
-        }
-        let n = Arc::new(Branch {
-            id: NEXT.fetch_add(1, Atomic::Relaxed),
-            digest: mix(mix(key.0.digest(), hi.digest()), lo.digest()),
-            atom: key.0.clone(),
-            hi,
-            lo,
-        });
-        A::table(|t| t.insert(key, n.clone()));
-        Bdd::Node(n)
+    /// `self op other` when one of the two is a chain under `op`: the chain's literals joined
+    /// to the other one at a time, the shorter chain's when both are; `None` when neither is.
+    // Complexity tradeoff: when both are chains, joining the shorter to the longer costs
+    // `O(k log n)` for the shorter's `k` literals; either order gives the one list.
+    fn zip_chain(&self, other: &Bdd<A>, op: Op) -> Option<Bdd<A>> {
+        // Only the chain joined is listed: listing the other too would cost its length at each
+        // literal added to a long chain.
+        let (base, joined) = match (self.chain_len(op), other.chain_len(op)) {
+            (Some(x), Some(y)) if x <= y => (other, self),
+            (_, Some(_)) => (self, other),
+            (Some(_), None) => (other, self),
+            (None, None) => return None,
+        };
+        let lits = joined.chain_keys(op).expect("a chain has its literals");
+        Some(lits.into_iter().fold(base.clone(), |f, k| match op {
+            Op::Or => f.or_literal(k),
+            Op::And => f.and_literal(k),
+        }))
     }
 
-    /// The union or intersection.
-    pub(super) fn zip(&self, other: &Bdd<A>, op: Op) -> Bdd<A> {
-        self.apply(other, op, &mut HashMap::new())
+    /// The literals of a chain under `op`, of any length; `None` for any other list.
+    fn chain_keys(&self, op: Op) -> Option<Vec<Key<A>>> {
+        if let Some((a, taken)) = self.as_literal() {
+            return Some(vec![(a.clone(), taken)]);
+        }
+        if let Bdd::Leaf(_) = self {
+            return self.is_chain(op).then(Vec::new);
+        }
+        let lits = self.chain(op)?;
+        Some(lits.into_iter().map(|(a, t)| (a.clone(), t)).collect())
     }
 
-    /// Whether the diagram is one atom or its complement.
+    /// The number of literals of a chain under `op`, of any length, in constant time; `None`
+    /// for any other list.
+    fn chain_len(&self, op: Op) -> Option<usize> {
+        if self.is_literal() {
+            return Some(1);
+        }
+        match self {
+            Bdd::Leaf(_) => self.is_chain(op).then_some(0),
+            Bdd::List(c, _) => self.is_chain(op).then(|| set::len(Some(&c.block))),
+        }
+    }
+
+    /// Whether the list is one atom or its complement.
     fn is_literal(&self) -> bool {
-        matches!(self, Bdd::Node(n) if matches!(n.hi, Bdd::Leaf(_)) && matches!(n.lo, Bdd::Leaf(_)))
+        self.as_literal().is_some()
     }
 
-    /// Whether the diagram is a chain under `op`: a meet of literals under `And`, a union of
-    /// them under `Or`.
+    /// Whether the list is a chain under `op`: a meet of literals under `And`, a union of them
+    /// under `Or`. A union of literals is one block of value `true`, a meet one of value
+    /// `false`, the meet of the complements of its literals; a literal is both.
     fn is_chain(&self, op: Op) -> bool {
         let out = op == Op::Or;
-        let mut b = self;
-        loop {
-            match b {
-                Bdd::Leaf(v) => return *v != out,
-                Bdd::Node(n) => match (&n.hi, &n.lo) {
-                    (Bdd::Leaf(v), x) | (x, Bdd::Leaf(v)) if *v == out => b = x,
-                    _ => return false,
-                },
-            }
+        match self {
+            Bdd::Leaf(v) => *v != out,
+            Bdd::List(c, v) => c.next.is_none() && (*v == out || self.is_literal()),
         }
     }
 
     /// The literals of a chain under `op` of two or more literals, each an atom and whether
-    /// the chain takes it; `None` for any other diagram.
+    /// the chain takes it; `None` for any other list.
     fn chain(&self, op: Op) -> Option<Vec<(&A, bool)>> {
+        let Bdd::List(c, _) = self else { return None };
         if self.is_literal() || !self.is_chain(op) {
             return None;
         }
         let out = op == Op::Or;
-        let mut lits = Vec::new();
-        let mut b = self;
-        while let Bdd::Node(n) = b {
-            b = match &n.lo {
-                Bdd::Leaf(v) if *v == out => {
-                    lits.push((&n.atom, !out));
-                    &n.hi
-                }
-                _ => {
-                    lits.push((&n.atom, out));
-                    &n.lo
-                }
-            };
-        }
-        Some(lits)
+        Some(
+            set::iter(Some(&c.block))
+                .map(|(a, p)| (a, *p == out))
+                .collect(),
+        )
     }
 
     /// The chain under `op` without its literal on `atom`, which it takes when `taken`.
@@ -250,125 +264,79 @@ impl<A: Literal> Bdd<A> {
 
     /// The literal on `atom`, taken or refused.
     fn literal_of(atom: &A, taken: bool) -> Bdd<A> {
-        let l = Bdd::literal(atom.clone());
-        if taken { l } else { l.not() }
+        Bdd::literal_key((atom.clone(), taken))
     }
 
-    /// The atom of a diagram that is one literal, and whether the literal takes it.
+    /// The atom of a list that is one literal, and whether the literal takes it.
     fn as_literal(&self) -> Option<(&A, bool)> {
         match self {
-            Bdd::Node(n) if self.is_literal() => Some((&n.atom, matches!(n.hi, Bdd::Leaf(true)))),
+            Bdd::List(c, v) if c.next.is_none() => {
+                set::single_key(&c.block).map(|(a, p)| (a, *p == *v))
+            }
             _ => None,
         }
     }
 
-    /// `self op other`, each pair of nodes met once, a node built after its two children, from
-    /// a stack: a pair's `hi` pair is done before its `lo` pair, as a recursion would.
-    fn apply(&self, other: &Bdd<A>, op: Op, memo: &mut HashMap<(u64, u64), Bdd<A>>) -> Bdd<A> {
-        /// What is left to do: a pair to combine, or the node of a pair's atom to build once
-        /// its `hi` and its `lo` are on the stack of results.
-        enum Job<'a, A: Literal> {
-            Pair(&'a Bdd<A>, &'a Bdd<A>),
-            Node(&'a A, (u64, u64)),
-        }
-        let mut done: Vec<Bdd<A>> = Vec::new();
-        let mut jobs = vec![Job::Pair(self, other)];
-        while let Some(job) = jobs.pop() {
-            let (x, y) = match job {
-                Job::Node(atom, key) => {
-                    let lo = done.pop().expect("the lo of a pair");
-                    let hi = done.pop().expect("the hi of a pair");
-                    let r = Bdd::node(atom.clone(), hi, lo);
-                    memo.insert(key, r.clone());
-                    done.push(r);
-                    continue;
-                }
-                Job::Pair(x, y) => (x, y),
-            };
-            match (op, x, y) {
-                (Op::And, Bdd::Leaf(false), _) | (Op::And, _, Bdd::Leaf(false)) => {
-                    done.push(Bdd::Leaf(false));
-                    continue;
-                }
-                (Op::Or, Bdd::Leaf(true), _) | (Op::Or, _, Bdd::Leaf(true)) => {
-                    done.push(Bdd::Leaf(true));
-                    continue;
-                }
-                (_, Bdd::Leaf(_), z) | (_, z, Bdd::Leaf(_)) => {
-                    done.push(z.clone());
-                    continue;
-                }
-                _ if x.id() == y.id() => {
-                    done.push(x.clone());
-                    continue;
-                }
-                _ => {}
-            }
-            let key = (x.id(), y.id());
-            if let Some(r) = memo.get(&key) {
-                done.push(r.clone());
-                continue;
-            }
-            let (Bdd::Node(a), Bdd::Node(b)) = (x, y) else {
-                unreachable!("both leaves were handled")
-            };
-            let (atom, [hi, lo]) = match a.atom.cmp(&b.atom) {
-                Ordering::Equal => (&a.atom, [(&a.hi, &b.hi), (&a.lo, &b.lo)]),
-                Ordering::Less => (&a.atom, [(&a.hi, y), (&a.lo, y)]),
-                Ordering::Greater => (&b.atom, [(x, &b.hi), (x, &b.lo)]),
-            };
-            jobs.push(Job::Node(atom, key));
-            jobs.push(Job::Pair(lo.0, lo.1));
-            jobs.push(Job::Pair(hi.0, hi.1));
-        }
-        done.pop().expect("the pair asked for")
-    }
-
+    /// The complement: the value of the first block flipped, and a literal's atom refused
+    /// rather than taken, so that a single literal keeps the value `true`.
     pub(super) fn not(&self) -> Bdd<A> {
-        self.flip(&mut HashMap::new())
+        match self {
+            Bdd::Leaf(b) => Bdd::Leaf(!b),
+            Bdd::List(c, v) => match self.as_literal() {
+                Some((a, taken)) => Bdd::literal_of(a, !taken),
+                None => Bdd::List(c.clone(), !v),
+            },
+        }
     }
 
-    /// The diagram with each atom that `fix` decides replaced by its value, each node rebuilt
-    /// once, after the children it keeps, from a stack.
+    /// The list with each atom that `fix` decides replaced by its value: a literal set false
+    /// leaves its block, and one set true ends the list at its block with the block's value.
+    /// The blocks after the last one changed are kept as they are.
     fn restrict(
         &self,
         fix: &impl Fn(&A) -> Option<bool>,
         memo: &mut HashMap<u64, Bdd<A>>,
     ) -> Bdd<A> {
-        let Bdd::Node(root) = self else {
+        if let Bdd::Leaf(_) = self {
             return self.clone();
-        };
-        // A node, and once its children are queued what `fix` decides of its atom.
-        let mut stack: Vec<(&Branch<A>, Option<Option<bool>>)> = vec![(root, None)];
-        while let Some((n, fixed)) = stack.pop() {
-            if memo.contains_key(&n.id) {
-                continue;
-            }
-            let Some(v) = fixed else {
-                let v = fix(&n.atom);
-                stack.push((n, Some(v)));
-                for (c, kept) in [(&n.lo, v != Some(true)), (&n.hi, v != Some(false))] {
-                    if let Bdd::Node(m) = c
-                        && kept
-                        && !memo.contains_key(&m.id)
-                    {
-                        stack.push((m, None));
+        }
+        if let Some(r) = memo.get(&self.id()) {
+            return r.clone();
+        }
+        let mut prefix = Vec::new();
+        // The length of the prefix to the last block changed, and the list after that block.
+        let mut changed = None;
+        let mut cut = None;
+        'blocks: for (w, c) in self.cells() {
+            let mut block = Some(c.block.clone());
+            for k in set::iter(Some(&c.block)) {
+                match fix(&k.0) {
+                    None => {}
+                    Some(x) if x == k.1 => {
+                        cut = Some(w);
+                        break 'blocks;
+                    }
+                    Some(_) => {
+                        let b = block
+                            .as_ref()
+                            .expect("a literal not yet removed is in its block");
+                        block = set::remove(b, k);
+                        changed = Some((prefix.len() + 1, (c.next.clone(), !w)));
                     }
                 }
-                continue;
-            };
-            let get = |b: &Bdd<A>| match b {
-                Bdd::Leaf(_) => b.clone(),
-                Bdd::Node(m) => memo[&m.id].clone(),
-            };
-            let r = match v {
-                Some(true) => get(&n.hi),
-                Some(false) => get(&n.lo),
-                None => Bdd::node(n.atom.clone(), get(&n.hi), get(&n.lo)),
-            };
-            memo.insert(n.id, r);
+            }
+            prefix.push((w, block, None));
         }
-        memo[&root.id].clone()
+        let r = match (cut, changed) {
+            (Some(w), _) => Bdd::assemble(prefix, (None, w)),
+            (None, Some((len, rest))) => {
+                prefix.truncate(len);
+                Bdd::assemble(prefix, rest)
+            }
+            (None, None) => self.clone(),
+        };
+        memo.insert(self.id(), r.clone());
+        r
     }
 
     /// The atoms every value takes, and those every value refuses: [`Bdd::forced_to`] `true`.
@@ -376,234 +344,72 @@ impl<A: Literal> Bdd<A> {
         self.forced_to(true)
     }
 
-    /// The atoms taken, and those refused, on every path to the leaf `leaf`. The atoms are
-    /// ordered, so an atom is free when a path to `leaf` passes its place in the order without
-    /// testing it, or tests it and goes on to `leaf` both ways. One pass over the nodes that reach
-    /// `leaf` marks the places each edge passes over and the ways each node goes on; the atoms are
-    /// then sorted, so the time is `O(n log n)` in the nodes.
+    /// The atoms taken, and those refused, by every value of the list that is `leaf`, each in
+    /// order. A literal is forced on the values `true` only when it is the list, or, when the
+    /// first block has the value `false`, refused by every literal of that block: a later block
+    /// of the one form, or the default, leaves each of its atoms free.
     fn forced_to(&self, leaf: bool) -> (Vec<A>, Vec<A>) {
-        let Bdd::Node(root) = self else {
-            return (Vec::new(), Vec::new());
-        };
-        // The nodes from which `leaf` is reached, each once.
-        let mut reaches: HashMap<u64, bool> = HashMap::new();
-        let mut live: Vec<&Arc<Branch<A>>> = Vec::new();
-        let mut stack = vec![(root, false)];
-        while let Some((n, expanded)) = stack.pop() {
-            if reaches.contains_key(&n.id) {
-                continue;
-            }
-            if !expanded {
-                stack.push((n, true));
-                for c in [&n.lo, &n.hi] {
-                    if let Bdd::Node(m) = c
-                        && !reaches.contains_key(&m.id)
-                    {
-                        stack.push((m, false));
-                    }
-                }
-                continue;
-            }
-            let r = [&n.hi, &n.lo].into_iter().any(|c| match c {
-                Bdd::Leaf(v) => *v == leaf,
-                Bdd::Node(m) => reaches[&m.id],
-            });
-            reaches.insert(n.id, r);
-            if r {
-                live.push(n);
-            }
-        }
-        if !reaches[&root.id] {
-            return (Vec::new(), Vec::new());
-        }
-        let mut atoms: Vec<&A> = live.iter().map(|n| &n.atom).collect();
-        atoms.sort();
-        atoms.dedup();
-        let place = |a: &A| {
-            atoms
-                .binary_search(&a)
-                .expect("an atom of a node is placed")
-        };
-        // `passed[i] - passed[i - 1]` edges pass over place `i`; `ways[i]` the ways on.
-        let count = atoms.len();
-        let mut passed = vec![0isize; count + 1];
-        let mut ways = vec![(false, false); count];
-        let mut pass = |from: usize, to: usize| {
-            if from < to {
-                passed[from] += 1;
-                passed[to] -= 1;
-            }
-        };
-        pass(0, place(&root.atom));
-        for n in &live {
-            let i = place(&n.atom);
-            for (c, v) in [(&n.hi, true), (&n.lo, false)] {
-                let to = match c {
-                    Bdd::Leaf(v) if *v == leaf => count,
-                    Bdd::Leaf(_) => continue,
-                    Bdd::Node(m) if reaches[&m.id] => place(&m.atom),
-                    Bdd::Node(_) => continue,
-                };
-                pass(i + 1, to);
-                if v {
-                    ways[i].0 = true;
-                } else {
-                    ways[i].1 = true;
-                }
-            }
-        }
+        let f = if leaf { self.clone() } else { self.not() };
         let (mut taken, mut refused) = (Vec::new(), Vec::new());
-        let mut over = 0;
-        for (i, a) in atoms.iter().enumerate() {
-            over += passed[i];
-            match (over, ways[i]) {
-                (0, (true, false)) => taken.push((*a).clone()),
-                (0, (false, true)) => refused.push((*a).clone()),
-                _ => {}
+        if let Some((a, t)) = f.as_literal() {
+            match t {
+                true => taken.push(a.clone()),
+                false => refused.push(a.clone()),
+            }
+        } else if let Bdd::List(c, false) = &f {
+            for (a, p) in set::iter(Some(&c.block)) {
+                match p {
+                    true => refused.push(a.clone()),
+                    false => taken.push(a.clone()),
+                }
             }
         }
         (taken, refused)
     }
 
-    /// The complement, each node flipped once, after its `hi` and then its `lo`, from a stack.
-    fn flip(&self, memo: &mut HashMap<u64, Bdd<A>>) -> Bdd<A> {
-        /// What is left to do: a diagram to flip, or a node to build once its children's
-        /// complements are on the stack of results.
-        enum Job<'a, A: Literal> {
-            Flip(&'a Bdd<A>),
-            Node(&'a Branch<A>),
-        }
-        let mut done: Vec<Bdd<A>> = Vec::new();
-        let mut jobs = vec![Job::Flip(self)];
-        while let Some(job) = jobs.pop() {
-            match job {
-                Job::Flip(Bdd::Leaf(b)) => done.push(Bdd::Leaf(!b)),
-                Job::Flip(Bdd::Node(n)) => match memo.get(&n.id) {
-                    Some(r) => done.push(r.clone()),
-                    None => {
-                        jobs.push(Job::Node(n));
-                        jobs.push(Job::Flip(&n.lo));
-                        jobs.push(Job::Flip(&n.hi));
-                    }
-                },
-                Job::Node(n) => {
-                    let lo = done.pop().expect("the lo flipped");
-                    let hi = done.pop().expect("the hi flipped");
-                    let r = Bdd::node(n.atom.clone(), hi, lo);
-                    memo.insert(n.id, r.clone());
-                    done.push(r);
-                }
-            }
-        }
-        done.pop().expect("the diagram flipped")
-    }
-}
-
-impl<A: Literal> Bdd<A> {
-    /// The node's id, atom, `hi` and `lo`, or the leaf's value.
+    /// The node's id, atom, `hi` and `lo`, or the leaf's value. A list is shown as a diagram
+    /// whose nodes are its literals in turn ([`Bdd::view`]); a node's id is its list's.
     pub(super) fn branch(&self) -> Result<NodeView<'_, A>, bool> {
         match self {
             Bdd::Leaf(b) => Err(*b),
-            Bdd::Node(n) => Ok((n.id, &n.atom, &n.hi, &n.lo)),
+            Bdd::List(..) => {
+                let (a, hi, lo) = self.view().expect("a list has a first node");
+                Ok((self.id(), a, hi, lo))
+            }
         }
     }
 
-    /// Whether `f` holds of the atom of every node not in `seen`, each added to it; a node
-    /// before its `hi`, its `hi` before its `lo`, from a stack.
+    /// Whether `f` holds of the atom of every cell not in `seen`, each added to it; the blocks
+    /// in turn, the atoms of a block in order.
     fn atoms_unseen<'a>(
         &'a self,
         seen: &mut HashSet<u64>,
         f: &mut impl FnMut(&'a A) -> bool,
     ) -> bool {
-        let mut stack = vec![self];
-        while let Some(b) = stack.pop() {
-            if let Bdd::Node(n) = b
-                && seen.insert(n.id)
-            {
-                if !f(&n.atom) {
-                    return false;
-                }
-                stack.push(&n.lo);
-                stack.push(&n.hi);
+        for (_, c) in self.cells() {
+            if !seen.insert(c.id) {
+                break;
+            }
+            if !set::iter(Some(&c.block)).all(|(a, _)| f(a)) {
+                return false;
             }
         }
         true
     }
 
-    /// Whether `f` holds of every path to the `true` leaf, given as the atoms it takes and those
-    /// it refuses, in order, stopping at the first path where it does not; walked from a stack of
-    /// its own, so a diagram of any depth is walked. Below a node whose `hi` is `true` the `lo`
-    /// path does not refuse the node's atom, since `a | (!a & L)` is `a | L`, so a union of
-    /// atoms is a path per atom.
-    pub(super) fn paths<'a>(&'a self, f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool) -> bool {
-        self.walk(false, f)
-    }
-
-    /// [`Bdd::paths`]; with `prune`, `f` is also asked of each path's atoms taken so far with
-    /// none refused, and the paths below are passed over when it holds: refusing more atoms
-    /// only removes values, so if `f` holds of `pos` alone it holds of every path below.
-    pub(super) fn walk<'a>(
-        &'a self,
-        prune: bool,
-        f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool,
-    ) -> bool {
-        /// What is left to do: a diagram to walk; the `lo` of a node whose `hi` is walked; or
-        /// the end of a node's `lo`, which drops the node's atom from those refused if it was
-        /// added.
-        enum Step<'a, A: Literal> {
-            Walk(&'a Bdd<A>),
-            Lo(&'a Branch<A>),
-            Done(bool),
-        }
-        // Where `f` fails the walk ends, so each path is walked with no answer kept but that.
-        let (mut pos, mut neg): (Vec<&'a A>, Vec<&'a A>) = (Vec::new(), Vec::new());
-        let mut steps = vec![Step::Walk(self)];
-        while let Some(step) = steps.pop() {
-            match step {
-                Step::Walk(Bdd::Leaf(false)) => {}
-                Step::Walk(Bdd::Leaf(true)) => {
-                    if !f(&pos, &neg) {
-                        return false;
-                    }
-                }
-                Step::Walk(Bdd::Node(n)) => {
-                    pos.push(&n.atom);
-                    steps.push(Step::Lo(n));
-                    if !(prune && !matches!(n.hi, Bdd::Leaf(false)) && f(&pos, &[])) {
-                        steps.push(Step::Walk(&n.hi));
-                    }
-                }
-                Step::Lo(n) => {
-                    pos.pop();
-                    let refuse = !matches!(n.hi, Bdd::Leaf(true));
-                    if refuse {
-                        neg.push(&n.atom);
-                    }
-                    steps.push(Step::Done(refuse));
-                    steps.push(Step::Walk(&n.lo));
-                }
-                Step::Done(refused) => {
-                    if refused {
-                        neg.pop();
-                    }
-                }
-            }
-        }
-        true
-    }
-
-    /// Whether `f` holds of each node's atom and state, for the nodes from whose `hi` a chain of
-    /// `lo` edges alone reaches `true`: the nodes that are the last `hi` taken on some path to
-    /// `true`. The root has the state `start`; an edge to a node's `hi` passes on `take` of its
-    /// state and its atom, an edge to its `lo` its state; a node's state is `join` of the states
-    /// of the edges into it. Each node is visited once, after every node with an edge into it,
-    /// so the time is linear in the nodes however many paths there are.
+    /// Whether `f` holds of each node's atom and state, for the nodes ([`Bdd::branch`]) from
+    /// whose `hi` a chain of `lo` edges alone reaches `true`: the nodes that are the last `hi`
+    /// taken on some path to `true`. The root has the state `start`; an edge to a node's `hi`
+    /// passes on `take` of its state and its atom, an edge to its `lo` its state; a node's state
+    /// is `join` of the states of the edges into it. Each node is visited once, after every node
+    /// with an edge into it, so the time is linear in the nodes however many paths there are.
     ///
-    /// Which nodes are the last `hi` of a path does not depend on the atom order as much as
-    /// which nodes have a `hi` other than `false`: a meet `x & y` has the one path `x, y` in
-    /// either order, and only its last node is passed to `f`, so a user that reads a node's state
-    /// as the atoms its paths took sees the meet in both orders (step L1.37a: the atom order
-    /// follows digests, and truncated digests order atoms differently).
+    /// The nodes of a list follow the literals of each block in the order of their atoms, so
+    /// which nodes are the last `hi` of a path depends on the order of the atoms only within a
+    /// block: a meet `x & y` has the one path `x, y` in either order, and only its last node is
+    /// passed to `f`, so a user that reads a node's state as the atoms its paths took sees the
+    /// meet in both orders (step L1.37a: the atom order follows digests, and truncated digests
+    /// order atoms differently).
     pub(super) fn reaching<S>(
         &self,
         start: S,
@@ -611,25 +417,29 @@ impl<A: Literal> Bdd<A> {
         join: impl Fn(&S, &S) -> S,
         mut f: impl FnMut(&A, &S) -> bool,
     ) -> bool {
-        let Bdd::Node(root) = self else {
+        if let Bdd::Leaf(_) = self {
             return true;
-        };
+        }
+        fn node<A: Literal>(b: &Bdd<A>) -> NodeView<'_, A> {
+            b.branch().expect("only a list is a node")
+        }
         // Nodes in reverse postorder of a depth-first walk: each after those above it.
-        let mut order: Vec<&Branch<A>> = Vec::new();
+        let mut order: Vec<&Bdd<A>> = Vec::new();
         let mut seen = HashSet::new();
-        let mut stack: Vec<(&Branch<A>, bool)> = vec![(root, false)];
+        let mut stack: Vec<(&Bdd<A>, bool)> = vec![(self, false)];
         while let Some((n, below)) = stack.pop() {
             if below {
                 order.push(n);
                 continue;
             }
-            if !seen.insert(n.id) {
+            if !seen.insert(n.id()) {
                 continue;
             }
             stack.push((n, true));
-            for c in [&n.lo, &n.hi] {
-                if let Bdd::Node(c) = c
-                    && !seen.contains(&c.id)
+            let (_, _, hi, lo) = node(n);
+            for c in [lo, hi] {
+                if let Bdd::List(..) = c
+                    && !seen.contains(&c.id())
                 {
                     stack.push((c, false));
                 }
@@ -639,52 +449,91 @@ impl<A: Literal> Bdd<A> {
         let mut lo_true: HashMap<u64, bool> = HashMap::with_capacity(order.len());
         let chain = |b: &Bdd<A>, lo_true: &HashMap<u64, bool>| match b {
             Bdd::Leaf(v) => *v,
-            Bdd::Node(c) => *lo_true
-                .get(&c.id)
+            Bdd::List(..) => *lo_true
+                .get(&b.id())
                 .expect("a node is ordered after its children"),
         };
         for n in &order {
-            let t = chain(&n.lo, &lo_true);
-            lo_true.insert(n.id, t);
+            let t = chain(node(n).3, &lo_true);
+            lo_true.insert(n.id(), t);
         }
-        let mut state: HashMap<u64, S> = HashMap::from([(root.id, start)]);
+        let mut state: HashMap<u64, S> = HashMap::from([(self.id(), start)]);
         for n in order.into_iter().rev() {
+            let (id, atom, hi, lo) = node(n);
             let here = state
-                .remove(&n.id)
+                .remove(&id)
                 .expect("a node is reached before it is visited");
-            if chain(&n.hi, &lo_true) && !f(&n.atom, &here) {
+            if chain(hi, &lo_true) && !f(atom, &here) {
                 return false;
             }
-            for (child, s) in [(&n.hi, take(&here, &n.atom)), (&n.lo, here)] {
-                match child {
-                    Bdd::Leaf(_) => {}
-                    Bdd::Node(c) => {
-                        let s = match state.remove(&c.id) {
-                            Some(t) => join(&t, &s),
-                            None => s,
-                        };
-                        state.insert(c.id, s);
-                    }
+            for (child, s) in [(hi, take(&here, atom)), (lo, here)] {
+                if let Bdd::List(..) = child {
+                    let s = match state.remove(&child.id()) {
+                        Some(t) => join(&t, &s),
+                        None => s,
+                    };
+                    state.insert(child.id(), s);
                 }
             }
         }
         true
     }
 
-    /// Whether the path that `holds` chooses at each atom ends at `true`.
+    /// The value of the first block with a literal that `holds` makes true, or the default.
     pub(super) fn eval(&self, holds: impl Fn(&A) -> bool) -> bool {
-        let mut b = self;
-        loop {
-            match b {
-                Bdd::Leaf(v) => return *v,
-                Bdd::Node(n) => b = if holds(&n.atom) { &n.hi } else { &n.lo },
+        if let Bdd::Leaf(v) = self {
+            return *v;
+        }
+        let mut last = true;
+        for (v, c) in self.cells() {
+            if set::iter(Some(&c.block)).any(|(a, p)| holds(a) == *p) {
+                return v;
             }
+            last = v;
+        }
+        !last
+    }
+
+    /// The list's value on every value of the set that `holds` gives (`Bdd::eval3`'s use in
+    /// [`Part::eval3`]): each block with a literal `holds` leaves unknown may give its value,
+    /// and the first block with a literal it makes true ends the walk; the list is known when
+    /// one value is left. The atoms of a list are distinct, so each value left is reached.
+    fn eval3(&self, holds: &impl Fn(&A) -> Option<bool>) -> Option<bool> {
+        if let Bdd::Leaf(v) = self {
+            return Some(*v);
+        }
+        let mut values = [false; 2];
+        let mut last = true;
+        'blocks: for (v, c) in self.cells() {
+            for (a, p) in set::iter(Some(&c.block)) {
+                match holds(a) {
+                    Some(h) if h == *p => {
+                        values[usize::from(v)] = true;
+                        return (!values[usize::from(!v)]).then_some(v);
+                    }
+                    Some(_) => {}
+                    None => {
+                        values[usize::from(v)] = true;
+                        if values == [true; 2] {
+                            break 'blocks;
+                        }
+                    }
+                }
+            }
+            last = v;
+        }
+        values[usize::from(!last)] = true;
+        match values {
+            [true, false] => Some(false),
+            [false, true] => Some(true),
+            _ => None,
         }
     }
 }
 
-/// A tuple part of one length, or the morphism part: a diagram, or, when a connective's diagram
-/// would have more nodes than its operands together, the connective applied to its operands.
+/// A tuple part of one length, or the morphism part: a decision list, or, when a connective's
+/// result is not one, the connective applied to its operands, or an exclusive or of atoms in its
+/// one form (module `xor`).
 #[derive(Clone)]
 pub(super) enum Part<A: Literal> {
     Bdd(Bdd<A>),
@@ -698,6 +547,8 @@ pub(super) struct Expr<A: Literal> {
     form: Form<A>,
     /// The complement, made once, so that a chain of choices is negated in steps, not walked.
     complement: std::sync::OnceLock<Part<A>>,
+    /// The exclusive or the expression is the one form of (module `xor`), if any.
+    xor: Option<xor::Tag<A>>,
 }
 
 pub(super) enum Form<A: Literal> {
@@ -758,6 +609,11 @@ impl<A: Literal> Part<A> {
     }
 
     fn expr(form: Form<A>) -> Part<A> {
+        Part::expr_xor(form, None)
+    }
+
+    /// The expression of `form`, the one form of the exclusive or `xor` when given.
+    fn expr_xor(form: Form<A>, xor: Option<xor::Tag<A>>) -> Part<A> {
         let digest = match &form {
             Form::Not(p) => mix(8, p.digest()),
             Form::Or(a, b) => mix(mix(9, a.digest()), b.digest()),
@@ -768,6 +624,7 @@ impl<A: Literal> Part<A> {
             digest,
             form,
             complement: std::sync::OnceLock::new(),
+            xor,
         }))
     }
 
@@ -896,14 +753,19 @@ impl<'m> Connect<'m> {
         if self.same_as_not(&a, &b).await {
             return Part::leaf(op == Op::Or);
         }
-        // Only chains grow a diagram, so each diagram is a decision list: the latest literal
-        // that fires gives the value. Atoms read so far leave at most one function per literal
-        // that fired, so a level has at most `n + 1` nodes and a diagram at most `n(n + 1)` on
-        // `n` atoms, in any atom order.
+        // Only chains grow a list, so each list is a decision list, kept as its blocks: a
+        // chain's literals are joined to the other operand one at a time (module `list`).
         if let (Part::Bdd(x), Part::Bdd(y)) = (&a, &b)
-            && (x.is_chain(op) || y.is_chain(op))
+            && let Some(z) = x.zip_chain(y, op)
         {
-            return Part::Bdd(x.zip(y, op));
+            return Part::Bdd(z);
+        }
+        // Complexity tradeoff: an exclusive or of two others is taken to its one form (module
+        // `xor`), in `O(k log n)` for the `k` atoms of the smaller and the `n` of the larger,
+        // rather than kept as the expression made in constant time, so that one set of atoms
+        // built in any order is one node; parity built a literal at a time stays `O(n log n)`.
+        if let Some(x) = xor::xor_of(&a, &b, op) {
+            return x;
         }
         // Choices on one condition meet branch by branch.
         let (l, r) = (self.choice(&a).await, self.choice(&b).await);
@@ -950,6 +812,9 @@ impl<'m> Connect<'m> {
     async fn choose<A: Literal>(&'m self, c: &Part<A>, x: &Part<A>, y: &Part<A>) -> Part<A> {
         if x == y {
             return x.clone();
+        }
+        if let Some(z) = xor::xor_choice(c, x, y) {
+            return z;
         }
         let (c, same) = self.condition(c).await;
         let (x, y) = if same { (x, y) } else { (y, x) };
@@ -1130,47 +995,13 @@ impl<A: Literal> Part<A> {
         holds: &impl Fn(&A) -> Option<bool>,
         pins: &HashMap<u64, bool>,
     ) -> Option<bool> {
-        // Each node once, after the children its atom's value leads to, from a stack.
+        // Each list once.
         fn bdd<A: Literal>(
             b: &Bdd<A>,
             holds: &impl Fn(&A) -> Option<bool>,
             memo: &mut HashMap<u64, Option<bool>>,
         ) -> Option<bool> {
-            let root = match b {
-                Bdd::Leaf(v) => return Some(*v),
-                Bdd::Node(n) => n,
-            };
-            // A node, and once its children are queued its atom's value.
-            let mut stack: Vec<(&Branch<A>, Option<Option<bool>>)> = vec![(root, None)];
-            while let Some((n, held)) = stack.pop() {
-                if memo.contains_key(&n.id) {
-                    continue;
-                }
-                let Some(h) = held else {
-                    let h = holds(&n.atom);
-                    stack.push((n, Some(h)));
-                    for (c, read) in [(&n.lo, h != Some(true)), (&n.hi, h != Some(false))] {
-                        if let Bdd::Node(m) = c
-                            && read
-                            && !memo.contains_key(&m.id)
-                        {
-                            stack.push((m, None));
-                        }
-                    }
-                    continue;
-                };
-                let get = |c: &Bdd<A>| match c {
-                    Bdd::Leaf(v) => Some(*v),
-                    Bdd::Node(m) => memo[&m.id],
-                };
-                let v = match h {
-                    Some(true) => get(&n.hi),
-                    Some(false) => get(&n.lo),
-                    None => get(&n.hi).filter(|hi| get(&n.lo) == Some(*hi)),
-                };
-                memo.insert(n.id, v);
-            }
-            memo[&root.id]
+            *memo.entry(b.id()).or_insert_with(|| b.eval3(holds))
         }
         let mut nodes = HashMap::new();
         let mut memo: HashMap<u64, Option<bool>> =
@@ -1310,7 +1141,7 @@ impl<A: Literal> Part<A> {
                 Part::Expr(x) => read(ids[&x.id]),
                 Part::Bdd(b) => match b {
                     Bdd::Leaf(v) => Some(*v),
-                    Bdd::Node(_) => None,
+                    Bdd::List(..) => None,
                 },
             };
             match &e.form {
@@ -1531,7 +1362,7 @@ impl<A: Literal> Part<A> {
             match b {
                 Bdd::Leaf(false) => (None, Some(imbl::OrdSet::new())),
                 Bdd::Leaf(true) => (Some(imbl::OrdSet::new()), None),
-                Bdd::Node(_) => (settings(b.forced_to(true)), settings(b.forced_to(false))),
+                Bdd::List(..) => (settings(b.forced_to(true)), settings(b.forced_to(false))),
             }
         }
         let root = match self {
@@ -1554,8 +1385,8 @@ impl<A: Literal> Part<A> {
                 for q in operands {
                     match q {
                         Part::Expr(x) => stack.push((x.clone(), false)),
-                        Part::Bdd(b @ Bdd::Node(n)) => {
-                            nodes.entry(n.id).or_insert_with(|| of_bdd(b));
+                        Part::Bdd(b @ Bdd::List(..)) => {
+                            nodes.entry(b.id()).or_insert_with(|| of_bdd(b));
                         }
                         Part::Bdd(Bdd::Leaf(_)) => {}
                     }
@@ -1564,7 +1395,7 @@ impl<A: Literal> Part<A> {
             }
             let get = |q: &Part<A>| match q {
                 Part::Expr(x) => exprs[&x.id].clone(),
-                Part::Bdd(Bdd::Node(n)) => nodes[&n.id].clone(),
+                Part::Bdd(b @ Bdd::List(..)) => nodes[&b.id()].clone(),
                 Part::Bdd(b) => of_bdd(b),
             };
             let sets = match &e.form {
@@ -1651,22 +1482,22 @@ impl<A: Literal> Part<A> {
                     stack.push(b);
                     stack.push(a);
                 }
-                Part::Bdd(b) => {
-                    let mut x = b;
-                    loop {
-                        match x {
-                            Bdd::Leaf(false) => break,
-                            Bdd::Leaf(true) => return None,
-                            Bdd::Node(n) => {
-                                if !matches!(n.hi, Bdd::Leaf(true)) {
-                                    return None;
-                                }
-                                out.push(n.atom.clone());
-                                x = &n.lo;
+                Part::Bdd(b) => match b {
+                    Bdd::Leaf(false) => {}
+                    Bdd::Leaf(true) => return None,
+                    // A union of atoms is one block of value `true` that takes them all.
+                    Bdd::List(c, v) => {
+                        if !*v || c.next.is_some() {
+                            return None;
+                        }
+                        for (a, taken) in set::iter(Some(&c.block)) {
+                            if !taken {
+                                return None;
                             }
+                            out.push(a.clone());
                         }
                     }
-                }
+                },
             }
         }
         Some(out)
@@ -1689,9 +1520,12 @@ impl<A: Literal> Part<A> {
     }
 }
 
-/// Two diagrams, expressions or parts of one universe to compare in [`order`].
+/// Two lists, cells, sets, expressions or parts of one universe to compare in [`order`]; no
+/// cell or set is before one.
 pub(super) enum Walk<'a, A: Literal> {
     Bdds(&'a Bdd<A>, &'a Bdd<A>),
+    Cells(Option<&'a Cell<A>>, Option<&'a Cell<A>>),
+    Sets(Option<&'a Set<A>>, Option<&'a Set<A>>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
 }
@@ -1983,21 +1817,47 @@ fn walk<'a, A: Literal>(
         Walk::Parts(Part::Bdd(_), Part::Expr(_)) => Ordering::Less,
         Walk::Parts(Part::Expr(_), Part::Bdd(_)) => Ordering::Greater,
         Walk::Bdds(Bdd::Leaf(a), Bdd::Leaf(b)) => a.cmp(b),
-        Walk::Bdds(Bdd::Leaf(_), Bdd::Node(_)) => Ordering::Less,
-        Walk::Bdds(Bdd::Node(_), Bdd::Leaf(_)) => Ordering::Greater,
-        Walk::Bdds(Bdd::Node(a), Bdd::Node(b)) => {
+        Walk::Bdds(Bdd::Leaf(_), Bdd::List(..)) => Ordering::Less,
+        Walk::Bdds(Bdd::List(..), Bdd::Leaf(_)) => Ordering::Greater,
+        Walk::Bdds(x @ Bdd::List(a, v), y @ Bdd::List(b, w)) => {
+            let c = x.digest().cmp(&y.digest()).then(v.cmp(w));
+            if c != Ordering::Equal {
+                return c;
+            }
+            walk(Walk::Cells(Some(a), Some(b)), steps, equal)
+        }
+        Walk::Cells(None, None) | Walk::Sets(None, None) => Ordering::Equal,
+        Walk::Cells(None, Some(_)) | Walk::Sets(None, Some(_)) => Ordering::Less,
+        Walk::Cells(Some(_), None) | Walk::Sets(Some(_), None) => Ordering::Greater,
+        Walk::Cells(Some(a), Some(b)) => {
             let key = (a.id, b.id);
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
             }
             let c = a.digest.cmp(&b.digest);
             if c == Ordering::Equal {
-                // The atoms are pushed last, so they are compared first, then `hi`.
+                // The blocks are pushed last, so they are compared first.
                 steps.extend([
                     Step::Equal(key.0, key.1),
-                    A::walk(Walk::Bdds(&a.lo, &b.lo)),
-                    A::walk(Walk::Bdds(&a.hi, &b.hi)),
-                    A::atoms(&a.atom, &b.atom),
+                    A::walk(Walk::Cells(a.next.as_deref(), b.next.as_deref())),
+                    A::walk(Walk::Sets(Some(&a.block), Some(&b.block))),
+                ]);
+            }
+            c
+        }
+        Walk::Sets(Some(a), Some(b)) => {
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let c = a.digest.cmp(&b.digest).then(a.key.1.cmp(&b.key.1));
+            if c == Ordering::Equal {
+                // The atoms are pushed last, so they are compared first, then the left sets.
+                steps.extend([
+                    Step::Equal(key.0, key.1),
+                    A::walk(Walk::Sets(a.right.as_deref(), b.right.as_deref())),
+                    A::walk(Walk::Sets(a.left.as_deref(), b.left.as_deref())),
+                    A::atoms(&a.key.0, &b.key.0),
                 ]);
             }
             c
@@ -2247,20 +2107,13 @@ mod tests {
         // growing depths, walking up one step at a time: `O(m²)`.
         std::thread::Builder::new()
             .spawn(|| {
-                // Built node by node, the atoms in their order: a union or intersection counts
-                // the nodes of its result. `w` is the first atom, `z` the last.
+                // Built from its literals by the connectives: `w` is atom 0, `z` atom `m + 1`.
                 let chain = |m: usize| {
-                    let mut xs: Vec<Row> = (0..m as u64 + 2).map(atom).collect();
-                    xs.sort();
-                    let z = Bdd::literal(xs[m + 1].clone());
-                    let mut g = Bdd::node(xs[m].clone(), Bdd::Leaf(true), z.clone());
-                    for x in xs[1..m].iter().rev() {
-                        g = Bdd::node(x.clone(), g, z.clone());
-                    }
-                    (
-                        Part::Bdd(Bdd::node(xs[0].clone(), g, Bdd::Leaf(false))),
-                        xs[0].clone(),
-                    )
+                    let xs: Vec<Row> = (0..m as u64 + 2).map(atom).collect();
+                    let lit = |k: usize| Part::literal(xs[k].clone());
+                    let meet = (2..=m).fold(lit(1), |g, k| g.zip(&lit(k), Op::And));
+                    let g = meet.zip(&lit(m + 1), Op::Or);
+                    (lit(0).zip(&g, Op::And), xs[0].clone())
                 };
                 let n = 1 << 12;
                 let built = scaling::inputs(n, chain);
@@ -2346,41 +2199,35 @@ mod tests {
     }
 
     #[test]
-    fn two_diagrams_on_disjoint_atoms_can_meet_in_a_larger_one() {
-        // With the atoms in the order `a < b < c < d`, `a xor c` and `b xor d` have three nodes
-        // each and no atom in common, and their meet has nine: disjoint atoms bound the meet by
-        // the sum of the sizes only when one diagram's atoms all come before the other's. So
-        // `Part::zip` meets two diagrams only when one is a chain (the decision-list bound in
-        // its comment), and keeps this meet as an expression (cross-review XR3, R3_CODEX.md Q1).
-        let mut rows: Vec<Row> = (0..4).map(atom).collect();
-        rows.sort();
-        let xs: Vec<Bdd<Row>> = rows.iter().cloned().map(Bdd::literal).collect();
-        let xor = |p: &Bdd<Row>, q: &Bdd<Row>| {
+    fn two_exclusive_ors_on_disjoint_atoms_meet_in_an_expression() {
+        // With the atoms in the order `a < b < c < d`, the diagrams of `a xor c` and `b xor d`
+        // have three nodes each and no atom in common, and their meet has nine: disjoint atoms
+        // bound a meet by the sum of the sizes only when one diagram's atoms all come before
+        // the other's (cross-review XR3, R3_CODEX.md Q1). An exclusive or is no decision list,
+        // so `Part::zip` keeps each, and their meet, as expressions.
+        let oxor = |p: &Old, q: &Old| {
+            (p.apply(&q.not(), Op::And)).apply(&p.not().apply(q, Op::And), Op::Or)
+        };
+        let (a, b) = (
+            oxor(&Old::literal(0), &Old::literal(2)),
+            oxor(&Old::literal(1), &Old::literal(3)),
+        );
+        assert_eq!(
+            (a.nodes(), b.nodes(), a.apply(&b, Op::And).nodes()),
+            (3, 3, 9)
+        );
+        let lit = |i: u64| Part::literal(atom(i));
+        let xor = |p: Part<Row>, q: Part<Row>| {
             p.zip(&q.not(), Op::And)
-                .zip(&p.not().zip(q, Op::And), Op::Or)
+                .zip(&p.not().zip(&q, Op::And), Op::Or)
         };
-        let nodes = |b: &Bdd<Row>| {
-            let mut count = 0;
-            b.atoms_unseen(&mut HashSet::new(), &mut |_| {
-                count += 1;
-                true
-            });
-            count
-        };
-        let (a, b) = (xor(&xs[0], &xs[2]), xor(&xs[1], &xs[3]));
-        let meet = a.zip(&b, Op::And);
-        assert_eq!((nodes(&a), nodes(&b), nodes(&meet)), (3, 3, 9));
-        for set in 0..16u32 {
-            let holds = |t: &Row| (0..4).any(|i| set & (1 << i) != 0 && *t == rows[i]);
-            let bit = |i: u32| set & (1 << i) != 0;
-            assert_eq!(meet.eval(holds), (bit(0) != bit(2)) && (bit(1) != bit(3)));
-        }
-        let (pa, pb) = (Part::Bdd(a), Part::Bdd(b));
+        let (pa, pb) = (xor(lit(0), lit(2)), xor(lit(1), lit(3)));
         let kept = pa.zip(&pb, Op::And);
         assert!(matches!(kept, Part::Expr(_)), "{kept:?}");
         for set in 0..16u32 {
-            let holds = |t: &Row| (0..4).any(|i| set & (1 << i) != 0 && *t == rows[i]);
-            assert_eq!(kept.eval(&holds), pa.eval(&holds) && pb.eval(&holds));
+            let holds = |t: &Row| (0..4).any(|i| set >> i & 1 == 1 && *t == atom(i));
+            let bit = |i: u32| set >> i & 1 == 1;
+            assert_eq!(kept.eval(&holds), (bit(0) != bit(2)) && (bit(1) != bit(3)));
         }
     }
 
@@ -2417,30 +2264,32 @@ mod tests {
     }
 
     #[test]
-    fn comparing_equal_diagrams_built_on_two_threads_scales() {
-        // The parity of `m` atoms: two nodes on each atom, each pointing to both nodes on the
-        // next. Each thread has its own table of nodes, so the two diagrams share no node, and
-        // comparing `hi` then `lo` met the last atom `2^m` times.
-        let parity = |m: usize| {
-            let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
-            xs.sort();
-            let (mut even, mut odd) = (Bdd::Leaf(true), Bdd::Leaf(false));
-            for x in xs.iter().rev() {
-                (even, odd) = (
-                    Bdd::node(x.clone(), odd.clone(), even.clone()),
-                    Bdd::node(x.clone(), even.clone(), odd.clone()),
-                );
+    fn comparing_equal_lists_built_on_two_threads_scales() {
+        // A list of `m` literals in blocks of two of alternating values. Each thread has its
+        // own tables of cells and sets, so the two lists share no node, and comparing them
+        // reads each pair of cells and of set nodes once. (The parity of `m` atoms, a diagram
+        // the lists no longer build, met its last atom `2^m` times when compared `hi` then
+        // `lo`.)
+        let blocks = |m: usize| {
+            let mut b = Bdd::Leaf(false);
+            for i in 0..m {
+                let k = (atom(i as u64), true);
+                b = if (i / 2) % 2 == 0 {
+                    b.or_literal(k)
+                } else {
+                    b.and_literal(k)
+                };
             }
-            Part::Bdd(even)
+            Part::Bdd(b)
         };
         let n = 1 << 10;
-        let on_a_thread = |m: usize| std::thread::spawn(move || parity(m)).join().unwrap();
+        let on_a_thread = |m: usize| std::thread::spawn(move || blocks(m)).join().unwrap();
         let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
             .into_iter()
             .map(|m| (m, (on_a_thread(m), on_a_thread(m))))
             .collect();
         scaling::check(
-            "comparing equal diagrams built on two threads, by atoms",
+            "comparing equal lists built on two threads, by literals",
             n,
             |m| {
                 let (a, b) = &built[&m];
@@ -2449,8 +2298,8 @@ mod tests {
         );
     }
 
-    /// A decision list's blocks with each block's literals sorted, and its tail.
-    type Blocks = (Vec<(bool, Vec<(Row, bool)>)>, Result<bool, Bdd<Row>>);
+    /// A decision list's blocks with each block's literals sorted, and its default.
+    type Blocks = (Vec<(bool, Vec<(Row, bool)>)>, bool);
 
     fn sorted(l: super::list::List<Row>) -> Blocks {
         let blocks = l
@@ -2464,100 +2313,310 @@ mod tests {
         (blocks, l.tail)
     }
 
-    /// The decision list found block by block: the atoms forced on the paths to one leaf,
-    /// then the diagram restricted to their literals false, and so on.
-    fn list_by_blocks(b: &Bdd<Row>) -> Blocks {
-        let mut f = b.clone();
+    /// The one form of the decision list of `f`, a function of the atoms `atom(0..6)` given
+    /// by its value on each set of them, found from the values alone: the literals under which
+    /// the function is constant, a block, then those once the block's literals are false, and
+    /// so on (module `list`). `None` when the function is no decision list.
+    fn list_of_values(f: impl Fn(u32) -> bool) -> Option<Blocks> {
+        // The value when the atoms of `fixed` are fixed to theirs, if one.
+        let constant = |fixed: &[Option<bool>; 6]| {
+            let mut seen = [false; 2];
+            for set in 0..64u32 {
+                let agrees = (0..6).all(|i| fixed[i].is_none_or(|b| b == (set >> i & 1 == 1)));
+                if agrees {
+                    seen[usize::from(f(set))] = true;
+                }
+            }
+            match seen {
+                [true, false] => Some(false),
+                [false, true] => Some(true),
+                _ => None,
+            }
+        };
+        let mut fixed = [None; 6];
         let mut blocks = Vec::new();
-        let mut last: Option<bool> = None;
         loop {
-            if let Bdd::Leaf(v) = f {
-                return (blocks, Ok(v));
+            if let Some(v) = constant(&fixed) {
+                return Some((blocks, v));
             }
-            // The literals of value `!leaf`: those whose opposite every path to `leaf` takes.
-            let of = |leaf: bool| {
-                let (taken, refused) = f.forced_to(leaf);
-                let mut lits: Vec<(Row, bool)> = taken.into_iter().map(|a| (a, false)).collect();
-                lits.extend(refused.into_iter().map(|a| (a, true)));
-                lits.sort();
-                lits
-            };
-            let (value, lits) = match last {
-                None => match of(false) {
-                    l if !l.is_empty() => (true, l),
-                    _ => (false, of(true)),
-                },
-                Some(v) => (!v, of(v)),
-            };
+            let mut lits = Vec::new();
+            for i in 0..6 {
+                for taken in [true, false] {
+                    if fixed[i].is_some() {
+                        continue;
+                    }
+                    let mut f = fixed;
+                    f[i] = Some(taken);
+                    if let Some(c) = constant(&f) {
+                        lits.push((i, taken, c));
+                    }
+                }
+            }
             if lits.is_empty() {
-                return (blocks, Err(f));
+                return None;
             }
-            let fix: BTreeMap<Row, bool> = lits.iter().map(|(a, t)| (a.clone(), !t)).collect();
-            f = f.restrict(&|a: &Row| fix.get(a).copied(), &mut HashMap::new());
-            blocks.push((value, lits));
-            last = Some(value);
+            // Literals of both values are one atom's two: the list of one literal, `true`.
+            let v = lits.iter().any(|l| l.2);
+            let mut block: Vec<(Row, bool)> = Vec::new();
+            for &(i, taken, c) in &lits {
+                if c == v {
+                    fixed[i] = Some(!taken);
+                    block.push((atom(i as u64), taken));
+                }
+            }
+            block.sort();
+            blocks.push((v, block));
         }
     }
 
-    fn eval_list(l: &Blocks, holds: &impl Fn(&Row) -> bool) -> bool {
-        for (v, lits) in &l.0 {
-            if lits.iter().any(|(a, t)| holds(a) == *t) {
-                return *v;
+    /// The construction the lists replaced, kept to check them against: a reduced ordered
+    /// diagram on the atoms `atom(0..6)` in the order of their indices, two diagrams joined
+    /// by `apply`, which builds `O(n²)` nodes for a decision list of `n` literals in the worst
+    /// atom order. Small sizes only: the walks recurse and share no node.
+    mod old {
+        use super::Op;
+        use std::rc::Rc;
+
+        #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+        pub(super) enum Old {
+            Leaf(bool),
+            Node(Rc<(usize, Old, Old)>),
+        }
+
+        impl Old {
+            pub(super) fn node(i: usize, hi: Old, lo: Old) -> Old {
+                if hi == lo {
+                    hi
+                } else {
+                    Old::Node(Rc::new((i, hi, lo)))
+                }
+            }
+
+            pub(super) fn literal(i: usize) -> Old {
+                Old::node(i, Old::Leaf(true), Old::Leaf(false))
+            }
+
+            fn top(&self) -> usize {
+                match self {
+                    Old::Leaf(_) => usize::MAX,
+                    Old::Node(n) => n.0,
+                }
+            }
+
+            /// The diagram with atom `i` fixed to `true`, and to `false`; `i` is at or above
+            /// the root's atom.
+            fn cofactors(&self, i: usize) -> (Old, Old) {
+                match self {
+                    Old::Node(n) if n.0 == i => (n.1.clone(), n.2.clone()),
+                    _ => (self.clone(), self.clone()),
+                }
+            }
+
+            pub(super) fn apply(&self, other: &Old, op: Op) -> Old {
+                if let (Old::Leaf(a), Old::Leaf(b)) = (self, other) {
+                    return Old::Leaf(match op {
+                        Op::Or => a | b,
+                        Op::And => a & b,
+                    });
+                }
+                let i = self.top().min(other.top());
+                let ((a1, a0), (b1, b0)) = (self.cofactors(i), other.cofactors(i));
+                Old::node(i, a1.apply(&b1, op), a0.apply(&b0, op))
+            }
+
+            pub(super) fn not(&self) -> Old {
+                match self {
+                    Old::Leaf(b) => Old::Leaf(!b),
+                    Old::Node(n) => Old::node(n.0, n.1.not(), n.2.not()),
+                }
+            }
+
+            pub(super) fn restrict(&self, fixed: &[Option<bool>; 6]) -> Old {
+                match self {
+                    Old::Leaf(_) => self.clone(),
+                    Old::Node(n) => match fixed[n.0] {
+                        Some(true) => n.1.restrict(fixed),
+                        Some(false) => n.2.restrict(fixed),
+                        None => Old::node(n.0, n.1.restrict(fixed), n.2.restrict(fixed)),
+                    },
+                }
+            }
+
+            /// The value on the set of atoms whose indices are the bits of `set`.
+            pub(super) fn eval(&self, set: u32) -> bool {
+                match self {
+                    Old::Leaf(b) => *b,
+                    Old::Node(n) if set >> n.0 & 1 == 1 => n.1.eval(set),
+                    Old::Node(n) => n.2.eval(set),
+                }
+            }
+
+            /// The number of distinct nodes.
+            pub(super) fn nodes(&self) -> usize {
+                let mut seen = std::collections::HashSet::new();
+                let mut stack = vec![self];
+                while let Some(d) = stack.pop() {
+                    if let Old::Node(n) = d
+                        && seen.insert(d.clone())
+                    {
+                        stack.extend([&n.1, &n.2]);
+                    }
+                }
+                seen.len()
             }
         }
-        match &l.1 {
-            Ok(v) => *v,
-            Err(b) => b.eval(holds),
+    }
+    use old::Old;
+
+    #[test]
+    fn lists_agree_with_the_diagrams_apply_built() {
+        // Random lists built by the connectives on lists (complement, a chain joined, a
+        // restriction) and, beside each, the diagram the old construction builds. They agree
+        // on every set of atoms; the list is the one form of its function, found from its
+        // values; two lists of one function are one list, however they were built; and the
+        // three-valued value, the forced atoms and the first node each agree with the values.
+        let holds = |set: u32| move |t: &Row| (0..6).any(|i| set >> i & 1 == 1 && *t == atom(i));
+        let mut pool: Vec<(Bdd<Row>, Old)> = (0..6)
+            .map(|i| (Bdd::literal(atom(i as u64)), Old::literal(i)))
+            .chain([false, true].map(|b| (Bdd::Leaf(b), Old::Leaf(b))))
+            .collect();
+        // The id of the one list of each function, by its values.
+        let mut ids: HashMap<u64, u64> = HashMap::new();
+        let mut seed = 5u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            seed >> 33
+        };
+        let (mut joined, mut found_again) = (0, 0);
+        for _ in 0..20_000 {
+            let r = next() as usize;
+            let (a, x) = pool[r % pool.len()].clone();
+            let (b, y) = pool[next() as usize % pool.len()].clone();
+            let op = if (r / pool.len()).is_multiple_of(2) {
+                Op::Or
+            } else {
+                Op::And
+            };
+            let made = match r / pool.len() / 2 % 4 {
+                0 => (a.not(), x.not()),
+                3 => {
+                    let mut fixed = [None; 6];
+                    for f in &mut fixed {
+                        *f = [None, None, Some(false), Some(true)][next() as usize % 4];
+                    }
+                    let fix = |t: &Row| {
+                        (0..6)
+                            .find(|&i| *t == atom(i as u64))
+                            .and_then(|i| fixed[i])
+                    };
+                    (a.restrict(&fix, &mut HashMap::new()), x.restrict(&fixed))
+                }
+                _ => match a.zip_chain(&b, op) {
+                    Some(z) => {
+                        joined += 1;
+                        (z, x.apply(&y, op))
+                    }
+                    None => continue,
+                },
+            };
+            let (z, d) = made;
+            let values: u64 = (0..64).filter(|&s| d.eval(s)).fold(0, |m, s| m | 1 << s);
+            for set in 0..64u32 {
+                assert_eq!(z.eval(holds(set)), d.eval(set), "{z:?} at {set:b}");
+            }
+            let id = *ids.entry(values).or_insert_with(|| z.id());
+            found_again += usize::from(id == z.id() && pool.iter().any(|(p, _)| p.id() == id));
+            assert_eq!(id, z.id(), "two lists of one function: {z:?}");
+            assert_eq!(
+                Some(sorted(z.list())),
+                list_of_values(|s| d.eval(s)),
+                "the list of {z:?}"
+            );
+            // Three-valued: known when every set agreeing with what is known has one value.
+            for _ in 0..8 {
+                let (known, fixed) = (next() as u32 % 64, next() as u32 % 64);
+                let fix = |t: &Row| {
+                    (0..6)
+                        .find(|&i| *t == atom(i as u64) && known >> i & 1 == 1)
+                        .map(|i| fixed >> i & 1 == 1)
+                };
+                let agreeing: Vec<bool> = (0..64u32)
+                    .filter(|s| (s ^ fixed) & known == 0)
+                    .map(|s| d.eval(s))
+                    .collect();
+                let expected = (agreeing.iter().all(|&v| v == agreeing[0])).then_some(agreeing[0]);
+                assert_eq!(z.eval3(&fix), expected, "{z:?}");
+            }
+            // Forced: the atoms in every set of value `true`, and those in none; none when
+            // there is no such set, as the diagram's walk found.
+            let inside: Vec<u32> = (0..64).filter(|&s| d.eval(s)).collect();
+            let (mut taken, mut refused) = (Vec::new(), Vec::new());
+            if !inside.is_empty() {
+                for i in 0..6 {
+                    if inside.iter().all(|s| s >> i & 1 == 1) {
+                        taken.push(atom(i as u64));
+                    } else if inside.iter().all(|s| s >> i & 1 == 0) {
+                        refused.push(atom(i as u64));
+                    }
+                }
+            }
+            taken.sort();
+            refused.sort();
+            assert_eq!(z.forced(), (taken.clone(), refused.clone()), "{z:?}");
+            let (mut t, mut f) = Part::Bdd(z.clone()).forced();
+            t.sort();
+            f.sort();
+            assert_eq!((t, f), (taken, refused), "{z:?}");
+            // The first node: the list is its `hi` where its atom holds, its `lo` elsewhere.
+            if let Ok((_, a, hi, lo)) = z.branch() {
+                for set in 0..64u32 {
+                    let h = holds(set);
+                    let by_node = if h(a) { hi.eval(h) } else { lo.eval(h) };
+                    assert_eq!(by_node, z.eval(h), "{z:?} at {set:b}");
+                }
+            }
+            pool.push((z, d));
         }
+        assert!(
+            joined > 5000 && found_again > 5000,
+            "{joined} {found_again}"
+        );
     }
 
     #[test]
-    fn list_matches_the_blocks_found_one_by_one() {
+    fn list_matches_the_one_form_found_from_its_values() {
         let mut seed = 11;
         let mut lists = 0;
         for _ in 0..4000 {
             let Part::Bdd(b) = random(&mut seed, 6) else {
                 continue;
             };
-            let got = sorted(b.list());
-            assert_eq!(got, list_by_blocks(&b), "the list of {b:?}");
-            // Every diagram the connectives build is a decision list (`Part::zip`).
-            assert!(got.1.is_ok(), "{b:?} is a decision list");
-            for bits in 0..64u64 {
-                let holds = |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(i));
-                assert_eq!(eval_list(&got, &holds), b.eval(holds), "{b:?} at {bits}");
-            }
+            let holds =
+                |set: u32| move |t: &Row| (0..6).any(|i| set >> i & 1 == 1 && *t == atom(i));
+            let expected = list_of_values(|s| b.eval(holds(s)));
+            assert_eq!(Some(sorted(b.list())), expected, "the list of {b:?}");
             lists += 1;
         }
-        assert!(lists > 1000, "{lists} diagrams");
+        assert!(lists > 1000, "{lists} lists");
     }
 
     #[test]
-    fn list_of_a_diagram_that_is_no_decision_list_keeps_the_rest() {
-        // `x | (y ^ z)`: the block `x`, then the parity of `y` and `z`, which no literal decides.
-        let mut xs: Vec<Row> = (0..3).map(atom).collect();
-        xs.sort();
-        let (y, z) = (Bdd::literal(xs[1].clone()), Bdd::literal(xs[2].clone()));
-        let parity = Bdd::node(xs[1].clone(), z.not(), z.clone());
-        let f = Bdd::node(xs[0].clone(), Bdd::Leaf(true), parity.clone());
-        let l = f.list();
-        assert_eq!(l.blocks, vec![(true, vec![(xs[0].clone(), true)])]);
-        assert_eq!(l.tail, Err(parity.clone()));
-        assert_eq!(sorted(f.list()), list_by_blocks(&f));
-        assert_eq!(parity.list().blocks, Vec::new());
-        assert_eq!(y.list().blocks, vec![(true, vec![(xs[1].clone(), true)])]);
-        assert_eq!(y.list().tail, Ok(false));
-        assert_eq!(
-            y.not().list().blocks,
-            vec![(true, vec![(xs[1].clone(), false)])]
-        );
+    fn list_of_a_literal_and_its_complement() {
+        let y = Bdd::literal(atom(1));
+        assert_eq!(y.list().blocks, vec![(true, vec![(atom(1), true)])]);
+        assert!(!y.list().tail);
+        assert_eq!(y.not().list().blocks, vec![(true, vec![(atom(1), false)])]);
+        assert!(!y.not().list().tail);
+        assert_eq!(y.not().not(), y);
     }
 
     #[test]
     fn list_of_alternating_literals_scales() {
-        // `((x0 | x1) & !x2 | x3) & !x4 …`, each new literal first in the order, so the
-        // diagram is one node per atom and every literal is a block of its own: finding the
-        // blocks one by one took a pass over the nodes per block.
+        // `((x0 | x1) & !x2 | x3) & !x4 …`, each new literal first in the order, so every
+        // literal is a block of its own: finding the blocks one by one took a pass over the
+        // diagram's nodes per block.
         let build = |m: usize| {
             let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
             xs.sort();
@@ -2569,7 +2628,7 @@ mod tests {
                 };
             }
             let Part::Bdd(b) = f else {
-                unreachable!("a literal joined to a diagram is a diagram")
+                unreachable!("a literal joined to a list is a list")
             };
             b
         };
@@ -2584,7 +2643,199 @@ mod tests {
             |m| {
                 let l = built[&m].list();
                 assert_eq!(l.blocks.len(), m - 1);
-                assert_eq!(l.tail, Ok(false));
+                assert!(!l.tail);
+            },
+        );
+    }
+
+    #[test]
+    fn joining_chains_to_lists_scales() {
+        // `((x_0 | x_1) & !x_2 | x_3) & !x_4 …` built a literal at a time, each new literal last
+        // in the order of the atoms: the diagram the chain rule built had up to `k` nodes on
+        // the `k`-th atom, `O(m²)` in all, and built them all again at each literal (the
+        // negative control in STATUS.md, CHAIN-zip-size). A list takes each literal into its
+        // first block, or a block of its own, in `O(log m)`. Two chains with half their atoms
+        // in common are joined a literal of the shorter at a time.
+        let n = 1 << 11;
+        let lits = scaling::inputs(n, |m| {
+            let mut xs: Vec<Row> = (0..m as u64).map(atom).collect();
+            xs.sort();
+            let lits: Vec<(Part<Row>, Part<Row>)> = xs
+                .into_iter()
+                .map(|x| (Part::literal(x.clone()), Part::literal(x).not()))
+                .collect();
+            lits
+        });
+        let chains = scaling::inputs(n, |m| {
+            let chain = |from: u64| {
+                (from..from + m as u64).fold(Part::leaf(false), |f, k| {
+                    f.zip(&Part::literal(atom(k)), Op::Or)
+                })
+            };
+            (chain(0), chain(m as u64 / 2))
+        });
+        scaling::check("a list built a literal at a time, by literals", n, |m| {
+            let xs = &lits[&m];
+            let f =
+                (xs[1..].iter().enumerate()).fold(xs[0].0.clone(), |f, (i, (x, not_x))| {
+                    match i % 2 {
+                        0 => f.zip(x, Op::Or),
+                        _ => f.zip(not_x, Op::And),
+                    }
+                });
+            assert!(matches!(f, Part::Bdd(_)), "{f:?}");
+        });
+        // A chain grown a literal at a time stays a chain, so both operands of each step are
+        // chains; listing the long one too at each step took `O(m²)` (59 s for the forced atoms
+        // of a chain of 32768 literals).
+        for op in [Op::Or, Op::And] {
+            scaling::check("a chain built a literal at a time, by literals", n, |m| {
+                let xs = &lits[&m];
+                let f = (xs[1..].iter()).fold(xs[0].0.clone(), |f, (x, _)| f.zip(x, op));
+                assert!(
+                    matches!(&f, Part::Bdd(b) if b.chain_len(op) == Some(m)),
+                    "{f:?}"
+                );
+            });
+        }
+        scaling::check(
+            "the union of two chains with half their atoms in common, by literals",
+            n,
+            |m| {
+                let (a, b) = &chains[&m];
+                assert!(a.zip(b, Op::Or) != *a);
+            },
+        );
+    }
+
+    /// `p ^ q` as the type operations build it: `p&!q | !p&q`.
+    fn xor_by_or(p: &Part<Row>, q: &Part<Row>) -> Part<Row> {
+        let left = p.zip(&q.not(), Op::And);
+        left.zip(&p.not().zip(q, Op::And), Op::Or)
+    }
+
+    /// `p ^ q` as `(p|q) & (!p|!q)`.
+    fn xor_by_and(p: &Part<Row>, q: &Part<Row>) -> Part<Row> {
+        let left = p.zip(q, Op::Or);
+        left.zip(&p.not().zip(&q.not(), Op::Or), Op::And)
+    }
+
+    /// Whether the set `bits` has an odd number of the atoms `0..k`.
+    fn odd(bits: u32, k: u32) -> bool {
+        (bits & ((1 << k) - 1)).count_ones() % 2 == 1
+    }
+
+    #[test]
+    fn exclusive_ors_built_in_any_order_are_one_node() {
+        let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
+        let fold = |order: &[usize], by: fn(&Part<Row>, &Part<Row>) -> Part<Row>| {
+            (order.iter()).fold(Part::leaf(false), |f, &i| by(&f, &lits[i]))
+        };
+        let holds = |bits: u32| move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(i));
+        let forward = fold(&[0, 1, 2, 3, 4, 5], xor_by_or);
+        assert!(forward.xor_tag().is_some(), "{forward:?}");
+        for bits in 0..64 {
+            assert_eq!(forward.eval(&holds(bits)), odd(bits, 6), "{bits:b}");
+        }
+        for order in [[5, 4, 3, 2, 1, 0], [2, 0, 5, 1, 3, 4], [3, 5, 1, 0, 4, 2]] {
+            assert_eq!(fold(&order, xor_by_or).id(), forward.id(), "{order:?}");
+            assert_eq!(fold(&order, xor_by_and).id(), forward.id(), "{order:?}");
+        }
+        // Two halves joined, and a literal's complement taken in.
+        let halves = xor_by_or(&fold(&[0, 2, 4], xor_by_or), &fold(&[5, 3, 1], xor_by_and));
+        assert_eq!(halves.id(), forward.id());
+        let flipped = (1..6).fold(lits[0].not(), |f, i| xor_by_or(&f, &lits[i]));
+        assert_eq!(flipped.id(), forward.not().id());
+        for bits in 0..64 {
+            assert_eq!(flipped.eval(&holds(bits)), !odd(bits, 6), "{bits:b}");
+        }
+        // An atom taken twice leaves; all taken twice leave nothing.
+        let twice = xor_by_or(&forward, &lits[3]);
+        assert_eq!(twice.id(), fold(&[0, 1, 2, 4, 5], xor_by_or).id());
+        assert_eq!(xor_by_and(&forward, &forward.not()).is_leaf(), Some(true));
+        // The choice `c&x | !c&!x`, `!(c ^ x)`.
+        let (c, x) = (fold(&[0, 1], xor_by_or), fold(&[2, 3, 4, 5], xor_by_or));
+        let choice = xor::xor_choice(&c, &x, &x.not()).expect("an exclusive or of two");
+        assert_eq!(choice.id(), forward.not().id());
+        // Restricted to one atom's value, an exclusive or is the one of the others.
+        let fixed = forward.restrict(&|a: &Row| (*a == atom(2)).then_some(true));
+        assert_eq!(fixed.id(), fold(&[0, 1, 3, 4, 5], xor_by_or).not().id());
+    }
+
+    #[test]
+    fn exclusive_ors_agree_with_their_values() {
+        // Random parts over six atoms, each built with its set of values beside it as a mask of
+        // the 64 assignments; exclusive ors in their one form of one function are one node.
+        let lits: Vec<(Part<Row>, u64)> = (0..6)
+            .map(|i| {
+                let mask = (0..64u32).filter(|b| b >> i & 1 == 1);
+                (Part::literal(atom(i)), mask.fold(0u64, |m, b| m | 1 << b))
+            })
+            .collect();
+        let holds = |bits: u32| move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(i));
+        let mut pool: Vec<(Part<Row>, u64)> = lits.clone();
+        let mut ids: HashMap<u64, u64> = HashMap::new();
+        let mut seed = 7u64;
+        for _ in 0..4000 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let pick = (seed >> 33) as usize;
+            let (p, pm) = pool[pick % pool.len()].clone();
+            let (q, qm) = pool[(pick / 7) % pool.len()].clone();
+            let made = match pick % 5 {
+                0 => (xor_by_or(&p, &q), pm ^ qm),
+                1 => (xor_by_and(&p, &q), pm ^ qm),
+                2 => (p.not(), !pm),
+                3 => (p.zip(&q, Op::And), pm & qm),
+                _ => (p.zip(&q, Op::Or), pm | qm),
+            };
+            for bits in 0..64 {
+                assert_eq!(made.0.eval(&holds(bits)), made.1 >> bits & 1 == 1);
+            }
+            if made.0.xor_tag().is_some() {
+                assert_eq!(*ids.entry(made.1).or_insert(made.0.id()), made.0.id());
+            }
+            if pool.len() < 200 {
+                pool.push(made);
+            } else {
+                pool[pick % 200] = made;
+            }
+        }
+        assert!(ids.len() >= 10, "{}", ids.len());
+    }
+
+    #[test]
+    fn exclusive_ors_scale() {
+        // Parity built a literal at a time, as the type operations build it: each step takes a
+        // literal into the set of the one form in `O(log n)`, and makes the expressions of the
+        // `O(log n)` new tree nodes. Two halves of `n` atoms each are joined in `O(n log n)`.
+        // Each size has atoms of its own.
+        let n = 1 << 10;
+        let lits = scaling::inputs(n, |m| {
+            (0..m as u64)
+                .map(|i| Part::literal(atom(16 * m as u64 + i)))
+                .collect::<Vec<_>>()
+        });
+        scaling::check("parity built a literal at a time, by literals", n, |m| {
+            let x = (lits[&m].iter()).fold(Part::leaf(false), |f, l| xor_by_or(&f, l));
+            assert!(x.xor_tag().is_some());
+        });
+        let halves = scaling::inputs(n, |m| {
+            let ls = &lits[&m];
+            let half = |r: std::ops::Range<usize>| {
+                ls[r]
+                    .iter()
+                    .fold(Part::leaf(false), |f, l| xor_by_or(&f, l))
+            };
+            (half(0..m / 2), half(m / 4..m))
+        });
+        scaling::check(
+            "two exclusive ors with half their atoms in common joined, by literals",
+            n,
+            |m| {
+                let (a, b) = &halves[&m];
+                assert!(xor_by_and(a, b).xor_tag().is_some());
             },
         );
     }
@@ -2672,27 +2923,27 @@ mod tests {
     }
 
     /// `t | y_1 | … | y_{m-1}` as expressions nested `m - 1` deep, and `!t`: `t` is the
-    /// complement of the atom `base` kept as an expression, and `y_k` the diagram of the
+    /// complement of the atom `base` kept as an expression, and `y_k` the list of the
     /// atoms `base + 2k - 1` and `base + 2k`, which is no chain under `|`, so that no union
-    /// rebuilt from them merges into a diagram. [`Part::settle`] pins `t` to `false` and
+    /// rebuilt from them merges into a list. [`Part::settle`] pins `t` to `false` and
     /// rebuilds the `m - 1` expressions above it.
     fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
         let t = Part::expr(Form::Not(Part::literal(atom(base))));
         let p = (1..m as u64).fold(t.clone(), |e, k| {
-            let [x, y] = [2 * k - 1, 2 * k].map(|i| Bdd::literal(atom(base + i)));
-            Part::expr(Form::Or(e, Part::Bdd(x.zip(&y, Op::And))))
+            let x = Bdd::literal(atom(base + 2 * k - 1));
+            Part::expr(Form::Or(
+                e,
+                Part::Bdd(x.and_literal((atom(base + 2 * k), true))),
+            ))
         });
         Part::expr(Form::And(p, Part::expr(Form::Not(t))))
     }
 
-    /// The diagram `x_0 & x_1 & … & x_{m-1}`, one node per atom, `m` deep, the atoms from
-    /// `base`, built from the bottom.
+    /// The list `x_0 & x_1 & … & x_{m-1}`, one block of `m` literals, the atoms from `base`.
     fn meet(base: u64, m: usize) -> Bdd<Row> {
-        let mut xs: Vec<Row> = (0..m as u64).map(|k| atom(base + k)).collect();
-        xs.sort();
-        xs.into_iter()
-            .rev()
-            .fold(Bdd::Leaf(true), |b, x| Bdd::node(x, b, Bdd::Leaf(false)))
+        (0..m as u64).fold(Bdd::Leaf(true), |b, k| {
+            b.and_literal((atom(base + k), true))
+        })
     }
 
     /// The walks on expressions and diagrams nested this deep, on a 2 MiB stack.
@@ -2776,17 +3027,11 @@ mod tests {
         });
     }
 
-    /// The diagram `x_0 & … & x_{m-2} & !x_{m-1}`, on the atoms of [`meet`]`(base, m)`, which
-    /// meets it in no value: an intersection of the two meets each pair of their nodes, `m`
-    /// deep.
+    /// The list `x_0 & … & x_{m-2} & !x_{m-1}`, on the atoms of [`meet`]`(base, m)`, which
+    /// meets it in no value: the meet of the two joins each literal of one to the other.
     fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
-        let mut xs: Vec<Row> = (0..m as u64).map(|k| atom(base + k)).collect();
-        xs.sort();
-        let last = xs.pop().expect("one atom or more");
-        let bottom = Bdd::node(last, Bdd::Leaf(false), Bdd::Leaf(true));
-        xs.into_iter()
-            .rev()
-            .fold(bottom, |b, x| Bdd::node(x, b, Bdd::Leaf(false)))
+        let last = atom(base + m as u64 - 1);
+        meet(base, m - 1).and_literal((last, false))
     }
 
     /// The choice `c_{m-1} & (… (c_1 & x_0 | !c_1 & y_1) …) | !c_{m-1} & y_{m-1}`, kept as
@@ -2804,13 +3049,9 @@ mod tests {
         })
     }
 
-    /// How deep the diagrams of the depth test go: `apply` and `flip`, as recursions,
-    /// overflowed the 8 MiB stack of a main thread at 60,000 (and ran at 30,000).
+    /// How deep the lists of the depth test go: the diagrams' `apply` and `flip`, as
+    /// recursions, overflowed the 8 MiB stack of a main thread at 60,000 (and ran at 30,000).
     const DIAGRAM_DEPTH: usize = 100_000;
-
-    /// How deep the paths walked go: `walk`, as a recursion, overflowed the 8 MiB stack at
-    /// 400,000 (and ran at 100,000).
-    const WALK_DEPTH: usize = 400_000;
 
     /// How deep the choices of the depth test go: `Part::not` and `Part::zip`, as a mutual
     /// recursion through `choice`, `choice_of`, `same_as_not` and `choose`, overflowed the
@@ -2822,34 +3063,14 @@ mod tests {
         // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), a
         // quarter of the 8 MiB the depths above overflowed.
         let (a, b) = (meet(0, DIAGRAM_DEPTH), meet_but_last(0, DIAGRAM_DEPTH));
-        assert_eq!(a.zip(&b, Op::And), Bdd::Leaf(false));
+        assert_eq!(a.zip_chain(&b, Op::And), Some(Bdd::Leaf(false)));
         let not_a = a.not();
         assert_eq!(not_a.not(), a);
-        assert_eq!(a.zip(&not_a, Op::Or), Bdd::Leaf(true));
-        let w = meet(0, WALK_DEPTH);
-        let mut paths = 0;
-        assert!(w.paths(&mut |pos, neg| {
-            paths += 1;
-            pos.len() == WALK_DEPTH && neg.is_empty()
-        }));
-        assert_eq!(paths, 1);
-        // Pruned where all the atoms are taken: asked once per node, the last the one that holds.
-        let mut asked = 0;
-        assert!(w.walk(true, &mut |pos, neg| {
-            asked += 1;
-            assert!(neg.is_empty());
-            pos.len() == WALK_DEPTH
-        }));
-        assert_eq!(asked, WALK_DEPTH);
-        // `!w` has a path per atom, the `k`-th taking the atoms before atom `k` and refusing it.
-        let not_w = w.not();
-        let mut refused = 0;
-        assert!(not_w.paths(&mut |pos, neg| {
-            refused += neg.len();
-            neg.len() == 1 && pos.len() < WALK_DEPTH
-        }));
-        assert_eq!(refused, WALK_DEPTH);
-        let base = 10 * WALK_DEPTH as u64;
+        assert_eq!(a.zip_chain(&not_a, Op::Or), Some(Bdd::Leaf(true)));
+        let l = b.list();
+        assert_eq!(l.blocks.len(), 1);
+        assert_eq!(l.blocks[0].1.len(), DIAGRAM_DEPTH);
+        let base = 10 * DIAGRAM_DEPTH as u64;
         let p = choices(base, base + 2 * CHOICE_DEPTH as u64, CHOICE_DEPTH);
         let q = choices(base, base + 4 * CHOICE_DEPTH as u64, CHOICE_DEPTH);
         let not_p = p.not();
@@ -2893,19 +3114,13 @@ mod tests {
                 (m, std::sync::Mutex::new(pairs))
             })
             .into();
-        scaling::check("the meet of two diagrams, by depth", n, |m| {
+        scaling::check("the meet of two lists, by depth", n, |m| {
             let (a, b) = &meets[&m];
-            assert_eq!(a.zip(b, Op::And), Bdd::Leaf(false));
+            assert_eq!(a.zip_chain(b, Op::And), Some(Bdd::Leaf(false)));
         });
-        scaling::check("the complement of a diagram, by depth", n, |m| {
+        // The complement flips the value of the first block and allocates nothing.
+        scaling::check_instructions_only("the complement of a list, by depth", n, 1, |m| {
             assert!(meets[&m].0.not() != meets[&m].0);
-        });
-        scaling::check("the paths of a diagram, by depth", n, |m| {
-            assert!(
-                meets[&m]
-                    .1
-                    .paths(&mut |pos, neg| pos.len() + neg.len() == m)
-            );
         });
         scaling::check("the union of two chains of choices, by depth", n, |m| {
             let (p, q) = chains[&m]

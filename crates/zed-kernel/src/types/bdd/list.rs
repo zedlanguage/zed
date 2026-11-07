@@ -1,439 +1,310 @@
 //! A diagram as a decision list in its one form, which does not depend on the order of the
-//! atoms (step BDD-atom-order): the printers show a diagram from it, since the atom order
-//! follows the digests, and the digests differ between builds.
+//! atoms (step BDD-atom-order).
 //!
 //! Only chains grow a diagram (`Part::zip`), so every diagram is a decision list: literals in
-//! turn, the first that holds giving the value, and a default when none holds. Its one form
-//! has blocks: the first block holds every literal under which the function is constant, all
-//! with one value; each later block holds every literal under which the function is constant
-//! once the literals of the blocks before are false; the values alternate, and the default is
-//! the value left. A literal is in the first block with value `v` exactly when every path to
-//! the leaf `!v` takes the opposite literal, so a block is the atoms forced on the paths to
-//! one leaf ([`Bdd::forced_to`]), the next block those forced on the paths to the other leaf
-//! once the block's literals are set false, and so on.
+//! turn, the first that holds giving the value, and a default when none holds. Its one form has
+//! blocks: the first block holds every literal under which the function is constant, all with
+//! one value; each later block holds every literal under which the function is constant once
+//! the literals of the blocks before are false; the values alternate, and the default is the
+//! value left. So no atom is in two blocks, two or more blocks end in a block of two or more
+//! literals, and one block of one literal takes the value `true`.
 //!
-//! Setting literals false only deletes edges, so the paths to each leaf are kept as live
-//! edges, deleted as the blocks are found: an edge dies when it is set false, when no live
-//! edge is left into its source, or when no live edge is left out of its target. A place in
-//! the order of atoms is forced on the paths to a leaf when no live edge passes over it and
-//! its nodes go on one way only. Each edge dies once, and its death updates a tree over the
-//! places, so the time is `O(n log n)` in the nodes however many blocks there are; finding
-//! the blocks one by one with [`Bdd::forced_to`] took a pass over the nodes per block.
+//! A list is kept as cells, each a block (a set of literals, module `set`) and the cell of the
+//! next block, shared through a table of the thread, so that one list is one cell, and with
+//! the value of its first block; the values of the others alternate. The complement flips that
+//! value. A chain of literals joined to a list ([`Bdd::or_literal`]) adds each literal to the
+//! first block, or puts a block of it first, in `O(log n)`, once the list has had the atom
+//! removed: a literal on an atom the list holds is first set false there, which removes it from
+//! its block or cuts the list at its block, and rebuilds the blocks before.
 
-use std::collections::HashMap;
+use std::sync::atomic::Ordering as Atomic;
+use std::sync::{Arc, OnceLock};
 
-use super::{Bdd, Branch, Literal};
+use super::set::{self, Key, Set, Tree};
+use super::{Bdd, Literal, NEXT, Owned, Part, mix};
+
+/// A block of a list and the cell of the next block: a list, with the value of its first block
+/// beside it ([`Bdd::List`]).
+pub(in crate::types) struct Cell<A: Literal> {
+    /// The cell's id, unique among the nodes of the process, and the next id, kept for it:
+    /// the list of first value `v` has the id `id + v`.
+    pub(super) id: u64,
+    pub(super) digest: u64,
+    pub(super) block: Arc<Set<A>>,
+    pub(super) next: Option<Arc<Cell<A>>>,
+    /// The atoms of this block and the blocks after, made on first use.
+    atoms: OnceLock<imbl::OrdSet<A>>,
+    /// The first node of the list of each first value, as [`Bdd::branch`] shows it: its `hi`
+    /// and `lo`, made on first use.
+    view: [OnceLock<(Bdd<A>, Bdd<A>)>; 2],
+}
+
+/// The cells of a thread, by the ids of their block and next cell.
+pub(in crate::types) type CellTable<A> = std::collections::BTreeMap<(u64, u64), Arc<Cell<A>>>;
+
+/// A cell's block, next cell and views are freed in a loop (module `deep`).
+impl<A: Literal> Drop for Cell<A> {
+    fn drop(&mut self) {
+        if let Some(n) = self.next.take() {
+            A::free(Owned::Cell(n));
+        }
+        for v in &mut self.view {
+            if let Some((hi, lo)) = v.take() {
+                A::free(Owned::Part(Part::Bdd(hi)));
+                A::free(Owned::Part(Part::Bdd(lo)));
+            }
+        }
+    }
+}
 
 /// A diagram as a decision list in its one form (module comment).
 #[derive(Debug)]
 pub(in crate::types) struct List<A: Literal> {
     /// The blocks in order, each its value and its literals: an atom and whether it is
-    /// taken. The literals of a block are in no order that means anything.
+    /// taken. The literals of a block are in the order of their atoms.
     pub(in crate::types) blocks: Vec<(bool, Vec<(A, bool)>)>,
-    /// The value when no literal holds; or, should the diagram not be a decision list, the
-    /// diagram left once every literal of the blocks is false.
-    pub(in crate::types) tail: Result<bool, Bdd<A>>,
+    /// The value when no literal holds.
+    pub(in crate::types) tail: bool,
 }
 
-/// Where an edge leads.
-#[derive(Clone, Copy)]
-enum To {
-    Node(usize),
-    Leaf(bool),
+/// A block to put before a list: its value, its literals, and, when known, the atoms of it and
+/// of the blocks after it.
+type Block<A> = (bool, Tree<A>, Option<imbl::OrdSet<A>>);
+
+/// A block of `assemble`: its value, its literals, none empty, and its atoms as in [`Block`].
+type Built<A> = (bool, Arc<Set<A>>, Option<imbl::OrdSet<A>>);
+
+/// The cell of `block` before `next`, the one in the table if there is one.
+fn cell<A: Literal>(block: Arc<Set<A>>, next: Option<Arc<Cell<A>>>) -> Arc<Cell<A>> {
+    let key = (block.id, next.as_ref().map_or(0, |c| c.id));
+    if let Some(c) = A::table(|t| t.cells.get(&key).cloned()) {
+        return c;
+    }
+    let digest = mix(
+        mix(16, block.digest),
+        next.as_ref().map_or(mix(17, 0), |c| c.digest),
+    );
+    let c = Arc::new(Cell {
+        id: NEXT.fetch_add(2, Atomic::Relaxed),
+        digest,
+        block,
+        next,
+        atoms: OnceLock::new(),
+        view: [OnceLock::new(), OnceLock::new()],
+    });
+    A::table(|t| t.cells.insert(key, c.clone()));
+    c
 }
 
-/// The nodes of a diagram, numbered with the root `0`; edge `2u` is the `hi` of node `u` and
-/// `2u + 1` its `lo`.
-struct Graph<'a, A: Literal> {
-    /// The atoms of the nodes, sorted: an atom's index is its place.
-    atoms: Vec<&'a A>,
-    place: Vec<usize>,
-    to: Vec<To>,
-    /// The edges into each node.
-    into: Vec<Vec<usize>>,
-    /// The edges out of the nodes at each place.
-    at: Vec<Vec<usize>>,
-    /// The nodes, each after its children.
-    post: Vec<usize>,
-}
-
-impl<'a, A: Literal> Graph<'a, A> {
-    fn new(root: &'a Branch<A>) -> Graph<'a, A> {
-        // A node is numbered when first entered, so the root is `0`, and leaves the walk after
-        // every node below it.
-        let mut index: HashMap<u64, usize> = HashMap::new();
-        let mut nodes: Vec<&'a Branch<A>> = Vec::new();
-        let mut post = Vec::new();
-        let mut stack = vec![(root, false)];
-        while let Some((n, below)) = stack.pop() {
-            if below {
-                post.push(index[&n.id]);
-                continue;
-            }
-            if index.contains_key(&n.id) {
-                continue;
-            }
-            index.insert(n.id, nodes.len());
-            nodes.push(n);
-            stack.push((n, true));
-            for c in [&n.lo, &n.hi] {
-                if let Bdd::Node(m) = c
-                    && !index.contains_key(&m.id)
-                {
-                    stack.push((m, false));
-                }
-            }
+impl<A: Literal> Cell<A> {
+    /// The atoms of this block and the blocks after it, made once for each cell, from those of
+    /// the first cell below that has them.
+    pub(super) fn atoms(&self) -> &imbl::OrdSet<A> {
+        if let Some(s) = self.atoms.get() {
+            return s;
         }
-        let mut atoms: Vec<&A> = nodes.iter().map(|n| &n.atom).collect();
-        atoms.sort();
-        atoms.dedup();
-        let place: Vec<usize> = nodes
-            .iter()
-            .map(|n| {
-                atoms
-                    .binary_search(&&n.atom)
-                    .expect("the atom of a node is placed")
-            })
-            .collect();
-        let mut to = Vec::with_capacity(2 * nodes.len());
-        let mut into = vec![Vec::new(); nodes.len()];
-        let mut at = vec![Vec::new(); atoms.len()];
-        for (u, n) in nodes.iter().enumerate() {
-            for (w, c) in [&n.hi, &n.lo].into_iter().enumerate() {
-                let e = 2 * u + w;
-                to.push(match c {
-                    Bdd::Leaf(v) => To::Leaf(*v),
-                    Bdd::Node(m) => {
-                        let v = index[&m.id];
-                        into[v].push(e);
-                        To::Node(v)
+        let mut todo = vec![self];
+        let mut below = self.next.as_deref();
+        let mut atoms = loop {
+            match below {
+                None => break imbl::OrdSet::new(),
+                Some(c) => match c.atoms.get() {
+                    Some(s) => break s.clone(),
+                    None => {
+                        todo.push(c);
+                        below = c.next.as_deref();
                     }
-                });
-                at[place[u]].push(e);
+                },
             }
-        }
-        Graph {
-            atoms,
-            place,
-            to,
-            into,
-            at,
-            post,
-        }
-    }
-
-    /// The place an edge leads to: its target's, or past every place for a leaf.
-    fn end(&self, e: usize) -> usize {
-        match self.to[e] {
-            To::Node(v) => self.place[v],
-            To::Leaf(_) => self.atoms.len(),
-        }
-    }
-}
-
-/// A count at a place no longer counted: its count fell to 0, and counts only fall.
-const RETIRED: i64 = i64::MAX / 2;
-
-/// The number of live edges over each place, as a tree of minima with additions over ranges,
-/// which reports each place when its count falls to 0.
-struct Over {
-    len: usize,
-    min: Vec<i64>,
-    add: Vec<i64>,
-}
-
-impl Over {
-    /// The tree of `counts`; the places whose count is 0 are pushed to `zero`.
-    fn new(counts: &[i64], zero: &mut Vec<usize>) -> Over {
-        let len = counts.len();
-        let mut o = Over {
-            len,
-            min: vec![0; 4 * len.max(1)],
-            add: vec![0; 4 * len.max(1)],
         };
-        if len > 0 {
-            o.build(1, 0, len, counts);
-            if o.min[1] == 0 {
-                o.zeros(1, 0, len, zero);
+        for c in todo.into_iter().rev() {
+            for (a, _) in set::iter(Some(&c.block)) {
+                atoms.insert(a.clone());
             }
+            let _ = c.atoms.set(atoms.clone());
         }
-        o
-    }
-
-    fn build(&mut self, node: usize, lo: usize, hi: usize, counts: &[i64]) {
-        if hi - lo == 1 {
-            self.min[node] = counts[lo];
-            return;
-        }
-        let mid = (lo + hi) / 2;
-        self.build(2 * node, lo, mid, counts);
-        self.build(2 * node + 1, mid, hi, counts);
-        self.min[node] = self.min[2 * node].min(self.min[2 * node + 1]);
-    }
-
-    fn push(&mut self, node: usize) {
-        let d = std::mem::take(&mut self.add[node]);
-        for c in [2 * node, 2 * node + 1] {
-            self.min[c] += d;
-            self.add[c] += d;
-        }
-    }
-
-    /// Takes 1 from the count of each place in `from..to`; the places whose count falls to 0
-    /// are pushed to `zero`.
-    fn fall(&mut self, from: usize, to: usize, zero: &mut Vec<usize>) {
-        if from < to {
-            self.fall_in(1, 0, self.len, from, to, zero);
-        }
-    }
-
-    fn fall_in(
-        &mut self,
-        node: usize,
-        lo: usize,
-        hi: usize,
-        from: usize,
-        to: usize,
-        zero: &mut Vec<usize>,
-    ) {
-        if to <= lo || hi <= from {
-            return;
-        }
-        if from <= lo && hi <= to {
-            self.min[node] -= 1;
-            self.add[node] -= 1;
-            if self.min[node] == 0 {
-                self.zeros(node, lo, hi, zero);
-            }
-            return;
-        }
-        self.push(node);
-        let mid = (lo + hi) / 2;
-        self.fall_in(2 * node, lo, mid, from, to, zero);
-        self.fall_in(2 * node + 1, mid, hi, from, to, zero);
-        self.min[node] = self.min[2 * node].min(self.min[2 * node + 1]);
-    }
-
-    /// Retires the places under `node` whose count is 0, pushing them to `zero`.
-    fn zeros(&mut self, node: usize, lo: usize, hi: usize, zero: &mut Vec<usize>) {
-        if hi - lo == 1 {
-            self.min[node] = RETIRED;
-            zero.push(lo);
-            return;
-        }
-        self.push(node);
-        let mid = (lo + hi) / 2;
-        for (c, l, h) in [(2 * node, lo, mid), (2 * node + 1, mid, hi)] {
-            if self.min[c] == 0 {
-                self.zeros(c, l, h, zero);
-            }
-        }
-        self.min[node] = self.min[2 * node].min(self.min[2 * node + 1]);
-    }
-}
-
-/// The paths from the root to one leaf, as their live edges.
-struct Side {
-    live: Vec<bool>,
-    /// The live edges out of each node, and into it.
-    out: Vec<u8>,
-    inn: Vec<u32>,
-    over: Over,
-    /// Whether no live edge passes over each place.
-    unpassed: Vec<bool>,
-    /// The live edges on each way, `hi` then `lo`, out of the nodes at each place.
-    ways: Vec<[u32; 2]>,
-    /// The places whose counts changed since they were last looked at.
-    queue: Vec<usize>,
-}
-
-impl Side {
-    fn new<A: Literal>(g: &Graph<'_, A>, leaf: bool) -> Side {
-        let nodes = g.place.len();
-        // Whether each node reaches `leaf`, children first.
-        let mut reaches = vec![false; nodes];
-        for &u in &g.post {
-            reaches[u] = (0..2).any(|w| match g.to[2 * u + w] {
-                To::Leaf(v) => v == leaf,
-                To::Node(v) => reaches[v],
-            });
-        }
-        let count = g.atoms.len();
-        let mut s = Side {
-            live: vec![false; 2 * nodes],
-            out: vec![0; nodes],
-            inn: vec![0; nodes],
-            over: Over::new(&[], &mut Vec::new()),
-            unpassed: vec![false; count],
-            ways: vec![[0, 0]; count],
-            queue: (0..count).collect(),
-        };
-        // `passed[i] - passed[i - 1]` live edges pass over place `i`.
-        let mut passed = vec![0i64; count + 1];
-        for u in (0..nodes).filter(|&u| reaches[u]) {
-            for w in 0..2 {
-                let e = 2 * u + w;
-                let on = match g.to[e] {
-                    To::Leaf(v) => v == leaf,
-                    To::Node(v) => reaches[v],
-                };
-                if !on {
-                    continue;
-                }
-                s.live[e] = true;
-                s.out[u] += 1;
-                if let To::Node(v) = g.to[e] {
-                    s.inn[v] += 1;
-                }
-                s.ways[g.place[u]][w] += 1;
-                let (from, to) = (g.place[u] + 1, g.end(e));
-                if from < to {
-                    passed[from] += 1;
-                    passed[to] -= 1;
-                }
-            }
-        }
-        let mut counts = Vec::with_capacity(count);
-        let mut over = 0;
-        for p in &passed[..count] {
-            over += p;
-            counts.push(over);
-        }
-        let mut zero = Vec::new();
-        s.over = Over::new(&counts, &mut zero);
-        for p in zero {
-            s.unpassed[p] = true;
-        }
-        s
-    }
-
-    /// Whether no path is left.
-    fn empty(&self) -> bool {
-        self.out[0] == 0
-    }
-
-    /// Deletes edge `e`, and every edge left on no path with it.
-    fn kill<A: Literal>(&mut self, g: &Graph<'_, A>, e: usize) {
-        let mut work = vec![e];
-        let mut zero = Vec::new();
-        while let Some(e) = work.pop() {
-            if !self.live[e] {
-                continue;
-            }
-            self.live[e] = false;
-            let (u, w) = (e / 2, e % 2);
-            let p = g.place[u];
-            self.out[u] -= 1;
-            self.ways[p][w] -= 1;
-            if self.ways[p][w] == 0 {
-                self.queue.push(p);
-            }
-            if let To::Node(v) = g.to[e] {
-                self.inn[v] -= 1;
-                if self.inn[v] == 0 {
-                    work.extend([2 * v, 2 * v + 1]);
-                }
-            }
-            self.over.fall(p + 1, g.end(e), &mut zero);
-            for q in zero.drain(..) {
-                self.unpassed[q] = true;
-                self.queue.push(q);
-            }
-            if self.out[u] == 0 && u != 0 {
-                work.extend(g.into[u].iter().copied());
-            }
-        }
-    }
-
-    /// The literals not yet `emitted` under which no path to the leaf is left: each place
-    /// whose nodes the paths pass, all going on one way, as its literal the other way.
-    fn forced(&mut self, emitted: &[bool]) -> Vec<(usize, bool)> {
-        let mut found: Vec<(usize, bool)> = Vec::new();
-        for p in std::mem::take(&mut self.queue) {
-            if emitted[p] || !self.unpassed[p] {
-                continue;
-            }
-            match self.ways[p] {
-                [h, 0] if h > 0 => found.push((p, false)),
-                [0, l] if l > 0 => found.push((p, true)),
-                _ => {}
-            }
-        }
-        found.sort_unstable();
-        found.dedup();
-        found
+        self.atoms.get().expect("the atoms were just made")
     }
 }
 
 impl<A: Literal> Bdd<A> {
-    /// The diagram as a decision list in its one form (module comment).
-    pub(in crate::types) fn list(&self) -> List<A> {
-        let root = match self {
-            Bdd::Leaf(v) => {
-                return List {
-                    blocks: Vec::new(),
-                    tail: Ok(*v),
-                };
-            }
-            Bdd::Node(n) => n,
+    /// The list of the one literal `key`.
+    pub(super) fn literal_key(key: Key<A>) -> Bdd<A> {
+        Bdd::List(cell(set::single(key), None), true)
+    }
+
+    /// The cells with the value of each block, first to last.
+    pub(super) fn cells(&self) -> impl Iterator<Item = (bool, &Cell<A>)> {
+        let first = match self {
+            Bdd::Leaf(_) => None,
+            Bdd::List(c, v) => Some((*v, &**c)),
         };
-        let g = Graph::new(root);
-        let mut sides = [Side::new(&g, false), Side::new(&g, true)];
-        if sides[0].empty() || sides[1].empty() {
-            return List {
-                blocks: Vec::new(),
-                tail: Ok(sides[0].empty()),
-            };
-        }
-        let mut emitted = vec![false; g.atoms.len()];
-        // The value each emitted atom is fixed to: the one that makes its literal false.
-        let mut fixed = vec![false; g.atoms.len()];
-        // The first block may have either value: when both have literals, the function is
-        // one literal, and its block of value `true` is taken.
-        let mut lits = sides[0].forced(&emitted);
-        let mut value = true;
-        if lits.is_empty() {
-            lits = sides[1].forced(&emitted);
-            value = false;
-        }
-        let mut blocks = Vec::new();
-        let tail = loop {
-            if lits.is_empty() {
-                break Err(self.restrict(
-                    &|a: &A| {
-                        let p = g
-                            .atoms
-                            .binary_search(&a)
-                            .expect("an atom of the diagram is placed");
-                        emitted[p].then_some(fixed[p])
-                    },
-                    &mut HashMap::new(),
-                ));
+        std::iter::successors(first, |(v, c)| c.next.as_deref().map(|n| (!*v, n)))
+    }
+
+    /// The list of `prefix` before `rest`, a cell and the value of its block, or no cell and the
+    /// default, in its one form (module comment): empty blocks dropped, neighbors of one value
+    /// joined, and the last block moved into the one before when that leaves the same function
+    /// in the one form.
+    pub(super) fn assemble(
+        prefix: Vec<Block<A>>,
+        (mut rest, mut value): (Option<Arc<Cell<A>>>, bool),
+    ) -> Bdd<A> {
+        let mut blocks: Vec<Built<A>> = Vec::new();
+        for (v, s, atoms) in prefix {
+            let Some(s) = s else { continue };
+            match blocks.last_mut() {
+                Some((w, t, _)) if *w == v => *t = set::union(t, &s),
+                _ => blocks.push((v, s, atoms)),
             }
-            // The block's literals made false: the paths to leaf `value` lose the edges that
-            // take them; the paths to the other leaf took none of them.
-            let side = &mut sides[usize::from(value)];
-            for &(p, taken) in &lits {
-                emitted[p] = true;
-                fixed[p] = !taken;
-                for &e in &g.at[p] {
-                    if (e % 2 == 0) == taken {
-                        side.kill(&g, e);
-                    }
+        }
+        match (blocks.last_mut(), &rest) {
+            (Some((v, s, _)), Some(c)) if *v == value => {
+                *s = set::union(s, &c.block);
+                (rest, value) = (c.next.clone(), !value);
+            }
+            (Some((v, ..)), None) if *v == value => {
+                blocks.pop();
+                // The blocks kept have lost atoms of the block dropped.
+                for b in &mut blocks {
+                    b.2 = None;
                 }
             }
-            blocks.push((
-                value,
-                lits.iter()
-                    .map(|&(p, taken)| (g.atoms[p].clone(), taken))
-                    .collect(),
-            ));
-            if side.empty() {
-                break Ok(!value);
-            }
-            lits = side.forced(&emitted);
-            value = !value;
+            _ => {}
+        }
+        if rest.is_none()
+            && let [.., (_, before, _), (u, last, _)] = &mut blocks[..]
+            && let Some(m) = set::single_key(last)
+        {
+            // `… before:!u, {m}:u, default !u` is `… (before ∪ {!m}):!u, default u`.
+            let flipped = (m.0.clone(), !m.1);
+            *before = set::insert(Some(&*before), flipped);
+            value = *u;
+            blocks.pop();
+        }
+        if rest.is_none()
+            && let [(v, only, _)] = &mut blocks[..]
+            && !*v
+            && let Some(m) = set::single_key(only)
+        {
+            // `{m}:false, default true` is `{!m}:true, default false`.
+            let flipped = (m.0.clone(), !m.1);
+            *only = set::single(flipped);
+            (*v, value) = (true, false);
+        }
+        let Some(&(first, ..)) = blocks.first() else {
+            return match rest {
+                Some(c) => Bdd::List(c, value),
+                None => Bdd::Leaf(value),
+            };
         };
-        List { blocks, tail }
+        for (_, s, atoms) in blocks.into_iter().rev() {
+            let c = cell(s, rest.take());
+            if let Some(atoms) = atoms {
+                let _ = c.atoms.set(atoms);
+            }
+            rest = Some(c);
+        }
+        Bdd::List(
+            rest.expect("a list of one or more blocks has a cell"),
+            first,
+        )
+    }
+
+    /// `self | l`, `l` the literal `key`. When the list holds the atom, the literal is first set
+    /// false in it; the literal then joins the first block if its value is `true`, or comes
+    /// first in a block of its own.
+    pub(super) fn or_literal(&self, key: Key<A>) -> Bdd<A> {
+        let (c, v) = match self {
+            Bdd::Leaf(true) => return self.clone(),
+            Bdd::Leaf(false) => return Bdd::literal_key(key),
+            Bdd::List(c, v) => (c, *v),
+        };
+        if !c.atoms().contains(&key.0) {
+            let atoms = Some(c.atoms().update(key.0.clone()));
+            return if v {
+                let first = set::insert(Some(&c.block), key);
+                Bdd::assemble(vec![(true, Some(first), atoms)], (c.next.clone(), false))
+            } else {
+                let first = set::single(key);
+                Bdd::assemble(vec![(true, Some(first), atoms)], (Some(c.clone()), false))
+            };
+        }
+        if v && set::get(Some(&c.block), &key.0) == Some(key.1) {
+            return self.clone();
+        }
+        // The blocks before the atom's, and the block of the atom and its value.
+        let mut before: Vec<(bool, &Cell<A>)> = Vec::new();
+        let mut cells = self.cells();
+        let (w, at, taken) = loop {
+            let (w, at) = cells
+                .next()
+                .expect("an atom of a list is in one of its blocks");
+            match set::get(Some(&at.block), &key.0) {
+                Some(taken) => break (w, at, taken),
+                None => before.push((w, at)),
+            }
+        };
+        let rest = if taken == key.1 {
+            // The literal set false leaves its block; each block before loses the atom.
+            let lose = |c: &Cell<A>| Some(c.atoms().without(&key.0));
+            let mut prefix: Vec<Block<A>> = (before.iter())
+                .map(|(w, c)| (*w, Some(c.block.clone()), lose(c)))
+                .collect();
+            prefix.push((w, set::remove(&at.block, &key), lose(at)));
+            Bdd::assemble(prefix, (at.next.clone(), !w))
+        } else {
+            // The opposite literal holds, so the list ends at its block.
+            let prefix = (before.iter())
+                .map(|(w, c)| (*w, Some(c.block.clone()), None))
+                .collect();
+            Bdd::assemble(prefix, (None, w))
+        };
+        rest.or_literal(key)
+    }
+
+    /// `self & l`, `l` the literal `key`: `!(!self | !l)`.
+    pub(super) fn and_literal(&self, (a, taken): Key<A>) -> Bdd<A> {
+        self.not().or_literal((a, !taken)).not()
+    }
+
+    /// The value when no literal holds.
+    pub(super) fn default(&self) -> bool {
+        match self {
+            Bdd::Leaf(v) => *v,
+            Bdd::List(..) => {
+                let (v, _) = self.cells().last().expect("a list has a cell");
+                !v
+            }
+        }
+    }
+
+    /// The decision list in its one form (module comment).
+    pub(in crate::types) fn list(&self) -> List<A> {
+        let blocks = self
+            .cells()
+            .map(|(v, c)| (v, set::iter(Some(&c.block)).cloned().collect()))
+            .collect();
+        List {
+            blocks,
+            tail: self.default(),
+        }
+    }
+
+    /// The list's first node, as a diagram would have it: the smallest literal of the first
+    /// block, and the leaf of the block's value on the side where it holds, the list without
+    /// it on the other. The view is made once for each list.
+    pub(super) fn view(&self) -> Option<(&A, &Bdd<A>, &Bdd<A>)> {
+        let Bdd::List(c, v) = self else { return None };
+        let (a, taken) = set::min(&c.block);
+        let (hi, lo) = c.view[usize::from(*v)].get_or_init(|| {
+            let without = set::remove(&c.block, &(a.clone(), *taken));
+            let rest = Bdd::assemble(vec![(*v, without, None)], (c.next.clone(), !*v));
+            match taken {
+                true => (Bdd::Leaf(*v), rest),
+                false => (rest, Bdd::Leaf(*v)),
+            }
+        });
+        Some((a, hi, lo))
     }
 }
