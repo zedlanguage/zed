@@ -56,7 +56,9 @@ fn zedc_test_prints_the_warning_zedc_run_prints() {
     // The area of a square whose side fits in an i64 does not.
     let src = checked_program("  side = 3037000500;\n  area = side * side;\n");
     let file = unit("area", "area.zed", &src);
-    let address = zedc::run::load(src.as_bytes()).unwrap().warnings()[0].address;
+    let address = zedc::suppress::InFile::of(file.as_ref())
+        .unwrap()
+        .address(&zedc::run::load(src.as_bytes()).unwrap().warnings()[0]);
     let (status, out, err) = test(&[&file]);
     assert_eq!(status, 0, "{out}");
     assert_eq!(out, "2 passed, 0 failed, 0 rejection units\n");

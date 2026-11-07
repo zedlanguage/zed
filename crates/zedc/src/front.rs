@@ -40,7 +40,9 @@ pub struct Diagnostic {
     pub steps: Vec<Step>,
     /// The row of the rejection table (DESIGN.md sec:diagnostics) it is a case of, if any.
     pub row: Option<crate::rejection::Row>,
-    /// Its address, the same on every run of the same source ([`crate::suppress`]).
+    /// The part of its address that the unit's text decides, the same on every run of the same
+    /// text; the address printed and suppressed joins it with the file's part
+    /// ([`crate::suppress::InFile::address`]).
     pub address: ContentAddress,
 }
 

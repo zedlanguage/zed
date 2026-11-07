@@ -39,6 +39,11 @@ path = "../../tests/steps/l01_36a_executables/binary.rs"
 name = "report_binary"
 path = "../../tests/steps/l01_30_queries/binary.rs"
 
+# `zedc run --suppress` run from a directory of the user's (DIAG-suppress-rest).
+[[test]]
+name = "suppress_binary"
+path = "../../tests/steps/l01_29_diagnostics/suppress_binary.rs"
+
 [dependencies]
 cranelift-codegen = "0.137.1"
 cranelift-frontend = "0.137.1"

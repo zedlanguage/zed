@@ -1910,3 +1910,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `std::mem::take` and `std::mem::replace` of the search's list of missing values read, around a nested build and each retry, and a `BTreeMap` from a type to the kept failures waiting on it, updated in place | `Searching::rep`, `Searching::retry`, `Search::forget_failures` | Mutation | A nested build returns the types it read with its value; the waiting map is search state threaded through the builds, as the other `Search` fields |
+
+## Entries from DIAG-suppress-rest (`zedc/src/suppress.rs`, `run.rs`, `testing.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::fs::canonicalize` of the file and of `std::env::current_dir()`, which resolve every symbolic link and `.` and `..` step through the operating system | `InFile::of` | Library (host file system) | A `realpath` word of the `Files` port (step L1.19), and the current directory as a field of the process environment port (ENV-port) |
+| `Path::components` compared pairwise up to the first difference, then each remaining part's bytes by `OsStr::as_encoded_bytes` | `InFile::from_resolved` | None | A path as a list of `U8String` parts; the shared prefix by a fold with early exit, the rest appended to the hash input |

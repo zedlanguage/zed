@@ -23,7 +23,7 @@ use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::rows::{row, wave};
 use crate::run::{self, Through};
-use crate::suppress::Suppress;
+use crate::suppress::{InFile, Suppress};
 use crate::work::{self, Stage};
 use crate::{fence, front, source};
 
@@ -244,7 +244,8 @@ fn mark_failure(ds: &[&front::Diagnostic], named: Option<Row>) -> Option<String>
 /// run, those with a line marked ✗. A file with no table row and no ✗ mark fails, so a run
 /// that finds no tests fails. Returns the exit status: 0 when every check passes, 1 when
 /// one fails (a unit that does not compile, a row that fails or aborts, a marked line), 2 for
-/// a usage error or a file that cannot be read.
+/// a usage error, a file that cannot be read, or a file or current directory that cannot be
+/// resolved to the path the addresses name ([`InFile`]).
 ///
 /// `zedc test --mutate <file> …` then runs the tables against each mutant of each unit that
 /// compiles (step L25.8, [`crate::mutate`]) when every check passes, and writes each mutant
@@ -285,6 +286,13 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
                 return 2;
             }
         };
+        let at = match InFile::of(std::path::Path::new(file)) {
+            Ok(at) => at,
+            Err(why) => {
+                let _ = writeln!(stderr, "{why}");
+                return 2;
+            }
+        };
         let text = match text {
             Ok(text) => text,
             Err(why) => {
@@ -301,11 +309,11 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         // printed only when the front end and `run::program` accept it.
         match &*db.front(&text) {
             Ok((_, _, warnings)) if accepted => {
-                let _ = run::write_warnings(stderr, file, warnings, &mut suppress);
+                let _ = run::write_warnings(stderr, file, at, warnings, &mut suppress);
             }
             // A rejection cannot be suppressed: naming one fails the run.
             Err(rejections) => {
-                for line in suppress.refused(file, rejections) {
+                for line in suppress.refused(file, at, rejections) {
                     let _ = writeln!(stdout, "{line}");
                     failed += 1;
                 }

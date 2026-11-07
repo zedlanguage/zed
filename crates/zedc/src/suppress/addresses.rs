@@ -1,8 +1,8 @@
 //! The address of a diagnostic (DESIGN.md sec:diagnostics, item DIAG-suppress): a hash of what
 //! the diagnostic is and where in the unit's declarations it lies, the same on every run of the
-//! same source. A file of its own so that the front end (`crate::front`), which gives each
-//! diagnostic its address, imports it without importing the suppression, which reads
-//! diagnostics.
+//! same source; `super::InFile` adds the file. A file of its own so that the front end
+//! (`crate::front`), which gives each diagnostic its address, imports it without importing the
+//! suppression, which reads diagnostics.
 
 use std::collections::HashMap;
 
@@ -19,13 +19,14 @@ pub enum Severity {
     Rejection,
 }
 
-/// The addresses of `errors`, diagnostics of `severity` of the unit `text` whose top-level
+/// The part of the address that the text decides ([`super::InFile`] joins it with the file's)
+/// of each of `errors`, diagnostics of `severity` of the unit `text` whose top-level
 /// statements are `stmts` (empty when the unit was rejected before resolution), in order.
 ///
-/// An address is the BLAKE3-256 hash of the severity, the rejection row, the name of the
+/// That part is the BLAKE3-256 hash of the severity, the rejection row, the name of the
 /// top-level declaration the diagnostic lies in, the text of the node it is at with its
 /// white space dropped, and its message; and of its occurrence among the diagnostics with all
-/// of these the same, counted in order, so that no two diagnostics of a unit share an address.
+/// of these the same, counted in order, so that no two diagnostics of a unit share it.
 /// Line and column are not part of it, so an edit elsewhere in the unit, a line added above
 /// for instance, leaves it as it was. The full 256 bits are kept even under zed-kernel's
 /// feature `short-addresses`, which shortens content addresses only.

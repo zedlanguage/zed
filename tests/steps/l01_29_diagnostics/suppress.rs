@@ -1,13 +1,16 @@
-//! Item DIAG-suppress (DESIGN.md sec:diagnostics): each diagnostic prints its address, the
-//! same on every run of the same source; `--suppress <address>` leaves that warning unprinted
-//! and the program unchanged; naming a rejection is an error and the run still fails; an
-//! address that names nothing is reported.
+//! Items DIAG-suppress and DIAG-suppress-rest (DESIGN.md sec:diagnostics): each diagnostic
+//! prints its address, the same on every run of the same file from the same directory and
+//! different in each file; `--suppress <address>` leaves that warning unprinted and the program
+//! unchanged; naming a rejection is an error and the run still fails; an address that names
+//! nothing is reported.
+
+use std::path::{Component, Path, PathBuf};
 
 use zed_tests::scaling;
 use zedc::address::ContentAddress;
 use zedc::front::Diagnostic;
 use zedc::run::{load, load_file};
-use zedc::suppress::Suppress;
+use zedc::suppress::{InFile, Suppress};
 
 use super::widen_test::{checked_program, many_squares, unit};
 
@@ -57,15 +60,21 @@ fn zir(file: &str, words: &[&str]) -> (String, String) {
     (zedc::zir::text::print(&g), String::from_utf8(err).unwrap())
 }
 
+/// The address the first warning of the program `src`, read from `file`, prints.
+fn address_in(file: &str, src: &str) -> String {
+    InFile::of(Path::new(file))
+        .unwrap()
+        .address(&load(src.as_bytes()).unwrap().warnings()[0])
+        .to_string()
+}
+
 #[test]
 fn a_warning_prints_the_same_address_on_every_run() {
     let src = area();
     let file = unit("suppress", "same.zed", &src);
     let (status, _, first) = zedc(&["run", &file]);
     assert_eq!(status, 0);
-    let want = load(src.as_bytes()).unwrap().warnings()[0]
-        .address
-        .to_string();
+    let want = address_in(&file, &src);
     assert_eq!(printed(&first), [want.as_str()]);
     // The address follows the warning's derivation, on a line of its own.
     assert!(
@@ -73,11 +82,136 @@ fn a_warning_prints_the_same_address_on_every_run() {
         "{first}"
     );
     assert_eq!(zedc(&["run", &file]).2, first);
-    // A line added above moves the warning to line 5 and leaves its address.
-    let moved = unit("suppress", "moved.zed", &format!("// a comment\n{src}"));
-    let (_, _, err) = zedc(&["run", &moved]);
+    // A line added above, in the same file, moves the warning to line 5 and leaves its address.
+    unit("suppress", "same.zed", &format!("// a comment\n{src}"));
+    let (_, _, err) = zedc(&["run", &file]);
     assert!(err.contains(":5:10: `area` widens"), "{err}");
     assert_eq!(printed(&err), [want.as_str()]);
+    // So does a function added below `main`.
+    unit(
+        "suppress",
+        "same.zed",
+        &format!("{src}third(positional x) = x div 3 test {{ 9 -> 3 }}\n"),
+    );
+    assert_eq!(printed(&zedc(&["run", &file]).2), [want.as_str()]);
+}
+
+#[test]
+fn the_same_warning_in_two_files_has_two_addresses() {
+    // One text in four files: two names in one directory, and one name in two directories.
+    let src = area();
+    let files = [
+        unit("suppress", "first.zed", &src),
+        unit("suppress", "second.zed", &src),
+        unit("suppress/left", "copy.zed", &src),
+        unit("suppress/right", "copy.zed", &src),
+    ];
+    let names: Vec<&str> = files.iter().map(String::as_str).collect();
+    let (status, out, err) = zedc_test(&names);
+    assert_eq!(
+        (status, out.as_str()),
+        (0, "8 passed, 0 failed, 0 rejection units\n")
+    );
+    let all = printed(&err);
+    assert_eq!(all.len(), 4, "{err}");
+    assert_eq!(
+        all.iter().collect::<std::collections::HashSet<_>>().len(),
+        4,
+        "{err}"
+    );
+    for (file, a) in files.iter().zip(&all) {
+        // Checking each file alone prints the address checking them together prints.
+        assert_eq!(printed(&zedc(&["run", file]).2), [*a]);
+        assert_eq!(printed(&zedc_test(&[file]).2), [*a]);
+        assert_eq!(*a, address_in(file, &src));
+    }
+    // Suppressing the third file's warning hides it and no other.
+    let mut words = vec!["--suppress", all[2]];
+    words.extend(&names);
+    let (status, _, rest) = zedc_test(&words);
+    assert_eq!(status, 0);
+    assert_eq!(printed(&rest), [all[0], all[1], all[3]]);
+    assert!(!rest.contains(&files[2]), "{rest}");
+    assert!(
+        rest.contains(&format!("{}:4:10: `area` widens", files[3])),
+        "{rest}"
+    );
+}
+
+/// The path of `to`, an absolute path, from the current directory, with `..` for each part of
+/// the current directory below the parts the two share.
+fn relative(to: &Path) -> PathBuf {
+    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let to = to.canonicalize().unwrap();
+    let shared = here
+        .components()
+        .zip(to.components())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut path: PathBuf = here
+        .components()
+        .skip(shared)
+        .map(|_| Component::ParentDir)
+        .collect();
+    path.extend(to.components().skip(shared));
+    path
+}
+
+#[test]
+fn a_file_named_by_several_paths_has_one_address() {
+    // The rule: a file's part of the address is its path from the current directory once
+    // every link and every `.` and `..` step is resolved, so any path to it gives the same.
+    let src = area();
+    let file = unit("suppress/paths", "one.zed", &src);
+    let dir = Path::new(&file).parent().unwrap();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let link = dir.join("link.zed");
+    if std::fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink("one.zed", &link).unwrap();
+    }
+    let paths = [
+        file.clone(),
+        dir.join(".").join("one.zed").display().to_string(),
+        dir.join("sub")
+            .join("..")
+            .join("one.zed")
+            .display()
+            .to_string(),
+        link.display().to_string(),
+        relative(Path::new(&file)).display().to_string(),
+    ];
+    assert!(paths[4].starts_with(".."), "{}", paths[4]);
+    let names: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let (status, _, err) = zedc_test(&names);
+    assert_eq!(status, 0);
+    let want = address_in(&file, &src);
+    assert_eq!(printed(&err), [want.as_str(); 5]);
+    // The one address hides the warning under every path.
+    let mut words = vec!["--suppress", &want];
+    words.extend(&names);
+    assert_eq!(
+        zedc_test(&words),
+        (
+            0,
+            "10 passed, 0 failed, 0 rejection units\n".into(),
+            String::new()
+        )
+    );
+}
+
+#[test]
+fn a_file_whose_name_has_spaces_and_other_characters_round_trips() {
+    // The address is hex, whatever the path holds, so it needs no quoting.
+    let file = unit("suppress/odd name", "a b, ü & $x 'q'.zed", &area());
+    let (status, out, err) = zedc(&["run", &file]);
+    assert_eq!(status, 0);
+    let a = printed(&err)[0].to_string();
+    assert!(err.starts_with(&format!("{file}:4:10:")), "{err}");
+    assert_eq!(
+        zedc(&["run", &file, "--suppress", &a]),
+        (0, out, String::new())
+    );
+    assert_eq!(zedc_test(&["--suppress", &a, &file]).2, "");
 }
 
 #[test]
@@ -196,10 +330,11 @@ fn suppressing_every_warning_scales() {
         .map(|m| {
             let src = many_squares(m);
             let file = unit("suppress", &format!("scale{m}.zed"), &src);
+            let at = InFile::of(Path::new(&file)).unwrap();
             let mut words = vec!["run".to_string(), file];
             for w in load(src.as_bytes()).unwrap().warnings() {
                 words.push("--suppress".into());
-                words.push(w.address.to_string());
+                words.push(at.address(w).to_string());
             }
             (m, words)
         })
@@ -240,7 +375,7 @@ fn matching_suppressions_scales() {
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
         let (mut suppress, rest) = Suppress::take(&words).unwrap();
         assert!(rest.is_empty());
-        assert!(warnings.iter().all(|w| suppress.hides(w)));
+        assert!(warnings.iter().all(|w| suppress.hides(w.address)));
         assert!(suppress.unmatched().is_empty());
     });
 }

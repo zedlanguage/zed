@@ -23,7 +23,7 @@ use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::Unit;
 use crate::front::{Diagnostic, compile};
-use crate::suppress::Suppress;
+use crate::suppress::{InFile, Suppress};
 use crate::work::{self, Stage};
 use crate::{canon, interp, source, stage};
 
@@ -265,18 +265,20 @@ fn loaded(bytes: &[u8]) -> Result<Program, Unloaded> {
     Ok(program)
 }
 
-/// Writes each warning of `warnings`, of the unit read from `file`, that `suppress` does not
-/// name to `out` as `file:` then the warning, then its address on a line of its own: what
-/// `zedc run` and `zedc test` print before they run the unit.
+/// Writes each warning of `warnings`, of the unit read from `file`, which is `at`, that
+/// `suppress` does not name to `out` as `file:` then the warning, then its address on a line of
+/// its own: what `zedc run` and `zedc test` print before they run the unit.
 pub(crate) fn write_warnings(
     out: &mut dyn Write,
     file: &str,
+    at: InFile,
     warnings: &[Diagnostic],
     suppress: &mut Suppress,
 ) -> std::io::Result<()> {
     for w in warnings {
-        if !suppress.hides(w) {
-            writeln!(out, "{file}:{w}\n  address: {}", w.address)?;
+        let address = at.address(w);
+        if !suppress.hides(address) {
+            writeln!(out, "{file}:{w}\n  address: {address}")?;
         }
     }
     Ok(())
@@ -836,9 +838,10 @@ fn command_inner(
 
 /// The program in `file`, its warnings that `suppress` does not name written to `stderr` as
 /// `zedc run` writes them, then a line for each address `suppress` names that no warning has;
-/// or the exit status and message: 2 when the file cannot be read, 1 when the program is
-/// rejected, each rejection followed by its address and a line for each rejection `suppress`
-/// names, since a rejection cannot be suppressed.
+/// or the exit status and message: 2 when the file cannot be read, or it or the current
+/// directory cannot be resolved to the path its addresses name ([`InFile`]), 1 when the
+/// program is rejected, each rejection followed by its address and a line for each rejection
+/// `suppress` names, since a rejection cannot be suppressed.
 pub fn load_file(
     file: &str,
     suppress: &mut Suppress,
@@ -846,6 +849,7 @@ pub fn load_file(
 ) -> Result<Program, (u8, String)> {
     work::unit(file);
     let bytes = std::fs::read(file).map_err(|e| (2, format!("{file}: {e}")))?;
+    let at = InFile::of(std::path::Path::new(file)).map_err(|e| (2, e))?;
     // A unit under a manifest that imports a unit, or sees a prelude unit, is read with its
     // package (step L2.3); linking it to the units it imports is step L2.4.
     if let Ok(text) = std::str::from_utf8(&bytes)
@@ -861,13 +865,13 @@ pub fn load_file(
         Err(Unloaded::Rejected(ds)) => {
             let mut lines: Vec<String> = ds
                 .iter()
-                .map(|d| format!("{d}\n  address: {}", d.address))
+                .map(|d| format!("{d}\n  address: {}", at.address(d)))
                 .collect();
-            lines.extend(suppress.refused(file, &ds));
+            lines.extend(suppress.refused(file, at, &ds));
             return Err((1, format!("{file}:{}", lines.join("\n"))));
         }
     };
-    let written = write_warnings(stderr, file, program.warnings(), suppress).and_then(|()| {
+    let written = write_warnings(stderr, file, at, program.warnings(), suppress).and_then(|()| {
         suppress
             .unmatched()
             .iter()
