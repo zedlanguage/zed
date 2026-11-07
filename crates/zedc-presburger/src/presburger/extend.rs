@@ -11,11 +11,17 @@
 //! body and the definitions it reaches, `defs && body` and `defs && !body`, and a part's
 //! definitions are reached from the part alone, so a conjunction is decided from its kept
 //! part's answers and its other parts with their own definitions.
+//!
+//! A question decided with its definitions reads each definition's chain through a summary of
+//! it (`Summaries`, LOAD-chain-sep): the chain projected exactly onto the variables of its
+//! last definition and the atoms it does not define, made from the summary of the definition
+//! before, so separate tests over the links of one chain (`t{i}(x) = h{i}(x: x) > 0`, `h{i} =
+//! h{i-1} div 2 + 1`) read one definition and one summary each, not the chain.
 
 use std::collections::{HashMap, HashSet};
 
 use super::formula::Id;
-use super::{Atom, Con, Factor, Formula, Lin, Model, Refusal, decide, satisfiable};
+use super::{Atom, Con, Factor, Formula, Lin, Model, Refusal, decide, satisfiable, shadow};
 use zedc_int::int::Int;
 
 /// Whether a formula holds somewhere and whether its negation does, each with the refusal that
@@ -41,10 +47,31 @@ struct Known {
     point: Option<Point>,
 }
 
-/// The answers of conjunctions decided so far, by the part each is.
+/// The answers of conjunctions decided so far, by the part each is, and the summaries of the
+/// definitions read so far.
 #[derive(Default)]
 pub struct Extending {
     known: HashMap<Id, Known>,
+    sums: Summaries,
+}
+
+/// The definitions a definition reaches, projected exactly: by the definition (the formula
+/// `def` gives, held as a key, so that the quotient and the remainder it defines share it), its
+/// summary, or `None` where none is made.
+#[derive(Default)]
+struct Summaries {
+    by: HashMap<Id, Option<Summary>>,
+}
+
+/// A definition `d` and the definitions it reaches, projected onto the variables `d` defines and
+/// the atoms none of them defines (the inputs, and variables with no definition): the integer
+/// points of `rows` are those of the conjunction read on these atoms (exact, [`shadow`] with its
+/// dark shadows). Made only where each definition reads the variables of one definition at
+/// most, so the definitions reached form a path down to the one that reads none, `bottom`; two
+/// summaries with different bottoms share no definition.
+struct Summary {
+    rows: Formula,
+    bottom: Id,
 }
 
 impl Extending {
@@ -100,11 +127,13 @@ impl Extending {
     // solution needs an incremental integer procedure: a simplex kept from the callee, with
     // its basis, to which the new rows are added, and the branch of an integer search redone
     // only where the new rows cut it.
-    // The same holds for a negation the part's point and the new definitions do not settle
-    // (decided with every definition it reaches), and for a question with no kept part (`t(x) =
-    // h(x: x) > 0`, decided whole with every definition it reaches, so separate tests over the
-    // links of one chain of n definitions read O(n²) definitions; open, COMPLEXITY.md row
-    // LOAD-chain-defs).
+    // A negation the part's point and the new definitions do not settle, and a question with
+    // no kept part (`t(x) = h(x: x) > 0`), are decided with the summaries of the definitions
+    // they read ([`Summaries`], LOAD-chain-sep), so separate tests over the links of one chain
+    // of n definitions read O(n) rows in all; where a summary is not made, with every
+    // definition they reach (the tradeoff at [`Summaries::summary`]). A conjunction with no
+    // kept part finds its point with every definition it reaches, as above, since a summary
+    // gives no value to the atoms it projects out.
     pub fn defined(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Answers {
         // The chain of kept conjunctions from `f` down to the first one known or with no kept
         // part, each decided after the one it holds: an explicit stack, since the chain is as
@@ -125,24 +154,21 @@ impl Extending {
         }
         match f {
             Formula::And(_) => self.known[&Id::any(f)].answers.clone(),
-            _ => {
-                let d = reached(f, def);
-                Answers {
-                    holds: decide(&with(&d, f.clone())),
-                    fails: decide(&with(&d, Formula::negate(f.clone()))),
-                }
-            }
+            _ => Answers {
+                holds: decide_defined(&mut self.sums, f.clone(), def),
+                fails: decide_defined(&mut self.sums, Formula::negate(f.clone()), def),
+            },
         }
     }
 
     /// The answers of the conjunction `g`, its kept part's answers known when it has one.
-    fn extend(&self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
+    fn extend(&mut self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
         let Some(at) = kept_at(g) else {
-            return whole(g, def);
+            return whole(&mut self.sums, g, def);
         };
         let kids = g.kids();
         let Some(part) = self.known.get(&Id::any(&kids[at])) else {
-            return whole(g, def);
+            return whole(&mut self.sums, g, def);
         };
         // The other parts, O(their number), and the definitions they reach; a refusal on them
         // is answered by deciding the whole, so a refused question prints the refusal it
@@ -181,13 +207,13 @@ impl Extending {
                 });
                 match short {
                     Some(b) => Ok(b),
-                    None => match decide(&with(&reached(&not, def), not)) {
+                    None => match decide_defined(&mut self.sums, not, def) {
                         Ok(b) => Ok(b),
-                        Err(_) => fails_whole(g, def),
+                        Err(_) => fails_whole(&mut self.sums, g, def),
                     },
                 }
             }
-            Err(_) => fails_whole(g, def),
+            Err(_) => fails_whole(&mut self.sums, g, def),
         };
         Known {
             answers: Answers { holds, fails },
@@ -325,18 +351,210 @@ fn holds_whole(
 }
 
 /// Whether the negation of `g` and its definitions hold somewhere, decided whole.
-fn fails_whole(g: &Formula, def: &dyn Fn(u32) -> Formula) -> Result<bool, Refusal> {
-    decide(&with(&reached(g, def), Formula::negate(g.clone())))
+fn fails_whole(
+    sums: &mut Summaries,
+    g: &Formula,
+    def: &dyn Fn(u32) -> Formula,
+) -> Result<bool, Refusal> {
+    decide_defined(sums, Formula::negate(g.clone()), def)
 }
 
 /// The answers of `g`, decided whole.
-fn whole(g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
+fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
     let (holds, point) = holds_whole(g, def);
     Known {
         answers: Answers {
             holds,
-            fails: fails_whole(g, def),
+            fails: fails_whole(sums, g, def),
         },
         point,
     }
+}
+
+/// Whether `f` holds somewhere with the definitions it reaches: decided with their summaries
+/// ([`Summaries::read`]) where each is made and the answer is given, and otherwise with the
+/// definitions themselves, so that a question the solver refuses with the summaries prints the
+/// refusal it printed before. The answers agree where the solver gives both, since each summary
+/// is exact; a question it refuses whole may be answered with the summaries, which are smaller.
+fn decide_defined(
+    sums: &mut Summaries,
+    f: Formula,
+    def: &dyn Fn(u32) -> Formula,
+) -> Result<bool, Refusal> {
+    if let Some(d) = sums.read(&f, def)
+        && let Ok(b) = decide(&with(&d, f.clone()))
+    {
+        return Ok(b);
+    }
+    decide(&with(&reached(&f, def), f))
+}
+
+impl Summaries {
+    /// The summaries of the definitions of `f`'s auxiliary variables, one for each definition,
+    /// in place of every definition `f` reaches: `None` when one has none, or when two have the
+    /// same bottom, so that they may share definitions and their projections, each exact, may
+    /// not be together. Time of `f` and of the summaries made, each made once.
+    fn read(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Option<Vec<Formula>> {
+        let mut seen: HashSet<Id> = HashSet::new();
+        let mut bottoms: HashSet<Id> = HashSet::new();
+        let mut out = Vec::new();
+        for n in f.atoms().iter().flat_map(auxes) {
+            let d = def(n);
+            if matches!(&d, Formula::And(gs) if gs.is_empty()) {
+                continue;
+            }
+            if !matches!(d, Formula::And(_)) {
+                return None;
+            }
+            let id = Id::any(&d);
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let s = self.summary(&d, def)?;
+            if !bottoms.insert(s.bottom.clone()) {
+                return None;
+            }
+            out.push(s.rows.clone());
+        }
+        Some(out)
+    }
+
+    /// The summary of the definition `d`, a conjunction, made from the summary of the one
+    /// definition its variables read, which is made first: an explicit stack, since the path is
+    /// as deep as the chain of definitions. Each definition is read once, and its summary is
+    /// `shadow` of its constraints and its input's summary, so the time is that of the
+    /// definitions and the summaries along the path, each made once and remembered.
+    // Complexity tradeoff: no summary is made, and the question is decided with every
+    // definition it reaches as before, for a definition that is not a conjunction of
+    // constraints (`min`, `max`, `abs`, an `if`, a `div` by a variable, each a disjunction), one
+    // with products of variables, one that reads the variables of two definitions, one whose
+    // input has none, and one whose projection `shadow` does not finish (an atom of the input
+    // left in it); and for a question that reads two variables on one path (`h3(x: x) > 0 &&
+    // h7(x: x) > 0`). Separate tests over the links of such a chain read O(n²) definitions.
+    // Why: projecting a disjunction keeps one case per branch, which may double at each link,
+    // and two definitions read together need the conjunction of their paths, which no single
+    // summary is. Trigger: these definitions in a chain of separate tests. Test
+    // `l01_38_presburger::one_scope::summaries_of_definitions_give_the_answers_of_the_definitions`,
+    // which checks the answers, COMPLEXITY.md row LOAD-chain-sep. A complete solution keeps
+    // a summary per case of a disjunction, merged where cases agree, and for two variables on
+    // one path the summary of the lower projected onto both, made from the higher's path.
+    // The coefficients of a summary are those of the composed definitions (`2^i` after i
+    // halvings), so its numbers have O(i) bits; the solver's own elimination of the whole chain
+    // makes the same numbers.
+    fn summary(&mut self, d: &Formula, def: &dyn Fn(u32) -> Formula) -> Option<&Summary> {
+        let mut stack: Vec<Formula> = vec![d.clone()];
+        let mut open: HashSet<Id> = HashSet::new();
+        while let Some(top) = stack.last() {
+            let id = Id::any(top);
+            if self.by.contains_key(&id) {
+                open.remove(&id);
+                stack.pop();
+                continue;
+            }
+            open.insert(id.clone());
+            match self.make(top, &id, def) {
+                Made::Done(s) => {
+                    self.by.insert(id.clone(), s);
+                    open.remove(&id);
+                    stack.pop();
+                }
+                Made::First(g) if !open.contains(&Id::any(&g)) => stack.push(g),
+                Made::First(_) => {
+                    self.by.insert(id.clone(), None);
+                    open.remove(&id);
+                    stack.pop();
+                }
+            }
+        }
+        self.by.get(&Id::any(d))?.as_ref()
+    }
+
+    /// The summary of the definition `d` (whose key is `id`) when the summary of its input is
+    /// known, or the input to make first. Time of `d` and of its input's summary.
+    fn make(&self, d: &Formula, id: &Id, def: &dyn Fn(u32) -> Formula) -> Made {
+        let none = Made::Done(None);
+        let mut rows: Vec<Con> = Vec::new();
+        for h in d.kids() {
+            match h {
+                Formula::Con(c) => rows.push(c.clone()),
+                _ => return none,
+            }
+        }
+        // The atoms the summary keeps: the inputs (the variables without a definition and
+        // those of no other definition) and the variables `d` defines.
+        let mut keep: HashSet<Atom> = HashSet::new();
+        let mut input: Option<(Id, Formula)> = None;
+        for c in &rows {
+            for a in c.lin.terms.keys() {
+                match a {
+                    Atom::Product(..) => return none,
+                    Atom::Sym(_) => {
+                        keep.insert(a.clone());
+                    }
+                    Atom::Aux(n) => {
+                        let e = def(*n);
+                        if matches!(&e, Formula::And(gs) if gs.is_empty()) {
+                            keep.insert(a.clone());
+                            continue;
+                        }
+                        if !matches!(e, Formula::And(_)) {
+                            return none;
+                        }
+                        let eid = Id::any(&e);
+                        if eid == *id {
+                            keep.insert(a.clone());
+                        } else {
+                            match &input {
+                                None => input = Some((eid, e)),
+                                Some((j, _)) if *j == eid => {}
+                                Some(_) => return none,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let Some((gid, g)) = input else {
+            return Made::Done(Some(Summary {
+                rows: d.clone(),
+                bottom: id.clone(),
+            }));
+        };
+        let Some(known) = self.by.get(&gid) else {
+            return Made::First(g);
+        };
+        let Some(below) = known else {
+            return none;
+        };
+        // The input's summary reads the inputs and the input definition's variables, which
+        // are projected out.
+        for a in below.rows.atoms() {
+            if matches!(a, Atom::Sym(_))
+                || matches!(&a, Atom::Aux(n) if matches!(&def(*n), Formula::And(gs) if gs.is_empty()))
+            {
+                keep.insert(a);
+            }
+        }
+        rows.extend(below.rows.cons().into_iter().cloned());
+        let Some(out) = shadow(&rows, &|a| keep.contains(a), true) else {
+            return none;
+        };
+        if out
+            .iter()
+            .any(|c| c.lin.terms.keys().any(|a| !keep.contains(a)))
+        {
+            return none;
+        }
+        Made::Done(Some(Summary {
+            rows: Formula::and(out.into_iter().map(Formula::Con).collect()),
+            bottom: below.bottom.clone(),
+        }))
+    }
+}
+
+/// What [`Summaries::make`] gives: the summary, `None` where none is made, or the input
+/// definition whose summary is made first.
+enum Made {
+    Done(Option<Summary>),
+    First(Formula),
 }

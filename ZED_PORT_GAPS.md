@@ -2041,6 +2041,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A closure returning `Option` and using `?` on each step of reading an argument | `Scoped::coordinates` (`through`) | None | A function whose body chains `else` on each failure (`#none`) |
 | An optional borrowed closure `Option<&dyn Fn(&Lin) -> Lin>` passed to a writer | `What::written`, `Scoped::written` | None | An optional function value |
 
+## Entries from LOAD-chain-sep (`zedc-presburger/src/presburger.rs`, `presburger/extend.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo `HashMap<Id, Option<Summary>>` keyed by a definition's `Arc` identity, filled by an explicit stack with a `HashSet<Id>` of open entries | `extend::Summaries`, `Summaries::summary`, `Summaries::make` | Identity (gap 1), Shared tables (gap 2), Mutation (gap 11) | A map from the definition's content digest threaded through the fold over the questions |
+| A two-state enum `Made { Done(Option<Summary>), First(Formula) }` telling the stack loop to finish an entry or descend first | `extend::Made`, `Summaries::summary` | None | A union of two records |
+| A let chain `if let Some(..) = .. && let Ok(b) = ..` choosing the summaries before the fallback | `extend::decide_defined` | None | Nested matches, or `else` on `#none` |
+| A struct with methods `push`, `combine`, `dark_is_real` over one bound of a variable, used in Fourier-Motzkin elimination | `presburger::Side1`, `presburger::shadow` | None | A record type with functions over it |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |

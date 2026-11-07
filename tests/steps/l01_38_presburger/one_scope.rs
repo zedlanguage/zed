@@ -567,3 +567,139 @@ fn the_questions_of_a_chain_of_tests_holding_everywhere_scale() {
         },
     );
 }
+
+#[test]
+fn separate_tests_over_the_links_of_one_chain_of_definitions_scale() {
+    // LOAD-chain-sep: `t{i}(x) = h{i}(x: x) > 0` with `h{i}(x) = h{i-1}(x: x) div 2 + 1`, each
+    // test a question of its own over the i definitions of `h{i}`, with no kept part. Each was
+    // decided with all i definitions, O(n²): 80.4 times the bytes for 8 times the functions (25
+    // to 200) on main; read through the summary of `h{i}`'s definition, made from that of
+    // `h{i-1}`'s, 8.4 times the bytes and 9.0 times the instructions now.
+    questions_scale(
+        "separate tests over one chain of halvings",
+        25,
+        "h0(x: int) = x;\nt0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "h{i}(x: int) = h{}(x: x) div 2 + 1;\nt{i}(x: int) = h{i}(x: x) > 0;\n",
+                i - 1
+            )
+        },
+    );
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions() {
+    // LOAD-chain-sep: a question with no kept part reads each definition's chain through its
+    // summary, projected exactly. Each answer is the one the relation with all its definitions
+    // has, asked in the unit's order, in the reverse, and alone, so that the answers do not
+    // depend on what was asked before (batch and single-file checking agree). Where the solver
+    // refuses the whole (its shadows disagree), the smaller question of the summaries may be
+    // answered: the answer is then checked against the values of `x` from -300 to 300.
+    use zedc::store::presburger::extend::{Answers, Extending};
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
+    // The answer `got` of whether `f` holds somewhere: [`decide`]'s, or, where it refuses,
+    // one the values of `x` from -300 to 300 do not contradict.
+    let agrees = |f: Formula, got: &Result<bool, zedc::store::presburger::Refusal>, what: &str| {
+        let whole = decide(&f);
+        if whole.is_ok() {
+            assert_eq!(*got, whole, "{what}");
+            return;
+        }
+        let Ok(got) = got else { return };
+        let x = (f.atoms().into_iter())
+            .find(|a| matches!(a, Atom::Sym(_)))
+            .expect("an input");
+        let at = |v: i64| {
+            let fixed = Formula::Con(Con::eq(&Lin::atom(x.clone()), &Lin::constant(v)));
+            decide(&Formula::and(vec![f.clone(), fixed])) == Ok(true)
+        };
+        assert!(*got || !(-300..=300).any(at), "{what}: holds nowhere");
+        assert!(!*got || (-300..=300).any(at), "{what}: holds somewhere");
+    };
+    let chain = |step: &str, test: &str, n: usize| {
+        let mut src = "h0(x: int) = x;\n".to_string();
+        for i in 1..=n {
+            src += &format!(
+                "h{i}(x: int) = {};\n",
+                step.replace("H", &format!("h{}(x: x)", i - 1))
+            );
+            src += &format!(
+                "t{i}(x: int) = {};\n",
+                test.replace("H", &format!("h{i}(x: x)"))
+            );
+        }
+        src
+    };
+    let units = [
+        // The chain of the scaling test, and other steps: by 3, a remainder, a step that
+        // reverses the sign, one that grows its input, and one that reads it twice.
+        chain("H div 2 + 1", "H > 0", 7),
+        chain("H div 3 - 2", "H > 0", 6),
+        chain("H mod 7 + H", "H == 9", 5),
+        chain("(0 - H) div 2", "H > 1", 6),
+        chain("(3 * H + 1) div 2", "H < 0 - 4", 6),
+        chain("H div 2 + H div 3", "H > 5", 5),
+        // Steps whose projections are not exact (`3·q` of `x div 2` skips values), where no
+        // summary is made, and tests that ask for one value or one remainder.
+        chain("(3 * H) div 2", "H == 4", 5),
+        chain("(3 * H) div 2", "H == 2", 4),
+        chain("(3 * H) div 2", "H == 2 || H == 5", 4),
+        chain("(3 * H) div 2 + 1", "H mod 2 == 1 && x < 7 && x > 0 - 7", 5),
+        chain("(5 * H + 2) div 3", "H == 7 || H == 12", 4),
+        chain("2 * H", "H mod 3 == 1", 5),
+        chain("(2 * H) div 3", "3 * H == 2 * x", 4),
+        // Tests that hold everywhere or nowhere, and tests over two links of one chain and
+        // over two chains.
+        chain("H div 2 + 1", "H * 2 <= x + 2 || H * 2 > x + 2", 6),
+        chain("H div 2", "H * 2 > x + 1 && x >= 0", 6),
+        chain("H div 2 + 1", "H > h1(x: x)", 6),
+        chain("H div 2 + 1", "H + h1(x: x + 1) > 3", 6),
+        // A branch, a smallest value and an absolute value in a link: no summary is made
+        // past them.
+        chain("if H > 3 { H div 2 } else { H + 1 }", "H > 2", 5),
+        chain("min(H div 2, x)", "H > 0", 5),
+        chain("abs(H div 2 - 3)", "H > 1", 5),
+        // A division by a variable.
+        chain("H div x", "H > 0", 4),
+    ];
+    for src in &units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        let n = fs.len();
+        // The answers of each function, asked in an order of one `Extending`.
+        let ask = |order: Vec<usize>| -> Vec<Option<Answers>> {
+            let mut scoped = Scoped::new(&lets);
+            let mut extending = Extending::new();
+            let mut out = vec![None; n];
+            for i in order {
+                let (name, ps, body) = fs[i];
+                let Some(r) = scoped.relation(body, ps, ps, true) else {
+                    continue;
+                };
+                let a = extending.defined(&r, &|n| scoped.def(n));
+                let w = scoped.written(&r);
+                let with = |f: Formula| Formula::and(vec![w.defined(), f]);
+                agrees(
+                    with(w.body.clone()),
+                    &a.holds,
+                    &format!("`{name}` can hold in\n{src}\n{w}"),
+                );
+                agrees(
+                    with(Formula::negate(w.body.clone())),
+                    &a.fails,
+                    &format!("`{name}` can fail in\n{src}\n{w}"),
+                );
+                out[i] = Some(a);
+            }
+            out
+        };
+        let forward = ask((0..n).collect());
+        assert!(forward.iter().any(Option::is_some), "{src}");
+        assert_eq!(forward, ask((0..n).rev().collect()), "{src}");
+        for i in 0..n {
+            assert_eq!(forward[i], ask(vec![i])[i], "{src}: `{}` alone", fs[i].0);
+        }
+    }
+}

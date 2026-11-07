@@ -2219,6 +2219,80 @@ struct Side1 {
     row: usize,
 }
 
+impl Side1 {
+    /// The bounds the row `c`, numbered `row`, puts on `x`, which it holds, pushed on `lows` and
+    /// `highs`: one, or both for an equality.
+    fn push(c: &Con, x: &Atom, row: usize, lows: &mut Vec<Side1>, highs: &mut Vec<Side1>) {
+        let a = c.lin.terms.get(x).expect("a row of the atom").clone();
+        let mut rest = c.lin.clone();
+        rest.terms.remove(x);
+        let neg = || Lin {
+            terms: rest.terms.iter().map(|(b, k)| (b.clone(), -k)).collect(),
+            constant: -&rest.constant,
+        };
+        match (c.rel, a.is_positive()) {
+            (Rel::Eq, true) => {
+                highs.push(Side1 {
+                    a: -&a,
+                    rest: neg(),
+                    row,
+                });
+                lows.push(Side1 { a, rest, row });
+            }
+            (Rel::Eq, false) => {
+                lows.push(Side1 {
+                    a: -&a,
+                    rest: neg(),
+                    row,
+                });
+                highs.push(Side1 { a, rest, row });
+            }
+            (Rel::Ge, true) => lows.push(Side1 { a, rest, row }),
+            (Rel::Ge, false) => highs.push(Side1 { a, rest, row }),
+        }
+    }
+
+    /// The real shadow of the lower bound `self`, `a·x + r >= 0`, and the upper bound `hi`,
+    /// `-b·x + s >= 0`: `b·r + a·s`, which is at least 0 where they have a real `x` between them.
+    fn combine(&self, hi: &Side1) -> Lin {
+        let b = -&hi.a;
+        let mut lin = Lin {
+            terms: BTreeMap::new(),
+            constant: &(&b * &self.rest.constant) + &(&self.a * &hi.rest.constant),
+        };
+        for (t, k) in &self.rest.terms {
+            lin.terms.insert(t.clone(), &b * k);
+        }
+        for (t, k) in &hi.rest.terms {
+            let v = &self.a * k;
+            let sum = match lin.terms.remove(t) {
+                Some(w) => &w + &v,
+                None => v,
+            };
+            if !sum.is_zero() {
+                lin.terms.insert(t.clone(), sum);
+            }
+        }
+        lin
+    }
+
+    /// Whether the real shadow of the pair has the integer points of its dark shadow, `b·r +
+    /// a·s >= (a - 1)·(b - 1)` (Pugh, "The Omega test", 1992), so that the pair has an integer
+    /// `x` between its bounds wherever its real shadow holds. With `g` the greatest common
+    /// divisor of the terms of `b·r + a·s` and `c` its constant, the form takes the values `g·t
+    /// + c`, so the two rows hold for the same `t` when `c` and `c - (a - 1)·(b - 1)` round down
+    /// to one multiple of `g`; without terms, when the constant is below 0 or at least
+    /// `(a - 1)·(b - 1)`. `lin` is [`Side1::combine`] of the pair. O(the terms of the pair).
+    fn dark_is_real(&self, hi: &Side1, lin: &Lin) -> bool {
+        let gap = &(&self.a - &Int::ONE) * &(&(-&hi.a) - &Int::ONE);
+        if lin.terms.is_empty() {
+            return lin.constant.is_negative() || lin.constant >= gap;
+        }
+        let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
+        lin.constant.div_floor(&g) == (&lin.constant - &gap).div_floor(&g)
+    }
+}
+
 /// The rows of `rows`, a system with an integer point when `None` is not returned, with atoms
 /// that `keep` does not hold eliminated wherever the elimination is exact and adds no terms:
 /// the integer points of the result, read on the atoms it keeps, are those of `rows`, so the
@@ -2242,7 +2316,10 @@ struct Side1 {
 /// the tighter is kept, so a substitution or a combination that writes a row again adds
 /// nothing. `None` when a combination or a substitution leaves a false row without atoms, or an
 /// equality whose terms' greatest common divisor does not divide its constant: `rows` has no
-/// point.
+/// point. With `dark`, an atom is eliminated too where each pair of its bounds has the integer
+/// points of its real shadow in its dark shadow (as `2·q <= x <= 2·q + 1`, the bounds of `q = x
+/// div 2`, leave no gap) and the rows its elimination makes are no more than those it takes
+/// out; without it, as the solver's own projections ([`by_halves`]) always did.
 // Complexity tradeoff: an atom whose elimination would add terms is kept, so the result is
 // small only where the graph of the rows is: on chains, trees and other graphs whose atoms
 // have few lower or few upper bounds it keeps little beyond `keep`, and on a graph with a core
@@ -2250,8 +2327,8 @@ struct Side1 {
 // it keeps that core whole. A complete projection there grows the rows quadratically or worse
 // (Fourier-Motzkin is doubly exponential in general), so no smaller exact result is known;
 // the callers then solve the kept core with each question, as they did the whole group.
-fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
-    shadow_logged(rows, keep, None)
+pub(super) fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, dark: bool) -> Option<Vec<Con>> {
+    shadow_logged(rows, keep, dark, None)
 }
 
 /// An atom eliminated by [`shadow`] and its rows when it was: a point of the rows left gives
@@ -2262,6 +2339,7 @@ type Eliminated = (Atom, Vec<Con>);
 fn shadow_logged(
     rows: &[Con],
     keep: &dyn Fn(&Atom) -> bool,
+    dark: bool,
     mut log: Option<&mut Vec<Eliminated>>,
 ) -> Option<Vec<Con>> {
     #[derive(Default)]
@@ -2435,7 +2513,41 @@ fn shadow_logged(
         let others = (l + u).saturating_sub(d.eqs + 1);
         let by_eq =
             d.unit_eqs > 0 && others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs;
-        if d.gone || !(by_eq || (exact && (small || trial))) {
+        // With `dark`, an atom is eliminated too when each pair of its bounds has, in its real
+        // shadow, the integer points of its dark shadow ([`Side1::dark_is_real`], always so
+        // for a coefficient 1 or -1): the dark shadow of the whole then has the points of the
+        // real one, and the projection, between them, is exact (Pugh 1992). An equality whose
+        // coefficient is not 1 or -1 is left, since its two sides alone ask that the
+        // coefficient divide the rest. Whether the result is small is judged by the rows the
+        // elimination makes, after cancelling (as `x div 2` of `x div 2` cancels its input),
+        // and not by the bound of `small`: no more rows, of no more terms in all, than it
+        // takes out. The rows are made only where `l·u <= l + u` (one side has one or two
+        // bounds), so the trial costs O(the terms of the atom's rows), as the elimination does.
+        let fits = dark && l * u <= l + u && !by_eq && !d.gone && d.eqs == d.unit_eqs && {
+            let (mut lows, mut highs) = (Vec::new(), Vec::new());
+            let (mut old_rows, mut old_terms) = (0, 0);
+            for &i in &d.rows {
+                if let Some(c) = &live[i] {
+                    old_rows += 1;
+                    old_terms += c.lin.terms.len();
+                    Side1::push(c, &x, i, &mut lows, &mut highs);
+                }
+            }
+            let (mut new_rows, mut new_terms) = (0, 0);
+            let all = (lows.iter()).all(|lo| {
+                (highs.iter()).filter(|hi| lo.row != hi.row).all(|hi| {
+                    let lin = lo.combine(hi);
+                    let real = lo.dark_is_real(hi, &lin);
+                    if let Ok(Some(c)) = tidy(lin, Rel::Ge) {
+                        new_rows += 1;
+                        new_terms += c.lin.terms.len();
+                    }
+                    real
+                })
+            });
+            all && new_rows <= old_rows && new_terms <= old_terms
+        };
+        if d.gone || !(by_eq || (exact && (small || trial)) || fits) {
             continue;
         }
         d.gone = true;
@@ -2479,33 +2591,7 @@ fn shadow_logged(
         let (mut lows, mut highs): (Vec<Side1>, Vec<Side1>) = (Vec::new(), Vec::new());
         for &i in &ids {
             let Some(c) = &live[i] else { continue };
-            let a = c.lin.terms.get(&x).expect("a row of the atom").clone();
-            let mut rest = c.lin.clone();
-            rest.terms.remove(&x);
-            let neg = || Lin {
-                terms: rest.terms.iter().map(|(b, k)| (b.clone(), -k)).collect(),
-                constant: -&rest.constant,
-            };
-            match (c.rel, a.is_positive()) {
-                (Rel::Eq, true) => {
-                    highs.push(Side1 {
-                        a: -&a,
-                        rest: neg(),
-                        row: i,
-                    });
-                    lows.push(Side1 { a, rest, row: i });
-                }
-                (Rel::Eq, false) => {
-                    lows.push(Side1 {
-                        a: -&a,
-                        rest: neg(),
-                        row: i,
-                    });
-                    highs.push(Side1 { a, rest, row: i });
-                }
-                (Rel::Ge, true) => lows.push(Side1 { a, rest, row: i }),
-                (Rel::Ge, false) => highs.push(Side1 { a, rest, row: i }),
-            }
+            Side1::push(c, &x, i, &mut lows, &mut highs);
         }
         // The rows made, each tidied; a row without atoms that is false shows that `rows` has
         // no point, whether the elimination is then done or not.
@@ -2516,25 +2602,7 @@ fn shadow_logged(
                     continue;
                 }
                 // `lo.a·x + r >= 0` and `hi.a·x + s >= 0` with `hi.a` below zero.
-                let b = -&hi.a;
-                let mut lin = Lin {
-                    terms: BTreeMap::new(),
-                    constant: &(&b * &lo.rest.constant) + &(&lo.a * &hi.rest.constant),
-                };
-                for (t, k) in &lo.rest.terms {
-                    lin.terms.insert(t.clone(), &b * k);
-                }
-                for (t, k) in &hi.rest.terms {
-                    let v = &lo.a * k;
-                    let sum = match lin.terms.remove(t) {
-                        Some(w) => &w + &v,
-                        None => v,
-                    };
-                    if !sum.is_zero() {
-                        lin.terms.insert(t.clone(), sum);
-                    }
-                }
-                match tidy(lin, Rel::Ge) {
+                match tidy(lo.combine(hi), Rel::Ge) {
                     Err(()) => return None,
                     Ok(None) => {}
                     Ok(Some(c)) => made.push(c),
@@ -2594,7 +2662,7 @@ fn by_halves<E>(
     let project = |rows: Vec<Con>, l: usize, r: usize| -> Option<Vec<Con>> {
         let atoms: HashSet<&Atom> = keep[l..r].iter().flatten().collect();
         let near = linked_to(rows, atoms.iter().copied());
-        let s = shadow(&near, &|a| atoms.contains(a))?;
+        let s = shadow(&near, &|a| atoms.contains(a), false)?;
         Some(linked_to(s, atoms.iter().copied()))
     };
     // The ranges still to run after the one running, each with its system (`None`: unknown),
@@ -7449,7 +7517,7 @@ fn int_bounds(
 /// as the solver reads it. The cost is that of [`shadow`] and of one solve of the rows left.
 fn point_of(rows: &[Con]) -> Option<Model> {
     let mut log = Vec::new();
-    let left = shadow_logged(rows, &|_| false, Some(&mut log))?;
+    let left = shadow_logged(rows, &|_| false, false, Some(&mut log))?;
     let mut model = solve(&left, true).ok()??;
     for (x, rows) in log.into_iter().rev() {
         let at = rows.iter().map(|c| {
@@ -9063,5 +9131,100 @@ mod by_halves_against_old {
         }
         assert_eq!(cases, 600);
         eprintln!("hulls narrower than the old path's: {narrower}");
+    }
+}
+
+#[cfg(test)]
+mod dark_shadow {
+    use super::*;
+
+    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+    }
+
+    fn a(s: &str) -> Atom {
+        Atom::Sym(s.into())
+    }
+
+    /// Whether the rows hold at `y` and `z` for some `r` in `-4..=4` (every row bounds `r`
+    /// there), counted, not solved.
+    fn points(rows: &[Con], y: i128, z: i128) -> bool {
+        (-4..=4).any(|r| {
+            let m: Model = [(a("y"), y), (a("z"), z), (a("r"), r)]
+                .into_iter()
+                .map(|(k, v)| (k, Int::from(v)))
+                .collect();
+            rows.iter().all(|c| c.holds(&m))
+        })
+    }
+
+    /// `shadow` with dark shadows projects out `r` exactly or keeps it: on small systems over
+    /// `y`, `z` and `r`, with coefficients of `r` from -4 to 4, the integer points of the result
+    /// on `y` and `z` are those of the system. Bounds such as `4·r <= y <= 4·r + 1`, whose real
+    /// shadow has points (`y = 2`) the system has not, are the case the dark shadow keeps.
+    #[test]
+    fn projections_with_dark_shadows_keep_the_integer_points() {
+        let mut rng = Rng(0x5eed_da4c);
+        let (mut cases, mut gone) = (0, 0);
+        for _ in 0..400 {
+            let mut rows = vec![
+                Con::ge(&Lin::atom(a("r")), &Lin::constant(-4)),
+                Con::ge(&Lin::constant(4), &Lin::atom(a("r"))),
+            ];
+            for _ in 0..2 + rng.below(3) {
+                let k = |rng: &mut Rng, n: u64| rng.below(2 * n + 1) as i128 - n as i128;
+                let lin = Lin::atom(a("r"))
+                    .times(k(&mut rng, 4))
+                    .plus(&Lin::atom(a("y")).times(k(&mut rng, 2)))
+                    .plus(&Lin::atom(a("z")).times(k(&mut rng, 1)))
+                    .plus(&Lin::constant(k(&mut rng, 6)));
+                rows.push(Con::ge(&lin, &Lin::default()));
+            }
+            let keep = |x: &Atom| *x != a("r");
+            let Some(out) = shadow(&rows, &keep, true) else {
+                let none = (-12..=12).all(|y| (-12..=12).all(|z| !points(&rows, y, z)));
+                assert!(none, "{rows:?}: no point found, but it has one");
+                continue;
+            };
+            cases += 1;
+            gone += usize::from(out.iter().all(|c| !c.lin.terms.contains_key(&a("r"))));
+            for y in -12..=12 {
+                for z in -12..=12 {
+                    assert_eq!(
+                        points(&rows, y, z),
+                        points(&out, y, z),
+                        "{rows:?} projected to {out:?} at y = {y}, z = {z}"
+                    );
+                }
+            }
+        }
+        assert!(
+            cases >= 300 && gone >= 100,
+            "{cases} cases, {gone} projected"
+        );
+    }
+
+    /// The bounds `4·r <= y <= 4·r + 1` of `r` from 0 to 1 have `y` in {0, 1, 4, 5}: their real
+    /// shadow `0 <= y <= 5` is not their projection, so `r` is kept.
+    #[test]
+    fn bounds_with_a_gap_are_kept() {
+        let y = || Lin::atom(a("y"));
+        let r4 = || Lin::atom(a("r")).times(4);
+        let rows = vec![
+            Con::ge(&Lin::atom(a("r")), &Lin::default()),
+            Con::ge(&Lin::constant(1), &Lin::atom(a("r"))),
+            Con::ge(&y(), &r4()),
+            Con::ge(&r4().plus(&Lin::constant(1)), &y()),
+        ];
+        let out = shadow(&rows, &|x| *x != a("r"), true).expect("a point");
+        assert!(points(&out, 4, 0) && !points(&out, 2, 0), "{out:?}");
     }
 }
