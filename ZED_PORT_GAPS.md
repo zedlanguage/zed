@@ -2059,3 +2059,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `&dyn Any` with `downcast_ref::<T>()` and `is::<T>()`, to compare a memo entry of any table by its type | test `rechecked`, `shown_any` | Reflection | One comparison function per memo table, passed with the table |
 | `#[path]` on a module, to share one test file between crates | `zedc` `lib.rs` (`mod scaling`), as `zed-kernel` | Modules | A shared test unit imported by each crate's tests |
+
+## Entries from RUNTIME-build-src (`zed-native/build.rs`, `zed-native/src/sources.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A build script hashing the source files of its crate and of the workspace crates it depends on, found by reading `Cargo.toml` files line by line, listing directories (`std::fs::read_dir`, `canonicalize`) and searching Rust files for `include!`, `include_str!`, `include_bytes!` and `#[path]`; it prints `cargo::rerun-if-changed` for each file and directory read | `build.rs`, `sources::of` | None at the language level: Cargo's crate hash leaves out the sources' contents; Library (host file system) | The Zed build tool knows the content address of every unit it compiles (sec:ir) and writes the runtime's identity from those addresses; no file walk or manifest reading is needed |
+| `#[path]` on a module, to compile one file both in a build script and in the crate | `build.rs` (`mod sources`), `lib.rs` (`pub mod sources`) | Modules | Gone with the build script, as above |

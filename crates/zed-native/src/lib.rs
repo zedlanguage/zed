@@ -15,6 +15,7 @@ mod legal;
 #[cfg(target_os = "linux")]
 pub mod link;
 mod outcome;
+pub mod sources;
 mod tables;
 
 use std::mem::ManuallyDrop;

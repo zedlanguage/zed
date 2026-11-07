@@ -12,6 +12,7 @@ mod cache;
 mod identity;
 mod leftover;
 mod scaling;
+mod sources;
 
 use std::path::{Path, PathBuf};
 

@@ -459,7 +459,7 @@ pub const SECTION: &str = ".zed_native.build";
 /// Which build of this crate a file holds: the runtime library, `zedc`, and any other
 /// executable linked with this crate hold it as the bytes of [`SECTION`], which `strip` keeps,
 /// unlike the symbol table. Two builds have equal bytes only if they agree in this crate's
-/// hash and in the compiler's flags.
+/// hash, in the compiler's flags and in the sources of it and its workspace dependencies.
 #[repr(C)]
 pub struct Build {
     /// The identity of the type `Build`, which the compiler derives from this crate's hash:
@@ -469,6 +469,10 @@ pub struct Build {
     /// A hash of the compiler's flags (`CARGO_ENCODED_RUSTFLAGS`), which the crate's hash
     /// leaves out; written by `build.rs`.
     rustflags: [u8; 8],
+    /// The BLAKE3 hash of the sources of this crate and of the workspace crates it depends on
+    /// ([`crate::sources`]), which the crate's hash leaves out; written by `build.rs`
+    /// (RUNTIME-build-src).
+    sources: [u8; 32],
 }
 
 /// This build of the crate; see [`Build`].
@@ -481,6 +485,7 @@ pub struct Build {
 pub static BUILD: Build = Build {
     crate_hash: const { TypeId::of::<Build>() },
     rustflags: include!(concat!(env!("OUT_DIR"), "/rustflags.rs")),
+    sources: include!(concat!(env!("OUT_DIR"), "/sources.rs")),
 };
 
 /// The bytes of [`SECTION`] in the executable or object file `exe`: the [`BUILD`] of the

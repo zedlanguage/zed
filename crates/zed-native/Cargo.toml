@@ -79,6 +79,10 @@ unsafe_code = "deny"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 
+[build-dependencies]
+# The hash of the sources in the build of this crate (RUNTIME-build-src, `src/sources.rs`).
+blake3 = "1"
+
 [dev-dependencies]
 libc = "0.2.191"
 # Strips a copy of zedc in the build_binary test (NATIVE-build-id).
