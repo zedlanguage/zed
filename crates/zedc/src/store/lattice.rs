@@ -8,6 +8,8 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use zed_kernel::types::{Type, Universe};
+
 use super::interval::{End, IntervalSet, Num};
 use super::landmarks::{Landmarks, Mark};
 
@@ -330,6 +332,93 @@ impl Lattice for Card {
     }
     fn narrow(&self, next: &Self, marks: &Landmarks) -> Self {
         Card(self.0.narrow(&next.0, marks).meet(&Card::top().0))
+    }
+}
+
+/// The base types whose part a widening of a type takes whole once it grows.
+fn bases() -> [Type; 5] {
+    [
+        Type::bool(),
+        Type::int(),
+        Type::rat(),
+        Type::f64(),
+        Type::string(),
+    ]
+}
+
+/// The parts a widening takes whole and a narrowing leaves whole: each base type, and the rest
+/// of each universe. They cover every value.
+fn parts() -> Vec<Type> {
+    let all_bases = bases().iter().fold(Type::empty(), |a, b| &a | b);
+    let mut out = bases().to_vec();
+    for u in [
+        Universe::Scalar,
+        Universe::Tuple,
+        Universe::Struct,
+        Universe::Morphism,
+    ] {
+        out.push(Type::universe(u) - &all_bases);
+    }
+    out
+}
+
+impl Lattice for Type {
+    fn bottom() -> Self {
+        Type::empty()
+    }
+    fn top() -> Self {
+        Type::top()
+    }
+    fn join(&self, other: &Self) -> Self {
+        self | other
+    }
+    fn meet(&self, other: &Self) -> Self {
+        self & other
+    }
+    /// The join, and the whole of each base type, and of the rest of each universe, in which
+    /// `next` has a value `self` has not. Each such part is taken at most once, so every
+    /// chain of widenings is finite.
+    ///
+    /// Complexity tradeoff: a type that grows within a base type (more literals, more tuple
+    /// shapes) jumps to the whole base type, so a loop's type keeps none of the members it
+    /// gained. Why: types do not satisfy the ascending chain condition (`#a | #b | …` grows
+    /// forever), so the fixpoint needs a widening; keeping members would need a landmark set
+    /// of types and a test per member. Trigger: a widening at which `next` has a value in a
+    /// base type part that `self` lacks. Test:
+    /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type`.
+    /// COMPLEXITY.md row C3. A complete solution would compute the loop's least fixpoint over
+    /// types, which is undecidable in general. A more precise widening, still not complete,
+    /// would stop first at the loop's written type literals (type landmarks, as intervals do
+    /// with integer landmarks), at a cost of one subtype test per landmark.
+    fn widen(&self, next: &Self, _: &Landmarks) -> Self {
+        let mut out = self | next;
+        for p in parts() {
+            if !(next & &p).subtype(self) {
+                out = &out | &p;
+            }
+        }
+        out
+    }
+    /// `next` in each part that `self` holds whole, and `self` in the others: each part leaves
+    /// the whole at most once and is then fixed, so every chain of narrowings is finite.
+    ///
+    /// Complexity tradeoff: in a part that `self` does not hold whole, a smaller `next` is not
+    /// taken, so `1 | 2` narrowed by `1` stays `1 | 2`. Why: types have infinite descending
+    /// chains (`int`, `int` without `0`, without `0` and `1`, …), so taking the meet at each
+    /// step need not end; with this rule each part changes at most once. Trigger: a part of
+    /// `self` that is neither empty nor the whole base type or universe part. Test:
+    /// `l01_39_reduced_product::controls::a_type_widens_to_its_whole_base_type` (its narrowing
+    /// cases). COMPLEXITY.md row C4. A complete solution would compute the greatest fixpoint
+    /// below the widened type, which needs the loop's effect on its values solved exactly:
+    /// undecidable in general.
+    fn narrow(&self, next: &Self, _: &Landmarks) -> Self {
+        parts().iter().fold(Type::empty(), |out, p| {
+            let whole = p.subtype(self);
+            &out | &(if whole { next & p } else { self & p })
+        })
+    }
+    fn leq(&self, other: &Self) -> bool {
+        self.subtype(other)
     }
 }
 
