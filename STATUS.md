@@ -1373,30 +1373,31 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| BDD-xor-parity | impl attempt 1 | 2026-11-05 04:07 | tests written (corner cases c 0,1,2,7 + one-column overlap; scaling false/equal at c 64->512; listing comment reconciled); no bdd.rs edit needed (rejection); wa |
+| BDD-xor-parity | impl attempt 1 | 2026-11-05 04:07 | ready 3d91ddc9 on origin/main 288c83db: XOR nodes rejected (COMPLEXITY.md K57); groups kernel-lib 102, l01_23 157, deep_types 22, l01_22 41, l01_26 246 (+1 igno |
 | DECIDE-disj-chain | running | 2026-11-03 15:55 |  |
-| EMPTY-key-search | running | 2026-11-05 18:16 |  |
+| EMPTY-key-search | impl attempt 1 | 2026-11-05 18:16 | find_rep proves a closure's key type empty in the same search (Searching::no_key, through no_value's settle); settle starts a new phase only when dead grows (wi |
+| LINK-obj-leftover | impl attempt 1 | 2026-11-07 01:09 | reproduced: stale sign.zed.o makes build fail 'File exists (os error 17)' on old code (new test leftover::a_file_at_the_old_object_files_name_blocks_no_build re |
+| LIST-parity-quad | impl attempt 1 | 2026-11-07 01:46 | started; worktree wt/list-parity-quad from origin/main, cherry-picked BDD-xor-parity 3d91ddc9 |
 | main | running | 2026-11-06 23:47 | KERNEL-sum-tower ready d4cbf628 (bound.rs uses fast::pow/mul); POW-tower held on A29; A28 asked; load 26.94 23.48 17.66 |
-| MATCH-fn-binder | impl attempt 1 | 2026-11-05 04:07 | ready e96c7d61 on origin/main 8431cf03; function_binders 9/9, groups pass; load5 20.54 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| NAME-at-print-warnings | impl attempt 1 | 2026-11-07 00:21 | ready: wt/name-at-print-warnings head 390f5bd1 on 8431cf03; 8 groups pass; fmt and clippy clean |
 | NAME-ties-orient+DECIDE-disj-chain | impl attempt 1 | 2026-11-07 01:00 | started in /home/luke/Work/wt/decide-disj from origin/main ca529f21; load 27.72 23.48 21.48 |
 | NAME-ties-orient | impl attempt 1 | 2026-11-05 04:07 | ready 0eadfcd7 on wt/decide-disj; l01_38_presburger 240 pass 2 ignored (by submodule, load 23-28), zedc lib store::presburger 15 pass; clippy and fmt clean |
-| NARROW-hub-settle | impl attempt 1 | 2026-11-03 23:52 | tests added (interleaved, two-hub, lazy.rs 300 seeds); lazy.rs negative control (settled = get) fails at seed 19, reverted |
+| NARROW-hub-rest | impl attempt 1 | 2026-11-07 01:48 | started; worktree wt/narrow-hub-rest on wt/narrow-hub-settle a18089b5; load 24.44 |
+| NARROW-hub-settle | impl attempt 1 | 2026-11-03 23:52 | ready: a18089b5 on origin/main 288c83db; groups pass alone (39a 27.4 s, 39 12.9 s; both timed out at 60 s when run with 6 others at load 31); fmt, clippy, board |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | POW-tower | impl attempt 1 | 2026-11-05 22:47 | returned for cross-review: no exact O(n log n) tower order known (Baker bound exponential for towers, log log forms, PosSLP); candidates a/b/c in ledger / load  |
 | PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | both commits on wt/preimage-ref-tests (3630da47, 04dd4432); waiting for BUILD-feature-match on origin/main to rebase and add preimage-ref to the three dependent |
-| RAT-parse-scale | impl attempt 1 | 2026-11-03 18:28 | valuation_upto now climbs while p^(2^i) divides n (fixes literals::rounding_a_literal_of_n_digits_scales 27.6x); 160k->1.28M: 5: 15.9x/13.8x, 2: 14.0x/14.3x, bo |
+| RAT-parse-scale | impl attempt 1 | 2026-11-03 18:28 | ready 6d091116 on wt/rat-parse-scale; groups pass: zed-kernel lib 100, deep_values 14, deep_scaling 9, deep_types 20, l01_03 8, l01_04 8, l01_17 104, l01_18 55, |
 | REP-path-memo+EMPTY-key-search | impl attempt 1 | 2026-11-07 00:55 | started by orchestrator in wt/empty-search; load5 22.62 |
 | REP-path-memo | impl attempt 1 | 2026-11-05 23:59 | committed 2780a28a; refusals 84->80 (layered 79, cells 1); tests kernel 100, l01_22 41, l01_23 156, l01_24 66, l01_26 246, l01_27 48, l01_29 170, l01_39 136, l0 |
-| S.1f-rest | impl attempt 1 | 2026-11-05 22:48 | ready 3dc2f026; S.1f not done (zedc 32-file, kernel 12-file cycles open, pinned); A42 appended / load 21.68 21.70 21.17 |
-| S22-order | impl attempt 1 | 2026-11-05 04:07 | found and fixed a pre-existing endless loop: by_class_at fallback on a Bool if re-enters by_class(t) via back_in; minimal x mod 3 != 0 && (if x <= 2 { false } e |
-| ST-exact-enum | impl attempt 1 | 2026-11-05 04:07 | control old code (not committed): chain 4->32 232x instr (58.3M->13.5G), 8->64 304x; apart 4->32 11.5x, 8->64 14.7x; new exact:: tests 9/9 pass on old code too; |
+| S22-order | impl attempt 1 | 2026-11-05 04:07 | probe: preimage of a k-level one-input chain <= 2: k=20 6.7 ms, 40 209 ms, 80 3.37 s, 160 30.2 s (load ~25); profile: hashing (term, Demand) keys of back's memo |
+| ST-exact-enum | impl attempt 1 | 2026-11-05 04:07 | ready 76a90721 on origin/main 288c83db; groups l01_39 140, l01_38 242, l01_39a 43, l01_39b 7, zedc lib 90 pass (load 13-24); build/STACK briefly had the empty l |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | TD-finite | impl attempt 1 | 2026-11-05 04:07 | committed comment at Type::finite (C22); zed-kernel lib 100, l01_23 155, l01_28 63, zedc lib 90 pass, load 20-32 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | returned with author question A30 (crate granularity: per-task ~310 crates doubles all-crates rebuild after a zedc edit, 21-26 s -> 45-49 s; lib edit 6-7 s -> 2 |
-| ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 8 zedc-resolve committed; build, clippy, doc; 11 groups pass (zedc-lib 28, l01_14/16/23/26/27/28/29/30, s_01f) load 22-32 |
+| ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 10 zedc-check committed; printed-types feature and self dev-dependency checked; build, clippy, doc; 14 groups pass (check-lib 1, zedc-lib 27, l01_14/16 |
+| ZRUN-silent | impl attempt 1 | 2026-11-07 01:41 | cause confirmed: zrun took build/ns.lock exclusive before every command while running commands hold it shared, so commands of one worktree ran one at a time (24 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
