@@ -441,7 +441,7 @@ fn a_word_is_matched_whole() {
 #[test]
 fn the_unsaid_words_come_from_the_kernel_grammar() {
     let design = "\
-# (sec:kernel_terms) An earlier section
+# (sec:syntax_tour) An earlier section
     | skip(x)
 # (sec:kernel) Appendix
 ```
