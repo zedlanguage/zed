@@ -88,7 +88,7 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
 fn a_form_of_a_later_layer_names_that_layer() {
     let cases = [(
         "data >< f unordered",
-        "this form (Unordered) is built from layer L9",
+        "this form (ReducePolicy) is built from layer L9",
     )];
     for (text, want) in cases {
         assert_eq!(ast(text).unwrap_err().message, want, "{text}");
