@@ -95,7 +95,7 @@ fn a_rising_chain_scales() {
 }
 
 // A cost quadratic with a small constant stays below the limit at the sizes above and shows at
-// these. Controls, each a patch to `crates/zedc/src/store/presburger.rs`, to run on all six
+// these. Controls, each a patch to `crates/zedc-presburger/src/presburger.rs`, to run on all six
 // tests:
 //
 // Rows rescanned, in `System::take`, in place of `std::mem::take(&mut self.vars[j].rows)`:

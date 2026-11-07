@@ -2,7 +2,7 @@
 // step M0.5): the tonicity table of the integer operators, the HC4 backward
 // table, and the reductions between the interval facet and the congruence and
 // finite-set facets. The Rust-hosted checker's copy is
-// crates/zedc/src/store/revision.rs.
+// crates/zedc-lattice/src/revision.rs.
 //
 // Forward revision maps each operand interval through the operator. An operand
 // that straddles 0 is split at 0 into its sign parts, each part's image is
@@ -106,7 +106,7 @@ reduceFinite(positional xs, positional s) =
 
 // The scalar entries of the preimage catalog (DESIGN.md sec:domains, "Backward
 // transfer", written by step L1.25) read this table backward. The Rust-hosted
-// checker's copy is crates/zedc/src/store/preimage.rs. A test moves with its
+// checker's copy is crates/zedc-preimage/src/preimage.rs. A test moves with its
 // arguments in the order false < true: `x < y` and `x <= y` fall with x and
 // rise with y, `x > y` and `x >= y` the other way, `!x` falls, `&&` and `||`
 // rise in both, and `==` and `!=` have no tonicity. Shifts and scalings by a

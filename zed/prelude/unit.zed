@@ -1,7 +1,7 @@
 // prelude unit unit (DESIGN.md sec:ir, "Identity", and step L2.8; written by
 // step M0.11): how a unit, a prelude unit included, is versioned and addressed.
 // The Rust-hosted checker's copy is zedc::canon::unit_address in
-// crates/zedc/src/canon/mod.rs.
+// crates/zedc-zir/src/canon/mod.rs.
 //
 // A unit has no version number. Its address is the hash of its exported
 // declarations, each named and given its content address (step M0.7), so a

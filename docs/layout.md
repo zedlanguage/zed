@@ -9,8 +9,22 @@ kinds of places.
 Cargo.toml            the Rust workspace
 crates/               the Rust-hosted toolchain, kept permanently as the bootstrap root
   zed-kernel/         kernel terms, the ZIR node inventory, the M0.9 reference evaluator
-  zedc/               the compiler: loading, lexer, parser, elaboration, checker,
-                      interpreter, ZIR, code generation, and the `zedc` command
+  zedc/               the compiler's top crate: the incremental queries, the run of a program,
+                      the `zedc` command's code, and each zedc-* crate's modules re-exported at
+                      their old paths (`zedc::check`, `zedc::store::presburger`, ...)
+  zedc-base/          source text, addresses, rejections, costs, the definitional interpreter
+  zedc-syntax/        lexer, parser, syntax tree, formatter
+  zedc-int/           the unbounded integers of the constraint store
+  zedc-lattice/       the store's lattices: intervals, affine, floats, cells, iteration orders
+  zedc-solvers/       linear programs, two-variable and UTVPI systems, shortest paths
+  zedc-presburger/    the Presburger decision procedure, conjuncts, hulls
+  zedc-types/         checker types and their kernel types
+  zedc-resolve/       name resolution and its tables, doc comments
+  zedc-stage/         staging, definitions, cones
+  zedc-preimage/      preimages and the reduced product
+  zedc-check/         the checker
+  zedc-zir/           ZIR and canonical forms
+  zedc-elab/          elaboration to kernel terms
   zed-rt/             the runtime that native code links against
   zed-native/         native code by Cranelift (step L1.36), `zedc build` (L1.36a), and the
                       runtime library `libzed_native.a` an executable links; the `zedc` binary,
@@ -48,12 +62,41 @@ ZED_PORT_GAPS.md      what the Rust relies on that Zed lacks; each step adds to 
 
 ## Crates
 
-The four crates are the ones step M0.1 names. A crate is split out only where the design asks
-for a separate artifact. The certificate checker is independent of the optimizer it checks
-(sec:optimizer), and the runtime is not used by the interpreter, so that the differential
-oracle (step L1.37) compares two independent implementations. The compiler's stages are
-modules of `zedc`, not crates, because from step L1.30 on they are queries over one shared
-incremental database.
+The four crates are the ones step M0.1 names. The certificate checker is independent of the
+optimizer it checks (sec:optimizer), and the runtime is not used by the interpreter, so that the
+differential oracle (step L1.37) compares two independent implementations.
+
+The compiler is split into the crates `zedc-*` (item ZEDC-split) so that an edit recompiles only
+its own crate and the crates above it, not the whole compiler. Each is built as an rlib and a
+dylib, and takes its lints from the workspace. The incremental database of step L1.30 stays in
+`zedc`, which is the top crate; it re-exports each moved module at its old path, so callers
+still write `zedc::check` or `zedc::store::presburger`. From the bottom up, each crate depends
+only on crates above it in this list:
+
+| Crate | The zedc crates it depends on |
+|---|---|
+| zedc-base | |
+| zedc-syntax | base |
+| zedc-int | |
+| zedc-lattice | base, int |
+| zedc-solvers | int |
+| zedc-presburger | int, lattice, solvers |
+| zedc-types | syntax |
+| zedc-resolve | base, syntax |
+| zedc-stage | base, syntax |
+| zedc-preimage | int, lattice, presburger, stage |
+| zedc-check | base, int, lattice, preimage, resolve, syntax, types |
+| zedc-zir | base, int, lattice, syntax |
+| zedc-elab | base, check, resolve, stage, syntax, types |
+| zedc | all of them |
+
+An item a crate above uses is `pub`, with a doc comment; anything else stays private to its
+crate. A feature that changes a crate's code for tests (`printed-types`, `counts`,
+`two-at-a-time`) is also named in that crate's own dev-dependencies, and in those of each crate
+above it whose tests need it. A dylib's file name does not change with its features, so without
+this `cargo test -p <crate>` would build the crate with fewer features over the workspace build's
+copy, and the next workspace build would build it again. Add a new module to the lowest crate
+whose dependencies it needs, and re-export it from `zedc` if callers outside the compiler use it.
 
 Code generation through MLIR and LLVM (L28) and the GPU, distributed and hardware targets
 (L27) go into new modules of `zedc`, or into a new crate only where they bring a heavy native

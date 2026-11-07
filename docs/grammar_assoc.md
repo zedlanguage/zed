@@ -14,7 +14,7 @@ the wrong nesting first.
 
 **Result.** Two rules were converted: `Expr12` (the `else` chain) and the `&&` chain of
 `JoinTerm` (now the rule `AndJoin`). No reader folds the wrong way: the parser, the syntax
-tree builder (`crates/zedc/src/ast/`) and the formatter (`crates/zedc/src/format.rs`) agree
+tree builder (`crates/zedc-syntax/src/ast/`) and the formatter (`crates/zedc-syntax/src/format.rs`) agree
 with the semantics on every row. The tests are in `tests/steps/l01_08_parser/lr4_assoc.rs`
 and the bracketing cases at the end of `zed/grammar/cases.txt`.
 

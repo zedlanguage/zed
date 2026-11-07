@@ -1,8 +1,8 @@
 // prelude unit axioms (DESIGN.md sec:property_tracking, the Axiom grade;
 // written by step M0.11, read by the obligation record of step L3.8): the laws
 // each built-in operator carries by axiom, one entry per arrow. The
-// Rust-hosted checker's copy is crates/zedc/src/axioms.rs, and the tests of
-// tests/steps/m0_11_prelude_axioms_and_limits/ keep the two equal and check
+// Rust-hosted checker's copy is crates/zedc-base/src/axioms.rs, and the tests
+// of tests/steps/m0_11_prelude_axioms_and_limits/ keep the two equal and check
 // every entry on the finite-model harness of step M0.10.
 //
 // An operator with no entry here (`-` at f64, `/`, `div`, `mod`) carries no

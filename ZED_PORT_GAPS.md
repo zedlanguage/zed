@@ -2196,3 +2196,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | An `Option<Rc<HashMap>>` field of the run filled on the first call and shared by every later call (the cuts of each input and modulus) | `Tx::classes_of`, `Run::cut_table` | Mutation, shared ownership | A value computed once when the run starts, or a lazy binding of the run |
 | A `HashMap` keyed by a pair of a term and an `Option` of an input and modulus, memoizing the summaries by class | `Memo::by_class`, `Walk::by_class` | Mutation | A memo keyed by the same tuple, as the other memos of the walk |
+
+## Entries from ZEDC-split (`crates/zedc/src/lib.rs`, `store/mod.rs`, `crates/zedc-presburger`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A module of another crate republished at its old path (`pub use zedc_check::check;`), so callers keep writing `zedc::check` after the compiler is split into crates | `zedc` `lib.rs`, `store/mod.rs` | Missing (a re-export is a definition of one name, DESIGN.md sec:units) | Not needed in the port: each unit imports the unit that defines what it uses; the Rust paths are kept only so the split changes no caller |
+| A cargo feature, `two-at-a-time`, that keeps a `thread_local!` switch and the joins it selects in the build of `zedc-presburger`, so the unit tests of another crate (`zedc-preimage`) can set it; before the split it was `#[cfg(test)]` in the same crate | `presburger::TWO_AT_A_TIME`, `and_keeping`, `or_keeping` | No conditional compilation; global state (gap 2) | A build mode of the unit, as for `printed-types`, or the join order passed as a parameter in the test |
