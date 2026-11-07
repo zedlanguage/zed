@@ -251,7 +251,7 @@ fn merging_the_failures_of_a_long_chain_scales() {
                     let what = format!("a chain of n sums of {kinds:?} kinds of failure");
                     scaling::check(&what, 1000, |n| {
                         let text = mixed_failures(n, kinds.unwrap_or(n));
-                        let sig = crate::l01_26_type_resolution::sig(&text, "f");
+                        let sig = zed_tests::step_helpers::l01_26_type_resolution::sig(&text, "f");
                         let result = sig.rsplit(" -> ").next().unwrap();
                         assert_eq!(result.matches("#errs").count(), errs, "{result}");
                     })

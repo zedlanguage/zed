@@ -243,7 +243,7 @@ fn a_merged_failure_reads_back() {
         ("g", "#errs(#a | #b | #c ->? #a | #b | #c)"),
         ("h", "#errs(#syntaxError(int) ->? #syntaxError(int))"),
     ] {
-        let s = crate::l01_26_type_resolution::sig_of(text, name);
+        let s = zed_tests::step_helpers::l01_26_type_resolution::sig_of(text, name);
         let t = Ty::func(s.clone());
         let shown = s.to_string();
         assert!(shown.contains(want), "{shown}");

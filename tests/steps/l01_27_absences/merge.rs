@@ -2,8 +2,8 @@
 //! failures (DESIGN.md sec:failure): equal failures merge into one, and a singleton is the atom
 //! itself, so `#errs` is in a type only where two operands can carry different failures.
 
-use crate::l01_16_elaboration::value;
-use crate::l01_26_type_resolution::{sig, type_errors};
+use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 #[test]
 fn different_failures_on_two_operands_merge_into_errs() {

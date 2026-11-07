@@ -12,7 +12,7 @@ use zed_tools::layer::WordTable;
 use zed_tools::plan::row_ids;
 use zed_tools::spec::Spec;
 
-use crate::m0_03_grammar_tools::{Dir, grammar, tool};
+use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, grammar, tool};
 
 fn varint(mut v: u64, out: &mut Vec<u8>) {
     while v >= 0x80 {

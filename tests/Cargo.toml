@@ -73,6 +73,9 @@ path = "steps/l01_19_whole_file_ports/mod.rs"
 name = "l01_19a_command_line"
 path = "steps/l01_19a_command_line/mod.rs"
 [[test]]
+name = "l01_19b_record_address"
+path = "steps/l01_19b_record_address/mod.rs"
+[[test]]
 name = "l01_20_provenance"
 path = "steps/l01_20_provenance/mod.rs"
 [[test]]
@@ -201,6 +204,12 @@ path = "steps/m0_10_finite_model_harness/mod.rs"
 [[test]]
 name = "m0_11_prelude_axioms_and_limits"
 path = "steps/m0_11_prelude_axioms_and_limits/mod.rs"
+[[test]]
+name = "s_01_port_catalog"
+path = "steps/s_01_port_catalog/mod.rs"
+[[test]]
+name = "s_01f_import_graph"
+path = "steps/s_01f_import_graph/mod.rs"
 # END step targets
 
 # The tests that need tools outside the Rust toolchain; tools/run_tests.sh --full runs them.
