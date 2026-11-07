@@ -386,8 +386,8 @@ parent's re-export of a child is an edge from parent to child. It names every st
 component, with a shortest cycle and every import within it. Paths below are relative to
 `crates/`, with `src/` dropped.
 
-**`zedc` has no cycle since S.1f** (`imports crates/zedc/src`: 87 files, 291 imports, exit 0;
-test `s_01f_import_graph::the_compiler_has_no_import_cycle`). The tool found nine components
+**`zedc` had no cycle through paths after S.1f** (`imports crates/zedc/src`: 87 files, 291
+imports, exit 0, before calls of methods written apart counted). The tool found nine components
 when S.1f began, against the six `zedc` components of the first, uncommitted scanner. Each was broken by moving
 the shared items to a file below both sides; no file was merged and no re-export hides an edge:
 
@@ -403,22 +403,48 @@ the shared items to a file below both sides; no file was merged and no re-export
 | `store/presburger`, `presburger/deep`, `presburger/deep/canon` | The formulas (`Atom`, `Lin`, `Con`, `Formula`, `Rel`, `Model`) and `Id` moved to `store/presburger/formula.rs` |
 | `zir`, `zir/text` | The validator moved from `zir/mod.rs` to `zir/validate.rs`, which imports `zir/text.rs` |
 
-Method calls are not imports, so a type whose `impl` blocks are split across files still
-recurses across them through its methods: `ast::Builder` (`ast/mod.rs`, `stmts.rs`, `types.rs`,
-`body.rs`) and `check::Ck` (`check/mod.rs`, `walk.rs`, `widen.rs`). A Zed unit cannot split a
-definition's methods across units, so the port merges each such group into one unit or turns
-the calls into functions over a shared type; the step S.2 port decides which.
+**Methods written apart are imports since S.1f-rest.** A call of a method whose `impl` block is
+in another file than its type (`impl Builder { … }` in `ast/stmts.rs`, `Builder` in
+`ast/mod.rs`) is an import of the block's file, since a Zed unit cannot split a definition's
+methods across units and the port makes each such block a unit of its own. The tool types the
+receiver from parameters, `let`s, fields, return types, patterns (`for`, `match`, `if let`,
+closures) and the standard wrappers; when it cannot, the call is an import of every file with a
+method of that name written apart from its type that the caller may call, so no cycle is
+missed, and the report counts those calls. A receiver of a type parameter's type takes only
+trait methods, so it imports nothing.
 
-**Other crates.** DESIGN.md step S.1f states its test for `crates/`; S.1f made `zedc` acyclic.
-The tool finds these components in the rest (`zed-rt`, `zed-cert`, `zed-tools` and
-`zed-alloc-count` have none):
+**The cycles that counting reveals, still open** (S.1f-rest, test
+`s_01f_import_graph::no_crate_has_an_import_cycle_but_the_known_ones`, which lists their files).
+The tool reports one component of 32 files in `zedc` (90 files, 370 imports, 212 calls not
+typed) and one of 12 in `zed-kernel` (28 files, 89 imports, 68 calls not typed). The true cycles
+inside them were found by adding the cross-file call edges rustc's MIR gives
+(`--emit=mir`, a scratch check, not committed) to the tool's path edges; the files beyond them
+are in the components only through calls the tool did not type (in `zedc` 23 files through
+`x.get()` read as `Unit::get` in `elab.rs`; in `zed-kernel` `num.rs`, `text.rs`, `value.rs` and
+`bes.rs` through `x.is_empty()` read as `Type::is_empty` in `types/empty.rs`). The MIR call graph
+also tells which cycles a move can break: functions that call each other in a cycle must stay in
+one unit, and only two such groups cross files.
 
-| Component | Edges | Proposed fix (inferred from the edges, not built) |
+| True cycle | Edges | Fix (inferred from the MIR call graph, not built) |
 |---|---|---|
-| `zed-kernel`: `deep`, `error`, `family`, `text`, `value` | `deep.rs:18` `Family`, `:19` `Atom`; `error.rs:9` `Keypath`, `:40` `Value`; `family.rs:20` `Part`, `:21` `KernelError`, `:22` `Value`; `text.rs:28` `KernelError`; `value.rs:21` `Part`, `:22` `Family`, `:24` `Text` | Merge `value`, `family` and `deep`: `Value`, `Family` and `Part` are one recursive type. `Keypath` is `Vec<Value>` and `KernelError` holds `Value`, so `error` joins them, or `KernelError` stops holding a `Value` |
-| `zed-kernel`: `types`, `types/bdd`, `bdd/list`, `types/debug`, `types/empty`, `types/print`, `types/rec` | `types.rs:44` `bdd::Form`, `:28` `empty::Refusal`, `:32` `print::Surface`, `:232` `rec::Key`; `bdd.rs:39` `AtomPart`, `:2309` `list::List`, `:67` `debug::Queue`; `debug.rs:14` `Morphism`, `:13` `Bdd`; `list.rs:25` `Bdd`; `empty.rs:78` `Lits`, `:77` `bdd::Part`, `:3065` `rec::Def`; `print.rs:25` `Lits`, `:24` `Bdd`; `rec.rs:29` `Piece`, `Verdict` | Move the shared data (`AtomPart`, `Lits`, `Piece`, `Form`, `Part`, `Refusal`, `Verdict`, `Key`) to a leaf file under `types`, so the algorithms in `bdd`, `debug`, `empty`, `print` and `rec` import it and `types.rs` imports them |
-| `zed-kernel`: `num`, `num/bound` | `num.rs:31` `bound::Format`; `bound.rs:16` `LiteralRounding` | Move `LiteralRounding` to `num/bound.rs` or `Format` to `num.rs` |
-| `zed-native`: `codegen`, `exe`, `hooks`, `lib` | `codegen.rs:31` `hooks::HOOKS`; `exe.rs:58`, `hooks.rs:845` `crate::legalize`; `lib.rs:159` `codegen::define`, `:222` `exe::data`, `:37` `hooks::Counted` | Move `legalize` from `lib.rs` to its own file, which `codegen`, `exe` and `hooks` import |
+| `zedc`: `ast/mod`, `body`, `neglit`, `stmts`, `types` | the `impl Builder` blocks call each other's methods | No group of mutually recursive functions crosses these files, so moving methods breaks it: order the `Builder` methods by what they call and put each file's methods below the files that call them |
+| `zedc`: `check/mod`, `check/walk` | 56 functions in one group of mutual recursion, 27 in `check/mod.rs` (`fit_declared`, `compare`, `fits_slot`, `bind_pattern`, …) and 29 in `check/walk.rs` (`call`, `expr_of`, `infer`, `scope`, …) | The group must be one unit: move the 27 into `check/walk.rs` (or the 29 into `check/mod.rs`), the rest of each file importing it |
+| `zedc`: `elab`, `elab/walk` | `Elab::scope` and the walk's methods | No recursive group crosses them: move the methods `elab/walk.rs` calls below it |
+| `zedc`: `store/presburger`, `presburger/deep`, `deep/canon` | `Formula::fold`, `Con::holds`, `canon::Canon`, `Lin::constant`; one recursive group `presburger::witness`, `presburger::holds`, `deep::holds_as` | Move `holds_as` to `presburger.rs` (or `witness` and `holds` to `deep.rs`); the rest by moving the split methods of `Formula`, `Con` and `Lin` to `formula.rs` |
+| `zed-kernel`: `types`, `types/bdd`, `bdd/list`, `types/debug`, `types/empty`, `types/print`, `types/rec`, `rec/walk` | `types.rs` uses `bdd::Form`, `empty::Refusal`, `print::Surface`, `rec::Key` and `Bdd::list`; each of the others uses `Type`, `Row`, `AtomPart`, `Lits`, `Piece` or methods of `Type` written in another of them (`Type::is_empty`, `subtype` and `verdict` in `empty.rs`) | No recursive group of functions crosses these files, though `Type` holds `Bdd<Row>` and `Row` holds `Type`, so the data stay in one unit: move the shared data (`AtomPart`, `Lits`, `Piece`, `Form`, `Part`, `Refusal`, `Verdict`, `Key`, `Queue`, `List`) into `types.rs` or a leaf under it, and each method of `Type` to the file of the algorithm it belongs to, called by path |
+
+These moves touch the files that ZEDC-split (`zedc` into crates) and the kernel `types` branches
+were changing while S.1f-rest ran, so they were left to be made after those merge.
+
+**The other components the tool found when S.1f-rest began are broken.** `zed-kernel`: `value`,
+`family`, `error` and `deep` were one recursive type (`Value`, `Family`, `Part`, `KernelError`
+holding `Value`), so `family.rs` and `error.rs` merged into `value.rs`, and `deep.rs` imports it
+(the paths `zed_kernel::family` and `zed_kernel::error` are now `zed_kernel::value`). `num` and
+`num/bound`: `LiteralRounding`, `TooLarge`, `room` and `bytes_of` moved to `num/room.rs` and
+`built` to `num/fast.rs`, which both import. `zed-native`: `codegen`, `exe`, `hooks` and `lib`:
+`legalize` moved to `legal.rs`, and a run's outcome and the running of generated code to
+`outcome.rs`. `zed-native`, `zed-rt`,
+`zed-cert`, `zed-tools` and `zed-alloc-count` have no cycle.
 
 `zed-kernel` reads the shared scaling test through `#[path]` (`lib.rs:30`); the tool reports such
 a module and does not read it, since its file is outside the crate.
