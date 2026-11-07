@@ -1507,9 +1507,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | node tables to HashMap (KeyHasher) and zip_chain of two long chains by treap union; running zed_kernel group / load 20.32 23.08 25.87 |
-| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | cause found: split_at put the halves of a cut piece under ancestors of lower priority, breaking heap order (501 of 2049 nodes); split_around fix makes probe_all |
-| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | cube and equality fixed in zedc-int (one-word root, carried inverse, power-residue filter, power-of-2 strip); negative control fails 12.93/17.23, fixed 9.16/7.7 |
+| L1.39f | impl attempt 1 | 2026-11-07 12:29 | started; worktree wt/l1-39f from origin/main |
+| LOAD-disj-residue | impl attempt 1 | 2026-11-07 11:08 | baseline (old code, defined_with, load 19.47 30.63 30.13): v3 decide 0.209/0.897/5.285 s at 40/80/160 links, hashes a65c8aa1/9b0695f2/6de002fb; v1 0.018/0.037/0 |
+| MATHLIB-seed | impl attempt 1 | 2026-11-05 04:07 | ready: docs/mathlib-study.md committed dac6e20c8b79c98f5e2d9ba4046c32b307371bf4 on wt/mathlib-seed, verbatim from wt/proofs with sources; s_01f_import_graph 14  |
+| MSG-words | impl attempt 1 | 2026-11-05 04:07 | spec edits in msg-words-spec (sentence in sec:diagnostics, op's laws at :253, :1358, :1364); test no_message_names_a_kernel_rule written in rows.rs, building |
+| SCALE-fix-crossover | running | 2026-11-07 12:13 |  |
+| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | averaged 3 kernel tests + x13 over 8 shapes; running groups / load 19.14 21.88 24.37 |
+| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | negative controls done (old split, walk, int each fail as recorded); running affected groups with doc check, load 28.26 23.69 26.13 |
+| SCALE-fix-round-literal | impl attempt 1 | 2026-11-07 12:13 | ready at cc25efeb: affected groups + doc check run (load 17-19), only known base failures remain; fmt, clippy clean |
+| SCALE-fix-strip-odd | running | 2026-11-07 12:13 |  |
+| ST-hole-project | impl attempt 1 | 2026-11-07 11:57 | split by case, k=40..320: false case (x_i == 5) changes k names per test (sum k^2: 1599..102399), work/changed name flat 126k-178k instr: output-bound, not redu |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
