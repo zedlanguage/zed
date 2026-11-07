@@ -12,9 +12,9 @@ use zed_kernel::num::literal_f64;
 use zed_kernel::{Prim, Rat, Term, Value, eval};
 
 use super::{Builder, Error, Expr, ExprKind, Note};
-use crate::interp;
 use crate::lex::Tok;
-use crate::rejection::Row;
+use zedc_base::interp;
+use zedc_base::rejection::Row;
 
 impl Builder<'_, '_> {
     /// The rejection of the `Prefix` node `n`, whose operand built to `operand`, when its

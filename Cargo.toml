@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/zedc",
     "crates/zedc-base",
+    "crates/zedc-syntax",
     "crates/zed-kernel",
     "crates/zed-rt",
     "crates/zed-cert",
@@ -30,6 +31,7 @@ zed-corpus-ref = { path = "zed/corpus/ref" }
 zed-tools = { path = "crates/zed-tools" }
 zed-alloc-count = { path = "crates/zed-alloc-count" }
 zedc-base = { path = "crates/zedc-base" }
+zedc-syntax = { path = "crates/zedc-syntax" }
 # The libraries the compiler crates (zedc, zedc-*) share, at one version each.
 blake3 = "1"
 imbl = "7.0.2"

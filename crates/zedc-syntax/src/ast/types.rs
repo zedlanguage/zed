@@ -13,7 +13,7 @@ use super::{
     TypeKind, TypeParam,
 };
 use crate::lex::{Span, Tok};
-use crate::rejection::Row;
+use zedc_base::rejection::Row;
 
 impl Builder<'_, '_> {
     /// The type node `n` built to.

@@ -1,0 +1,23 @@
+[package]
+name = "zedc-syntax"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# A part of the compiler `zedc`, which re-exports its modules at their old paths. Also a dylib, as
+# zedc is: an edit recompiles this crate and those above it, and each test binary links one shared
+# copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+zedc-base.workspace = true
+zed-kernel.workspace = true
+num-bigint.workspace = true
+unicode-ident.workspace = true
+unicode-script.workspace = true
+
+[lints]
+workspace = true

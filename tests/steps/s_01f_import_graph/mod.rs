@@ -38,12 +38,12 @@ fn cycles(g: &Graph) -> Vec<Vec<&str>> {
 /// The files of the import cycles still open (item S.1f-rest), as `crate/path`. The tool reads
 /// a call of a method written in another file than its type as an import (a Zed port makes that
 /// `impl` block a unit of its own), and these files are in a cycle through such calls or through
-/// paths: in zedc the `ast` builder split over five files, `check/mod.rs` and `check/walk.rs`
-/// (one group of mutually recursive functions), `elab.rs` and `elab/walk.rs`, and
-/// `store/presburger.rs` with `deep.rs` and `canon.rs`; in zed-kernel the type algebra in
-/// `types`. The rest are in a cycle only through calls whose receiver the tool did not type,
-/// each read as an import of every file with a method of that name. S.1f is done when this list
-/// is empty and every crate passes the tool.
+/// paths: in the compiler (zedc and the crates zedc-* it is split into) the `ast` builder split
+/// over five files, `check/mod.rs` and `check/walk.rs` (one group of mutually recursive
+/// functions), `elab.rs` and `elab/walk.rs`, and `presburger.rs` with `deep.rs` and `canon.rs`;
+/// in zed-kernel the type algebra in `types`. The rest are in a cycle only through calls whose
+/// receiver the tool did not type, each read as an import of every file with a method of that
+/// name. S.1f is done when this list is empty and every crate passes the tool.
 const KNOWN_CYCLES: &[&str] = &[
     "zed-kernel/num.rs",
     "zed-kernel/text.rs",
@@ -57,11 +57,11 @@ const KNOWN_CYCLES: &[&str] = &[
     "zed-kernel/types/rec.rs",
     "zed-kernel/types/rec/walk.rs",
     "zed-kernel/value.rs",
-    "zedc/ast/body.rs",
-    "zedc/ast/mod.rs",
-    "zedc/ast/neglit.rs",
-    "zedc/ast/stmts.rs",
-    "zedc/ast/types.rs",
+    "zedc-syntax/ast/body.rs",
+    "zedc-syntax/ast/mod.rs",
+    "zedc-syntax/ast/neglit.rs",
+    "zedc-syntax/ast/stmts.rs",
+    "zedc-syntax/ast/types.rs",
     "zedc/check/kernel_type.rs",
     "zedc/check/mod.rs",
     "zedc/check/ty.rs",

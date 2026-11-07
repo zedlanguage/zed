@@ -1,5 +1,5 @@
 //! The lexer (DESIGN.md sec:lexical, its lexical grammar; steps L1.2–L1.6): the loaded text
-//! (`crate::source`) becomes tokens, each with its span, a byte range of that text.
+//! (`zedc_base::source`) becomes tokens, each with its span, a byte range of that text.
 //!
 //! Tokens are read by ordered choice, as the lexical grammar orders them. A character no rule
 //! reads is an error at that character, and lexing stops there.
@@ -12,7 +12,7 @@ mod string;
 mod token;
 
 pub use name::is_single_script;
-pub(crate) use name::name as name_end;
+pub use name::name as name_end;
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
 pub use token::{Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, unread_literal};

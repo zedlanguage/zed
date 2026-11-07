@@ -44,7 +44,7 @@ pub use node::{
 
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
-use crate::rejection::Row;
+use zedc_base::rejection::Row;
 
 /// The expression of `tree`, parsed as `Expr` from `tokens` of `text`.
 pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {

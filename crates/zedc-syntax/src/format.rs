@@ -18,13 +18,14 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use crate::ast;
 use crate::ast::{
     Annot, Arm, BoundaryItem, Every, Expr, ExprKind, Field, Function, ImportKind, IndexKey, Param,
     Pattern, Port, Stmt, StmtKind, Target, Type, TypeKind, TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
 use crate::parse::{TOP, parse};
-use crate::{ast, source};
+use zedc_base::source;
 
 /// The text of `unit`, parsed from `tokens` of `text`, in the formatter's layout, with the
 /// comments of `text` kept.

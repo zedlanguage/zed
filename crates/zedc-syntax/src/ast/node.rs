@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::address::ContentAddress;
 use crate::lex::{Digits, Span};
+use zedc_base::address::ContentAddress;
 
 /// An expression and its span.
 pub struct Expr {
@@ -276,7 +276,7 @@ pub struct Error {
     /// How the checker reached it: each constraint and step, in the order it met them.
     pub notes: Vec<Note>,
     /// The row of the rejection table (DESIGN.md sec:diagnostics) the error is a case of, if any.
-    pub row: Option<crate::rejection::Row>,
+    pub row: Option<zedc_base::rejection::Row>,
 }
 
 /// One step of a derivation: a place in the source and what holds there.

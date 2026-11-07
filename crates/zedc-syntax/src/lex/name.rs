@@ -17,7 +17,7 @@ use unicode_ident::{is_xid_continue, is_xid_start};
 use unicode_script::{Script, ScriptExtension, UnicodeScript};
 
 /// The end of the name starting at byte `pos` of `text`, if one starts there.
-pub(crate) fn name(text: &str, pos: usize) -> Option<usize> {
+pub fn name(text: &str, pos: usize) -> Option<usize> {
     let rest = &text[pos..];
     let mut chars = rest.char_indices().peekable();
     let (_, first) = chars.next()?;

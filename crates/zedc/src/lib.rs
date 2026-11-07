@@ -7,8 +7,8 @@
 //! and its interpreter stays as the permanent differential oracle (step L1.37).
 
 pub use zedc_base::address;
-pub mod ast;
 pub use zedc_base::axioms;
+pub use zedc_syntax::ast;
 pub mod canon;
 pub mod check;
 pub use zedc_base::cost;
@@ -16,12 +16,12 @@ mod defs;
 pub mod docs;
 pub mod elab;
 pub use zedc_base::fence;
-pub mod format;
+pub use zedc_syntax::format;
 pub mod front;
 pub use zedc_base::interp;
-pub mod lex;
+pub use zedc_syntax::lex;
 pub mod mutate;
-pub mod parse;
+pub use zedc_syntax::parse;
 pub mod query;
 pub use zedc_base::rejection;
 pub mod resolve;

@@ -14,7 +14,7 @@
 
 use super::{Builder, Error, Expr, Note};
 use crate::lex::Span;
-use crate::rejection::Row;
+use zedc_base::rejection::Row;
 
 /// What in a brace reads as a display.
 enum Reading {

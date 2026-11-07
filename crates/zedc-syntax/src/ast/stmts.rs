@@ -13,8 +13,8 @@ use super::{
     Annot, BoundaryItem, Builder, Built, Error, Expr, ExprKind, Field, Function, Import,
     ImportKind, IndexKey, IndexedDef, Method, Note, Port, Stmt, StmtKind, Struct, Target, TypeDecl,
 };
-use crate::address::ContentAddress;
 use crate::lex::{Part, Span, Tok};
+use zedc_base::address::ContentAddress;
 
 impl Builder<'_, '_> {
     /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`.
