@@ -23,11 +23,23 @@
 //! onto those atoms, made from the faces of its own kept parts, so a link of a chain that
 //! extends the point of a small callee beside the chain (`p{i}(x) = q(x: x) && p{i-1}(x: x + 3)
 //! && x < 1000 * i`) reads O(1) rows, not the chain.
+//!
+//! A face of a conjunction with a disjunction keeps it as a clause, projected exactly, the rows
+//! beside one disjunction copied into each of its disjuncts (LOAD-disj-residue), and keeps each
+//! clause once: two clauses that differ only in the names of their quotients and their written
+//! order say the same once each quotient's equality is read as the congruence it says. So a
+//! chain whose callee is `q(x) = (x mod 3 == 1 || x mod 5 == 2) && ...` reads at most five
+//! clauses a link, one for each residue of the shift modulo 5. The face never lists residue
+//! classes, so its size is bounded by the clauses written and not by the least common
+//! multiple of the moduli.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use super::formula::Rel;
-use super::{Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, satisfiable, shadow};
+use super::{
+    Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, nnf, satisfiable, shadow,
+};
 use zedc_int::int::Int;
 
 /// Whether a formula holds somewhere and whether its negation does, each with the refusal that
@@ -76,9 +88,15 @@ struct Known {
 /// `rows` extends to a point of the conjunction and its definitions with the same values on
 /// `atoms`, and on no other atom, so the rows stand for the conjunction in a question that
 /// reads none of its other atoms. Rows of atoms none of the caller's reads are dropped, since
-/// the conjunction holds and so they hold somewhere apart.
+/// the conjunction holds and so they hold somewhere apart. A conjunction with a disjunction
+/// keeps it as a clause (LOAD-disj-residue): `rows` and `clauses` together are the projection
+/// ([`projected`]), each clause a disjunction, and `atoms` holds the atoms of the clauses too:
+/// a quotient a clause alone reads, and an atom two disjunctions share, which is kept and not
+/// projected out ([`project`]); a clause that says what another says is kept once
+/// ([`Face::of`]).
 struct Face {
     rows: Vec<Con>,
+    clauses: Vec<Formula>,
     atoms: HashSet<Atom>,
 }
 
@@ -285,19 +303,30 @@ impl Extending {
         // `l01_38_presburger::one_scope::the_questions_of_a_drifting_chain_scale`). Each face is exact, so the point is
         // found where the whole one would be; where the solver refuses the question with faces,
         // or none is read, the question is asked with the parts themselves, as before.
+        // A part with a disjunction or a negation (an `if`, `min`, `max`, `abs`, `!=`, an
+        // `||`, a `div` or `mod` by a variable) has a face too, its disjunctions kept as
+        // clauses, each clause said once (LOAD-disj-residue, [`clauses_once`]): the chain with
+        // `q = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000` keeps five clauses a
+        // link, one for each residue of the shift modulo 5, and not one for each link (160
+        // links: 5.40 s before, 0.27 s now; test
+        // `l01_38_presburger::one_scope::the_questions_of_a_drifting_disjunctive_chain_scale`).
         // Complexity tradeoff: a kept part with no face is read whole, as before: one that
-        // holds a disjunction or a negation (an `if`, `min`, `max`, `abs`, `!=`, an `||`, a
-        // `div` or `mod` by a variable, whose definition is one disjunct per sign), a product,
-        // a let-bound name (no call binds it, so its caller's atoms are not known), one that
-        // does not hold, and one beside which an atom it projects out is read. Why:
-        // projecting a disjunction keeps a disjunct for each of its cases, which doubles at
-        // each link of a chain; the exact face is small (`(x mod 3 == 1 || x mod 5 == 2)`
-        // repeats every 15 values) but needs the disjuncts merged by their residues modulo
-        // the least common multiple of the moduli. Trigger: the chain above with `q = (x mod
-        // 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000`: 0.224, 0.910 and 4.576 s at 40,
-        // 80 and 160 links (measured once, debug). Test
-        // `l01_38_presburger::one_scope::each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole`.
-        // COMPLEXITY.md row LOAD-call-summary; LOAD-disj-residue is the complete solution.
+        // holds a product, a let-bound name (no call binds it, so its caller's atoms are not
+        // known), one that does not hold, and one beside which an atom it projects out is
+        // read; and a face holds one clause for each link whose clause differs from every
+        // other's, so a link reads O(its depth) clauses and the chain O(n²): a disjunction of
+        // bounds that the call moves (`(x < 10 || x > 20)` read at `x + 3`), a residue whose
+        // modulus exceeds the chain's length, and an atom two disjunctions share ([`project`]),
+        // which keeps its name in each link. Why: the clauses are merged where they say the
+        // same, not where one implies another or several say what one says; deciding that a
+        // clause of congruences is implied by others is co-NP-hard (simultaneous incongruences,
+        // Garey and Johnson problem AN2), and the union of moved holes is one interval each
+        // where they do not overlap. Trigger: the chain above with `q = (x < 10 || x > 20) &&
+        // x > 0 && x < 1000000`: 1.68 s at 80 links, 1.91 s before (measured once, debug). Test
+        // `l01_38_presburger::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
+        // COMPLEXITY.md row LOAD-disj-residue. A complete solution for bounds keeps the holes of
+        // the clauses over one term as an ordered map of disjoint intervals, merged at each
+        // link in O(log n).
         let mut holds = None;
         for &(j, k) in &parts {
             let (Ok(true), Some(m)) = (&k.answers.holds, &k.point) else {
@@ -475,13 +504,14 @@ impl Faces {
 
     /// The face of the known conjunction `g`, whose kept parts' faces are made: `shadow` of its
     /// constraints, the definitions they reach past its kept parts, and its kept parts' faces,
-    /// onto the atoms its caller reads. Exact: each part's face stands for it where nothing
-    /// else read with it reads an atom the face projects out, which is checked, and `shadow`
-    /// eliminates an atom only where that is exact. `None` where `g` does not hold, no call
-    /// binds it, it or a definition it reaches holds a disjunction, a negation or a product, or
-    /// a kept part has no face or is read at an atom its face projects out. Time of `g`'s own
-    /// parts and definitions and of its parts' faces, and, for each two kept parts, of the
-    /// smaller of their atoms.
+    /// onto the atoms its caller reads, or, where any of them holds a disjunction or a
+    /// negation, their projection by [`projected`]. Exact: each part's face stands for it
+    /// where nothing else read with it reads an atom the face projects out, which is checked,
+    /// and `shadow` eliminates an atom only where that is exact. `None` where `g` does not
+    /// hold, no call binds it, it or a definition it reaches holds a product, or a kept part
+    /// has no face or is read at an atom its face projects out. Time of `g`'s own parts and
+    /// definitions and of its parts' faces, and, for each two kept parts, of the smaller of
+    /// their atoms, and of [`projected`].
     fn face(
         &self,
         known: &HashMap<Id, Known>,
@@ -493,8 +523,11 @@ impl Faces {
         if k.answers.holds != Ok(true) {
             return None;
         }
-        let keep: HashSet<Atom> = iface(g)?.into_iter().collect();
+        let mut keep: HashSet<Atom> = iface(g)?.into_iter().collect();
         let mut rows: Vec<Con> = Vec::new();
+        // Its disjunctions and negations, and the definitions it reaches that are not
+        // conjunctions of constraints (LOAD-disj-residue).
+        let mut ors: Vec<Formula> = Vec::new();
         let mut parts: Vec<(&Known, &Face)> = Vec::new();
         for h in g.kids() {
             match h {
@@ -503,7 +536,7 @@ impl Faces {
                     let id = Id::any(h);
                     parts.push((known.get(&id)?, self.by.get(&id)?.as_ref()?));
                 }
-                _ => return None,
+                Formula::Not(_) | Formula::Or(_) => ors.push(h.clone()),
             }
         }
         // The definitions its own constraints reach past its kept parts, whose own are in
@@ -511,19 +544,33 @@ impl Faces {
         let mut seen: HashSet<u32> = HashSet::new();
         let mut todo: Vec<u32> = (rows.iter())
             .flat_map(|c| c.lin.terms.keys().flat_map(auxes).collect::<Vec<_>>())
+            .chain(
+                ors.iter()
+                    .flat_map(|h| h.atoms().iter().flat_map(auxes).collect::<Vec<_>>()),
+            )
             .collect();
         while let Some(n) = todo.pop() {
             let a = Atom::Aux(n);
             if !seen.insert(n) || parts.iter().any(|(p, _)| p.closure.contains(&a)) {
                 continue;
             }
-            for c in constraints(&def(n))? {
-                todo.extend(c.lin.terms.keys().flat_map(auxes));
-                rows.push(c.clone());
+            let d = def(n);
+            match constraints(&d) {
+                Some(cs) => {
+                    for c in cs {
+                        todo.extend(c.lin.terms.keys().flat_map(auxes));
+                        rows.push(c.clone());
+                    }
+                }
+                None => {
+                    todo.extend(d.atoms().iter().flat_map(auxes));
+                    ors.push(d);
+                }
             }
         }
         let own: HashSet<Atom> = (rows.iter())
             .flat_map(|c| c.lin.terms.keys().cloned())
+            .chain(ors.iter().flat_map(Formula::atoms))
             .collect();
         if own.iter().any(|a| matches!(a, Atom::Product(..))) {
             return None;
@@ -540,9 +587,14 @@ impl Faces {
         }
         for (_, face) in &parts {
             rows.extend(face.rows.iter().cloned());
+            ors.extend(face.clauses.iter().cloned());
         }
-        let rows = shadow(&rows, &|a| keep.contains(a), true)?;
-        Some(Face::of(rows, &keep))
+        if ors.is_empty() {
+            let rows = shadow(&rows, &|a| keep.contains(a), true)?;
+            return Some(Face::of(rows, Vec::new(), &keep));
+        }
+        let (rows, clauses) = projected(rows, ors, &mut keep)?;
+        Some(Face::of(rows, clauses, &keep))
     }
 
     /// A point of the conjunction `g` (whose parts are `kids`) that extends the point `m` of its
@@ -576,6 +628,7 @@ impl Faces {
                 Some((k, face)) => {
                     faced.push((k, face));
                     rows.extend(face.rows.iter().cloned().map(Formula::Con));
+                    rows.extend(face.clauses.iter().cloned());
                 }
                 None => {
                     match k {
@@ -614,37 +667,37 @@ impl Faces {
 }
 
 impl Face {
-    /// The face of `rows`, a projection onto `keep` of a conjunction that holds: each row once,
-    /// and the rows of each group linked by shared atoms that reads none of `keep` dropped,
-    /// since the conjunction holds and so each such group holds somewhere apart. Time of the
-    /// rows, near linear.
-    fn of(rows: Vec<Con>, keep: &HashSet<Atom>) -> Face {
+    /// The face of `rows` and `clauses`, a projection onto `keep` of a conjunction that holds:
+    /// each row once, each congruence once ([`congruences_once`]), each clause once
+    /// ([`clauses_once`]), and the rows and clauses of each group linked by shared atoms that
+    /// reads none of `keep` dropped, since the conjunction holds and so each such group holds
+    /// somewhere apart. Time of the rows and clauses, near linear.
+    fn of(rows: Vec<Con>, clauses: Vec<Formula>, keep: &HashSet<Atom>) -> Face {
         let rows: Vec<Con> = (rows.into_iter())
             .filter(|c| !c.lin.terms.is_empty())
             .collect::<std::collections::BTreeSet<Con>>()
             .into_iter()
             .collect();
-        let rows = congruences_once(rows, keep);
-        // The groups, by a union of the atoms each row reads: each atom's index, and the
-        // index each points to, followed to its group's by halving.
+        let in_clauses: HashSet<Atom> = clauses.iter().flat_map(Formula::atoms).collect();
+        let rows = congruences_once(rows, keep, &in_clauses);
+        drop(in_clauses);
+        let clauses = clauses_once(clauses, &rows, keep);
+        // The atoms of each row and then of each clause.
+        let reads: Vec<Vec<Atom>> = (rows.iter())
+            .map(|c| c.lin.terms.keys().cloned().collect())
+            .chain(clauses.iter().map(|f| f.atoms().into_iter().collect()))
+            .collect();
+        // The groups, by a union of the atoms each row or clause reads: each atom's index, and
+        // the index each points to, followed to its group's by halving.
         let mut index: HashMap<&Atom, usize> = HashMap::new();
-        for c in &rows {
-            for a in c.lin.terms.keys() {
-                let n = index.len();
-                index.entry(a).or_insert(n);
-            }
+        for a in reads.iter().flatten() {
+            let n = index.len();
+            index.entry(a).or_insert(n);
         }
         let mut up: Vec<usize> = (0..index.len()).collect();
-        fn root(up: &mut [usize], mut a: usize) -> usize {
-            while up[a] != a {
-                up[a] = up[up[a]];
-                a = up[a];
-            }
-            a
-        }
-        for c in &rows {
-            let mut atoms = c.lin.terms.keys().map(|a| index[a]);
-            let first = atoms.next().expect("a row with an atom");
+        for atoms in &reads {
+            let mut atoms = atoms.iter().map(|a| index[a]);
+            let Some(first) = atoms.next() else { continue };
             for a in atoms {
                 let (r, s) = (root(&mut up, first), root(&mut up, a));
                 up[s] = r;
@@ -654,39 +707,101 @@ impl Face {
             .filter_map(|a| index.get(a).copied())
             .map(|a| root(&mut up, a))
             .collect();
-        let read: Vec<bool> = (rows.iter())
-            .map(|c| {
-                let a = c.lin.terms.keys().next().expect("a row with an atom");
-                kept.contains(&root(&mut up, index[a]))
-            })
+        // A clause with no atom holds, since the conjunction does, and is dropped.
+        let mut read = (reads.iter())
+            .map(|atoms| (atoms.first()).is_some_and(|a| kept.contains(&root(&mut up, index[a]))));
+        let rows: Vec<Con> = (rows.into_iter())
+            .filter(|_| read.next().expect("a row's group"))
             .collect();
+        let clauses: Vec<Formula> = (clauses.into_iter())
+            .filter(|_| read.next().expect("a clause's group"))
+            .collect();
+        drop(read);
         drop(index);
-        let rows: Vec<Con> = (rows.into_iter().zip(read))
-            .filter_map(|(c, r)| r.then_some(c))
-            .collect();
         let atoms = (rows.iter())
             .flat_map(|c| c.lin.terms.keys().cloned())
+            .chain(clauses.iter().flat_map(Formula::atoms))
             .collect();
-        Face { rows, atoms }
+        Face {
+            rows,
+            clauses,
+            atoms,
+        }
+    }
+}
+
+/// The group of the atom at `a`, by the index each points to, the path halved on the way.
+fn root(up: &mut [usize], mut a: usize) -> usize {
+    while up[a] != a {
+        up[a] = up[up[a]];
+        a = up[a];
+    }
+    a
+}
+
+/// The terms and constant of a congruence, each a residue modulo `modulus`.
+#[derive(PartialEq, Eq, Hash)]
+struct Congruence {
+    modulus: Int,
+    terms: Vec<(Atom, Int)>,
+    constant: Int,
+}
+
+impl Congruence {
+    /// The congruence the equality `c` says when it reads an atom `lone` holds of: that the
+    /// rest of its term is a multiple of that atom's coefficient. Of the residues of the rest
+    /// and of its negation, which say it alike, the smaller names it. `None` for an inequality
+    /// or an equality with no such atom.
+    fn of(c: &Con, lone: &dyn Fn(&Atom) -> bool) -> Option<Congruence> {
+        let q = (c.lin.terms.iter()).find(|(a, _)| lone(a));
+        let (Rel::Eq, Some((q, d))) = (c.rel, q) else {
+            return None;
+        };
+        let d = d.abs();
+        let residues = |sign: &Int| {
+            let terms: Vec<(Atom, Int)> = (c.lin.terms.iter())
+                .filter(|(a, _)| *a != q)
+                .map(|(a, e)| (a.clone(), (e * sign).mod_floor(&d)))
+                .filter(|(_, r)| !r.is_zero())
+                .collect();
+            (terms, (&c.lin.constant * sign).mod_floor(&d))
+        };
+        let (terms, constant) = residues(&Int::from(1)).min(residues(&Int::from(-1)));
+        Some(Congruence {
+            modulus: d,
+            terms,
+            constant,
+        })
+    }
+
+    /// The congruence written as one equality, its lone atom replaced by a product of two
+    /// auxiliary variables numbered `u32::MAX`: no face holds a product ([`Faces::face`]), so
+    /// the equality is that of no row, and two rows that say the same congruence give the same
+    /// one. Read only as a key ([`clauses_once`]).
+    fn key(self) -> Con {
+        let stand = Atom::Product(Factor::Aux(u32::MAX), Factor::Aux(u32::MAX));
+        Con {
+            lin: Lin {
+                terms: std::iter::once((stand, self.modulus))
+                    .chain(self.terms)
+                    .collect(),
+                constant: self.constant,
+            },
+            rel: Rel::Eq,
+        }
     }
 }
 
 /// `rows` with each congruence said once. An equality that reads an atom outside `keep` no other
-/// row reads says only that the rest of its term is a multiple of that atom's coefficient: the
-/// atom is a quotient `shadow` could not eliminate, since it substitutes unit equalities only.
-/// Of the rows that say the same congruence one is kept, and a row whose congruence always
-/// holds is dropped; this keeps the face of a chain of `x mod 3 == 1` tests at one row however
-/// long the chain (LOAD-call-summary). Exact: the dropped row's lone atom is read nowhere else,
-/// so the rows kept, with that atom projected out, say the same of every other atom. Time of
-/// the rows, near linear.
-fn congruences_once(rows: Vec<Con>, keep: &HashSet<Atom>) -> Vec<Con> {
-    /// The terms and constant of a congruence, each a residue modulo `modulus`.
-    #[derive(PartialEq, Eq, Hash)]
-    struct Congruence {
-        modulus: Int,
-        terms: Vec<(Atom, Int)>,
-        constant: Int,
-    }
+/// row reads, nor any atom of `also` (the clauses beside the rows), says only that the rest of
+/// its term is a multiple of that atom's coefficient ([`Congruence::of`]): the atom is a
+/// quotient `shadow` could not eliminate, since it substitutes unit equalities only. Of the
+/// rows that say the same congruence one is kept, and a row whose congruence always holds is
+/// dropped; this keeps the face of a chain of `x mod 3 == 1` tests at one row however long the
+/// chain (LOAD-call-summary). Exact: the dropped row's lone atom is read nowhere else, so the
+/// rows kept, with that atom projected out, say the same of every other atom. Time of the rows,
+/// near linear.
+fn congruences_once(rows: Vec<Con>, keep: &HashSet<Atom>, also: &HashSet<Atom>) -> Vec<Con> {
     enum Says {
         Row,
         Nothing,
@@ -698,35 +813,17 @@ fn congruences_once(rows: Vec<Con>, keep: &HashSet<Atom>) -> Vec<Con> {
             *reads.entry(a).or_default() += 1;
         }
     }
+    let lone = |a: &Atom| reads[a] == 1 && !keep.contains(a) && !also.contains(a);
     let says: Vec<Says> = (rows.iter())
-        .map(|c| {
-            let lone = (c.lin.terms.iter()).find(|(a, _)| reads[a] == 1 && !keep.contains(*a));
-            let (Rel::Eq, Some((q, d))) = (c.rel, lone) else {
-                return Says::Row;
-            };
-            let d = d.abs();
-            // The residues of the rest of the term and of its negation; the smaller names the
-            // congruence, which the two say alike.
-            let residues = |sign: &Int| {
-                let terms: Vec<(Atom, Int)> = (c.lin.terms.iter())
-                    .filter(|(a, _)| *a != q)
-                    .map(|(a, e)| (a.clone(), (e * sign).mod_floor(&d)))
-                    .filter(|(_, r)| !r.is_zero())
-                    .collect();
-                (terms, (&c.lin.constant * sign).mod_floor(&d))
-            };
-            let (terms, constant) = residues(&Int::from(1)).min(residues(&Int::from(-1)));
-            match (terms.is_empty(), constant.is_zero()) {
+        .map(|c| match Congruence::of(c, &lone) {
+            None => Says::Row,
+            Some(k) => match (k.terms.is_empty(), k.constant.is_zero()) {
                 (true, true) => Says::Nothing,
                 // A congruence that never holds: kept, though a face is made only where its
                 // rows hold.
                 (true, false) => Says::Row,
-                (false, _) => Says::Congruence(Congruence {
-                    modulus: d,
-                    terms,
-                    constant,
-                }),
-            }
+                (false, _) => Says::Congruence(k),
+            },
         })
         .collect();
     drop(reads);
@@ -738,6 +835,404 @@ fn congruences_once(rows: Vec<Con>, keep: &HashSet<Atom>) -> Vec<Con> {
             Says::Congruence(k) => said.insert(k).then_some(c),
         })
         .collect()
+}
+
+/// `clauses` with each said once (LOAD-disj-residue): two clauses say the same when they are
+/// alike once each equality that reads a quotient is read as the congruence it says
+/// ([`Congruence::of`]) and the parts of each conjunction and disjunction are sorted. A
+/// quotient of a clause is an atom outside `keep` that no row and no other clause reads, and
+/// that no two parts of one conjunction in the clause read and no negation in it reads
+/// ([`joined`]). Exact: the existential of such an atom distributes over each disjunction and
+/// each conjunction of the clause down to its constraints, and that of an equality that reads it
+/// is the congruence the equality says, so a clause with its quotients projected out is its
+/// key, and a clause whose key is that of one kept adds nothing to the projection. So a link of
+/// the chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3)` with `q = (x mod 3 == 1 || x mod 5 == 2)
+/// && ...` keeps one clause for each residue of the shift modulo 5, five in all, however long
+/// the chain. Time of the clauses and rows, near linear.
+fn clauses_once(clauses: Vec<Formula>, rows: &[Con], keep: &HashSet<Atom>) -> Vec<Formula> {
+    let mut reads: HashMap<Atom, usize> = HashMap::new();
+    let atoms = (rows
+        .iter()
+        .map(|c| c.lin.terms.keys().cloned().collect::<Vec<Atom>>()))
+    .chain(clauses.iter().map(|f| f.atoms().into_iter().collect()));
+    for a in atoms.flatten() {
+        *reads.entry(a).or_default() += 1;
+    }
+    let mut said: HashSet<Formula> = HashSet::new();
+    (clauses.into_iter())
+        .filter(|f| {
+            let joined = joined(f);
+            let lone = |a: &Atom| reads[a] == 1 && !keep.contains(a) && !joined.contains(a);
+            said.insert(clause_key(f, &lone))
+        })
+        .collect()
+}
+
+/// The atoms of `f` that two parts of one conjunction in it read, or a negation in it reads:
+/// those whose existential does not distribute down to the constraints of `f`. One fold over
+/// the distinct parts of `f`, each part's atoms merged into its largest part's, so each atom
+/// is moved O(log n) times.
+fn joined(f: &Formula) -> HashSet<Atom> {
+    let mut out: HashSet<Atom> = HashSet::new();
+    f.fold(
+        (),
+        |_, ()| (),
+        |g, (), mut parts: Vec<HashSet<Atom>>| match g {
+            Formula::Con(c) => c.lin.terms.keys().cloned().collect(),
+            Formula::Not(_) => {
+                let read = parts.pop().expect("one part");
+                out.extend(read.iter().cloned());
+                read
+            }
+            Formula::And(_) | Formula::Or(_) => {
+                let Some(big) = (0..parts.len()).max_by_key(|&i| parts[i].len()) else {
+                    return HashSet::new();
+                };
+                let mut read = parts.swap_remove(big);
+                for a in parts.into_iter().flatten() {
+                    if !read.contains(&a) {
+                        read.insert(a);
+                    } else if matches!(g, Formula::And(_)) {
+                        out.insert(a);
+                    }
+                }
+                read
+            }
+        },
+    );
+    out
+}
+
+/// The key of the clause `f` ([`clauses_once`]): each equality that reads an atom `lone` holds
+/// of read as its congruence ([`Congruence::key`]), and the parts of each conjunction and
+/// disjunction flattened, sorted and said once. One pass over the distinct parts of `f`.
+fn clause_key(f: &Formula, lone: &dyn Fn(&Atom) -> bool) -> Formula {
+    f.fold(
+        (),
+        |_, ()| (),
+        |g, (), parts: Vec<Formula>| match g {
+            Formula::Con(c) => {
+                Formula::Con(Congruence::of(c, lone).map_or_else(|| c.clone(), Congruence::key))
+            }
+            Formula::Not(_) => Formula::Not(Arc::new(parts.into_iter().next().expect("one part"))),
+            Formula::And(_) | Formula::Or(_) => {
+                let and = matches!(g, Formula::And(_));
+                let mut kids: Vec<Formula> = Vec::new();
+                for h in parts {
+                    match h {
+                        Formula::And(_) if and => {
+                            kids.extend(h.into_parts().expect("a conjunction"))
+                        }
+                        Formula::Or(_) if !and => {
+                            kids.extend(h.into_parts().expect("a disjunction"))
+                        }
+                        h => kids.push(h),
+                    }
+                }
+                kids.sort();
+                kids.dedup();
+                match and {
+                    true => Formula::And(Arc::new(kids)),
+                    false => Formula::Or(Arc::new(kids)),
+                }
+            }
+        },
+    )
+}
+
+/// The conjunction of `rows` and `ors` (disjunctions and negations) projected exactly onto
+/// `keep` (LOAD-disj-residue): rows over `keep` and atoms [`shadow`] could not eliminate, and
+/// clauses, each a disjunction, an atom of a clause outside `keep` read by that clause alone.
+/// `keep` gains the atoms that had to be kept to make it so ([`project`]). `None` where the
+/// conjunction holds nowhere.
+fn projected(
+    rows: Vec<Con>,
+    ors: Vec<Formula>,
+    keep: &mut HashSet<Atom>,
+) -> Option<(Vec<Con>, Vec<Formula>)> {
+    let items: Vec<Formula> = (rows.into_iter().map(Formula::Con))
+        .chain(ors.iter().map(|h| nnf(h, true)))
+        .collect();
+    let (mut rows, mut clauses) = (Vec::new(), Vec::new());
+    let mut todo = vec![project(items, keep)];
+    while let Some(h) = todo.pop() {
+        match h {
+            Formula::Con(ref c) => rows.push(c.clone()),
+            Formula::And(_) => todo.extend(h.into_parts().expect("a conjunction")),
+            Formula::Or(ref gs) if gs.is_empty() => return None,
+            Formula::Or(_) | Formula::Not(_) => clauses.push(h),
+        }
+    }
+    Some((rows, clauses))
+}
+
+/// The conjunction of `items` (in negation normal form) with the atoms outside `keep`
+/// projected out, exactly: `false` where it holds nowhere. Each step splits a conjunction into
+/// groups linked by the atoms outside `keep` they read ([`split`]); a group of rows alone is
+/// projected by [`shadow`], and a group with one disjunction is the disjunction, over its
+/// disjuncts, of the projection of the group's rows with that disjunct, each projected in turn;
+/// a group with two disjunctions or more keeps the atoms its disjunctions read that another of
+/// its parts reads (added to `keep`), which leaves each disjunction in a group of its own. Each
+/// projection is exact: the existential of a conjunction of parts with no projected atom in
+/// common is the conjunction of their existentials, and the existential of a disjunction is the
+/// disjunction of its disjuncts'. An explicit stack, since disjunctions nest as deep as the
+/// formula.
+// Complexity tradeoff: a group's rows are copied into each disjunct of its disjunction, so a
+// group of r rows beside a disjunction of d disjuncts costs O(r d), as the solver's own
+// projection, the union over each disjunct of the base with that disjunct, does; and two
+// disjunctions that read one projected atom keep it, so the face holds that atom and is read
+// with it, and is not smaller than the formula. Why: projecting two disjunctions that share an
+// atom exactly writes out their product, d1 d2 disjuncts and more with each further one, which
+// is exponential in the number of disjunctions; one variable under congruences with distinct
+// moduli encodes the satisfiability of clauses (simultaneous incongruences, NP-complete: Garey
+// and Johnson, problem AN2), so no exact projection of polynomial size is known for it.
+// Trigger: two disjunctions over one `x mod n`, as `(x mod 6 == 1 || y > 0) && (x mod 6 == 5
+// || z > 0)`. Test
+// `l01_38_presburger::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
+// COMPLEXITY.md row LOAD-disj-residue. A complete solution needs a projection that keeps such
+// disjunctions in a shared form, a decision diagram over their cases.
+fn project(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Formula {
+    enum Step {
+        Split(Vec<Formula>),
+        /// The conjunction of these parts and the results of the next `n` steps.
+        And(usize, Vec<Formula>),
+        /// The disjunction of the results of the next `n` steps.
+        Or(usize),
+    }
+    let mut steps = vec![Step::Split(items)];
+    let mut out: Vec<Formula> = Vec::new();
+    while let Some(step) = steps.pop() {
+        let items = match step {
+            Step::And(n, mut own) => {
+                own.extend(out.split_off(out.len() - n));
+                out.push(Formula::and(own));
+                continue;
+            }
+            Step::Or(n) => {
+                let ds = out.split_off(out.len() - n);
+                out.push(Formula::or(ds));
+                continue;
+            }
+            Step::Split(items) => items,
+        };
+        let Some((own, groups)) = split(items, keep) else {
+            out.push(Formula::bottom());
+            continue;
+        };
+        steps.push(Step::And(groups.len(), own));
+        for group in groups {
+            match group {
+                Group::Or(rows, ds) => {
+                    steps.push(Step::Or(ds.len()));
+                    for d in ds {
+                        let mut items = rows.clone();
+                        items.push(d);
+                        steps.push(Step::Split(items));
+                    }
+                }
+                Group::Again(items) => steps.push(Step::Split(items)),
+            }
+        }
+    }
+    out.pop().expect("the projection")
+}
+
+/// A group of a conjunction left to project ([`split`]).
+enum Group {
+    /// Rows and the disjuncts of the one disjunction beside them.
+    Or(Vec<Formula>, Vec<Formula>),
+    /// Parts to split again, `keep` having gained the atoms their disjunctions share.
+    Again(Vec<Formula>),
+}
+
+/// One step of [`project`] on the conjunction of `items`: the parts that need no more, its rows
+/// over `keep` and those of groups of rows alone, projected by [`shadow`], and its disjunctions
+/// that read only `keep`; and the groups left. Each atom outside `keep` that a disjunction reads
+/// and a two-term equality among the rows sets with coefficient 1 or -1 (`x@3 == x@4 + 3`, the
+/// binding of a call's argument) is first replaced in the disjunctions by what it equals, which
+/// the rows make the same, so that a callee's clauses read the caller's atom and not the bound
+/// one. `None` where the rows hold nowhere. Time of the items, near linear, and of [`shadow`].
+fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>, Vec<Group>)> {
+    let (mut rows, mut ors): (Vec<Con>, Vec<Formula>) = (Vec::new(), Vec::new());
+    let mut flat = items;
+    while let Some(f) = flat.pop() {
+        match f {
+            Formula::Con(ref c) => rows.push(c.clone()),
+            Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
+            Formula::Or(ref gs) if gs.is_empty() => return None,
+            Formula::Or(_) => ors.push(f),
+            Formula::Not(_) => flat.push(nnf(&f, true)),
+        }
+    }
+    let read: HashSet<Atom> = (ors.iter())
+        .flat_map(Formula::atoms)
+        .filter(|a| !keep.contains(a))
+        .collect();
+    let mut to: HashMap<Atom, Lin> = HashMap::new();
+    for c in &rows {
+        if c.rel != Rel::Eq || c.lin.terms.len() != 2 {
+            continue;
+        }
+        let set = (c.lin.terms.iter())
+            .find(|(a, k)| k.abs() == Int::ONE && read.contains(*a) && !to.contains_key(*a));
+        if let Some((a, k)) = set {
+            // k·a + rest == 0, so a == -k·rest.
+            let mut rest = c.lin.clone();
+            rest.terms.remove(a);
+            to.insert(a.clone(), rest.times(-k));
+        }
+    }
+    drop(read);
+    if !to.is_empty() {
+        let put = |c: &Con| {
+            Formula::Con(Con {
+                lin: substituted(&c.lin, &to),
+                rel: c.rel,
+            })
+        };
+        ors = ors.iter().map(|f| f.map_cons(&put)).collect();
+    }
+    // The atoms outside `keep` of each row and then of each disjunction, and their groups.
+    let reads: Vec<Vec<Atom>> = (rows.iter())
+        .map(|c| {
+            c.lin
+                .terms
+                .keys()
+                .filter(|a| !keep.contains(*a))
+                .cloned()
+                .collect()
+        })
+        .chain(ors.iter().map(|f| {
+            f.atoms()
+                .into_iter()
+                .filter(|a| !keep.contains(a))
+                .collect()
+        }))
+        .collect();
+    let mut index: HashMap<&Atom, usize> = HashMap::new();
+    for a in reads.iter().flatten() {
+        let n = index.len();
+        index.entry(a).or_insert(n);
+    }
+    let mut up: Vec<usize> = (0..index.len()).collect();
+    for atoms in &reads {
+        let mut atoms = atoms.iter().map(|a| index[a]);
+        let Some(first) = atoms.next() else { continue };
+        for a in atoms {
+            let (r, s) = (root(&mut up, first), root(&mut up, a));
+            up[s] = r;
+        }
+    }
+    // Each group's rows and disjunctions, by the index of each item, in the order met.
+    let mut at: HashMap<usize, usize> = HashMap::new();
+    let mut groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
+    let mut plain: Vec<Con> = Vec::new();
+    let mut own: Vec<Formula> = Vec::new();
+    for (i, atoms) in reads.iter().enumerate() {
+        let Some(a) = atoms.first() else {
+            match i < rows.len() {
+                true => plain.push(rows[i].clone()),
+                false => own.push(ors[i - rows.len()].clone()),
+            }
+            continue;
+        };
+        let r = root(&mut up, index[a]);
+        let g = *at.entry(r).or_insert_with(|| {
+            groups.push((Vec::new(), Vec::new()));
+            groups.len() - 1
+        });
+        match i < rows.len() {
+            true => groups[g].0.push(i),
+            false => groups[g].1.push(i),
+        }
+    }
+    drop(index);
+    let mut left: Vec<Group> = Vec::new();
+    for (rs, os) in groups {
+        let rows_of = |rs: &[usize]| -> Vec<Formula> {
+            rs.iter().map(|&i| Formula::Con(rows[i].clone())).collect()
+        };
+        match os.len() {
+            0 => plain.extend(rs.iter().map(|&i| rows[i].clone())),
+            1 => left.push(Group::Or(
+                rows_of(&rs),
+                ors[os[0] - rows.len()].kids().to_vec(),
+            )),
+            _ => {
+                // The atoms its disjunctions read that another of its parts reads.
+                let mut by: HashMap<&Atom, (usize, bool)> = HashMap::new();
+                for &i in rs.iter().chain(&os) {
+                    for a in &reads[i] {
+                        let e = by.entry(a).or_insert((0, false));
+                        e.0 += 1;
+                        e.1 |= i >= rows.len();
+                    }
+                }
+                keep.extend(
+                    (by.into_iter())
+                        .filter(|&(_, (n, or))| n >= 2 && or)
+                        .map(|(a, _)| a.clone()),
+                );
+                let mut items = rows_of(&rs);
+                items.extend(os.iter().map(|&i| ors[i - rows.len()].clone()));
+                left.push(Group::Again(items));
+            }
+        }
+    }
+    let plain = shadow(&plain, &|a| keep.contains(a), true)?;
+    own.extend(paired(plain).into_iter().map(Formula::Con));
+    Some((own, left))
+}
+
+/// `rows` with each pair `t >= 0` and `-t >= 0` written as the one equality `t == 0`, so that
+/// a congruence projected from a disjunct, as `x - 3 * q >= 0 && 3 * q - x >= 0`, is read as
+/// one ([`Congruence::of`]). Time of the rows.
+fn paired(rows: Vec<Con>) -> Vec<Con> {
+    let ge: HashSet<&Lin> = (rows.iter())
+        .filter(|c| c.rel == Rel::Ge)
+        .map(|c| &c.lin)
+        .collect();
+    let mut out: Vec<Con> = Vec::new();
+    let mut said: HashSet<Lin> = HashSet::new();
+    for c in &rows {
+        if c.rel == Rel::Ge {
+            let neg = c.lin.times(-1);
+            if ge.contains(&neg) {
+                let lin = neg.min(c.lin.clone());
+                if said.insert(lin.clone()) {
+                    out.push(Con { lin, rel: Rel::Eq });
+                }
+                continue;
+            }
+        }
+        out.push(c.clone());
+    }
+    out
+}
+
+/// `l` with each atom `to` holds replaced by what it gives. Time of `l` and of what replaces
+/// its atoms.
+fn substituted(l: &Lin, to: &HashMap<Atom, Lin>) -> Lin {
+    let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+    let mut constant = l.constant.clone();
+    let mut add = |a: &Atom, k: Int| {
+        let v = terms.remove(a).map_or_else(|| k.clone(), |o| &o + &k);
+        if !v.is_zero() {
+            terms.insert(a.clone(), v);
+        }
+    };
+    for (a, k) in &l.terms {
+        match to.get(a) {
+            Some(v) => {
+                for (b, e) in &v.terms {
+                    add(b, e * k);
+                }
+                constant = &constant + &(&v.constant * k);
+            }
+            None => add(a, k.clone()),
+        }
+    }
+    Lin { terms, constant }
 }
 
 /// Whether the closure of a kept part holds the auxiliary variable `n`, so that its definition
@@ -859,10 +1354,12 @@ fn with(defs: &[Formula], f: Formula) -> Formula {
 }
 
 /// A point where `f` holds that gives each atom of `m` its value there: `m` itself, each atom of
-/// `f` it does not hold given 0, when `f` holds at it; otherwise `m` with the values of a point
-/// the solver gives `f` with the atoms of `m` fixed to their values. `Ok(None)` when `f` holds
-/// nowhere with them so fixed, and the refusal when the solver refuses that question. Time of
-/// `f`, and O(log n) for each atom added to `m`.
+/// `f` it does not hold given 0, when `f` holds at it, or else when it holds with the atoms the
+/// equalities of `f` set given those values ([`solved`]: the quotients of a face's clauses,
+/// LOAD-disj-residue); otherwise `m` with the values of a point the solver gives `f` with the
+/// atoms of `m` fixed to their values. `Ok(None)` when `f` holds nowhere with them so fixed,
+/// and the refusal when the solver refuses that question. Time of `f`, and O(log n) for each
+/// atom added to `m`.
 fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
     let atoms = f.atoms();
     // The values `f` reads at `m`, with the factors of its products.
@@ -879,9 +1376,10 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
         }
     }
     let mut out = m.clone();
-    if f.holds(&at) {
+    if f.holds(&at) || (solved(&mut at, f) && f.holds(&at)) {
         for a in atoms {
-            out.entry(a).or_default();
+            let v = at.get(&a).cloned().unwrap_or_default();
+            out.entry(a).or_insert(v);
         }
         return Ok(Some(out));
     }
@@ -900,6 +1398,43 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
         }
     }
     Ok(Some(out))
+}
+
+/// Gives each atom of `f` absent from `at` that an equality of `f` sets, the equality's other
+/// atoms having values in `at` and its term at them divisible by the atom's coefficient, that
+/// value, the first such equality in the order of `f`'s constraints setting it; whether any was
+/// given. A quotient of a face's clause is so set once its caller's atoms are, and [`met`]
+/// checks the values against `f` before it uses them. Time of `f`.
+fn solved(at: &mut Model, f: &Formula) -> bool {
+    let mut any = false;
+    for c in f.cons() {
+        if c.rel != Rel::Eq {
+            continue;
+        }
+        // The one atom without a value, with its coefficient, and the term at the others.
+        let mut unknown: Option<(&Atom, &Int)> = None;
+        let mut rest = c.lin.constant.clone();
+        let mut two = false;
+        for (a, k) in &c.lin.terms {
+            match (at.get(a), unknown) {
+                (Some(v), _) => rest = &rest + &(k * v),
+                (None, None) => unknown = Some((a, k)),
+                (None, Some(_)) => two = true,
+            }
+        }
+        let (false, Some((a, k))) = (two, unknown) else {
+            continue;
+        };
+        // A product is read from its factors' values.
+        if matches!(a, Atom::Product(..)) || !rest.mod_floor(k).is_zero() {
+            continue;
+        }
+        // k·a + rest == 0.
+        let v = (-&rest).div_floor(k);
+        at.insert(a.clone(), v);
+        any = true;
+    }
+    any
 }
 
 /// Whether `g` and its definitions hold somewhere, decided whole, with a point when they hold

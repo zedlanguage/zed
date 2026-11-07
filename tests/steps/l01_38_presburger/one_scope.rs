@@ -519,6 +519,54 @@ fn answers_are_those_of_the_whole(src: &str) {
     }
 }
 
+/// Checks that each answer of each function of `src`, read under one scope and decided from the
+/// answers of the conjunctions it extends, is the same, refusals too, when each kept part is
+/// read through its face where one is made (`Extending::defined_with`) as when none is
+/// (`Extending::defined`), and is the one the body closed over the definitions it reaches has,
+/// decided whole, where that is decided too; in the unit's order and in the reverse. The
+/// solver refuses some of these questions decided whole and not decided from parts, and some
+/// the other way (`x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)` beside a chain moving it
+/// by 3, `p2`), with and without faces alike.
+fn answers_with_faces_are_those_without(src: &str) {
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let cones = Cones::new(&unit);
+    let lets = lets(&unit);
+    let fs = functions(&unit);
+    let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+    for order in [
+        (0..fs.len()).collect::<Vec<_>>(),
+        (0..fs.len()).rev().collect(),
+    ] {
+        let mut scoped = Scoped::new(&lets);
+        let (mut faced, mut plain) = (Extending::new(), Extending::new());
+        for i in order {
+            let (name, ps, body) = fs[i];
+            let (expected, r) = match (
+                closed(&cones, ps, body),
+                scoped.relation(body, ps, ps, true),
+            ) {
+                (Some(e), Some(r)) => (e, r),
+                (None, None) => continue,
+                (e, r) => panic!("`{name}`: {e:?} whole, {} read in the scope", r.is_some()),
+            };
+            let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            let b = plain.defined(&r, &|n| scoped.def(n));
+            let w = scoped.written(&r);
+            assert_eq!(a, b, "`{name}` with faces and without in\n{src}\n{w}");
+            for (got, f) in [
+                (&a.holds, expected.body.clone()),
+                (&a.fails, Formula::negate(expected.body.clone())),
+            ] {
+                if let (Ok(got), Ok(want)) = (got, whole(&expected, f)) {
+                    assert_eq!(*got, want, "`{name}` in\n{src}\n{w}");
+                }
+            }
+        }
+    }
+}
+
 /// The drifting chain of LOAD-call-summary, `q` and `p0` followed by `p{i}(x) = q(x: x) &&
 /// p{i-1}(x: x + 3) && x < 1000 i` for `i` in 1..n: `p{i-1}`'s point is its lowest `x`, which
 /// `x + 3` takes below `q`'s range, so each link extends `q`'s point with the chain beside it.
@@ -585,9 +633,9 @@ fn random_chain(rng: &mut zed_tests::instances::Rng) -> String {
 fn each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole() {
     // LOAD-call-summary: chains whose links extend the point of a small callee beside the
     // chain, which they read through its face. The drifting chain; the same with a
-    // disjunction in its callee, which has no face and is read whole (the Complexity tradeoff
-    // at `Extending::extend`, LOAD-disj-residue); a chain moving a second parameter beside a
-    // callee of the first; and random chains of the drifting chain's shape.
+    // disjunction in its callee, whose face keeps it as a clause (LOAD-disj-residue); a chain
+    // moving a second parameter beside a callee of the first; and random chains of the
+    // drifting chain's shape.
     let r = "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n";
     answers_are_those_of_the_whole(&drifting_chain(r, 30));
     let disjunction = "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n";
@@ -619,6 +667,95 @@ fn the_questions_of_a_drifting_chain_scale() {
         "a chain whose links extend a callee's point beside the chain",
         40,
         "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
+         p0(x: int) = x > 0;\n",
+        drifting_link,
+    );
+}
+
+/// A random test of `x` that a disjunction may hold: a remainder equal or unequal to a
+/// constant, which may lie outside the remainder's range, or a bound.
+fn random_case(rng: &mut zed_tests::instances::Rng) -> String {
+    let m = rng.int(2, 7);
+    match rng.below(4) {
+        0 => format!("x mod {m} == {}", rng.int(0, m)),
+        1 => format!("x mod {m} != {}", rng.int(0, m - 1)),
+        2 => format!("x < {}", lit(rng.int(-10, 40))),
+        _ => format!("x > {}", lit(rng.int(-10, 40))),
+    }
+}
+
+/// A random chain in the shape of the drifting chain whose callee `q` holds one or two
+/// disjunctions of [`random_case`]s beside a range, which may share a remainder, and whose
+/// links move the argument by a random constant, bound it above, and may hold a disjunction of
+/// their own (LOAD-disj-residue): clauses that repeat, that do not, that share a projected
+/// atom, and links that hold or fail.
+fn random_disjunctive_chain(rng: &mut zed_tests::instances::Rng) -> String {
+    let a = rng.int(-5, 5);
+    let b = a + rng.int(-2, 80);
+    let mut q = format!("({} || {})", random_case(rng), random_case(rng));
+    if rng.below(2) == 0 {
+        q.push_str(&format!(
+            " && ({} || {})",
+            random_case(rng),
+            random_case(rng)
+        ));
+    }
+    let mut src = format!(
+        "q(x: int) = {q} && x > {} && x < {};\np0(x: int) = x > {};\n",
+        lit(a),
+        lit(b),
+        lit(rng.int(-10, 10)),
+    );
+    for i in 1..rng.int(2, 9) {
+        let own = match rng.below(3) {
+            0 => format!(" && ({} || {})", random_case(rng), random_case(rng)),
+            _ => String::new(),
+        };
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {}) && x < {}{own};\n",
+            i - 1,
+            lit(rng.int(-4, 4)),
+            lit(rng.int(-10, 160)),
+        ));
+    }
+    src
+}
+
+#[test]
+fn each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole() {
+    // LOAD-disj-residue: the face of a callee with a disjunction keeps it as clauses, each said
+    // once. Drifting chains whose clauses repeat every few links (residues modulo 5), never
+    // repeat (modulo 1009), move a bound (the holes of `x < 10 || x > 20`), or share a
+    // remainder between two disjunctions, which keeps it; and random chains of that shape. Each
+    // is checked against the answers made with no face, refusals too, and against the whole
+    // where the whole is decided, since the solver refuses some of these questions one way and
+    // not the other.
+    for q in [
+        "(x mod 3 == 1 || x mod 5 == 2)",
+        "(x mod 1009 == 0 || x mod 3 == 1)",
+        "(x < 10 || x > 20)",
+        "(x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50)",
+        "x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)",
+    ] {
+        let q = format!("q(x: int) = {q} && x > 0 && x < 1000000;\n");
+        answers_with_faces_are_those_without(&drifting_chain(&q, 30));
+    }
+    let mut rng = zed_tests::instances::Rng::new(0xd15e);
+    for _ in 0..80 {
+        answers_with_faces_are_those_without(&random_disjunctive_chain(&mut rng));
+    }
+}
+
+#[test]
+fn the_questions_of_a_drifting_disjunctive_chain_scale() {
+    // The drifting chain beside `q(x) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x <
+    // 1000000` (LOAD-disj-residue): each link's face keeps one clause for each residue of the
+    // shift modulo 5, five at most, where before the chain was read whole at each link (0.244,
+    // 1.005, 5.399 s at 40, 80, 160 links, debug, measured once).
+    questions_scale(
+        "a chain whose links extend a callee's point beside a chain of disjunctions",
+        40,
+        "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n\
          p0(x: int) = x > 0;\n",
         drifting_link,
     );

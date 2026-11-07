@@ -2419,3 +2419,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A persistent treap of `Rc` nodes, each holding the sum of its subtree, updated by split and join that copy one path | `images::Tree`, `images::set`, `split`, `without`, `join` | Shared immutable nodes and reference counts; Zed's values are immutable, but a tree with a monoid sum per node is not in the standard library | A persistent ordered map with a sum per subtree (a finger tree or a weight-balanced tree with a monoid annotation) |
 | The keys where two persistent maps differ, by `imbl`'s `diff`, which skips subtrees the two share by pointer | `images::updated`, `LetPa::changed_since` | Pointer equality of shared subtrees; Zed has no identity on values | A diff of persistent maps that compares shared nodes by identity in the runtime, or a log of the keys changed since a version |
 | A priority from the bytes of a name, FNV-1a mixed by splitmix64, with wrapping arithmetic | `images::prio` | Wrapping `u64` multiplication | `u64` words with wrapping operations (step L7.4c) |
+
+## Entries from LOAD-disj-residue (`crates/zedc-presburger/src/presburger/extend.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack of `enum Step { Split, And(usize, Vec<Formula>), Or(usize) }` whose results go on a second `Vec` and are taken back with `split_off` | `extend::project` | Mutation (gap 11) | A fold over a work list returning the stack of results, or recursion where the port has deep stacks |
+| Union-find over atom indices in a `Vec<usize>` with path halving in place (`root(&mut up, a)`) | `extend::split`, `Face::of` | Mutation (gap 11) | A persistent map from index to parent, or the union-find of the stdlib catalog of step L2.11 |
+| `Formula::into_parts()` and `Formula::Con(ref c) => c.clone()`, since `Formula` implements `Drop` and its parts cannot be moved out by a pattern | `extend::projected`, `extend::split` | Moves out of `Drop` types; Zed values are shared | A plain `match` binding the parts |
+| A `HashSet<Atom>` per part merged small into large inside a fold that also inserts into a captured set, and `HashMap::entry(..).or_insert(..)` counters per atom | `extend::joined`, `extend::split` | Mutation (gap 11) | A fold returning the set or map with the result |
+| A local `#[derive(PartialEq, Eq, Hash)] struct Congruence` turned into a `Con` key with a placeholder atom `Atom::Product(Aux(u32::MAX), Aux(u32::MAX))` | `Congruence::key`, `extend::clause_key` | None | A record or union value used as the key directly |
+| `Model` (`HashMap<Atom, Int>`) filled in place by `solved` before a check | `extend::solved`, `extend::met` | Mutation (gap 11) | `solved` returns the extended map |
