@@ -994,7 +994,7 @@ impl Scope {
     }
 
     /// [`Scope::bind`] of `x` to `p` met with `image`, the integers a summary of its value takes
-    /// where the inputs it reads are as this scope has them ([`LetPa::image_over`]), on the
+    /// where the inputs it reads are as this scope has them ([`LetPa::image_shifted`]), on the
     /// `premises` of those inputs; the binding keeps no summary of the value. For a caller
     /// that reads the scope once, through no test, and pays for the inputs this scope has,
     /// not for all `k` of the summary ([`Scope::bind_summarized`], `O(k)`).

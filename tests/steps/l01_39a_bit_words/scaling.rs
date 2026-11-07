@@ -1076,7 +1076,7 @@ fn a_chain_of_sums_over_many_inputs_reads_each_summary_in_its_narrowed_inputs() 
     // the product of `x_k` reads that of `x_(k-1)` met with its summary's values. Read over
     // every input, that took the bounds of each of `x_(k-1)`'s terms, `Θ(d²)` for the chain;
     // the sum keeps its terms' bounds over the domains it was formed over
-    // (`LetPa::image_over`), and a scope with none of the inputs reads none. A count does not
+    // (`LetPa::image_shifted`), and a scope with none of the inputs reads none. A count does not
     // change with the load. Measured: 259 at d = 64 and 2051 at d = 512 (7.92 times); with
     // every input read, 2210 and 132354 (59.89 times).
     let n = 64;
@@ -1093,4 +1093,58 @@ fn a_chain_of_sums_over_many_inputs_reads_each_summary_in_its_narrowed_inputs() 
         a > 0 && ratio <= 9.0,
         "`pa_bounds` ran {a} times at d = {n} and {b} at d = {large}: {ratio:.2} times, above 9"
     );
+}
+
+/// The probe of item PA-let-narrow-many: `x_0 = n`, then for `k` up to `d` a test that narrows
+/// one input, `q_k = n mod 4` to `q_k >= 1` or the parameter `a_k` to `1..=3`, and under it
+/// `x_k = x_(k-1) + q_k` (or `+ a_k`); then one test `x_d >= 3 d`, with a bit word on `n` in
+/// its arm.
+fn nested_chain(d: usize, params: bool) -> String {
+    let mut s = String::from("x0 = n; ");
+    let mut close = String::new();
+    for k in 1..=d {
+        if params {
+            s += &format!("if a{k} >= 1 && a{k} <= 3 {{ x{k} = x{} + a{k}; ", k - 1);
+        } else {
+            s += &format!("q{k} = n mod 4; if q{k} >= 1 {{ x{k} = x{} + q{k}; ", k - 1);
+        }
+        close += " } else { 0 }";
+    }
+    let ps: String = if params {
+        (1..=d).map(|k| format!(", positional a{k}: int")).collect()
+    } else {
+        String::new()
+    };
+    format!(
+        "f(positional n: int{ps}) =\n  {{ {s}if x{d} >= {} {{ popCount(n) }} else {{ 0 }}{close} }};\n",
+        3 * d
+    )
+}
+
+#[test]
+fn a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before() {
+    // `x_(k-1)` is read in the scope of `x_k`, under the tests of `k - 1` of its inputs (item
+    // PA-let-narrow-many). Read afresh, each binding took the bounds of `x_(k-1)`'s term of
+    // every narrowed input, `Θ(d²)` for the chain; the inputs read are kept in a tree with the
+    // sum of their shifts, and `x_(k-1)` is read from `x_(k-2)` in the scope of `x_(k-1)`,
+    // which differ at one input (`images::updated`). A count does not change with the load.
+    // Measured: 323 at d = 64 and 2563 at d = 512 (7.93 times), the same for remainders and
+    // for parameters; read afresh, 2275 and 132867 (58.40 times).
+    let n = 64;
+    let large = n * scaling::FACTOR;
+    for params in [false, true] {
+        let (small_src, large_src) = (
+            super::program(&nested_chain(n, params)),
+            super::program(&nested_chain(large, params)),
+        );
+        let (a, b) = scaling::on_a_thread(1 << 29, || {
+            (term_bounds(&small_src), term_bounds(&large_src))
+        });
+        let ratio = b as f64 / a as f64;
+        assert!(
+            a > 0 && ratio <= 9.0,
+            "parameters {params}: `pa_bounds` ran {a} times at d = {n} and {b} at d = {large}: \
+             {ratio:.2} times, above 9"
+        );
+    }
 }

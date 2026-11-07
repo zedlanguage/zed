@@ -2406,4 +2406,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | The domain of each input passed as a borrowed closure, `&dyn Fn(&Arc<str>) -> Option<&IntervalSet>`, with two lifetimes (`Dom<'f, 'd>`) | `Sep::add`, `Sep::add_pa`, `Sep::take_bounds`, `LetPa::sum`, `LetPa::form` | Borrowed trait objects and lifetimes; Zed passes a function value | A function argument, or the map of inputs itself |
-| A running total kept beside a persistent map and updated as entries are put in and taken out, with counts of infinite ends | `Sep::tot`, `Tot::put`, `Sep::bounds_over` | None beyond a record field updated with the map | The same record |
+| A running total kept beside a persistent map and updated as entries are put in and taken out, with counts of infinite ends | `Sep::tot`, `Tot::put`, `Sep::shift` (was `Sep::bounds_over`) | None beyond a record field updated with the map | The same record |
+
+## Entries from PA-let-narrow-many (`crates/zedc-check/src/check/images.rs`, `walk.rs`, `mod.rs`, `arms.rs`, `crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent treap of `Rc` nodes, each holding the sum of its subtree, updated by split and join that copy one path | `images::Tree`, `images::set`, `split`, `without`, `join` | Shared immutable nodes and reference counts; Zed's values are immutable, but a tree with a monoid sum per node is not in the standard library | A persistent ordered map with a sum per subtree (a finger tree or a weight-balanced tree with a monoid annotation) |
+| The keys where two persistent maps differ, by `imbl`'s `diff`, which skips subtrees the two share by pointer | `images::updated`, `LetPa::changed_since` | Pointer equality of shared subtrees; Zed has no identity on values | A diff of persistent maps that compares shared nodes by identity in the runtime, or a log of the keys changed since a version |
+| A priority from the bytes of a name, FNV-1a mixed by splitmix64, with wrapping arithmetic | `images::prio` | Wrapping `u64` multiplication | `u64` words with wrapping operations (step L7.4c) |

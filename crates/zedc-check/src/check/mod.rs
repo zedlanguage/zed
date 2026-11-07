@@ -37,6 +37,7 @@ pub use zedc_types::ty;
 pub mod widen;
 
 mod arms;
+mod images;
 mod walk;
 
 use std::borrow::Cow;
@@ -672,6 +673,9 @@ struct Ck<'t, 'a> {
     /// The scopes the tests the walk is in make, which narrow the ints a bit word or `**`
     /// reads.
     arms: arms::Arms<'a>,
+    /// For each binder read by a binder's value, what its summary read in the scope of its
+    /// last such read ([`images::Read`]), from which the next is found.
+    reads: HashMap<usize, images::Read>,
 }
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of
@@ -727,6 +731,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             outside: HashMap::new(),
             tried: HashMap::new(),
             arms: arms::Arms::new(),
+            reads: HashMap::new(),
         }
     }
 

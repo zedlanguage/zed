@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arms::{Item, Node, Summarized, Translated, prim_of, var};
+use super::images;
 use super::*;
 use zed_kernel::Shared;
 use zedc_lattice::cell::Premises;
@@ -2923,13 +2924,8 @@ impl<'a> Ck<'_, 'a> {
     /// [`Ck::with_bound`] for a scope read once by a binder's value ([`Item::Bound`]), which no
     /// test narrows: each of `binders` is bound with its product met with its summary's values
     /// over the inputs `s` has, at their integers there, and the others at those the summary
-    /// was formed over ([`LetPa::image_over`]); the inputs are not bound and the binding keeps
-    /// no summary. The inputs `s` has are found from the smaller of its names and the
-    /// summary's inputs, so a chain `x_k = x_(k-1) + q_k` costs `O(log k)` a binding where
-    /// binding every input of `x_(k-1)` cost `O(k)`, and the chain `Θ(d²)` (item
-    /// PA-let-multi).
-    ///
-    /// [`LetPa::image_over`]: zedc_preimage::preimage::LetPa::image_over
+    /// was formed over ([`Ck::read_image`]); the inputs are not bound and the binding keeps no
+    /// summary.
     fn with_bound_read(&mut self, mut s: Scope, binders: &[usize]) -> Scope {
         if s.bottom {
             return s;
@@ -2947,36 +2943,63 @@ impl<'a> Ck<'_, 'a> {
                 s.bind(&name, p, &e);
                 continue;
             };
-            let vars = sum.summary.vars();
-            let here: Vec<(&Arc<str>, &Product)> = if vars.len() <= s.names.len() {
-                vars.iter()
-                    .filter_map(|v| s.names.get_key_value(v))
-                    .collect()
-            } else {
-                (s.names.iter())
-                    .filter(|(v, _)| vars.contains(*v))
-                    .collect()
-            };
-            // The summary holds where each input's integers lie within those it was made over
-            // ([`Scope::bind_summarized`]).
-            let image = here
-                .iter()
-                .all(|(v, q)| (sum.inputs.get(*v)).is_some_and(|d| q.ints().is_subset(d.ints())))
-                .then(|| {
-                    sum.summary
-                        .image_over(here.iter().map(|(v, q)| (*v, q.ints())))
-                })
-                .flatten();
-            let mut premises = Premises::new();
-            for (_, q) in &here {
-                premises.extend(&q.premises());
-            }
+            let (image, premises) = self.read_image(b, &sum, &s.names);
             match image {
                 Some(image) => s.bind_within(&name, p, &e, image, &premises),
                 None => s.bind(&name, p, &e),
             };
         }
         s
+    }
+
+    /// The integers the summary `sum` of binder `b` takes over the inputs the scope of names
+    /// `names` has, at their integers there, and the others at those it was formed over, and
+    /// the premises of the inputs the scope has: `None` for the integers when the summary does
+    /// not hold there or was not formed over domains ([`images::leaf`]).
+    ///
+    /// The inputs are kept in a tree with the sum of their shifts, failures and premises
+    /// ([`images::Read`]), found from the tree of `b`'s last read, or else of the read of the
+    /// binder whose map of inputs `b`'s was made from, by setting the inputs where the two
+    /// differ ([`images::updated`]); afresh from the inputs the scope has, found from the
+    /// smaller of its names and the summary's inputs, when there is none or the differences
+    /// are as many. Each read costs the lesser of the differences and the inputs, times
+    /// `O(log k)`: a chain `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` in
+    /// the scope of `x_k` from `x_(k-2)` in that of `x_(k-1)`, which differ at `q_(k-1)`, in
+    /// `O(log k)`, where reading its `k - 1` narrowed inputs cost `O(k)` a binding and the
+    /// chain `Θ(d²)` (item PA-let-narrow-many). The result is the same either way.
+    fn read_image(
+        &mut self,
+        b: usize,
+        sum: &Rc<Summarized>,
+        names: &images::Names,
+    ) -> (Option<IntervalSet>, Premises) {
+        let vars = sum.summary.vars();
+        let limit = vars.len().min(names.len());
+        let base = (self.reads.get(&b)).or_else(|| sum.widest.and_then(|w| self.reads.get(&w)));
+        let tree = match base.and_then(|r| images::updated(r, sum, names, limit)) {
+            Some(tree) => tree,
+            None => {
+                let here: Vec<(&Arc<str>, &Product)> = if vars.len() <= names.len() {
+                    vars.iter().filter_map(|v| names.get_key_value(v)).collect()
+                } else {
+                    (names.iter()).filter(|(v, _)| vars.contains(*v)).collect()
+                };
+                here.into_iter().fold(None, |t, (v, q)| {
+                    images::set(&t, v, Some(images::leaf(sum, v, q)))
+                })
+            }
+        };
+        let total = images::total(&tree);
+        let read = images::Read {
+            names: names.clone(),
+            sum: sum.clone(),
+            tree,
+        };
+        self.reads.insert(b, read);
+        let image = (total.fails == 0)
+            .then(|| sum.summary.image_shifted(&total.shift))
+            .flatten();
+        (image, total.premises)
     }
 
     /// Records, for the binder `b` of `value` bound here, the type here of each narrowed name
@@ -3043,9 +3066,13 @@ impl<'a> Ck<'_, 'a> {
         let mut inputs: imbl::OrdMap<Arc<str>, Product> = imbl::OrdMap::new();
         let mut own: Vec<(Arc<str>, Product)> = Vec::new();
         let mut lets = Lets::new();
+        let mut widest: Option<(usize, usize)> = None;
         for (x, id) in &t.vars {
             let bound = self.arms.bound.get(id);
             if let Some(Some(sum)) = self.arms.summaries.get(id) {
+                if widest.is_none_or(|(n, _)| sum.inputs.len() > n) {
+                    widest = Some((sum.inputs.len(), *id));
+                }
                 // `union` adds the smaller map to the larger.
                 inputs = inputs.union(sum.inputs.clone());
                 let ints = bound.map_or_else(IntervalSet::top, |p| p.ints().clone());
@@ -3088,7 +3115,11 @@ impl<'a> Ck<'_, 'a> {
         }
         let summary = let_summary(&t.term, &domains, lets)?;
         summary.form(|v| inputs.get(v).map(Product::ints));
-        Some(Summarized { summary, inputs })
+        Some(Summarized {
+            summary,
+            inputs,
+            widest: widest.map(|(_, id)| id),
+        })
     }
 
     /// The type of the parameter `id` where binder `b` is bound: as recorded there when a

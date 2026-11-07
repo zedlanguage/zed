@@ -6543,6 +6543,24 @@ enum Pa {
     Piecewise { var: Arc<str>, root: Tree },
 }
 
+impl PartialEq for Pa {
+    /// The same input and the same pieces with the same lines ([`pa_pieces`]): at once for
+    /// two copies of one tree, else `O(p)` for `p` pieces.
+    fn eq(&self, other: &Pa) -> bool {
+        match (self, other) {
+            (Pa::Piecewise { var: v, root: r }, Pa::Piecewise { var: w, root: s }) => {
+                v == w
+                    && (match (r, s) {
+                        (Some(r), Some(s)) => Arc::ptr_eq(r, s),
+                        _ => r.is_none() && s.is_none(),
+                    } || pa_pieces(self) == pa_pieces(other))
+            }
+            (Pa::Piecewise { .. }, _) | (_, Pa::Piecewise { .. }) => false,
+            _ => self.var() == other.var() && pa_pieces(self) == pa_pieces(other),
+        }
+    }
+}
+
 impl Pa {
     fn var(&self) -> Option<&Arc<str>> {
         match self {
@@ -6692,7 +6710,7 @@ pub struct LetIn {
 /// A sum formed over the domains of its inputs ([`LetPa::form`]) keeps `b`, the bounds of
 /// `pa` over its input's domain, and in `tot` their sum ([`Tot`]), each put in as its term
 /// is: so the bounds of the sum, with some inputs over other domains, cost those inputs
-/// ([`LetPa::image_over`]) and not all of them.
+/// ([`LetPa::image_shifted`]) and not all of them.
 #[derive(Clone)]
 struct Sep {
     scale: Int,
@@ -6702,11 +6720,27 @@ struct Sep {
     tot: Option<Tot>,
 }
 
+/// What some inputs read over other integers than those a summary was formed over add to the
+/// bounds of its value ([`LetPa::shift`]): a group under [`Shift::plus`], so that a sum of
+/// shifts over many inputs is kept in a tree and one input's is changed in `O(log k)`.
+#[derive(Clone)]
+pub struct Shift(Tot);
+
+impl Shift {
+    /// Nothing added.
+    pub const ZERO: Shift = Shift(Tot::ZERO);
+
+    /// Both added.
+    pub fn plus(&self, o: &Shift) -> Shift {
+        Shift(self.0.plus(&o.0))
+    }
+}
+
 /// The domain of an input, as a sum is formed over it ([`LetPa::form`]).
 type Dom<'f, 'd> = &'f dyn Fn(&Arc<str>) -> Option<&'d IntervalSet>;
 
 /// The bounds of one term of a sum ([`Sep`]) over the domain of its input ([`pa_bounds`]).
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum Tb {
     /// Not taken: the sum was not formed over domains.
     Unset,
@@ -6777,6 +6811,19 @@ impl Tot {
                 add(&mut self.lo, &mut self.lo_inf, l);
                 add(&mut self.hi, &mut self.hi_inf, h);
             }
+        }
+    }
+
+    /// The sum of two totals.
+    fn plus(&self, o: &Tot) -> Tot {
+        let add = |[a, b]: [i64; 2], [c, d]: [i64; 2]| [a + c, b + d];
+        Tot {
+            lo: &self.lo + &o.lo,
+            hi: &self.hi + &o.hi,
+            lo_inf: add(self.lo_inf, o.lo_inf),
+            hi_inf: add(self.hi_inf, o.hi_inf),
+            no_val: self.no_val + o.no_val,
+            no_dom: self.no_dom + o.no_dom,
         }
     }
 
@@ -6973,21 +7020,18 @@ impl Sep {
         Some(Some((lo, hi)))
     }
 
-    /// [`Sep::bounds`] with each input of `here` over its integers there and every other over
-    /// the domain the sum was formed over ([`LetPa::form`]); `None` also when it was not.
-    /// `O(h log k)` for the `h` inputs of `here`, of `k`.
-    fn bounds_over<'a>(
-        &self,
-        here: impl IntoIterator<Item = (&'a Arc<str>, &'a IntervalSet)>,
-    ) -> Option<Option<(Val, Val)>> {
-        let mut tot = self.tot.clone()?;
-        for (v, ints) in here {
-            if let Some(t) = self.terms.get(v) {
-                tot.put(&t.2, &self.scale.div_floor(&t.1), -1);
-                tot.put(&Tb::of(&self.term(t), Some(ints)), &Int::ONE, 1);
-            }
+    /// What the input `v` over `ints`, in place of the domain the sum was formed over, adds
+    /// to `tot`: its term's bounds there less those it keeps; nothing when `v` has no term or
+    /// the sum keeps no total. `O(log k)` for `k` inputs.
+    fn shift(&self, v: &Arc<str>, ints: &IntervalSet) -> Tot {
+        let mut d = Tot::ZERO;
+        if self.tot.is_some()
+            && let Some(t) = self.terms.get(v)
+        {
+            d.put(&t.2, &self.scale.div_floor(&t.1), -1);
+            d.put(&Tb::of(&self.term(t), Some(ints)), &Int::ONE, 1);
         }
-        tot.bounds(&self.constant)
+        d
     }
 }
 
@@ -7083,7 +7127,7 @@ impl LetPa {
     ///
     /// Formed over `dom`, the domains of its inputs, the sum keeps the bounds of each term over
     /// its input's domain and their total, each taken as its term is put in, so that the
-    /// bounds of the value cost the inputs read over other domains ([`LetPa::image_over`]).
+    /// bounds of the value cost the inputs read over other domains ([`LetPa::image_shifted`]).
     /// A summary formed before keeps the sum it has.
     pub fn form<'d>(&self, dom: impl Fn(&Arc<str>) -> Option<&'d IntervalSet>) {
         self.0.forced.get_or_init(|| self.sum(Some(&dom)));
@@ -7107,24 +7151,56 @@ impl LetPa {
         })
     }
 
-    /// [`LetPa::image`] with each input of `here` over its integers there and every other
-    /// over its domain the summary was formed over ([`LetPa::form`]): `None` when it was not
-    /// formed over domains or an input has none. `O(h log k)` for the `h` inputs of `here`, of
-    /// `k`: a chain `x_k = x_(k-1) + q_k` read with none of its inputs narrowed costs `O(1)`
-    /// a binding, not `O(k)` (item PA-let-multi).
-    pub fn image_over<'a>(
-        &self,
-        here: impl IntoIterator<Item = (&'a Arc<str>, &'a IntervalSet)>,
-    ) -> Option<IntervalSet> {
+    /// What the input `v` read over `ints`, and not over the domain the summary was formed
+    /// over ([`LetPa::form`]), adds to the bounds of its value: nothing when it has no term or
+    /// the summary was not formed over domains. `O(log k)` for `k` inputs.
+    pub fn shift(&self, v: &Arc<str>, ints: &IntervalSet) -> Shift {
+        Shift(self.formed().shift(v, ints))
+    }
+
+    /// [`LetPa::image`] with the inputs whose shifts `s` sums ([`LetPa::shift`]) over the
+    /// integers they were taken at and every other over the domain the summary was formed
+    /// over: `None` when it was not formed over domains or an input has none. `O(1)` whatever
+    /// the number of inputs, so a caller that keeps the sum of the inputs' shifts in a tree,
+    /// and changes it where an input changes, pays for those inputs alone (item
+    /// PA-let-narrow-many).
+    pub fn image_shifted(&self, s: &Shift) -> Option<IntervalSet> {
         let end = |v: Val| match v {
             Val::Neg => NegInf,
             Val::Fin(x) => Fin(Num::from(&x)),
             Val::Pos => PosInf,
         };
-        Some(match self.formed().bounds_over(here)? {
-            Some((lo, hi)) => IntervalSet::range(end(lo), end(hi)),
-            None => IntervalSet::empty(),
-        })
+        let formed = self.formed();
+        Some(
+            match formed.tot.as_ref()?.plus(&s.0).bounds(&formed.constant)? {
+                Some((lo, hi)) => IntervalSet::range(end(lo), end(hi)),
+                None => IntervalSet::empty(),
+            },
+        )
+    }
+
+    /// The inputs whose shift may differ from that of the same input in `base`
+    /// ([`LetPa::shift`]), each once or more, and those one of the two reads and the other
+    /// does not: `None` when either was not formed over domains or one was scaled since the
+    /// terms they share were put in, so that every shift may differ. Found from the
+    /// differences of the persistent maps, which skip the parts the two share: a summary
+    /// formed from `base` and a few more terms costs those terms (`O(m log k)`).
+    pub fn changed_since<'a>(
+        &'a self,
+        base: &'a LetPa,
+    ) -> Option<impl Iterator<Item = &'a Arc<str>> + 'a> {
+        let (now, then) = (self.formed(), base.formed());
+        if now.tot.is_none() || then.tot.is_none() || now.scale != then.scale {
+            return None;
+        }
+        let vars = (base.0.vars.diff(&self.0.vars)).map(|d| match d {
+            imbl::ordset::DiffItem::Add(v) | imbl::ordset::DiffItem::Remove(v) => v,
+        });
+        let terms = (then.terms.diff(&now.terms)).map(|d| match d {
+            imbl::ordmap::DiffItem::Add(v, _) | imbl::ordmap::DiffItem::Remove(v, _) => v,
+            imbl::ordmap::DiffItem::Update { new: (v, _), .. } => v,
+        });
+        Some(vars.chain(terms))
     }
 
     /// The summary's parts summed. Each node of the graph below it gets the sum of the
