@@ -2255,6 +2255,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | An enum variant holding a borrowed `&Bdd` (`Operands::Chain`) so a chain is looked up in place, not listed | `Part::operands`, `choice_of`, `xor::pair` | Borrowed references in data | The variant holds the list value itself; values are shared, not copied |
 | Two sets compared by `Arc` id first, then walked side by side from a `Vec` stack of node pairs, so equal sets made on two threads are found equal | `set::same`, `xor::opposite` | Identity (gap 1), mutation | Not needed if the port keeps one table per unit and checks on one thread; otherwise a recursive comparison of the two trees, stopping where the nodes are one |
 
+## Entries from CHAIN-deep-atom (`zed-kernel/src/types/bdd/list.rs`, `types/bdd.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A list's blocks kept in a treap by position whose cells are hash-consed by `(left id, block id, right id)` through one `HashMap::entry` walk that upgrades a `Weak` or inserts one | `list::cell`, `Drop for Cell` | Shared tables across pure calls (gap 2), identity (gap 1) | The cell table in the unit's state struct, as for TABLE-life; the treap itself is a plain recursive value |
+| The restriction of a list driven by a `Vec` stack of `(cell, value, Stage)`, where the enum `Stage` holds the block left and the left child's piece between the visits of a cell, results written into a `HashMap` memo passed as `&mut` (replaces the CHAIN-restrict-memo row's walk) | `Bdd::restrict`, `Stage` | Mutation | A recursive function over the treap returning the piece and the memo; the stack is the call stack, deep only as the treap, `O(log m)` |
+| A `Hasher` written for the memo's `u64` keys (splitmix64's finalizer), given to `HashMap` through `BuildHasherDefault` | `list::KeyHasher`, `list::Memo` | Interfaces (L10) | The memo map takes its hash function as a parameter, or keys by id in an array map |
+| The atoms of a rebuilt cell taken from the cell it replaces, changed by the edit's atoms, written into the new cell's `OnceLock` when the old one has made them | `list::carry`, `list::replace` | Mutation of shared data, lazy cells (gap 3) | The atoms computed when the cell is made, from the replaced cell's, in the cell constructor |
+
 ## Entries from S22-linear-rem (`crates/zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |

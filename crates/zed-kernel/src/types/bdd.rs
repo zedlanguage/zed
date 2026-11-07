@@ -282,7 +282,7 @@ impl<A: Literal> Bdd<A> {
         let out = op == Op::Or;
         match self {
             Bdd::Leaf(v) => *v != out,
-            Bdd::List(c, v) => c.next.is_none() && (*v == out || self.is_literal()),
+            Bdd::List(c, v) => c.len == 1 && (*v == out || self.is_literal()),
         }
     }
 
@@ -319,7 +319,7 @@ impl<A: Literal> Bdd<A> {
         let Bdd::List(c, v) = self else {
             return self.clone();
         };
-        debug_assert!(c.next.is_none(), "a chain is one block");
+        debug_assert!(c.len == 1, "a chain is one block");
         // The literal is left out by fixing it to the value `op` passes over.
         let value = taken != (op == Op::Or);
         match set::get(Some(&c.block), atom) {
@@ -327,7 +327,7 @@ impl<A: Literal> Bdd<A> {
             Some(p) if p == value => Bdd::Leaf(*v),
             Some(p) => {
                 let block = set::remove(&c.block, &(atom.clone(), p));
-                Bdd::before((*v, block, None), &Bdd::Leaf(!*v))
+                Bdd::assemble(vec![(*v, block)], &Bdd::Leaf(!*v))
             }
         }
     }
@@ -340,9 +340,7 @@ impl<A: Literal> Bdd<A> {
     /// The atom of a list that is one literal, and whether the literal takes it.
     fn as_literal(&self) -> Option<(&A, bool)> {
         match self {
-            Bdd::List(c, v) if c.next.is_none() => {
-                set::single_key(&c.block).map(|(a, p)| (a, *p == *v))
-            }
+            Bdd::List(c, v) if c.len == 1 => set::single_key(&c.block).map(|(a, p)| (a, *p == *v)),
             _ => None,
         }
     }
@@ -357,73 +355,6 @@ impl<A: Literal> Bdd<A> {
                 None => Bdd::List(c.clone(), !v),
             },
         }
-    }
-
-    /// The list with each atom that `fix` decides replaced by its value: a literal set false
-    /// leaves its block, and one set true ends the list at its block with the block's value.
-    /// The list after each cell is restricted once for each `memo`, keyed by its id, so lists
-    /// that share cells share the work (item CHAIN-restrict-memo): the cells are walked down to
-    /// the first one in `memo`, then restricted from the last up, each a block put before the
-    /// list after it restricted. A cell whose block and rest are unchanged is kept.
-    fn restrict(
-        &self,
-        fix: &impl Fn(&A) -> Option<bool>,
-        memo: &mut HashMap<u64, Bdd<A>>,
-    ) -> Bdd<A> {
-        let Bdd::List(first, v) = self else {
-            return self.clone();
-        };
-        let mut todo: Vec<(bool, &Arc<Cell<A>>)> = Vec::new();
-        let mut below = None;
-        let mut at = Some((*v, first));
-        while let Some((w, c)) = at {
-            if let Some(r) = memo.get(&(c.id + u64::from(w))) {
-                below = Some(r.clone());
-                break;
-            }
-            todo.push((w, c));
-            at = c.next.as_ref().map(|n| (!w, n));
-        }
-        let Some(&(last, _)) = todo.last() else {
-            return below.expect("a list not walked is in `memo`");
-        };
-        // The list after the last cell to restrict, restricted: from `memo`, or the default.
-        let mut below = below.unwrap_or(Bdd::Leaf(!last));
-        for (w, c) in todo.into_iter().rev() {
-            let mut block = Some(c.block.clone());
-            let mut cut = false;
-            for k in set::iter(Some(&c.block)) {
-                match fix(&k.0) {
-                    None => {}
-                    Some(x) if x == k.1 => {
-                        cut = true;
-                        break;
-                    }
-                    Some(_) => {
-                        let b = block
-                            .as_ref()
-                            .expect("a literal not yet removed is in its block");
-                        block = set::remove(b, k);
-                    }
-                }
-            }
-            let kept = !cut
-                && block.as_ref().is_some_and(|b| b.id == c.block.id)
-                && match (&below, &c.next) {
-                    (Bdd::Leaf(x), None) => *x != w,
-                    (Bdd::List(d, x), Some(n)) => d.id == n.id && *x != w,
-                    _ => false,
-                };
-            below = if cut {
-                Bdd::Leaf(w)
-            } else if kept {
-                Bdd::List(c.clone(), w)
-            } else {
-                Bdd::before((w, block, None), &below)
-            };
-            memo.insert(c.id + u64::from(w), below.clone());
-        }
-        below
     }
 
     /// The atoms every value takes, and those every value refuses: [`Bdd::forced_to`] `true`.
@@ -443,8 +374,8 @@ impl<A: Literal> Bdd<A> {
                 true => taken.push(a.clone()),
                 false => refused.push(a.clone()),
             }
-        } else if let Bdd::List(c, false) = &f {
-            for (a, p) in set::iter(Some(&c.block)) {
+        } else if let (Bdd::List(_, false), Some(first)) = (&f, f.first_block()) {
+            for (a, p) in set::iter(Some(first)) {
                 match p {
                     true => refused.push(a.clone()),
                     false => taken.push(a.clone()),
@@ -464,24 +395,6 @@ impl<A: Literal> Bdd<A> {
                 Ok((self.id(), a, hi, lo))
             }
         }
-    }
-
-    /// Whether `f` holds of the atom of every cell not in `seen`, each added to it; the blocks
-    /// in turn, the atoms of a block in order.
-    fn atoms_unseen<'a>(
-        &'a self,
-        seen: &mut HashSet<u64>,
-        f: &mut impl FnMut(&'a A) -> bool,
-    ) -> bool {
-        for (_, c) in self.cells() {
-            if !seen.insert(c.id) {
-                break;
-            }
-            if !set::iter(Some(&c.block)).all(|(a, _)| f(a)) {
-                return false;
-            }
-        }
-        true
     }
 
     /// Whether `f` holds of each node's atom and state, for the nodes ([`Bdd::branch`]) from
@@ -1455,7 +1368,7 @@ impl<A: Literal> Part<A> {
     /// The part with each atom that `fix` decides replaced by its value, each node and
     /// expression rebuilt once.
     pub(super) fn restrict(&self, fix: &impl Fn(&A) -> Option<bool>) -> Part<A> {
-        let mut nodes = HashMap::new();
+        let mut nodes = list::Memo::default();
         self.rebuild(|p| match p {
             Part::Bdd(b) => Some(Part::Bdd(b.restrict(fix, &mut nodes))),
             Part::Expr(_) => None,
@@ -1676,7 +1589,7 @@ impl<A: Literal> Part<A> {
                     Bdd::Leaf(true) => return None,
                     // A union of atoms is one block of value `true` that takes them all.
                     Bdd::List(c, v) => {
-                        if !*v || c.next.is_some() {
+                        if !*v || c.len > 1 {
                             return None;
                         }
                         for (a, taken) in set::iter(Some(&c.block)) {
@@ -2025,11 +1938,13 @@ fn walk<'a, A: Literal>(
             }
             let c = a.digest.cmp(&b.digest);
             if c == Ordering::Equal {
-                // The blocks are pushed last, so they are compared first.
+                // A sequence has one shape, so equal digests are compared cell by cell: the
+                // cells before, the blocks, then the cells after, each pushed after the next.
                 steps.extend([
                     Step::Equal(key.0, key.1),
-                    A::walk(Walk::Cells(a.next.as_deref(), b.next.as_deref())),
+                    A::walk(Walk::Cells(a.right.as_deref(), b.right.as_deref())),
                     A::walk(Walk::Sets(Some(&a.block), Some(&b.block))),
+                    A::walk(Walk::Cells(a.left.as_deref(), b.left.as_deref())),
                 ]);
             }
             c
@@ -2944,7 +2859,10 @@ mod tests {
                             .find(|&i| *t == atom(i as u64))
                             .and_then(|i| fixed[i])
                     };
-                    (a.restrict(&fix, &mut HashMap::new()), x.restrict(&fixed))
+                    (
+                        a.restrict(&fix, &mut Default::default()),
+                        x.restrict(&fixed),
+                    )
                 }
                 _ => match a.zip_chain(&b, op) {
                     Some(z) => {
@@ -3730,27 +3648,27 @@ mod tests {
     /// from `true`: no block is merged or moved, so the list has `m` cells.
     fn blocks(base: u64, m: usize) -> Bdd<Row> {
         let prefix = (0..m as u64)
-            .map(|i| (i % 2 == 0, Some(pair_block(base + 2 * i)), None))
+            .map(|i| (i % 2 == 0, Some(pair_block(base + 2 * i))))
             .collect();
-        Bdd::assemble(prefix, (None, m.is_multiple_of(2)))
+        Bdd::assemble(prefix, &Bdd::Leaf(m.is_multiple_of(2)))
     }
 
     #[test]
     fn restricting_lists_that_share_a_tail_scales() {
         // Item CHAIN-restrict-memo: `m` lists, each a block of its own before one tail of `m`
         // blocks, restricted on an atom of the tail's last block with one memo. Memoized by
-        // list, each walked and rebuilt the whole tail again, `O(m²)` in all; memoized by the
-        // list after each cell, the tail is restricted once.
+        // list, each walked and rebuilt the whole tail again, `O(m²)` in all; memoized by cell,
+        // the cells of the tail are restricted once.
         let n = 1 << 9;
         let lists = scaling::inputs(n, |m| {
             let tail = blocks(8000, m);
-            let Bdd::List(c, v) = &tail else {
+            let Bdd::List(_, v) = &tail else {
                 unreachable!("a list of blocks has a cell")
             };
             let heads: Vec<Bdd<Row>> = (0..m as u64)
                 .map(|i| {
-                    let head = (!*v, Some(pair_block(30000 + 2 * i)), None);
-                    Bdd::assemble(vec![head], (Some(c.clone()), *v))
+                    let head = (!*v, Some(pair_block(30000 + 2 * i)));
+                    Bdd::assemble(vec![head], &tail)
                 })
                 .collect();
             (atom(8000 + 2 * (m as u64 - 1)), heads)
@@ -3758,7 +3676,7 @@ mod tests {
         scaling::check("lists sharing a tail of m blocks, restricted", n, |m| {
             let (last, heads) = &lists[&m];
             let fix = |a: &Row| (a == last).then_some(false);
-            let mut memo = HashMap::new();
+            let mut memo = list::Memo::default();
             for l in heads {
                 assert_ne!(l.restrict(&fix, &mut memo).id(), l.id());
             }
@@ -3770,15 +3688,12 @@ mod tests {
         // Item CHAIN-restrict-memo: a memo kept across lists that share cells gives each list
         // what a fresh memo gives it, on every atom fixed either way.
         let tail = blocks(8500, 6);
-        let Bdd::List(c, v) = &tail else {
-            unreachable!("a list of blocks has a cell")
-        };
         let mut lists = vec![tail.clone(), tail.not()];
         for i in 0..3u64 {
-            let head = (i % 2 == 0, Some(pair_block(8600 + 2 * i)), None);
-            lists.push(Bdd::assemble(vec![head], (Some(c.clone()), *v)));
-            let one = (i % 2 == 1, Some(set::single((atom(8700 + i), true))), None);
-            lists.push(Bdd::assemble(vec![one], (Some(c.clone()), *v)));
+            let head = (i % 2 == 0, Some(pair_block(8600 + 2 * i)));
+            lists.push(Bdd::assemble(vec![head], &tail));
+            let one = (i % 2 == 1, Some(set::single((atom(8700 + i), true))));
+            lists.push(Bdd::assemble(vec![one], &tail));
         }
         let atoms: Vec<Row> = (8500..8512)
             .chain(8600..8606)
@@ -3788,10 +3703,10 @@ mod tests {
         for a in &atoms {
             for x in [false, true] {
                 let fix = |b: &Row| (b == a).then_some(x);
-                let mut memo = HashMap::new();
+                let mut memo = list::Memo::default();
                 for l in &lists {
                     let shared = l.restrict(&fix, &mut memo);
-                    let alone = l.restrict(&fix, &mut HashMap::new());
+                    let alone = l.restrict(&fix, &mut Default::default());
                     assert_eq!(shared, alone, "{a:?} {x}");
                     for bits in [0u64, 0x15555, 0xaaaaa, 0x1fffff, 0x12345] {
                         let holds = |b: &Row| {
@@ -3914,5 +3829,266 @@ mod tests {
         assert!(d.xor_tag().is_some());
         assert_eq!(c, d);
         assert!(c.xor_tag().is_some(), "{c:?}");
+    }
+
+    /// The list of `m` blocks of two literals on the atoms from `base`, built by joining one
+    /// literal at a time, each new block first: the values alternate from `false` at the
+    /// block built first. Built from `or_literal` and `and_literal` alone.
+    fn joined_blocks(base: u64, m: usize) -> Bdd<Row> {
+        let mut f = Bdd::Leaf(false);
+        for i in 0..m as u64 {
+            for a in [base + 2 * i, base + 2 * i + 1] {
+                f = match i % 2 {
+                    0 => f.or_literal((atom(a), true)),
+                    _ => f.and_literal((atom(a), true)),
+                };
+            }
+        }
+        f
+    }
+
+    #[test]
+    fn rejoining_one_atom_of_each_block_scales() {
+        // Item CHAIN-deep-atom: a list of `m` blocks, one atom of each joined again, the
+        // deepest block first. The literal set false leaves a block at depth `d`; a list of
+        // cells each before the next rebuilt the `d` cells above it, `O(m²)` in all. The
+        // blocks in a treap by position rebuild `O(log m)` cells for each.
+        let n = 1 << 9;
+        let lists = scaling::inputs(n, |m| (joined_blocks(70000, m), m));
+        scaling::check(
+            "one atom of each of m blocks joined again, deepest first",
+            n,
+            |m| {
+                let (f, m) = &lists[&m];
+                let mut f = f.clone();
+                for i in 0..*m as u64 {
+                    f = match i % 2 {
+                        0 => f.or_literal((atom(70000 + 2 * i), true)),
+                        _ => f.and_literal((atom(70000 + 2 * i), true)),
+                    };
+                }
+                assert!(f.cells().count() > 1);
+            },
+        );
+    }
+
+    #[test]
+    fn rejoined_blocks_give_the_function_and_the_one_form() {
+        // Item CHAIN-deep-atom: the list after the rejoins of the scaling test above, on 6
+        // blocks, against the truth table of the same joins.
+        let (base, m) = (70500, 6);
+        let mut f = joined_blocks(base, m);
+        let atoms: Vec<Row> = (0..2 * m as u64).map(|i| atom(base + i)).collect();
+        let at = |a: &Row| atoms.iter().position(|b| b == a).expect("an atom listed");
+        let mut table: Vec<bool> = (0..1u32 << (2 * m))
+            .map(|s| joined_blocks(base, m).eval(|a| s >> at(a) & 1 == 1))
+            .collect();
+        for i in 0..m {
+            f = match i % 2 {
+                0 => f.or_literal((atoms[2 * i].clone(), true)),
+                _ => f.and_literal((atoms[2 * i].clone(), true)),
+            };
+            for (s, t) in table.iter_mut().enumerate() {
+                let x = s >> (2 * i) & 1 == 1;
+                *t = if i % 2 == 0 { *t || x } else { *t && x };
+            }
+        }
+        for (s, t) in table.iter().enumerate() {
+            assert_eq!(f.eval(|a| s >> at(a) & 1 == 1), *t, "{s:b}");
+        }
+        assert!(f.cells_are_sound());
+    }
+
+    /// A decision list as plain vectors, its operations by the rules of the one form, the
+    /// reference for the treap of cells (item CHAIN-deep-atom).
+    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Plain {
+        blocks: Vec<(bool, BTreeMap<u64, bool>)>,
+        tail: bool,
+    }
+
+    impl Plain {
+        /// The list of `blocks` and `tail` in its one form: empty blocks dropped, neighbors of
+        /// one value joined, then the end as `list::finish` puts it.
+        fn normal(blocks: Vec<(bool, BTreeMap<u64, bool>)>, mut tail: bool) -> Plain {
+            let mut out: Vec<(bool, BTreeMap<u64, bool>)> = Vec::new();
+            for (v, b) in blocks {
+                if b.is_empty() {
+                    continue;
+                }
+                match out.last_mut() {
+                    Some((w, c)) if *w == v => c.extend(b),
+                    _ => out.push((v, b)),
+                }
+            }
+            if out.last().is_some_and(|(v, _)| *v == tail) {
+                out.pop();
+            }
+            if out.len() >= 2 && out[out.len() - 1].1.len() == 1 {
+                let (u, last) = out.pop().expect("two or more blocks");
+                let (&m, &t) = last.iter().next().expect("one literal");
+                out.last_mut().expect("a block before").1.insert(m, !t);
+                tail = u;
+            }
+            if out.len() == 1 && !out[0].0 && out[0].1.len() == 1 {
+                let (&m, &t) = out[0].1.iter().next().expect("one literal");
+                out[0] = (true, BTreeMap::from([(m, !t)]));
+                tail = false;
+            }
+            Plain { blocks: out, tail }
+        }
+
+        fn or(&self, a: u64, t: bool) -> Plain {
+            let found = (self.blocks.iter()).position(|(_, b)| b.contains_key(&a));
+            let Some(p) = found else {
+                let mut blocks = self.blocks.clone();
+                match blocks.first_mut() {
+                    _ if self.blocks.is_empty() && self.tail => return self.clone(),
+                    Some((true, b)) => {
+                        b.insert(a, t);
+                    }
+                    _ => blocks.insert(0, (true, BTreeMap::from([(a, t)]))),
+                }
+                return Plain {
+                    blocks,
+                    tail: self.tail,
+                };
+            };
+            let (w, taken) = (self.blocks[p].0, self.blocks[p].1[&a]);
+            if taken == t && p == 0 && w {
+                return self.clone();
+            }
+            let rest = if taken == t {
+                let mut blocks = self.blocks.clone();
+                blocks[p].1.remove(&a);
+                Plain::normal(blocks, self.tail)
+            } else {
+                Plain::normal(self.blocks[..p].to_vec(), w)
+            };
+            rest.or(a, t)
+        }
+
+        fn not(&self) -> Plain {
+            let blocks = self.blocks.iter().map(|(v, b)| (!v, b.clone())).collect();
+            Plain::normal(blocks, !self.tail)
+        }
+
+        fn and(&self, a: u64, t: bool) -> Plain {
+            self.not().or(a, !t).not()
+        }
+
+        fn restrict(&self, fix: &BTreeMap<u64, bool>) -> Plain {
+            let mut blocks = Vec::new();
+            for (v, b) in &self.blocks {
+                if b.iter().any(|(a, t)| fix.get(a) == Some(t)) {
+                    return Plain::normal(blocks, *v);
+                }
+                let left = b.iter().filter(|(a, _)| !fix.contains_key(a));
+                blocks.push((*v, left.map(|(a, t)| (*a, *t)).collect()));
+            }
+            Plain::normal(blocks, self.tail)
+        }
+
+        fn eval(&self, holds: impl Fn(u64) -> bool) -> bool {
+            for (v, b) in &self.blocks {
+                if b.iter().any(|(a, t)| holds(*a) == *t) {
+                    return *v;
+                }
+            }
+            self.tail
+        }
+    }
+
+    #[test]
+    fn list_operations_agree_with_plain_lists() {
+        // Item CHAIN-deep-atom: random joins, complements, restrictions and blocks put before
+        // lists, on 40 atoms, give the list the plain vectors give, one id for one list, and
+        // cells of a treap whose atoms are those of their blocks. The first list of each value is
+        // kept, since ids are compared only between lists alive at once.
+        const ATOMS: u64 = 40;
+        let base = 71000;
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let atoms: Vec<Row> = (0..ATOMS).map(|i| atom(base + i)).collect();
+        let index = |a: &Row| atoms.iter().position(|b| b == a).expect("an atom listed") as u64;
+        let plain = |b: &Bdd<Row>| Plain {
+            blocks: (b.list().blocks.into_iter())
+                .map(|(v, l)| (v, l.iter().map(|(a, t)| (index(a), *t)).collect()))
+                .collect(),
+            tail: b.default(),
+        };
+        let mut pool: Vec<(Bdd<Row>, Plain)> = vec![(Bdd::Leaf(false), plain(&Bdd::Leaf(false)))];
+        let mut kept: BTreeMap<Plain, Bdd<Row>> = BTreeMap::new();
+        let mut longest = 0;
+        for _ in 0..30_000 {
+            let r = next();
+            let (f, p) = pool[(r % pool.len() as u64) as usize].clone();
+            let (a, t) = (next() % ATOMS, next() % 2 == 0);
+            let op = (r >> 32) % 10;
+            let made = match op {
+                0..=4 => match matches!(f, Bdd::List(_, true)) {
+                    // A new block first, most of the time, so that the lists grow long.
+                    true => (f.and_literal((atoms[a as usize].clone(), t)), p.and(a, t)),
+                    false => (f.or_literal((atoms[a as usize].clone(), t)), p.or(a, t)),
+                },
+                5 => (f.or_literal((atoms[a as usize].clone(), t)), p.or(a, t)),
+                6 => (f.and_literal((atoms[a as usize].clone(), t)), p.and(a, t)),
+                7 => (f.not(), p.not()),
+                8 => {
+                    let fix: BTreeMap<u64, bool> = (0..1 + next() % 3)
+                        .map(|_| (next() % ATOMS, next() % 2 == 0))
+                        .collect();
+                    let by_row = |b: &Row| fix.get(&index(b)).copied();
+                    (
+                        f.restrict(&by_row, &mut Default::default()),
+                        p.restrict(&fix),
+                    )
+                }
+                _ => {
+                    let free: Vec<u64> = (0..ATOMS)
+                        .filter(|x| !p.blocks.iter().any(|(_, b)| b.contains_key(x)))
+                        .collect();
+                    if free.len() < 2 {
+                        continue;
+                    }
+                    let (x, y) = (
+                        free[a as usize % free.len()],
+                        free[(a as usize + 1) % free.len()],
+                    );
+                    let block = set::insert(
+                        Some(&set::single((atoms[x as usize].clone(), t))),
+                        (atoms[y as usize].clone(), !t),
+                    );
+                    let mut blocks = vec![(t, BTreeMap::from([(x, t), (y, !t)]))];
+                    blocks.extend(p.blocks.iter().cloned());
+                    let tail = p.tail;
+                    (
+                        Bdd::assemble(vec![(t, Some(block))], &f),
+                        Plain::normal(blocks, tail),
+                    )
+                }
+            };
+            let (g, q) = made;
+            assert_eq!(plain(&g), q, "op {op} on {p:?}, atom {a} {t}: {g:?}");
+            assert!(g.cells_are_sound(), "{g:?}");
+            let id = kept.entry(q.clone()).or_insert_with(|| g.clone()).id();
+            assert_eq!(id, g.id(), "two cells of one list: {q:?}");
+            for _ in 0..4 {
+                let bits = next();
+                let holds = |x: u64| bits >> x & 1 == 1;
+                assert_eq!(g.eval(|b| holds(index(b))), q.eval(holds), "{q:?}");
+            }
+            longest = longest.max(q.blocks.len());
+            pool.push((g, q));
+            if pool.len() > 400 {
+                pool.swap_remove((next() % 400) as usize);
+            }
+        }
+        assert!(longest >= 12, "the longest list has {longest} blocks");
     }
 }
