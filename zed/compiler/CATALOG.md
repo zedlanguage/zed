@@ -13,9 +13,9 @@ The Zed column is written by hand and is one of:
 
 - `missing`: nothing in Zed or in the plan provides the routine yet;
 - `row ID`: plan rows of `docs/plan_dag.md` that provide it, separated by commas;
-- Zed texts in backticks: expressions of the grammar of DESIGN.md whose defined words lie in Zed₀ (layer 24 or below; ZED0.md), with `a`, `b`, `n`, `x`, `xs`, `s`, `m`, `k`, `f`, `p` and `z` standing for the operands. `x` alone marks a routine with no work in Zed: a copy, a borrow, a dereference or a shared pointer, which Zed's immutable values make the value itself.
+- Zed texts in backticks: expressions of the grammar of DESIGN.md whose defined words lie in Zed₀ (layer 24 or below; ZED0.md), with `a`, `b`, `n`, `i`, `x`, `xs`, `ys`, `s`, `t`, `m`, `k`, `f`, `p` and `z` standing for the operands. A text is exact: where Zed and Rust differ, it writes out Rust's result (a truncating `/` on signed integers, a wrapping or saturating operation, a fixed `width:`). `x` alone marks a routine with no work in Zed: a copy, a borrow, a dereference or a shared pointer, which Zed's immutable values make the value itself.
 
-The tool checks every row against the index, so a routine called and not listed, or listed and no longer called, is an error, and checks each Zed column against the grammar, the words table and the plan. `missing` entries are allowed until S.1, whose test is that none is left. Plan rows used: STD-seq, STD-text, STD-num and STD-blake3 (the seed library), S.1c (Unicode tables), S.1d (`#bug` for broken invariants), L6.13 (reuse in place, which replaces capacity and in-place mutation), S.4 (the MLIR text emitter, which replaces Cranelift, `object` and `libc`).
+The tool checks every row against the index, so a routine called and not listed, or listed and no longer called, is an error, and checks each Zed column against the grammar, the words table and the plan: each name in a text is an operand, a lambda parameter or a defined word, and each call of a word passes the arguments the word takes (a `width:` where one is required, sort keys or `by:` to `sort`). `missing` entries are allowed until S.1, whose test is that none is left. Plan rows used: STD-seq, STD-text, STD-num and STD-blake3 (the seed library), S.1c (Unicode tables), S.1d (`#bug` for broken invariants), L5.8a (ranges of an ordered family and the priority queue), L6.13 (reuse in place, which replaces capacity and in-place mutation), S.4 (the MLIR text emitter, which replaces Cranelift, `object` and `libc`).
 
 Counts: 1369 routines, 50049 uses.
 
@@ -34,10 +34,10 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::boxed::Box<T>::new` | 115 | 17 | `crates/zed-kernel/src/deep.rs:172` | `x` |
 | `alloc::boxed::Box<T>::pin` | 3 | 2 | `crates/zed-kernel/src/frames.rs:51` | missing |
 | `alloc::collections::binary_heap::BinaryHeap<T, A>::clear` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:198` | row L6.13 |
-| `alloc::collections::binary_heap::BinaryHeap<T, A>::peek` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:214` | row STD-seq |
-| `alloc::collections::binary_heap::BinaryHeap<T, A>::pop` | 7 | 3 | `crates/zedc/src/elab.rs:1238` | row STD-seq |
+| `alloc::collections::binary_heap::BinaryHeap<T, A>::peek` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:214` | row L5.8a |
+| `alloc::collections::binary_heap::BinaryHeap<T, A>::pop` | 7 | 3 | `crates/zedc/src/elab.rs:1238` | row L5.8a |
 | `alloc::collections::binary_heap::BinaryHeap<T, A>::push` | 9 | 3 | `crates/zedc/src/elab.rs:1251` | row L6.13 |
-| `alloc::collections::binary_heap::BinaryHeap<T>::new` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:190` | row STD-seq |
+| `alloc::collections::binary_heap::BinaryHeap<T>::new` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:190` | row L5.8a |
 | `alloc::collections::btree::map::<BTreeMap<K, V, A> as Clone>::clone` | 40 | 12 | `crates/zed-kernel/src/term/walk.rs:53` | `x` |
 | `alloc::collections::btree::map::<BTreeMap<K, V, A> as Extend<(K, V)>>::extend` | 5 | 3 | `crates/zed-kernel/src/types/empty.rs:175` | row L6.13 |
 | `alloc::collections::btree::map::<BTreeMap<K, V, A> as Index<&Q>>::index` | 124 | 14 | `crates/zed-kernel/src/eval.rs:262` | `xs[i]` |
@@ -46,7 +46,7 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::collections::btree::map::<BTreeMap<K, V> as From<[(K, V); N]>>::from` | 5 | 5 | `crates/zed-kernel/src/provenance.rs:324` | missing |
 | `alloc::collections::btree::map::<Iter<'a, K, V> as Iterator>::next` | 7 | 3 | `crates/zedc/src/store/preimage.rs:961` | row STD-seq |
 | `alloc::collections::btree::map::<Keys<'a, K, V> as Iterator>::next` | 1 | 1 | `crates/zedc/src/store/hull.rs:276` | row STD-seq |
-| `alloc::collections::btree::map::<Range<'a, K, V> as Iterator>::next` | 4 | 2 | `crates/zed-kernel/src/types/bdd.rs:1807` | row STD-seq |
+| `alloc::collections::btree::map::<Range<'a, K, V> as Iterator>::next` | 4 | 2 | `crates/zed-kernel/src/types/bdd.rs:1807` | row L5.8a |
 | `alloc::collections::btree::map::<Values<'a, K, V> as Iterator>::next` | 1 | 1 | `crates/zedc/src/store/hull.rs:247` | row STD-seq |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::clear` | 4 | 2 | `crates/zed-kernel/src/types/empty.rs:155` | row L6.13 |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::contains_key` | 35 | 12 | `crates/zed-kernel/src/eval.rs:888` | `k in m` |
@@ -62,7 +62,7 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::keys` | 54 | 11 | `crates/zed-kernel/src/types.rs:1344` | row STD-seq |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::len` | 18 | 11 | `crates/zed-kernel/src/types/empty.rs:1943` | `xs.count` |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::pop_last` | 2 | 2 | `crates/zed-kernel/src/provenance.rs:326` | row STD-seq |
-| `alloc::collections::btree::map::BTreeMap<K, V, A>::range` | 6 | 3 | `crates/zed-kernel/src/types/bdd.rs:1803` | row STD-seq |
+| `alloc::collections::btree::map::BTreeMap<K, V, A>::range` | 6 | 3 | `crates/zed-kernel/src/types/bdd.rs:1803` | row L5.8a |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::remove` | 21 | 11 | `crates/zed-kernel/src/eval.rs:1817` | row STD-seq |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::retain` | 5 | 3 | `crates/zed-kernel/src/types/empty.rs:1062` | row STD-seq |
 | `alloc::collections::btree::map::BTreeMap<K, V, A>::values` | 36 | 7 | `crates/zed-kernel/src/types.rs:791` | row STD-seq |
@@ -82,10 +82,10 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::collections::btree::set::<BTreeSet<T> as From<[T; N]>>::from` | 5 | 4 | `crates/zed-kernel/src/provenance.rs:308` | missing |
 | `alloc::collections::btree::set::<Iter<'a, T> as Iterator>::next` | 3 | 2 | `crates/zedc/src/check/ty.rs:1292` | row STD-seq |
 | `alloc::collections::btree::set::<Range<'a, T> as DoubleEndedIterator>::next_back` | 1 | 1 | `crates/zedc/src/store/interval.rs:512` | missing |
-| `alloc::collections::btree::set::<Range<'a, T> as Iterator>::next` | 1 | 1 | `crates/zedc/src/store/interval.rs:517` | row STD-seq |
+| `alloc::collections::btree::set::<Range<'a, T> as Iterator>::next` | 1 | 1 | `crates/zedc/src/store/interval.rs:517` | row L5.8a |
 | `alloc::collections::btree::set::BTreeSet<T, A>::clear` | 1 | 1 | `crates/zedc/src/check/ty.rs:3227` | row L6.13 |
 | `alloc::collections::btree::set::BTreeSet<T, A>::contains` | 65 | 14 | `crates/zed-kernel/src/eval.rs:1389` | `k in m` |
-| `alloc::collections::btree::set::BTreeSet<T, A>::first` | 5 | 2 | `crates/zedc/src/check/ty.rs:503` | row STD-seq |
+| `alloc::collections::btree::set::BTreeSet<T, A>::first` | 5 | 2 | `crates/zedc/src/check/ty.rs:503` | `xs.first` |
 | `alloc::collections::btree::set::BTreeSet<T, A>::get` | 1 | 1 | `crates/zed-kernel/src/provenance.rs:508` | row STD-seq |
 | `alloc::collections::btree::set::BTreeSet<T, A>::insert` | 78 | 15 | `crates/zed-kernel/src/eval.rs:1759` | row STD-seq |
 | `alloc::collections::btree::set::BTreeSet<T, A>::intersection` | 3 | 2 | `crates/zedc/src/store/affine.rs:502` | row STD-seq |
@@ -94,12 +94,12 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::collections::btree::set::BTreeSet<T, A>::iter` | 82 | 13 | `crates/zed-kernel/src/types/empty.rs:1051` | row STD-seq |
 | `alloc::collections::btree::set::BTreeSet<T, A>::len` | 7 | 3 | `crates/zed-kernel/src/types/empty.rs:589` | `xs.count` |
 | `alloc::collections::btree::set::BTreeSet<T, A>::pop_last` | 2 | 1 | `crates/zedc/src/stage.rs:1843` | row STD-seq |
-| `alloc::collections::btree::set::BTreeSet<T, A>::range` | 6 | 3 | `crates/zedc/src/store/affine.rs:436` | row STD-seq |
+| `alloc::collections::btree::set::BTreeSet<T, A>::range` | 6 | 3 | `crates/zedc/src/store/affine.rs:436` | row L5.8a |
 | `alloc::collections::btree::set::BTreeSet<T, A>::remove` | 17 | 6 | `crates/zed-kernel/src/eval.rs:1753` | row STD-seq |
 | `alloc::collections::btree::set::BTreeSet<T, A>::retain` | 2 | 2 | `crates/zed-kernel/src/types/empty.rs:2888` | row STD-seq |
 | `alloc::collections::btree::set::BTreeSet<T, A>::union` | 1 | 1 | `crates/zedc/src/store/lattice.rs:327` | row STD-seq |
 | `alloc::collections::btree::set::BTreeSet<T>::new` | 72 | 15 | `crates/zed-kernel/src/provenance.rs:304` | `{}` |
-| `alloc::collections::vec_deque::VecDeque<T, A>::back` | 1 | 1 | `crates/zedc/src/ast/mod.rs:565` | row STD-seq |
+| `alloc::collections::vec_deque::VecDeque<T, A>::back` | 1 | 1 | `crates/zedc/src/ast/mod.rs:565` | `xs.last` |
 | `alloc::collections::vec_deque::VecDeque<T, A>::get_mut` | 1 | 1 | `crates/zedc/src/ast/mod.rs:649` | row L6.13 |
 | `alloc::collections::vec_deque::VecDeque<T, A>::is_empty` | 1 | 1 | `crates/zedc/src/store/product.rs:1826` | `xs.count == 0` |
 | `alloc::collections::vec_deque::VecDeque<T, A>::iter` | 1 | 1 | `crates/zedc/src/store/product.rs:1756` | row STD-seq |
@@ -121,12 +121,12 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::rc::Rc<T, A>::try_unwrap` | 3 | 3 | `crates/zedc/src/check/mod.rs:473` | row L6.13 |
 | `alloc::rc::Rc<T>::new` | 35 | 8 | `crates/zed-kernel/src/eval.rs:829` | `x` |
 | `alloc::slice::[T]::concat` | 13 | 7 | `crates/zed-kernel/src/num.rs:138` | row STD-seq |
-| `alloc::slice::[T]::join` | 74 | 32 | `crates/zed-kernel/src/bits.rs:82` | row STD-seq |
-| `alloc::slice::[T]::sort` | 18 | 12 | `crates/zed-kernel/src/eval.rs:1821` | `xs.sort()` |
-| `alloc::slice::[T]::sort_by` | 16 | 12 | `crates/zed-kernel/src/value.rs:365` | `xs.sort()` |
-| `alloc::slice::[T]::sort_by_cached_key` | 1 | 1 | `crates/zedc/src/zir/text.rs:382` | `xs.sort()` |
-| `alloc::slice::[T]::sort_by_key` | 21 | 12 | `crates/zedc/src/ast/mod.rs:386` | `xs.sort()` |
-| `alloc::slice::[T]::to_vec` | 47 | 25 | `crates/zed-kernel/src/eval.rs:937` | missing |
+| `alloc::slice::[T]::join` | 74 | 32 | `crates/zed-kernel/src/bits.rs:82` | row STD-text |
+| `alloc::slice::[T]::sort` | 18 | 12 | `crates/zed-kernel/src/eval.rs:1821` | `xs.sort(asc x -> x)` |
+| `alloc::slice::[T]::sort_by` | 16 | 12 | `crates/zed-kernel/src/value.rs:365` | `xs.sort(by: f)` |
+| `alloc::slice::[T]::sort_by_cached_key` | 1 | 1 | `crates/zedc/src/zir/text.rs:382` | `xs.sort(asc f)` |
+| `alloc::slice::[T]::sort_by_key` | 21 | 12 | `crates/zedc/src/ast/mod.rs:386` | `xs.sort(asc f)` |
+| `alloc::slice::[T]::to_vec` | 47 | 25 | `crates/zed-kernel/src/eval.rs:937` | `x` |
 | `alloc::str::<str as ToOwned>::to_owned` | 1 | 1 | `crates/zedc/src/store/presburger.rs:1211` | `x` |
 | `alloc::str::str::repeat` | 9 | 4 | `crates/zed-kernel/src/num.rs:1304` | row STD-text |
 | `alloc::str::str::replace` | 5 | 3 | `crates/zedc/src/lex/number.rs:60` | row L6.13 |
@@ -136,18 +136,18 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::string::<String as AddAssign<&str>>::add_assign` | 15 | 1 | `crates/zed-kernel/src/print.rs:787` | `s ++ t` |
 | `alloc::string::<String as Clone>::clone` | 54 | 16 | `crates/zed-kernel/src/types/print.rs:1023` | `x` |
 | `alloc::string::<String as Deref>::deref` | 5 | 2 | `crates/zedc/src/check/walk.rs:1904` | `x` |
-| `alloc::string::<String as From<&str>>::from` | 4 | 3 | `crates/zed-native/src/tables.rs:311` | missing |
-| `alloc::string::<String as Index<I>>::index` | 6 | 3 | `crates/zedc/src/check/read.rs:61` | `xs[i]` |
+| `alloc::string::<String as From<&str>>::from` | 4 | 3 | `crates/zed-native/src/tables.rs:311` | `x` |
+| `alloc::string::<String as Index<I>>::index` | 6 | 3 | `crates/zedc/src/check/read.rs:61` | `fromUtf8(utf8(s).drop(a).take(b - a))` |
 | `alloc::string::<String as Ord>::cmp` | 4 | 4 | `crates/zed-kernel/src/types/rec.rs:908` | missing |
 | `alloc::string::<String as PartialEq<&str>>::eq` | 27 | 7 | `crates/zed-kernel/src/num.rs:1488` | `a == b` |
-| `alloc::string::<T as ToString>::to_string` | 161 | 47 | `crates/zed-kernel/src/eval.rs:891` | missing |
-| `alloc::string::String::as_bytes` | 13 | 8 | `crates/zed-kernel/src/types.rs:148` | missing |
+| `alloc::string::<T as ToString>::to_string` | 161 | 47 | `crates/zed-kernel/src/eval.rs:891` | `"${x}"` |
+| `alloc::string::String::as_bytes` | 13 | 8 | `crates/zed-kernel/src/types.rs:148` | `utf8(s)` |
 | `alloc::string::String::as_str` | 79 | 22 | `crates/zed-kernel/src/text.rs:311` | `x` |
 | `alloc::string::String::clear` | 1 | 1 | `crates/zed-native/src/tables.rs:215` | row L6.13 |
-| `alloc::string::String::from_utf8` | 3 | 2 | `crates/zed-kernel/src/words.rs:182` | missing |
+| `alloc::string::String::from_utf8` | 3 | 2 | `crates/zed-kernel/src/words.rs:182` | `fromUtf8(b)` |
 | `alloc::string::String::from_utf8_lossy` | 2 | 2 | `crates/zed-native/src/link.rs:151` | missing |
-| `alloc::string::String::into_bytes` | 1 | 1 | `crates/zedc/src/testing.rs:264` | missing |
-| `alloc::string::String::is_empty` | 6 | 5 | `crates/zedc/src/elab/walk.rs:1853` | `len(xs) == 0` |
+| `alloc::string::String::into_bytes` | 1 | 1 | `crates/zedc/src/testing.rs:264` | `utf8(s)` |
+| `alloc::string::String::is_empty` | 6 | 5 | `crates/zedc/src/elab/walk.rs:1853` | `len(s) == 0` |
 | `alloc::string::String::len` | 18 | 11 | `crates/zed-kernel/src/num.rs:1561` | `utf8(s).count` |
 | `alloc::string::String::new` | 34 | 24 | `crates/zed-kernel/src/print.rs:25` | `""` |
 | `alloc::string::String::push` | 13 | 6 | `crates/zed-kernel/src/types/print.rs:1045` | row L6.13 |
@@ -161,10 +161,10 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::sync::<Arc<T, A> as Ord>::cmp` | 9 | 5 | `crates/zed-kernel/src/deep.rs:155` | missing |
 | `alloc::sync::<Arc<T, A> as PartialEq<Self>>::eq` | 36 | 8 | `crates/zed-kernel/src/eval.rs:2011` | `a == b` |
 | `alloc::sync::<Arc<T, A> as PartialEq<Self>>::ne` | 6 | 2 | `crates/zed-kernel/src/types/empty.rs:1180` | `a != b` |
-| `alloc::sync::<Arc<[T], A> as From<Vec<T, A>>>::from` | 2 | 1 | `crates/zed-kernel/src/types.rs:1508` | missing |
-| `alloc::sync::<Arc<[T]> as From<[T; N]>>::from` | 1 | 1 | `crates/zedc/src/run.rs:481` | missing |
-| `alloc::sync::<Arc<str> as From<&str>>::from` | 9 | 7 | `crates/zed-kernel/src/term.rs:531` | missing |
-| `alloc::sync::<Arc<str> as From<String>>::from` | 4 | 4 | `crates/zed-kernel/src/text.rs:305` | missing |
+| `alloc::sync::<Arc<[T], A> as From<Vec<T, A>>>::from` | 2 | 1 | `crates/zed-kernel/src/types.rs:1508` | `x` |
+| `alloc::sync::<Arc<[T]> as From<[T; N]>>::from` | 1 | 1 | `crates/zedc/src/run.rs:481` | `x` |
+| `alloc::sync::<Arc<str> as From<&str>>::from` | 9 | 7 | `crates/zed-kernel/src/term.rs:531` | `x` |
+| `alloc::sync::<Arc<str> as From<String>>::from` | 4 | 4 | `crates/zed-kernel/src/text.rs:305` | `x` |
 | `alloc::sync::Arc<T, A>::as_ptr` | 13 | 5 | `crates/zed-kernel/src/types.rs:469` | missing |
 | `alloc::sync::Arc<T, A>::get_mut` | 9 | 6 | `crates/zed-kernel/src/term.rs:371` | row L6.13 |
 | `alloc::sync::Arc<T, A>::into_inner` | 4 | 3 | `crates/zed-kernel/src/provenance.rs:92` | `x` |
@@ -183,7 +183,7 @@ Counts: 1369 routines, 50049 uses.
 | `alloc::vec::<Vec<T, A> as IndexMut<I>>::index_mut` | 1136 | 46 | `crates/zed-kernel/src/family.rs:114` | row L6.13 |
 | `alloc::vec::<Vec<T, A> as IntoIterator>::into_iter` | 282 | 53 | `crates/zed-kernel/src/eval.rs:815` | row STD-seq |
 | `alloc::vec::<Vec<T, A> as Ord>::cmp` | 6 | 4 | `crates/zed-kernel/src/types/rec.rs:908` | missing |
-| `alloc::vec::<Vec<T> as FromIterator<T>>::from_iter` | 1 | 1 | `crates/zedc/src/store/presburger.rs:5225` | missing |
+| `alloc::vec::<Vec<T> as FromIterator<T>>::from_iter` | 1 | 1 | `crates/zedc/src/store/presburger.rs:5225` | `x` |
 | `alloc::vec::<[T; N] as TryFrom<Vec<T, A>>>::try_from` | 7 | 5 | `crates/zed-kernel/src/eval.rs:1370` | missing |
 | `alloc::vec::Vec<T, A>::append` | 15 | 10 | `crates/zed-kernel/src/family.rs:258` | row L6.13 |
 | `alloc::vec::Vec<T, A>::as_slice` | 30 | 14 | `crates/zed-kernel/src/eval.rs:2181` | `x` |
@@ -249,7 +249,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::cell::once::OnceCell<T>::get_or_init` | 5 | 3 | `crates/zedc/src/ast/body.rs:207` | missing |
 | `core::cell::once::OnceCell<T>::new` | 8 | 3 | `crates/zedc/src/ast/mod.rs:426` | missing |
 | `core::cell::once::OnceCell<T>::set` | 1 | 1 | `crates/zedc/src/store/presburger.rs:2727` | missing |
-| `core::char::convert::<u32 as From<char>>::from` | 2 | 2 | `crates/zed-kernel/src/words.rs:126` | missing |
+| `core::char::convert::<u32 as From<char>>::from` | 2 | 2 | `crates/zed-kernel/src/words.rs:126` | `int(x)` |
 | `core::char::methods::char::encode_utf8` | 1 | 1 | `crates/zed-kernel/src/words.rs:130` | missing |
 | `core::char::methods::char::from_u32` | 4 | 3 | `crates/zed-kernel/src/words.rs:129` | missing |
 | `core::char::methods::char::is_alphabetic` | 1 | 1 | `crates/zedc/src/docs.rs:82` | missing |
@@ -259,19 +259,19 @@ Counts: 1369 routines, 50049 uses.
 | `core::char::methods::char::is_ascii_digit` | 10 | 6 | `crates/zedc/src/ast/neglit.rs:157` | missing |
 | `core::char::methods::char::is_digit` | 2 | 2 | `crates/zed-kernel/src/value.rs:441` | missing |
 | `core::char::methods::char::is_whitespace` | 2 | 2 | `crates/zedc/src/ast/neglit.rs:165` | missing |
-| `core::char::methods::char::len_utf8` | 7 | 3 | `crates/zedc/src/lex/comment.rs:34` | missing |
+| `core::char::methods::char::len_utf8` | 7 | 3 | `crates/zedc/src/lex/comment.rs:34` | `utf8(s).count` |
 | `core::clone::Clone::clone` | 46 | 11 | `crates/zed-kernel/src/types/bdd.rs:183` | `x` |
 | `core::clone::impls::<usize as Clone>::clone` | 1 | 1 | `crates/zedc/src/canon/binders.rs:331` | `x` |
 | `core::cmp::<Ordering as PartialEq<Self>>::eq` | 81 | 11 | `crates/zed-kernel/src/num.rs:675` | `a == b` |
-| `core::cmp::Ord::clamp` | 1 | 1 | `crates/zed-kernel/src/num/bound.rs:353` | row STD-num |
+| `core::cmp::Ord::clamp` | 1 | 1 | `crates/zed-kernel/src/num/bound.rs:353` | `min(max(x, a), b)` |
 | `core::cmp::Ord::cmp` | 3 | 2 | `crates/zed-kernel/src/types/bdd.rs:281` | missing |
-| `core::cmp::Ord::max` | 82 | 28 | `crates/zed-kernel/src/eval.rs:2246` | missing |
-| `core::cmp::Ord::min` | 78 | 31 | `crates/zed-kernel/src/bits.rs:210` | missing |
+| `core::cmp::Ord::max` | 82 | 28 | `crates/zed-kernel/src/eval.rs:2246` | `max(a, b)` |
+| `core::cmp::Ord::min` | 78 | 31 | `crates/zed-kernel/src/bits.rs:210` | `min(a, b)` |
 | `core::cmp::Ordering::is_eq` | 3 | 3 | `crates/zed-kernel/src/types.rs:1539` | missing |
 | `core::cmp::Ordering::is_gt` | 3 | 1 | `crates/zedc/src/store/live3.rs:383` | missing |
 | `core::cmp::Ordering::is_le` | 1 | 1 | `crates/zed-kernel/src/types/bdd.rs:673` | missing |
 | `core::cmp::Ordering::is_ne` | 9 | 3 | `crates/zed-kernel/src/types/rec.rs:876` | missing |
-| `core::cmp::Ordering::reverse` | 8 | 3 | `crates/zed-kernel/src/num.rs:1382` | row STD-seq |
+| `core::cmp::Ordering::reverse` | 8 | 3 | `crates/zed-kernel/src/num.rs:1382` | missing |
 | `core::cmp::Ordering::then` | 10 | 6 | `crates/zed-kernel/src/provenance.rs:142` | missing |
 | `core::cmp::Ordering::then_with` | 21 | 9 | `crates/zed-kernel/src/deep.rs:155` | missing |
 | `core::cmp::PartialEq::eq` | 18 | 5 | `crates/zedc/src/canon/mod.rs:113` | `a == b` |
@@ -299,7 +299,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::cmp::impls::<f64 as PartialOrd<Self>>::le` | 3 | 1 | `crates/zed-kernel/src/eval.rs:2223` | `a <= b` |
 | `core::cmp::impls::<f64 as PartialOrd<Self>>::lt` | 9 | 2 | `crates/zed-kernel/src/eval.rs:2132` | `a < b` |
 | `core::cmp::impls::<f64 as PartialOrd<Self>>::partial_cmp` | 1 | 1 | `crates/zed-kernel/src/deep.rs:189` | missing |
-| `core::cmp::impls::<i128 as Ord>::clamp` | 1 | 1 | `crates/zedc/src/store/preimage.rs:1774` | row STD-num |
+| `core::cmp::impls::<i128 as Ord>::clamp` | 1 | 1 | `crates/zedc/src/store/preimage.rs:1774` | `min(max(x, a), b)` |
 | `core::cmp::impls::<i128 as Ord>::cmp` | 1 | 1 | `crates/zedc/src/store/int.rs:257` | missing |
 | `core::cmp::impls::<i128 as PartialEq<Self>>::eq` | 27 | 4 | `crates/zedc/src/check/widen.rs:724` | `a == b` |
 | `core::cmp::impls::<i128 as PartialEq<Self>>::ne` | 12 | 2 | `crates/zed-kernel/src/types/empty.rs:772` | `a != b` |
@@ -353,7 +353,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::cmp::impls::<u8 as PartialOrd<Self>>::gt` | 12 | 1 | `crates/zed-kernel/src/text.rs:203` | `a > b` |
 | `core::cmp::impls::<u8 as PartialOrd<Self>>::le` | 3 | 1 | `crates/zedc/src/zir/binary.rs:396` | `a <= b` |
 | `core::cmp::impls::<u8 as PartialOrd<Self>>::lt` | 9 | 2 | `crates/zedc/src/check/mod.rs:1719` | `a < b` |
-| `core::cmp::impls::<usize as Ord>::clamp` | 1 | 1 | `crates/zedc/src/run.rs:427` | row STD-num |
+| `core::cmp::impls::<usize as Ord>::clamp` | 1 | 1 | `crates/zedc/src/run.rs:427` | `min(max(x, a), b)` |
 | `core::cmp::impls::<usize as Ord>::cmp` | 9 | 5 | `crates/zed-kernel/src/types/bdd.rs:1809` | missing |
 | `core::cmp::impls::<usize as PartialEq<Self>>::eq` | 1053 | 65 | `crates/zed-kernel/src/bits.rs:118` | `a == b` |
 | `core::cmp::impls::<usize as PartialEq<Self>>::ne` | 321 | 37 | `crates/zed-kernel/src/bits.rs:170` | `a != b` |
@@ -366,34 +366,34 @@ Counts: 1369 routines, 50049 uses.
 | `core::convert::AsRef::as_ref` | 1 | 1 | `crates/zedc/src/run.rs:875` | `x` |
 | `core::convert::From::from` | 2 | 1 | `crates/zedc/src/store/presburger.rs:4533` | missing |
 | `core::convert::Into::into` | 22 | 12 | `crates/zed-kernel/src/eval.rs:181` | `x` |
-| `core::convert::num::<f64 as From<u8>>::from` | 2 | 1 | `crates/zed-kernel/src/types/empty.rs:652` | missing |
-| `core::convert::num::<i128 as From<bool>>::from` | 1 | 1 | `crates/zedc/src/check/widen.rs:827` | missing |
-| `core::convert::num::<i128 as From<i64>>::from` | 13 | 5 | `crates/zed-kernel/src/bits.rs:202` | missing |
-| `core::convert::num::<i128 as From<u64>>::from` | 9 | 3 | `crates/zed-kernel/src/types/empty.rs:770` | missing |
+| `core::convert::num::<f64 as From<u8>>::from` | 2 | 1 | `crates/zed-kernel/src/types/empty.rs:652` | `f64(a)` |
+| `core::convert::num::<i128 as From<bool>>::from` | 1 | 1 | `crates/zedc/src/check/widen.rs:827` | `if a { 1 } else { 0 }` |
+| `core::convert::num::<i128 as From<i64>>::from` | 13 | 5 | `crates/zed-kernel/src/bits.rs:202` | `int(a)` |
+| `core::convert::num::<i128 as From<u64>>::from` | 9 | 3 | `crates/zed-kernel/src/types/empty.rs:770` | `int(a)` |
 | `core::convert::num::<i128 as TryFrom<u128>>::try_from` | 3 | 2 | `crates/zedc/src/check/widen.rs:437` | missing |
-| `core::convert::num::<i32 as From<bool>>::from` | 1 | 1 | `crates/zedc/src/store/int.rs:417` | missing |
-| `core::convert::num::<i32 as From<u8>>::from` | 1 | 1 | `crates/zed-native/src/exe.rs:138` | missing |
-| `core::convert::num::<i64 as From<bool>>::from` | 5 | 3 | `crates/zed-native/src/hooks.rs:595` | missing |
-| `core::convert::num::<i64 as From<i32>>::from` | 1 | 1 | `crates/zedc/src/store/int.rs:1611` | missing |
-| `core::convert::num::<i64 as From<u32>>::from` | 8 | 5 | `crates/zed-kernel/src/bits.rs:180` | missing |
-| `core::convert::num::<i64 as From<u8>>::from` | 1 | 1 | `crates/zed-kernel/src/words.rs:158` | missing |
+| `core::convert::num::<i32 as From<bool>>::from` | 1 | 1 | `crates/zedc/src/store/int.rs:417` | `if a { 1 } else { 0 }` |
+| `core::convert::num::<i32 as From<u8>>::from` | 1 | 1 | `crates/zed-native/src/exe.rs:138` | `int(a)` |
+| `core::convert::num::<i64 as From<bool>>::from` | 5 | 3 | `crates/zed-native/src/hooks.rs:595` | `if a { 1 } else { 0 }` |
+| `core::convert::num::<i64 as From<i32>>::from` | 1 | 1 | `crates/zedc/src/store/int.rs:1611` | `int(a)` |
+| `core::convert::num::<i64 as From<u32>>::from` | 8 | 5 | `crates/zed-kernel/src/bits.rs:180` | `int(a)` |
+| `core::convert::num::<i64 as From<u8>>::from` | 1 | 1 | `crates/zed-kernel/src/words.rs:158` | `int(a)` |
 | `core::convert::num::<i64 as TryFrom<i128>>::try_from` | 14 | 5 | `crates/zed-kernel/src/bits.rs:204` | missing |
 | `core::convert::num::<i64 as TryFrom<u64>>::try_from` | 1 | 1 | `crates/zedc/src/check/widen.rs:798` | missing |
-| `core::convert::num::<u128 as From<u32>>::from` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:352` | missing |
-| `core::convert::num::<u128 as From<u64>>::from` | 23 | 5 | `crates/zed-kernel/src/num.rs:919` | missing |
-| `core::convert::num::<u32 as From<bool>>::from` | 6 | 3 | `crates/zed-kernel/src/num.rs:908` | missing |
+| `core::convert::num::<u128 as From<u32>>::from` | 1 | 1 | `crates/zedc/src/store/negsssp.rs:352` | `int(a)` |
+| `core::convert::num::<u128 as From<u64>>::from` | 23 | 5 | `crates/zed-kernel/src/num.rs:919` | `int(a)` |
+| `core::convert::num::<u32 as From<bool>>::from` | 6 | 3 | `crates/zed-kernel/src/num.rs:908` | `if a { 1 } else { 0 }` |
 | `core::convert::num::<u32 as TryFrom<i64>>::try_from` | 8 | 6 | `crates/zed-kernel/src/eval.rs:2070` | missing |
 | `core::convert::num::<u32 as TryFrom<u128>>::try_from` | 1 | 1 | `crates/zedc/src/check/widen.rs:706` | missing |
 | `core::convert::num::<u32 as TryFrom<u64>>::try_from` | 2 | 2 | `crates/zed-kernel/src/num.rs:1184` | missing |
-| `core::convert::num::<u64 as From<bool>>::from` | 14 | 7 | `crates/zed-kernel/src/num.rs:887` | missing |
-| `core::convert::num::<u64 as From<u32>>::from` | 5 | 5 | `crates/zed-kernel/src/provenance.rs:50` | missing |
-| `core::convert::num::<u64 as From<u8>>::from` | 2 | 1 | `crates/zed-kernel/src/types.rs:120` | missing |
+| `core::convert::num::<u64 as From<bool>>::from` | 14 | 7 | `crates/zed-kernel/src/num.rs:887` | `if a { 1 } else { 0 }` |
+| `core::convert::num::<u64 as From<u32>>::from` | 5 | 5 | `crates/zed-kernel/src/provenance.rs:50` | `int(a)` |
+| `core::convert::num::<u64 as From<u8>>::from` | 2 | 1 | `crates/zed-kernel/src/types.rs:120` | `int(a)` |
 | `core::convert::num::<u64 as TryFrom<i128>>::try_from` | 3 | 3 | `crates/zed-kernel/src/types/empty.rs:778` | missing |
 | `core::convert::num::<u64 as TryFrom<u128>>::try_from` | 4 | 3 | `crates/zed-kernel/src/num.rs:924` | missing |
-| `core::convert::num::<u8 as From<bool>>::from` | 13 | 6 | `crates/zed-kernel/src/types.rs:619` | missing |
+| `core::convert::num::<u8 as From<bool>>::from` | 13 | 6 | `crates/zed-kernel/src/types.rs:619` | `if a { 1 } else { 0 }` |
 | `core::convert::num::<u8 as TryFrom<i64>>::try_from` | 1 | 1 | `crates/zed-kernel/src/words.rs:173` | missing |
-| `core::convert::num::<usize as From<bool>>::from` | 25 | 17 | `crates/zed-kernel/src/types/bdd/list.rs:415` | missing |
-| `core::convert::num::<usize as From<u8>>::from` | 1 | 1 | `crates/zed-kernel/src/text.rs:128` | missing |
+| `core::convert::num::<usize as From<bool>>::from` | 25 | 17 | `crates/zed-kernel/src/types/bdd/list.rs:415` | `if a { 1 } else { 0 }` |
+| `core::convert::num::<usize as From<u8>>::from` | 1 | 1 | `crates/zed-kernel/src/text.rs:128` | `int(a)` |
 | `core::convert::num::ptr_try_from_impls::<i64 as TryFrom<usize>>::try_from` | 4 | 3 | `crates/zed-kernel/src/words.rs:117` | missing |
 | `core::convert::num::ptr_try_from_impls::<u32 as TryFrom<usize>>::try_from` | 5 | 3 | `crates/zed-kernel/src/eval.rs:421` | missing |
 | `core::convert::num::ptr_try_from_impls::<u64 as TryFrom<usize>>::try_from` | 1 | 1 | `crates/zed-kernel/src/num.rs:140` | missing |
@@ -459,14 +459,14 @@ Counts: 1369 routines, 50049 uses.
 | `core::iter::adapters::map::<Map<I, F> as Iterator>::next` | 4 | 3 | `crates/zedc/src/check/mod.rs:6035` | row STD-seq |
 | `core::iter::adapters::peekable::<Peekable<I> as Iterator>::next` | 21 | 4 | `crates/zedc/src/lex/name.rs:23` | row STD-seq |
 | `core::iter::adapters::peekable::Peekable<I>::next_if` | 5 | 3 | `crates/zedc/src/ast/mod.rs:958` | missing |
-| `core::iter::adapters::peekable::Peekable<I>::peek` | 12 | 5 | `crates/zedc/src/lex/name.rs:25` | row STD-seq |
+| `core::iter::adapters::peekable::Peekable<I>::peek` | 12 | 5 | `crates/zedc/src/lex/name.rs:25` | `xs.first` |
 | `core::iter::adapters::rev::<Rev<I> as ExactSizeIterator>::len` | 1 | 1 | `crates/zed-kernel/src/num.rs:1229` | `xs.count` |
 | `core::iter::adapters::rev::<Rev<I> as Iterator>::find` | 1 | 1 | `crates/zed-kernel/src/exact.rs:59` | `xs.where(p).last` |
 | `core::iter::adapters::rev::<Rev<I> as Iterator>::fold` | 17 | 10 | `crates/zed-kernel/src/num.rs:1191` | `xs.foldr((x, acc) -> f(acc, x), z)` |
 | `core::iter::adapters::zip::<Zip<A, B> as Iterator>::fold` | 3 | 3 | `crates/zed-kernel/src/types/rec.rs:600` | `xs.foldl(z, f)` |
 | `core::iter::sources::from_fn::from_fn` | 2 | 2 | `crates/zed-kernel/src/num.rs:1086` | missing |
 | `core::iter::sources::once::once` | 15 | 7 | `crates/zed-kernel/src/types/bdd.rs:142` | missing |
-| `core::iter::sources::repeat::repeat` | 1 | 1 | `crates/zed-kernel/src/eval.rs:1316` | row STD-text |
+| `core::iter::sources::repeat::repeat` | 1 | 1 | `crates/zed-kernel/src/eval.rs:1316` | missing |
 | `core::iter::sources::repeat_n::repeat_n` | 3 | 2 | `crates/zed-kernel/src/num/factor.rs:14` | missing |
 | `core::iter::traits::collect::<I as IntoIterator>::into_iter` | 1 | 1 | `crates/zedc/src/elab.rs:1070` | row STD-seq |
 | `core::iter::traits::collect::IntoIterator::into_iter` | 20 | 10 | `crates/zed-kernel/src/family.rs:223` | row STD-seq |
@@ -474,10 +474,10 @@ Counts: 1369 routines, 50049 uses.
 | `core::iter::traits::iterator::Iterator::all` | 71 | 27 | `crates/zed-kernel/src/deep.rs:487` | `xs.all(p)` |
 | `core::iter::traits::iterator::Iterator::any` | 61 | 23 | `crates/zed-kernel/src/exact.rs:52` | `xs.any(p)` |
 | `core::iter::traits::iterator::Iterator::by_ref` | 5 | 4 | `crates/zed-kernel/src/num.rs:1238` | `x` |
-| `core::iter::traits::iterator::Iterator::chain` | 88 | 32 | `crates/zed-kernel/src/eval.rs:1316` | row STD-seq |
+| `core::iter::traits::iterator::Iterator::chain` | 88 | 32 | `crates/zed-kernel/src/eval.rs:1316` | `xs ++ ys` |
 | `core::iter::traits::iterator::Iterator::cloned` | 104 | 20 | `crates/zed-kernel/src/eval.rs:440` | `x` |
 | `core::iter::traits::iterator::Iterator::cmp` | 4 | 3 | `crates/zed-kernel/src/exact.rs:44` | missing |
-| `core::iter::traits::iterator::Iterator::collect` | 1023 | 79 | `crates/zed-kernel/src/bits.rs:60` | row STD-seq |
+| `core::iter::traits::iterator::Iterator::collect` | 1023 | 79 | `crates/zed-kernel/src/bits.rs:60` | `x` |
 | `core::iter::traits::iterator::Iterator::copied` | 56 | 22 | `crates/zed-kernel/src/types.rs:1798` | `x` |
 | `core::iter::traits::iterator::Iterator::count` | 7 | 7 | `crates/zedc/src/canon/mod.rs:108` | `xs.count` |
 | `core::iter::traits::iterator::Iterator::enumerate` | 238 | 52 | `crates/zed-kernel/src/bits.rs:117` | row STD-seq |
@@ -486,33 +486,33 @@ Counts: 1369 routines, 50049 uses.
 | `core::iter::traits::iterator::Iterator::find` | 37 | 20 | `crates/zed-kernel/src/types/empty.rs:568` | `xs.where(p).first` |
 | `core::iter::traits::iterator::Iterator::find_map` | 5 | 4 | `crates/zed-kernel/src/types/empty.rs:2157` | row STD-seq |
 | `core::iter::traits::iterator::Iterator::flat_map` | 71 | 23 | `crates/zed-kernel/src/provenance.rs:425` | `xs.flatMap(f)` |
-| `core::iter::traits::iterator::Iterator::flatten` | 70 | 17 | `crates/zed-kernel/src/eval.rs:815` | missing |
+| `core::iter::traits::iterator::Iterator::flatten` | 70 | 17 | `crates/zed-kernel/src/eval.rs:815` | `xs.flatMap(x -> x)` |
 | `core::iter::traits::iterator::Iterator::fold` | 9 | 5 | `crates/zed-kernel/src/types.rs:144` | `xs.foldl(z, f)` |
 | `core::iter::traits::iterator::Iterator::for_each` | 22 | 9 | `crates/zed-kernel/src/provenance.rs:472` | missing |
 | `core::iter::traits::iterator::Iterator::last` | 1 | 1 | `crates/zedc/src/store/affine.rs:439` | `xs.last` |
 | `core::iter::traits::iterator::Iterator::map` | 983 | 81 | `crates/zed-kernel/src/bits.rs:60` | `xs.map(f)` |
-| `core::iter::traits::iterator::Iterator::max` | 18 | 12 | `crates/zed-kernel/src/num/bound.rs:155` | missing |
-| `core::iter::traits::iterator::Iterator::max_by_key` | 6 | 6 | `crates/zed-kernel/src/value.rs:386` | `xs.maxBy(f)` |
-| `core::iter::traits::iterator::Iterator::min` | 15 | 9 | `crates/zed-kernel/src/types/bes.rs:754` | missing |
-| `core::iter::traits::iterator::Iterator::min_by` | 1 | 1 | `crates/zed-kernel/src/types/empty.rs:687` | `xs.minBy(f)` |
-| `core::iter::traits::iterator::Iterator::min_by_key` | 11 | 6 | `crates/zed-kernel/src/types/empty.rs:1677` | `xs.minBy(f)` |
+| `core::iter::traits::iterator::Iterator::max` | 18 | 12 | `crates/zed-kernel/src/num/bound.rs:155` | `xs.maxBy(x -> x).last` |
+| `core::iter::traits::iterator::Iterator::max_by_key` | 6 | 6 | `crates/zed-kernel/src/value.rs:386` | `xs.maxBy(f).last` |
+| `core::iter::traits::iterator::Iterator::min` | 15 | 9 | `crates/zed-kernel/src/types/bes.rs:754` | `xs.minBy(x -> x).first` |
+| `core::iter::traits::iterator::Iterator::min_by` | 1 | 1 | `crates/zed-kernel/src/types/empty.rs:687` | `xs.sort(by: f).first` |
+| `core::iter::traits::iterator::Iterator::min_by_key` | 11 | 6 | `crates/zed-kernel/src/types/empty.rs:1677` | `xs.minBy(f).first` |
 | `core::iter::traits::iterator::Iterator::next` | 1 | 1 | `crates/zedc/src/canon/binders.rs:701` | row STD-seq |
-| `core::iter::traits::iterator::Iterator::nth` | 3 | 3 | `crates/zed-kernel/src/provenance.rs:649` | missing |
+| `core::iter::traits::iterator::Iterator::nth` | 3 | 3 | `crates/zed-kernel/src/provenance.rs:649` | `xs.drop(n).first` |
 | `core::iter::traits::iterator::Iterator::partition` | 3 | 2 | `crates/zedc/src/store/presburger.rs:3371` | missing |
 | `core::iter::traits::iterator::Iterator::peekable` | 11 | 7 | `crates/zedc/src/ast/mod.rs:957` | missing |
-| `core::iter::traits::iterator::Iterator::position` | 3 | 2 | `crates/zedc/src/canon/mod.rs:101` | row STD-seq |
-| `core::iter::traits::iterator::Iterator::product` | 4 | 4 | `crates/zed-kernel/src/types/empty.rs:676` | missing |
+| `core::iter::traits::iterator::Iterator::position` | 3 | 2 | `crates/zedc/src/canon/mod.rs:101` | `xs.find(p)` |
+| `core::iter::traits::iterator::Iterator::product` | 4 | 4 | `crates/zed-kernel/src/types/empty.rs:676` | `xs.foldl(1, (a, b) -> a * b)` |
 | `core::iter::traits::iterator::Iterator::reduce` | 5 | 4 | `crates/zedc/src/check/ty.rs:2388` | `xs.reduce(f)` |
 | `core::iter::traits::iterator::Iterator::rev` | 223 | 52 | `crates/zed-kernel/src/deep.rs:460` | row STD-seq |
 | `core::iter::traits::iterator::Iterator::skip` | 7 | 7 | `crates/zed-native/src/hooks.rs:644` | `xs.drop(n)` |
 | `core::iter::traits::iterator::Iterator::step_by` | 5 | 3 | `crates/zedc/src/ast/stmts.rs:423` | missing |
 | `core::iter::traits::iterator::Iterator::sum` | 12 | 8 | `crates/zed-kernel/src/num.rs:619` | `sum(xs)` |
-| `core::iter::traits::iterator::Iterator::take` | 2 | 2 | `crates/zed-kernel/src/num.rs:1238` | missing |
+| `core::iter::traits::iterator::Iterator::take` | 2 | 2 | `crates/zed-kernel/src/num.rs:1238` | `xs.take(n)` |
 | `core::iter::traits::iterator::Iterator::take_while` | 10 | 7 | `crates/zedc/src/check/mod.rs:2603` | `xs.takeWhile(p)` |
 | `core::iter::traits::iterator::Iterator::try_fold` | 3 | 3 | `crates/zedc/src/check/mod.rs:5438` | missing |
 | `core::iter::traits::iterator::Iterator::try_for_each` | 6 | 5 | `crates/zed-kernel/src/provenance.rs:165` | missing |
 | `core::iter::traits::iterator::Iterator::unzip` | 4 | 4 | `crates/zed-kernel/src/types.rs:771` | missing |
-| `core::iter::traits::iterator::Iterator::zip` | 143 | 37 | `crates/zed-kernel/src/bits.rs:117` | `xs.zip(ys)` |
+| `core::iter::traits::iterator::Iterator::zip` | 143 | 37 | `crates/zed-kernel/src/bits.rs:117` | `xs.take(ys.count).zip(ys.take(xs.count))` |
 | `core::macros::assert_eq!` | 337 | 33 | `crates/zed-kernel/src/bits.rs:316` | row S.1d |
 | `core::macros::assert_ne!` | 8 | 6 | `crates/zed-kernel/src/text.rs:546` | row S.1d |
 | `core::macros::builtin::assert!` | 126 | 27 | `crates/zed-kernel/src/exact.rs:171` | row S.1d |
@@ -530,7 +530,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::macros::unreachable!` | 211 | 48 | `crates/zed-kernel/src/eval.rs:398` | row S.1d |
 | `core::macros::write!` | 176 | 35 | `crates/zed-kernel/src/deep.rs:505` | missing |
 | `core::macros::writeln!` | 30 | 7 | `crates/zed-native/src/exe.rs:149` | missing |
-| `core::mem::<Discriminant<T> as PartialEq<Self>>::eq` | 3 | 1 | `crates/zed-kernel/src/eval.rs:2233` | `a == b` |
+| `core::mem::<Discriminant<T> as PartialEq<Self>>::eq` | 3 | 1 | `crates/zed-kernel/src/eval.rs:2233` | missing |
 | `core::mem::discriminant` | 7 | 4 | `crates/zed-kernel/src/eval.rs:2233` | missing |
 | `core::mem::drop` | 17 | 10 | `crates/zed-kernel/src/deep.rs:79` | row L6.13 |
 | `core::mem::manually_drop::<ManuallyDrop<T> as DerefMut>::deref_mut` | 1 | 1 | `crates/zed-native/src/lib.rs:159` | `x` |
@@ -562,44 +562,44 @@ Counts: 1369 routines, 50049 uses.
 | `core::num::i64::checked_sub` | 1 | 1 | `crates/zed-kernel/src/eval.rs:2066` | missing |
 | `core::num::i64::count_ones` | 1 | 1 | `crates/zed-kernel/src/bits.rs:197` | `popCount(a)` |
 | `core::num::i64::div_euclid` | 1 | 1 | `crates/zedc/src/store/int.rs:179` | `a div b` |
-| `core::num::i64::leading_zeros` | 1 | 1 | `crates/zed-kernel/src/bits.rs:180` | `leadingZeros(a)` |
+| `core::num::i64::leading_zeros` | 1 | 1 | `crates/zed-kernel/src/bits.rs:180` | `leadingZeros(a, width: 64)` |
 | `core::num::i64::rem_euclid` | 5 | 2 | `crates/zedc/src/check/widen.rs:793` | `a mod b` |
-| `core::num::i64::saturating_add` | 1 | 1 | `crates/zedc/src/check/widen.rs:811` | missing |
-| `core::num::i64::signum` | 1 | 1 | `crates/zedc/src/store/int.rs:1811` | missing |
-| `core::num::i64::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/bits.rs:200` | `trailingZeros(a)` |
+| `core::num::i64::saturating_add` | 1 | 1 | `crates/zedc/src/check/widen.rs:811` | `min(max(a + b, -(2 ** 63)), 2 ** 63 - 1)` |
+| `core::num::i64::signum` | 1 | 1 | `crates/zedc/src/store/int.rs:1811` | `if a > 0 { 1 } else if a < 0 { -1 } else { 0 }` |
+| `core::num::i64::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/bits.rs:200` | `trailingZeros(a, width: 64)` |
 | `core::num::i64::unsigned_abs` | 17 | 5 | `crates/zed-kernel/src/num/bound.rs:109` | `abs(a)` |
 | `core::num::u128::checked_add` | 1 | 1 | `crates/zed-kernel/src/words.rs:273` | missing |
 | `core::num::u128::checked_pow` | 1 | 1 | `crates/zedc/src/store/int.rs:1945` | missing |
 | `core::num::u128::from_str_radix` | 1 | 1 | `crates/zedc/src/check/widen.rs:684` | row STD-num |
-| `core::num::u128::is_power_of_two` | 1 | 1 | `crates/zedc/src/check/widen.rs:693` | row STD-num |
-| `core::num::u128::saturating_add` | 2 | 1 | `crates/zedc/src/store/preimage.rs:4511` | missing |
-| `core::num::u128::saturating_mul` | 4 | 1 | `crates/zedc/src/store/preimage.rs:4511` | missing |
-| `core::num::u128::saturating_sub` | 3 | 1 | `crates/zed-kernel/src/words.rs:308` | missing |
-| `core::num::u128::trailing_zeros` | 1 | 1 | `crates/zedc/src/check/widen.rs:696` | `trailingZeros(a)` |
+| `core::num::u128::is_power_of_two` | 1 | 1 | `crates/zedc/src/check/widen.rs:693` | `popCount(a) == 1` |
+| `core::num::u128::saturating_add` | 2 | 1 | `crates/zedc/src/store/preimage.rs:4511` | `min(a + b, 2 ** 128 - 1)` |
+| `core::num::u128::saturating_mul` | 4 | 1 | `crates/zedc/src/store/preimage.rs:4511` | `min(a * b, 2 ** 128 - 1)` |
+| `core::num::u128::saturating_sub` | 3 | 1 | `crates/zed-kernel/src/words.rs:308` | `max(a - b, 0)` |
+| `core::num::u128::trailing_zeros` | 1 | 1 | `crates/zedc/src/check/widen.rs:696` | `trailingZeros(a, width: 128)` |
 | `core::num::u32::checked_add` | 1 | 1 | `crates/zedc/src/store/preimage.rs:1046` | missing |
 | `core::num::u32::from_le_bytes` | 1 | 1 | `crates/zedc/src/zir/binary.rs:345` | row STD-num |
 | `core::num::u32::from_str_radix` | 3 | 2 | `crates/zedc/src/lex/string.rs:206` | row STD-num |
-| `core::num::u32::ilog2` | 1 | 1 | `crates/zed-kernel/src/value.rs:453` | row STD-num |
-| `core::num::u32::is_power_of_two` | 1 | 1 | `crates/zed-kernel/src/value.rs:453` | row STD-num |
-| `core::num::u32::leading_zeros` | 3 | 2 | `crates/zedc/src/stage.rs:498` | `leadingZeros(a)` |
+| `core::num::u32::ilog2` | 1 | 1 | `crates/zed-kernel/src/value.rs:453` | `31 - leadingZeros(a, width: 32)` |
+| `core::num::u32::is_power_of_two` | 1 | 1 | `crates/zed-kernel/src/value.rs:453` | `popCount(a) == 1` |
+| `core::num::u32::leading_zeros` | 3 | 2 | `crates/zedc/src/stage.rs:498` | `leadingZeros(a, width: 32)` |
 | `core::num::u32::to_le_bytes` | 6 | 3 | `crates/zedc/src/canon/mod.rs:200` | row STD-num |
 | `core::num::u64::abs_diff` | 2 | 1 | `crates/zed-kernel/src/num/factor.rs:99` | `abs(a - b)` |
 | `core::num::u64::checked_mul` | 1 | 1 | `crates/zed-kernel/src/types/empty.rs:573` | missing |
-| `core::num::u64::div_ceil` | 5 | 2 | `crates/zedc/src/cost.rs:67` | missing |
+| `core::num::u64::div_ceil` | 5 | 2 | `crates/zedc/src/cost.rs:67` | `-((-a) div b)` |
 | `core::num::u64::from_le_bytes` | 2 | 2 | `crates/zed-native/src/exe.rs:54` | row STD-num |
-| `core::num::u64::ilog2` | 3 | 2 | `crates/zed-kernel/src/num.rs:1143` | row STD-num |
+| `core::num::u64::ilog2` | 3 | 2 | `crates/zed-kernel/src/num.rs:1143` | `63 - leadingZeros(a, width: 64)` |
 | `core::num::u64::is_multiple_of` | 6 | 3 | `crates/zed-kernel/src/num/factor.rs:12` | `a mod b == 0` |
-| `core::num::u64::is_power_of_two` | 2 | 2 | `crates/zed-kernel/src/num.rs:1143` | row STD-num |
-| `core::num::u64::leading_zeros` | 5 | 4 | `crates/zed-kernel/src/exact.rs:61` | `leadingZeros(a)` |
-| `core::num::u64::overflowing_sub` | 2 | 1 | `crates/zed-kernel/src/exact.rs:35` | missing |
-| `core::num::u64::rotate_left` | 3 | 3 | `crates/zed-kernel/src/provenance.rs:50` | `rotl(a, n)` |
-| `core::num::u64::saturating_add` | 9 | 1 | `crates/zedc/src/cost.rs:67` | missing |
-| `core::num::u64::saturating_mul` | 3 | 2 | `crates/zedc/src/cost.rs:67` | missing |
+| `core::num::u64::is_power_of_two` | 2 | 2 | `crates/zed-kernel/src/num.rs:1143` | `popCount(a) == 1` |
+| `core::num::u64::leading_zeros` | 5 | 4 | `crates/zed-kernel/src/exact.rs:61` | `leadingZeros(a, width: 64)` |
+| `core::num::u64::overflowing_sub` | 2 | 1 | `crates/zed-kernel/src/exact.rs:35` | `((a - b) mod 2 ** 64, a < b)` |
+| `core::num::u64::rotate_left` | 3 | 3 | `crates/zed-kernel/src/provenance.rs:50` | `rotl(a, n, width: 64)` |
+| `core::num::u64::saturating_add` | 9 | 1 | `crates/zedc/src/cost.rs:67` | `min(a + b, 2 ** 64 - 1)` |
+| `core::num::u64::saturating_mul` | 3 | 2 | `crates/zedc/src/cost.rs:67` | `min(a * b, 2 ** 64 - 1)` |
 | `core::num::u64::to_le_bytes` | 13 | 8 | `crates/zed-native/src/exe.rs:42` | row STD-num |
-| `core::num::u64::trailing_zeros` | 3 | 2 | `crates/zed-kernel/src/num/factor.rs:13` | `trailingZeros(a)` |
-| `core::num::u64::wrapping_add` | 7 | 4 | `crates/zed-kernel/src/eval.rs:1980` | missing |
-| `core::num::u64::wrapping_mul` | 13 | 5 | `crates/zed-kernel/src/eval.rs:1982` | missing |
-| `core::num::u64::wrapping_sub` | 2 | 1 | `crates/zed-kernel/src/types.rs:1138` | missing |
+| `core::num::u64::trailing_zeros` | 3 | 2 | `crates/zed-kernel/src/num/factor.rs:13` | `trailingZeros(a, width: 64)` |
+| `core::num::u64::wrapping_add` | 7 | 4 | `crates/zed-kernel/src/eval.rs:1980` | `(a + b) mod 2 ** 64` |
+| `core::num::u64::wrapping_mul` | 13 | 5 | `crates/zed-kernel/src/eval.rs:1982` | `(a * b) mod 2 ** 64` |
+| `core::num::u64::wrapping_sub` | 2 | 1 | `crates/zed-kernel/src/types.rs:1138` | `(a - b) mod 2 ** 64` |
 | `core::num::u8::abs_diff` | 2 | 1 | `crates/zed-kernel/src/text.rs:188` | `abs(a - b)` |
 | `core::num::u8::count_ones` | 4 | 1 | `crates/zedc/src/check/mod.rs:2292` | `popCount(a)` |
 | `core::num::u8::is_ascii_digit` | 11 | 7 | `crates/zed-kernel/src/num.rs:120` | missing |
@@ -607,13 +607,13 @@ Counts: 1369 routines, 50049 uses.
 | `core::num::usize::checked_add` | 1 | 1 | `crates/zed-kernel/src/text.rs:85` | missing |
 | `core::num::usize::checked_mul` | 1 | 1 | `crates/zedc/src/zir/binary.rs:553` | missing |
 | `core::num::usize::checked_sub` | 13 | 7 | `crates/zed-kernel/src/print.rs:751` | missing |
-| `core::num::usize::div_ceil` | 1 | 1 | `crates/zedc/src/store/revision.rs:364` | missing |
-| `core::num::usize::ilog2` | 1 | 1 | `crates/zed-kernel/src/num.rs:1020` | row STD-num |
+| `core::num::usize::div_ceil` | 1 | 1 | `crates/zedc/src/store/revision.rs:364` | `-((-a) div b)` |
+| `core::num::usize::ilog2` | 1 | 1 | `crates/zed-kernel/src/num.rs:1020` | `63 - leadingZeros(a, width: 64)` |
 | `core::num::usize::isolate_lowest_one` | 2 | 1 | `crates/zedc/src/store/preimage.rs:728` | row STD-num |
-| `core::num::usize::saturating_add` | 1 | 1 | `crates/zedc/src/store/conjuncts.rs:891` | missing |
-| `core::num::usize::saturating_sub` | 6 | 6 | `crates/zed-kernel/src/print.rs:827` | missing |
-| `core::num::usize::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/exact.rs:195` | `trailingZeros(a)` |
-| `core::num::usize::wrapping_sub` | 1 | 1 | `crates/zedc/src/canon/binders.rs:416` | missing |
+| `core::num::usize::saturating_add` | 1 | 1 | `crates/zedc/src/store/conjuncts.rs:891` | `min(a + b, 2 ** 64 - 1)` |
+| `core::num::usize::saturating_sub` | 6 | 6 | `crates/zed-kernel/src/print.rs:827` | `max(a - b, 0)` |
+| `core::num::usize::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/exact.rs:195` | `trailingZeros(a, width: 64)` |
+| `core::num::usize::wrapping_sub` | 1 | 1 | `crates/zedc/src/canon/binders.rs:416` | `(a - b) mod 2 ** 64` |
 | `core::ops::arith::<&u32 as Add<u32>>::add` | 3 | 1 | `crates/zedc/src/store/presburger.rs:6224` | `a + b` |
 | `core::ops::arith::<&u64 as Mul<Self>>::mul` | 3 | 1 | `crates/zedc/src/store/int.rs:1587` | `a * b` |
 | `core::ops::arith::<&usize as Add<usize>>::add` | 7 | 3 | `crates/zedc/src/store/presburger.rs:5491` | `a + b` |
@@ -623,10 +623,10 @@ Counts: 1369 routines, 50049 uses.
 | `core::ops::arith::<f64 as Neg>::neg` | 3 | 2 | `crates/zed-kernel/src/eval.rs:2213` | `-a` |
 | `core::ops::arith::<f64 as Sub<Self>>::sub` | 6 | 2 | `crates/zed-kernel/src/eval.rs:2210` | `a - b` |
 | `core::ops::arith::<i128 as Add<Self>>::add` | 22 | 4 | `crates/zedc/src/check/widen.rs:749` | `a + b` |
-| `core::ops::arith::<i128 as Div<Self>>::div` | 3 | 1 | `crates/zed-kernel/src/types/empty.rs:773` | missing |
+| `core::ops::arith::<i128 as Div<Self>>::div` | 3 | 1 | `crates/zed-kernel/src/types/empty.rs:773` | `if (a < 0) != (b < 0) { -(abs(a) div abs(b)) } else { abs(a) div abs(b) }` |
 | `core::ops::arith::<i128 as Mul<Self>>::mul` | 27 | 4 | `crates/zed-kernel/src/types/empty.rs:774` | `a * b` |
 | `core::ops::arith::<i128 as Neg>::neg` | 19 | 4 | `crates/zedc/src/check/widen.rs:438` | `-a` |
-| `core::ops::arith::<i128 as Rem<Self>>::rem` | 6 | 1 | `crates/zedc/src/store/preimage_ref.rs:3113` | missing |
+| `core::ops::arith::<i128 as Rem<Self>>::rem` | 6 | 1 | `crates/zedc/src/store/preimage_ref.rs:3113` | `if a < 0 { -((-a) mod abs(b)) } else { a mod abs(b) }` |
 | `core::ops::arith::<i128 as Sub<Self>>::sub` | 48 | 6 | `crates/zed-kernel/src/bits.rs:202` | `a - b` |
 | `core::ops::arith::<i32 as Add<Self>>::add` | 13 | 2 | `crates/zed-kernel/src/num.rs:1565` | `a + b` |
 | `core::ops::arith::<i32 as AddAssign<Self>>::add_assign` | 48 | 8 | `crates/zed-kernel/src/types/bdd.rs:1157` | `a + b` |
@@ -637,7 +637,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::ops::arith::<i64 as AddAssign<&i64>>::add_assign` | 3 | 1 | `crates/zed-kernel/src/types/bdd/list.rs:299` | `a + b` |
 | `core::ops::arith::<i64 as AddAssign<Self>>::add_assign` | 24 | 4 | `crates/zed-kernel/src/eval.rs:1269` | `a + b` |
 | `core::ops::arith::<i64 as Neg>::neg` | 22 | 11 | `crates/zed-kernel/src/eval.rs:2093` | `-a` |
-| `core::ops::arith::<i64 as Rem<Self>>::rem` | 9 | 2 | `crates/zed-kernel/src/bits.rs:215` | missing |
+| `core::ops::arith::<i64 as Rem<Self>>::rem` | 9 | 2 | `crates/zed-kernel/src/bits.rs:215` | `if a < 0 { -((-a) mod abs(b)) } else { a mod abs(b) }` |
 | `core::ops::arith::<i64 as Sub<Self>>::sub` | 24 | 7 | `crates/zed-kernel/src/bits.rs:198` | `a - b` |
 | `core::ops::arith::<i64 as SubAssign<Self>>::sub_assign` | 12 | 2 | `crates/zed-kernel/src/num/bound.rs:363` | `a - b` |
 | `core::ops::arith::<i8 as Mul<Self>>::mul` | 9 | 1 | `crates/zedc/src/store/revision.rs:189` | `a * b` |
@@ -689,14 +689,14 @@ Counts: 1369 routines, 50049 uses.
 | `core::ops::arith::Neg::neg` | 1 | 1 | `crates/zedc/src/axioms.rs:137` | `-a` |
 | `core::ops::arith::Sub::sub` | 9 | 3 | `crates/zed-kernel/src/num.rs:915` | `a - b` |
 | `core::ops::bit::<&bool as Not>::not` | 10 | 7 | `crates/zed-kernel/src/eval.rs:2251` | `!a` |
-| `core::ops::bit::<&i128 as BitAnd<i128>>::bitand` | 3 | 1 | `crates/zedc/src/store/int.rs:139` | `bitAnd(a, b)` |
-| `core::ops::bit::<&i64 as BitAnd<i64>>::bitand` | 3 | 1 | `crates/zedc/src/store/int.rs:1836` | `bitAnd(a, b)` |
+| `core::ops::bit::<&i128 as BitAnd<i128>>::bitand` | 3 | 1 | `crates/zedc/src/store/int.rs:139` | `bitAnd(a mod 2 ** 128, b)` |
+| `core::ops::bit::<&i64 as BitAnd<i64>>::bitand` | 3 | 1 | `crates/zedc/src/store/int.rs:1836` | `bitAnd(a mod 2 ** 64, b)` |
 | `core::ops::bit::<&u64 as Shr<usize>>::shr` | 3 | 1 | `crates/zedc/src/zir/legalize.rs:72` | `shr(a, n)` |
-| `core::ops::bit::<bool as BitAndAssign<Self>>::bitand_assign` | 84 | 10 | `crates/zed-kernel/src/exact.rs:111` | `bitAnd(a, b)` |
-| `core::ops::bit::<bool as BitOr<Self>>::bitor` | 3 | 1 | `crates/zedc/src/store/presburger/deep.rs:617` | `bitOr(a, b)` |
-| `core::ops::bit::<bool as BitOrAssign<Self>>::bitor_assign` | 81 | 11 | `crates/zed-kernel/src/types/empty.rs:2457` | `bitOr(a, b)` |
+| `core::ops::bit::<bool as BitAndAssign<Self>>::bitand_assign` | 84 | 10 | `crates/zed-kernel/src/exact.rs:111` | `a && b` |
+| `core::ops::bit::<bool as BitOr<Self>>::bitor` | 3 | 1 | `crates/zedc/src/store/presburger/deep.rs:617` | `a \|\| b` |
+| `core::ops::bit::<bool as BitOrAssign<Self>>::bitor_assign` | 81 | 11 | `crates/zed-kernel/src/types/empty.rs:2457` | `a \|\| b` |
 | `core::ops::bit::<bool as Not>::not` | 1117 | 85 | `crates/zed-kernel/src/bits.rs:118` | `!a` |
-| `core::ops::bit::<i128 as BitXor<Self>>::bitxor` | 3 | 1 | `crates/zedc/src/store/preimage.rs:4892` | `bitXor(a, b)` |
+| `core::ops::bit::<i128 as BitXor<Self>>::bitxor` | 3 | 1 | `crates/zedc/src/store/preimage.rs:4892` | `bitXor(a mod 2 ** 128, b mod 2 ** 128)` |
 | `core::ops::bit::<i128 as Shl<i64>>::shl` | 6 | 1 | `crates/zed-kernel/src/bits.rs:202` | `shl(a, n)` |
 | `core::ops::bit::<i128 as Shl<u32>>::shl` | 3 | 1 | `crates/zedc/src/check/widen.rs:550` | `shl(a, n)` |
 | `core::ops::bit::<i128 as Shr<i32>>::shr` | 6 | 1 | `crates/zedc/src/store/preimage.rs:4892` | `shr(a, n)` |
@@ -712,7 +712,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::ops::bit::<u32 as BitAnd<Self>>::bitand` | 42 | 3 | `crates/zed-kernel/src/num.rs:906` | `bitAnd(a, b)` |
 | `core::ops::bit::<u32 as BitOr<Self>>::bitor` | 9 | 2 | `crates/zed-kernel/src/num.rs:906` | `bitOr(a, b)` |
 | `core::ops::bit::<u32 as BitXor<Self>>::bitxor` | 6 | 1 | `crates/zedc/src/stage.rs:498` | `bitXor(a, b)` |
-| `core::ops::bit::<u32 as Not>::not` | 1 | 1 | `crates/zedc/src/stage.rs:421` | `bitNot(a)` |
+| `core::ops::bit::<u32 as Not>::not` | 1 | 1 | `crates/zedc/src/stage.rs:421` | `bitNot(a, width: 32)` |
 | `core::ops::bit::<u32 as Shl<Self>>::shl` | 6 | 1 | `crates/zedc/src/stage.rs:498` | `shl(a, n)` |
 | `core::ops::bit::<u32 as Shl<i32>>::shl` | 9 | 1 | `crates/zed-kernel/src/num.rs:906` | `shl(a, n)` |
 | `core::ops::bit::<u32 as Shr<Self>>::shr` | 3 | 1 | `crates/zedc/src/store/int.rs:1995` | `shr(a, n)` |
@@ -734,7 +734,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::ops::bit::<u8 as BitOr<Self>>::bitor` | 30 | 5 | `crates/zed-kernel/src/types.rs:976` | `bitOr(a, b)` |
 | `core::ops::bit::<u8 as BitOrAssign<&u8>>::bitor_assign` | 3 | 1 | `crates/zedc/src/check/mod.rs:410` | `bitOr(a, b)` |
 | `core::ops::bit::<u8 as BitOrAssign<Self>>::bitor_assign` | 21 | 2 | `crates/zedc/src/check/mod.rs:3985` | `bitOr(a, b)` |
-| `core::ops::bit::<u8 as Not>::not` | 5 | 4 | `crates/zed-kernel/src/types.rs:1007` | `bitNot(a)` |
+| `core::ops::bit::<u8 as Not>::not` | 5 | 4 | `crates/zed-kernel/src/types.rs:1007` | `bitNot(a, width: 8)` |
 | `core::ops::bit::<u8 as Shl<Self>>::shl` | 18 | 3 | `crates/zed-kernel/src/types.rs:619` | `shl(a, n)` |
 | `core::ops::bit::<u8 as Shl<i32>>::shl` | 3 | 1 | `crates/zedc/src/address.rs:26` | `shl(a, n)` |
 | `core::ops::bit::<u8 as Shl<usize>>::shl` | 3 | 1 | `crates/zedc/src/check/ty.rs:976` | `shl(a, n)` |
@@ -742,7 +742,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::ops::bit::<usize as BitAnd<Self>>::bitand` | 9 | 2 | `crates/zedc/src/parse/engine.rs:696` | `bitAnd(a, b)` |
 | `core::ops::bit::<usize as BitOr<Self>>::bitor` | 3 | 1 | `crates/zedc/src/parse/engine.rs:490` | `bitOr(a, b)` |
 | `core::ops::bit::<usize as BitXor<Self>>::bitxor` | 12 | 2 | `crates/zedc/src/store/presburger/deep/canon.rs:333` | `bitXor(a, b)` |
-| `core::ops::bit::<usize as Not>::not` | 1 | 1 | `crates/zedc/src/parse/engine.rs:699` | `bitNot(a)` |
+| `core::ops::bit::<usize as Not>::not` | 1 | 1 | `crates/zedc/src/parse/engine.rs:699` | `bitNot(a, width: 64)` |
 | `core::ops::bit::<usize as Shl<Self>>::shl` | 6 | 2 | `crates/zed-kernel/src/num.rs:1028` | `shl(a, n)` |
 | `core::ops::bit::<usize as Shl<u32>>::shl` | 3 | 1 | `crates/zed-kernel/src/exact.rs:195` | `shl(a, n)` |
 | `core::ops::bit::<usize as Shr<Self>>::shr` | 3 | 1 | `crates/zedc/src/store/presburger/deep/canon.rs:334` | `shr(a, n)` |
@@ -843,9 +843,9 @@ Counts: 1369 routines, 50049 uses.
 | `core::slice::[T]::reverse` | 29 | 17 | `crates/zed-kernel/src/num.rs:1242` | row STD-seq |
 | `core::slice::[T]::select_nth_unstable` | 1 | 1 | `crates/zedc/src/store/live3.rs:503` | missing |
 | `core::slice::[T]::select_nth_unstable_by` | 1 | 1 | `crates/zedc/src/store/live3.rs:368` | missing |
-| `core::slice::[T]::sort_unstable` | 37 | 19 | `crates/zed-kernel/src/num/factor.rs:24` | `xs.sort()` |
-| `core::slice::[T]::sort_unstable_by` | 5 | 4 | `crates/zedc/src/store/preimage.rs:721` | `xs.sort()` |
-| `core::slice::[T]::sort_unstable_by_key` | 5 | 4 | `crates/zed-kernel/src/num.rs:649` | `xs.sort()` |
+| `core::slice::[T]::sort_unstable` | 37 | 19 | `crates/zed-kernel/src/num/factor.rs:24` | `xs.sort(asc x -> x)` |
+| `core::slice::[T]::sort_unstable_by` | 5 | 4 | `crates/zedc/src/store/preimage.rs:721` | `xs.sort(by: f)` |
+| `core::slice::[T]::sort_unstable_by_key` | 5 | 4 | `crates/zed-kernel/src/num.rs:649` | `xs.sort(asc f)` |
 | `core::slice::[T]::split` | 1 | 1 | `crates/zedc/src/run.rs:654` | row STD-seq |
 | `core::slice::[T]::split_at_checked` | 1 | 1 | `crates/zed-native/src/exe.rs:55` | missing |
 | `core::slice::[T]::split_at_mut` | 4 | 3 | `crates/zed-kernel/src/types.rs:1932` | row L6.13 |
@@ -873,24 +873,24 @@ Counts: 1369 routines, 50049 uses.
 | `core::slice::iter::<IterMut<'a, T> as Iterator>::for_each` | 5 | 1 | `crates/zedc/src/zir/canon.rs:89` | missing |
 | `core::slice::iter::Iter<'a, T>::as_slice` | 3 | 2 | `crates/zedc/src/store/presburger/deep.rs:473` | `x` |
 | `core::slice::raw::from_raw_parts` | 1 | 1 | `crates/zed-native/src/exe.rs:133` | missing |
-| `core::slice::raw::from_ref` | 18 | 10 | `crates/zed-kernel/src/eval.rs:1470` | `x` |
-| `core::str::converts::from_utf8` | 9 | 6 | `crates/zed-kernel/src/text.rs:666` | missing |
+| `core::slice::raw::from_ref` | 18 | 10 | `crates/zed-kernel/src/eval.rs:1470` | `[x]` |
+| `core::str::converts::from_utf8` | 9 | 6 | `crates/zed-kernel/src/text.rs:666` | `fromUtf8(b)` |
 | `core::str::error::Utf8Error::error_len` | 1 | 1 | `crates/zedc/src/source.rs:113` | missing |
 | `core::str::error::Utf8Error::valid_up_to` | 1 | 1 | `crates/zedc/src/source.rs:112` | missing |
 | `core::str::iter::<Bytes<'_> as Iterator>::all` | 7 | 4 | `crates/zed-kernel/src/num.rs:120` | `xs.all(p)` |
-| `core::str::iter::<CharIndices<'a> as Iterator>::next` | 3 | 1 | `crates/zedc/src/zir/text.rs:1236` | row STD-seq |
-| `core::str::iter::<Chars<'a> as Iterator>::count` | 3 | 3 | `crates/zed-kernel/src/text.rs:292` | `len(xs)` |
-| `core::str::iter::<Chars<'a> as Iterator>::next` | 17 | 10 | `crates/zed-kernel/src/words.rs:146` | row STD-seq |
+| `core::str::iter::<CharIndices<'a> as Iterator>::next` | 3 | 1 | `crates/zedc/src/zir/text.rs:1236` | row STD-text |
+| `core::str::iter::<Chars<'a> as Iterator>::count` | 3 | 3 | `crates/zed-kernel/src/text.rs:292` | `len(s)` |
+| `core::str::iter::<Chars<'a> as Iterator>::next` | 17 | 10 | `crates/zed-kernel/src/words.rs:146` | row STD-text |
 | `core::str::iter::<RSplit<'a, P> as Iterator>::next` | 2 | 1 | `crates/zedc/src/resolve.rs:915` | row STD-seq |
 | `core::str::iter::<Split<'a, P> as Iterator>::next` | 2 | 2 | `crates/zedc/src/run.rs:803` | row STD-seq |
-| `core::str::str::as_bytes` | 43 | 15 | `crates/zed-kernel/src/text.rs:271` | missing |
-| `core::str::str::bytes` | 13 | 7 | `crates/zed-kernel/src/num.rs:120` | missing |
+| `core::str::str::as_bytes` | 43 | 15 | `crates/zed-kernel/src/text.rs:271` | `utf8(s)` |
+| `core::str::str::bytes` | 13 | 7 | `crates/zed-kernel/src/num.rs:120` | `utf8(s)` |
 | `core::str::str::char_indices` | 8 | 7 | `crates/zedc/src/ast/neglit.rs:151` | row STD-text |
 | `core::str::str::chars` | 29 | 18 | `crates/zed-kernel/src/num.rs:1560` | row STD-text |
-| `core::str::str::contains` | 12 | 6 | `crates/zed-kernel/src/types/print.rs:458` | row STD-seq |
+| `core::str::str::contains` | 12 | 6 | `crates/zed-kernel/src/types/print.rs:458` | row STD-text |
 | `core::str::str::ends_with` | 14 | 5 | `crates/zed-kernel/src/words.rs:58` | row STD-text |
 | `core::str::str::find` | 14 | 9 | `crates/zed-kernel/src/num.rs:114` | missing |
-| `core::str::str::is_empty` | 21 | 7 | `crates/zed-kernel/src/num.rs:121` | `len(xs) == 0` |
+| `core::str::str::is_empty` | 21 | 7 | `crates/zed-kernel/src/num.rs:121` | `len(s) == 0` |
 | `core::str::str::len` | 71 | 27 | `crates/zed-kernel/src/num.rs:134` | `utf8(s).count` |
 | `core::str::str::lines` | 3 | 3 | `crates/zedc/src/run.rs:92` | `lines(s)` |
 | `core::str::str::match_indices` | 2 | 1 | `crates/zedc/src/lex/string.rs:50` | row STD-text |
@@ -899,7 +899,7 @@ Counts: 1369 routines, 50049 uses.
 | `core::str::str::rfind` | 1 | 1 | `crates/zedc/src/lex/string.rs:361` | row STD-text |
 | `core::str::str::rsplit` | 2 | 1 | `crates/zedc/src/resolve.rs:915` | missing |
 | `core::str::str::rsplit_once` | 1 | 1 | `crates/zedc/src/check/ty.rs:2435` | row STD-text |
-| `core::str::str::split` | 9 | 6 | `crates/zedc/src/fence.rs:23` | row STD-seq |
+| `core::str::str::split` | 9 | 6 | `crates/zedc/src/fence.rs:23` | `s.split(t)` |
 | `core::str::str::split_at` | 4 | 2 | `crates/zed-kernel/src/num.rs:1028` | missing |
 | `core::str::str::split_once` | 12 | 6 | `crates/zed-kernel/src/num.rs:119` | row STD-text |
 | `core::str::str::starts_with` | 39 | 15 | `crates/zed-kernel/src/words.rs:391` | row STD-text |
@@ -1024,14 +1024,14 @@ Counts: 1369 routines, 50049 uses.
 | `imbl::ord::map::<GenericOrdMap<K, V, P> as Index<&Q>>::index` | 4 | 2 | `crates/zedc/src/store/conjuncts.rs:875` | `xs[i]` |
 | `imbl::ord::map::<GenericOrdMap<K, V, P> as PartialEq<Self>>::eq` | 3 | 1 | `crates/zedc/src/store/product.rs:1637` | `a == b` |
 | `imbl::ord::map::<Iter<'a, K, V, P> as Iterator>::next` | 5 | 3 | `crates/zed-kernel/src/deep.rs:240` | row STD-seq |
-| `imbl::ord::map::<RangedIter<'a, K, V, P> as Iterator>::next` | 2 | 1 | `crates/zed-kernel/src/types/bdd.rs:1767` | row STD-seq |
+| `imbl::ord::map::<RangedIter<'a, K, V, P> as Iterator>::next` | 2 | 1 | `crates/zed-kernel/src/types/bdd.rs:1767` | row L5.8a |
 | `imbl::ord::map::Entry<'a, K, V, P>::or_default` | 4 | 2 | `crates/zedc/src/store/conjuncts.rs:32` | row STD-seq |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::contains_key` | 19 | 7 | `crates/zed-kernel/src/provenance.rs:509` | `k in m` |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::diff` | 14 | 4 | `crates/zed-kernel/src/deep.rs:295` | row STD-seq |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::entry` | 4 | 2 | `crates/zedc/src/store/conjuncts.rs:32` | row STD-seq |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::get` | 79 | 11 | `crates/zed-kernel/src/eval.rs:139` | `xs[i]` |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::get_key_value` | 1 | 1 | `crates/zedc/src/store/product.rs:927` | row STD-seq |
-| `imbl::ord::map::GenericOrdMap<K, V, P>::get_min` | 1 | 1 | `crates/zed-kernel/src/family.rs:404` | row STD-seq |
+| `imbl::ord::map::GenericOrdMap<K, V, P>::get_min` | 1 | 1 | `crates/zed-kernel/src/family.rs:404` | `xs.first` |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::get_mut` | 13 | 3 | `crates/zedc/src/store/conjuncts.rs:37` | missing |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::insert` | 57 | 10 | `crates/zed-kernel/src/eval.rs:134` | row STD-seq |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::is_empty` | 10 | 7 | `crates/zed-kernel/src/family.rs:71` | `xs.count == 0` |
@@ -1040,7 +1040,7 @@ Counts: 1369 routines, 50049 uses.
 | `imbl::ord::map::GenericOrdMap<K, V, P>::len` | 31 | 7 | `crates/zed-kernel/src/family.rs:336` | `xs.count` |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::new` | 27 | 7 | `crates/zed-kernel/src/provenance.rs:327` | `{}` |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::ptr_eq` | 1 | 1 | `crates/zed-kernel/src/deep.rs:162` | missing |
-| `imbl::ord::map::GenericOrdMap<K, V, P>::range` | 3 | 2 | `crates/zed-kernel/src/types/bdd.rs:1763` | row STD-seq |
+| `imbl::ord::map::GenericOrdMap<K, V, P>::range` | 3 | 2 | `crates/zed-kernel/src/types/bdd.rs:1763` | row L5.8a |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::remove` | 42 | 6 | `crates/zed-kernel/src/provenance.rs:525` | row STD-seq |
 | `imbl::ord::map::GenericOrdMap<K, V, P>::values` | 8 | 5 | `crates/zed-kernel/src/provenance.rs:422` | row STD-seq |
 | `imbl::ord::set::<DiffIter<'a, 'b, A, P> as Iterator>::next` | 1 | 1 | `crates/zedc/src/check/ty.rs:710` | row STD-seq |
@@ -1062,7 +1062,7 @@ Counts: 1369 routines, 50049 uses.
 | `imbl::vector::<GenericVector<A, P> as Extend<A>>::extend` | 1 | 1 | `crates/zed-kernel/src/eval.rs:440` | row L6.13 |
 | `imbl::vector::<GenericVector<A, P> as Index<usize>>::index` | 32 | 1 | `crates/zedc/src/resolve.rs:741` | `xs[i]` |
 | `imbl::vector::GenericVector<A, P>::append` | 1 | 1 | `crates/zedc/src/resolve.rs:884` | row L6.13 |
-| `imbl::vector::GenericVector<A, P>::front` | 1 | 1 | `crates/zedc/src/elab.rs:357` | row STD-seq |
+| `imbl::vector::GenericVector<A, P>::front` | 1 | 1 | `crates/zedc/src/elab.rs:357` | `xs.first` |
 | `imbl::vector::GenericVector<A, P>::iter` | 3 | 2 | `crates/zed-kernel/src/provenance.rs:201` | row STD-seq |
 | `imbl::vector::GenericVector<A, P>::last` | 1 | 1 | `crates/zed-kernel/src/provenance.rs:184` | `xs.last` |
 | `imbl::vector::GenericVector<A, P>::len` | 20 | 6 | `crates/zed-kernel/src/eval.rs:371` | `xs.count` |
@@ -1078,13 +1078,13 @@ Counts: 1369 routines, 50049 uses.
 | `num_bigint::bigint::<&BigInt as Neg>::neg` | 10 | 3 | `crates/zed-kernel/src/num.rs:568` | `-a` |
 | `num_bigint::bigint::<BigInt as Clone>::clone` | 32 | 2 | `crates/zed-kernel/src/num.rs:145` | `x` |
 | `num_bigint::bigint::<BigInt as Integer>::div_ceil` | 2 | 1 | `crates/zedc/src/store/int.rs:548` | missing |
-| `num_bigint::bigint::<BigInt as Integer>::div_floor` | 4 | 1 | `crates/zedc/src/store/int.rs:182` | missing |
+| `num_bigint::bigint::<BigInt as Integer>::div_floor` | 4 | 1 | `crates/zedc/src/store/int.rs:182` | `a div b` |
 | `num_bigint::bigint::<BigInt as Integer>::div_rem` | 2 | 1 | `crates/zed-kernel/src/num.rs:1048` | missing |
 | `num_bigint::bigint::<BigInt as Integer>::gcd` | 8 | 2 | `crates/zed-kernel/src/num.rs:962` | row STD-num |
 | `num_bigint::bigint::<BigInt as Integer>::is_even` | 1 | 1 | `crates/zed-kernel/src/num.rs:225` | `a mod 2 == 0` |
 | `num_bigint::bigint::<BigInt as Integer>::is_multiple_of` | 1 | 1 | `crates/zedc/src/store/int.rs:542` | `a mod b == 0` |
 | `num_bigint::bigint::<BigInt as Integer>::is_odd` | 2 | 1 | `crates/zedc/src/store/int.rs:140` | `a mod 2 == 1` |
-| `num_bigint::bigint::<BigInt as Integer>::mod_floor` | 5 | 1 | `crates/zedc/src/store/int.rs:193` | missing |
+| `num_bigint::bigint::<BigInt as Integer>::mod_floor` | 5 | 1 | `crates/zedc/src/store/int.rs:193` | `a mod b` |
 | `num_bigint::bigint::<BigInt as Neg>::neg` | 9 | 5 | `crates/zed-kernel/src/eval.rs:2192` | `-a` |
 | `num_bigint::bigint::<BigInt as One>::is_one` | 11 | 2 | `crates/zed-kernel/src/num.rs:57` | `a == 1` |
 | `num_bigint::bigint::<BigInt as One>::one` | 8 | 2 | `crates/zed-kernel/src/bits.rs:252` | `1` |
@@ -1098,14 +1098,14 @@ Counts: 1369 routines, 50049 uses.
 | `num_bigint::bigint::<Sign as Ord>::cmp` | 2 | 2 | `crates/zed-kernel/src/num.rs:1376` | missing |
 | `num_bigint::bigint::<Sign as PartialEq<Self>>::eq` | 45 | 4 | `crates/zed-kernel/src/num.rs:279` | `a == b` |
 | `num_bigint::bigint::BigInt::bits` | 37 | 2 | `crates/zed-kernel/src/num.rs:236` | row STD-num |
-| `num_bigint::bigint::BigInt::from_biguint` | 8 | 5 | `crates/zed-kernel/src/num.rs:137` | `int(a)` |
+| `num_bigint::bigint::BigInt::from_biguint` | 8 | 5 | `crates/zed-kernel/src/num.rs:137` | `n * a` |
 | `num_bigint::bigint::BigInt::into_parts` | 4 | 2 | `crates/zed-kernel/src/num.rs:696` | missing |
 | `num_bigint::bigint::BigInt::magnitude` | 60 | 4 | `crates/zed-kernel/src/bits.rs:145` | `abs(a)` |
 | `num_bigint::bigint::BigInt::nth_root` | 1 | 1 | `crates/zedc/src/store/int.rs:2094` | row STD-num |
 | `num_bigint::bigint::BigInt::pow` | 1 | 1 | `crates/zedc/src/store/int.rs:2095` | `a ** n` |
 | `num_bigint::bigint::BigInt::sign` | 21 | 3 | `crates/zed-kernel/src/num.rs:279` | missing |
 | `num_bigint::bigint::BigInt::to_biguint` | 1 | 1 | `crates/zed-kernel/src/num.rs:392` | missing |
-| `num_bigint::bigint::BigInt::trailing_zeros` | 8 | 2 | `crates/zed-kernel/src/num.rs:1040` | `trailingZeros(a)` |
+| `num_bigint::bigint::BigInt::trailing_zeros` | 8 | 2 | `crates/zed-kernel/src/num.rs:1040` | missing |
 | `num_bigint::bigint::addition::<&BigInt as Add<BigInt>>::add` | 9 | 1 | `crates/zedc/src/store/int.rs:527` | `a + b` |
 | `num_bigint::bigint::addition::<&BigInt as Add<Self>>::add` | 27 | 3 | `crates/zed-kernel/src/num.rs:428` | `a + b` |
 | `num_bigint::bigint::addition::<&BigInt as Add<u32>>::add` | 9 | 1 | `crates/zedc/src/store/int.rs:454` | `a + b` |
@@ -1129,9 +1129,9 @@ Counts: 1369 routines, 50049 uses.
 | `num_bigint::bigint::convert::<i128 as TryFrom<&BigInt>>::try_from` | 3 | 1 | `crates/zedc/src/store/int.rs:87` | missing |
 | `num_bigint::bigint::convert::<i64 as TryFrom<&BigInt>>::try_from` | 2 | 1 | `crates/zedc/src/store/int.rs:1632` | missing |
 | `num_bigint::bigint::convert::<u64 as TryFrom<&BigInt>>::try_from` | 5 | 1 | `crates/zedc/src/store/int.rs:394` | missing |
-| `num_bigint::bigint::division::<&BigInt as Rem<Self>>::rem` | 6 | 1 | `crates/zed-kernel/src/num.rs:962` | missing |
-| `num_bigint::bigint::division::<BigInt as Div<&BigInt>>::div` | 9 | 2 | `crates/zed-kernel/src/num.rs:953` | missing |
-| `num_bigint::bigint::division::<BigInt as Div<Self>>::div` | 18 | 2 | `crates/zed-kernel/src/num.rs:953` | missing |
+| `num_bigint::bigint::division::<&BigInt as Rem<Self>>::rem` | 6 | 1 | `crates/zed-kernel/src/num.rs:962` | `if a < 0 { -((-a) mod abs(b)) } else { a mod abs(b) }` |
+| `num_bigint::bigint::division::<BigInt as Div<&BigInt>>::div` | 9 | 2 | `crates/zed-kernel/src/num.rs:953` | `if (a < 0) != (b < 0) { -(abs(a) div abs(b)) } else { abs(a) div abs(b) }` |
+| `num_bigint::bigint::division::<BigInt as Div<Self>>::div` | 18 | 2 | `crates/zed-kernel/src/num.rs:953` | `if (a < 0) != (b < 0) { -(abs(a) div abs(b)) } else { abs(a) div abs(b) }` |
 | `num_bigint::bigint::division::<BigInt as Euclid>::div_euclid` | 1 | 1 | `crates/zed-kernel/src/num.rs:743` | `a div b` |
 | `num_bigint::bigint::multiplication::<&BigInt as Mul<BigInt>>::mul` | 15 | 2 | `crates/zed-kernel/src/num.rs:494` | `a * b` |
 | `num_bigint::bigint::multiplication::<&BigInt as Mul<Self>>::mul` | 81 | 2 | `crates/zed-kernel/src/num.rs:446` | `a * b` |
@@ -1162,7 +1162,7 @@ Counts: 1369 routines, 50049 uses.
 | `num_bigint::bigint::subtraction::<BigInt as SubAssign<&BigInt>>::sub_assign` | 3 | 1 | `crates/zedc/src/store/int.rs:1103` | `a - b` |
 | `num_bigint::bigint::subtraction::<BigInt as SubAssign<u64>>::sub_assign` | 3 | 1 | `crates/zed-kernel/src/num.rs:96` | `a - b` |
 | `num_bigint::biguint::<BigUint as Clone>::clone` | 54 | 6 | `crates/zed-kernel/src/bits.rs:232` | `x` |
-| `num_bigint::biguint::<BigUint as Integer>::div_rem` | 5 | 2 | `crates/zed-kernel/src/num/bound.rs:85` | missing |
+| `num_bigint::biguint::<BigUint as Integer>::div_rem` | 5 | 2 | `crates/zed-kernel/src/num/bound.rs:85` | `(a div b, a mod b)` |
 | `num_bigint::biguint::<BigUint as Integer>::gcd` | 4 | 1 | `crates/zedc/src/store/int.rs:778` | row STD-num |
 | `num_bigint::biguint::<BigUint as Integer>::is_multiple_of` | 2 | 1 | `crates/zedc/src/store/int.rs:1053` | `a mod b == 0` |
 | `num_bigint::biguint::<BigUint as Integer>::lcm` | 1 | 1 | `crates/zedc/src/store/int.rs:2293` | row STD-num |
@@ -1183,7 +1183,7 @@ Counts: 1369 routines, 50049 uses.
 | `num_bigint::biguint::BigUint::parse_bytes` | 1 | 1 | `crates/zed-kernel/src/value.rs:455` | row STD-num |
 | `num_bigint::biguint::BigUint::pow` | 2 | 2 | `crates/zed-kernel/src/num.rs:1010` | `a ** n` |
 | `num_bigint::biguint::BigUint::sqrt` | 1 | 1 | `crates/zedc/src/store/int.rs:602` | row STD-num |
-| `num_bigint::biguint::BigUint::trailing_zeros` | 9 | 4 | `crates/zed-kernel/src/bits.rs:247` | `trailingZeros(a)` |
+| `num_bigint::biguint::BigUint::trailing_zeros` | 9 | 4 | `crates/zed-kernel/src/bits.rs:247` | missing |
 | `num_bigint::biguint::addition::<&BigUint as Add<Self>>::add` | 9 | 1 | `crates/zedc/src/store/int.rs:1026` | `a + b` |
 | `num_bigint::biguint::addition::<&BigUint as Add<u32>>::add` | 9 | 2 | `crates/zed-kernel/src/num.rs:1167` | `a + b` |
 | `num_bigint::biguint::addition::<BigUint as Add<&BigUint>>::add` | 6 | 2 | `crates/zed-kernel/src/types/empty.rs:741` | `a + b` |
@@ -1252,9 +1252,9 @@ Counts: 1369 routines, 50049 uses.
 | `num_bigint::biguint::subtraction::<BigUint as SubAssign<&BigUint>>::sub_assign` | 3 | 1 | `crates/zedc/src/store/presburger/deep/canon.rs:550` | `a - b` |
 | `num_bigint::biguint::subtraction::<BigUint as SubAssign<u32>>::sub_assign` | 3 | 1 | `crates/zed-kernel/src/types/empty.rs:2079` | `a - b` |
 | `num_bigint::biguint::subtraction::<BigUint as SubAssign<u8>>::sub_assign` | 6 | 1 | `crates/zedc/src/store/presburger/deep/canon.rs:371` | `a - b` |
-| `num_integer::<i128 as Integer>::div_floor` | 1 | 1 | `crates/zedc/src/store/int.rs:2155` | missing |
+| `num_integer::<i128 as Integer>::div_floor` | 1 | 1 | `crates/zedc/src/store/int.rs:2155` | `a div b` |
 | `num_integer::<i128 as Integer>::gcd` | 1 | 1 | `crates/zedc/src/store/int.rs:2243` | row STD-num |
-| `num_integer::<i128 as Integer>::mod_floor` | 1 | 1 | `crates/zedc/src/store/int.rs:2205` | missing |
+| `num_integer::<i128 as Integer>::mod_floor` | 1 | 1 | `crates/zedc/src/store/int.rs:2205` | `a mod b` |
 | `num_traits::cast::ToPrimitive::to_usize` | 3 | 2 | `crates/zed-kernel/src/num.rs:1279` | missing |
 | `object::read::any::<Section<'data, 'file, R> as ObjectSection<'data>>::data` | 1 | 1 | `crates/zed-native/src/link.rs:237` | row S.4 |
 | `object::read::any::File<'data, R>::parse` | 1 | 1 | `crates/zed-native/src/link.rs:234` | row S.4 |
@@ -1342,7 +1342,7 @@ Counts: 1369 routines, 50049 uses.
 | `std::path::Path::display` | 17 | 2 | `crates/zed-native/src/link.rs:90` | missing |
 | `std::path::Path::file_name` | 1 | 1 | `crates/zed-native/src/link.rs:167` | missing |
 | `std::path::Path::is_file` | 2 | 2 | `crates/zed-native/src/link.rs:84` | missing |
-| `std::path::Path::join` | 3 | 1 | `crates/zedc/src/unit.rs:73` | row STD-seq |
+| `std::path::Path::join` | 3 | 1 | `crates/zedc/src/unit.rs:73` | row STD-text |
 | `std::path::Path::new` | 2 | 2 | `crates/zed-native/src/link.rs:64` | missing |
 | `std::path::Path::parent` | 3 | 1 | `crates/zedc/src/unit.rs:822` | missing |
 | `std::path::Path::strip_prefix` | 1 | 1 | `crates/zedc/src/unit.rs:825` | row STD-text |

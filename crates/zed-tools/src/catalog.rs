@@ -29,12 +29,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use zedc::parse::TOP;
+use zedc::parse::{Node, TOP};
 
 use crate::layer::WordTable;
 use crate::plan::row_ids;
 use crate::spec::Spec;
-use crate::syntax::{lex, then_end};
+use crate::syntax::{Tokens, lex, then_end};
 use crate::text::{read_text, repr};
 use crate::{Outcome, arg, impl_root, say};
 
@@ -440,13 +440,15 @@ fn spans(cell: &str) -> Option<(Vec<&str>, String)> {
 }
 
 /// The problem with one Zed column, if any: `missing`, plan rows of `rows`, or Zed texts that
-/// parse as expressions of `spec` and use no defined word above Zed₀.
+/// parse as expressions of `spec`, use no defined word above Zed₀, and call each word with the
+/// arguments it takes ([`check_words`]). `cell` is as the table holds it, so `\|` is read as `|`.
 pub fn check_zed(
     cell: &str,
     spec: &Spec,
     words: &WordTable,
     rows: &HashSet<&str>,
 ) -> Option<String> {
+    let cell = &unescape(cell);
     if cell == "missing" {
         return None;
     }
@@ -470,9 +472,9 @@ pub fn check_zed(
             Err(e) => return Some(format!("{} does not lex: {e}", repr(t))),
         };
         let mut p = zedc::parse::Parser::new(&spec.syntactic, TOP, &toks);
-        if then_end(&spec.syntactic, &mut p, &toks, "Expr").is_none() {
+        let Some((_, root)) = then_end(&spec.syntactic, &mut p, &toks, "Expr") else {
             return Some(format!("{} is not an expression of the grammar", repr(t)));
-        }
+        };
         for tok in &toks.0 {
             if let Some(l) = words.layer_of(&tok.text).filter(|&l| l > ZED0_LAYER) {
                 return Some(format!(
@@ -481,6 +483,9 @@ pub fn check_zed(
                     tok.text
                 ));
             }
+        }
+        if let Some(problem) = check_words(spec, words, t, &toks, &p.nodes, root) {
+            return Some(problem);
         }
     }
     None
@@ -585,4 +590,305 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         found.len()
     );
     Ok(bad == 0)
+}
+
+/// How many positional arguments a word takes, the receiver of `x.f(a)` counted.
+#[derive(Clone, Copy, Debug)]
+enum Count {
+    Exactly(usize),
+    AtLeast(usize),
+}
+
+impl Count {
+    fn admits(self, n: usize) -> bool {
+        match self {
+            Count::Exactly(k) => n == k,
+            Count::AtLeast(k) => n >= k,
+        }
+    }
+}
+
+/// A word a Zed text of the catalog may call, with the arguments DESIGN.md gives it.
+struct Sig {
+    word: &'static str,
+    /// The positional arguments. The receiver of `x.f(a)` fills `f`'s first parameter, and a
+    /// member read `x.f` with no parentheses is `f(x)` (DESIGN.md, "Application is indexing").
+    positional: Count,
+    /// The named arguments it must be given.
+    required: &'static [&'static str],
+    /// The named arguments it may be given.
+    optional: &'static [&'static str],
+}
+
+const fn sig(word: &'static str, positional: Count) -> Sig {
+    Sig {
+        word,
+        positional,
+        required: &[],
+        optional: &[],
+    }
+}
+
+/// The words a catalog Zed text may call, each a prelude word of `zedc::resolve::WORDS`, with
+/// its arguments: the casts and the L1 string and number words take one (L1.14); `min` and
+/// `max` two or more (`min(d[i-1][j] + 1, …)`, sec:power); the bit words as step L1.39a
+/// gives them, with `width:` on the words whose result depends on a width; the views of a
+/// string one (L1.39c); the family operations their receiver and the operands of the kernel
+/// table (sec:kernel): `foldl(init, op)`, `foldr(op, init)`, `.sort(asc f, …)` or
+/// `.sort(by: le)`, and one operand for the others.
+const SIGS: &[Sig] = &[
+    sig("String", Count::Exactly(1)),
+    sig("int", Count::Exactly(1)),
+    sig("rat", Count::Exactly(1)),
+    sig("f64", Count::Exactly(1)),
+    sig("abs", Count::Exactly(1)),
+    sig("min", Count::AtLeast(2)),
+    sig("max", Count::AtLeast(2)),
+    sig("len", Count::Exactly(1)),
+    sig("lower", Count::Exactly(1)),
+    sig("upper", Count::Exactly(1)),
+    sig("trim", Count::Exactly(1)),
+    sig("sum", Count::Exactly(1)),
+    sig("bitAnd", Count::Exactly(2)),
+    sig("bitOr", Count::Exactly(2)),
+    sig("bitXor", Count::Exactly(2)),
+    Sig {
+        required: &["width"],
+        ..sig("bitNot", Count::Exactly(1))
+    },
+    sig("shl", Count::Exactly(2)),
+    sig("shr", Count::Exactly(2)),
+    sig("popCount", Count::Exactly(1)),
+    Sig {
+        required: &["width"],
+        ..sig("leadingZeros", Count::Exactly(1))
+    },
+    Sig {
+        required: &["width"],
+        ..sig("trailingZeros", Count::Exactly(1))
+    },
+    Sig {
+        required: &["width"],
+        ..sig("rotl", Count::Exactly(2))
+    },
+    Sig {
+        required: &["width"],
+        ..sig("rotr", Count::Exactly(2))
+    },
+    sig("f64Bits", Count::Exactly(1)),
+    sig("codePoint", Count::Exactly(1)),
+    sig("scalar", Count::Exactly(1)),
+    sig("utf8", Count::Exactly(1)),
+    sig("fromUtf8", Count::Exactly(1)),
+    sig("count", Count::Exactly(1)),
+    sig("map", Count::Exactly(2)),
+    sig("where", Count::Exactly(2)),
+    sig("foldl", Count::Exactly(3)),
+    sig("foldr", Count::Exactly(3)),
+    sig("reduce", Count::Exactly(2)),
+    sig("any", Count::Exactly(2)),
+    sig("all", Count::Exactly(2)),
+    sig("find", Count::Exactly(2)),
+    sig("split", Count::Exactly(2)),
+    sig("lines", Count::Exactly(1)),
+    sig("group", Count::Exactly(2)),
+    sig("flatMap", Count::Exactly(2)),
+    Sig {
+        optional: &["by"],
+        ..sig("sort", Count::AtLeast(1))
+    },
+    sig("zip", Count::Exactly(2)),
+    sig("first", Count::Exactly(1)),
+    sig("last", Count::Exactly(1)),
+    sig("minBy", Count::Exactly(2)),
+    sig("maxBy", Count::Exactly(2)),
+    sig("slice", Count::Exactly(2)),
+    sig("take", Count::Exactly(2)),
+    sig("drop", Count::Exactly(2)),
+    sig("takeWhile", Count::Exactly(2)),
+    sig("chunkBy", Count::Exactly(2)),
+];
+
+/// The names that stand for operands in a Zed text of the catalog.
+const OPERANDS: [&str; 14] = [
+    "a", "b", "n", "x", "xs", "s", "m", "k", "f", "p", "z", "i", "t", "ys",
+];
+
+/// One call in a Zed text: the word, its positional arguments (the receiver counted), the
+/// names of its named arguments, and whether any positional argument is a sort key.
+struct Call<'t> {
+    word: &'t str,
+    positional: usize,
+    named: Vec<&'t str>,
+    keys: bool,
+}
+
+/// The arguments of the call suffix `call`: positional, named, and whether a sort key is
+/// among them.
+fn args<'t>(
+    call: usize,
+    nodes: &[Node],
+    rule_of: &dyn Fn(usize) -> &'t str,
+    name_of: &dyn Fn(usize) -> &'t str,
+) -> (usize, Vec<&'t str>, bool) {
+    let (mut positional, mut named, mut keys) = (0, Vec::new(), false);
+    for &a in &nodes[call].kids {
+        if rule_of(a) != "Args" {
+            continue;
+        }
+        for &arg in &nodes[a].kids {
+            match rule_of(arg) {
+                "NamedArg" => named.push(name_of(nodes[arg].kids[0])),
+                "SortArg" => {
+                    positional += 1;
+                    keys = true;
+                }
+                _ => positional += 1,
+            }
+        }
+    }
+    (positional, named, keys)
+}
+
+/// The problem with the words of the Zed text `t`, parsed as `nodes` from `toks` with root
+/// `root`, if any: every name it reads is an operand, a parameter of one of its lambdas or a
+/// word that `words` or the prelude defines, and every word it calls or reads as a member is
+/// one of [`SIGS`], given the arguments listed there.
+// Complexity tradeoff: linear in the text; each name is looked up in a hash set and in the
+// fixed tables `SIGS` and `zedc::resolve::WORDS`, whose sizes do not depend on the catalog.
+fn check_words(
+    spec: &Spec,
+    words: &WordTable,
+    t: &str,
+    toks: &Tokens,
+    nodes: &[Node],
+    root: usize,
+) -> Option<String> {
+    let rule_of = |n: usize| spec.syntactic.rules[nodes[n].rule].name.as_str();
+    let name_of = |n: usize| toks.0[nodes[n].start].text.as_str();
+    let mut parent = vec![usize::MAX; nodes.len()];
+    let mut order = Vec::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        order.push(n);
+        for &k in &nodes[n].kids {
+            parent[k] = n;
+            stack.push(k);
+        }
+    }
+    let defined = |w: &str| {
+        zedc::resolve::prelude_layer(w).is_some()
+            || words.layer_of(w).is_some()
+            || words.layer_of(&format!(".{w}")).is_some()
+    };
+    let binders: HashSet<&str> = order
+        .iter()
+        .filter(|&&n| rule_of(n) == "Name" && matches!(rule_of(parent[n]), "Lambda" | "Param"))
+        .map(|&n| name_of(n))
+        .collect();
+    // The node `n` heads the postfix `parent[n]` whose suffix is a call: that call's suffix.
+    let called = |n: usize| {
+        let q = *parent.get(n)?;
+        (q != usize::MAX && rule_of(q) == "Postfix" && nodes[q].kids.first() == Some(&n))
+            .then(|| nodes[q].kids.get(1).copied())
+            .flatten()
+            .filter(|&c| rule_of(c) == "CallSuffix")
+    };
+    let mut calls = Vec::new();
+    for &n in &order {
+        if rule_of(n) != "Name" || parent[n] == usize::MAX {
+            continue;
+        }
+        let (q, w) = (parent[n], name_of(n));
+        match rule_of(q) {
+            "Lambda" | "Param" | "NamedArg" => {}
+            "MemberSuffix" => {
+                // `recv.w(…)` or the member read `recv.w`.
+                let post = parent[q];
+                let (positional, named, keys) = match called(post) {
+                    Some(c) => {
+                        let (p, named, keys) = args(c, nodes, &rule_of, &name_of);
+                        (p + 1, named, keys)
+                    }
+                    None => (1, Vec::new(), false),
+                };
+                if !defined(w) {
+                    return Some(format!("{} reads `.{w}`, which is no word", repr(t)));
+                }
+                calls.push(Call {
+                    word: w,
+                    positional,
+                    named,
+                    keys,
+                });
+            }
+            _ if OPERANDS.contains(&w) || binders.contains(w) => {}
+            _ if !defined(w) => {
+                return Some(format!(
+                    "{} names `{w}`, which is no operand, parameter or word",
+                    repr(t)
+                ));
+            }
+            _ => {
+                if let Some(c) = called(n) {
+                    let (positional, named, keys) = args(c, nodes, &rule_of, &name_of);
+                    calls.push(Call {
+                        word: w,
+                        positional,
+                        named,
+                        keys,
+                    });
+                }
+            }
+        }
+    }
+    for c in calls {
+        let Some(s) = SIGS.iter().find(|s| s.word == c.word) else {
+            return Some(format!(
+                "{} calls `{}`, whose arguments the check does not know",
+                repr(t),
+                c.word
+            ));
+        };
+        let missing: Vec<&str> = s
+            .required
+            .iter()
+            .copied()
+            .filter(|r| !c.named.contains(r))
+            .collect();
+        let extra: Vec<&str> = c
+            .named
+            .iter()
+            .copied()
+            .filter(|n| !s.required.contains(n) && !s.optional.contains(n))
+            .collect();
+        // `.sort` takes sort keys or one comparator `by:`, not both and not neither.
+        let sort_wrong = c.word == "sort" && (c.keys == c.named.contains(&"by"));
+        let keys_wrong = c.keys && c.word != "sort";
+        if !s.positional.admits(c.positional)
+            || !missing.is_empty()
+            || !extra.is_empty()
+            || sort_wrong
+            || keys_wrong
+        {
+            let want = match (s.word, s.positional) {
+                ("sort", _) => "its receiver and sort keys, or its receiver and `by:`".to_owned(),
+                (_, Count::Exactly(k)) => format!("{k} positional"),
+                (_, Count::AtLeast(k)) => format!("{k} or more positional"),
+            };
+            let req: String = s.required.iter().map(|r| format!(" and `{r}:`")).collect();
+            let named = if c.named.is_empty() {
+                String::new()
+            } else {
+                format!(" and `{}:`", c.named.join(":`, `"))
+            };
+            return Some(format!(
+                "{} calls `{}` with {} positional{named}; it takes {want}{req}",
+                repr(t),
+                c.word,
+                c.positional
+            ));
+        }
+    }
+    None
 }

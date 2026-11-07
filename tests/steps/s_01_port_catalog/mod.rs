@@ -220,6 +220,16 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
         "row STD-seq, S.4",
         "`a + b`",
         "`len(xs) == 0`, `xs[i]`",
+        "`xs.sort(asc x -> x)`",
+        "`xs.sort(desc f, asc x -> x)`",
+        "`xs.sort(by: f)`",
+        "`xs.minBy(f).first`",
+        "`xs.foldr((x, acc) -> f(acc, x), z)`",
+        "`trailingZeros(a, width: 64)`",
+        "`a.rotl(n, width: 64)`",
+        "`min(a, b, n)`",
+        "`xs.count`",
+        "`a \\|\\| b`",
     ];
     for cell in ok {
         assert_eq!(check_zed(cell, &spec, &words, &rows), None, "{cell}");
@@ -233,11 +243,57 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
         ("none", "neither"),
         ("`a` or `b`", "neither"),
         ("", "neither"),
+        (
+            "`trailingZeros(a)`",
+            "calls `trailingZeros` with 1 positional; it takes 1 positional and `width:`",
+        ),
+        (
+            "`a.rotl(n)`",
+            "calls `rotl` with 2 positional; it takes 2 positional and `width:`",
+        ),
+        ("`bitAnd(a, b, width: 8)`", "with 2 positional and `width:`"),
+        (
+            "`xs.where(p, f)`",
+            "calls `where` with 3 positional; it takes 2",
+        ),
+        ("`min(a)`", "it takes 2 or more positional"),
+        ("`xs.sort()`", "it takes its receiver and sort keys"),
+        (
+            "`xs.sort(asc f, by: f)`",
+            "it takes its receiver and sort keys",
+        ),
+        ("`xs.map(asc f)`", "calls `map` with 2 positional"),
+        ("`xs.indexOf(a)`", "reads `.indexOf`, which is no word"),
+        (
+            "`q + 1`",
+            "names `q`, which is no operand, parameter or word",
+        ),
+        ("`(y -> y)(a)`, `y`", "names `y`"),
+        ("`xs.rank`", "whose arguments the check does not know"),
     ];
     for (cell, want) in bad {
         let p = check_zed(cell, &spec, &words, &rows).unwrap_or_default();
         assert!(p.contains(want), "{cell:?}: {p:?} lacks {want:?}");
     }
+}
+
+/// The words-and-arguments check is linear in the text: a chain of `n` calls, each with a lambda
+/// and a named argument.
+#[test]
+fn check_zed_scales_linearly_with_the_text() {
+    let dir = spec_dir("catalog_zed_scaling");
+    let spec = Spec::open(&dir.root()).expect("the test spec");
+    let words = WordTable::read(&spec.design).expect("its table");
+    let rows = HashSet::new();
+    let texts = inputs(500, |n| {
+        format!(
+            "`xs{}`",
+            ".map(y -> bitNot(y, width: 8)).sort(by: f)".repeat(n)
+        )
+    });
+    check("catalog check of a chain of n calls", 500, |n| {
+        assert_eq!(check_zed(&texts[&n], &spec, &words, &rows), None);
+    });
 }
 
 #[test]

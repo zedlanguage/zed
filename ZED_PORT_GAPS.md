@@ -45,14 +45,27 @@ is inferred. Everything in the class "workaround" that names L6.13 falls with it
 **The routines the Rust calls** are listed in `zed/compiler/CATALOG.md` (row PORT-catalog,
 2026-11-05): 1,369 routines of the standard library and of dependencies, called 50,049 times by
 zedc, zed-kernel and zed-native outside unit tests, each with its Zed text, the plan row that
-provides it, or `missing` (398). The missing ones are gaps of the library, not of the language
-(inferred from their kinds, not checked row by row). The largest groups: conversions (`From`,
-`TryFrom`; 37), methods of `Option` and `Result` (39), signed truncating division and remainder (Zed's `div` and `mod` are Euclidean), the checked,
-wrapping and saturating fixed-width arithmetic (34), `Ordering` and `cmp` (30), hashing and
-formatting, `Cell`, `RefCell` and
-`OnceCell`, character classes, and the operating-system calls of `std::fs`, `std::io`,
-`std::env` and `std::process`. Rows STD-seq, STD-text and STD-num start from this list, and step
-S.1 regenerates it with the tool `catalog`.
+provides it, or `missing` (398 at PORT-catalog, 333 after PORT-catalog-audit, 2026-11-07,
+which wrote out as Zed texts the signed truncating division and remainder, the wrapping and
+saturating arithmetic, the widening conversions and others, each text exact). The missing ones
+are gaps of the library, not of the language (inferred from their kinds, not checked row by
+row). The largest groups: methods of `Option` and `Result`, checked arithmetic and narrowing
+conversions (`checked_*`, `TryFrom`), `Ordering` and `cmp`, hashing and formatting, `Cell`,
+`RefCell` and `OnceCell`, character classes, and the operating-system calls of `std::fs`,
+`std::io`, `std::env` and `std::process`. Rows STD-seq, STD-text and STD-num start from this
+list, and step S.1 regenerates it with the tool `catalog`.
+
+Library words the audit found missing, with no plan row adding them (PORT-catalog-audit; each a
+`missing` row of the catalog, none invented):
+
+| Rust | Rows | What Zed lacks | Workaround until a word exists |
+|---|---|---|---|
+| `BigInt::trailing_zeros`, `BigUint::trailing_zeros` | 2 | `trailingZeros` of an integer with no width (L1.39a requires `width:`) | none at linear cost: a loop of `div 2` costs O(bits²) on an unbounded integer |
+| `<Discriminant<T> as PartialEq>::eq` | 1 | a test that two values of a union are the same member | a `match` on both, one arm per member |
+| `Ord::cmp` of each type, `partial_cmp`, `total_cmp`, `Iterator::cmp` and the `Ordering` methods (`reverse`, `then`, `then_with`, `is_*`) | 32 | a three-way comparison and its value | `a < b`, `a == b` and `by: le` for sorting |
+| `Hash::hash` of each type, `Hasher::write*`, `BuildHasher::hash_one`, `DefaultHasher` | 13 | a hash word for any value (row STD-blake3 covers byte sequences only) | the value as its key in a family |
+| `iter::repeat`, `iter::repeat_n` | 2 | a sequence of one value repeated, unbounded or `n` times | `xs[i] else d` for padding |
+| `TryFrom` narrowing (24), `checked_*` (21) | 45 | a narrowing conversion and checked fixed-width arithmetic as a value-level failure | `if a < 2 ** w { … }` written out (author question) |
 
 ## Method
 
