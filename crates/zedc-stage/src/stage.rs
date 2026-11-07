@@ -1497,12 +1497,13 @@ impl<'u> Specializer<'u> {
 }
 
 /// A name in scope: its term when it is build-stage, else nothing, the names that term reads,
-/// and the map of the scope's bindings before it was pushed.
+/// and the maps of the scope's bindings and entries before it was pushed.
 struct Entry {
     name: Arc<str>,
     known: Option<Shared>,
     reads: Set,
     prev: Map,
+    prev_stamps: Map,
     /// The number of parameters of the function the term is, when it is a lambda or a name of
     /// one; such an entry is a function.
     arity: Option<usize>,
@@ -1531,7 +1532,9 @@ struct Entry {
 
 /// The names in scope, innermost last, with the positions of each name's entries, so a name
 /// is looked up in `O(log n)` rather than by a scan of the scope, and the map of each name in
-/// scope to its innermost binding (`top`, in [`Maps`]).
+/// scope to its innermost binding (`top`, in [`Maps`]) and to the stamp of its innermost entry
+/// (`stamps`): the number of entries pushed before it, so two places where a map restricted to
+/// some names is one map bind each of those names to one entry.
 #[derive(Default)]
 struct Scope {
     entries: Vec<Entry>,
@@ -1540,6 +1543,8 @@ struct Scope {
     /// The build-stage entries with a position here ([`Entry::global`]), which a run as
     /// written is under ([`Mixer::run_under`]).
     globals: Globals,
+    stamps: Map,
+    pushed: Binding,
 }
 
 impl Scope {
@@ -1566,6 +1571,7 @@ impl Scope {
             self.globals.pop();
         }
         self.top = e.prev;
+        self.stamps = e.prev_stamps;
     }
 
     /// What each of `names`, read at position `at`, refers to among the globals: the
@@ -1858,6 +1864,15 @@ enum Probe {
     Same(Arc<str>),
 }
 
+impl Probe {
+    /// The name the question is asked of.
+    fn name(&self) -> &Arc<str> {
+        match self {
+            Probe::Call(x, _) | Probe::Same(x) => x,
+        }
+    }
+}
+
 /// The answer to a [`Probe`]: the call's value, `None` when it fails; or the binding's exact
 /// number.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1866,19 +1881,63 @@ enum Answer {
     Is(Binding),
 }
 
-/// A node of the tree of the questions a part asked ([`Mixer::memo`]): the part mixed, or a
-/// question with the node each answer leads to.
+/// What a part asked: a question and its answer, or all that a part held in it asked, as
+/// the leaf of that part's tree, which keeps it ([`Leaf::asked`]). A part held in nested
+/// parts is so asked once, and each part around it holds one item for it, not a copy of its
+/// questions.
+#[derive(Clone)]
+enum Item {
+    One(Probe, Answer),
+    Part(usize),
+}
+
+/// A node of the tree of the questions a part asked ([`Mixer::memo`]): the part mixed; a
+/// question with the node each answer leads to; or a part held in it, by the root of its
+/// tree, with the node each leaf of that tree leads to.
 enum Node {
-    Leaf(Shared, Summary),
+    Leaf(Box<Leaf>),
     Ask(Probe, BTreeMap<Answer, usize>),
+    Part(usize, BTreeMap<usize, usize>),
+}
+
+/// What a part mixed to, and what it asked to mix to that.
+struct Leaf {
+    out: Shared,
+    sum: Summary,
+    /// The root of the part's tree.
+    root: usize,
+    asked: Vec<Item>,
+    /// The names `asked` asks of, through the parts it holds too.
+    names: Set,
+    /// Whether the leaf is reached from `root` by the answers to `asked`
+    /// ([`Mixer::remember`]).
+    kept: bool,
 }
 
 /// What a part held in a node being mixed has asked, in order, of the entries of the scope
-/// below `base`, where the part was entered.
+/// below `base`, where the part was entered, when the scope's map of names to entries was
+/// `stamps`.
 struct Watch {
     base: usize,
+    stamps: Map,
     seen: BTreeSet<Probe>,
-    said: Vec<(Probe, Answer)>,
+    /// The leaves of the parts held in it whose questions it took as a whole.
+    parts: BTreeSet<usize>,
+    said: Vec<Item>,
+    names: Set,
+}
+
+impl Watch {
+    fn new(base: usize, stamps: Map) -> Watch {
+        Watch {
+            base,
+            stamps,
+            seen: BTreeSet::new(),
+            parts: BTreeSet::new(),
+            said: Vec::new(),
+            names: EMPTY,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1907,12 +1966,19 @@ struct Mixer {
     /// What each part held in a node in the term `mix_top` is mixing became, by the node's id
     /// and the map of the names it reads to their bindings ([`Maps::restrict`]): the root of a
     /// tree in [`Mixer::trie`] that asks what the part asked of the functions it reads
-    /// ([`Probe`]), each answer leading to the next question or to the mixed part. What a
+    /// ([`Probe`]) and the parts it holds ([`Item`]), each answer leading to the next question
+    /// or to the mixed part. What a
     /// part mixes to depends on nothing else, so a part shared by two places under the same
     /// bindings of its names, or under functions that answer it alike, is mixed once and the
     /// places share the result.
     memo: HashMap<(u64, Map), usize>,
     trie: Vec<Node>,
+    /// The names each tree asks of on all its paths, by its root.
+    asks: HashMap<usize, Set>,
+    /// The leaf each tree's walk reached ([`Mixer::recall`]), by its root and the scope's map
+    /// of names to entries restricted to the names the tree asks of: under one such map each
+    /// question gets the answer it got, since what a name answers depends only on its entry.
+    recalled: HashMap<(usize, Map), usize>,
     /// What each part held in a node now being mixed has asked, innermost last.
     watch: Vec<Watch>,
     /// What each part held inline in a node being mixed reads, and how many positions its
@@ -1927,11 +1993,13 @@ impl Mixer {
             .map_or(EMPTY, |k| self.frees.summary(Part::held(k)).free);
         let x = self.frees.name(&name);
         let prev = self.scope.top;
+        let prev_stamps = self.scope.stamps;
         let mut e = Entry {
             name,
             known: None,
             reads,
             prev,
+            prev_stamps,
             arity: None,
             fine: UNKNOWN,
             ends: false,
@@ -1951,6 +2019,8 @@ impl Mixer {
         }
         e.known = known;
         self.scope.top = self.maps.insert(prev, x, b);
+        self.scope.stamps = self.maps.insert(prev_stamps, x, self.scope.pushed);
+        self.scope.pushed += 1;
         self.scope.push(e);
     }
 
@@ -2382,11 +2452,98 @@ impl Mixer {
 
     /// Records that the part being mixed asked `p` and was told `a`, once.
     fn record(&mut self, p: Probe, a: Answer) {
-        if let Some(w) = self.watch.last_mut()
-            && w.seen.insert(p.clone())
-        {
-            w.said.push((p, a));
+        let Some(w) = self.watch.last_mut() else {
+            return;
+        };
+        if !w.seen.insert(p.clone()) {
+            return;
         }
+        let x = self.frees.name(p.name());
+        let x = self.frees.sets.one(x);
+        w.names = self.frees.sets.union(w.names, x);
+        w.said.push(Item::One(p, a));
+    }
+
+    /// Records that the part being mixed asked all that the part whose tree ends at `leaf`
+    /// asked, once.
+    fn record_part(&mut self, leaf: usize) {
+        let Some(w) = self.watch.last_mut() else {
+            return;
+        };
+        if !w.parts.insert(leaf) {
+            return;
+        }
+        let Node::Leaf(l) = &self.trie[leaf] else {
+            unreachable!("a leaf")
+        };
+        w.names = self.frees.sets.union(w.names, l.names);
+        w.said.push(Item::Part(leaf));
+    }
+
+    /// Whether each name of `names` is bound to the entry it was bound to where the part
+    /// being mixed was entered, so a question asked of it here, below the part's base, gets
+    /// the answer it gets there and asks nothing more.
+    fn outside(&mut self, names: Set) -> bool {
+        let Some(w) = self.watch.last() else {
+            return false;
+        };
+        let sets = &self.frees.sets;
+        let there = self.maps.restrict(sets, w.stamps, names);
+        there == self.maps.restrict(sets, self.scope.stamps, names)
+    }
+
+    /// Records that the part being mixed asked what the part held in it whose tree ends at
+    /// `leaf` asked, here, where that part is mixed or recalled: the leaf itself when each
+    /// name it asks of is bound as where the part being mixed was entered, and otherwise each
+    /// of its items so, asking again here the questions of names bound in between, which
+    /// asks what their bindings ask of the scope outside ([`Mixer::ask`]).
+    fn take(&mut self, leaf: usize) {
+        if self.watch.is_empty() {
+            return;
+        }
+        let mut todo = vec![Item::Part(leaf)];
+        // The leaves whose items were taken one by one: each once, as the parts share them.
+        let mut opened = HashSet::new();
+        while let Some(item) = todo.pop() {
+            match item {
+                Item::One(p, a) => {
+                    let x = self.frees.name(p.name());
+                    let w = self.watch.last().expect("not empty");
+                    match self.maps.get(w.stamps, x) == self.maps.get(self.scope.stamps, x) {
+                        true => self.record(p, a),
+                        false => {
+                            self.ask(&p);
+                        }
+                    }
+                }
+                Item::Part(at) => {
+                    let Node::Leaf(l) = &self.trie[at] else {
+                        unreachable!("a leaf")
+                    };
+                    let (kept, names) = (l.kept, l.names);
+                    if kept && self.outside(names) {
+                        self.record_part(at);
+                    } else if opened.insert(at) {
+                        let Node::Leaf(l) = &self.trie[at] else {
+                            unreachable!("a leaf")
+                        };
+                        todo.extend(l.asked.iter().rev().cloned());
+                    }
+                }
+            }
+        }
+    }
+
+    /// The answer to `p` here, recorded nowhere.
+    fn answer(&mut self, p: &Probe) -> Answer {
+        let Some(w) = self.watch.last() else {
+            return self.ask(p);
+        };
+        let w = Watch::new(w.base, w.stamps);
+        self.watch.push(w);
+        let a = self.ask(p);
+        self.watch.pop();
+        a
     }
 
     /// The answer to `p` here, recorded as asked by the part being mixed.
@@ -2430,57 +2587,133 @@ impl Mixer {
         }
     }
 
-    /// What the part whose tree of questions starts at `at` mixed to here, when it was mixed
-    /// before under functions that answer each question as they answer here.
-    fn recall(&mut self, mut at: usize) -> Option<(Shared, Summary)> {
-        loop {
-            let p = match &self.trie[at] {
-                Node::Leaf(s, sum) => return Some((s.clone(), *sum)),
-                Node::Ask(p, _) => p.clone(),
-            };
-            let a = self.ask(&p);
-            let Node::Ask(_, next) = &self.trie[at] else {
-                unreachable!("asked above")
-            };
-            at = *next.get(&a)?;
+    /// The leaf the tree of questions of a part, at `root`, leads to here, when the part was
+    /// mixed before under functions that answer each question as they answer here. Records
+    /// nothing; the caller takes what the leaf asked ([`Mixer::take`]). A node of a part held
+    /// in it recalls that part's tree, on an explicit stack, and each tree's walk is kept by
+    /// the entries of the names it asks of ([`Mixer::recalled`]), so a part held in many
+    /// nested parts is walked once under one scope, not once per part around it.
+    fn recall(&mut self, root: usize) -> Option<usize> {
+        // Each tree being walked: its root, the key its walk is kept by, and the node reached.
+        let mut walks: Vec<(usize, Map, usize)> = Vec::new();
+        // The leaf the tree last walked reached, for the node of the tree that asked for it.
+        let mut reached = None;
+        let start = |m: &mut Mixer, root: usize, walks: &mut Vec<(usize, Map, usize)>| {
+            let names = m.asks.get(&root).copied().unwrap_or(EMPTY);
+            let key = m.maps.restrict(&m.frees.sets, m.scope.stamps, names);
+            match m.recalled.get(&(root, key)) {
+                Some(&leaf) => Some(leaf),
+                None => {
+                    walks.push((root, key, root));
+                    None
+                }
+            }
+        };
+        if let Some(leaf) = start(self, root, &mut walks) {
+            return Some(leaf);
         }
+        while let Some(&(root, key, at)) = walks.last() {
+            let next = match (&self.trie[at], reached.take()) {
+                (Node::Part(_, next), Some(leaf)) => *next.get(&leaf)?,
+                (Node::Leaf(_), _) => {
+                    self.recalled.insert((root, key), at);
+                    walks.pop();
+                    reached = Some(at);
+                    continue;
+                }
+                (Node::Ask(p, _), _) => {
+                    let p = p.clone();
+                    let a = self.answer(&p);
+                    let Node::Ask(_, next) = &self.trie[at] else {
+                        unreachable!("asked above")
+                    };
+                    *next.get(&a)?
+                }
+                (Node::Part(part, _), None) => {
+                    let part = *part;
+                    reached = start(self, part, &mut walks);
+                    continue;
+                }
+            };
+            walks.last_mut().expect("walking").2 = next;
+        }
+        reached
     }
 
-    /// Remembers that the part held in the node with id `id`, under `names`, mixed to `s`
-    /// after it asked `said`.
-    fn remember(&mut self, key: (u64, Map), said: &[(Probe, Answer)], s: Shared, sum: Summary) {
+    /// Remembers that the part held in the node with id `id`, under `names`, mixed to `out`
+    /// after it asked what `w` holds, and gives the leaf that keeps it.
+    fn remember(&mut self, key: (u64, Map), w: Watch, out: Shared, sum: Summary) -> usize {
         let leaf = self.trie.len();
-        self.trie.push(Node::Leaf(s, sum));
-        let chain = |trie: &mut Vec<Node>, from: &[(Probe, Answer)]| {
-            from.iter().rev().fold(leaf, |next, (p, a)| {
-                trie.push(Node::Ask(p.clone(), BTreeMap::from([(a.clone(), next)])));
+        self.trie.push(Node::Leaf(Box::new(Leaf {
+            out,
+            sum,
+            root: leaf,
+            asked: Vec::new(),
+            names: w.names,
+            kept: false,
+        })));
+        let root_of = |trie: &[Node], at: usize| match &trie[at] {
+            Node::Leaf(l) => l.root,
+            _ => unreachable!("a leaf"),
+        };
+        let chain = |trie: &mut Vec<Node>, from: &[Item]| {
+            from.iter().rev().fold(leaf, |next, item| {
+                let node = match item {
+                    Item::One(p, a) => Node::Ask(p.clone(), BTreeMap::from([(a.clone(), next)])),
+                    Item::Part(at) => Node::Part(root_of(trie, *at), BTreeMap::from([(*at, next)])),
+                };
+                trie.push(node);
                 trie.len() - 1
             })
         };
-        let Some(&root) = self.memo.get(&key) else {
-            let root = chain(&mut self.trie, said);
-            self.memo.insert(key, root);
-            return;
-        };
-        let mut at = root;
-        for (i, (p, a)) in said.iter().enumerate() {
-            let Node::Ask(q, next) = &self.trie[at] else {
-                return;
-            };
-            if q != p {
-                return;
+        let (root, kept) = match self.memo.get(&key) {
+            None => {
+                let root = chain(&mut self.trie, &w.said);
+                self.memo.insert(key, root);
+                (root, true)
             }
-            match next.get(a) {
-                Some(&n) => at = n,
-                None => {
-                    let rest = chain(&mut self.trie, &said[i + 1..]);
-                    if let Node::Ask(_, next) = &mut self.trie[at] {
-                        next.insert(a.clone(), rest);
+            Some(&root) => {
+                let mut at = root;
+                let mut kept = false;
+                for (i, item) in w.said.iter().enumerate() {
+                    let branch = match (&self.trie[at], item) {
+                        (Node::Ask(q, next), Item::One(p, a)) if q == p => {
+                            next.get(a).copied().ok_or(())
+                        }
+                        (Node::Part(r, next), Item::Part(l)) if *r == root_of(&self.trie, *l) => {
+                            next.get(l).copied().ok_or(())
+                        }
+                        _ => break,
+                    };
+                    match branch {
+                        Ok(n) => at = n,
+                        Err(()) => {
+                            let rest = chain(&mut self.trie, &w.said[i + 1..]);
+                            match (&mut self.trie[at], item) {
+                                (Node::Ask(_, next), Item::One(_, a)) => {
+                                    next.insert(a.clone(), rest)
+                                }
+                                (Node::Part(_, next), Item::Part(l)) => next.insert(*l, rest),
+                                _ => unreachable!("matched above"),
+                            };
+                            kept = true;
+                            break;
+                        }
                     }
-                    return;
                 }
+                (root, kept)
             }
+        };
+        if kept {
+            let names = self.asks.get(&root).copied().unwrap_or(EMPTY);
+            let names = self.frees.sets.union(names, w.names);
+            self.asks.insert(root, names);
         }
+        let Node::Leaf(l) = &mut self.trie[leaf] else {
+            unreachable!("pushed above")
+        };
+        (l.root, l.asked, l.kept) = (root, w.said, kept);
+        leaf
     }
 
     /// `o` held in a node, its summary recorded under the node's id.
@@ -2499,6 +2732,8 @@ impl Mixer {
     fn mix_top(&mut self, t: Part<'_>) -> Out {
         self.memo.clear();
         self.trie.clear();
+        self.asks.clear();
+        self.recalled.clear();
         self.watch.clear();
         self.arena.clear();
         self.frees.of.clear();
@@ -2509,11 +2744,8 @@ impl Mixer {
                 // entered, so that each evaluation in it calls the functions bound outside it
                 // through their stubs rather than closing over all the bindings they need. No
                 // part is stored under what the root asked.
-                self.watch.push(Watch {
-                    base: self.scope.len(),
-                    seen: BTreeSet::new(),
-                    said: Vec::new(),
-                });
+                let w = Watch::new(self.scope.len(), self.scope.stamps);
+                self.watch.push(w);
                 Site::Inline(t.term, self.cluster(t.term))
             }
         };
@@ -2653,14 +2885,10 @@ impl Mixer {
                     let sum = out.sum;
                     let s = self.hold(out);
                     let w = self.watch.pop().expect("pushed on entering the part");
-                    self.remember((id, names), &w.said, s.clone(), sum);
+                    let leaf = self.remember((id, names), w, s.clone(), sum);
                     // What the part asked of the scope outside it, the part that holds it
                     // asked too, of the scope outside that one.
-                    if !self.watch.is_empty() {
-                        for (p, _) in &w.said {
-                            self.ask(p);
-                        }
-                    }
+                    self.take(leaf);
                     done.push(Out {
                         term: Mixed::Held(s),
                         sum,
@@ -2705,18 +2933,19 @@ impl Mixer {
             .restrict(&self.frees.sets, self.scope.top, sum.free);
         if let Some(s) = held {
             let root = self.memo.get(&(s.id(), names)).copied();
-            if let Some((out, sum)) = root.and_then(|at| self.recall(at)) {
+            if let Some(leaf) = root.and_then(|at| self.recall(at)) {
+                self.take(leaf);
+                let Node::Leaf(l) = &self.trie[leaf] else {
+                    unreachable!("a leaf")
+                };
                 done.push(Out {
-                    term: Mixed::Held(out),
-                    sum,
+                    term: Mixed::Held(l.out.clone()),
+                    sum: l.sum,
                 });
                 return;
             }
-            self.watch.push(Watch {
-                base: self.scope.len(),
-                seen: BTreeSet::new(),
-                said: Vec::new(),
-            });
+            let w = Watch::new(self.scope.len(), self.scope.stamps);
+            self.watch.push(w);
             todo.push(Mix::Store(s.id(), names));
         }
         if value && self.build(sum, names) {

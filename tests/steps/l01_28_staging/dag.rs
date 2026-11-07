@@ -70,7 +70,7 @@ fn unit(d: usize, shared: bool) -> Unit {
 }
 
 /// The number of distinct `Shared` nodes of `t`, each counted once by its id.
-fn distinct(t: &Term) -> usize {
+pub(super) fn distinct(t: &Term) -> usize {
     let mut seen = HashSet::new();
     let mut todo = vec![t];
     while let Some(t) = todo.pop() {

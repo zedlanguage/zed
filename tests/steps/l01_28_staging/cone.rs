@@ -19,7 +19,7 @@ use super::scaling::deep;
 
 const FORM: &str = "its form does not show that it ends";
 
-fn def(name: &str, term: Term) -> Def {
+pub(super) fn def(name: &str, term: Term) -> Def {
     Def {
         name: name.into(),
         kernel: name.into(),
@@ -28,7 +28,7 @@ fn def(name: &str, term: Term) -> Def {
     }
 }
 
-fn unit(defs: Vec<Def>) -> Unit {
+pub(super) fn unit(defs: Vec<Def>) -> Unit {
     Unit {
         defs,
         tests: Arc::from([]),
@@ -42,7 +42,7 @@ fn f(j: usize) -> String {
 
 /// The first function of a chain.
 #[derive(Clone, Copy)]
-enum F0 {
+pub(super) enum F0 {
     /// `f0 = (y) -> y + 1`, so `fk(0)` is 1.
     Ends,
     /// `f0 = (y) -> y(y)`, whose form does not show that it ends, and so neither does any
@@ -56,7 +56,7 @@ enum F0 {
 /// `f(k-2)(y)` when `two` and k >= 2, else the same node `f(k-1)(y)` as the first arm. With
 /// `two` the names the functions read form a DAG whose paths from `fn` number the Fibonacci
 /// number of n, so a walk of it as a tree would be exponential.
-fn chain(n: usize, f0: F0, two: bool) -> Vec<Def> {
+pub(super) fn chain(n: usize, f0: F0, two: bool) -> Vec<Def> {
     let f0 = match f0 {
         F0::Ends => lam(&["y"], prim(Prim::Add, vec![var("y"), lit(1i64)])),
         F0::Loops => lam(&["y"], app(var("y"), vec![var("y")])),
@@ -77,7 +77,7 @@ fn chain(n: usize, f0: F0, two: bool) -> Vec<Def> {
 }
 
 /// `(f1(0) + c, f2(0) + c, .., fn(0) + c)`.
-fn sites(n: usize) -> Term {
+pub(super) fn sites(n: usize) -> Term {
     let site = |j: usize| prim(Prim::Add, vec![app(var(&f(j)), vec![lit(0i64)]), var("c")]);
     prim(Prim::Tuple, (1..=n).map(site).collect())
 }
@@ -90,7 +90,7 @@ fn with_main(n: usize, f0: F0, two: bool) -> Unit {
 }
 
 /// The calls the report leaves to run, each with its reason, as text.
-fn left(report: &stage::Report) -> Vec<String> {
+pub(super) fn left(report: &stage::Report) -> Vec<String> {
     let calls = report.left.iter();
     calls.map(|(t, why)| format!("{t:?}: {why}")).collect()
 }
@@ -385,7 +385,7 @@ fn random_roots(rng: &mut Rng, u: &Unit, n: usize) -> [Term; 2] {
 }
 
 /// The mixed definitions of `u` and the report, as text.
-fn mixed_text(u: &Unit) -> String {
+pub(super) fn mixed_text(u: &Unit) -> String {
     let (out, report) = stage::mix(u, &["main"]);
     let defs = out.defs.iter();
     let defs: String = defs

@@ -11,6 +11,7 @@ mod ends;
 mod ids;
 mod mix;
 mod scaling;
+mod store;
 mod trick;
 
 use std::collections::BTreeMap;
