@@ -436,3 +436,134 @@ fn the_questions_of_a_chain_renaming_its_argument_scale() {
         },
     );
 }
+
+#[test]
+fn each_answer_through_a_chain_of_definitions_is_the_answer_of_the_relation_alone() {
+    // LOAD-chain-defs: a link whose new constraint reads a chain of int-returning functions
+    // (`h{i}(x) = h{i-1}(x: x) div 2 + 1`) is decided from its callee's point with only the
+    // definitions its link added; each answer is the one the relation with all its
+    // definitions has, in both orders of the bodies.
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let units = [
+        // Halvings read by a chain of tests: a link that holds at its callee's point, one that
+        // excludes it, and one that holds nowhere.
+        "h0(x: int) = x;\nh1(x: int) = h0(x: x) div 2 + 1;\nh2(x: int) = h1(x: x) div 2 + 1;\n\
+         h3(x: int) = h2(x: x) div 3 - 1;\np0(x: int) = x > 0;\np1(x: int) = p0(x: x) && h1(x: x) > 0;\n\
+         p2(x: int) = p1(x: x) && h2(x: x) > 2;\np3(x: int) = p2(x: x) && h3(x: x) < 0;\n\
+         p4(x: int) = p2(x: x) && h1(x: x) < 0;",
+        // Mixed operations, each also reading the input, and a link reading two members of
+        // the chain and a product of one with the input.
+        "g0(x: int) = x;\ng1(x: int) = g0(x: x) mod 7 + x;\ng2(x: int) = min(g1(x: x), 9) + 1;\n\
+         g3(x: int) = abs(g2(x: x)) - x div 3;\nq0(x: int) = x > 0 - 20;\n\
+         q1(x: int) = q0(x: x) && g1(x: x) > 0 - 5;\nq2(x: int) = q1(x: x) && g2(x: x) < 8;\n\
+         q3(x: int) = q2(x: x) && g3(x: x) + g1(x: x) > 4;\nq4(x: int) = q3(x: x) && g2(x: x) * x > 3;",
+        // A root and links that hold everywhere, then a link that fails somewhere, and one
+        // that holds nowhere: the negation is decided from the new definitions alone.
+        "k0(x: int) = x;\nk1(x: int) = k0(x: x) div 2 + 1;\nk2(x: int) = k1(x: x) div 2 + 1;\n\
+         a0(x: int) = x > 0 || x <= 0;\na1(x: int) = a0(x: x) && abs(k1(x: x)) >= 0;\n\
+         a2(x: int) = a1(x: x) && abs(k2(x: x)) >= 0;\na3(x: int) = a2(x: x) && k2(x: x) > 1;\n\
+         a4(x: int) = a2(x: x) && abs(k2(x: x)) < 0;",
+    ];
+    let (mut nowhere, mut everywhere) = (0, 0);
+    for src in units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        // In the unit's order and in the reverse, so that a caller is asked before its callee.
+        for order in [
+            (0..fs.len()).collect::<Vec<_>>(),
+            (0..fs.len()).rev().collect(),
+        ] {
+            let mut scoped = Scoped::new(&lets);
+            let mut extending = Extending::new();
+            for i in order {
+                let (name, ps, body) = fs[i];
+                let Some(r) = scoped.relation(body, ps, ps, true) else {
+                    continue;
+                };
+                let a = extending.defined(&r, &|n| scoped.def(n));
+                let w = scoped.written(&r);
+                let with = |f: Formula| Formula::and(vec![w.defined(), f]);
+                assert_eq!(
+                    a.holds,
+                    decide(&with(w.body.clone())),
+                    "`{name}` can hold in\n{src}\n{w}"
+                );
+                assert_eq!(
+                    a.fails,
+                    decide(&with(Formula::negate(w.body.clone()))),
+                    "`{name}` can fail in\n{src}\n{w}"
+                );
+                nowhere += usize::from(a.holds == Ok(false));
+                everywhere += usize::from(a.fails == Ok(false));
+            }
+        }
+    }
+    // Both shortcuts' other sides are met: relations that hold nowhere and that hold everywhere.
+    assert!(nowhere >= 2, "{nowhere} hold nowhere");
+    assert!(everywhere >= 2, "{everywhere} hold everywhere");
+}
+
+#[test]
+fn the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale() {
+    // `p{i}(x) = p{i-1}(x: x) && h{i}(x: x) > 0` with `h{i}(x) = h{i-1}(x: x) div 2 + 1`: each
+    // link's new constraint reaches the i definitions of `h{i}`. When each link read them all,
+    // 74.6 times the instructions and 66.8 times the bytes for 8 times the links (25 to 200);
+    // 8.1 and 8.0 times when it reads past those its callee's point gives a value.
+    questions_scale(
+        "a chain of tests over a chain of halvings",
+        25,
+        "h0(x: int) = x;\np0(x: int) = x > 0;\n",
+        |i| {
+            format!(
+                "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && h{i}(x: x) > 0;\n",
+                i - 1,
+                i - 1
+            )
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_of_tests_over_mixed_definitions_scale() {
+    // As above, the definitions by turns a quotient, a remainder plus the input, a minimum and
+    // an absolute value less a quotient: 103.2 times the instructions and 98.5 times the bytes
+    // from 25 to 200 links when each link read the chain, about 8.2 times now.
+    questions_scale(
+        "a chain of tests over mixed definitions",
+        25,
+        "h0(x: int) = x;\np0(x: int) = x > 0;\n",
+        |i| {
+            let h = i - 1;
+            let op = match i % 4 {
+                0 => format!("h{h}(x: x) div 2"),
+                1 => format!("h{h}(x: x) mod 7 + x"),
+                2 => format!("min(h{h}(x: x), {i}) + 1"),
+                _ => format!("abs(h{h}(x: x)) - x div 3"),
+            };
+            format!("h{i}(x: int) = {op};\np{i}(x: int) = p{h}(x: x) && h{i}(x: x) > 0 - {i};\n")
+        },
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_of_tests_holding_everywhere_scale() {
+    // A root and links that hold everywhere, `p{i}(x) = p{i-1}(x: x) && abs(h{i}(x: x)) >= 0`:
+    // each link's negation is decided from the definitions its link added, which never hold
+    // with it. 85.4 times the instructions and 73.0 times the bytes from 25 to 200 links when
+    // it read the chain (81.1 and 62.7 times with only the side that holds reading past the
+    // point), 7.7 times now.
+    questions_scale(
+        "a chain of tests holding everywhere over a chain of halvings",
+        25,
+        "h0(x: int) = x;\np0(x: int) = x > 0 || x <= 0;\n",
+        |i| {
+            format!(
+                "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && abs(h{i}(x: x)) >= 0;\n",
+                i - 1,
+                i - 1
+            )
+        },
+    );
+}

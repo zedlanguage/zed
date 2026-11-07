@@ -71,7 +71,9 @@ impl Extending {
     ///   every other part, or where the other parts hold with the atoms the part's point gives
     ///   a value fixed to it and their other atoms free; otherwise it is decided whole;
     /// - its negation holds somewhere when the part's negation does; when the part holds
-    ///   everywhere, it is the negation of the other parts that is decided; otherwise it is
+    ///   everywhere, it is the negation of the other parts that is decided: first with only the
+    ///   definitions they reach past the part's point, which settles it when that never holds
+    ///   or holds at a point extending the part's, then with all they reach; otherwise it is
     ///   decided whole.
     ///
     /// The definitions of the other parts may be left out of the part's questions, and those of
@@ -81,10 +83,11 @@ impl Extending {
     /// does, or holds at a point, holds there. The answer of a conjunction does not depend on
     /// the order in which conjunctions are asked, since its kept part is always decided first,
     /// the same way. The time is that of the parts beside each kept part and the definitions
-    /// they reach, for a chain of conjunctions each extending the one before whose point meets
-    /// the next part and whose negation holds or never holds; a conjunction decided whole costs
-    /// what [`decide`] costs on it. Every formula asked of one `Extending` is read with the same
-    /// `def`, since the answers it remembers are those under it.
+    /// they reach past the part's point (LOAD-chain-defs), for a chain of conjunctions each
+    /// extending the one before whose point meets the next part and whose negation holds or
+    /// never holds; a conjunction decided whole costs what [`decide`] costs on it. Every formula
+    /// asked of one `Extending` is read with the same `def`, since the answers it remembers are
+    /// those under it.
     // Complexity tradeoff: a conjunction whose new parts exclude the point found for the part it
     // extends, or whose part's question was refused, is decided whole, in time of the whole
     // conjunction and not of its new parts; the answer is [`decide`]'s. Why: deciding integer
@@ -97,6 +100,11 @@ impl Extending {
     // solution needs an incremental integer procedure: a simplex kept from the callee, with
     // its basis, to which the new rows are added, and the branch of an integer search redone
     // only where the new rows cut it.
+    // The same holds for a negation the part's point and the new definitions do not settle
+    // (decided with every definition it reaches), and for a question with no kept part (`t(x) =
+    // h(x: x) > 0`, decided whole with every definition it reaches, so separate tests over the
+    // links of one chain of n definitions read O(n²) definitions; open, COMPLEXITY.md row
+    // LOAD-chain-defs).
     pub fn defined(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Answers {
         // The chain of kept conjunctions from `f` down to the first one known or with no kept
         // part, each decided after the one it holds: an explicit stack, since the chain is as
@@ -141,21 +149,44 @@ impl Extending {
         // printed before.
         let others = kids.iter().enumerate().filter(|&(i, _)| i != at);
         let rest = Formula::and(others.map(|(_, h)| h.clone()).collect());
-        let d = reached(&rest, def);
+        // The definitions the other parts reach past the auxiliary variables the part's point
+        // gives a value: those it gives hold there with their own definitions, so a point that
+        // extends it needs values for the new ones alone, and a link whose new constraint reads
+        // a long chain of definitions (`h{i}(x: x) > 0`, `h{i} = h{i-1} div 2`) reads only the
+        // definitions its link added, not the chain again (LOAD-chain-defs).
+        let new = |f: &Formula, m: &Point| with(&reached_past(f, def, m), f.clone());
         let (holds, point) = match (&part.answers.holds, &part.point) {
             (Ok(false), _) => (Ok(false), None),
-            (Ok(true), Some(m)) => match met(m, &with(&d, rest.clone())) {
+            (Ok(true), Some(m)) => match met(m, &new(&rest, m)) {
                 Some(p) => (Ok(true), Some(p)),
                 None => holds_whole(g, def),
             },
             _ => holds_whole(g, def),
         };
+        // The part holds everywhere, so the whole fails where the other parts do. Their
+        // negation with only the new definitions holds where the full one does (the others'
+        // variables left free), so it never holding settles it; one point of it that extends
+        // the part's point satisfies every definition, so that settles it too; otherwise it is
+        // decided with all the definitions it reaches.
         let fails = match part.answers.fails {
             Ok(true) => Ok(true),
-            Ok(false) => match decide(&with(&d, Formula::negate(rest))) {
-                Ok(b) => Ok(b),
-                Err(_) => fails_whole(g, def),
-            },
+            Ok(false) => {
+                let not = Formula::negate(rest);
+                let short = part.point.as_ref().and_then(|m| {
+                    let f = new(&not, m);
+                    match decide(&f) {
+                        Ok(false) => Some(false),
+                        _ => met(m, &f).map(|_| true),
+                    }
+                });
+                match short {
+                    Some(b) => Ok(b),
+                    None => match decide(&with(&reached(&not, def), not)) {
+                        Ok(b) => Ok(b),
+                        Err(_) => fails_whole(g, def),
+                    },
+                }
+            }
             Err(_) => fails_whole(g, def),
         };
         Known {
@@ -195,11 +226,18 @@ fn auxes(a: &Atom) -> impl Iterator<Item = u32> {
 /// The definitions `f` reaches: those of its auxiliary variables, and of theirs. Time of `f`
 /// and of the definitions, each read once.
 fn reached(f: &Formula, def: &dyn Fn(u32) -> Formula) -> Vec<Formula> {
+    reached_past(f, def, &Point::new())
+}
+
+/// The definitions `f` reaches through the auxiliary variables `m` gives no value: those of
+/// its auxiliary variables not in `m`, and of theirs. Time of `f` and of the definitions read,
+/// each read once, and O(log n) for each variable looked up in `m`.
+fn reached_past(f: &Formula, def: &dyn Fn(u32) -> Formula, m: &Point) -> Vec<Formula> {
     let mut seen: HashSet<u32> = HashSet::new();
     let mut todo: Vec<u32> = f.atoms().iter().flat_map(auxes).collect();
     let mut out = Vec::new();
     while let Some(n) = todo.pop() {
-        if !seen.insert(n) {
+        if !seen.insert(n) || m.contains_key(&Atom::Aux(n)) {
             continue;
         }
         let d = def(n);
