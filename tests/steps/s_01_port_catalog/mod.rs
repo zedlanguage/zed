@@ -277,6 +277,60 @@ fn check_zed_takes_missing_plan_rows_and_zed_texts_in_zed0_only() {
     }
 }
 
+/// A lambda's parameters are in scope in its body only: two lambdas in one text may reuse a
+/// name, an inner lambda may shadow an outer one and sees the outer one's other parameters,
+/// and a parameter read after its lambda closes is no parameter.
+#[test]
+fn check_zed_scopes_lambda_parameters_to_their_lambda() {
+    let dir = spec_dir("catalog_zed_scope");
+    let spec = Spec::open(&dir.root()).expect("the test spec");
+    let words = WordTable::read(&spec.design).expect("its table");
+    let rows = HashSet::new();
+    let ok = [
+        "`xs.map(y -> y + 1).where(y -> y > 0)`",
+        "`xs.map(y -> ys.map(y -> y + 1))`",
+        "`xs.map(y -> ys.map(w -> w + y))`",
+        "`xs.map(y -> ys.map(y -> y).count + y)`",
+        "`xs.foldr((y, w) -> f(w, y), z)`",
+        "`xs.map(y -> y)`, `ys.map(y -> y)`",
+    ];
+    for cell in ok {
+        assert_eq!(check_zed(cell, &spec, &words, &rows), None, "{cell}");
+    }
+    let bad = [
+        ("`xs.map(y -> y).where(w -> w > y)`", "names `y`"),
+        ("`xs.map(y -> ys.map(w -> w).count + w)`", "names `w`"),
+        ("`xs.foldr((y, w) -> f(w, y), z) + w`", "names `w`"),
+        ("`xs.map(y -> y)`, `y`", "names `y`"),
+    ];
+    for (cell, want) in bad {
+        let p = check_zed(cell, &spec, &words, &rows).unwrap_or_default();
+        assert!(p.contains(want), "{cell:?}: {p:?} lacks {want:?}");
+    }
+}
+
+/// The scope of lambda parameters costs no walk up a name's ancestors: lambdas nested `n` deep,
+/// whose innermost body reads the outermost lambda's parameter and the innermost one's `n`
+/// times each, are checked in time linear in `n`.
+#[test]
+fn check_zed_scales_linearly_with_lambda_nesting() {
+    let dir = spec_dir("catalog_zed_nesting");
+    let spec = Spec::open(&dir.root()).expect("the test spec");
+    let words = WordTable::read(&spec.design).expect("its table");
+    let rows = HashSet::new();
+    let texts = inputs(1000, |n| {
+        format!(
+            "`xs.map(w -> {}{}w{})`",
+            "ys.map(y -> ".repeat(n),
+            "w + y + ".repeat(n),
+            ")".repeat(n)
+        )
+    });
+    check("catalog check of n nested lambdas", 1000, |n| {
+        assert_eq!(check_zed(&texts[&n], &spec, &words, &rows), None);
+    });
+}
+
 /// The words-and-arguments check is linear in the text: a chain of `n` calls, each with a lambda
 /// and a named argument.
 #[test]
@@ -446,4 +500,62 @@ fn scan_scales_linearly_with_the_index() {
         let found = scan(&built[&n], &catalog::SOURCES, &o).expect("a well-formed index");
         assert_eq!(found.len(), n / 2);
     });
+}
+
+/// The floor quotient and remainder of `a` by `b` (`b` not 0), the remainder having the sign
+/// of `b`, as `num_integer`'s `div_floor` and `mod_floor` give them.
+fn floor_div_mod(a: i64, b: i64) -> (i64, i64) {
+    let (q, r) = (a / b, a % b);
+    if r != 0 && (r < 0) != (b < 0) {
+        (q - 1, r + b)
+    } else {
+        (q, r)
+    }
+}
+
+/// The catalog's Zed texts for the floor and ceiling quotients and the floor remainder, which
+/// the compiler's `Num` reaches with a negative divisor (`x * -3` in `times_pre`), give the
+/// Rust routine's value for every sign of the dividend and of the divisor, where Zed's `div`
+/// and `mod` are Euclidean.
+#[test]
+fn the_catalog_floor_texts_hold_for_a_negative_divisor() {
+    let root = zed_tools::impl_root();
+    let text = std::fs::read_to_string(format!("{root}/zed/compiler/CATALOG.md"))
+        .expect("zed/compiler/CATALOG.md");
+    let (_, rows, _) = read_catalog(&text).expect("its table");
+    let zed_of = |routine: &str| {
+        let r = rows.iter().find(|r| r.routine == routine);
+        let cell = r.map_or("", |r| r.zed.as_str());
+        let code = cell.strip_prefix('`').and_then(|c| c.strip_suffix('`'));
+        code.unwrap_or_else(|| panic!("{routine}: {cell:?} is no Zed text"))
+            .to_string()
+    };
+    let floor = |(a, b): (i64, i64), which: usize| {
+        let (q, r) = floor_div_mod(a, b);
+        [q, r, -floor_div_mod(-a, b).0][which]
+    };
+    let cases = [
+        ("num_bigint::bigint::<BigInt as Integer>::div_floor", 0),
+        ("num_integer::<i128 as Integer>::div_floor", 0),
+        ("num_bigint::bigint::<BigInt as Integer>::mod_floor", 1),
+        ("num_integer::<i128 as Integer>::mod_floor", 1),
+        ("num_bigint::bigint::<BigInt as Integer>::div_ceil", 2),
+    ];
+    for (routine, which) in cases {
+        let zed = zed_of(routine);
+        for a in [-7, -6, -1, 0, 1, 6, 7] {
+            for b in [-3, -2, -1, 1, 2, 3] {
+                let got = zed_tests::step_helpers::l01_16_elaboration::value(
+                    &format!("a = {a};\nb = {b};\nx = {zed};\n"),
+                    "x",
+                );
+                let want = floor((a, b), which);
+                assert_eq!(
+                    got,
+                    want.to_string(),
+                    "{routine} at a = {a}, b = {b}: {zed}"
+                );
+            }
+        }
+    }
 }

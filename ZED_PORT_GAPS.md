@@ -47,7 +47,7 @@ is inferred. Everything in the class "workaround" that names L6.13 falls with it
 zedc, zed-kernel and zed-native outside unit tests, each with its Zed text, the plan row that
 provides it, or `missing` (398 at PORT-catalog, 333 after PORT-catalog-audit, 2026-11-07,
 which wrote out as Zed texts the signed truncating division and remainder, the wrapping and
-saturating arithmetic, the widening conversions and others, each text exact). The missing ones
+saturating arithmetic, the widening conversions and others, each text exact; 332 after CATALOG-followups, which wrote out `BigInt::div_ceil` and the floor division and remainder for a divisor of either sign). The missing ones
 are gaps of the library, not of the language (inferred from their kinds, not checked row by
 row). The largest groups: methods of `Option` and `Result`, checked arithmetic and narrowing
 conversions (`checked_*`, `TryFrom`), `Ordering` and `cmp`, hashing and formatting, `Cell`,

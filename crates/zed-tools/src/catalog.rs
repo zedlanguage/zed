@@ -752,11 +752,13 @@ fn args<'t>(
 }
 
 /// The problem with the words of the Zed text `t`, parsed as `nodes` from `toks` with root
-/// `root`, if any: every name it reads is an operand, a parameter of one of its lambdas or a
-/// word that `words` or the prelude defines, and every word it calls or reads as a member is
+/// `root`, if any: every name it reads is an operand, a parameter of a lambda the name lies
+/// in, or a word that `words` or the prelude defines, and every word it calls or reads as a member is
 /// one of [`SIGS`], given the arguments listed there.
-// Complexity tradeoff: linear in the text; each name is looked up in a hash set and in the
-// fixed tables `SIGS` and `zedc::resolve::WORDS`, whose sizes do not depend on the catalog.
+// Complexity tradeoff: linear in the text; one walk binds each lambda parameter on entering
+// its lambda and unbinds it on leaving, so a name is checked against the parameters in scope
+// by one hash lookup, with no walk up its ancestors, and against the fixed tables `SIGS` and
+// `zedc::resolve::WORDS`, whose sizes do not depend on the catalog.
 fn check_words(
     spec: &Spec,
     words: &WordTable,
@@ -768,13 +770,9 @@ fn check_words(
     let rule_of = |n: usize| spec.syntactic.rules[nodes[n].rule].name.as_str();
     let name_of = |n: usize| toks.0[nodes[n].start].text.as_str();
     let mut parent = vec![usize::MAX; nodes.len()];
-    let mut order = Vec::new();
-    let mut stack = vec![root];
-    while let Some(n) = stack.pop() {
-        order.push(n);
-        for &k in &nodes[n].kids {
+    for (n, node) in nodes.iter().enumerate() {
+        for &k in &node.kids {
             parent[k] = n;
-            stack.push(k);
         }
     }
     let defined = |w: &str| {
@@ -782,11 +780,19 @@ fn check_words(
             || words.layer_of(w).is_some()
             || words.layer_of(&format!(".{w}")).is_some()
     };
-    let binders: HashSet<&str> = order
-        .iter()
-        .filter(|&&n| rule_of(n) == "Name" && matches!(rule_of(parent[n]), "Lambda" | "Param"))
-        .map(|&n| name_of(n))
-        .collect();
+    // The name `n` binds a parameter: one written before a lambda's arrow (every child of
+    // the lambda but its body, the last), or the name of a parameter or tuple target in a
+    // parameter list, not its type or default.
+    let binds = |n: usize| {
+        let q = parent[n];
+        q != usize::MAX
+            && match rule_of(q) {
+                "Lambda" => nodes[q].kids.last() != Some(&n),
+                "Param" | "PositionalParam" => nodes[q].kids.first() == Some(&n),
+                "Target" => true,
+                _ => false,
+            }
+    };
     // The node `n` heads the postfix `parent[n]` whose suffix is a call: that call's suffix.
     let called = |n: usize| {
         let q = *parent.get(n)?;
@@ -796,13 +802,38 @@ fn check_words(
             .filter(|&c| rule_of(c) == "CallSuffix")
     };
     let mut calls = Vec::new();
-    for &n in &order {
+    // A depth-first walk in text order. `scope` counts the parameters of the lambdas open at
+    // the node, `bound` lists them in the order they were bound, and `marks` holds the length
+    // of `bound` when each open lambda was entered, so leaving a lambda unbinds its own.
+    let mut scope: HashMap<&str, usize> = HashMap::new();
+    let (mut bound, mut marks) = (Vec::new(), Vec::new());
+    let mut stack = vec![(root, false)];
+    while let Some((n, leaving)) = stack.pop() {
+        if leaving {
+            let mark = marks.pop().unwrap_or(0);
+            for w in bound.drain(mark..) {
+                if let Some(c) = scope.get_mut(w) {
+                    *c -= 1;
+                }
+            }
+            continue;
+        }
+        if rule_of(n) == "Lambda" {
+            marks.push(bound.len());
+            stack.push((n, true));
+        }
+        stack.extend(nodes[n].kids.iter().rev().map(|&k| (k, false)));
         if rule_of(n) != "Name" || parent[n] == usize::MAX {
             continue;
         }
         let (q, w) = (parent[n], name_of(n));
+        if binds(n) {
+            *scope.entry(w).or_insert(0) += 1;
+            bound.push(w);
+            continue;
+        }
         match rule_of(q) {
-            "Lambda" | "Param" | "NamedArg" => {}
+            "NamedArg" => {}
             "MemberSuffix" => {
                 // `recv.w(…)` or the member read `recv.w`.
                 let post = parent[q];
@@ -823,7 +854,7 @@ fn check_words(
                     keys,
                 });
             }
-            _ if OPERANDS.contains(&w) || binders.contains(w) => {}
+            _ if OPERANDS.contains(&w) || scope.get(w).is_some_and(|&c| c > 0) => {}
             _ if !defined(w) => {
                 return Some(format!(
                     "{} names `{w}`, which is no operand, parameter or word",

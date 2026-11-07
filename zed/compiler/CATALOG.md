@@ -144,7 +144,7 @@ Counts: 1495 routines, 57704 uses.
 | `alloc::string::<String as Deref>::deref` | 5 | 2 | `crates/zedc-check/src/check/walk.rs:2020` | `x` |
 | `alloc::string::<String as Extend<char>>::extend` | 2 | 2 | `crates/zed-kernel/src/num/fast.rs:1208` | missing |
 | `alloc::string::<String as From<&str>>::from` | 4 | 3 | `crates/zed-native/src/tables.rs:311` | `x` |
-| `alloc::string::<String as Index<I>>::index` | 6 | 3 | `crates/zedc-check/src/check/read.rs:61` | `fromUtf8(utf8(s).drop(a).take(b - a))` |
+| `alloc::string::<String as Index<I>>::index` | 6 | 3 | `crates/zedc-check/src/check/read.rs:61` | `fromUtf8(utf8(s).slice(a..<b))` |
 | `alloc::string::<String as Ord>::cmp` | 4 | 4 | `crates/zed-kernel/src/types/rec.rs:998` | missing |
 | `alloc::string::<String as PartialEq<&str>>::eq` | 27 | 9 | `crates/zed-kernel/src/num.rs:1536` | `a == b` |
 | `alloc::string::<T as ToString>::to_string` | 181 | 54 | `crates/zed-kernel/src/eval.rs:891` | `"${x}"` |
@@ -1145,13 +1145,13 @@ Counts: 1495 routines, 57704 uses.
 | `libc::munmap` | 1 | 1 | `crates/zed-native/src/lib.rs:436` | row S.4 |
 | `num_bigint::bigint::<&BigInt as Neg>::neg` | 10 | 3 | `crates/zed-kernel/src/num.rs:608` | `-a` |
 | `num_bigint::bigint::<BigInt as Clone>::clone` | 32 | 2 | `crates/zed-kernel/src/num.rs:166` | `x` |
-| `num_bigint::bigint::<BigInt as Integer>::div_ceil` | 2 | 1 | `crates/zedc-int/src/int.rs:549` | missing |
-| `num_bigint::bigint::<BigInt as Integer>::div_floor` | 4 | 1 | `crates/zedc-int/src/int.rs:183` | `a div b` |
+| `num_bigint::bigint::<BigInt as Integer>::div_ceil` | 2 | 1 | `crates/zedc-int/src/int.rs:549` | `if b < 0 { -(a div (-b)) } else { -((-a) div b) }` |
+| `num_bigint::bigint::<BigInt as Integer>::div_floor` | 4 | 1 | `crates/zedc-int/src/int.rs:183` | `if b < 0 { (-a) div (-b) } else { a div b }` |
 | `num_bigint::bigint::<BigInt as Integer>::gcd` | 5 | 1 | `crates/zedc-int/src/int.rs:171` | row STD-num |
 | `num_bigint::bigint::<BigInt as Integer>::is_even` | 1 | 1 | `crates/zed-kernel/src/num.rs:244` | `a mod 2 == 0` |
 | `num_bigint::bigint::<BigInt as Integer>::is_multiple_of` | 1 | 1 | `crates/zedc-int/src/int.rs:543` | `a mod b == 0` |
 | `num_bigint::bigint::<BigInt as Integer>::is_odd` | 2 | 1 | `crates/zedc-int/src/int.rs:141` | `a mod 2 == 1` |
-| `num_bigint::bigint::<BigInt as Integer>::mod_floor` | 5 | 1 | `crates/zedc-int/src/int.rs:194` | `a mod b` |
+| `num_bigint::bigint::<BigInt as Integer>::mod_floor` | 5 | 1 | `crates/zedc-int/src/int.rs:194` | `if b < 0 { -((-a) mod (-b)) } else { a mod b }` |
 | `num_bigint::bigint::<BigInt as Neg>::neg` | 10 | 6 | `crates/zed-kernel/src/eval.rs:2199` | `-a` |
 | `num_bigint::bigint::<BigInt as One>::is_one` | 11 | 2 | `crates/zed-kernel/src/num.rs:61` | `a == 1` |
 | `num_bigint::bigint::<BigInt as One>::one` | 12 | 3 | `crates/zed-kernel/src/bits.rs:252` | `1` |
@@ -1329,9 +1329,9 @@ Counts: 1495 routines, 57704 uses.
 | `num_bigint::biguint::subtraction::<BigUint as SubAssign<&BigUint>>::sub_assign` | 9 | 2 | `crates/zed-kernel/src/num/fast.rs:829` | `a - b` |
 | `num_bigint::biguint::subtraction::<BigUint as SubAssign<u32>>::sub_assign` | 6 | 2 | `crates/zed-kernel/src/num/fast.rs:830` | `a - b` |
 | `num_bigint::biguint::subtraction::<BigUint as SubAssign<u8>>::sub_assign` | 6 | 1 | `crates/zedc-presburger/src/presburger/deep/canon.rs:370` | `a - b` |
-| `num_integer::<i128 as Integer>::div_floor` | 1 | 1 | `crates/zedc-int/src/int.rs:2216` | `a div b` |
+| `num_integer::<i128 as Integer>::div_floor` | 1 | 1 | `crates/zedc-int/src/int.rs:2216` | `if b < 0 { (-a) div (-b) } else { a div b }` |
 | `num_integer::<i128 as Integer>::gcd` | 1 | 1 | `crates/zedc-int/src/int.rs:2304` | row STD-num |
-| `num_integer::<i128 as Integer>::mod_floor` | 1 | 1 | `crates/zedc-int/src/int.rs:2266` | `a mod b` |
+| `num_integer::<i128 as Integer>::mod_floor` | 1 | 1 | `crates/zedc-int/src/int.rs:2266` | `if b < 0 { -((-a) mod (-b)) } else { a mod b }` |
 | `num_traits::cast::ToPrimitive::to_usize` | 3 | 3 | `crates/zed-kernel/src/num.rs:1350` | missing |
 | `object::read::any::<File<'data, R> as Object<'data>>::build_id` | 1 | 1 | `crates/zed-native/src/link.rs:778` | missing |
 | `object::read::any::<Section<'data, 'file, R> as ObjectSection<'data>>::data` | 2 | 1 | `crates/zed-native/src/link.rs:346` | row S.4 |

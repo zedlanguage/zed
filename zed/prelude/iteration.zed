@@ -20,7 +20,7 @@
 put(positional xs, positional i, positional x) = xs.take(i) ++ [x] ++ xs.drop(i + 1);
 
 dependencyGraph(positional reads) =
-  for u -> _ in reads { (for v -> rs in reads { rs.contains(u) }).keys };
+  for u -> _ in reads { reads.where(rs -> rs.any(w -> w == u))::domain };
 
 // ---- The weak topological order [Bourdoncle 1993, figure 4] ------------------
 // The depth-first traversal starts from the vertices in the order `by` and
@@ -177,7 +177,7 @@ distinct(positional sys, positional by, positional i) =
 // Two cells with one key are refused: no order of the traversal tells them
 // apart, and the one they were numbered in is where they were written.
 solve(positional sys) = {
-  by = (for v -> _ in sys.reads { true }).keys.sort(asc v -> sys.key(v));
+  by = sys.reads::domain.sort(asc v -> sys.key(v));
   succ = dependencyGraph(sys.reads).map(s -> s.sort(asc w -> sys.key(w)));
   if !distinct(sys, by, 0) { #sameKey }
   else {
