@@ -5119,10 +5119,14 @@ impl<'m, 't> Walk<'m, 't> {
         // 3, those are all the other ranges, the same cases as cutting at every start (in the
         // five shape tests every box of `x` lies within the level-by-level box, 17 of 60
         // strictly); with more, a hole only a farther range's start cuts out is lost, and
-        // the box keeps those points (sound, inexact). Why: cutting at every other range's
-        // starts makes `L * S` cases for `L` ranges and `S` starts, `2k^2 + 3k + 1` for the
-        // chain of `k` guards of `spread_remainder_chain`; cutting at the neighbors makes at
-        // most `C + 2S`, `5k + 1` there. Tests:
+        // the box keeps those points (sound, inexact): at moduli 5 and 7, 2 of 120 shape boxes
+        // are 1 point wider than level by level and 1 differs both ways, and the boxes hold
+        // 0.2% and 0.6% more points than cut at every range. Meeting the box with the union of
+        // the pieces does not help: a range whose summary is one line has one piece over the
+        // whole domain. Why: cutting at every other range's starts makes `L * S` cases for `L`
+        // ranges and `S` starts, `2k^2 + 3k + 1` for the chain of `k` guards of
+        // `spread_remainder_chain`; cutting at the neighbors makes at most `C + 2S`, `5k + 1`
+        // there. Tests:
         // `l01_25_preimage_catalog::s22::remainder_cases_cut_at_their_neighbors_*`.
         // COMPLEXITY.md rows S22-linear-rem and S22-case-cuts. A complete solution keeps the
         // congruence in the solver's projection of each case instead of its hull.

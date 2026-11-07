@@ -2726,6 +2726,87 @@ fn remainder_cases_cut_at_their_neighbors_keep_the_holes() {
     });
 }
 
+/// The boxes of `x` at a modulus other than 3 that cutting at the neighbors leaves wider than
+/// the level-by-level translation, or wider at some points and narrower at others, as
+/// `(modulus, shape, seed, k, box, level-by-level box)`: a hole that only a farther range's
+/// start cuts out stays filled (COMPLEXITY.md S22-case-cuts).
+const FARTHER_HOLES: [(i64, usize, u64, usize, Boxes, Boxes); 3] = [
+    (
+        5,
+        4,
+        3,
+        5,
+        &[(-58, -58), (-56, -56), (-54, 58), (60, 60)],
+        &[(-58, -58), (-56, -56), (-54, -4), (-2, 58), (60, 60)],
+    ),
+    (
+        7,
+        4,
+        3,
+        2,
+        &[(-60, -60), (-58, 0), (2, 50), (58, 58)],
+        &[(-60, -60), (-58, -4), (-2, 50), (58, 58)],
+    ),
+    (
+        7,
+        4,
+        3,
+        5,
+        &[(-60, -60), (-58, -58), (-54, 52), (56, 58), (60, 60)],
+        &[
+            (-60, -60),
+            (-58, -58),
+            (-54, -4),
+            (-2, 52),
+            (56, 58),
+            (60, 60),
+        ],
+    ),
+];
+
+/// COMPLEXITY.md S22-case-cuts: the five shapes of [`REMAINDER_SHAPES`] on the chains of seeds
+/// 1 to 3 at k = 1, 2, 5, 13 of modulus `m`, over `x` and `y` in `[-60, 60]`: every box agrees
+/// with the interpreter, the boxes of [`FARTHER_HOLES`] are as recorded, and the boxes of `x`
+/// hold `points` points in all. Measured when this was written: at modulus 5, 6951 points,
+/// against 7030 level by level and 6936 cut at every range's starts; at modulus 7, 6906
+/// against 6951 and 6864. Level by level, a box is wider than cut at the neighbors only in
+/// [`FARTHER_HOLES`]. A change that loses more holes raises `points`.
+fn boxes_at_modulus(m: i64, points: usize) {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(60), Demand::Bool(true));
+        let mut total = 0;
+        for (s, shape) in REMAINDER_SHAPES.iter().enumerate() {
+            for seed in 1..=3 {
+                for k in [1, 2, 5, 13] {
+                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
+                    let p = preimage(&t, &ds, &d);
+                    check(&t, &ds, &d, &p, (-60, 60));
+                    let x = &p.domains["x"];
+                    total += (-60..=60).filter(|&v| x.contains(v)).count();
+                    let held = FARTHER_HOLES.iter().find(|(fm, fs, fseed, fk, _, _)| {
+                        (*fm, *fs, *fseed, *fk) == (m, s, seed, k)
+                    });
+                    if let Some((_, _, _, _, want, level)) = held {
+                        assert_eq!(*x, pieces(want), "{shape}, seed {seed}, k = {k}: {t}");
+                        assert!(!pieces(want).is_subset(&pieces(level)));
+                    }
+                }
+            }
+        }
+        assert_eq!(total, points, "points of the boxes of `x` at modulus {m}");
+    });
+}
+
+#[test]
+fn remainder_cases_cut_at_their_neighbors_at_modulus_5() {
+    boxes_at_modulus(5, 6951);
+}
+
+#[test]
+fn remainder_cases_cut_at_their_neighbors_at_modulus_7() {
+    boxes_at_modulus(7, 6906);
+}
+
 /// The chain of `k` guards `x mod 1024 != r(j)`, else `max(t, c(j))`, the `r(j)` distinct and
 /// the `c(j)` spread over `[-100, -1]`: in class `r(j)` the chain is `max(x, c(j))`, two
 /// pieces, and `x` in every other class, so `2k + 1` ranges of classes each with a start no
