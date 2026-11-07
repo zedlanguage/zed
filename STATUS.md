@@ -1480,10 +1480,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DISJ-dpll | impl attempt 1 | 2026-11-07 06:25 | Jacobi rounds were O(n) on a chain of removals (cascade 9..129 rounds, 4.3 s at n=128, test fails 89.1x bytes); replaced by forward/backward Gauss-Seidel passes |
+| CHAIN-deep-atom | impl attempt 1 | 2026-11-07 04:42 | start: recycled chain-bundle as wt/chain-deep-atom at c11e8db0, restacked on central 1f787929; load 15.99 18.62 19.17 |
+| DISJ-dpll | impl attempt 1 | 2026-11-07 06:25 | hub family r=4/8/32: base f60e2220 77 ms/390 ms/21.9 s, branch b3984216 26 ms/111 ms/1.08 s (7/15/31 passes), same hull; queued DISJ-hub-passes; ready b3984216  |
 | LIST-xor-finite | impl attempt 1 | 2026-11-07 06:40 | started: worktree wt/list-xor-finite from f60e2220 |
-| LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | identity classes (union-find) restore shared reads for diamonds; 30/34 pass; drift probes still quadratic / load 28.05 20.26 18.52 |
-| NARROW-lazy-settle | impl attempt 1 | 2026-11-07 06:04 | fix 2 (lazy scope projects one star per changed class); wide seed sweep 0..4000 both generators |
+| LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | rebased onto origin/main (crate split, LOAD-chain-sep): conflicts resolved, fmt+clippy clean; running groups (load 18.43) |
+| NARROW-lazy-settle | impl attempt 1 | 2026-11-07 06:04 | ready 35ec8c01 on wt/narrow-lazy-settle; groups ^(l01_25/l01_29/l01_38/l01_39) 315 pieces pass, unit+doc pass; queued NARROW-eager-star-redo (seed 3011, costs) |
+| PA-let-check | impl attempt 1 | 2026-11-07 07:51 | checker binds a tested let name with its value's summary (made once per binder, Arms.summaries) and its input; m = n + 3; if m >= 3 { popCount(n) } now accepted |
+| PA-let-stack | impl attempt 1 | 2026-11-07 07:51 | reproduced: arms of a 100,000-binding block on a 2 MiB thread SIGSEGV; gdb backtrace shows ~667 frames of product::walk (leaf in Scope::assume->narrow->atom_nam |
+| S22-hole-summaries | impl attempt 1 | 2026-11-07 07:27 | fix 1 (Pa::to_treap over the domain's hull) + fix 2 (pa_select gives domain holes to the stretch before, joins one arm's stretches): spread chain [-100,99] case |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
