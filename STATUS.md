@@ -1525,8 +1525,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | ready a86b89ee6c62b57cad0925b69802f7e29c751088: averaged tests, all 75 pieces pass / load 13.94 19.35 22.74 |
-| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | ready at 36708513: 5 of 6 fixed, grid returned, 4 reruns and hull edge case recorded; load 13.50 19.36 22.76 |
+| FLOAT-half-spec | spec attempt 1 | 2026-11-07 13:54 | carried out by the LITERAL-roundtrip-spec:spec#1 agent (running since 13:53), one spec change |
+| FUZZ-neg | impl attempt 1 | 2026-11-05 04:07 | ready 7af2bc05 on wt/fuzz-neg: m0_03 57 pass (doc check on), load 21; old break seed 15 n=5 gives derived but rejected; 500/ring real grammar 0/0 in ~5 s; 3 neg |
+| GROUP-same | impl attempt 1 | 2026-11-05 04:07 | ready ecba8417 on base 22108912: clippy clean, l01_23_subtyping+zed_kernel 75 pieces pass after rebase (load 21-25), doc check passed |
+| HEAP-fresh-dag | impl attempt 1 | 2026-11-05 04:07 | after fix (load 11-18): same port d=10..20 allocates d+2 cells on both paths, machine ~19 us, native ~0.31 ms flat; scaling 2000->16000 levels: machine 8.19x, n |
+| LITERAL-roundtrip-spec | spec attempt 1 | 2026-11-07 13:52 | ready: spec 52ba59555800cdcf9e6486e6d5711f77c6d9e8c2, impl 29c5b9a6b407ddbfcc23bdc05ab133b2a2d6f30d; FLOAT-half-spec folded in; 33 test pieces pass |
+| LOAD-extend-refuses | impl attempt 1 | 2026-11-07 13:11 | negated random test settled at seed 0x5eed1, 10 chains (old code: 5 red), ~9 s; scaling bindings_put_in_place_scale green, control with a quadratic pass in thro |
+| MATHLIB-euclid-gaps | impl attempt 1 | 2026-11-07 13:39 | ready 8cbd716e on 22108912; clippy and fmt clean |
+| ST-holes-many | impl attempt 1 | 2026-11-07 13:25 | negative control: base 2433d52d+b4850062 code, chain ladder test k=320 past 120 s (timeout); new code 168 M to 2,527 M instr (15.0x), 33 M to 398 M bytes (12.0x |
+| T12-Z4 | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/t12-z4 at d2c58958, seeded |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
