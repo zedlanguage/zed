@@ -2849,9 +2849,16 @@ impl Scope {
             // projection (`x, z` in `[w, w + 1]`, `x <= z <= x + 1`, `x != 5`, `z != 6` leave
             // out `w = 5`), and no exact incremental rule for such holes is known here; the
             // holes of one name then leave holes in the others. Trigger: tests that each leave
-            // a hole in another name of such a cycle: TBD_RESIDUAL. Tests that leave holes in
-            // many names of a tree no such cycle passes through are projected by shortest
-            // paths: TBD_LINEAR. COMPLEXITY.md row S25.
+            // a hole in another name of such a cycle, with `if`s joined between them: the band
+            // `10 <= x_i - x_(i+1) <= 11`, `x_i != 10 (k - i) + 5` and rungs
+            // `x_i - x_(i+2) >= 20` read 138 M, 4,115 M and 110,524 M instructions at k = 5, 10
+            // and 20, as on the code before, and 12 M to 28 M at k = 5 to 10 with no hole. Tests
+            // that leave holes in many names of a tree no such cycle passes through are
+            // projected by shortest paths, at a cost in proportion to the names whose potential
+            // each hole lowers ([`Scope::raise`]): about k / 2 a hole on a chain of k names
+            // whose edges have no slack in the potential, quadratic in all, and `m - 1` on an `m`
+            // by `m` grid, `n^1.5` in its `n` names. That cost is open, item ST-holes-moves, and
+            // not approved. COMPLEXITY.md row S25.
             let shortest =
                 !every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t);
             if shortest && blocks.gaps(t) == Some(0) {
@@ -3119,7 +3126,9 @@ impl Scope {
     /// edges added are ([`Scope::repair`]). When that finds a cycle negative with the gaps,
     /// nothing changes, and `x` keeps its tree from shortest paths ([`Scope::sync_gap`]): the
     /// holes of `x` may then leave holes in the other names. A name the potential lacks takes
-    /// the gap alone, with no edge to read. In O(m log n) as [`Scope::repair`].
+    /// the gap alone, with no edge to read. In O((r + their edges) log n) for the `r` names whose
+    /// potential falls, which is every name below `x` on a chain with no slack in the
+    /// potential: open, item ST-holes-moves (COMPLEXITY.md row S25).
     fn raise(&mut self, relation: &Conjuncts, t: BlockId, x: &Arc<str>) {
         let Some(p) = self.names.get(x).filter(|p| !classed(p)) else {
             return;
@@ -4931,11 +4940,12 @@ fn snap_up(ints: &IntervalSet, z: &Int) -> Option<Int> {
     })
 }
 
-/// Whether the integers of `p` are other than one interval with no class: such a name keeps a
+/// Whether the integers of `p` are other than one interval with no class. Such a name keeps a
 /// tree of difference constraints from projection by shortest paths
-/// ([`conjuncts::Blocks::differences_only`]), since its holes may narrow the others past the
-/// intervals' bounds. A class of modulus 0, a single value, counts only where the interval is
-/// that value.
+/// ([`conjuncts::Blocks::differences_only`]) when the potential holds with no gap at it, as
+/// after a projection of every block, which empties the potential; otherwise its holes count
+/// only past that gap ([`Scope::off_paths`]). A class of modulus 0, a single value, counts only
+/// where the interval is that value.
 fn gapped(p: &Product) -> bool {
     let ints = p.ints();
     let plain = match &p.cell.congruence.element {

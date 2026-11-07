@@ -1040,10 +1040,10 @@ fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
     // so that no edge moves a bound, each rung's `if` after an `if` that puts a hole in a name,
     // `x_i != 10 (k - i) + 5`. The arms are taken as the checker takes them
     // (`Scope::assume_case`), since the arm where a rung fails is empty. The arm where the
-    // hole holds projects the tree by shortest paths with the hole left out
-    // (`Scope::lone_hole`), and the join keeps that arm's last projection, whose tree had a
-    // hole and is still read by shortest paths (`Seeds::unsure`). 9.4 times the work and 8.5
-    // times the bytes from k = 40 to 320; on the code before, which projected the tree's
+    // hole holds projects the tree by shortest paths, the gap of the name with the hole held in
+    // the potential (`Scope::raise`), and the join keeps that arm's last projection, whose tree
+    // had a hole and is still read by shortest paths (`Seeds::unsure`). 9.4 times the work and
+    // 8.5 times the bytes from k = 40 to 320; on the code before, which projected the tree's
     // blocks one by one at each test, 62.2 times the bytes (COMPLEXITY.md row S25).
     let p = Premises::new();
     let built: BTreeMap<usize, (Scope, Vec<Term>)> = [40, 320]
@@ -1277,16 +1277,30 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
     assert!(holes > 200, "{holes} steps left a name with holes");
 }
 
-#[test]
-fn a_hole_in_one_name_of_a_tree_of_differences_gives_the_projection_block_by_block() {
-    // Trees of difference constraints, each step a test `x != c` asked both ways on the scope
-    // so far, which then takes the step's own test: one name with a hole of one integer, and
-    // no cycle of weight 0 through it, is projected by shortest paths with the hole left out
-    // (`Scope::lone_hole`). The rest gives holes of two integers, holes in two names, and
-    // cycles of weight 0 from equalities and from two inequalities, which go block by block.
-    let mut r = Rng::new(0x1e4e);
+/// Counts of [`holes_in_trees`]: tests that moved an interval, left a name with holes, left
+/// two names or more with holes, or made the scope empty; pairs of inequalities that made a
+/// cycle of weight 0; tests that joined both arms.
+#[derive(Debug, Default)]
+struct HoleCounts {
+    moved: usize,
+    holes: usize,
+    piled: usize,
+    empty: usize,
+    tied: usize,
+    joined: usize,
+}
+
+/// Trees of difference constraints, each step a test `x != c` asked both ways on the scope so
+/// far and compared with the projection from scratch, then the step's own test. A name whose
+/// holes lie within the gap the potential holds with keeps its tree on shortest paths
+/// (`Scope::raise`); holes of two integers, cycles lighter than the sum of their names' gaps,
+/// and cycles of weight 0 from equalities and from two inequalities go block by block. With
+/// `pile`, the step's own test is the hole test half the time, so that holes pile up in many
+/// names of one tree.
+fn holes_in_trees(seed: u64, pile: bool) -> HoleCounts {
+    let mut r = Rng::new(seed);
     let p = Premises::new();
-    let (mut moved, mut empty, mut holes, mut tied, mut joined) = (0, 0, 0, 0, 0);
+    let mut out = HoleCounts::default();
     for case in 0..150 {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
@@ -1331,9 +1345,22 @@ fn a_hole_in_one_name_of_a_tree_of_differences_gives_the_projection_block_by_blo
                     "case {case} step {step} {holds}: {hole:?} on {:?}",
                     s.relation
                 );
-                moved += usize::from(intervals(&got, &ns) != intervals(&s, &ns));
-                holes += usize::from(ns.iter().any(|n| got.get(n).ints().pieces().len() > 1));
-                empty += usize::from(got.bottom);
+                let holed = ns
+                    .iter()
+                    .filter(|n| got.get(n).ints().pieces().len() > 1)
+                    .count();
+                out.moved += usize::from(intervals(&got, &ns) != intervals(&s, &ns));
+                out.holes += usize::from(holed > 0);
+                out.piled += usize::from(holed > 1);
+                out.empty += usize::from(got.bottom);
+            }
+            if pile && r.below(2) == 0 {
+                let next = s.assume(&asked[0], true, &p);
+                if next.bottom {
+                    break;
+                }
+                s = next;
+                continue;
             }
             let t = match r.below(12) {
                 0 => asked[0].clone(),
@@ -1341,7 +1368,7 @@ fn a_hole_in_one_name_of_a_tree_of_differences_gives_the_projection_block_by_blo
                 // An `if` whose arms join: the join keeps the last projection of the arm that
                 // held, with the hole, and the next steps are projected from it.
                 3 => {
-                    joined += 1;
+                    out.joined += 1;
                     let mut j = s
                         .assume(&asked[1], true, &p)
                         .join(&s.assume(&asked[1], false, &p));
@@ -1353,7 +1380,7 @@ fn a_hole_in_one_name_of_a_tree_of_differences_gives_the_projection_block_by_blo
                     continue;
                 }
                 2 if i != j => {
-                    tied += 1;
+                    out.tied += 1;
                     s = s.assume(&ge(&ns[i], &ns[j], c), true, &p);
                     ge(&ns[j], &ns[i], -c)
                 }
@@ -1367,14 +1394,26 @@ fn a_hole_in_one_name_of_a_tree_of_differences_gives_the_projection_block_by_blo
             s = next;
         }
     }
-    assert!(moved > 5000, "{moved} tests moved an interval");
-    assert!(holes > 2000, "{holes} tests left a name with holes");
-    assert!(empty > 500, "{empty} tests made the scope empty");
-    assert!(
-        tied > 60,
-        "{tied} pairs of inequalities made a cycle of weight 0"
-    );
-    assert!(joined > 80, "{joined} tests joined both arms");
+    out
+}
+
+#[test]
+fn holes_in_a_tree_of_differences_give_the_projection_from_scratch() {
+    let n = holes_in_trees(0x1e4e, false);
+    assert!(n.moved > 5000, "{n:?}");
+    assert!(n.holes > 2000, "{n:?}");
+    assert!(n.empty > 500, "{n:?}");
+    assert!(n.tied > 60, "{n:?}");
+    assert!(n.joined > 80, "{n:?}");
+}
+
+/// As [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], with the holes piled
+/// up in many names of each tree.
+#[test]
+fn holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch() {
+    let n = holes_in_trees(0x9a1e, true);
+    eprintln!("{n:?}");
+    assert!(n.piled > 0, "{n:?}");
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
@@ -1424,4 +1463,108 @@ fn a_star_goes_when_one_step_moves_its_counts() {
         .plus(&Lin::constant(1))));
     assert!(c.star("f").is_none(), "{c}");
     same(&c);
+}
+
+/// The ladder of `if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear` at size
+/// `k`, and its tests: before each rung, a hole `x_i != 10 (k - i) + 5` that holds, so that
+/// the holes pile up, one in each name.
+fn piled_holes(k: usize, p: &Premises) -> (Scope, Vec<(Term, bool)>) {
+    let n = named(k + 1, "x");
+    let base = |i: usize| (10 * (k - i)) as i64;
+    let s = (0..=k).fold(ints(&n), |s, i| {
+        s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, p)
+            .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, p)
+    });
+    let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, p));
+    let mut tests: Vec<(Term, bool)> = Vec::new();
+    for i in 0..k - 1 {
+        tests.push((prim(Prim::Ne, var(&n[i]), int(base(i) + 5)), false));
+        tests.push((ge(&n[i], &n[i + 2], 2), true));
+    }
+    (s, tests)
+}
+
+/// The ladder of [`piled_holes`] at `k`, each hole held and each rung an `if` whose arms join.
+fn piled_holes_run(k: usize, p: &Premises) -> Scope {
+    let (s, tests) = piled_holes(k, p);
+    tests.iter().fold(s, |s, (t, joined)| {
+        if *joined {
+            let mut j = s.assume_case(t, true, p).join(&s.assume_case(t, false, p));
+            j.reduce();
+            j
+        } else {
+            s.assume(t, true, p)
+        }
+    })
+}
+
+/// Holes that pile up in the names of one chain stay on shortest paths, and each name keeps its
+/// hole. Quadratic, open as item ST-holes-moves (COMPLEXITY.md S25): each hole lowers the
+/// potential at its name, and on a chain whose edges have no slack in the potential every name
+/// below it moves too, about k/2 names a hole (`Scope::raise`). Before, block by block, cubic.
+#[test]
+fn holes_piled_in_the_names_of_a_chain_take_quadratic_time() {
+    let p = Premises::new();
+    let s = piled_holes_run(12, &p);
+    assert!(!s.bottom);
+    for i in 0..11 {
+        let base = 10 * (12 - i) as i64;
+        let ints = s.get(&format!("x{i}")).ints().clone();
+        assert!(!ints.contains(base + 5), "x{i}: {ints:?}");
+        assert!(ints.contains(base + 4), "x{i}: {ints:?}");
+    }
+    scaling::check_order("holes piled in the names of a chain", 40, 2, |k| {
+        piled_holes_run(k, &p);
+    });
+}
+
+/// An `m` by `m` grid of names, each in its own ten values, each greater than the names right of
+/// and below it, then a hole in each name in rows; the names, their bases and the scope.
+fn grid_holes(m: usize, p: &Premises) -> Scope {
+    let n = named(m * m, "g");
+    let at = |r: usize, c: usize| &n[r * m + c];
+    let base = |r: usize, c: usize| (10 * (2 * (m - 1) - r - c)) as i64;
+    let mut s = ints(&n);
+    for r in 0..m {
+        for c in 0..m {
+            s = s
+                .assume(&prim(Prim::Ge, var(at(r, c)), int(base(r, c))), true, p)
+                .assume(&prim(Prim::Le, var(at(r, c)), int(base(r, c) + 9)), true, p);
+        }
+    }
+    for r in 0..m {
+        for c in 0..m {
+            if c + 1 < m {
+                s = s.assume(&ge(at(r, c), at(r, c + 1), 1), true, p);
+            }
+            if r + 1 < m {
+                s = s.assume(&ge(at(r, c), at(r + 1, c), 1), true, p);
+            }
+        }
+    }
+    for r in 0..m {
+        for c in 0..m {
+            s = s.assume(&prim(Prim::Ne, var(at(r, c)), int(base(r, c) + 5)), true, p);
+        }
+    }
+    s
+}
+
+/// Holes in every name of a grid of difference constraints: each hole moves about `m - 1`
+/// names of the potential, so `m^3`, `n^1.5` in the `n = m^2` names (order 3 in `m`). Open as
+/// item ST-holes-moves (COMPLEXITY.md S25): the names a hole moves are those within its shift
+/// of it by reduced distance, which on a grid are no range of one order of the names.
+#[test]
+fn holes_in_every_name_of_a_grid_take_time_m_cubed() {
+    let p = Premises::new();
+    let s = grid_holes(4, &p);
+    assert!(!s.bottom);
+    for (i, b) in [(0usize, 60i64), (5, 40), (15, 0)] {
+        let ints = s.get(&format!("g{i}")).ints().clone();
+        assert!(!ints.contains(b + 5), "g{i}: {ints:?}");
+        assert!(ints.contains(b + 4), "g{i}: {ints:?}");
+    }
+    scaling::check_order("holes in every name of a grid, by its side", 4, 3, |m| {
+        grid_holes(m, &p);
+    });
 }

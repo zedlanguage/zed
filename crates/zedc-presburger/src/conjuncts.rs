@@ -536,14 +536,16 @@ impl Conjuncts {
         }
     }
 
-    /// Records whether the integers the scope's product gives `name` are other than one
-    /// interval with no class ([`Blocks::differences_only`]), in O(log n).
+    /// Records whether `name` keeps its tree from projection by shortest paths
+    /// ([`Blocks::differences_only`]), as the scope says: its integers lie in a class, or have
+    /// holes wider than the scope's potential holds with. In O(log n).
     pub fn gapped(&mut self, name: &Arc<str>, on: bool) {
         self.blocks.gap(name, on);
     }
 
     /// Whether the tree of blocks that holds `name` holds only difference constraints and
-    /// bounds of names each one interval with no class ([`Blocks::differences_only`]); true
+    /// bounds of names none of which keeps it from shortest paths
+    /// ([`Blocks::differences_only`]); true
     /// when no conjunct of the forest mentions `name`.
     pub fn differences_only_at(&self, name: &str) -> bool {
         self.blocks
@@ -1291,7 +1293,7 @@ pub struct Blocks {
     /// The number of conjuncts of each tree that are not difference constraints or bounds
     /// ([`edges`]), at its representative; none when zero.
     others: OrdMap<BlockId, usize>,
-    /// The names whose integers are not one interval or lie in a class ([`Blocks::gap`]).
+    /// The names that keep their trees from projection by shortest paths ([`Blocks::gap`]).
     gapped: OrdSet<Arc<str>>,
     /// The number of such names of each tree, at its representative; none when zero.
     gaps: OrdMap<BlockId, usize>,
@@ -1347,14 +1349,15 @@ impl Blocks {
     }
 
     /// Whether the tree `t` of the forest holds only difference constraints and bounds
-    /// ([`edges`]) and none of its names has holes or a class ([`Blocks::gap`]): read from
+    /// ([`edges`]) and none of its names keeps it from shortest paths ([`Blocks::gap`]): read from
     /// two counts kept as conjuncts come and go, in O(log n).
     pub fn differences_only(&self, t: BlockId) -> bool {
         let r = self.find(t);
         !self.is_apart(r) && !self.others.contains_key(&r) && !self.gaps.contains_key(&r)
     }
 
-    /// The number of names of tree `t` of the forest with holes or a class ([`Blocks::gap`])
+    /// The number of names of tree `t` of the forest that keep it from shortest paths
+    /// ([`Blocks::gap`])
     /// when it holds only difference constraints and bounds ([`edges`]), otherwise `None`; in
     /// O(log n). [`Blocks::differences_only`] is a count of 0.
     pub fn gaps(&self, t: BlockId) -> Option<usize> {
@@ -1363,14 +1366,15 @@ impl Blocks {
         only.then(|| self.gaps.get(&r).copied().unwrap_or(0))
     }
 
-    /// Whether the integers of `name` were recorded as other than one interval with no class
-    /// ([`Blocks::gap`]), in O(log n).
+    /// Whether `name` was recorded as keeping its tree from shortest paths ([`Blocks::gap`]), in
+    /// O(log n).
     pub fn is_gapped(&self, name: &str) -> bool {
         self.gapped.contains(name)
     }
 
-    /// Records whether the integers of `name` are other than one interval with no class, as
-    /// [`Blocks::differences_only`] reads them, in O(log n).
+    /// Records whether `name` keeps its tree from projection by shortest paths: in the scope,
+    /// its integers lie in a class, or have holes wider than the gap its potential holds with
+    /// at the name. [`Blocks::differences_only`] reads them, in O(log n).
     pub fn gap(&mut self, name: &Arc<str>, on: bool) {
         let changed = if on {
             self.gapped.insert(name.clone()).is_none()
