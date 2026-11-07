@@ -301,9 +301,8 @@ fn tuples_are_checked_against_the_tuple_types_that_may_hold_them() {
         BTreeSet::from_iter(exact(&crossed_nested)),
         BTreeSet::from([one_of(pair(int(1), int(0))), one_of(pair(int(0), int(1)))])
     );
-    // A column of tuples and integers, or of tuples of two lengths, is not found by
-    // components, and its tuple types are checked for every tuple: `(5)` is in all three
-    // tuple types and so in their parity.
+    // A column of tuples and integers, or of tuples of two lengths, is found by its keys at
+    // each depth (LIST-parity-rest): `(5)` is in all three tuple types and so in their parity.
     let loose = parity((0..3).map(|i| one(&diagonal(i) | &lit(5))));
     assert_eq!(exact(&loose).len(), 3 + 1);
     let lengths = parity((0..3).map(|i| one(&diagonal(i) | &Type::tuple(vec![lit(i)]))));
@@ -331,4 +330,77 @@ fn tuples_are_checked_against_the_tuple_types_that_may_hold_them() {
     let rest = [(2, 3), (3, 2), (3, 3), (3, 4), (4, 3), (4, 4)];
     assert_eq!(exact(&squares), pairs_of(&[&first[..], &rest[..]].concat()));
     assert_eq!(exact(&crossed), pairs_of(&[(0, 1), (1, 0)]));
+}
+
+#[test]
+fn every_tuple_type_is_filed_by_its_parts() {
+    // A column of several kinds or tuple lengths is filed by the scalars, bare atoms and empty
+    // tuples it lists at each depth of first components; a tuple type no column of which lists
+    // its values, such as one given by its complement, is filed by the keys of every column,
+    // and its value on a tuple with none of them is decided by the tuple's kinds
+    // (LIST-parity-rest). Each list is checked against `contains` over the scalars below, the
+    // empty tuple, and their one-tuples, pairs, one-tuples of one-tuples and of pairs.
+    let v = |x: Value| Type::lit(&x).unwrap();
+    let mut scalars: Vec<Value> = (0..6).map(int).collect();
+    scalars.extend([
+        Value::Bool(false),
+        Value::Bool(true),
+        Value::str("s"),
+        Value::str("t"),
+        Value::atom("a"),
+        Value::atom("b"),
+    ]);
+    let u = &Type::union_all(scalars.iter().cloned().map(v)) | &Type::tuple(vec![]);
+    scalars.push(Value::tuple(vec![]));
+    let mut all = scalars.clone();
+    all.extend(scalars.iter().cloned().map(one_of));
+    all.extend(
+        scalars
+            .iter()
+            .flat_map(|a| scalars.iter().map(move |b| pair(a.clone(), b.clone()))),
+    );
+    all.extend(scalars.iter().map(|x| one_of(one_of(x.clone()))));
+    all.extend(scalars.iter().map(|x| one_of(pair(x.clone(), int(0)))));
+    let exact = |t: &Type| -> usize {
+        let want: BTreeSet<Value> = all.iter().filter(|x| t.contains(x)).cloned().collect();
+        assert_eq!(listed(t), Some(want.clone()), "{t}");
+        want.len()
+    };
+    let one = |t: Type| Type::tuple(vec![t]);
+    let but = |x: Type| &Type::top() - &x;
+    let n = scalars.len();
+    // Columns of two kinds each: a value in two of the tuple types is not listed.
+    let (s, a) = (v(Value::str("s")), v(Value::atom("a")));
+    let kinds = parity([
+        one(&lit(0) | &s),
+        one(&s | &a),
+        one(&a | &Type::tuple(vec![])),
+        one(&Type::tuple(vec![]) | &v(Value::Bool(true))),
+    ]);
+    assert_eq!(exact(&kinds), 2, "(0) and (true)");
+    // Tuple types given by their complements, in every kind: within the one-tuples of `u`,
+    // all but `#a`, `3` and `true`, and the difference keeps `3` alone.
+    let within = one(u.clone());
+    let met = [a.clone(), lit(3), v(Value::Bool(true))]
+        .into_iter()
+        .fold(within.clone(), |t, x| &t & &one(but(x)));
+    assert_eq!(exact(&met), n - 3);
+    assert_eq!(exact(&(&within - &one(but(lit(3))))), 1);
+    // Two columns given by their complements, of two kinds: a pair whose first component is
+    // not an integer is in no tuple type with `int - 1` first, whatever its keys.
+    let pairs = Type::tuple(vec![u.clone(), u.clone()]);
+    let co = Type::tuple(vec![&Type::int() - &lit(1), but(s.clone())]);
+    let co2 = Type::tuple(vec![but(lit(0)), &Type::int() - &lit(2)]);
+    assert_eq!(exact(&(&(&pairs & &co) - &co2)), 5 * (n - 1) - 4 * 5);
+    // A complement one level down, in the only tuple type of length 1 of its column.
+    let nested = &one(one(u.clone())) & &one(one(&Type::int() - &lit(2)));
+    assert_eq!(exact(&nested), 5);
+    // A complement first in a pair: its kinds leave its value unknown, and it is read for every
+    // tuple of the class; the list is still exact.
+    let open = &one(Type::tuple(vec![u.clone(), lit(0)]))
+        & &one(Type::tuple(vec![&Type::int() - &lit(2), lit(0)]));
+    assert_eq!(exact(&open), 5);
+    // The empty tuple is a key where a column holds it.
+    let empty = parity([one(&Type::tuple(vec![]) | &lit(1)), one(&lit(1) | &lit(2))]);
+    assert_eq!(exact(&empty), 2, "(()) and (2)");
 }

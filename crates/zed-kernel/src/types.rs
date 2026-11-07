@@ -776,10 +776,12 @@ impl Type {
     /// not hold, which can be exponential in the type's size: listing the values of a tuple
     /// type in time polynomial in their number would decide satisfiability. A tuple is checked
     /// on the type's part restricted to the tuple types that may hold it, found by its
-    /// components where a column holds only scalars and bare atoms, or only tuples of one
-    /// length found by their first components (`RowIndex`), and against the earlier boxes that
-    /// may hold it (`BoxIndex`): the exclusive or of `c` tuple types lists its `c` values in
-    /// about `c log² c` steps, not `c²` (LIST-parity-quad). Its user is the type facet of a
+    /// components: each tuple type is filed by the scalars, bare atoms and empty tuples its
+    /// columns list, at any depth of first components, and one no column of which lists all it
+    /// holds is decided by the kinds of a tuple that has none of its keys (`RowIndex`); and it
+    /// is checked against the earlier boxes that may hold it (`BoxIndex`): the exclusive or of
+    /// `c` tuple types lists its `c` values in about `c log² c` steps, not `c²`
+    /// (LIST-parity-quad, LIST-parity-rest). Its user is the type facet of a
     /// product cell (`zedc::store::product`).
     pub fn each_value(&self) -> Option<Values> {
         let (types, boxes): (Vec<Type>, Vec<Vec<Row>>) = self.finite_order()?.into_iter().unzip();
@@ -1954,67 +1956,174 @@ fn scalars(p: &Parts) -> Vec<Value> {
     made
 }
 
-/// The values of `t`, when they are finitely many scalars and bare atoms: no tuple, struct,
-/// function or atom with a payload, and no literal set given by its complement.
-fn scalars_only(t: &Type) -> Option<Vec<Value>> {
-    let p = t.p();
-    let only = !p.structs
-        && p.morphisms.is_leaf() == Some(false)
-        && !p.atoms.cofinite
-        && p.atoms.names.values().all(|a| a.payload == Type::empty())
-        && !p.tuples.rest
-        && p.tuples.lens.values().all(|t| t.is_leaf() == Some(false))
-        && [&p.ints, &p.rats, &p.floats, &p.strings]
-            .iter()
-            .all(|l| !l.cofinite);
-    only.then(|| scalars(p))
+/// What a column's type names of the values it may hold, at any depth of first components: a
+/// value's component at depth 0 is the value, and at depth `d + 1` the first component of its
+/// component at depth `d`.
+struct Filed {
+    /// The scalars and bare atoms the types at some depth list, and the empty tuple where they
+    /// hold it, sorted and distinct: a value none of whose components is a key is in the type
+    /// only as its kinds decide ([`kind_status`]).
+    keys: Vec<Value>,
+    /// Whether every value of the type has a component that is a key.
+    listed: bool,
 }
 
-/// The keys of `t`: a depth `d` and values, such that the value of `t` reached by taking the
-/// first component `d` times is among the values. At depth 0 `t` holds finitely many scalars
-/// and bare atoms and they are its values; at depth `d + 1` `t` holds only tuples of one length,
-/// each in a tuple type of its part, and the keys are those of the union of their first
-/// columns. `None` when no depth has such values.
-fn keys(t: &Type) -> Option<(usize, Vec<Value>)> {
-    let mut t = t.clone();
-    let mut depth = 0;
-    loop {
-        if let Some(vs) = scalars_only(&t) {
-            return Some((depth, vs));
+/// The types a value's first component is read in, below the column type `t`: the first
+/// columns of its boxes (`Type::boxes`) with `by_boxes`, when they hold all its tuples, which
+/// are finite where `t` is; otherwise those of every tuple type of its parts. `push` takes each.
+/// Whether the tuples of `t` are all in tuple types these first columns are of.
+fn firsts(t: &Type, by_boxes: bool, keys: &mut Vec<Value>, mut push: impl FnMut(&Type)) -> bool {
+    if let Some(boxes) = by_boxes.then(|| t.boxes()).flatten() {
+        for r in &boxes {
+            match r.first() {
+                Some(c) => push(c),
+                None => keys.push(Value::tuple(Vec::new())),
+            }
         }
+        return true;
+    }
+    let p = t.p();
+    let mut listed = !p.tuples.rest;
+    for (&len, part) in &p.tuples.lens {
+        if len == 0 {
+            if part.eval(&|_| true) {
+                keys.push(Value::tuple(Vec::new()));
+            }
+            continue;
+        }
+        // A tuple in no tuple type of the part, which the part holds when every tuple type is
+        // taken as false, has a first component outside their first columns.
+        listed &= !part.eval(&|_| false);
+        for r in part.distinct_atoms() {
+            push(&r[0]);
+        }
+    }
+    listed
+}
+
+/// The keys of the column type `t` ([`Filed`]): each type it reaches through first columns
+/// ([`firsts`]) is visited once, kept in a visited set, so a type recursive in its first
+/// component ends too. A key is not tied to its depth: a component equal to a key at another
+/// depth only makes its tuple type read.
+fn file(t: &Type, by_boxes: bool) -> Filed {
+    let (mut keys, mut listed) = (Vec::new(), true);
+    let mut seen: HashSet<Type> = HashSet::from([t.clone()]);
+    let mut todo = vec![t.clone()];
+    while let Some(t) = todo.pop() {
         let p = t.p();
-        let tuples_only = p.bools == 0
-            && !p.structs
-            && p.morphisms.is_leaf() == Some(false)
-            && !p.atoms.cofinite
-            && p.atoms.names.is_empty()
-            && !p.tuples.rest
-            && [&p.ints, &p.rats, &p.floats, &p.strings]
-                .iter()
-                .all(|l| !l.cofinite && l.values.is_empty());
-        let (Some((&len, part)), 1) = (p.tuples.lens.first_key_value(), p.tuples.lens.len()) else {
-            return None;
-        };
-        // A tuple in no tuple type of the part, which the part holds when every tuple type
-        // is taken as false, has a first component outside their first columns.
-        if !tuples_only || len == 0 || part.eval(&|_| false) {
-            return None;
+        for b in [false, true] {
+            if p.bools & (1 << u8::from(b)) != 0 {
+                keys.push(Value::Bool(b));
+            }
         }
-        t = Type::union_all(part.distinct_atoms().iter().map(|r| r[0].clone()));
-        depth += 1;
+        for lits in [&p.ints, &p.rats, &p.floats, &p.strings] {
+            keys.extend(lits.values.iter().cloned());
+            listed &= !lits.cofinite;
+        }
+        // A name listed is an exception to the names not listed.
+        let atoms = &p.atoms;
+        keys.extend(
+            atoms
+                .names
+                .iter()
+                .filter(|(_, a)| a.bare != atoms.cofinite)
+                .map(|(name, _)| Value::atom(name)),
+        );
+        listed &= !atoms.cofinite;
+        listed &= firsts(&t, by_boxes, &mut keys, |c| {
+            if seen.insert(c.clone()) {
+                todo.push(c.clone());
+            }
+        });
+    }
+    keys.sort();
+    keys.dedup();
+    Filed { keys, listed }
+}
+
+/// The kind of a value, as far as the kinds decide whether a type holds a value none of whose
+/// components is a key of it ([`Filed`]).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Kind {
+    Bool,
+    Int,
+    Rat,
+    Float,
+    Str,
+    Atom,
+    Tuple(usize),
+    /// A path or a function, which no maker makes.
+    Other,
+}
+
+/// The kinds of `x` and of its first components, depth by depth.
+fn kinds(x: &Value) -> Vec<Kind> {
+    let mut out = Vec::new();
+    let mut x = x;
+    loop {
+        out.push(match x {
+            Value::Bool(_) => Kind::Bool,
+            Value::Int(_) | Value::Big(_) => Kind::Int,
+            Value::Rat(_) => Kind::Rat,
+            Value::Float(_) => Kind::Float,
+            Value::Str(_) => Kind::Str,
+            Value::Atom(_) => Kind::Atom,
+            Value::Tuple(items) => Kind::Tuple(items.len()),
+            Value::Path(_) | Value::Family(_) => Kind::Other,
+        });
+        match x {
+            Value::Tuple(items) if !items.is_empty() => x = &items[0],
+            _ => return out,
+        }
     }
 }
 
-/// Tuple types of one length by the values they may hold: a tuple type with a column that
-/// has keys ([`keys`]) is kept under each of them, in its column of fewest, so the tuple types
-/// that may hold a tuple are read by one lookup per component and per depth the component
-/// reaches. A component whose key is not among a kept tuple type's is not in its column's
-/// type, since `Type::contains` compares scalars by the order of values and a tuple by its
-/// components, and a maker makes no atom with fields and no path.
+/// Whether `t` holds a value of kind `kind` none of whose components is a key of `t`, when the
+/// kind decides it; `first` gives the same for a first column of `t` and the next kind. A
+/// tuple outside every first column of its tuple types is in `t` as the part is with every
+/// tuple type false; one in the first column of a part's only tuple type, of length 1, is in
+/// it as its component is in that column; any other is not decided by kinds.
+fn kind_status(t: &Type, kind: &Kind, first: impl Fn(&Type) -> Option<bool>) -> Option<bool> {
+    let p = t.p();
+    match kind {
+        Kind::Bool => Some(false),
+        Kind::Int => Some(p.ints.cofinite),
+        Kind::Rat => Some(p.rats.cofinite),
+        Kind::Float => Some(p.floats.cofinite),
+        Kind::Str => Some(p.strings.cofinite),
+        Kind::Atom => Some(p.atoms.cofinite),
+        Kind::Other => None,
+        Kind::Tuple(len) => match p.tuples.lens.get(len) {
+            None => Some(p.tuples.rest),
+            // The empty tuple is a key where a type holds it.
+            Some(_) if *len == 0 => Some(false),
+            Some(part) => {
+                let rows = part.distinct_atoms();
+                let firsts: Vec<Option<bool>> = rows.iter().map(|r| first(&r[0])).collect();
+                if firsts.iter().all(|s| *s == Some(false)) {
+                    Some(part.eval(&|_| false))
+                } else if *len == 1
+                    && rows.len() == 1
+                    && part.eval(&|_| true)
+                    && !part.eval(&|_| false)
+                {
+                    firsts[0]
+                } else {
+                    None
+                }
+            }
+        },
+    }
+}
+
+/// Tuple types of one length by the values they may hold, so that the tuple types that may
+/// hold a tuple are read by one lookup per component and per depth the component reaches. A
+/// component none of whose depths is a key of a filed tuple type's column is in the column's
+/// type only as its kinds decide, since `Type::contains` compares scalars by the order of
+/// values and a tuple by its components, and a maker makes no atom with fields and no path.
 struct Keyed {
-    /// Per column and per depth, each value with the positions of the tuple types kept under
-    /// it.
-    by: Vec<BTreeMap<usize, BTreeMap<Value, Vec<usize>>>>,
+    /// Per column, each key with the positions of the tuple types filed under it.
+    by: Vec<BTreeMap<Value, Vec<usize>>>,
 }
 
 impl Keyed {
@@ -2024,43 +2133,31 @@ impl Keyed {
         }
     }
 
-    /// Keeps the tuple type `row` at position `at`, if a column of it has keys.
-    // Complexity tradeoff: a tuple type with no column that has keys, such as `(i | (i, i))`
-    // or `((i) | (i, i))`, is not kept, and is read for every tuple of its length, so `n` of
-    // them still cost order `n²` (LIST-parity-quad, COMPLEXITY.md K57). Keying such a column
-    // by its parts, as the class split does (K36), would remove it.
-    fn add(&mut self, at: usize, row: &Row) -> bool {
-        let fewest = row
-            .iter()
-            .enumerate()
-            .filter_map(|(j, t)| keys(t).map(|(d, vs)| (j, d, vs)))
-            .min_by_key(|(_, _, vs)| vs.len());
-        let Some((j, d, vs)) = fewest else {
-            return false;
-        };
-        let by = self.by[j].entry(d).or_default();
-        for v in vs {
-            by.entry(v).or_default().push(at);
+    /// Files the tuple type at position `at` under the keys of its column `j`.
+    fn add(&mut self, at: usize, j: usize, keys: &[Value]) {
+        for v in keys {
+            self.by[j].entry(v.clone()).or_default().push(at);
         }
-        true
     }
 
-    /// The positions of the kept tuple types that may hold the tuple `v`, sorted and
-    /// distinct: every kept one that holds it is among them.
+    /// The positions of the filed tuple types under a key of the tuple `v`, at any depth,
+    /// sorted and distinct. A key is a scalar, a bare atom or the empty tuple, so of a
+    /// column's components at each depth only the innermost can be one.
     fn at(&self, v: &[Value]) -> Vec<usize> {
         let mut at = Vec::new();
         for (by, x) in self.by.iter().zip(v) {
-            let Some(&deepest) = by.keys().next_back() else {
+            if by.is_empty() {
                 continue;
-            };
+            }
+            // No key is a tuple with components, so only the last component is looked up.
             let mut x = x;
-            for d in 0..=deepest {
-                at.extend(by.get(&d).and_then(|m| m.get(x)).into_iter().flatten());
-                match x {
-                    Value::Tuple(items) if !items.is_empty() => x = &items[0],
-                    _ => break,
+            while let Value::Tuple(items) = x {
+                match items.first() {
+                    Some(c) => x = c,
+                    None => break,
                 }
             }
+            at.extend(by.get(x).into_iter().flatten());
         }
         at.sort_unstable();
         at.dedup();
@@ -2068,103 +2165,268 @@ impl Keyed {
     }
 }
 
+/// The keys of each column of `row` ([`file`]), and the column with fewest keys among those
+/// that list every value they hold: a tuple none of whose components there is a key is not in
+/// the row. A column is first filed by its tuple types, and by its boxes only when that does
+/// not list its values, since a box is made by walking the type's diagram.
+fn file_row(row: &Row) -> (Vec<Filed>, Option<usize>) {
+    let filed: Vec<Filed> = row
+        .iter()
+        .map(|t| {
+            let f = file(t, false);
+            if f.listed {
+                return f;
+            }
+            let g = file(t, true);
+            if g.listed { g } else { f }
+        })
+        .collect();
+    let fewest = (0..filed.len())
+        .filter(|&j| filed[j].listed)
+        .min_by_key(|&j| filed[j].keys.len());
+    (filed, fewest)
+}
+
+/// How a row of a [`RowIndex`] is filed.
+enum Filing {
+    /// Under the keys of a column that lists every value it holds: a tuple with no key there
+    /// is not in the row.
+    Listed,
+    /// Under the keys of every column, as the open row at this position of `RowIndex::open`:
+    /// a tuple with no key in any column is in the row as its kinds decide.
+    Open(usize),
+}
+
+/// The value of the row at `i` of `filing` on a tuple with no key of it, when known; `open`
+/// gives each open row's, for the tuple's class.
+fn row_default(filing: &[Filing], open: &[Option<bool>], i: usize) -> Option<bool> {
+    match filing[i] {
+        Filing::Listed => Some(false),
+        Filing::Open(o) => open[o],
+    }
+}
+
 /// The part of one length of a maker's type, so that a tuple is checked on a part that holds
 /// only the rows it may be in. Checking each tuple on the whole part tests every row on the
 /// way: in an exclusive or of `c` tuple types, built as an expression, each of its `c` values
-/// was checked against all `c` types, order `c²` (LIST-parity-quad).
+/// was checked against all `c` types, order `c²` (LIST-parity-quad). Every row is filed by its
+/// parts, as the class split does (K36): by the scalars and bare atoms its columns list, of
+/// any kinds and tuple lengths, at every depth of first components; a row no column of which
+/// lists every value it holds, such as one given by its complement, is filed by the keys of
+/// every column, and its value on a tuple with none of them is decided by the tuple's kinds
+/// (LIST-parity-rest).
 struct RowIndex {
-    /// The rows of the part that [`Keyed`] keeps, sorted.
+    /// The rows of the part, sorted.
     rows: Vec<Row>,
+    /// How each row is filed.
+    filing: Vec<Filing>,
     /// The positions in `rows` by the values they may hold.
     keyed: Keyed,
-    /// The part restricted to the rows of a range of `rows`, the others taken as false, made
-    /// when first needed: entry 1 for the whole range, and entries `2i` and `2i + 1` for the
-    /// lower and upper halves of the range of entry `i`. The rows not kept are in every entry.
-    halves: Vec<Option<Part<Row>>>,
-    /// The part with every row of `rows` taken as false, made when first needed.
-    unkeyed: Option<Part<Row>>,
+    /// Per open row, per column, the column type and the types below it by depth, made as
+    /// deep as a class has read: depth `d + 1` holds the first columns of the tuple types of
+    /// the types at depth `d`.
+    open: Vec<Vec<Vec<Vec<Type>>>>,
+    /// Whether an open row has a column at each position: a tuple's class is the kinds of
+    /// those columns' components ([`kinds`]).
+    read: Vec<bool>,
+    /// Per class, the open rows' values on a tuple of it with no key of theirs, and the part
+    /// restricted to ranges of `rows`.
+    classes: HashMap<Vec<Vec<Kind>>, Class>,
+}
+
+/// The rows of a [`RowIndex`] as a class of tuples sees them.
+struct Class {
+    /// Per open row, its value on a tuple of the class none of whose components is a key of
+    /// it, when the kinds decide it.
+    open: Vec<Option<bool>>,
+    /// The part restricted to the rows of a range of `rows`, the rows outside the range taken
+    /// as their value on a tuple with no key of theirs, made when first needed: entry 1 for
+    /// the whole range, and entries `2i` and `2i + 1` for the lower and upper halves of the
+    /// range of entry `i`. The rows whose value is not known are in every entry.
+    halves: HashMap<usize, Part<Row>>,
+    /// The part with every row so taken, made when first needed.
+    none: Option<Part<Row>>,
 }
 
 impl RowIndex {
     fn new(len: usize, part: &Part<Row>) -> RowIndex {
-        let (mut rows, mut keyed) = (Vec::new(), Keyed::new(len));
-        let mut atoms = part.distinct_atoms();
-        atoms.sort();
-        for row in atoms {
-            if keyed.add(rows.len(), &row) {
-                rows.push(row);
+        let mut rows = part.distinct_atoms();
+        rows.sort();
+        let mut keyed = Keyed::new(len);
+        let (mut filing, mut open, mut read) = (Vec::new(), Vec::new(), vec![false; len]);
+        for (i, row) in rows.iter().enumerate() {
+            let (filed, fewest) = file_row(row);
+            if let Some(j) = fewest {
+                keyed.add(i, j, &filed[j].keys);
+                filing.push(Filing::Listed);
+                continue;
             }
+            // No column lists its values, so each was filed by its tuple types, as the kinds
+            // read them ([`kind_status`]).
+            for (j, f) in filed.iter().enumerate() {
+                keyed.add(i, j, &f.keys);
+                read[j] = true;
+            }
+            filing.push(Filing::Open(open.len()));
+            open.push(row.iter().map(|t| vec![vec![t.clone()]]).collect());
         }
-        let mut halves = vec![None; 2 * rows.len().next_power_of_two()];
-        halves[1] = Some(part.clone());
         RowIndex {
             rows,
+            filing,
             keyed,
-            halves,
-            unkeyed: None,
+            open,
+            read,
+            classes: HashMap::new(),
+        }
+    }
+
+    /// The open rows' values on a tuple of the class `class` with no key of theirs. Each
+    /// column's types are made to the depth of the class's kinds and read deepest first, each
+    /// type once per column and depth for all the open rows.
+    fn class(&mut self, class: &[Vec<Kind>]) -> Class {
+        let mut memo: Vec<HashMap<(usize, Type), Option<bool>>> =
+            vec![HashMap::new(); self.read.len()];
+        let open = self
+            .open
+            .iter_mut()
+            .map(|columns| {
+                let mut value = Some(true);
+                for (j, levels) in columns.iter_mut().enumerate() {
+                    let (chain, memo) = (&class[j], &mut memo[j]);
+                    while levels.len() < chain.len() {
+                        let mut next = Vec::new();
+                        let mut here: HashSet<Type> = HashSet::new();
+                        for t in levels.last().expect("the column type is at depth 0") {
+                            firsts(t, false, &mut Vec::new(), |c| {
+                                if here.insert(c.clone()) {
+                                    next.push(c.clone());
+                                }
+                            });
+                        }
+                        if next.is_empty() {
+                            break;
+                        }
+                        levels.push(next);
+                    }
+                    for k in (0..levels.len().min(chain.len())).rev() {
+                        for t in &levels[k] {
+                            if memo.contains_key(&(k, t.clone())) {
+                                continue;
+                            }
+                            let first = |c: &Type| memo.get(&(k + 1, c.clone())).copied().flatten();
+                            let s = kind_status(t, &chain[k], first);
+                            memo.insert((k, t.clone()), s);
+                        }
+                    }
+                    let s = memo.get(&(0, levels[0][0].clone())).copied().flatten();
+                    value = match (value, s) {
+                        (Some(false), _) | (_, Some(false)) => Some(false),
+                        (None, _) | (_, None) => None,
+                        _ => Some(true),
+                    };
+                }
+                value
+            })
+            .collect();
+        Class {
+            open,
+            halves: HashMap::new(),
+            none: None,
         }
     }
 
     /// Whether the tuple `v` is in `part`, the part indexed; `fits` tells whether a row holds
-    /// `v`. The part is restricted to the smallest range of halves that holds every row of
-    /// `rows` that may hold `v`: `O(log n)` steps for `n` rows, each restriction made once, and
-    /// one check of the restricted part.
+    /// `v`. The part is restricted, for the class of `v`'s kinds, to the smallest range of
+    /// halves that holds every row of `rows` that has a key of `v`: `O(log n)` steps for `n`
+    /// rows, each restriction made once per class, and one check of the restricted part.
+    // Complexity tradeoff: the open rows' values and the restrictions are made once per class
+    // of the tuples' kinds in the columns an open row has, so tuples of `k` classes cost up to
+    // `k` times those of one; each class has a tuple, so `k` is at most the number of tuples,
+    // and the classes are only those of kinds the tuples have, never one per row. An open row
+    // whose value the kinds leave unknown is read for every tuple of the class: one whose
+    // column holds tuples of length 2 or more, or of several tuple types, that some first
+    // column given by its complement holds the first component of, such as `((int - i, 0),)`,
+    // since the first component tells nothing of the rest of the tuple. Such rows cost order
+    // `c` each per tuple: the meet of `((0..2c, 0),)` with each `((int - (2i + 1), 0),)` took
+    // 27.1M to 1,329M instructions from `c` 64 to 512 (48.9 times; COMPLEXITY.md K57).
     fn holds(&mut self, part: &Part<Row>, v: &[Value], fits: impl Fn(&Row) -> bool) -> bool {
         let at = self.keyed.at(v);
+        let key: Vec<Vec<Kind>> = v
+            .iter()
+            .zip(&self.read)
+            .map(|(x, &read)| if read { kinds(x) } else { Vec::new() })
+            .collect();
+        if !self.classes.contains_key(&key) {
+            let class = self.class(&key);
+            self.classes.insert(key.clone(), class);
+        }
+        let (rows, filing) = (&self.rows, &self.filing);
+        let Class { open, halves, none } = self.classes.get_mut(&key).expect("inserted above");
+        let open = &*open;
         let restricted = match (at.first(), at.last()) {
             (Some(&first), Some(&last)) => {
-                let i = self.half(first, last);
-                self.halves[i].as_ref().expect("made by `half`")
+                let i = half(rows, filing, open, halves, part, first, last);
+                &halves[&i]
             }
-            _ => {
-                let rows = &self.rows;
-                self.unkeyed.get_or_insert_with(|| {
-                    part.restrict(&|r| rows.binary_search(r).is_ok().then_some(false))
+            _ => none.get_or_insert_with(|| {
+                part.restrict(&|r| {
+                    rows.binary_search(r)
+                        .ok()
+                        .and_then(|i| row_default(filing, open, i))
                 })
-            }
+            }),
         };
-        // A row of `rows` that may hold `v` is in `at`; every other row of `rows` does not.
-        let rows = &self.rows;
+        // A row that may hold `v` either has a key of `v`, and is in `at`, or holds it as its
+        // value on a tuple of the class with no key of it, when that is known.
         restricted.eval(&|r| match rows.binary_search(r) {
-            Ok(i) => at.binary_search(&i).is_ok() && fits(r),
-            Err(_) => fits(r),
-        })
-    }
-
-    /// The entry of `halves` for the smallest range of halves that holds the rows `first` to
-    /// `last` of `rows`, its part made from its enclosing range's part when first needed.
-    fn half(&mut self, first: usize, last: usize) -> usize {
-        let (mut i, mut lo, mut hi) = (1, 0, self.rows.len());
-        while hi - lo > 1 {
-            let mid = lo + (hi - lo) / 2;
-            let (j, l, h) = if last < mid {
-                (2 * i, lo, mid)
-            } else if first >= mid {
-                (2 * i + 1, mid, hi)
-            } else {
-                break;
-            };
-            if self.halves[j].is_none() {
-                let rows = &self.rows;
-                let outer = self.halves[i]
-                    .as_ref()
-                    .expect("a range's part is made first");
-                let inner = outer.restrict(&|r| match rows.binary_search(r) {
-                    Ok(k) if !(l..h).contains(&k) => Some(false),
-                    _ => None,
-                });
-                self.halves[j] = Some(inner);
+            Ok(i) if at.binary_search(&i).is_err() => {
+                row_default(filing, open, i).unwrap_or_else(|| fits(r))
             }
-            (i, lo, hi) = (j, l, h);
-        }
-        i
+            _ => fits(r),
+        })
     }
 }
 
+/// The entry of `halves` for the smallest range of halves that holds the rows `first` to
+/// `last` of `rows`, its part made from its enclosing range's part when first needed.
+fn half(
+    rows: &[Row],
+    filing: &[Filing],
+    open: &[Option<bool>],
+    halves: &mut HashMap<usize, Part<Row>>,
+    part: &Part<Row>,
+    first: usize,
+    last: usize,
+) -> usize {
+    let (mut i, mut lo, mut hi) = (1, 0, rows.len());
+    halves.entry(1).or_insert_with(|| part.clone());
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        let (j, l, h) = if last < mid {
+            (2 * i, lo, mid)
+        } else if first >= mid {
+            (2 * i + 1, mid, hi)
+        } else {
+            break;
+        };
+        if !halves.contains_key(&j) {
+            let inner = halves[&i].restrict(&|r| match rows.binary_search(r) {
+                Ok(k) if !(l..h).contains(&k) => row_default(filing, open, k),
+                _ => None,
+            });
+            halves.insert(j, inner);
+        }
+        (i, lo, hi) = (j, l, h);
+    }
+    i
+}
+
 /// The boxes of one length of a maker, by the values they may hold, so that whether an earlier
-/// box gave a tuple is checked against those boxes alone.
+/// box gave a tuple is checked against those boxes alone. A box is a meet of tuple types of a
+/// finite type, so each of its columns is finite and lists every value it holds, its tuples
+/// read by its boxes ([`file_row`]).
 struct BoxIndex {
-    /// The positions in the maker's boxes of the boxes [`Keyed`] keeps.
+    /// The positions in the maker's boxes of the boxes filed under a column's keys.
     keyed: Keyed,
     /// The positions of the others, ascending: each is checked for every tuple.
     open: Vec<usize>,
@@ -2190,8 +2452,9 @@ impl Maker {
                 keyed: Keyed::new(r.len()),
                 open: Vec::new(),
             });
-            if !index.keyed.add(b, r) {
-                index.open.push(b);
+            match file_row(r) {
+                (filed, Some(j)) => index.keyed.add(b, j, &filed[j].keys),
+                (_, None) => index.open.push(b),
             }
         }
         Maker {

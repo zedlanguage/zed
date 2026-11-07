@@ -447,6 +447,56 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
             assert_eq!(nested[&c].each_value().map(|v| v.count()), Some(c));
         },
     );
+    // Columns no one kind or length lists (LIST-parity-rest): `(i | (i, i))`, with tuples and
+    // integers in one column; `((i) | (i, i))`, with tuples of two lengths; and `(0..2c)` met
+    // with each `(int - (2i + 1))`, tuple types given by their complements. Each tuple type is
+    // filed by its parts, as the class split does (K36); unfiled, each was read for every value
+    // (60.3, 60.3 and 45.7 times the instructions from `c` 64 to 512).
+    let shape = |c: usize, which: usize| -> Type {
+        let row = |i: usize| -> Type {
+            let pair = Type::tuple(vec![lit(i), lit(i)]);
+            match which {
+                0 => Type::tuple(vec![&lit(i) | &pair]),
+                _ => Type::tuple(vec![&Type::tuple(vec![lit(i)]) | &pair]),
+            }
+        };
+        if which < 2 {
+            return parity((0..c).map(row));
+        }
+        let all = Type::tuple(vec![Type::union_all((0..2 * c).map(lit))]);
+        (0..c).fold(all, |t, i| {
+            &t & &Type::tuple(vec![&Type::int() - &lit(2 * i + 1)])
+        })
+    };
+    for (which, what, per) in [
+        (
+            0,
+            "listing an exclusive or of integer-or-pair columns, by count",
+            2,
+        ),
+        (
+            1,
+            "listing an exclusive or of columns of two tuple lengths, by count",
+            2,
+        ),
+        (
+            2,
+            "listing a meet of tuple types given by their complements, by count",
+            1,
+        ),
+    ] {
+        let built: std::collections::HashMap<usize, Type> = [64, 512]
+            .into_iter()
+            .map(|c| (c, shape(c, which)))
+            .collect();
+        for c in [1, 2, 7] {
+            let small = shape(c, which).each_value().map(|v| v.count());
+            assert_eq!(small, Some(per * c), "{what}, c = {c}");
+        }
+        scaling::check(what, 64, |c| {
+            assert_eq!(built[&c].each_value().map(|v| v.count()), Some(per * c));
+        });
+    }
 }
 
 /// The rows of a decision tree on `c` columns of `{b, b + 1, b + 2}`: on column `i`, after
