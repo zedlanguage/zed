@@ -217,7 +217,7 @@ fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
 // exist; a stronger sound one would add a termination proof by decreasing measures
 // (size-change termination, PSPACE-complete in the call graph).
 pub fn ends(t: &Term) -> bool {
-    Reader::default().read(t).is_some()
+    Reader::default().read(Part::inline(t)).is_some()
 }
 
 /// What a part of a term needs of the names bound around it to end: `None` when no binding
@@ -240,8 +240,11 @@ struct Reader {
     /// [`zed_kernel::Items`] and [`zed_kernel::Family`] are known by theirs). A part shared by
     /// two places is one node reached twice, so it is read once. A part held inline (an
     /// argument, a match arm, the root) has one place, inside the one part that holds it, and
-    /// is read once with that part. The term is borrowed for the whole reading, so no node is
-    /// freed or changed in place while the reading holds its id.
+    /// is read once with that part. What a part needs depends on the part alone, so a reader
+    /// kept across readings ([`Mixer::reader`]) reads each node once over all of them: an id is
+    /// drawn once and never given to another node, and a node changed in place takes a new one
+    /// ([`Shared::make_mut`]), so an id it holds names the same part even after the node is
+    /// freed.
     ///
     /// The numbers are given in the order the parts are read, which depends only on the term's
     /// structure and sharing: never on the ids' values, which follow the order the nodes were
@@ -260,6 +263,8 @@ struct Reader {
     /// number, in the order [`each_part`] gives them.
     reads: Option<Vec<Vec<usize>>>,
     names: HashMap<Arc<str>, Name>,
+    /// Each name, by its number.
+    named: Vec<Arc<str>>,
     sets: Sets,
 }
 
@@ -297,7 +302,7 @@ pub fn reading(t: &Term) -> Vec<(Option<u32>, Vec<usize>)> {
         reads: Some(Vec::new()),
         ..Reader::default()
     };
-    r.read(t);
+    r.read(Part::inline(t));
     let reads = r.reads.unwrap_or_default();
     r.needs.into_iter().zip(reads).collect()
 }
@@ -305,9 +310,9 @@ pub fn reading(t: &Term) -> Vec<(Option<u32>, Vec<usize>)> {
 impl Reader {
     /// What `root` needs. The parts are read with an explicit stack, each after its own parts,
     /// and each part held in a node only the first time the node is reached.
-    fn read(&mut self, root: &Term) -> Needs {
+    fn read(&mut self, root: Part<'_>) -> Needs {
         // A part to read, with `None`; or a part whose `k` parts are on their way, with `k`.
-        let mut todo = vec![(Part::inline(root), None)];
+        let mut todo = vec![(root, None)];
         // The numbers of the parts read and not yet taken by the part that reads them: a
         // part's own parts end up on top, in the reverse of the order they were put on `todo`.
         let mut done: Vec<usize> = Vec::new();
@@ -349,7 +354,21 @@ impl Reader {
         }
         let n = self.names.len() as Name;
         self.names.insert(x.clone(), n);
+        self.named.push(x.clone());
         n
+    }
+
+    /// The names in the set `s`.
+    fn names_in(&self, s: Set) -> impl Iterator<Item = &Arc<str>> {
+        let members = self.sets.members(s).into_iter();
+        members.map(|x| &self.named[x as usize])
+    }
+
+    /// The names the lambda `k`, called, calls by name, when its form shows that a call ends
+    /// once each of them ends; `None` when no binding of them makes it end.
+    fn called(&mut self, k: &Shared) -> Option<Vec<Arc<str>>> {
+        let needs = self.read(Part::held(k))?;
+        Some(self.names_in(needs).cloned().collect())
     }
 
     /// What a term needs whose parts need `a` and `b`: both.
@@ -1488,8 +1507,19 @@ struct Entry {
     /// The number of what the binding is exactly: a literal by its value, any other term by
     /// its id and the exact numbers of the bindings it reads ([`Mixer::number`]).
     fine: Binding,
-    /// Whether a call of the binding is shown to end by its form, as [`ends`] reads a call.
+    /// Whether a call of the binding is shown to end by its form, as [`ends`] reads a call,
+    /// and, for a function, whether it has a stub.
     ends: bool,
+    /// Whether a call of the binding is shown to end by its form, exactly as [`ends`] reads a
+    /// call of the name in the term closed under the bindings it needs ([`Mixer::closed`]): a
+    /// primitive, a name free or bound to such a binding, or a lambda each name of
+    /// [`Reader::called`] is.
+    call_ends: bool,
+    /// Whether the binding and each binding it reads, closed the same way, are shown to end
+    /// by their form where they are bound, as [`ends`] reads their `let`s: each of them that
+    /// is no lambda is shown to end once the names it calls do, and each of those names is
+    /// free or bound to a binding whose calls end.
+    cone_ends: bool,
     /// The port that answers calls of the function, when it is one whose calls end.
     stub: Option<Arc<Stub>>,
 }
@@ -1593,23 +1623,6 @@ fn inline(o: Out) -> Term {
 /// Why a build-stage term is left to run when its form does not show that it ends.
 const FORM: &str = "its form does not show that it ends";
 
-/// The names the lambda `k`, called, calls by name, when its form shows that a call ends once
-/// each of them ends ([`ends`]); `None` when no binding of them makes it end.
-fn called(k: &Term) -> Option<Vec<Arc<str>>> {
-    let mut r = Reader::default();
-    let needs = r.read(k)?;
-    let mut by_name: Vec<Option<Arc<str>>> = vec![None; r.names.len()];
-    for (x, &n) in &r.names {
-        by_name[n as usize] = Some(x.clone());
-    }
-    let names = r.sets.members(needs).into_iter();
-    Some(
-        names
-            .map(|n| by_name[n as usize].clone().expect("a name read"))
-            .collect(),
-    )
-}
-
 /// The value of the closed term `t` under the prelude, its calls of the functions of `stubs`
 /// answered by their ports for the run `calls`.
 fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, String> {
@@ -1623,14 +1636,6 @@ fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, Str
     Evaluator::new(world)
         .run(&interp::prelude(t))
         .map_err(|e| e.to_string())
-}
-
-/// The value of the closed term `t`, when its form shows that it ends.
-fn run(t: Term) -> Result<Value, String> {
-    if !ends(&t) {
-        return Err(FORM.into());
-    }
-    run_with(t, &[], &Arc::new(Run::default()))
 }
 
 /// Whether the value `v` is compared in time linear in the memory it holds, and, as the
@@ -1822,8 +1827,11 @@ struct Mixer {
     /// The number of the functions of one kind: lambda or a name of one, the number of
     /// parameters, and whether their calls are shown to end.
     kinds: HashMap<(bool, usize, bool), Binding>,
-    /// The names each lambda, called, calls ([`called`]), by the lambda's id.
+    /// The names each lambda, called, calls ([`Reader::called`]), by the lambda's id.
     calls: HashMap<u64, Option<Vec<Arc<str>>>>,
+    /// What each part read for [`Mixer::shows_end`] and [`Mixer::number`] needs, kept across
+    /// evaluations and calls of [`Mixer::mix_top`], so that each node is read once in the mix.
+    reader: Reader,
     /// The ports given to stubs so far.
     ports: u64,
     /// What each part held in a node in the term `mix_top` is mixing became, by the node's id
@@ -1857,6 +1865,8 @@ impl Mixer {
             arity: None,
             fine: UNKNOWN,
             ends: false,
+            call_ends: false,
+            cone_ends: false,
             stub: None,
         };
         let b = match &known {
@@ -1882,6 +1892,7 @@ impl Mixer {
     /// reached under either mixes to one term and is mixed once.
     fn number(&mut self, e: &mut Entry, k: &Shared) -> Binding {
         let at = self.scope.len();
+        self.shown(e, k, at);
         let below = |x: &Arc<str>| self.scope.known_below(x, at);
         let reads: Vec<Option<usize>> = self
             .frees
@@ -1928,17 +1939,53 @@ impl Mixer {
         b
     }
 
+    /// Sets `e.call_ends` and `e.cone_ends` for the entry `e`, bound to the build-stage term
+    /// `k` and pushed next at position `at`, from the entries below it, so that
+    /// [`Mixer::shows_end`] answers what [`ends`] answers of a term closed under the bindings
+    /// it needs without building that term.
+    fn shown(&mut self, e: &mut Entry, k: &Shared, at: usize) {
+        let scope = &self.scope;
+        let call_ends = |y: &Arc<str>| {
+            let j = scope.known_below(y, at);
+            j.is_none_or(|j| scope.entries[j].call_ends)
+        };
+        e.call_ends = match &**k {
+            Term::PrimFn(_) => true,
+            Term::Var(y) => call_ends(y),
+            Term::Lam(..) => {
+                let reader = &mut self.reader;
+                let called = self.calls.entry(k.id());
+                let called = called.or_insert_with(|| reader.called(k));
+                called.as_ref().is_some_and(|c| c.iter().all(call_ends))
+            }
+            _ => false,
+        };
+        // A lambda bound and never called need not end; any other binding is evaluated.
+        let evaluated = match &**k {
+            Term::Lam(..) => true,
+            _ => {
+                let needs = self.reader.read(Part::held(k));
+                needs.is_some_and(|s| self.reader.names_in(s).all(call_ends))
+            }
+        };
+        e.cone_ends = evaluated
+            && self.frees.names_in(e.reads).into_iter().all(|y| {
+                let j = scope.known_below(y, at);
+                j.is_none_or(|j| scope.entries[j].cone_ends)
+            });
+    }
+
     /// The stub of the function `e`, bound to `k` at position `at`: `None` unless a call of
     /// it is shown to end, with each function it reads by that function's own stub and each
     /// other binding as it is.
     fn stub(&mut self, e: &Entry, k: &Shared, at: usize) -> Option<Arc<Stub>> {
         let called = match &**k {
             Term::Var(y) => Some(vec![y.clone()]),
-            _ => self
-                .calls
-                .entry(k.id())
-                .or_insert_with(|| called(k))
-                .clone(),
+            _ => {
+                let reader = &mut self.reader;
+                let called = self.calls.entry(k.id());
+                called.or_insert_with(|| reader.called(k)).clone()
+            }
         }?;
         let entries = &self.scope.entries;
         let callee_ends = |y: &Arc<str>| {
@@ -2141,16 +2188,20 @@ impl Mixer {
         let base = self.watch.last().map(|w| w.base);
         let (lets, stubs) = self.needs(free, base);
         if stubs.is_empty() {
-            return run(self.closed(t, &lets, &[]));
+            if !self.shows_end(t, free) {
+                return Err(FORM.into());
+            }
+            return run_with(self.closed(t, &lets, &[]), &[], &Arc::default());
         }
         let entries = &self.scope.entries;
         if stubs.iter().any(|&i| entries[i].stub.is_none()) {
             return self.as_written(t, free, &stubs);
         }
-        let closed = self.closed(t, &lets, &stubs);
-        if !ends(&closed) {
+        if !self.shows_end(t, free) {
             return Err(FORM.into());
         }
+        let closed = self.closed(t, &lets, &stubs);
+        let entries = &self.scope.entries;
         let ports: Vec<Arc<Stub>> = stubs
             .iter()
             .map(|&i| entries[i].stub.clone().expect("a stub"))
@@ -2169,14 +2220,62 @@ impl Mixer {
 
     /// The value of `t`, which reads `free`, with every binding it needs as written, recorded as
     /// depending on what each function at `stubs` is.
+    // Complexity tradeoff: a run as written takes time linear in the bindings `t` needs, all of
+    // them below as well as above the base, since the evaluator runs only a closed term: what
+    // is given up is time, `O(n)` per such evaluation and `O(n^2)` for `n` places each calling
+    // one of a chain of `n` functions. Whether the form shows that it ends no longer costs
+    // that ([`Mixer::shows_end`]), so a term whose form does not show it is left to run at once;
+    // the run itself still closes `t` over every binding it needs. Why: the kernel's
+    // evaluator takes a closed term and its values borrow it, so it cannot run under an
+    // environment kept from one evaluation to the next, and the error a run as written gives
+    // is the one the report shows, which the failed run with stubs cannot be trusted to give
+    // (a stub refuses a call it cannot key, and a key holding a function fails inside the
+    // stub). Trigger: a build-stage call whose run with stubs fails, by a real error, a call
+    // at an argument no answer table takes ([`compared`]), or a function with no stub.
+    // Tests: `l01_28_staging::cone::failing_calls_of_a_long_chain_are_left_to_run_in_quadratic_time`
+    // (at n and 8n, power 2), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written`,
+    // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F43. A
+    // complete solution would give the evaluator an environment of the bindings in scope, each
+    // entry's closure made once when it is pushed, and run `t` under it in time linear in `t`
+    // and the bindings the run reaches.
     fn as_written(&mut self, t: &Term, free: Set, stubs: &[usize]) -> Result<Value, String> {
         for &i in stubs {
             let e = &self.scope.entries[i];
             let (x, fine) = (e.name.clone(), e.fine);
             self.record(Probe::Same(x), Answer::Is(fine));
         }
+        if !self.shows_end(t, free) {
+            return Err(FORM.into());
+        }
         let (lets, _) = self.needs(free, None);
-        run(self.closed(t, &lets, &[]))
+        run_with(self.closed(t, &lets, &[]), &[], &Arc::default())
+    }
+
+    /// Whether [`ends`] would show that the build-stage term `t`, which reads `free`, ends
+    /// when closed under the bindings it needs ([`Mixer::needs`]), with or without stubs,
+    /// read from what `t` needs and what each entry holds ([`Mixer::shown`]) in time linear in
+    /// what `t` reads, not in the bindings it needs. The `let` of each binding the closed
+    /// term holds asks that the binding's own evaluation end and that a call of its name end
+    /// when the name is called, which are `cone_ends` and `call_ends`. With stubs, a function
+    /// bound below the base is replaced by its stub, which ends; it is there only when every
+    /// such function has a stub, and a function with a stub has both flags set (its calls
+    /// end by `Mixer::stub`, and each binding it reads is a function with a stub or a
+    /// literal, primitive or name, each of which ends), so both readings agree.
+    fn shows_end(&mut self, t: &Term, free: Set) -> bool {
+        let top = self.scope.len();
+        let Some(needs) = self.reader.read(Part::inline(t)) else {
+            return false;
+        };
+        let scope = &self.scope;
+        let entry = |y: &Arc<str>| scope.known_below(y, top).map(|j| &scope.entries[j]);
+        self.reader
+            .names_in(needs)
+            .all(|y| entry(y).is_none_or(|e| e.call_ends))
+            && self
+                .frees
+                .names_in(free)
+                .into_iter()
+                .all(|y| entry(y).is_none_or(|e| e.cone_ends))
     }
 
     /// Records that the part being mixed asked `p` and was told `a`, once.
@@ -2303,7 +2402,18 @@ impl Mixer {
         self.frees.of.clear();
         let site = match t.node {
             Some(s) => Site::Held(s),
-            None => Site::Inline(t.term, self.cluster(t.term)),
+            None => {
+                // A root held inline has a base too, as one held in a node has when it is
+                // entered, so that each evaluation in it calls the functions bound outside it
+                // through their stubs rather than closing over all the bindings they need. No
+                // part is stored under what the root asked.
+                self.watch.push(Watch {
+                    base: self.scope.len(),
+                    seen: BTreeSet::new(),
+                    said: Vec::new(),
+                });
+                Site::Inline(t.term, self.cluster(t.term))
+            }
         };
         self.mix(site)
     }
