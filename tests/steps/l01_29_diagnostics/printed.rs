@@ -147,6 +147,9 @@ fn every_printed_type_parses_back_to_itself() {
                 &out[i..]
             ));
         }
+        if let Some(name) = super::kernel_names::kernel_name(&out) {
+            failures.push(format!("{at}: a diagnostic names a kernel binder: {name}"));
+        }
         for (t, shown) in seen.into_iter().filter(|(t, _)| !unsolved(t)) {
             count += 1;
             if let Some(why) = mismatch(&t, &shown) {

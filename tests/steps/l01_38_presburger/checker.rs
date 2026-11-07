@@ -246,6 +246,33 @@ fn a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused() {
 }
 
 #[test]
+fn a_refused_question_names_the_parameters_as_written_when_other_functions_share_them() {
+    // `other` and `first` bind `x` and `w` too, so elaboration renames `ok`'s parameters
+    // `x@k` and `w@k`; the message names them `x` and `w`, as `ok` wrote them, in the order
+    // it prints them with no other function in the unit (item NAME-at-print).
+    let [first, second] = REFUSED[2].rows;
+    let src = program(
+        &format!(
+            "ok(x, y, z, w) = {first} && {second};\nother(x) = x > 2;\nfirst(w, x1) = w > x1;"
+        ),
+        "x: a, y: a, z: a, w: a",
+    );
+    assert_eq!(
+        rejection("tie", &src),
+        format!(
+            "1:1: whether `ok` can hold is not decided: variables that no structure tells apart \
+             would be eliminated in an order chosen by name: `w`, `x`, `z`, `y` occur alike in \
+             the integer constraints (the same coefficients, in rows that occur alike), so the \
+             next step has no first among them, and they share the rows `-w + 3 * x - 10 >= 0`, \
+             `3 * w - z - 10 >= 0`, `-x + 3 * y - 10 >= 0`, `3 * z - y - 10 >= 0`; so whether \
+             the constraints hold at an integer point is not decided\n  \
+             [1] 1:18: the constraints: x <= 3 * y - 10 && y <= 3 * z - 10 && 3 * w >= z + 10 \
+             && w <= 3 * x - 10\n  {MENU}"
+        )
+    );
+}
+
+#[test]
 fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
     let src = program(
         "ok(x, y, z, w) = 9 * x - 4 * y - 8 * w - 3 >= 0 && 5 * x + 11 * y + 9 * w - 9 >= 0 && -7 \

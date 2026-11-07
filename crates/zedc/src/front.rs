@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::Term;
+use zed_kernel::{Shared, Term};
 
 use crate::address::ContentAddress;
 use crate::ast::{self, Error, Stmt, StmtKind};
@@ -186,11 +186,23 @@ const NON_LINEAR_MENU: [&str; 2] = [
 #[doc(hidden)]
 pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     use crate::store::{preimage, presburger};
-    let defs: std::collections::HashMap<&str, &Term> = unit
-        .defs
-        .iter()
-        .map(|d| (d.name.as_str(), &*d.term))
-        .collect();
+    // The functions of the unit by name and written parameter names, so each overload of a name
+    // finds its own definition; overloads alike in both, which differ in types only, are matched
+    // to their definitions in the order of the unit's definitions. A kernel name is the written
+    // name or the written name and `@k` (`crate::elab`), and a written name holds no `@`
+    // (`crate::lex::name`). O(n) in the size of the parameter lists.
+    type Key<'a> = (&'a str, Vec<&'a str>);
+    type Lams<'a> = Vec<(&'a [Arc<str>], &'a Shared)>;
+    let mut defs: std::collections::HashMap<Key, Lams> = std::collections::HashMap::new();
+    for d in unit.defs.iter().rev() {
+        if let Term::Lam(ps, body) = &*d.term {
+            let written = ps.iter().map(|k| k.split('@').next().unwrap_or(k));
+            (defs
+                .entry((d.name.as_str(), written.collect()))
+                .or_default())
+            .push((ps, body));
+        }
+    }
     let cones = crate::elab::Cones::new(unit);
     let mut out = Vec::new();
     for s in stmts {
@@ -200,12 +212,16 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
         if f.name == "main" {
             continue;
         }
-        let Some(Term::Lam(ps, body)) = defs.get(f.name.as_str()) else {
+        let key = (
+            f.name.as_str(),
+            f.params.iter().map(|p| p.name.as_str()).collect(),
+        );
+        let Some((ps, body)) = defs.get_mut(&key).and_then(Vec::pop) else {
             continue;
         };
         work::stage(Stage::Linear, Some(&f.name), || {
-            let body = interp::prelude(cones.close((**body).clone()));
-            let Some(rs) = preimage::relations(&[&body], ps, true) else {
+            let (inputs, body) = written(f, ps, interp::prelude(cones.close((**body).clone())));
+            let Some(rs) = preimage::relations(&[&body], &inputs, true) else {
                 return;
             };
             for r in rs {
@@ -244,6 +260,38 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
         });
     }
     out
+}
+
+/// The question of `f`, whose kernel parameters are `ps` and whose closed body is `body`, stated
+/// over the parameters' written names: the names, and `body` under a let binding each renamed
+/// kernel parameter to its written name. Elaboration renames a binder `x` to `x@k` when another
+/// binder of the unit is named `x` too (`crate::elab`), which the user cannot write; the
+/// question, its refusal and its constraints then print `x`, the name the user wrote, and
+/// their text does not change with the other functions of the unit. The parameters of one
+/// function have distinct names, so the written names are distinct as the kernel names are.
+/// The lets are outside the prelude's, so a parameter named like a prelude word, `min`, is the
+/// free input `min` and not the word.
+///
+/// O(p) for `p` parameters: one let per renamed parameter.
+fn written(f: &ast::Function, ps: &[Arc<str>], body: Term) -> (Vec<Arc<str>>, Term) {
+    debug_assert_eq!(
+        f.params.len(),
+        ps.len(),
+        "one kernel name for each parameter"
+    );
+    let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
+    let body = ps
+        .iter()
+        .zip(&inputs)
+        .filter(|(k, w)| k != w)
+        .fold(body, |body, (k, w)| {
+            Term::Let(
+                k.clone(),
+                Shared::new(Term::Var(w.clone())),
+                Shared::new(body),
+            )
+        });
+    (inputs, body)
 }
 
 /// The errors `errors` of `text`, of `severity`, as diagnostics, each placed with its steps and
