@@ -239,33 +239,22 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             // (`presburger::extend`), so a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i`,
             // over one variable or several, costs O(n) in all. Complexity tradeoff: a chain
             // whose links each exclude the point found for their callee is decided whole at each
-            // link, O(n²) (at `Extending::answers`); so is a chain whose links define auxiliary
-            // variables (at `Scoped::relation`), and one whose links pass their callee other
+            // link, O(n²) (at `Extending::defined`); so is one whose links pass their callee other
             // arguments than their own names (`p{i-1}(x: x + 1)`), whose calls are each
             // translated again. Tests `l01_38_presburger::one_scope::
             // the_questions_of_a_chain_of_tests_scale` and `..._over_two_variables_scale`.
-            // COMPLEXITY.md rows LOAD-chain and LOAD-chain-share.
+            // COMPLEXITY.md rows LOAD-chain and LOAD-chain-share. A chain whose links define
+            // auxiliary variables (`x mod 7`) costs O(n) as well: they are numbered once for the
+            // scope, and each question reads the definitions its new parts reach (LOAD-chain-aux).
             // The question is stated over the names the user wrote: elaboration renames a binder
             // `x` to `x@k` when another binder of the unit is named `x` too (`crate::elab`), which
             // the user cannot write, so the question, its refusal and its constraints print `x`,
-            // and their text does not change with the other functions of the unit.
+            // and their names do not change with the other functions of the unit. The auxiliary
+            // variables of the constraints are numbered from 0 in the order the scope made them,
+            // which an earlier function that made one of them first may change.
             let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
             if let Some(r) = scoped.relation(body, ps, &inputs, true) {
-                let answers = if r.defs.is_empty() {
-                    extending.answers(&r.body)
-                } else {
-                    let defined = r.defined();
-                    presburger::extend::Answers {
-                        holds: presburger::decide(&presburger::Formula::and(vec![
-                            defined.clone(),
-                            r.body.clone(),
-                        ])),
-                        fails: presburger::decide(&presburger::Formula::and(vec![
-                            defined,
-                            presburger::Formula::negate(r.body.clone()),
-                        ])),
-                    }
-                };
+                let answers = extending.defined(&r, &|n| scoped.def(n));
                 for (can, answer) in [("hold", answers.holds), ("fail", answers.fails)] {
                     if let Err(why) = answer {
                         out.push(ast::Error {
@@ -278,7 +267,7 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
                             notes: vec![
                                 ast::Note {
                                     span: f.body.span,
-                                    text: format!("the constraints: {r}"),
+                                    text: format!("the constraints: {}", scoped.written(&r)),
                                 },
                                 // O(1): two constant lines per refused question.
                                 ast::Note {

@@ -85,8 +85,9 @@ fn a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body() {
             let mut scoped = Scoped::new(&lets);
             for i in order {
                 let (name, ps, body) = fs[i];
+                let got = scoped.relation(body, ps, ps, true);
                 assert_eq!(
-                    scoped.relation(body, ps, ps, true),
+                    got.map(|b| scoped.written(&b)),
                     expected[i],
                     "`{name}` in\n{src}"
                 );
@@ -235,15 +236,91 @@ fn each_answer_from_a_callee_is_the_answer_of_the_relation_alone() {
             for i in order {
                 let (name, ps, body) = fs[i];
                 let r = scoped.relation(body, ps, ps, true).expect(name);
-                assert!(r.defs.is_empty(), "{name}");
-                let a = extending.answers(&r.body);
-                assert_eq!(a.holds, decide(&r.body), "`{name}` can hold in\n{src}");
+                assert!(scoped.written(&r).defs.is_empty(), "{name}");
+                let a = extending.answers(&r);
+                assert_eq!(a.holds, decide(&r), "`{name}` can hold in\n{src}");
                 assert_eq!(
                     a.fails,
-                    decide(&Formula::negate(r.body.clone())),
+                    decide(&Formula::negate(r.clone())),
                     "`{name}` can fail in\n{src}"
                 );
             }
         }
     }
+}
+
+#[test]
+fn each_answer_with_auxiliary_variables_is_the_answer_of_the_relation_alone() {
+    // LOAD-chain-aux: the auxiliary variables are numbered once for the scope, and each
+    // answer, found from the callee's and the definitions the new parts reach, is the one
+    // the relation with all its definitions has.
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let units = [
+        // A chain whose links each define a remainder, a link that holds its callee's
+        // point and one that excludes it.
+        "c0(x: int) = x div 3 > 0;\nc1(x: int) = c0(x: x) && x mod 7 + 1 > 0;\n\
+         c2(x: int) = c1(x: x) && x mod 7 == 5;\nc3(x: int) = c2(x: x) && x div 3 < 0;\n\
+         c4(x: int) = c3(x: x) || x mod 2 == 1;",
+        // Nested `div` and `mod`, a divisor that is a term, and a callee read twice.
+        "n0(x: int, y: int) = (x div 3) mod 5 == 2 && y > 0;\n\
+         n1(x: int, y: int) = n0(x: x, y: y) && (x mod 15) div 4 == y;\n\
+         n2(x: int, y: int) = n1(x: x, y: y) && x div y > 1 && x mod y == 0;\n\
+         n3(x: int, y: int) = n2(x: x, y: y) && n0(x: x, y: y) && min(x, y) + abs(y) > 2;",
+        // A callee whose value is defined by a branch and a remainder, called by tests.
+        "v(x: int) = if x mod 4 == 0 { x div 4 } else { 0 - x };\nt1(x: int) = v(x: x) > 3;\n\
+         t2(x: int) = t1(x: x) && v(x: x) < 9;\nt3(x: int) = t2(x: x) && x mod 3 == 1;",
+        // A chain of one function: no callee.
+        "e0(x: int) = x mod 3 == 1;",
+    ];
+    for src in units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        // In the unit's order and in the reverse, so that a caller is asked before its callee.
+        for order in [
+            (0..fs.len()).collect::<Vec<_>>(),
+            (0..fs.len()).rev().collect(),
+        ] {
+            let mut scoped = Scoped::new(&lets);
+            let mut extending = Extending::new();
+            let mut defined = 0;
+            for i in order {
+                let (name, ps, body) = fs[i];
+                let Some(r) = scoped.relation(body, ps, ps, true) else {
+                    continue;
+                };
+                let a = extending.defined(&r, &|n| scoped.def(n));
+                let w = scoped.written(&r);
+                defined += usize::from(!w.defs.is_empty());
+                let with = |f: Formula| Formula::and(vec![w.defined(), f]);
+                assert_eq!(
+                    a.holds,
+                    decide(&with(w.body.clone())),
+                    "`{name}` can hold in\n{src}\n{w}"
+                );
+                assert_eq!(
+                    a.fails,
+                    decide(&with(Formula::negate(w.body.clone()))),
+                    "`{name}` can fail in\n{src}\n{w}"
+                );
+            }
+            assert!(defined >= 1, "{src}");
+        }
+    }
+}
+
+#[test]
+fn the_questions_of_a_chain_defining_auxiliary_variables_scale() {
+    // `p{i}(x) = p{i-1}(x: x) && x mod 7 + i > 0`, the chain of LOAD-chain-aux: each link
+    // defines a quotient and a remainder. When a body that defined one dropped its
+    // translations, each link translated the chain again and each relation was decided whole
+    // with all its definitions, O(n²): 90.9 times the bytes for 8 times the functions (50 to
+    // 400) on main, 7.9 times now.
+    questions_scale(
+        "a chain of tests defining auxiliary variables",
+        50,
+        "p0(x: int) = x div 3 > 0;\n",
+        |i| format!("p{i}(x: int) = p{}(x: x) && x mod 7 + {i} > 0;\n", i - 1),
+    );
 }

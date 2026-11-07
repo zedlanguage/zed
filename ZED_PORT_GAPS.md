@@ -2023,6 +2023,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | The memo's translation tables moved out with `std::mem::take` after a body and moved back before the next (`Option<(bool, Translations)>`) | `Memo::take_translations`, `Memo::put_translations`, `Scoped::relation` | Mutation (gap 11) | The tables returned with each relation and passed to the next |
 | An index `HashMap<Arc<str>, Vec<Rc<Logged>>>` from a name to the kept call entries whose arguments hold it, pruned with `retain` to the names a body reads | `Scoped::by_name`, `Scoped::relation` | Shared tables (gap 2), Mutation (gap 11) | A map from name to entries rebuilt by a filter over the next body's inputs |
 
+## Entries from LOAD-chain-aux (`zedc/src/store/preimage.rs`, `presburger/extend.rs`, `front.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| One translation state (`Tr`) kept in `Scoped` for every body of a scope, its auxiliary numbers and definitions growing, replaced when `products` changes | `Scoped::tr`, `Scoped::relation`, `Scoped::def` | Mutation (gap 11) | The state returned with each relation and passed to the next |
+| A point as an `imbl::OrdMap<Atom, Int>` that each extension adds the values of new atoms to, sharing the callee's point | `extend::Known::point`, `Extending::extend`, `extend::met` | None | Zed's maps are values; the runtime shares their structure, so an update stays `O(log n)` |
+| A borrowed closure `&dyn Fn(u32) -> Formula` giving the definition of an auxiliary variable | `Extending::defined`, `extend::reached`, `front::linear_questions` | None | A function value passed beside the formula |
+| An enum `What` of what an auxiliary variable stands for, written by a function that renumbers its auxiliary atoms, and `Display` | `preimage::What`, `What::written`, `Scoped::written` | Interfaces (L10) for `Display` | A union with a function writing it |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |

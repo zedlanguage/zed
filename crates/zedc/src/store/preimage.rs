@@ -869,7 +869,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         let body = tx.relation(&mut tr, root, ROOT)?;
         out.push(Relation {
             body,
-            defs: tr.defs[first..].to_vec(),
+            defs: tr.written(first),
         });
     }
     Some(out)
@@ -899,8 +899,12 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// input. A caller's relation so takes its callee's translation as made for an earlier body,
 /// shared and not read again, and a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i` is
 /// translated in O(n), where translating each body afresh read the chain once per body,
-/// O(n²) (LOAD-chain-share). A body that defines auxiliary variables keeps none of the
-/// translations it made, since they number them.
+/// O(n²) (LOAD-chain-share). The auxiliary variables are numbered once for the scope, so a
+/// kept translation that holds one serves every body; a relation is its body alone, its
+/// definitions read from the scope ([`Scoped::def`]) and written, numbered from 0, by
+/// [`Scoped::written`], and a chain whose links each define one (`x mod 7`) is translated in
+/// O(n) as well, where dropping the translations of a body that made one read the chain once
+/// per body (LOAD-chain-aux).
 pub struct Scoped<'t> {
     tx: Tx<'t>,
     scope: Eid,
@@ -911,6 +915,10 @@ pub struct Scoped<'t> {
     /// is kept is what a body over the same names can find again, and a unit whose bodies
     /// name their inputs apart (`x@1`, `x@2`) holds O(n) entries, not each body's calls.
     by_name: HashMap<Arc<str>, Vec<Rc<Logged>>>,
+    /// The auxiliary variables of every relation read under the `products` of `kept`, each
+    /// numbered once for the scope, so that a kept translation that holds one serves every
+    /// body (LOAD-chain-aux).
+    tr: Tr,
 }
 
 /// The translation tables of a [`Memo`], kept by [`Scoped`] from one body to the next.
@@ -957,24 +965,27 @@ impl<'t> Scoped<'t> {
             scope,
             kept: None,
             by_name: HashMap::new(),
+            tr: Tr::new(false),
         }
     }
 
-    /// The relation the linear-relation domain states for the test `body` of parameters
-    /// `params` over the free names `inputs`, the i-th parameter standing for the i-th input,
-    /// read under the scope: as [`relations`] states it over `inputs` for `body` closed by the
-    /// scope's lets, under lets outside them that bind each parameter to its input. A
-    /// parameter so names its input whatever the scope binds, a prelude word or a definition
-    /// of the unit; an input named like a prelude word, `min`, is the input. Products of two
-    /// symbols are atoms when `products` holds. `None` when the body is outside the domain.
-    /// Time of the body, of the parameters and of the parts of the scope no earlier body read.
+    /// The body of the relation the linear-relation domain states for the test `body` of
+    /// parameters `params` over the free names `inputs`, the i-th parameter standing for the
+    /// i-th input, read under the scope, its auxiliary variables defined by [`Scoped::def`]:
+    /// the relation [`Scoped::written`] writes is the one [`relations`] states over `inputs`
+    /// for `body` closed by the scope's lets, under lets outside them that bind each
+    /// parameter to its input. A parameter so names its input whatever the scope binds, a
+    /// prelude word or a definition of the unit; an input named like a prelude word, `min`,
+    /// is the input. Products of two symbols are atoms when `products` holds. `None` when the
+    /// body is outside the domain. Time of the body, of the parameters and of the parts of the
+    /// scope no earlier body read.
     pub fn relation(
         &mut self,
         body: &'t Term,
         params: &[Arc<str>],
         inputs: &[Arc<str>],
         products: bool,
-    ) -> Option<Relation> {
+    ) -> Option<Formula> {
         debug_assert_eq!(params.len(), inputs.len(), "one input for each parameter");
         let tx = &mut self.tx;
         let doms: Domains = inputs
@@ -1005,7 +1016,10 @@ impl<'t> Scoped<'t> {
         m.log.clear();
         match self.kept.take() {
             Some((p, t)) if p == products => m.put_translations(t),
-            _ => self.by_name.clear(),
+            _ => {
+                self.by_name.clear();
+                self.tr = Tr::new(products);
+            }
         }
         // O(the names held and the inputs), each dropped entry once.
         let names: HashSet<&Arc<str>> = inputs.iter().collect();
@@ -1022,26 +1036,7 @@ impl<'t> Scoped<'t> {
             }
             false
         });
-        let mut tr = Tr::new(products);
-        let body = tx.formula(&mut tr, root, scope);
-        // An auxiliary variable is numbered in the relation that made it, so a translation
-        // that holds one cannot serve another relation: when this one made any, every
-        // translation it made is dropped (they are in the log, which was empty at its start).
-        // An entry kept from an earlier body holds none, since each earlier body that made
-        // one dropped its own, so what is kept holds none either.
-        // Complexity tradeoff: a chain whose links each define an auxiliary variable (`div`
-        // or `mod` by a term, `x div 3` in a test) translates each link again for each
-        // caller, O(n²) for a chain of n; what each relation states is unchanged. Renumbering
-        // a kept translation's auxiliary variables into the next relation would rewrite it
-        // whole, the same cost. Trigger: a call of a function whose test needs an auxiliary
-        // variable. Test `l01_38_presburger::one_scope::a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body`
-        // (its first unit calls a helper with `div` and `mod`).
-        // COMPLEXITY.md row LOAD-chain-share. A complete solution needs the auxiliary
-        // variables numbered once for the scope and each relation's definitions shared with
-        // its callee's.
-        if !tr.defs.is_empty() {
-            tx.forget(0);
-        }
+        let body = tx.formula(&mut self.tr, root, scope);
         // The calls this body translated and kept, each under the names its arguments hold:
         // O(the size of their keys).
         fn sym(f: &presburger::Factor) -> Option<&Arc<str>> {
@@ -1073,10 +1068,91 @@ impl<'t> Scoped<'t> {
         }
         tx.drop_fresh();
         self.kept = Some((products, tx.run.memo.take_translations()));
-        Some(Relation {
-            body: body?,
-            defs: tr.defs,
-        })
+        body
+    }
+
+    /// The formula that defines the auxiliary variable `n` of a relation [`Scoped::relation`]
+    /// gave, over the atoms it is made of: for the remainder of a pair, its quotient's, which
+    /// defines both. Each holds for some value of `n` whatever the values of those atoms, as
+    /// [`presburger::extend::Extending::defined`] needs. O(1).
+    pub fn def(&self, n: u32) -> Formula {
+        let n = n as usize;
+        let at = if self.tr.defs[n].1.remainder() {
+            n - 1
+        } else {
+            n
+        };
+        self.tr.defs[at].2.clone()
+    }
+
+    /// The relation of `body`, a body [`Scoped::relation`] gave: with the definitions it
+    /// reaches, its auxiliary variables numbered from 0 in the order the scope numbered them.
+    /// It is the relation [`relations`] states for the body closed over the definitions it
+    /// reaches, but for the numbering of the auxiliary variables when a definition was made
+    /// for another body first. For a message and for tests: time of the body and of the
+    /// definitions it reaches.
+    pub fn written(&self, body: &Formula) -> Relation {
+        use presburger::Atom;
+        let auxes = |f: &Formula| -> Vec<u32> {
+            let mut out = Vec::new();
+            for a in f.atoms() {
+                match a {
+                    Atom::Aux(n) => out.push(n),
+                    Atom::Product(f, g) => {
+                        for h in [f, g] {
+                            if let presburger::Factor::Aux(n) = h {
+                                out.push(n);
+                            }
+                        }
+                    }
+                    Atom::Sym(_) => {}
+                }
+            }
+            out
+        };
+        let mut reached: Vec<u32> = Vec::new();
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut todo = auxes(body);
+        while let Some(n) = todo.pop() {
+            if !seen.insert(n) {
+                continue;
+            }
+            reached.push(n);
+            let (_, what, def) = &self.tr.defs[n as usize];
+            todo.extend(auxes(def));
+            if what.remainder() {
+                todo.push(n - 1);
+            }
+        }
+        if reached.is_empty() {
+            return Relation {
+                body: body.clone(),
+                defs: Vec::new(),
+            };
+        }
+        reached.sort_unstable();
+        let at: HashMap<u32, u32> = (reached.iter().enumerate())
+            .map(|(i, &n)| (n, i as u32))
+            .collect();
+        let to = |n: u32| at[&n];
+        let renumber = |f: &Formula| {
+            f.map_cons(&|c| {
+                Formula::Con(Con {
+                    lin: renumbered(&c.lin, &to),
+                    rel: c.rel,
+                })
+            })
+        };
+        let defs = (reached.iter().enumerate())
+            .map(|(i, &n)| {
+                let (_, what, def) = &self.tr.defs[n as usize];
+                (i as u32, what.written(Some(&to)), renumber(def))
+            })
+            .collect();
+        Relation {
+            body: renumber(body),
+            defs,
+        }
     }
 
     /// The number of scopes and remembered entries the scope holds from one body to the next:
@@ -1125,7 +1201,7 @@ fn linear(
     };
     let rel = Relation {
         body,
-        defs: tr.defs,
+        defs: tr.written(0),
     };
     let go = || -> Result<(Domains, bool, Option<Refusal>), Refusal> {
         let within = |d: &Domains| -> Formula {
@@ -1182,7 +1258,7 @@ fn linear(
 /// The translation of terms into the linear-relation domain: the definitions of the auxiliary
 /// variables made so far.
 struct Tr {
-    defs: Vec<(u32, String, Formula)>,
+    defs: Vec<(u32, What, Formula)>,
     products: bool,
     /// For each dividend and divisor that is not a constant, the number of the quotient of the
     /// pair [`Tr::div_mod_by_term`] made for them, so that `a div n` and `a mod n` share it.
@@ -1202,6 +1278,13 @@ impl Tr {
         }
     }
 
+    /// The definitions from `first` on, as a [`Relation`] lists them.
+    fn written(&self, first: usize) -> Vec<(u32, String, Formula)> {
+        (self.defs[first..].iter())
+            .map(|(n, w, f)| (*n, w.to_string(), f.clone()))
+            .collect()
+    }
+
     /// Undoes the definitions from `mark` on, and the pairs among them.
     fn truncate(&mut self, mark: usize) {
         self.defs.truncate(mark);
@@ -1213,7 +1296,7 @@ impl Tr {
         }
     }
 
-    fn aux(&mut self, what: String, def: Formula) -> presburger::Atom {
+    fn aux(&mut self, what: What, def: Formula) -> presburger::Atom {
         let n = self.defs.len() as u32;
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
@@ -1256,8 +1339,7 @@ impl Tr {
             ])
         };
         let def = Formula::or(vec![sign(1), sign(-1), Formula::Con(Con::eq(n, &zero))]);
-        let (first, second) = (operand(a), operand(n));
-        let shown = |op: &str| format!("{first} {op} {second}");
+        let shown = |op| What::ByTerm(op, a.clone(), n.clone());
         self.defs.push((k, shown("div"), def));
         self.defs.push((k + 1, shown("mod"), Formula::top()));
         self.pairs.insert(key.clone(), k);
@@ -1266,6 +1348,87 @@ impl Tr {
     }
 }
 
+/// What an auxiliary variable stands for, as a message writes it: kept as its parts, so that
+/// a relation of a [`Scoped`] scope writes its variables numbered from 0 in its own order
+/// ([`What::written`]), whatever the scope numbers them.
+#[derive(Clone)]
+enum What {
+    /// `a div c` or `a mod c`, the operator first, for a constant `c`.
+    ByConstant(&'static str, Lin, i128),
+    /// `a div n` or `a mod n`, the operator first, for a term `n`.
+    ByTerm(&'static str, Lin, Lin),
+    /// `if g then a else b`.
+    If(Formula, Lin, Lin),
+    /// `abs(a)`.
+    Abs(Lin),
+    /// `min(a, b)`.
+    Min(Lin, Lin),
+    /// `max(a, b)`.
+    Max(Lin, Lin),
+}
+
+impl What {
+    /// Whether it is the remainder of a pair, defined by its quotient's formula, the one
+    /// numbered before it.
+    fn remainder(&self) -> bool {
+        matches!(self, What::ByConstant("mod", ..) | What::ByTerm("mod", ..))
+    }
+
+    /// As a message writes it, each auxiliary variable `n` numbered `to(n)`, or as it is
+    /// numbered. Time of its parts.
+    fn written(&self, to: Option<&dyn Fn(u32) -> u32>) -> String {
+        let l = |l: &Lin| match to {
+            Some(to) => renumbered(l, to),
+            None => l.clone(),
+        };
+        match self {
+            What::ByConstant(op, a, c) => format!("{} {op} {c}", operand(&l(a))),
+            What::ByTerm(op, a, n) => format!("{} {op} {}", operand(&l(a)), operand(&l(n))),
+            What::If(g, a, b) => {
+                let g = match to {
+                    Some(to) => g.map_cons(&|c| {
+                        Formula::Con(Con {
+                            lin: renumbered(&c.lin, to),
+                            rel: c.rel,
+                        })
+                    }),
+                    None => g.clone(),
+                };
+                format!("if {g} then {} else {}", l(a), l(b))
+            }
+            What::Abs(a) => format!("abs({})", l(a)),
+            What::Min(a, b) => format!("min({}, {})", l(a), l(b)),
+            What::Max(a, b) => format!("max({}, {})", l(a), l(b)),
+        }
+    }
+}
+
+impl fmt::Display for What {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.written(None))
+    }
+}
+
+/// `l` with each auxiliary variable `n` numbered `to(n)`.
+fn renumbered(l: &Lin, to: &dyn Fn(u32) -> u32) -> Lin {
+    use presburger::{Atom, Factor};
+    let factor = |f: &Factor| match f {
+        Factor::Aux(n) => Factor::Aux(to(*n)),
+        Factor::Sym(_) => f.clone(),
+    };
+    let terms = l.terms.iter().map(|(a, c)| {
+        let a = match a {
+            Atom::Aux(n) => Atom::Aux(to(*n)),
+            Atom::Product(f, g) => Atom::product_of(factor(f), factor(g)),
+            Atom::Sym(_) => a.clone(),
+        };
+        (a, c.clone())
+    });
+    Lin {
+        terms: terms.collect(),
+        constant: l.constant.clone(),
+    }
+}
 /// `l` as the operand of an infix operator: in parentheses unless it is one name or a natural
 /// number.
 fn operand(l: &Lin) -> String {
@@ -4616,7 +4779,7 @@ impl<'m, 't> Walk<'m, 't> {
                 let (la, lb) = (self.lin(a, env).await?, self.lin(b, env).await?);
                 // One level: the parts are shown by their linear forms, in which an auxiliary
                 // variable is its name, so the name costs the size of what it is made of.
-                let what = format!("if {g} then {la} else {lb}");
+                let what = What::If(g.clone(), la.clone(), lb.clone());
                 self.tr(|tr| {
                     let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
                     let def = Formula::or(vec![
@@ -4674,8 +4837,7 @@ impl<'m, 't> Walk<'m, 't> {
                                 Formula::Con(Con::ge(&r, &Lin::constant(0))),
                                 Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
                             ]);
-                            let first = operand(&a);
-                            let shown = |op: &str| format!("{first} {op} {c}");
+                            let shown = |op| What::ByConstant(op, a.clone(), c);
                             tr.defs.push((n, shown("div"), def));
                             tr.defs.push((n + 1, shown("mod"), Formula::top()));
                             Some(if p == IntDiv { q } else { r })
@@ -4700,9 +4862,9 @@ impl<'m, 't> Walk<'m, 't> {
                                 ]),
                             ]);
                             let what = match p {
-                                Abs => format!("abs({a})"),
-                                Min => format!("min({a}, {b})"),
-                                _ => format!("max({a}, {b})"),
+                                Abs => What::Abs(a.clone()),
+                                Min => What::Min(a.clone(), b.clone()),
+                                _ => What::Max(a.clone(), b.clone()),
                             };
                             tr.aux(what, def);
                             Some(x)
