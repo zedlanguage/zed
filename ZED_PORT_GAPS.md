@@ -2090,3 +2090,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | A tree of restrictions by halves kept in a `Vec<Option<Part<Row>>>`, each built on first use through `&mut self` while the iterator runs | `RowIndex::half`, `RowIndex::holds` | Mutation | The tree in the iterator's state receiver, each node a lazy value; or all `2c` restrictions built before the first value, which costs the same order |
 | Per column and depth, a `BTreeMap<Value, Vec<usize>>` filled with `entry().or_default().push` | `Keyed::add`, `Keyed::at` | Mutation | A table from column, depth and value to a list, built by a fold over the tuple types |
+
+## Entries from S22-chain-cost (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Peekable` over a `Vec`'s owning iterator, with `next_if` taking the next leaf only when its range lies inside the node being built | `cls_build` | Mutation, iterators | A recursive build over the list of leaves that returns the rest of the list |
+| A `&mut Vec` passed down a recursion that pushes the leaf pairs of two trees walked together | `cls_zip` | Mutation | A fold that returns the list, or the two walks' leaf lists merged by their ranges |
+| `if … && let Split::Exact(..) = …` (a let chain) taking a second split's answer only when it is exact | `preimage_in` | None | `match` with an `is` test |

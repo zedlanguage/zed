@@ -30,20 +30,18 @@ fn the_z3_fixture_reproduces_exactly() {
         ),
         "x [0..=47]; exact"
     );
-    // A congruence over many periods is read by the split by remainders (row S22e-wide): the
-    // first and last periods of `[0..=49]` are read one by one, so 3, 10, 17, 38 and 45 leave
-    // the box, and the merged middle periods keep 24 and 31. The relation holds one disjunct
-    // per piece and class, and the set is necessary only. Before S22e-wide the linear stage
-    // kept `[0..=2, 4..=49]` with the relation `2 * x <= 98 && !(q1 == 3)`.
+    // A congruence over many periods is read by the split by remainders (row S22e-wide). The
+    // split over `[0..=1000000]` merges the middle periods and finds the box `[0..=49]` less
+    // 3, 10, 17, 38 and 45; the split over that box reads each class exactly, so 24 and 31
+    // leave it too (row S22-order-chain). Before S22-order-chain the set was necessary, with
+    // 24 and 31 kept and a relation of one disjunct per piece and class; before S22e-wide the
+    // linear stage kept `[0..=2, 4..=49]` with the relation `2 * x <= 98 && !(q1 == 3)`.
     assert_eq!(
         pre(
             "ok(x) = (x * 2 + 1) < 100 && x mod 7 != 3;",
             &[("x", Some(0), Some(1_000_000))]
         ),
-        "x [0..=2, 4..=9, 11..=16, 18..=37, 39..=44, 46..=49]; necessary; relation (x >= 0 && \
-         x <= 2 && q1 >= 0 && q1 <= 2) || (x >= 4 && x <= 49 && q1 >= 0 && q1 <= 2) || (x >= 0 \
-         && x <= 2 && q1 >= 4 && q1 <= 6) || (x >= 4 && x <= 49 && q1 >= 4 && q1 <= 6) where q0 \
-         = x div 7, q1 = x mod 7"
+        "x [0..=2, 4..=9, 11..=16, 18..=23, 25..=30, 32..=37, 39..=44, 46..=49]; exact"
     );
 }
 

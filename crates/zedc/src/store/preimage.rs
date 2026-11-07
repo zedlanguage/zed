@@ -252,11 +252,24 @@ fn preimage_in(
     // COMPLEXITY.md row S22e-quad. A complete solution would hold the congruence facet in
     // the backward transfer's sets, so that one transfer carries every class at once.
     //
-    // A split that finds a mixed stretch over many periods ([`Split::Wide`]) is kept, and the
-    // transfer and the split over the transfer's box run as without it: over that narrower box
-    // the split may be exact where over the whole box it is not (`many_remainders` below
-    // `i mod 1024 == 0`, row S22e-wide). When neither is exact the kept answer is the
-    // preimage, its box met with the transfer's, and the linear stage is not run.
+    // A split that finds a mixed stretch over many periods ([`Split::Wide`]) runs once more over
+    // the box it found, which holds every point of the preimage, so an exact answer there is
+    // the preimage. Otherwise it is kept, and the transfer and the split over the transfer's
+    // box run as without it: over that narrower box the split may be exact where over the
+    // whole box it is not (`many_remainders` below `i mod 1024 == 0`, row S22e-wide). When
+    // neither is exact the kept answer is the preimage, its box met with the transfer's, and
+    // the linear stage is not run. The split over the found box comes first because the
+    // transfer reads a guard on the remainder over more than two periods inexactly, so the
+    // `if` it guards has no summary ([`Walk::pa_if`]) and the term its arms share is read once
+    // for each demand they send it, a number that grows with the depth of a chain (row
+    // S22-order-chain); the split reads each level once ([`Walk::by_class`]).
+    //
+    // Complexity tradeoff: when the split over the found box is not exact, it was one more
+    // split, `O(G n log n)` as the first, spent for nothing. Why: whether it is exact is
+    // known only by running it. Trigger: a split that is wide over the whole box and not
+    // exact over the box it finds. Test:
+    // `store::preimage::tests::a_chain_split_by_two_classes_is_read_in_time_near_its_length`.
+    // COMPLEXITY.md row S22-order-chain.
     let mut whole_tried = false;
     let mut early = None;
     if !is_empty(inputs) {
@@ -272,6 +285,19 @@ fn preimage_in(
                 };
             }
             Split::Wide(dom, found) => {
+                if dom != *inputs
+                    && let Split::Exact(exact) =
+                        split_residues(tx, root, &dom, demand, &marks, false)
+                {
+                    return Preimage {
+                        domains: exact,
+                        exact: true,
+                        enumerated: false,
+                        stops: Vec::new(),
+                        relation: None,
+                        refusal: None,
+                    };
+                }
                 early = Some((dom, found));
                 whole_tried = true;
             }
@@ -480,15 +506,15 @@ enum Split {
 /// Complexity tradeoff: a term the summary does not read is read by each class's run, `G`
 /// times the cost of one transfer of it for `G` classes, and `G` is at most `2d + 1` for `d`
 /// distinct constants compared: `O(G n log n)`, up to `O(n^2 log n)`, where that transfer is
-/// `O(n log n)`. Such terms are listed at [`Walk::by_class`] (an `if` whose arms differ by more
-/// than a constant in some class, a test of a term that reads a remainder, `min` and `max`
-/// across their constant, values that may leave `i64`). The split is not tried when the terms
-/// compare remainders of two inputs or two moduli, and it is given up when a class's transfer
-/// is not exact or when two classes narrow another input differently; those inputs get the
-/// linear stage's answer, as before. Why: the classes of two pairs combine as a product, `G1 *
-/// G2` transfers, and boxes that differ in two inputs have a union that is not a box (row
-/// C14). Trigger: a guard `x mod m == c` for `d` distinct `c` above such a term (the cost);
-/// two remainders compared; another input narrowed by class. Test:
+/// `O(n log n)`. Such terms are listed at [`Walk::by_class`] (an `if` whose arms read different
+/// inputs, a test of a term that reads a remainder, values that may leave `i64`). The split is
+/// not tried when the terms compare remainders of two inputs or two moduli, and it is given
+/// up when a class's transfer is not exact or when two classes narrow another input
+/// differently; those inputs get the linear stage's answer, as before. Why: the classes of
+/// two pairs combine as a product, `G1 * G2` transfers, and boxes that differ in two inputs
+/// have a union that is not a box (row C14). Trigger: a guard `x mod m == c` for `d`
+/// distinct `c` above such a term (the cost); two remainders compared; another input
+/// narrowed by class. Test:
 /// `l01_25_preimage_catalog::s22::chain_mod7_scales`,
 /// `l01_25_preimage_catalog::s22::many_remainders_scales`,
 /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
@@ -3952,10 +3978,25 @@ impl<'m, 't> Walk<'m, 't> {
                     Some(c) => (c, b),
                     None => (self.constant_int(b, env).await?, a),
                 };
+                let pa = self.pa(u, env).await?;
                 if c == 0 {
-                    return None;
+                    // `u` is summarized, so it has a value at every input, and the product is 0.
+                    return Some(Pa::Const(0));
                 }
-                self.pa(u, env).await?.affine(c.into(), 0)
+                pa.affine(c.into(), 0)
+            }
+            Prim::Min | Prim::Max => {
+                let b = self.arg(args, 1);
+                let (c, u) = match self.constant_int(a, env).await {
+                    Some(c) => (c, b),
+                    None => (self.constant_int(b, env).await?, a),
+                };
+                let pa = self.pa(u, env).await?;
+                let min = p == Prim::Min;
+                match pa.var() {
+                    None => pa.clamp(min, c, &IntervalSet::empty()),
+                    Some(v) => self.with(|tx| pa.clamp(min, c, tx.cx.inputs.get(v)?)),
+                }
             }
             _ => None,
         }
@@ -3979,26 +4020,28 @@ impl<'m, 't> Walk<'m, 't> {
     ///   class (`t` and `t + 1` for one `t`, [`ByClass`]), the tree is kept and its base is
     ///   sliced once, `O(log n)`, since adding a constant commutes with slicing by the guard's
     ///   sets.
-    /// - `-u`, `u + c`, `u - c`, `c - u` and `c * u`: every summary is mapped, `O(1)`; `not u`
-    ///   is `1 - u`; `min` and `max` of `u` and a constant `c` are `u` or `c` in every class
-    ///   when the forward values of `u`, the same in every class, lie on one side of `c`.
+    ///   Otherwise the two trees are laid over each other and each stretch of classes in which
+    ///   both arms are one summary is sliced by itself ([`cls_zip`]), `O(L log n)` for `L`
+    ///   such stretches, at most `G`.
+    /// - `-u`, `u + c`, `u - c`, `c - u` and `c * u`: every summary is mapped, `O(1)`, and
+    ///   `0 * u` is 0; `not u` is `1 - u`; `min` and `max` of `u` and a constant `c` are `u` or
+    ///   `c` in every class when the forward values of `u`, the same in every class, lie on one
+    ///   side of `c`, and otherwise each class's summary is clamped at `c` ([`ByClass::clamp`]),
+    ///   `O((m + 1) log n)` for the `m` pieces that cross `c`.
     ///
     /// Complexity tradeoff: a term this does not read is read in each class by its own run,
     /// `O(G n log n)` for `G` classes, as before this summary (row S22e). Given up: an `if` on
-    /// a test that reads no remainder whose arms differ by more than a constant in some class,
-    /// or whose classes' summaries are not one base plus a constant (each class's summary is
-    /// then sliced in its own way, so the classes share no step); a test of a term that reads
-    /// a remainder (its set in each class is the inverse of that class's own summary); `min`
-    /// and `max` whose other argument's values cross the constant; and a term whose values or
-    /// coefficients may pass `i64::MAX` in magnitude (the summary checks them on the bounds of
-    /// every class at once, where the transfer checks each class). Trigger: such a term between
-    /// the root and the remainder guards, for example `if i >= 3 { t } else { -t }`, `t >= 0`
-    /// below an `if` on the remainder, `min(t, 5)` with `t` on both sides of 5, or a domain
-    /// unbounded on either side. Test:
+    /// a test that reads no remainder whose arms read different inputs; a test of a term that
+    /// reads a remainder (its set in each class is the inverse of that class's own summary);
+    /// and a term whose values or coefficients may pass `i64::MAX` in magnitude (the summary
+    /// checks them on the bounds of every class at once, where the transfer checks each
+    /// class). Trigger: such a term between the root and the remainder guards, for example
+    /// `if i >= 3 { t } else { j }` with `t` reading `i`, `t >= 0` below an `if` on the
+    /// remainder, or a domain unbounded on either side. Test:
     /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`,
-    /// COMPLEXITY.md rows S22e-quad and S22e-wide. A complete solution would hold the
-    /// congruence facet in the backward transfer's sets (`x mod m` in a set of classes beside
-    /// the interval), so that one transfer carries every class at once.
+    /// COMPLEXITY.md rows S22e-quad, S22e-wide and S22-order-chain. A complete solution would
+    /// hold the congruence facet in the backward transfer's sets (`x mod m` in a set of
+    /// classes beside the interval), so that one transfer carries every class at once.
     fn by_class(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<ByClass>> {
         let t = self.with(|tx| tx.terms.form(t));
         self.cached(
@@ -4123,10 +4166,52 @@ impl<'m, 't> Walk<'m, 't> {
                 adds: true,
             });
         }
-        let (pa, pb) = (ca.uniform()?, cb.uniform()?);
-        let pa = self.pa_select(g, env, &pa, &pb).await?;
-        let var = pa.var().cloned().or(ca.var.clone());
-        ByClass::based(pa, var, bound, ca.n)
+        if let (Some(pa), Some(pb)) = (ca.uniform(), cb.uniform()) {
+            let pa = self.pa_select(g, env, &pa, &pb).await?;
+            let var = pa.var().cloned().or(ca.var.clone());
+            return ByClass::based(pa, var, bound, ca.n);
+        }
+        // Complexity tradeoff: the arms differ by more than a constant in some class, so each
+        // stretch of classes in which both arms are one summary is sliced by itself, `O(L log
+        // n)` for the `L` leaves of the two trees laid over each other, at most the `G`
+        // classes, where the cases above slice once. Why: the slices of different summaries
+        // share no step. Trigger: an `if` on a test that reads no remainder whose arms read
+        // the remainder in different ways, for example `if y == 0 { u + 2 } else { u }` with
+        // `u = if y mod 2 != 0 { y } else { 6 - y }`. Test:
+        // `store::preimage::tests::a_chain_with_clamps_is_read_in_time_near_its_length`.
+        // COMPLEXITY.md rows S22e-quad and S22-order-chain. A complete solution is the one
+        // named at [`Walk::by_class`].
+        let var = match (&ca.var, &cb.var) {
+            (Some(u), Some(v)) if u != v => return None,
+            (Some(v), _) | (_, Some(v)) => Some(v.clone()),
+            (None, None) => None,
+        };
+        let mut pairs = Vec::new();
+        cls_zip(
+            &ca.shifted()?,
+            &cb.shifted()?,
+            (ca.base.as_ref(), cb.base.as_ref()),
+            (0, ca.n),
+            &mut pairs,
+        )?;
+        let mut leaves = Vec::with_capacity(pairs.len());
+        for (span, pa, pb) in pairs {
+            leaves.push((span, self.pa_select(g, env, &pa, &pb).await?));
+        }
+        let bound = leaves
+            .iter()
+            .fold(bound, |b, (_, pa)| b.max(Bound::of(pa, b.x)));
+        let mut leaves = leaves.into_iter().peekable();
+        let root = cls_build(&mut leaves, (0, ca.n));
+        bound.holds().then_some(ByClass {
+            root,
+            n: ca.n,
+            var,
+            bound,
+            base: None,
+            shift: 0,
+            adds: false,
+        })
     }
 
     /// [`Walk::pa_prim`] over every class.
@@ -4167,10 +4252,11 @@ impl<'m, 't> Walk<'m, 't> {
                     Some(c) => (c, b),
                     None => (self.constant_int(b, env).await?, a),
                 };
+                let cu = self.by_class(u, env).await?;
                 if c == 0 {
-                    return None;
+                    return ByClass::constant(0, n);
                 }
-                self.by_class(u, env).await?.affine((c.into(), 0))
+                cu.affine((c.into(), 0))
             }
             Prim::Min | Prim::Max => {
                 let b = self.arg(args, 1);
@@ -4188,7 +4274,14 @@ impl<'m, 't> Walk<'m, 't> {
                 match (p, below, above) {
                     (Prim::Min, true, _) | (Prim::Max, _, true) => self.by_class(u, env).await,
                     (Prim::Min, _, true) | (Prim::Max, true, _) => ByClass::constant(c, n),
-                    _ => None,
+                    _ => {
+                        let cu = self.by_class(u, env).await?;
+                        let min = p == Prim::Min;
+                        match &cu.var {
+                            None => cu.clamp(min, c, &IntervalSet::empty()),
+                            Some(v) => self.with(|tx| cu.clamp(min, c, tx.cx.inputs.get(v)?)),
+                        }
+                    }
                 }
             }
             Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Eq | Prim::Ne => {
@@ -4756,6 +4849,17 @@ impl Pa {
         }
         Some(root)
     }
+
+    /// `min(self, c)`, or `max(self, c)` where not `min`, over `dom`, the domain of the input
+    /// ([`clamp_treap`]).
+    fn clamp(&self, min: bool, c: i64, dom: &IntervalSet) -> Option<Pa> {
+        let var = match self {
+            Pa::Const(v) => return Some(Pa::Const(if min { *v.min(&c) } else { *v.max(&c) })),
+            Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => var.clone(),
+        };
+        let root = clamp_treap(&self.to_treap(dom)?, min, c.into())?;
+        Some(Pa::Piecewise { var, root })
+    }
 }
 
 /// The summaries ([`Pa`]) of one term in each of the `n` classes of remainders of a split
@@ -4957,6 +5061,35 @@ impl ByClass {
         })
     }
 
+    /// `min(self, c)`, or `max` where not `min`, in every class ([`Pa::clamp`]), each leaf
+    /// clamped once for the classes it covers: `O(L (m + 1) log P)` for `L` leaves, at most
+    /// the `G` classes, and `m` crossings of `c` among `P` pieces.
+    ///
+    /// Complexity tradeoff: each leaf is clamped by itself, not the tree's base once, so the
+    /// classes share no step here, `O(L)` clamps for a tree of `L` leaves, at most `G`. Why: a
+    /// leaf is the base under its own affine map, and a clamp does not commute with a map
+    /// that is not the identity, so the leaves' clamps differ. Trigger: `min` or `max` with a
+    /// constant of a term whose values lie on both sides of it, below an `if` on the split's
+    /// remainder. Test: `store::preimage::tests::a_chain_with_clamps_is_read_in_time_near_its_length`.
+    /// COMPLEXITY.md rows S22e-quad and S22-order-chain. A complete solution is the one named
+    /// at [`Walk::by_class`]: the congruence facet in the transfer's sets.
+    fn clamp(&self, min: bool, c: i64, dom: &IntervalSet) -> Option<ByClass> {
+        let root = cls_clamp(&self.root, (1, self.shift), self.base.as_ref(), min, c, dom)?;
+        let bound = Bound {
+            b: self.bound.b.max(c.unsigned_abs().into()),
+            ..self.bound
+        };
+        bound.holds().then(|| ByClass {
+            root,
+            n: self.n,
+            var: self.var.clone(),
+            bound,
+            base: None,
+            shift: 0,
+            adds: false,
+        })
+    }
+
     /// The summary in class `index`.
     fn get(&self, index: usize) -> Option<Pa> {
         let (mut node, (mut lo, mut hi)) = (&self.root, (0, self.n));
@@ -4989,6 +5122,85 @@ impl ByClass {
             }
         }
     }
+}
+
+/// The summary a leaf holds, `base` standing for [`Leaf::Base`].
+fn leaf_pa(leaf: &Leaf, base: Option<&Pa>) -> Option<Pa> {
+    match leaf {
+        Leaf::Own(pa) => Some(pa.clone()),
+        Leaf::Base((mul, add)) => base?.affine(*mul, *add),
+    }
+}
+
+/// Appends to `out`, in the order of the classes, each range of classes `span` in which both
+/// `a` and `b`, trees over `span` with no map above them, are one summary, with those two
+/// summaries; `bases` are the summaries of their [`Leaf::Base`] leaves. A range is a node of
+/// either tree, so there are at most as many as the two trees have leaves together.
+fn cls_zip(
+    a: &Rc<Cls>,
+    b: &Rc<Cls>,
+    bases: (Option<&Pa>, Option<&Pa>),
+    (lo, hi): (usize, usize),
+    out: &mut Vec<((usize, usize), Pa, Pa)>,
+) -> Option<()> {
+    if let (Cls::Same(u), Cls::Same(v)) = (&**a, &**b) {
+        out.push(((lo, hi), leaf_pa(u, bases.0)?, leaf_pa(v, bases.1)?));
+        return Some(());
+    }
+    let mid = lo + (hi - lo) / 2;
+    let (al, ar) = cls_halves(a)?;
+    let (bl, br) = cls_halves(b)?;
+    cls_zip(&al, &bl, bases, (lo, mid), out)?;
+    cls_zip(&ar, &br, bases, (mid, hi), out)
+}
+
+/// The tree over the classes `span` whose leaves are `leaves`, in order, each a range of
+/// classes that is a node of the halving of `span` ([`cls_zip`]).
+fn cls_build(
+    leaves: &mut std::iter::Peekable<impl Iterator<Item = ((usize, usize), Pa)>>,
+    (lo, hi): (usize, usize),
+) -> Rc<Cls> {
+    if let Some((_, pa)) = leaves.next_if(|(span, _)| *span == (lo, hi)) {
+        return Rc::new(Cls::Same(Leaf::Own(pa)));
+    }
+    let mid = lo + (hi - lo) / 2;
+    Rc::new(Cls::Split {
+        left: cls_build(leaves, (lo, mid)),
+        right: cls_build(leaves, (mid, hi)),
+        tag: (1, 0),
+    })
+}
+
+/// The tree `node` with the map `f` applied above it and every leaf's summary clamped
+/// ([`ByClass::clamp`]); `base` is the summary of the leaves [`Leaf::Base`].
+fn cls_clamp(
+    node: &Rc<Cls>,
+    f: (i128, i128),
+    base: Option<&Pa>,
+    min: bool,
+    c: i64,
+    dom: &IntervalSet,
+) -> Option<Rc<Cls>> {
+    Some(Rc::new(match &**node {
+        Cls::Same(leaf) => {
+            let pa = match leaf {
+                Leaf::Own(pa) => pa.affine(f.0, f.1)?,
+                Leaf::Base(g) => {
+                    let g = compose(*g, f)?;
+                    base?.affine(g.0, g.1)?
+                }
+            };
+            Cls::Same(Leaf::Own(pa.clamp(min, c, dom)?))
+        }
+        Cls::Split { left, right, tag } => {
+            let f = compose(*tag, f)?;
+            Cls::Split {
+                left: cls_clamp(left, f, base, min, c, dom)?,
+                right: cls_clamp(right, f, base, min, c, dom)?,
+                tag: (1, 0),
+            }
+        }
+    }))
 }
 
 /// Whether `u` and `v` are one summary: equal coefficients, or one shared treap.
@@ -5167,10 +5379,15 @@ fn input(e: &End) -> Option<i128> {
     }
 }
 
-/// `(lo, hi)` mapped by `x -> mul * x + add`, in order, for `mul` not 0: an infinity stays one
-/// of the same sign when `mul > 0` and becomes the other when `mul < 0`; `None` when a finite
-/// value leaves `i128`.
+/// `(lo, hi)` mapped by `x -> mul * x + add`, in order: an infinity stays one of the same sign
+/// when `mul > 0` and becomes the other when `mul < 0`, and every value, an infinity too,
+/// becomes `add` when `mul` is 0 (the limit of a line of slope 0 is its constant, as at
+/// [`value_at`]); `None` when a finite value leaves `i128`.
 fn map_vals((lo, hi): (i128, i128), (mul, add): (i128, i128)) -> Option<(i128, i128)> {
+    if mul == 0 {
+        let v = finite(add)?;
+        return Some((v, v));
+    }
     let f = |v: i128| match v {
         NEG | POS if mul > 0 => Some(v),
         NEG => Some(POS),
@@ -5316,6 +5533,58 @@ fn split_at(root: Tree, cut: i128) -> Option<(Tree, Tree)> {
         let r = join_treap(Some(make_node(above, hi, a, b, None, None)?), right)?;
         Some((l, r))
     }
+}
+
+/// The pieces of `node`'s subtree with each value `v` made `min(v, c)` where `min`, and
+/// `max(v, c)` otherwise. A subtree whose values all lie on the kept side of `c` is kept, and
+/// one whose values all lie on the other side is mapped to `c` by a tag ([`map_vals`] with
+/// multiplier 0), so only the nodes whose subtree's values lie on both sides of `c` are
+/// visited: those on the paths to the `m` pieces whose line crosses `c`, `O((m + 1) log n)`
+/// nodes, each joined in `O(log n)`.
+fn clamp_treap(node: &Tree, min: bool, c: i128) -> Option<Tree> {
+    let Some(n) = node else {
+        return Some(None);
+    };
+    let (lo, hi) = n.vals;
+    let (kept, at_c) = if min {
+        (hi <= c, lo >= c)
+    } else {
+        (lo >= c, hi <= c)
+    };
+    if kept {
+        return Some(Some(n.clone()));
+    }
+    if at_c {
+        return apply_tag(n, (0, c)).map(Some);
+    }
+    let (left, right) = push_down(n)?;
+    let mut out = clamp_treap(&left, min, c)?;
+    // The inputs of the node's own piece whose value lies on the kept side of `c`: one stretch
+    // at an end of the piece, or none, since the line is monotone; the rest take `c`.
+    let side = if min {
+        IntervalSet::range(NegInf, End::from(c))
+    } else {
+        IntervalSet::range(End::from(c), PosInf)
+    };
+    let mut own = Vec::with_capacity(1);
+    invert_piece(&n.lo, &n.hi, n.a, n.b, &side, &mut own)?;
+    let mut pieces = Vec::with_capacity(3);
+    match own.first() {
+        None => pieces.push((n.lo.clone(), n.hi.clone(), 0, c)),
+        Some((xl, xh)) => {
+            if *xl > n.lo {
+                pieces.push((n.lo.clone(), xl.pred(), 0, c));
+            }
+            pieces.push((xl.clone(), xh.clone(), n.a, n.b));
+            if *xh < n.hi {
+                pieces.push((xh.succ(), n.hi.clone(), 0, c));
+            }
+        }
+    }
+    for (plo, phi, a, b) in pieces {
+        out = join_treap(out, Some(make_node(plo, phi, a, b, None, None)?))?;
+    }
+    join_treap(out, clamp_treap(&right, min, c)?)
 }
 
 /// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly between the
@@ -7527,6 +7796,119 @@ mod tests {
         });
     }
 
+    /// The preimage of `chain(k) <= 2` ([`Gen::chain`]) over `x` and `y` in `[-6, 6]`, exact.
+    fn chain_preimage(seed: u64, k: usize) {
+        let doms: Domains = [
+            ("x".into(), IntervalSet::of(-6, 6)),
+            ("y".into(), IntervalSet::of(-6, 6)),
+        ]
+        .into();
+        let mut g = Gen::new(seed, true);
+        g.chains = true;
+        let t = Term::Prim(Prim::Le, vec![g.chain(k, true), Term::Lit(Value::Int(2))]);
+        let p = preimage(&t, &doms, &Demand::Bool(true));
+        assert!(p.exact, "seed {seed:#x}, k = {k}: {p:?}");
+    }
+
+    /// A chain of guards on `x mod 3` whose arms move, reflect, negate, scale and clamp the
+    /// term below, with `min` and `max` across their constant and `0 * u` (COMPLEXITY.md row
+    /// S22-order-chain: 6.7 ms, 209 ms, 3.37 s and 30.2 s at k = 20, 40, 80 and 160). Each
+    /// level is one summary over the classes ([`ByClass`]), so the shared term is read once.
+    #[test]
+    fn a_chain_is_read_in_time_near_its_length() {
+        crate::scaling::check_order("the preimage of a chain of k ifs", 10, 1, |k| {
+            chain_preimage(0x5851_f42d_4c95_7f2d, k)
+        });
+    }
+
+    /// A chain on `y` whose guards compare `y` with constants or take `y mod 2`, with `min`
+    /// arms across their constant, and `if`s on a comparison whose arms read the remainder in
+    /// different ways ([`Walk::by_class_if`], [`ByClass::clamp`]).
+    #[test]
+    fn a_chain_with_clamps_is_read_in_time_near_its_length() {
+        crate::scaling::check_order(
+            "the preimage of a chain of k ifs, mixed guards",
+            10,
+            1,
+            |k| chain_preimage(0xa, k),
+        );
+    }
+
+    /// A chain whose guards compare `x` with constants, with `min` and `max` arms across their
+    /// constant: one summary of each level ([`Pa::clamp`]).
+    #[test]
+    fn a_chain_of_comparisons_is_read_in_time_near_its_length() {
+        crate::scaling::check_order(
+            "the preimage of a chain of k ifs, comparisons",
+            10,
+            1,
+            |k| chain_preimage(1, k),
+        );
+    }
+
+    /// A chain of guards on `x mod 2` over `[-6, 6]`, which the first split finds wide
+    /// ([`Split::Wide`]) and the split over the box it found reads exactly ([`preimage_in`]).
+    #[test]
+    fn a_chain_split_by_two_classes_is_read_in_time_near_its_length() {
+        crate::scaling::check_order("the preimage of a chain of k ifs, x mod 2", 10, 1, |k| {
+            chain_preimage(2, k)
+        });
+    }
+
+    /// `min` and `max` of a summary with a constant ([`clamp_treap`]) agree with the summary
+    /// clamped point by point, on random piecewise summaries.
+    #[test]
+    fn a_clamped_summary_is_the_summary_clamped_at_every_point() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        for round in 0..2000 {
+            let mut root = None;
+            let mut lo = -40i64;
+            for _ in 0..1 + rng.below(6) {
+                let hi = lo + rng.below(12) as i64;
+                let (a, b) = (rng.below(7) as i128 - 3, rng.below(21) as i128 - 10);
+                let node = make_node(End::of(lo), End::of(hi), a, b, None, None).unwrap();
+                root = join_treap(root, Some(node)).unwrap();
+                lo = hi + 1 + rng.below(3) as i64;
+            }
+            let c = rng.below(31) as i128 - 15;
+            let min = rng.below(2) == 0;
+            let clamped = clamp_treap(&root, min, c).unwrap();
+            for x in -40..=lo + 12 {
+                let want = point(&root, x).map(|v| if min { v.min(c) } else { v.max(c) });
+                assert_eq!(
+                    point(&clamped, x),
+                    want,
+                    "round {round}, x = {x}, min {min}, c = {c}"
+                );
+            }
+            // The values the root keeps are those of its pieces.
+            if let Some(r) = &clamped {
+                let vals = (-40..=lo + 12).filter_map(|x| point(&clamped, x));
+                let (vlo, vhi) =
+                    vals.fold((i128::MAX, i128::MIN), |(l, h), v| (l.min(v), h.max(v)));
+                assert!(
+                    r.vals.0 <= vlo && vhi <= r.vals.1,
+                    "round {round}: {:?}",
+                    r.vals
+                );
+            }
+        }
+    }
+
+    /// The value of the summary `t` at `x`, or `None` where it has no piece. A node's own
+    /// piece has its maps applied; its children get its tag ([`push_down`]).
+    fn point(t: &Tree, x: i64) -> Option<i128> {
+        let n = t.as_ref()?;
+        let (left, right) = push_down(n).unwrap();
+        if End::of(x) < n.lo {
+            return point(&left, x);
+        }
+        if End::of(x) > n.hi {
+            return point(&right, x);
+        }
+        Some(n.a * i128::from(x) + n.b)
+    }
+
     mod written {
         //! Hand-written programs, one for each way an entry made below a stop could be read
         //! where it no longer holds.
@@ -7757,36 +8139,45 @@ mod tests {
             assert_eq!(checked[1], 0, "{checked:?}");
         }
 
-        /// `let t = if x < 0 { u + 1 } else { 3 - u }`, with `u = if x mod 2 == 0 { x } else
+        /// `let t = if x < 0 { u + 1 } else { 3 - u }`, with `u = if x mod m == 0 { x } else
         /// { x + 1 }`, read under `t <= 2 && t >= -3` and under `t >= -3 && t <= 2`: the
         /// summaries of `t` and `u` are made under the first test read, and the preimages are
-        /// the same in either order.
+        /// the same in either order. With `m = 2` the split by remainders reads the term alone,
+        /// with the summaries by class ([`ByClass`]); with `m = 8` the guard lies within two
+        /// periods, and the transfer reads it with the plain summaries ([`Pa`]).
         #[test]
         fn a_shared_chain_gives_one_preimage_in_either_order() {
-            let u = if_(class(2, 0), v("x"), prim(Add, v("x"), int(1)));
-            let t = if_(
-                prim(Lt, v("x"), int(0)),
-                prim(Add, v("u"), int(1)),
-                prim(Sub, int(3), v("u")),
-            );
-            let (a, b) = (prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3)));
-            let both =
-                |p: Term, q: Term| let_("u", u.clone(), let_("t", t.clone(), prim(And, p, q)));
-            SUMMARIES.set([0; 4]);
-            let (ab, _, _, _) = check(&both(a.clone(), b.clone()), 0);
-            let (ba, _, _, _) = check(&both(b, a), 1);
-            assert_eq!(ab, ba);
-            let [_, pa_everywhere, _, by_class_everywhere] = SUMMARIES.get();
-            assert!(
-                pa_everywhere > 0 && by_class_everywhere > 0,
-                "{:?}",
-                SUMMARIES.get()
-            );
-            let (_, _, _, shown) = run(&both(prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3))));
-            assert_eq!(
-                shown,
-                "x [-5..=-1, 1..=6] y [-6..=6] exact stops 0; x [-6..=-6, 0..=0] y [-6..=6] exact stops 0"
-            );
+            for (m, kind, expected) in [
+                (
+                    2,
+                    3,
+                    "x [-5..=-1, 1..=6] y [-6..=6] exact stops 0; x [-6..=-6, 0..=0] y [-6..=6] \
+                     exact stops 0",
+                ),
+                (
+                    8,
+                    1,
+                    "x [-5..=-1, 1..=5] y [-6..=6] exact stops 0; x [-6..=-6, 0..=0, 6..=6] y \
+                     [-6..=6] exact stops 0",
+                ),
+            ] {
+                let u = if_(class(m, 0), v("x"), prim(Add, v("x"), int(1)));
+                let t = if_(
+                    prim(Lt, v("x"), int(0)),
+                    prim(Add, v("u"), int(1)),
+                    prim(Sub, int(3), v("u")),
+                );
+                let (a, b) = (prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3)));
+                let both =
+                    |p: Term, q: Term| let_("u", u.clone(), let_("t", t.clone(), prim(And, p, q)));
+                SUMMARIES.set([0; 4]);
+                let (ab, _, _, _) = check(&both(a.clone(), b.clone()), 0);
+                let (ba, _, _, _) = check(&both(b.clone(), a.clone()), 1);
+                assert_eq!(ab, ba, "m = {m}");
+                assert!(SUMMARIES.get()[kind] > 0, "m = {m}: {:?}", SUMMARIES.get());
+                let (_, _, _, shown) = run(&both(a, b));
+                assert_eq!(shown, expected, "m = {m}");
+            }
         }
 
         /// `f(f, n) = if n <= 0 { x <= 1 } else { (if x mod 2 == 0 { s } else { s - 1 }) <= 3 }`,
