@@ -16,13 +16,6 @@ crate-type = ["rlib", "dylib"]
 
 [dependencies]
 blake3.workspace = true
-imbl.workspace = true
-num-bigint.workspace = true
-num-integer.workspace = true
-num-traits.workspace = true
-unicode-ident.workspace = true
-unicode-normalization.workspace = true
-unicode-script.workspace = true
 zed-kernel.workspace = true
 zedc-base.workspace = true
 zedc-syntax.workspace = true
@@ -30,7 +23,6 @@ zedc-int.workspace = true
 zedc-lattice.workspace = true
 zedc-solvers.workspace = true
 zedc-presburger.workspace = true
-zedc-types.workspace = true
 zedc-resolve.workspace = true
 zedc-stage.workspace = true
 zedc-preimage.workspace = true
@@ -48,7 +40,7 @@ zedc-solvers = { workspace = true, features = ["counts"] }
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.
-printed-types = ["zedc-check/printed-types", "zedc-types/printed-types"]
+printed-types = ["zedc-check/printed-types"]
 # Counts the calls of `Lin2::minus` in `store::live3` on a thread, for the test that bounds the
 # work of the linear programs by a count that does not depend on the load (SLABS-count). Off in a
 # release build.
