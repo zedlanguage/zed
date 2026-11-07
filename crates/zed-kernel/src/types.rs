@@ -1041,6 +1041,22 @@ impl Type {
     /// one value. No size is compared: the answer depends on the type alone, not on the order
     /// its diagram tests tuple types in.
     pub fn finite(&self) -> bool {
+        // Complexity tradeoff: COMPLEXITY.md C22. A type with finitely many values that is not
+        // of the forms above (a recursive type, an atom payload, a struct, a function, or a box
+        // with an infinite component that a negated tuple type cuts down to finitely many
+        // values, such as `(int, 0) - (int - 0, 0)`, which equals `(0, 0)`) is answered "not
+        // known finite". The Trick (`zedc::stage::trick`) then keeps the parameter whole, and
+        // the type facet of a product cell (`zedc::store::product`) does not list its values.
+        // Why: deciding finiteness decides emptiness, since `(int, X)` is finite exactly when
+        // `X` is empty, and emptiness of Boolean combinations of tuple types is coNP-hard
+        // (`types/empty.rs`); this test reads the type's own parts and boxes once and compares
+        // no size. Trigger: any of those forms in the type. Tests:
+        // `l01_23_subtyping::scaling::listing_a_diagram_with_exponentially_many_paths_scales`
+        // and `l01_28_staging::trick::a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept`.
+        // A complete solution would decide, for each box with an infinite component, whether
+        // the type holds finitely many of its tuples, by the emptiness search with a full case
+        // split over the tuple types (exponential in them, or a SAT solver), and would follow
+        // atom payloads, struct fields and recursive groups into the types they hold.
         self.finite_order().is_some()
     }
 
