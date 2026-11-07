@@ -1452,12 +1452,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CHAIN-zip-size | impl attempt 1 | 2026-11-07 02:15 | start: reading brief, ledger, LIST-parity-quad diff |
 | DISJ-diff-fast | impl attempt 1 | 2026-11-07 02:12 | WIP committed: shadow + by_halves in settle and pick (a failed perl splice emptied presburger.rs; restored from HEAD and re-applied from the transcript) / load  |
 | DISJ-incremental | impl attempt 1 | 2026-11-07 01:57 | TEST-heavy-zero ready (d14aa416, docs 89a906e8); DISJ-incremental counted (settle/project_parts/pick solve whole group per disjunct; none-holds projection O(n^3 |
-| LIST-parity-rest | impl attempt 1 | 2026-11-07 02:41 | ready 527b4b80 on wt/list-parity-rest (base 59248d88); shapes 11.5/11.0/9.3x (were 60.3/60.3/45.7x); 8 groups pass; neg control 53.3x bytes on old kernel, not c |
-| LIST-parity-tail | impl attempt 1 | 2026-11-07 03:15 | start: complement-first-component tuple case c^2 in RowIndex::holds |
+| LIST-parity-tail | impl attempt 1 | 2026-11-07 03:15 | red on 527b4b80: new shape ((0..2c,0),) meet ((int-(2i+1),0),) c 64->512 allocated 30.4x bytes (limit 24), load 21 |
 | main | running | 2026-11-06 23:47 | KERNEL-sum-tower ready d4cbf628 (bound.rs uses fast::pow/mul); POW-tower held on A29; A28 asked; load 26.94 23.48 17.66 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NAME-ties-orient+DECIDE-disj-chain | impl attempt 1 | 2026-11-07 01:00 | started in /home/luke/Work/wt/decide-disj from origin/main ca529f21; load 27.72 23.48 21.48 |
-| NARROW-hub-rest | impl attempt 1 | 2026-11-07 01:48 | NARROW-hub-settle merged (batch 9); rebased onto origin/main 25ee049d (one conflict in Scope::atom: main's atom_names(written) kept with unit_sum); head 17f731a |
+| NARROW-hub-related | impl attempt 1 | 2026-11-07 03:26 | reproduced on 68a03534: n >= m above ai >= n && ai >= m, 0.09/0.31/1.16/4.91 s at k=24/48/96/192 (load 51-61); sum variant with link 0.29 s at k=12 |
+| NUMERICS-spec2 | impl attempt 1 | 2026-11-07 03:42 | started: tree default, @fpsafe, recurrence text, rsqrt + instruction survey; rebasing both branches first |
+| NUMERICS-spec | impl attempt 1 | 2026-11-07 03:33 | ready: spec 665f98c on numerics, plan 86cca1a7 on numerics-plan; tools ok (cases 442, fuzz 5686); l02_03 i16 failure pre-existing (U8-rename) |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | POW-tower | impl attempt 1 | 2026-11-05 22:47 | returned for cross-review: no exact O(n log n) tower order known (Baker bound exponential for towers, log log forms, PosSLP); candidates a/b/c in ledger / load  |
 | PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | both commits on wt/preimage-ref-tests (3630da47, 04dd4432); waiting for BUILD-feature-match on origin/main to rebase and add preimage-ref to the three dependent |
@@ -1468,6 +1469,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TD-finite | impl attempt 1 | 2026-11-05 04:07 | committed comment at Type::finite (C22); zed-kernel lib 100, l01_23 155, l01_28 63, zedc lib 90 pass, load 20-32 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | returned with author question A30 (crate granularity: per-task ~310 crates doubles all-crates rebuild after a zedc edit, 21-26 s -> 45-49 s; lib edit 6-7 s -> 2 |
+| VERDICT-group-readers | impl attempt 1 | 2026-11-07 03:07 | start |
 | ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 13 zedc-elab committed (last boundary); build, clippy, doc; 16 groups pass (zedc-lib 2, l01_15/16/17/18/19/19a/21/26/28/29/30/39b/39c, s_01f) load 13-1 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
