@@ -731,6 +731,17 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Post-order walks of a diagram or expression on a `Vec<(&node, bool)>`, with a `HashMap<u64, _>` memo keyed by node id | `Part::eval`, `eval3`, `rebuild` (`substitute_all`, `Part::restrict`), `Bdd::restrict`, atoms, `union_rows` | Identity (gap 1), mutation | A state receiver holding the stack and the memo, keyed by digest |
 | A term laid out as a `Vec` of tokens with a second `Vec<usize>` linking each `Start` to its `End`, written and broken by loops over indices with a stack of frames | `print::Doc`, `Doc::render` | Mutation | The tokens as a list; the links as a map from index to index built by a fold; the frames in a state receiver |
 
+## Entries from T2-types-rest-4 (`zed-kernel/src/types/bdd.rs`, `types/debug.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Builds of a diagram from an enum of jobs borrowing the input (`Job::Pair(&Bdd, &Bdd)`, `Job::Node(&A, key)`; `Job::Flip`, `Job::Node(&Branch)`) on a `Vec`, children's results on a second `Vec` popped by the node job, with the memo keyed by node ids as before | `Bdd::apply`, `Bdd::flip` | Identity (gap 1), mutation | A state receiver holding the two lists and the memo, as for `rec` `Node::of` |
+| A walk of paths on a `Vec` of steps (`Walk`, `Lo`, `Done(bool)`) sharing two `Vec`s of atoms taken and refused, pushed and popped around each node, the closure called with slices of them | `Bdd::walk`, `Bdd::paths` | Mutation | The atoms taken and refused passed down as lists; a fold that stops at the first `false` |
+| `async fn` methods of a struct holding the frame stack (`Connect`, a `frames::Stack`), called through `fn`s returning `Deep` that answer at once (`Stack::ready`) or start a frame (`Stack::call`), so about seven mutually recursive connectives keep their order and run on the heap | `Part::not`, `Part::zip`, `Connect::{not, zip, negate, zipped, same_as_not, condition, choose, choice_of, choice}` | Missing (no coroutines or `async`), as for `types/empty.rs` | Removed: the port's runtime must run deep recursion without overflowing; else an explicit machine of frames |
+| A higher-ranked closure bound (`impl for<'m> FnOnce(&'m Connect<'m>) -> Deep<'m, V>`) so the root call borrows a stack made inside `Connect::run` | `Connect::run` | Lifetimes | Removed |
+| A complement kept beside an expression in a `OnceLock<Part>`, set once by `get_or_init` after it is made, the complement's own cell set to the expression | `Connect::negate` | Mutation, interior mutability | A memo from expression id to its complement, threaded through the calls |
+| Shared types found by one pass with a `HashSet<&Type>` and numbered from a `HashMap<&Type, Option<usize>>`, keyed by the type's value (`Hash` is its digest, `Eq` its comparison), with one counter for the whole text | `debug::shared_types`, `debug::number`, `debug::run` | Identity (gap 1: digests), mutation | A map from digest to number passed along the fold that writes |
+
 ## Entries from T2-mid (`zedc/src/resolve.rs`, `elab.rs`, `canon/`, `stage.rs`, `check/`, `zir/`)
 
 | Rust construct | Sites | Gap | At the port |

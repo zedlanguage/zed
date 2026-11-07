@@ -591,3 +591,33 @@ fn xor_chain(leaf: usize, n: usize) -> Type {
         &(&t - &r) | &(&r - &t)
     })
 }
+
+/// The type `t_d`, with `t_0` the literal `leaf` and `t_k = (t_{k-1}, t_{k-1})`: each `t_k` is
+/// one shared value reached by two edges, `2^d` paths through `d + 1` types.
+fn doubled(leaf: usize, d: usize) -> Type {
+    let leaf = Type::lit(&Value::Int(leaf as i64)).expect("an integer literal is a type");
+    (0..d).fold(leaf, |t, _| Type::tuple(vec![t.clone(), t]))
+}
+
+/// How deep [`doubled`] goes on the default stack. The `Debug` that wrote a type once per path
+/// wrote `2^d` copies of the leaf; this depth would never end.
+const DOUBLINGS: usize = 20_000;
+
+#[test]
+fn the_debug_text_of_a_shared_type_writes_it_once() {
+    let text = format!("{:?}", doubled(0, DOUBLINGS));
+    // Each `t_k` below the top is numbered where first written and referred to once after.
+    assert_eq!(text.matches('=').count(), DOUBLINGS - 1);
+    assert_eq!(text.matches('#').count(), 3 * (DOUBLINGS - 1));
+    assert!(text.len() < 1_000 * DOUBLINGS);
+}
+
+#[test]
+fn the_debug_text_of_a_shared_type_scales() {
+    scales_at(
+        "the Debug text of a type with each level shared",
+        2_000,
+        |n, i| doubled(i * 1_000_000 + n, n),
+        |_, t| format!("{t:?}"),
+    );
+}

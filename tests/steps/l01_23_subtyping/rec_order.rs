@@ -209,27 +209,19 @@ fn checking_a_program_alone_or_after_another_agrees() {
 fn the_members_of_a_group_are_ordered_in_n_log_n() {
     // Input Θ(n): a group of n definitions. Its n members are built, sorted and their 1-tuples
     // united; each comparison of two members is decided by their keys, so the order costs
-    // O(n log n) comparisons of constant cost, and the whole O(n log n).
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 28)
-            .spawn_scoped(s, || {
-                let tag = AtomicUsize::new(0);
-                scaling::check(
-                    "a group's members, built, sorted and united, by n",
-                    512,
-                    |n| {
-                        let cell = format!("scale{}", tag.fetch_add(1, Relaxed));
-                        let ts = periods(&cell, n, 0);
-                        let sorted: BTreeSet<&Type> = ts.iter().collect();
-                        assert_eq!(sorted.len(), n);
-                        let u = Type::union_all(ts.iter().map(|t| Type::tuple(vec![t.clone()])));
-                        assert!(!u.is_empty());
-                    },
-                );
-            })
-            .unwrap()
-            .join()
-            .unwrap()
-    });
+    // O(n log n) comparisons of constant cost, and the whole O(n log n). It runs on the default
+    // stack of a test thread.
+    let tag = AtomicUsize::new(0);
+    scaling::check(
+        "a group's members, built, sorted and united, by n",
+        512,
+        |n| {
+            let cell = format!("scale{}", tag.fetch_add(1, Relaxed));
+            let ts = periods(&cell, n, 0);
+            let sorted: BTreeSet<&Type> = ts.iter().collect();
+            assert_eq!(sorted.len(), n);
+            let u = Type::union_all(ts.iter().map(|t| Type::tuple(vec![t.clone()])));
+            assert!(!u.is_empty());
+        },
+    );
 }

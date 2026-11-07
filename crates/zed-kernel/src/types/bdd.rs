@@ -36,6 +36,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as Atomic};
 
+use crate::frames::{Deep, Stack};
+
 use super::{AtomPart, Morphism, Node, Op, Row, Type, mix};
 
 mod list;
@@ -260,44 +262,66 @@ impl<A: Literal> Bdd<A> {
         }
     }
 
+    /// `self op other`, each pair of nodes met once, a node built after its two children, from
+    /// a stack: a pair's `hi` pair is done before its `lo` pair, as a recursion would.
     fn apply(&self, other: &Bdd<A>, op: Op, memo: &mut HashMap<(u64, u64), Bdd<A>>) -> Bdd<A> {
-        match (op, self, other) {
-            (Op::And, Bdd::Leaf(false), _) | (Op::And, _, Bdd::Leaf(false)) => {
-                return Bdd::Leaf(false);
-            }
-            (Op::Or, Bdd::Leaf(true), _) | (Op::Or, _, Bdd::Leaf(true)) => {
-                return Bdd::Leaf(true);
-            }
-            (_, Bdd::Leaf(_), x) | (_, x, Bdd::Leaf(_)) => return x.clone(),
-            _ if self.id() == other.id() => return self.clone(),
-            _ => {}
+        /// What is left to do: a pair to combine, or the node of a pair's atom to build once
+        /// its `hi` and its `lo` are on the stack of results.
+        enum Job<'a, A: Literal> {
+            Pair(&'a Bdd<A>, &'a Bdd<A>),
+            Node(&'a A, (u64, u64)),
         }
-        let key = (self.id(), other.id());
-        if let Some(r) = memo.get(&key) {
-            return r.clone();
+        let mut done: Vec<Bdd<A>> = Vec::new();
+        let mut jobs = vec![Job::Pair(self, other)];
+        while let Some(job) = jobs.pop() {
+            let (x, y) = match job {
+                Job::Node(atom, key) => {
+                    let lo = done.pop().expect("the lo of a pair");
+                    let hi = done.pop().expect("the hi of a pair");
+                    let r = Bdd::node(atom.clone(), hi, lo);
+                    memo.insert(key, r.clone());
+                    done.push(r);
+                    continue;
+                }
+                Job::Pair(x, y) => (x, y),
+            };
+            match (op, x, y) {
+                (Op::And, Bdd::Leaf(false), _) | (Op::And, _, Bdd::Leaf(false)) => {
+                    done.push(Bdd::Leaf(false));
+                    continue;
+                }
+                (Op::Or, Bdd::Leaf(true), _) | (Op::Or, _, Bdd::Leaf(true)) => {
+                    done.push(Bdd::Leaf(true));
+                    continue;
+                }
+                (_, Bdd::Leaf(_), z) | (_, z, Bdd::Leaf(_)) => {
+                    done.push(z.clone());
+                    continue;
+                }
+                _ if x.id() == y.id() => {
+                    done.push(x.clone());
+                    continue;
+                }
+                _ => {}
+            }
+            let key = (x.id(), y.id());
+            if let Some(r) = memo.get(&key) {
+                done.push(r.clone());
+                continue;
+            }
+            let (Bdd::Node(a), Bdd::Node(b)) = (x, y) else {
+                unreachable!("both leaves were handled")
+            };
+            let (atom, [hi, lo]) = match a.atom.cmp(&b.atom) {
+                Ordering::Equal => (&a.atom, [(&a.hi, &b.hi), (&a.lo, &b.lo)]),
+                Ordering::Less => (&a.atom, [(&a.hi, y), (&a.lo, y)]),
+                Ordering::Greater => (&b.atom, [(x, &b.hi), (x, &b.lo)]),
+            };
+            jobs.push(Job::Node(atom, key));
+            jobs.push(Job::Pair(lo.0, lo.1));
+            jobs.push(Job::Pair(hi.0, hi.1));
         }
-        let (Bdd::Node(a), Bdd::Node(b)) = (self, other) else {
-            unreachable!("both leaves were handled")
-        };
-        let r = match a.atom.cmp(&b.atom) {
-            Ordering::Equal => Bdd::node(
-                a.atom.clone(),
-                a.hi.apply(&b.hi, op, memo),
-                a.lo.apply(&b.lo, op, memo),
-            ),
-            Ordering::Less => Bdd::node(
-                a.atom.clone(),
-                a.hi.apply(other, op, memo),
-                a.lo.apply(other, op, memo),
-            ),
-            Ordering::Greater => Bdd::node(
-                b.atom.clone(),
-                self.apply(&b.hi, op, memo),
-                self.apply(&b.lo, op, memo),
-            ),
-        };
-        memo.insert(key, r.clone());
-        r
+        done.pop().expect("the pair asked for")
     }
 
     pub(super) fn not(&self) -> Bdd<A> {
@@ -441,16 +465,37 @@ impl<A: Literal> Bdd<A> {
         (taken, refused)
     }
 
+    /// The complement, each node flipped once, after its `hi` and then its `lo`, from a stack.
     fn flip(&self, memo: &mut HashMap<u64, Bdd<A>>) -> Bdd<A> {
-        let Bdd::Node(n) = self else {
-            return Bdd::Leaf(*self == Bdd::Leaf(false));
-        };
-        if let Some(r) = memo.get(&n.id) {
-            return r.clone();
+        /// What is left to do: a diagram to flip, or a node to build once its children's
+        /// complements are on the stack of results.
+        enum Job<'a, A: Literal> {
+            Flip(&'a Bdd<A>),
+            Node(&'a Branch<A>),
         }
-        let r = Bdd::node(n.atom.clone(), n.hi.flip(memo), n.lo.flip(memo));
-        memo.insert(n.id, r.clone());
-        r
+        let mut done: Vec<Bdd<A>> = Vec::new();
+        let mut jobs = vec![Job::Flip(self)];
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Flip(Bdd::Leaf(b)) => done.push(Bdd::Leaf(!b)),
+                Job::Flip(Bdd::Node(n)) => match memo.get(&n.id) {
+                    Some(r) => done.push(r.clone()),
+                    None => {
+                        jobs.push(Job::Node(n));
+                        jobs.push(Job::Flip(&n.lo));
+                        jobs.push(Job::Flip(&n.hi));
+                    }
+                },
+                Job::Node(n) => {
+                    let lo = done.pop().expect("the lo flipped");
+                    let hi = done.pop().expect("the hi flipped");
+                    let r = Bdd::node(n.atom.clone(), hi, lo);
+                    memo.insert(n.id, r.clone());
+                    done.push(r);
+                }
+            }
+        }
+        done.pop().expect("the diagram flipped")
     }
 }
 
@@ -486,9 +531,10 @@ impl<A: Literal> Bdd<A> {
     }
 
     /// Whether `f` holds of every path to the `true` leaf, given as the atoms it takes and those
-    /// it refuses, in order, stopping at the first path where it does not. Below a node whose
-    /// `hi` is `true` the `lo` path does not refuse the node's atom, since `a | (!a & L)` is
-    /// `a | L`, so a union of atoms is a path per atom.
+    /// it refuses, in order, stopping at the first path where it does not; walked from a stack of
+    /// its own, so a diagram of any depth is walked. Below a node whose `hi` is `true` the `lo`
+    /// path does not refuse the node's atom, since `a | (!a & L)` is `a | L`, so a union of
+    /// atoms is a path per atom.
     pub(super) fn paths<'a>(&'a self, f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool) -> bool {
         self.walk(false, f)
     }
@@ -501,36 +547,49 @@ impl<A: Literal> Bdd<A> {
         prune: bool,
         f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool,
     ) -> bool {
-        fn go<'a, A: Literal>(
-            b: &'a Bdd<A>,
-            prune: bool,
-            pos: &mut Vec<&'a A>,
-            neg: &mut Vec<&'a A>,
-            f: &mut impl FnMut(&[&'a A], &[&'a A]) -> bool,
-        ) -> bool {
-            let n = match b {
-                Bdd::Leaf(false) => return true,
-                Bdd::Leaf(true) => return f(pos, neg),
-                Bdd::Node(n) => n,
-            };
-            pos.push(&n.atom);
-            let hi = (prune && !matches!(n.hi, Bdd::Leaf(false)) && f(pos, &[]))
-                || go(&n.hi, prune, pos, neg, f);
-            pos.pop();
-            if !hi {
-                return false;
-            }
-            let refuse = !matches!(n.hi, Bdd::Leaf(true));
-            if refuse {
-                neg.push(&n.atom);
-            }
-            let lo = go(&n.lo, prune, pos, neg, f);
-            if refuse {
-                neg.pop();
-            }
-            lo
+        /// What is left to do: a diagram to walk; the `lo` of a node whose `hi` is walked; or
+        /// the end of a node's `lo`, which drops the node's atom from those refused if it was
+        /// added.
+        enum Step<'a, A: Literal> {
+            Walk(&'a Bdd<A>),
+            Lo(&'a Branch<A>),
+            Done(bool),
         }
-        go(self, prune, &mut Vec::new(), &mut Vec::new(), f)
+        // Where `f` fails the walk ends, so each path is walked with no answer kept but that.
+        let (mut pos, mut neg): (Vec<&'a A>, Vec<&'a A>) = (Vec::new(), Vec::new());
+        let mut steps = vec![Step::Walk(self)];
+        while let Some(step) = steps.pop() {
+            match step {
+                Step::Walk(Bdd::Leaf(false)) => {}
+                Step::Walk(Bdd::Leaf(true)) => {
+                    if !f(&pos, &neg) {
+                        return false;
+                    }
+                }
+                Step::Walk(Bdd::Node(n)) => {
+                    pos.push(&n.atom);
+                    steps.push(Step::Lo(n));
+                    if !(prune && !matches!(n.hi, Bdd::Leaf(false)) && f(&pos, &[])) {
+                        steps.push(Step::Walk(&n.hi));
+                    }
+                }
+                Step::Lo(n) => {
+                    pos.pop();
+                    let refuse = !matches!(n.hi, Bdd::Leaf(true));
+                    if refuse {
+                        neg.push(&n.atom);
+                    }
+                    steps.push(Step::Done(refuse));
+                    steps.push(Step::Walk(&n.lo));
+                }
+                Step::Done(refused) => {
+                    if refused {
+                        neg.pop();
+                    }
+                }
+            }
+        }
+        true
     }
 
     /// Whether `f` holds of each node's atom and state, for the nodes from whose `hi` a chain of
@@ -715,113 +774,31 @@ impl<A: Literal> Part<A> {
     pub(super) fn not(&self) -> Part<A> {
         match self {
             Part::Bdd(b) => Part::Bdd(b.not()),
-            Part::Expr(e) => e
-                .complement
-                .get_or_init(|| {
-                    let n = if let Form::Not(p) = &e.form {
-                        p.clone()
-                    } else if let Some((c, x, y)) = self.choice() {
-                        Part::choose(&c, &x.not(), &y.not())
-                    } else {
-                        Part::expr(Form::Not(self.clone()))
-                    };
-                    if let Part::Expr(m) = &n {
-                        let _ = m.complement.set(self.clone());
-                    }
-                    n
-                })
-                .clone(),
+            Part::Expr(e) => match e.complement.get() {
+                Some(n) => n.clone(),
+                None => Connect::run(|k| k.not(self)),
+            },
         }
     }
 
     pub(super) fn zip(&self, other: &Part<A>, op: Op) -> Part<A> {
+        match Part::zip_at_once(self, other, op) {
+            Some(r) => r,
+            None => Connect::run(|k| k.zip(self, other, op)),
+        }
+    }
+
+    /// `a op b` when a leaf or equal operands give it at once.
+    fn zip_at_once(a: &Part<A>, b: &Part<A>, op: Op) -> Option<Part<A>> {
         // A leaf that absorbs is the result; a leaf that does not leaves the other operand.
         let absorbs = op == Op::Or;
-        match (self.is_leaf(), other.is_leaf()) {
-            (Some(b), _) if b == absorbs => return self.clone(),
-            (_, Some(b)) if b == absorbs => return other.clone(),
-            (Some(_), _) => return other.clone(),
-            (_, Some(_)) => return self.clone(),
-            _ => {}
+        match (a.is_leaf(), b.is_leaf()) {
+            (Some(x), _) if x == absorbs => Some(a.clone()),
+            (_, Some(x)) if x == absorbs => Some(b.clone()),
+            (Some(_), _) => Some(b.clone()),
+            (_, Some(_)) => Some(a.clone()),
+            _ => (a == b).then(|| a.clone()),
         }
-        if self == other {
-            return self.clone();
-        }
-        if self.same_as_not(other) {
-            return Part::leaf(absorbs);
-        }
-        // Only chains grow a diagram, so each diagram is a decision list: the latest literal
-        // that fires gives the value. Atoms read so far leave at most one function per literal
-        // that fired, so a level has at most `n + 1` nodes and a diagram at most `n(n + 1)` on
-        // `n` atoms, in any atom order.
-        if let (Part::Bdd(a), Part::Bdd(b)) = (self, other)
-            && (a.is_chain(op) || b.is_chain(op))
-        {
-            return Part::Bdd(a.zip(b, op));
-        }
-        // Choices on one condition meet branch by branch.
-        if let (Some((c, x, y)), Some((d, u, v))) = (self.choice(), other.choice())
-            && c == d
-        {
-            return Part::choose(&c, &x.zip(&u, op), &y.zip(&v, op));
-        }
-        // `c&x | !c&y` and `(!c|x) & (c|y)` are one choice.
-        if let Some((c, x, y)) = Part::choice_of(self, other, op) {
-            return Part::choose(&c, &x, &y);
-        }
-        let (a, b) = if self.before(other) {
-            (self, other)
-        } else {
-            (other, self)
-        };
-        Part::expr(match op {
-            Op::Or => Form::Or(a.clone(), b.clone()),
-            Op::And => Form::And(a.clone(), b.clone()),
-        })
-    }
-
-    /// Whether `self` is the complement of `other`, as built.
-    fn same_as_not(&self, other: &Part<A>) -> bool {
-        match (self, other) {
-            (Part::Bdd(a), Part::Bdd(b)) => a.is_literal() && a.not() == *b,
-            (Part::Expr(a), _) => {
-                a.complement.get().is_some_and(|c| c == other) || self.not() == *other
-            }
-            _ => other.not() == *self,
-        }
-    }
-
-    /// The condition of a choice, of `c` and `!c` the one [`Part::before`] puts first.
-    fn condition(c: &Part<A>) -> (Part<A>, bool) {
-        let n = c.not();
-        if c.before(&n) {
-            (c.clone(), true)
-        } else {
-            (n, false)
-        }
-    }
-
-    /// The choice `c&x | !c&y`, in the one form each choice has.
-    fn choose(c: &Part<A>, x: &Part<A>, y: &Part<A>) -> Part<A> {
-        if x == y {
-            return x.clone();
-        }
-        let (c, same) = Part::condition(c);
-        let (x, y) = if same { (x, y) } else { (y, x) };
-        match (x.is_leaf(), y.is_leaf()) {
-            (Some(false), Some(false)) => return Part::leaf(false),
-            (Some(true), Some(false)) => return c,
-            (Some(false), Some(true)) => return c.not(),
-            _ => {}
-        }
-        let parts = [c.zip(x, Op::And), c.not().zip(y, Op::And)];
-        let [a, b] = if parts[0].before(&parts[1]) {
-            parts
-        } else {
-            let [p, q] = parts;
-            [q, p]
-        };
-        Part::expr(Form::Or(a, b))
     }
 
     /// The operands of an expression's `And` or `Or`, under `op`, or the literals of a chain
@@ -839,13 +816,172 @@ impl<A: Literal> Part<A> {
             (Part::Bdd(b), _) => b.chain(op).map(|lits| Operands::Chain(b, lits)),
         }
     }
+}
+
+/// The complement and the union or intersection of parts. They are a recursion through the
+/// choices they find ([`Connect::choice`]), as deep as the parts are nested, so each call of
+/// [`Connect::not`] or [`Connect::zip`] that is not answered at once runs on a frame of its own
+/// (module `frames`), and a part nested to any depth is negated and combined on a small stack.
+/// The frames run in the order of the plain recursion, so the parts made, and the ids they take,
+/// are those it made.
+// Complexity tradeoff: a frame on the heap per call not answered at once costs a constant
+// factor over the plain recursion (measured in a debug build on chains of choices 500 deep:
+// `zip` 1.4 times, `not` 1.3 to 1.9 times), for any depth on a small stack; the order of the
+// work is unchanged.
+struct Connect<'m> {
+    stack: Stack<'m>,
+}
+
+impl Connect<'_> {
+    /// Runs `root` and the calls it makes on a stack of their own.
+    fn run<V: Unpin>(root: impl for<'m> FnOnce(&'m Connect<'m>) -> Deep<'m, V>) -> V {
+        let k = Connect {
+            stack: Stack::default(),
+        };
+        k.stack.run(root(&k))
+    }
+}
+
+impl<'m> Connect<'m> {
+    fn not<A: Literal>(&'m self, p: &Part<A>) -> Deep<'m, Part<A>> {
+        match p {
+            Part::Bdd(b) => Stack::ready(Part::Bdd(b.not())),
+            Part::Expr(e) => match e.complement.get() {
+                Some(n) => Stack::ready(n.clone()),
+                None => {
+                    let p = p.clone();
+                    self.stack.call(move || self.negate(p))
+                }
+            },
+        }
+    }
+
+    /// The complement of an expression, made once and kept with it, and the expression kept as
+    /// the complement's, so that a chain of choices is negated in steps, not walked.
+    async fn negate<A: Literal>(&'m self, p: Part<A>) -> Part<A> {
+        let Part::Expr(e) = &p else {
+            unreachable!("only an expression keeps its complement")
+        };
+        let n = if let Form::Not(q) = &e.form {
+            q.clone()
+        } else if let Some((c, x, y)) = self.choice(&p).await {
+            let x = self.not(&x).await;
+            let y = self.not(&y).await;
+            self.choose(&c, &x, &y).await
+        } else {
+            Part::expr(Form::Not(p.clone()))
+        };
+        e.complement
+            .get_or_init(|| {
+                if let Part::Expr(m) = &n {
+                    let _ = m.complement.set(p.clone());
+                }
+                n
+            })
+            .clone()
+    }
+
+    fn zip<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>, op: Op) -> Deep<'m, Part<A>> {
+        match Part::zip_at_once(a, b, op) {
+            Some(r) => Stack::ready(r),
+            None => {
+                let (a, b) = (a.clone(), b.clone());
+                self.stack.call(move || self.zipped(a, b, op))
+            }
+        }
+    }
+
+    /// `a op b` of operands neither a leaf nor equal.
+    async fn zipped<A: Literal>(&'m self, a: Part<A>, b: Part<A>, op: Op) -> Part<A> {
+        if self.same_as_not(&a, &b).await {
+            return Part::leaf(op == Op::Or);
+        }
+        // Only chains grow a diagram, so each diagram is a decision list: the latest literal
+        // that fires gives the value. Atoms read so far leave at most one function per literal
+        // that fired, so a level has at most `n + 1` nodes and a diagram at most `n(n + 1)` on
+        // `n` atoms, in any atom order.
+        if let (Part::Bdd(x), Part::Bdd(y)) = (&a, &b)
+            && (x.is_chain(op) || y.is_chain(op))
+        {
+            return Part::Bdd(x.zip(y, op));
+        }
+        // Choices on one condition meet branch by branch.
+        let (l, r) = (self.choice(&a).await, self.choice(&b).await);
+        if let (Some((c, x, y)), Some((d, u, v))) = (l, r)
+            && c == d
+        {
+            let p = self.zip(&x, &u, op).await;
+            let q = self.zip(&y, &v, op).await;
+            return self.choose(&c, &p, &q).await;
+        }
+        // `c&x | !c&y` and `(!c|x) & (c|y)` are one choice.
+        if let Some((c, x, y)) = self.choice_of(&a, &b, op).await {
+            return self.choose(&c, &x, &y).await;
+        }
+        let (a, b) = if a.before(&b) { (a, b) } else { (b, a) };
+        Part::expr(match op {
+            Op::Or => Form::Or(a, b),
+            Op::And => Form::And(a, b),
+        })
+    }
+
+    /// Whether `a` is the complement of `b`, as built.
+    async fn same_as_not<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>) -> bool {
+        match (a, b) {
+            (Part::Bdd(x), Part::Bdd(y)) => x.is_literal() && x.not() == *y,
+            (Part::Expr(e), _) => {
+                e.complement.get().is_some_and(|c| c == b) || self.not(a).await == *b
+            }
+            _ => self.not(b).await == *a,
+        }
+    }
+
+    /// The condition of a choice, of `c` and `!c` the one [`Part::before`] puts first.
+    async fn condition<A: Literal>(&'m self, c: &Part<A>) -> (Part<A>, bool) {
+        let n = self.not(c).await;
+        if c.before(&n) {
+            (c.clone(), true)
+        } else {
+            (n, false)
+        }
+    }
+
+    /// The choice `c&x | !c&y`, in the one form each choice has.
+    async fn choose<A: Literal>(&'m self, c: &Part<A>, x: &Part<A>, y: &Part<A>) -> Part<A> {
+        if x == y {
+            return x.clone();
+        }
+        let (c, same) = self.condition(c).await;
+        let (x, y) = if same { (x, y) } else { (y, x) };
+        match (x.is_leaf(), y.is_leaf()) {
+            (Some(false), Some(false)) => return Part::leaf(false),
+            (Some(true), Some(false)) => return c,
+            (Some(false), Some(true)) => return self.not(&c).await,
+            _ => {}
+        }
+        let first = self.zip(&c, x, Op::And).await;
+        let not_c = self.not(&c).await;
+        let parts = [first, self.zip(&not_c, y, Op::And).await];
+        let [a, b] = if parts[0].before(&parts[1]) {
+            parts
+        } else {
+            let [p, q] = parts;
+            [q, p]
+        };
+        Part::expr(Form::Or(a, b))
+    }
 
     /// `(c, x, y)` when `a op b` is a choice: under `Or`, `c&x | !c&y`; under `And`,
     /// `(!c|x) & (c|y)`. The condition `c` is an operand of `a`'s expression, or a literal of
     /// its chain, whose complement is one of `b`'s. When two or more conditions fit, which one
     /// a search finds first depends on the order of the atoms, so there is then no choice, and
     /// the parts built are the same in every order of the atoms (step BDD-atom-order).
-    fn choice_of(a: &Part<A>, b: &Part<A>, op: Op) -> Option<(Part<A>, Part<A>, Part<A>)> {
+    async fn choice_of<A: Literal>(
+        &'m self,
+        a: &Part<A>,
+        b: &Part<A>,
+        op: Op,
+    ) -> Option<(Part<A>, Part<A>, Part<A>)> {
         let inner = if op == Op::Or { Op::And } else { Op::Or };
         let (l, r) = (a.operands(inner)?, b.operands(inner)?);
         // The literal of `lits` that `n` is.
@@ -861,7 +997,7 @@ impl<A: Literal> Part<A> {
             (Operands::Two(p, q), Operands::Two(s, t)) => {
                 for (c, x) in [(p, q), (q, p)] {
                     for (n, y) in [(s, t), (t, s)] {
-                        if c.same_as_not(n) {
+                        if self.same_as_not(c, n).await {
                             found.push(((*c).clone(), (*x).clone(), (*y).clone()));
                         }
                     }
@@ -869,7 +1005,7 @@ impl<A: Literal> Part<A> {
             }
             (Operands::Two(p, q), Operands::Chain(d, lits)) => {
                 for (c, x) in [(p, q), (q, p)] {
-                    if let Some((atom, taken)) = within(&c.not(), lits) {
+                    if let Some((atom, taken)) = within(&self.not(c).await, lits) {
                         let y = Part::Bdd(d.chain_without(inner, &atom, taken));
                         found.push(((*c).clone(), (*x).clone(), y));
                     }
@@ -877,7 +1013,7 @@ impl<A: Literal> Part<A> {
             }
             (Operands::Chain(d, lits), Operands::Two(s, t)) => {
                 for (n, y) in [(s, t), (t, s)] {
-                    if let Some((atom, taken)) = within(&n.not(), lits) {
+                    if let Some((atom, taken)) = within(&self.not(n).await, lits) {
                         let c = Part::Bdd(Bdd::literal_of(&atom, taken));
                         let x = Part::Bdd(d.chain_without(inner, &atom, taken));
                         found.push((c, x, (*y).clone()));
@@ -915,17 +1051,18 @@ impl<A: Literal> Part<A> {
         })
     }
 
-    /// The choice this part is in its one form. Only an expression is one, since an operand
-    /// of a chain's union is a literal, which has no operands.
-    fn choice(&self) -> Option<(Part<A>, Part<A>, Part<A>)> {
-        let Part::Expr(e) = self else { return None };
+    /// The choice `p` is in its one form. Only an expression is one, since an operand of a
+    /// chain's union is a literal, which has no operands.
+    async fn choice<A: Literal>(&'m self, p: &Part<A>) -> Option<(Part<A>, Part<A>, Part<A>)> {
+        let Part::Expr(e) = p else { return None };
         let Form::Or(a, b) = &e.form else { return None };
-        Part::choice_of(a, b, Op::Or).map(|(c, x, y)| {
-            let (d, same) = Part::condition(&c);
-            if same { (d, x, y) } else { (d, y, x) }
-        })
+        let (c, x, y) = self.choice_of(a, b, Op::Or).await?;
+        let (d, same) = self.condition(&c).await;
+        Some(if same { (d, x, y) } else { (d, y, x) })
     }
+}
 
+impl<A: Literal> Part<A> {
     /// Whether the value whose membership in each atom `holds` decides is in the part.
     /// Each expression is evaluated once, from a stack, and the second operand of an `Or` or
     /// `And` only when the first does not decide it.
@@ -2636,6 +2773,147 @@ mod tests {
         );
         scaling::check("settling on one pin, by depth", n, |m| {
             assert_eq!(pins[&m].settle().distinct_atoms().len(), 2 * (m - 1));
+        });
+    }
+
+    /// The diagram `x_0 & … & x_{m-2} & !x_{m-1}`, on the atoms of [`meet`]`(base, m)`, which
+    /// meets it in no value: an intersection of the two meets each pair of their nodes, `m`
+    /// deep.
+    fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
+        let mut xs: Vec<Row> = (0..m as u64).map(|k| atom(base + k)).collect();
+        xs.sort();
+        let last = xs.pop().expect("one atom or more");
+        let bottom = Bdd::node(last, Bdd::Leaf(false), Bdd::Leaf(true));
+        xs.into_iter()
+            .rev()
+            .fold(bottom, |b, x| Bdd::node(x, b, Bdd::Leaf(false)))
+    }
+
+    /// The choice `c_{m-1} & (… (c_1 & x_0 | !c_1 & y_1) …) | !c_{m-1} & y_{m-1}`, kept as
+    /// expressions nested `m - 1` deep, each `c_k` the atom `base + k`, `x_0` the atom
+    /// `base + m`, and `y_k` the atom `leaves + k`. Its complement, and its union with another
+    /// such chain on the same conditions, are each built a level at a time, through the choice
+    /// each level is.
+    fn choices(base: u64, leaves: u64, m: usize) -> Part<Row> {
+        (1..m as u64).fold(Part::literal(atom(base + m as u64)), |p, k| {
+            let c = Part::literal(atom(base + k));
+            Part::expr(Form::Or(
+                Part::expr(Form::And(c.clone(), p)),
+                Part::expr(Form::And(c.not(), Part::literal(atom(leaves + k)))),
+            ))
+        })
+    }
+
+    /// How deep the diagrams of the depth test go: `apply` and `flip`, as recursions,
+    /// overflowed the 8 MiB stack of a main thread at 60,000 (and ran at 30,000).
+    const DIAGRAM_DEPTH: usize = 100_000;
+
+    /// How deep the paths walked go: `walk`, as a recursion, overflowed the 8 MiB stack at
+    /// 400,000 (and ran at 100,000).
+    const WALK_DEPTH: usize = 400_000;
+
+    /// How deep the choices of the depth test go: `Part::not` and `Part::zip`, as a mutual
+    /// recursion through `choice`, `choice_of`, `same_as_not` and `choose`, overflowed the
+    /// 8 MiB stack at 10,000 (and ran at 6,000).
+    const CHOICE_DEPTH: usize = 20_000;
+
+    #[test]
+    fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
+        // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), a
+        // quarter of the 8 MiB the depths above overflowed.
+        let (a, b) = (meet(0, DIAGRAM_DEPTH), meet_but_last(0, DIAGRAM_DEPTH));
+        assert_eq!(a.zip(&b, Op::And), Bdd::Leaf(false));
+        let not_a = a.not();
+        assert_eq!(not_a.not(), a);
+        assert_eq!(a.zip(&not_a, Op::Or), Bdd::Leaf(true));
+        let w = meet(0, WALK_DEPTH);
+        let mut paths = 0;
+        assert!(w.paths(&mut |pos, neg| {
+            paths += 1;
+            pos.len() == WALK_DEPTH && neg.is_empty()
+        }));
+        assert_eq!(paths, 1);
+        // Pruned where all the atoms are taken: asked once per node, the last the one that holds.
+        let mut asked = 0;
+        assert!(w.walk(true, &mut |pos, neg| {
+            asked += 1;
+            assert!(neg.is_empty());
+            pos.len() == WALK_DEPTH
+        }));
+        assert_eq!(asked, WALK_DEPTH);
+        // `!w` has a path per atom, the `k`-th taking the atoms before atom `k` and refusing it.
+        let not_w = w.not();
+        let mut refused = 0;
+        assert!(not_w.paths(&mut |pos, neg| {
+            refused += neg.len();
+            neg.len() == 1 && pos.len() < WALK_DEPTH
+        }));
+        assert_eq!(refused, WALK_DEPTH);
+        let base = 10 * WALK_DEPTH as u64;
+        let p = choices(base, base + 2 * CHOICE_DEPTH as u64, CHOICE_DEPTH);
+        let q = choices(base, base + 4 * CHOICE_DEPTH as u64, CHOICE_DEPTH);
+        let not_p = p.not();
+        assert_eq!(not_p.not(), p);
+        assert_eq!(p.zip(&not_p, Op::And), Part::leaf(false));
+        let both = p.zip(&q, Op::Or);
+        // Every condition and `x_0` held: both chains take the deepest branch, `x_0`.
+        let deepest: BTreeSet<Row> = (1..=CHOICE_DEPTH as u64).map(|k| atom(base + k)).collect();
+        assert!(p.eval(&|a| deepest.contains(a)));
+        assert!(both.eval(&|a| deepest.contains(a)));
+        // No condition held, and the top leaf of `q`: only `q` takes it.
+        let top_of_q = atom(base + 4 * CHOICE_DEPTH as u64 + CHOICE_DEPTH as u64 - 1);
+        assert!(both.eval(&|a| *a == top_of_q));
+        assert!(!p.eval(&|a| *a == top_of_q));
+    }
+
+    #[test]
+    fn the_connectives_on_parts_scale_by_depth() {
+        // Inputs Θ(m) deep, built before any run is timed; each connective meets each node or
+        // expression a constant number of times.
+        let n = 1 << 12;
+        let meets = scaling::inputs(n, |m| {
+            let base = 100 * m as u64;
+            (meet(base, m), meet_but_last(base, m))
+        });
+        // A union keeps the complements it makes with the expressions, so each run of it takes
+        // chains of its own, on atoms of their own.
+        let (small, large) = scaling::Meter::new().runs();
+        type Pairs = std::sync::Mutex<Vec<(Part<Row>, Part<Row>)>>;
+        let chains: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
+            .map(|(m, runs)| {
+                let pairs = (0..runs as u64)
+                    .map(|i| {
+                        let base = (1000 + 10 * i) * m as u64;
+                        (
+                            choices(base, base + 2 * m as u64, m),
+                            choices(base, base + 4 * m as u64, m),
+                        )
+                    })
+                    .collect();
+                (m, std::sync::Mutex::new(pairs))
+            })
+            .into();
+        scaling::check("the meet of two diagrams, by depth", n, |m| {
+            let (a, b) = &meets[&m];
+            assert_eq!(a.zip(b, Op::And), Bdd::Leaf(false));
+        });
+        scaling::check("the complement of a diagram, by depth", n, |m| {
+            assert!(meets[&m].0.not() != meets[&m].0);
+        });
+        scaling::check("the paths of a diagram, by depth", n, |m| {
+            assert!(
+                meets[&m]
+                    .1
+                    .paths(&mut |pos, neg| pos.len() + neg.len() == m)
+            );
+        });
+        scaling::check("the union of two chains of choices, by depth", n, |m| {
+            let (p, q) = chains[&m]
+                .lock()
+                .expect("the chains of a size")
+                .pop()
+                .expect("a pair of chains per run");
+            assert!(p.zip(&q, Op::Or) != p);
         });
     }
 }
