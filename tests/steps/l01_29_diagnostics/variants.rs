@@ -32,6 +32,11 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "8: this form (ResultType) is built from layer L10".into(),
         ),
         ("nullable-column-missing-none", none(25)),
+        // L1.26b rejects it: 2.0 is an f16 and h an f64.
+        (
+            "plain-decimal-other-format",
+            "4: the line is marked ✗ and the unit is accepted".into(),
+        ),
         ("numeric-is-not-binary-float", none(25)),
         (
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which

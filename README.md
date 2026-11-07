@@ -749,24 +749,27 @@ Parameters are passed by name unless you mark them `positional`, so a call site 
 
 ### Numbers
 
-Zed has exact integers, rational numbers (fractions of two integers) and 64-bit floating-point numbers (`f64`), and it never converts between them on its own.
+Zed has exact integers, rational numbers (fractions of two integers) and floating-point numbers in four formats, `f16`, `bf16`, `f32` and `f64` (16, 16, 32 and 64 bits), and it never converts between them on its own.
 
-**Syntax:** `42`, `1.5`, `3r`, `2n`, `a / b`, `a div b`, `f64(n)`
+**Syntax:** `42`, `1.5`, `0.1f64`, `3r`, `2n`, `2.0n`, `a / b`, `a div b`, `f64(n)`
 
 > [!NOTE]
-> **`42`** is an `int`, **`1.5`** an `f64` (a 64-bit floating-point number), and **`3r`** a `rat`, an exact rational number, a fraction of two integers that is never rounded. A decimal one such as `0.1r` is exactly the decimal it spells, `1r / 10r`, never a rounded binary float. **`2n`** is a generic number, which takes whichever number type its use needs, so `inc(x) = x + 1n;` works on all three.
+> **`42`** is an `int`, and **`3r`** a `rat`, an exact rational number, a fraction of two integers that is never rounded. A decimal one such as `0.1r` is exactly the decimal it spells, `1r / 10r`, never a rounded binary float.
 >
-> **`a / b`** divides `f64` and `rat` values. **`a div b`** and **`a mod b`** are the integer quotient and remainder, and **`a ** b`** is a power. **`f64(n)`** converts `n` to `f64`, and **`int(s)`** converts a string to an `int`; such conversions are checked and can fail.
+> **`1.5`** is a float in the first of the formats `f16`, `f32`, `f64` whose nearest value is within half a unit of the last digit written, so that it prints back as written. So `1.5`, `2.0` and `0.1` are `f16`, `3.14159` is `f32`, and `3.141592653589793` is `f64`. A suffix names the format instead: **`0.1f64`**, `0.1f32`, `0.1f16` or `0.1bf16`. **`2n`** and **`2.0n`** are generic numbers, which take whichever number type their use needs, so `inc(x) = x + 1n;` works on every number type.
+>
+> **`a / b`** divides floats and `rat` values. **`a div b`** and **`a mod b`** are the integer quotient and remainder, and **`a ** b`** is a power. **`f64(n)`** converts `n` to `f64`, and **`int(s)`** converts a string to an `int`; such conversions are checked and can fail.
 >
 > **`==`**, **`!=`**, **`<`**, **`<=`**, **`>`** and **`>=`** compare, giving a **`bool`**, true or false, and `==` compares structure, by value. **`&&`** and **`||`** are logical and and or.
 
 ```zed
 big = 2 ** 100;              // 2 to the power 100, the exact integer, with no overflow
 third = 1r / 3r;             // an exact rational
-half = 1.0 / 2.0;            // f64
+half = 1.0 / 2.0;            // f16: 1.0 and 2.0 are f16
 q = 7 div 2;                 // 3
-ratio = f64(q) / 2.0;        // conversions are written out
-// bad = q + 1.5;            // ✗ Two numeric values with no common carrier: int + f64
+ratio = f64(q) / 2n;         // conversions are written out; 2n takes the format of f64(q)
+twice(x: f64) = x * 2n;      // x * 2.0 would be rejected: 2.0 is an f16
+// bad = q + 1.5;            // ✗ Two numeric values with no common carrier: int + f16
 ```
 
 ```text
@@ -776,6 +779,8 @@ half  = 0.5, q = 3, ratio = 1.5
 ```
 
 An `int` is a mathematical integer. It can't overflow, because the compiler picks its machine representation from the range it can prove, and that is a plain machine word wherever a word is enough. So overflow bugs are gone, without the cost of big integers where the range is known. `/` works on fractional types, and integers divide with `div` and `mod`. A `rat` is never rounded, so `0.1r + 0.2r == 0.3r` is true. Mixing `int` and `f64` is a compile error until you write `f64(n)`, because a silent conversion is how a large integer gets rounded with nobody noticing. That cast is checked, so its type also includes the failure value `#inexact` unless the compiler can show the value fits exactly.
+
+Floats of two formats don't mix either, and a plain decimal is accepted only where its own format is the one expected. With `x: f64`, `x * 2.0` is a compile error, because `2.0` is an `f16` and `*` converts neither operand. Write `x * 2.0n`, which takes the format of `x`, or `x * 2.0f64`. The error message lists every fix that compiles, each with the value it gives. A plain decimal is never widened behind your back because widening is where precision goes missing: `0.1` read as an `f16` and then widened to `f64` would be `0.0999755859375`, not the `f64` nearest one tenth.
 
 ### Strings
 
@@ -810,10 +815,10 @@ A struct is a record of named fields, compared by value and copied with changes.
 
 ```zed
 struct Point { x: f64, y: f64 }
-struct Circle { center: Point, radius: f64 = 1.0 }
+struct Circle { center: Point, radius: f64 = 1n }
 
-p = Point(x: 1.0, y: 2.0);
-moved = p with { x = 3.0 };
+p = Point(x: 1n, y: 2n);
+moved = p with { x = 3n };
 unit = Circle(center: p);
 
 Point.norm = (x * x + y * y).sqrt;
@@ -906,7 +911,7 @@ Each file is a module, and an import names what it brings in.
 ```zed
 import geometry.shapes.{Point, dist};
 
-far = dist(Point(x: 0.0, y: 0.0), Point(x: 3.0, y: 4.0));
+far = dist(Point(x: 0n, y: 0n), Point(x: 3n, y: 4n));
 ```
 
 ```text
@@ -1677,8 +1682,8 @@ An array's type can state its size, so shape mismatches are compile-time errors,
 ```zed
 scale(positional s: T, positional v: [T; n]) = s * v;     // result: [T; n]
 
-a: [f64; 2, 3] = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-b: [f64; 3, 2] = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+a: [f64; 2, 3] = [[1n, 2n, 3n], [4n, 5n, 6n]];
+b: [f64; 3, 2] = [[1n, 0n], [0n, 1n], [1n, 1n]];
 c = a.matmul(b);                                          // [f64; 2, 2]
 // d = a.matmul(a);                                       // ✗ Levels of one name with different domains: 3 columns, 2 rows
 ```
@@ -1920,13 +1925,13 @@ stats(positional data: [f64]) {
   return { mean:, sd: };      // short for { mean: mean, sd: sd }
 }
 
-m = stats([1.0, 2.0, 3.0]).mean;      // sd is never computed
+m = stats([1n, 2n, 3n]).mean;         // sd is never computed
 
 firstPrime = (for i in 2.. { i }).where(isPrime).first;
 ```
 
 ```text
-stats([1.0, 2.0, 3.0]): n = 3.0, mean = 6.0 / 3.0 = 2.0
+stats([1n, 2n, 3n]): n = 3.0, mean = 6.0 / 3.0 = 2.0
 m = 2.0, and sd has not run
 
 firstPrime before .where = 2, 3, 4, 5, ...
@@ -2160,7 +2165,7 @@ sumSquares(positional xs: [f64]) = xs.map(x -> x * x) >< (+);
 ranked(positional xs: [int]) = xs.sort(desc x -> x);
 
 @noalloc
-lerp(positional a: f64, positional b: f64, positional t: f64) = a * (1.0 - t) + b * t;
+lerp(positional a: f64, positional b: f64, positional t: f64) = a * (1n - t) + b * t;
 ```
 
 ```text
@@ -2237,7 +2242,7 @@ A grammar describes a text or binary format.
 ```zed
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
 
-v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0.0, y: 0.0, z: 0.0);
+v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0n, y: 0n, z: 0n);
 s = v.serialize;       // "(1.0,2.0,3.0)"
 ```
 
@@ -2427,10 +2432,10 @@ Annotations declare C functions to call and Zed functions to expose to C.
 ```zed
 @foreign("m", "cbrt") @stateless cbrt: (positional x: f64) -> f64;
 
-root = cbrt(8.0) else 0.0;
+root = cbrt(8n) else f64(0);
 
 @export("c", "zed_score")
-score(positional a: f64, positional b: f64) = a * 0.7 + b * 0.3;
+score(positional a: f64, positional b: f64) = (7n * a + 3n * b) / 10n;
 ```
 
 ```text

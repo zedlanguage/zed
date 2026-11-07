@@ -83,6 +83,12 @@ payload-built-by-position
 ]
   checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is compiled from step L2.5") }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is compiled from step L2.5") }, Outcome { line: 3, col: 41, failure: Some("the type `Utf8String` is not defined") }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 6, col: 21, failure: Some("a `match` is compiled from step L2.4") }]
 
+plain-decimal-other-format
+  warnings: []
+  `h`: Ok(Float(3.5))
+  `bad`: Ok(Float(7.0))
+  checks: [Outcome { line: 4, col: 1, failure: Some("the line is marked ✗ and the unit is accepted") }]
+
 taint-reaches-clean-sink
   rejected: [
     Diagnostic {
