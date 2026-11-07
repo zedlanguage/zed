@@ -228,14 +228,15 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
             .checked_sub(without)
             .expect("the rejections add work")
     };
-    let (m, limit) = (60_000, scaling::RATIO / scaling::FACTOR as f64);
+    let m = 60_000;
+    let limit = scaling::limit(m, scaling::FACTOR * m, 0);
     let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
     let ratio = large as f64 / small as f64;
     assert!(
         ratio <= limit,
         "{R} rejections beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
          times the work; for work of order n^0 the rule of low complexity allows at most \
-         {limit} times (DESIGN.md Part G)",
+         {limit:.2} times (DESIGN.md Part G)",
         scaling::FACTOR * m,
         meter.unit(),
     );
@@ -408,14 +409,15 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
             .checked_sub(without)
             .expect("the rejections add work")
     };
-    let (m, limit) = (60_000, scaling::RATIO / scaling::FACTOR as f64);
+    let m = 60_000;
+    let limit = scaling::limit(m, scaling::FACTOR * m, 0);
     let (small, large) = (rejections(m), rejections(scaling::FACTOR * m));
     let ratio = large as f64 / small as f64;
     assert!(
         ratio <= limit,
         "{R} functions beside {m} and {} expressions: {small} and {large} {}, {ratio:.2} \
          times the work; for work of order n^0 the rule of low complexity allows at most \
-         {limit} times (DESIGN.md Part G)",
+         {limit:.2} times (DESIGN.md Part G)",
         scaling::FACTOR * m,
         meter.unit(),
     );

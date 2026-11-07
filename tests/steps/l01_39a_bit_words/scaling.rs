@@ -315,8 +315,9 @@ fn check_note_counts(
         "{what}"
     );
     assert!(
-        large_text as f64 <= scaling::RATIO * small_text as f64,
-        "{what}: {small_text} and {large_text} bytes of text"
+        large_text as f64 <= scaling::limit(n, scaling::FACTOR * n, 1) * small_text as f64,
+        "{what}: {small_text} and {large_text} bytes of text, over {:.1} times",
+        scaling::limit(n, scaling::FACTOR * n, 1)
     );
     srcs
 }

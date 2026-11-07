@@ -3020,11 +3020,11 @@ fn class_ranges_read_the_holes_once() {
         assert!(small > 0, "the tests are read by their classes");
         let ratio = large as f64 / small as f64;
         assert!(
-            ratio <= scaling::RATIO,
+            ratio <= scaling::limit(n, scaling::FACTOR * n, 1),
             "pieces of the domain read at sizes {n} and {}: {small} and {large}, {ratio:.1} times, \
              over {}",
             scaling::FACTOR * n,
-            scaling::RATIO
+            scaling::limit(n, scaling::FACTOR * n, 1)
         );
     });
 }

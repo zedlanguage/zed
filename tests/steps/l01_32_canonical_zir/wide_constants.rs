@@ -7,7 +7,7 @@
 use num_bigint::{BigInt, BigUint, Sign};
 use zed_kernel::term::build::lit;
 use zed_kernel::{Rat, Term, Value};
-use zed_tests::scaling::{FACTOR, RATIO, check_order, compare};
+use zed_tests::scaling::{check_order, compare, limit};
 use zedc::address::ContentAddress;
 use zedc::canon::{self, Def};
 use zedc::zir::canon::address;
@@ -214,8 +214,9 @@ fn addressing_a_wide_constant_is_linear_in_its_bits() {
 }
 
 /// The decimal digits cost about `n^1.5` here, 22.3 times the work for 8 times the bits, which
-/// is under the 24 times that [`check_order`] allows for order `n`; over 64 times the bits they
-/// cost about 500 times, so this test tells the two apart where [`check_order`] cannot.
+/// was under the 24 times that [`check_order`] allowed for order `n` until SCALE-ratio; over 64
+/// times the bits they cost about 500 times, far over the limit of about 100 times, so this test
+/// tells the two apart with a wider margin than [`check_order`].
 #[test]
 fn addressing_a_wide_constant_stays_linear_over_64_times_the_bits() {
     const N: usize = 1 << 14;
@@ -223,16 +224,15 @@ fn addressing_a_wide_constant_stays_linear_over_64_times_the_bits() {
         graph(Value::int(wide(N, Sign::Plus))),
         graph(Value::int(wide(64 * N, Sign::Plus))),
     );
-    let limit = RATIO / FACTOR as f64 * 64.0;
+    let limit = limit(N, 64 * N, 1);
     compare(
         &format!(
             "the ZIR address of a random number of n bits: sizes {N} and {}",
             64 * N
         ),
         &format!(
-            "for work of order n the rule of low complexity allows {} times per {FACTOR} times \
-             the size, so at most {limit} times for 64 times (DESIGN.md Part G)",
-            RATIO
+            "for work of order n log n the rule of low complexity allows at most {limit:.1} times \
+             for 64 times the size (DESIGN.md Part G)"
         ),
         limit,
         || {

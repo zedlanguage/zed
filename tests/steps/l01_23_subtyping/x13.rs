@@ -158,9 +158,13 @@ fn e4b_scales() {
     });
 }
 
-/// Why the union's two sizes may differ 24 times in work.
-const NTH_WHY: &str = "the input has 8.04 times the definitions; for work of order n log n in \
-                       them the rule of low complexity allows at most 24 times (DESIGN.md Part G)";
+/// Why the union's two sizes, of `small` and `large` definitions, may differ `limit` times in work.
+fn nth_why(limit: f64) -> String {
+    format!(
+        "the input has 8.04 times the definitions; for work of order n log n in them the rule \
+         of low complexity allows at most {limit:.1} times (DESIGN.md Part G)"
+    )
+}
 
 #[test]
 fn the_union_of_nth_from_end_is_built_in_its_size() {
@@ -174,8 +178,8 @@ fn the_union_of_nth_from_end_is_built_in_its_size() {
         assert!((8.0..8.1).contains(&(large as f64 / small as f64)));
         scaling::compare(
             &format!("the nth union built: n {n} and {m}, {small} and {large} definitions"),
-            NTH_WHY,
-            24.0,
+            &nth_why(scaling::limit(small, large, 1)),
+            scaling::limit(small, large, 1),
             || build(n),
             || build(m),
         );
@@ -208,8 +212,8 @@ fn the_union_of_nth_from_end_is_decided_in_its_size() {
         let (small, large) = (nth_pair_size(n), nth_pair_size(m));
         scaling::compare(
             &format!("the nth union decided: n {n} and {m}, {small} and {large} definitions"),
-            NTH_WHY,
-            24.0,
+            &nth_why(scaling::limit(small, large, 1)),
+            scaling::limit(small, large, 1),
             || decide(&small_pairs),
             || decide(&large_pairs),
         );

@@ -240,9 +240,12 @@ fn the_meet_of_prime_cycles_scales() {
     };
     scaling::compare(
         "a meet of cycles, the first 10 and 25 primes",
-        "the input has 8.2 times the definitions; for work of order n log n in them the rule \
-         of low complexity allows at most 24 times (DESIGN.md Part G)",
-        24.0,
+        &format!(
+            "the input has 8.2 times the definitions; for work of order n log n in them the \
+             rule of low complexity allows at most {:.1} times (DESIGN.md Part G)",
+            scaling::limit(129, 1060, 1)
+        ),
+        scaling::limit(129, 1060, 1),
         || run(&small),
         || run(&large),
     );

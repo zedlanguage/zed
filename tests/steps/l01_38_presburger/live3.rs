@@ -891,9 +891,12 @@ fn a_lens_of_tangent_planes_over_the_origin_scales_in_point_on_its_long_path() {
     let (small, large) = (tangents(32, 0), tangents(512, 0));
     scaling::compare(
         "the lens of tangent planes over the origin, in `point`: 32 and 512 pairs",
-        "16 times the rows, both sizes running five linear programs; the rule of low complexity \
-         allows 24 times for 8, so 48 for 16 (DESIGN.md Part G)",
-        2.0 * scaling::RATIO,
+        &format!(
+            "16 times the rows, both sizes running five linear programs; for work of order n log n \
+             the rule of low complexity allows {:.1} times (DESIGN.md Part G)",
+            scaling::limit(32, 512, 1)
+        ),
+        scaling::limit(32, 512, 1),
         || drop(point(&small)),
         || drop(point(&large)),
     );

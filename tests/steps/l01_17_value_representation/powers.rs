@@ -394,16 +394,17 @@ fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
             assert!(p < s && s > p && p != s);
         },
     );
-    // At n and 8n the 24 times allowed also admits num-bigint's O(n^1.47), 21 times; at n and
-    // 64n it is 452 times against about 90 for O(n log n), so a limit of 3 times 64 tells them
-    // apart.
+    // At n and 8n the 24 times allowed until SCALE-ratio also admitted num-bigint's O(n^1.47),
+    // 21 times; at n and 64n it is 452 times against about 90 for O(n log n), so a limit of 3
+    // times 64 tells them apart.
     let run = |n: u64| {
         let p = int(3).pow(&n.into()).unwrap();
         assert!(p < p.add(&int(1)).unwrap());
     };
     scaling::compare(
         "3^n + 1 built and compared with the kept 3^n: sizes 2^18 and 2^24",
-        "O(n log n) at 64 times the size, with the 3 times over n that RATIO allows at 8n",
+        "O(n log n) at 64 times the size, with 3 times over n, the margin the old limit of 24 \
+         had at 8n",
         3.0 * 64.0,
         || run(1 << 18),
         || run(1 << 24),

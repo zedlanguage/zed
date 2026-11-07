@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use num_bigint::{BigInt, Sign};
 use zed_kernel::num::bytes_of;
 use zed_kernel::term::build::var;
-use zed_tests::scaling::{FACTOR, RATIO, check_order, compare};
+use zed_tests::scaling::{check_order, compare, limit};
 use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
 use zedc::canon::{Def, Domain, address};
 use zedc::store::interval::{IntervalSet, Num};
@@ -190,10 +190,11 @@ fn addressing_a_wide_end_and_class_scales() {
     );
 }
 
-/// The decimal text cost about `n^1.5`, under the 24 times that [`check_order`] allows for
-/// order `n` at 8 times the bits; over 64 times the bits it costs about 500 times, so this test
-/// tells the two apart where [`check_order`] cannot (as
-/// `l01_32_canonical_zir::wide_constants` does for constants).
+/// The decimal text cost about `n^1.5`, under the 24 times that [`check_order`] allowed for
+/// order `n` at 8 times the bits until SCALE-ratio; over 64 times the bits it costs about 500
+/// times, far over the limit of about 100 times, so this test tells the two apart with a
+/// wider margin than [`check_order`] (as `l01_32_canonical_zir::wide_constants` does for
+/// constants).
 #[test]
 fn addressing_a_wide_end_and_class_stays_linear_over_64_times_the_bits() {
     const N: usize = 16 << 10;
@@ -201,7 +202,7 @@ fn addressing_a_wide_end_and_class_stays_linear_over_64_times_the_bits() {
         let v = wide(b);
         (at(v.clone()), class(&v + &v, v))
     });
-    let limit = RATIO / FACTOR as f64 * 64.0;
+    let limit = limit(N, 64 * N, 1);
     let run = |(end, class): &(Def, Def)| {
         addr(end);
         addr(class);
@@ -212,8 +213,8 @@ fn addressing_a_wide_end_and_class_stays_linear_over_64_times_the_bits() {
             64 * N
         ),
         &format!(
-            "for work of order n the rule of low complexity allows {RATIO} times per {FACTOR} \
-             times the size, so at most {limit} times for 64 times (DESIGN.md Part G)"
+            "for work of order n log n the rule of low complexity allows at most {limit:.1} times \
+             for 64 times the size (DESIGN.md Part G)"
         ),
         limit,
         || run(&defs[0]),

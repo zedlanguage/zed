@@ -13230,7 +13230,7 @@ mod tests {
         crate::scaling::compare(
             "refused joins between two classes of n/8 functions, eight pairs, n = 1000 and 8000",
             "work of order n log n (DESIGN.md Part G)",
-            crate::scaling::RATIO,
+            crate::scaling::limit(1000, 8000, 1),
             || {
                 std::hint::black_box(unite(&small.0, &small.1));
             },

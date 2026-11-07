@@ -306,21 +306,22 @@ fn decide(name: &str, m: usize, (t, expected, _): &(Type, Verdict, usize)) {
 const VARS: (usize, usize) = (45, 128);
 
 /// The cost of deciding a shape at the variable counts `VARS`, the types built before the runs,
-/// within the limit for work linear in the type (24 times at 8 times the size).
+/// within the limit for work of order n log n in the type ([`scaling::limit`]).
 fn scales(name: &str) {
     let ((a, b), small, large) = (VARS, instance(name, VARS.0), instance(name, VARS.1));
     let ratio = large.2 as f64 / small.2 as f64;
     assert!((7.9..8.2).contains(&ratio), "{name}: size ratio {ratio}");
+    let limit = scaling::limit(small.2, large.2, 1);
     scaling::compare(
         &format!(
             "2-CNF {name}: {a} and {b} variables, sizes {} and {}",
             small.2, large.2
         ),
         &format!(
-            "the type has {ratio:.2} times the size; for work linear in it the rule of low \
-             complexity allows at most 24 times (DESIGN.md Part G)"
+            "the type has {ratio:.2} times the size; for work of order n log n in it the rule \
+             of low complexity allows at most {limit:.1} times (DESIGN.md Part G)"
         ),
-        24.0,
+        limit,
         || decide(name, a, &small),
         || decide(name, b, &large),
     );

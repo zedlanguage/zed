@@ -1,8 +1,14 @@
 //! The scaling test of the rule of low complexity (DESIGN.md Part G, "Six standing rules"): a
-//! pass runs at sizes n and 8n, and the larger run may do at most `24 × 8^(k−1)` times the
-//! work, where `n^k` is the order the measured work is defined to have. A run of order `n^k`
-//! or `n^k log n` stays near `8^k` to `1.4 × 8^k` times, and one a power of n above it near
-//! `8^(k+1)`.
+//! pass runs at sizes n and 8n, and the larger run may do at most `8^k × ln(8n) / ln(n) × 1.1`
+//! times the work ([`limit`]), where `n^k` is the order the measured work is defined to have:
+//! the ratio of work of order `n^k log n`, and 10% ([`SLACK`]) for the spread of the count from
+//! run to run. Work of order `n^k` or `n^k log n` stays under it; work of order `n^(k + 0.25)`
+//! is over it from n = 52 on (`8^0.25` = 1.68, against 1.10 times the log factor 1.53 at
+//! n = 50), and work of order `n^(k + 0.19)` from n = 500. The limit was a fixed `24 × 8^(k−1)`
+//! until 2026-11-07 (SCALE-ratio), which let work of order `n^1.5` (22.6 times) pass for k = 1.
+//! Below about n = 50 the orders cannot be told apart this way (at n = 6 the limit is `8^1.42`),
+//! so a test meant to catch `n^1.25` runs at a larger n. Setting the variable `ZED_SCALING_RATIOS`
+//! ([`RATIOS_FILE`]) to a file name makes every check append its measurements to that file.
 //!
 //! Work is counted in instructions retired, in user mode, by this thread and the threads it
 //! starts. The count does not change with the load on the machine. Elapsed time and processor
@@ -79,8 +85,31 @@ use zed_alloc_count::os;
 /// How much larger the second run is.
 pub const FACTOR: usize = 8;
 
-/// The most times the work of the first the second run may do, for work of order `n`.
-pub const RATIO: f64 = 24.0;
+/// How far a run may go over the ratio of work of order `n^k log n`, in instructions. The
+/// instructions of one test differ from run to run by up to 6.5% in the ratio of the larger
+/// size to the smaller (387 tests run three times, 2026-11-07: median 0.03%, 99th percentile
+/// 3%), from the order a hash map's seed puts keys in; 10% covers that with half again to spare.
+pub const SLACK: f64 = 1.1;
+
+/// How many times [`SLACK`] a meter of processor time or cycles allows: those change with load.
+/// A linear loop run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the
+/// fastest of five each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
+pub const TIME_ALLOWANCE: f64 = 2.0;
+
+/// The most times the work at size `small` that a run at size `large` may do, for work of order
+/// `n^power` or `n^power log n`: `(large / small)^power × ln(large) / ln(small)`, the ratio of
+/// work of order `n^power log n`, times [`SLACK`]. Power 0 is work of order 1 or `log n`. At
+/// `small` = n and `large` = 8n the log factor is 1.30 at n = 1000 and 1.53 at n = 50, so a
+/// power `k + 0.25` (`8^0.25` = 1.68) is caught from n = 52 on, and `k + 0.19` from n = 500.
+pub fn limit(small: usize, large: usize, power: u32) -> f64 {
+    assert!(
+        2 <= small && small < large,
+        "a scaling test compares a size of at least 2 with a larger one, not {small} and {large}: \
+         the log factor of the limit is ln({large}) / ln({small})"
+    );
+    let (s, l) = (small as f64, large as f64);
+    (l / s).powi(power as i32) * l.ln() / s.ln() * SLACK
+}
 
 /// How many measurements of processor time must all be over the limit before the test fails.
 pub const TRIES: usize = 3;
@@ -242,6 +271,16 @@ impl Meter {
             (2, 1)
         } else {
             (5, TRIES)
+        }
+    }
+
+    /// How many times the limit of a check this meter allows: [`TIME_ALLOWANCE`] for processor time
+    /// and cycles, which change with load, and 1 for instructions.
+    fn allowance(&self) -> f64 {
+        if self.instructions {
+            1.0
+        } else {
+            TIME_ALLOWANCE
         }
     }
 
@@ -414,9 +453,9 @@ pub fn check(what: &str, n: usize, run: impl Fn(usize) + Sync) {
 }
 
 /// Runs `run` at sizes `n` and `FACTOR * n` and panics when the larger does more than
-/// `RATIO * FACTOR^(power - 1)` times the work, or allocates more than that many times the
-/// bytes, or allocates none on its thread. `power` is the power of n in the order the work is
-/// defined to have: for a Zed program, that of its own algorithm, so an O(n) operation in an
+/// [`limit`]`(n, FACTOR * n, power)` times the work (as [`compare`] holds it), or allocates more
+/// than that many times the bytes, or allocates none on its thread. `power` is the power of n in
+/// the order the work is defined to have: for a Zed program, that of its own algorithm, so an O(n) operation in an
 /// O(n) loop has power 2. `what` names the pass and its size.
 pub fn check_order(what: &str, n: usize, power: u32, run: impl Fn(usize) + Sync) {
     check_by(&mut Meter::new(), Measures::Both, what, n, power, run)
@@ -438,19 +477,29 @@ fn check_by(
     power: u32,
     run: impl Fn(usize) + Sync,
 ) {
-    let limit = RATIO * (FACTOR as f64).powi(power as i32 - 1);
+    let limit = limit(n, FACTOR * n, power);
     let why = format!(
-        "for work of order n^{power} the rule of low complexity allows at most {limit} times \
-         (DESIGN.md Part G)"
+        "for work of order n^{power} or n^{power} log n the rule of low complexity allows at most \
+         {limit:.1} times (DESIGN.md Part G)"
     );
     let what = format!("{what}: sizes {n} and {}", FACTOR * n);
     let (small, large) = (|| run(n), || run(FACTOR * n));
-    compare_by(meter, measures, &what, &why, limit, small, large);
+    compare_by(
+        meter,
+        measures,
+        Some((n, power)),
+        (&what, &why),
+        limit,
+        small,
+        large,
+    );
 }
 
 /// Panics when `large` does more than `limit` times the work of `small`, or allocates more than
 /// `limit` times its bytes, or allocates none on its thread, for sizes that are not `n` and
-/// `8n`. `why` says where the limit comes from.
+/// `8n`. `why` says where the limit comes from; [`limit`] gives it for work of a given order. The
+/// limit is of instructions: a meter of processor time or cycles allows [`TIME_ALLOWANCE`] times
+/// the work, and the bytes are held to `limit` itself.
 pub fn compare(
     what: &str,
     why: &str,
@@ -461,8 +510,8 @@ pub fn compare(
     compare_by(
         &mut Meter::new(),
         Measures::Both,
-        what,
-        why,
+        None,
+        (what, why),
         limit,
         small,
         large,
@@ -486,8 +535,8 @@ pub fn compare(
 fn compare_by(
     meter: &mut Meter,
     measures: Measures,
-    what: &str,
-    why: &str,
+    order: Option<(usize, u32)>,
+    (what, why): (&str, &str),
     limit: f64,
     small: impl Fn() + Sync,
     large: impl Fn() + Sync,
@@ -552,13 +601,20 @@ fn compare_by(
         let (small_bytes, large_bytes) = (small_bytes.get(), large_bytes.get());
         // Never 0 in the ratio, as [`Meter::work`] counts them; the messages print the counts.
         let bytes = large_bytes.max(1) as f64 / small_bytes.max(1) as f64;
+        let ratio = large.units as f64 / small.units as f64;
+        record(
+            what,
+            order,
+            limit,
+            (small.units, large.units, ratio, meter.unit()),
+            (small_bytes, large_bytes, bytes),
+        );
         if measures == Measures::Both && bytes > limit {
             panic!(
                 "{what}: allocated {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes; {why}"
             );
         }
-        let ratio = large.units as f64 / small.units as f64;
-        if ratio <= limit {
+        if ratio <= limit * meter.allowance() {
             let held = match measures {
                 Measures::Both => "",
                 Measures::WorkOnly => ", not held to the limit",
@@ -572,7 +628,7 @@ fn compare_by(
             eprintln!(
                 "{what}: passed: took {} and {} {}, {ratio:.1} times the work; allocated \
                  {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes{held}; \
-                 the limit is {limit}{first_runs}{earlier}",
+                 the limit is {limit:.2}{first_runs}{earlier}",
                 small.units,
                 large.units,
                 meter.unit()
@@ -584,11 +640,51 @@ fn compare_by(
             small.units, large.units
         ));
     }
+    let allowed = if meter.instructions {
+        String::new()
+    } else {
+        format!(", times {TIME_ALLOWANCE} for a count that changes with load")
+    };
     panic!(
-        "{what}: took {} in {}; {why}",
+        "{what}: took {} in {}; {why}{allowed}",
         seen.join("; then "),
         meter.unit()
     );
+}
+
+/// The variable naming the file every check ([`check_order`], [`compare`] and the rest) appends a
+/// line to for each measurement, when it is set: the test, `what`, n and the power (`-` for
+/// [`compare`]), the limit, the work of the two sizes and its ratio, the unit, and the bytes of
+/// the two sizes and their ratio, separated by tabs. It lets the limit be set from the ratios the tests measure (SCALE-ratio).
+pub const RATIOS_FILE: &str = "ZED_SCALING_RATIOS";
+
+/// Appends one measurement to the file [`RATIOS_FILE`] names, if it is set. One `write` call per
+/// line to a file opened for appending, so lines of tests running at once do not mix.
+fn record(
+    what: &str,
+    order: Option<(usize, u32)>,
+    limit: f64,
+    (small, large, ratio, unit): (u64, u64, f64, &str),
+    (small_bytes, large_bytes, bytes): (u64, u64, f64),
+) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os(RATIOS_FILE) else {
+        return;
+    };
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("-");
+    let (n, power) = order.map_or(("-".into(), "-".into()), |(n, p)| {
+        (n.to_string(), p.to_string())
+    });
+    let line = format!(
+        "{test}\t{what}\t{n}\t{power}\t{limit}\t{small}\t{large}\t{ratio:.3}\t{unit}\t{small_bytes}\t{large_bytes}\t{bytes:.3}\n"
+    );
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(line.as_bytes()))
+        .unwrap_or_else(|e| panic!("{RATIOS_FILE}: writing to {}: {e}", path.display()));
 }
 
 #[cfg(test)]
@@ -638,6 +734,33 @@ mod tests {
             2,
             |n| work(n, 3, 20)
         )));
+    }
+
+    /// Work of order `n^1.25`, which the limit of 24 for k = 1 let pass (13.5 times at 8n), fails
+    /// at n = 1000, and work of order `n log n` passes there and at n = 52.
+    #[test]
+    fn work_a_quarter_power_above_n_log_n_fails() {
+        let n_log_n = |n: usize| spin((n as f64 * (n as f64).log2() * 50.0) as u64);
+        check_instructions_only("n log n work", 1000, 1, n_log_n);
+        check_instructions_only("n log n work", 52, 1, n_log_n);
+        let quarter = |n: usize| spin(((n as f64).powf(1.25) * 500.0) as u64);
+        assert!(fails(|| check_instructions_only(
+            "work of order n^1.25",
+            1000,
+            1,
+            quarter
+        )));
+    }
+
+    #[test]
+    fn the_limit_is_the_ratio_of_n_log_n_with_its_slack() {
+        let at = |n: usize| limit(n, FACTOR * n, 1) / SLACK;
+        assert!((at(1000) - 8.0 * 8000f64.ln() / 1000f64.ln()).abs() < 1e-9);
+        assert!(limit(52, 416, 1) < 8f64.powf(1.25));
+        assert!(limit(50, 400, 1) > 8f64.powf(1.25));
+        assert!(limit(500, 4000, 1) < 8f64.powf(1.19));
+        assert!((limit(100, 800, 2) / limit(100, 800, 1) - 8.0).abs() < 1e-9);
+        assert!(fails(|| _ = limit(1, 8, 1)));
     }
 
     // Only Linux has a meter of processor time.
@@ -711,8 +834,8 @@ mod tests {
         compare_by(
             &mut meter,
             Measures::WorkOnly,
-            "counted runs",
-            "the limit is 24",
+            None,
+            ("counted runs", "the limit is 24"),
             24.0,
             || _ = small.fetch_add(1, Relaxed),
             || _ = large.fetch_add(1, Relaxed),
@@ -978,8 +1101,8 @@ mod tests {
         compare_by(
             &mut meter,
             only,
-            "memo runs",
-            "the limit is 24",
+            None,
+            ("memo runs", "the limit is 24"),
             24.0,
             run,
             run,

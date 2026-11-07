@@ -570,9 +570,12 @@ fn a_complete_component_is_searched_once_in_time_linear_in_its_imports() {
     };
     scaling::compare(
         "a complete component, ordered: 40 and 113 units",
-        "for work linear in the imports the rule of low complexity allows at most 24 times 8 \
-         times the input (DESIGN.md Part G)",
-        24.0,
+        &format!(
+            "the 1,560 and 12,656 imports, 8.1 times as many; for work of order n log n in \
+             them the rule of low complexity allows at most {:.1} times (DESIGN.md Part G)",
+            scaling::limit(40 * 39, 113 * 112, 1)
+        ),
+        scaling::limit(40 * 39, 113 * 112, 1),
         || run(40),
         || run(113),
     );
