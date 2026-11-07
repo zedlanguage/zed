@@ -54,21 +54,16 @@ fn sum(n: usize) -> String {
 fn a_function_of_many_untyped_parameters_scales() {
     // The search tried the product of the carriers of the parameters, 3^n, until its budget
     // of 256 combinations gave `_`. The parameters now merge into one class, once each.
-    // The body is a chain of `n` additions, nested `n` deep.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(sig(&sum(3), "f"), "(T, T, T) -> T for T in int | f64 | rat");
-            let wide = sig(&sum(40), "f");
-            assert!(wide.ends_with(") -> T for T in int | f64 | rat"), "{wide}");
-            scaling::check("a function of n untyped parameters", 400, |n| {
-                let (info, _) = info(&sum(n));
-                assert!(info.errors.is_empty(), "{:?}", info.errors);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // The body is a chain of `n` additions, nested `n` deep, on a 2 MiB stack.
+    zed_tests::deep::on_small_stack(|| {
+        assert_eq!(sig(&sum(3), "f"), "(T, T, T) -> T for T in int | f64 | rat");
+        let wide = sig(&sum(40), "f");
+        assert!(wide.ends_with(") -> T for T in int | f64 | rat"), "{wide}");
+        scaling::check("a function of n untyped parameters", 400, |n| {
+            let (info, _) = info(&sum(n));
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
 }
 
 /// `n` functions, each calling the one before with its untyped parameter.
@@ -292,14 +287,14 @@ fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
     // `is` compares the lambdas of `t` with the written ones, reading the classes solved
     // inside them through the union-find (`Ty::diff_with`), so the `else` branch, where `t`
     // is not of the type, narrows to nothing. A tuple takes no function, so `t = (h, 1)` is
-    // rejected, once.
+    // rejected, once. The comparison of function types recursed once per lambda, about 8
+    // frames a level, and overflowed a 2 MiB stack at 800; it now keeps its frames on the
+    // heap (`Comparing`, TY-sub-stack).
     let (info, _) = super::info(&curried_tested(2));
     assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
     assert_eq!(info.tops["r"].to_string(), "1");
     let n = 100;
-    // 512 MiB until item TY-sub-stack: the comparison of function types (`Ty::sub_in`)
-    // recurses once a curried level and overflows a 2 MiB stack at n = 800.
-    scaling::on_a_thread(1 << 29, || {
+    zed_tests::deep::on_small_stack(|| {
         let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
             .into_iter()
             .map(|m| {

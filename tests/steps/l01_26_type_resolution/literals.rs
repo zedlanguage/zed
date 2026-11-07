@@ -370,21 +370,17 @@ fn adopting_the_literals_of_a_wide_tuple_scales() {
 
 #[test]
 fn adopting_the_literals_of_a_deep_tuple_scales() {
-    // The parser, the checker and the type printer recurse on the nesting.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(value(&deep(3), "y"), "true");
-            checks_linearly(
-                "adopting the literals of tuples nested n deep",
-                128,
-                deep,
-                |m| 2 * (m + 1),
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // The parser, the checker and the type printer recurse on the nesting, within a 2 MiB
+    // stack at 1,024 deep (it ran on 512 MiB, TY-sub-stack).
+    zed_tests::deep::on_small_stack(|| {
+        assert_eq!(value(&deep(3), "y"), "true");
+        checks_linearly(
+            "adopting the literals of tuples nested n deep",
+            128,
+            deep,
+            |m| 2 * (m + 1),
+        );
+    });
 }
 
 /// The operands of `p == ((…(0n, 0n)…, 0n), 0n)`, the tuple nested `d` deep, with `p` at f64

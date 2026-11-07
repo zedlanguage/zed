@@ -460,6 +460,8 @@ fn passing_a_function_of_many_bounded_variables_scales() {
 
 #[test]
 fn nested_bounds_clauses_scale() {
+    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
+    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(|| {
@@ -552,6 +554,8 @@ fn a_bounded_variable_only_in_the_result_gives_its_whole_bound() {
 fn printing_a_deep_function_type_scales() {
     // Each function type is written in place: building each part as a string and copying it
     // into the whole cost O(n^2) for n nested function types.
+    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
+    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(|| {
@@ -666,6 +670,8 @@ fn passed_deep(n: usize, bounded: bool) -> String {
 
 #[test]
 fn passing_a_deep_function_type_as_itself_scales() {
+    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
+    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(|| {
@@ -680,6 +686,8 @@ fn passing_a_deep_function_type_as_itself_scales() {
 
 #[test]
 fn passing_a_deep_bounded_function_type_as_itself_scales() {
+    // Not 2 MiB: `Denote::ty` (zedc-check) recurses on the nesting of a written type and
+    // overflows it here (gdb, TY-sub-stack, 2026-11-07).
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(|| {
@@ -890,17 +898,12 @@ fn a_lambda_of_many_bounded_parameters_scales() {
 
 #[test]
 fn nested_lambdas_for_bounded_parameters_scale() {
-    std::thread::Builder::new()
-        .stack_size(1 << 30)
-        .spawn(|| {
-            assert_eq!(value(&nested_lambdas(3), "y"), "3");
-            check_scales(
-                "n nested lambdas, each for a bounded parameter",
-                400,
-                nested_lambdas,
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::deep::on_small_stack(|| {
+        assert_eq!(value(&nested_lambdas(3), "y"), "3");
+        check_scales(
+            "n nested lambdas, each for a bounded parameter",
+            400,
+            nested_lambdas,
+        );
+    });
 }

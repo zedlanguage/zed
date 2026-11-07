@@ -8,10 +8,12 @@
 //! and `f64 + int`.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
+use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::types::{Type as KType, Verdict};
 use zed_kernel::{Universe, Value};
 
@@ -1779,14 +1781,52 @@ impl Cx<'_> {
     /// `fns` maps to it and `env`. The payloads stay as they are, since no comparison reads
     /// them. The cost is that of `t` outside its functions, so each function type is read once
     /// for each comparison of it. A class variable `solve` gives a type is read as that type.
+    ///
+    /// The tuples are read on an explicit stack, each component before the type that holds it
+    /// and in order, as the recursive form read them, so the new names are made in the same
+    /// order, and a tuple nested to any depth needs no more of the thread's stack.
     fn read(&mut self, t: &Ty, env: &Env) -> Ty {
+        /// A type whose tuples are being read: the rows read, and the components read of the
+        /// next row.
+        struct Reading<'t> {
+            t: &'t Ty,
+            rows: Vec<Row>,
+            row: Vec<Ty>,
+        }
+        let start = |t| Reading {
+            t,
+            rows: Vec::new(),
+            row: Vec::new(),
+        };
+        let mut stack = vec![start(t)];
+        loop {
+            let top = stack
+                .last_mut()
+                .expect("the type being read is on the stack");
+            if let Some(cs) = top.t.tuples.get(top.rows.len()) {
+                match cs.get(top.row.len()) {
+                    Some(c) => stack.push(start(c)),
+                    None => {
+                        let row = std::mem::take(&mut top.row).into_iter().collect();
+                        top.rows.push(row);
+                    }
+                }
+                continue;
+            }
+            let Reading { t, rows, .. } = stack.pop().expect("the type being read is on the stack");
+            let out = self.read_outer(t, rows, env);
+            match stack.last_mut() {
+                Some(up) => up.row.push(out),
+                None => return out,
+            }
+        }
+    }
+
+    /// [`Self::read`] of `t` whose tuples read as `tuples`: its functions and variables.
+    fn read_outer(&mut self, t: &Ty, tuples: Vec<Row>, env: &Env) -> Ty {
         let mut out = Ty {
             set: t.set.clone(),
-            tuples: t
-                .tuples
-                .iter()
-                .map(|cs| cs.iter().map(|c| self.read(c, env)).collect())
-                .collect(),
+            tuples,
             fns: Vec::new(),
             vars: BTreeSet::new(),
             dynamic: t.dynamic,
@@ -1825,6 +1865,151 @@ impl Cx<'_> {
             self.rigid.remove(&w);
             self.fns.remove(&w);
         }
+    }
+}
+
+/// A comparison of function types running on an explicit stack on the heap
+/// ([`zed_kernel::frames`]). The comparisons that call each other through the parts of the
+/// types compared ([`Comparing::sub_in`], [`accepts`], [`fits_in`], [`every_arrow_fits`],
+/// [`arrow_fits`], [`result_within`], and [`covered`], [`part_of`], [`met`], [`meet_within`]
+/// and [`refused_cover`]) are `async`, awaited in the frame that calls them; a cycle among
+/// them passes through [`accepts`], which starts a frame of its own ([`Comparing::fits`],
+/// [`Comparing::rows`]) for a function or a tuple. So types nested to any depth are compared
+/// with no more of the thread's stack than shallow ones. Calls are made in the order of the
+/// recursive form, with its short-circuits, so the answers and the names made are the same.
+///
+/// Complexity tradeoff: each frame is a boxed future and each use of the state a check of the
+/// `RefCell`, a constant factor over the recursive form, for an O(depth) heap in place of the
+/// thread's stack; the order of the work is unchanged. Measured on a fit of curried types
+/// 8,000 deep: 60.8 ms and 14.4 G instructions against 59.0 ms and 13.6 G recursive (both runs
+/// with building and dropping the types; perf stat, TY-sub-stack, 2026-11-07).
+struct Comparing<'m, 's> {
+    stack: Stack<'m>,
+    /// The comparison's state, borrowed by one statement at a time, never across an `await`,
+    /// since the call awaited borrows it too.
+    cx: &'m RefCell<Cx<'s>>,
+}
+
+/// Runs `$body`, which reads the comparison `$c`, on a stack of its own over the state `$cx`, a
+/// `&mut Cx`, which it leaves as the comparison left it.
+macro_rules! comparing {
+    ($cx:expr, |$c:ident| $body:expr) => {{
+        let cx: &mut Cx = $cx;
+        let cell = RefCell::new(std::mem::take(cx));
+        let v = {
+            let $c = Comparing {
+                stack: Stack::default(),
+                cx: &cell,
+            };
+            $c.stack.run($body)
+        };
+        *cx = cell.into_inner();
+        v
+    }};
+}
+
+impl<'m, 's> Comparing<'m, 's> {
+    /// [`fits_in`] in a frame of its own.
+    fn fits(&'m self, s: Arc<Sig>, se: Env, q: Arc<Sig>, qe: Env) -> Deep<'m, bool> {
+        self.stack
+            .call(move || async move { fits_in(&s, &se, &q, &qe, self).await })
+    }
+
+    /// Whether each component of `cs` is in the one of `ds` at its place
+    /// ([`Comparing::sub_by_shape`]), in order, stopping at the first that is not, in a frame
+    /// of its own: with `b` and what it binds.
+    fn rows(&'m self, cs: Row, ds: Row, mut b: Binds) -> Deep<'m, (bool, Binds)> {
+        self.stack.call(move || async move {
+            for (c, d) in cs.iter().zip(&ds) {
+                if !self.sub_by_shape(c, d, &mut b).await {
+                    return (false, b);
+                }
+            }
+            (true, b)
+        })
+    }
+
+    /// [`Ty::sub`] of `t` and `other` inside the comparisons of function types the state holds.
+    async fn sub_in(&'m self, t: &Ty, other: &Ty, binds: &mut Binds) -> bool {
+        // `other` as a kernel type, built at most once, when a tuple piece needs it.
+        let mut whole: Option<Option<KType>> = None;
+        for p in t.pieces() {
+            // A tuple piece of a type with no variable, function or unknown is decided by the
+            // kernel, which sees shapes that hold it only together. Trying each shape in turn
+            // costs every shape times the components; the kernel splits the components once.
+            // The rule of one shape is sound, so it is tried only when the kernel refused.
+            // So is a kind-wide part, which tuple shapes of `other` may hold only together.
+            let a = match &p {
+                Piece::Tuple(cs) => cs.kernel(),
+                Piece::Set(s) if !(s & &wide()).is_empty() => Some(s.clone()),
+                _ => None,
+            };
+            let decided = a.and_then(|a| {
+                let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
+                match a.subtype_verdict(b) {
+                    Verdict::Empty => Some(true),
+                    Verdict::Inhabited => Some(false),
+                    Verdict::Refused(_) => None,
+                }
+            });
+            let ok = match decided {
+                Some(ok) => ok,
+                None => accepts(other, &p, t, binds, self).await,
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// [`Comparing::sub_in`] with each tuple piece held by one tuple shape of `other`: the rule
+    /// for the components of a tuple, whose joint check is the kernel's on the whole tuple.
+    async fn sub_by_shape(&'m self, t: &Ty, other: &Ty, binds: &mut Binds) -> bool {
+        for p in t.pieces() {
+            if !accepts(other, &p, t, binds, self).await {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// [`Ty::diff`] of `t` and `u`, a tuple compared with `u` as [`Ty::sub_with`] compares, with
+    /// the resolver `solve`, if any: each comparison a new one, on this stack, the state of
+    /// the comparisons open set aside meanwhile.
+    async fn diff(&'m self, t: &Ty, u: &Ty, solve: Option<Solve<'s>>) -> Ty {
+        let open = std::mem::take(&mut *self.cx.borrow_mut());
+        let tk = u.kernel();
+        let mut out = t.clone();
+        out.set = &t.set - tk.as_ref().unwrap_or(&u.set);
+        out.family = &t.family - &u.set;
+        out.prune_payloads();
+        let w = &u.set & &wide();
+        let within = Ty {
+            set: w.clone(),
+            ..u.clone()
+        };
+        let mut rest = Vec::new();
+        let mut kept = Vec::with_capacity(out.tuples.len());
+        for a in std::mem::take(&mut out.tuples) {
+            *self.cx.borrow_mut() = Cx {
+                solve,
+                ..Cx::default()
+            };
+            let row = Ty::of_row(a.clone());
+            let mut b = Binds::new();
+            if self.sub_in(&row, &within, &mut b).await && b.is_empty() {
+                continue;
+            }
+            match (&tk, a.kernel()) {
+                (Some(tk), Some(k)) if !(&k & &w).is_empty() => rest.push(&k - tk),
+                _ => kept.push(a),
+            }
+        }
+        *self.cx.borrow_mut() = open;
+        out.tuples = kept;
+        out.set = KType::union_all(std::iter::once(out.set).chain(rest));
+        out
     }
 }
 
@@ -2175,7 +2360,7 @@ impl Ty {
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
     pub fn sub(&self, other: &Ty, binds: &mut Binds) -> bool {
-        self.sub_in(other, binds, &mut Cx::default())
+        comparing!(&mut Cx::default(), |c| c.sub_in(self, other, binds))
     }
 
     /// [`Self::sub`], each class variable `solve` gives a type read as that type inside the
@@ -2185,48 +2370,13 @@ impl Ty {
             solve: Some(solve),
             ..Cx::default()
         };
-        self.sub_in(other, binds, &mut cx)
+        comparing!(&mut cx, |c| c.sub_in(self, other, binds))
     }
 
     /// [`Self::subtype`], read as [`Self::sub_with`] reads.
     pub fn subtype_with(&self, other: &Ty, solve: Solve) -> bool {
         let mut b = Binds::new();
         self.sub_with(other, &mut b, solve) && b.is_empty()
-    }
-
-    /// [`Self::sub`] inside the comparisons of function types `cx` holds.
-    fn sub_in(&self, other: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
-        // `other` as a kernel type, built at most once, when a tuple piece needs it.
-        let mut whole: Option<Option<KType>> = None;
-        self.pieces().iter().all(|p| {
-            // A tuple piece of a type with no variable, function or unknown is decided by the
-            // kernel, which sees shapes that hold it only together. Trying each shape in turn
-            // costs every shape times the components; the kernel splits the components once.
-            // The rule of one shape is sound, so it is tried only when the kernel refused.
-            // So is a kind-wide part, which tuple shapes of `other` may hold only together.
-            let a = match p {
-                Piece::Tuple(cs) => cs.kernel(),
-                Piece::Set(s) if !(s & &wide()).is_empty() => Some(s.clone()),
-                _ => None,
-            };
-            let decided = a.and_then(|a| {
-                let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
-                match a.subtype_verdict(b) {
-                    Verdict::Empty => Some(true),
-                    Verdict::Inhabited => Some(false),
-                    Verdict::Refused(_) => None,
-                }
-            });
-            decided.unwrap_or_else(|| accepts(other, p, self, binds, cx))
-        })
-    }
-
-    /// [`Self::sub_in`] with each tuple piece held by one tuple shape of `other`: the rule for
-    /// the components of a tuple, whose joint check is the kernel's on the whole tuple.
-    fn sub_by_shape(&self, other: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
-        self.pieces()
-            .iter()
-            .all(|p| accepts(other, p, self, binds, cx))
     }
 
     /// The kernel type of its values, when it holds no function, variable or unknown at any
@@ -2358,36 +2508,7 @@ impl Ty {
 
     /// [`Self::diff`], with the resolver of the comparisons, if any.
     fn diff_in(&self, t: &Ty, solve: Option<Solve>) -> Ty {
-        let tk = t.kernel();
-        let mut out = self.clone();
-        out.set = &self.set - tk.as_ref().unwrap_or(&t.set);
-        out.family = &self.family - &t.set;
-        out.prune_payloads();
-        let w = &t.set & &wide();
-        let within = Ty {
-            set: w.clone(),
-            ..t.clone()
-        };
-        let mut rest = Vec::new();
-        out.tuples.retain(|a| {
-            let row = Ty::of_row(a.clone());
-            let inside = match solve {
-                Some(solve) => row.subtype_with(&within, solve),
-                None => row.subtype(&within),
-            };
-            if inside {
-                return false;
-            }
-            match (&tk, a.kernel()) {
-                (Some(tk), Some(k)) if !(&k & &w).is_empty() => {
-                    rest.push(&k - tk);
-                    false
-                }
-                _ => true,
-            }
-        });
-        out.set = KType::union_all(std::iter::once(out.set).chain(rest));
-        out
+        comparing!(&mut Cx::default(), |c| c.diff(self, t, solve))
     }
 
     /// `self` with its variables replaced by their bindings.
@@ -2633,57 +2754,88 @@ impl Ty {
 /// of `t` holds it. A variable of `cx.rigid` stands for each carrier of its mask in turn: as
 /// `p`, `t` must hold each; in `t`, it holds what each carrier, with the rest of `t`, holds. A
 /// variable of `cx.fns` is the function it stands for.
-fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
+///
+/// A tuple shape and a function are compared in a frame of their own ([`Comparing::rows`],
+/// [`Comparing::fits`]), through which every cycle of the comparisons passes.
+async fn accepts<'m>(
+    t: &Ty,
+    p: &Piece,
+    of: &Ty,
+    binds: &mut Binds,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     if t.dynamic {
         return true;
     }
-    let ok = match p {
-        Piece::Dyn => false,
-        Piece::Set(s) => {
-            s.subtype(&t.set)
-                || t.vars.iter().any(|w| {
-                    cx.rigid.get(w).is_some_and(|&m| {
-                        Carrier::of_mask(m).all(|c| s.subtype(&(&t.set | &c.ty())))
+    let ok =
+        match p {
+            Piece::Dyn => false,
+            Piece::Set(s) => {
+                let cx = c.cx.borrow();
+                s.subtype(&t.set)
+                    || t.vars.iter().any(|w| {
+                        cx.rigid.get(w).is_some_and(|&m| {
+                            Carrier::of_mask(m).all(|c| s.subtype(&(&t.set | &c.ty())))
+                        })
                     })
-                })
-        }
-        // A kind-wide part that holds every tuple of the length holds it, whatever it holds.
-        Piece::Tuple(cs) if KType::tuple(vec![KType::top(); cs.len()]).subtype(&t.set) => true,
-        Piece::Tuple(cs) => t.tuples.iter().any(|ds| {
-            ds.len() == cs.len() && {
-                let mut b = binds.clone();
-                let ok = cs
-                    .iter()
-                    .zip(ds)
-                    .all(|(c, d)| c.sub_by_shape(d, &mut b, cx));
-                if ok {
-                    *binds = b;
+            }
+            // A kind-wide part that holds every tuple of the length holds it, whatever it holds.
+            Piece::Tuple(cs) if KType::tuple(vec![KType::top(); cs.len()]).subtype(&t.set) => true,
+            Piece::Tuple(cs) => {
+                let mut ok = false;
+                for ds in &t.tuples {
+                    if ds.len() != cs.len() {
+                        continue;
+                    }
+                    let b;
+                    (ok, b) = c.rows(cs.clone(), ds.clone(), binds.clone()).await;
+                    if ok {
+                        *binds = b;
+                        break;
+                    }
                 }
                 ok
             }
-        }),
-        // A type outside every comparison of function types holds its functions as written.
-        Piece::Fn(s) => t
-            .fns
-            .iter()
-            .any(|q| fits_in(s, &Env::new(), q, &Env::new(), cx)),
-        Piece::Var(v) => match cx.fns.get(v).cloned() {
-            Some((s, se)) => t.vars.iter().any(|w| match cx.fns.get(w).cloned() {
-                Some((q, qe)) => fits_in(&s, &se, &q, &qe, cx),
-                None => false,
-            }),
-            None => {
-                t.vars.contains(v)
-                    || cx
-                        .rigid
-                        .get(v)
-                        .is_some_and(|&m| Carrier::of_mask(m).all(|c| c.ty().subtype(&t.set)))
+            // A type outside every comparison of function types holds its functions as written.
+            Piece::Fn(s) => {
+                let mut ok = false;
+                for q in &t.fns {
+                    if c.fits(s.clone(), Env::new(), q.clone(), Env::new()).await {
+                        ok = true;
+                        break;
+                    }
+                }
+                ok
             }
-        },
-    };
+            Piece::Var(v) => {
+                let fns = c.cx.borrow().fns.get(v).cloned();
+                match fns {
+                    Some((s, se)) => {
+                        let mut ok = false;
+                        for w in &t.vars {
+                            let Some((q, qe)) = c.cx.borrow().fns.get(w).cloned() else {
+                                continue;
+                            };
+                            if c.fits(s.clone(), se.clone(), q, qe).await {
+                                ok = true;
+                                break;
+                            }
+                        }
+                        ok
+                    }
+                    None => {
+                        t.vars.contains(v)
+                            || c.cx.borrow().rigid.get(v).is_some_and(|&m| {
+                                Carrier::of_mask(m).all(|c| c.ty().subtype(&t.set))
+                            })
+                    }
+                }
+            }
+        };
     if ok {
         return true;
     }
+    let cx = c.cx.borrow();
     match t
         .vars
         .iter()
@@ -2702,7 +2854,8 @@ fn accepts(t: &Ty, p: &Piece, of: &Ty, binds: &mut Binds, cx: &mut Cx) -> bool {
 /// names and kinds, and on each arrow of `q`, an arrow of `s` that takes its parameters and
 /// returns within its result, or arrows of `s` that do so together (`covered`).
 pub fn fits_sig(s: &Sig, q: &Sig) -> bool {
-    fits_in(s, &Env::new(), q, &Env::new(), &mut Cx::default())
+    let env = Env::new();
+    comparing!(&mut Cx::default(), |c| fits_in(s, &env, q, &env, &c))
 }
 
 /// [`fits_sig`], read as [`Ty::sub_with`] reads.
@@ -2711,7 +2864,8 @@ pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
         solve: Some(solve),
         ..Cx::default()
     };
-    fits_in(s, &Env::new(), q, &Env::new(), &mut cx)
+    let env = Env::new();
+    comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c))
 }
 
 /// [`fits_sig`] inside the expected function types whose bounded variables `cx.rigid` holds,
@@ -2725,14 +2879,15 @@ pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
 /// depth cost the size of `q` at each, the square of the depth for a function type nested
 /// that deep. Each depth now costs its own parameters and bounds, and a lookup for each
 /// variable (COMPLEXITY.md F60).
-fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
-    let explain = cx.why.take().is_some();
+async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, '_>) -> bool {
+    let explain = c.cx.borrow_mut().why.take().is_some();
     if !s.needs.is_empty() {
         // Compared as written: the same signature, each variable read alike on both sides,
         // each solved class variable read as its type at every depth. That walk costs what
         // the comparison of the two as written costs.
         let solved;
-        let (s, q) = match cx.solve {
+        let solve = c.cx.borrow().solve;
+        let (s, q) = match solve {
             Some(f) => {
                 solved = (s.solved_with(f), q.solved_with(f));
                 (&solved.0, &solved.1)
@@ -2758,52 +2913,67 @@ fn fits_in(s: &Sig, se: &Env, q: &Sig, qe: &Env, cx: &mut Cx) -> bool {
     if !same_params {
         return false;
     }
-    let mark = cx.made.len();
-    // Each own variable names its own binder here, so the reading of the same name around it
-    // is dropped, or replaced as above.
-    let mut qe = qe.clone();
-    for v in &q.own {
-        match q.bounds.get(v) {
-            Some(&m) if q.held.contains(v) => {
-                let w = cx.fresh(v);
-                cx.rigid.insert(w.clone(), m);
-                qe.insert(v.clone(), Read::Rigid(w));
-            }
-            Some(&m) => {
-                qe.insert(v.clone(), Read::Mask(m));
-            }
-            None => {
-                qe.remove(v);
-            }
-        }
-    }
-    let mut se = se.clone();
-    for v in &s.own {
-        match s.bounds.get(v) {
-            Some(&m) if !s.held.contains(v) => {
-                se.insert(v.clone(), Read::Mask(m));
-            }
-            _ => {
-                se.remove(v);
-            }
-        }
-    }
-    let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
-        params: a.params.iter().map(|p| cx.read(p, env)).collect(),
-        result: cx.read(&a.result, env),
-    };
-    let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
-    let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
-    let fits = every_arrow_fits(s, &sas, &qas, cx);
+    let (mark, sas, qas) = c.cx.borrow_mut().open(s, se, q, qe);
+    let fits = every_arrow_fits(s, &sas, &qas, c).await;
     if explain && !fits {
         // The first arrow of `q` not covered, compared again alone: only on the way to an
         // error, at the cost of one more comparison of each arrow of `q`.
-        let k =
-            (0..qas.len()).find(|&k| !every_arrow_fits(s, &sas, std::slice::from_ref(&qas[k]), cx));
-        cx.why = Some(k.and_then(|k| refused_cover(s, q, &sas, &qas[k], k, cx)));
+        let mut why = None;
+        for (k, qa) in qas.iter().enumerate() {
+            if !every_arrow_fits(s, &sas, std::slice::from_ref(qa), c).await {
+                why = refused_cover(s, q, &sas, qa, k, c).await;
+                break;
+            }
+        }
+        c.cx.borrow_mut().why = Some(why);
     }
-    cx.forget(mark);
+    c.cx.borrow_mut().forget(mark);
     fits
+}
+
+impl Cx<'_> {
+    /// Opens the comparison of [`fits_in`] of `s`, read by `se`, with `q`, read by `qe`: the
+    /// mark of the names made for it ([`Self::forget`]), and the arrows of each as read.
+    fn open(&mut self, s: &Sig, se: &Env, q: &Sig, qe: &Env) -> (usize, Vec<Arrow>, Vec<Arrow>) {
+        let cx = self;
+        let mark = cx.made.len();
+        // Each own variable names its own binder here, so the reading of the same name around it
+        // is dropped, or replaced as above.
+        let mut qe = qe.clone();
+        for v in &q.own {
+            match q.bounds.get(v) {
+                Some(&m) if q.held.contains(v) => {
+                    let w = cx.fresh(v);
+                    cx.rigid.insert(w.clone(), m);
+                    qe.insert(v.clone(), Read::Rigid(w));
+                }
+                Some(&m) => {
+                    qe.insert(v.clone(), Read::Mask(m));
+                }
+                None => {
+                    qe.remove(v);
+                }
+            }
+        }
+        let mut se = se.clone();
+        for v in &s.own {
+            match s.bounds.get(v) {
+                Some(&m) if !s.held.contains(v) => {
+                    se.insert(v.clone(), Read::Mask(m));
+                }
+                _ => {
+                    se.remove(v);
+                }
+            }
+        }
+        let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
+            params: a.params.iter().map(|p| cx.read(p, env)).collect(),
+            result: cx.read(&a.result, env),
+        };
+        let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
+        let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
+        (mark, sas, qas)
+    }
 }
 
 /// Why a function of signature `s` is not a function of signature `q`, when the cover of an
@@ -2828,7 +2998,8 @@ pub fn why_unfit_with(s: &Sig, q: &Sig, solve: Solve) -> Option<String> {
 
 fn why_unfit_in(s: &Sig, q: &Sig, mut cx: Cx) -> Option<String> {
     cx.why = Some(None);
-    if fits_in(s, &Env::new(), q, &Env::new(), &mut cx) {
+    let env = Env::new();
+    if comparing!(&mut cx, |c| fits_in(s, &env, q, &env, &c)) {
         return None;
     }
     cx.why.flatten()
@@ -2849,10 +3020,15 @@ thread_local! {
 /// ([`covered`]). Rule 6 of sec:type_resolution types an application region by region, so a
 /// call of `qa` at any value of its parameters reaches an arrow of `s` that returns within
 /// `qa`'s result.
-fn every_arrow_fits(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool {
+async fn every_arrow_fits<'m>(
+    s: &Sig,
+    sas: &[Arrow],
+    qas: &[Arrow],
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     #[cfg(test)]
     if REFERENCE.get() != tests::Reference::None {
-        return tests::reference(s, sas, qas, cx);
+        return tests::reference(s, sas, qas, c).await;
     }
     // Each arrow of `q` is tried first on an arrow of `s` equal to it, found by hash, so that
     // an overload passed where the same overload is expected costs one comparison per arrow.
@@ -2886,13 +3062,23 @@ fn every_arrow_fits(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool 
     // Hitting Set, for which no n^(2-e) algorithm is expected (Abboud, Vassilevska Williams and
     // Wang, SODA 2016, the Hitting Set conjecture; a conjecture, not a theorem).
     let mut index: Option<ArrowIndex> = None;
-    qas.iter().all(|qa| {
-        if equal.get(qa).is_some_and(|sa| arrow_fits(s, sa, qa, cx)) {
-            return true;
+    'qas: for qa in qas {
+        if let Some(sa) = equal.get(qa)
+            && arrow_fits(s, sa, qa, c).await
+        {
+            continue;
         }
         let index = index.get_or_insert_with(|| ArrowIndex::new(sas, s.params.len()));
-        index.first(qa, |i| arrow_fits(s, &sas[i], qa, cx)) || covered(s, sas, index, qa, cx)
-    })
+        for i in index.may_fit(qa) {
+            if arrow_fits(s, &sas[i], qa, c).await {
+                continue 'qas;
+            }
+        }
+        if !covered(s, sas, index, qa, c).await {
+            return false;
+        }
+    }
+    true
 }
 
 /// Why the arrow `qa` of `q`, its `k`th, as read, is covered neither by one arrow of `s`, of
@@ -2905,13 +3091,13 @@ fn every_arrow_fits(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool 
 /// intersection the checker does not build (case (3)); an arrow that takes values at every
 /// parameter but misses more than one (case (1)). `None` for a plain reason: a value no arrow
 /// takes, or one arrow that returns outside. One pass over the arrows, on the way to an error.
-fn refused_cover(
+async fn refused_cover<'m>(
     s: &Sig,
     q: &Sig,
     sas: &[Arrow],
     qa: &Arrow,
     k: usize,
-    cx: &mut Cx,
+    c: &'m Comparing<'m, '_>,
 ) -> Option<String> {
     let mut shared = None;
     let mut free = None;
@@ -2921,7 +3107,7 @@ fn refused_cover(
         let mut b = Binds::new();
         let mut miss = Vec::new();
         for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
-            if !x.sub_in(y, &mut b, cx) {
+            if !c.sub_in(x, y, &mut b).await {
                 miss.push(j);
             }
         }
@@ -2929,31 +3115,31 @@ fn refused_cover(
         if !miss.iter().all(|&j| qa.params[j].meets(&sa.params[j])) {
             continue;
         }
-        match miss[..] {
-            [_, _, ..] => {
-                split.get_or_insert(i);
+        // In the order of the cases, each read off the state before a comparison borrows it.
+        let binds = match miss[..] {
+            [j] => !binds_nothing(&sa.params[j], &c.cx.borrow()),
+            _ => false,
+        };
+        if let [_, _, ..] = miss[..] {
+            split.get_or_insert(i);
+        } else if binds {
+            free.get_or_insert((i, miss[0]));
+        } else if !bounds_hold(s, sa, &b, &c.cx.borrow()) {
+            let cx = c.cx.borrow();
+            let several = s
+                .bounds
+                .keys()
+                .filter_map(|v| Some((v, b.get(v)?)))
+                .find(|(v, t)| !one_carrier(t) && !one_place(sa, v, &cx));
+            if let Some((v, t)) = several {
+                shared.get_or_insert((i, v.clone(), t.clone(), Places::of(sa, v, &cx)));
             }
-            [j] if !binds_nothing(&sa.params[j], cx) => {
-                free.get_or_insert((i, j));
-            }
-            _ if !bounds_hold(s, sa, &b, cx) => {
-                let several = s
-                    .bounds
-                    .keys()
-                    .filter_map(|v| Some((v, b.get(v)?)))
-                    .find(|(v, t)| !one_carrier(t) && !one_place(sa, v, cx));
-                if let Some((v, t)) = several {
-                    shared.get_or_insert((i, v.clone(), t.clone(), Places::of(sa, v, cx)));
-                }
-            }
-            _ if !result_within(sa, qa, &b, cx) => {
-                outside.push((i, miss.is_empty().then(|| sa.result.subst(&b))));
-            }
-            _ => {}
+        } else if !result_within(sa, qa, &b, c).await {
+            outside.push((i, miss.is_empty().then(|| sa.result.subst(&b))));
         }
     }
     let slot = arrow_text(q, &q.arrows[k]);
-    let result = text_at(&q.arrows[k].result, q, cx);
+    let result = text_at(&q.arrows[k].result, q, &c.cx.borrow());
     let reason = if let Some((i, v, t, places)) = shared {
         let place = match places {
             Places { taken: 1.., .. } => format!(
@@ -2973,7 +3159,7 @@ fn refused_cover(
             "the arrow `{}` takes it only with `{v}` bound to `{}`, values of more than one \
              carrier, but a call fixes `{v}` to one carrier, and {place}",
             arrow_text(s, &s.arrows[i]),
-            text_at(&t, q, cx)
+            text_at(&t, q, &c.cx.borrow())
         )
     } else if let Some((i, j)) = free {
         format!(
@@ -3137,19 +3323,29 @@ fn arrow_text(s: &Sig, a: &Arrow) -> String {
 /// at the first arrow that holds each key is not exact, since a key (a carrier, an atom's name)
 /// does not decide which values of it an arrow holds. The intersection takes the candidates
 /// whatever their results, since the arrows of `H` return outside `qa`'s.
-fn covered(s: &Sig, sas: &[Arrow], index: &ArrowIndex, qa: &Arrow, cx: &mut Cx) -> bool {
+async fn covered<'m>(
+    s: &Sig,
+    sas: &[Arrow],
+    index: &ArrowIndex<'_>,
+    qa: &Arrow,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     // The parts at each parameter, by parameter; a BTreeMap, so the parameters are tried in
     // order, and only those some arrow misses are held.
     let mut parts: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
     for i in index.covering(qa, true) {
-        if let Some((Part::At(j, true), _)) = part_of(s, &sas[i], qa, cx) {
+        if let Some((Part::At(j, true), _)) = part_of(s, &sas[i], qa, c).await {
             parts.entry(j).or_default().push(&sas[i].params[j]);
         }
     }
-    parts
-        .into_iter()
-        .any(|(j, ps)| qa.params[j].sub_in(&Ty::union_all(ps), &mut Binds::new(), cx))
-        || met(s, sas, &index.covering(qa, false), qa, cx)
+    for (j, ps) in parts {
+        if c.sub_in(&qa.params[j], &Ty::union_all(ps), &mut Binds::new())
+            .await
+        {
+            return true;
+        }
+    }
+    met(s, sas, &index.covering(qa, false), qa, c).await
 }
 
 /// How the arrow `sa` of `s` takes `qa`'s parameters ([`part_of`]).
@@ -3166,37 +3362,50 @@ enum Part {
 /// at which its type binds nothing ([`binds_nothing`]), each bounded variable of `s` it binds
 /// bound as [`bounds_hold`] requires, with what it binds. [`arrow_fits`] with `j` left out: a type that binds
 /// nothing, so the pass over every parameter binds what the pass without `j` binds.
-fn part_of(s: &Sig, sa: &Arrow, qa: &Arrow, cx: &mut Cx) -> Option<(Part, Binds)> {
+async fn part_of<'m>(
+    s: &Sig,
+    sa: &Arrow,
+    qa: &Arrow,
+    c: &'m Comparing<'m, '_>,
+) -> Option<(Part, Binds)> {
     let mut b = Binds::new();
     let mut miss = None;
     for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
-        if !x.sub_in(y, &mut b, cx) {
-            if miss.is_some() || !binds_nothing(y, cx) {
+        if !c.sub_in(x, y, &mut b).await {
+            if miss.is_some() || !binds_nothing(y, &c.cx.borrow()) {
                 return None;
             }
             miss = Some(j);
         }
     }
-    if !bounds_hold(s, sa, &b, cx) {
+    if !bounds_hold(s, sa, &b, &c.cx.borrow()) {
         return None;
     }
     let part = match miss {
         None => Part::Whole,
-        Some(j) => Part::At(j, result_within(sa, qa, &b, cx)),
+        Some(j) => Part::At(j, result_within(sa, qa, &b, c).await),
     };
     Some((part, b))
 }
 
 /// Whether comparing a type with `t` binds nothing: each variable it holds outside functions,
 /// at any depth, is a rigid variable or a function read as one ([`Cx::read`]). The unknown
-/// binds nothing; a type variable of the given side would be bound.
+/// binds nothing; a type variable of the given side would be bound. The tuples are walked on
+/// an explicit stack, each type's variables before its components and the components in
+/// order, as the recursive form walked them, stopping at the first variable that binds.
 fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
-    t.vars
-        .iter()
-        .all(|v| cx.rigid.contains_key(v) || cx.fns.contains_key(v))
-        && t.tuples
+    let mut stack = vec![t];
+    while let Some(t) = stack.pop() {
+        if !t
+            .vars
             .iter()
-            .all(|r| r.iter().all(|c| binds_nothing(c, cx)))
+            .all(|v| cx.rigid.contains_key(v) || cx.fns.contains_key(v))
+        {
+            return false;
+        }
+        stack.extend(t.tuples.iter().rev().flat_map(|r| r.iter().rev()));
+    }
+    true
 }
 
 /// Whether the candidates `cands` of `sas` cover `qa` by intersection ([`covered`]): with
@@ -3208,7 +3417,13 @@ fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
 /// leave. The results are intersected by [`meet_within`]. The cost is one comparison of each
 /// candidate and, for each `j`, one of each arrow that takes a part there with what the others
 /// leave.
-fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool {
+async fn met<'m>(
+    s: &Sig,
+    sas: &[Arrow],
+    cands: &[usize],
+    qa: &Arrow,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     // An arrow of `q` that takes no value is left to one arrow and the union, as before this
     // form: the index leaves out arrows of `s` that take part of no parameter of it.
     if qa.params.iter().any(Ty::is_empty) {
@@ -3221,7 +3436,7 @@ fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool
     let mut outside: BTreeMap<usize, Vec<(&Ty, Ty)>> = BTreeMap::new();
     for &i in cands {
         let sa = &sas[i];
-        match part_of(s, sa, qa, cx) {
+        match part_of(s, sa, qa, c).await {
             Some((Part::Whole, b)) => whole.push(sa.result.subst(&b)),
             Some((Part::At(j, true), _)) => within.entry(j).or_default().push(&sa.params[j]),
             Some((Part::At(j, false), b)) => outside
@@ -3231,23 +3446,29 @@ fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool
             None => {}
         }
     }
-    if !whole.is_empty() && meet_within(&whole, &qa.result, cx) {
+    if !whole.is_empty() && meet_within(&whole, &qa.result, c).await {
         return true;
     }
     // At a parameter no arrow outside takes a part of, `H` is the arrows that take all of `qa`.
-    outside.iter().any(|(&j, parts)| {
+    for (&j, parts) in &outside {
         let left = match within.get(&j) {
-            Some(ps) => qa.params[j].diff(&Ty::union_all(ps.iter().copied())),
+            Some(ps) => {
+                c.diff(&qa.params[j], &Ty::union_all(ps.iter().copied()), None)
+                    .await
+            }
             None => qa.params[j].clone(),
         };
         let mut h = whole.clone();
         for (p, r) in parts {
-            if left.sub_in(p, &mut Binds::new(), cx) {
+            if c.sub_in(&left, p, &mut Binds::new()).await {
                 h.push(r.clone());
             }
         }
-        !h.is_empty() && meet_within(&h, &qa.result, cx)
-    })
+        if !h.is_empty() && meet_within(&h, &qa.result, c).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether the intersection of `results` is within `result`. Each result is split into its
@@ -3271,55 +3492,59 @@ fn met(s: &Sig, sas: &[Arrow], cands: &[usize], qa: &Arrow, cx: &mut Cx) -> bool
 /// carrier of its bound, the product of the bounds in the variables; the tuple pieces would
 /// need the intersection per component of each pair of shapes of one width, quadratic in the
 /// shapes.
-fn meet_within(results: &[Ty], result: &Ty, cx: &mut Cx) -> bool {
+async fn meet_within<'m>(results: &[Ty], result: &Ty, c: &'m Comparing<'m, '_>) -> bool {
     if results.is_empty() {
         return false;
     }
-    let masks: Vec<u8> = results.iter().map(|r| carriers_of(r, cx)).collect();
-    let mut after = vec![EVERY; masks.len() + 1];
-    for (i, &m) in masks.iter().enumerate().rev() {
-        after[i] = after[i + 1] & m;
-    }
-    let no_function = results.iter().any(|r| holds_no_function(r, cx));
-    let mut before = EVERY;
-    let mut kernels = Vec::with_capacity(results.len());
-    let mut rest = Ty::empty();
-    for (i, r) in results.iter().enumerate() {
-        let others = before & after[i + 1];
-        before &= masks[i];
-        let mut shapes = Vec::new();
-        for row in &r.tuples {
-            match row.iter().map(Ty::kernel).collect::<Option<Vec<_>>>() {
-                Some(cs) => shapes.push(KType::tuple(cs)),
-                None => rest.tuples.push(row.clone()),
+    let (kernels, rest) = {
+        let cx = c.cx.borrow();
+        let masks: Vec<u8> = results.iter().map(|r| carriers_of(r, &cx)).collect();
+        let mut after = vec![EVERY; masks.len() + 1];
+        for (i, &m) in masks.iter().enumerate().rev() {
+            after[i] = after[i + 1] & m;
+        }
+        let no_function = results.iter().any(|r| holds_no_function(r, &cx));
+        let mut before = EVERY;
+        let mut kernels = Vec::with_capacity(results.len());
+        let mut rest = Ty::empty();
+        for (i, r) in results.iter().enumerate() {
+            let others = before & after[i + 1];
+            before &= masks[i];
+            let mut shapes = Vec::new();
+            for row in &r.tuples {
+                match row.iter().map(Ty::kernel).collect::<Option<Vec<_>>>() {
+                    Some(cs) => shapes.push(KType::tuple(cs)),
+                    None => rest.tuples.push(row.clone()),
+                }
             }
-        }
-        kernels.push(KType::union_all(
-            std::iter::once(r.set.clone()).chain(shapes),
-        ));
-        if !no_function {
-            rest.fns.extend(r.fns.iter().cloned());
-        }
-        for v in &r.vars {
-            let missed = match cx.rigid.get(v) {
-                Some(&m) => m & OTHER == 0 && m & others == 0,
-                None => no_function && cx.fns.contains_key(v),
-            };
-            if !missed {
-                rest.vars.insert(v.clone());
+            kernels.push(KType::union_all(
+                std::iter::once(r.set.clone()).chain(shapes),
+            ));
+            if !no_function {
+                rest.fns.extend(r.fns.iter().cloned());
             }
+            for v in &r.vars {
+                let missed = match cx.rigid.get(v) {
+                    Some(&m) => m & OTHER == 0 && m & others == 0,
+                    None => no_function && cx.fns.contains_key(v),
+                };
+                if !missed {
+                    rest.vars.insert(v.clone());
+                }
+            }
+            rest.dynamic |= r.dynamic;
         }
-        rest.dynamic |= r.dynamic;
-    }
+        (kernels, rest)
+    };
     let Some(k) = kernels.into_iter().reduce(|a, b| &a & &b) else {
         return false;
     };
     let mut b = Binds::new();
     let kernel_within = match result.kernel() {
         Some(r) => k.subtype(&r),
-        None => Ty::set(k).sub_in(result, &mut b, cx) && b.is_empty(),
+        None => c.sub_in(&Ty::set(k), result, &mut b).await && b.is_empty(),
     };
-    kernel_within && (rest.is_empty() || rest.sub_in(result, &mut b, cx) && b.is_empty())
+    kernel_within && (rest.is_empty() || c.sub_in(&rest, result, &mut b).await && b.is_empty())
 }
 
 /// Results [`meet_within`] intersects and the result their intersection must be within, built
@@ -3356,7 +3581,7 @@ impl Meet {
             rigid: self.rigid.clone(),
             ..Cx::default()
         };
-        meet_within(&self.results, &self.result, &mut cx)
+        comparing!(&mut cx, |c| meet_within(&self.results, &self.result, &c))
     }
 }
 
@@ -3607,13 +3832,12 @@ impl<'t> ArrowIndex<'t> {
         out
     }
 
-    /// Whether `fits` holds for an arrow that may fit `qa`, tried in order, stopping at the
-    /// first. The candidates come from the shortest list: the arrows that offer one key `qa`'s
-    /// parameters need, with the arrows open at that parameter, or the arrows whose results
-    /// may be within `qa`'s closed result. Each is kept if, at every parameter, it is open or
-    /// offers every key `qa` needs there, and its result needs no key `qa`'s closed result
-    /// lacks.
-    fn first(&self, qa: &'t Arrow, fits: impl FnMut(usize) -> bool) -> bool {
+    /// The arrows that may fit `qa`, in order, to be tried until one fits. The candidates come
+    /// from the shortest list: the arrows that offer one key `qa`'s parameters need, with the
+    /// arrows open at that parameter, or the arrows whose results may be within `qa`'s closed
+    /// result. Each is kept if, at every parameter, it is open or offers every key `qa` needs
+    /// there, and its result needs no key `qa`'s closed result lacks.
+    fn may_fit(&self, qa: &'t Arrow) -> Vec<usize> {
         let need = self.needed(qa);
         let result = Self::result_keys(qa);
         let mut sources: Vec<Vec<&[usize]>> = need
@@ -3624,8 +3848,6 @@ impl<'t> ArrowIndex<'t> {
             sources.push(self.by_results(r));
         }
         self.candidates(&need, result.as_ref(), sources)
-            .into_iter()
-            .any(fits)
     }
 
     /// The arrows that offer one key of `qa`'s parameter at `j` there, or are open there, when
@@ -3713,14 +3935,15 @@ impl std::hash::Hash for Sig {
 
 /// Whether the arrow `sa` of `s` takes the parameters of the arrow `qa` and returns within its
 /// result, each bounded variable of `s` bound to carriers of its bound ([`fits_in`]).
-fn arrow_fits(s: &Sig, sa: &Arrow, qa: &Arrow, cx: &mut Cx) -> bool {
+async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
     let mut b = Binds::new();
-    qa.params
-        .iter()
-        .zip(&sa.params)
-        .all(|(x, y)| x.sub_in(y, &mut b, cx))
-        && bounds_hold(s, sa, &b, cx)
-        && result_within(sa, qa, &b, cx)
+    for (x, y) in qa.params.iter().zip(&sa.params) {
+        if !c.sub_in(x, y, &mut b).await {
+            return false;
+        }
+    }
+    let held = bounds_hold(s, sa, &b, &c.cx.borrow());
+    held && result_within(sa, qa, &b, c).await
 }
 
 /// Whether each bounded variable of `s` that `b` binds is bound to carriers of its bound, and,
@@ -3783,46 +4006,50 @@ impl Places {
     /// The places of `v` in the arrow `sa`, as read.
     fn of(sa: &Arrow, v: &str, cx: &Cx) -> Places {
         let mut places = Places::default();
-        for p in &sa.params {
-            places.walk(p, v, false, true, cx);
-        }
-        places.walk(&sa.result, v, true, true, cx);
+        let mut stack: Vec<(&Ty, bool, bool)> =
+            sa.params.iter().map(|p| (p, false, true)).collect();
+        stack.push((&sa.result, true, true));
+        places.walk(stack, v, cx);
         places
     }
 
-    /// Counts the places of `v` in `t`, which the arrow gives values of when `out` and takes
-    /// values of when not, outside every function type when `top`. A function type read as a
-    /// variable ([`Cx::read`]) is walked as its signature; one that binds `v` itself does not
-    /// hold this `v`.
-    fn walk(&mut self, t: &Ty, v: &str, out: bool, top: bool, cx: &Cx) {
-        if !out && t.vars.contains(v) {
-            match top {
-                true => self.given += 1,
-                false => self.taken += 1,
-            }
-        }
-        for c in t.tuples.iter().flat_map(|r| r.iter()) {
-            self.walk(c, v, out, top, cx);
-        }
-        let read = t.vars.iter().filter_map(|w| cx.fns.get(w).map(|e| &e.0));
-        for s in t.fns.iter().chain(read) {
-            if s.own.contains(v) {
-                continue;
-            }
-            for a in &s.arrows {
-                for p in &a.params {
-                    self.walk(p, v, !out, false, cx);
+    /// Counts the places of `v` in each type `t` of `stack`, with `(t, out, top)`: the arrow
+    /// gives values of `t` when `out` and takes values of it when not, outside every function
+    /// type when `top`. A function type read as a variable ([`Cx::read`]) is walked as its
+    /// signature; one that binds `v` itself does not hold this `v`. The parts are walked on an
+    /// explicit stack, so a type nested to any depth needs no more of the thread's stack; the
+    /// counts do not depend on the order.
+    fn walk<'t>(&mut self, mut stack: Vec<(&'t Ty, bool, bool)>, v: &str, cx: &'t Cx) {
+        while let Some((t, out, top)) = stack.pop() {
+            if !out && t.vars.contains(v) {
+                match top {
+                    true => self.given += 1,
+                    false => self.taken += 1,
                 }
-                self.walk(&a.result, v, out, false, cx);
+            }
+            for c in t.tuples.iter().flat_map(|r| r.iter()) {
+                stack.push((c, out, top));
+            }
+            let read = t.vars.iter().filter_map(|w| cx.fns.get(w).map(|e| &e.0));
+            for s in t.fns.iter().chain(read) {
+                if s.own.contains(v) {
+                    continue;
+                }
+                for a in &s.arrows {
+                    for p in &a.params {
+                        stack.push((p, !out, false));
+                    }
+                    stack.push((&a.result, out, false));
+                }
             }
         }
     }
 }
 
 /// Whether the result of `sa`, its variables bound by `b`, is within `qa`'s, binding nothing.
-fn result_within(sa: &Arrow, qa: &Arrow, b: &Binds, cx: &mut Cx) -> bool {
+async fn result_within<'m>(sa: &Arrow, qa: &Arrow, b: &Binds, c: &'m Comparing<'m, '_>) -> bool {
     let mut rb = Binds::new();
-    sa.result.subst(b).sub_in(&qa.result, &mut rb, cx) && rb.is_empty()
+    c.sub_in(&sa.result.subst(b), &qa.result, &mut rb).await && rb.is_empty()
 }
 
 impl Sig {
@@ -4381,30 +4608,55 @@ mod tests {
     /// The search with no index (COMPLEXITY.md F82): each arrow of `q` on an arrow of `s`
     /// equal to it, then on every arrow of `s` in order, then, under [`Reference::Subsets`],
     /// on every set of arrows of `s` ([`together`]).
-    pub(super) fn reference(s: &Sig, sas: &[Arrow], qas: &[Arrow], cx: &mut Cx) -> bool {
+    pub(super) async fn reference<'m>(
+        s: &Sig,
+        sas: &[Arrow],
+        qas: &[Arrow],
+        c: &'m Comparing<'m, '_>,
+    ) -> bool {
         let wide = REFERENCE.get() == Reference::Subsets;
         let mut equal: HashMap<&Arrow, &Arrow> = HashMap::with_capacity(sas.len());
         for sa in sas {
             equal.entry(sa).or_insert(sa);
         }
-        qas.iter().all(|qa| {
-            equal.get(qa).is_some_and(|sa| arrow_fits(s, sa, qa, cx))
-                || sas.iter().any(|sa| arrow_fits(s, sa, qa, cx))
-                || (wide && together(s, sas, qa, cx))
-                || (wide && met(s, sas, &(0..sas.len()).collect::<Vec<_>>(), qa, cx))
-        })
+        'qas: for qa in qas {
+            if let Some(sa) = equal.get(qa)
+                && arrow_fits(s, sa, qa, c).await
+            {
+                continue;
+            }
+            for sa in sas {
+                if arrow_fits(s, sa, qa, c).await {
+                    continue 'qas;
+                }
+            }
+            if wide
+                && (together(s, sas, qa, c).await
+                    || met(s, sas, &(0..sas.len()).collect::<Vec<_>>(), qa, c).await)
+            {
+                continue;
+            }
+            return false;
+        }
+        true
     }
 
     /// [`arrow_fits`] with the parameter `skip` left out.
-    fn fits_but(s: &Sig, sa: &Arrow, qa: &Arrow, skip: usize, cx: &mut Cx) -> bool {
+    async fn fits_but<'m>(
+        s: &Sig,
+        sa: &Arrow,
+        qa: &Arrow,
+        skip: usize,
+        c: &'m Comparing<'m, '_>,
+    ) -> bool {
         let mut b = Binds::new();
-        qa.params
-            .iter()
-            .zip(&sa.params)
-            .enumerate()
-            .all(|(j, (x, y))| j == skip || x.sub_in(y, &mut b, cx))
-            && bounds_hold(s, sa, &b, cx)
-            && result_within(sa, qa, &b, cx)
+        for (j, (x, y)) in qa.params.iter().zip(&sa.params).enumerate() {
+            if j != skip && !c.sub_in(x, y, &mut b).await {
+                return false;
+            }
+        }
+        let held = bounds_hold(s, sa, &b, &c.cx.borrow());
+        held && result_within(sa, qa, &b, c).await
     }
 
     /// Whether, at some parameter, a set of arrows of `sas` covers `qa`: each arrow of the set
@@ -4412,32 +4664,34 @@ mod tests {
     /// result, and the union of their parameter types there holds `qa`'s. Every nonempty set is
     /// tried when there are at most [`SUBSETS`] arrows; with more, the set of every arrow that
     /// qualifies, which holds what any of its subsets holds.
-    fn together(s: &Sig, sas: &[Arrow], qa: &Arrow, cx: &mut Cx) -> bool {
-        (0..qa.params.len().min(s.params.len())).any(|j| {
-            let ok: Vec<bool> = sas
-                .iter()
-                .map(|sa| {
-                    let p = &sa.params[j];
-                    binds_nothing(p, cx) && fits_but(s, sa, qa, j, cx)
-                })
-                .collect();
-            let holds = |set: &dyn Fn(usize) -> bool, cx: &mut Cx| {
+    async fn together<'m>(s: &Sig, sas: &[Arrow], qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
+        for j in 0..qa.params.len().min(s.params.len()) {
+            let mut ok = Vec::with_capacity(sas.len());
+            for sa in sas {
+                let p = &sa.params[j];
+                let free = binds_nothing(p, &c.cx.borrow());
+                ok.push(free && fits_but(s, sa, qa, j, c).await);
+            }
+            let holds = async |set: &dyn Fn(usize) -> bool| {
                 let u = Ty::union_all(
                     (0..sas.len())
                         .filter(|&i| set(i))
                         .map(|i| &sas[i].params[j]),
                 );
-                qa.params[j].sub_in(&u, &mut Binds::new(), cx)
+                c.sub_in(&qa.params[j], &u, &mut Binds::new()).await
             };
             if sas.len() <= SUBSETS {
-                (1u32..1 << sas.len()).any(|m| {
+                for m in 1u32..1 << sas.len() {
                     let has = |i: usize| m & (1 << i) != 0;
-                    (0..sas.len()).all(|i| !has(i) || ok[i]) && holds(&has, cx)
-                })
-            } else {
-                ok.contains(&true) && holds(&|i| ok[i], cx)
+                    if (0..sas.len()).all(|i| !has(i) || ok[i]) && holds(&has).await {
+                        return true;
+                    }
+                }
+            } else if ok.contains(&true) && holds(&|i| ok[i]).await {
+                return true;
             }
-        })
+        }
+        false
     }
 
     /// splitmix64, so the cases are the same on every run.
@@ -4670,55 +4924,51 @@ mod tests {
     /// others, whichever key list or result list it draws from.
     fn index_keeps(s: &Sig, qas: &[Arrow], width: usize, what: &str) {
         let index = ArrowIndex::new(&s.arrows, width);
-        let mut cx = Cx::default();
-        for qa in qas {
-            let mut candidates = Vec::new();
-            index.first(qa, |i| {
-                candidates.push(i);
-                false
-            });
-            for (i, sa) in s.arrows.iter().enumerate() {
-                if arrow_fits(s, sa, qa, &mut cx) {
-                    assert!(
-                        candidates.binary_search(&i).is_ok(),
-                        "{what}: arrow {i} fits but is no candidate"
-                    );
-                }
-            }
-            let covering = index.covering(qa, true);
-            let meeting = index.covering(qa, false);
-            for (i, sa) in s.arrows.iter().enumerate() {
-                // An arrow that misses a parameter takes part only where it meets it there, and
-                // one that takes a parameter of no value takes no value.
-                let part = part_of(s, sa, qa, &mut cx).map(|p| p.0);
-                let meets = |j: usize| sa.params[j].meets(&qa.params[j]);
-                if (part == Some(Part::Whole) && qa.params.iter().all(|t| !t.is_empty()))
-                    || matches!(part, Some(Part::At(j, _)) if meets(j))
-                {
-                    assert!(
-                        meeting.binary_search(&i).is_ok(),
-                        "{what}: arrow {i} takes part of an arrow of q but is no candidate: {part:?} {:?} {:?} {:?}",
-                        sa.params.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
-                        qa.params.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
-                        (sa.result.to_string(), qa.result.to_string())
-                    );
-                }
-            }
-            for j in 0..width {
+        comparing!(&mut Cx::default(), |c| async {
+            let c = &c;
+            for qa in qas {
+                let candidates = index.may_fit(qa);
                 for (i, sa) in s.arrows.iter().enumerate() {
-                    let p = &sa.params[j];
-                    if binds_nothing(p, &cx)
-                        && p.meets(&qa.params[j])
-                        && fits_but(s, sa, qa, j, &mut cx)
-                    {
+                    if arrow_fits(s, sa, qa, c).await {
                         assert!(
-                            covering.binary_search(&i).is_ok(),
-                            "{what}: arrow {i} may cover at {j} but is no candidate"
+                            candidates.binary_search(&i).is_ok(),
+                            "{what}: arrow {i} fits but is no candidate"
                         );
                     }
                 }
+                let covering = index.covering(qa, true);
+                let meeting = index.covering(qa, false);
+                for (i, sa) in s.arrows.iter().enumerate() {
+                    // An arrow that misses a parameter takes part only where it meets it there,
+                    // and one that takes a parameter of no value takes no value.
+                    let part = part_of(s, sa, qa, c).await.map(|p| p.0);
+                    let meets = |j: usize| sa.params[j].meets(&qa.params[j]);
+                    if (part == Some(Part::Whole) && qa.params.iter().all(|t| !t.is_empty()))
+                        || matches!(part, Some(Part::At(j, _)) if meets(j))
+                    {
+                        assert!(
+                            meeting.binary_search(&i).is_ok(),
+                            "{what}: arrow {i} takes part of an arrow of q but is no candidate: {part:?} {:?} {:?} {:?}",
+                            sa.params.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                            qa.params.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+                            (sa.result.to_string(), qa.result.to_string())
+                        );
+                    }
+                }
+                for j in 0..width {
+                    for (i, sa) in s.arrows.iter().enumerate() {
+                        let p = &sa.params[j];
+                        let free = binds_nothing(p, &c.cx.borrow());
+                        if free && p.meets(&qa.params[j]) && fits_but(s, sa, qa, j, c).await {
+                            assert!(
+                                covering.binary_search(&i).is_ok(),
+                                "{what}: arrow {i} may cover at {j} but is no candidate"
+                            );
+                        }
+                    }
+                }
             }
-        }
+        })
     }
 
     /// The verdict on `q` in `s` is the same with the arrows of `s` reversed, rotated by one

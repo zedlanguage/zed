@@ -63,7 +63,9 @@ fn negations_and_calls_8000_deep_check_on_a_2_mib_stack() {
 
 /// Checks the program of `shape` 1,000 deep on a 2 MiB stack, then `n` and `8n` deep and
 /// checks the time is linear, on a 512 MiB stack: printing a type recurses on its nesting
-/// (`Ty::write`, for the text of each binding's origin), and overflows 2 MiB below 8,000 deep.
+/// (`Ty::write`, for the text of each binding's origin), and overflows 2 MiB below 8,000 deep;
+/// at 8,000 nested lambdas the drop of their type, recursive through `Arc<Sig>`, overflows it
+/// too (gdb, TY-sub-stack, 2026-11-07). Nested tuples fit 2 MiB.
 fn checks_linear(shape: &str, n: usize) {
     use zed_tests::deep::{on_small_stack, program, statements};
     let stmts = statements(&program(shape, 1_000).text);
@@ -123,18 +125,76 @@ fn nested_around(n: usize) -> String {
 #[test]
 fn a_variable_nested_in_tuples_checks_in_linear_time() {
     assert_eq!(sig(&nested_around(2), "f"), "(_) -> ((_, 1), 1)");
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            let units = resolved(500, nested_around);
-            scaling::check_order("a variable nested in n tuples", 500, 1, |n| {
-                let info = units[&n].check();
-                assert!(info.errors.is_empty(), "{:?}", info.errors);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::deep::on_small_stack(|| {
+        let units = resolved(500, nested_around);
+        scaling::check_order("a variable nested in n tuples", 500, 1, |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
+}
+
+/// `(int) -> ((int) -> (… (int) -> result))`, `n` arrows deep.
+fn curried_type(n: usize, result: zedc::check::ty::Ty) -> zedc::check::ty::Ty {
+    use std::sync::Arc;
+    use zed_kernel::types::Type;
+    use zedc::check::ty::{SParam, Sig, Ty};
+    (0..n).fold(result, |t, _| {
+        let x = SParam {
+            name: "x".into(),
+            positional: true,
+            default: None,
+        };
+        Ty::func(Arc::new(Sig::one(vec![x], vec![Ty::set(Type::int())], t)))
+    })
+}
+
+/// Takes `t` apart level by level: dropping it whole recurses through each `Arc<Sig>` and
+/// overflows a 2 MiB stack near 8,000 deep, which is not what the test below is about.
+fn take_apart(t: zedc::check::ty::Ty) {
+    let mut stack = vec![t];
+    while let Some(mut t) = stack.pop() {
+        for s in std::mem::take(&mut t.fns) {
+            if let Ok(s) = std::sync::Arc::try_unwrap(s) {
+                for a in s.arrows {
+                    stack.push(a.result);
+                    stack.extend(a.params);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn function_types_nested_16000_deep_compare_on_a_2_mib_stack() {
+    // The comparison of function types (`Ty::sub`, `fits_sig` and the cover of rule 6 of
+    // sec:type_resolution) recursed once per level of nesting, about 8 frames a level, and
+    // overflowed a 2 MiB stack at 800 levels. Its frames now live on a stack on the heap
+    // (`Comparing`, TY-sub-stack); each level is compared once, so the time is linear.
+    use zed_kernel::types::Type;
+    use zedc::check::ty::Ty;
+    // Only the fit is timed. At each level a failed fit is followed by the search for a cover,
+    // which compares the level below again, so the time of a refusal about doubles with each
+    // level (TY-refuse-exp in STATUS.md): 0.44 ms 5 deep and 0.67 s 16 deep with the
+    // recursion, about the same with the explicit stack (13.5 s 20 deep).
+    let n = 2_000;
+    let int = || Ty::set(Type::int());
+    let number = || Ty::set(&Type::int() | &Type::f64());
+    assert!(!curried_type(3, number()).subtype(&curried_type(3, int())));
+    zed_tests::deep::on_small_stack(|| {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, (curried_type(m, int()), curried_type(m, number()))))
+            .collect();
+        scaling::check_order("comparing function types n deep", n, 1, |m| {
+            let (narrow, wide) = &built[&m];
+            assert!(narrow.subtype(wide), "{m} deep");
+        });
+        for (narrow, wide) in built.into_values() {
+            take_apart(narrow);
+            take_apart(wide);
+        }
+    });
 }
 
 /// `x = bitAnd(bitAnd(… bitAnd(1, 1) …, 1), 1);`, `n` calls of the bit word nested.

@@ -128,16 +128,10 @@ fn by_propagation(vars: usize, clauses: &[Clause]) -> bool {
     true
 }
 
-/// Runs `f` on a thread with a large stack: the search walks deep types.
+/// Runs `f` on a 2 MiB stack, the default of a test thread: the search walks deep types, on
+/// a stack of its own on the heap. It ran on 256 MiB, which it never needed (TY-sub-stack).
 fn deep(f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 28)
-            .spawn_scoped(s, f)
-            .expect("starting a thread")
-            .join()
-            .expect("the thread ends");
-    });
+    zed_tests::deep::on_small_stack(f);
 }
 
 /// Random clause sets of one and two literals on up to 10 variables, decided as enumeration

@@ -2377,6 +2377,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 - No new gap. `Walk::pa_select` joins stretches with a let chain `if let Some(last) = slices.last_mut() && ..` (as `extend::decide_defined`) and mutates the last slice in place through `last_mut`, a `match` on the list's end at the port; `no_input_between` uses `slice::partition_point` (as `docs::check`) and `Option::is_none_or` (as `repair`).
 - `preimage::CLASS_READS`, read and reset by a test through `class_domain_reads`, is a `thread_local!` `Cell<u64>` counter, the gap of row `preimage::EXACT` above (the count returned with the answer at the port); `meets` uses `partition_point` as `no_input_between`.
 
+## Entries from TY-sub-stack (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `async fn`s awaited in their caller's frame, with a new heap frame (`Stack::call`, `Deep`) at each function or tuple compared, so the comparison of function types keeps its nesting on the heap in plain-recursion order with its short-circuits | `Comparing::sub_in`, `Comparing::fits`, `Comparing::rows`, `accepts`, `fits_in`, `every_arrow_fits`, `arrow_fits`, `result_within`, `covered`, `part_of`, `met`, `meet_within`, `refused_cover` | No `async` or compiler-written state machines (as for PRE-stack-explicit and PA-let-stack) | The frames as a sum type with an explicit stack |
+| The comparison's state (`Cx`: names made, rigid variables, functions read as variables) in a `RefCell` shared by all frames, borrowed one statement at a time and never across an `await` | `Comparing::cx`, `Cx::open` | Mutation shared by frames (gap 1) | State threaded through the frame loop |
+| `macro_rules! comparing` that moves a `&mut Cx` into a `RefCell`, runs a body on a new stack and moves it back | `Ty::sub`, `Ty::sub_with`, `Ty::diff_in`, `fits_sig`, `fits_sig_with`, `why_unfit_in`, `within` and the test `index_keeps` | No macros | A function taking the body as a closure over the comparison |
+
 ## Entries from PA-let-narrow (`crates/zedc-check/src/check/walk.rs`, `mod.rs`, `crates/zedc-preimage/src/preimage.rs`, `product.rs`)
 
 | Rust construct | Sites | Gap | At the port |
