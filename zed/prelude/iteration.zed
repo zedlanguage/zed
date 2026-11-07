@@ -19,6 +19,12 @@
 
 put(positional xs, positional i, positional x) = xs.take(i) ++ [x] ++ xs.drop(i + 1);
 
+// Complexity tradeoff: O(V * E), each vertex scanning every edge list, where the Rust
+// copy (iterate.rs dependency_graph) inverts the edges once in O(V + E log E). The
+// inversion is `group` over the edges flattened to one level, and DESIGN gives the
+// flattening, unnest (the defined-forms table), no word or syntax: `flatMap` and a
+// second generator keep the edge rank as a level, and `.image` is not in the words
+// table. Row PRELUDE-depgraph writes the O((V + E) log V) form once a word exists.
 dependencyGraph(positional reads) =
   for u -> _ in reads { reads.where(rs -> rs.any(w -> w == u))::domain };
 

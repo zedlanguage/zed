@@ -172,24 +172,28 @@ impl Int {
         }
     }
 
-    /// `self / m` rounded down, for `m` above zero.
+    /// `self / m` rounded down, for `m` of either sign and not zero.
     pub fn div_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
-            // In 64 bits when both fit, where a 128-bit division is many times slower.
+            // In 64 bits when both fit, where a 128-bit division is many times slower; the
+            // one quotient that overflows, `MIN / -1`, is left to the next width.
             (Repr::Small(a), Repr::Small(b)) => match (i64::try_from(*a), i64::try_from(*b)) {
-                (Ok(a), Ok(b)) => a.div_euclid(b).into(),
-                _ => a.div_euclid(*b).into(),
+                (Ok(a), Ok(b)) if (a, b) != (i64::MIN, -1) => Integer::div_floor(&a, &b).into(),
+                _ if (*a, *b) != (i128::MIN, -1) => Integer::div_floor(a, b).into(),
+                _ => self.big().div_floor(&m.big()).into(),
             },
             _ => self.big().div_floor(&m.big()).into(),
         }
     }
 
-    /// The remainder of [`Int::div_floor`], for `m` above zero.
+    /// The remainder of [`Int::div_floor`], which has the sign of `m`.
     pub fn mod_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
+            // `MIN mod -1` is 0, but `rem` overflows computing it, as `MIN / -1` does.
+            (Repr::Small(_), Repr::Small(-1)) => Int::ZERO,
             (Repr::Small(a), Repr::Small(b)) => match (i64::try_from(*a), i64::try_from(*b)) {
-                (Ok(a), Ok(b)) => a.rem_euclid(b).into(),
-                _ => a.rem_euclid(*b).into(),
+                (Ok(a), Ok(b)) => Integer::mod_floor(&a, &b).into(),
+                _ => Integer::mod_floor(a, b).into(),
             },
             _ => self.big().mod_floor(&m.big()).into(),
         }
@@ -2708,5 +2712,30 @@ mod tests {
         let min = Int::from(i128::MIN);
         assert_eq!(min.gcd(&min), -&min);
         assert_eq!(Int::ZERO.gcd(&Int::from(-5)), Int::from(5));
+    }
+
+    /// The 64-bit, 128-bit and big paths of `div_floor` and `mod_floor` give the floor quotient
+    /// and remainder of `BigInt` for every sign of each operand, at and across the ends of
+    /// `i64` and `i128`, including `MIN / -1`, whose quotient does not fit.
+    #[test]
+    fn floor_division_agrees_on_every_path_for_every_sign() {
+        let mut ends: Vec<BigInt> = [1, 2, 3, 7]
+            .map(BigInt::from)
+            .into_iter()
+            .chain([i128::from(i64::MAX), i128::MAX].into_iter().flat_map(|v| {
+                let v = BigInt::from(v);
+                [&v - 1, v.clone(), &v + 1, &v + 2]
+            }))
+            .chain([BigInt::from(1) << 200])
+            .collect();
+        ends.extend(ends.clone().into_iter().map(|v| -v));
+        let zero = BigInt::zero();
+        for a in ends.iter().chain([&zero]) {
+            for m in &ends {
+                let (x, y) = (Int::from(a.clone()), Int::from(m.clone()));
+                let want = (Int::from(a.div_floor(m)), Int::from(a.mod_floor(m)));
+                assert_eq!((x.div_floor(&y), x.mod_floor(&y)), want, "{a} by {m}");
+            }
+        }
     }
 }
