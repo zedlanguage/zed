@@ -3362,7 +3362,7 @@ fn substitute(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Term {
 /// The element of `e`'s value in `scope`: a literal, a value computed from static names, the
 /// revision table's forward transfer over integers, or the join of an `if`'s reachable arms.
 /// `scope` is as it was on return. The walk keeps its `let`s, `if`s and primitives on frames
-/// on the heap ([`Run`]), so any depth of nesting runs on a small thread stack.
+/// on the heap (`Run`), so any depth of nesting runs on a small thread stack.
 pub fn forward(e: &Term, scope: &mut Scope) -> Product {
     let run = Run::new(scope);
     run.stack.run(run.forward(e))
@@ -3645,7 +3645,7 @@ impl Arm {
 /// arms are written. The walk enters `let` bindings, `if` arms and primitive and call
 /// arguments; it does not enter a function body or a construct that binds names by pattern.
 /// The premise of each test is its position in the walk. The walk keeps its nesting on frames
-/// on the heap ([`Run`]), so a block of any depth runs on a small thread stack.
+/// on the heap (`Run`), so a block of any depth runs on a small thread stack.
 pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
     let mut scope = scope.clone();
     let run = Run::new(&mut scope);
