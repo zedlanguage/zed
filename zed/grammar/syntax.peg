@@ -128,7 +128,7 @@ ReduceTail    = '><' Postfix ReducePolicy?                                      
               | 'into' '(' nest(OutPattern) ')' Suffix*                            L8
               | 'with' '{' nest(Update % ',' ','?) '}' Suffix*                     L2
               | 'with' FacetCall Suffix*                                           L7
-ReducePolicy  = 'exact' | 'tree' | 'unordered'                                     L9
+ReducePolicy  = 'compensated' | 'tree' | 'unordered'                               L9
 Range         = Additive RangeTail                                                 L3
               | ~Additive                                                          L1
 RangeTail     = '..<' Additive | '..=' Additive | '..'                             L3
@@ -137,7 +137,10 @@ Additive      = Additive ('+' | '-' | '++') Multiplicative                      
 Multiplicative = Multiplicative ('*' | '/' | 'div' | 'mod') Prefix                 L1
               | ~Prefix                                                            L1
 Prefix        = ('-' | '!') Prefix                                                 L1
+              | AnnotExpr                                                          L10
               | ~Power                                                             L1
+AnnotExpr     = Annot Postfix                                                      L10
+              | ANNOT Postfix                                                      L10
 Power         = Postfix '**' Prefix                                                L1
               | ~Postfix                                                           L1
 Postfix       = Postfix Suffix                                                     L1
