@@ -123,6 +123,6 @@ fn a_command_line_port_is_an_input() {
     let src = "main() -> (args: CommandLine) {\n  args <- \"a\";\n}\n";
     assert_eq!(
         zedc::run::load(src.as_bytes()).err().as_deref(),
-        Some("output port `args` of `main` is `Lines` at layer L1")
+        Some("1:12: output port `args` of `main` is `Lines` at layer L1")
     );
 }

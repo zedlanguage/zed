@@ -347,7 +347,7 @@ fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
     let (status, out, err) = test(&[&file]);
     assert_eq!(status, 1, "{out}");
     assert!(
-        out.contains(&format!("{file}:2:1: port `stdin` of `main`")),
+        out.contains(&format!("{file}:2:6: port `stdin` of `main`")),
         "{out}"
     );
     assert_eq!(err, "");

@@ -14,6 +14,7 @@ mod negative_literals;
 mod neglit;
 mod order;
 mod printed;
+mod rejection_addresses;
 mod repairs;
 mod scaling;
 mod stable;

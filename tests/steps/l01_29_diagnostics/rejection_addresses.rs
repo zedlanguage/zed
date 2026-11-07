@@ -1,0 +1,341 @@
+//! Item DIAG-addr-rest (DESIGN.md sec:diagnostics): every rejection prints its address, the
+//! address of the top-level declaration it concerns, in the form every diagnostic prints it:
+//! a rejection reported by `zedc test`, a problem of a package (`zedc::unit::Package`), and a
+//! `main` that `zedc run` refuses (`zedc::run::program`). Naming any of them with
+//! `--suppress` is an error, as naming a front-end rejection is.
+
+use std::path::PathBuf;
+
+use zed_tests::scaling;
+use zedc::suppress::{InFile, Suppress};
+
+use super::widen_test::unit;
+
+/// `zedc <words>` through `zedc::run::command`, with no input: status, stdout and stderr.
+fn zedc(words: &[&str]) -> (u8, String, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let status = zedc::run::command(words, &mut "".as_bytes(), &mut out, &mut err);
+    (
+        status,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+/// `zedc test <words>`: status, stdout and stderr.
+fn zedc_test(words: &[&str]) -> (u8, String, String) {
+    let args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let status = zedc::testing::command(&args, &mut out, &mut err);
+    (
+        status,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+/// The address printed on the line after the line that starts with `place`, in `text`.
+fn address_after(text: &str, place: &str) -> String {
+    let mut lines = text.lines().skip_while(|l| !l.starts_with(place));
+    assert!(
+        lines.next().is_some(),
+        "no line starts with {place}:\n{text}"
+    );
+    lines
+        .find_map(|l| l.strip_prefix("  address: "))
+        .unwrap_or_else(|| panic!("no address after {place}:\n{text}"))
+        .to_string()
+}
+
+/// The lines of `text` that are addresses.
+fn addresses(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter_map(|l| l.strip_prefix("  address: "))
+        .collect()
+}
+
+/// A package directory of its own for test `name`, holding `files`, under the test target's
+/// scratch directory; files in it are overwritten by each run, never deleted.
+fn package(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("l01_29_rejection_addresses")
+        .join(name);
+    for (file, text) in files {
+        let path = d.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    d
+}
+
+/// A unit with a table whose `use` names nothing.
+const REJECTED: &str = "double(x) = x * 2 test { 1 -> 2 }\nuse(x) = missing + x;\n";
+
+#[test]
+fn a_rejection_under_zedc_test_prints_the_address_zedc_run_prints() {
+    let file = unit("addresses", "rejected.zed", REJECTED);
+    let (status, _, err) = zedc(&["run", &file]);
+    assert_eq!(status, 1);
+    let place = format!("{file}:2:");
+    let a = address_after(&err, &place);
+    let (status, out, _) = zedc_test(&[&file]);
+    assert_eq!(status, 1, "{out}");
+    assert_eq!(address_after(&out, &place), a, "{out}");
+    // The row that does not run reports no rejection and so prints no address.
+    assert_eq!(addresses(&out), [&a[..]], "{out}");
+    // The address names the declaration `use`, not the line: a declaration added above it
+    // moves the rejection and leaves its address.
+    let moved = unit(
+        "addresses",
+        "moved.zed",
+        &format!("other(y) = y;\n{REJECTED}"),
+    );
+    let (_, out, _) = zedc_test(&[&moved]);
+    // Compared in one file, since the address names its file too.
+    std::fs::write(&moved, REJECTED).unwrap();
+    let (_, _, same) = zedc(&["run", &moved]);
+    assert_eq!(
+        address_after(&out, &format!("{moved}:3:")),
+        address_after(&same, &format!("{moved}:2:"))
+    );
+}
+
+/// A unit whose front end accepts it and whose `main` has a port `zedc run` refuses.
+const PORT: &str = "helper(x) = x;\nmain(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n";
+
+#[test]
+fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
+    let file = unit("addresses", "port.zed", PORT);
+    let (status, _, err) = zedc(&["run", &file]);
+    assert_eq!(status, 1);
+    let a = address_after(&err, &format!("{file}:2:6: port `n` of `main` is `Lines`"));
+    assert_eq!(
+        err,
+        format!(
+            "{file}:2:6: port `n` of `main` is `Lines`, `Files` or `CommandLine` at layer L1\n  \
+             address: {a}\n"
+        )
+    );
+    // `zedc test` prints it the same way, address and all.
+    let tested = PORT.replace("helper(x) = x;", "helper(x) = x test { 1 -> 1 }");
+    let tested = unit("addresses", "port_test.zed", &tested);
+    let (status, out, _) = zedc_test(&[&tested]);
+    assert_eq!(status, 1, "{out}");
+    let b = address_after(&out, &format!("{tested}:2:6: port `n` of `main`"));
+    let (_, _, run) = zedc(&["run", &tested]);
+    assert_eq!(address_after(&run, &format!("{tested}:2:6: ")), b);
+    // Naming it is an error, under both commands.
+    let (status, _, refused) = zedc(&["run", &file, "--suppress", &a]);
+    assert_eq!(status, 1);
+    assert_eq!(
+        refused,
+        format!(
+            "{err}{file}:2:6: `--suppress {a}` names a rejection, which cannot be suppressed\n"
+        )
+    );
+    let (status, out, err) = zedc_test(&["--suppress", &b, &tested]);
+    assert_eq!(status, 1);
+    assert!(
+        out.contains(&format!(
+            "{tested}:2:6: `--suppress {b}` names a rejection, which cannot be suppressed"
+        )),
+        "{out}"
+    );
+    assert!(!err.contains("no diagnostic has this address"), "{err}");
+}
+
+#[test]
+fn a_unit_with_no_main_is_refused_at_its_start_with_an_address() {
+    let file = unit("addresses", "nomain.zed", "helper = 1;\n");
+    let (status, _, err) = zedc(&["run", &file]);
+    assert_eq!(status, 1);
+    let a = address_after(&err, &format!("{file}:1:1: a program declares one `main`"));
+    assert_eq!(
+        err,
+        format!(
+            "{file}:1:1: a program declares one `main` function; this one declares 0\n  \
+             address: {a}\n"
+        )
+    );
+}
+
+/// A package whose unit `app.main` imports a name `pricing` does not define.
+fn shop(name: &str, main: &str) -> PathBuf {
+    package(
+        name,
+        &[
+            ("zed.manifest", "// the shop\n"),
+            ("app/main.zed", main),
+            ("pricing.zed", "net(g: f64) = g / 1.2;\n"),
+        ],
+    )
+}
+
+const SHOP_MAIN: &str = "import pricing.{net, gross};\nmain() -> (stdout: Lines) {}\n";
+
+#[test]
+fn a_problem_of_a_package_prints_its_address() {
+    let d = shop("shop", SHOP_MAIN);
+    let main = d.join("app/main.zed");
+    let main = main.to_str().unwrap();
+    let (status, _, err) = zedc(&["run", main]);
+    assert_eq!(status, 1, "{err}");
+    let place = format!("{main}:1:1: the unit `pricing` defines no `gross`");
+    let a = address_after(&err, &place);
+    // Each problem prints one address, after its derivation, and the runs agree.
+    let problems = err
+        .lines()
+        .filter(|l| l.starts_with(&d.display().to_string()));
+    assert_eq!(problems.count(), addresses(&err).len(), "{err}");
+    assert_eq!(zedc(&["run", main]).2, err);
+    // The same package in another directory prints another address.
+    let other = shop("shop2", SHOP_MAIN);
+    let other = other.join("app/main.zed");
+    let other = other.to_str().unwrap();
+    let (_, _, there) = zedc(&["run", other]);
+    assert_ne!(
+        address_after(
+            &there,
+            &format!("{other}:1:1: the unit `pricing` defines no `gross`")
+        ),
+        a
+    );
+    // Naming it is an error, and the address counts as matched.
+    let (status, _, refused) = zedc(&["run", main, "--suppress", &a]);
+    assert_eq!(status, 1);
+    assert_eq!(
+        refused,
+        format!(
+            "{err}{main}:1:1: `--suppress {a}` names a rejection, which cannot be suppressed\n"
+        )
+    );
+}
+
+#[test]
+fn a_unit_a_package_names_and_has_no_file_prints_an_address() {
+    let d = package(
+        "missing",
+        &[
+            ("zed.manifest", "// the shop\n"),
+            (
+                "main.zed",
+                "import nowhere.{x};\nmain() -> (stdout: Lines) {}\n",
+            ),
+        ],
+    );
+    let main = d.join("main.zed");
+    let (status, _, err) = zedc(&["run", main.to_str().unwrap()]);
+    assert_eq!(status, 1, "{err}");
+    let problems = err.lines().filter(|l| !l.starts_with("  "));
+    assert_eq!(problems.count(), addresses(&err).len(), "{err}");
+    for a in addresses(&err) {
+        let (status, _, refused) = zedc(&["run", main.to_str().unwrap(), "--suppress", a]);
+        assert_eq!(status, 1);
+        assert!(
+            refused.contains(&format!("`--suppress {a}` names a rejection")),
+            "{refused}"
+        );
+    }
+}
+
+/// `Package::report_on_disk` on a package with problems in `n` files, each a unit that imports
+/// a name its import does not define, with every address suppressed: placing, addressing and
+/// matching them is within n log n. The package is loaded before the timing.
+#[test]
+fn addressing_the_problems_of_a_package_scales() {
+    let n = 400;
+    let made: Vec<(usize, PathBuf, zedc::unit::Package, Vec<String>)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| {
+            let mut files = vec![
+                ("zed.manifest".to_string(), String::new()),
+                ("base.zed".to_string(), "b = 1;\n".to_string()),
+            ];
+            let mut main = String::new();
+            for i in 0..m {
+                main.push_str(&format!("import u{i}.{{here{i}}};\n"));
+                files.push((
+                    format!("u{i}.zed"),
+                    format!("import base.{{gone{i}}};\nhere{i} = {i};\n"),
+                ));
+            }
+            main.push_str("main() -> (stdout: Lines) {}\n");
+            files.push(("main.zed".into(), main));
+            let files: Vec<(&str, &str)> = files
+                .iter()
+                .map(|(f, t)| (f.as_str(), t.as_str()))
+                .collect();
+            let d = package(&format!("scale{m}"), &files);
+            let pkg = zedc::unit::load(
+                &mut zedc::query::Db::new(),
+                &zedc::unit::Dir(d.clone()),
+                &["main"],
+            );
+            let lines = pkg.report_on_disk(&d, &mut Suppress::default()).unwrap();
+            assert!(lines.len() >= m, "{}", lines.len());
+            let words = lines
+                .iter()
+                .flat_map(|l| addresses(l))
+                .flat_map(|a| ["--suppress".to_string(), a.to_string()])
+                .collect();
+            (m, d, pkg, words)
+        })
+        .collect();
+    scaling::check("addressing the problems of a package in n files", n, |m| {
+        let (_, d, pkg, words) = made.iter().find(|(k, ..)| *k == m).expect("a size");
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        let (mut suppress, _) = Suppress::take(&words).unwrap();
+        let lines = pkg.report_on_disk(d, &mut suppress).unwrap();
+        assert!(suppress.unmatched().is_empty());
+        // Each problem, and the line refusing its suppression.
+        assert_eq!(lines.len(), words.len());
+    });
+}
+
+/// `Suppress::refused_at` matches the address it is given, and only that one.
+#[test]
+fn refused_at_counts_its_address_as_matched() {
+    let a = "1".repeat(64);
+    let b = "2".repeat(64);
+    let (mut s, rest) = Suppress::take(&["--suppress", &a]).unwrap();
+    assert!(rest.is_empty());
+    let pa = zedc::address::ContentAddress::parse(&a).unwrap();
+    let pb = zedc::address::ContentAddress::parse(&b).unwrap();
+    assert_eq!(s.refused_at("f.zed", pb), None);
+    assert_eq!(
+        s.refused_at("f.zed:1:2", pa).as_deref(),
+        Some(
+            format!("f.zed:1:2: `--suppress {a}` names a rejection, which cannot be suppressed")
+                .as_str()
+        )
+    );
+    assert!(s.unmatched().is_empty());
+}
+
+/// A root unit with no file is reported in the file it would have, with an address; that
+/// file's part of the address is found from the resolved root, so two paths to the root give
+/// one, and two names give two.
+#[test]
+fn a_root_unit_with_no_file_has_an_address_from_its_resolved_root() {
+    let d = package("rootless", &[("zed.manifest", ""), ("sub/keep.zed", "")]);
+    let gone = d.join("gone.zed");
+    assert!(!gone.exists());
+    let before = InFile::under(&d, "gone.zed").unwrap();
+    let pkg = zedc::unit::load(
+        &mut zedc::query::Db::new(),
+        &zedc::unit::Dir(d.clone()),
+        &["gone"],
+    );
+    let lines = pkg.report_on_disk(&d, &mut Suppress::default()).unwrap();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].starts_with(&format!("{}: ", gone.display())),
+        "{lines:?}"
+    );
+    assert_eq!(addresses(&lines[0]).len(), 1, "{lines:?}");
+    assert_eq!(
+        InFile::under(&d.join("sub/.."), "gone.zed").unwrap(),
+        before
+    );
+    assert_ne!(InFile::under(&d, "gone2.zed").unwrap(), before);
+}

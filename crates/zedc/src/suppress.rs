@@ -36,10 +36,29 @@ impl InFile {
     /// directory, cannot be resolved.
     pub fn of(file: &Path) -> Result<InFile, String> {
         let full = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let here = std::env::current_dir()
-            .and_then(std::fs::canonicalize)
-            .map_err(|e| format!("the current directory: {e}"))?;
-        Ok(InFile::from_resolved(&full, &here))
+        Ok(InFile::from_resolved(&full, &here()?))
+    }
+
+    /// The file `name`, a path under the package root `root` with `/` between its parts, as
+    /// its diagnostics' addresses name it: [`InFile::of`] when the file exists; when it does
+    /// not (a unit a package names and has no file), the resolved root followed by the parts
+    /// of `name`. Or why the root or the current directory cannot be resolved.
+    pub fn under(root: &Path, name: &str) -> Result<InFile, String> {
+        let file = root.join(name);
+        // The empty path, which a file in the current directory has as its directory, is `.`.
+        let root = if root.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            root
+        };
+        let full = match std::fs::canonicalize(&file) {
+            Ok(full) => full,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::canonicalize(root)
+                .map_err(|e| format!("{}: {e}", root.display()))?
+                .join(name),
+            Err(e) => return Err(format!("{}: {e}", file.display())),
+        };
+        Ok(InFile::from_resolved(&full, &here()?))
     }
 
     /// The file at `full` seen from the directory `here`, both absolute with no link and no
@@ -67,12 +86,25 @@ impl InFile {
     /// The address of the diagnostic `d` of this file, as printed and as `--suppress` names it:
     /// the BLAKE3-256 hash of the file's part and `d`'s own. O(1).
     pub fn address(self, d: &Diagnostic) -> ContentAddress {
+        self.join(d.address)
+    }
+
+    /// The address of the diagnostic of this file whose part the text decides is `part`
+    /// ([`Diagnostic::address`]): the BLAKE3-256 hash of the file's part and `part`. O(1).
+    pub fn join(self, part: ContentAddress) -> ContentAddress {
         let mut h = blake3::Hasher::new();
         h.update(b"zed diagnostic in a file\0");
         h.update(&self.0);
-        h.update(&d.address.0);
+        h.update(&part.0);
         ContentAddress(*h.finalize().as_bytes())
     }
+}
+
+/// The current directory, resolved as [`InFile`] resolves a file; or why it cannot be.
+fn here() -> Result<std::path::PathBuf, String> {
+    std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .map_err(|e| format!("the current directory: {e}"))
 }
 
 /// The addresses `--suppress` names on a command line, each with whether a diagnostic had it.
@@ -123,16 +155,22 @@ impl Suppress {
         let mut out = Vec::new();
         for d in rejections {
             let address = at.address(d);
-            if let Some(m) = self.matched.get_mut(&address) {
-                *m = true;
-                out.push(format!(
-                    "{file}:{}:{}: `--suppress {address}` names a rejection, which cannot be \
-                     suppressed",
-                    d.line, d.col
-                ));
+            if self.matched.contains_key(&address) {
+                out.extend(self.refused_at(&format!("{file}:{}:{}", d.line, d.col), address));
             }
         }
         out
+    }
+
+    /// The line, placed at `place` (`file:line:col`, or `file` for a rejection with no place
+    /// in its file), that says `--suppress` names the rejection whose address is `address`,
+    /// if it does: a rejection cannot be suppressed. The address counts as matched.
+    pub fn refused_at(&mut self, place: &str, address: ContentAddress) -> Option<String> {
+        let m = self.matched.get_mut(&address)?;
+        *m = true;
+        Some(format!(
+            "{place}: `--suppress {address}` names a rejection, which cannot be suppressed"
+        ))
     }
 
     /// A line for each address named that no diagnostic had, in the order named.

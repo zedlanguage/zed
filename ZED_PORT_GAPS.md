@@ -2008,6 +2008,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `std::fs::canonicalize` of the file and of `std::env::current_dir()`, which resolve every symbolic link and `.` and `..` step through the operating system | `InFile::of` | Library (host file system) | A `realpath` word of the `Files` port (step L1.19), and the current directory as a field of the process environment port (ENV-port) |
 | `Path::components` compared pairwise up to the first difference, then each remaining part's bytes by `OsStr::as_encoded_bytes` | `InFile::from_resolved` | None | A path as a list of `U8String` parts; the shared prefix by a fold with early exit, the rest appended to the hash input |
 
+## Entries from DIAG-addr-rest (`zedc/src/suppress.rs`, `unit.rs`, `testing.rs`, `run.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::fs::canonicalize` of a package root, and on `ErrorKind::NotFound` for the file the root joined with the file's name | `InFile::under` | Library (host file system) | The `realpath` word of the `Files` port, with its not-found failure matched |
+| A `HashMap<&str, InFile>` borrowing each problem's file name, filled on first use | `Package::report_on_disk` | Shared tables (gap 2) | A map from file name to its part threaded through the fold over the problems |
+| A `Vec<Option<Reported>>` written by index from each file's group and unwrapped in problem order | `Package::reported` | Mutation (gap 11) | The groups' results merged by problem index, as a sorted list or a map from index |
+| An enum `Accepted` whose variant `Refused` carries the rejection that `run::program` gave | `testing::checks`, `testing::command` | None | A union with a payload |
+
 ## Entries from K30-rest (`zedc-zir/src/zir/canon.rs`, `canon/serial.rs`, `store/int.rs`, `zed-kernel/src/words.rs`, `text.rs`, `zed-native/src/exe.rs`)
 
 | Rust construct | Sites | Gap | At the port |

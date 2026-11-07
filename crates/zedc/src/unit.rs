@@ -34,7 +34,7 @@ use crate::parse::{TOP, parse};
 use crate::query::{self, Db};
 use crate::resolve::{self, Exports, Refused, Resolved, Units};
 use crate::source;
-use crate::suppress::Severity;
+use crate::suppress::{InFile, Severity, Suppress, addresses};
 
 /// The name of the manifest file, which marks the package root.
 pub const MANIFEST: &str = "zed.manifest";
@@ -253,6 +253,16 @@ pub struct Problem {
     pub error: Error,
 }
 
+/// A problem of a package as `zedc` prints it.
+struct Reported {
+    /// Its place: `file:line:col`, or `file` when it has none in its file.
+    place: String,
+    /// Its place, its message and its derivation.
+    text: String,
+    /// The part of its address that its file's text decides ([`Diagnostic::address`]).
+    part: crate::address::ContentAddress,
+}
+
 /// A package's units, in the order the loader found them, and its errors.
 #[derive(Debug, Default)]
 pub struct Package {
@@ -280,51 +290,112 @@ impl Package {
         self.index.get(path).map(|&i| &self.units[i])
     }
 
-    /// Each problem as `zedc` prints it, as `file:line:col: message` and its derivation, the
-    /// file written under `root`; a file that cannot be read gives `file:line:col: message` at
-    /// the place it was rejected, or `file: message` when the reason has no place.
+    /// Each problem as `zedc` prints it, but for its address, as `file:line:col: message` and
+    /// its derivation, the file written under `root`; a file that cannot be read gives
+    /// `file:line:col: message` at the place it was rejected, or `file: message` when the
+    /// reason has no place. It is for a package held in memory, whose files have no path for
+    /// an address to name; [`Package::report_on_disk`] adds the addresses.
     pub fn report(&self, root: &Path) -> Vec<String> {
-        // The problems of each file with a text are placed together, in one pass over that
-        // text (the addresses read the whole of it), and then written in the problems' order.
-        let mut placed: HashMap<&str, (&str, Vec<usize>)> = HashMap::new();
-        let mut out = vec![String::new(); self.problems.len()];
+        self.reported(root).into_iter().map(|r| r.text).collect()
+    }
+
+    /// Each problem as `zedc` prints it, the package's files lying under `root`, a path from
+    /// the current directory: as [`Package::report`], each followed by its address on a line
+    /// of its own, `  address: <hex>`, as every diagnostic prints it; then a line for each
+    /// problem whose address `suppress` names, since a rejection cannot be suppressed. Or why
+    /// the root or the current directory cannot be resolved ([`InFile::under`]). O(p) for p
+    /// problems, after O(f) path resolutions for the f files they are in.
+    pub fn report_on_disk(
+        &self,
+        root: &Path,
+        suppress: &mut Suppress,
+    ) -> Result<Vec<String>, String> {
+        let mut files: HashMap<&str, InFile> = HashMap::new();
+        let mut out = Vec::with_capacity(self.problems.len());
+        let mut refused = Vec::new();
+        for (p, r) in self.problems.iter().zip(self.reported(root)) {
+            let at = match files.get(p.file.as_str()) {
+                Some(&at) => at,
+                None => {
+                    let at = InFile::under(root, &p.file)?;
+                    files.insert(&p.file, at);
+                    at
+                }
+            };
+            let address = at.join(r.part);
+            out.push(format!("{}\n  address: {address}", r.text));
+            refused.extend(suppress.refused_at(&r.place, address));
+        }
+        out.extend(refused);
+        Ok(out)
+    }
+
+    /// Each problem as [`Package::report`] prints it, with its place and the part of its
+    /// address that its file's text decides: the address of a placed problem names the
+    /// top-level declaration of its unit it lies in, as every rejection's does.
+    fn reported(&self, root: &Path) -> Vec<Reported> {
+        // The problems of each file are placed together, in one pass over its text, if it has
+        // one (the addresses read the whole of it), and then written in the problems' order.
+        type Group<'a> = (Option<&'a Result<Arc<str>, Unreadable>>, Vec<usize>);
+        let mut groups: HashMap<&str, Group> = HashMap::new();
         for (i, p) in self.problems.iter().enumerate() {
-            let file = root.join(&p.file);
             let text = if p.file == MANIFEST {
                 self.manifest.as_ref()
             } else {
                 self.unit_of_file(&p.file).and_then(|u| u.text.as_ref())
             };
-            let text = match text {
-                Some(Ok(text)) => text,
-                Some(Err(Unreadable {
-                    at: Some((line, col)),
-                    ..
-                })) => {
-                    out[i] = format!("{}:{line}:{col}: {}", file.display(), p.error.message);
-                    continue;
-                }
-                _ => {
-                    out[i] = format!("{}: {}", file.display(), p.error.message);
-                    continue;
-                }
-            };
-            placed
+            groups
                 .entry(&p.file)
                 .or_insert_with(|| (text, Vec::new()))
                 .1
                 .push(i);
         }
-        for (name, (text, at)) in placed {
+        let mut out: Vec<Option<Reported>> = (0..self.problems.len()).map(|_| None).collect();
+        for (name, (read, at)) in groups {
             let file = root.join(name);
-            let errors = at.iter().map(|&i| self.problems[i].error.clone()).collect();
+            let file = file.display();
+            let errors: Vec<Error> = at.iter().map(|&i| self.problems[i].error.clone()).collect();
+            let text = match read {
+                Some(Ok(text)) => text,
+                // A file with no text: the address rests on the message alone, and the place
+                // is where the file was rejected, if that has one.
+                _ => {
+                    let place = match read {
+                        Some(Err(Unreadable {
+                            at: Some((line, col)),
+                            ..
+                        })) => format!("{file}:{line}:{col}"),
+                        _ => file.to_string(),
+                    };
+                    let parts = addresses("", &[], Severity::Rejection, &errors);
+                    for ((i, e), part) in at.into_iter().zip(errors).zip(parts) {
+                        out[i] = Some(Reported {
+                            text: format!("{place}: {}", e.message),
+                            place: place.clone(),
+                            part,
+                        });
+                    }
+                    continue;
+                }
+            };
+            let stmts = match self.unit_of_file(name).and_then(|u| u.parsed.as_deref()) {
+                Some(Ok((stmts, _))) if name != MANIFEST => &stmts[..],
+                _ => &[],
+            };
             let lines = source::Lines::new(text.as_bytes());
-            let d: Vec<Diagnostic> = front::placed(text, &lines, &[], Severity::Rejection, errors);
+            let d: Vec<Diagnostic> =
+                front::placed(text, &lines, stmts, Severity::Rejection, errors);
             for (i, d) in at.into_iter().zip(d) {
-                out[i] = format!("{}:{d}", file.display());
+                out[i] = Some(Reported {
+                    place: format!("{file}:{}:{}", d.line, d.col),
+                    text: format!("{file}:{d}"),
+                    part: d.address,
+                });
             }
         }
-        out
+        out.into_iter()
+            .map(|r| r.expect("each problem is in its file's group"))
+            .collect()
     }
 
     /// The unit whose file is `file`.
@@ -819,8 +890,13 @@ pub fn root_of(file: &Path) -> Result<Option<(PathBuf, String)>, String> {
 /// What `zedc run` reports of the package of the unit `file`, read as `text`: `None` when the
 /// unit compiles alone, since it has no manifest above it, or it imports nothing and its
 /// manifest names no prelude unit; otherwise each problem of the package its unit reaches,
-/// the files written under the root as `file`'s directory names it.
-pub fn package_report(file: &Path, text: &str) -> Result<Option<Vec<String>>, String> {
+/// the files written under the root as `file`'s directory names it, with its address, and a
+/// line for each problem whose address `suppress` names ([`Package::report_on_disk`]).
+pub fn package_report(
+    file: &Path,
+    text: &str,
+    suppress: &mut Suppress,
+) -> Result<Option<Vec<String>>, String> {
     let Some((root, rel)) = root_of(file)? else {
         return Ok(None);
     };
@@ -839,7 +915,8 @@ pub fn package_report(file: &Path, text: &str) -> Result<Option<Vec<String>>, St
     // The root as the command line reached it: the file's directory, and up from there.
     let depth = path.matches('.').count();
     let shown = file.parent().and_then(|p| p.ancestors().nth(depth));
-    Ok(Some(pkg.report(shown.unwrap_or(&root))))
+    pkg.report_on_disk(shown.unwrap_or(&root), suppress)
+        .map(Some)
 }
 
 #[cfg(test)]

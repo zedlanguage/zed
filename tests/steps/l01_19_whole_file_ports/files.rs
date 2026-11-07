@@ -92,23 +92,23 @@ fn ports_are_lines_or_files_at_l1() {
     let e = load(b"main(n: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("port `n` of `main` is `Lines`, `Files` or `CommandLine` at layer L1")
+        Some("1:6: port `n` of `main` is `Lines`, `Files` or `CommandLine` at layer L1")
     );
     let e = load(b"main(fs: Files) -> (out: Files) {\n  out <- fs;\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("output port `out` of `main` is `Lines` at layer L1")
+        Some("1:21: output port `out` of `main` is `Lines` at layer L1")
     );
     // An output port of a type that is no port at all says it is an output port.
     let e = load(b"main() -> (out: int) {\n  out <- \"x\";\n}\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("output port `out` of `main` is `Lines` at layer L1")
+        Some("1:12: output port `out` of `main` is `Lines` at layer L1")
     );
     let e = load(b"helper = 1;\n").err();
     assert_eq!(
         e.as_deref(),
-        Some("a program declares one `main` function; this one declares 0")
+        Some("1:1: a program declares one `main` function; this one declares 0")
     );
 }
 

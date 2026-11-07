@@ -16,6 +16,7 @@ use std::io::Write;
 
 use zed_kernel::Term;
 
+use crate::address::ContentAddress;
 use crate::ast::StmtKind;
 use crate::elab::Cones;
 use crate::mutate::{self, Verdict};
@@ -23,7 +24,7 @@ use crate::query::{self, Db, Query};
 use crate::rejection::Row;
 use crate::rows::{row, wave};
 use crate::run::{self, Through};
-use crate::suppress::{InFile, Suppress};
+use crate::suppress::{InFile, Severity, Suppress};
 use crate::work::{self, Stage};
 use crate::{fence, front, source};
 
@@ -36,6 +37,10 @@ pub struct Outcome {
     pub col: usize,
     /// Why it fails; `None` when it passes.
     pub failure: Option<String>,
+    /// The part its text decides ([`front::Diagnostic::address`]) of the address of the
+    /// rejection its failure reports, if it reports one: `zedc test` prints the address under
+    /// it, joined with the file's part, as it prints a warning's (DIAG-addr-rest).
+    pub address: Option<ContentAddress>,
 }
 
 /// The checks of the unit `text`, in source order.
@@ -55,12 +60,21 @@ pub fn test_through(text: &str, map: &Through<'_>) -> Vec<Outcome> {
     checks(&mut Db::new(), text, map).0
 }
 
-/// The checks of the unit `text`, each row run by `map`, and whether the unit is accepted: its
-/// front end accepts it and, if it has a `main`, so does `run::program`, as `run::load` requires.
-fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
+/// Whether a unit is accepted as `run::load` accepts it.
+enum Accepted {
+    /// Its front end accepts it and, if it has a `main`, so does `run::program`.
+    Yes,
+    /// Its front end rejects it.
+    Rejected,
+    /// Its front end accepts it and `run::program` refuses it, with this rejection.
+    Refused(front::Diagnostic),
+}
+
+/// The checks of the unit `text`, each row run by `map`, and whether the unit is accepted.
+fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted) {
     let marked = fence::marks(text).lines;
     let mut out = Vec::new();
-    let mut accepted = false;
+    let mut accepted = Accepted::Rejected;
     match &*db.front(text) {
         Err(diagnostics) => {
             // The diagnostics on each line, and the marked lines, each found in a map.
@@ -75,10 +89,17 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                 let named = source[line - 1]
                     .split_once('✗')
                     .and_then(|(_, comment)| Row::named_by(comment));
+                let failure = mark_failure(ds, named);
+                // A mark that names another row than the diagnostic's reports that diagnostic.
+                let address = match (&failure, named, ds.first()) {
+                    (Some(_), Some(_), Some(d)) => Some(d.address),
+                    _ => None,
+                };
                 out.push(Outcome {
                     line,
                     col: ds.first().map_or(1, |d| d.col),
-                    failure: mark_failure(ds, named),
+                    failure,
+                    address,
                 });
             }
             for d in diagnostics.iter().filter(|d| !is_marked.contains(&d.line)) {
@@ -94,6 +115,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                             .1
                             .into(),
                     ),
+                    address: Some(d.address),
                 });
             }
             // A rejected unit runs no table, and a row that does not run does not pass (DESIGN.md
@@ -115,6 +137,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                                 "`{case}` of `{}`: not run, since the unit is rejected",
                                 f.name
                             )),
+                            address: None,
                         });
                     }
                 }
@@ -128,26 +151,39 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                     line,
                     col: 1,
                     failure: Some("the line is marked ✗ and the unit is accepted".into()),
+                    address: None,
                 });
             }
             let main = stmts
                 .iter()
                 .find(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
             let mut program = None;
-            if let Some(main) = main {
+            accepted = Accepted::Yes;
+            if main.is_some() {
                 match work::stage(Stage::Program, None, || run::program(stmts, unit.clone())) {
                     Ok(p) => program = Some(p),
-                    Err(why) => {
-                        let (line, col) = lines.line_col(text.as_bytes(), main.span.start);
+                    Err(e) => {
+                        // Placed and addressed as the front end's rejections are, with its
+                        // derivation after the place the outcome already gives.
+                        let d = front::placed(text, &lines, stmts, Severity::Rejection, vec![e])
+                            .pop()
+                            .expect("one diagnostic for one error");
                         out.push(Outcome {
-                            line,
-                            col,
-                            failure: Some(why),
+                            line: d.line,
+                            col: d.col,
+                            failure: Some(
+                                d.to_string()
+                                    .split_once(": ")
+                                    .expect("`line:col: `")
+                                    .1
+                                    .into(),
+                            ),
+                            address: Some(d.address),
                         });
+                        accepted = Accepted::Refused(d);
                     }
                 }
             }
-            accepted = main.is_none() || program.is_some();
             let main_def = unit.defs.iter().find(|d| d.name == "main");
             for t in unit.tests.iter() {
                 let (line, col) = lines.line_col(text.as_bytes(), t.span.start);
@@ -176,6 +212,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, bool) {
                     line,
                     col,
                     failure: failure.map(|why| format!("`{case}` of `{}`: {why}", t.function)),
+                    address: None,
                 });
             }
         }
@@ -240,7 +277,7 @@ fn mark_failure(ds: &[&front::Diagnostic], named: Option<Row>) -> Option<String>
 
 /// `zedc test <file> …`, with `args` the words after `test`: writes the warnings of each unit
 /// that compiles to `stderr`, as `zedc run` does, and each failing check as `file:line:col: why`
-/// to `stdout`, then the counts: checks passed and failed, and the rejection units
+/// to `stdout`, followed by `  address: <hex>` when it reports a rejection, then the counts: checks passed and failed, and the rejection units
 /// run, those with a line marked ✗. A file with no table row and no ✗ mark fails, so a run
 /// that finds no tests fails. Returns the exit status: 0 when every check passes, 1 when
 /// one fails (a unit that does not compile, a row that fails or aborts, a marked line), 2 for
@@ -307,18 +344,19 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         let (outcomes, accepted) = checks(&mut db, &text, &run::direct);
         // A unit with a rejection reports no warning (DESIGN.md L1.29): the warnings are
         // printed only when the front end and `run::program` accept it.
-        match &*db.front(&text) {
-            Ok((_, _, warnings)) if accepted => {
+        // A rejection cannot be suppressed: naming one fails the run.
+        let refused = match (&*db.front(&text), &accepted) {
+            (Ok((_, _, warnings)), Accepted::Yes) => {
                 let _ = run::write_warnings(stderr, file, at, warnings, &mut suppress);
+                Vec::new()
             }
-            // A rejection cannot be suppressed: naming one fails the run.
-            Err(rejections) => {
-                for line in suppress.refused(file, at, rejections) {
-                    let _ = writeln!(stdout, "{line}");
-                    failed += 1;
-                }
-            }
-            Ok(_) => {}
+            (Err(rejections), _) => suppress.refused(file, at, rejections),
+            (Ok(_), Accepted::Refused(d)) => suppress.refused(file, at, std::slice::from_ref(d)),
+            (Ok(_), Accepted::Rejected) => Vec::new(),
+        };
+        for line in refused {
+            let _ = writeln!(stdout, "{line}");
+            failed += 1;
         }
         texts.push((file, text));
         if outcomes.is_empty() {
@@ -333,6 +371,9 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
                 None => passed += 1,
                 Some(why) => {
                     let _ = writeln!(stdout, "{file}:{}:{}: {why}", o.line, o.col);
+                    if let Some(a) = o.address {
+                        let _ = writeln!(stdout, "  address: {}", at.join(a));
+                    }
                     failed += 1;
                 }
             }

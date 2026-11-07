@@ -23,7 +23,8 @@ use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::elab::Unit;
 use crate::front::{Diagnostic, compile};
-use crate::suppress::{InFile, Suppress};
+use crate::lex::Span;
+use crate::suppress::{InFile, Severity, Suppress};
 use crate::work::{self, Stage};
 use crate::{canon, interp, source, stage};
 
@@ -247,10 +248,10 @@ pub fn load(bytes: &[u8]) -> Result<Program, String> {
 
 /// Why a program was not loaded.
 enum Unloaded {
-    /// The diagnostics of the phase that rejected it.
+    /// The diagnostics of the phase that rejected it, or the refusal of [`program`]: it is not
+    /// a program's unit.
     Rejected(Vec<Diagnostic>),
-    /// Why it was refused where no diagnostic is placed: its bytes are not a source, or it is
-    /// not a program's unit.
+    /// Why it was refused where no diagnostic is placed: its bytes are not a source.
     Refused(String),
 }
 
@@ -259,10 +260,18 @@ fn loaded(bytes: &[u8]) -> Result<Program, Unloaded> {
     let text = work::stage(Stage::Load, None, || source::load(bytes))
         .map_err(|e| Unloaded::Refused(e.render(bytes)))?;
     let (stmts, unit, warnings) = compile(&text).map_err(Unloaded::Rejected)?;
-    let mut program =
-        work::stage(Stage::Program, None, || program(&stmts, unit)).map_err(Unloaded::Refused)?;
+    let mut program = work::stage(Stage::Program, None, || program(&stmts, unit))
+        .map_err(|e| Unloaded::Rejected(refusal(&text, &stmts, e)))?;
     program.warnings = warnings.into();
     Ok(program)
+}
+
+/// The refusal `e` of [`program`] for the unit `text` whose top-level statements are `stmts`,
+/// placed as a rejection: its place, its derivation and its address, which names the
+/// top-level declaration it lies in.
+pub(crate) fn refusal(text: &str, stmts: &[Stmt], e: ast::Error) -> Vec<Diagnostic> {
+    let lines = source::Lines::new(text.as_bytes());
+    crate::front::placed(text, &lines, stmts, Severity::Rejection, vec![e])
 }
 
 /// Writes each warning of `warnings`, of the unit read from `file`, which is `at`, that
@@ -284,40 +293,68 @@ pub(crate) fn write_warnings(
     Ok(())
 }
 
-/// The program `unit` is, with the ports its one `main` declares.
-pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, String> {
-    let mains: Vec<&Function> = stmts
+/// The program `unit` is, with the ports its one `main` declares; or why it is refused, at the
+/// declaration it concerns (DIAG-addr-rest): a port of `main` at the port, a second `main` at
+/// that declaration with each `main` a step of the derivation, and no `main` at the start of
+/// the unit. The caller places the error, so it prints a place and an address as every
+/// rejection does.
+pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, ast::Error> {
+    let mains: Vec<(&Stmt, &Function)> = stmts
         .iter()
         .filter_map(|s| match &s.kind {
-            StmtKind::Function(f) if f.name == "main" => Some(f),
+            StmtKind::Function(f) if f.name == "main" => Some((s, f)),
             _ => None,
         })
         .collect();
-    let [main] = mains[..] else {
-        return Err(format!(
+    let [(_, main)] = mains[..] else {
+        let message = format!(
             "a program declares one `main` function; this one declares {}",
             mains.len()
-        ));
+        );
+        return Err(ast::Error {
+            row: None,
+            span: mains
+                .get(1)
+                .map_or(Span { start: 0, end: 0 }, |(s, _)| s.span),
+            message,
+            notes: mains
+                .iter()
+                .map(|(s, _)| ast::Note {
+                    span: s.span,
+                    text: "`main` is declared here".into(),
+                })
+                .collect(),
+        });
     };
-    let kind = |name: &str, ty: Option<&ast::Type>| match ty.map(|t| &t.kind) {
+    let refused = |span: Span, message: String| ast::Error {
+        row: None,
+        span,
+        message,
+        notes: Vec::new(),
+    };
+    let kind = |p: &ast::Param| match p.ty.as_ref().map(|t| &t.kind) {
         Some(TypeKind::Name(n)) if n == "Lines" => Ok(PortKind::Lines),
         Some(TypeKind::Name(n)) if n == "Files" => Ok(PortKind::Files),
         Some(TypeKind::Name(n)) if n == "CommandLine" => Ok(PortKind::CommandLine),
-        _ => Err(format!(
-            "port `{name}` of `main` is `Lines`, `Files` or `CommandLine` at layer L1"
+        _ => Err(refused(
+            p.span,
+            format!(
+                "port `{}` of `main` is `Lines`, `Files` or `CommandLine` at layer L1",
+                p.name
+            ),
         )),
     };
     let inputs = main
         .params
         .iter()
-        .map(|p| Ok((p.name.clone(), kind(&p.name, p.ty.as_ref())?)))
-        .collect::<Result<_, String>>()?;
+        .map(|p| Ok((p.name.clone(), kind(p)?)))
+        .collect::<Result<_, ast::Error>>()?;
     let mut outputs = Vec::new();
     for p in main.ports.iter().flatten() {
         if !matches!(&p.ty.kind, TypeKind::Name(n) if n == "Lines") {
-            return Err(format!(
-                "output port `{}` of `main` is `Lines` at layer L1",
-                p.name
+            return Err(refused(
+                p.span,
+                format!("output port `{}` of `main` is `Lines` at layer L1", p.name),
             ));
         }
         outputs.push(p.name.clone());
@@ -840,8 +877,9 @@ fn command_inner(
 /// `zedc run` writes them, then a line for each address `suppress` names that no warning has;
 /// or the exit status and message: 2 when the file cannot be read, or it or the current
 /// directory cannot be resolved to the path its addresses name ([`InFile`]), 1 when the
-/// program is rejected, each rejection followed by its address and a line for each rejection
-/// `suppress` names, since a rejection cannot be suppressed.
+/// program is rejected (by its package, by the front end or by [`program`]), each rejection
+/// as `file:line:col: why` and its derivation, followed by its address, and then a line for
+/// each rejection `suppress` names, since a rejection cannot be suppressed.
 pub fn load_file(
     file: &str,
     suppress: &mut Suppress,
@@ -854,7 +892,8 @@ pub fn load_file(
     // package (step L2.3); linking it to the units it imports is step L2.4.
     if let Ok(text) = std::str::from_utf8(&bytes)
         && let Some(report) =
-            crate::unit::package_report(std::path::Path::new(file), text).map_err(|e| (1, e))?
+            crate::unit::package_report(std::path::Path::new(file), text, suppress)
+                .map_err(|e| (1, e))?
         && !report.is_empty()
     {
         return Err((1, report.join("\n")));
@@ -865,10 +904,10 @@ pub fn load_file(
         Err(Unloaded::Rejected(ds)) => {
             let mut lines: Vec<String> = ds
                 .iter()
-                .map(|d| format!("{d}\n  address: {}", at.address(d)))
+                .map(|d| format!("{file}:{d}\n  address: {}", at.address(d)))
                 .collect();
             lines.extend(suppress.refused(file, at, &ds));
-            return Err((1, format!("{file}:{}", lines.join("\n"))));
+            return Err((1, lines.join("\n")));
         }
     };
     let written = write_warnings(stderr, file, at, program.warnings(), suppress).and_then(|()| {
