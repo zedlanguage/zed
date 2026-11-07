@@ -1484,11 +1484,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CATALOG-followups | impl attempt 1 | 2026-11-07 00:56 | catalog rows, scoped binders, tests and iteration.zed edited; building |
+| CATALOG-followups | impl attempt 1 | 2026-11-07 00:56 | ready 428acfaf on 4de1fa22; groups s_01_port_catalog 12, l01_13_formatter 24, m0_11 22, m0_03 55 pass; clippy and fmt clean |
 | LIST-xor-finite | impl attempt 1 | 2026-11-07 06:40 | started: worktree wt/list-xor-finite from f60e2220 |
-| PA-let-stack | impl attempt 1 | 2026-11-07 07:51 | ready: wt/pa-let-stack 485ff593 on 5b0aee39 (rebased twice; STATUS/ZED_PORT_GAPS append conflicts kept both sides); 353 pieces pass, clippy and fmt clean; load  |
+| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | start: reading brief, ledger, walk.rs |
+| PA-let-stack | impl attempt 1 | 2026-11-07 07:51 | per-test cost flat: 165/181/186 us at d 1,000/4,000/12,500 (test every day, minus no-test block); 100 spaced tests: 12,500 0.30 vs 0.28 s, 100,000 2.37 vs 2.45  |
 | S22-hole-summaries | impl attempt 1 | 2026-11-07 07:27 | ready ace151de on eb84152b: 403 pieces pass after rebase, fmt and clippy clean; ctl worktree removed / load 22.07 35.39 40.19 |
-| TY-subst-stacks | impl attempt 1 | 2026-11-07 00:33 | negative control on old code (5b0aee39): F106 atoms_nested_in_atoms and ATOM-payload-open a_variable_deep_in_a_payload scaling tests without the 512 MiB stack b |
+| TY-subst-stacks | impl attempt 1 | 2026-11-07 00:33 | negative control (not committed): new deep_types tests on base ty.rs 5b0aee39 at 2 MiB: 100000-deep and shared-scaling both abort 'has overflowed its stack' in  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
