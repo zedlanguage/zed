@@ -89,7 +89,7 @@ fn later_parts_name_their_layer() {
         ),
         (
             "f(m) = m >< (+) unordered;",
-            "error: this form (Unordered) is built from layer L9",
+            "error: this form (ReducePolicy) is built from layer L9",
         ),
         (
             "f(m) = for x in m { g(x); };",

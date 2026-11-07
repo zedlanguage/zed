@@ -157,7 +157,16 @@ const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"),
 /// Names of the table whose rows are not built, each with the plan row that builds it: the test
 /// holds that each is not yet known, so that row must take it out of this list.
 const PENDING: &[(&str, &str)] = &[
-    ("noNaN", "NONAN"),
+    ("fpwarn", "FPWARN"),
+    ("i128", "INT-128"),
+    ("u16", "INT-128"),
+    ("u32", "INT-128"),
+    ("u64", "INT-128"),
+    ("u128", "INT-128"),
+    ("csqrt", "MATH-names"),
+    ("cexp", "MATH-names"),
+    ("clog", "MATH-names"),
+    ("cpow", "MATH-names"),
     ("U8String", "STR-types"),
     ("Utf8String", "STR-types"),
     ("Utf16String", "STR-types"),

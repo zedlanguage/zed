@@ -68,7 +68,7 @@ IsTest        : the type test of ⟦e⟧ against T, a bool
 InTest        : `e in D` is match get(⟦D⟧, ⟦e⟧) { #notFound -> false, _ -> true }, and `not in` its negation
 Reduce        : the tails applied left to right to ⟦Range⟧
 ReduceTail    : `F >< op` is fold(⟦F⟧, ⟦op⟧, ev) with the evidence the checker attaches (sec:reduction); `as (p)` names the levels of ⟦F⟧ and `into (q)` is the reindex its output pattern builds, with a fold for each level collapsed by `><` (sec:remap_law); `with { u, … }` is discard(⟦F⟧, keep all but the updated keypaths) ⊎ the updated entries; `with f(…)` attaches a facet (sec:facets), adding its failure members and leaving the term unchanged
-Unordered     : the fold's evidence permits any grouping and order (sec:reduction)
+ReducePolicy  : the fold's evidence: `exact` the exact sum, `tree` the canonical tree, `unordered` any grouping and order (sec:reduction)
 Range         : `a ..< b`, `a ..= b` and `a ..` are the domains {a, …, b−1}, {a, …, b} and {a, a+1, …}, built by the primitive range; an unbounded domain is read only by generators that stop
 RangeTail     : the upper end of a range, exclusive, inclusive or absent
 Additive      : the primitives add and sub; `++` on a string and on rank keys is the offset concatenation, the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧; on Seq (L5) it is the union of the operands, which keep their origin keys, the right operand ordered after the left (sec:order), and operands whose keys overlap are a collision

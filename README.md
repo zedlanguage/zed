@@ -754,7 +754,7 @@ Zed has exact integers, rational numbers (fractions of two integers) and 64-bit 
 **Syntax:** `42`, `1.5`, `3r`, `2n`, `a / b`, `a div b`, `f64(n)`
 
 > [!NOTE]
-> **`42`** is an `int`, **`1.5`** an `f64` (a 64-bit floating-point number), and **`3r`** a `rat`, an exact rational number, a fraction of two integers that is never rounded. **`2n`** is a generic number, which takes whichever number type its use needs, so `inc(x) = x + 1n;` works on all three.
+> **`42`** is an `int`, **`1.5`** an `f64` (a 64-bit floating-point number), and **`3r`** a `rat`, an exact rational number, a fraction of two integers that is never rounded. A decimal one such as `0.1r` is exactly the decimal it spells, `1r / 10r`, never a rounded binary float. **`2n`** is a generic number, which takes whichever number type its use needs, so `inc(x) = x + 1n;` works on all three.
 >
 > **`a / b`** divides `f64` and `rat` values. **`a div b`** and **`a mod b`** are the integer quotient and remainder, and **`a ** b`** is a power. **`f64(n)`** converts `n` to `f64`, and **`int(s)`** converts a string to an `int`; such conversions are checked and can fail.
 >
@@ -1461,7 +1461,7 @@ With three values:
 
 For `combine`, the compiler derives both laws from `+` on the fields. In general, a proved law lets the compiler regroup freely, while a claim that was only tested permits one fixed grouping and can still be wrong, and the report says which you have. If an operator isn't associative, use `foldl` or `foldr` to say which way to fold. A reduction over nothing can't be silently wrong: the `else` gives the answer for an empty collection, and without it the result type includes `#empty`, unless the operator has an identity or the collection is known not to be empty.
 
-Floating-point sums get special care. `samples >< (+)` computes the exact sum and rounds it once, so the result doesn't depend on how the work was split or how many cores ran it. If you'd rather have speed than that guarantee, you ask for it, and it shows in the type: `samples >< (+) unordered`. Your own floating-point operator needs no law: with none, the reduction runs on one fixed grouping over the collection's order, so it gives the same bits at any core count.
+Floating-point sums get special care. `samples >< (+)` computes the exact sum and rounds it once, so the result doesn't depend on how the work was split or how many cores ran it. If you'd rather have speed than that guarantee, you ask for it, and it shows in the type: `samples >< (+) unordered`. Between the two, `samples >< (+) tree` adds the floats in one fixed balanced grouping: about as fast as a plain loop, the same bits at any core count, and an error that grows with the logarithm of the count rather than the count. Your own floating-point operator needs no law: with none, the reduction runs on one fixed grouping over the collection's order, so it gives the same bits at any core count.
 
 ### Pushing into a map
 
