@@ -239,11 +239,15 @@ fn a_unit_a_package_names_and_has_no_file_prints_an_address() {
 }
 
 /// `Package::report_on_disk` on a package with problems in `n` files, each a unit that imports
-/// a name its import does not define, with every address suppressed: placing, addressing and
-/// matching them is within n log n. The package is loaded before the timing.
+/// `PER` names its import does not define, with every address suppressed: placing, addressing
+/// and matching them is within n log n. The package is loaded before the timing. Each problem
+/// costs some 60,000 instructions of its own (placing, hashing, writing), so a cost per pair of
+/// problems shows only when there are thousands: `PER` = 40 gives 8,400 and 67,200 problems,
+/// and a scan of all problems per problem then grows 50 times, not the 24 allowed.
 #[test]
 fn addressing_the_problems_of_a_package_scales() {
-    let n = 400;
+    const PER: usize = 40;
+    let n = 200;
     let made: Vec<(usize, PathBuf, zedc::unit::Package, Vec<String>)> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| {
@@ -254,10 +258,10 @@ fn addressing_the_problems_of_a_package_scales() {
             let mut main = String::new();
             for i in 0..m {
                 main.push_str(&format!("import u{i}.{{here{i}}};\n"));
-                files.push((
-                    format!("u{i}.zed"),
-                    format!("import base.{{gone{i}}};\nhere{i} = {i};\n"),
-                ));
+                files.push((format!("u{i}.zed"), {
+                    let names: Vec<String> = (0..PER).map(|j| format!("gone{i}_{j}")).collect();
+                    format!("import base.{{{}}};\nhere{i} = {i};\n", names.join(", "))
+                }));
             }
             main.push_str("main() -> (stdout: Lines) {}\n");
             files.push(("main.zed".into(), main));
