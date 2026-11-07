@@ -1464,11 +1464,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LIST-parity-keys | impl attempt 1 | 2026-11-07 04:37 | perf of regions shape at c=2048 (3.2G instr, c 1024->2048 5.4x): 80% in RowIndex::holds eval of the halves restriction; rows sort by hash, so the 2-3 rows with  |
-| LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | resumed after context compaction; measuring base cases; load 52.61 31.34 24.64 |
-| NARROW-eager-scope | impl attempt 1 | 2026-11-07 04:43 | new eager scaling test fails on base e88c9c35: 57.4 times the bytes at k=16 vs 128 (limit 24) |
+| DISJ-three-atom-empty | impl attempt 1 | 2026-11-07 03:49 | ready fe38dd47 on 655cd816: groups 319 pieces 0 failed; scaling test 32->256 passes (1.04 s); probe 17/32/86/155/369/750 ms n=16..512 (base 86/600/3600/41600 ms |
+| KERNEL-bdd-cycle | impl attempt 1 | 2026-11-07 05:56 | ready 01d08b68 on wt/kernel-bdd-cycle; zed-kernel cycle back to the 12 known files; timing within noise (min 18.2 vs 18.8 s); TABLE-life rebase conflicts in bdd |
+| LIST-parity-keys | impl attempt 1 | 2026-11-07 04:37 | ready at 011752706d330b156f1b221ffd4d27e74e814b4e on wt/list-parity-keys (not pushed); groups 79 pieces 0 failed |
+| LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | canonical atoms + claims written in preimage.rs, first build / load 18.07 23.49 25.31 |
+| NARROW-eager-scope | impl attempt 1 | 2026-11-07 04:43 | ready again at 65c1b9bc: longer paths by one BFS + O(log s) narrowings; k/8k test red on 5cde256e (46.1x bytes); 314 pieces pass after rebase |
 | NUMERICS-spec2 | impl attempt 1 | 2026-11-07 03:42 | done in batch 15 (folded into NUMERICS-spec, zed 6728767) |
-| PA-plus-if | impl attempt 1 | 2026-11-07 05:08 | traced depth 4: transfer widens n to all ints at the first sum with an if operand (HC4 projection, fwd of n is every int) from depth 2; linear stage recovers [1 |
+| PA-plus-if | impl attempt 1 | 2026-11-07 05:08 | ready: f1d432ff on wt/pa-plus-if (rebased on main 655cd816); groups l01_25 l01_39 zedc- 120 pieces pass; negative control (old Pa::plus) fails depth 4 and rando |
+| ROW-intern | running | 2026-11-07 05:45 |  |
+| S22-linear-rem | impl attempt 1 | 2026-11-07 03:57 | reproduced at load 33-40: seed 2 k=13 13.5-28 s per shape, counted c<=2&&y even 0.89/2.21/4.18 s at k=15/30/60, seed 1 k=4 1.49 s vs k=8 0.125 s; profiling |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
