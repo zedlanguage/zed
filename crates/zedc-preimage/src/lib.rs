@@ -4,7 +4,9 @@
 
 pub mod images;
 pub mod preimage;
-/// The backward transfer before S22a, which tests compare [`preimage`] with.
+/// The backward transfer before S22a, which tests compare [`preimage`] with. Built only with
+/// the feature `preimage-ref`, which only zed-tests enables (through zedc).
+#[cfg(feature = "preimage-ref")]
 #[doc(hidden)]
 pub mod preimage_ref;
 pub mod product;

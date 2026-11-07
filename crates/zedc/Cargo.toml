@@ -38,7 +38,7 @@ zedc-elab.workspace = true
 # tests turn on `two-at-a-time`, the step tests `counts`), and does not overwrite their copies.
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 zedc-solvers = { workspace = true, features = ["counts"] }
-zedc-preimage = { workspace = true, features = ["counts"] }
+zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
@@ -48,6 +48,9 @@ printed-types = ["zedc-check/printed-types"]
 # work of the linear programs by a count that does not depend on the load (SLABS-count), and the
 # nodes `LetPa::sum` enters in `store::preimage` (PA-let-narrow). Off in a release build.
 counts = ["zedc-solvers/counts", "zedc-preimage/counts"]
+# Builds `store::preimage_ref`, the backward transfer before S22a, which the tests of step L1.25
+# compare `store::preimage` with (PREIMAGE-ref-tests). Off in a release build.
+preimage-ref = ["zedc-preimage/preimage-ref"]
 # Truncates content addresses so that they collide (step L1.37a); see zed-kernel src/address.rs.
 short-addresses = ["zed-kernel/short-addresses"]
 
@@ -59,4 +62,4 @@ workspace = true
 # overwrite it and the next build of the tests would rebuild it (see crates/zed-native/Cargo.toml).
 [dev-dependencies.zedc]
 path = "."
-features = ["printed-types", "counts"]
+features = ["printed-types", "counts", "preimage-ref"]

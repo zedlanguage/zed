@@ -256,7 +256,7 @@ short-addresses = ["zedc/short-addresses", "zed-kernel/short-addresses"]
 
 [dependencies]
 insta.workspace = true
-zedc = { workspace = true, features = ["printed-types", "counts"] }
+zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
 zed-corpus-ref.workspace = true
 zed-tools.workspace = true
 zed-alloc-count.workspace = true

@@ -1120,6 +1120,7 @@ dependencies = [
  "zed-kernel",
  "zedc-base",
  "zedc-check",
+ "zedc-preimage",
  "zedc-presburger",
  "zedc-resolve",
  "zedc-solvers",

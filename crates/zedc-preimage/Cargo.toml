@@ -29,6 +29,10 @@ workspace = true
 # summaries of a block of bindings by a count that does not depend on the load (PA-let-narrow).
 # Off in a release build; zedc's feature `counts` turns it on.
 counts = []
+# Builds `preimage_ref`, the backward transfer before S22a, which the tests of step L1.25 compare
+# `preimage` with (PREIMAGE-ref-tests). Off in a release build; zedc's feature `preimage-ref` turns
+# it on, and only zed-tests asks for that.
+preimage-ref = []
 
 [dev-dependencies]
 # The tests of preimage set presburger::TWO_AT_A_TIME, which exists only with this feature.
@@ -36,8 +40,9 @@ zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 # A dylib's file name does not change with its features, so `cargo test -p zedc-preimage` builds
 # zedc-solvers with the feature `counts` the step tests give it, and does not overwrite their copy.
 zedc-solvers = { workspace = true, features = ["counts"] }
-# As for zedc-solvers: this crate with the feature `counts` the step tests give it.
-zedc-preimage = { path = ".", features = ["counts"] }
+# As for zedc-solvers: this crate with the features `counts` and `preimage-ref` the step tests give
+# it.
+zedc-preimage = { path = ".", features = ["counts", "preimage-ref"] }
 # The scaling test of the rule of low complexity (tests/src/scaling.rs), which preimage's tests use.
 rustix.workspace = true
 zed-alloc-count.workspace = true

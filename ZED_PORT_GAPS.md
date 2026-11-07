@@ -2491,3 +2491,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `hash_map::Entry` matched as occupied or vacant, inserting into a second `HashSet<Tid>` (`Terms::shared`) on the occupied side while numbering a term | `Terms::id` | Mutation (gap 11) | A lookup in the map of seen terms, then either the set with the term added or the map with the new number, both returned |
 | A local `enum Step` work list (operand, memo read, close at a `Mark`) popped in a `while let` loop inside an `async fn`, a closure giving each inner node's steps | `Walk::chain` | Mutation (gap 11), Early exit (gap 12) | A fold over the work list in a state receiver, ending in `#none` at the first operand with no formula |
+
+## Entries from PREIMAGE-ref-tests (`zedc-preimage/src/lib.rs`, `zedc/src/store/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A cargo feature, `preimage-ref`, that adds a whole module and its re-export, off in a release build; every package that builds the zedc and zedc-preimage dylibs asks for it, so their copies are not rebuilt | `zedc_preimage::preimage_ref`, `zedc::store::preimage_ref` under `#[cfg(feature = "preimage-ref")]` | No conditional compilation | A unit of its own that only the test units import, so the release build does not hold it; no build mode needed |

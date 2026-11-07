@@ -16,7 +16,9 @@ pub use zedc_lattice::lattice;
 pub use zedc_lattice::revision;
 pub use zedc_lattice::wto;
 pub use zedc_preimage::preimage;
-/// The backward transfer before S22a, which tests compare [`preimage`] with.
+/// The backward transfer before S22a, which tests compare [`preimage`] with. Built only with
+/// the feature `preimage-ref`, which only zed-tests enables.
+#[cfg(feature = "preimage-ref")]
 #[doc(hidden)]
 pub use zedc_preimage::preimage_ref;
 pub use zedc_preimage::product;

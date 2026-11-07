@@ -25,10 +25,11 @@ zedc-types.workspace = true
 workspace = true
 
 [dev-dependencies]
-# As in zedc-check: `cargo test -p zedc-elab` builds zedc-presburger and zedc-solvers with the
-# features the workspace build gives them, and does not overwrite their copies.
+# As in zedc-check: `cargo test -p zedc-elab` builds zedc-presburger, zedc-solvers and zedc-preimage
+# with the features the workspace build gives them, and does not overwrite their copies.
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 zedc-solvers = { workspace = true, features = ["counts"] }
+zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 
 # A dylib's file name does not change with its features, so `cargo test -p zedc-elab` builds
 # zedc-check and zedc-types with the feature `printed-types` the step tests give them, and does not

@@ -33,7 +33,7 @@ workspace = true
 # `counts`), and does not overwrite their copies.
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 zedc-solvers = { workspace = true, features = ["counts"] }
-zedc-preimage = { workspace = true, features = ["counts"] }
+zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 
 [features]
 # Records each type the checker prints on a thread with its text, for the test that parses each back
