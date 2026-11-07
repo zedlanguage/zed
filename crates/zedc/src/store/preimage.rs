@@ -887,20 +887,20 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 /// afresh; so an entry keyed by a term of the scope holds for every body.
 /// A definition reached from many bodies is so read once, and a chain of n functions, each
 /// calling the one before, costs O(n) where closing each body over its cone cost O(n²)
-/// (LOAD-chain). The translations are made again for each body, whose auxiliary variables
-/// they number. Each body's run also makes entries that depend on the body: its terms, the
+/// (LOAD-chain). Each body's run also makes entries that depend on the body: its terms, the
 /// scopes its calls bind, and what is found of a term in those scopes. These are dropped once
 /// the body is read (`Fresh`), at a cost of what the body made, so that what is kept from
 /// body to body is found of the scope alone: a chain of n tests, each calling the one before,
 /// held O(n²) entries when every entry was kept, and holds O(n).
 ///
 /// The translations into the linear-relation domain are kept from body to body as well
-/// ([`Translations`]), each a function of its key alone: a call by its lambda and the linear
+/// (`Translations`), each a function of its key alone: a call by its lambda and the linear
 /// terms of its arguments, over the inputs' names, and a term of the scope, which reads no
 /// input. A caller's relation so takes its callee's translation as made for an earlier body,
 /// shared and not read again, and a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i` is
 /// translated in O(n), where translating each body afresh read the chain once per body,
-/// O(n²) (LOAD-chain-share).
+/// O(n²) (LOAD-chain-share). A body that defines auxiliary variables keeps none of the
+/// translations it made, since they number them.
 pub struct Scoped<'t> {
     tx: Tx<'t>,
     scope: Eid,

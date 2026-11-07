@@ -3,7 +3,7 @@
 //! conjunction of `q`'s relation, kept whole as one part ([`Formula::and_keeping`]), and the
 //! new constraint; the relation of a chain of n such tests so holds each callee's relation
 //! once, shared, and not n²/2 copies. [`Extending`] remembers the answers of each conjunction
-//! it decides, by the part it is ([`Id`]), and decides a conjunction that holds a decided one
+//! it decides, by the part it is (`Id`), and decides a conjunction that holds a decided one
 //! from those answers and its other parts.
 
 use std::collections::HashMap;

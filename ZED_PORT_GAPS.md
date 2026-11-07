@@ -2009,6 +2009,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A trait over memo keys (`Key`, implemented for `At` and `(At, D)`) giving the term and scope an entry is keyed by | `Key`, `Walk::cached`, `Walk::made`, `Walk::translated` | Interfaces (L10) | A function giving the place passed beside the table, as `Table` is |
 | A struct borrowing the given terms for its lifetime (`Scoped<'t>`), built once and asked once per body | `Scoped`, `front::linear_questions` | None | A value threaded through the fold over the functions, returned with each relation |
 
+## Entries from LOAD-chain-share (`zedc/src/store/preimage.rs`, `presburger/extend.rs`, `front.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<Id, Known>` from a shared conjunction, keyed by the part it is, to its answers and an `Rc<Model>` point shared with the conjunctions that extend it | `extend::Extending`, `Extending::answers`, `Extending::extend` | Shared tables (gap 2), Mutation (gap 11) | A map from the part's identity threaded through the fold over the questions, as `Id` sets are |
+| The memo's translation tables moved out with `std::mem::take` after a body and moved back before the next (`Option<(bool, Translations)>`) | `Memo::take_translations`, `Memo::put_translations`, `Scoped::relation` | Mutation (gap 11) | The tables returned with each relation and passed to the next |
+| An index `HashMap<Arc<str>, Vec<Rc<Logged>>>` from a name to the kept call entries whose arguments hold it, pruned with `retain` to the names a body reads | `Scoped::by_name`, `Scoped::relation` | Shared tables (gap 2), Mutation (gap 11) | A map from name to entries rebuilt by a filter over the next body's inputs |
+
 ## Entries from L1.36b (`zed-native/src/link.rs`)
 
 | Rust construct | Sites | Gap | At the port |
