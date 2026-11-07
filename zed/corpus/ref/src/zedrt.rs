@@ -15,7 +15,7 @@
 //! Where the Zed rule is the same or unstated, the outputs follow these readings of text, kept
 //! here so that every program makes them the same way:
 //! - `parse_int(s)` / `try_parse_int(s)`: surrounding whitespace, a sign, decimal digits of any
-//!   script, '_' between digits, at most 4300 digits; any size.
+//!   script, '_' between digits; any size, read by halves (`read_digits`).
 //! - `parse_float(s)` / `try_parse_float(s)`: the same reading of digits and a decimal float,
 //!   and also inf, infinity and nan in any case.
 //! - `lower(s)`: the full lowercase mapping (U+0130 becomes "i̇") and the final-sigma rule for
@@ -26,7 +26,7 @@
 
 use std::sync::LazyLock;
 
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{ToPrimitive, Zero};
 
 /// The element of `xs` at `i`, or an error as for an index out of range.
@@ -211,11 +211,55 @@ pub fn try_parse_int(s: &str) -> Option<BigInt> {
     if !well_formed {
         return None;
     }
-    let digits = t.replace('_', "");
-    if bytes.iter().filter(|b| **b != b'_').count() > 4300 {
-        return None;
+    let sign = match t.starts_with('-') {
+        true => Sign::Minus,
+        false => Sign::Plus,
+    };
+    Some(BigInt::from_biguint(
+        sign,
+        read_digits(&body.replace('_', "")),
+    ))
+}
+
+/// The digits `read_digits` hands to num-bigint whole. The value read does not depend on it.
+const LEAF_DIGITS: usize = 512;
+
+/// The value of a nonempty text of ASCII decimal digits.
+///
+/// num-bigint reads a text one machine word of digits at a time into the whole number read so
+/// far, O(n^2) for `n` digits. This reads the text in two parts, the low part `LEAF_DIGITS *
+/// 2^i` digits long and the high part no longer, and joins them as `high * 10^(LEAF_DIGITS *
+/// 2^i) + low`, with the powers `10^(LEAF_DIGITS * 2^i)` built once by squaring: O(M(n) log n)
+/// for the cost M(n) of a product of n digits, the method of `zed_kernel::num::read_digits`
+/// (Brent and Zimmermann, Modern Computer Arithmetic, section 1.7). The references do not use
+/// the kernel, so the products are num-bigint's, Toom-3 at these sizes, M(n) about n^1.46; the
+/// recursion then costs O(M(n)), its levels' costs falling geometrically (COMPLEXITY.md F38).
+fn read_digits(digits: &str) -> BigUint {
+    let Some(top) = split_depth(digits.len()) else {
+        return digits.parse().expect("ASCII decimal digits");
+    };
+    let mut tens = vec![BigUint::from(10u32).pow(LEAF_DIGITS as u32)];
+    while tens.len() <= top {
+        let last = tens.last().expect("the first power is built");
+        let next = last * last;
+        tens.push(next);
     }
-    digits.parse().ok()
+    read_parts(digits, &tens)
+}
+
+/// The `i` for which a text of `len` digits splits into a low part of `LEAF_DIGITS * 2^i`
+/// digits and a high part of at least one and at most as many; `None` when it is read whole.
+fn split_depth(len: usize) -> Option<usize> {
+    (len > LEAF_DIGITS).then(|| ((len - 1) / LEAF_DIGITS).ilog2() as usize)
+}
+
+/// [`read_digits`] of a part, `tens[i]` being `10^(LEAF_DIGITS * 2^i)`.
+fn read_parts(digits: &str, tens: &[BigUint]) -> BigUint {
+    let Some(i) = split_depth(digits.len()) else {
+        return digits.parse().expect("ASCII decimal digits");
+    };
+    let (high, low) = digits.split_at(digits.len() - (LEAF_DIGITS << i));
+    read_parts(high, tens) * &tens[i] + read_parts(low, tens)
 }
 
 /// `s` read as a float, or an error.

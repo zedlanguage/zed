@@ -2,6 +2,7 @@
 //! program of its number prints on the `.in` file of the same name. The references compute the
 //! outputs without the compiler, so the corpus tests the compiler rather than repeating it.
 
+mod int_reading;
 mod p14_oracle;
 mod scaling;
 

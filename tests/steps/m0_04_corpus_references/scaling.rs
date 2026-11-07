@@ -381,7 +381,7 @@ fn clustering_of_random_points_at_eight_times_the_coordinate_size() {
 /// the bytes: the in-circle tests multiply factors of up to about 1918 and 15,312 bits (30 and
 /// 240 words), which num-bigint multiplies by schoolbook (up to 32 words) and by Karatsuba (33
 /// to 256 words), O(b^1.58) (COMPLEXITY F39). Reading the coordinates is not the cause: they
-/// have at most 4300 digits, and reading them by halves changed the total by under 1% (item
+/// have at most 2304 digits, and reading them by halves changed the total by under 1% (item
 /// P14-bigint-parse).
 #[test]
 #[ignore = "COMPLEXITY.md F39, open under BIGINT-fast-mul: num-bigint's Karatsuba product, about 27.9 times"]
