@@ -214,6 +214,41 @@ fn taking_k_values_costs_k_times_the_depth() {
     );
 }
 
+/// `t(0) = 0 | 1`, `t(i + 1) = (t(i), t(i)) | (0 | 1, t(i))`: two boxes at every depth from
+/// 2, each with `t(i)` last, so the first `k` values read `k` values of `t(i)`, whichever box
+/// is first.
+fn doubling_two_boxes(d: usize) -> Type {
+    let bit = &lit(0) | &lit(1);
+    (0..d).fold(bit.clone(), |t, _| {
+        &Type::tuple(vec![t.clone(), t.clone()]) | &Type::tuple(vec![bit.clone(), t])
+    })
+}
+
+#[test]
+fn a_tuple_is_found_tried_in_the_time_of_its_length() {
+    // Each tuple tried is looked up by its components' numbers, so its depth is not read
+    // again at each level; one compared by its values cost the depth at each of the `d`
+    // levels, order `d²` per value.
+    let take = |t: &Type, k: usize| {
+        assert_eq!(t.each_value().expect("finite").take(k).count(), k);
+    };
+    let t = doubling_two_boxes(48);
+    scaling::check(
+        "taking the first k values of a type of two boxes at each of 48 depths, by k",
+        500,
+        |k| take(&t, k),
+    );
+    let built: std::collections::HashMap<usize, Type> = [12, 96]
+        .into_iter()
+        .map(|d| (d, doubling_two_boxes(d)))
+        .collect();
+    scaling::check(
+        "taking the first 500 values of a type of two boxes at each depth, by depth",
+        12,
+        |d| take(&built[&d], 500),
+    );
+}
+
 /// The exclusive or of `types`, taken in order as `x = (x - t) | (t - x)`.
 fn parity(types: impl IntoIterator<Item = Type>) -> Type {
     types

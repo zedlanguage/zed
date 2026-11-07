@@ -174,7 +174,14 @@ step_pieces() {
           c=${c//_/-}
           if [ -d "$c" ]; then echo "$n $c $p"; else echo "$n tests $p"; fi
           ;;
-        zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
+        zed_kernel-*)
+          # This test took 35 to 39 s alone (46 s at load 26), so the rest of the
+          # crate's tests ran past 60 s with it in one process (LIST-xor-finite,
+          # 2026-11-07); it gets a process of its own.
+          slow=types::bdd::tests::exclusive_ors_agree_with_their_values
+          echo "$n crates/zed-kernel $p --skip $slow"
+          echo "$n::exclusive_ors crates/zed-kernel $p --exact $slow"
+          ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;
         zed_cert-*) echo "$n crates/zed-cert $p" ;;

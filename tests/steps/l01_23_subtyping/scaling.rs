@@ -1455,11 +1455,15 @@ fn finding_the_boxes_of_a_meet_with_an_exclusive_or_scales() {
             w.div_ceil(2)
         }
     };
-    // The boxes of the second are `n` of `w - 1` values each, order `n²` at `w = n`, where
-    // finding them took 10.4M and 174M instructions at 64 and 512 rows and listing them 95M
-    // and 5.8G; so its side is held at 64 values. Measured at 64, 512 and 4096 rows: finding
-    // the first finite 3.4M, 26.7M, 221M; the second 10.4M, 82M, 665M; listing the first 13.2M,
-    // 122M, 1.12G; the second 95M, 546M, 4.29G.
+    // The boxes of the second are `n` of `w - 1` values each, order `n²` at `w = n`. Finding
+    // them compared each `u - (2k + 1)`, made once in the type and again in a box, literal by
+    // literal: 10.4M and 174M instructions at 64 and 512 rows; two sets made from one set are
+    // now found equal by `==`, which skips their shared nodes, so it is found finite at
+    // `w = n`: 9.1M, 78.6M, 720M at 64, 512 and 4096. Listing it reads every box, 104M and
+    // 6.16G at 64 and 512 for `n / 2` values (LIST-box-overlap), so its listing holds the side
+    // at 64 values. Measured at 64, 512 and 4096 rows: finding the first finite 3.4M, 26.7M,
+    // 221M; the second at a side of 64 10.4M, 82M, 665M; listing the first 13.2M, 122M,
+    // 1.12G; the second 95M, 546M, 4.29G.
     let met = scaling::inputs(128, |n| family(n, n, false));
     scaling::check(
         "finding the boxes of a finite type met with the exclusive or",
@@ -1473,12 +1477,13 @@ fn finding_the_boxes_of_a_meet_with_an_exclusive_or_scales() {
             assert_eq!(met[&n].each_value().map(|v| v.count()), Some(listed(n, n)));
         },
     );
-    let each = scaling::inputs(128, |n| family(n, 64, true));
+    let wide = scaling::inputs(128, |n| family(n, n, true));
     scaling::check(
         "finding the boxes of a finite type each row met first",
         128,
-        |n| assert!(each[&n].finite()),
+        |n| assert!(wide[&n].finite()),
     );
+    let each = scaling::inputs(128, |n| family(n, 64, true));
     scaling::check("listing a finite type each row met first", 128, |n| {
         assert_eq!(
             each[&n].each_value().map(|v| v.count()),

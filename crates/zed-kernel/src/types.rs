@@ -506,11 +506,38 @@ struct Parts {
 /// A finite set of literals, or the complement of one within its base type. The set is
 /// persistent, so that a union or difference with a small set copies nothing else, and `sum`,
 /// the wrapping sum of its literals' hashes, is kept as it changes.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 struct Lits {
     cofinite: bool,
     values: OrdSet<Value>,
     sum: u64,
+}
+
+/// By `cofinite`, then the values in order, then `sum`, as derived; but two equal sets are
+/// found equal by `==`, which skips the nodes they share, before the values are read in order.
+/// So two equal sets made apart from one set compare in order `log n`, not `n`: the meets of a
+/// side `u` with the rows `(int - (2k + 1), int)` make each `u - (2k + 1)` once in the type
+/// and again in its boxes (LIST-xor-finite).
+// Complexity tradeoff: two unequal sets with equal sums pay for both walks, `==` then the
+// ordered one; equal sums of unequal sets are a hash collision.
+impl Ord for Lits {
+    fn cmp(&self, other: &Lits) -> std::cmp::Ordering {
+        self.cofinite.cmp(&other.cofinite).then_with(|| {
+            match self.sum == other.sum && self.values == other.values {
+                true => std::cmp::Ordering::Equal,
+                false => self
+                    .values
+                    .cmp(&other.values)
+                    .then(self.sum.cmp(&other.sum)),
+            }
+        })
+    }
+}
+
+impl PartialOrd for Lits {
+    fn partial_cmp(&self, other: &Lits) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
@@ -996,12 +1023,17 @@ impl Type {
             })
             .collect();
         drop(index);
+        let mut numbers = Numbers::default();
         let makers = types
             .into_iter()
             .zip(boxes.into_iter().zip(rows))
-            .map(|(t, (boxes, rows))| Maker::new(t, boxes, rows))
+            .map(|(t, (boxes, rows))| Maker::new(t, boxes, rows, &mut numbers))
             .collect();
-        Some(Values { makers, given: 0 })
+        Some(Values {
+            makers,
+            numbers,
+            given: 0,
+        })
     }
 
     /// The types `self`'s values are built from, each with its boxes and after the types in
@@ -2065,8 +2097,34 @@ pub struct Values {
     /// One maker per type the values are built from, each after the types in its boxes, the
     /// listed type last.
     makers: Vec<Maker>,
+    /// The number of each value the makers made.
+    numbers: Numbers,
     /// How many values of the listed type have been given.
     given: usize,
+}
+
+/// Numbers for the values a [`Values`] makes, equal exactly when the values are: a scalar or
+/// bare atom is numbered by its value, a tuple by its components' numbers. Equal values built
+/// apart, as two boxes of one type build them, get one number, and a tuple's number is found
+/// in the time of its length, whatever the depth of its components.
+#[derive(Default)]
+struct Numbers {
+    leaves: BTreeMap<Value, usize>,
+    tuples: HashMap<Vec<usize>, usize>,
+}
+
+impl Numbers {
+    /// The number of the scalar or bare atom `v`.
+    fn leaf(&mut self, v: &Value) -> usize {
+        let next = self.leaves.len() + self.tuples.len();
+        *self.leaves.entry(v.clone()).or_insert(next)
+    }
+
+    /// The number of the tuple whose components have the numbers `items`.
+    fn tuple(&mut self, items: Vec<usize>) -> usize {
+        let next = self.leaves.len() + self.tuples.len();
+        *self.tuples.entry(items).or_insert(next)
+    }
 }
 
 /// The values of one type of a [`Values`], made one at a time on demand and kept, since every
@@ -2078,18 +2136,20 @@ struct Maker {
     rows: BTreeMap<Row, Vec<Option<usize>>>,
     /// Per length, the type's part of that length with its rows by the values they may hold.
     by_value: BTreeMap<usize, RowIndex>,
-    /// The tuples tried so far, each once: a tuple an earlier box gave was tried there.
+    /// The tuples tried so far, each once, by their components' numbers ([`Numbers`]): a tuple
+    /// an earlier box gave was tried there.
     // Complexity tradeoff: the set holds each distinct tuple tried, memory order the tuples
-    // tried, where testing a tuple against the earlier boxes that may hold it kept nothing but
-    // cost order `n` per tuple when `n` boxes overlap; a lookup costs order `log t`
-    // comparisons, each reading the two tuples (order the size of their shared parts), so the
-    // set is kept only by a type of more than one box.
-    tried: BTreeSet<Vec<Value>>,
+    // tried times their length, where testing a tuple against the earlier boxes that may hold
+    // it kept nothing but cost order `n` per tuple when `n` boxes overlap; a lookup costs the
+    // tuple's length, never the depth of its components.
+    tried: HashSet<Vec<usize>>,
     /// The box being listed.
     next: usize,
     at: At,
     /// The values made so far: the scalars and bare atoms, then the tuples.
     made: Vec<Value>,
+    /// The number of each value made ([`Numbers`]).
+    ids: Vec<usize>,
     /// Whether every value has been made.
     done: bool,
 }
@@ -3653,9 +3713,11 @@ impl Maker {
         ty: Type,
         boxes: Vec<(Vec<usize>, Row)>,
         rows: BTreeMap<Row, Vec<Option<usize>>>,
+        numbers: &mut Numbers,
     ) -> Maker {
         let p = ty.p();
         let made = scalars(&p);
+        let ids = made.iter().map(|v| numbers.leaf(v)).collect();
         let by_value = p
             .tuples
             .lens
@@ -3666,10 +3728,11 @@ impl Maker {
             boxes,
             rows,
             by_value,
-            tried: BTreeSet::new(),
+            tried: HashSet::new(),
             next: 0,
             at: At::Start,
             made,
+            ids,
             done: false,
         }
     }
@@ -3687,7 +3750,7 @@ impl Maker {
     /// One step of the maker `me` of `makers`: it enters a box, makes the tuple at its
     /// position, or moves past it, or says which value of a component it needs first, before
     /// changing anything. The components' makers come before `me`.
-    fn step(makers: &mut [Maker], me: usize) -> Result<(), Need> {
+    fn step(makers: &mut [Maker], numbers: &mut Numbers, me: usize) -> Result<(), Need> {
         let (below, rest) = makers.split_at_mut(me);
         let m = &mut rest[0];
         match std::mem::replace(&mut m.at, At::Start) {
@@ -3712,13 +3775,17 @@ impl Maker {
                     .zip(&pos)
                     .map(|(&c, &i)| below[c].made[i].clone())
                     .collect();
+                let key: Vec<usize> = cols
+                    .iter()
+                    .zip(&pos)
+                    .map(|(&c, &i)| below[c].ids[i])
+                    .collect();
                 // A tuple is given by the first box that has it, and is tried there. Within one
                 // box the positions give distinct tuples, since each maker gives each value
-                // once, and a box's makers give every value of its columns.
-                // With one box no tuple repeats, and the set, whose comparisons read the values,
-                // is not kept: a value deep in shared parts is not compared at each level.
+                // once, and a box's makers give every value of its columns. The tuple is
+                // looked up by its components' numbers, never by their contents.
                 m.at = At::Past(pos);
-                if m.boxes.len() > 1 && !m.tried.insert(v.clone()) {
+                if !m.tried.insert(key.clone()) {
                     return Ok(());
                 }
                 // A component's value is in the type that made it, so only a row whose type
@@ -3737,6 +3804,7 @@ impl Maker {
                 let index = m.by_value.get_mut(&row.len()).expect("an index per length");
                 if index.holds(&v, fits) {
                     m.made.push(Value::tuple(v));
+                    m.ids.push(numbers.tuple(key));
                 }
             }
             At::Past(mut pos) => {
@@ -3776,7 +3844,7 @@ impl Values {
                     stack.pop();
                 }
                 Err(_) => {
-                    if let Err(need) = Maker::step(&mut self.makers, m) {
+                    if let Err(need) = Maker::step(&mut self.makers, &mut self.numbers, m) {
                         stack.push(need);
                     }
                 }
