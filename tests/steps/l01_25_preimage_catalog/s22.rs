@@ -25,7 +25,9 @@ use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
-use zedc::store::preimage::{Classes, Demand, Domains, Preimage, exact_preimage, preimage};
+use zedc::store::preimage::{
+    Classes, Demand, Domains, Preimage, class_domain_reads, exact_preimage, preimage,
+};
 use zedc::store::preimage_ref as before;
 use zedc::store::presburger::{Atom, Model, Refusal};
 
@@ -2968,5 +2970,52 @@ fn remainder_cases_sliced_by_a_test_scale() {
         scaling::check("cases of a sliced remainder chain", n, |k| {
             preimage(&terms[&k], &ds, &d);
         });
+    });
+}
+
+/// `x` in `[-100000, 100000]` with `h` holes of one point, spread evenly, and `y` in
+/// `[-100000, 100000]`.
+fn x_with_holes(h: usize) -> Domains {
+    let step = 198000 / h as i64;
+    let mut ps = Vec::with_capacity(h + 1);
+    let mut lo = -100000;
+    for j in 0..h as i64 {
+        let at = -99000 + step * j;
+        ps.push((lo, at - 1));
+        lo = at + 1;
+    }
+    ps.push((lo, 100000));
+    over(&[("x", pieces(&ps)), ("y", IntervalSet::of(-100000, 100000))])
+}
+
+/// COMPLEXITY.md S22-hole-summaries: reading the test `x mod 1024 != r(j)` of each level of
+/// [`spread_remainder_chain`] by its classes, with `16k` holes in the domain of `x`, reads
+/// pieces of that domain of order `k log k` from `k` to `8k`: each range of classes is read
+/// within the hull of the domain, a box is tested against the holes by binary search, and the
+/// union is met with the domain once. Meeting each range with the whole domain read `O(k)`
+/// pieces for each of `O(k)` ranges, `O(k^2)`: 2193 and 132225 pieces at `k = 8` and `64`,
+/// 60 times (negative control, not committed), where this reads 245 and 2693, 11 times.
+#[test]
+fn class_ranges_read_the_holes_once() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let n = 8;
+        let reads = |k: usize| {
+            let t = counted_shapes(spread_remainder_chain(k))[4].clone();
+            let ds = x_with_holes(16 * k);
+            class_domain_reads();
+            preimage(&t, &ds, &d);
+            class_domain_reads()
+        };
+        let (small, large) = (reads(n), reads(scaling::FACTOR * n));
+        assert!(small > 0, "the tests are read by their classes");
+        let ratio = large as f64 / small as f64;
+        assert!(
+            ratio <= scaling::RATIO,
+            "pieces of the domain read at sizes {n} and {}: {small} and {large}, {ratio:.1} times, \
+             over {}",
+            scaling::FACTOR * n,
+            scaling::RATIO
+        );
     });
 }

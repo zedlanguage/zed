@@ -3296,6 +3296,14 @@ impl<'t> Tx<'t> {
     /// when an end of the input's domain lies outside [`in_range`] and the caller reads the
     /// `if` as before.
     fn invert_pa(&self, pa: &Pa, z: &IntervalSet) -> Option<Res> {
+        self.invert_pa_in(pa, z, false)
+    }
+
+    /// [`Tx::invert_pa`], with `hull` within the hull of the input's domain and not the domain:
+    /// the holes of the domain are not cut out, so the time is that of the summary's pieces
+    /// and not of the domain's (the caller meets the result with the domain,
+    /// [`Tx::within_inputs`]).
+    fn invert_pa_in(&self, pa: &Pa, z: &IntervalSet, hull: bool) -> Option<Res> {
         let (var, dom) = match pa {
             Pa::Const(c) => {
                 return Some(if z.contains_end(&Fin(Num::from(c))) {
@@ -3309,15 +3317,46 @@ impl<'t> Tx<'t> {
         let root = pa.to_treap(dom)?;
         let mut pieces = Vec::new();
         invert_treap(&root, &Tag::ID, z, &mut pieces);
-        let met = IntervalSet::from_pieces(pieces).meet(dom);
+        let within = if hull { &dom.hull() } else { &**dom };
+        let met = IntervalSet::from_pieces(pieces).meet(within);
         if met.is_empty() {
             return Some(Res::none());
         }
         let mut r = Res::all();
-        if met != **dom {
+        if met != *within {
             r.dom.insert(var.clone(), Rc::new(met));
         }
         Some(r)
+    }
+
+    /// Whether the box `r` holds a point of the inputs' domains: each input it narrows meets its
+    /// domain, `O(p log P)` for the `p` pieces of the box's set and the `P` of the domain.
+    fn reaches_inputs(&self, r: &Res) -> bool {
+        !self.empty(r)
+            && (r.dom.iter()).all(|(k, s)| self.cx.inputs.get(k).is_none_or(|d| meets(s, d)))
+    }
+
+    /// The box `r` met with the inputs' domains, each name it narrows met once, `O(p + P)`.
+    fn within_inputs(&self, r: Res) -> Res {
+        if self.empty(&r) {
+            return r;
+        }
+        let mut dom = Sets::new();
+        for (k, s) in &r.dom {
+            let Some(d) = self.cx.inputs.get(k) else {
+                dom.insert(k.clone(), s.clone());
+                continue;
+            };
+            read_domain(s.pieces().len() + d.pieces().len());
+            let met = s.meet(d);
+            if met.is_empty() {
+                return Res::none();
+            }
+            if met != **d {
+                dom.insert(k.clone(), Rc::new(met));
+            }
+        }
+        Res { dom, ..r }
     }
 }
 
@@ -5239,24 +5278,54 @@ impl<'m, 't> Walk<'m, 't> {
             (name, dom)
         });
         let dom = dom?;
-        let mut out = Res::none();
+        // Each leaf is read within the hull of the domain of `x` and the boxes are met with the
+        // domain once at the end ([`Tx::within_inputs`]), so that a leaf costs the pieces of its
+        // own box and a binary search of the domain per piece, where meeting each leaf with the
+        // domain cost `O(L * P)` for `L` leaves and `P` pieces, `O(k^2)` when both grow with the
+        // chain (COMPLEXITY.md S22-hole-summaries); the union is taken as a balanced tree
+        // ([`Walk::union_all`]), where joined one by one each step would cost the pieces
+        // gathered so far.
+        let hull = dom.hull();
+        let mut found = Vec::with_capacity(leaves.len());
         for ((i, j), pa) in leaves {
-            let r = self.with(|tx| tx.invert_pa(&pa, &z))?;
+            let r = self.with(|tx| tx.invert_pa_in(&pa, &z, true))?;
+            read_domain(1);
             let rems =
                 IntervalSet::range(End::from(classes.cuts[i]), End::from(classes.cuts[j] - 1));
-            let (members, exact) = mod_pre(&rems, c, &dom);
+            let (members, exact) = mod_pre(&rems, c, &hull);
             if members.is_empty() {
                 continue;
             }
             let mut within = Res::all();
             within.exact = exact;
-            if members != *dom {
+            if members != hull {
                 within.dom.insert(name.clone(), Rc::new(members));
             }
             let met = self.meet(r, within);
-            out = self.union(out, met);
+            // A box whose members of an input all lie in holes of its domain holds no point.
+            if self.with(|tx| tx.reaches_inputs(&met)) {
+                found.push(met);
+            }
         }
-        Some(out)
+        let out = self.union_all(found);
+        Some(self.with(|tx| tx.within_inputs(out)))
+    }
+
+    /// The union of `rs` ([`Tx::union`]), joined in pairs, then pairs of pairs: each round
+    /// costs the pieces of all the boxes, so `O(N log n)` for `n` boxes of `N` pieces in all.
+    fn union_all(&self, mut rs: Vec<Res>) -> Res {
+        while rs.len() > 1 {
+            let mut next = Vec::with_capacity(rs.len().div_ceil(2));
+            let mut it = rs.into_iter();
+            while let Some(a) = it.next() {
+                next.push(match it.next() {
+                    Some(b) => self.union(a, b),
+                    None => a,
+                });
+            }
+            rs = next;
+        }
+        rs.pop().unwrap_or_else(Res::none)
     }
 
     /// The classes of the run's split in which the test `g` is true, as ranges of class
@@ -7079,7 +7148,11 @@ fn value_at(x: &End, a: &Int, b: &Int) -> Val {
 // more. Test: `l01_25_preimage_catalog::wide_ends::ends_past_i128_take_the_transfer_before`.
 // COMPLEXITY.md S33. A complete solution would hold the pieces' ends as `Num`.
 fn in_range(s: &IntervalSet) -> bool {
-    s.pieces().iter().all(|(lo, hi)| {
+    // The pieces are in order, so every finite end lies between the least and the greatest
+    // finite end, which are ends of the first or the last piece: `O(1)`, not `O(P)` for the
+    // `P` pieces, which each summary of a split read (COMPLEXITY.md S22-hole-summaries).
+    let ps = s.pieces();
+    (ps.first().into_iter().chain(ps.last())).all(|(lo, hi)| {
         [lo, hi].into_iter().all(|e| {
             !matches!(e, Fin(v) if v.to_i128().is_none_or(|w| w == i128::MIN || w == i128::MAX))
         })
@@ -7107,6 +7180,16 @@ fn no_input_between(dom: &IntervalSet, a: &End, b: &End) -> bool {
     let ps = dom.pieces();
     let next = ps.partition_point(|(_, hi)| hi <= a);
     ps.get(next).is_none_or(|(lo, _)| lo >= b)
+}
+
+/// Whether `a` and `b` share a member: `O(p log P)` for the `p` pieces of `a` and the `P` of `b`.
+fn meets(a: &IntervalSet, b: &IntervalSet) -> bool {
+    let ps = b.pieces();
+    read_domain(a.pieces().len() * (ps.len() + 1).ilog2() as usize);
+    (a.pieces().iter()).any(|(lo, hi)| {
+        let next = ps.partition_point(|(_, h)| h < lo);
+        ps.get(next).is_some_and(|(l, _)| l <= hi)
+    })
 }
 
 /// An end of an input's domain as an input, for the bounds of [`ByClass`]: the infinities are
@@ -7954,6 +8037,23 @@ thread_local! {
 /// last call, which resets the count. Only a scope declared `@exact` searches (step L1.39b).
 pub fn exact_steps() -> u64 {
     EXACT.replace(0)
+}
+
+thread_local! {
+    /// The pieces of an input's domain that [`Walk::back_by_class`] read on this thread since
+    /// [`class_domain_reads`] last read it, a binary search counted by its steps.
+    static CLASS_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The pieces of an input's domain that the reading of a test on a remainder by its classes
+/// read on this thread since the last call, which resets the count (COMPLEXITY.md
+/// S22-hole-summaries).
+pub fn class_domain_reads() -> u64 {
+    CLASS_READS.replace(0)
+}
+
+fn read_domain(n: usize) {
+    CLASS_READS.with(|c| c.set(c.get() + n as u64));
 }
 
 /// The preimage of `demand` under `term` when its declaration is annotated `@exact`
