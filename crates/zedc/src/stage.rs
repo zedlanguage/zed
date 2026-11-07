@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Shared, Term, Value, World};
 
-use crate::elab::{Def, Unit};
+use crate::defs::{Def, Unit};
 use crate::interp;
 
 /// When a term is evaluated.
@@ -2558,7 +2558,7 @@ impl Mixer {
                 if self.build(bound, names) && !read {
                     self.report
                         .unread
-                        .push(crate::elab::written_name(x).to_string());
+                        .push(crate::defs::written_name(x).to_string());
                     todo.push(Mix::Part(body));
                 } else {
                     let (e, _) = parts.pop().expect("the bound term");
