@@ -14,6 +14,7 @@ mod fits;
 mod given;
 mod handled;
 mod held_functions;
+mod is_chains;
 mod literals;
 mod named_calls;
 mod narrowing;

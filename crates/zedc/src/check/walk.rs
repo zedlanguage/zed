@@ -13,16 +13,49 @@ use std::sync::Arc;
 use super::*;
 
 /// What a job gives back.
-pub(super) enum Ret {
+pub(super) enum Ret<'a> {
     /// Nothing yet, or a statement's result, which is nothing.
     None,
     Ty(Ty),
     Arg(Arg),
-    /// A condition's type, the facts it makes when it holds and when it does not, and the
-    /// nodes of [`super::arms::Arms`] where it holds and where it does not.
-    Cond(Ty, Facts, Facts, Sides),
+    Cond(Cond<'a>),
     Sig(Arc<Sig>),
 }
+
+/// A condition checked: its type, the facts it makes when it holds and when it does not, the
+/// nodes of [`super::arms::Arms`] where it holds and where it does not, and the narrowing it
+/// leaves in place.
+pub(super) struct Cond<'a> {
+    t: Ty,
+    yes: Facts,
+    no: Facts,
+    sides: Sides,
+    held: Held<'a>,
+}
+
+impl Cond<'_> {
+    /// A condition that leaves nothing narrowed.
+    fn of(t: Ty, yes: Facts, no: Facts, sides: Sides) -> Self {
+        Cond {
+            t,
+            yes,
+            no,
+            sides,
+            held: None,
+        }
+    }
+}
+
+/// The narrowing a condition leaves in place for the frame that reads it: the binders of its
+/// facts where it holds (`true`) or where it fails (`false`), narrowed in their order, and what
+/// restores them. A chain of `&&` keeps its left side narrowed while its right side is checked
+/// and then narrows the right side's facts on top, so that each fact of the chain is narrowed
+/// once and not once at each level of the chain (IS-chain-quad); `||` keeps where its sides
+/// fail. The frame that reads the condition takes this narrowing over when it wants that side,
+/// and restores it otherwise. Nothing is checked, and no error is derived, while a narrowing
+/// is held: only `!`, `&&` and `||` apply to the condition's type, an application whose
+/// arguments carry no site to derive.
+type Held<'a> = Option<(bool, Saved<'a>)>;
 
 /// What the type expected where an expression is checked says about it: the one function
 /// type it is, if it is one, and the one numeric carrier it holds, if it holds one. Only
@@ -413,7 +446,7 @@ pub(super) enum FitWait {
 /// The machine: the jobs left, the next on top, and the result of the last one done.
 pub(super) struct M<'a> {
     stack: Vec<Job<'a>>,
-    ret: Ret,
+    ret: Ret<'a>,
 }
 
 impl<'a> M<'a> {
@@ -441,7 +474,7 @@ impl<'a> M<'a> {
         self.ret = Ret::Ty(t);
     }
 
-    fn take(&mut self) -> Ret {
+    fn take(&mut self) -> Ret<'a> {
         std::mem::replace(&mut self.ret, Ret::None)
     }
 
@@ -459,9 +492,9 @@ impl<'a> M<'a> {
         }
     }
 
-    fn take_cond(&mut self) -> (Ty, Facts, Facts, Sides) {
+    fn take_cond(&mut self) -> Cond<'a> {
         match self.take() {
-            Ret::Cond(t, y, n, s) => (t, y, n, s),
+            Ret::Cond(c) => c,
             _ => unreachable!("the job above gives a condition"),
         }
     }
@@ -618,7 +651,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ty(t);
             }
             Frame::If1(e) => {
-                let (c, yes, no, (holds, fails)) = m.take_cond();
+                let Cond {
+                    t: c,
+                    yes,
+                    no,
+                    sides: (holds, fails),
+                    held,
+                } = m.take_cond();
+                // The condition is checked with nothing narrowed by its own tests, and its
+                // derivation reads the origins of its names as they are outside it.
+                self.release(held);
                 let ExprKind::If {
                     cond,
                     then,
@@ -694,7 +736,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let b = match (&of.kind, self.t.res.uses.get(&of.span)) {
                     (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => ids[0],
                     _ => {
-                        m.ret = Ret::Cond(bool_, Vec::new(), Vec::new(), (here, here));
+                        m.ret =
+                            Ret::Cond(Cond::of(bool_, Facts::new(), Facts::new(), (here, here)));
                         return;
                     }
                 };
@@ -703,38 +746,47 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // The reduced product reads no `is`: its scope is the one it is checked in.
                 let yes = v.meet(&t);
                 let no = self.narrowed(&v, &Narrow::Not(t), e.span);
-                let (yes, no) = (vec![(b, yes, e.span)], vec![(b, no, e.span)]);
-                m.ret = match negated {
-                    false => Ret::Cond(bool_, yes, no, (here, here)),
-                    true => Ret::Cond(bool_, no, yes, (here, here)),
-                };
+                let (yes, no) = (
+                    Facts::from([(b, yes, e.span)]),
+                    Facts::from([(b, no, e.span)]),
+                );
+                m.ret = Ret::Cond(match negated {
+                    false => Cond::of(bool_, yes, no, (here, here)),
+                    true => Cond::of(bool_, no, yes, (here, here)),
+                });
             }
             Frame::CondNot(span) => {
-                let (t, yes, no, (holds, fails)) = m.take_cond();
+                let c = m.take_cond();
                 let sig = op_sig("!");
                 let t = self
-                    .apply("`!`", &sig, vec![Some(Arg::of(t))], true, span)
+                    .apply("`!`", &sig, vec![Some(Arg::of(c.t))], true, span)
                     .0;
-                m.ret = Ret::Cond(t, no, yes, (fails, holds));
+                m.ret = Ret::Cond(Cond {
+                    t,
+                    yes: c.no,
+                    no: c.yes,
+                    sides: (c.sides.1, c.sides.0),
+                    held: c.held.map(|(holds, saved)| (!holds, saved)),
+                });
             }
             Frame::CondAnd1 { op, b, span } => {
-                let (ta, ya, na, sa) = m.take_cond();
-                let first = if op == "&&" { &ya } else { &na };
-                let saved = self.narrow(first);
-                self.arms.enter(if op == "&&" { sa.0 } else { sa.1 });
+                let a = m.take_cond();
+                let and = op == "&&";
+                let saved = self.narrow_side(a.held, if and { &a.yes } else { &a.no }, and);
+                self.arms.enter(if and { a.sides.0 } else { a.sides.1 });
                 m.k(Frame::CondAnd2(Box::new(CondAnd {
                     op,
                     span,
-                    ta,
-                    ya,
-                    na,
+                    ta: a.t,
+                    ya: a.yes,
+                    na: a.no,
                     saved,
-                    sa,
+                    sa: a.sides,
                 })));
                 m.job(Job::Cond(b));
             }
             Frame::CondAnd2(s) => {
-                let (tb, yb, nb, sb) = m.take_cond();
+                let b = m.take_cond();
                 let CondAnd {
                     op,
                     span,
@@ -744,40 +796,56 @@ impl<'t, 'a> Ck<'t, 'a> {
                     saved,
                     sa,
                 } = *s;
-                self.widen(saved);
+                // `a`'s side stays narrowed and `b`'s is narrowed on top, as a frame reading
+                // the whole condition would narrow them, in their order.
+                let and = op == "&&";
+                let more = self.narrow_side(b.held, if and { &b.yes } else { &b.no }, and);
+                let saved = joined(saved, more);
                 self.arms.leave();
                 // `b` is checked where `a` holds for `&&`, and fails for `||`, so its nodes
                 // are already within that one.
-                let sides = match op {
-                    "&&" => (sb.0, self.arms.join(sa.1, sb.1)),
-                    _ => (self.arms.join(sa.0, sb.0), sb.1),
+                let sb = b.sides;
+                let sides = match and {
+                    true => (sb.0, self.arms.join(sa.1, sb.1)),
+                    false => (self.arms.join(sa.0, sb.0), sb.1),
                 };
                 let sig = op_sig("&&");
                 let t = self
                     .apply(
                         &format!("`{op}`"),
                         &sig,
-                        vec![Some(Arg::of(ta)), Some(Arg::of(tb))],
+                        vec![Some(Arg::of(ta)), Some(Arg::of(b.t))],
                         true,
                         span,
                     )
                     .0;
-                m.ret = if op == "&&" {
-                    Ret::Cond(t, [ya, yb].concat(), Vec::new(), sides)
-                } else {
-                    Ret::Cond(t, Vec::new(), [na, nb].concat(), sides)
+                let (yes, no) = match and {
+                    true => (joined(ya, b.yes), Facts::new()),
+                    false => (Facts::new(), joined(na, b.no)),
                 };
+                m.ret = Ret::Cond(Cond {
+                    t,
+                    yes,
+                    no,
+                    sides,
+                    held: Some((and, saved)),
+                });
             }
             Frame::CondOf(e) => {
                 let t = m.take_ty();
                 let sides = self.test_nodes(e);
-                m.ret = Ret::Cond(t, Vec::new(), Vec::new(), sides);
+                m.ret = Ret::Cond(Cond::of(t, Facts::new(), Facts::new(), sides));
             }
             Frame::Logic1 { op, b, span } => {
-                let (ta, ya, na, (holds, fails)) = m.take_cond();
-                let (first, at) = if op == "&&" { (ya, holds) } else { (na, fails) };
-                m.k(Frame::Logic2 { op, span, ta });
-                self.under(m, &first, at, b);
+                let a = m.take_cond();
+                let and = op == "&&";
+                let (first, at) = match and {
+                    true => (a.yes, a.sides.0),
+                    false => (a.no, a.sides.1),
+                };
+                m.k(Frame::Logic2 { op, span, ta: a.t });
+                let saved = self.narrow_side(a.held, &first, and);
+                self.within(m, saved, at, b);
             }
             Frame::Logic2 { op, span, ta } => {
                 let tb = m.take_ty();
@@ -1006,9 +1074,37 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `e` checked with the binders of `facts` narrowed, in node `at` of [`super::arms::Arms`].
     fn under(&mut self, m: &mut M<'a>, facts: &Facts, at: usize, e: &'a Expr) {
         let saved = self.narrow(facts);
+        self.within(m, saved, at, e);
+    }
+
+    /// `e` checked with the narrowing `saved` restores, in node `at` of [`super::arms::Arms`].
+    fn within(&mut self, m: &mut M<'a>, saved: Saved<'a>, at: usize, e: &'a Expr) {
         self.arms.enter(at);
         m.k(Frame::Widen(saved));
         m.job(Job::Expr(e));
+    }
+
+    /// The binders of `facts`, the facts of a condition where it holds (`holds`) or where it
+    /// fails, narrowed, and what restores them: the narrowing `held` the condition left in
+    /// place when it is of that side, and otherwise `held` restored and `facts` narrowed anew.
+    /// The facts of a side of `&&` where it fails, or of `||` where it holds, are none, and an
+    /// `is` holds no narrowing, so the narrowing made anew is of at most one fact; a condition
+    /// read whole, by `if` or by `&&` outside a condition, narrows its facts once.
+    fn narrow_side(&mut self, held: Held<'a>, facts: &Facts, holds: bool) -> Saved<'a> {
+        match held {
+            Some((side, saved)) if side == holds => saved,
+            held => {
+                self.release(held);
+                self.narrow(facts)
+            }
+        }
+    }
+
+    /// Restores the narrowing a condition left in place, if any.
+    fn release(&mut self, held: Held<'a>) {
+        if let Some((_, saved)) = held {
+            self.widen(saved);
+        }
     }
 
     /// The statements of one scope, in the order elaboration binds them; the export's type.

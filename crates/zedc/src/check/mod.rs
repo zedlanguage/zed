@@ -40,7 +40,7 @@ mod walk;
 
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::{self, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -378,10 +378,26 @@ struct Args<'a> {
 }
 
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
-type Facts = Vec<(usize, Ty, Span)>;
+type Facts = VecDeque<(usize, Ty, Span)>;
 
 /// What [`Ck::narrow`] changed, for [`Ck::widen`] to restore.
-type Saved<'a> = Vec<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
+type Saved<'a> = VecDeque<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
+
+/// The items of `a` followed by those of `b`, the shorter list moved onto the longer, at a cost
+/// of the shorter's length. An item moves only onto a list at least as long as its own, so it
+/// moves at most log2 n times however the joins nest, and a tree of joins of n items costs
+/// O(n log n): the facts and narrowings of a chain of `&&` or `||`, nested to the left, to
+/// the right or both ways (COMPLEXITY.md IS-chain-quad).
+fn joined<T>(mut a: VecDeque<T>, mut b: VecDeque<T>) -> VecDeque<T> {
+    if a.len() >= b.len() {
+        a.append(&mut b);
+        return a;
+    }
+    while let Some(x) = a.pop_back() {
+        b.push_front(x);
+    }
+    b
+}
 
 /// Where an expression's type comes from, for a derivation (DESIGN.md "Diagnostics").
 #[derive(Clone)]
