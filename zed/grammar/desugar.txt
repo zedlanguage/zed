@@ -74,7 +74,7 @@ RangeTail     : the upper end of a range, exclusive, inclusive or absent
 Additive      : the primitives add and sub; `++` on a string and on rank keys is the offset concatenation, the right operand reindexed by rank + count(⟦a⟧) unioned with ⟦a⟧; on Seq (L5) it is the union of the operands, which keep their origin keys, the right operand ordered after the left (sec:order), and operands whose keys overlap are a collision
 Multiplicative: the primitives mul, div, intDiv and mod
 Prefix        : the primitives neg and not
-AnnotExpr     : ⟦Postfix⟧ with the annotation recorded on the expression; only `@fpsafe` (sec:failure) and `@approx(relErr: e)` or `@approx(absErr: e)` (sec:linalg) take this position, and any other annotation here is rejected after parsing; the first alternative reads a parenthesized group right after the name as the annotation's arguments when a postfix expression follows it, so `@fpsafe (x - y);` takes the second
+AnnotExpr     : ⟦Postfix⟧ or ⟦Prefix⟧ with the annotation recorded on the expression; only `@fpsafe` (sec:failure) and `@approx(relErr: e)` or `@approx(absErr: e)` (sec:linalg) take this position, and any other annotation here is rejected after parsing; the first alternative reads a parenthesized group right after the name as the annotation's arguments when a postfix expression follows it, so `@fpsafe (x - y);` takes the second; the second takes a prefix expression, so `@fpsafe -f64(#inf)` covers the negation, `@fpsafe -x - y` covers `-x` and `@fpsafe x ** 2` covers the power
 Power         : the primitive pow, right-associative
 Postfix       : the suffixes applied left to right to ⟦Primary⟧
 Suffix        : the suffix of its alternative, over its receiver x

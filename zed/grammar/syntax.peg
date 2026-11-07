@@ -139,8 +139,8 @@ Multiplicative = Multiplicative ('*' | '/' | 'div' | 'mod') Prefix              
 Prefix        = ('-' | '!') Prefix                                                 L1
               | AnnotExpr                                                          L10
               | ~Power                                                             L1
-AnnotExpr     = Annot Postfix                                                      L10
-              | ANNOT Postfix                                                      L10
+AnnotExpr     = ANNOT '(' nest(Args?) ')' Postfix                                  L10
+              | ANNOT Prefix                                                       L10
 Power         = Postfix '**' Prefix                                                L1
               | ~Postfix                                                           L1
 Postfix       = Postfix Suffix                                                     L1
