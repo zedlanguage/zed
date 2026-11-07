@@ -531,7 +531,7 @@ pub struct Scope {
     reduced: Reduced,
     /// The scope as the last projection and the last enumeration found it.
     seen: Seen,
-    /// Whether a move of a hub leaves its spokes' leaves to be settled when read
+    /// Whether a move of a hub leaves its stars' leaves to be settled when read
     /// ([`Scope::lazy`]).
     lazy: bool,
 }
@@ -818,48 +818,43 @@ impl Scope {
         s
     }
 
-    /// This scope, made lazy: a test that moves a hub, a name that many spokes mention
-    /// ([`Conjuncts::spoke`]), leaves its spokes' leaves as they were, and a read settles a
-    /// leaf it needs ([`Scope::settled`]), so that `k` tests on a hub of `k` spokes cost `k`
-    /// narrowings and not `k²` projections. Every pass that reads names settles them first:
-    /// a test settles its own names, a join the leaves its two sides may differ at, and a
-    /// `bind` of a hub its leaves; [`Scope::get`], [`Scope::statics`] and
-    /// [`Scope::contains`] read names as held, so a caller of these settles first
-    /// ([`Scope::eager_on`]).
+    /// This scope, made lazy: a test that moves a hub of a star ([`Conjuncts::star`]) leaves
+    /// the star's leaf as it was, and a read settles a leaf it needs ([`Scope::settled`]), so
+    /// that `k` tests on a hub of `k` stars cost `k` narrowings and not `k²` projections.
+    /// Every pass that reads names settles them first: a test settles its own names, a join
+    /// the leaves its two sides may differ at, and a `bind` of a hub its leaves;
+    /// [`Scope::get`], [`Scope::statics`] and [`Scope::contains`] read names as held, so a
+    /// caller of these settles first ([`Scope::eager_on`]).
     ///
     /// The invariant: a lazy scope differs from the eager scope of the same tests only at
-    /// stale leaves, the leaves whose spoke's part was last projected at other intervals or
-    /// classes of its two names than they now have, and there settling the leaf, projecting
-    /// its spoke and reducing as [`Scope::reduce`] does, gives the eager product. A spoke is
-    /// its leaf's only conjunct and no written constraint holds of the leaf, so the leaf's
-    /// product reaches no other name but through the spoke; its projection onto the hub is a
-    /// bound through the leaf's greatest or least member, which a cut of the leaf by the
-    /// hub's moves keeps, so the hub does not move; and the cut is a half-line that holds
-    /// that member, so it empties no leaf, and the scope is bottom exactly when the eager
-    /// one is.
+    /// stale leaves, the leaves whose star was last projected at other intervals or classes
+    /// of its names than they now have, and there settling the leaf, projecting its star and
+    /// reducing as [`Scope::reduce`] does, gives the eager product. No written constraint
+    /// holds of a leaf, so its product reaches no other name but through its star, whose
+    /// projection onto its hubs is a bound on each alone, through the leaf's greatest or least
+    /// member, which a cut of the leaf by the hubs' moves keeps, so no hub moves; and the cut
+    /// is a half-line that holds that member, so it empties no leaf, and the scope is bottom
+    /// exactly when the eager one is. A star that goes or changes makes its leaf's conjuncts
+    /// due at the next projection, which settles the leaf.
     pub fn lazy(mut self) -> Scope {
         self.lazy = true;
         self
     }
 
-    /// The spoke parts of the leaves among `names` that are stale ([`Scope::lazy`]), as the
+    /// The stars of the leaves among `names` that are stale ([`Scope::lazy`]), as the
     /// blocks to project.
     fn stale<'a>(&self, names: impl IntoIterator<Item = &'a Arc<str>>) -> Vec<Block> {
         let mut seen: BTreeSet<BlockId> = BTreeSet::new();
         let mut out = Vec::new();
         for x in names {
-            let Some(b) = self
-                .relation
-                .spoke(x)
-                .and_then(|g| self.relation.blocks().of(g))
-            else {
+            let Some(b) = self.relation.star(x) else {
                 continue;
             };
             if !seen.insert(b) {
                 continue;
             }
             let block = Block::of(&self.relation, b);
-            debug_assert_eq!(block.parts.len(), 1, "a spoke is a block of its own");
+            debug_assert_eq!(block.parts.len(), 1, "a star is one part");
             if block
                 .parts
                 .iter()
@@ -871,7 +866,7 @@ impl Scope {
         out
     }
 
-    /// Settles the stale leaves among `names` ([`Scope::lazy`]): projects each one's spoke,
+    /// Settles the stale leaves among `names` ([`Scope::lazy`]): projects each one's star,
     /// then reduces, which costs the leaves settled.
     pub fn settle<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
         if !self.lazy || self.bottom {
@@ -901,7 +896,7 @@ impl Scope {
 
     /// Settles the names `term` reads and makes the scope eager from here, for a pass that
     /// reads it through [`Scope::get`], as [`forward`] does: a later test that moves a hub
-    /// then projects its spokes again, and a leaf no read settles is never read.
+    /// then projects its stars again, and a leaf no read settles is never read.
     pub fn eager_on(&mut self, term: &Term) {
         let names = stage::free(term);
         self.settle(&names);
@@ -950,15 +945,30 @@ impl Scope {
         if self.bottom {
             return saved;
         }
-        // The spokes at `x` go with it, and their leaves keep what they have.
+        // The stars that forgetting `x` takes or changes, and their leaves keep what they
+        // have: those at `x` as a hub, and those whose hub it leaves with too few conjuncts
+        // or with one no star holds. No reduction follows to settle them, so they are settled
+        // first, against the relation they were stars of.
+        let mut after = self.relation.clone();
+        after.forget(x);
         let leaves: Vec<Arc<str>> = self
             .relation
-            .hanging(x)
-            .flat_map(|g| conjuncts::names(g))
+            .stars()
+            .diff(after.stars())
+            .filter_map(|d| match d {
+                DiffItem::Remove(n, _) | DiffItem::Update { old: (n, _), .. } => Some(n.clone()),
+                DiffItem::Add(..) => None,
+            })
             .filter(|n| n != x)
             .collect();
-        self.settle(&leaves);
-        self.relation.forget(x);
+        if leaves.is_empty() {
+            self.relation = after;
+        } else {
+            // Settling reads the bounds of the names, which may change the stars: the
+            // relation is forgotten again from where it then is.
+            self.settle(&leaves);
+            self.relation.forget(x);
+        }
         let gone: Vec<String> = self.written_by.of(x).cloned().collect();
         for k in &gone {
             self.unwrite(k);
@@ -1136,9 +1146,10 @@ impl Scope {
     /// scope costs what the cases changed, not the scope.
     ///
     /// A lazy scope ([`Scope::lazy`]) first settles, on each side, the leaves the two sides may
-    /// differ at: each name they hold differently, each leaf of a spoke at such a name, and
+    /// differ at: each name they hold differently or a written constraint one holds alone
+    /// mentions, each leaf of a star at such a name, and
     /// each name of a conjunct one side holds alone. A stale leaf they do not differ at has one
-    /// product, hub, spoke and settled product on both sides, so it stays stale in the join,
+    /// product, hubs, star and settled product on both sides, so it stays stale in the join,
     /// where settling it gives that product. This costs the leaves at the names that differ,
     /// which the names of an eager join would differ at as well.
     pub fn join(&self, other: &Scope) -> Scope {
@@ -1161,6 +1172,17 @@ impl Scope {
         for d in self.relation.set().diff(other.relation.set()) {
             let (imbl::ordset::DiffItem::Add(g) | imbl::ordset::DiffItem::Remove(g)) = d;
             differ.extend(conjuncts::names(g));
+        }
+        // A written constraint one side holds alone pins its names there and not in the join,
+        // which may make one of them a star's leaf there ([`Conjuncts::pin`]).
+        for d in self.written.diff(&other.written) {
+            let (DiffItem::Add(_, (_, free))
+            | DiffItem::Remove(_, (_, free))
+            | DiffItem::Update {
+                old: (_, (_, free)),
+                ..
+            }) = d;
+            differ.extend(free.iter().cloned());
         }
         let mut leaves = differ.clone();
         for side in [&self.relation, &other.relation] {
@@ -1217,7 +1239,11 @@ impl Scope {
         // do not share: the rest of the two hulls is one, which their join keeps as it is and
         // the shared conjuncts already state.
         let is_eq = |g: &Formula| matches!(g, Formula::Con(c) if c.rel == Rel::Eq);
-        let (eqs, near) = conjuncts::reach(&[&self.relation, &other.relation], seeds, is_eq);
+        let (eqs, near) = conjuncts::reach(
+            &[&self.relation, &other.relation],
+            seeds.iter().cloned(),
+            is_eq,
+        );
         let hull = self.hull(&eqs, &near).join(&other.hull(&eqs, &near));
         let reduce = |c: &Con| hull.reduce(c);
         let kept: Vec<Formula> = hull
@@ -1236,6 +1262,12 @@ impl Scope {
         // are grouped.
         let (a, b) = (self.stated(&mine, &theirs), other.stated(&theirs, &mine));
         let mut relation = self.relation.clone();
+        // The joined names as the relation reads them for its stars ([`Scope::sync_bounds`]):
+        // only names among the seeds differ from `self`'s.
+        for n in &seeds {
+            let (below, above) = sides(&names, n);
+            relation.bound(n, below, above);
+        }
         let mut added = vec![Formula::either(&a, &b, &reduce)];
         added.extend(kept);
         relation.swap(&mine, Formula::and(added));
@@ -1606,9 +1638,10 @@ impl Scope {
         }));
         let t = substitute(test, &statics);
         let (exact, inputs, free) = self.atom_names(&t, written, outcome, false, prem);
-        // Whether the relation holds the test exactly as a difference of its two names,
-        // `x - y + c >= 0`, so that the written constraint adds nothing.
-        let mut difference = false;
+        // Whether the relation holds the test exactly as a bound on a sum of its names, each
+        // of coefficient one or minus one, `x - y + c >= 0` or `x - n - m + c >= 0`, so that
+        // the written constraint adds nothing.
+        let mut unit = false;
         // The linear relation, when the test needs no auxiliary variable and says more than
         // the intervals: a test of one name whose preimage is exact is the interval itself.
         if !inputs.is_empty()
@@ -1623,19 +1656,20 @@ impl Scope {
             } else {
                 Formula::negate(r.body)
             };
-            difference = !self.exact && conjuncts::difference(&body).is_some();
+            unit = !self.exact && conjuncts::unit_sum(&body);
             self.relation.and(body);
         }
         // The written constraint, unless it is a test of one integer name whose preimage is
         // exact: the name's interval then holds exactly the values that meet it, and
-        // enumeration would remove none of them; or a test the relation holds as a
-        // difference of its two integer names: enumerating it, with one name of one value
-        // `v`, keeps the other's members on one side of `v` and a bound, which projecting
-        // the difference gives as well. So a lazy scope ([`Scope::lazy`]) has the test as a
-        // spoke, and a move of one name reads no text of the tests that relate it to others.
+        // enumeration would remove none of them; or a test the relation holds as a bound on a
+        // sum of its integer names of coefficients one and minus one: enumerating it, with
+        // every name but one of one value each, keeps that name's members on one side of a
+        // bound, which projecting the sum gives as well. So a lazy scope ([`Scope::lazy`])
+        // has the test as a star's conjunct, and a move of one name reads no text of the
+        // tests that relate it to others.
         // Under `@exact`, where written constraints that share a name are enumerated
         // together, it is kept.
-        if !(exact && inputs.len() == 1 && free.len() == 1) && !difference {
+        if !(exact && inputs.len() == 1 && free.len() == 1) && !unit {
             let kept = if outcome {
                 test.clone()
             } else {
@@ -1797,6 +1831,20 @@ impl Scope {
                 break;
             }
             let before = self.names.clone();
+            // The names whose bounds may have changed since the last projection, so that the
+            // stars it finds are those of the bounds as they are.
+            let moved: Vec<Arc<str>> = match &self.seen.projection {
+                Some((names, _)) => names
+                    .diff(&self.names)
+                    .map(|d| match d {
+                        DiffItem::Add(n, _)
+                        | DiffItem::Remove(n, _)
+                        | DiffItem::Update { new: (n, _), .. } => n.clone(),
+                    })
+                    .collect(),
+                None => self.names.keys().cloned().collect(),
+            };
+            self.sync_bounds(&moved);
             // The names and conjuncts as projected are those before the projection, so that a
             // projection that moves a bound is followed by another, until none moves one.
             if let Some(due) = self.due(whole, force) {
@@ -1866,6 +1914,14 @@ impl Scope {
                     .filter_map(|g| blocks.of(g)),
             );
         }
+        // A leaf whose star went or changed may be stale ([`Scope::lazy`]) where nothing else
+        // makes it due: its conjuncts' blocks now are.
+        for d in old.stars().diff(self.relation.stars()) {
+            if let DiffItem::Remove(x, _) | DiffItem::Update { new: (x, _), .. } = d {
+                any = true;
+                out.extend(self.relation.mentioning(x).filter_map(|g| blocks.of(g)));
+            }
+        }
         let mut gone: Vec<Arc<Formula>> = Vec::new();
         for d in old.set().diff(self.relation.set()) {
             any = true;
@@ -1919,11 +1975,41 @@ impl Scope {
             return;
         }
         if whole {
-            let blocks = self.relation.blocks();
-            let mut trees: BTreeMap<BlockId, Vec<&Formula>> = BTreeMap::new();
+            // The conjuncts linked by shared atoms, found by a union-find over the atoms, not
+            // by the trees of blocks: a star is a tree of its own ([`Conjuncts::star`]), and
+            // this projection is the one the blocks' is checked against.
+            let mut index: BTreeMap<Atom, usize> = BTreeMap::new();
+            let mut parent: Vec<usize> = Vec::new();
+            fn root(parent: &mut [usize], mut x: usize) -> usize {
+                while parent[x] != x {
+                    parent[x] = parent[parent[x]];
+                    x = parent[x];
+                }
+                x
+            }
+            let mut first: Vec<Option<usize>> = Vec::new();
             for g in self.relation.set() {
-                if let Some(b) = blocks.of(g) {
-                    trees.entry(blocks.tree(b)).or_default().push(&**g);
+                let mut atoms = g.atoms();
+                atoms.extend(conjuncts::names(g).into_iter().map(Atom::Sym));
+                let mut at: Option<usize> = None;
+                for a in atoms {
+                    let next = parent.len();
+                    let i = *index.entry(a).or_insert(next);
+                    if i == next {
+                        parent.push(i);
+                    }
+                    if let Some(j) = at {
+                        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+                        parent[ri] = rj;
+                    }
+                    at = Some(i);
+                }
+                first.push(at);
+            }
+            let mut trees: BTreeMap<usize, Vec<&Formula>> = BTreeMap::new();
+            for (g, at) in self.relation.set().iter().zip(first) {
+                if let Some(i) = at {
+                    trees.entry(root(&mut parent, i)).or_default().push(&**g);
                 }
             }
             let parts: Vec<(PartKey, Formula)> = trees
@@ -1975,7 +2061,10 @@ impl Scope {
                     self.relation = relation;
                     return;
                 }
-                echo |= from.contains(n);
+                // A star's projection onto its hubs is exact, a bound on each alone, so it
+                // passes nothing back and forth ([`Conjuncts::star`]): its move of the name
+                // that moved it is no echo.
+                echo |= from.contains(n) && !blocks.is_apart(b);
                 for g in relation.moved(n, self.lazy) {
                     if let Some(c) = blocks.of(g)
                         && c != b
@@ -2084,6 +2173,16 @@ impl Scope {
         self.project_part(part);
         let at = self.snapshot(names);
         self.projected.insert(key.clone(), at);
+    }
+
+    /// Tells the relation whether each of `names` is bounded below and above, as its product
+    /// is now: a leaf is a star's only while unbounded on the side away from a conjunct of
+    /// two hubs or more ([`Conjuncts::star`]).
+    fn sync_bounds<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
+        for n in names {
+            let (below, above) = sides(&self.names, n);
+            self.relation.bound(n, below, above);
+        }
     }
 
     /// The interval and class of each of `names`.
@@ -3222,5 +3321,15 @@ fn walk(t: &Term, scope: &mut Scope, out: &mut Vec<Arm>, count: &mut u32) {
             }
         }
         _ => {}
+    }
+}
+
+/// Whether `n` is bounded below and above in `names`: a name not there is unbounded, and an
+/// empty product is bounded.
+fn sides(names: &imbl::OrdMap<Arc<str>, Product>, n: &str) -> (bool, bool) {
+    match names.get(n).map(|p| p.ints().bounds()) {
+        Some(Some((lo, hi))) => (*lo != End::NegInf, *hi != End::PosInf),
+        Some(None) => (true, true),
+        None => (false, false),
     }
 }

@@ -10,7 +10,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::{Conjuncts, names};
-use zedc::store::presburger::{Atom, Con, Formula, Lin};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc::store::product::Scope;
 
 use super::ints;
@@ -135,6 +135,30 @@ fn conjunct(r: &mut Rng) -> Formula {
     }
 }
 
+/// A random conjunct as [`conjunct`] gives, or, four times in five, one of the shape of a star's
+/// ([`stars_by_definition`]): one of `c` to `f`, each with a sign of its own, against one or
+/// both of the hubs `a` and `b`, the sign now and then the other one, so that stars of two
+/// hubs come and go.
+fn star_conjunct(r: &mut Rng) -> Formula {
+    if r.below(5) == 0 {
+        return conjunct(r);
+    }
+    let i = r.below(4);
+    let flip = |r: &mut Rng| if r.below(8) == 0 { -1 } else { 1 };
+    let up = if i.is_multiple_of(2) { 1 } else { -1 };
+    let leaf = Atom::Sym(["c", "d", "e", "f"][i].into());
+    let mut lin = Lin::constant(r.int(-3, 3)).plus(&Lin::atom(leaf).times(up * flip(r)));
+    let hubs = match r.below(3) {
+        0 => &["a"][..],
+        1 => &["b"][..],
+        _ => &["a", "b"][..],
+    };
+    for h in hubs {
+        lin = lin.plus(&Lin::atom(Atom::Sym((*h).into())).times(-up * flip(r)));
+    }
+    Formula::Con(Con::ge(&lin, &Lin::constant(0)))
+}
+
 /// The blocks of `c`, each as the set of its conjuncts.
 pub(super) fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
     let blocks = c.blocks();
@@ -150,11 +174,84 @@ pub(super) fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
     by.into_values().collect()
 }
 
-/// The blocks of `c` by their definition, by brute force: conjuncts that share an atom other
-/// than a name are one group, and two groups are in one block when no single name separates
-/// them in the graph of groups and the names they mention as atoms of their own.
+/// The stars of `c` by their definition ([`Conjuncts::star`]), by brute force, each leaf with
+/// its conjuncts: a name no written constraint holds of, each conjunct at which is a
+/// constraint `>= 0` of names alone with another name, its coefficient of one sign at all of
+/// them and each hub's of one sign, each hub of more conjuncts than it, and unbounded on the
+/// side away from each conjunct of two hubs or more; with one hub, or with every hub's
+/// conjuncts each the conjunct of such a leaf other than the hub or of the hub alone.
+pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<Arc<Formula>>> {
+    let at = |x: &Arc<str>| -> Vec<Arc<Formula>> {
+        c.set()
+            .iter()
+            .filter(|g| names(g).contains(x))
+            .cloned()
+            .collect()
+    };
+    // The leaves of that shape, each with its hubs.
+    let mut shaped: BTreeMap<Arc<str>, BTreeSet<Arc<str>>> = BTreeMap::new();
+    'name: for x in c.set().iter().flat_map(|g| names(g)) {
+        if shaped.contains_key(&x) || c.pinned(&x) {
+            continue;
+        }
+        let gs = at(&x);
+        let mut signs: BTreeMap<Arc<str>, bool> = BTreeMap::new();
+        for g in &gs {
+            let Formula::Con(k) = &**g else {
+                continue 'name;
+            };
+            if k.rel != Rel::Ge || k.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
+                continue 'name;
+            }
+            let Some(a) = k.lin.terms.get(&Atom::Sym(x.clone())) else {
+                continue 'name;
+            };
+            if k.lin.terms.len() < 2 {
+                continue 'name;
+            }
+            if k.lin.terms.len() > 2 && c.bounded(&x, a.is_positive()) {
+                continue 'name;
+            }
+            for (t, b) in &k.lin.terms {
+                let Atom::Sym(h) = t else { unreachable!() };
+                if *signs.entry(h.clone()).or_insert(b.is_positive()) != b.is_positive() {
+                    continue 'name;
+                }
+            }
+        }
+        signs.remove(&x);
+        if signs.keys().any(|h| at(h).len() <= gs.len()) {
+            continue;
+        }
+        shaped.insert(x, signs.into_keys().collect());
+    }
+    let owner = |g: &Arc<Formula>| shaped.keys().find(|x| names(g).contains(*x));
+    let alone = |g: &Arc<Formula>, h: &Arc<str>| g.atoms().into_iter().eq([Atom::Sym(h.clone())]);
+    let clean = |h: &Arc<str>| {
+        at(h)
+            .iter()
+            .all(|g| owner(g).is_some_and(|x| x != h) || alone(g, h))
+    };
+    shaped
+        .iter()
+        .filter(|(_, hubs)| hubs.len() == 1 || hubs.iter().all(&clean))
+        .map(|(x, _)| (x.clone(), at(x).into_iter().collect()))
+        .collect()
+}
+
+/// The blocks of `c` by their definition, by brute force: each star is a block
+/// ([`stars_by_definition`]); of the other conjuncts, those that share an atom other than a
+/// name are one group, and two groups are in one block when no single name separates them in
+/// the graph of groups and the names they mention as atoms of their own.
 pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
-    let gs: Vec<Arc<Formula>> = c.set().iter().cloned().collect();
+    let stars = stars_by_definition(c);
+    let starred: BTreeSet<&Arc<Formula>> = stars.values().flatten().collect();
+    let gs: Vec<Arc<Formula>> = c
+        .set()
+        .iter()
+        .filter(|g| !starred.contains(g))
+        .cloned()
+        .collect();
     let n = gs.len();
     let mut group: Vec<usize> = (0..n).collect();
     fn find(g: &mut [usize], i: usize) -> usize {
@@ -229,7 +326,7 @@ pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Fo
             }
         }
     }
-    blocks.into_iter().collect()
+    blocks.into_iter().chain(stars.into_values()).collect()
 }
 
 #[test]
@@ -238,11 +335,14 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
     // How many states had a block of several conjuncts beside another block, so that the
     // test is known to reach blocks that are neither one conjunct nor the whole relation.
     let mut mixed = 0;
+    // How many states had a star of two hubs or more, and a star of two conjuncts or more.
+    let mut starred = 0;
+    let mut wide = 0;
     for case in 0..200 {
         let mut c = Conjuncts::default();
         let mut log: Vec<String> = Vec::new();
         for _ in 0..24 {
-            match r.below(8) {
+            match r.below(10) {
                 0 if !c.is_top() => {
                     let gs: Vec<Arc<Formula>> = c.set().iter().cloned().collect();
                     let g = r.pick(&gs);
@@ -266,13 +366,26 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
                         Formula::Con(k) if r.below(2) == 0 => {
                             Formula::Con(Con::ge(&k.lin, &Lin::constant(r.int(-2, 2))))
                         }
-                        _ => conjunct(&mut r),
+                        _ => star_conjunct(&mut r),
                     };
                     log.push(format!("swap {gone:?} for {g}"));
                     c.swap(&gone, g);
                 }
+                // As a scope does: a written constraint holds of a name or no longer does, and a
+                // name is bounded or unbounded on a side, which a star's leaf reads.
+                8 => {
+                    let (x, on): (Arc<str>, bool) = (r.pick(&NAMES).into(), r.below(2) == 0);
+                    log.push(format!("pin {x} {on}"));
+                    c.pin(&x, on);
+                }
+                9 => {
+                    let x: Arc<str> = r.pick(&NAMES).into();
+                    let (below, above) = (r.below(2) == 0, r.below(2) == 0);
+                    log.push(format!("bound {x} {below} {above}"));
+                    c.bound(&x, below, above);
+                }
                 _ => {
-                    let g = conjunct(&mut r);
+                    let g = star_conjunct(&mut r);
                     log.push(format!("and {g}"));
                     c.and(g);
                 }
@@ -289,6 +402,29 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
             }
             let got = partition(&c);
             mixed += usize::from(got.len() > 1 && got.iter().any(|b| b.len() > 1));
+            let stars = stars_by_definition(&c);
+            starred += usize::from(stars.values().any(|gs| {
+                gs.iter()
+                    .flat_map(|g| names(g))
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    > 2
+            }));
+            wide += usize::from(stars.values().any(|gs| gs.len() > 1));
+            for (x, gs) in &stars {
+                let b = c
+                    .star(x)
+                    .unwrap_or_else(|| panic!("{x} is a star's leaf after {log:#?}"));
+                let got: BTreeSet<Arc<Formula>> = c.blocks().members(b).cloned().collect();
+                assert_eq!(&got, gs, "case {case}: the star of {x} after {log:#?}");
+            }
+            for x in c.names() {
+                assert_eq!(
+                    c.star(x).is_some(),
+                    stars.contains_key(x),
+                    "case {case}: {x} after {log:#?}"
+                );
+            }
             assert_eq!(
                 got,
                 partition_by_definition(&c),
@@ -296,6 +432,11 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
             );
             // The same conjuncts added afresh, in the reverse order, give the same blocks.
             let mut fresh = Conjuncts::default();
+            for x in NAMES {
+                let x: Arc<str> = x.into();
+                fresh.pin(&x, c.pinned(&x));
+                fresh.bound(&x, c.bounded(&x, false), c.bounded(&x, true));
+            }
             for g in c.set().iter().rev() {
                 fresh.and(Formula::clone(g));
             }
@@ -307,6 +448,8 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
         }
     }
     assert!(mixed > 500, "{mixed} states with mixed blocks");
+    assert!(starred > 75, "{starred} states with a star of two hubs");
+    assert!(wide > 40, "{wide} states with a star of two conjuncts");
 }
 
 /// As a join of two arms does: many conjuncts go at once, often most of a block, and the
@@ -651,4 +794,53 @@ fn a_ladder_grown_by_k_if_statements_is_quadratic() {
             j
         });
     });
+}
+
+/// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
+/// `a + f <= 1` is the star of `f` while `a` has more conjuncts than `f`, and a swap of the
+/// other conjunct at `a` for `f >= a` leaves each of them two, so that neither is a leaf.
+/// Two hubs need both clean: with `b` beside `a`, `a + b + f <= 1` is no star while `a` has
+/// a conjunct no star holds.
+#[test]
+fn a_star_goes_when_one_step_moves_its_counts() {
+    let s = |x: &str| Lin::atom(Atom::Sym(x.into()));
+    let ge = |l: Lin| Formula::Con(Con::ge(&l, &Lin::constant(0)));
+    let product = |x: &str, y: &str| Lin::atom(Atom::product(&x.into(), &y.into()));
+    let same = |c: &Conjuncts| {
+        let stars = stars_by_definition(c);
+        for x in ["a", "b", "d", "f"] {
+            assert_eq!(c.star(x).is_some(), stars.contains_key(x), "{x} in {c}");
+        }
+        assert_eq!(partition(c), partition_by_definition(c), "{c}");
+    };
+    let mut c = Conjuncts::default();
+    c.and(Formula::or(vec![
+        ge(product("a", "b").times(-2).plus(&Lin::constant(-2))),
+        ge(s("a").plus(&product("b", "d"))),
+    ]));
+    c.and(ge(s("a").plus(&s("f")).times(-1).plus(&Lin::constant(1))));
+    assert!(c.star("f").is_some(), "{c}");
+    same(&c);
+    let gs: Vec<Arc<Formula>> = c
+        .set()
+        .iter()
+        .filter(|g| matches!(&***g, Formula::Or(_)))
+        .cloned()
+        .collect();
+    c.swap(&gs, ge(s("f").plus(&s("a").times(-1))));
+    assert!(c.star("f").is_none() && c.star("a").is_none(), "{c}");
+    same(&c);
+
+    let mut c = Conjuncts::default();
+    c.and(Formula::or(vec![
+        ge(product("a", "b").times(-2).plus(&Lin::constant(-2))),
+        ge(s("a").plus(&product("b", "d"))),
+    ]));
+    c.and(ge(s("a")
+        .plus(&s("b"))
+        .plus(&s("f"))
+        .times(-1)
+        .plus(&Lin::constant(1))));
+    assert!(c.star("f").is_none(), "{c}");
+    same(&c);
 }

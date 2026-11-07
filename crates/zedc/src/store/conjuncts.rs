@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
+use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 
 use imbl::{OrdMap, OrdSet};
@@ -63,6 +64,28 @@ impl<T: Ord + Clone> Uses<T> {
     }
 }
 
+impl Uses<(usize, Arc<str>)> {
+    /// The names kept at `name` with a count in `counts`, in O(log n) and their number.
+    fn within(&self, name: &str, counts: impl RangeBounds<usize>) -> Vec<Arc<str>> {
+        let Some(s) = self.0.get(name) else {
+            return Vec::new();
+        };
+        // The least name, so that `(c, least)` comes before every entry of count `c`.
+        let least: Arc<str> = Arc::from("");
+        let lo = match counts.start_bound() {
+            Bound::Included(&c) => Bound::Included((c, least.clone())),
+            Bound::Excluded(&c) => Bound::Included((c + 1, least.clone())),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let hi = match counts.end_bound() {
+            Bound::Included(&c) => Bound::Excluded((c + 1, least)),
+            Bound::Excluded(&c) => Bound::Excluded((c, least)),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        s.range((lo, hi)).map(|(_, n)| n.clone()).collect()
+    }
+}
+
 /// The key of a constraint for the rule that keeps the tighter of two: its term and relation.
 type Tight = (BTreeMap<Atom, Int>, Rel);
 
@@ -78,45 +101,120 @@ pub struct Conjuncts {
     tight: OrdMap<Tight, Arc<Formula>>,
     /// The conjuncts that mention each name, alone or in a product.
     users: Uses<Arc<Formula>>,
-    /// The blocks of the conjuncts.
+    /// The blocks of the conjuncts: the forest of the conjuncts of no star, and each star's
+    /// conjuncts as a block of its own outside it ([`Blocks::detach`]).
     blocks: Blocks,
-    /// The spokes ([`Conjuncts::spoke`]), each by its leaf.
-    leaves: OrdMap<Arc<str>, Arc<Formula>>,
-    /// The spokes at each hub.
+    /// The stars and what keeps them current, apart so that a conjunction is small to move.
+    index: Box<StarIndex>,
+}
+
+/// The stars of a conjunction ([`Conjuncts::star`]) and the indexes that keep them current.
+#[derive(Clone, Debug, Default)]
+struct StarIndex {
+    /// The names of the shape of a leaf ([`Conjuncts::star`]), each with its shape.
+    shapes: OrdMap<Arc<str>, Arc<Shape>>,
+    /// The other names some conjunct mentions, each with why it is not of that shape.
+    whys: OrdMap<Arc<str>, Arc<Why>>,
+    /// Of the names of `whys` with a `count`, those of each witness, by their own counts.
+    witnessed: Uses<(usize, Arc<str>)>,
+    /// The names of `shapes` of each hub, by their own counts.
+    shaped: Uses<(usize, Arc<str>)>,
+    /// The names of `shapes` of two hubs or more, at each hub.
+    multi: Uses<Arc<str>>,
+    /// The conjuncts at each name that a name of `shapes` other than it holds.
+    owned: Uses<Arc<Formula>>,
+    /// The conjuncts at each name of that name alone ([`alone`]).
+    solo: Uses<Arc<Formula>>,
+    /// The names every conjunct at which is in `owned` or `solo`, as last found.
+    clean: OrdSet<Arc<str>>,
+    /// The stars ([`Conjuncts::star`]): each leaf's block.
+    stars: OrdMap<Arc<str>, BlockId>,
+    /// The conjuncts of the stars at each hub.
     hangs: Uses<Arc<Formula>>,
-    /// The conjuncts that mention each name, but the spokes at it as a hub: those a move of
-    /// the name makes due in a lazy scope ([`Conjuncts::moving`]).
+    /// The conjuncts that mention each name, but those of the stars at it as a hub: those a
+    /// move of the name makes due in a lazy scope ([`Conjuncts::moving`]).
     moving: Uses<Arc<Formula>>,
     /// The names a written constraint holds of, which are no leaves (`Scope::write`).
     pinned: OrdSet<Arc<str>>,
+    /// The sides each name is bounded on, the upper side `true`, as the scope last stated
+    /// them ([`Conjuncts::bound`]).
+    bounded: OrdSet<(Arc<str>, bool)>,
 }
 
-/// The two names of `g` when it is `x - y + c >= 0` or `y - x + c >= 0`, each name of
-/// coefficient one: a difference of two names with a bound. The negation of one,
+/// The shape of a leaf ([`Conjuncts::star`]).
+#[derive(Clone, Debug, PartialEq)]
+struct Shape {
+    /// Its conjuncts.
+    gs: Vec<Arc<Formula>>,
+    /// Its hubs: the other names its conjuncts mention.
+    hubs: Vec<Arc<str>>,
+    /// The side, the upper one `true`, that some conjunct of two hubs or more needs unbounded.
+    far: Option<bool>,
+    /// The number of its conjuncts.
+    count: usize,
+}
+
+/// Why a name with conjuncts is not of the shape of a leaf: what a change must touch to make
+/// it one, so that no other change looks at it again.
+#[derive(Clone, Debug, PartialEq)]
+struct Why {
+    /// Conjuncts at the name that show it: only a removal of one of them can undo it.
+    by: Vec<Arc<Formula>>,
+    /// A name it shares the conjunct `by` with, of no more conjuncts than it: a witness that it
+    /// is no leaf, which a rise of that name's count past its own undoes.
+    count: Option<Arc<str>>,
+    /// The side, the upper one `true`, whose bound a conjunct of two hubs or more needs
+    /// unbounded.
+    bound: Option<bool>,
+    /// The number of its conjuncts.
+    size: usize,
+}
+
+/// The work a change to the conjuncts leaves for [`Conjuncts::flush`].
+#[derive(Default)]
+struct Pending {
+    /// The names whose shape may have changed.
+    eval: BTreeSet<Arc<str>>,
+    /// The names whose conjuncts or owned conjuncts changed: whether they are clean may have.
+    touched: BTreeSet<Arc<str>>,
+    /// The conjuncts added, not yet in a block, each with the one it takes the place of.
+    placed: Vec<(Arc<Formula>, Option<Arc<Formula>>)>,
+}
+
+/// Whether `g` is `±x ± y ± … + c >= 0`, a bound on a sum of two names or more, each of
+/// coefficient one or minus one, such as a difference of two names. The negation of one,
 /// `!(x - y + c >= 0)`, is one as well, `y - x - c - 1 >= 0`.
-pub fn difference(g: &Formula) -> Option<[Arc<str>; 2]> {
+pub fn unit_sum(g: &Formula) -> bool {
     let c = match g {
         Formula::Con(c) => c,
         Formula::Not(n) => match &**n {
             Formula::Con(c) => c,
-            _ => return None,
+            _ => return false,
         },
-        _ => return None,
-    };
-    if c.rel != Rel::Ge || c.lin.terms.len() != 2 {
-        return None;
-    }
-    let mut it = c.lin.terms.iter();
-    let (Some((Atom::Sym(a), p)), Some((Atom::Sym(b), q))) = (it.next(), it.next()) else {
-        return None;
+        _ => return false,
     };
     let (one, minus) = (Int::ONE, Int::from(-1i64));
-    ((*p == one && *q == minus) || (*p == minus && *q == one)).then(|| [a.clone(), b.clone()])
+    c.rel == Rel::Ge
+        && c.lin.terms.len() >= 2
+        && c.lin
+            .terms
+            .iter()
+            .all(|(a, k)| matches!(a, Atom::Sym(_)) && (*k == one || *k == minus))
 }
 
 impl PartialEq for Conjuncts {
     fn eq(&self, other: &Conjuncts) -> bool {
         self.set == other.set
+    }
+}
+
+/// The name `g` holds of alone, when that name is its one atom: a bound or a class of the name
+/// that relates it to no other name or atom.
+fn alone(g: &Formula) -> Option<Arc<str>> {
+    let atoms = g.atoms();
+    match atoms.first() {
+        Some(Atom::Sym(n)) if atoms.len() == 1 => Some(n.clone()),
+        _ => None,
     }
 }
 
@@ -172,106 +270,394 @@ impl Conjuncts {
         &self.blocks
     }
 
-    /// The spoke of which `x` is the leaf, if any. A spoke is a conjunct `x - y + c >= 0` or
-    /// `y - x + c >= 0` whose leaf `x` no other conjunct mentions and no written constraint
-    /// holds of ([`Conjuncts::pin`]), and whose hub `y` another conjunct mentions. Its leaf
-    /// lies on no cycle, so it is a block of its own, and its projection onto `x` is a
-    /// half-line through `y`'s least or greatest value that holds `x`'s greatest or least
-    /// member: a move of `y` changes `x` alone, and empties nothing.
-    pub fn spoke(&self, x: &str) -> Option<&Arc<Formula>> {
-        self.leaves.get(x)
+    /// The block of the star of which `x` is the leaf, if any. A leaf is a name no written
+    /// constraint holds of ([`Conjuncts::pin`]) each conjunct at which is a constraint
+    /// `a * x + b1 * y1 + … + c >= 0` of names alone with at least one other name, its hubs;
+    /// `a` is of one sign at every conjunct, so is each hub's coefficient, each hub is
+    /// mentioned by more conjuncts than `x`, and where a conjunct mentions two hubs or more,
+    /// `x` is unbounded on the side away from it ([`Conjuncts::bound`]). The leaf's conjuncts
+    /// are a star when it has one hub or each of its hubs is clean: every conjunct at the hub
+    /// is a leaf's or of the hub alone ([`alone`]), such as a bound on it. A conjunct is the
+    /// leaf's of one name at most, since its hubs have more conjuncts than it.
+    ///
+    /// A star bounds its leaf on one side only, the side its hubs' least or greatest values
+    /// bound it from, and a conjunct of two hubs or more holds for a large enough `x`: the
+    /// star's projection onto its hubs is a bound on each hub alone, and so is the projection
+    /// of the leaves' conjuncts at a clean hub, and its other conjuncts hold of it alone. The
+    /// hubs of a star of clean hubs then range over a box, whose corners their products hold,
+    /// and a star of one hub lies on no cycle, so in both the star's projection onto `x` is
+    /// the projection of the whole relation, and a move of a hub changes `x` alone
+    /// and cuts it to a half-line that holds its greatest or least member, which empties
+    /// nothing. A star is a block of its own outside the forest ([`Blocks::detach`]).
+    pub fn star(&self, x: &str) -> Option<BlockId> {
+        self.index.stars.get(x).copied()
     }
 
-    /// The spokes whose hub is `y`.
+    /// The leaf and block of each star ([`Conjuncts::star`]).
+    pub fn stars(&self) -> &OrdMap<Arc<str>, BlockId> {
+        &self.index.stars
+    }
+
+    /// The conjuncts of the stars whose hub is `y`.
     pub fn hanging(&self, y: &str) -> impl Iterator<Item = &Arc<Formula>> {
-        self.hangs.of(y)
+        self.index.hangs.of(y)
     }
 
-    /// The conjuncts that mention `name` but the spokes whose hub it is: those a move of
-    /// `name` makes due in a scope that leaves its spokes' leaves to be settled when read.
+    /// The conjuncts that mention `name` but those of the stars whose hub it is: those a move
+    /// of `name` makes due in a scope that leaves its stars' leaves to be settled when read.
     pub fn moving(&self, name: &str) -> impl Iterator<Item = &Arc<Formula>> {
-        self.moving.of(name)
+        self.index.moving.of(name)
     }
 
     /// The conjuncts a move of `name` makes due: [`Conjuncts::moving`] when `lazy`, else
     /// [`Conjuncts::mentioning`].
     pub fn moved(&self, name: &str, lazy: bool) -> impl Iterator<Item = &Arc<Formula>> {
-        if lazy { &self.moving } else { &self.users }.of(name)
+        if lazy {
+            &self.index.moving
+        } else {
+            &self.users
+        }
+        .of(name)
     }
 
     /// Records whether a written constraint holds of `name`: such a name is no leaf, since an
     /// enumeration reads it.
     pub fn pin(&mut self, name: &Arc<str>, on: bool) {
         let changed = if on {
-            self.pinned.insert(name.clone()).is_none()
+            self.index.pinned.insert(name.clone()).is_none()
         } else {
-            self.pinned.remove(name).is_some()
+            self.index.pinned.remove(name).is_some()
         };
         if changed {
-            self.restate(name);
+            let mut p = Pending::default();
+            p.eval.insert(name.clone());
+            self.flush(p);
         }
     }
 
-    /// The leaf and hub `g` is a spoke of, by the counts and pins as they are.
-    fn classify(&self, g: &Formula) -> Option<(Arc<str>, Arc<str>)> {
-        let [a, b] = difference(g)?;
-        let leaf = |x: &Arc<str>, y: &Arc<str>| {
-            self.users.count(x) == 1 && !self.pinned.contains(x) && self.users.count(y) >= 2
+    /// Records whether `name` is bounded below and above, as the scope's product of it says:
+    /// a leaf with a conjunct of two hubs or more is unbounded on the side away from it
+    /// ([`Conjuncts::star`]). A name never stated is unbounded. In O(log n), and the name's
+    /// conjuncts when a side its shape reads changes.
+    pub fn bound(&mut self, name: &Arc<str>, below: bool, above: bool) {
+        let mut p = Pending::default();
+        for (side, on) in [(false, below), (true, above)] {
+            let key = (name.clone(), side);
+            let changed = if on {
+                self.index.bounded.insert(key).is_none()
+            } else {
+                self.index.bounded.remove(&key).is_some()
+            };
+            let reads = self
+                .index
+                .shapes
+                .get(name)
+                .is_some_and(|s| s.far == Some(side))
+                || self
+                    .index
+                    .whys
+                    .get(name)
+                    .is_some_and(|w| w.bound == Some(side));
+            if changed && reads {
+                p.eval.insert(name.clone());
+            }
+        }
+        if !p.eval.is_empty() {
+            self.flush(p);
+        }
+    }
+
+    /// Whether a written constraint holds of `name` ([`Conjuncts::pin`]).
+    pub fn pinned(&self, name: &str) -> bool {
+        self.index.pinned.contains(name)
+    }
+
+    /// Whether `name` is bounded above (`above`) or below, as last stated
+    /// ([`Conjuncts::bound`]).
+    pub fn bounded(&self, name: &Arc<str>, above: bool) -> bool {
+        self.index.bounded.contains(&(name.clone(), above))
+    }
+
+    /// The shape of `x`, a name some conjunct mentions, by the counts, pins and bounds as they
+    /// are ([`Conjuncts::star`]), or why it has none: in time near its conjuncts.
+    fn shape_of(&self, x: &Arc<str>) -> Result<Shape, Why> {
+        let count = self.users.count(x);
+        let why = |by: Vec<Arc<Formula>>| Why {
+            by,
+            count: None,
+            bound: None,
+            size: count,
         };
-        if leaf(&a, &b) {
-            Some((a, b))
-        } else if leaf(&b, &a) {
-            Some((b, a))
-        } else {
-            None
+        if self.index.pinned.contains(x) {
+            return Err(why(Vec::new()));
+        }
+        let at = Atom::Sym(x.clone());
+        // The sign of `x`'s coefficient, and of each hub's, with a conjunct that shows it.
+        let mut sign: Option<(bool, &Arc<Formula>)> = None;
+        let mut hubs: BTreeMap<&Arc<str>, (bool, &Arc<Formula>)> = BTreeMap::new();
+        let mut far = None;
+        let mut witness: Option<(&Arc<str>, &Arc<Formula>)> = None;
+        for g in self.users.of(x) {
+            let Formula::Con(c) = &**g else {
+                return Err(why(vec![g.clone()]));
+            };
+            let Some(a) = c.lin.terms.get(&at) else {
+                return Err(why(vec![g.clone()]));
+            };
+            if c.rel != Rel::Ge || c.lin.terms.keys().any(|a| !matches!(a, Atom::Sym(_))) {
+                return Err(why(vec![g.clone()]));
+            }
+            let up = a.is_positive();
+            match sign {
+                Some((s, h)) if s != up => return Err(why(vec![g.clone(), h.clone()])),
+                Some(_) => {}
+                None => sign = Some((up, g)),
+            }
+            let mut others = 0;
+            for (a, b) in &c.lin.terms {
+                let Atom::Sym(h) = a else {
+                    unreachable!("a conjunct of names alone")
+                };
+                if h == x {
+                    continue;
+                }
+                others += 1;
+                match hubs.get(h) {
+                    Some(&(s, k)) if s != b.is_positive() => {
+                        return Err(why(vec![g.clone(), k.clone()]));
+                    }
+                    Some(_) => {}
+                    None => {
+                        hubs.insert(h, (b.is_positive(), g));
+                    }
+                }
+                if witness.is_none() && self.users.count(h) <= count {
+                    witness = Some((h, g));
+                }
+            }
+            if others == 0 {
+                return Err(why(vec![g.clone()]));
+            }
+            // `x` is bounded by `g` below when `up`, so a large enough `x` meets it when `x`
+            // is unbounded above.
+            if others > 1 {
+                if self.index.bounded.contains(&(x.clone(), up)) {
+                    return Err(Why {
+                        bound: Some(up),
+                        ..why(vec![g.clone()])
+                    });
+                }
+                far = Some(up);
+            }
+        }
+        if let Some((h, g)) = witness {
+            return Err(Why {
+                count: Some(h.clone()),
+                ..why(vec![g.clone()])
+            });
+        }
+        Ok(Shape {
+            gs: self.users.of(x).cloned().collect(),
+            hubs: hubs.into_keys().cloned().collect(),
+            far,
+            count,
+        })
+    }
+
+    /// Takes `x`'s shape or `Why` out of the indexes; the names whose owned conjuncts change
+    /// are touched. Every name to be found again is taken out first ([`Conjuncts::flush`]):
+    /// a conjunct whose leaf changes in one flush is then owned by the new leaf alone.
+    fn unshape(&mut self, x: &Arc<str>, p: &mut Pending) {
+        if let Some(old) = self.index.shapes.remove(x) {
+            for g in &old.gs {
+                for h in names(g).into_iter().filter(|h| h != x) {
+                    self.index.owned.remove(&h, g);
+                    p.touched.insert(h);
+                }
+            }
+            for h in &old.hubs {
+                self.index.shaped.remove(h, &(old.count, x.clone()));
+                if old.hubs.len() > 1 {
+                    self.index.multi.remove(h, x);
+                }
+            }
+        }
+        if let Some(old) = self.index.whys.remove(x)
+            && let Some(h) = &old.count
+        {
+            self.index.witnessed.remove(h, &(old.size, x.clone()));
         }
     }
 
-    /// The leaf and hub `g` is indexed as a spoke of, if any.
-    fn indexed(&self, g: &Arc<Formula>) -> Option<(Arc<str>, Arc<str>)> {
-        let [a, b] = difference(g)?;
-        if self.leaves.get(&a) == Some(g) {
-            Some((a, b))
-        } else if self.leaves.get(&b) == Some(g) {
-            Some((b, a))
-        } else {
-            None
-        }
-    }
-
-    /// Indexes `g` as a spoke or not, as the counts and pins now say.
-    fn reclassify(&mut self, g: &Arc<Formula>) {
-        let old = self.indexed(g);
-        let new = if self.set.contains(g) {
-            self.classify(g)
-        } else {
-            None
-        };
-        if old == new {
+    /// Finds `x`'s shape, its old one taken out ([`Conjuncts::unshape`]), and indexes it; the
+    /// names whose owned conjuncts change are touched.
+    fn reshape(&mut self, x: &Arc<str>, p: &mut Pending) {
+        if self.users.count(x) == 0 {
             return;
         }
-        if let Some((x, y)) = old {
-            self.leaves.remove(&x);
-            self.hangs.remove(&y, g);
-            self.moving.add(&y, g);
-        }
-        if let Some((x, y)) = new {
-            self.leaves.insert(x, g.clone());
-            self.hangs.add(&y, g);
-            self.moving.remove(&y, g);
+        match self.shape_of(x) {
+            Ok(s) => {
+                for g in &s.gs {
+                    for h in names(g).into_iter().filter(|h| h != x) {
+                        self.index.owned.add(&h, g);
+                        p.touched.insert(h);
+                    }
+                }
+                for h in &s.hubs {
+                    self.index.shaped.add(h, &(s.count, x.clone()));
+                    if s.hubs.len() > 1 {
+                        self.index.multi.add(h, x);
+                    }
+                }
+                self.index.shapes.insert(x.clone(), Arc::new(s));
+            }
+            Err(w) => {
+                if let Some(h) = &w.count {
+                    self.index.witnessed.add(h, &(w.size, x.clone()));
+                }
+                self.index.whys.insert(x.clone(), Arc::new(w));
+            }
         }
     }
 
-    /// Reclassifies the conjuncts that mention `name` when they are one or two: a count of one
-    /// or two is the only one whose change can make a conjunct a spoke or not, so a name
-    /// mentioned more often costs nothing here.
-    fn restate(&mut self, name: &Arc<str>) {
-        if self.users.count(name) > 2 {
+    /// Notes that `g` came to (`added`) or left each of the names `ns`, whose counts are
+    /// already changed: the names whose shape that may change are put in `p`. A name of no
+    /// shape stays so as long as what its `Why` names stands, which costs O(log n) here: so a
+    /// hub of many conjuncts is not looked at again for each conjunct that comes.
+    fn counted(&mut self, g: &Arc<Formula>, ns: &BTreeSet<Arc<str>>, added: bool, p: &mut Pending) {
+        for n in ns {
+            p.touched.insert(n.clone());
+            let count = self.users.count(n);
+            let Some(w) = self.index.whys.get(n).cloned() else {
+                p.eval.insert(n.clone());
+                continue;
+            };
+            let witness = w.count.as_ref().filter(|h| self.users.count(h) <= count);
+            if !added && (w.by.contains(g) || (w.count.is_some() && witness.is_none())) {
+                p.eval.insert(n.clone());
+                continue;
+            }
+            if let Some(h) = &w.count {
+                self.index.witnessed.remove(h, &(w.size, n.clone()));
+                self.index.witnessed.add(h, &(count, n.clone()));
+            }
+            self.index.whys.insert(
+                n.clone(),
+                Arc::new(Why {
+                    size: count,
+                    ..Why::clone(&w)
+                }),
+            );
+        }
+        // A name `n` witnessed against that now has fewer conjuncts than `n`, and a leaf at a
+        // hub `n` that now has no fewer than it.
+        for n in ns {
+            let count = self.users.count(n);
+            let found = if added {
+                self.index.witnessed.within(n, ..count)
+            } else {
+                self.index.shaped.within(n, count..)
+            };
+            p.eval.extend(found);
+        }
+    }
+
+    /// Finds the shapes `p` names again; then the stars of the names whose shape changed or
+    /// whose hub became clean or not; then places each conjunct added and not yet in a block,
+    /// in the forest in place of the one it replaces when it can.
+    fn flush(&mut self, mut p: Pending) {
+        if self.is_bottom() {
             return;
         }
-        let gs: Vec<Arc<Formula>> = self.users.of(name).cloned().collect();
-        for g in &gs {
-            self.reclassify(g);
+        let mut check = std::mem::take(&mut p.eval);
+        for x in &check {
+            self.unshape(x, &mut p);
+        }
+        for x in &check {
+            self.reshape(x, &mut p);
+        }
+        for h in &p.touched {
+            let (all, held) = (self.users.count(h), self.index.owned.count(h));
+            let now = all > 0 && all == held + self.index.solo.count(h);
+            if now != self.index.clean.contains(h) {
+                if now {
+                    self.index.clean.insert(h.clone());
+                } else {
+                    self.index.clean.remove(h);
+                }
+                check.extend(self.index.multi.of(h).cloned());
+            }
+        }
+        // The stars that go or change first, so that a conjunct moving from one leaf's star to
+        // another's is out of its block when the second takes it.
+        let mut loose: Vec<Arc<Formula>> = Vec::new();
+        let mut new: Vec<(Arc<str>, Arc<Shape>)> = Vec::new();
+        for x in &check {
+            let shape = self.index.shapes.get(x).filter(|s| {
+                s.hubs.len() == 1 || s.hubs.iter().all(|h| self.index.clean.contains(h))
+            });
+            let old = self.index.stars.get(x).copied();
+            if let (Some(b), Some(s)) = (old, shape)
+                && self.blocks.members(b).eq(s.gs.iter())
+            {
+                continue;
+            }
+            if let Some(s) = shape {
+                new.push((x.clone(), s.clone()));
+            }
+            if let Some(b) = old {
+                self.index.stars.remove(x);
+                let gs: Vec<Arc<Formula>> = self.blocks.members(b).cloned().collect();
+                self.blocks.undetach(b);
+                for g in &gs {
+                    for h in names(g).into_iter().filter(|h| h != x) {
+                        self.index.hangs.remove(&h, g);
+                        if self.users.has(&h, g) {
+                            self.index.moving.add(&h, g);
+                        }
+                    }
+                }
+                loose.extend(gs);
+            }
+        }
+        for (x, s) in new {
+            let forest: Vec<Arc<Formula>> =
+                s.gs.iter()
+                    .filter(|g| self.blocks.placed(g))
+                    .cloned()
+                    .collect();
+            if !forest.is_empty() {
+                self.blocks.remove(&forest);
+            }
+            let b = self.blocks.detach(s.gs.iter().cloned());
+            self.index.stars.insert(x.clone(), b);
+            for g in &s.gs {
+                for h in names(g).into_iter().filter(|h| *h != x) {
+                    self.index.hangs.add(&h, g);
+                    self.index.moving.remove(&h, g);
+                }
+            }
+        }
+        for g in loose {
+            if self.set.contains(&g) && self.blocks.of(&g).is_none() {
+                self.blocks.add(&g);
+            }
+        }
+        let mut drop: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        for (g, old) in p.placed {
+            let old = old.filter(|o| !self.set.contains(o) && self.blocks.placed(o));
+            if self.set.contains(&g) && self.blocks.of(&g).is_none() {
+                match old {
+                    Some(o) if !drop.contains(&o) => self.blocks.replace(&o, &g),
+                    _ => self.blocks.add(&g),
+                }
+            } else if let Some(o) = old {
+                drop.insert(o);
+            }
+        }
+        if !drop.is_empty() {
+            let drop: Vec<Arc<Formula>> = drop.into_iter().collect();
+            self.blocks.remove(&drop);
         }
     }
 
@@ -296,7 +682,9 @@ impl Conjuncts {
     /// of a test `x != x`, is decided at once: it is `true` or `false`, since no block holds
     /// it and no projection would read it.
     pub fn and(&mut self, f: Formula) {
-        self.and_held(f, &mut Held::new());
+        let mut p = Pending::default();
+        self.and_held(f, &mut Held::new(), &mut p);
+        self.flush(p);
     }
 
     /// The conjunction without the conjuncts `gone` and with `f`, in time near theirs: `f` is
@@ -306,16 +694,16 @@ impl Conjuncts {
     /// and build the blocks of the rest again.
     pub fn swap(&mut self, gone: &[Arc<Formula>], f: Formula) {
         let mut held = Held::new();
+        let mut p = Pending::default();
         for g in gone {
-            if self.unindex(g) {
+            if self.unindex(g, &mut p) {
                 held.entry(g.atoms()).or_default().push(g.clone());
             }
         }
-        self.and_held(f, &mut held);
+        self.and_held(f, &mut held, &mut p);
+        self.flush(p);
         let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
-        if !rest.is_empty() && !self.is_bottom() {
-            self.blocks.remove(&rest);
-        }
+        self.unplace(&rest);
     }
 
     /// Adds the conjuncts of `f`, read on an explicit stack in order. A conjunction held in
@@ -323,14 +711,14 @@ impl Conjuncts {
     /// another) is read once, at its first place: a conjunct added twice changes nothing, and
     /// a chain of names each conjoining the two before it would otherwise be read once for
     /// each path to it, a number exponential in its length.
-    fn and_held(&mut self, f: Formula, held: &mut Held) {
+    fn and_held(&mut self, f: Formula, held: &mut Held, p: &mut Pending) {
         let mut seen: HashSet<*const Vec<Formula>> = HashSet::new();
         // The shared conjunctions read, held so that their addresses are not reused.
         let mut read: Vec<Formula> = Vec::new();
         let mut stack = vec![f];
         while let Some(g) = stack.pop() {
             let Formula::And(gs) = &g else {
-                self.and_one(g, held);
+                self.and_one(g, held, p);
                 continue;
             };
             if Arc::strong_count(gs) == 1 {
@@ -342,7 +730,7 @@ impl Conjuncts {
         }
     }
 
-    fn and_one(&mut self, g: Formula, held: &mut Held) {
+    fn and_one(&mut self, g: Formula, held: &mut Held, p: &mut Pending) {
         if self.is_bottom() {
             return;
         }
@@ -353,7 +741,7 @@ impl Conjuncts {
                 held.clear();
                 return;
             }
-            Formula::And(_) => return self.and_held(g, held),
+            Formula::And(_) => return self.and_held(g, held, p),
             _ => {}
         }
         // `!(t >= 0)` is the constraint `-t - 1 >= 0` on the integers, which is projected with
@@ -370,7 +758,7 @@ impl Conjuncts {
         };
         if g.atoms().is_empty() {
             if !g.holds(&Model::new()) {
-                self.and_one(Formula::bottom(), held);
+                self.and_one(Formula::bottom(), held, p);
             }
             return;
         }
@@ -384,10 +772,10 @@ impl Conjuncts {
             };
             if c.rel == Rel::Ge && c.lin.constant < o.lin.constant {
                 let old = old.clone();
-                self.unindex(&old);
+                self.unindex(&old, p);
                 looser = Some(old);
             } else if c.rel == Rel::Eq && c.lin.constant != o.lin.constant {
-                self.and_one(Formula::bottom(), held);
+                self.and_one(Formula::bottom(), held, p);
                 return;
             } else {
                 return;
@@ -400,7 +788,10 @@ impl Conjuncts {
         let ns = names(&g);
         for n in &ns {
             self.users.add(n, &g);
-            self.moving.add(n, &g);
+            self.index.moving.add(n, &g);
+        }
+        if let Some(n) = alone(&g) {
+            self.index.solo.add(&n, &g);
         }
         if let Formula::Con(c) = &*g {
             self.tight.insert((c.lin.terms.clone(), c.rel), g.clone());
@@ -414,30 +805,26 @@ impl Conjuncts {
                 .or(same.len().checked_sub(1))?;
             Some(same.swap_remove(i))
         });
-        match old {
-            Some(old) => self.blocks.replace(&old, &g),
-            None => self.blocks.add(&g),
-        }
-        self.set.insert(g);
-        for n in &ns {
-            self.restate(n);
-        }
+        self.set.insert(g.clone());
+        self.counted(&g, &ns, true, p);
+        p.placed.push((g, old));
     }
 
     /// Removes `g` from the set and from every index but the blocks; whether it was there.
-    fn unindex(&mut self, g: &Arc<Formula>) -> bool {
+    /// A star that held it is changed by [`Conjuncts::flush`].
+    fn unindex(&mut self, g: &Arc<Formula>, p: &mut Pending) -> bool {
         if self.set.remove(g).is_none() {
             return false;
         }
-        self.reclassify(g);
         let ns = names(g);
         for n in &ns {
             self.users.remove(n, g);
-            self.moving.remove(n, g);
+            self.index.moving.remove(n, g);
         }
-        for n in &ns {
-            self.restate(n);
+        if let Some(n) = alone(g) {
+            self.index.solo.remove(&n, g);
         }
+        self.counted(g, &ns, false, p);
         if let Formula::Con(c) = &**g {
             let key = (c.lin.terms.clone(), c.rel);
             if self.tight.get(&key) == Some(g) {
@@ -447,10 +834,24 @@ impl Conjuncts {
         true
     }
 
+    /// Takes the conjuncts `gs`, already out of the set, out of the forest, those in it.
+    fn unplace(&mut self, gs: &[Arc<Formula>]) {
+        let forest: Vec<Arc<Formula>> = gs
+            .iter()
+            .filter(|g| self.blocks.placed(g))
+            .cloned()
+            .collect();
+        if !forest.is_empty() && !self.is_bottom() {
+            self.blocks.remove(&forest);
+        }
+    }
+
     /// Removes the conjunct `g`.
     pub fn remove(&mut self, g: &Arc<Formula>) {
-        if self.unindex(g) {
-            self.blocks.remove(std::slice::from_ref(g));
+        let mut p = Pending::default();
+        if self.unindex(g, &mut p) {
+            self.flush(p);
+            self.unplace(std::slice::from_ref(g));
         }
     }
 
@@ -460,13 +861,17 @@ impl Conjuncts {
     /// to them when one is not a leaf of its tree ([`Blocks::remove`]).
     pub fn forget(&mut self, name: &Arc<str>) {
         let gs: Vec<Arc<Formula>> = self.mentioning(name).cloned().collect();
+        let mut p = Pending::default();
         for g in &gs {
-            self.unindex(g);
+            self.unindex(g, &mut p);
         }
-        self.blocks.remove(&gs);
+        self.flush(p);
+        self.unplace(&gs);
+        let mut p = Pending::default();
         for g in gs {
-            self.and(g.forget(name));
+            self.and_held(g.forget(name), &mut Held::new(), &mut p);
         }
+        self.flush(p);
     }
 }
 
@@ -543,6 +948,8 @@ pub struct Blocks {
     syms: Uses<Arc<Formula>>,
     /// The conjuncts that mention each atom that is not a name.
     shared: OrdMap<Atom, OrdSet<Arc<Formula>>>,
+    /// The blocks apart from the forest, each its own tree ([`Blocks::detach`]).
+    apart: OrdSet<BlockId>,
 }
 
 impl Blocks {
@@ -564,6 +971,41 @@ impl Blocks {
     /// Every block.
     pub fn all(&self) -> impl Iterator<Item = BlockId> + '_ {
         self.members.keys().copied()
+    }
+
+    /// Whether block `b` is apart from the forest ([`Blocks::detach`]).
+    pub fn is_apart(&self, b: BlockId) -> bool {
+        self.apart.contains(&b)
+    }
+
+    /// Whether `g` is in a block of the forest, not one apart from it
+    /// ([`Blocks::detach`]).
+    pub fn placed(&self, g: &Arc<Formula>) -> bool {
+        self.of(g).is_some_and(|b| !self.is_apart(b))
+    }
+
+    /// A new block of the conjuncts `gs`, none in a block, apart from the forest: no name or
+    /// tree links it, so it is its own tree. In O(log n) per conjunct.
+    pub fn detach(&mut self, gs: impl IntoIterator<Item = Arc<Formula>>) -> BlockId {
+        let b = self.fresh();
+        let mut ms = OrdSet::new();
+        for g in gs {
+            let was = self.of.insert(g.clone(), b);
+            debug_assert!(was.is_none(), "a conjunct detached is in no block");
+            ms.insert(g);
+        }
+        self.members.insert(b, ms);
+        self.apart.insert(b);
+        b
+    }
+
+    /// Removes the block `b` made by [`Blocks::detach`].
+    pub fn undetach(&mut self, b: BlockId) {
+        let removed = self.apart.remove(&b);
+        debug_assert!(removed.is_some(), "a block apart from the forest");
+        for g in self.members.remove(&b).into_iter().flatten() {
+            self.of.remove(&g);
+        }
     }
 
     fn fresh(&mut self) -> BlockId {

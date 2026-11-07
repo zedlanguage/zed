@@ -926,18 +926,21 @@ impl<'a> Ck<'_, 'a> {
                         // find the tests that changed a name by [`Arms::lookup`], not by a list
                         // per test of the names it changed, which is `k` names a test there.
                         //
-                        // Complexity tradeoff: only a spoke, a difference of two names whose
-                        // leaf no other conjunct mentions, is left to a read. What is given up
-                        // is time, not an answer: two hubs on one leaf, `ai >= n && ai >= m`,
-                        // make each `ai` mentioned twice, so a test that moves `n` projects all
-                        // `k` blocks still, `k²` projections in all: 1.27, 4.71 and 20.6 s at
-                        // `k` = 96, 192 and 384 (2026-11-07, load 18). `ai >= n + m` is not a
-                        // spoke either, about `k³`: 0.34, 2.11 and 18.3 s at `k` = 12, 24, 48.
-                        // Why: a leaf of two hubs lies on a cycle of the relation, and its
-                        // product is not a cut through one hub's bound but the projection of
-                        // the cycle. Trigger: many tests on two
-                        // names that many conjuncts relate. Test:
-                        // `l01_39a_bit_words::scaling::two_hubs_on_one_block_settle_as_the_whole_scope`.
+                        // Complexity tradeoff: only a star's leaf is left to a read: a name
+                        // whose conjuncts are each a bound on a sum of names, of coefficients
+                        // one and minus one, with one hub, or with hubs whose other conjuncts
+                        // are a leaf's or bound the hub alone (`Conjuncts::stars`). So
+                        // `ai >= n && ai >= m` and `ai >= n + m` under `k` tests on `n` and
+                        // `k` on `m` cost `O(k)`: 0.15, 0.28 and 0.52 s at `k` = 96, 192 and
+                        // 384, and 0.11, 0.18, 0.33 and 1.51 s at `k` = 12, 24, 48 and 192
+                        // (2026-11-07, load 18). What is given up is time, not an answer: two
+                        // hubs related to each other, `n >= m` above those tests, are no
+                        // clean hubs, so a test that moves `n` projects all `k` blocks still,
+                        // about `k²`: 0.15, 0.37 and 1.38 s at `k` = 24, 48 and 96. Why: a
+                        // leaf of two related hubs lies on a cycle of the relation, and its
+                        // product is the projection of the cycle, not a cut at a box's corner.
+                        // Trigger: many tests on two related names that many conjuncts relate.
+                        // Test: `l01_39a_bit_words::scaling::two_hubs_on_one_block_settle_to_the_eager_answer`.
                         // COMPLEXITY.md C26. A complete solution keeps a feasible point and
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).

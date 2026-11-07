@@ -562,12 +562,10 @@ fn two_hubs(k: usize) -> String {
 }
 
 #[test]
-fn two_hubs_on_one_block_settle_as_the_whole_scope() {
-    // Each `ai` is related to two hubs, so no `ai >= n` is a spoke and every scope is
-    // settled whole: the answer and the notes are those of the eager scope, `a0` int[-1..]
-    // under `a0 >= n` and the strongest test on `n`, which is enough without one on `m`. The
-    // time is not checked here: about `k²`, 20.6 s at `k` = 384 (COMPLEXITY.md C26, the
-    // tradeoff at `Ck::compute`).
+fn two_hubs_on_one_block_settle_to_the_eager_answer() {
+    // Each `ai` is a leaf of a star of two hubs, `n` and `m`, whose other conjuncts are bounds
+    // on one hub alone: the answer and the notes are those of the eager scope, `a0` int[-1..]
+    // under `a0 >= n` and the strongest test on `n`, which is enough without one on `m`.
     for k in [1, 2, 5] {
         let src = two_hubs(k);
         let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
@@ -580,5 +578,91 @@ fn two_hubs_on_one_block_settle_as_the_whole_scope() {
             "k = {k}:\n{e}"
         );
         assert!(e.contains("if a0 >= n && a0 >= m {"), "k = {k}:\n{e}");
+    }
+}
+
+#[test]
+fn two_hubs_on_one_block_settle_in_time_linear_in_the_tests() {
+    // Each `ai >= n && ai >= m` related `ai` to two hubs, so no scope was lazy and each of the
+    // `2k` tests on a hub projected all `k` levels: about `k²`, 0.04 to 1.43 s at `k` = 12 to
+    // 96 (wt/narrow-hub-settle at a18089b5). Each `ai` is now a star's leaf
+    // (COMPLEXITY.md C26).
+    check_rejected_in_linear_work("settling k levels each related to two hubs", 12, two_hubs);
+}
+
+/// `k` levels `ai >= n + m`, then `k` tests on `n` and `k` on `m`, each stronger, then one
+/// read of `a0`.
+fn hub_sum(k: usize) -> String {
+    let params: Vec<String> = (0..k).map(|i| format!("positional a{i}: int")).collect();
+    let mut body = String::from("popCount(a0)");
+    for j in 1..=k {
+        body = format!("if m >= -{j} {{\n{body}\n}} else {{ 0 }}");
+    }
+    for j in 1..=k {
+        body = format!("if n >= -{j} {{\n{body}\n}} else {{ 0 }}");
+    }
+    for i in (0..k).rev() {
+        body = format!("if a{i} >= n + m {{\n{body}\n}} else {{ 0 }}");
+    }
+    with_main(format!(
+        "f(\npositional n: int,\npositional m: int,\n{}\n) =\n{body};\n",
+        params.join(",\n")
+    ))
+}
+
+#[test]
+fn a_bound_on_a_sum_of_two_hubs_settles_to_the_eager_answer() {
+    // `a0 >= n + m` with `n >= -1` and `m >= -1`: `a0` is int[-2..]. The notes are those the
+    // eager scope gave: the tests on `m` and the sum, without `n >= -1` (QUESTIONS.md).
+    for k in [1, 2, 5] {
+        let src = hub_sum(k);
+        let e = scaling::on_a_thread(1 << 29, || zedc::run::load(src.as_bytes()).err())
+            .expect("a0 may be negative");
+        assert!(e.contains("this `x` is int[-2..]"), "k = {k}:\n{e}");
+        assert!(e.contains("if a0 >= n + m {"), "k = {k}:\n{e}");
+        assert_eq!(
+            e.matches("this test is true here").count(),
+            k + 1,
+            "k = {k}:\n{e}"
+        );
+    }
+}
+
+#[test]
+fn a_bound_on_a_sum_of_two_hubs_settles_in_time_linear_in_the_tests() {
+    // `ai >= n + m` was a written constraint, which pinned `ai`, so no scope was lazy and each
+    // test on a hub enumerated the levels: about `k³`, 0.31 to 19.4 s at `k` = 12 to 48
+    // (wt/narrow-hub-settle at a18089b5). A bound on a sum of names of coefficients one and
+    // minus one is now the relation's alone (`Scope::atom`), and `ai` a star's leaf. The
+    // `k + 1` notes give text of order `k`, read once.
+    check_rejected_in_linear_work(
+        "settling k levels each a bound on a sum of two hubs",
+        6,
+        hub_sum,
+    );
+}
+
+#[test]
+fn a_bound_on_a_sum_of_any_signs_or_a_wider_coefficient_settles_to_the_eager_answer() {
+    // With `n >= -1` and `m` in [-1, 1]. A sum with a coefficient of two stays a written
+    // constraint and pins `a0`; the others are the relation's alone.
+    for (test, low) in [
+        ("a0 >= n - m", -2),
+        ("a0 + m >= n", -2),
+        ("a0 >= n + n + m", -3),
+    ] {
+        let src = with_main(format!(
+            "f(\npositional n: int,\npositional m: int,\npositional a0: int\n) =\n\
+             if {test} {{\nif n >= -1 {{\nif m <= 1 {{\nif m >= -1 {{\npopCount(a0)\n\
+             }} else {{ 0 }}\n}} else {{ 0 }}\n}} else {{ 0 }}\n}} else {{ 0 }};\n"
+        ));
+        let e = zedc::run::load(src.as_bytes())
+            .err()
+            .expect("a0 may be negative");
+        assert!(
+            e.contains(&format!("this `x` is int[{low}..]")),
+            "{test}:\n{e}"
+        );
+        assert!(e.contains(&format!("if {test} {{")), "{test}:\n{e}");
     }
 }
