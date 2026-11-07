@@ -3520,9 +3520,14 @@ impl Ties {
     /// variable equal to that member plus `d`: the member of least color (`keys`), then of least
     /// offset, then of least place. Colors, and the differences between the offsets of a
     /// class, depend on the rows alone, not on the order in which [`Ties::equate`] joined the
-    /// class; two members of one color and one offset are equal at every point and alike in
-    /// the rows, so taking one or the other only renames the variable that stands for the
-    /// class. O(n log n) for n variables.
+    /// class: that order, and the order of the arguments of each `equate`, choose only which
+    /// member is the root, and moving the root from `r` to `s` subtracts the one constant
+    /// `x[s] - x[r]` from the offset of every member of the class, which keeps both the order
+    /// of the candidates `(color, offset, place)` and each difference `d - e` below. Two
+    /// members of one color and one offset are equal at every point and alike in the rows, so
+    /// taking one or the other only renames the variable that stands for the class. Test
+    /// `tests::the_representatives_of_joined_equalities_do_not_depend_on_their_order`.
+    /// O(n log n) for n variables.
     fn representatives(&self, keys: &[usize]) -> Vec<(usize, Int)> {
         let roots: Vec<(usize, Int)> = (0..self.parent.len()).map(|i| self.root(i)).collect();
         let mut best: Vec<Option<(usize, &Int, usize)>> = vec![None; roots.len()];
@@ -7294,5 +7299,160 @@ pub(super) mod tests {
         .collect();
         assert!(difference_hulls(&[&two[0]], &m).is_none());
         assert!(difference_hulls(&[&three[0]], &m).is_none());
+    }
+
+    /// Calls `f` with each order of `0..n`, by Heap's method.
+    fn each_order(n: usize, f: &mut impl FnMut(&[usize])) {
+        let mut p: Vec<usize> = (0..n).collect();
+        let mut c = vec![0; n];
+        f(&p);
+        let mut i = 1;
+        while i < n {
+            if c[i] < i {
+                if i % 2 == 0 {
+                    p.swap(0, i);
+                } else {
+                    p.swap(c[i], i);
+                }
+                f(&p);
+                c[i] += 1;
+                i = 1;
+            } else {
+                c[i] = 0;
+                i += 1;
+            }
+        }
+    }
+
+    /// Variables with a value each, joined by equalities `x[a] - x[b] == value[a] - value[b]`
+    /// along `edges`, and the color of each.
+    struct Classes {
+        value: Vec<i64>,
+        keys: Vec<usize>,
+        edges: Vec<(usize, usize)>,
+    }
+
+    impl Classes {
+        /// The representatives of the forest that joins `edges` in `order`, edge `e` written
+        /// `equate(b, a, -d)` in place of `equate(a, b, d)` when bit `e` of `flip` is set; the
+        /// root of each variable; and the greatest rank of a root.
+        fn joined(&self, order: &[usize], flip: &[bool]) -> (Vec<(usize, Int)>, Vec<usize>, usize) {
+            let mut ties = Ties::new(self.value.len());
+            for &e in order {
+                let (a, b) = self.edges[e];
+                let (x, y) = if flip[e] { (b, a) } else { (a, b) };
+                assert!(ties.equate(x, y, Int::from(self.value[x] - self.value[y])));
+            }
+            let roots = (0..self.value.len()).map(|i| ties.root(i).0).collect();
+            let rank = ties.rank.iter().copied().max().unwrap_or(0);
+            (ties.representatives(&self.keys), roots, rank)
+        }
+
+        /// What `representatives` must give, from the values: in each class the member of
+        /// least color, then value, then place, and each variable's value less that member's.
+        fn expected(&self) -> Vec<(usize, Int)> {
+            let n = self.value.len();
+            let mut class: Vec<usize> = (0..n).collect();
+            fn top(class: &mut [usize], mut i: usize) -> usize {
+                while class[i] != i {
+                    i = class[i];
+                }
+                i
+            }
+            for &(a, b) in &self.edges {
+                let (ra, rb) = (top(&mut class, a), top(&mut class, b));
+                class[ra.max(rb)] = ra.min(rb);
+            }
+            let class: Vec<usize> = (0..n).map(|i| top(&mut class, i)).collect();
+            (0..n)
+                .map(|i| {
+                    let rep = (0..n)
+                        .filter(|&j| class[j] == class[i])
+                        .min_by_key(|&j| (self.keys[j], self.value[j], j))
+                        .expect("a class has a member");
+                    (rep, Int::from(self.value[i] - self.value[rep]))
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn the_representatives_of_joined_equalities_do_not_depend_on_their_order() {
+        // Three classes: {0, 2, 4, 6, 7} by five equalities, one of them implied by the
+        // others, with 2 and 4 of one color and one value, so their places choose; {1, 3, 8},
+        // all of one color; and {5} alone. Every order of the seven equalities, each written
+        // either way round, gives one vector, though the roots differ (union by rank orients
+        // a join of roots of equal rank by the order of the arguments).
+        let small = Classes {
+            value: vec![5, 0, 3, -4, 3, 0, 7, 3, 6],
+            keys: vec![1, 2, 0, 2, 0, 0, 0, 1, 2],
+            edges: vec![(0, 2), (4, 6), (7, 0), (6, 2), (4, 7), (1, 3), (8, 1)],
+        };
+        let want = small.expected();
+        assert_eq!(want[0].0, 2, "{want:?}");
+        assert_eq!(want[1].0, 3, "{want:?}");
+        let mut roots = BTreeSet::new();
+        each_order(small.edges.len(), &mut |order| {
+            for bits in 0..1u32 << small.edges.len() {
+                let flip: Vec<bool> = (0..small.edges.len()).map(|e| bits >> e & 1 == 1).collect();
+                let (got, r, _) = small.joined(order, &flip);
+                assert_eq!(got, want, "order {order:?}, flipped {flip:?}");
+                roots.insert(r);
+            }
+        });
+        assert!(roots.len() > 1, "the roots never differ: {roots:?}");
+        // Classes of 16, 8 (one color), 2 and 1 joined by random trees with three implied
+        // equalities each, in 400 random orders and orientations: roots of rank 2 and more
+        // are joined, so equal ranks occur above the leaves.
+        let mut rng = Rng(0x38_0e1e);
+        let sizes = [16, 8, 2, 1];
+        let n: usize = sizes.iter().sum();
+        let mut place: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            place.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let mut value = vec![0; n];
+        let mut keys = vec![0; n];
+        let mut edges = Vec::new();
+        let mut start = 0;
+        for (c, &size) in sizes.iter().enumerate() {
+            let members = &place[start..start + size];
+            for (k, &m) in members.iter().enumerate() {
+                value[m] = rng.below(5) as i64 - 2;
+                keys[m] = if c == 1 { 7 } else { rng.below(3) as usize };
+                if k > 0 {
+                    edges.push((m, members[rng.below(k as u64) as usize]));
+                }
+            }
+            if size > 2 {
+                for _ in 0..3 {
+                    let a = members[rng.below(size as u64) as usize];
+                    let b = members[rng.below(size as u64) as usize];
+                    edges.push((a, b));
+                }
+            }
+            start += size;
+        }
+        let large = Classes { value, keys, edges };
+        let want = large.expected();
+        let mut roots = BTreeSet::new();
+        let mut rank = 0;
+        let m = large.edges.len();
+        for _ in 0..400 {
+            let mut order: Vec<usize> = (0..m).collect();
+            for i in (1..m).rev() {
+                order.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+            let flip: Vec<bool> = (0..m).map(|_| rng.below(2) == 1).collect();
+            let (got, r, k) = large.joined(&order, &flip);
+            assert_eq!(got, want, "order {order:?}, flipped {flip:?}");
+            roots.insert(r);
+            rank = rank.max(k);
+        }
+        assert!(roots.len() > 1, "the roots never differ");
+        assert!(
+            rank >= 2,
+            "no join of two roots of rank 1: greatest rank {rank}"
+        );
     }
 }

@@ -462,10 +462,13 @@ fn the_frucht_edge_system_has_one_answer() {
 }
 
 #[test]
-fn the_orientation_of_joined_equalities_does_not_change_an_answer() {
-    // `x0 - x1 == 1`, `x1 - x2 == 1`, `x2 - x3 == 1` join one class, which `Ties::equate`
-    // orients by the order of its arguments; with rows that the box stage alone decides, the
-    // answer under every naming and every order of the equalities is the same.
+fn every_order_and_naming_of_a_chain_of_equalities_gives_one_answer() {
+    // `x0 - x1 == 1`, `x1 - x2 == 1`, `x2 - x3 == 1` join one class; with rows that the box
+    // stage alone decides, the answer under every naming and every order of the equalities is
+    // the same. All four variables join one class, so this does not show that the member that
+    // stands for a class is free of the order in which `Ties::equate` joined it; the unit test
+    // `store::presburger::tests::the_representatives_of_joined_equalities_do_not_depend_on_their_order`
+    // does, over classes of several sizes and colors.
     let rows = [
         eq(&[1, -1, 0, 0], -1),
         eq(&[0, 1, -1, 0], -1),
@@ -715,6 +718,44 @@ fn decide_scales_over_copies_of_tied_equalities() {
     // Each copy of `x + y == 5`, `x, y >= 0` keeps its equality as rows and has a point.
     let rows = vec![eq(&[1, 1], -5), ge(&[1, 0], 0), ge(&[0, 1], 0)];
     scales_over_copies("copies of tied equalities", &rows, 2);
+}
+
+/// `n` variables, each with a value in `[-2, 2]`, joined into one class by the equalities
+/// `x[a] - x[b] == value[a] - value[b]` of a random tree, given in a random order with each
+/// written either way round, and `0 <= x[0] <= 5`.
+fn one_class_of_equalities(n: usize) -> Formula {
+    let mut rng = Rng::new(0x38_0e1f);
+    let v = |i: usize| Lin::atom(Atom::Sym(format!("v{i}").into()));
+    let value: Vec<i64> = (0..n).map(|_| rng.below(5) as i64 - 2).collect();
+    let mut joins: Vec<(usize, usize)> = (1..n).map(|i| (i, rng.below(i))).collect();
+    for i in (1..joins.len()).rev() {
+        joins.swap(i, rng.below(i + 1));
+    }
+    let mut fs = vec![
+        Formula::Con(Con::ge(&v(0), &Lin::constant(0))),
+        Formula::Con(Con::ge(&Lin::constant(5), &v(0))),
+    ];
+    for (a, b) in joins {
+        let (a, b) = if rng.below(2) == 0 { (a, b) } else { (b, a) };
+        let d = Lin::constant(value[a] - value[b]);
+        fs.push(Formula::Con(Con::eq(&v(a).minus(&v(b)), &d)));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn decide_scales_over_one_class_of_equalities() {
+    // `Ties` joins every equality of the class, and `representatives` reads each variable's
+    // root once; with union by rank both cost a logarithm per variable.
+    let (small, large) = (
+        one_class_of_equalities(256),
+        one_class_of_equalities(256 * scaling::FACTOR),
+    );
+    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
+    scaling::check_order("decide on one class of equalities", 256, 1, |n| {
+        let f = if n == 256 { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
 }
 
 /// A unit whose `main` calls `ok(a, b, c, d) = -a + 3·b >= 10 && ...`, the cycle of four over
