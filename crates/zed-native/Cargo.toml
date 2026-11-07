@@ -83,3 +83,10 @@ libc = "0.2.191"
 object = { workspace = true, features = ["build"] }
 # Sets the stack limit the zedc_binary test's child inherits.
 rustix.workspace = true
+# zedc and zed-rt are dylibs, whose file names do not change with their features, so every
+# package that builds them must ask for the same features as zed-tests, or a build of one
+# package overwrites the other's and the next build rebuilds it. Here as dev-dependencies, so
+# that `cargo test -p zed-native` matches and the runtime library of a release build stays
+# without the test counters.
+zedc = { workspace = true, features = ["printed-types", "counts"] }
+zed-rt = { workspace = true, features = ["counts"] }

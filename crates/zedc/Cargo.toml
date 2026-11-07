@@ -38,3 +38,10 @@ short-addresses = ["zed-kernel/short-addresses"]
 
 [lints]
 workspace = true
+
+# The features zed-tests asks for, so that `cargo test -p zedc` builds this dylib as the tests
+# link it: its file name does not change with its features, so a build with others would
+# overwrite it and the next build of the tests would rebuild it (see crates/zed-native/Cargo.toml).
+[dev-dependencies.zedc]
+path = "."
+features = ["printed-types", "counts"]

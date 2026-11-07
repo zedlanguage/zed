@@ -1030,6 +1030,7 @@ dependencies = [
  "libc",
  "psm",
  "zed-kernel",
+ "zed-rt",
 ]
 
 [[package]]
@@ -1075,4 +1076,5 @@ dependencies = [
  "unicode-normalization",
  "unicode-script",
  "zed-kernel",
+ "zedc",
 ]
