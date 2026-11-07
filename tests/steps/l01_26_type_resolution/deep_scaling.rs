@@ -173,10 +173,7 @@ fn function_types_nested_16000_deep_compare_on_a_2_mib_stack() {
     // (`Comparing`, TY-sub-stack); each level is compared once, so the time is linear.
     use zed_kernel::types::Type;
     use zedc::check::ty::Ty;
-    // Only the fit is timed. At each level a failed fit is followed by the search for a cover,
-    // which compares the level below again, so the time of a refusal about doubles with each
-    // level (TY-refuse-exp in STATUS.md): 0.44 ms 5 deep and 0.67 s 16 deep with the
-    // recursion, about the same with the explicit stack (13.5 s 20 deep).
+    // The fit is timed here, the refusal in the test below (TY-refuse-exp).
     let n = 2_000;
     let int = || Ty::set(Type::int());
     let number = || Ty::set(&Type::int() | &Type::f64());
@@ -227,4 +224,88 @@ fn bit_words_8000_deep_check_on_a_2_mib_stack() {
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         });
     });
+}
+
+#[test]
+fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
+    // `(int) -> … -> int | f64` is not `(int) -> … -> int`. At each level the arrow's fit
+    // fails, and the search for a cover (rule 6 of sec:type_resolution) compares the same two
+    // results again, so each level was compared twice for each level around it: 1.0 ms 6 deep,
+    // 15.5 ms 10 deep, 0.92 s 16 deep, doubling per level (TY-refuse-exp). The verdict of each
+    // pair of functions compared is now kept for the comparison (`Cx::fitted`), so each level
+    // is compared once.
+    use zed_kernel::types::Type;
+    use zedc::check::ty::Ty;
+    let n = 1_000;
+    let int = || Ty::set(Type::int());
+    let number = || Ty::set(&Type::int() | &Type::f64());
+    assert!(curried_type(3, int()).subtype(&curried_type(3, number())));
+    assert!(!curried_type(3, number()).subtype(&curried_type(3, int())));
+    zed_tests::deep::on_small_stack(|| {
+        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, (curried_type(m, int()), curried_type(m, number()))))
+            .collect();
+        scaling::check_order("refusing function types n deep", n, 1, |m| {
+            let (narrow, wide) = &built[&m];
+            assert!(!wide.subtype(narrow), "{m} deep");
+        });
+        for (narrow, wide) in built.into_values() {
+            take_apart(narrow);
+            take_apart(wide);
+        }
+    });
+}
+
+/// `p` expects a function of `d` curried arrows that take int, String at `at`, and return a pair
+/// of ints at the end; `g` has `d` curried parameters and returns the one at `uses` plus 1, and `last`.
+fn curried_refusal(d: usize, uses: usize, at: usize, last: &str) -> String {
+    let arrows: String = (0..d)
+        .map(|i| if i == at { "(String) -> " } else { "(int) -> " })
+        .collect();
+    let lambdas: String = (1..d).map(|i| format!("(a{i}) -> ")).collect();
+    format!(
+        "p(f: {arrows}(int, int)) = 0;\ng(positional a0) = {lambdas}(a{uses} + 1, {last});\ny = p(f: g);\n"
+    )
+}
+
+/// The message for `curried_refusal(d, …)`: `g`'s signature, its parameter at `uses` int and
+/// its result `result`, and `p`'s slot, its parameter at `at` String.
+fn curried_refusal_message(d: usize, uses: usize, at: usize, result: &str) -> String {
+    let given = (0..d).fold(result.to_string(), |r, i| {
+        let p = if d - 1 - i == uses { "int" } else { "_" };
+        format!("({p}) -> {}", if i == 0 { r } else { format!("({r})") })
+    });
+    let expected = (0..d).fold("(int, int)".to_string(), |r, i| {
+        let p = if d - 1 - i == at { "String" } else { "int" };
+        format!("({p}) -> {}", if i == 0 { r } else { format!("({r})") })
+    });
+    format!("`g` is `{given}`, not `{expected}` [g]")
+}
+
+#[test]
+fn a_refusal_deep_in_a_curried_type_names_the_argument() {
+    // A function passed where curried function types are expected is refused at the argument,
+    // with both types whole, whether the mismatch is in the result 40 levels down or at a
+    // parameter in the middle of the chain; the same function with every level fitting is
+    // taken. Compared level by level twice, 40 levels took about 2^40 comparisons.
+    use super::type_errors;
+    let d = 40;
+    let none = d;
+    assert_eq!(
+        type_errors(&curried_refusal(d, 0, none, "1")),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        type_errors(&curried_refusal(d, 0, none, "0.5")),
+        [curried_refusal_message(d, 0, none, "(int, 0.5)")]
+    );
+    assert_eq!(
+        type_errors(&curried_refusal(d, 20, 20, "1")),
+        [curried_refusal_message(d, 20, 20, "(int, 1)")]
+    );
+    assert_eq!(
+        type_errors(&curried_refusal(d, 20, 21, "1")),
+        Vec::<String>::new()
+    );
 }

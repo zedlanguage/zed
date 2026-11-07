@@ -1760,6 +1760,11 @@ struct Cx<'s> {
     count: usize,
     /// The types of the solved class variables, read where a function's arrows are read.
     solve: Option<Solve<'s>>,
+    /// The verdict of each comparison of a function of `fns` with another, by their two
+    /// names ([`Comparing::fits_read`]). A failed fit of an arrow is followed by the search for
+    /// a cover, which compares the same two results again; without this, a refusal of curried
+    /// function types compared each level twice for each level around it, 2^depth in all.
+    fitted: HashMap<(Arc<str>, Arc<str>), bool>,
     /// When asked for, by [`why_unfit`], why the outermost comparison failed, if one of the
     /// covers rule 6 of sec:type_resolution gives is refused there: `Some(None)` until it is
     /// found. Only the outermost [`fits_in`] reads it, so a comparison inside, tried and
@@ -1913,6 +1918,31 @@ impl<'m, 's> Comparing<'m, 's> {
     fn fits(&'m self, s: Arc<Sig>, se: Env, q: Arc<Sig>, qe: Env) -> Deep<'m, bool> {
         self.stack
             .call(move || async move { fits_in(&s, &se, &q, &qe, self).await })
+    }
+
+    /// Whether the function read as the variable `v`, `s` read by `se`, fits the one read as
+    /// `w`, if `w` is one ([`fits_in`]): compared once for each pair of names, the verdict kept
+    /// in `fitted`. The verdict depends on the two signatures, their readings, the bounds of
+    /// the rigid variables those readings name, made before `v` and `w` and kept while they
+    /// are, and `solve`, fixed for the comparison; `why` is read only by the outermost
+    /// [`fits_in`], which is not one of these. A name is never made again in one state, and
+    /// [`Comparing::diff`] sets this memo aside with the names, so a kept verdict is never read
+    /// for other functions. The names are keys by identity: each is one function as read.
+    async fn fits_read(&'m self, v: &Arc<str>, s: &Arc<Sig>, se: &Env, w: &Arc<str>) -> bool {
+        let key = (v.clone(), w.clone());
+        let (q, qe) = {
+            let cx = self.cx.borrow();
+            if let Some(&ok) = cx.fitted.get(&key) {
+                return ok;
+            }
+            match cx.fns.get(w) {
+                Some(f) => f.clone(),
+                None => return false,
+            }
+        };
+        let ok = self.fits(s.clone(), se.clone(), q, qe).await;
+        self.cx.borrow_mut().fitted.insert(key, ok);
+        ok
     }
 
     /// Whether each component of `cs` is in the one of `ds` at its place
@@ -2813,10 +2843,7 @@ async fn accepts<'m>(
                     Some((s, se)) => {
                         let mut ok = false;
                         for w in &t.vars {
-                            let Some((q, qe)) = c.cx.borrow().fns.get(w).cloned() else {
-                                continue;
-                            };
-                            if c.fits(s.clone(), se.clone(), q, qe).await {
+                            if c.fits_read(v, &s, &se, w).await {
                                 ok = true;
                                 break;
                             }
