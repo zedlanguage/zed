@@ -166,7 +166,12 @@ step_pieces() {
           fi
           ;;
         zedc-*) echo "$n crates/zedc $p" ;;
-        zedc_*-*) c=${n%-*}; echo "$n crates/${c//_/-} $p" ;;
+        # A crate zedc-* split from zedc; zedc_binary is a test of zed-native, run from tests.
+        zedc_*-*)
+          c=crates/${n%-*}
+          c=${c//_/-}
+          if [ -d "$c" ]; then echo "$n $c $p"; else echo "$n tests $p"; fi
+          ;;
         zed_kernel-*) echo "$n crates/zed-kernel $p" ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;
