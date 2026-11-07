@@ -1483,9 +1483,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIST-xor-finite | impl attempt 1 | 2026-11-07 06:40 | started: worktree wt/list-xor-finite from f60e2220 |
 | LOAD-chain-affine | impl attempt 1 | 2026-11-07 05:06 | identity classes (union-find) restore shared reads for diamonds; 30/34 pass; drift probes still quadratic / load 28.05 20.26 18.52 |
 | NARROW-lazy-settle | impl attempt 1 | 2026-11-07 06:04 | fix 2 (lazy scope projects one star per changed class); wide seed sweep 0..4000 both generators |
-| PA-let-block | impl attempt 1 | 2026-11-07 06:19 | start: worktree from origin/main 5db9f3b1 |
 | REC-cycle | impl attempt 1 | 2026-11-07 05:45 | remedy chosen: per-unit clear of recursive instances at Type::forget_emptiness (cycle collector rejected: imbl shares map nodes invisibly); implementing |
-| S22-case-cuts | impl attempt 1 | 2026-11-07 06:39 | probe of the 60 shape boxes (5 shapes x seeds 1-3 x k 1,2,5,13): cutting each case at the piece starts of the two neighboring class ranges (O(C) cases) gives ev |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
