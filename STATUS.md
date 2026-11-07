@@ -1400,32 +1400,27 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| DECIDE-disj-chain | impl attempt 1 | 2026-11-03 15:55 | rebased on origin/main a7eb8815 (STATUS only): ready d4ca9ebc, NAME-ties-orient fb551ef4 |
-| DISJ-incremental | impl attempt 1 | 2026-11-07 01:57 | TEST-heavy-zero: cause: heavy's y >= 0 // z >= 0 gave y and z one color, so the formula went to Naming::Tied (settled as sets, never searched): 0 parts. Fix y > |
-| EMPTY-key-search | impl attempt 1 | 2026-11-05 18:16 | ready: wt/empty-search 855e0990 (REP-path-memo) + 3165cb0a (EMPTY-key-search) rebased on a7eb8815; fmt, clippy clean; kernel 103, l01_22 41, l01_23 159, l01_24  |
-| EMPTY-overlap-chain | impl attempt 1 | 2026-11-07 01:46 | started; worktree wt/empty-overlap from wt/empty-search 3165cb0a plus 3d91ddc9 |
-| LINK-obj-leftover | impl attempt 1 | 2026-11-07 01:09 | ready 9aaec2f4 on origin/main a7eb8815; l01_36b 16, build_binary 7, l01_36a 21, zed-native 11, l07_03 19, report_binary 3, deep_heap 22, l01_36_cranelift 148 pa |
-| LIST-parity-quad | impl attempt 1 | 2026-11-07 01:46 | started; worktree wt/list-parity-quad from origin/main, cherry-picked BDD-xor-parity 3d91ddc9 |
+| DISJ-diff-fast | impl attempt 1 | 2026-11-07 02:12 | scope widened by coordinator: also DISJ-incremental (general rows by the solver's own projection); step-1 test written, building; load 16.56 19.14 24.38 |
+| DISJ-incremental | impl attempt 1 | 2026-11-07 01:57 | TEST-heavy-zero ready (d14aa416, docs 89a906e8); DISJ-incremental counted (settle/project_parts/pick solve whole group per disjunct; none-holds projection O(n^3 |
+| DOC-private-links | impl attempt 1 | 2026-11-07 02:10 | ready 008b5823 on wt/doc-private-links (base ad124dcb): 12 private links as code spans (9 from ledger + 3 product.rs from batch 9); strict cargo doc rc 0 (was 1 |
+| EMPTY-overlap-chain | impl attempt 2 | 2026-11-07 01:46 | started; rebasing wt/empty-overlap onto origin/main; load 16.64 18.95 24.18 |
+| IS-chain-quad | impl attempt 1 | 2026-11-03 18:32 | re-measured on 1648eb4d^ (ad124dcb): left chain of k 'x is int' 0.050/0.183/0.641/2.68 s at k=500/1000/2000/4000, distinct binders 3.74 s at 4000, right-nested  |
+| LIST-parity-quad | impl attempt 1 | 2026-11-07 01:46 | negative control (old kernel, new order-1 assertion): fails, 2.32MB->142.0MB bytes 61.3x at c 64->512, load 30.7; not committed |
 | main | running | 2026-11-06 23:47 | KERNEL-sum-tower ready d4cbf628 (bound.rs uses fast::pow/mul); POW-tower held on A29; A28 asked; load 26.94 23.48 17.66 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
 | NAME-ties-orient+DECIDE-disj-chain | impl attempt 1 | 2026-11-07 01:00 | started in /home/luke/Work/wt/decide-disj from origin/main ca529f21; load 27.72 23.48 21.48 |
-| NAME-ties-orient | impl attempt 1 | 2026-11-05 04:07 | ready 0eadfcd7 on wt/decide-disj; l01_38_presburger 240 pass 2 ignored (by submodule, load 23-28), zedc lib store::presburger 15 pass; clippy and fmt clean |
-| NARROW-hub-rest | impl attempt 1 | 2026-11-07 01:48 | started; worktree wt/narrow-hub-rest on wt/narrow-hub-settle a18089b5; load 24.44 |
+| NARROW-hub-rest | impl attempt 1 | 2026-11-07 01:48 | causes confirmed by perf (fp build): two hubs 78% and sum 95% in project_block -> project_part -> presburger::project_each of the one base part holding every ai |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
 | POW-tower | impl attempt 1 | 2026-11-05 22:47 | returned for cross-review: no exact O(n log n) tower order known (Baker bound exponential for towers, log log forms, PosSLP); candidates a/b/c in ledger / load  |
 | PREIMAGE-ref-tests | impl attempt 1 | 2026-11-05 04:07 | both commits on wt/preimage-ref-tests (3630da47, 04dd4432); waiting for BUILD-feature-match on origin/main to rebase and add preimage-ref to the three dependent |
 | REP-path-memo+EMPTY-key-search | impl attempt 1 | 2026-11-07 00:55 | started by orchestrator in wt/empty-search; load5 22.62 |
-| REP-path-memo | impl attempt 1 | 2026-11-05 23:59 | committed 2780a28a; refusals 84->80 (layered 79, cells 1); tests kernel 100, l01_22 41, l01_23 156, l01_24 66, l01_26 246, l01_27 48, l01_29 170, l01_39 136, l0 |
-| RUN-only | impl attempt 1 | 2026-11-07 01:38 | started; worktree /home/luke/Work/wt/run-only from origin/main |
+| RUN-only | impl attempt 1 | 2026-11-07 01:38 | ready 300ca848: run_tests.sh --only/--no-doc/--list; test_run_tests.sh 14/14 (control 5/14 fail); --only 'l01_29/deep_heap' 23 pieces 0 failed load 15; full lis |
 | S22-chain-cost | impl attempt 1 | 2026-11-07 02:02 | start; load 28.70 39.43 34.42 |
-| S22-order | impl attempt 1 | 2026-11-05 04:07 | ready a4673e8e on origin/main a7eb8815: store::preimage 33/33, l01_25 215, l01_39 136, l01_39b 7, s_01f 14, l01_38 242+2 ignored (load 35-50); fmt, clippy -D wa |
-| SPEC-sync-l136b | impl attempt 1 | 2026-11-07 02:00 | ready 97fc8b7e on wt/spec-sync-l136b (rebased on 1c0bf76a): m0_01 step_index snapshot +l01_36b_link_identity (L1.36b impl 597484b6 added the target, not spec e4 |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
 | TD-finite | impl attempt 1 | 2026-11-05 04:07 | committed comment at Type::finite (C22); zed-kernel lib 100, l01_23 155, l01_28 63, zedc lib 90 pass, load 20-32 |
-| TEST-heavy-zero | running | 2026-11-07 01:57 |  |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | returned with author question A30 (crate granularity: per-task ~310 crates doubles all-crates rebuild after a zedc edit, 21-26 s -> 45-49 s; lib edit 6-7 s -> 2 |
-| ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 12 zedc-zir committed; l01_35 source path updated; build, clippy, doc; 15 groups pass (zir-lib 4, zedc-lib 2, l01_19b/20/31/32/33/34/35/36/36a/37/37a/3 |
+| ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 13 zedc-elab committed (last boundary); build, clippy, doc; 16 groups pass (zedc-lib 2, l01_15/16/17/18/19/19a/21/26/28/29/30/39b/39c, s_01f) load 13-1 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
