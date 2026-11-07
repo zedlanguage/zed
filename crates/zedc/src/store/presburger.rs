@@ -1646,86 +1646,181 @@ fn fresh_stamp() -> u64 {
 /// (four tasks in three slots), `l01_38_presburger::omega::a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause`.
 /// COMPLEXITY.md rows S16 and S18. A complete solution would backtrack over the disjuncts
 /// (DPLL(T) with learned conflicts), exponential in the worst case.
+///
+/// The disjunctions are first read with [`by_halves`] (`fast`), each disjunct that no point
+/// answers asked of the constraints taken projected onto its disjunction's atoms; a disjunct
+/// taken so leaves the model a point of the constraints taken before it only, so until the
+/// model is found again, by one solve of the constraints taken, the disjuncts are asked of
+/// the projection alone. When that reading is refused, the disjunctions are read again as
+/// before, each disjunct asked of the groups of the constraints taken (not `fast`), so no
+/// formula is refused that was not before. Either reading gives a point of `p`, but not
+/// always the same one.
+// Complexity tradeoff: a failed fast reading is followed by the reading of before, which
+// asks each disjunct that no point answers of its whole group: on `n` disjunctions over one
+// group of `n` rows whose point needs an earlier choice undone, O(n²), as before this plan
+// item (DISJ-incremental). No answer is given up.
 fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
+    pick_by(p, deep, true).or_else(|_| pick_by(p, deep, false))
+}
+
+/// [`pick`], reading the disjunctions by halves when `fast`.
+fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<Model, Refusal> {
     let mut model = solve(&p.cons, true)?.ok_or(Refusal::Disjuncts)?;
     let mut acc = Linked::default();
     let mut near = Near::default();
     take(&p.cons, &mut acc, &mut near);
-    // The disjunctions left, read in place: only the disjuncts taken are entered.
-    let mut queue: Vec<&[Rc<Parts>]> = p.ors.iter().map(Vec::as_slice).collect();
+    // The disjunctions left, in the order they are read (the last first); only the disjuncts
+    // taken are entered.
+    let batch: Vec<&[Rc<Parts>]> = p.ors.iter().rev().map(Vec::as_slice).collect();
     // The disjuncts that hold at the model, found by [`Parts::witness`].
     let mut held: Vec<&Parts> = Vec::new();
     // A new stamp each time the model changes, under which a part found not to hold at the
     // model is not read again ([`Parts::witness`]).
     let mut stamp = fresh_stamp();
-    'next: while let Some(ds) = queue.pop() {
-        // A disjunct that holds at the model is taken with the disjunct that holds first in
-        // each disjunction below it, which reading those disjunctions one by one would take,
-        // the model being unchanged; so the nest below is read once, not again at each level.
-        for d in ds {
-            held.clear();
-            let holds = if deep {
-                d.witness(&model, stamp, &mut held)
-            } else {
-                held.push(d);
-                d.cons.iter().all(|c| c.holds(&model))
-            };
-            if holds {
-                held.iter().for_each(|h| take(&h.cons, &mut acc, &mut near));
-                continue 'next;
+    // Whether a disjunction may be asked of the solver: one with no disjunct holding at the
+    // model, which only a taken disjunct changes.
+    let asks = fast
+        && !batch
+            .iter()
+            .all(|ds| ds.iter().any(|d| d.cons.iter().all(|c| c.holds(&model))));
+    // Whether the model is a point of the constraints taken: not after a disjunct is taken on
+    // the projection's word, until it is found again.
+    let mut valid = true;
+    let keep: Vec<BTreeSet<Atom>> = if asks {
+        (batch.iter())
+            .map(|ds| {
+                (ds.iter())
+                    .flat_map(|d| d.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()))
+                    .collect()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let rows: Vec<Con> = (acc.around_atoms(keep.iter().flatten()).into_iter())
+        .cloned()
+        .collect();
+    // Reads the disjunction at `i` and the disjunctions below the disjuncts it takes, given the
+    // constraints taken projected onto its atoms (`None`: not known), and returns the
+    // constraints it takes. The model is a point of the constraints taken throughout.
+    let mut one = |i: usize, kernel: Option<Vec<Con>>| -> Result<Vec<Con>, Refusal> {
+        let mut added: Vec<Con> = Vec::new();
+        // The disjunctions below, read before the next of `batch`, as a queue of all of them
+        // would read them; the projection is of the atoms of the first alone.
+        let mut queue: Vec<&[Rc<Parts>]> = vec![batch[i]];
+        let mut kernel = kernel.map(Linked::of);
+        'next: while let Some(ds) = queue.pop() {
+            let kernel = kernel.take();
+            if !valid && kernel.is_none() {
+                model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                stamp = fresh_stamp();
+                valid = true;
             }
-        }
-        let mut taken: Option<(&Parts, Model)> = None;
-        let mut why = Refusal::Disjuncts;
-        for d in ds {
-            // A disjunct whose constraints hold at the model, though the disjunctions below it
-            // may not, is taken with the model unchanged, so that the parts found not to hold
-            // below it are not read again.
-            if d.cons.iter().all(|c| c.holds(&model)) {
-                taken = Some((d, Model::new()));
-                break;
+            // A disjunct that holds at the model is taken with the disjunct that holds first in
+            // each disjunction below it, which reading those disjunctions one by one would
+            // take, the model being unchanged; so the nest below is read once, not again at
+            // each level.
+            for d in ds.iter().filter(|_| valid) {
+                held.clear();
+                let holds = if deep {
+                    d.witness(&model, stamp, &mut held)
+                } else {
+                    held.push(d);
+                    d.cons.iter().all(|c| c.holds(&model))
+                };
+                if holds {
+                    for h in &held {
+                        take(&h.cons, &mut acc, &mut near);
+                        added.extend(h.cons.iter().cloned());
+                    }
+                    continue 'next;
+                }
             }
-            if let Some(m) = local_repair(&acc.cons, &near, &model, &d.cons) {
-                taken = Some((d, m));
-                break;
-            }
-        }
-        for d in ds {
-            if taken.is_some() {
-                break;
-            }
-            let mut cs = acc.around(&d.cons);
-            cs.extend(d.cons.iter());
-            match solve(&cs, true) {
-                Ok(Some(m)) => {
+            let mut taken: Option<(&Parts, Model)> = None;
+            let mut why = Refusal::Disjuncts;
+            for d in ds.iter().filter(|_| valid) {
+                // A disjunct whose constraints hold at the model, though the disjunctions below
+                // it may not, is taken with the model unchanged, so that the parts found not to
+                // hold below it are not read again.
+                if d.cons.iter().all(|c| c.holds(&model)) {
+                    taken = Some((d, Model::new()));
+                    break;
+                }
+                if let Some(m) = local_repair(&acc.cons, &near, &model, &d.cons) {
                     taken = Some((d, m));
                     break;
                 }
-                Ok(None) => {}
-                Err(r) => why = r,
+            }
+            for d in ds {
+                if taken.is_some() {
+                    break;
+                }
+                // Asked of the constraints taken projected onto the disjunction's atoms, which
+                // have a point with the disjunct exactly when the constraints taken do, and
+                // which give one there; the model takes the projection's point on the
+                // disjunct's group, whose atoms are kept. When the solver refuses that, of the
+                // groups of the constraints taken, as before.
+                if let Some(k) = &kernel {
+                    let mut cs = k.around(&d.cons);
+                    cs.extend(d.cons.iter());
+                    match solve(&cs, false) {
+                        Ok(None) => continue,
+                        Ok(Some(_)) => {
+                            taken = Some((d, Model::new()));
+                            valid = false;
+                            break;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                if !valid {
+                    model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                    stamp = fresh_stamp();
+                    valid = true;
+                }
+                let mut cs = acc.around(&d.cons);
+                cs.extend(d.cons.iter());
+                match solve(&cs, true) {
+                    Ok(Some(m)) => {
+                        taken = Some((d, m));
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(r) => why = r,
+                }
+            }
+            let Some((d, m)) = taken else {
+                return Err(why);
+            };
+            // A change of any value drops every mark, not only the marks of the parts that
+            // mention it, yet no part is read again below each level: a part is marked by the
+            // first walk that reaches it and fails, at the disjunction `D` popped then. The
+            // disjunctions popped after `D` and before the one that holds the part are those of
+            // the disjuncts taken on the way down, read last to first as that walk read them;
+            // each was found to hold by that walk, and each disjunct on the way has its
+            // constraints holding, so it is taken with the model unchanged. A disjunct taken
+            // earlier in its disjunction leaves the part unread. So the model is the same when
+            // the part is reached again, and its mark holds. Test `l01_39_reduced_product::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
+            // counts the parts tested ([`parts_tested`]) (COMPLEXITY S31).
+            if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
+                stamp = fresh_stamp();
+            }
+            model.extend(m);
+            take(&d.cons, &mut acc, &mut near);
+            added.extend(d.cons.iter().cloned());
+            if deep {
+                queue.extend(d.ors.iter().map(Vec::as_slice));
             }
         }
-        let Some((d, m)) = taken else {
-            return Err(why);
-        };
-        // A change of any value drops every mark, not only the marks of the parts that mention
-        // it, yet no part is read again below each level: a part is marked by the first walk
-        // that reaches it and fails, at the disjunction `D` popped then. The disjunctions
-        // popped after `D` and before the one that holds the part are those of the disjuncts
-        // taken on the way down, read last to first as that walk read them; each was found to
-        // hold by that walk, and each disjunct on the way has its constraints holding, so it is
-        // taken with the model unchanged. A disjunct taken earlier in its disjunction leaves
-        // the part unread. So the model is the same when the part is reached again, and its
-        // mark holds. Test `l01_39_reduced_product::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
-        // counts the parts tested ([`parts_tested`]) (COMPLEXITY S31).
-        if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
-            stamp = fresh_stamp();
-        }
-        model.extend(m);
-        take(&d.cons, &mut acc, &mut near);
-        if deep {
-            queue.extend(d.ors.iter().map(Vec::as_slice));
-        }
+        Ok(added)
+    };
+    if asks {
+        by_halves(rows, &keep, &mut one)?;
+    } else {
+        (0..batch.len()).try_for_each(|i| one(i, None).map(drop))?;
+    }
+    if !valid {
+        model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
     }
     Ok(model)
 }
@@ -1935,15 +2030,273 @@ impl Linked {
 
     /// The constraints in the groups of the atoms of `cs`, in no particular order.
     fn around(&self, cs: &[Con]) -> Vec<&Con> {
-        let roots: BTreeSet<usize> = cs
-            .iter()
-            .flat_map(|c| c.lin.terms.keys())
+        self.around_atoms(cs.iter().flat_map(|c| c.lin.terms.keys()))
+    }
+
+    /// The constraints in the groups of `atoms`, in no particular order.
+    fn around_atoms<'a>(&self, atoms: impl Iterator<Item = &'a Atom>) -> Vec<&Con> {
+        (self.around_places(atoms).into_iter())
+            .map(|i| &self.cons[i])
+            .collect()
+    }
+
+    /// The places in `cons` of the constraints in the groups of `atoms`, in no particular order.
+    fn around_places<'a>(&self, atoms: impl Iterator<Item = &'a Atom>) -> Vec<usize> {
+        let roots: BTreeSet<usize> = atoms
             .filter_map(|a| self.ids.get(a).map(|i| self.root(*i)))
             .collect();
-        roots
-            .into_iter()
-            .flat_map(|r| self.held[r].iter().map(|i| &self.cons[*i]))
+        (roots.into_iter())
+            .flat_map(|r| self.held[r].iter().copied())
             .collect()
+    }
+}
+
+/// The rows of `rows` in the groups of `atoms` ([`Linked::around_atoms`]), in their order.
+fn linked_to<'a>(rows: Vec<Con>, atoms: impl Iterator<Item = &'a Atom>) -> Vec<Con> {
+    let linked = Linked::of(rows);
+    let mut at = linked.around_places(atoms);
+    at.sort_unstable();
+    let mut rows: Vec<Option<Con>> = linked.cons.into_iter().map(Some).collect();
+    at.into_iter()
+        .map(|i| rows[i].take().expect("each place once"))
+        .collect()
+}
+
+/// A row `a·x + rest >= 0` read as a bound on `x`: `a` above zero for a lower bound, below for an
+/// upper one.
+struct Side1 {
+    a: Int,
+    rest: Lin,
+    /// The row it comes from, so that the two sides of one equality are not combined.
+    row: usize,
+}
+
+/// The rows of `rows`, a system with an integer point when `None` is not returned, with atoms
+/// that `keep` does not hold eliminated wherever the elimination is exact and adds no terms:
+/// the integer points of the result, read on the atoms it keeps, are those of `rows`, so the
+/// result with any rows over kept atoms has a point exactly when `rows` with them has one.
+/// An atom `x` is eliminated by Fourier-Motzkin, each lower bound `a·x + r >= 0` combined with
+/// each upper bound `-b·x + s >= 0` into `b·r + a·s >= 0`, an equality giving both; this is exact
+/// over the integers when every lower bound or every upper bound has coefficient 1 (Pugh, "The
+/// Omega test", 1992, the exact shadow). It is done only when the `L·U` rows made have no more
+/// terms in all than the `L + U` rows taken out, judged in O(1) from counts kept for each atom,
+/// so the system never grows and the whole elimination costs O(m log m) for m terms, an atom
+/// being looked at again only when a row of it changes. `None` when a combination leaves a
+/// false row without atoms: `rows` has no point.
+// Complexity tradeoff: an atom whose elimination would add terms is kept, so the result is
+// small only where the graph of the rows is: on chains, trees and other graphs whose atoms
+// have few lower or few upper bounds it keeps little beyond `keep`, and on a graph with a core
+// of atoms each of three or more lower and three or more upper bounds (a dense graph, a grid)
+// it keeps that core whole. A complete projection there grows the rows quadratically or worse
+// (Fourier-Motzkin is doubly exponential in general), so no smaller exact result is known;
+// the callers then solve the kept core with each question, as they did the whole group.
+fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    #[derive(Default)]
+    struct Deg {
+        lo: usize,
+        hi: usize,
+        lo_terms: usize,
+        hi_terms: usize,
+        lo_wide: usize,
+        hi_wide: usize,
+        rows: Vec<usize>,
+        gone: bool,
+        queued: bool,
+    }
+    let mut live: Vec<Option<Con>> = Vec::with_capacity(rows.len());
+    let mut deg: HashMap<Atom, Deg> = HashMap::new();
+    let mut queue: std::collections::VecDeque<Atom> = std::collections::VecDeque::new();
+    // Adds (`by` 1) or takes out (`by` -1) the counts of row `i` at each of its atoms, queuing
+    // those that may now be eliminated.
+    let count = |deg: &mut HashMap<Atom, Deg>,
+                 queue: &mut std::collections::VecDeque<Atom>,
+                 c: &Con,
+                 i: usize,
+                 add: bool| {
+        let n = c.lin.terms.len();
+        for (a, k) in &c.lin.terms {
+            let d = deg.entry(a.clone()).or_default();
+            let wide = usize::from(!k.is_unit());
+            let sides = if c.rel == Rel::Eq {
+                [true, true]
+            } else {
+                [k.is_positive(), !k.is_positive()]
+            };
+            for (lower, on) in [(true, sides[0]), (false, sides[1])] {
+                if !on {
+                    continue;
+                }
+                let (cnt, terms, w) = if lower {
+                    (&mut d.lo, &mut d.lo_terms, &mut d.lo_wide)
+                } else {
+                    (&mut d.hi, &mut d.hi_terms, &mut d.hi_wide)
+                };
+                if add {
+                    *cnt += 1;
+                    *terms += n;
+                    *w += wide;
+                } else {
+                    *cnt -= 1;
+                    *terms -= n;
+                    *w -= wide;
+                }
+            }
+            if add {
+                d.rows.push(i);
+            }
+            if !d.gone && !d.queued && !keep(a) {
+                d.queued = true;
+                queue.push_back(a.clone());
+            }
+        }
+    };
+    // A combined row with its terms divided by their common divisor and its constant rounded
+    // down; `None` for a row without atoms, which is false when its constant is below zero.
+    let tidy = |lin: Lin| -> Result<Option<Con>, ()> {
+        if lin.terms.is_empty() {
+            return if lin.constant.is_negative() { Err(()) } else { Ok(None) };
+        }
+        let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
+        let lin = if g.is_unit() {
+            lin
+        } else {
+            Lin {
+                terms: lin.terms.iter().map(|(a, k)| (a.clone(), k.div_floor(&g))).collect(),
+                constant: lin.constant.div_floor(&g),
+            }
+        };
+        Ok(Some(Con { lin, rel: Rel::Ge }))
+    };
+    for c in rows {
+        let i = live.len();
+        count(&mut deg, &mut queue, c, i, true);
+        live.push(Some(c.clone()));
+    }
+    while let Some(x) = queue.pop_front() {
+        let d = deg.get_mut(&x).expect("a queued atom");
+        d.queued = false;
+        let (l, u) = (d.lo, d.hi);
+        let exact = d.lo_wide == 0 || d.hi_wide == 0;
+        let small = l * u <= l + u && l * d.hi_terms + u * d.lo_terms <= d.lo_terms + d.hi_terms + 2 * l * u;
+        if d.gone || !exact || !small {
+            continue;
+        }
+        d.gone = true;
+        let mut ids = mem::take(&mut d.rows);
+        ids.sort_unstable();
+        ids.dedup();
+        let (mut lows, mut highs): (Vec<Side1>, Vec<Side1>) = (Vec::new(), Vec::new());
+        for i in ids {
+            let Some(c) = live[i].take() else { continue };
+            count(&mut deg, &mut queue, &c, i, false);
+            let a = c.lin.terms.get(&x).expect("a row of the atom").clone();
+            let mut rest = c.lin.clone();
+            rest.terms.remove(&x);
+            let neg = || Lin {
+                terms: rest.terms.iter().map(|(b, k)| (b.clone(), -k)).collect(),
+                constant: -&rest.constant,
+            };
+            match (c.rel, a.is_positive()) {
+                (Rel::Eq, true) => {
+                    highs.push(Side1 { a: -&a, rest: neg(), row: i });
+                    lows.push(Side1 { a, rest, row: i });
+                }
+                (Rel::Eq, false) => {
+                    lows.push(Side1 { a: -&a, rest: neg(), row: i });
+                    highs.push(Side1 { a, rest, row: i });
+                }
+                (Rel::Ge, true) => lows.push(Side1 { a, rest, row: i }),
+                (Rel::Ge, false) => highs.push(Side1 { a, rest, row: i }),
+            }
+        }
+        for lo in &lows {
+            for hi in &highs {
+                if lo.row == hi.row {
+                    continue;
+                }
+                // `lo.a·x + r >= 0` and `hi.a·x + s >= 0` with `hi.a` below zero.
+                let b = -&hi.a;
+                let mut lin = Lin { terms: BTreeMap::new(), constant: &(&b * &lo.rest.constant) + &(&lo.a * &hi.rest.constant) };
+                for (t, k) in &lo.rest.terms {
+                    lin.terms.insert(t.clone(), &b * k);
+                }
+                for (t, k) in &hi.rest.terms {
+                    let v = &lo.a * k;
+                    let sum = match lin.terms.remove(t) {
+                        Some(w) => &w + &v,
+                        None => v,
+                    };
+                    if !sum.is_zero() {
+                        lin.terms.insert(t.clone(), sum);
+                    }
+                }
+                match tidy(lin) {
+                    Err(()) => return None,
+                    Ok(None) => {}
+                    Ok(Some(c)) => {
+                        let i = live.len();
+                        count(&mut deg, &mut queue, &c, i, true);
+                        live.push(Some(c));
+                    }
+                }
+            }
+        }
+    }
+    Some(live.into_iter().flatten().collect())
+}
+
+/// Runs `leaf` on each item `0..keep.len()` in order, giving it the rows of the system `rows`
+/// and of every row an earlier `leaf` returned, projected by [`shadow`] onto the atoms of the
+/// item, `keep[i]`, and cut to the groups of those atoms ([`linked_to`]); `None` when the
+/// projection found no point, which a system with a point never gives. The projections are
+/// made by halves: the system projected onto the atoms of a range of items is projected onto
+/// those of its first half, whose items run, and then, with the rows they returned, onto those
+/// of its second half. On a system whose projections stay small (see [`shadow`]) the work is
+/// O((m + k) log k) for m terms and k items, where asking each item of the whole system is
+/// O(m k). `rows` must have an integer point, and keep one with the rows returned, for a
+/// projection to be used by the leaves.
+fn by_halves<E>(
+    rows: Vec<Con>,
+    keep: &[BTreeSet<Atom>],
+    mut leaf: impl FnMut(usize, Option<Vec<Con>>) -> Result<Vec<Con>, E>,
+) -> Result<(), E> {
+    let n = keep.len();
+    if n == 0 {
+        return Ok(());
+    }
+    let project = |rows: Vec<Con>, l: usize, r: usize| -> Option<Vec<Con>> {
+        let atoms: HashSet<&Atom> = keep[l..r].iter().flatten().collect();
+        let near = linked_to(rows, atoms.iter().copied());
+        let s = shadow(&near, &|a| atoms.contains(a))?;
+        Some(linked_to(s, atoms.iter().copied()))
+    };
+    // The ranges still to run after the one running, each with its system (`None`: unknown),
+    // to which the rows returned meanwhile are added; innermost last.
+    let mut open: Vec<(usize, usize, Option<Vec<Con>>)> = Vec::new();
+    let mut cur = Some((0, n, Some(rows)));
+    loop {
+        if let Some((l, r, rows)) = cur.take() {
+            let k = rows.and_then(|rows| project(rows, l, r));
+            if r - l == 1 {
+                let added = leaf(l, k)?;
+                if !added.is_empty() {
+                    for (_, _, rows) in &mut open {
+                        if let Some(rows) = rows {
+                            rows.extend(added.iter().cloned());
+                        }
+                    }
+                }
+            } else {
+                let m = l + (r - l) / 2;
+                cur = Some((l, m, k.clone()));
+                open.push((m, r, k));
+                continue;
+            }
+        }
+        match open.pop() {
+            Some(next) => cur = Some(next),
+            None => return Ok(()),
+        }
     }
 }
 
@@ -3121,62 +3474,117 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
         let mut todo = std::mem::take(&mut p.ors);
         let mut next = 0;
         while next < todo.len() {
-            let ds = std::mem::take(&mut todo[next]);
-            next += 1;
-            let n = ds.len();
-            // With `search`, whether a disjunct of this disjunction holds at the point.
-            let served = search
-                && (point.as_ref())
-                    .is_some_and(|pt| ds.iter().any(|d| d.cons.iter().all(|c| c.holds(pt))));
-            let mut live: Vec<Rc<Parts>> = ds
-                .into_iter()
-                .filter(|d| {
-                    // The question below is of the disjunct's own constraints, so the point
-                    // answers it when they hold there, whatever holds below them; reading
-                    // only them keeps a nest from being read once for each level above it.
-                    if let Some(pt) = &point
-                        && (d.cons.iter().all(|c| c.holds(pt))
-                            || local_repair(&base.cons, &near, pt, &d.cons).is_some())
-                    {
-                        return true;
-                    }
-                    if local_refute(&base.cons, &near, &d.cons) {
-                        return false;
-                    }
-                    if served {
-                        return true;
-                    }
-                    let mut cs = base.around(&d.cons);
-                    cs.extend(d.cons.iter());
-                    !matches!(solve(&cs, false), Ok(None))
+            let end = todo.len();
+            // Whether a disjunct of these disjunctions may be asked of the solver: one that does
+            // not hold at the point, in a disjunction that the point does not serve.
+            let asks = point.as_ref().is_some_and(|pt| {
+                todo[next..end].iter().any(|ds| {
+                    let holds = |d: &Rc<Parts>| d.cons.iter().all(|c| c.holds(pt));
+                    !(search && ds.iter().any(holds)) && !ds.iter().all(holds)
                 })
+            });
+            // The atoms of each disjunction's own constraints, onto which [`by_halves`]
+            // projects the base for its questions.
+            let keep: Vec<BTreeSet<Atom>> = if asks {
+                (todo[next..end].iter())
+                    .map(|ds| {
+                        (ds.iter())
+                            .flat_map(|d| d.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()))
+                            .collect()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let rows: Vec<Con> = (base.around_atoms(keep.iter().flatten()).into_iter())
+                .cloned()
                 .collect();
-            changed |= live.len() < n;
-            match live.len() {
-                0 => return Ok(None),
-                1 => {
-                    let d = live.pop().expect("one");
-                    let repaired = match &point {
-                        Some(pt) if d.cons.iter().all(|c| c.holds(pt)) => None,
-                        Some(pt) => Some(local_repair(&base.cons, &near, pt, &d.cons)),
-                        None => None,
-                    };
-                    take(&d.cons, &mut base, &mut near);
-                    match (repaired, &mut point) {
-                        (Some(Some(m)), Some(pt)) => pt.extend(m),
-                        // No point of the base near the old one: one of the whole base, or
-                        // none, in which case the formula has none either.
-                        (Some(None), _) => match solve(&base.cons, true) {
-                            Ok(Some(m)) => point = Some(m),
-                            Ok(None) => return Ok(None),
-                            Err(_) => point = None,
-                        },
-                        _ => {}
+            // Tests the disjunction at `i`, given the base projected onto its atoms (`None`:
+            // not known), and returns the constraints it adds to the base.
+            let mut one = |i: usize, kernel: Option<Vec<Con>>| -> Result<Vec<Con>, ()> {
+                let ds = std::mem::take(&mut todo[i]);
+                let n = ds.len();
+                // With `search`, whether a disjunct of this disjunction holds at the point.
+                let served = search
+                    && (point.as_ref())
+                        .is_some_and(|pt| ds.iter().any(|d| d.cons.iter().all(|c| c.holds(pt))));
+                // The projection is of a base with a point; one is known while `point` is.
+                let kernel = kernel.filter(|_| point.is_some()).map(Linked::of);
+                let mut live: Vec<Rc<Parts>> = ds
+                    .into_iter()
+                    .filter(|d| {
+                        // The question below is of the disjunct's own constraints, so the point
+                        // answers it when they hold there, whatever holds below them; reading
+                        // only them keeps a nest from being read once for each level above it.
+                        if let Some(pt) = &point
+                            && (d.cons.iter().all(|c| c.holds(pt))
+                                || local_repair(&base.cons, &near, pt, &d.cons).is_some())
+                        {
+                            return true;
+                        }
+                        if local_refute(&base.cons, &near, &d.cons) {
+                            return false;
+                        }
+                        if served {
+                            return true;
+                        }
+                        // Asked of the base projected onto the disjunction's atoms, which has a
+                        // point with the disjunct exactly when the base has one; when the
+                        // solver refuses that, of the base's groups, as before.
+                        if let Some(k) = &kernel {
+                            let mut cs = k.around(&d.cons);
+                            cs.extend(d.cons.iter());
+                            match solve(&cs, false) {
+                                Ok(None) => return false,
+                                Ok(Some(_)) => return true,
+                                Err(_) => {}
+                            }
+                        }
+                        let mut cs = base.around(&d.cons);
+                        cs.extend(d.cons.iter());
+                        !matches!(solve(&cs, false), Ok(None))
+                    })
+                    .collect();
+                changed |= live.len() < n;
+                match live.len() {
+                    0 => Err(()),
+                    1 => {
+                        let d = live.pop().expect("one");
+                        let repaired = match &point {
+                            Some(pt) if d.cons.iter().all(|c| c.holds(pt)) => None,
+                            Some(pt) => Some(local_repair(&base.cons, &near, pt, &d.cons)),
+                            None => None,
+                        };
+                        take(&d.cons, &mut base, &mut near);
+                        match (repaired, &mut point) {
+                            (Some(Some(m)), Some(pt)) => pt.extend(m),
+                            // No point of the base near the old one: one of the whole base, or
+                            // none, in which case the formula has none either.
+                            (Some(None), _) => match solve(&base.cons, true) {
+                                Ok(Some(m)) => point = Some(m),
+                                Ok(None) => return Err(()),
+                                Err(_) => point = None,
+                            },
+                            _ => {}
+                        }
+                        todo.extend(d.ors.iter().cloned());
+                        Ok(d.cons.clone())
                     }
-                    todo.extend(d.ors.iter().cloned());
+                    _ => {
+                        p.ors.push(live);
+                        Ok(Vec::new())
+                    }
                 }
-                _ => p.ors.push(live),
+            };
+            let done = if asks {
+                by_halves(rows, &keep, |i, k| one(next + i, k))
+            } else {
+                (next..end).try_for_each(|i| one(i, None).map(drop))
+            };
+            if done.is_err() {
+                return Ok(None);
             }
+            next = end;
         }
         if !changed {
             p.cons = base.cons;
@@ -7747,5 +8155,154 @@ pub(super) mod tests {
             rank >= 2,
             "no join of two roots of rank 1: greatest rank {rank}"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod difference_rows {
+    use super::*;
+
+    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % n
+        }
+    }
+
+    fn x(i: usize) -> Lin {
+        Lin::atom(Atom::Sym(format!("x{i}").into()))
+    }
+
+    /// `x[i] - x[j] + k >= 0`, or `== 0`; with `j == i`, the bound `x[i] + k >= 0`, and with
+    /// `sum`, `x[i] + x[j] + k >= 0`.
+    fn row(i: usize, j: usize, k: i128, eq: bool, sum: bool) -> Con {
+        let mut l = x(i).plus(&Lin::constant(k));
+        if j != i {
+            l = l.plus(&x(j).times(if sum { 1 } else { -1 }));
+        }
+        Con {
+            lin: l,
+            rel: if eq { Rel::Eq } else { Rel::Ge },
+        }
+    }
+
+    /// Whether the rows `x[i] - x[j] + k >= 0` (`x[j] <= x[i] + k`, an edge `i → j` of weight
+    /// `k`; the bounds are edges from and to a node for zero) have no point: a cycle of
+    /// negative weight, by Bellman-Ford. Over the integers as over the reals, since the
+    /// weights are integers.
+    fn negative_cycle(n: usize, edges: &[(usize, usize, i128)]) -> bool {
+        let mut d = vec![0i128; n + 1];
+        for _ in 0..=n + 1 {
+            let mut moved = false;
+            for &(a, b, w) in edges {
+                if d[a] + w < d[b] {
+                    d[b] = d[a] + w;
+                    moved = true;
+                }
+            }
+            if !moved {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The premise of the fast path for groups of difference rows (DISJ-diff-fast, question
+    /// A44): `solve` never refuses a system whose rows are all `±x ± y + k >= 0`, `± x + k >=
+    /// 0` or such equalities, with or without a model wanted, and its answer is that of
+    /// Bellman-Ford on the rows `x - y + k`. Shapes chosen to tie: cycles and cliques whose
+    /// rows are all alike, stars of alike leaves, chains, and random graphs.
+    #[test]
+    fn solve_never_refuses_rows_of_two_unit_terms() {
+        let mut rng = Rng(0xd1ff_0a44);
+        let (mut empty, mut point) = (0, 0);
+        for case in 0..6000 {
+            let n = 2 + rng.below(24) as usize;
+            let sum_ok = case % 3 == 2;
+            let k = |rng: &mut Rng, alike: bool| {
+                if alike {
+                    0
+                } else {
+                    rng.below(9) as i128 - 4
+                }
+            };
+            let alike = rng.below(3) == 0;
+            let mut pairs: Vec<(usize, usize)> = Vec::new();
+            match rng.below(5) {
+                0 => pairs.extend((0..n).map(|i| (i, (i + 1) % n))),
+                1 => {
+                    for i in 0..n.min(9) {
+                        for j in 0..n.min(9) {
+                            if i != j {
+                                pairs.push((i, j));
+                            }
+                        }
+                    }
+                }
+                2 => pairs.extend((1..n).flat_map(|i| [(0, i), (i, 0)])),
+                3 => pairs.extend((0..n - 1).map(|i| (i + 1, i))),
+                _ => {
+                    for _ in 0..rng.below(3 * n as u64) + 1 {
+                        let i = rng.below(n as u64) as usize;
+                        let j = rng.below(n as u64) as usize;
+                        pairs.push((i, j));
+                    }
+                }
+            }
+            let mut cons = Vec::new();
+            let mut edges = Vec::new();
+            let mut sums = false;
+            for (i, j) in pairs {
+                let c = k(&mut rng, alike);
+                let eq = rng.below(6) == 0;
+                let sum = sum_ok && i != j && rng.below(3) == 0;
+                sums |= sum;
+                cons.push(row(i, j, c, eq, sum));
+                if i != j && !sum {
+                    edges.push((i + 1, j + 1, c));
+                    if eq {
+                        edges.push((j + 1, i + 1, -c));
+                    }
+                }
+                if i == j {
+                    // `x[i] + c >= 0`: `0 <= x[i] + c`, an edge `i → zero` of weight `c`.
+                    edges.push((i + 1, 0, c));
+                    if eq {
+                        edges.push((0, i + 1, -c));
+                    }
+                }
+            }
+            for _ in 0..rng.below(4) {
+                let i = rng.below(n as u64) as usize;
+                let c = rng.below(21) as i128 - 10;
+                cons.push(Con {
+                    lin: x(i).times(-1).plus(&Lin::constant(c)),
+                    rel: Rel::Ge,
+                });
+                edges.push((0, i + 1, c));
+            }
+            let quick = solve(&cons, false);
+            let full = solve(&cons, true);
+            let (Ok(quick), Ok(full)) = (&quick, &full) else {
+                panic!("refused: {quick:?} {full:?} on {cons:?}");
+            };
+            assert_eq!(quick.is_some(), full.is_some(), "{cons:?}");
+            if let Some(m) = full {
+                point += 1;
+                assert!(cons.iter().all(|c| c.holds(m)), "{cons:?} at {m:?}");
+            } else {
+                empty += 1;
+            }
+            if !sums {
+                assert_eq!(negative_cycle(n, &edges), full.is_none(), "{cons:?}");
+            }
+        }
+        assert!(empty > 1000 && point > 1000, "{empty} empty, {point} with a point");
     }
 }

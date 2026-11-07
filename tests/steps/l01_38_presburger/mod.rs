@@ -14,6 +14,7 @@ mod canonical;
 mod checker;
 mod controls;
 mod deep;
+mod disj_groups;
 mod entailment;
 mod extend;
 mod live3;
