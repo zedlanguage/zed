@@ -10,3 +10,4 @@ mod laws;
 mod rat_literals;
 mod scaling;
 mod surface;
+mod table_life;

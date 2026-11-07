@@ -18,7 +18,7 @@
 //! its block or cuts the list at its block, and rebuilds the blocks before.
 
 use std::sync::atomic::Ordering as Atomic;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 use super::set::{self, Key, Set, Tree};
 use super::{Bdd, Literal, NEXT, Owned, Part, mix};
@@ -39,12 +39,24 @@ pub(in crate::types) struct Cell<A: Literal> {
     view: [OnceLock<(Bdd<A>, Bdd<A>)>; 2],
 }
 
-/// The cells of a thread, by the ids of their block and next cell.
-pub(in crate::types) type CellTable<A> = std::collections::BTreeMap<(u64, u64), Arc<Cell<A>>>;
+/// The live cells of a thread, by the ids of their block and next cell, each held weakly: a cell
+/// leaves the table when it is dropped (step TABLE-life).
+pub(in crate::types) type CellTable<A> = std::collections::BTreeMap<(u64, u64), Weak<Cell<A>>>;
 
-/// A cell's block, next cell and views are freed in a loop (module `deep`).
+/// A cell leaves its thread's table, and its block, next cell and views are freed in a loop
+/// (module `deep`).
 impl<A: Literal> Drop for Cell<A> {
     fn drop(&mut self) {
+        let key = (self.block.id, self.next.as_ref().map_or(0, |c| c.id));
+        A::untable(|t| {
+            // Another cell of the key may have taken the entry since, or none was made here.
+            if t.cells
+                .get(&key)
+                .is_some_and(|w| std::ptr::eq(w.as_ptr(), self))
+            {
+                t.cells.remove(&key);
+            }
+        });
         if let Some(n) = self.next.take() {
             A::free(Owned::Cell(n));
         }
@@ -77,7 +89,7 @@ type Built<A> = (bool, Arc<Set<A>>, Option<imbl::OrdSet<A>>);
 /// The cell of `block` before `next`, the one in the table if there is one.
 fn cell<A: Literal>(block: Arc<Set<A>>, next: Option<Arc<Cell<A>>>) -> Arc<Cell<A>> {
     let key = (block.id, next.as_ref().map_or(0, |c| c.id));
-    if let Some(c) = A::table(|t| t.cells.get(&key).cloned()) {
+    if let Some(c) = A::table(|t| t.cells.get(&key).and_then(Weak::upgrade)) {
         return c;
     }
     let digest = mix(
@@ -92,7 +104,7 @@ fn cell<A: Literal>(block: Arc<Set<A>>, next: Option<Arc<Cell<A>>>) -> Arc<Cell<
         atoms: OnceLock::new(),
         view: [OnceLock::new(), OnceLock::new()],
     });
-    A::table(|t| t.cells.insert(key, c.clone()));
+    A::table(|t| t.cells.insert(key, Arc::downgrade(&c)));
     c
 }
 

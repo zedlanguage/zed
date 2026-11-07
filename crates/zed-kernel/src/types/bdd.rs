@@ -27,8 +27,8 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::Bound;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as Atomic};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as Atomic};
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::frames::{Deep, Stack};
 
@@ -55,7 +55,10 @@ pub(super) enum Bdd<A: Literal> {
 /// A node's id, atom, `hi` and `lo`, as [`Bdd::branch`] shows a list.
 pub(super) type NodeView<'a, A> = (u64, &'a A, &'a Bdd<A>, &'a Bdd<A>);
 
-/// The sets, cells and exclusive ors of a thread.
+/// The live sets, cells and exclusive ors of a thread, each held weakly: a node leaves its table
+/// when it is dropped, so the tables hold what the thread's types hold and no more (step
+/// TABLE-life). A node stays in its table while it lives, so a live node is the one node of its
+/// contents and keeps its id.
 pub(super) struct Tables<A: Literal> {
     sets: set::SetTable<A>,
     cells: list::CellTable<A>,
@@ -84,6 +87,10 @@ pub(super) enum Owned<A: Literal> {
 /// The atoms of a universe, each kind with its thread's tables of sets and cells.
 pub(super) trait Literal: Ord + Clone + super::debug::Queue + 'static {
     fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R;
+    /// Runs `f` on the thread's tables to remove a dropped node's entry. While the thread is
+    /// ending and its tables are gone, or while they are borrowed, nothing is done: the entry is
+    /// then a weak handle that no lookup takes, replaced when its key is next made.
+    fn untable(f: impl FnOnce(&mut Tables<Self>));
     /// A hash of the atom, equal for equal atoms.
     fn digest(&self) -> u64;
     /// Drops a part, cell or set in the thread's loop of type parts (module `deep`).
@@ -105,6 +112,9 @@ impl Literal for Row {
         super::hold();
         TUPLES.with(|t| f(&mut t.borrow_mut()))
     }
+    fn untable(f: impl FnOnce(&mut Tables<Self>)) {
+        let _ = TUPLES.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
+    }
     fn digest(&self) -> u64 {
         Row::digest(self)
     }
@@ -124,6 +134,9 @@ impl Literal for Morphism {
         super::hold();
         MORPHISMS.with(|t| f(&mut t.borrow_mut()))
     }
+    fn untable(f: impl FnOnce(&mut Tables<Self>)) {
+        let _ = MORPHISMS.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
+    }
     fn digest(&self) -> u64 {
         let m = mix(6, self.guarantee.digest());
         mix(mix(m, self.permission.digest()), self.value.digest())
@@ -139,9 +152,23 @@ impl Literal for Morphism {
     }
 }
 
-/// An expression's operands and complement are freed in a loop, as a cell's next cell is.
+/// An expression leaves its thread's table of exclusive ors, if it is in it, and its operands
+/// and complement are freed in a loop, as a cell's next cell is.
 impl<A: Literal> Drop for Expr<A> {
     fn drop(&mut self) {
+        if let Some((pair, constant)) = &self.xor
+            && let Some(s) = &pair.atoms
+        {
+            let key = (s.id, *constant);
+            A::untable(|t| {
+                if t.xors
+                    .get(&key)
+                    .is_some_and(|w| std::ptr::eq(w.as_ptr(), self))
+                {
+                    t.xors.remove(&key);
+                }
+            });
+        }
         let (p, q) = match &mut self.form {
             Form::Not(p) => (p, None),
             Form::Or(p, q) | Form::And(p, q) => (p, Some(q)),
@@ -154,9 +181,8 @@ impl<A: Literal> Drop for Expr<A> {
         if let Some(c) = self.complement.take() {
             A::free(Owned::Part(c));
         }
-        if let Some((s, _)) = self.xor.take() {
-            A::free(Owned::Set(s));
-        }
+        // The pair frees its parts in the loop when it is dropped.
+        self.xor.take();
     }
 }
 
@@ -545,10 +571,65 @@ pub(super) struct Expr<A: Literal> {
     id: u64,
     digest: u64,
     form: Form<A>,
-    /// The complement, made once, so that a chain of choices is negated in steps, not walked.
+    /// The complement, made once and held, so that a chain of choices is negated in steps, not
+    /// walked. It is not set when the complement holds the expression (`!e` made as `Not(e)`,
+    /// or the complement made first and holding it); `back` then finds it.
     complement: std::sync::OnceLock<Part<A>>,
-    /// The exclusive or the expression is the one form of (module `xor`), if any.
-    xor: Option<xor::Tag<A>>,
+    /// The complement, not held, when it was made from the expression or holds it: an
+    /// expression and its complement never hold each other, so they are freed when no one
+    /// holds them (step TABLE-life). When the complement held here is freed, the next one made
+    /// replaces it.
+    back: Mutex<Weak<Expr<A>>>,
+    /// Whether the complement is `Not` of the expression: no choice was found in it, so a
+    /// complement made again skips the search.
+    plain: AtomicBool,
+    /// The two halves the expression was made from as an exclusive or, and its constant
+    /// (module `xor`), if it was; its complement is made again from them.
+    xor: Option<(Arc<xor::Pair<A>>, bool)>,
+}
+
+impl<A: Literal> Expr<A> {
+    /// The complement as kept: held, or made earlier and still held by someone.
+    fn known(&self) -> Option<Part<A>> {
+        self.complement.get().cloned().or_else(|| {
+            let back = self
+                .back
+                .lock()
+                .expect("no thread panics holding a complement");
+            back.upgrade().map(Part::Expr)
+        })
+    }
+
+    /// Keeps `m` as the complement without holding it.
+    fn set_back(&self, m: &Arc<Expr<A>>) {
+        *self
+            .back
+            .lock()
+            .expect("no thread panics holding a complement") = Arc::downgrade(m);
+    }
+
+    /// Whether the expression holds `e` as its operand or its complement.
+    fn holds(&self, e: &Arc<Expr<A>>) -> bool {
+        let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
+        matches!(&self.form, Form::Not(q) if is_e(q)) || self.complement.get().is_some_and(is_e)
+    }
+
+    /// Keeps `n`, made as the complement of the expression, as its complement:
+    /// held when it does not hold the expression, which is then kept as its complement without
+    /// being held; not held otherwise. Returns the complement kept, which another thread may
+    /// have set first.
+    fn link(self: &Arc<Self>, n: Part<A>) -> Part<A> {
+        match &n {
+            Part::Expr(m) if m.holds(self) => self.set_back(m),
+            _ => {
+                if let Part::Expr(m) = &n {
+                    m.set_back(self);
+                }
+                let _ = self.complement.set(n.clone());
+            }
+        }
+        self.known().unwrap_or(n)
+    }
 }
 
 pub(super) enum Form<A: Literal> {
@@ -613,7 +694,7 @@ impl<A: Literal> Part<A> {
     }
 
     /// The expression of `form`, the one form of the exclusive or `xor` when given.
-    fn expr_xor(form: Form<A>, xor: Option<xor::Tag<A>>) -> Part<A> {
+    fn expr_xor(form: Form<A>, xor: Option<(Arc<xor::Pair<A>>, bool)>) -> Part<A> {
         let digest = match &form {
             Form::Not(p) => mix(8, p.digest()),
             Form::Or(a, b) => mix(mix(9, a.digest()), b.digest()),
@@ -624,6 +705,8 @@ impl<A: Literal> Part<A> {
             digest,
             form,
             complement: std::sync::OnceLock::new(),
+            back: Mutex::new(Weak::new()),
+            plain: AtomicBool::new(false),
             xor,
         }))
     }
@@ -631,8 +714,8 @@ impl<A: Literal> Part<A> {
     pub(super) fn not(&self) -> Part<A> {
         match self {
             Part::Bdd(b) => Part::Bdd(b.not()),
-            Part::Expr(e) => match e.complement.get() {
-                Some(n) => n.clone(),
+            Part::Expr(e) => match e.known() {
+                Some(n) => n,
                 None => Connect::run(|k| k.not(self)),
             },
         }
@@ -703,8 +786,8 @@ impl<'m> Connect<'m> {
     fn not<A: Literal>(&'m self, p: &Part<A>) -> Deep<'m, Part<A>> {
         match p {
             Part::Bdd(b) => Stack::ready(Part::Bdd(b.not())),
-            Part::Expr(e) => match e.complement.get() {
-                Some(n) => Stack::ready(n.clone()),
+            Part::Expr(e) => match e.known() {
+                Some(n) => Stack::ready(n),
                 None => {
                     let p = p.clone();
                     self.stack.call(move || self.negate(p))
@@ -719,23 +802,23 @@ impl<'m> Connect<'m> {
         let Part::Expr(e) = &p else {
             unreachable!("only an expression keeps its complement")
         };
-        let n = if let Form::Not(q) = &e.form {
+        let n = if let Some((pair, constant)) = &e.xor {
+            // An exclusive or's complement is made again as it was first made beside it, so
+            // that the two are equal as built.
+            xor::mate(pair, !constant)
+        } else if let Form::Not(q) = &e.form {
             q.clone()
-        } else if let Some((c, x, y)) = self.choice(&p).await {
+        } else if !e.plain.load(Atomic::Relaxed)
+            && let Some((c, x, y)) = self.choice(&p).await
+        {
             let x = self.not(&x).await;
             let y = self.not(&y).await;
             self.choose(&c, &x, &y).await
         } else {
+            e.plain.store(true, Atomic::Relaxed);
             Part::expr(Form::Not(p.clone()))
         };
-        e.complement
-            .get_or_init(|| {
-                if let Part::Expr(m) = &n {
-                    let _ = m.complement.set(p.clone());
-                }
-                n
-            })
-            .clone()
+        e.link(n)
     }
 
     fn zip<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>, op: Op) -> Deep<'m, Part<A>> {
@@ -791,9 +874,7 @@ impl<'m> Connect<'m> {
     async fn same_as_not<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>) -> bool {
         match (a, b) {
             (Part::Bdd(x), Part::Bdd(y)) => x.is_literal() && x.not() == *y,
-            (Part::Expr(e), _) => {
-                e.complement.get().is_some_and(|c| c == b) || self.not(a).await == *b
-            }
+            (Part::Expr(e), _) => e.known().is_some_and(|c| c == *b) || self.not(a).await == *b,
             _ => self.not(b).await == *a,
         }
     }
@@ -2941,9 +3022,12 @@ mod tests {
 
     /// The list `x_0 & x_1 & … & x_{m-1}`, one block of `m` literals, the atoms from `base`.
     fn meet(base: u64, m: usize) -> Bdd<Row> {
-        (0..m as u64).fold(Bdd::Leaf(true), |b, k| {
-            b.and_literal((atom(base + k), true))
-        })
+        meet_of(&(0..m as u64).map(|k| atom(base + k)).collect::<Vec<_>>())
+    }
+
+    /// The list of the literals `x` of `rows`, each taken.
+    fn meet_of(rows: &[Row]) -> Bdd<Row> {
+        (rows.iter()).fold(Bdd::Leaf(true), |b, x| b.and_literal((x.clone(), true)))
     }
 
     /// The walks on expressions and diagrams nested this deep, on a 2 MiB stack.
@@ -3027,11 +3111,14 @@ mod tests {
         });
     }
 
-    /// The list `x_0 & … & x_{m-2} & !x_{m-1}`, on the atoms of [`meet`]`(base, m)`, which
-    /// meets it in no value: the meet of the two joins each literal of one to the other.
-    fn meet_but_last(base: u64, m: usize) -> Bdd<Row> {
-        let last = atom(base + m as u64 - 1);
-        meet(base, m - 1).and_literal((last, false))
+    /// [`meet`]`(base, m)`, and the list `x_0 & … & x_{m-2} & !x_{m-1}` on the same atoms, which
+    /// meets it in no value: the meet of the two joins each literal of one to the other. The
+    /// two share their rows, so the meet compares atoms by pointer; two equal rows built apart
+    /// are compared by content (`Row`), a cost of its own (follow-up item ROW-intern).
+    fn meets(base: u64, m: usize) -> (Bdd<Row>, Bdd<Row>) {
+        let rows: Vec<Row> = (0..m as u64).map(|k| atom(base + k)).collect();
+        let but_last = meet_of(&rows[..m - 1]).and_literal((rows[m - 1].clone(), false));
+        (meet_of(&rows), but_last)
     }
 
     /// The choice `c_{m-1} & (… (c_1 & x_0 | !c_1 & y_1) …) | !c_{m-1} & y_{m-1}`, kept as
@@ -3062,7 +3149,7 @@ mod tests {
     fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
         // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), a
         // quarter of the 8 MiB the depths above overflowed.
-        let (a, b) = (meet(0, DIAGRAM_DEPTH), meet_but_last(0, DIAGRAM_DEPTH));
+        let (a, b) = meets(0, DIAGRAM_DEPTH);
         assert_eq!(a.zip_chain(&b, Op::And), Some(Bdd::Leaf(false)));
         let not_a = a.not();
         assert_eq!(not_a.not(), a);
@@ -3094,7 +3181,7 @@ mod tests {
         let n = 1 << 12;
         let meets = scaling::inputs(n, |m| {
             let base = 100 * m as u64;
-            (meet(base, m), meet_but_last(base, m))
+            meets(base, m)
         });
         // A union keeps the complements it makes with the expressions, so each run of it takes
         // chains of its own, on atoms of their own.
@@ -3130,5 +3217,105 @@ mod tests {
                 .expect("a pair of chains per run");
             assert!(p.zip(&q, Op::Or) != p);
         });
+    }
+
+    /// The entries of this thread's tables of tuple nodes, in all: sets, cells and exclusive ors.
+    fn entries() -> usize {
+        Row::table(|t| t.sets.len() + t.cells.len() + t.xors.len())
+    }
+
+    /// The exclusive or of the atoms `base..base + k`.
+    fn parity(base: u64, k: u64) -> Part<Row> {
+        (base..base + k).fold(Part::leaf(false), |f, i| {
+            xor_by_or(&f, &Part::literal(atom(i)))
+        })
+    }
+
+    #[test]
+    fn the_tables_keep_a_node_only_while_it_lives() {
+        // Each table holds its nodes weakly, and a node leaves it when it is dropped (step
+        // TABLE-life): the lists, sets, exclusive ors and complements of a unit leave no entry.
+        let before = entries();
+        {
+            let x = parity(7000, 8);
+            assert!(x.xor_tag().is_some());
+            let parts = [x.not(), Part::Bdd(meet(7100, 64)), choices(7200, 7300, 16)];
+            let nots: Vec<Part<Row>> = parts.iter().map(Part::not).collect();
+            assert!(entries() > before);
+            assert_eq!(nots[2].not().id(), parts[2].id());
+        }
+        assert_eq!(entries(), before);
+    }
+
+    #[test]
+    fn a_node_rebuilt_after_its_drop_equals_the_first() {
+        // While a node lives, building it again finds it; once dropped, it is built anew with
+        // another id and the same contents.
+        let first = meet(7400, 32);
+        let (id, digest) = (first.id(), first.digest());
+        assert_eq!(meet(7400, 32).id(), id);
+        drop(first);
+        let again = meet(7400, 32);
+        assert_eq!(again.digest(), digest);
+        assert_eq!(meet(7400, 32).id(), again.id());
+        let holds = |a: &Row| *a != atom(7400 + 31);
+        assert!(!again.eval(holds));
+        assert!(again.eval(|_| true));
+    }
+
+    #[test]
+    fn a_complement_is_found_while_it_lives_and_rebuilt_alike_after() {
+        // The complement of an expression: found again while it lives, rebuilt with the same
+        // contents once dropped, and its own complement the expression in both cases.
+        let e = choices(7500, 7600, 8);
+        let n = e.not();
+        assert_eq!(e.not().id(), n.id());
+        assert_eq!(n.not().id(), e.id());
+        let n_digest = n.digest();
+        drop(n);
+        let n = e.not();
+        assert_eq!((n.digest(), n.not().id()), (n_digest, e.id()));
+        // The expression dropped while its complement lives: made again from the complement,
+        // as a choice, which may differ from the expression as written but holds the same
+        // values, and negates back to the complement.
+        let e_id = e.id();
+        drop(e);
+        let again = n.not();
+        assert_ne!(again.id(), e_id);
+        assert_eq!(again.not().id(), n.id());
+        let written = choices(7500, 7600, 8);
+        let atoms: Vec<Row> = (7501..=7508).chain(7601..7608).map(atom).collect();
+        for bits in 0..1u32 << atoms.len() {
+            let holds = |a: &Row| (0..atoms.len()).any(|i| bits >> i & 1 == 1 && *a == atoms[i]);
+            assert_eq!(again.eval(&holds), written.eval(&holds), "{bits:b}");
+        }
+        // An exclusive or's complement, its mate, rebuilt after its drop: the same contents, an
+        // exclusive or again, and the one node a literal's complement taken in reaches.
+        let x = parity(7700, 6);
+        let mate = x.not();
+        let mate_digest = mate.digest();
+        assert_eq!(mate.not().id(), x.id());
+        drop(mate);
+        let mate = x.not();
+        assert_eq!(mate.digest(), mate_digest);
+        assert!(mate.xor_tag().is_some());
+        assert_eq!(mate.not().id(), x.id());
+        let flipped = (7701..7706).fold(Part::literal(atom(7700)).not(), |f, i| {
+            xor_by_or(&f, &Part::literal(atom(i)))
+        });
+        assert_eq!(flipped.id(), mate.id());
+        let holds = |bits: u32| {
+            move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(7700 + i as u64))
+        };
+        for bits in 0..64 {
+            assert_eq!(mate.eval(&holds(bits)), !odd(bits, 6), "{bits:b}");
+        }
+        // The exclusive or dropped while its mate lives: rebuilt from the mate, the same node
+        // the literals give.
+        let x_digest = x.digest();
+        drop(x);
+        let x = mate.not();
+        assert_eq!(x.digest(), x_digest);
+        assert_eq!(x.id(), parity(7700, 6).id());
     }
 }

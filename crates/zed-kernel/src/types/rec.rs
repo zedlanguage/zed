@@ -23,7 +23,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 
 use super::bes::{Answer, Bes, Kind, decide};
 use super::{Piece, Rope, Type, Verdict, bytes, mix};
@@ -85,15 +85,19 @@ pub struct Def {
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
 /// ([`digest`]). `Def` equality picks the entry, so a digest only narrows the search: equal
-/// definitions get one group, and so one number, however often they were written.
-static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Group>>>> = LazyLock::new(Mutex::default);
+/// definitions get one group, and so one number, however often they were written while it lives.
+/// Each group is held weakly and leaves the table when it is dropped (step TABLE-life).
+static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Weak<Checked>>>>> = LazyLock::new(Mutex::default);
 
-/// The members of each instance, by the group's number and the arguments.
-type Instances = HashMap<(u64, Vec<Type>), Vec<Type>>;
+/// The live instances, by the group's number and the arguments, each held weakly.
+type Instances = HashMap<(u64, Vec<Type>), Weak<Env>>;
 
-/// The instances made so far, by the group's number and the arguments: one group at equal
-/// arguments gives one set of types, so that equal definitions meet as equal types. The arguments
-/// hash by their digests and compare exactly, so a call costs time in its arguments only.
+/// The live instances, by the group's number and the arguments: one group at equal arguments
+/// gives one set of types while they live, so that equal definitions meet as equal types. The
+/// arguments hash by their digests and compare exactly, so a call costs time in its arguments
+/// only. An instance leaves the table when it is dropped (step TABLE-life). No type is dropped
+/// while this table or [`GROUPS`] is locked, since a type dropped may drop an instance or a
+/// group, which takes the lock.
 static INSTANCES: LazyLock<Mutex<Instances>> = LazyLock::new(Mutex::default);
 
 /// A checked group of mutually recursive definitions.
@@ -359,12 +363,21 @@ impl Group {
         g.regular()?;
         g.contractive()?;
         g.monotone()?;
+        // The groups looked at are dropped after the lock is released, as `g` is when an equal
+        // one is found.
+        let mut seen = Vec::new();
         let mut groups = GROUPS.lock().expect("no thread panics holding the groups");
         let bucket = groups.entry(digest).or_default();
-        if let Some(first) = bucket.iter().find(|h| h.0.defs == g.0.defs) {
-            return Ok(first.clone());
+        for h in bucket.iter().filter_map(Weak::upgrade) {
+            if h.defs == g.0.defs {
+                drop(groups);
+                return Ok(Group(h));
+            }
+            seen.push(h);
         }
-        bucket.push(g.clone());
+        bucket.push(Arc::downgrade(&g.0));
+        drop(groups);
+        drop(seen);
         Ok(g)
     }
 
@@ -539,14 +552,17 @@ impl Group {
             self.0.defs[0].params.len(),
             "one argument per parameter"
         );
-        let mut table = INSTANCES
-            .lock()
-            .expect("no thread panics holding the table");
-        let slot = match table.entry((self.0.number, args)) {
-            Entry::Occupied(o) => return o.get().clone(),
-            Entry::Vacant(v) => v,
+        let key = (self.0.number, args);
+        let lock = || {
+            INSTANCES
+                .lock()
+                .expect("no thread panics holding the table")
         };
-        let args = slot.key().1.clone();
+        let live = lock().get(&key).and_then(Weak::upgrade);
+        if let Some(env) = live {
+            return env.members();
+        }
+        let args = key.1.clone();
         let env = Arc::new(Env {
             group: Some(self.clone()),
             digest: args
@@ -574,12 +590,23 @@ impl Group {
             let t = eval(&self.0.bodies[i], &env);
             env.members[i].set(t).expect("a member is set once");
         }
-        let members: Vec<Type> = env
-            .members
-            .iter()
-            .map(|m| m.get().expect("every member is set").clone())
-            .collect();
-        slot.insert(members).clone()
+        // Another thread may have made the instance meanwhile: the first kept is the one.
+        let mut table = lock();
+        let kept = match table.entry(key) {
+            Entry::Occupied(mut o) => match o.get().upgrade() {
+                Some(first) => first,
+                None => {
+                    o.insert(Arc::downgrade(&env));
+                    env.clone()
+                }
+            },
+            Entry::Vacant(v) => {
+                v.insert(Arc::downgrade(&env));
+                env.clone()
+            }
+        };
+        drop(table);
+        kept.members()
     }
 
     /// `e`, an expression of definition `def`, in the surface syntax.
@@ -794,6 +821,37 @@ struct Env {
     judged: OnceLock<Vec<Option<bool>>>,
 }
 
+/// An instance leaves [`INSTANCES`]; its arguments, and the entry's, are dropped after the lock
+/// is released.
+impl Drop for Env {
+    fn drop(&mut self) {
+        let Some(g) = &self.group else { return };
+        let key = (g.0.number, std::mem::take(&mut self.args));
+        let removed = INSTANCES.lock().ok().and_then(|mut t| {
+            let mine = t.get(&key).is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
+            mine.then(|| t.remove_entry(&key)).flatten()
+        });
+        drop(removed);
+    }
+}
+
+/// A group leaves [`GROUPS`], with the dead entries of its bucket.
+impl Drop for Checked {
+    fn drop(&mut self) {
+        let Ok(mut groups) = GROUPS.lock() else {
+            return;
+        };
+        if let Some(bucket) = groups.get_mut(&self.digest) {
+            // Its own handle is dead now, as are those of groups dropped before. Only weak
+            // handles are dropped here, which drop no group.
+            bucket.retain(|w| w.strong_count() > 0);
+            if bucket.is_empty() {
+                groups.remove(&self.digest);
+            }
+        }
+    }
+}
+
 impl Env {
     fn ground(args: Vec<Type>) -> Env {
         Env {
@@ -803,6 +861,13 @@ impl Env {
             members: Vec::new(),
             judged: OnceLock::new(),
         }
+    }
+
+    /// The members of an instance, each set.
+    fn members(&self) -> Vec<Type> {
+        (self.members.iter())
+            .map(|m| m.get().expect("every member is set").clone())
+            .collect()
     }
 
     fn group(&self) -> &Group {
@@ -1236,4 +1301,74 @@ fn kids<'a>(
             c
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One definition `name = (k, …)`, plain, or recursive as `name = () | (k, name)`.
+    fn defs(name: &str, k: i64, recursive: bool) -> Vec<Def> {
+        let k = Expr::Type(Type::lit(&crate::value::Value::Int(k)).expect("an int literal"));
+        let body = if recursive {
+            Expr::Union(vec![
+                Expr::Tuple(vec![]),
+                Expr::Tuple(vec![k, Expr::Ref(0, vec![])]),
+            ])
+        } else {
+            Expr::Tuple(vec![k])
+        };
+        vec![Def {
+            name: name.to_string(),
+            params: vec![],
+            body,
+        }]
+    }
+
+    /// Whether [`GROUPS`] has an entry for a group of `digest`.
+    fn grouped(digest: u64) -> bool {
+        GROUPS
+            .lock()
+            .expect("no panic under the lock")
+            .contains_key(&digest)
+    }
+
+    /// Whether [`INSTANCES`] has a live instance of group `number` at no arguments.
+    fn instanced(number: u64) -> bool {
+        let t = INSTANCES.lock().expect("no panic under the lock");
+        t.get(&(number, vec![]))
+            .is_some_and(|w| w.strong_count() > 0)
+    }
+
+    #[test]
+    fn a_group_is_found_again_while_it_lives_and_leaves_the_table_after() {
+        // Step TABLE-life: equal definitions get one group while it lives, and a dropped group
+        // leaves its entry. A plain group's instance holds nothing of the group, so it leaves
+        // the instances when the call returns, and its types are built alike the next time.
+        let g = Group::new(defs("TableLifePlain", 9_001, false)).expect("a plain group");
+        let again = Group::new(defs("TableLifePlain", 9_001, false)).expect("a plain group");
+        assert!(Arc::ptr_eq(&g.0, &again.0));
+        let (number, digest) = (g.0.number, g.0.digest);
+        let t = g.instance(vec![]);
+        assert!(!instanced(number));
+        assert_eq!(g.instance(vec![]), t);
+        assert!(grouped(digest));
+        drop((g, again));
+        assert!(!grouped(digest));
+        let made_again = Group::new(defs("TableLifePlain", 9_001, false)).expect("a plain group");
+        assert_eq!(made_again.instance(vec![]), t);
+    }
+
+    #[test]
+    fn a_recursive_instance_is_found_again_while_it_lives() {
+        // A recursive member holds its instance, which holds the group: found again by pointer
+        // while held. Such an instance is a cycle and outlives its holders (follow-up item
+        // REC-cycle).
+        let g = Group::new(defs("TableLifeRec", 9_002, true)).expect("a recursive group");
+        let t = g.instance(vec![]);
+        assert!(instanced(g.0.number));
+        let u = g.instance(vec![]);
+        assert!(Arc::ptr_eq(&t[0].0, &u[0].0));
+        assert!(!t[0].is_empty());
+    }
 }

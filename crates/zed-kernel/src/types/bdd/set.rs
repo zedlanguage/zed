@@ -3,14 +3,15 @@
 //!
 //! A node's priority is a hash of its literal, ties broken by the literal's order, so the
 //! priorities are distinct and one set has one shape whatever order its literals were added
-//! in. The nodes of a thread are kept in a table by literal and children, so one set is one
-//! node: two sets are equal exactly when their roots are one node, and a set built in two
-//! orders is found again. An insertion or removal rebuilds the path to the place it changes,
+//! in. The live nodes of a thread are kept in a table by literal and children, so one set is
+//! one node: two sets are equal exactly when their roots are one node, and a set built in two
+//! orders is found again. The table holds each node weakly, and a node leaves it when it is
+//! dropped (step TABLE-life). An insertion or removal rebuilds the path to the place it changes,
 //! `O(log n)` nodes in expectation, each looked up in the table in `O(log N)`; the walks keep
 //! stacks of their own, so a set of any shape is walked on a small stack.
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering as Atomic;
+use std::sync::{Arc, Weak};
 
 use super::{Literal, NEXT, Owned, mix};
 
@@ -33,12 +34,28 @@ pub(in crate::types) struct Set<A: Literal> {
 /// A set: the root, or `None` when empty.
 pub(in crate::types) type Tree<A> = Option<Arc<Set<A>>>;
 
-/// The nodes of a thread's sets, by literal and children's ids.
-pub(in crate::types) type SetTable<A> = std::collections::BTreeMap<(Key<A>, u64, u64), Arc<Set<A>>>;
+/// The live nodes of a thread's sets, by literal and children's ids.
+pub(in crate::types) type SetTable<A> =
+    std::collections::BTreeMap<(Key<A>, u64, u64), Weak<Set<A>>>;
 
-/// A set node's children are freed in a loop (module `deep`), as a diagram's cells are.
+/// A set node leaves its thread's table, and its children are freed in a loop (module `deep`),
+/// as a diagram's cells are.
 impl<A: Literal> Drop for Set<A> {
     fn drop(&mut self) {
+        let k = (
+            self.key.clone(),
+            id(self.left.as_ref()),
+            id(self.right.as_ref()),
+        );
+        A::untable(|t| {
+            // Another node of the key may have taken the entry since, or none was made here.
+            if t.sets
+                .get(&k)
+                .is_some_and(|w| std::ptr::eq(w.as_ptr(), self))
+            {
+                t.sets.remove(&k);
+            }
+        });
         for c in [self.left.take(), self.right.take()].into_iter().flatten() {
             A::free(Owned::Set(c));
         }
@@ -71,7 +88,7 @@ pub(super) fn len<A: Literal>(t: Option<&Arc<Set<A>>>) -> usize {
 /// The node of `key` over `left` and `right`, the one in the table if there is one.
 fn make<A: Literal>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
     let k = (key, id(left.as_ref()), id(right.as_ref()));
-    if let Some(s) = A::table(|t| t.sets.get(&k).cloned()) {
+    if let Some(s) = A::table(|t| t.sets.get(&k).and_then(Weak::upgrade)) {
         return s;
     }
     let (key, ..) = &k;
@@ -90,7 +107,8 @@ fn make<A: Literal>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
         left,
         right,
     });
-    A::table(|t| t.sets.insert(k, s.clone()));
+    // An entry left by a node dropped on another thread is replaced.
+    A::table(|t| t.sets.insert(k, Arc::downgrade(&s)));
     s
 }
 
