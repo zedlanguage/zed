@@ -1494,11 +1494,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | control worktree atom-intern-ctl removed; probe and profiling build deleted; running groups |
-| LOAD-affine-drift | impl attempt 1 | 2026-11-07 09:20 | started on 5367fa6a; worktree /home/luke/Work/wt/load-affine-drift seeded |
-| LOAD-affine-join | impl attempt 1 | 2026-11-07 09:20 | checked note's candidate: count per pair of roots costs O(sum of arity^2) (a function of P params puts P(P-1)/2 pairs at start), so not O(n log n); using instea |
-| STAGE-stub-rerun | impl attempt 1 | 2026-11-07 10:13 | started; worktree from origin/main 5367fa6a |
-| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | rebased on 5367fa6a, restacked; load 8.27 14.64 20.34 |
+| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | ready 4a08f001 on e223984b: 78 pieces pass with doc check, fmt and clippy clean; K70, STATUS, ZED_PORT_GAPS updated |
+| DIAG-addr-root | impl attempt 1 | 2026-11-07 10:10 | InFile now from unit name (package) or absolute path (loose); l01_29+suppress_binary pass (178+3); new suppress_binary tests fail on old zedc (2 of 3), load 19 |
+| LOAD-affine-join | impl attempt 1 | 2026-11-07 09:20 | origin moved (PA-let-narrow); clean rebase to 55e4f3ae on 9e26c28d, new unit tests pass; ready line re-appended |
+| LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | started: worktree from origin/main, reading extend.rs and drift probe |
+| STACK-big-tests | impl attempt 1 | 2026-11-07 09:39 | started: worktree from origin/main, finding the walk behind the 512 MiB stacks |
+| STAGE-stub-rerun | impl attempt 1 | 2026-11-07 10:13 | baseline at 5367fa6a: l01_28_staging 70 pass, l25_08_mutate 20 pass, zedc_stage unit 0 (load 35.6) |
+| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | design settled (CM-2006 potential repair + Dijkstra bounds per qualifying tree, per-tree counters in Blocks); baseline run of the six groups started / load 26.5 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
