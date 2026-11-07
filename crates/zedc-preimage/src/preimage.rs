@@ -2411,15 +2411,8 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
 /// each call. Which join of two parameters of one function is refused depends on the order of
 /// the calls; the class atoms are never bound, so any classes are sound.
 ///
-/// Time of the functions' bodies, each part once (the terms share parts), and of the joins:
-/// each set moves to a larger one, O(n log n) moves in all.
-// Complexity tradeoff: a refused join looks through the smaller class's functions, and is not
-// remembered, so k refused joins between two classes of m functions each cost O(k m). Why: a
-// join is refused for a function in both classes, and it is found by looking. Trigger: many
-// calls passing one parameter as two, `p(x: x, y: x)`, between two large classes. Test
-// `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale`
-// (no refusal) and `..._the_questions_of_a_chain_passing_a_parameter_twice_scale` (one refusal per
-// link). COMPLEXITY.md row LOAD-chain-affine.
+/// Time of the functions' bodies, each part once (the terms share parts), and of the joins
+/// ([`unite`]).
 fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<str>> {
     // Each function by its name, each parameter by its name, and the first node of each
     // function's parameters. A name bound twice is left out: its calls are not followed.
@@ -2494,40 +2487,13 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
             }
         }
     }
-    // Union by the size of the classes, each class's functions held at its root.
-    let nodes = first[lams.len()];
-    let mut parent: Vec<usize> = (0..nodes).collect();
+    // The joins of functions no call passes another argument.
     let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
-    let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
-    fn find(parent: &mut [usize], mut v: usize) -> usize {
-        while parent[v] != v {
-            parent[v] = parent[parent[v]];
-            v = parent[v];
-        }
-        v
-    }
-    let mut joined = vec![false; nodes];
-    for (a, b) in joins {
-        if moved[owner(a)] || moved[owner(b)] {
-            continue;
-        }
-        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-        let (big, small) = match funs[ra].len() >= funs[rb].len() {
-            true => (ra, rb),
-            false => (rb, ra),
-        };
-        if ra == rb || funs[small].iter().any(|x| funs[big].contains(x)) {
-            continue;
-        }
-        parent[small] = big;
-        let f = std::mem::take(&mut funs[small]);
-        funs[big].extend(f);
-        joined[big] = true;
-    }
+    joins.retain(|&(a, b)| !moved[owner(a)] && !moved[owner(b)]);
+    let (root, joined) = unite(&first, &joins);
     // Each class of two or more parameters named by its root.
     let mut out = HashMap::new();
-    for v in 0..nodes {
-        let r = find(&mut parent, v);
+    for (v, &r) in root.iter().enumerate() {
         if !joined[r] {
             continue;
         }
@@ -2545,6 +2511,76 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
         );
     }
     out
+}
+
+/// The classes of the parameters `0..` the last of `first`, those of function `k` numbered from
+/// `first[k]`, after the joins `joins` in their order: the root of each parameter's class, and
+/// whether a root's class holds two or more. A join is refused where the two classes hold
+/// parameters of one function, so a class never holds two of one function.
+///
+/// Union by the number of functions in a class, each class's functions held at its root: a set
+/// moves only into one at least as large, O(n log n) moves in all. A refusal is permanent, since
+/// a class's functions only grow, so it is remembered for the two roots, and a join refused
+/// again between those classes, or classes holding them, costs O(1); when a root joins a larger
+/// class, its refusals move to that root with its functions, O(log n) moves each. Before the
+/// smaller class's functions, the two functions of the join are looked up in the other class:
+/// a join refused by its caller or its callee, `p(x: x, y: x)`, costs O(1).
+// Complexity tradeoff: the first refusal between two classes that share only a third function
+// (neither the join's caller nor its callee) looks through the smaller class's functions, O(m)
+// for classes of m functions, so j such refusals between j distinct pairs of classes of m
+// functions cost O(j m), up to about n^1.5 (a function of k parameters in k classes of k
+// functions each, and k calls each joining one parameter to all k classes). Why: whether two
+// classes share a function is a question of set disjointness, for which no structure answering
+// in O(log n) a question is known. Trigger: a call joining one parameter
+// to the classes of two parameters of a third function. Test
+// `tests::refused_joins_between_two_large_classes_scale` (repeated refusals between two
+// classes, the case remembered) and `tests::the_classes_are_those_of_a_join_refused_by_looking`
+// (the answers of the plain union). COMPLEXITY.md row LOAD-affine-join. A complete solution
+// would need a count per pair of classes sharing a function, which a function of k parameters
+// starts at k(k - 1)/2 pairs.
+fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
+    fn find(parent: &mut [usize], mut v: usize) -> usize {
+        while parent[v] != v {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        v
+    }
+    let nodes = first.last().copied().unwrap_or(0);
+    let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
+    let mut parent: Vec<usize> = (0..nodes).collect();
+    let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
+    let mut refused: Vec<HashSet<usize>> = vec![HashSet::new(); nodes];
+    let mut joined = vec![false; nodes];
+    for &(a, b) in joins {
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        if ra == rb || refused[ra].contains(&rb) {
+            continue;
+        }
+        let (big, small) = match funs[ra].len() >= funs[rb].len() {
+            true => (ra, rb),
+            false => (rb, ra),
+        };
+        if funs[rb].contains(&owner(a))
+            || funs[ra].contains(&owner(b))
+            || funs[small].iter().any(|x| funs[big].contains(x))
+        {
+            refused[ra].insert(rb);
+            refused[rb].insert(ra);
+            continue;
+        }
+        parent[small] = big;
+        let f = std::mem::take(&mut funs[small]);
+        funs[big].extend(f);
+        for r in std::mem::take(&mut refused[small]) {
+            refused[r].remove(&small);
+            refused[r].insert(big);
+            refused[big].insert(r);
+        }
+        joined[big] = true;
+    }
+    let root = (0..nodes).map(|v| find(&mut parent, v)).collect();
+    (root, joined)
 }
 
 /// The term `l`, over the canonical atoms of the canonical key `key` ([`Walk::claimable`]),
@@ -10195,6 +10231,125 @@ mod tests {
     #[test]
     fn summaries_read_again_give_what_reading_the_term_again_gives_8() {
         summaries_read_again(7);
+    }
+
+    /// The classes of [`unite`] without its remembered refusals and its look-up of the caller
+    /// and callee: each join looks through the smaller class's functions.
+    fn unite_by_looking(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
+        fn find(parent: &mut [usize], mut v: usize) -> usize {
+            while parent[v] != v {
+                v = parent[v];
+            }
+            v
+        }
+        let nodes = *first.last().unwrap();
+        let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
+        let mut parent: Vec<usize> = (0..nodes).collect();
+        let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
+        let mut joined = vec![false; nodes];
+        for &(a, b) in joins {
+            let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+            let (big, small) = match funs[ra].len() >= funs[rb].len() {
+                true => (ra, rb),
+                false => (rb, ra),
+            };
+            if ra == rb || funs[small].iter().any(|x| funs[big].contains(x)) {
+                continue;
+            }
+            parent[small] = big;
+            let f = std::mem::take(&mut funs[small]);
+            funs[big].extend(f);
+            joined[big] = true;
+        }
+        let root = (0..nodes).map(|v| find(&mut parent, v)).collect();
+        (root, joined)
+    }
+
+    /// [`unite`] gives the classes of the union that looks for a shared function at each join,
+    /// root for root, over random functions of 0 to 4 parameters and random joins, among them
+    /// two parameters of one function and joins repeated.
+    #[test]
+    fn the_classes_are_those_of_a_join_refused_by_looking() {
+        let mut rng = Rng(0x2f6b_8a1c_93d4_e507);
+        let mut refused = 0;
+        for _ in 0..2000 {
+            let mut first = vec![0];
+            for _ in 0..1 + rng.below(12) {
+                first.push(first.last().unwrap() + rng.below(5) as usize);
+            }
+            let nodes = *first.last().unwrap() as u64;
+            if nodes == 0 {
+                continue;
+            }
+            let joins: Vec<(usize, usize)> = (0..rng.below(3 * nodes + 1))
+                .map(|_| (rng.below(nodes) as usize, rng.below(nodes) as usize))
+                .collect();
+            let (root, joined) = unite(&first, &joins);
+            let looked = unite_by_looking(&first, &joins);
+            assert_eq!(
+                (&root, &joined),
+                (&looked.0, &looked.1),
+                "functions from {first:?}, joins {joins:?}"
+            );
+            // Each class holds at most one parameter of a function.
+            for k in 0..first.len() - 1 {
+                let roots: HashSet<usize> = (first[k]..first[k + 1]).map(|v| root[v]).collect();
+                assert_eq!(roots.len(), first[k + 1] - first[k], "{first:?} {joins:?}");
+            }
+            refused += joins.iter().filter(|&&(a, b)| root[a] != root[b]).count();
+        }
+        assert!(refused > 1000, "{refused} joins refused");
+    }
+
+    /// Eight pairs of classes of n/8 functions each, each pair sharing one function `s(x, y)`
+    /// (`x` in the first class, `y` in the second), and n/8 functions
+    /// `t{j}(x) = ra(x: x) && rb(y: x)` a pair, each joining its parameter to the first class
+    /// and then refused against the second for `s`, which is neither its caller nor its callee.
+    /// Looking through the smaller class at each refusal is O(n²) (eight pairs, so the place of
+    /// `s` in each class's order varies less between runs); remembered, a repeated refusal is
+    /// O(1).
+    #[test]
+    fn refused_joins_between_two_large_classes_scale() {
+        // A function of `params` parameters added after those of `first`: its first parameter.
+        fn function(first: &mut Vec<usize>, params: usize) -> usize {
+            let at = *first.last().unwrap();
+            first.push(at + params);
+            at
+        }
+        let input = |n: usize| {
+            let (mut first, mut joins, mut pairs) = (vec![0], Vec::new(), Vec::new());
+            for _ in 0..8 {
+                let (ra, rb) = (function(&mut first, 1), function(&mut first, 1));
+                let s = function(&mut first, 2);
+                joins.extend([(s, ra), (s + 1, rb)]);
+                for _ in 0..n / 8 {
+                    let (a, b) = (function(&mut first, 1), function(&mut first, 1));
+                    joins.extend([(a, ra), (b, rb)]);
+                }
+                for _ in 0..n / 8 {
+                    let t = function(&mut first, 1);
+                    joins.extend([(t, ra), (t, rb)]);
+                }
+                pairs.push((ra, rb));
+            }
+            (first, joins, pairs)
+        };
+        let (small, large) = (input(1000), input(8000));
+        let (root, _) = unite(&large.0, &large.1);
+        for &(ra, rb) in &large.2 {
+            assert_ne!(root[ra], root[rb], "the two classes of a pair stay apart");
+        }
+        crate::scaling::compare(
+            "refused joins between two classes of n/8 functions, eight pairs, n = 1000 and 8000",
+            "work of order n log n (DESIGN.md Part G)",
+            crate::scaling::RATIO,
+            || {
+                std::hint::black_box(unite(&small.0, &small.1));
+            },
+            || {
+                std::hint::black_box(unite(&large.0, &large.1));
+            },
+        );
     }
 
     /// [`Gen::chain`] makes a chain of `n` `if`s in work of order `n`: each level reads the
