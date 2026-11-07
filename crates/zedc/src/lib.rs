@@ -34,3 +34,12 @@ pub mod testing;
 pub mod unit;
 pub mod work;
 pub mod zir;
+
+/// The scaling test of the rule of low complexity, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/scaling.rs"]
+#[expect(
+    dead_code,
+    reason = "zedc's tests build no input before a timed run (`inputs`)"
+)]
+mod scaling;

@@ -25,6 +25,14 @@ unicode-normalization = "0.1.26"
 unicode-script = "0.5.8"
 zed-kernel.workspace = true
 
+[dev-dependencies]
+rustix.workspace = true
+zed-alloc-count.workspace = true
+stacker.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2.workspace = true
+
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build.

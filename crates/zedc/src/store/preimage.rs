@@ -4026,6 +4026,13 @@ impl<'m, 't> Walk<'m, 't> {
         }
         // The transfer of the term is the same in every class.
         let pa = if self.fwd(t, env).await.is_bool() {
+            // The transfer of a test `if` in a class asks for this summary first
+            // ([`Walk::back_in`]), which is being made: reading it here would call itself
+            // without end (S22-order, `x mod 3 != 0 && (if x <= 2 { false } else { x < x })`).
+            // Without it the transfer reads the guard and the arms in each class, exactly.
+            if matches!(self.node(t), Node::If(..)) {
+                return None;
+            }
             self.pa_select(t, env, &Pa::Const(1), &Pa::Const(0)).await?
         } else {
             self.pa_at(t, env).await?
@@ -6253,6 +6260,10 @@ mod tests {
         /// those read on a stack higher than where they began, those read with other inputs, and
         /// the entries that hold everywhere compared.
         static CHECKED: Cell<[u64; 5]> = const { Cell::new([0; 5]) };
+        /// Of the entries [`RECHECK`] compared: the summaries ([`Pa`]) made below a stop and
+        /// those that hold everywhere, then the same for the summaries over every class of
+        /// remainders ([`ByClass`]).
+        static SUMMARIES: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
     }
 
     fn made_key<K: Hash, V>(table: Table<K, V>, k: &K) -> u64 {
@@ -6388,12 +6399,28 @@ mod tests {
         } else if a.is::<Option<Lin>>() || a.is::<Option<Formula>>() {
             // A translation read again defines its own auxiliary atoms anew.
             Some(renamed(&shown_any(a), &shown_any(b)))
+        } else if a.is::<Option<Pa>>() || a.is::<Option<ByClass>>() {
+            // A summary read again builds its own treaps and trees, so the two are compared
+            // by what they state: each piece, and each class's summary.
+            Some(shown_any(a) == shown_any(b))
         } else {
             None
         };
         // An entry that holds wherever it is reached may stop where its own reading calls
         // itself, which its cut leaves out.
         let held = cut != usize::MAX;
+        let summary = if a.is::<Option<Pa>>() {
+            Some(0)
+        } else if a.is::<Option<ByClass>>() {
+            Some(2)
+        } else {
+            None
+        };
+        if let Some(i) = summary {
+            let mut s = SUMMARIES.get();
+            s[i + usize::from(!held)] += 1;
+            SUMMARIES.set(s);
+        }
         assert!(
             !held || cut == again,
             "an entry's cut {cut} where it began, {again} again"
@@ -6436,9 +6463,82 @@ mod tests {
             format!("{x:?}")
         } else if let Some(x) = v.downcast_ref::<Option<Lin>>() {
             format!("{:?}", x.as_ref().map(Lin::to_string))
+        } else if let Some(x) = v.downcast_ref::<Option<Pa>>() {
+            x.as_ref().map_or_else(|| "none".into(), pa_shown)
+        } else if let Some(x) = v.downcast_ref::<Option<ByClass>>() {
+            x.as_ref().map_or_else(|| "none".into(), by_class_shown)
         } else {
             "a kind not shown".into()
         }
+    }
+
+    /// The function a summary states, as its input and its pieces `lo..=hi: a * x + b` in
+    /// order, with each subtree's maps applied and neighboring pieces of one line joined, so
+    /// that two summaries of one function are shown alike however their treaps were built.
+    /// A map that leaves `i128` is shown as such.
+    fn pa_shown(p: &Pa) -> String {
+        let (var, pieces) = match p {
+            Pa::Const(c) => (None, vec![(NegInf, PosInf, 0, i128::from(*c))]),
+            Pa::Linear { var, a, b } => (Some(var), vec![(NegInf, PosInf, *a, *b)]),
+            Pa::Piecewise { var, root } => {
+                let Some(pieces) = treap_pieces(root) else {
+                    return format!("{var}: a map past i128");
+                };
+                (Some(var), pieces)
+            }
+        };
+        let mut joined: Vec<(End, End, i128, i128)> = Vec::with_capacity(pieces.len());
+        for (lo, hi, a, b) in pieces {
+            match joined.last_mut() {
+                Some(last) if (last.2, last.3) == (a, b) && last.1.succ() == lo => last.1 = hi,
+                _ => joined.push((lo, hi, a, b)),
+            }
+        }
+        // A function constant over every input reads none.
+        let var = match joined.as_slice() {
+            [(NegInf, PosInf, 0, _)] => None,
+            _ => var,
+        };
+        let shown: Vec<String> = (joined.iter())
+            .map(|(lo, hi, a, b)| format!("{lo}..={hi}: {a} x + {b}"))
+            .collect();
+        format!("{}: {}", var.map_or("no input", |v| &**v), shown.join(", "))
+    }
+
+    /// The pieces of a treap in order, each `(lo, hi, a, b)` with the maps above it applied,
+    /// or `None` when a map leaves `i128`. The stack is explicit, so a deep treap does not
+    /// overflow the thread's.
+    fn treap_pieces(root: &Tree) -> Option<Vec<(End, End, i128, i128)>> {
+        let mut out = Vec::new();
+        let mut stack: Vec<(&PaNode, (i128, i128), bool)> = Vec::new();
+        if let Some(n) = root {
+            stack.push((n, (1, 0), false));
+        }
+        while let Some((n, f, left_done)) = stack.pop() {
+            let below = compose(n.tag, f)?;
+            if !left_done {
+                stack.push((n, f, true));
+                if let Some(l) = &n.left {
+                    stack.push((l, below, false));
+                }
+                continue;
+            }
+            let (a, b) = compose((n.a, n.b), f)?;
+            out.push((n.lo.clone(), n.hi.clone(), a, b));
+            if let Some(r) = &n.right {
+                stack.push((r, below, false));
+            }
+        }
+        Some(out)
+    }
+
+    /// The summaries over every class of remainders, shown as the number of classes and each
+    /// class's summary ([`ByClass::get`]).
+    fn by_class_shown(c: &ByClass) -> String {
+        let classes: Vec<String> = (0..c.n)
+            .map(|i| c.get(i).map_or_else(|| "none".into(), |p| pa_shown(&p)))
+            .collect();
+        format!("{} classes: {}", c.n, classes.join(" | "))
     }
 
     /// Whether `a` and `b` are the same text but for the numbers of auxiliary atoms (`q1`),
@@ -6532,6 +6632,9 @@ mod tests {
         rec: bool,
         /// The groups whose lambdas may be called here: those whose step is being made.
         frames: Vec<Frame>,
+        /// Whether a test may also compare a chain of `if`s over one input with a constant
+        /// ([`Gen::chain`]); [`Gen::new`] makes it false, so the programs are as before.
+        chains: bool,
     }
 
     impl Gen {
@@ -6543,6 +6646,7 @@ mod tests {
                 pool: Vec::new(),
                 rec,
                 frames: Vec::new(),
+                chains: false,
             }
         }
 
@@ -6622,6 +6726,9 @@ mod tests {
             }
             let d = d - 1;
             let lit = |n: i64| Term::Lit(Value::Int(n));
+            if self.chains && self.rng.below(4) == 0 {
+                return self.chain_test();
+            }
             if self.rec {
                 match self.rng.below(6) {
                     0 if !self.frames.is_empty() => return self.again(d),
@@ -6721,6 +6828,84 @@ mod tests {
         }
 
         /// `w(w, n)` with `w = (g, n) -> body`, the body a test that may call `g(g, ..)`.
+        /// `chain op c`, for a chain of one to four levels ([`Gen::chain`]) and a constant `c`:
+        /// the comparison a test asks true or false asks the chain for its values on a ray,
+        /// which its summary ([`Pa`]) answers.
+        fn chain_test(&mut self) -> Term {
+            let ps = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge, Prim::Eq, Prim::Ne];
+            let p = ps[self.rng.below(6) as usize];
+            let k = 1 + self.rng.below(4) as usize;
+            let c = self.rng.below(17) as i64 - 8;
+            Term::Prim(p, vec![self.chain(k, true), Term::Lit(Value::Int(c))])
+        }
+
+        /// A chain of `k` `if`s over one input: `t0` is the input, the input moved or
+        /// reflected, or a constant, and `tj = if guard { arm(t(j-1)) } else { arm(t(j-1)) }`,
+        /// both arms reading the one term `t(j-1)`. The guards of a chain compare the input
+        /// with constants, or take its remainder by one modulus, 2 or 3, which splits it by
+        /// class ([`ByClass`]), or mix the two; within a group's step a guard may also call a
+        /// lambda of the group ([`Gen::again`]). Each arm is the term, the term moved, reflected
+        /// or negated, its `min` or `max` with a constant, or where `scale` a multiple of it,
+        /// so that a chain of many levels keeps its values small.
+        fn chain(&mut self, k: usize, scale: bool) -> Term {
+            let lit = |n: i64| Term::Lit(Value::Int(n));
+            let x: Term = match self.rng.below(5) {
+                0 => Term::Var("y".into()),
+                1 => Term::Var(self.some(Kind::Int).unwrap_or_else(|| "x".into())),
+                _ => Term::Var("x".into()),
+            };
+            let mut t = match self.rng.below(6) {
+                0 => Term::Prim(
+                    Prim::Add,
+                    vec![x.clone(), lit(self.rng.below(7) as i64 - 3)],
+                ),
+                1 => Term::Prim(
+                    Prim::Sub,
+                    vec![lit(self.rng.below(7) as i64 - 3), x.clone()],
+                ),
+                2 => lit(self.rng.below(7) as i64 - 3),
+                _ => x.clone(),
+            };
+            let (guards, m) = (self.rng.below(3), 2 + self.rng.below(2) as i64);
+            for _ in 0..k {
+                let c = self.rng.below(13) as i64 - 6;
+                let by_class = match guards {
+                    0 => false,
+                    1 => true,
+                    _ => self.rng.below(2) == 0,
+                };
+                let g = if !self.frames.is_empty() && self.rng.below(4) == 0 {
+                    // A call of a lambda being read, so that the summary is made below a stop.
+                    self.again(0)
+                } else if by_class {
+                    let p = [Prim::Eq, Prim::Ne][self.rng.below(2) as usize];
+                    let r = Term::Prim(Prim::Mod, vec![x.clone(), lit(m)]);
+                    Term::Prim(p, vec![r, lit(c.rem_euclid(m))])
+                } else {
+                    let ps = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge, Prim::Eq, Prim::Ne];
+                    Term::Prim(ps[self.rng.below(6) as usize], vec![x.clone(), lit(c)])
+                };
+                let shared = Shared::new(t);
+                let arm = |g: &mut Self| {
+                    let s = (*shared).clone();
+                    let c = g.rng.below(13) as i64 - 6;
+                    match g.rng.below(if scale { 9 } else { 8 }) {
+                        0 | 1 => s,
+                        2 => Term::Prim(Prim::Add, vec![s, lit(c)]),
+                        3 => Term::Prim(Prim::Sub, vec![lit(c), s]),
+                        4 => Term::Prim(Prim::Neg, vec![s]),
+                        5 => Term::Prim(Prim::Min, vec![s, lit(c)]),
+                        6 => Term::Prim(Prim::Max, vec![s, lit(c)]),
+                        7 => Term::Prim(Prim::Sub, vec![s, lit(c)]),
+                        _ => Term::Prim(Prim::Mul, vec![lit(c.clamp(-2, 2)), s]),
+                    }
+                };
+                let (a, b) = (arm(self), arm(self));
+                t = Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
+            }
+            t
+        }
+
         fn itself(&mut self, d: u32) -> Term {
             let (g, n) = (self.name(), self.name());
             let body = self.within(g.clone(), Kind::Itself, |s| {
@@ -7244,6 +7429,104 @@ mod tests {
         entries_below_a_stop(7);
     }
 
+    /// The summaries of `if` chains over one input ([`Pa`]) and over each class of remainders
+    /// ([`ByClass`]) that [`RECHECK`] reads again give what reading their terms again gives,
+    /// on the random programs of [`entries_below_a_stop`] whose tests may also compare a chain
+    /// with a constant ([`Gen::chain_test`]). Checks the rounds of part `part` ([`PARTS`]) of 400
+    /// of one seed, those whose remainder by [`PARTS`] is `part`. Each part must meet both
+    /// kinds of summary; a summary made below a stop is met by some parts only, and
+    /// [`a_summary_made_below_a_stop_is_read_again`] makes one on purpose.
+    fn summaries_read_again(part: usize) {
+        let mut g = Gen::new(0x5851_f42d_4c95_7f2d, true);
+        g.chains = true;
+        CHECKED.set([0; 5]);
+        SUMMARIES.set([0; 4]);
+        let (mut met, mut endless) = (0, 0);
+        for round in 0..400 {
+            g.pool.clear();
+            let t = match g.rng.below(4) {
+                0 => g.group(3),
+                1 => g.itself(3),
+                2 => g.chain_test(),
+                _ => {
+                    let p = if g.rng.below(2) == 0 {
+                        Prim::And
+                    } else {
+                        Prim::Or
+                    };
+                    Term::Prim(p, vec![g.test(3), g.test(3)])
+                }
+            };
+            if round % PARTS != part {
+                continue;
+            }
+            let (_, _, m, e) = check(&t, round);
+            met += m;
+            endless += usize::from(e);
+        }
+        let [checked, unchecked, _, _, everywhere] = CHECKED.get();
+        let [pa, pa_everywhere, by_class, by_class_everywhere] = SUMMARIES.get();
+        eprintln!(
+            "read again {checked}, of kinds not compared {unchecked}, entries that hold \
+             anywhere {everywhere}; summaries held {pa}, anywhere {pa_everywhere}; by class \
+             held {by_class}, anywhere {by_class_everywhere}; points met {met}, rounds out of \
+             fuel {endless}"
+        );
+        assert_eq!(unchecked, 0);
+        assert!(pa_everywhere > 0 && by_class_everywhere > 0);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_1() {
+        summaries_read_again(0);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_2() {
+        summaries_read_again(1);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_3() {
+        summaries_read_again(2);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_4() {
+        summaries_read_again(3);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_5() {
+        summaries_read_again(4);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_6() {
+        summaries_read_again(5);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_7() {
+        summaries_read_again(6);
+    }
+
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_8() {
+        summaries_read_again(7);
+    }
+
+    /// [`Gen::chain`] makes a chain of `n` `if`s in work of order `n`: each level reads the
+    /// one term below it, shared, so neither the work nor the term doubles at a level.
+    #[test]
+    fn a_chain_is_made_in_work_of_order_its_length() {
+        crate::scaling::check_order("a chain of n ifs over one input made", 2000, 1, |n| {
+            let mut g = Gen::new(0x5851_f42d_4c95_7f2d, true);
+            g.chains = true;
+            std::hint::black_box(g.chain(n, true));
+        });
+    }
+
     mod written {
         //! Hand-written programs, one for each way an entry made below a stop could be read
         //! where it no longer holds.
@@ -7444,6 +7727,88 @@ mod tests {
                 made > 0 && reads[0] > 0 && checked[0] > 0,
                 "{reads:?} {checked:?}"
             );
+        }
+
+        /// `x mod m == r`.
+        fn class(m: i64, r: i64) -> Term {
+            prim(Eq, prim(Prim::Mod, v("x"), int(m)), int(r))
+        }
+
+        /// `x mod 3 != 0 && (if x <= 2 { false } else { x < x })`: the transfer of the test
+        /// `if` in a class asks for its summary by class, whose making read the transfer of the
+        /// `if` in turn, without end (S22-order).
+        #[test]
+        fn a_test_if_in_a_class_does_not_read_its_own_summary() {
+            let test = if_(
+                prim(Le, v("x"), int(2)),
+                Term::Lit(Value::Bool(false)),
+                prim(Lt, v("x"), v("x")),
+            );
+            let t = prim(
+                And,
+                prim(Prim::Ne, prim(Prim::Mod, v("x"), int(3)), int(0)),
+                test,
+            );
+            let (_, _, checked, shown) = run(&t);
+            assert_eq!(
+                shown,
+                "x [] y [] exact stops 0; x [-6..=6] y [-6..=6] exact stops 0"
+            );
+            assert_eq!(checked[1], 0, "{checked:?}");
+        }
+
+        /// `let t = if x < 0 { u + 1 } else { 3 - u }`, with `u = if x mod 2 == 0 { x } else
+        /// { x + 1 }`, read under `t <= 2 && t >= -3` and under `t >= -3 && t <= 2`: the
+        /// summaries of `t` and `u` are made under the first test read, and the preimages are
+        /// the same in either order.
+        #[test]
+        fn a_shared_chain_gives_one_preimage_in_either_order() {
+            let u = if_(class(2, 0), v("x"), prim(Add, v("x"), int(1)));
+            let t = if_(
+                prim(Lt, v("x"), int(0)),
+                prim(Add, v("u"), int(1)),
+                prim(Sub, int(3), v("u")),
+            );
+            let (a, b) = (prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3)));
+            let both =
+                |p: Term, q: Term| let_("u", u.clone(), let_("t", t.clone(), prim(And, p, q)));
+            SUMMARIES.set([0; 4]);
+            let (ab, _, _, _) = check(&both(a.clone(), b.clone()), 0);
+            let (ba, _, _, _) = check(&both(b, a), 1);
+            assert_eq!(ab, ba);
+            let [_, pa_everywhere, _, by_class_everywhere] = SUMMARIES.get();
+            assert!(
+                pa_everywhere > 0 && by_class_everywhere > 0,
+                "{:?}",
+                SUMMARIES.get()
+            );
+            let (_, _, _, shown) = run(&both(prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3))));
+            assert_eq!(
+                shown,
+                "x [-5..=-1, 1..=6] y [-6..=6] exact stops 0; x [-6..=-6, 0..=0] y [-6..=6] exact stops 0"
+            );
+        }
+
+        /// `f(f, n) = if n <= 0 { x <= 1 } else { (if x mod 2 == 0 { s } else { s - 1 }) <= 3 }`,
+        /// with `s = if f(f, n - 1) { x + 1 } else { 2 - x }`: the summary of the chain is
+        /// made while `f` is being read, below a stop, and read again there ([`RECHECK`]).
+        #[test]
+        fn a_summary_made_below_a_stop_is_read_again() {
+            let s = if_(
+                again(1),
+                prim(Add, v("x"), int(1)),
+                prim(Sub, int(2), v("x")),
+            );
+            let chain = if_(class(2, 0), v("s"), prim(Sub, v("s"), int(1)));
+            let step = let_("s", s, prim(Le, chain, int(3)));
+            SUMMARIES.set([0; 4]);
+            let (_, _, checked, shown) = run(&rec(prim(Le, v("x"), int(1)), step, v("y")));
+            assert_eq!(
+                shown,
+                "x [-6..=6] y [-6..=6] stops 1; x [-6..=-2, 2..=6] y [-6..=6] stops 1"
+            );
+            assert_eq!(checked[1], 0, "{checked:?}");
+            assert!(SUMMARIES.get()[0] > 0, "{:?}", SUMMARIES.get());
         }
     }
 }

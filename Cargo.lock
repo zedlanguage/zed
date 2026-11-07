@@ -1073,9 +1073,13 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "perf-event2",
+ "rustix",
+ "stacker",
  "unicode-ident",
  "unicode-normalization",
  "unicode-script",
+ "zed-alloc-count",
  "zed-kernel",
  "zedc",
 ]
