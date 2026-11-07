@@ -1,9 +1,9 @@
-// Lays the plan out with ELK (layered, network-simplex node placement), which
-// keeps the chart narrow: on the plan of 2026-11-03 it is 15,190 px wide where
-// dagre's placement was 38,237 px.
-// One layout of the whole plan takes most of a minute of one core, so it runs
-// in a worker, off the request path, and the page shows the last finished
-// layout until the new one is ready.
+// Lays the plan out with ELK (layered: network-simplex layering, layer-sweep
+// crossing reduction, Brandes-Koepf node placement, edges from one node merged).
+// One layout of the plan of 2026-11-07 (1,000 nodes, 1,700 direct edges) takes
+// 3 to 5 s of one core, and 12 s with all 3,450 edges. It runs in a worker, off
+// the request path, and the page shows the last finished layout until the new
+// one is ready.
 
 import { Worker } from "node:worker_threads";
 
@@ -17,6 +17,9 @@ export interface Layout {
   // Centers, as the page draws them.
   boxes: Record<string, { x: number; y: number; w: number; h: number }>;
   edges: { from: string; to: string; points: Point[] }[];
+  // When the server finished it, in ms since 1970; absent in layouts saved
+  // before this was kept.
+  at?: number;
 }
 
 const options = {
@@ -27,7 +30,41 @@ const options = {
   "elk.layered.spacing.nodeNodeBetweenLayers": "54",
   "elk.spacing.edgeNode": "8",
   "elk.spacing.edgeEdge": "8",
-  "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+  // Complexity tradeoff: ELK's network-simplex node placement recomputes every
+  // cut value after each pivot, O(n) per pivot and about O(n^2) in all, over a
+  // graph of the nodes, one dummy per layer an edge crosses and one node per
+  // edge (about 20,000 on the plan of 2026-11-07): it took 240 s on the direct
+  // edges. Brandes-Koepf placement is O(n) in the
+  // nodes and dummies and takes under 1 s on the same graph. What it gives up:
+  // network simplex minimizes the total horizontal stretch of edges, so it gave a
+  // chart 20,900 px wide; Brandes-Koepf aligns each node with a median neighbor
+  // and balances four such alignments, which leaves gaps and gives about
+  // 45,000 px (84,300 px without merged edges). Tried and rejected: linear segments
+  // (29,600 px wide, but its placement grows faster than linear: 42 s of a 97 s
+  // layout at 4,000 nodes) and simple placement (12,000 px wide, but most edges
+  // are pushed to the sides of their layer: 10,300 bends against 4,100).
+  "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+  // Edges leaving one node, or entering one, share a trunk, so the long edges of
+  // a busy node take one lane through each layer instead of one each; fewer
+  // dummies leave less for crossing reduction to sort. What it gives up: where
+  // the trunk splits, which edge goes where is read at the split, not along the
+  // whole line.
+  "elk.layered.mergeEdges": "true",
+  // ELK runs its greedy-switch crossing step only on graphs of fewer than 40
+  // nodes (greedySwitch.activationThreshold); turning it off lays every graph
+  // out the same way at every size.
+  "elk.layered.crossingMinimization.greedySwitch.type": "OFF",
+  // Complexity tradeoff: crossing reduction starts from `thoroughness` random
+  // orders and keeps the best; each start sweeps the layers and counts every
+  // crossing after each sweep, so the time is thoroughness times the sweeps.
+  // ELK also stops network-simplex layering after 4 * thoroughness * sqrt(n)
+  // pivots per component. What 2 starts give up against ELK's 7: the best of
+  // fewer random tries. On the plan of 2026-11-07 that cost nothing (direct
+  // edges: the same layout, 4.6 s against 6.0 s; all edges: 61,700 crossings
+  // against 78,100, 12 s against 23 s), and the 4,000-node test graph took
+  // 25 s against 67 s at load 37. With 1 the direct edges came out with
+  // 16,500 crossings against 9,400.
+  "elk.layered.thoroughness": "2",
 };
 
 export function graphKey(g: Graph): string {
@@ -79,11 +116,14 @@ export function layoutInWorker(g: Graph): Promise<Layout> {
 // replaces any older request for its mode, so the next layout is of the newest graph.
 // The finished layouts are passed to `save` and given back at startup, so a
 // restarted server shows the last chart while it lays out the current one.
+// `status` reports on a mode without asking for anything, so a check of
+// freshness does not replace the page's request.
 export class Layouts {
   private done = new Map<string, Layout>();
   private want = new Map<string, { key: string; graph: Graph }>();
   private failed = new Map<string, string>();
-  private running: { mode: string; key: string } | null = null;
+  private asked = new Map<string, string>();
+  private running: { mode: string; key: string; at: number } | null = null;
 
   private compute: (g: Graph) => Promise<Layout>;
   private save: (done: Record<string, Layout>) => void;
@@ -100,6 +140,7 @@ export class Layouts {
 
   request(mode: string, graph: Graph): { layout: Layout | null; fresh: boolean; error?: string } {
     const key = graphKey(graph);
+    this.asked.set(mode, key);
     const have = this.done.get(mode) ?? null;
     if (have?.key === key) return { layout: have, fresh: true };
     if (this.failed.get(mode) === key) return { layout: have, fresh: false, error: "layout failed; see the server log" };
@@ -110,16 +151,31 @@ export class Layouts {
     return { layout: have, fresh: false };
   }
 
+  // For the last graph asked for in this mode: whether the finished layout is
+  // of it, how old the finished layout is, how long the layout running in this
+  // mode has run, whether a graph waits, and whether its layout failed.
+  status(mode: string, now = Date.now()): { fresh: boolean; ageMs: number | null; runningMs: number | null; waiting: boolean; failed: boolean } {
+    const have = this.done.get(mode);
+    const asked = this.asked.get(mode);
+    return {
+      fresh: have !== undefined && have.key === asked,
+      ageMs: have?.at === undefined ? null : now - have.at,
+      runningMs: this.running?.mode === mode ? now - this.running.at : null,
+      waiting: this.want.has(mode),
+      failed: asked !== undefined && this.failed.get(mode) === asked,
+    };
+  }
+
   private async pump(): Promise<void> {
     if (this.running) return;
     const next = this.want.entries().next();
     if (next.done) return;
     const [mode, { key, graph }] = next.value;
     this.want.delete(mode);
-    this.running = { mode, key };
+    this.running = { mode, key, at: Date.now() };
     try {
       const l = await this.compute(graph);
-      this.done.set(mode, { ...l, key });
+      this.done.set(mode, { ...l, key, at: Date.now() });
       this.save(Object.fromEntries(this.done));
     } catch (err) {
       console.error(`layout of ${mode} failed:`, err);

@@ -204,9 +204,9 @@ function edgesOf(s: State): [string, string][] {
   return out;
 }
 
-function heightOf(n: Node): number {
-  if (n.state !== "active") return 52;
-  return 126 + n.subs.length * 21;
+function sizeOf(n: Node): { w: number; h: number } {
+  if (n.state !== "active") return { w: NARROW, h: 52 };
+  return { w: WIDE, h: 126 + n.subs.length * 21 };
 }
 
 // Asks for the layout of the graph s shows. The server answers at once with
@@ -215,7 +215,7 @@ function heightOf(n: Node): number {
 // reports the layout finished.
 async function relayout(s: State): Promise<void> {
   const graph = {
-    nodes: s.nodes.map((n) => ({ id: n.id, w: n.state === "active" ? WIDE : NARROW, h: heightOf(n) })),
+    nodes: s.nodes.map((n) => ({ id: n.id, ...sizeOf(n) })),
     edges: edgesOf(s),
   };
   const body = JSON.stringify({ mode: allEdges ? "all" : "direct", graph });
@@ -340,10 +340,14 @@ function render(s: State): void {
     const found = card.classList.contains("found");
     card.className = `node ${n.state}${n.ready ? " ready" : ""}${n.awaitingBatch ? " awaiting" : ""}` +
       `${n.id === selected ? " selected" : ""}${found ? " found" : ""}`;
-    card.style.left = `${p.x - p.w / 2}px`;
-    card.style.top = `${p.y - p.h / 2}px`;
-    card.style.width = `${p.w}px`;
-    card.style.height = `${p.h}px`;
+    // The card takes its size now, centered where the layout put it, so a
+    // node that turns active or gains a sub shows at once; the layout of the
+    // new sizes follows a few seconds later.
+    const { w, h } = sizeOf(n);
+    card.style.left = `${p.x - w / 2}px`;
+    card.style.top = `${p.y - h / 2}px`;
+    card.style.width = `${w}px`;
+    card.style.height = `${h}px`;
     card.title = n.title;
     const from = JSON.stringify(n);
     if (n.state === "active" || filledFrom.get(n.id) !== from) {

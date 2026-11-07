@@ -203,6 +203,8 @@ const server = createServer(async (req, res) => {
       case "/api/state":
         return send("application/json", JSON.stringify(await state()));
       case "/api/layout": {
+        // GET /api/layout?mode=direct only reports; see Layouts.status.
+        if (req.method === "GET") return send("application/json", JSON.stringify(layouts.status(url.searchParams.get("mode") ?? "direct")));
         const { mode, graph } = JSON.parse(await body(req)) as { mode: string; graph: Graph };
         return send("application/json", JSON.stringify(layouts.request(mode, graph)));
       }

@@ -115,3 +115,38 @@ test("a failed layout is reported and not retried for the same graph", async () 
     console.error = errors;
   }
 });
+
+test("status reports on a mode without asking for a layout or replacing the graph asked for", async () => {
+  const finish: (() => void)[] = [];
+  const started: string[] = [];
+  const layouts = new Layouts((g) => {
+    started.push(g.nodes[0].id);
+    return new Promise<Layout>((resolve) => finish.push(() => resolve({ key: "", w: 1, h: 1, boxes: {}, edges: [] })));
+  });
+  const g = (id: string): Graph => ({ nodes: [{ id, w: 1, h: 1 }], edges: [] });
+  const settle = () => new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(layouts.status("direct", 0), { fresh: false, ageMs: null, runningMs: null, waiting: false, failed: false });
+  layouts.request("direct", g("one"));
+  layouts.request("direct", g("two"));
+  const t = Date.now();
+  const s = layouts.status("direct", t + 5000);
+  assert.equal(s.fresh, false);
+  assert.ok(s.runningMs !== null && s.runningMs >= 5000);
+  assert.equal(s.waiting, true);
+  // Asking for status starts nothing and leaves "two" waiting.
+  assert.deepEqual(started, ["one"]);
+  finish.shift()!();
+  await settle();
+  assert.deepEqual(started, ["one", "two"]);
+  assert.equal(layouts.status("direct").fresh, false);
+  finish.shift()!();
+  await settle();
+  const done = layouts.status("direct", Date.now() + 1000);
+  assert.equal(done.fresh, true);
+  assert.ok(done.ageMs !== null && done.ageMs >= 1000);
+  assert.equal(done.runningMs, null);
+  assert.equal(done.waiting, false);
+  // The other mode is untouched.
+  assert.deepEqual(layouts.status("all", 0), { fresh: false, ageMs: null, runningMs: null, waiting: false, failed: false });
+});
