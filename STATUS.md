@@ -1493,9 +1493,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | probe on main 63c865da (instructions, least of 5, load 17-19): morphism chain built again+compared d=2000 26.40M, d=16000 257.5M (linear); union of n morphism t |
-| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | rebased on 1d14188f; running affected groups with doc check (load 6.50 16.65 21.64) |
-| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | started; worktree wt/st-ladder-potential from origin/main 1d14188f |
+| ATOM-intern | impl attempt 1 | 2026-11-07 06:02 | control worktree atom-intern-ctl removed; probe and profiling build deleted; running groups |
+| LOAD-affine-drift | impl attempt 1 | 2026-11-07 09:20 | started on 5367fa6a; worktree /home/luke/Work/wt/load-affine-drift seeded |
+| LOAD-affine-join | impl attempt 1 | 2026-11-07 09:20 | checked note's candidate: count per pair of roots costs O(sum of arity^2) (a function of P params puts P(P-1)/2 pairs at start), so not O(n log n); using instea |
+| PA-let-narrow | impl attempt 1 | 2026-11-07 08:58 | doc fixed; rerunning affected groups with doc check (load 7.64 13.46 19.64) |
+| STAGE-stub-rerun | impl attempt 1 | 2026-11-07 10:13 | started; worktree from origin/main 5367fa6a |
+| ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | rebased on 5367fa6a, restacked; load 8.27 14.64 20.34 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
