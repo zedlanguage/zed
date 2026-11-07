@@ -27,7 +27,7 @@ use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{Classes, Demand, Domains, Preimage, exact_preimage, preimage};
 use zedc::store::preimage_ref as before;
-use zedc::store::presburger::{Atom, Model};
+use zedc::store::presburger::{Atom, Model, Refusal};
 
 use super::check;
 use super::random::{bool_term, domains, int_demand, int_term, with_functions};
@@ -351,7 +351,9 @@ fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 /// the cases now exact that the transfer before left inexact, refused or listed (by
 /// classes of remainders, COMPLEXITY.md S22e, or by S22b's reflection), and the cases a split
 /// over many periods answers with the classes' relation in place of the linear stage's
-/// (COMPLEXITY.md S22e-wide), each shown with its box now and before when wider.
+/// (COMPLEXITY.md S22e-wide), each shown with its box now and before when wider, and the cases
+/// that differ only in the names of the variables of their relation or refusal
+/// (COMPLEXITY.md S22-transfer-rem).
 #[derive(Default)]
 struct Diffs {
     cases: usize,
@@ -361,6 +363,7 @@ struct Diffs {
     exact: usize,
     wide: usize,
     wider: Vec<String>,
+    renamed: usize,
 }
 
 /// Whether `p`, not exact, holds the relation of a split by remainders over many periods
@@ -457,6 +460,24 @@ impl Diffs {
                     show(&then.domains)
                 ));
             }
+            return;
+        }
+        // Item S22-transfer-rem: the linear stage gives one quotient and remainder to every
+        // `x mod c` of one input, so the auxiliary variables of a relation and the variables a
+        // refusal names are numbered anew. Such a result differs from the one before only in
+        // those names: the same box, exactness, listing and stops, a relation where there was
+        // one, and a refusal of the same kind.
+        let kind = |r: &Option<Refusal>| r.as_ref().map(std::mem::discriminant);
+        if new != old
+            && now.domains == then.domains
+            && now.exact == then.exact
+            && now.enumerated == then.enumerated
+            && format!("{:?}", now.stops) == format!("{:?}", then.stops)
+            && now.relation.is_some() == then.relation.is_some()
+            && kind(&now.refusal) == kind(&then.refusal)
+        {
+            self.cases += 1;
+            self.renamed += 1;
             return;
         }
         // Both inexact and alike but for the box, and the new box lies inside the one before
@@ -577,6 +598,10 @@ impl Diffs {
         );
         assert_eq!(self.exact, exact, "the number of boxes made exact changed");
         assert_eq!(self.wide, 0, "a split over many periods answered");
+        assert_eq!(
+            self.renamed, 0,
+            "a result differs from the one before only in the names of its variables"
+        );
     }
 
     /// Checks that a split over many periods answered `wide` cases with the classes'
@@ -592,6 +617,17 @@ impl Diffs {
             "the wider boxes of splits over many periods"
         );
         self.wide = 0;
+        self
+    }
+
+    /// Checks that `renamed` results differ from the one before only in the names of the
+    /// variables of their relation or refusal (item S22-transfer-rem).
+    fn renamed(mut self, renamed: usize) -> Diffs {
+        assert_eq!(
+            self.renamed, renamed,
+            "the number of results that differ only in the names of their variables changed"
+        );
+        self.renamed = 0;
         self
     }
 }
@@ -879,6 +915,7 @@ fn random_guarded_chains(
     to: usize,
     (narrower, reflected, exact): (usize, usize, usize),
     (wide, wider): (usize, &[&str]),
+    renamed: usize,
 ) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
@@ -899,39 +936,44 @@ fn random_guarded_chains(
                 diffs.preimage("random chain", &t, &ds, &d);
             }
         }
-        diffs
-            .split_wide(wide, wider)
-            .none_but(to - from, narrower, reflected, exact);
+        diffs.split_wide(wide, wider).renamed(renamed).none_but(
+            to - from,
+            narrower,
+            reflected,
+            exact,
+        );
     });
 }
 
 /// The counts of each test of [`random_guarded_chains`]: the first case of its 250, the
 /// narrower, reflected and exact boxes, and the splits over many periods with the wider of
-/// them. The rows of each half sum to that half's counts as one test
+/// them, and the results that differ only in the names of their variables. The rows of each
+/// half sum to that half's counts as one test
 /// (`random_guarded_chains_sum_to_the_counts_of_each_half`).
 type Counts = (
     usize,
     (usize, usize, usize),
     (usize, &'static [&'static str]),
+    usize,
 );
 
 const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 23), (9, &[])),
-    (250, (1, 3, 22), (5, &[])),
-    (500, (1, 1, 19), (5, &[])),
-    (750, (0, 1, 16), (8, &[])),
-    (1000, (2, 0, 24), (9, &[])),
-    (1250, (2, 2, 20), (2, &[])),
-    (1500, (0, 1, 16), (8, &[])),
-    (1750, (0, 1, 22), (9, &[])),
-    (2000, (0, 2, 33), (11, &[])),
-    (2250, (0, 1, 18), (13, &[])),
-    (2500, (2, 0, 23), (7, &[])),
-    (2750, (0, 0, 18), (5, &[])),
-    (3000, (2, 1, 27), (6, &[])),
-    (3250, (1, 1, 26), (4, &[])),
-    (3500, (0, 0, 25), (3, &[])),
-    (3750, (0, 2, 21), (9, &[])),
+    (0, (0, 0, 23), (9, &[]), 3),
+    (250, (1, 3, 22), (5, &[]), 2),
+    (500, (1, 1, 19), (5, &[]), 4),
+    (750, (0, 1, 16), (8, &[]), 5),
+    (1000, (2, 1, 24), (9, &[]), 4),
+    (1250, (2, 2, 20), (2, &[]), 4),
+    (1500, (0, 1, 17), (8, &[]), 5),
+    (1750, (0, 1, 22), (9, &[]), 5),
+    (2000, (0, 2, 33), (11, &[]), 3),
+    (2250, (0, 2, 18), (13, &[]), 2),
+    (2500, (2, 0, 23), (7, &[]), 4),
+    (2750, (0, 0, 18), (5, &[]), 2),
+    (3000, (2, 1, 27), (6, &[]), 5),
+    (3250, (1, 1, 26), (4, &[]), 4),
+    (3500, (0, 0, 25), (3, &[]), 2),
+    (3750, (0, 3, 21), (9, &[]), 4),
 ];
 
 /// One test per row of [`GUARDED`], each under 60 s at load 120.
@@ -940,8 +982,8 @@ macro_rules! guarded_ranges {
         $(
             #[test]
             fn $name() {
-                let (from, counts, wide) = GUARDED[$row];
-                random_guarded_chains(from, from + 250, counts, wide);
+                let (from, counts, wide, renamed) = GUARDED[$row];
+                random_guarded_chains(from, from + 250, counts, wide, renamed);
             }
         )*
     };
@@ -1008,17 +1050,27 @@ guarded_ranges!(
 /// is wider. Measured on main 62ea3f02, cases 3500 to 3750 had one more exact box (26); on
 /// main 6532d51e the transfer before decides it too (DISJ-incremental, as at cases 500 to
 /// 750), so both are exact and alike (inferred from the count; the case was not isolated).
+///
+/// Since S22-transfer-rem, which gives one quotient and remainder to every `x mod c` of one
+/// input in the linear stage, 58 results differ from the transfer before only in the names of
+/// the variables of their relation or refusal (32 in the first half, 26 in the second), and
+/// four are better than on main: one inexact box of cases 1500 to 1750 is exact (97 made
+/// exact in the first half, was 96); one of cases 1000 to 1250 keeps its box and relation, but
+/// the linear stage decides it where it refused before (reflected 7, was 6); and two boxes of
+/// the second half are narrower, `[2, +inf)` for `[-1, +inf)` and `[-22, 18]` for `[-43, 18]`,
+/// which count as reflected since their relation changed too (6, was 4).
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
-        let mut s = (0, 0, 0, 0, Vec::new());
-        for &(_, (narrower, reflected, exact), (wide, wider)) in rows {
+        let mut s = (0, 0, 0, 0, Vec::new(), 0);
+        for &(_, (narrower, reflected, exact), (wide, wider), renamed) in rows {
             s = (
                 s.0 + narrower,
                 s.1 + reflected,
                 s.2 + exact,
                 s.3 + wide,
                 s.4,
+                s.5 + renamed,
             );
             s.4.extend_from_slice(wider);
         }
@@ -1027,8 +1079,8 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (6, 9, 162, 55, vec![]));
-    assert_eq!(sum(&GUARDED[8..]), (5, 7, 191, 58, vec![]));
+    assert_eq!(sum(&GUARDED[..8]), (6, 10, 163, 55, vec![], 32));
+    assert_eq!(sum(&GUARDED[8..]), (5, 9, 191, 58, vec![], 26));
 }
 
 /// The random terms of `random.rs`, with its seeds and others, and its exact preimages.
@@ -2218,6 +2270,238 @@ fn a_stretch_wrapping_past_the_modulus_inside_one_class_is_checked_by_remainder(
             let d = Demand::Bool(true);
             let p = preimage(&stamped, &ds, &d);
             check(&stamped, &ds, &d, &p, (0, 1024 * periods + 1023));
+        }
+    });
+}
+
+/// A chain of `k` guards `x mod m == r`, each `r` drawn in `[0, m)`, whose two arms each move
+/// the term before by one of `t`, `t + c`, `c - t`, `-t`, `min(t, c)` and `max(t, c)`, drawn
+/// with `seed`: a remainder guard over many periods that the split by remainders does not
+/// answer alone once the term around it reads another input or tests the chain.
+fn moved_remainder_chain(seed: u64, k: usize, x: &str, m: i64) -> Term {
+    let mut rng = Rng::new(seed);
+    (0..k).fold(var(x), |t, _| {
+        let r = rng.int(0, m.abs() - 1);
+        let g = prim(Prim::Eq, prim(Prim::Mod, var(x), int(m)), int(r));
+        let arm = |rng: &mut Rng| {
+            let c = rng.int(-6, 6);
+            let t = t.clone();
+            match rng.below(7) {
+                0 | 1 => t,
+                2 => prim(Prim::Add, t, int(c)),
+                3 => prim(Prim::Sub, int(c), t),
+                4 => Term::Prim(Prim::Neg, vec![t]),
+                5 => prim(Prim::Min, t, int(c)),
+                _ => prim(Prim::Max, t, int(c)),
+            }
+        };
+        let (a, b) = (arm(&mut rng), arm(&mut rng));
+        Term::If(Shared::new(g), Shared::new(a), Shared::new(b))
+    })
+}
+
+/// The shapes of item S22-transfer-rem around the chain `c` over `x`, each asked `true`: the
+/// arms of an `if` reading different inputs (`y >= 0` or `x >= 0` picks `c` or `y`), a test
+/// of `c` (`c >= 1` picks `y` or `-y`), and remainders of two inputs or two moduli (`c <= 2`
+/// and `y mod 2 == 0`, or `x mod 2 == 0`).
+fn remainder_shape(shape: &str, c: Term) -> Term {
+    let le2 = |t: Term| prim(Prim::Le, t, int(2));
+    let pick = |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
+    let even = |x: &str| prim(Prim::Eq, prim(Prim::Mod, var(x), int(2)), int(0));
+    match shape {
+        "arms of x and y" => le2(pick(prim(Prim::Ge, var("y"), int(0)), c, var("y"))),
+        "arms over x" => le2(pick(prim(Prim::Ge, var("x"), int(0)), c, var("y"))),
+        "a test of the chain" => le2(pick(
+            prim(Prim::Ge, c, int(1)),
+            var("y"),
+            Term::Prim(Prim::Neg, vec![var("y")]),
+        )),
+        "remainders of two inputs" => prim(Prim::And, le2(c), even("y")),
+        "two moduli of one input" => prim(Prim::And, le2(c), even("x")),
+        _ => unreachable!("no shape {shape}"),
+    }
+}
+
+const REMAINDER_SHAPES: [&str; 5] = [
+    "arms of x and y",
+    "arms over x",
+    "a test of the chain",
+    "remainders of two inputs",
+    "two moduli of one input",
+];
+
+/// `x` and `y` in `[-w, w]`.
+fn xy_in(w: i64) -> Domains {
+    over(&[("x", IntervalSet::of(-w, w)), ("y", IntervalSet::of(-w, w))])
+}
+
+/// The chain of `k` guards `x mod m == j mod 3`, else `t + 1`. At `m = 3` each `x` misses two
+/// guards in every three, so at `k = 3q` the chain is `x + 2q`.
+fn counted_remainder_chain(k: usize, m: i64) -> Term {
+    let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("x"), int(m)), int(j % 3));
+    chain(k, var("x"), g, plus(|_| 1))
+}
+
+/// Five programs around the chain `c`, each asked `true`: `if x >= 0 { c } else { y } <= 2`,
+/// `if y >= 0 { c } else { 9 } <= 2`, `if c >= 1 { y } else { 9 } <= 2`,
+/// `c <= 2 && y mod 2 == 0` and `c <= 2 && x mod 2 == 0`.
+fn counted_shapes(c: Term) -> [Term; 5] {
+    let le2 = |t: Term| prim(Prim::Le, t, int(2));
+    let pick = |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
+    let even = |x: &str| prim(Prim::Eq, prim(Prim::Mod, var(x), int(2)), int(0));
+    [
+        le2(pick(prim(Prim::Ge, var("x"), int(0)), c.clone(), var("y"))),
+        le2(pick(prim(Prim::Ge, var("y"), int(0)), c.clone(), int(9))),
+        le2(pick(prim(Prim::Ge, c.clone(), int(1)), var("y"), int(9))),
+        prim(Prim::And, le2(c.clone()), even("y")),
+        prim(Prim::And, le2(c), even("x")),
+    ]
+}
+
+/// COMPLEXITY.md S22-transfer-rem: the chain `x + 2q` of `k = 3q` guards `x mod 3 == j mod 3`
+/// over `x` and `y` in `[-60, 60]`, 40 periods, in each of the five programs of
+/// [`counted_shapes`], has the box worked out by hand, exact where every point in it meets
+/// the demand, and agrees with the interpreter. A box cannot hold the even numbers alone, so
+/// the last two keep their hull, with the ends `-60` and `60` apart, and a relation.
+#[test]
+fn remainder_reads_outside_a_split_have_their_preimages() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(60), Demand::Bool(true));
+        let all = || pieces(&[(-60, 60)]);
+        // The hull of the even numbers in `[-60, hi]`, less the odd ends `-59` and `59`.
+        let evens = |hi: i64| {
+            let ps = [(-60, -60), (-58, hi.min(58)), (60, 60)];
+            pieces(
+                &ps.into_iter()
+                    .filter(|&(a, b)| a <= b && b <= hi)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for k in [3, 6, 30, 96] {
+            let q = k as i64 / 3;
+            // `x + 2q <= 2` at `x <= 2 - 2q`, and `x + 2q >= 1` at `x >= 1 - 2q`.
+            let (le, ge) = ((2 - 2 * q).max(-61), (1 - 2 * q).max(-60));
+            let upto = |hi: i64| {
+                if hi < -60 {
+                    IntervalSet::empty()
+                } else {
+                    pieces(&[(-60, hi)])
+                }
+            };
+            let want: [(IntervalSet, IntervalSet, bool); 5] = [
+                // `x >= 0` meets the chain only at `x = 0`, `q = 1`; `x < 0` asks `y <= 2`.
+                if q == 1 {
+                    (upto(0), all(), false)
+                } else {
+                    (upto(-1), pieces(&[(-60, 2)]), true)
+                },
+                (upto(le), pieces(&[(0, 60)]), true),
+                (pieces(&[(ge, 60)]), pieces(&[(-60, 2)]), true),
+                (upto(le), evens(60), false),
+                (evens(le), all(), false),
+            ];
+            for (t, (x, y, exact)) in counted_shapes(counted_remainder_chain(k, 3))
+                .iter()
+                .zip(want)
+            {
+                let p = preimage(t, &ds, &d);
+                let got = (&p.domains["x"], &p.domains["y"], p.exact);
+                if x.is_empty() {
+                    assert!(got.0.is_empty() || got.1.is_empty(), "k={k}: {t}: {p:?}");
+                } else {
+                    assert_eq!(got, (&x, &y, exact), "k={k}: {t}: {p:?}");
+                }
+                check(t, &ds, &d, &p, (-15, 15));
+                check(t, &ds, &d, &p, (-60, -45));
+            }
+        }
+    });
+}
+
+/// COMPLEXITY.md S22-transfer-rem: on each shape of [`remainder_shape`], three chains of `k`
+/// guards `x mod 3 == r` with arms drawn at random, over `x` and `y` in `[-60, 60]`, agree
+/// with the interpreter: every point that meets the demand lies in the box, and when the
+/// box is exact every point in it meets the demand.
+#[test]
+fn remainder_reads_outside_a_split_match_the_interpreter() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(60), Demand::Bool(true));
+        for shape in REMAINDER_SHAPES {
+            for seed in 1..=3 {
+                for k in [1, 2, 5, 13] {
+                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", 3));
+                    let p = preimage(&t, &ds, &d);
+                    check(&t, &ds, &d, &p, (-20, 20));
+                    check(&t, &ds, &d, &p, (45, 60));
+                }
+            }
+        }
+    });
+}
+
+/// The shapes of [`counted_shapes`] at their corners, each agreeing with the interpreter: the
+/// moduli 1, -3, 1024 (one period), `2^62` and `i64::MIN`, whose classes do not fit `i64`, so
+/// the transfer reads the guards as before; `x` unbounded, in pieces or empty; and the demand
+/// `false` over `[-60, 60]`.
+#[test]
+fn remainder_reads_outside_a_split_at_their_corners() {
+    on_big_stack(|| {
+        let y = ("y", IntervalSet::of(-60, 60));
+        let domains = [
+            over(&[("x", IntervalSet::of(-60, 60)), y.clone()]),
+            over(&[
+                ("x", IntervalSet::range(End::NegInf, End::PosInf)),
+                y.clone(),
+            ]),
+            over(&[("x", pieces(&[(-60, -31), (-9, 50)])), y.clone()]),
+            over(&[("x", IntervalSet::empty()), y]),
+        ];
+        for m in [1, -3, 1024, 1 << 62, i64::MIN] {
+            for k in [1, 6] {
+                for t in counted_shapes(counted_remainder_chain(k, m)) {
+                    for (i, ds) in domains.iter().enumerate() {
+                        // The demand `false` on the first domain only, to keep the test short.
+                        for d in [Demand::Bool(true), Demand::Bool(false)]
+                            .iter()
+                            .take(if i == 0 { 2 } else { 1 })
+                        {
+                            let p = preimage(&t, ds, d);
+                            check(&t, ds, d, &p, (-12, 12));
+                        }
+                    }
+                }
+            }
+        }
+        // At `m = 1` the guard `x mod 1 == j mod 3` holds at `j = 0, 3, ...` alone, so the chain
+        // is `x + 4` at `k = 6`: `if y >= 0 { x + 4 } else { 9 } <= 2`.
+        let t = &counted_shapes(counted_remainder_chain(6, 1))[1];
+        let p = preimage(t, &xy_in(60), &Demand::Bool(true));
+        assert!(p.exact, "{p:?}");
+        assert_eq!(p.domains["x"], IntervalSet::of(-60, -2));
+        assert_eq!(p.domains["y"], IntervalSet::of(0, 60));
+    });
+}
+
+/// COMPLEXITY.md S22-transfer-rem: the three shapes the split by remainders does not answer
+/// alone (arms of an `if` reading different inputs, a test of a term that reads a remainder,
+/// remainders of two inputs), each over a chain of `k` guards `x mod 3 == r` across 40
+/// periods, take work of order `k` from `k` to `8k`.
+#[test]
+fn remainder_reads_outside_a_split_scale() {
+    on_big_stack(|| {
+        let (ds, d) = (xy_in(60), Demand::Bool(true));
+        for shape in [
+            "arms of x and y",
+            "a test of the chain",
+            "remainders of two inputs",
+        ] {
+            let n = 8;
+            let terms = scaling::inputs(n, |k| {
+                remainder_shape(shape, moved_remainder_chain(1, k, "x", 3))
+            });
+            scaling::check(shape, n, |k| {
+                preimage(&terms[&k], &ds, &d);
+            });
         }
     });
 }

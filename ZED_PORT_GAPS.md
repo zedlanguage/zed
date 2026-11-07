@@ -2189,3 +2189,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A `BTreeSet` round of types popped one at a time (`pop_first`) from the search's state, refilled by `std::mem::take` of `again`, and read by drains started inside the decisions it runs | `Searching::drain`, `Search::round` | Mutation | The round is search state threaded through each decision, as the other `Search` fields; a nested drain returns the round it leaves |
+
+## Entries from S22-transfer-rem (`zedc/src/store/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An `Option<Rc<HashMap>>` field of the run filled on the first call and shared by every later call (the cuts of each input and modulus) | `Tx::classes_of`, `Run::cut_table` | Mutation, shared ownership | A value computed once when the run starts, or a lazy binding of the run |
+| A `HashMap` keyed by a pair of a term and an `Option` of an input and modulus, memoizing the summaries by class | `Memo::by_class`, `Walk::by_class` | Mutation | A memo keyed by the same tuple, as the other memos of the walk |
