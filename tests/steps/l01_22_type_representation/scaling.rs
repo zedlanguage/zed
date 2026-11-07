@@ -86,3 +86,41 @@ fn a_union_of_many_tuple_types_scales() {
         assert!(!Type::meet_all(get(n).iter().map(|p| !p)).is_empty());
     });
 }
+
+/// The morphism type `T(d)`, where `T(0)` is `int` and `T(k + 1)` is `T(k) -> T(k)`: each level
+/// holds the one below as its keys and its values, so a comparison that reads the contents of
+/// two such types built apart reads every level.
+fn arrows(d: usize) -> Type {
+    (0..d).fold(Type::int(), |t, _| Type::exact(t.clone(), t))
+}
+
+/// The union of the `n` morphism types `#a{i} -> int`.
+fn arrow_union(n: usize) -> Type {
+    (0..n).fold(Type::empty(), |u, i| {
+        &u | &Type::exact(Type::atom(&format!("a{i}")), Type::int())
+    })
+}
+
+#[test]
+fn equal_morphism_types_built_apart_compare_in_linear_time() {
+    // Item ATOM-intern (COMPLEXITY.md K66): a morphism type equal to one alive, built apart
+    // from it, is found equal level by level as it is built, and compared at the top.
+    let chains = scaling::inputs(2_000, arrows);
+    scaling::check(
+        "a morphism type n deep built again and compared",
+        2_000,
+        |d| {
+            let b = arrows(d);
+            assert!(chains[&d] == b);
+        },
+    );
+    let unions = scaling::inputs(500, arrow_union);
+    scaling::check(
+        "a union of n morphism types built again and compared",
+        500,
+        |n| {
+            let b = arrow_union(n);
+            assert!(unions[&n] == b);
+        },
+    );
+}

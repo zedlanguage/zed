@@ -32,12 +32,13 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::frames::{Deep, Stack};
 
-use super::{AtomPart, Morphism, Node, Op, Row, Type, mix};
+use super::{Arrow, AtomPart, Morphism, Node, Op, Row, Type, mix};
 
 mod list;
 mod set;
 
 use list::Cell;
+pub(super) use list::KeyHasher;
 use set::{Key, NEXT, Set};
 
 #[derive(Clone)]
@@ -150,8 +151,7 @@ impl Literal for Morphism {
         let _ = MORPHISMS.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
     }
     fn digest(&self) -> u64 {
-        let m = mix(6, self.guarantee.digest());
-        mix(mix(m, self.permission.digest()), self.value.digest())
+        Morphism::digest(self)
     }
     fn free(part: Owned<Morphism>) {
         super::free(super::Freed::Morphisms(part));
@@ -1643,7 +1643,7 @@ type Lens = BTreeMap<usize, Part<Row>>;
 pub(super) enum Step<'a> {
     Types(&'a Type, &'a Type),
     Rows(&'a Row, &'a Row),
-    Morphisms(&'a Morphism, &'a Morphism),
+    Morphisms(&'a Arrow, &'a Arrow),
     Tuples(Walk<'a, Row>),
     Arrows(Walk<'a, Morphism>),
     /// The remaining components of two rows.
@@ -1694,12 +1694,31 @@ pub(super) fn order(first: Step<'_>) -> Ordering {
                     .then_with(|| items(a.iter(), b.iter(), &mut steps, &equal))
             }
             Step::Morphisms(a, b) => {
-                steps.extend([
-                    Step::Types(&a.value, &b.value),
-                    Step::Types(&a.permission, &b.permission),
-                    Step::Types(&a.guarantee, &b.guarantee),
-                ]);
-                Ordering::Equal
+                if std::ptr::eq(a, b) {
+                    continue;
+                }
+                // Each pair is read at once where its fields decide it, as in [`items`], so that
+                // two morphism types told apart by a digest push nothing; at the first pair that
+                // needs a nested comparison, the pairs after it wait below what it pushed.
+                let pairs = [
+                    (&a.guarantee, &b.guarantee),
+                    (&a.permission, &b.permission),
+                    (&a.value, &b.value),
+                ];
+                let mut c = Ordering::Equal;
+                for (i, &(x, y)) in pairs.iter().enumerate() {
+                    let n = steps.len();
+                    c = types(x, y, &mut steps, &equal);
+                    if c != Ordering::Equal {
+                        break;
+                    }
+                    if steps.len() > n {
+                        let rest = pairs[i + 1..].iter().rev();
+                        steps.splice(n..n, rest.map(|&(x, y)| Step::Types(x, y)));
+                        break;
+                    }
+                }
+                c
             }
             Step::Items(x, y) => items(x, y, &mut steps, &equal),
             Step::Names(p, q, from) => atom_names((p, q), from, &mut steps),
@@ -3593,6 +3612,22 @@ mod tests {
         assert!(!std::ptr::eq(a.as_ptr(), atom(7901).as_ptr()));
         let digest = a.digest();
         let live = || super::super::ROWS.with(|t| t.borrow().get(&digest).map_or(0, Vec::len));
+        assert_eq!(live(), 1);
+        drop((a, b));
+        assert_eq!(live(), 0);
+    }
+
+    #[test]
+    fn equal_morphism_types_alive_together_are_one_node_and_leave_the_table_when_freed() {
+        // Step ATOM-intern: as rows, two equal morphism types built apart while both live are one
+        // node, so they compare by pointer; a freed one leaves the table.
+        let lit = |i| Type::lit(&Value::Int(i)).unwrap();
+        let arrow = |i| Morphism::new(Type::empty(), lit(7990), lit(i));
+        let (a, b) = (arrow(7991), arrow(7991));
+        assert!(std::ptr::eq(&*a, &*b));
+        assert!(!std::ptr::eq(&*a, &*arrow(7992)));
+        let digest = a.digest();
+        let live = || super::super::ARROWS.with(|t| t.borrow().get(&digest).map_or(0, Vec::len));
         assert_eq!(live(), 1);
         drop((a, b));
         assert_eq!(live(), 0);

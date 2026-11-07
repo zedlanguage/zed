@@ -1889,11 +1889,7 @@ impl<'m> Searching<'m> {
             }
             None => {
                 self.morphisms(
-                    Morphism {
-                        guarantee: Type::empty(),
-                        permission: Type::top(),
-                        value: Type::top(),
-                    },
+                    Morphism::new(Type::empty(), Type::top(), Type::top()),
                     p.morphisms.clone(),
                     true,
                 )
@@ -2866,11 +2862,7 @@ impl<'m> Searching<'m> {
             return Some(self.s().show(Rep::Struct));
         }
         if p.morphisms.is_leaf() != Some(false) {
-            let top = Morphism {
-                guarantee: Type::empty(),
-                permission: Type::top(),
-                value: Type::top(),
-            };
+            let top = Morphism::new(Type::empty(), Type::top(), Type::top());
             // A closure is shown only for a meet of morphism types whose keys are all
             // permitted as written and whose value type has a value, which may be one being
             // built here, holding this closure: a closure can return itself. A closure whose
@@ -4004,11 +3996,11 @@ fn known_empty(k: &Type) -> bool {
 
 /// The morphisms both `a` and `b` admit.
 fn meet(a: &Morphism, b: &Morphism) -> Morphism {
-    Morphism {
-        guarantee: &a.guarantee | &b.guarantee,
-        permission: &a.permission & &b.permission,
-        value: &a.value & &b.value,
-    }
+    Morphism::new(
+        &a.guarantee | &b.guarantee,
+        &a.permission & &b.permission,
+        &a.value & &b.value,
+    )
 }
 
 #[cfg(test)]

@@ -258,7 +258,7 @@ impl Queue for Node {
 impl Queue for Row {
     fn queue<'a>(&'a self, todo: &mut Vec<Show<'a>>) {
         let mut w = vec![Show::Text("[")];
-        for (i, t) in self.0.items.iter().enumerate() {
+        for (i, t) in self.iter().enumerate() {
             if i > 0 {
                 w.push(Show::Text(", "));
             }

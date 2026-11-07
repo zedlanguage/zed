@@ -2304,7 +2304,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | Tables of `Weak` references, each entry removed by the node's `Drop` on a pointer match, through `try_with` and `try_borrow_mut` of the thread's table | `set::make`, `list::cell`, `xor::node`, `Drop for Set`, `Drop for Cell`, `Drop for Pair`, `Literal::untable`, `rec::GROUPS`, `rec::INSTANCES` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A per-unit state struct of the tables, dropped whole at the end of a unit, so no entry needs to leave on its own |
 | A `Mutex<Weak<Expr>>` beside a `OnceLock<Part>` so that an expression and its complement hold each other one way only | `Expr::back`, `Expr::link`, `Expr::known` | Lazy cells and tied recursive types (gap 3) | The complement in the unit's memo table keyed by expression id, both ways |
-| A weak table of rows, each row removed by `Drop for RowNode` on a pointer match | `Row::new`, `ROWS`, `Drop for RowNode` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A row table in the unit's state struct, dropped whole at the end of a unit |
+| A weak table of rows, each row removed by `Drop for RowNode` on a pointer match (since ATOM-intern the generic `Shared<K>`, below) | `Row::new`, `ROWS`, `Drop for RowNode` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A row table in the unit's state struct, dropped whole at the end of a unit |
 | The form an expression was the complement of, kept so a freed source is made again alike | `Expr::source`, `Source`, `Connect::negate` | Lazy cells (gap 3) | Not needed when the unit's memo table keeps both sides for the unit |
 
 ## Entries from CHAIN-restrict-memo, CHOICE-both-chains, XOR-cross-thread (`zed-kernel/src/types/bdd.rs`, `bdd/list.rs`, `bdd/set.rs`)
@@ -2357,6 +2357,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A memo of `Rc<Summarized>` per binder in a `HashMap`, filled on an explicit stack with an `entered` set | `Arms::summaries`, `Ck::summarized` | Shared ownership, mutation of the checker state | A table of summaries keyed by binder, filled in dependency order with the binders |
+
+## Entries from ATOM-intern (`zed-kernel/src/types.rs`, `types/bdd.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A generic node `Shared<K>` kept in a weak `thread_local!` table chosen by a trait method that returns a `&'static LocalKey` (`Tabled::live`), one table per key type, each node removing its entry in a generic `Drop` | `Shared`, `Shared::new`, `Tabled`, `ROWS`, `ARROWS`, `Row`, `Morphism` | Shared tables across pure calls (gap 2), identity (gap 1), global state; Zed has no weak reference, finalizer or thread-local | One table per key type in the unit's state struct, dropped whole at the end of a unit, as for TABLE-life |
 
 ## Entries from PA-let-stack (`crates/zedc-preimage/src/product.rs`)
 

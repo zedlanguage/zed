@@ -358,9 +358,8 @@ impl Universe {
     }
 }
 
-/// A morphism type: `(guarantee ⊆ dom ⊆ permission) -> value`.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Morphism {
+/// The bounds and value type of a morphism type: `(guarantee ⊆ dom ⊆ permission) -> value`.
+pub struct Arrow {
     /// The keys certainly present.
     pub guarantee: Type,
     /// The keys possibly present.
@@ -369,7 +368,46 @@ pub struct Morphism {
     pub value: Type,
 }
 
-/// By guarantee, then permission, then value, in the loop of `bdd::order`.
+/// Equal when the three types are, read in one loop of `bdd::order`.
+impl PartialEq for Arrow {
+    fn eq(&self, other: &Arrow) -> bool {
+        bdd::order(bdd::Step::Morphisms(self, other)) == std::cmp::Ordering::Equal
+    }
+}
+
+/// A morphism type, an atom of the morphism parts, kept with its hash in one shared node as a
+/// row is: the live morphism types of a thread are kept in a table by digest (item
+/// ATOM-intern), so two equal ones alive on one thread are one node and compare by pointer.
+/// The fields are read through [`Arrow`].
+#[derive(Clone)]
+pub struct Morphism(Arc<Shared<Arrow>>);
+
+impl Morphism {
+    pub(crate) fn new(guarantee: Type, permission: Type, value: Type) -> Morphism {
+        let m = mix(6, guarantee.digest());
+        let digest = mix(mix(m, permission.digest()), value.digest());
+        let arrow = Arrow {
+            guarantee,
+            permission,
+            value,
+        };
+        Morphism(Shared::new(digest, arrow))
+    }
+
+    pub(crate) fn digest(&self) -> u64 {
+        self.0.digest
+    }
+}
+
+impl std::ops::Deref for Morphism {
+    type Target = Arrow;
+    fn deref(&self) -> &Arrow {
+        &self.0.key
+    }
+}
+
+/// By guarantee, then permission, then value, in the loop of `bdd::order`; one node is equal
+/// to itself without reading it.
 impl Ord for Morphism {
     fn cmp(&self, other: &Morphism) -> std::cmp::Ordering {
         bdd::order(bdd::Step::Morphisms(self, other))
@@ -382,32 +420,60 @@ impl PartialOrd for Morphism {
     }
 }
 
-/// The component types of a tuple type, an atom of the tuple parts, kept with their hash in
-/// one shared node: a row is copied in constant time, and compared in constant time unless it
-/// equals a row built apart from it on another thread. The live rows of a thread are kept in a
-/// table by digest, so two equal rows alive on one thread are one node (step TABLE-life; the
-/// tables of diagram nodes once kept every row's node for the life of the thread, which had
-/// made equal rows one node only while their first diagram's nodes were never freed).
-#[derive(Clone)]
-pub(crate) struct Row(Arc<RowNode>);
+impl PartialEq for Morphism {
+    fn eq(&self, other: &Morphism) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
 
-pub(crate) struct RowNode {
+impl Eq for Morphism {}
+
+/// A key kept with its digest in a node of a weak per-thread table (step TABLE-life), so that
+/// equal keys alive together on one thread are one node: the rows of the tuple parts and the
+/// morphism types of the morphism parts.
+struct Shared<K: Tabled> {
     digest: u64,
-    items: Vec<Type>,
+    key: K,
+}
+
+/// The thread's live nodes of one kind, by digest; nodes of one digest that differ share a
+/// bucket.
+type Live<K> = RefCell<
+    HashMap<u64, Vec<std::sync::Weak<Shared<K>>>, std::hash::BuildHasherDefault<bdd::KeyHasher>>,
+>;
+
+/// A kind of key kept in a table of live nodes, with the thread-local that holds the table.
+trait Tabled: PartialEq + Sized + 'static {
+    /// The thread's table of the kind.
+    fn live() -> &'static std::thread::LocalKey<Live<Self>>;
 }
 
 thread_local! {
-    /// The live rows of the thread, by digest; rows of one digest that differ share a bucket.
-    static ROWS: RefCell<HashMap<u64, Vec<std::sync::Weak<RowNode>>>> =
-        RefCell::new(HashMap::new());
+    /// The live rows of the thread.
+    static ROWS: Live<Vec<Type>> = RefCell::default();
+    /// The live morphism types of the thread.
+    static ARROWS: Live<Arrow> = RefCell::default();
 }
 
-/// A row leaves its thread's table when dropped; one dropped on another thread leaves an entry
-/// that no longer upgrades, which the next row of its digest built here takes out.
-impl Drop for RowNode {
+impl Tabled for Vec<Type> {
+    fn live() -> &'static std::thread::LocalKey<Live<Self>> {
+        &ROWS
+    }
+}
+
+impl Tabled for Arrow {
+    fn live() -> &'static std::thread::LocalKey<Live<Self>> {
+        &ARROWS
+    }
+}
+
+/// A node leaves its thread's table when dropped; one dropped on another thread leaves an entry
+/// that no longer upgrades, which the next node of its digest built here takes out. The key's
+/// types are freed in the loop of type parts (module `deep`), as every type is.
+impl<K: Tabled> Drop for Shared<K> {
     fn drop(&mut self) {
-        let me: *const RowNode = self;
-        let _ = ROWS.try_with(|t| {
+        let me: *const Shared<K> = self;
+        let _ = K::live().try_with(|t| {
             if let Ok(mut t) = t.try_borrow_mut()
                 && let Some(bucket) = t.get_mut(&self.digest)
             {
@@ -420,25 +486,43 @@ impl Drop for RowNode {
     }
 }
 
-impl Row {
-    pub(crate) fn new(items: Vec<Type>) -> Row {
-        let digest = items.iter().fold(5, |h, t| mix(h, t.digest()));
-        // The live rows of the digest are taken out of the table before they are compared, so
-        // that no comparison runs while the table is borrowed.
-        let live: Vec<Arc<RowNode>> = ROWS.with(|t| {
+impl<K: Tabled> Shared<K> {
+    /// The live node of the thread whose key equals `key`, or a new one put in the table.
+    fn new(digest: u64, key: K) -> Arc<Shared<K>> {
+        // The live nodes of the digest are taken out of the table before they are compared, so
+        // that no comparison runs while the table is borrowed. A bucket nearly always holds one
+        // node at most, which is taken out without allocating.
+        let (first, rest): (_, Vec<Arc<Shared<K>>>) = K::live().with(|t| {
             let mut t = t.borrow_mut();
             let bucket = t.entry(digest).or_default();
             bucket.retain(|w| w.strong_count() > 0);
-            bucket.iter().filter_map(std::sync::Weak::upgrade).collect()
+            let mut live = bucket.iter().filter_map(std::sync::Weak::upgrade);
+            (live.next(), live.collect())
         });
-        if let Some(r) = live.iter().find(|r| r.items == items) {
-            return Row(r.clone());
+        if let Some(r) = first.into_iter().chain(rest).find(|r| r.key == key) {
+            return r;
         }
-        let r = Arc::new(RowNode { digest, items });
-        ROWS.with(|t| {
+        let r = Arc::new(Shared { digest, key });
+        K::live().with(|t| {
             (t.borrow_mut().entry(digest).or_default()).push(Arc::downgrade(&r));
         });
-        Row(r)
+        r
+    }
+}
+
+/// The component types of a tuple type, an atom of the tuple parts, kept with their hash in
+/// one shared node: a row is copied in constant time, and compared in constant time unless it
+/// equals a row built apart from it on another thread. The live rows of a thread are kept in a
+/// table by digest, so two equal rows alive on one thread are one node (step TABLE-life; the
+/// tables of diagram nodes once kept every row's node for the life of the thread, which had
+/// made equal rows one node only while their first diagram's nodes were never freed).
+#[derive(Clone)]
+pub(crate) struct Row(Arc<Shared<Vec<Type>>>);
+
+impl Row {
+    pub(crate) fn new(items: Vec<Type>) -> Row {
+        let digest = items.iter().fold(5, |h, t| mix(h, t.digest()));
+        Row(Shared::new(digest, items))
     }
 
     pub(crate) fn digest(&self) -> u64 {
@@ -449,7 +533,7 @@ impl Row {
 impl std::ops::Deref for Row {
     type Target = [Type];
     fn deref(&self) -> &[Type] {
-        &self.0.items
+        &self.0.key
     }
 }
 
@@ -457,7 +541,7 @@ impl<'a> IntoIterator for &'a Row {
     type Item = &'a Type;
     type IntoIter = std::slice::Iter<'a, Type>;
     fn into_iter(self) -> Self::IntoIter {
-        self.0.items.iter()
+        self.0.key.iter()
     }
 }
 
@@ -868,13 +952,7 @@ impl Type {
 
     /// The morphism type with the given bounds and value type.
     pub fn morphism(guarantee: Type, permission: Type, value: Type) -> Type {
-        Type::with(|p| {
-            p.morphisms = Part::literal(Morphism {
-                guarantee,
-                permission,
-                value,
-            })
-        })
+        Type::with(|p| p.morphisms = Part::literal(Morphism::new(guarantee, permission, value)))
     }
 
     /// `K -> V`, exact: every key of `K` is present.
