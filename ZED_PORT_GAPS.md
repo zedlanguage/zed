@@ -2023,3 +2023,11 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `if … && let …` (a let chain) taking a constraint off the due set and reading its free names | `product::Scope::enumerate_exactly` | None | a `match` on the lookup inside the `if` |
 | An or-pattern in an irrefutable `let`, naming the key of each item of a persistent map's difference | `product::Scope::enumerate_exactly` | Or-patterns (row above) | a `match` with one arm per kind of change |
+
+## Entries from NARROW-hub-settle (`zedc/src/check/arms.rs`, `zedc/src/store/product.rs`, `zedc/src/store/conjuncts.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `RefCell<HashMap>` memo filled by a `&self` method, so a lookup under a shared borrow of the arms keeps its answers | `Arms::found`, `Arms::lookup` | Mutation (gap 2) | `lookup` takes and returns the memo as a state receiver; every lookup runs inside `deciding`, which holds the arms mutably but reads a node's names (`push_names`) while it looks each one up, hence the cell |
+| Skew-binary jump pointers in two `Vec<usize>` indexed by node and pushed as nodes are added (Myers 1983) | `Arms::add`, `Arms::depth`, `Arms::jump`, `Arms::step` | Mutation | Two maps from node to depth and jump target, grown with the node list; the arithmetic is plain `int` |
+| A scope settled in place on a clone (`let mut s = self.clone(); s.settle(..)`) to answer a read through `&self` | `Scope::settled` | Mutation | `settle` returns the settled scope; the clone is the persistent maps' sharing, which Zed values have |
