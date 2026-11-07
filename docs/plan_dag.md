@@ -3043,6 +3043,7 @@ These rows were removed from the table on 2026-11-05 by the author's order. They
 | was 0 | BOX-5pt | Done: XT3 B3: the box stage tries five order-free candidate points (nearest zero, both corners, both midpoints); oracle 213/3/184 → 255/3/142 | S | no | none | `crates/zedc/src/store/presburger.rs`, `tests/steps/l01_38_presburger/` |
 | was 1 | L1.39b-origin-scale | Done: L1.39b's scaling tests catch a quadratic scan of the binder origins: a second test checks n functions of 40 parameters each, the check alone, so a step that grows with the origins recorded before it shows | S | no | L1.39b | `tests/steps/l01_39b_on_demand/`, `COMPLEXITY.md` |
 | was 1 | HULL3 | Done: XT3 B4: three live variables with a unit side decided exactly by 3-D halfspace intersection, O(m log m), and `twovar` | L | no | BOX-5pt | `crates/zedc/src/store/hull3.rs`, `crates/zedc/src/store/presburger.rs` |
+| was 0 | VERDICT-group-roots | Done: A33 withdrawn; every member of a group the decider leaves open is decided by one `Search::solve_all` with all members as roots, forks refusing only the types that read them; verdicts of all n members one search, not n (COMPLEXITY.md K61) | S | no | VERDICT-group-share | `crates/zed-kernel/src/types/empty.rs`, `tests/steps/l01_23_subtyping/group_oracle.rs` |
 
 Reasons as they stood:
 

@@ -148,15 +148,40 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// Keeps the verdicts of `members`, the recursive members of one group, for each member its
-/// group's decider (module `bes`) decides: a member decided empty is `Empty`, and one decided
-/// inhabited is `Inhabited` once a value of it is built and checked. The values are built by one
-/// search for all members, in definition order, which keeps each value it builds, so a type
-/// shared by members is given its value once: the verdicts of a group of n cost what one search
-/// over the group does, where a search for each member would read the group n times. A member
-/// with no value built here is given the verdict of a search of its own. Each verdict is a
-/// function of the group, which every member names, whichever member is asked first.
+/// Keeps the verdicts of `members`, the recursive members of one group. A member the group's
+/// decider (module `bes`) decides empty is `Empty`, and one it decides inhabited is `Inhabited`
+/// once a value of it is built and checked. The members it does not decide are decided by one
+/// search with all of them as roots ([`Search::solve_all`]), as [`Type::verdict_alone`] decides
+/// one: a member is `Empty` when the search proves it so and no fork lies under it, and
+/// `Inhabited` when a value of it is built, by that search or by the search for values below.
+/// Values are built by one search for all members, in definition order, which keeps each value
+/// it builds, so a type shared by members is given its value once. So the verdicts of a group of
+/// n cost what one search over the group does, where a search for each member would read the
+/// group n times. Each verdict is a function of the group, which every member names,
+/// whichever member is asked first.
 fn group_verdicts(members: &[Type]) {
+    let open: Vec<Type> = (members.iter())
+        .filter(|m| m.judged().is_none())
+        .cloned()
+        .collect();
+    let mut d = Search {
+        strict: true,
+        refuse_forks: true,
+        blame: Some(Vec::new()),
+        ..Search::default()
+    };
+    let answers = d.solve_all(&open);
+    let causes = d.causes();
+    // For each member not decided by the decider, in order: whether the search proved it
+    // empty, its number there, and the cause its answer may rest on. A fork met with no type
+    // being decided ends the search, and refuses every root, as it does for one.
+    let found: Vec<(bool, Option<usize>, Option<Refusal>)> = (open.iter().zip(answers))
+        .map(|(m, b)| {
+            let id = d.ids.get(m).copied();
+            (b, id, d.refused.or(id.and_then(|i| causes[i])))
+        })
+        .collect();
+    let mut found = found.into_iter();
     let mut s = Search {
         strict: true,
         ..Search::default()
@@ -170,7 +195,22 @@ fn group_verdicts(members: &[Type]) {
             // groups of 1024 and 2048 definitions measured for plan item VERDICT-group-share
             // needed none.
             Some(false) => m.verdict_alone(),
-            None => continue,
+            None => {
+                let (b, id, cause) = found.next().expect("one answer per member not decided");
+                let decided = cause != Some(Refusal::Fork);
+                if decided && b {
+                    Verdict::Empty
+                } else if decided
+                    && (id.is_some_and(|i| d.witnessed.contains(&i)) || d.rep(m).is_some())
+                    || s.rep(m).is_some()
+                {
+                    Verdict::Inhabited
+                } else {
+                    // Complexity tradeoff at `Type::verdict_alone`: neither proved empty nor
+                    // shown inhabited, so refused.
+                    Verdict::Refused(cause.or(d.gave_up).unwrap_or(Refusal::NoWitness))
+                }
+            }
         };
         VERDICTS.with(|k| k.borrow_mut().insert(m.clone(), v));
     }
@@ -209,25 +249,23 @@ impl Type {
     /// Whether `self` is empty, shown inhabited by a checked value, or refused: not proved
     /// empty, and no value found. Kept results are not read, since those of `is_empty` carry no
     /// value and would make the outcome depend on the queries before it. A member of a recursive
-    /// group that its decider decides gets its verdict with the other members
-    /// (`group_verdicts`).
+    /// group gets its verdict with the other members (`group_verdicts`).
     pub fn verdict(&self) -> Verdict {
         let kept = || VERDICTS.with(|m| m.borrow().get(self).copied());
         if let Some(v) = kept() {
             return v;
         }
-        // Complexity tradeoff: a member its decider does not decide (a refusal, or a recursive
-        // occurrence under `&`, `\` or a complement) gets a search of its own, which reads no
-        // result of another member, so the verdicts of every member of such a group of n cost n
-        // searches of the group, O(n^2). Trigger: `judged` is none. COMPLEXITY.md row K55.
-        if self.judged().is_some()
-            && let Some(members) = self.group_members()
-        {
+        if let Some(members) = self.group_members() {
             group_verdicts(&members);
             if let Some(v) = kept() {
                 return v;
             }
         }
+        // Complexity tradeoff: a type outside a group that reads a member the decider leaves
+        // open gets a search of its own, which reads no kept result and so decides again the
+        // part of the group it reaches; the verdicts of m such types cost m searches of that
+        // part, O(m n). Trigger: a type that is no member reads a member whose `judged` is none.
+        // COMPLEXITY.md K61.
         let v = self.verdict_alone();
         VERDICTS.with(|m| m.borrow_mut().insert(self.clone(), v));
         v
@@ -510,10 +548,16 @@ struct Search {
     /// Why the search stopped, when it met a fork; set only when `refuse_forks`.
     refused: Option<Refusal>,
     /// The first place the search let a part count as inhabited with nothing shown: the cause
-    /// of a refusal when no value of the root is built.
+    /// of a refusal when no value of the root is built. With `blame`, only such a place met
+    /// while no type was being decided.
     gave_up: Option<Refusal>,
     /// How many times a part counted as inhabited with nothing shown.
     give_ups: usize,
+    /// For a search with several roots ([`Search::solve_all`]): each fork or part counted as
+    /// inhabited with nothing shown, with the type being decided when it was met, in the order
+    /// met. A fork then refuses the types that read that type ([`Search::causes`]) and the
+    /// search goes on; with no type being decided, it ends the search as with one root.
+    blame: Option<Vec<(usize, Refusal)>>,
     /// Whether this is the first walk over the types, in which what a type read is on record.
     walking: bool,
     /// Whether values are sought only among the tuple types as written.
@@ -1083,8 +1127,14 @@ impl Search {
 
     /// Decides `root` ([`Searching::solve`]).
     fn solve(&mut self, root: &Type) -> bool {
-        let root = root.clone();
-        self.run(|d| Box::pin(async move { d.solve(&root).await }))
+        self.solve_all(std::slice::from_ref(root))[0]
+    }
+
+    /// Decides each of `roots` by one search ([`Searching::solve`]), so a type read from
+    /// several roots is decided once: whether each is empty, in order.
+    fn solve_all(&mut self, roots: &[Type]) -> Vec<bool> {
+        let roots = roots.to_vec();
+        self.run(|d| Box::pin(async move { d.solve(&roots).await }))
     }
 
     /// A value in `t`, if one is found ([`Searching::rep`]).
@@ -1101,11 +1151,10 @@ impl Search {
     }
 
     /// The end of a phase of [`Searching::solve`], once each inhabited answer was tried for a
-    /// value, `new` when one was found: the answer for the root, numbered `r`, when the phases
-    /// are over, or none when another starts.
-    fn end_phase(&mut self, open: Vec<usize>, new: bool, r: usize) -> Option<bool> {
+    /// value, `new` when one was found: whether the phases are over, or another starts.
+    fn end_phase(&mut self, open: Vec<usize>, new: bool) -> bool {
         if !self.again.is_empty() {
-            return None;
+            return false;
         }
         // Value types still empty with every morphism value read as inhabited are empty:
         // read them so, and start again.
@@ -1121,10 +1170,10 @@ impl Search {
                 }
             }
             self.forget_failures();
-            return None;
+            return false;
         }
         if !new {
-            return Some(self.answer[r]);
+            return true;
         }
         for t in open {
             if !self.witnessed.contains(&t) {
@@ -1132,18 +1181,50 @@ impl Search {
                 self.again.insert(t);
             }
         }
-        if self.again.is_empty() {
-            return Some(self.answer[r]);
-        }
-        None
+        self.again.is_empty()
     }
 
-    /// Notes the first place a part counted as inhabited with nothing shown.
+    /// Notes the first place a part counted as inhabited with nothing shown. A search with
+    /// `blame` notes it against the type being decided, and as `gave_up` only when there is none,
+    /// so a root is never given the cause met in the decision of a type it does not read.
     fn give_up(&mut self, r: Refusal) {
         self.give_ups += 1;
-        if self.strict {
-            self.gave_up.get_or_insert(r);
+        match (&mut self.blame, self.current) {
+            (Some(blame), Some(c)) => blame.push((c, r)),
+            _ if self.strict => {
+                self.gave_up.get_or_insert(r);
+            }
+            _ => {}
         }
+    }
+
+    /// For a search with `blame`, the cause each type's answer may rest on: a fork met in the
+    /// decision of a type it read, directly or through others, else the first part counted as
+    /// inhabited with nothing shown in such a decision. Each type is marked once, by walks over
+    /// the readers from the types blamed, forks first and then the rest in the order met:
+    /// O(types + reads + blame).
+    fn causes(&self) -> Vec<Option<Refusal>> {
+        let mut cause = vec![None; self.types.len()];
+        let blame = self.blame.as_deref().unwrap_or_default();
+        let forks = blame.iter().filter(|(_, r)| *r == Refusal::Fork);
+        let rest = blame.iter().filter(|(_, r)| *r != Refusal::Fork);
+        let mut stack = Vec::new();
+        for &(t, r) in forks.chain(rest) {
+            if cause[t].is_some() {
+                continue;
+            }
+            cause[t] = Some(r);
+            stack.push(t);
+            while let Some(x) = stack.pop() {
+                for &y in &self.readers[x] {
+                    if cause[y].is_none() {
+                        cause[y] = Some(r);
+                        stack.push(y);
+                    }
+                }
+            }
+        }
+        cause
     }
 
     /// The answer for `t` when it is known: a type met before in this search, read by the type
@@ -1294,32 +1375,52 @@ impl<'m> Searching<'m> {
         self.s.borrow_mut()
     }
 
-    /// Decides `root`: phases, in each of which an answer only goes from empty to inhabited;
-    /// at the end of a phase each inhabited answer is tried for a checked value, and if a new one
-    /// is found the answers without one start again from empty, so a wrong "inhabited" read by
-    /// another decision is undone. The last phase gives the answer.
-    async fn solve(&'m self, root: &Type) -> bool {
+    /// Decides each of `roots`: phases, in each of which an answer only goes from empty to
+    /// inhabited; at the end of a phase each inhabited answer is tried for a checked value, and
+    /// if a new one is found the answers without one start again from empty, so a wrong
+    /// "inhabited" read by another decision is undone. The last phase gives the answers. The
+    /// roots are walked in order, and every type met from any of them is decided in the same
+    /// phases, once.
+    async fn solve(&'m self, roots: &[Type]) -> Vec<bool> {
         // A value built from the tuple types as written answers at once, and no box is split.
         // Answers read on the way are unfinished, so none is kept. A type with no atoms has no
         // list to walk, and a row tested against every row would cost their square.
-        if !root.p().atoms.names.is_empty() {
+        let mut answers: Vec<Option<bool>> = vec![None; roots.len()];
+        let mut seeded = false;
+        for (a, root) in answers.iter_mut().zip(roots) {
+            if root.p().atoms.names.is_empty() {
+                continue;
+            }
+            seeded = true;
             self.s().seeding = true;
             let seed = self.rep(root).await.is_some();
-            let mut s = self.s();
-            s.seeding = false;
+            self.s().seeding = false;
             if seed {
-                s.types.clear();
-                s.answer.clear();
-                return false;
+                *a = Some(false);
             }
-            s.forget_failures();
+        }
+        if answers.iter().all(Option::is_some) {
+            let mut s = self.s();
+            s.types.clear();
+            s.answer.clear();
+            return answers.into_iter().flatten().collect();
+        }
+        if seeded {
+            self.s().forget_failures();
         }
         self.s().walking = true;
-        let b = self.empty(root).await;
+        let mut ids = vec![None; roots.len()];
+        for ((a, id), root) in answers.iter_mut().zip(&mut ids).zip(roots) {
+            if a.is_none() {
+                *a = Some(self.empty(root).await);
+                *id = self.s().ids.get(root).copied();
+            }
+        }
         self.s().walking = false;
-        let Some(r) = self.s().ids.get(root).copied() else {
-            return b;
-        };
+        let answers: Vec<bool> = answers.into_iter().flatten().collect();
+        if ids.iter().all(Option::is_none) {
+            return answers;
+        }
         loop {
             self.drain().await;
             let open: Vec<usize> = {
@@ -1346,8 +1447,11 @@ impl<'m> Searching<'m> {
                     self.s().keys.insert(k);
                 }
             }
-            if let Some(b) = self.s().end_phase(open, new, r) {
-                return b;
+            if self.s().end_phase(open, new) {
+                let s = self.s();
+                return (answers.iter().zip(&ids))
+                    .map(|(&b, id)| id.map_or(b, |r| s.answer[r]))
+                    .collect();
             }
         }
     }
@@ -1730,8 +1834,19 @@ impl<'m> Searching<'m> {
                 // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
                 // row "emptiness and subtyping of tuple and morphism parts". A complete solution
                 // needs the subset construction over the forked rows (a tree automaton
-                // determinized on demand), exponential in the rows of the fork.
-                self.s().refused = Some(Refusal::Fork);
+                // determinized on demand), exponential in the rows of the fork. A search with
+                // several roots refuses only those that read the type being decided
+                // (`Search::causes`).
+                let mut guard = self.s();
+                let s = &mut *guard;
+                match (&mut s.blame, s.current) {
+                    (Some(blame), Some(c)) => blame.push((c, Refusal::Fork)),
+                    // Complexity tradeoff: a fork met while no type is being decided cannot be
+                    // put on the roots that read it, so it ends the search and refuses every root
+                    // the decider left open, as it refuses the one root of a search of its own.
+                    // Trigger: `current` is none at a fork. COMPLEXITY.md K61.
+                    _ => s.refused = Some(Refusal::Fork),
+                }
                 return true;
             }
             if let Some(found) = self.two_sat(g, &f).await {

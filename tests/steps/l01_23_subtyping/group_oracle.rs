@@ -1700,3 +1700,236 @@ fn a_key_type_proved_empty_again_ends_the_search() {
         );
     });
 }
+
+// ---------------------------------------------------------------------------------------------
+// Groups the decider does not decide (plan item VERDICT-group-roots)
+// ---------------------------------------------------------------------------------------------
+
+/// `sys` with each body `b` written `b \ #none`, which holds the same values: a recursive
+/// occurrence under `\` makes the decider refuse the group (`rec::judge`), so every member is
+/// decided by the search, with all members of its group as roots of one search.
+fn undecided(sys: Vec<E>) -> Vec<E> {
+    sys.into_iter().map(|b| diff(b, E::Atom("none"))).collect()
+}
+
+/// `e` with each `Ref(i)` made `Ref(to[i])`.
+fn renamed(e: &E, to: &[usize]) -> E {
+    let all = |xs: &[E]| xs.iter().map(|x| renamed(x, to)).collect();
+    let one = |x: &E| Box::new(renamed(x, to));
+    match e {
+        E::Ref(i) => E::Ref(to[*i]),
+        E::Tup(xs) => E::Tup(all(xs)),
+        E::Union(xs) => E::Union(all(xs)),
+        E::And(xs) => E::And(all(xs)),
+        E::Mor(l, u, v) => E::Mor(one(l), one(u), one(v)),
+        E::Diff(a, b) => E::Diff(one(a), one(b)),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top => e.clone(),
+    }
+}
+
+/// The verdict of each admitted definition of `types`, each asked as a unit's checker asks it:
+/// with the kept results dropped first.
+fn alone(types: &[Option<Type>]) -> Vec<Option<Verdict>> {
+    (types.iter())
+        .map(|t| {
+            t.as_ref().map(|t| {
+                Type::forget_emptiness();
+                t.verdict()
+            })
+        })
+        .collect()
+}
+
+/// The verdicts of `types` asked one after another in `order`, keeping results between them, as
+/// a batch run checks many units.
+fn in_order(types: &[Option<Type>], order: &[usize]) -> Vec<Option<Verdict>> {
+    Type::forget_emptiness();
+    let mut got = vec![None; types.len()];
+    for &i in order {
+        got[i] = types[i].as_ref().map(Type::verdict);
+    }
+    got
+}
+
+/// Every order of `0..n`, by Heap's algorithm, for small `n`.
+fn permutations(n: usize) -> Vec<Vec<usize>> {
+    let mut p: Vec<usize> = (0..n).collect();
+    let (mut c, mut out, mut i) = (vec![0; n], vec![p.clone()], 1);
+    while i < n {
+        if c[i] < i {
+            p.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
+            out.push(p.clone());
+            c[i] += 1;
+            i = 1;
+        } else {
+            c[i] = 0;
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The members of a group asked in every order give the same verdicts, each the verdict it has
+/// when asked alone (a unit checked by itself) and in a batch: groups of three in all six
+/// orders, and with their definitions written in all six orders, larger groups in every
+/// rotation. Groups the decider refuses (`\ #none` on each body) and groups it decides.
+#[test]
+fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
+    let mut systems: Vec<(String, Vec<E>)> = Vec::new();
+    for seed in 0..40 {
+        let sys = claude_of(&mut Rng::new(seed), 3);
+        systems.push((format!("x14_{seed}"), sys.clone()));
+        systems.push((format!("x14u_{seed}"), undecided(sys)));
+    }
+    for seed in 0..40 {
+        systems.push((format!("cells{seed}"), gen_cells(&mut Rng::new(seed))));
+        systems.push((format!("layer{seed}"), gen_layer(&mut Rng::new(seed))));
+    }
+    systems.push(("chainu".into(), undecided(chain_of(&mut Rng::new(7), 64))));
+    systems.push(("x14u".into(), undecided(claude_of(&mut Rng::new(5), 24))));
+    on_a_big_stack(|| {
+        let (mut members, mut orders) = (0, 0);
+        for (tag, sys) in &systems {
+            let types = kernel(sys, tag);
+            let want = alone(&types);
+            let n = sys.len();
+            let all: Vec<Vec<usize>> = if n <= 3 {
+                permutations(n)
+            } else {
+                (0..n)
+                    .map(|k| (0..n).map(|i| (i + k) % n).collect())
+                    .collect()
+            };
+            for order in &all {
+                assert_eq!(
+                    in_order(&types, order),
+                    want,
+                    "{tag}: asked in the order {order:?}: {}",
+                    show_system(sys)
+                );
+                orders += 1;
+            }
+            if n == 3 {
+                // Definition k of the rewritten system is definition order[k] of `sys`.
+                for (p, order) in all.iter().enumerate() {
+                    let mut to = vec![0; n];
+                    for (k, &i) in order.iter().enumerate() {
+                        to[i] = k;
+                    }
+                    let moved: Vec<E> = order.iter().map(|&i| renamed(&sys[i], &to)).collect();
+                    let got = alone(&kernel(&moved, &format!("{tag}_p{p}")));
+                    let want: Vec<_> = order.iter().map(|&i| want[i]).collect();
+                    assert_eq!(
+                        got,
+                        want,
+                        "{tag}: definitions in the order {order:?}: {}",
+                        show_system(&moved)
+                    );
+                }
+            }
+            members += want.iter().flatten().count();
+        }
+        eprintln!("{members} members, {orders} orders");
+    });
+}
+
+/// Every member of a chain group of 512 that the decider refuses is inhabited, by a chain of up
+/// to 512 values, decided by one search with all 512 as roots.
+#[test]
+fn every_member_of_an_undecided_long_chain_is_inhabited() {
+    on_a_big_stack(|| {
+        let ts = kernel(&undecided(chain_of(&mut Rng::new(7), 512)), "long_chain_u");
+        for (i, v) in in_order(&ts, &(0..ts.len()).collect::<Vec<_>>())
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(*v, Some(Verdict::Inhabited), "R{i} of the chain");
+        }
+    });
+}
+
+/// The definitions of the largest group of `sys`, those that reach each other, in order: a
+/// walk from each definition, O(n^2) for the test's inputs, outside the runs it measures.
+fn largest_group(sys: &[E]) -> Vec<usize> {
+    let edges: Vec<Vec<usize>> = (sys.iter())
+        .map(|d| {
+            let mut out = Vec::new();
+            refs(d, &mut out);
+            out
+        })
+        .collect();
+    let reach: Vec<Vec<bool>> = (0..sys.len())
+        .map(|s| {
+            let mut seen = vec![false; sys.len()];
+            let mut stack = edges[s].clone();
+            while let Some(v) = stack.pop() {
+                if !std::mem::replace(&mut seen[v], true) {
+                    stack.extend(&edges[v]);
+                }
+            }
+            seen
+        })
+        .collect();
+    (0..sys.len())
+        .map(|i| {
+            (0..sys.len())
+                .filter(|&j| reach[i][j] && reach[j][i])
+                .collect::<Vec<_>>()
+        })
+        .max_by_key(Vec::len)
+        .unwrap_or_default()
+}
+
+/// The verdicts of every member of one group of `n` that the decider refuses, of the chain
+/// family and of the X14 family, at `n` and `8n`, the groups built before the runs: one search
+/// with every member as a root decides them all (plan item VERDICT-group-roots), where a search
+/// for each member read the group n times.
+#[test]
+fn verdicts_of_undecided_groups_scale() {
+    let chain = |n: usize| -> Vec<Type> {
+        kernel(
+            &undecided(chain_of(&mut Rng::new(7), n)),
+            &format!("chainu{n}"),
+        )
+        .into_iter()
+        .map(|t| t.expect("a chain group is admitted"))
+        .collect()
+    };
+    // Only the members of the largest group: a definition outside it that reads it gets a
+    // search of its own (`Type::verdict_alone`), which decides again the part of the group it
+    // reaches, so the verdicts of such definitions cost the square of the group; COMPLEXITY.md
+    // K61.
+    let one = |n: usize| -> Vec<Type> {
+        let sys = undecided(claude_of(&mut Rng::new(3), n));
+        let group = largest_group(&sys);
+        let ts = kernel(&sys, &format!("oneu{n}"));
+        (group.iter())
+            .map(|&i| {
+                ts[i]
+                    .clone()
+                    .expect("every definition of the X14 family is admitted")
+            })
+            .collect()
+    };
+    let every = |ts: &[Type]| {
+        Type::forget_emptiness();
+        for t in ts {
+            std::hint::black_box(t.verdict());
+        }
+    };
+    on_a_big_stack(|| {
+        let n = 128;
+        let chains = scaling::inputs(n, chain);
+        scaling::check(
+            "the verdicts of every member of an undecided chain group of n",
+            n,
+            |m| every(&chains[&m]),
+        );
+        let ones = scaling::inputs(n, one);
+        scaling::check(
+            "the verdicts of the members of the largest undecided X14 group of n definitions",
+            n,
+            |m| every(&ones[&m]),
+        );
+    });
+}

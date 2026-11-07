@@ -1979,6 +1979,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | `std::mem::take` and `std::mem::replace` of the search's list of missing values read, around a nested build and each retry, and a `BTreeMap` from a type to the kept failures waiting on it, updated in place | `Searching::rep`, `Searching::retry`, `Search::forget_failures` | Mutation | A nested build returns the types it read with its value; the waiting map is search state threaded through the builds, as the other `Search` fields |
 
+## Entries from VERDICT-group-roots (`zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `Vec<(usize, Refusal)>` of causes pushed in place by the search as it meets forks and give-ups, and a `Vec<Option<Refusal>>` marked by index in a walk over the readers with an explicit stack | `Search::give_up`, the fork in `Searching::tuples_on`, `Search::causes` | Mutation | The causes are search state threaded through the decisions, as the other `Search` fields; the walk is a fold over the readers with a persistent map as its visited set |
+| `std::slice::from_ref` to pass one root as a list of roots without a copy | `Search::solve` | None | A one-element list |
+
 ## Entries from DIAG-suppress-rest (`zedc/src/suppress.rs`, `run.rs`, `testing.rs`)
 
 | Rust construct | Sites | Gap | At the port |
