@@ -60,6 +60,9 @@ rows! {
     EmissionDisjointness => "Emission-disjointness",
     Rebinding => "Rebinding in the same scope",
     BinderNamingType => "Binder naming a type",
+    // No diagnostic uses this row yet: step L1.26b (plan row L1.26b) moves the rejection of a
+    // plain decimal at another format here from `NoCommonCarrier`.
+    LiteralFormat => "Plain decimal literal whose own format is not the format expected",
     NoCommonCarrier => "Two numeric values with no common carrier",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
     CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",

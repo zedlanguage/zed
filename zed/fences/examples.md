@@ -68,7 +68,7 @@ f(x) {
 x   = 3;
 q   = 7 div 2;             // 3      integers divide with div and mod (Euclidean)
 r   = -7 mod 2;            // 1      (-7) mod 2 — unary minus binds tighter than mod; the remainder is never negative
-h   = f64(7) / 2.0;        // 3.5    a cast is the type applied to the value
+h   = f64(7) / 2n;         // 3.5    a cast is the type applied to the value
 t   = 1r / 3r;             // exact: rat
 big = 2 ** 100;            // int has no width; ** binds tighter than * and than unary minus, and associates to the right
 m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci = 1.5e-3;
@@ -379,8 +379,8 @@ missingPayment = orders.diff(payments, on: #orderId);                      // th
 ```zed
 // [d4] sec:tour_basics
 struct Point { x: f64, y: f64 }
-p  = Point(x: 1.0, y: 2.0);
-p2 = p with { x = 3.0 };                // an update is a new value
+p  = Point(x: 1n, y: 2n);
+p2 = p with { x = 3n };                // an update is a new value
 px = p.x;                               // p.x ≡ p[#x]
 dist(positional a: Point, positional b: Point) = ((a.x - b.x) ** 2 + (a.y - b.y) ** 2).sqrt;
 struct Circle { c: Point, r: f64 }
@@ -400,10 +400,10 @@ s2 = s with { hi = s.hi + 1 };           // still a Span: hi + 1 >= lo
 ```zed
 // [d4*] sec:power (Vec3) — a constructor takes its fields by name only; `x:` supplies the variable x
 // layer L2
-x = 3.0;
-y = 4.0;
+x = f64(3);
+y = f64(4);
 q = Point(x:, y:);                 // Point(x: x, y: y)
-// q = Point(3.0, 4.0);            // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3.0, y: 4.0)
+// q = Point(3n, 4n);              // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3n, y: 4n)
 ```
 
 <!-- EXAMPLES.md:441 layer L6: ring L6, word none, label none; section [10. Structs and updates] 4 -->
@@ -412,26 +412,26 @@ q = Point(x:, y:);                 // Point(x: x, y: y)
 Point.norm     = (x*x + y*y).sqrt;                  // pure: no primes
 Point.scale(k) = Point(x: x * k, y: y * k);          // pure: returns a new Point
 Point.move(positional dx, positional dy) { x' = x + dx; y' = y + dy; }  // (Point, f64, f64) -> Point
-p3 = p.move(1.0, 0.0);                               // the moved point; p is unchanged
+p3 = p.move(1n, 0n);                                 // the moved point; p is unchanged
 walk = loop {
-  mutable pt = Point(x: 0.0, y: 0.0);
-  pt*.move(1.0, 1.0);                                // pt' = pt.move(1.0, 1.0)
-  until pt.x > 5.0;
+  mutable pt = Point(x: 0n, y: 0n);
+  pt*.move(1n, 1n);                                  // pt' = pt.move(1n, 1n)
+  until pt.x > 5n;
 };
 ```
 
 <!-- EXAMPLES.md:454 layer L3: ring L3, word none, label none; section [10. Structs and updates] 5 -->
 ```zed
 // [d4*] sec:values_morphisms — an anonymous struct is a display keyed by field atoms
-origin = { #x -> 0.0, #y -> 0.0 };      // has the fields of Point, so it is a Point
+origin = { #x -> f64(0), #y -> f64(0) };   // has the fields of Point, so it is a Point
 ```
 
 <!-- EXAMPLES.md:459 layer L2: ring L2, word none, label none; section [10. Structs and updates] 6 -->
 ```zed
 // [d4] sec:lexical, sec:type_language — the record display and a nested update path
-origin2 = { x: 0.0, y: 0.0 };           // name: v is #name -> v — the same display as origin, spelled with field names
-k  = Circle(c: p, r: 1.0);              // p : Point, from the first block of this section
-k2 = k with { c.x = 0.0 };              // one level in: k with { c = k.c with { x = 0.0 } }
+origin2 = { x: f64(0), y: f64(0) };     // name: v is #name -> v — the same display as origin, spelled with field names
+k  = Circle(c: p, r: 1n);               // p : Point, from the first block of this section
+k2 = k with { c.x = 0n };               // one level in: k with { c = k.c with { x = 0n } }
 ```
 
 <!-- EXAMPLES.md:466 layer L2: ring L2, word L1 (Utf8String), label none; section [10. Structs and updates] 7 -->
@@ -469,7 +469,7 @@ eval(positional e: Expr) -> f64 {
     #mul(a, b) -> eval(a) * eval(b),
   }
 }
-three = eval(#add(#num(1.0), #num(2.0)));
+three = eval(#add(#num(f64(1)), #num(f64(2))));
 ```
 
 <!-- EXAMPLES.md:503 layer L2: ring L2, word L1 (Utf8String), label none; section [11. Unions, atoms, match] 3 -->
@@ -549,7 +549,7 @@ a3 = withdraw(a, 10r) else #insufficient(short: _) -> a with { frozen = true }; 
 sim = loop {
   pos' = pos + vel * dt   with pos = p0;
   vel' = vel + acc * dt   with vel = v0;
-  until pos.y < 0.0;
+  until pos.y < 0n;
 };
 final   = sim.pos;                        // the last generation's value
 history = sim::frames;                    // int[0..<sim::len] -> Frame, kept only because it is demanded
@@ -723,7 +723,7 @@ g2 = greet(Cat(name: "Tom"));
 // [d4] sec:values_morphisms — a required name may be a field or a function in scope
 interface HasArea { area: f64 }
 describe(positional s: HasArea) = "area ${s.area}";
-d = describe(Circle(c: origin, r: 1.0));  // area(s: Shape) is in scope, and s.area ≡ area(s:)
+d = describe(Circle(c: origin, r: 1n));  // area(s: Shape) is in scope, and s.area ≡ area(s:)
 ```
 
 <!-- EXAMPLES.md:758 layer L2: ring L2, word none, label none; section [16. Generics and interfaces] 4 -->
@@ -755,7 +755,7 @@ dist(positional a: Point, positional b: Point) = (sq(a.x - b.x) + sq(a.y - b.y))
 import geometry.shapes.{Point, dist};    // unqualified; the alternatives are `import geometry.shapes;` (shapes.dist)
                                          //   and `import geometry.shapes as g;` (g.dist)
                                          //   a pinned form adds @hash("…"): the build writes the pin, and the file is then checked, not re-resolved
-far = dist(Point(x: 0.0, y: 0.0), Point(x: 3.0, y: 4.0));
+far = dist(Point(x: 0n, y: 0n), Point(x: 3n, y: 4n));
 ```
 
 <!-- EXAMPLES.md:794 layer L3: ring L1, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->
@@ -1131,7 +1131,7 @@ find(xs: [int], t: int) = match lowerBound(xs, t) { #none -> #none, i -> if xs[i
 type Mat(n, m) = int[0..<n] -> int[0..<m] -> f64;
 ab  = (a, b) into (r -> k -> c >< (+) -> a[r][c] * b[c][k]);
 at  = a as (r -> c -> v) into (c -> r -> v);                   // transpose: a repack
-eye = for i in 0..<n { for j in 0..<n { if i == j { 1.0 } else { 0.0 } } };
+eye = for i in 0..<n { for j in 0..<n { if i == j { f64(1) } else { f64(0) } } };
 ```
 
 <!-- EXAMPLES.md:1157 layer L6: ring L5, word L5 (sort), label L6; section [25. Algorithms] 8 -->

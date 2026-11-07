@@ -117,8 +117,10 @@ Expr ::: a.. ::: (a ..)
 Expr ::: 3r + 0.1r + 1e10 + 0x_ff ::: ERROR
 Expr ::: 3r + 0.1r + 1e10 + 0xff + 1_000 ::: ((((3r + 0.1r) + 1e10) + 0xff) + 1_000)
 Expr ::: x + 1n - 0xFFn * 1_000n ::: ((x + 1n) - (0xFFn * 1_000n))
-Expr ::: 1.5n ::: ERROR
-Expr ::: 1e3n ::: ERROR
+Expr ::: 1f64 ::: ERROR
+Expr ::: 0.1f8 ::: ERROR
+Expr ::: 0.1f64r ::: ERROR
+Expr ::: 0.1rf64 ::: ERROR
 Expr ::: 1nx ::: ERROR
 Expr ::: 1rn ::: ERROR
 Expr ::: if p with { x = 1 } == q { 1 } else { 2 } ::: (if ((p (with { (x = 1) })) == q) ({ 1 }) else ({ 2 }))

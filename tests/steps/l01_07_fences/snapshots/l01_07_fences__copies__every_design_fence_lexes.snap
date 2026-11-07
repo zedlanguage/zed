@@ -220,17 +220,17 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  16 | ann = greet ( str["Ann"] , punct : str["?"] ) ;
  17 | hiAnn = greet ( str["Ann"] , ... ) ;
  20 | «struct» Point { x : f64 , y : f64 }
- 21 | «struct» Circle { c : Point , r : f64 = 1.0f }
+ 21 | «struct» Circle { c : Point , r : f64 = 1₍10₎n }
  22 | «struct» Rect { lo : Point , hi : Point }
  23 | «type» Shape = Circle | Rect ;
  25 | area ( s : Shape ) = «match» s {
  26 | Circle ( r : ) -> pi * r * r ,
  27 | Rect ( lo : , hi : ) -> ( hi . x - lo . x ) * ( hi . y - lo . y ) ,
  28 | } ;
- 30 | p = Point ( x : 1.0f , y : 2.0f ) ;
- 31 | p2 = p «with» { x = 3.0f } ;
+ 30 | p = Point ( x : 1₍10₎n , y : 2₍10₎n ) ;
+ 31 | p2 = p «with» { x = 3₍10₎n } ;
  32 | unit = Circle ( c : p ) ;
- 33 | onAxis = Point ( x : 0.0f , ... ) ;
+ 33 | onAxis = Point ( x : 0₍10₎n , ... ) ;
  35 | «struct» Round { «import» Rect , r : f64 }
 == DESIGN.md [sec:tour_methods] 1 L10
   1 | «struct» Counter { n : int , hi : int }
@@ -365,7 +365,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;
  47 | energy = 0.5f * m * v * v ;
  51 | «struct» Vec3 «grammar» { str["("] x : f64 str[","] y : f64 str[","] z : f64 str[")"] }
- 52 | v = Vec3 . parse ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0.0f , y : 0.0f , z : 0.0f ) ;
+ 52 | v = Vec3 . parse ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0₍10₎n , y : 0₍10₎n , z : 0₍10₎n ) ;
  53 | s = v . serialize ;
  56 | stats ( «positional» data : [ f64 ] ) {
  57 | n = f64 ( data :: len ) ;
