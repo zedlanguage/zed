@@ -205,7 +205,18 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             .push((ps, body));
         }
     }
-    let cones = crate::elab::Cones::new(unit);
+    // The prelude and every definition, as one chain of lets, each after those it uses, as
+    // `Cones::close` binds a body's cone: numbered once and read once for all the functions,
+    // where closing each body over its cone read a chain of n calls n times (LOAD-chain).
+    let lets = interp::prelude(
+        unit.defs
+            .iter()
+            .rev()
+            .fold(Term::Lit(zed_kernel::Value::Bool(true)), |body, d| {
+                Term::Let(d.kernel.clone(), d.term.clone(), Shared::new(body))
+            }),
+    );
+    let mut scoped = preimage::Scoped::new(&lets);
     let mut out = Vec::new();
     for s in stmts {
         let StmtKind::Function(f) = &s.kind else {
@@ -222,11 +233,19 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             continue;
         };
         work::stage(Stage::Linear, Some(&f.name), || {
-            let (inputs, body) = written(f, ps, interp::prelude(cones.close((**body).clone())));
-            let Some(rs) = preimage::relations(&[&body], &inputs, true) else {
-                return;
-            };
-            for r in rs {
+            // Complexity tradeoff: each function's relation is built and decided on its own, so
+            // a chain of n tests `p{i}(x) = p{i-1}(x: x) && x > i` costs O(n²): the relation of
+            // `p{i}` holds i constraints, and the n relations n²/2, the size of the answers.
+            // Why: deciding a caller's relation from its callee's answer needs an incremental
+            // decision procedure, which the Presburger solver does not have. Trigger: a chain
+            // of tests over integers. Test: `l01_38_presburger::one_scope` (the chain of sums,
+            // O(n)). COMPLEXITY.md row LOAD-chain; QUESTIONS.md A35.
+            // The question is stated over the names the user wrote: elaboration renames a binder
+            // `x` to `x@k` when another binder of the unit is named `x` too (`crate::elab`), which
+            // the user cannot write, so the question, its refusal and its constraints print `x`,
+            // and their text does not change with the other functions of the unit.
+            let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
+            if let Some(r) = scoped.relation(body, ps, &inputs, true) {
                 for (can, question) in [
                     ("hold", r.body.clone()),
                     ("fail", presburger::Formula::negate(r.body.clone())),
@@ -262,38 +281,6 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
         });
     }
     out
-}
-
-/// The question of `f`, whose kernel parameters are `ps` and whose closed body is `body`, stated
-/// over the parameters' written names: the names, and `body` under a let binding each renamed
-/// kernel parameter to its written name. Elaboration renames a binder `x` to `x@k` when another
-/// binder of the unit is named `x` too (`crate::elab`), which the user cannot write; the
-/// question, its refusal and its constraints then print `x`, the name the user wrote, and
-/// their text does not change with the other functions of the unit. The parameters of one
-/// function have distinct names, so the written names are distinct as the kernel names are.
-/// The lets are outside the prelude's, so a parameter named like a prelude word, `min`, is the
-/// free input `min` and not the word.
-///
-/// O(p) for `p` parameters: one let per renamed parameter.
-fn written(f: &ast::Function, ps: &[Arc<str>], body: Term) -> (Vec<Arc<str>>, Term) {
-    debug_assert_eq!(
-        f.params.len(),
-        ps.len(),
-        "one kernel name for each parameter"
-    );
-    let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
-    let body = ps
-        .iter()
-        .zip(&inputs)
-        .filter(|(k, w)| k != w)
-        .fold(body, |body, (k, w)| {
-            Term::Let(
-                k.clone(),
-                Shared::new(Term::Var(w.clone())),
-                Shared::new(body),
-            )
-        });
-    (inputs, body)
 }
 
 /// The errors `errors` of `text`, of `severity`, as diagnostics, each placed with its steps and

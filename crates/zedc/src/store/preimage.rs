@@ -839,23 +839,119 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
     let mut out = Vec::new();
     for t in terms {
         let root = tx.terms.add(t);
-        // An auxiliary variable belongs to the relation of the term that made it.
-        let m = &mut tx.run.memo;
-        m.lin.clear();
-        m.formula.clear();
-        m.lin_calls.clear();
-        m.formula_calls.clear();
-        m.log.clear();
-        tr.pairs.clear();
-        tr.made.clear();
         let first = tr.defs.len();
-        let body = tx.formula(&mut tr, root, ROOT)?;
+        let body = tx.relation(&mut tr, root, ROOT)?;
         out.push(Relation {
             body,
             defs: tr.defs[first..].to_vec(),
         });
     }
     Some(out)
+}
+
+/// The relations of the bodies of a unit's functions, each read under one scope of the
+/// unit's definitions (step L1.38's linear questions, `front::linear_questions`). Each is the
+/// relation [`relations`] gives for the body closed over the definitions it reaches, with
+/// its own numbering of auxiliary variables. The scope is numbered once, and what the
+/// transfer finds of a term without reading the inputs (whether it reads one, its constant
+/// value, its forward values: [`Run::keep`]) is kept from one body's run to the next, as
+/// [`split_residues`] keeps it from one class of remainders to the next. A term of the scope
+/// reads none of a body's inputs: the scope binds every name it reads but a lambda's
+/// parameters, which the transfer binds where it reads the lambda, and each body is numbered
+/// afresh; so an entry keyed by a term of the scope holds for every body.
+/// A definition reached from many bodies is so read once, and a chain of n functions, each
+/// calling the one before, costs O(n) where closing each body over its cone cost O(n²)
+/// (LOAD-chain). The translations are made again for each body, whose auxiliary variables
+/// they number. Each body's run also makes entries that depend on the body: its terms, the
+/// scopes its calls bind, and what is found of a term in those scopes. These are dropped once
+/// the body is read ([`Fresh`]), at a cost of what the body made, so that what is kept from
+/// body to body is found of the scope alone: a chain of n tests, each calling the one before,
+/// held O(n²) entries when every entry was kept, and holds O(n).
+pub struct Scoped<'t> {
+    tx: Tx<'t>,
+    scope: Eid,
+}
+
+impl<'t> Scoped<'t> {
+    /// The scope of `lets`, a chain of `let`s whose last body is never read: each name bound
+    /// to its term, read in the scope of the names bound before it.
+    pub fn new(lets: &'t Term) -> Self {
+        let mut tx = Tx::new();
+        tx.start(&Domains::new(), Landmarks::none());
+        let mut t = tx.terms.add(lets);
+        let mut scope = ROOT;
+        while let Node::Let(n, e, b) = tx.node(t) {
+            scope = tx.let_env(n, e, scope);
+            t = b;
+        }
+        Scoped { tx, scope }
+    }
+
+    /// The relation the linear-relation domain states for the test `body` of parameters
+    /// `params` over the free names `inputs`, the i-th parameter standing for the i-th input,
+    /// read under the scope: as [`relations`] states it over `inputs` for `body` closed by the
+    /// scope's lets, under lets outside them that bind each parameter to its input. A
+    /// parameter so names its input whatever the scope binds, a prelude word or a definition
+    /// of the unit; an input named like a prelude word, `min`, is the input. Products of two
+    /// symbols are atoms when `products` holds. `None` when the body is outside the domain.
+    /// Time of the body, of the parameters and of the parts of the scope no earlier body read.
+    pub fn relation(
+        &mut self,
+        body: &'t Term,
+        params: &[Arc<str>],
+        inputs: &[Arc<str>],
+        products: bool,
+    ) -> Option<Relation> {
+        debug_assert_eq!(params.len(), inputs.len(), "one input for each parameter");
+        let tx = &mut self.tx;
+        let doms: Domains = inputs
+            .iter()
+            .map(|n| (n.clone(), IntervalSet::top()))
+            .collect();
+        // A new run over the body's inputs, with what the runs before it found of the terms
+        // without reading the inputs.
+        let kept = tx.run.keep();
+        tx.start(&doms, Landmarks::none());
+        tx.run.restore(kept);
+        tx.fresh = Some(Fresh::new(
+            tx.terms.nodes.len() as Tid,
+            tx.scopes.len() as Eid,
+        ));
+        let root = tx.terms.add(body);
+        // Each parameter bound to its input, read where the scope binds nothing. The input's
+        // term is the body's own, so what is found of it, which reads the input, is dropped
+        // with the body's entries and never meets a body of other inputs.
+        let mut scope = self.scope;
+        for (p, x) in params.iter().zip(inputs) {
+            let (p, x) = (tx.terms.name(p), tx.terms.name(x));
+            let to = (tx.terms.own_var(x), ROOT);
+            scope = tx.bind(scope, p, to);
+        }
+        let mut tr = Tr::new(products);
+        let body = tx.relation(&mut tr, root, scope);
+        tx.drop_fresh();
+        Some(Relation {
+            body: body?,
+            defs: tr.defs,
+        })
+    }
+
+    /// The number of scopes and remembered entries the scope holds from one body to the next:
+    /// O(n) after n bodies, whatever the bodies read (LOAD-chain).
+    pub fn held(&self) -> usize {
+        let (tx, m) = (&self.tx, &self.tx.run.memo);
+        tx.scopes.len()
+            + tx.scope_ids.len()
+            + tx.powers.len()
+            + tx.run.sums.len()
+            + tx.run.fwds.len()
+            + m.fwd.len()
+            + m.constant.len()
+            + m.mentions.len()
+            + m.clip.len()
+            + m.by_class.len()
+            + m.reads_mod.len()
+    }
 }
 
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
@@ -1379,6 +1475,15 @@ impl<'t> Terms<'t> {
         self.made(Made::Var(x), Node::Var(x))
     }
 
+    /// The name `x` as a term shared with no other: numbered past every term before it, so
+    /// that what is found of it is dropped with the body that made it ([`Fresh`]).
+    fn own_var(&mut self, x: Name) -> Tid {
+        let t = self.nodes.len() as Tid;
+        self.nodes.push(Node::Var(x));
+        self.src.push(None);
+        t
+    }
+
     /// The primitive application the call `app` of a word bound to `p` stands for.
     fn call(&mut self, app: Tid, p: Prim, args: Span) -> Tid {
         let key = Made::Call(app, std::mem::discriminant(&p));
@@ -1423,6 +1528,8 @@ struct Run {
     marks: Landmarks,
     /// The summaries met, each numbered once.
     sums: HashMap<Summary, u32>,
+    /// The number the next summary met is given.
+    sids: u32,
     fwds: HashMap<u32, Fwd>,
     backs: HashMap<(u32, Demand), Res>,
     scanned: HashSet<u32>,
@@ -1454,6 +1561,7 @@ struct Residue {
 #[derive(Default)]
 struct Kept {
     sums: HashMap<Summary, u32>,
+    sids: u32,
     fwds: HashMap<u32, Fwd>,
     fwd: HashMap<At, Entry<Fwd>>,
     constant: HashMap<At, Entry<Option<Value>>>,
@@ -1469,6 +1577,7 @@ impl Run {
         let m = &mut self.memo;
         Kept {
             sums: std::mem::take(&mut self.sums),
+            sids: self.sids,
             fwds: std::mem::take(&mut self.fwds),
             fwd: std::mem::take(&mut m.fwd),
             constant: std::mem::take(&mut m.constant),
@@ -1482,7 +1591,7 @@ impl Run {
     /// Puts back what [`Run::keep`] took, at the start of a run over the same box.
     fn restore(&mut self, k: Kept) {
         let m = &mut self.memo;
-        (self.sums, self.fwds) = (k.sums, k.fwds);
+        (self.sums, self.sids, self.fwds) = (k.sums, k.sids, k.fwds);
         (m.fwd, m.constant, m.mentions) = (k.fwd, k.constant, k.mentions);
         (m.clip, m.by_class) = (k.clip, k.by_class);
         m.reads_mod = k.reads_mod;
@@ -1710,6 +1819,58 @@ struct Tx<'t> {
     powers: HashMap<At, Power>,
     run: Run,
     cx: Cx,
+    /// What the body being read by [`Scoped::relation`] made, which [`Tx::drop_fresh`] drops.
+    fresh: Option<Fresh>,
+}
+
+/// What a body read under a [`Scoped`] scope made that depends on the body: the scopes made
+/// since it began, and the entries keyed by its terms or by those scopes, in the order they
+/// were made. An entry keyed by a term and a scope made before the body began depends on
+/// neither: the scopes made before bind only the scope's own terms.
+struct Fresh {
+    /// The first term and the first scope made for the body.
+    terms: Tid,
+    scopes: Eid,
+    /// Each removes one memo entry ([`Walk::made`]).
+    memo: Vec<Unheld>,
+    scope_ids: Vec<(Eid, Name, At)>,
+    powers: Vec<At>,
+    sums: Vec<Summary>,
+}
+
+impl Fresh {
+    fn new(terms: Tid, scopes: Eid) -> Self {
+        Fresh {
+            terms,
+            scopes,
+            memo: Vec::new(),
+            scope_ids: Vec::new(),
+            powers: Vec::new(),
+            sums: Vec::new(),
+        }
+    }
+
+    /// Whether `at` depends on the body.
+    fn of_body(&self, (t, env): At) -> bool {
+        t >= self.terms || env >= self.scopes
+    }
+}
+
+/// A memo key: the term and scope it is found at, with what else the entry depends on.
+trait Key: Hash + Eq + Clone + 'static {
+    fn at(&self) -> At;
+}
+
+impl Key for At {
+    fn at(&self) -> At {
+        *self
+    }
+}
+
+impl<D: Hash + Eq + Clone + 'static> Key for (At, D) {
+    fn at(&self) -> At {
+        self.0
+    }
 }
 
 impl<'t> Tx<'t> {
@@ -1724,6 +1885,7 @@ impl<'t> Tx<'t> {
                 inputs: Sets::new(),
                 cut: usize::MAX,
             },
+            fresh: None,
         }
     }
 
@@ -1846,7 +2008,43 @@ impl<'t> Tx<'t> {
         let s = self.scopes[env as usize].update(x, to);
         self.scopes.push(s);
         self.scope_ids.insert(k, e);
+        if let Some(fresh) = &mut self.fresh {
+            fresh.scope_ids.push(k);
+        }
         e
+    }
+
+    /// Records `at` as read as a power: `p`.
+    fn power_made(&mut self, at: At, p: Power) {
+        self.powers.insert(at, p);
+        if let Some(fresh) = &mut self.fresh
+            && fresh.of_body(at)
+        {
+            fresh.powers.push(at);
+        }
+    }
+
+    /// Drops what the body read by [`Scoped::relation`] made ([`Fresh`]), in time of what it
+    /// made. The entries go first, since the scopes they are keyed by are numbered again.
+    fn drop_fresh(&mut self) {
+        let Some(fresh) = self.fresh.take() else {
+            return;
+        };
+        for remove in fresh.memo {
+            remove(&mut self.run.memo);
+        }
+        for at in &fresh.powers {
+            self.powers.remove(at);
+        }
+        for s in &fresh.sums {
+            if let Some(sid) = self.run.sums.remove(s) {
+                self.run.fwds.remove(&sid);
+            }
+        }
+        for k in &fresh.scope_ids {
+            self.scope_ids.remove(k);
+        }
+        self.scopes.truncate(fresh.scopes as usize);
     }
 
     /// The kernel term `t` stands for.
@@ -2180,7 +2378,7 @@ impl<'t> Tx<'t> {
                 Node::Prim(Prim::Mul, args) if args.len() == 2 => args,
                 _ => {
                     todo.pop();
-                    self.powers.insert(at, Some((t, env, Count::one())));
+                    self.power_made(at, Some((t, env, Count::one())));
                     continue;
                 }
             };
@@ -2190,7 +2388,7 @@ impl<'t> Tx<'t> {
                 (Some(pa), Some(pb)) => {
                     todo.pop();
                     let p = self.joined(pa, pb);
-                    self.powers.insert(at, p);
+                    self.power_made(at, p);
                 }
                 (pa, pb) => {
                     let (wait_a, wait_b) = (pa.is_none(), pb.is_none());
@@ -2244,6 +2442,21 @@ impl<'t> Tx<'t> {
     fn lin(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Lin> {
         let w = Walk::translating(self, tr);
         w.stack.run(w.lin(t, env))
+    }
+
+    /// The formula of the test `t` read in `env`, translated afresh into `tr`: an auxiliary
+    /// variable belongs to the relation of the term that made it, so the translations of
+    /// earlier terms are dropped, and those of `tr`'s earlier terms are not reused.
+    fn relation(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
+        let m = &mut self.run.memo;
+        m.lin.clear();
+        m.formula.clear();
+        m.lin_calls.clear();
+        m.formula_calls.clear();
+        m.log.clear();
+        tr.pairs.clear();
+        tr.made.clear();
+        self.formula(tr, t, env)
     }
 
     /// [`Walk::formula`] on a new stack, adding to the translation `tr`.
@@ -2370,7 +2583,7 @@ impl<'m, 't> Walk<'m, 't> {
         f: impl FnOnce() -> F + 'm,
     ) -> Deep<'m, V>
     where
-        K: Hash + Eq + Clone + 'static,
+        K: Key,
         V: Clone + 'static,
         F: Future<Output = V> + 'm,
     {
@@ -2404,7 +2617,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// `f()` read and remembered, for [`Walk::cached`].
     async fn made<K, V, F>(&'m self, table: Table<K, V>, k: K, f: impl FnOnce() -> F) -> V
     where
-        K: Hash + Eq + Clone + 'static,
+        K: Key,
         V: Clone + 'static,
         F: Future<Output = V>,
     {
@@ -2418,6 +2631,14 @@ impl<'m, 't> Walk<'m, 't> {
             #[cfg(test)]
             if cut < base && !none_held() {
                 tests::held_made(tx, table, &k, base);
+            }
+            if let Some(fresh) = &mut tx.fresh
+                && fresh.of_body(k.at())
+            {
+                let k = k.clone();
+                fresh.memo.push(Box::new(move |m: &mut Memo| {
+                    table(m).remove(&k);
+                }));
             }
             let m = &mut tx.run.memo;
             if cut >= base {
@@ -2665,8 +2886,27 @@ impl<'m, 't> Walk<'m, 't> {
             }
         }
         Some(self.with(|tx| {
-            let next = tx.run.sums.len() as u32;
-            let sid = *tx.run.sums.entry(((body, lam), sig)).or_insert(next);
+            let key = ((body, lam), sig);
+            let sid = match tx.run.sums.get(&key) {
+                Some(&sid) => sid,
+                None => {
+                    // Numbered past every summary met, those [`Tx::drop_fresh`] dropped too,
+                    // whose parameters' names the terms still hold.
+                    let sid = tx.run.sids;
+                    tx.run.sids += 1;
+                    if let Some(fresh) = &mut tx.fresh
+                        && (fresh.of_body(key.0)
+                            || key
+                                .1
+                                .iter()
+                                .any(|a| matches!(a, Arg::At(at) if fresh.of_body(*at))))
+                    {
+                        fresh.sums.push(key.clone());
+                    }
+                    tx.run.sums.insert(key, sid);
+                    sid
+                }
+            };
             let (mut doms, mut params) = (doms.into_iter(), Vec::new());
             let mut bound = Vec::with_capacity(binds.len());
             for (p, to) in binds {
@@ -4033,7 +4273,7 @@ impl<'m, 't> Walk<'m, 't> {
         f: impl FnOnce() -> F + 'm,
     ) -> Deep<'m, V>
     where
-        K: Hash + Eq + Clone + 'static,
+        K: Key,
         V: Clone + Unpin + 'static,
         F: Future<Output = V> + 'm,
     {

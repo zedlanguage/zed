@@ -1937,3 +1937,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | A `Display` impl that reads the formatter's width, precision, fill and alignment and writes the blocks of a finger tree | `impl Display for Text` | None | A `show` with a padding record over the text's blocks |
 | `Arc<String>` shared between a token and the syntax tree | `lex::Part::Text`, `ast::StrPart::Text` | None | Zed values are shared |
 | A table numbering finished regions by their contents, read by a derived order of node shapes | `canon::Regions`, `Shape` | Gap 2 (shared tables) | A map from contents to number threaded through the lowering |
+
+## Entries from LOAD-chain (`zedc/src/store/preimage.rs`, `front.rs`)
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An undo log of boxed `FnOnce(&mut Memo)` closures, each removing one memo entry a body made, run after the body; the scopes made since a mark cut off the end of their `Vec` | `Fresh`, `Walk::made`, `Tx::bind`, `Tx::drop_fresh` | Mutation (gap 11), Shared tables (gap 2) | The memo threaded as state, with the entries a body made kept in a map of their own and dropped as one value, or the tables as values taken before the body and the scope's part restored after |
+| A trait over memo keys (`Key`, implemented for `At` and `(At, D)`) giving the term and scope an entry is keyed by | `Key`, `Walk::cached`, `Walk::made`, `Walk::translated` | Interfaces (L10) | A function giving the place passed beside the table, as `Table` is |
+| A struct borrowing the given terms for its lifetime (`Scoped<'t>`), built once and asked once per body | `Scoped`, `front::linear_questions` | None | A value threaded through the fold over the functions, returned with each relation |

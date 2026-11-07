@@ -20,6 +20,7 @@ mod mod_symbol;
 mod names;
 mod near;
 mod omega;
+mod one_scope;
 mod oracle;
 mod preimage;
 mod probe;
