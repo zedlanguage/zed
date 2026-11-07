@@ -3095,7 +3095,14 @@ impl<'a> Ck<'_, 'a> {
                 inputs = inputs.union(sum.inputs.clone());
                 let ints = bound.map_or_else(IntervalSet::top, |p| p.ints().clone());
                 let summary = sum.summary.clone();
-                lets.insert(x.clone(), LetIn { summary, ints });
+                lets.insert(
+                    x.clone(),
+                    LetIn {
+                        summary,
+                        ints,
+                        read: None,
+                    },
+                );
                 continue;
             }
             let p = match bound {

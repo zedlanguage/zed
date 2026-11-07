@@ -1148,3 +1148,46 @@ fn a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_be
         );
     }
 }
+
+/// Parameters `x_1 … x_k`, each tested to `0..=1`, then `z = x_1 + … + x_k` and `k` nested
+/// tests `z >= i`, with a bit word on `x_1` in the innermost arm.
+fn tests_of_one_sum(k: usize) -> String {
+    let ps: String = (1..=k).map(|i| format!("positional x{i}: int, ")).collect();
+    let mut s = String::new();
+    for i in 1..=k {
+        s += &format!("if x{i} >= 0 && x{i} <= 1 {{ ");
+    }
+    let sum: Vec<String> = (1..=k).map(|i| format!("x{i}")).collect();
+    s += &format!("z = {}; ", sum.join(" + "));
+    for i in 1..=k {
+        s += &format!("if z >= {i} {{ ");
+    }
+    s += "popCount(x1)";
+    for i in (1..=k).rev() {
+        s += &format!(" }} else {{ {i} }}");
+    }
+    for _ in 1..=k {
+        s += " } else { 0 }";
+    }
+    format!("f({}) =\n  {s};\n", ps.trim_end_matches(", "))
+}
+
+#[test]
+fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() {
+    // `k` tests of `z`, a sum of `k` inputs, each read through its summary (item
+    // PA-letpre-linear).
+    let n = 40;
+    let large = n * scaling::FACTOR;
+    let (small_src, large_src) = (
+        super::program(&tests_of_one_sum(n)),
+        super::program(&tests_of_one_sum(large)),
+    );
+    let (a, b) = scaling::on_a_thread(1 << 29, || {
+        (term_bounds(&small_src), term_bounds(&large_src))
+    });
+    let ratio = b as f64 / a as f64;
+    assert!(
+        a > 0 && ratio <= scaling::RATIO,
+        "`pa_bounds` ran {a} times at k = {n} and {b} at k = {large}: {ratio:.2} times"
+    );
+}

@@ -245,6 +245,28 @@ pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) 
     })
 }
 
+/// [`let_preimage`], giving only the inputs the box narrows, each with its set, or `None` when
+/// the box holds no point; the other inputs keep their domains. The inputs of a summary read
+/// through a tree of its terms' bounds ([`LetIn::read`]) are not among `inputs`: a test of a
+/// name over `k` such inputs then costs those it narrows, each `O(log k)`, and not all `k`
+/// (`Tx::invert_read`, item PA-letpre-linear).
+pub fn let_narrowing(
+    term: &Term,
+    inputs: &Domains,
+    lets: Lets,
+    demand: &Demand,
+) -> Option<Domains> {
+    on_stack(|| {
+        let mut tx = Tx::new();
+        tx.lets = lets;
+        let root = tx.terms.add(term);
+        let marks = tx.landmarks(inputs, demand);
+        tx.start(inputs, marks);
+        let r = tx.back(root, ROOT, demand);
+        tx.narrowed(&r)
+    })
+}
+
 /// The summary of the term `e` a `let` binds ([`LetPa`]), its free names in `inputs` ranging
 /// over their domains and those of `lets` read through their summaries; `None` when a term it
 /// adds has no summary over one input. The summaries of the terms it adds are summed by input
@@ -2221,6 +2243,8 @@ struct Run {
     /// The bodies of the lambdas whose calls are being read, each with its place on the stack.
     active: HashMap<Tid, usize>,
     marks: Landmarks,
+    /// Whether `marks` holds the ends of the inputs of the context's reads ([`Tx::marks`]).
+    marked: bool,
     /// The summaries met, each numbered once.
     sums: HashMap<Summary, u32>,
     /// The number the next summary met is given.
@@ -3141,12 +3165,38 @@ type Table<K, V> = fn(&mut Memo) -> &mut HashMap<K, Entry<V>>;
 /// it is within.
 struct Cx {
     inputs: Sets,
+    /// The inputs of the summaries of [`Lets`] that are read through a tree of their bounds
+    /// ([`LetIn::read`]), each found after those of `inputs`.
+    reads: Rc<[Arc<dyn SummaryRead>]>,
     /// The lowest place on the stack of lambdas being read whose lambda a call stopped at,
     /// since the result being computed began. A result is remembered wherever it is reached
     /// only when that place is not below the stack's height when it began; otherwise it
     /// depends on the lambdas below that height, and is remembered while they are there
     /// ([`Entry`]).
     cut: usize,
+}
+
+impl Cx {
+    /// The domain of the input `k`: of `inputs`, or else of a summary's read.
+    fn get(&self, k: &str) -> Option<&IntervalSet> {
+        match self.inputs.get(k) {
+            Some(d) => Some(d),
+            None => self.reads.iter().find_map(|r| r.ints(k)),
+        }
+    }
+
+    /// [`Cx::get`], shared: `O(1)` beside the search for one of `inputs`, a copy for a read.
+    fn rc(&self, k: &str) -> Option<Rc<IntervalSet>> {
+        match self.inputs.get(k) {
+            Some(d) => Some(d.clone()),
+            None => self.get(k).map(|d| Rc::new(d.clone())),
+        }
+    }
+
+    /// Whether `k` is an input ([`Cx::get`]).
+    fn has(&self, k: &str) -> bool {
+        self.get(k).is_some()
+    }
 }
 
 /// The transfer: the terms and scopes, numbered, which outlive one box; what one run over a
@@ -3233,6 +3283,7 @@ impl<'t> Tx<'t> {
             run: Run::default(),
             cx: Cx {
                 inputs: Sets::new(),
+                reads: Rc::new([]),
                 cut: usize::MAX,
             },
             fresh: None,
@@ -3243,9 +3294,13 @@ impl<'t> Tx<'t> {
 
     /// Begins a run over the box `inputs`.
     fn start(&mut self, inputs: &Domains, marks: Landmarks) {
+        let reads: Rc<[Arc<dyn SummaryRead>]> = (self.lets.values())
+            .filter_map(|l| l.read.clone())
+            .collect();
         self.run = Run {
             marks,
-            void: is_empty(inputs),
+            marked: reads.is_empty(),
+            void: is_empty(inputs) || reads.iter().any(|r| r.total().void > 0),
             ..Run::default()
         };
         self.cx = Cx {
@@ -3253,8 +3308,41 @@ impl<'t> Tx<'t> {
                 .iter()
                 .map(|(k, v)| (k.clone(), Rc::new(v.clone())))
                 .collect(),
+            reads,
             cut: usize::MAX,
         };
+    }
+
+    /// The landmarks of the run ([`Tx::landmarks`]), with the ends of the domains of the
+    /// inputs of the summaries read through a tree ([`LetIn::read`]) added the first time a
+    /// lambda's call reads them, so that a run that calls none does not read those inputs.
+    ///
+    /// Complexity tradeoff: the first call read in a run over such a summary of `k` inputs
+    /// costs `O(k log k)` for their ends, also when it narrows none of them; a test that calls
+    /// a lambda costs the inputs it does not narrow. Given up: the landmarks are a set made
+    /// afresh for each run. Trigger: tests calling a lambda, of a name over many inputs. Test:
+    /// none at scale; COMPLEXITY.md row PA-letpre-linear, residual. A complete solution would
+    /// keep the ends of each summary's inputs in a persistent multiset beside its tree,
+    /// changed in `O(log k)` for each input a scope narrows, and search it with the program's
+    /// own landmarks.
+    fn marks(&mut self) -> &Landmarks {
+        if !self.run.marked {
+            self.run.marked = true;
+            let mut ends = Vec::new();
+            for r in self.cx.reads.iter() {
+                for v in r.vars() {
+                    let pieces = r.ints(v).map_or(&[][..], IntervalSet::pieces);
+                    for (a, b) in pieces {
+                        ends.extend([a, b].into_iter().filter_map(|e| match e {
+                            Fin(v) => Some(v.clone()),
+                            _ => None,
+                        }));
+                    }
+                }
+            }
+            self.run.marks.extend(&Landmarks::of(ends, []));
+        }
+        &self.run.marks
     }
 
     /// The landmarks a summary's parameters and demands move out to: the terms' integer
@@ -3380,8 +3468,8 @@ impl<'t> Tx<'t> {
     /// constants compared cut `[0, m)` into two or more classes.
     fn classes_of(&mut self, x: Name, m: i128) -> Option<ClassCuts> {
         if self.run.cut_table.is_none() {
-            let inputs = &self.cx.inputs;
-            let table = (self.remainder_cuts(|k| inputs.contains_key(k)).into_iter())
+            let cx = &self.cx;
+            let table = (self.remainder_cuts(|k| cx.has(k)).into_iter())
                 .filter(|(_, (_, cuts))| cuts.len() > 2)
                 .map(|(k, (_, cuts))| (k, cuts.into()))
                 .collect();
@@ -3556,6 +3644,7 @@ impl<'t> Tx<'t> {
         }
         let sub = Cx {
             inputs,
+            reads: self.cx.reads.clone(),
             cut: usize::MAX,
         };
         (std::mem::replace(&mut self.cx, sub), e)
@@ -3609,19 +3698,47 @@ impl<'t> Tx<'t> {
         r.none || self.run.void
     }
 
-    /// The box over every input. A box that narrows a name of an empty domain is empty in
-    /// every name, as a box found empty is; one that narrows nothing keeps the domains.
+    /// Whether the box `r` holds no point of the inputs, as [`Tx::whole`] gives it.
+    fn none(&self, r: &Res) -> bool {
+        r.none || (self.run.void && !r.dom.is_empty())
+    }
+
+    /// The box over every input, those of the reads ([`LetIn::read`]) included. A box that
+    /// narrows a name of an empty domain is empty in every name, as a box found empty is; one
+    /// that narrows nothing keeps the domains.
     fn whole(&self, r: &Res) -> Domains {
-        let none = r.none || (self.run.void && !r.dom.is_empty());
-        let of = |k: &Arc<str>, z: &Rc<IntervalSet>| {
+        let none = self.none(r);
+        let of = |k: &Arc<str>, z: &IntervalSet| {
             let z = match r.dom.get(k) {
                 _ if none => IntervalSet::empty(),
                 Some(n) => (**n).clone(),
-                None => (**z).clone(),
+                None => z.clone(),
             };
             (k.clone(), z)
         };
-        self.cx.inputs.iter().map(|(k, z)| of(k, z)).collect()
+        let mut out: Domains = self.cx.inputs.iter().map(|(k, z)| of(k, z)).collect();
+        for read in self.cx.reads.iter() {
+            for v in read.vars() {
+                if !out.contains_key(v)
+                    && let Some(z) = read.ints(v)
+                {
+                    let (k, z) = of(v, z);
+                    out.insert(k, z);
+                }
+            }
+        }
+        out
+    }
+
+    /// The names of the inputs `r` narrows, each with the box's set, or `None` when the box
+    /// holds no point ([`Tx::whole`], which gives the others their domains): `O(m log k)` for
+    /// the `m` it narrows, however many inputs the reads hold.
+    fn narrowed(&self, r: &Res) -> Option<Domains> {
+        if self.none(r) {
+            return None;
+        }
+        let narrowed = (r.dom.iter()).filter(|(k, _)| self.cx.has(k));
+        Some(narrowed.map(|(k, n)| (k.clone(), (**n).clone())).collect())
     }
 
     fn stop(&mut self, kind: StopKind, t: Tid) -> Res {
@@ -3698,7 +3815,7 @@ impl<'t> Tx<'t> {
             small_within &= v.is_subset(w);
             large_within &= w.is_subset(v);
             let joined = v.join(w);
-            if self.cx.inputs.get(k).is_none_or(|z| **z != joined) {
+            if self.cx.get(k).is_none_or(|z| *z != joined) {
                 dom.insert(k.clone(), Rc::new(joined));
             }
         }
@@ -3897,7 +4014,7 @@ impl<'t> Tx<'t> {
 
     /// The largest magnitude of the domain of the input `var`, when it is bounded.
     fn magnitude(&self, var: &Arc<str>) -> Option<u128> {
-        let (lo, hi) = self.cx.inputs.get(var)?.bounds()?;
+        let (lo, hi) = self.cx.get(var)?.bounds()?;
         Some(input(lo)?.unsigned_abs().max(input(hi)?.unsigned_abs()))
     }
 
@@ -3921,12 +4038,12 @@ impl<'t> Tx<'t> {
                     Res::none()
                 });
             }
-            Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => (var, self.cx.inputs.get(var)?),
+            Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => (var, self.cx.get(var)?),
         };
         let root = pa.to_treap(dom)?;
         let mut pieces = Vec::new();
         invert_treap(&root, &Tag::ID, z, &mut pieces);
-        let within = if hull { &dom.hull() } else { &**dom };
+        let within = if hull { &dom.hull() } else { dom };
         let met = IntervalSet::from_pieces(pieces).meet(within);
         if met.is_empty() {
             return Some(Res::none());
@@ -3941,8 +4058,7 @@ impl<'t> Tx<'t> {
     /// Whether the box `r` holds a point of the inputs' domains: each input it narrows meets its
     /// domain, `O(p log P)` for the `p` pieces of the box's set and the `P` of the domain.
     fn reaches_inputs(&self, r: &Res) -> bool {
-        !self.empty(r)
-            && (r.dom.iter()).all(|(k, s)| self.cx.inputs.get(k).is_none_or(|d| meets(s, d)))
+        !self.empty(r) && (r.dom.iter()).all(|(k, s)| self.cx.get(k).is_none_or(|d| meets(s, d)))
     }
 
     /// The box `r` met with the inputs' domains, each name it narrows met once, `O(p + P)`.
@@ -3952,7 +4068,7 @@ impl<'t> Tx<'t> {
         }
         let mut dom = Sets::new();
         for (k, s) in &r.dom {
-            let Some(d) = self.cx.inputs.get(k) else {
+            let Some(d) = self.cx.get(k) else {
                 dom.insert(k.clone(), s.clone());
                 continue;
             };
@@ -3961,7 +4077,7 @@ impl<'t> Tx<'t> {
             if met.is_empty() {
                 return Res::none();
             }
-            if met != **d {
+            if met != *d {
                 dom.insert(k.clone(), Rc::new(met));
             }
         }
@@ -3981,54 +4097,139 @@ impl<'t> Tx<'t> {
         // Each term's bounds, and their sum with its infinite ends counted, so that the sum of
         // the others is the whole sum less one term's.
         let mut terms = Vec::with_capacity(sep.terms.len());
-        let (mut lo, mut hi) = (sep.constant.clone(), sep.constant.clone());
-        let (mut lo_inf, mut hi_inf) = (0usize, 0usize);
+        let mut sums = Sums {
+            lo: sep.constant.clone(),
+            hi: sep.constant.clone(),
+            lo_inf: 0,
+            hi_inf: 0,
+        };
         for (v, t) in &sep.terms {
             let pa = sep.term(t);
-            let Some((l, h)) = pa_bounds(&pa, self.cx.inputs.get(v)?) else {
+            let Some((l, h)) = pa_bounds(&pa, self.cx.get(v)?) else {
                 return Some(Res::none());
             };
             match &l {
-                Val::Fin(x) => lo = &lo + x,
-                _ => lo_inf += 1,
+                Val::Fin(x) => sums.lo = &sums.lo + x,
+                _ => sums.lo_inf += 1,
             }
             match &h {
-                Val::Fin(x) => hi = &hi + x,
-                _ => hi_inf += 1,
+                Val::Fin(x) => sums.hi = &sums.hi + x,
+                _ => sums.hi_inf += 1,
             }
             terms.push((pa, l, h));
         }
         let mut r = Res::unknown();
         for (pa, l, h) in &terms {
-            // The others' least and greatest sum; `None` for an infinite one.
-            let others = |sum: &Int, inf: usize, own: &Val| match own {
-                Val::Fin(x) if inf == 0 => Some(sum - x),
-                Val::Fin(_) => None,
-                _ if inf == 1 => Some(sum.clone()),
-                _ => None,
-            };
-            let (olo, ohi) = (others(&lo, lo_inf, l), others(&hi, hi_inf, h));
-            // `z - [olo, ohi]`, piece by piece.
-            let shift = |e: &End, by: &Int| match e {
-                Fin(v) => Fin(v - &Num::from(by)),
-                _ => e.clone(),
-            };
-            let pieces = z
-                .pieces()
-                .iter()
-                .map(|(zl, zh)| {
-                    let lo = ohi.as_ref().map_or(NegInf, |c| shift(zl, c));
-                    let hi = olo.as_ref().map_or(PosInf, |c| shift(zh, c));
-                    (lo, hi)
-                })
-                .collect();
-            let own = self.invert_pa(pa, &IntervalSet::from_pieces(pieces))?;
+            let own = self.invert_term(pa, (l, h), &sums, z)?;
             if own.none {
                 return Some(Res::none());
             }
             r.dom.extend(own.dom);
         }
         Some(r)
+    }
+
+    /// The inputs on which the term `pa` of a sum, of bounds `l..=h`, takes a value in `z`
+    /// less the bounds of the sum's other terms, the sum's bounds being `sums`
+    /// ([`Tx::invert_sep`]).
+    fn invert_term(
+        &self,
+        pa: &Pa,
+        (l, h): (&Val, &Val),
+        sums: &Sums,
+        z: &IntervalSet,
+    ) -> Option<Res> {
+        // The others' least and greatest sum; `None` for an infinite one.
+        let others = |sum: &Int, inf: usize, own: &Val| match own {
+            Val::Fin(x) if inf == 0 => Some(sum - x),
+            Val::Fin(_) => None,
+            _ if inf == 1 => Some(sum.clone()),
+            _ => None,
+        };
+        let (olo, ohi) = (
+            others(&sums.lo, sums.lo_inf, l),
+            others(&sums.hi, sums.hi_inf, h),
+        );
+        // `z - [olo, ohi]`, piece by piece.
+        let shift = |e: &End, by: &Int| match e {
+            Fin(v) => Fin(v - &Num::from(by)),
+            _ => e.clone(),
+        };
+        let pieces = z
+            .pieces()
+            .iter()
+            .map(|(zl, zh)| {
+                let lo = ohi.as_ref().map_or(NegInf, |c| shift(zl, c));
+                let hi = olo.as_ref().map_or(PosInf, |c| shift(zh, c));
+                (lo, hi)
+            })
+            .collect();
+        self.invert_pa(pa, &IntervalSet::from_pieces(pieces))
+    }
+
+    /// [`Tx::invert_sep`] of the summary of the name `l`, reading its inputs through the tree
+    /// of its terms' bounds ([`Tx::invert_read`]) when it has one and no input of this context
+    /// has another domain there.
+    fn invert_let(&self, l: &LetIn, z: &IntervalSet) -> Option<Res> {
+        let sep = l.summary.formed();
+        match &l.read {
+            Some(read)
+                if sep.terms.len() > 1
+                    && (self.cx.inputs.iter())
+                        .all(|(k, d)| read.ints(k).is_none_or(|w| *w == **d)) =>
+            {
+                self.invert_read(&**read, sep, z)
+            }
+            _ => self.invert_sep(sep, z),
+        }
+    }
+
+    /// [`Tx::invert_sep`] of `sep`, of two or more terms, whose inputs `read` holds, giving
+    /// the same box: the sum of the terms' bounds is the total of the tree's, and only the
+    /// terms that may narrow their input or end the inversion are inverted, in the order
+    /// [`Tx::invert_sep`] inverts them ([`Sums::wants`]); each other term's values lie in one
+    /// piece of what its input may take, so that its inversion keeps its domain. `O((m + 1)
+    /// log k)` for the `m` terms inverted of `k`, with the inversion of each, where
+    /// [`Tx::invert_sep`] costs `O(k)` also when none narrows (item PA-letpre-linear).
+    fn invert_read(&self, read: &dyn SummaryRead, sep: &Sep, z: &IntervalSet) -> Option<Res> {
+        let tot = read.total();
+        if tot.no_val > 0 {
+            return Some(Res::none());
+        }
+        let sums = Sums {
+            lo: &sep.constant + &tot.lo,
+            hi: &sep.constant + &tot.hi,
+            lo_inf: tot.lo_inf,
+            hi_inf: tot.hi_inf,
+        };
+        let want = sums.wants(z);
+        let mut r = Res::unknown();
+        let mut ended: Option<Option<Res>> = None;
+        read.visit(&|b| want.takes(b), &mut |v| {
+            let Some(t) = sep.terms.get(v) else {
+                return true;
+            };
+            let pa = sep.term(t);
+            let Some(dom) = read.ints(v) else {
+                ended = Some(None);
+                return false;
+            };
+            let Some((l, h)) = pa_bounds(&pa, dom) else {
+                ended = Some(Some(Res::none()));
+                return false;
+            };
+            match self.invert_term(&pa, (&l, &h), &sums, z) {
+                Some(own) if !own.none => {
+                    r.dom.extend(own.dom);
+                    true
+                }
+                own => {
+                    ended = Some(own.map(|_| Res::none()));
+                    false
+                }
+            }
+        });
+        ended.unwrap_or(Some(r))
     }
 }
 
@@ -4247,7 +4448,7 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.mentions(bt, be).await,
                 None => Some(self.with(|tx| {
                     let x = tx.name(x);
-                    tx.cx.inputs.contains_key(x) || tx.lets.contains_key(x)
+                    tx.cx.has(x) || tx.lets.contains_key(x)
                 })),
             },
             Node::Let(n, e, b) => {
@@ -4423,7 +4624,7 @@ impl<'m, 't> Walk<'m, 't> {
                 // rows S13 and S15. A complete solution would read each call in place (exact,
                 // exponential in the nesting) or key summaries by relational summaries that
                 // hold for every argument (a polyhedral or Presburger summary per function).
-                let dom = self.with(|tx| f.ints.snap(&tx.run.marks));
+                let dom = self.with(|tx| f.ints.snap(tx.marks()));
                 sig.push(Arg::Ints(dom.clone()));
                 doms.push((i, dom));
                 binds.push((p, None));
@@ -4610,8 +4811,8 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.fwd(bt, be).await,
                 None => self.with(|tx| {
                     let x = tx.name(x);
-                    match (tx.cx.inputs.get(x), tx.lets.get(x)) {
-                        (Some(dom), _) => Fwd::int((**dom).clone()),
+                    match (tx.cx.get(x), tx.lets.get(x)) {
+                        (Some(dom), _) => Fwd::int(dom.clone()),
                         (None, Some(l)) => Fwd::int(l.ints.clone()),
                         (None, None) => Fwd::top(),
                     }
@@ -4757,7 +4958,7 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.clip(bt, be).await,
                 None => self.with(|tx| {
                     let x = tx.name(x);
-                    match tx.cx.inputs.get(x) {
+                    match tx.cx.get(x) {
                         Some(dom) => Some(dom.hull()),
                         None => tx.lets.get(x).map(|l| l.ints.hull()),
                     }
@@ -4868,14 +5069,14 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.back(bt, be, d).await,
                 None => self.with(|tx| {
                     let x = tx.name(x);
-                    match (tx.cx.inputs.get(x), &d) {
+                    match (tx.cx.get(x), &d) {
                         (Some(dom), Demand::Ints(z)) => {
                             let met = dom.meet(z);
                             if met.is_empty() {
                                 return Res::none();
                             }
                             let mut r = Res::all();
-                            if met != **dom {
+                            if met != *dom {
                                 r.dom.insert(x.clone(), Rc::new(met));
                             }
                             r
@@ -4884,9 +5085,7 @@ impl<'m, 't> Walk<'m, 't> {
                         // A name bound by a `let` outside the term: the inputs where its
                         // summary meets the demand.
                         (None, d) if let Some(l) = tx.lets.get(x) => match d {
-                            Demand::Ints(z) => tx
-                                .invert_sep(l.summary.formed(), z)
-                                .unwrap_or_else(Res::unknown),
+                            Demand::Ints(z) => tx.invert_let(l, z).unwrap_or_else(Res::unknown),
                             Demand::Bool(_) => Res::none(),
                         },
                         (None, _) => {
@@ -4995,7 +5194,7 @@ impl<'m, 't> Walk<'m, 't> {
     ) -> Res {
         let (d, same) = match d {
             Demand::Ints(z) => {
-                let s = self.with(|tx| z.snap(&tx.run.marks));
+                let s = self.with(|tx| z.snap(tx.marks()));
                 let same = s == *z;
                 (Demand::Ints(s), same)
             }
@@ -5023,7 +5222,7 @@ impl<'m, 't> Walk<'m, 't> {
         out.exact = r.exact && same;
         self.with(|tx| {
             for (k, z) in &r.dom {
-                if tx.cx.inputs.get(k).is_some_and(|w| w != z) {
+                if tx.cx.get(k).is_some_and(|w| *w != **z) {
                     out.dom.insert(k.clone(), z.clone());
                 }
             }
@@ -5423,7 +5622,7 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.pa(bt, be).await,
                 None => self.with(|tx| {
                     let name = tx.name(x);
-                    if tx.cx.inputs.contains_key(name) {
+                    if tx.cx.has(name) {
                         return Some(Pa::Linear {
                             var: name.clone(),
                             a: Int::ONE,
@@ -5502,7 +5701,7 @@ impl<'m, 't> Walk<'m, 't> {
                     _ => None,
                 };
             };
-            let dom = tx.cx.inputs.get(var)?;
+            let dom = tx.cx.get(var)?;
             // Each arm's treap, and the stretches of inputs that take each arm, in order.
             let mut trees = Vec::with_capacity(2);
             let mut spans: Vec<(&End, &End, usize)> = Vec::new();
@@ -5510,7 +5709,7 @@ impl<'m, 't> Walk<'m, 't> {
                 if !taken {
                     continue;
                 }
-                let set = r.dom.get(var).map_or(&**dom, |s| &**s);
+                let set = r.dom.get(var).map_or(dom, |s| &**s);
                 if !in_range(set) {
                     return None;
                 }
@@ -5603,7 +5802,7 @@ impl<'m, 't> Walk<'m, 't> {
                 let min = p == Prim::Min;
                 match pa.var() {
                     None => pa.clamp(min, c, &IntervalSet::empty()),
-                    Some(v) => self.with(|tx| pa.clamp(min, c, tx.cx.inputs.get(v)?)),
+                    Some(v) => self.with(|tx| pa.clamp(min, c, tx.cx.get(v)?)),
                 }
             }
             _ => None,
@@ -5888,7 +6087,7 @@ impl<'m, 't> Walk<'m, 't> {
                         let min = p == Prim::Min;
                         match &cu.var {
                             None => cu.clamp(min, c, &IntervalSet::empty()),
-                            Some(v) => self.with(|tx| cu.clamp(min, c, tx.cx.inputs.get(v)?)),
+                            Some(v) => self.with(|tx| cu.clamp(min, c, tx.cx.get(v)?)),
                         }
                     }
                 }
@@ -5944,7 +6143,7 @@ impl<'m, 't> Walk<'m, 't> {
         let c = i64::try_from(m).ok()?;
         let (name, dom) = self.with(|tx| {
             let name = tx.name(x).clone();
-            let dom = tx.cx.inputs.get(&name).cloned();
+            let dom = tx.cx.rc(&name);
             (name, dom)
         });
         let dom = dom?;
@@ -6299,8 +6498,7 @@ impl<'m, 't> Walk<'m, 't> {
                 Some((bt, be)) => self.lin(bt, be).await,
                 None => self.with(|tx| {
                     let x = tx.name(x);
-                    (tx.cx.inputs.contains_key(x))
-                        .then(|| Lin::atom(presburger::Atom::Sym(x.clone())))
+                    (tx.cx.has(x)).then(|| Lin::atom(presburger::Atom::Sym(x.clone())))
                 }),
             },
             Node::Let(n, e, b) => {
@@ -7309,6 +7507,9 @@ pub struct LetIn {
     pub summary: LetPa,
     /// The integers the name's product holds.
     pub ints: IntervalSet,
+    /// The summary's inputs read through a tree of its terms' bounds, which are then not among
+    /// the inputs of the transfer ([`let_narrowing`]); `None` when they are.
+    pub read: Option<Arc<dyn SummaryRead>>,
 }
 
 /// The value of a `let` over the inputs it reads, as the sum of one piecewise-affine summary
@@ -7672,6 +7873,166 @@ fn pa_bounds(pa: &Pa, dom: &IntervalSet) -> Option<(Val, Val)> {
     }
 }
 
+/// The bounds of a sum of terms ([`Tx::invert_sep`]): the sums of the terms' finite least and
+/// greatest values with the constant, and the numbers of infinite ones.
+struct Sums {
+    lo: Int,
+    hi: Int,
+    lo_inf: usize,
+    hi_inf: usize,
+}
+
+impl Sums {
+    /// Which terms of a sum of these bounds [`Tx::invert_read`] inverts for the demand `z`.
+    /// A term of values `l..=h` keeps its input's domain when `l..=h` lies within one piece
+    /// `[zl - (hi - h), zh - (lo - l)]` of what [`Tx::invert_term`] lets it take, an end
+    /// infinite where the others' sum is or `z`'s is: for a term of finite bounds, when its
+    /// width `h - l` is at most `min(hi - zl, zh - lo)` for some piece `zl..=zh` of `z`,
+    /// the slack. A term with an infinite bound keeps it when the piece's end on that side
+    /// is infinite too.
+    fn wants(&self, z: &IntervalSet) -> Wants {
+        let (lo, hi) = (Num::from(&self.lo), Num::from(&self.hi));
+        let mut slack = NegInf;
+        let (mut lo_only, mut hi_only, mut both) = (true, true, true);
+        for (zl, zh) in z.pieces() {
+            // The piece's ends are infinite for a term of an infinite bound on that side.
+            let down = self.hi_inf > 0 || *zl == NegInf;
+            let up = self.lo_inf > 0 || *zh == PosInf;
+            let a = match zl {
+                _ if down => PosInf,
+                Fin(v) => Fin(&hi - v),
+                _ => NegInf,
+            };
+            let b = match zh {
+                _ if up => PosInf,
+                Fin(v) => Fin(v - &lo),
+                _ => NegInf,
+            };
+            slack = slack.max(a.min(b));
+            // A term infinite below is one of the `lo_inf`, so the others' least sum is
+            // infinite when `lo_inf >= 2`, and likewise above.
+            lo_only &= !(down && (self.lo_inf >= 2 || *zh == PosInf));
+            hi_only &= !(up && (self.hi_inf >= 2 || *zl == NegInf));
+            both &= !((self.hi_inf >= 2 || *zl == NegInf) && (self.lo_inf >= 2 || *zh == PosInf));
+        }
+        Wants {
+            slack,
+            lo_only,
+            hi_only,
+            both,
+        }
+    }
+}
+
+/// Which terms [`Tx::invert_read`] inverts ([`Sums::wants`]): those of finite bounds wider
+/// than `slack`, those of each kind of infinite bound when the flag of that kind is set, and
+/// those it cannot tell ([`TermBounds::odd`]).
+struct Wants {
+    slack: End,
+    lo_only: bool,
+    hi_only: bool,
+    both: bool,
+}
+
+impl Wants {
+    /// Whether a term among those `b` sums is inverted: when `b` is one term's, whether that
+    /// term is. It holds of a sum when it holds of one of its terms.
+    fn takes(&self, b: &TermBounds) -> bool {
+        b.odd > 0
+            || (b.wide.as_ref()).is_some_and(|w| Fin(Num::from(w)) > self.slack)
+            || (self.lo_only && b.lo_only > 0)
+            || (self.hi_only && b.hi_only > 0)
+            || (self.both && b.both > 0)
+    }
+}
+
+/// The bounds of a summary's term of one input over its domain, or their sum over several
+/// inputs ([`LetPa::term_bounds`]), kept in a tree of the inputs so that a test reads the
+/// bounds of a summary of `k` inputs in `O(1)` and finds the terms it narrows in `O(log k)`
+/// each ([`SummaryRead`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TermBounds {
+    /// The sum of the terms' finite least values.
+    lo: Int,
+    /// The sum of the terms' finite greatest values.
+    hi: Int,
+    /// The terms whose least value is infinite.
+    lo_inf: usize,
+    /// The terms whose greatest value is infinite.
+    hi_inf: usize,
+    /// The terms with no value, over an empty domain.
+    no_val: usize,
+    /// The inputs whose domain is empty.
+    void: usize,
+    /// The greatest width `h - l` of a term of finite bounds whose inversion keeps its
+    /// domain when its values lie in one piece of the demand.
+    wide: Option<Int>,
+    /// The terms whose inversion may not keep its domain so: a line over an input whose
+    /// domain has an end past `i128`, a summary with a gap, or bounds infinite the same way.
+    odd: usize,
+    /// The terms of values unbounded below and bounded above.
+    lo_only: usize,
+    /// The terms of values bounded below and unbounded above.
+    hi_only: usize,
+    /// The terms of values unbounded both ways.
+    both: usize,
+}
+
+impl TermBounds {
+    /// The bounds of no term.
+    pub fn zero() -> TermBounds {
+        TermBounds {
+            lo: Int::ZERO,
+            hi: Int::ZERO,
+            lo_inf: 0,
+            hi_inf: 0,
+            no_val: 0,
+            void: 0,
+            wide: None,
+            odd: 0,
+            lo_only: 0,
+            hi_only: 0,
+            both: 0,
+        }
+    }
+
+    /// The bounds of the terms of `self` and of `o`.
+    pub fn plus(&self, o: &TermBounds) -> TermBounds {
+        TermBounds {
+            lo: &self.lo + &o.lo,
+            hi: &self.hi + &o.hi,
+            lo_inf: self.lo_inf + o.lo_inf,
+            hi_inf: self.hi_inf + o.hi_inf,
+            no_val: self.no_val + o.no_val,
+            void: self.void + o.void,
+            wide: match (&self.wide, &o.wide) {
+                (Some(a), Some(b)) => Some(a.max(b).clone()),
+                (w, None) | (None, w) => w.clone(),
+            },
+            odd: self.odd + o.odd,
+            lo_only: self.lo_only + o.lo_only,
+            hi_only: self.hi_only + o.hi_only,
+            both: self.both + o.both,
+        }
+    }
+}
+
+/// The inputs of a summary of [`Lets`] as a test reads them ([`LetIn::read`]): each one's
+/// domain, and the bounds of the summary's terms over them kept in a tree with the sum of each
+/// subtree's, so that a test costs the inputs it narrows and not all of them
+/// (`images::TermRead`).
+pub trait SummaryRead: fmt::Debug {
+    /// The inputs.
+    fn vars(&self) -> &imbl::OrdSet<Arc<str>>;
+    /// The domain of the input `v`, `None` when it is not one.
+    fn ints(&self, v: &str) -> Option<&IntervalSet>;
+    /// The sum of the bounds of every term ([`LetPa::term_bounds`]).
+    fn total(&self) -> TermBounds;
+    /// Calls `f` on the inputs in order, skipping each subtree whose sum `want` refuses,
+    /// until `f` gives `false`.
+    fn visit(&self, want: &dyn Fn(&TermBounds) -> bool, f: &mut dyn FnMut(&Arc<str>) -> bool);
+}
+
 /// The piecewise-affine summary of the value a `let` binds, over the inputs it reads (`Sep`),
 /// kept as the sum `Σ c_i * s_i + rest` of the summaries `s_i` of the bound names it adds and
 /// the summary of the rest of its term ([`let_summary`]). Each binding is summarized once, in
@@ -7717,6 +8078,50 @@ impl LetPa {
             rest,
             forced: OnceLock::new(),
         }))
+    }
+
+    /// The bounds of the summary's term of the input `v` over `ints` ([`TermBounds`]), with
+    /// whether `ints` is empty: the leaf of `v` in the tree a test reads the summary's inputs
+    /// through ([`SummaryRead`]). Forms the summary (`LetPa::formed`) the first time.
+    pub fn term_bounds(&self, v: &str, ints: &IntervalSet) -> TermBounds {
+        let mut b = TermBounds::zero();
+        b.void = usize::from(ints.is_empty());
+        let sep = self.formed();
+        let Some(t) = sep.terms.get(v) else {
+            return b;
+        };
+        let pa = sep.term(t);
+        let Some((l, h)) = pa_bounds(&pa, ints) else {
+            b.no_val = 1;
+            return b;
+        };
+        match &l {
+            Val::Fin(x) => b.lo = x.clone(),
+            _ => b.lo_inf = 1,
+        }
+        match &h {
+            Val::Fin(x) => b.hi = x.clone(),
+            _ => b.hi_inf = 1,
+        }
+        // Whether inverting the term keeps every input whose value lies in the demand: a
+        // line over a domain whose ends `Pa::to_treap` takes, or pieces covering the domain's
+        // hull with no gap.
+        let whole = match &pa {
+            Pa::Const(_) => true,
+            Pa::Linear { .. } => in_range(ints),
+            Pa::Piecewise { root, .. } => root.as_ref().is_some_and(|n| {
+                n.dense
+                    && (ints.bounds()).is_some_and(|(lo, hi)| n.span.0 <= *lo && *hi <= n.span.1)
+            }),
+        };
+        match (whole, &l, &h) {
+            (true, Val::Fin(x), Val::Fin(y)) => b.wide = Some(y - x),
+            (true, Val::Neg, Val::Fin(_)) => b.lo_only = 1,
+            (true, Val::Fin(_), Val::Pos) => b.hi_only = 1,
+            (true, Val::Neg, Val::Pos) => b.both = 1,
+            _ => b.odd = 1,
+        }
+        b
     }
 
     /// The inputs the summary reads.

@@ -12,8 +12,11 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
-use zedc::store::interval::IntervalSet;
-use zedc::store::preimage::{Demand, Domains, LetIn, Lets, let_preimage, let_summary};
+use zedc::store::images::{self, TermRead};
+use zedc::store::interval::{End, IntervalSet};
+use zedc::store::preimage::{
+    Demand, Domains, LetIn, LetPa, Lets, let_narrowing, let_preimage, let_summary,
+};
 use zedc::store::product::{Product, Scope, arms};
 
 use super::{arm, arms_of, ints};
@@ -573,6 +576,7 @@ fn deep_chain(d: usize) -> Domains {
             LetIn {
                 summary,
                 ints: IntervalSet::top(),
+                read: None,
             },
         )]);
         summary = let_summary(&e, &inputs, lets).expect("a summary of a sum");
@@ -585,6 +589,7 @@ fn deep_chain(d: usize) -> Domains {
         LetIn {
             summary,
             ints: IntervalSet::top(),
+            read: None,
         },
     )]);
     let_preimage(&test, &inputs, lets, &Demand::Bool(true))
@@ -605,4 +610,204 @@ fn a_deep_chain_of_summaries_scales() {
     scaling::check("forming a chain of d summaries", 10_000, |d| {
         _ = deep_chain(d)
     });
+}
+
+/// A random domain: one to three pieces with ends in `-40..=40`, an end now and then
+/// unbounded, beyond `i64`, or at an end of `i128`, which a line's inversion does not take.
+fn random_domain(rng: &mut Rng) -> IntervalSet {
+    let end = |rng: &mut Rng, lo: bool| match rng.below(14) {
+        0 if lo => End::NegInf,
+        0 => End::PosInf,
+        1 => End::from(if lo { -(1i128 << 70) } else { 1i128 << 70 }),
+        2 => End::from(if lo { i128::MIN } else { i128::MAX }),
+        _ => End::from(rng.int(-40, 40)),
+    };
+    let pieces = (0..1 + rng.below(3))
+        .map(|_| {
+            let (a, b) = (end(rng, true), end(rng, false));
+            if a <= b { (a, b) } else { (b, a) }
+        })
+        .collect();
+    let d = IntervalSet::from_pieces(pieces);
+    if d.is_empty() {
+        IntervalSet::single(0)
+    } else {
+        d
+    }
+}
+
+/// `a * x + b`, or `if x > c { a * x + b } else { a' * x + b' }` (or with `<`), for random
+/// small integers.
+fn random_term(rng: &mut Rng, x: &Arc<str>) -> Term {
+    let lit = |v: i64| Term::Lit(Value::Int(v));
+    let line = |rng: &mut Rng| {
+        let a = Term::Prim(Prim::Mul, vec![lit(rng.int(-3, 3)), Term::Var(x.clone())]);
+        Term::Prim(Prim::Add, vec![a, lit(rng.int(-9, 9))])
+    };
+    if rng.below(2) == 0 {
+        return line(rng);
+    }
+    let op = if rng.below(2) == 0 {
+        Prim::Gt
+    } else {
+        Prim::Lt
+    };
+    let test = Term::Prim(op, vec![Term::Var(x.clone()), lit(rng.int(-20, 20))]);
+    let (yes, no) = (line(rng), line(rng));
+    Term::If(Shared::new(test), Shared::new(yes), Shared::new(no))
+}
+
+/// The sum of a random term of each of `xs`, and its summary over `doms`.
+fn random_sum(rng: &mut Rng, xs: &[Arc<str>], doms: &Domains) -> Option<LetPa> {
+    let sum = (xs.iter().map(|x| random_term(rng, x)))
+        .reduce(|s, t| Term::Prim(Prim::Add, vec![s, t]))?;
+    let_summary(&sum, doms, Lets::new())
+}
+
+/// Tests through summaries over many inputs, read through the trees of their terms' bounds
+/// ([`let_narrowing`], [`TermRead`]), narrow the inputs exactly as reading every input does
+/// ([`let_preimage`] with each input among the inputs): random sums of two to eight lines and
+/// `if`s over domains with holes, unbounded ends and ends beyond `i64`, tested by `z OP c`,
+/// `z + x1 >= c`, or two names at once, in sequences that narrow the domains as a walk does,
+/// each tree after the first found from the last by the inputs that changed
+/// ([`images::updated`]). Item PA-letpre-linear.
+#[test]
+fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
+    let mut rng = Rng::new(0x1e7_b0d5);
+    let mut compared = 0;
+    let mut narrowed = 0;
+    for round in 0..600 {
+        let k = 2 + rng.below(7);
+        let xs: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
+        let mut names: images::Names<IntervalSet> = xs
+            .iter()
+            .map(|x| (x.clone(), random_domain(&mut rng)))
+            .collect();
+        let doms: Domains = names.iter().map(|(x, d)| (x.clone(), d.clone())).collect();
+        let (z, w): (Arc<str>, Arc<str>) = ("z".into(), "w".into());
+        let Some(sz) = random_sum(&mut rng, &xs, &doms) else {
+            continue;
+        };
+        let some: Vec<Arc<str>> = xs.iter().filter(|_| rng.below(2) == 0).cloned().collect();
+        let sw = if some.len() >= 2 {
+            random_sum(&mut rng, &some, &doms)
+        } else {
+            None
+        };
+        let lit = |v: i64| Term::Lit(Value::Int(v));
+        let mut last: Vec<Option<(images::Names<IntervalSet>, images::Tree<_>)>> = vec![None, None];
+        for step in 0..4 {
+            let cmp = |rng: &mut Rng, t: Term| {
+                let op = rng.pick(&[Prim::Eq, Prim::Ne, Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge]);
+                Term::Prim(op, vec![t, lit(rng.int(-30, 30))])
+            };
+            let (test, own): (Term, Vec<Arc<str>>) = match (rng.below(3), &sw) {
+                (1, _) => {
+                    let t = Term::Prim(
+                        Prim::Add,
+                        vec![Term::Var(z.clone()), Term::Var(xs[0].clone())],
+                    );
+                    (
+                        Term::Prim(Prim::Ge, vec![t, lit(rng.int(-30, 30))]),
+                        vec![xs[0].clone()],
+                    )
+                }
+                (2, Some(_)) => {
+                    let a = cmp(&mut rng, Term::Var(z.clone()));
+                    let b = cmp(&mut rng, Term::Var(w.clone()));
+                    (Term::Prim(Prim::And, vec![a, b]), vec![])
+                }
+                _ => (cmp(&mut rng, Term::Var(z.clone())), vec![]),
+            };
+            let demand = Demand::Bool(rng.below(2) == 0);
+            let ints = if rng.below(4) == 0 {
+                random_domain(&mut rng)
+            } else {
+                IntervalSet::top()
+            };
+            let lets_of = |reads: Option<[Arc<TermRead<IntervalSet>>; 2]>| {
+                let mut lets = Lets::new();
+                let mut add = |n: &Arc<str>, s: &LetPa, i: usize| {
+                    let read = reads.as_ref().map(|r| r[i].clone() as _);
+                    let l = LetIn {
+                        summary: s.clone(),
+                        ints: ints.clone(),
+                        read,
+                    };
+                    lets.insert(n.clone(), l);
+                };
+                add(&z, &sz, 0);
+                if let Some(sw) = &sw {
+                    add(&w, sw, 1);
+                }
+                lets
+            };
+            // Each summary's tree, from the last one's where there is one.
+            let reads = [Some(&sz), sw.as_ref()].map(|s| {
+                let s = s.unwrap_or(&sz);
+                let leaf = |v: &Arc<str>, d: &IntervalSet| s.term_bounds(v, d);
+                (s, leaf)
+            });
+            let mut trees = Vec::new();
+            for (i, (s, leaf)) in reads.iter().enumerate() {
+                let tree = (last[i].as_ref())
+                    .and_then(|(n, t)| {
+                        let changed = images::changed(n, &names);
+                        images::updated(t, changed, s.vars(), &names, s.vars().len(), leaf)
+                    })
+                    .unwrap_or_else(|| images::fresh(s.vars(), &names, leaf));
+                last[i] = Some((names.clone(), tree.clone()));
+                trees.push(Arc::new(TermRead {
+                    names: names.clone(),
+                    vars: s.vars().clone(),
+                    tree,
+                    ints: |d: &IntervalSet| d,
+                }));
+            }
+            let reads = [trees[0].clone(), trees[1].clone()];
+            // The inputs a walk gives: the test's own, and those its summaries read.
+            let read = sz
+                .vars()
+                .iter()
+                .chain(sw.iter().flat_map(|s| s.vars().iter()));
+            let all: Domains = (own.iter().chain(read))
+                .map(|x| (x.clone(), names[x].clone()))
+                .collect();
+            let over: Domains = own.iter().map(|x| (x.clone(), names[x].clone())).collect();
+            let want = let_preimage(&test, &all, lets_of(None), &demand);
+            let got = let_narrowing(&test, &over, lets_of(Some(reads.clone())), &demand);
+            let whole = let_preimage(&test, &over, lets_of(Some(reads)), &demand);
+            let rebuilt: Domains = match &got {
+                None => all
+                    .keys()
+                    .map(|x| (x.clone(), IntervalSet::empty()))
+                    .collect(),
+                Some(m) => {
+                    assert!(
+                        m.keys().all(|x| all.contains_key(x)),
+                        "round {round}: {m:?}"
+                    );
+                    let of = |x: &Arc<str>| m.get(x).unwrap_or(&names[x]).clone();
+                    all.keys().map(|x| (x.clone(), of(x))).collect()
+                }
+            };
+            let case = format!("round {round} step {step}: {test} demand {demand:?} over {all:?}");
+            assert_eq!(rebuilt, want, "{case}");
+            assert_eq!(whole, want, "{case}");
+            compared += 1;
+            if want.values().any(IntervalSet::is_empty) {
+                break;
+            }
+            if want != all {
+                narrowed += 1;
+            }
+            for (x, d) in want {
+                names.insert(x, d);
+            }
+        }
+    }
+    assert!(
+        compared > 1_000 && narrowed > 300,
+        "{compared} compared, {narrowed} narrowed"
+    );
 }

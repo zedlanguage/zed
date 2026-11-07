@@ -2518,3 +2518,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `?` on `Option` from inside a `for` loop and after calls, leaving with `None` when a conjunct is not of the route's form or a projection refuses, so the caller takes the whole projection | `Scope::project_by_pendants`, `Scope::pendant`, `one_disjunction` | Early exit (gap 12) | A fold over the conjuncts whose result is an option, matched once after it |
 | A `BTreeMap` entry met in place (`*d = d.meet(..)` through `entry().or_insert_with`), and a counter map filled by `*count.entry(n).or_default() += 1` | `Scope::project_by_pendants` (`forms`, `count`) | Mutation (gap 11) | A fold building a persistent map, each step returning the map with the entry replaced |
+
+## Entries from PA-letpre-linear (`crates/zedc-preimage/src/preimage.rs`, `images.rs`, `product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A trait object `Arc<dyn SummaryRead>` in `LetIn`, so that `preimage.rs` reads the tree of `images.rs` without importing it, and an `Rc<[Arc<dyn SummaryRead>]>` of them in the transfer's context | `preimage::SummaryRead`, `LetIn::read`, `Cx::reads`, `images::TermRead` | Trait objects and reference counts | A record of functions (`vars`, `ints`, `total`, `visit`) or the read passed as a value of a known type once the two modules may share it |
+| `images::Tree<L>` and `Read<S, P, L>` generic over the leaf through a trait `Sum` (`zero`, `plus`), with a default type parameter | `images::Sum`, `images::Tree`, `images::updated`, `images::fresh`, `images::visit` | A trait with an associated constructor; default type parameters | A persistent ordered map parameterized by a monoid record (`zero`, `plus`) |
+| A walk of the tree pruned by a `&dyn Fn` predicate on the subtree sums that calls a `&mut dyn FnMut` callback, which records an early end in a captured `Option<Option<Res>>` and stops the walk by returning `false` | `images::visit`, `Tx::invert_read` | Mutation of captured state (gap 11), Early exit (gap 12) | A fold over the tree carrying the box and an ending value, pruning by the sums |
+| A second cache of the reads of each summary beside the first, `Arc<Mutex<HashMap<u64, ..>>>` written from `&self` | `product::Reads`, `Scope::term_read` | Interior mutability behind a shared reference, as PA-walk-multi's | As PA-walk-multi's: the map of reads threaded through the walk |
+| A flag in the run (`Run::marked`) set the first time the landmarks are read, to add the ends of the reads' inputs lazily through `&mut self` | `Tx::marks` | Mutation (gap 11) | The landmarks computed on demand and returned with the run's state |

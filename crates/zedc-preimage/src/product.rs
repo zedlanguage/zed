@@ -52,8 +52,8 @@ use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
 use super::images;
 use super::preimage::{
-    Classes, Demand, Domains, LetIn, LetPa, Lets, Shift, follow_own, let_preimage, let_summary,
-    preimage, relations, witness,
+    Classes, Demand, Domains, LetIn, LetPa, Lets, Shift, TermBounds, follow_own, let_narrowing,
+    let_summary, preimage, relations, witness,
 };
 use zedc_int::int::Int;
 use zedc_lattice::affine::Bounds;
@@ -557,8 +557,16 @@ impl fmt::Debug for Held {
 /// bindings, and the tree of its inputs.
 type HeldRead = images::Read<(Arc<Held>, Orders), Product>;
 
+/// What a test last read of one summary: the scope's names, and the tree of the bounds of the
+/// summary's terms over the inputs there ([`Scope::term_read`]).
+type BoundsRead = images::Read<(), Product, TermBounds>;
+
+/// The reads of each held summary ([`HeldRead`]), and those of tests ([`BoundsRead`]).
 #[derive(Clone, Default)]
-struct Reads(Arc<Mutex<HashMap<u64, HeldRead>>>);
+struct Reads(
+    Arc<Mutex<HashMap<u64, HeldRead>>>,
+    Arc<Mutex<HashMap<u64, BoundsRead>>>,
+);
 
 impl PartialEq for Reads {
     fn eq(&self, _: &Reads) -> bool {
@@ -1543,14 +1551,15 @@ impl Scope {
 
     /// The integer names of `free`, as inputs over their integers, or, when bound by a `let`
     /// with a summary that holds ([`Scope::summary`]), as names read through it, and the id
-    /// of the summary with the most inputs among these. With `all`, the inputs of each
-    /// summary are inputs too, for a test, which narrows them ([`let_preimage`]): `O(k)` for
-    /// `k` inputs, also when none of them narrows, so `k` tests of one name over `k` inputs
-    /// cost `Θ(k²)` (COMPLEXITY.md row PA-walk-multi, residual). Without, only the input of a
-    /// summary over one, which a term of a value other than a sum reads it through (`2 * y` is
-    /// a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does not read the inputs of the
-    /// summaries it adds: so a chain of bindings each adding the one before costs each binding
-    /// its own term, not the inputs of all before it.
+    /// of the summary with the most inputs among these. With `all`, for a test, which narrows
+    /// the inputs of each summary too ([`let_narrowing`]), a summary over two or more inputs
+    /// is read through the tree of its terms' bounds ([`Scope::term_read`]), its inputs not
+    /// among the inputs, so that the test costs the inputs it narrows and not all `k`; in a
+    /// scope no state reaches, its inputs are inputs, each empty. Without `all`, only the
+    /// input of a summary over one, which a term of a value other than a sum reads it through
+    /// (`2 * y` is a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does
+    /// not read the inputs of the summaries it adds: so a chain of bindings each adding the
+    /// one before costs each binding its own term, not the inputs of all before it.
     fn inputs_and_lets(
         &self,
         free: &BTreeSet<Arc<str>>,
@@ -1571,7 +1580,10 @@ impl Scope {
                     if widest.is_none_or(|(w, _)| k > w) {
                         widest = Some((k, id));
                     }
-                    if all || k == 1 {
+                    let mut read = None;
+                    if all && k > 1 && !self.bottom {
+                        read = Some(Arc::new(self.term_read(&summary, id)) as _);
+                    } else if all || k == 1 {
                         for v in summary.vars() {
                             inputs.insert(v.clone(), self.get(v).ints().clone());
                         }
@@ -1581,6 +1593,7 @@ impl Scope {
                         LetIn {
                             summary,
                             ints: p.ints().clone(),
+                            read,
                         },
                     );
                 }
@@ -1588,6 +1601,40 @@ impl Scope {
             }
         }
         (inputs, lets, widest.map(|(_, id)| id))
+    }
+
+    /// The inputs of `summary`, held by the id `id`, as a test reads them here: each input's
+    /// integers, and the bounds of the summary's term of each ([`LetPa::term_bounds`]) in a
+    /// tree found from that of the last test of the summary by setting the inputs whose
+    /// products differ between the two scopes ([`images::updated`]), or afresh when there is
+    /// none or the differences are as many as the inputs ([`images::fresh`]). Costs the lesser
+    /// of the differences and the inputs, times `O(log k)` for `k` inputs: `k` tests of one
+    /// name, each narrowing a few names, cost `O(k log k)`, where reading the inputs cost
+    /// `O(k)` a test (item PA-letpre-linear). The summary holds here ([`Scope::holds`]), so
+    /// the scope has each of its inputs.
+    fn term_read(&self, summary: &LetPa, id: u64) -> images::TermRead<Product> {
+        let vars = summary.vars();
+        let limit = vars.len().min(self.names.len());
+        let leaf = |v: &Arc<str>, q: &Product| summary.term_bounds(v, q.ints());
+        let mut reads = self.reads.1.lock().unwrap_or_else(PoisonError::into_inner);
+        let tree = (reads.get(&id))
+            .and_then(|r| {
+                let changed = images::changed(&r.names, &self.names);
+                images::updated(&r.tree, changed, vars, &self.names, limit, leaf)
+            })
+            .unwrap_or_else(|| images::fresh(vars, &self.names, leaf));
+        let read = images::Read {
+            names: self.names.clone(),
+            sum: (),
+            tree: tree.clone(),
+        };
+        reads.insert(id, read);
+        images::TermRead {
+            names: self.names.clone(),
+            vars: vars.clone(),
+            tree,
+            ints: Product::ints,
+        }
     }
 
     /// Records `t` as a written constraint that holds.
@@ -2369,23 +2416,25 @@ impl Scope {
                 });
             }
             // The names bound by `let`s read through their summaries: the test narrows the
-            // inputs they are computed from as well as the names.
-            //
-            // Complexity tradeoff: each test of a name whose summary reads `k` inputs builds the
-            // domains of all `k` and bounds each term ([`let_preimage`], `Tx::invert_sep`), `O(k)`,
-            // also when none narrows: `k` tests of one such name cost `Θ(k²)` (3,200 and 204,800
-            // term bounds at `k` = 40 and 320, measured). Given up: a test costs its summary's
-            // inputs, not those it narrows. Trigger: many tests of names over many inputs; the
-            // checker reads its tests here too. Test: none at scale; COMPLEXITY.md row
-            // PA-walk-multi, residual. A complete solution would read the summary's bounds from
-            // the sums of its tree of inputs ([`images`]) and find the inputs a test narrows,
-            // those whose term spans more than the slack, from a greatest width kept per subtree,
-            // so that a test costs the inputs it narrows times `O(log k)`.
+            // inputs they are computed from as well as the names. Only the inputs it narrows
+            // are met, each `O(log k)` for a summary of `k` inputs read through the tree of its
+            // terms' bounds ([`Scope::inputs_and_lets`], `Tx::invert_read`); the others keep
+            // their integers, which meeting with their own would not change. A box with no
+            // point empties every input, once, as the scope then becomes one no state reaches.
             let (over, lets, _) = self.inputs_and_lets(&free, true);
             let through = if lets.is_empty() {
                 Domains::new()
             } else {
-                let_preimage(t, &over, lets, &Demand::Bool(outcome))
+                let reads: Vec<_> = lets.values().filter_map(|l| l.read.clone()).collect();
+                match let_narrowing(t, &over, lets, &Demand::Bool(outcome)) {
+                    Some(narrowed) => narrowed,
+                    None => {
+                        let vars = reads.iter().flat_map(|r| r.vars().iter());
+                        (over.keys().chain(vars))
+                            .map(|n| (n.clone(), IntervalSet::empty()))
+                            .collect()
+                    }
+                }
             };
             for (n, d) in pre.domains.iter().chain(&through) {
                 if let Some(p) = self.names.get_mut(n) {

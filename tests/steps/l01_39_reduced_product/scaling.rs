@@ -1023,3 +1023,58 @@ fn a_binding_over_many_inputs_narrows_each_and_is_read_in_linear_time() {
         super::arms(t, s);
     });
 }
+
+/// `if x1 >= 0 { if x1 <= 1 { … let z = x1 + … + xk in if z >= 1 { if z >= 2 { … if z >= k
+/// { 0 } else { k } … } else { 2 } } else { 1 } … } else { -1 } } else { -1 }`: each `xi` in
+/// `0..=1`, then `k` tests of `z`, a name over `k` inputs, each arm reachable.
+fn tests_of_one_sum(k: usize) -> (Vec<Arc<str>>, Term) {
+    let names: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
+    let mut t = int(0);
+    for i in (1..=k).rev() {
+        t = Term::If(
+            arc(prim(Prim::Ge, var("z"), int(i as i64))),
+            arc(t),
+            arc(int(i as i64)),
+        );
+    }
+    let sum = (2..=k).fold(var("x1"), |s, i| prim(Prim::Add, s, var(&format!("x{i}"))));
+    t = Term::Let("z".into(), arc(sum), arc(t));
+    for i in (1..=k).rev() {
+        let x = format!("x{i}");
+        t = Term::If(
+            arc(prim(Prim::Ge, var(&x), int(0))),
+            arc(Term::If(
+                arc(prim(Prim::Le, var(&x), int(1))),
+                arc(t),
+                arc(int(-1)),
+            )),
+            arc(int(-1)),
+        );
+    }
+    (names, t)
+}
+
+#[test]
+fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() {
+    let built: BTreeMap<usize, (Scope, Term)> = [40, 320]
+        .into_iter()
+        .map(|k| {
+            let (names, t) = tests_of_one_sum(k);
+            (k, (ints(&names), t))
+        })
+        .collect();
+    let counted = |k: usize| {
+        let (s, t) = &built[&k];
+        scaling::on_a_thread(1 << 26, || {
+            let before = zedc::store::preimage::counts::term_bounds();
+            let a = super::arms(t, s);
+            assert!(a.iter().all(|a| a.reachable()), "{k} tests");
+            zedc::store::preimage::counts::term_bounds() - before
+        })
+    };
+    let (small, large) = (counted(40), counted(320));
+    assert!(
+        large as f64 <= scaling::RATIO * small as f64,
+        "term bounds: {small} at 40 tests, {large} at 320"
+    );
+}
