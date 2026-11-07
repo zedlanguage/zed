@@ -1449,21 +1449,353 @@ fn holds_whole(
 /// Whether `f` holds somewhere, with a point when it does and the solver gives one, every atom
 /// of `f` given a value.
 fn found(f: &Formula) -> (Result<bool, Refusal>, Option<Point>) {
-    match decide(f) {
+    match decided(f) {
         Ok(true) => (Ok(true), point(f)),
         other => (other, None),
     }
 }
 
-/// A point where `f` holds, every atom of `f` given a value, when the solver gives one.
+/// A point where `f` holds, every atom of `f` given a value, when the solver gives one: of `f`,
+/// or, where the solver refuses `f`, of `f` with its bindings in place ([`Bound`]).
 fn point(f: &Formula) -> Option<Point> {
-    satisfiable(f).ok().flatten().map(|m| {
+    let filled = |g: &Formula, m: Model| {
         let mut p: Point = m.into_iter().collect();
-        for a in f.atoms() {
+        for a in g.atoms() {
             p.entry(a).or_default();
         }
         p
+    };
+    match satisfiable(f) {
+        Ok(m) => m.map(|m| filled(f, m)),
+        Err(_) => {
+            let mut b = Bound::of(f)?;
+            let m = satisfiable(&b.f).ok().flatten()?;
+            let mut p = filled(&b.f, m);
+            b.back(&mut p);
+            Some(p)
+        }
+    }
+}
+
+/// [`decide`] of a whole question (LOAD-extend-refuses): where the solver refuses `f`, `f` is
+/// asked again with its bindings in place ([`Bound`]), and the first refusal is kept when that
+/// is refused too, so a question refused both ways prints the refusal it printed before. A
+/// question [`Extending`] decides whole reads its kept parts over the atoms their calls bind,
+/// tied to the caller's by equalities (`x@3 == x@4 + 3`), while the relation written whole
+/// reads the caller's atoms alone; the solver's search depends on that shape, and refused the
+/// first where it decided the second (Shadows on the chain of
+/// `l01_38_presburger::one_scope::a_link_decided_whole_is_answered_where_its_relation_is`).
+// Complexity tradeoff: a question the solver refuses is asked twice, so it costs that refusal,
+// the substitution (time of `f`, times a logarithm) and the second ask. Why: neither shape is
+// refused less often in general, since the search depends on the rows it is given, so the
+// form asked first is the one asked before and the second runs only on a refusal. Trigger: a
+// whole question refused with its bindings as rows. Tests
+// `l01_38_presburger::one_scope::a_link_decided_whole_is_answered_where_its_relation_is` and
+// `no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided`.
+// COMPLEXITY.md row LOAD-extend-refuses. A complete solution is a solver whose answer does not
+// depend on how unit equalities are written, substituting them before its search.
+fn decided(f: &Formula) -> Result<bool, Refusal> {
+    decide(f).or_else(|e| match Bound::of(f) {
+        Some(b) => decide(&b.f).map_err(|_| e),
+        None => Err(e),
     })
+}
+
+/// `f` with its bindings in place, as a whole question refused with them as rows is asked again
+/// ([`Bound`]), or `None` when it has none: for tests. Time of `f` times a logarithm.
+pub fn with_bindings_in_place(f: &Formula) -> Option<Formula> {
+    Bound::of(f).map(|b| b.f)
+}
+
+/// A formula with its bindings in place: each atom that a top-level equality of one or two
+/// terms with coefficients 1 or -1 sets (`x@3 == x@4 + 3`, a call's argument bound to its
+/// callee's atom, or `q12 == 12`, a binding variable) replaced, everywhere in the formula, by
+/// what it equals, so that one atom of each binding is left, as in the relation written over
+/// its inputs; and the quotient and remainder of a division read twice, through two calls,
+/// replaced by those of its first reading ([`Bound::merge_divisions`]), as the relation written
+/// whole reads it once. Exact: the formula with them in place holds where the formula does,
+/// with the replaced atoms given back by [`Bound::back`]. An atom that is a factor of a product
+/// is not replaced.
+struct Bound {
+    f: Formula,
+    /// Each replaced atom `a`, with `(k, b, c)` for `a == k * b + c`, `k` 1 or -1: `b` the atom
+    /// left, or another replaced atom ([`Bound::resolve`]); or `None`, with `k` 0, for `a == c`.
+    up: HashMap<Atom, (Int, Option<Atom>, Int)>,
+}
+
+/// A top-level division row `l + s·(m·q + r) == 0`, `s` 1 or -1, with `0 <= r <= m - 1` at the
+/// top level too: `q` and `r` are the quotient and remainder of `-s·l` by `m`.
+struct Division<'a> {
+    row: &'a Con,
+    q: Atom,
+    r: Atom,
+    m: Int,
+}
+
+impl Bound {
+    /// `f` with its bindings in place, `None` when it has none. Each top-level constraint is
+    /// read once and each atom resolved through the replaced ones with the path compressed (a
+    /// union of classes), so the time is that of `f` times a logarithm.
+    fn of(f: &Formula) -> Option<Bound> {
+        let mut factors: HashSet<Atom> = HashSet::new();
+        for a in &f.atoms() {
+            if let Atom::Product(x, y) = a {
+                factors.insert(x.atom());
+                factors.insert(y.atom());
+            }
+        }
+        let free = |a: &Atom| !matches!(a, Atom::Product(..)) && !factors.contains(a);
+        let mut b = Bound {
+            f: Formula::top(),
+            up: HashMap::new(),
+        };
+        // The top-level constraints, through the kept conjunctions, each part once.
+        let mut rows: Vec<&Con> = Vec::new();
+        let mut seen: HashSet<Id> = HashSet::new();
+        let mut todo: Vec<&Formula> = vec![f];
+        while let Some(g) = todo.pop() {
+            match g {
+                Formula::And(gs) if seen.insert(Id::any(g)) => todo.extend(gs.iter().rev()),
+                Formula::Con(c) => rows.push(c),
+                _ => {}
+            }
+        }
+        for c in &rows {
+            if c.rel == Rel::Eq
+                && c.lin.terms.len() <= 2
+                && c.lin.terms.iter().all(|(a, k)| k.is_unit() && free(a))
+            {
+                b.bind(&c.lin);
+            }
+        }
+        b.merge_divisions(&rows, &free);
+        if b.up.is_empty() {
+            return None;
+        }
+        // Each replaced atom pointed at the atom left, so that each is read with one lookup.
+        let replaced: Vec<Atom> = b.up.keys().cloned().collect();
+        for a in &replaced {
+            b.resolve(a);
+        }
+        let up = &b.up;
+        let put = |c: &Con| {
+            let lin = Bound::through(up, &c.lin, &[]);
+            match lin.terms.is_empty() {
+                true => match (c.rel, lin.constant.is_zero(), lin.constant.is_negative()) {
+                    (Rel::Eq, true, _) | (Rel::Ge, _, false) => Formula::top(),
+                    _ => Formula::bottom(),
+                },
+                false => Formula::Con(Con { lin, rel: c.rel }),
+            }
+        };
+        b.f = f.map_cons(&put);
+        Some(b)
+    }
+
+    /// Reads the equality `lin == 0`, of at most two atoms each with coefficient 1 or -1, over
+    /// the atoms left: one atom left with coefficient 1 or -1 is set to a constant, and of two
+    /// left, each with coefficient 1 or -1, the larger is set by the other. O(log n) amortized.
+    fn bind(&mut self, lin: &Lin) {
+        let mut left: Vec<(Atom, Int)> = Vec::new();
+        let mut rest = lin.constant.clone();
+        for (a, k) in &lin.terms {
+            let (j, r, d) = self.resolve(a);
+            rest = &rest + &(k * &d);
+            let Some(r) = r else { continue };
+            match left.iter_mut().find(|(s, _)| *s == r) {
+                Some((_, e)) => *e = &*e + &(k * &j),
+                None => left.push((r, k * &j)),
+            }
+        }
+        left.retain(|(_, e)| !e.is_zero());
+        left.sort_by(|x, y| y.0.cmp(&x.0));
+        // e·r + o·s + rest == 0, r the larger atom: r == -(o·s + rest) / e, e being 1 or -1.
+        match left.as_slice() {
+            [(r, e)] if e.is_unit() => {
+                self.up.insert(r.clone(), (Int::ZERO, None, -&(&rest * e)));
+            }
+            [(r, e), (s, o)] if e.is_unit() && o.is_unit() => {
+                self.up
+                    .insert(r.clone(), (-&(o * e), Some(s.clone()), -&(&rest * e)));
+            }
+            _ => {}
+        }
+    }
+
+    /// Merges the divisions of `rows` that divide the same term by the same number: rows
+    /// `l == m·q + r` and `l == m·q' + r'`, with `0 <= r <= m - 1` and `0 <= r' <= m - 1` among
+    /// `rows` too, give `q == q'` and `r == r'`, since the quotient and remainder of a division
+    /// are unique. A call reads its callee's definitions over the callee's atoms, so a
+    /// definition reached through two calls is two divisions, which the bindings put in place
+    /// ([`Bound::bind`]) make divisions of one term. The divisions are taken with those their
+    /// terms use first (a visited set), so a term is read over the merged atoms of the
+    /// divisions inside it; time of `rows` times a logarithm.
+    fn merge_divisions(&mut self, rows: &[&Con], free: &dyn Fn(&Atom) -> bool) {
+        // The atoms bounded below by 0 or more, and the least upper bound of each.
+        let mut from0: HashSet<&Atom> = HashSet::new();
+        let mut upper: HashMap<&Atom, &Int> = HashMap::new();
+        for c in rows {
+            if c.rel != Rel::Ge || c.lin.terms.len() != 1 {
+                continue;
+            }
+            let Some((a, k)) = c.lin.terms.iter().next() else {
+                continue;
+            };
+            // a + c >= 0 is a >= -c; -a + c >= 0 is a <= c.
+            if *k == Int::ONE && !c.lin.constant.is_positive() {
+                from0.insert(a);
+            } else if *k == -&Int::ONE {
+                let u = upper.entry(a).or_insert(&c.lin.constant);
+                if c.lin.constant < **u {
+                    *u = &c.lin.constant;
+                }
+            }
+        }
+        let kept = |a: &Atom, up: &HashMap<Atom, _>| free(a) && !up.contains_key(a);
+        let mut divs: Vec<Division> = Vec::new();
+        for c in rows {
+            if c.rel != Rel::Eq || c.lin.terms.len() < 3 {
+                continue;
+            }
+            let found = c.lin.terms.iter().find_map(|(r, kr)| {
+                if !(kr.is_unit() && from0.contains(r) && kept(r, &self.up)) {
+                    return None;
+                }
+                let u = upper.get(r)?;
+                c.lin.terms.iter().find_map(|(q, kq)| {
+                    let m = kq.abs();
+                    (q != r && kq.is_positive() == kr.is_positive() && **u < m && kept(q, &self.up))
+                        .then(|| (q.clone(), r.clone(), m))
+                })
+            });
+            if let Some((q, r, m)) = found {
+                divs.push(Division { row: c, q, r, m });
+            }
+        }
+        // Each division after those whose quotient or remainder its term uses.
+        let mut owner: HashMap<&Atom, usize> = HashMap::new();
+        for (i, d) in divs.iter().enumerate() {
+            owner.insert(&d.q, i);
+            owner.insert(&d.r, i);
+        }
+        let mut order: Vec<usize> = Vec::with_capacity(divs.len());
+        let mut visited = vec![false; divs.len()];
+        for start in 0..divs.len() {
+            if visited[start] {
+                continue;
+            }
+            visited[start] = true;
+            let mut stack: Vec<(usize, std::collections::btree_map::Iter<Atom, Int>)> =
+                vec![(start, divs[start].row.lin.terms.iter())];
+            while let Some((i, it)) = stack.last_mut() {
+                let i = *i;
+                match it.next() {
+                    Some((a, _)) => {
+                        if let Some(&j) = owner.get(a)
+                            && !visited[j]
+                        {
+                            visited[j] = true;
+                            stack.push((j, divs[j].row.lin.terms.iter()));
+                        }
+                    }
+                    None => {
+                        order.push(i);
+                        stack.pop();
+                    }
+                }
+            }
+        }
+        let mut first: HashMap<(Lin, Int), usize> = HashMap::new();
+        for i in order {
+            let d = &divs[i];
+            for a in d.row.lin.terms.keys() {
+                self.resolve(a);
+            }
+            let mut l = Bound::through(&self.up, &d.row.lin, &[&d.q, &d.r]);
+            // l + s·(m·q + r) == 0: the term divided is -s·l.
+            if d.row.lin.terms[&d.r].is_positive() {
+                l = l.times(-1);
+            }
+            match first.entry((l, d.m.clone())) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(i);
+                }
+                std::collections::hash_map::Entry::Occupied(o) => {
+                    let e = &divs[*o.get()];
+                    for (x, y) in [(&d.q, &e.q), (&d.r, &e.r)] {
+                        let tie = Lin {
+                            terms: BTreeMap::from([(x.clone(), Int::ONE), (y.clone(), -&Int::ONE)]),
+                            constant: Int::ZERO,
+                        };
+                        self.bind(&tie);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `lin` over the atoms left, each atom but `skip` read through `up` with one lookup (each
+    /// replaced atom pointing at the atom left, [`Bound::resolve`]).
+    fn through(up: &HashMap<Atom, (Int, Option<Atom>, Int)>, lin: &Lin, skip: &[&Atom]) -> Lin {
+        let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+        let mut constant = lin.constant.clone();
+        for (a, k) in &lin.terms {
+            if skip.contains(&a) {
+                continue;
+            }
+            let (j, r, d) = match up.get(a) {
+                Some((j, r, d)) => (j.clone(), r.clone(), d.clone()),
+                None => (Int::ONE, Some(a.clone()), Int::ZERO),
+            };
+            constant = &constant + &(k * &d);
+            let Some(r) = r else { continue };
+            let v = terms.remove(&r).map_or_else(|| k * &j, |v| &v + &(k * &j));
+            if !v.is_zero() {
+                terms.insert(r, v);
+            }
+        }
+        Lin { terms, constant }
+    }
+
+    /// `(k, r, d)` with `a == k * r + d` and `r` an atom not replaced, or `(0, None, d)` for
+    /// `a == d`: the path from `a` followed to its end, and each atom on it then pointed at
+    /// that end directly. O(log n) amortized.
+    fn resolve(&mut self, a: &Atom) -> (Int, Option<Atom>, Int) {
+        let up = &mut self.up;
+        let mut path: Vec<(Atom, Int, Int)> = Vec::new();
+        let mut at = Some(a.clone());
+        while let Some(x) = at.take() {
+            match up.get(&x) {
+                Some((k, b, d)) => {
+                    path.push((x, k.clone(), d.clone()));
+                    at = b.clone();
+                }
+                None => {
+                    at = Some(x);
+                    break;
+                }
+            }
+        }
+        // From the end back to `a`: x == k·y + d and y == j·r + e give x == kj·r + kd + d.
+        let (mut j, mut e) = (Int::ONE, Int::ZERO);
+        for (x, k, d) in path.into_iter().rev() {
+            e = &(&k * &e) + &d;
+            j = &k * &j;
+            up.insert(x, (j.clone(), at.clone(), e.clone()));
+        }
+        (j, at, e)
+    }
+
+    /// Gives each replaced atom its value at `p`, a point of the formula with the bindings in
+    /// place: a point of the formula itself.
+    fn back(&mut self, p: &mut Point) {
+        let replaced: Vec<Atom> = self.up.keys().cloned().collect();
+        for a in replaced {
+            let (k, r, d) = self.resolve(&a);
+            let v = r.and_then(|r| p.get(&r).cloned()).unwrap_or_default();
+            p.insert(a, &(&k * &v) + &d);
+        }
+    }
 }
 
 /// Whether the negation of `g` and its definitions hold somewhere, decided whole (with the
@@ -1509,7 +1841,7 @@ fn decide_defined(
     {
         return Ok(b);
     }
-    decide(&with(&reached(&f, def), f))
+    decided(&with(&reached(&f, def), f))
 }
 
 impl Summaries {

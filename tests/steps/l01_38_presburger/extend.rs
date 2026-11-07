@@ -143,3 +143,71 @@ fn a_chain_whose_points_move_is_decided_whole() {
         assert_eq!(e.answers(&f), decided(&f), "{f}");
     }
 }
+
+/// A chain of `n` calls as the scope reads it (LOAD-extend-refuses): `x{i} == x{i+1} + k`, the
+/// argument of call i bound to its callee's atom, written from the last link back so that the
+/// bindings resolve through long paths; `b{i} == i`, a binding's own variable; and at each link
+/// the callee's `x{i} mod 3`, a division over the callee's atom, with a disjunction over its
+/// remainder. With `k` 0 every division divides the same term.
+fn bound_chain(n: usize, k: i64) -> Formula {
+    let x = |i: usize| sym(&format!("x{i}"));
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let mut fs = Vec::new();
+    for i in (0..n).rev() {
+        fs.push(eq(x(i), x(i + 1).plus(&Lin::constant(k))));
+        fs.push(eq(sym(&format!("b{i}")), Lin::constant(i as i64)));
+    }
+    for i in 0..=n {
+        let (q, r) = (sym(&format!("q{i}")), sym(&format!("r{i}")));
+        fs.push(eq(x(i), q.times(3).plus(&r)));
+        fs.push(ge(r.clone(), Lin::constant(0)));
+        fs.push(ge(Lin::constant(2), r.clone()));
+        fs.push(Formula::or(vec![
+            eq(r.clone(), Lin::constant(1)),
+            ge(x(i), Lin::constant(10 * i as i64)),
+        ]));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn bindings_put_in_place_leave_one_atom_and_one_division() {
+    // LOAD-extend-refuses: a whole question the solver refuses is asked again with its
+    // bindings in place. Over a chain they leave one of the x atoms and no binding variable,
+    // the divisions of one term merge into one, and the formula with them in place has the
+    // answer of the formula.
+    use zedc::store::presburger::extend::with_bindings_in_place;
+    for k in [0, 2] {
+        let f = bound_chain(6, k);
+        let g = with_bindings_in_place(&f).expect("bindings");
+        let atoms = g.atoms();
+        let xs = atoms
+            .iter()
+            .filter(|a| format!("{a:?}").contains("\"x"))
+            .count();
+        let bs = atoms
+            .iter()
+            .filter(|a| format!("{a:?}").contains("\"b"))
+            .count();
+        let rs = atoms
+            .iter()
+            .filter(|a| format!("{a:?}").contains("\"r"))
+            .count();
+        assert_eq!((xs, bs), (1, 0), "{g}");
+        // With k 0 each x is the same term, so the seven divisions are one; with k 2 the terms
+        // differ by 2, so none merge.
+        assert_eq!(rs, if k == 0 { 1 } else { 7 }, "{g}");
+        assert_eq!(decide(&g), decide(&f), "{f}");
+    }
+}
+
+#[test]
+fn bindings_put_in_place_scale() {
+    // The substitution reads each top-level constraint once and resolves each atom through a
+    // union of classes with its path compressed: time of the formula times a logarithm.
+    use zedc::store::presburger::extend::with_bindings_in_place;
+    let chains = zed_tests::scaling::inputs(400, |n| bound_chain(n, 0));
+    zed_tests::scaling::check("the bindings of a chain put in place", 400, |n| {
+        assert!(with_bindings_in_place(&chains[&n]).is_some());
+    });
+}

@@ -523,11 +523,10 @@ fn answers_are_those_of_the_whole(src: &str) {
 /// answers of the conjunctions it extends, is the same, refusals too, when each kept part is
 /// read through its face where one is made (`Extending::defined_with`) as when none is
 /// (`Extending::defined`), and is the one the body closed over the definitions it reaches has,
-/// decided whole, where that is decided too; in the unit's order and in the reverse. The
-/// solver refuses some of these questions decided whole and not decided from parts, and some
-/// the other way (`x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)` beside a chain moving it
-/// by 3, `p2`), with and without faces alike.
-fn answers_with_faces_are_those_without(src: &str) {
+/// decided whole, wherever that is decided: no question decided whole is refused from parts
+/// (LOAD-extend-refuses); in the unit's order and in the reverse. A question the solver
+/// refuses whole may be answered from parts. Returns how many answers the whole gave.
+fn answers_with_faces_are_those_without(src: &str) -> usize {
     use zedc::store::presburger::extend::Extending;
     use zedc::store::presburger::{Formula, decide};
     let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
@@ -535,6 +534,7 @@ fn answers_with_faces_are_those_without(src: &str) {
     let lets = lets(&unit);
     let fs = functions(&unit);
     let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+    let mut decided = 0;
     for order in [
         (0..fs.len()).collect::<Vec<_>>(),
         (0..fs.len()).rev().collect(),
@@ -559,12 +559,14 @@ fn answers_with_faces_are_those_without(src: &str) {
                 (&a.holds, expected.body.clone()),
                 (&a.fails, Formula::negate(expected.body.clone())),
             ] {
-                if let (Ok(got), Ok(want)) = (got, whole(&expected, f)) {
-                    assert_eq!(*got, want, "`{name}` in\n{src}\n{w}");
+                if let Ok(want) = whole(&expected, f) {
+                    assert_eq!(*got, Ok(want), "`{name}` in\n{src}\n{w}");
+                    decided += 1;
                 }
             }
         }
     }
+    decided
 }
 
 /// The drifting chain of LOAD-call-summary, `q` and `p0` followed by `p{i}(x) = q(x: x) &&
@@ -744,6 +746,85 @@ fn each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole
     for _ in 0..80 {
         answers_with_faces_are_those_without(&random_disjunctive_chain(&mut rng));
     }
+}
+
+#[test]
+fn a_link_decided_whole_is_answered_where_its_relation_is() {
+    // LOAD-extend-refuses: asked from the end of the chain, `p2(x) = q(x: x) && p1(x: x + 3)
+    // && x < 2000` beside `q(x) = x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3) && 0 < x <
+    // 1000000` extends neither part's point and is decided whole. Decided over the atoms its
+    // calls bind, `x@3 == x@4 + 3` beside both callees' remainders, the solver refused it
+    // (Shadows), where it decided the relation written over the input (it holds). Now a
+    // question refused so is asked again with each binding put in place of the atom it binds,
+    // as the relation is written.
+    let q =
+        "q(x: int) = x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3) && x > 0 && x < 1000000;\n";
+    answers_with_faces_are_those_without(&drifting_chain(q, 30));
+}
+
+/// A random test of `x` with a negation: a remainder unequal to a constant, the negation of a
+/// conjunction of a remainder and a bound, or of a disjunction of two [`random_case`]s.
+fn random_negation(rng: &mut zed_tests::instances::Rng) -> String {
+    let m = rng.int(2, 11);
+    match rng.below(3) {
+        0 => format!("x mod {m} != {}", rng.int(0, m - 1)),
+        1 => format!(
+            "!(x mod {m} == {} && x > {})",
+            rng.int(0, m - 1),
+            lit(rng.int(-10, 60))
+        ),
+        _ => format!("!({} || {})", random_case(rng), random_case(rng)),
+    }
+}
+
+/// A random chain of the drifting chain's shape whose callee holds congruences, negations and
+/// disjunctions over moduli up to 11, and whose links move the argument by a random constant
+/// and may hold a negation or a disjunction of their own (LOAD-extend-refuses).
+fn random_negated_chain(rng: &mut zed_tests::instances::Rng) -> String {
+    let a = rng.int(-5, 5);
+    let b = a + rng.int(-2, 200);
+    let m = rng.int(2, 11);
+    let q = format!(
+        "{} && (x mod {m} == {} || {})",
+        random_negation(rng),
+        rng.int(0, m - 1),
+        random_case(rng)
+    );
+    let mut src = format!(
+        "q(x: int) = {q} && x > {} && x < {};\np0(x: int) = x > {};\n",
+        lit(a),
+        lit(b),
+        lit(rng.int(-10, 10)),
+    );
+    for i in 1..rng.int(2, 12) {
+        let own = match rng.below(4) {
+            0 => format!(" && {}", random_negation(rng)),
+            1 => format!(" && ({} || {})", random_case(rng), random_case(rng)),
+            _ => String::new(),
+        };
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {}) && x < {}{own};\n",
+            i - 1,
+            lit(rng.int(-6, 6)),
+            lit(rng.int(-10, 400)),
+        ));
+    }
+    src
+}
+
+#[test]
+fn no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided() {
+    // LOAD-extend-refuses: random chains with congruences, negations and disjunctions, each
+    // answer with faces and without equal, refusals too, and equal to `decide`'s on the
+    // relation written whole wherever that is decided, in both orders of the bodies. Before
+    // the fix, five of these ten chains had a question refused that the whole decided (the
+    // first at its first chain); the ten take about 9 s (dev build, load about 25).
+    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
+    let mut decided = 0;
+    for _ in 0..10 {
+        decided += answers_with_faces_are_those_without(&random_negated_chain(&mut rng));
+    }
+    assert!(decided >= 300, "{decided} answers of the whole");
 }
 
 #[test]
