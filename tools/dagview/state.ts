@@ -45,12 +45,16 @@ export interface Override {
   note?: string;
   title?: string;
   started?: string;
-  // Edges for an item the plan does not order: the items it needs, and the items that need it.
+  // Edges added to what the plan and the ledger say: the items it needs, and the items that need it.
   needs?: string[];
   feeds?: string[];
+  // Edges removed, whichever source gives them: the items it does not need.
+  notNeeds?: string[];
   // Not a step of Zed (the viewer, the test harness, an edit to the plan): no box is drawn and no
   // edge names it, while its ledger and log lines stay as history.
   outside?: boolean;
+  // For an item outside the graph: the item that took over its work, which a feed into it goes to.
+  replacedBy?: string;
 }
 
 export interface Sub {
@@ -276,7 +280,6 @@ export function buildGraph(inp: Inputs): BoardState {
   }
   const nodeIds = new Set(rows.map((r) => r.id));
 
-  // A node's state does not depend on its needs, so it is known before the edges are.
   const states = new Map<string, NodeState>();
   for (const r of rows) {
     const ov = inp.overrides[r.id]?.state;
@@ -303,43 +306,54 @@ export function buildGraph(inp: Inputs): BoardState {
     states.set(r.id, s);
   }
 
-  // Edges come from the overrides and from ledger lines, so an agent adds them by appending.
-  // An override's needs replace the needs of the item's plan row and of its own ledger lines, and the
-  // ledger feeds into it of unfinished items, so a wrong one of any can be corrected. A done item's
-  // ledger feeds into it stay: an edge out of a done item never points backward.
-  const corrected = (id: string) => Array.isArray(inp.overrides[id]?.needs);
-  const edges: [string, { needs?: string[]; feeds?: string[] }, boolean][] = [
-    ...Object.entries(inp.overrides).map(([id, ov]): [string, Override, boolean] => [id, ov, false]),
-    ...[...ledger]
-      .filter(([id]) => nodeIds.has(id))
-      .flatMap(([id, es]) => es.map((e): [string, LedgerEntry, boolean] => [id, corrected(id) ? { ...e, needs: undefined } : e, true])),
+  // Edges come from the plan rows, the overrides and ledger lines, and every source adds to the others,
+  // so an agent adds an edge by appending. An override's notNeeds removes a wrong edge, whichever source
+  // gives it. A feed into an item outside the graph goes to the item its override names in replacedBy.
+  const replaced = (f: string): string | null => {
+    const seen = new Set<string>();
+    while (outside(f)) {
+      const next = inp.overrides[f]?.replacedBy;
+      if (typeof next !== "string" || seen.has(f)) return null;
+      seen.add(f);
+      f = next;
+    }
+    return f;
+  };
+  const edges: [string, { needs?: string[]; feeds?: string[] }][] = [
+    ...Object.entries(inp.overrides),
+    ...[...ledger].filter(([id]) => nodeIds.has(id)).flatMap(([id, es]) => es.map((e): [string, LedgerEntry] => [id, e])),
   ];
   const own = new Map<string, string[]>();
   const fed = new Map<string, string[]>();
   // An agent may write a bare string; only a list of ids is read.
   const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
-  for (const [id, ov, fromLedger] of edges) {
+  for (const [id, ov] of edges) {
     if (!own.has(id)) own.set(id, []);
     own.get(id)!.push(...list(ov.needs));
+    if (outside(id)) continue;
     for (const f of list(ov.feeds)) {
-      if (outside(f)) {
-        if (!outside(id)) problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f}`);
+      const to = replaced(f);
+      if (to === null) {
+        problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f} (give ${f} a replacedBy override, or remove the feed)`);
         continue;
       }
-      if (fromLedger && corrected(f) && states.get(id) !== "done") {
-        problems.push(`DROPPED FEED: ${id} feeds ${f}, whose override lists its needs (add ${id} there, or remove the feed)`);
-        continue;
-      }
-      if (!fed.has(f)) fed.set(f, []);
-      fed.get(f)!.push(id);
+      if (!fed.has(to)) fed.set(to, []);
+      fed.get(to)!.push(id);
     }
   }
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
-    const all = [...(corrected(r.id) ? [] : r.needs), ...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])];
-    rows[i] = { ...r, needs: [...new Set(all)].filter((n) => n !== r.id && !outside(n)) };
+    const all = new Set([...r.needs, ...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])]);
+    const not = list(inp.overrides[r.id]?.notNeeds);
+    for (const n of not) {
+      if (!all.delete(n)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${r.id} notNeeds ${n}`);
+    }
+    rows[i] = { ...r, needs: [...all].filter((n) => n !== r.id && !outside(n)) };
   }
-
+  const rowIds = new Set(rows.map((r) => r.id));
+  for (const [id, ov] of Object.entries(inp.overrides)) {
+    if (!rowIds.has(id) && !outside(id)) for (const n of list(ov.notNeeds)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${id} notNeeds ${n} (${id} is no node)`);
+  }
 
   const nodes = rows.map((r): ViewNode => {
     const lines = logs.get(r.id) ?? [];

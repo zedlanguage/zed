@@ -177,22 +177,24 @@ test("override needs and feeds connect an added item", () => {
   assert.equal(nodes.get("C")!.ready, false);
 });
 
-test("override needs replace the needs of the item's own ledger lines, not its feeds", () => {
+test("override needs add to the needs of the item's own ledger lines, and notNeeds removes one", () => {
   const inp = inputs("", '{"id":"X","state":"open","needs":["A","C"],"feeds":["B"]}\n');
-  inp.overrides = { X: { needs: ["A"] } };
+  inp.overrides = { X: { needs: ["LR2"] } };
+  assert.deepEqual(by(buildNodes(inp)).get("X")!.needs, ["LR2", "A", "C"]);
+  inp.overrides = { X: { needs: ["LR2"], notNeeds: ["C"] } };
   const nodes = by(buildNodes(inp));
-  assert.deepEqual(nodes.get("X")!.needs, ["A"]);
+  assert.deepEqual(nodes.get("X")!.needs, ["LR2", "A"]);
   assert.ok(nodes.get("B")!.needs.includes("X"));
 });
 
-test("override needs also replace the ledger feeds of other items into it, but not override feeds", () => {
+test("notNeeds removes a ledger feed into the item, but override needs do not", () => {
   const inp = inputs("", '{"id":"X","state":"open","feeds":["Y"]}\n{"id":"Y","state":"done"}\n');
   inp.overrides = { Y: { needs: [] }, W: { feeds: ["Y"] } };
-  const nodes = by(buildNodes(inp));
-  assert.equal(nodes.get("Y")!.needs.includes("X"), false);
-  assert.ok(nodes.get("Y")!.needs.includes("W"));
-  inp.overrides = { W: { feeds: ["Y"] } };
   assert.ok(by(buildNodes(inp)).get("Y")!.needs.includes("X"));
+  inp.overrides = { Y: { notNeeds: ["X"] }, W: { feeds: ["Y"] } };
+  const g = buildGraph(inp);
+  assert.deepEqual(by(g.nodes).get("Y")!.needs, ["W"]);
+  assert.deepEqual(g.problems, []);
 });
 
 test("an item outside Zed draws no box, whether a plan row, the ledger or the log names it, and no edge names it", () => {
@@ -330,30 +332,36 @@ test("a label naming several items with commas is a line of each, not an item of
   assert.equal(nodes.get("LR2")!.logLines, 1);
 });
 
-test("a done item's ledger feeds into an item with override needs are kept; an unfinished one's are dropped and reported", () => {
+test("ledger feeds into an item with override needs count, whatever the source's state", () => {
   const inp = inputs(
     "",
     '{"id":"X","state":"fixed","by":"X:merge#1","commit":"c111111","feeds":["Y"]}\n' +
       '{"id":"Z","state":"open","feeds":["Y"]}\n{"id":"Y","state":"open"}\n',
   );
-  inp.overrides = { Y: { needs: [] } };
+  inp.overrides = { Y: { needs: ["A"] } };
   const g = buildGraph(inp);
-  assert.deepEqual(by(g.nodes).get("Y")!.needs, ["X"]);
-  assert.deepEqual(g.problems, ["DROPPED FEED: Z feeds Y, whose override lists its needs (add Z there, or remove the feed)"]);
+  assert.deepEqual(by(g.nodes).get("Y")!.needs, ["A", "X", "Z"]);
+  assert.deepEqual(g.problems, []);
 });
 
-test("a feed into an item outside the graph is reported; one from an outside item is not", () => {
-  const inp = inputs("", '{"id":"X","state":"open","feeds":["O","C"]}\n{"id":"V","state":"done","feeds":["C"]}\n');
-  inp.overrides = { O: { outside: true }, V: { outside: true } };
+test("a feed into an outside item goes to its replacedBy item, and without one is reported", () => {
+  const inp = inputs("", '{"id":"X","state":"open","feeds":["O","P","C"]}\n{"id":"V","state":"done","feeds":["C","O"]}\n');
+  inp.overrides = { O: { outside: true, replacedBy: "Q" }, Q: { outside: true, replacedBy: "LR2" }, P: { outside: true }, V: { outside: true } };
   const g = buildGraph(inp);
-  assert.deepEqual(g.problems, ["FEED INTO OUTSIDE ITEM: X feeds O"]);
-  assert.ok(by(g.nodes).get("C")!.needs.includes("X"));
+  assert.deepEqual(g.problems, ["FEED INTO OUTSIDE ITEM: X feeds P (give P a replacedBy override, or remove the feed)"]);
+  const nodes = by(g.nodes);
+  assert.deepEqual(nodes.get("LR2")!.needs, ["X"]);
+  assert.ok(nodes.get("C")!.needs.includes("X"));
+  inp.overrides.Q.replacedBy = "O";
+  assert.deepEqual(buildGraph(inp).problems.length, 2);
 });
 
-test("override needs replace a plan row's needs, and feeds into it still count", () => {
+test("notNeeds removes a plan row's need, and one that matches no edge is reported", () => {
   const inp = inputs("", '{"id":"X","state":"fixed","by":"orchestrator","feeds":["C"]}\n');
-  inp.overrides = { C: { needs: ["A"] }, W: { feeds: ["C"] } };
-  assert.deepEqual(by(buildNodes(inp)).get("C")!.needs, ["A", "W", "X"]);
+  inp.overrides = { C: { notNeeds: ["A", "LR2"] }, W: { feeds: ["C"] }, NONE: { notNeeds: ["A"] } };
+  const g = buildGraph(inp);
+  assert.deepEqual(by(g.nodes).get("C")!.needs, ["B", "W", "X"]);
+  assert.deepEqual(g.problems, ["NOT-NEEDS MATCHES NO EDGE: C notNeeds LR2", "NOT-NEEDS MATCHES NO EDGE: NONE notNeeds A (NONE is no node)"]);
 });
 
 test("a ledger id with a colon or joined with + is a line of each item it names", () => {
