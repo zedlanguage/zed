@@ -1501,11 +1501,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | LOAD-call-summary | impl attempt 1 | 2026-11-07 10:40 | resumed for option (a): conjunction faces; load 13.14 11.93 15.50 |
-| SCALE-ratio | impl attempt 1 | 2026-11-07 11:08 | recording added to scaling.rs (ZED_SCALING_RATIOS); run 1 of all groups with scaling tests starting, load 21.67 |
+| MAIN-red | impl attempt 1 | 2026-11-07 11:37 | confirmed at d1ee907c: l01_37a 3 snapshots fail (Outcome gains address: Some(#..)/None, which without_addresses does not strip), short- same, l02_02 malformed_a |
+| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | started: worktree /home/luke/Work/wt/scale-fix-kernel from wt/scale-ratio cd98182c; 10 findings to fit, profile and fix; load 35.52 |
+| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | started; worktree from wt/scale-ratio cd98182c; load 41.15 |
+| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | started; worktree wt/scale-fix-wide from wt/scale-ratio cd98182c |
 | STAGE-store-probes | impl attempt 1 | 2026-11-07 10:13 | started; worktree from origin/main d798ac47 / load 6.32 11.88 15.95 |
-| STAGE-stub-env | impl attempt 1 | 2026-11-07 10:48 | measured main at -0.0 chain n=60..960 doubling: instr ratios 2.76 3.10 3.54 3.80, bytes 3.01 3.44 3.80 3.93: quadratic, building a fix (load 43) |
+| STAGE-stub-env | impl attempt 1 | 2026-11-07 10:48 | ready 82c456bc on d1ee907c; final run with doc check 10/10 pass; load 49.06 44.53 33.08 |
 | ST-ladder-potential | impl attempt 1 | 2026-11-07 10:18 | ready 86ac734d on d798ac47; 364 pieces 0 failed with doc check / load 30.07 |
-| TY-sub-stack | impl attempt 1 | 2026-11-07 10:47 | after conversion: ^l01_2[0-9]/^zedc_types$ 205 pieces 0 failed, result lines same as baseline, load 34-52 |
+| TY-sub-stack | impl attempt 1 | 2026-11-07 10:47 | ready 1e54930c on d1ee907c; ^l01_2[0-9]/^zedc_types$ 205 pieces 0 failed with doc check, result lines same as baseline (+1 new test; l01_28/l01_29 counts from m |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
