@@ -1331,21 +1331,29 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | arith-tests | orch attempt  | 2026-11-05 15:14 | merged bd596300 (4 items); slabs resize decided (c), queued SLABS-count; OMEGA-cycle-growth impl#1 started |
 | audit | orch attempt  | 2026-11-05 15:46 | t2-types-rest-ctl owned by the running T2-types-rest merge (kept-work line); PERF-refused-sentence is a member of the live doc-checks group; T2-types-rest part  |
-| K30-rest | impl attempt 1 | 2026-11-05 22:20 | negative control string copies (old words.rs/eval.rs/value.rs/Text Display/zedc literal Text): 6 of 6 refusal children in l01_17 string_copies aborted (memory a |
-| L1.36b | impl attempt 1 | 2026-11-05 04:07 | started: linker, runtime and toolchain identity in cache keys and stage records |
-| LOAD-chain | impl attempt 1 | 2026-11-05 23:25 | final numbers (linear stage total instr, debug zedc): int chain 7.2M@100 58.4M@800 (8.1x), 14.6M@200 117.1M@1600 (8.0x); main 270M/14.6G (54x), 974M/59.0G (60.6 |
+| DECIDE-disj-chain | running | 2026-11-03 15:55 |  |
+| EMPTY-key-search | running | 2026-11-05 18:16 |  |
+| K30-rest | impl attempt 1 | 2026-11-05 22:20 | ready bfa34d55 (3 commits); no questions |
+| L1.36b | impl attempt 1 | 2026-11-05 04:07 | negative control (not committed): drivers at other paths reporting cc's own versions in another_release_of_the_driver_or_the_linker_links_again -> build kept (L |
+| LOAD-chain | impl attempt 1 | 2026-11-05 23:25 | ready c1d487f8; question A35 recorded by the agent |
 | main | running | 2026-11-06 23:47 | KERNEL-sum-tower ready d4cbf628 (bound.rs uses fast::pow/mul); POW-tower held on A29; A28 asked; load 26.94 23.48 17.66 |
 | mutants-flow | orch attempt  | 2026-11-05 16:24 | merged 436cd33d 63ae341f 16f087ef 7902b4b6; mutant 3643 shown not equivalent and killed by a new test; A13 appended; EMPTY-print waiting on A13 |
-| NARROW-hub-settle | impl attempt 1 | 2026-11-03 23:52 | narrow-if diff (8 commits) applied onto main b6c2ec0b, 4 conflicts resolved (arms narrowed/settled renamed to ints_in_scope/computed; check_load -> check_alone) |
+| NAME-at-print-warnings | impl attempt 1 | 2026-11-07 00:21 | started; worktree from origin/main d76e807c, load 10.97 17.24 18.72 |
+| NAME-ties-orient+DECIDE-disj-chain | impl attempt 1 | 2026-11-07 01:00 | started in /home/luke/Work/wt/decide-disj from origin/main ca529f21; load 27.72 23.48 21.48 |
+| NAME-ties-orient | running | 2026-11-05 04:07 |  |
+| NARROW-hub-settle | impl attempt 1 | 2026-11-03 23:52 | rebased onto origin/main d76e807c (STATUS conflict resolved), restacked build |
 | orch | running | 2026-11-05 18:05 | L1.35-inventory merged ff7fd9a1; update-status run |
-| PORT-catalog-audit | impl attempt 1 | 2026-11-05 23:39 | mechanical check (words defined, arity incl. width:, sort keys or by:) built; committed catalog flags 20 rows before fixes (7 xs.sort(), 6 trailingZeros, 3 lead |
+| PORT-catalog-audit | impl attempt 1 | 2026-11-05 23:39 | ready 286c2075; questions recorded A36-A39 (its .slice question withdrawn: DESIGN.md:600 defines .slice(r)); follow-up CATALOG-followups queued |
 | POW-tower | impl attempt 1 | 2026-11-05 22:47 | returned for cross-review: no exact O(n log n) tower order known (Baker bound exponential for towers, log log forms, PosSLP); candidates a/b/c in ledger / load  |
+| RAT-parse-scale | impl attempt 1 | 2026-11-03 18:28 | worktree wt/rat-parse-scale at d76e807c seeded; scaling test over 4 valuation families (rat(s) and exponent literals) and a probe written; building for before n |
+| REP-path-memo+EMPTY-key-search | impl attempt 1 | 2026-11-07 00:55 | started by orchestrator in wt/empty-search; load5 22.62 |
+| REP-path-memo | impl attempt 1 | 2026-11-05 23:59 | started in wt/empty-search on d76e807c (REP-path-memo, then EMPTY-key-search) |
 | S.1f-rest | impl attempt 1 | 2026-11-05 22:48 | zed-native cycle broken (legal.rs, outcome.rs); kernel num (num/room.rs) and value cluster (value+family+deep walks+error merged into value.rs, text::TooLong) b |
 | sub-tests | orch attempt  | 2026-11-05 16:16 | merged 9cd6a994 (K50-K52; l01_23 split in run_tests.sh) |
-| T2-types-rest-4 | impl attempt 1 | 2026-11-05 22:10 | measured before change, 8 MiB thread, old recursion: Bdd apply ok 30000 overflow 60000; flip ok 30000 overflow 60000; walk/paths ok 100000 overflow 400000; Part |
+| T2-types-rest-4 | impl attempt 1 | 2026-11-05 22:10 | cost probe (debug build, not committed), 200 chains of choices 500 deep, old recursion vs frames: zip 3040/2908 ms vs 4324/4050 ms (1.4x), not 1038/855 ms vs 13 |
 | TEST-mutants-flow+SCALAR-cell-test | merge attempt 1 | 2026-11-05 16:25 | verify and merge started, load 55.68 61.97 62.16 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | returned with author question A30 (crate granularity: per-task ~310 crates doubles all-crates rebuild after a zedc edit, 21-26 s -> 45-49 s; lib edit 6-7 s -> 2 |
-| ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 3 zedc-int committed; build, clippy, doc, zedc-lib 75, int 3, l01_24 66, l01_38 by submodule 19 parts, m0_05 44, l01_39a 43 pass at load 16-22 |
+| ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 4 zedc-lattice committed; build, clippy, doc; zedc-lib 57, lattice 18, l01_23 154, l01_24 66, l01_39 136, l01_39a 43, m0_05 44, l01_14 28, s_01f 10 pas |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
