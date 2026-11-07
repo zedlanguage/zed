@@ -2203,3 +2203,10 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 |---|---|---|---|
 | A module of another crate republished at its old path (`pub use zedc_check::check;`), so callers keep writing `zedc::check` after the compiler is split into crates | `zedc` `lib.rs`, `store/mod.rs` | Missing (a re-export is a definition of one name, DESIGN.md sec:units) | Not needed in the port: each unit imports the unit that defines what it uses; the Rust paths are kept only so the split changes no caller |
 | A cargo feature, `two-at-a-time`, that keeps a `thread_local!` switch and the joins it selects in the build of `zedc-presburger`, so the unit tests of another crate (`zedc-preimage`) can set it; before the split it was `#[cfg(test)]` in the same crate | `presburger::TWO_AT_A_TIME`, `and_keeping`, `or_keeping` | No conditional compilation; global state (gap 2) | A build mode of the unit, as for `printed-types`, or the join order passed as a parameter in the test |
+
+## Entries from TABLE-life (`zed-kernel/src/types/bdd.rs`, `bdd/set.rs`, `bdd/list.rs`, `bdd/xor.rs`, `types/rec.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Tables of `Weak` references, each entry removed by the node's `Drop` on a pointer match, through `try_with` and `try_borrow_mut` of the thread's table | `set::make`, `list::cell`, `xor::node`, `Drop for Set`, `Drop for Cell`, `Drop for Pair`, `Literal::untable`, `rec::GROUPS`, `rec::INSTANCES` | Shared tables across pure calls (gap 2), identity (gap 1); Zed has no weak reference or finalizer | A per-unit state struct of the tables, dropped whole at the end of a unit, so no entry needs to leave on its own |
+| A `Mutex<Weak<Expr>>` beside a `OnceLock<Part>` so that an expression and its complement hold each other one way only | `Expr::back`, `Expr::link`, `Expr::known` | Lazy cells and tied recursive types (gap 3) | The complement in the unit's memo table keyed by expression id, both ways |
