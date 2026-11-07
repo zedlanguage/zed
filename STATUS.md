@@ -1519,13 +1519,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LOAD-disj-residue | impl attempt 1 | 2026-11-07 11:08 | baseline (old code, defined_with, load 19.47 30.63 30.13): v3 decide 0.209/0.897/5.285 s at 40/80/160 links, hashes a65c8aa1/9b0695f2/6de002fb; v1 0.018/0.037/0 |
-| SCALE-fix-crossover | running | 2026-11-07 12:13 |  |
-| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | averaged 3 kernel tests + x13 over 8 shapes; running groups / load 19.14 21.88 24.37 |
-| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | negative controls done (old split, walk, int each fail as recorded); running affected groups with doc check, load 28.26 23.69 26.13 |
-| SCALE-fix-round-literal | impl attempt 1 | 2026-11-07 12:13 | ready at cc25efeb: affected groups + doc check run (load 17-19), only known base failures remain; fmt, clippy clean |
-| SCALE-fix-strip-odd | running | 2026-11-07 12:13 |  |
-| ST-hole-project | impl attempt 1 | 2026-11-07 11:57 | split by case, k=40..320: false case (x_i == 5) changes k names per test (sum k^2: 1599..102399), work/changed name flat 126k-178k instr: output-bound, not redu |
+| LITERAL-carrier-spec | spec attempt 1 | 2026-11-07 13:07 | started: worktree /home/luke/Work/wt/literal-carrier-spec on origin/main 08a19a2 |
+| LOAD-disj-residue | impl attempt 1 | 2026-11-07 11:08 | ready eafe32e8 on 1a7bc412; 244/244 pieces pass with doc check / load 16.00 14.36 16.85 |
+| PA-walk-multi | impl attempt 1 | 2026-11-07 12:26 | coordinator kept the precise results; concrete check (random.rs, kept, 25.7 s): 2700 bodies (seeds 0x1_39, 0x1_39_33, 7; shapes z, h, u), 3079105 (arm, point) c |
+| SCALE-fix-kernel | impl attempt 1 | 2026-11-07 11:37 | ready a86b89ee6c62b57cad0925b69802f7e29c751088: averaged tests, all 75 pieces pass / load 13.94 19.35 22.74 |
+| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | ready at 36708513: 5 of 6 fixed, grid returned, 4 reruns and hull edge case recorded; load 13.50 19.36 22.76 |
+| ST-hole-project | impl attempt 1 | 2026-11-07 11:57 | joined arms kept the arm's projection with the hole, so the next rung found unsure seeds and fell back: unsure now only for trees with other conjuncts; scaling  |
+| TY-write-stack | impl attempt 1 | 2026-11-07 11:38 | Sig::facts and Sig::digest made iterative too (held signatures first, post-order, visited set); negative control on HEAD code: 9 of 9 small-stack tests overflow |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
