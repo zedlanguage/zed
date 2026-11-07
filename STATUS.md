@@ -1534,10 +1534,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | started; worktree from 26372a77 |
+| EMPTY-overlap-chain | impl attempt 3 | 2026-11-07 01:46 | started on origin/main 45f8a2bb, worktree wt/empty-overlap-chain, load 14.24 |
+| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | reproduced on 26372a77: drifting chain with q=(x<10//x>20), shift +3: Extending 0.39/1.62/7.06 s at 40/80/160 links (quadratic, load ~22); shared-atom chain (x  |
+| MATHLIB-allintro-spec | impl attempt 1 | 2026-11-07 14:34 | started; spec worktree /home/luke/Work/wt/mathlib-allintro-spec-spec, impl worktree /home/luke/Work/wt/mathlib-allintro-spec |
+| NAN-spell-l139g | impl attempt 2 | 2026-11-07 14:30 | resumed for author decision f64(#NaN)/f64(#inf) casts |
 | P14-bigint-parse | impl attempt 1 | 2026-11-07 14:59 | measured: 288->2304 digits ref 14 is 27.9x instr from num-bigint multiply (parse-only 9.2x old parser, 8.3x by parts); by-parts reader no faster than whole read |
-| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | base measured: product walk 3,200/204,800 term bounds at k=40/320, checker 1,680/103,040 (61.3x); probes added |
-| PREIMAGE-and-chain | impl attempt 1 | 2026-11-03 21:23 | reproduced on main 32654e93 through zedc::run::load (the checker alone is linear): k && sides, else arm plain, k=75..600: 76M,198M,583M,2082M instr (3.57x per 2 |
+| PA-letpre-linear | impl attempt 1 | 2026-11-07 13:48 | random test added (follow.rs, 600 rounds, let_narrowing vs let_preimage over all inputs); negative controls run once, not committed: dropping the width, the inf |
+| PREIMAGE-and-chain | impl attempt 1 | 2026-11-03 21:23 | negative control (if route off, not committed): l01_25 scaling a_chain_of_and_written_as_ifs k=256->2048 265.5M->22.76G instr (85.7x), 73.2MB->4.40GB (60.1x), f |
 | ST-eqs-cubic | impl attempt 2 | 2026-11-07 14:15 | rebased onto f813fa34 (batch 46); state fixing |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
