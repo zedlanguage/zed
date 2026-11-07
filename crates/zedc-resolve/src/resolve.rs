@@ -418,8 +418,6 @@ pub const WORDS: &[(&str, u32)] = &[
     ("conj", 14),
     ("normSq", 14),
     ("inv", 14),
-    ("bf16", 14),
-    ("f16", 14),
     ("matmul", 14),
     ("dot", 14),
     ("norm", 14),
@@ -543,8 +541,9 @@ const TYPES: &[&str] = &[
 
 /// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
 /// by layer"). A use below its layer is an error naming the layer, as for a value word. The
-/// number algebras and float formats of L14 are words too, applied to build a value; the
-/// fixed-width aliases of L7, `i8` to `i64` and `u8 = int[0..=255]`, are types only.
+/// number algebras of L14 are words too, applied to build a value; the fixed-width aliases of
+/// L7, `i8` to `i64` and `u8 = int[0..=255]`, are types only. The float formats `f16` and
+/// `bf16` are of L1 and not yet built (step L1.18a), so neither list holds them.
 pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Seq", 5),
     ("Ast", 6),
@@ -568,8 +567,6 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("complex", 14),
     ("quat", 14),
     ("oct", 14),
-    ("bf16", 14),
-    ("f16", 14),
     ("Proof", 15),
     ("Semigroup", 22),
     ("Monoid", 22),

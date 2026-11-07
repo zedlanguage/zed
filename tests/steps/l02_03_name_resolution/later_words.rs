@@ -143,7 +143,7 @@ const NOT_PRELUDE_NAMES: &[(&str, &str)] = &[
 const UNLISTED: &[(&str, u32)] = &[("count", 3)];
 
 /// The lower-case names of the table that are types as well as words: the number algebras
-/// and float formats of L14, which are applied to build a value as `int(…)` is.
+/// of L14 and the float formats of L1, which are applied to build a value as `int(…)` is.
 const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
 
 /// The lower-case names of the table that are types and not words: the fixed-width aliases of L7
@@ -160,6 +160,11 @@ const PENDING: &[(&str, &str)] = &[
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),
+    ("f16", "L1.18a"),
+    ("bf16", "L1.18a"),
+    ("f32Bits", "L1.18a"),
+    ("f16Bits", "L1.18a"),
+    ("bf16Bits", "L1.18a"),
     ("i128", "INT-128"),
     ("u16", "INT-128"),
     ("u32", "INT-128"),
