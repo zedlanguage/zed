@@ -69,8 +69,11 @@ fn fees(d: usize, every: usize) -> Term {
 
 /// The arms of [`fees`] with `DEEP` days and a fee every 1,000th, on a 2 MiB stack: two for
 /// each fee and two for the final test, in the order written, the last fee's `2` taken only by
-/// `n > DEEP`. (Each test costs a reduction of the scope, so with a fee on every day this
-/// depth takes about 40 s; the depth of the walk is the same.)
+/// `n > DEEP`. The fee is spaced to keep the test short, not to hide a cost that grows: a
+/// test costs a reduction of the scope and a copy per arm, measured at 165, 181 and 186 µs
+/// with a fee on every day at 1,000, 4,000 and 12,500 days, and with 100 fees the time at
+/// 12,500 and 100,000 days is that of the block alone; so a fee on every day is O(d), about
+/// 20 s here, and the depth of the walk is the same.
 #[test]
 fn a_block_of_100000_bindings_has_its_arms_on_a_2_mib_stack() {
     on_small_stack(|| {
