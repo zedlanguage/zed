@@ -424,6 +424,9 @@ fn an_output_may_take_any_name() {
     let tools = toolchain();
     for name in ["program.o", "read.d", "record", "sign.o", "sign.zed-link"] {
         let out = d.join(name);
+        // An output that records no key, so the build links even where the run before left
+        // the executable.
+        std::fs::write(&out, "not yet built\n").unwrap();
         assert_eq!(link(&src, &out, &tools), Link::Ran, "{name}");
         assert_eq!(link(&src, &out, &tools), Link::Kept, "{name}");
         assert_eq!(says(&out), "any name\n", "{name}");
