@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use zed_kernel::term::build::{lam, lit, prim, var};
+use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Prim, Shared, Term};
 use zed_tests::scaling;
 use zedc::elab::Unit;
@@ -132,4 +132,39 @@ fn mixing_calls_under_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_giv
             }
         }
     });
+}
+
+/// One part under three sibling arms that bind `f1` at the same depth, to `y + 1`, `y + 1`
+/// and `y + 2`, is mixed under each arm's own `f1`. The second arm reuses the first arm's
+/// tree by walking it, and that walk is kept by the stamps of `f1`; a stamp counts entries
+/// over the whole run and is never reused, so the third arm, whose `f1` answers otherwise,
+/// does not get the second arm's walk.
+#[test]
+fn a_part_under_sibling_arms_that_bind_a_name_differently_is_mixed_under_each() {
+    let part = Shared::new(prim(
+        Prim::Add,
+        vec![app(var("f1"), vec![lit(0i64)]), var("c")],
+    ));
+    let arm = |step: i64, shared: bool| {
+        let f1 = lam(&["y"], prim(Prim::Add, vec![var("y"), lit(step)]));
+        let part = match shared {
+            true => part.clone(),
+            false => Shared::new((*part).clone()),
+        };
+        Shared::new(Term::Let("f1".into(), Shared::new(f1), part))
+    };
+    let main = |shared: bool| {
+        let guard = |j: i64| Shared::new(prim(Prim::Ge, vec![var("c"), lit(j)]));
+        let inner = Term::If(guard(2), arm(1, shared), arm(2, shared));
+        let body = Term::If(guard(1), arm(1, shared), Shared::new(inner));
+        unit(vec![def("main", lam(&["c"], body))])
+    };
+    let text = |u: &Unit| {
+        let text = mixed_text(u);
+        text[..text.rfind("Report").expect("the report")].to_string()
+    };
+    let (one, tree) = (text(&main(true)), text(&main(false)));
+    assert_eq!(one, tree);
+    assert_eq!(one.matches("(1 + c)").count(), 2, "{one}");
+    assert_eq!(one.matches("(2 + c)").count(), 1, "{one}");
 }

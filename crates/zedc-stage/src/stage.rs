@@ -1533,7 +1533,8 @@ struct Entry {
 /// The names in scope, innermost last, with the positions of each name's entries, so a name
 /// is looked up in `O(log n)` rather than by a scan of the scope, and the map of each name in
 /// scope to its innermost binding (`top`, in [`Maps`]) and to the stamp of its innermost entry
-/// (`stamps`): the number of entries pushed before it, so two places where a map restricted to
+/// (`stamps`): the number of entries pushed before it over the whole run (`pushed`), which
+/// only grows and so is never reused after a pop, so two places where a map restricted to
 /// some names is one map bind each of those names to one entry.
 #[derive(Default)]
 struct Scope {
