@@ -18,6 +18,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use zedc::suppress::Suppress;
 use zedc::work::{self, Stage};
@@ -144,20 +145,17 @@ pub fn build(
         work::cached(Stage::Link, None);
         return Ok(());
     }
-    let mut at = out.as_os_str().to_owned();
-    at.push(".zed.o");
-    let at = PathBuf::from(at);
-    // A file of the user's at that name is not overwritten.
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&at)
-        .and_then(|mut f| f.write_all(&object))
-        .map_err(|e| (1, format!("{}: {e}", at.display())))?;
+    sweep(out);
+    let scratch = Scratch::new(out)?;
+    let (at, linked_at) = (
+        scratch.path.join("program.o"),
+        scratch.path.join(&scratch.name),
+    );
+    std::fs::write(&at, &object).map_err(|e| (1, format!("{}: {e}", at.display())))?;
     let linked = work::stage(Stage::Link, None, || {
         Command::new(&tools.linker)
             .arg("-o")
-            .arg(out)
+            .arg(&linked_at)
             .arg(&at)
             .arg(&tools.runtime)
             .args(SYSTEM_LIBS)
@@ -165,7 +163,6 @@ pub fn build(
             .arg(format!("-Wl,--build-id=0x{}", key.to_hex()))
             .output()
     });
-    let _ = std::fs::remove_file(&at);
     let linker = tools.linker.to_string_lossy();
     match linked {
         Err(e) => Err(not_run(&linker, &e)),
@@ -177,7 +174,141 @@ pub fn build(
                 String::from_utf8_lossy(&o.stderr).trim_end()
             ),
         )),
-        Ok(_) => Ok(()),
+        // In one step, so that a build reading `out` at the same time, for its key or to run
+        // it, reads the executable before or the one after, never one half written.
+        Ok(_) => {
+            std::fs::rename(&linked_at, out).map_err(|e| (1, format!("{}: {e}", out.display())))
+        }
+    }
+}
+
+/// The directory a build of `out` writes its object file and links in:
+/// `<out>.zed-build.<pid>.<k>`, beside `out`, with `<pid>` the process's id and `<k>` the
+/// number of the attempt in this process. A name of its own for each build, so a directory
+/// left by a build stopped by a signal (SIGKILL, or SIGINT, which unwinds nothing) blocks no
+/// later build, and builds of one output at the same time do not meet; beside `out`, so the
+/// executable is moved to `out` by a rename. The build holds the directory locked (`flock`)
+/// while it lives, which the kernel releases when the process ends however it ends: a
+/// directory of this name that is not locked is a stopped build's, and [`sweep`] removes it.
+/// Dropping a `Scratch`, on success, on error and in unwinding from a panic, removes it.
+struct Scratch {
+    /// The directory.
+    path: PathBuf,
+    /// The name of `out` in its directory, which the linker's output takes in this one.
+    name: OsString,
+    /// The directory, open and locked.
+    _lock: std::fs::File,
+}
+
+/// The number of the next attempt at a working directory in this process.
+static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+
+impl Scratch {
+    /// A new working directory for a build of `out`, created and locked. A name taken already
+    /// is passed over for the next attempt's. A directory that [`sweep`] in another build
+    /// removed between its creation and its lock, which that build took for a stopped
+    /// build's, is passed over the same way: after its lock is taken, the name must still
+    /// name it.
+    fn new(out: &Path) -> Result<Scratch, (u8, String)> {
+        let name = out.file_name().ok_or_else(|| {
+            (
+                2,
+                format!(
+                    "the output {} names a directory, not a file: name the executable to build",
+                    out.display()
+                ),
+            )
+        })?;
+        loop {
+            let mut path = out.as_os_str().to_owned();
+            path.push(format!(
+                ".zed-build.{}.{}",
+                std::process::id(),
+                ATTEMPT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let path = PathBuf::from(path);
+            let failed = |e: std::io::Error| (1, format!("{}: {e}", path.display()));
+            match std::fs::create_dir(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                made => made.map_err(failed)?,
+            }
+            let lock = match std::fs::File::open(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                opened => opened.map_err(failed)?,
+            };
+            lock.lock().map_err(failed)?;
+            if names(&path, &lock) {
+                return Ok(Scratch {
+                    path,
+                    name: name.to_owned(),
+                    _lock: lock,
+                });
+            }
+        }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // Best effort, while the lock is held: the lock is released after, when the field
+        // `_lock` is dropped.
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Whether `path` names the open file `file`, not another or none.
+fn names(path: &Path, file: &std::fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    match (std::fs::symlink_metadata(path), file.metadata()) {
+        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+        _ => false,
+    }
+}
+
+/// Removes the working directories that builds of `out` stopped by a signal left beside it
+/// (see [`Scratch`]): each directory in `out`'s directory named `<out>.zed-build.<n>.<n>`,
+/// with `<n>` digits, whose lock this process can take. A running build holds its own locked,
+/// so it is kept. One read of the directory, and one open and lock of each such name: linear
+/// in the directory's entries. Best effort: a directory that cannot be read, opened or
+/// removed is left, and the build goes on, since what is left blocks no build.
+pub fn sweep(out: &Path) {
+    let Some(name) = out.file_name() else {
+        return;
+    };
+    let dir = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let mut prefix = name.to_owned();
+    prefix.push(".zed-build.");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let digits =
+        |p: Option<&[u8]>| p.is_some_and(|p| !p.is_empty() && p.iter().all(u8::is_ascii_digit));
+    for entry in entries.flatten() {
+        let entry_name = entry.file_name();
+        let Some(rest) = entry_name
+            .as_encoded_bytes()
+            .strip_prefix(prefix.as_encoded_bytes())
+        else {
+            continue;
+        };
+        let mut parts = rest.split(|&b| b == b'.');
+        if !(digits(parts.next()) && digits(parts.next()) && parts.next().is_none())
+            || !entry.file_type().is_ok_and(|t| t.is_dir())
+        {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(lock) = std::fs::File::open(&path) else {
+            continue;
+        };
+        // After the lock, the name must still name the directory locked: a build may have
+        // made a new one of that name since this one was opened.
+        if lock.try_lock().is_ok() && names(&path, &lock) {
+            let _ = std::fs::remove_dir_all(&path);
+        }
     }
 }
 

@@ -36,6 +36,40 @@ fn zedc_build(src: &Path, out: &Path, env: &[(&str, &str)]) -> Output {
     c.output().unwrap()
 }
 
+/// The working directories of builds of `name` in `d` (`<name>.zed-build.<pid>.<k>`), and the
+/// object file that builds before LINK-obj-leftover wrote (`<name>.zed.o`).
+fn working(d: &Path, name: &str) -> Vec<String> {
+    let (prefix, old) = (format!("{name}.zed-build."), format!("{name}.zed.o"));
+    let mut names: Vec<String> = std::fs::read_dir(d)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with(&prefix) || *n == old)
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+/// Writes `bytes` at `path` as a runnable file, in a process of its own: a file this process
+/// held open for writing could be inherited by a child that another test thread forks at that
+/// moment, and running it would then fail with "Text file busy" (ETXTBSY). As
+/// `tests/steps/l01_36b_link_identity`'s `script` does.
+fn install(path: &Path, bytes: &[u8]) {
+    let text = path.with_extension("bytes");
+    std::fs::write(&text, bytes).unwrap();
+    let installed = Command::new("install")
+        .arg("-m")
+        .arg("755")
+        .arg(&text)
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(
+        installed.success(),
+        "install {}: {installed}",
+        path.display()
+    );
+}
+
 /// The status and standard error of `out`, and that it wrote nothing to standard output.
 fn failed(out: &Output) -> (Option<i32>, String) {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "");
@@ -63,8 +97,8 @@ fn a_built_executable_runs() {
         (ran.status.code(), String::from_utf8(ran.stdout).unwrap()),
         (Some(0), "Hello, Ann!\n".to_string())
     );
-    // The object file the link reads is not left behind.
-    assert!(!d.join("hello.zed.o").exists());
+    // The directory the link works in, with the object file it reads, is not left behind.
+    assert_eq!(working(&d, "hello"), Vec::<String>::new());
 }
 
 #[test]
@@ -98,7 +132,7 @@ fn a_missing_tool_is_a_usage_error_naming_it() {
         )
     );
     // A failed link leaves no object file.
-    assert!(!d.join("quiet.zed.o").exists());
+    assert_eq!(working(&d, "quiet"), Vec::<String>::new());
 }
 
 /// A runtime library that is not the one built with `zedc` (here an archive holding nothing,
@@ -129,7 +163,7 @@ fn a_runtime_library_of_another_build_is_a_usage_error() {
         )
     );
     assert!(!out.exists());
-    assert!(!d.join("other.zed.o").exists());
+    assert_eq!(working(&d, "other"), Vec::<String>::new());
 }
 
 /// `zedc` with its symbol table removed, as `strip` removes it, still builds: the build it
@@ -138,7 +172,6 @@ fn a_runtime_library_of_another_build_is_a_usage_error() {
 #[test]
 fn a_stripped_zedc_builds() {
     use object::Object as _;
-    use std::os::unix::fs::PermissionsExt as _;
     let d = dir();
     let bytes = std::fs::read(env!("CARGO_BIN_EXE_zedc")).unwrap();
     let mut elf = object::build::elf::Builder::read(&*bytes).unwrap();
@@ -158,8 +191,7 @@ fn a_stripped_zedc_builds() {
         0
     );
     let zedc = d.join("zedc-stripped");
-    std::fs::write(&zedc, &stripped).unwrap();
-    std::fs::set_permissions(&zedc, std::fs::Permissions::from_mode(0o755)).unwrap();
+    install(&zedc, &stripped);
     let src = d.join("stripped.zed");
     std::fs::write(
         &src,
@@ -217,4 +249,71 @@ fn a_rejected_program_builds_nothing() {
     assert_eq!(status, Some(1), "{stderr}");
     assert!(stderr.starts_with(src.to_str().unwrap()), "{stderr}");
     assert!(!out.exists());
+}
+
+/// A build stopped by SIGKILL while its linker runs leaves its working directory, with the
+/// object file in it; the next build to the same output succeeds and removes it
+/// (LINK-obj-leftover). The driver here stands for a slow linker: it says when the link has
+/// begun, and waits until the build that ran it has ended, then fails.
+#[test]
+fn a_build_killed_while_linking_blocks_no_later_build() {
+    let d = dir();
+    let src = d.join("killed.zed");
+    std::fs::write(
+        &src,
+        "main() -> (stdout: Lines) {\n  stdout <- \"again\";\n}\n",
+    )
+    .unwrap();
+    let (out, linking) = (d.join("killed"), d.join("killed.linking"));
+    // An executable of the run before records the key, and the build would not link.
+    for f in [&out, &linking] {
+        match std::fs::remove_file(f) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => panic!("{}: {e}", f.display()),
+            _ => {}
+        }
+    }
+    let waits = d.join("cc-waits");
+    install(
+        &waits,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in --version|-Wl,--version) exec cc \"$@\" ;; esac\n\
+             : > '{}'\nwhile kill -0 \"$PPID\" 2>/dev/null; do sleep 0.01; done\nexit 1\n",
+            linking.display()
+        )
+        .as_bytes(),
+    );
+    let mut build = Command::new(env!("CARGO_BIN_EXE_zedc"))
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .env("ZED_RUNTIME", runtime())
+        .env("CC", &waits)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    while !linking.exists() {
+        if let Some(status) = build.try_wait().unwrap() {
+            panic!("the build ended before its link began: {status}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    build.kill().unwrap();
+    build.wait().unwrap();
+    let left = working(&d, "killed");
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(d.join(&left[0]).join("program.o").is_file(), "{left:?}");
+    assert!(!out.exists());
+
+    assert_eq!(
+        failed(&zedc_build(&src, &out, &[])),
+        (Some(0), String::new())
+    );
+    let ran = Command::new(&out).output().unwrap();
+    assert_eq!(
+        (ran.status.code(), String::from_utf8(ran.stdout).unwrap()),
+        (Some(0), "again\n".to_string())
+    );
+    assert_eq!(working(&d, "killed"), Vec::<String>::new());
 }

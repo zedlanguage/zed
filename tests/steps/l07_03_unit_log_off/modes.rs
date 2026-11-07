@@ -91,7 +91,9 @@ const NOT_MODES: &[&str] = &[
     "reproducible",
     "cross",
     "total",
-    "zedc",
+    "zedc", //
+    // The executable's "GNU build ID" (step L1.36b), an ELF note, not a kind of build.
+    "gnu",
 ];
 
 /// Whether `word` names a layer of the plan, as in "L4 builds groups".

@@ -2042,3 +2042,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Closures `held_by` and `serves` that borrow the function's maps, with `?` and early `return None` inside `serves` | `absorb` | None (early exit is gap 12) | Local functions taking the maps as arguments; the early exits as `if` or a fold with an `Option` |
 | `Vec::retain` whose closure advances a captured counter to read a `Vec<bool>` of removed positions | `absorb` | Mutation (gap 11) | `where` over the disjunctions zipped with their positions |
 | `Option::is_none_or`, `Option::is_some_and` | `repair`, `settle` | None | A `match`, or `x is #none or ..` |
+
+## Entries from LINK-obj-leftover (`zed-native/src/link.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::fs::File::lock` and `try_lock` (`flock`) on an open directory, released by the kernel when the process ends | `link::Scratch::new`, `link::sweep` | Foreign library (`flock`); file system port | A file-system port operation that takes an advisory lock and reports "held by another" |
+| A `Drop` impl that removes the build's working directory on every exit, unwinding included | `link::Scratch` | No destructors | The build's own `finally`-like cleanup in the process port's scope, as for other temporary files |
+| A `static AtomicU64` counter with `std::process::id()` to name a fresh directory | `link::Scratch::new` | No global mutable state; process id | A counter in the build's state and the process port's id |
+| `MetadataExt::dev` and `ino` compared after `symlink_metadata` and `File::metadata`, to check a name still names the locked directory | `link::names` | File identity from the OS (gap 5, Bytes and foreign calls) | A file-system port call returning a file's identity |
+| `std::fs::rename` of the linked executable over the output | `link::build` | File system port | The port's atomic replace |
