@@ -1459,13 +1459,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CHAIN-zip-size | impl attempt 1 | 2026-11-07 02:15 | ready at 42801f87 on wt/chain-zip-size: 270 test pieces after rebase, 0 failed (load 16.18 24.59 26.74 at end); ledger ready line and 4 follow-ups (CHAIN-deep-a |
-| DAGVIEW-lost-edges | impl attempt 2 | 2026-11-07 04:27 | coordinator decision: override needs add (no replacement), new notNeeds and replacedBy fields; reworking on wt/dagview-edges |
-| LIST-parity-tail | impl attempt 1 | 2026-11-07 03:15 | ready ff23311e on wt/list-parity-tail; 73 pieces 0 failed, zedc store:: 78 ok; red on 527b4b80 50.1x, green 9.4x/9.7x |
-| NARROW-notes-name | impl attempt 1 | 2026-11-07 03:26 | ready 0b8df58e on wt/narrow-hub-related / load 11.75 21.91 25.70 |
+| DEPS-tmpdir-rerun | impl attempt 1 | 2026-11-07 04:53 | done, ledger ready: fix on wt/deps-tmpdir; l01_36b 36/36 passed three reruns in a row (load 20); fmt and clippy -p zed-tests clean |
 | NUMERICS-spec2 | impl attempt 1 | 2026-11-07 03:42 | ready: zed numerics 6728767, zed-impl numerics-plan 8782a609; 26 test pieces pass, grammar and plan tools OK |
+| PA-plus-if | impl attempt 1 | 2026-11-07 05:08 | started; worktree wt/pa-plus-if from bd6b38ae |
+| PRODUCT-nested-chain | impl attempt 1 | 2026-11-03 20:05 | ready bd6b38ae on wt/product-nested-chain (base 6532d51e); 112 pieces l01_25/l01_39/zedc- with doc check pass, load 12-17; fmt, clippy, board-check clean; not p |
 | S1F-arms-cycle | impl attempt 1 (item ZEDC-split) | 2026-11-07 02:18 | boundary 13 zedc-elab committed (last boundary); build, clippy, doc; 16 groups pass (zedc-lib 2, l01_15/16/17/18/19/19a/21/26/28/29/30/39b/39c, s_01f) load 13-1 |
-| S22-transfer-rem | impl attempt 1 | 2026-11-07 02:40 | ready 4b3aa257 (wt/s22-transfer-rem on 25ee049d). Negative control on base preimage.rs, seed 1, k 4/8/16/32/64 (load 20-30): two inputs 0.16/0.41/1.13/6.13/25.4 |
+| S22-transfer-rem | repair attempt 1 | 2026-11-07 02:40 | ready ee236f8d on 6532d51e: 399 pieces 0 failed (load 18-31), split tests 14-30 s each, fmt+clippy clean; ledger ready |
 | ZEDC-split | impl attempt 1 | 2026-11-05 23:52 | boundary 13 zedc-elab committed (last boundary); build, clippy, doc; 16 groups pass (zedc-lib 2, l01_15/16/17/18/19/19a/21/26/28/29/30/39b/39c, s_01f) load 13-1 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
