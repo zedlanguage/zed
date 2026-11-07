@@ -1124,4 +1124,87 @@ mod tests {
             });
         }
     }
+
+    /// A text of `n` pieces, each a different character, joined one at a time at the end
+    /// (`left`) or at the front, and the same text built by `push_str`.
+    fn chain(n: usize, left: bool) -> (Text, String) {
+        // One, two, three and four bytes a character, so a block boundary falls between
+        // characters of every width.
+        let chars = ['a', 'é', '日', '😀', 'z'];
+        let (mut t, mut pieces) = (Text::from(""), Vec::with_capacity(n));
+        for i in 0..n {
+            let piece = chars[i % chars.len()].to_string().repeat(PIECE);
+            let p = Text::from(piece.as_str());
+            t = if left { join(&t, &p) } else { join(&p, &t) };
+            pieces.push(piece);
+        }
+        if !left {
+            pieces.reverse();
+        }
+        (t, pieces.concat())
+    }
+
+    #[test]
+    fn try_flat_reads_every_shape_of_a_text_whole() {
+        // The empty text and one block are borrowed, not copied.
+        assert!(matches!(Text::from("").try_flat(), Ok(Cow::Borrowed(""))));
+        let a = long('a');
+        let Ok(Cow::Borrowed(s)) = a.try_flat() else {
+            panic!("a text of one block is borrowed")
+        };
+        assert_eq!(s, "a".repeat(PIECE));
+        // Two blocks; a block at each end and one between; then trees whose middles hold
+        // nodes, and nodes of nodes, joined at either end.
+        for n in [2, 3, 5, 9, 40, 1000] {
+            for left in [true, false] {
+                let (t, want) = chain(n, left);
+                assert!(!t.is_flat());
+                let Ok(Cow::Owned(got)) = t.try_flat() else {
+                    panic!("a join of {n} blocks is written out")
+                };
+                assert_eq!(got, want, "{n} blocks, joined at the end {left}");
+                // The memory asked for first holds all of it: the copy never grows.
+                assert_eq!(got.capacity(), want.len());
+                assert_eq!(got, t.flat());
+            }
+        }
+        let (deep, _) = chain(1000, true);
+        assert!(deep.depth() >= 3, "depth {}", deep.depth());
+        // Two trees joined to each other, their inner ends' parts carried into the middle.
+        let ((l, lw), (r, rw)) = (chain(40, true), chain(41, false));
+        assert_eq!(join(&l, &r).try_flat().unwrap(), lw + &rw);
+        // A tree shared with itself reads twice.
+        let (s, sw) = chain(9, true);
+        assert_eq!(join(&s, &s).try_flat().unwrap(), sw.repeat(2));
+        // Short text merged into the end blocks of a join.
+        let (t, tw) = chain(3, true);
+        let ends = join(&join(&Text::from("-"), &t), &Text::from("."));
+        assert_eq!(ends.try_flat().unwrap(), format!("-{tw}."));
+    }
+
+    #[test]
+    fn try_flat_refuses_a_text_too_long_to_copy() {
+        // 2^63 bytes is more than any allocation may ask for; 2^62 more than the address
+        // space holds. Either is refused with the memory asked for, in bits.
+        for k in [62, 63] {
+            let s = doubled("a", k).unwrap();
+            assert_eq!(
+                s.try_flat().unwrap_err(),
+                TooLarge {
+                    bits: BigUint::from(1usize << k) << 3u32
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn try_flat_of_a_join_costs_its_length() {
+        // One walk over the blocks into memory asked for once: order `n` in the blocks, so 8n
+        // may do 24 times the work of n. The texts are built before the runs are timed.
+        let texts = crate::scaling::inputs(2000, |n| chain(n, true).0);
+        crate::scaling::check("try_flat of a join of n blocks", 2000, |n| {
+            let flat = texts[&n].try_flat().unwrap();
+            assert_eq!(flat.chars().count(), PIECE * n);
+        });
+    }
 }
