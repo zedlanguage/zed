@@ -2445,3 +2445,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A cache of the last read of each summary, shared by the copies of a scope through `Arc<Mutex<HashMap<..>>>`, written from a `&self` method | `product::Reads`, `Scope::holds` | Interior mutability behind a shared reference; Zed has none, and a scope is a value | The walk's state threaded explicitly: `holds` takes and returns the map of reads, or the walk keeps it beside the scope it passes down |
 | `images.rs` moved from `zedc-check` to `zedc-preimage`, its nodes `Arc` rather than `Rc` since a `Scope` is `Send + Sync`, and `Read<S>` generic over what the caller keeps beside the tree | `images::Read`, `images::Node` | Atomic reference counts and a generic struct; the PA-let-narrow-many entries above still apply | As above: a persistent ordered map with a sum per subtree; a record type with a type parameter |
+
+## Entries from LOAD-call-relation (`crates/zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A struct borrowing `&Tr` that holds memo maps (`HashMap<Atom, Option<Lin>>`, the representatives by `(Lin, i128)`) filled through `&mut self` methods | `preimage::Normal` | Borrowed references in a record; mutation (gap 11) | A record of map values threaded through the writing of the rows, `Tr` passed alongside |
+| A post-order walk on a `Vec<(Atom, bool)>` stack, the bool marking the second visit, with a `HashSet<Atom>` of open atoms to cut a binding that reaches itself | `Normal::atom` | Mutation (gap 11) | A fold over a work list carrying the memo and the open set, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)) |
+| A walk over auxiliary numbers on a `Vec<Lin>` work list with a `HashSet<u32>` visited set, leaving early with `?` on a definition of another kind | `preimage::value_projected` | Mutation (gap 11), Early exit (gap 12) | A fold over a work list ending in `#none` |
+| A `&mut HashMap<u32, u32>` passed down a recursive writer so each pair is made once per call | `Tr::instance` | Mutation (gap 11) | The map returned with the written term |
+| A `Projection` record of `Arc<[Con]>`, `Option<Lin>` and `Arc<HashMap<u32, (Lin, i128)>>`, cloned out of the memo by reference count | `Projection`, `Walk::projection`, `Walk::value_projection` | Shared ownership by reference count | A plain record value; Zed values are shared |

@@ -1356,3 +1356,274 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale() {
         },
     );
 }
+
+/// A random unit of callees that keep a congruence and integer functions over remainders and
+/// quotients (LOAD-call-relation), each called by more than one caller at moved arguments, so
+/// that all but the first call of each are written from its projection at their arguments:
+/// tests `g{j}` each calling the one before at a moved argument beside a remainder, a quotient
+/// or a bound; integer functions `v{j}` each adding a remainder or a quotient of its argument
+/// to the one before; a test `w` of two parameters; and callers `c{i}` that call them, and the
+/// caller before, at random moves, bounds and constants, so that calls hold, fail, or are
+/// refused.
+fn random_congruence_unit(rng: &mut zed_tests::instances::Rng) -> String {
+    let m = rng.int(2, 5);
+    let mut src = format!(
+        "g0(x: int) = x mod {m} == {} && x < {};\n",
+        rng.int(0, m - 1),
+        lit(rng.int(-5, 80)),
+    );
+    let gs = rng.int(1, 4);
+    for j in 1..gs {
+        let m = rng.int(2, 6);
+        let own = match rng.below(3) {
+            0 => format!("x mod {m} == {}", rng.int(0, m)),
+            1 => format!("x div {m} > {}", lit(rng.int(-5, 10))),
+            _ => format!("x > {}", lit(rng.int(-10, 10))),
+        };
+        src.push_str(&format!(
+            "g{j}(x: int) = g{}(x: x + {}) && {own};\n",
+            j - 1,
+            lit(rng.int(-3, 3)),
+        ));
+    }
+    let m = rng.int(2, 5);
+    src.push_str(&format!("v0(x: int) = x mod {m};\n"));
+    let vs = rng.int(1, 4);
+    for j in 1..vs {
+        let op = ["mod", "div"][rng.below(2)];
+        src.push_str(&format!(
+            "v{j}(x: int) = v{}(x: x + {}) + x {op} {};\n",
+            j - 1,
+            lit(rng.int(-3, 3)),
+            rng.int(2, 5),
+        ));
+    }
+    let m = rng.int(2, 4);
+    src.push_str(&format!(
+        "w(x: int, y: int) = x mod {m} == y mod {m} && x < y + {};\nc0(x: int) = x > {};\n",
+        rng.int(0, 20),
+        lit(rng.int(-10, 10)),
+    ));
+    for i in 1..rng.int(2, 6) {
+        let mut parts = vec![format!(
+            "g{}(x: x + {})",
+            rng.int(0, gs - 1),
+            lit(rng.int(-4, 4))
+        )];
+        if rng.below(2) == 0 {
+            parts.push(format!(
+                "v{}(x: x + {}) < {}",
+                rng.int(0, vs - 1),
+                lit(rng.int(-4, 4)),
+                lit(rng.int(-2, 12)),
+            ));
+        }
+        if rng.below(3) == 0 {
+            parts.push(format!(
+                "w(x: x + {}, y: {})",
+                lit(rng.int(-2, 2)),
+                ["x".to_string(), lit(rng.int(-3, 9))][rng.below(2)],
+            ));
+        }
+        parts.push(format!(
+            "c{}(x: x + {}) && x < {}",
+            i - 1,
+            lit(rng.int(-3, 3)),
+            lit(rng.int(-10, 120)),
+        ));
+        let join = [" && ", " || "][usize::from(rng.below(4) == 0)];
+        src.push_str(&format!("c{i}(x: int) = {};\n", parts.join(join)));
+    }
+    src
+}
+
+#[test]
+fn each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole() {
+    // LOAD-call-relation: a call that does not hold its callee's claim writes the callee's
+    // projection at its arguments; where the projection keeps a congruence, it keeps the
+    // quotients and remainders by constants, written at the call as the pairs of the
+    // arguments; an integer function's value is written so too. Each relation and answer,
+    // refusals too, is the one read with each such call reading its callee's body again, and
+    // the one the body closed over the definitions it reaches has, decided whole, where both
+    // are decided. A chain of congruences, an integer chain, and random units.
+    answers_are_those_reading_bodies(
+        "h0(x: int) = x < 200;\nh1(x: int) = h0(x: x) && x mod 4 == 1 && x < 199;\n\
+         h2(x: int) = h1(x: x + 1) && x mod 3 == 2;\np0(x: int) = x > 0;\n\
+         p1(x: int) = h2(x: x) && p0(x: x + 1) && x < 100;\n\
+         p2(x: int) = h2(x: x + 4) && p1(x: x + 1) && x < 90;\n\
+         p3(x: int) = h2(x: 2 * x) || p2(x: x - 1);",
+    );
+    answers_are_those_reading_bodies(
+        "v0(x: int) = x mod 3;\nv1(x: int) = v0(x: x) + x div 2;\nv2(x: int) = v1(x: x + 1) + x mod 5;\n\
+         p0(x: int) = x > 0;\np1(x: int) = v2(x: x) < 9 && p0(x: x + 1) && x < 40;\n\
+         p2(x: int) = v2(x: x - 2) == 7 && p1(x: x + 1) && x < 30;\n\
+         p3(x: int) = v1(x: x) + v2(x: x + 3) > 20 || p2(x: x);",
+    );
+    let mut rng = zed_tests::instances::Rng::new(0x1c4e);
+    for _ in 0..80 {
+        answers_are_those_reading_bodies(&random_congruence_unit(&mut rng));
+    }
+}
+
+/// Times the relations, translated alone, of the tests `p{i}` of the units `unit(n)` and
+/// `unit(8n)`, elaborated before the timing: their integer functions are read through their
+/// calls.
+fn unit_relations_scale(what: &str, n: usize, unit: fn(usize) -> String) {
+    let units: std::collections::BTreeMap<usize, Unit> = [n, n * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| (m, elab(&unit(m)).unwrap()))
+        .collect();
+    zed_tests::scaling::check(what, n, |m| {
+        let unit = &units[&m];
+        let lets = lets(unit);
+        let mut scoped = Scoped::new(&lets);
+        for (name, ps, body) in functions(unit) {
+            if !name.starts_with('p') {
+                continue;
+            }
+            assert!(scoped.relation(body, ps, ps, true).is_some(), "{name}");
+        }
+    });
+}
+
+#[test]
+fn the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale() {
+    // `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + 1) && x < 1000 i` beside `h{j}(x) =
+    // h{j-1}(x: x) && x mod 4 == 1 && x < 2000000 - j` (LOAD-call-relation): no elimination
+    // over `x` alone writes `h{n-1}`, so each call but the first read its cone again, O(n) a
+    // call (0.207, 0.882, 3.297 s for the relations at 50, 100, 200 links; 50 → 400:
+    // 141.1 times the bytes, 363 MB → 51.2 GB; measured once). Its projection
+    // now keeps the one pair `x div 4`, `x mod 4` the chain's links share, and a call writes it
+    // at its argument in O(its rows): 11.8 times (73.6 MB → 864 MB).
+    questions_scale_unit(
+        "a chain calling a callee that keeps a congruence",
+        50,
+        |n| {
+            let mut src = String::from("h0(x: int) = x < 2000000;\n");
+            for j in 1..n {
+                src.push_str(&format!(
+                    "h{j}(x: int) = h{}(x: x) && x mod 4 == 1 && x < {};\n",
+                    j - 1,
+                    2000000 - j
+                ));
+            }
+            src.push_str("p0(x: int) = x > 0;\n");
+            for i in 1..n {
+                src.push_str(&format!(
+                    "p{i}(x: int) = h{}(x: x) && p{}(x: x + 1) && x < {};\n",
+                    n - 1,
+                    i - 1,
+                    1000 * i
+                ));
+            }
+            src
+        },
+    );
+}
+
+#[test]
+fn the_relations_of_a_chain_calling_an_integer_function_scale() {
+    // `p{i}(x) = h{n-1}(x: x) < 3n && p{i-1}(x: x + 1) && x < 1000 i` beside `h{j}(x) =
+    // h{j-1}(x: x) + x mod 3` (LOAD-call-relation): each call but the first read the integer
+    // function's cone again, O(n) a call (0.062, 0.238, 1.082 s for the relations at 50, 100,
+    // 200 links; 50 → 400: 60.2 times the bytes, 88.2 MB → 5.31 GB; measured once). Its
+    // value is now written once over its argument's pairs and, at a call, at the argument: 8.1
+    // times (13.6 MB → 111 MB). Only the relations are timed: deciding these
+    // questions (`Extending::defined_with`) grows faster than n log n with the remainders
+    // along the chain (10.7 s at 400 links), which item LOAD-call-relation returns.
+    unit_relations_scale(
+        "the relations of a chain calling an integer function",
+        50,
+        |n| {
+            let mut src = String::from("h0(x: int) = x mod 3;\n");
+            for j in 1..n {
+                src.push_str(&format!("h{j}(x: int) = h{}(x: x) + x mod 3;\n", j - 1));
+            }
+            src.push_str("p0(x: int) = x > 0;\n");
+            for i in 1..n {
+                src.push_str(&format!(
+                    "p{i}(x: int) = h{}(x: x) < {} && p{}(x: x + 1) && x < {};\n",
+                    n - 1,
+                    3 * n,
+                    i - 1,
+                    1000 * i
+                ));
+            }
+            src
+        },
+    );
+}
+
+/// Times the linear questions of the units `unit(n)` and `unit(8n)`, elaborated before the
+/// timing; none is refused.
+fn questions_scale_unit(what: &str, n: usize, unit: fn(usize) -> String) {
+    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|m| {
+            let src = unit(m);
+            (m, (zed_tests::deep::statements(&src), elab(&src).unwrap()))
+        })
+        .collect();
+    zed_tests::scaling::check(what, n, |m| {
+        let (stmts, unit) = &units[&m];
+        let refused = zedc::front::linear_questions(stmts, unit);
+        assert!(refused.is_empty(), "{refused:?}");
+    });
+}
+
+/// Checks that each relation and answer of each function of `src`, read under one scope and
+/// decided from the answers of the conjunctions it extends (`Extending::defined_with`), is the
+/// same, refusals too, when each call that does not hold its callee's claim writes the
+/// callee's projection over quotients and remainders as when it reads the callee's body again
+/// (`Scoped::reading_bodies`, LOAD-call-relation), and is the one the body closed over the
+/// definitions it reaches has, decided whole, where that is decided too; in the unit's order
+/// and in the reverse.
+fn answers_are_those_reading_bodies(src: &str) {
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let cones = Cones::new(&unit);
+    let lets = lets(&unit);
+    let fs = functions(&unit);
+    let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+    for order in [
+        (0..fs.len()).collect::<Vec<_>>(),
+        (0..fs.len()).rev().collect(),
+    ] {
+        let (mut scoped, mut again) = (Scoped::new(&lets), Scoped::new(&lets).reading_bodies());
+        let (mut ext, mut ext_again) = (Extending::new(), Extending::new());
+        for i in order {
+            let (name, ps, body) = fs[i];
+            let (expected, r, s) = match (
+                closed(&cones, ps, body),
+                scoped.relation(body, ps, ps, true),
+                again.relation(body, ps, ps, true),
+            ) {
+                (Some(e), Some(r), Some(s)) => (e, r, s),
+                (None, None, None) => continue,
+                (e, r, s) => panic!(
+                    "`{name}` in\n{src}\n{e:?} whole, {} read, {} read with the bodies",
+                    r.is_some(),
+                    s.is_some()
+                ),
+            };
+            let a = ext.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            let b = ext_again.defined_with(&s, &|n| again.def(n), &|g| again.interface(g));
+            let w = scoped.written(&r);
+            assert_eq!(
+                a,
+                b,
+                "`{name}` in\n{src}\n{w}\nwith the bodies:\n{}",
+                again.written(&s)
+            );
+            for (got, f) in [
+                (&a.holds, expected.body.clone()),
+                (&a.fails, Formula::negate(expected.body.clone())),
+            ] {
+                if let (Ok(got), Ok(want)) = (got, whole(&expected, f)) {
+                    assert_eq!(*got, want, "`{name}` in\n{src}\n{w}");
+                }
+            }
+        }
+    }
+}

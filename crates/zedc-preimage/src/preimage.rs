@@ -1063,6 +1063,15 @@ impl<'t> Scoped<'t> {
         }
     }
 
+    /// The scope, with each call that does not hold its callee's claim reading the callee's
+    /// body again where an elimination over symbols alone does not write the callee, as before
+    /// LOAD-call-relation: the reference against which the tests check the relations written
+    /// from projections over quotients and remainders, refusals included.
+    pub fn reading_bodies(mut self) -> Self {
+        self.tr.bodies = true;
+        self
+    }
+
     /// The body of the relation the linear-relation domain states for the test `body` of
     /// parameters `params` over the free names `inputs`, the i-th parameter standing for the
     /// i-th input, read under the scope, its auxiliary variables defined by [`Scoped::def`]:
@@ -1126,7 +1135,11 @@ impl<'t> Scoped<'t> {
         m.log.clear();
         match self.kept.take() {
             Some((p, t)) if p == products => m.put_translations(t),
-            _ => self.tr = Tr::new(products),
+            _ => {
+                let bodies = self.tr.bodies;
+                self.tr = Tr::new(products);
+                self.tr.bodies = bodies;
+            }
         }
         let body = match lam {
             Some(l) => tx.question(&mut self.tr, l),
@@ -1452,6 +1465,12 @@ struct Tr {
     /// body read again ([`Scoped::interface`], LOAD-call-summary). Kept when definitions are
     /// undone, since a stale entry only names atoms no question reads.
     interfaces: HashMap<presburger::Id, HashSet<presburger::Atom>>,
+    /// Whether a call that does not hold its callee's claim reads the callee's body again
+    /// where an elimination over symbols alone does not write the callee, as before
+    /// LOAD-call-relation, rather than writing its projection over quotients and remainders
+    /// ([`projected`], [`value_projected`]): the reference [`Scoped::reading_bodies`] gives the
+    /// tests.
+    bodies: bool,
 }
 
 impl Tr {
@@ -1467,6 +1486,7 @@ impl Tr {
             claims: HashMap::new(),
             claimed: Vec::new(),
             interfaces: HashMap::new(),
+            bodies: false,
         }
     }
 
@@ -1517,6 +1537,114 @@ impl Tr {
     fn claim(&mut self, lam: At, args: Vec<Lin>, n: u32) {
         self.claims.insert(lam, (args, n));
         self.claimed.push(lam);
+    }
+
+    /// The number of the quotient of `a div c` and `a mod c` for a constant `c` other than 0,
+    /// its remainder numbered after it: the pair made for `a` and `c` before, or a new one,
+    /// `a == c·q + r` and `0 <= r <= |c| - 1` (Euclidean). One pair for each dividend and
+    /// divisor, so that every `x mod m` and `x div m` of one input names the same quotient and
+    /// remainder. O(log of the pairs) and the terms of `a`.
+    fn pair_by_constant(&mut self, a: &Lin, c: i128) -> u32 {
+        let key = (a.clone(), Lin::constant(c));
+        if let Some(&n) = self.pairs.get(&key) {
+            return n;
+        }
+        let n = self.defs.len() as u32;
+        self.pairs.insert(key.clone(), n);
+        self.made.push(key);
+        let (q, r) = (
+            Lin::atom(presburger::Atom::Aux(n)),
+            Lin::atom(presburger::Atom::Aux(n + 1)),
+        );
+        let def = Formula::and(vec![
+            Formula::Con(Con::eq(a, &q.times(c).plus(&r))),
+            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
+        ]);
+        let shown = |op| What::ByConstant(op, a.clone(), c);
+        self.defs.push((n, shown("div"), def));
+        self.defs.push((n + 1, shown("mod"), Formula::top()));
+        n
+    }
+
+    /// The term `l` of a callee's relation, over the canonical atoms `to` maps, written at a
+    /// call: each such atom replaced by its argument, and each quotient or remainder by a
+    /// constant ([`Tr::pair_by_constant`]) by the pair of its dividend so written and the same
+    /// divisor, which is the call's own, since a pair is a function of its dividend
+    /// (LOAD-call-relation). The dividends are those of `pairs`, a [`Projection`]'s, or, without
+    /// it, those of the definitions. `done` holds the pairs written so far, so each is written
+    /// once for all the terms of one call. `None` when an atom is a product or another
+    /// auxiliary variable, whose definition the call would need a copy of. Time of `l` and of
+    /// the dividends it reaches not yet in `done`, times the log of the terms.
+    fn instance(
+        &mut self,
+        l: &Lin,
+        to: &HashMap<Arc<str>, Lin>,
+        pairs: Option<&HashMap<u32, (Lin, i128)>>,
+        done: &mut HashMap<u32, u32>,
+    ) -> Option<Lin> {
+        use presburger::Atom;
+        // Each term added in place, O(log) for each atom, as [`at_arguments`] does.
+        let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+        let mut constant = l.constant.clone();
+        for (a, k) in &l.terms {
+            let at = match a {
+                Atom::Sym(s) => match to.get(s) {
+                    Some(arg) => arg.clone(),
+                    None => Lin::atom(a.clone()),
+                },
+                Atom::Aux(n) => {
+                    // The quotient, and whether `n` is its remainder, with its dividend.
+                    let (q, rem, a, c) = match pairs {
+                        Some(pairs) => match pairs.get(n) {
+                            Some((a, c)) => (*n, 0, a.clone(), *c),
+                            None => {
+                                let q = n.checked_sub(1)?;
+                                let (a, c) = pairs.get(&q)?;
+                                (q, 1, a.clone(), *c)
+                            }
+                        },
+                        None => {
+                            let (m, what, _) = self.defs.get(*n as usize)?;
+                            let (q, rem) = match what {
+                                What::ByConstant("mod", ..) => (n.checked_sub(1)?, 1),
+                                What::ByConstant(..) => (*n, 0),
+                                _ => return None,
+                            };
+                            let What::ByConstant(_, a, c) = &self.defs.get(q as usize)?.1 else {
+                                return None;
+                            };
+                            if *m != *n {
+                                return None;
+                            }
+                            (q, rem, a.clone(), *c)
+                        }
+                    };
+                    let p = match done.get(&q) {
+                        Some(&p) => p,
+                        None => {
+                            let a = self.instance(&a, to, pairs, done)?;
+                            let p = self.pair_by_constant(&a, c);
+                            done.insert(q, p);
+                            p
+                        }
+                    };
+                    Lin::atom(Atom::Aux(p + rem))
+                }
+                Atom::Product(..) => return None,
+            };
+            constant = &constant + &(k * &at.constant);
+            for (b, d) in at.terms {
+                let v = match terms.remove(&b) {
+                    Some(o) => &o + &(k * &d),
+                    None => k * &d,
+                };
+                if !v.is_zero() {
+                    terms.insert(b, v);
+                }
+            }
+        }
+        Some(Lin { terms, constant })
     }
 
     fn aux(&mut self, what: What, def: Formula) -> presburger::Atom {
@@ -2359,8 +2487,19 @@ type Unheld = Box<dyn FnOnce(&mut Memo)>;
 type CallKey = (At, Vec<Lin>);
 
 /// A callee's relation with every variable but its canonical atoms and the inputs it reads
-/// eliminated ([`Walk::projection`]): constraints over symbols alone.
-type Projection = Arc<[Con]>;
+/// eliminated ([`Walk::projection`]): constraints over symbols, and over the quotients and
+/// remainders by constants of `pairs` where an elimination over symbols alone would leave a
+/// congruence (LOAD-call-relation).
+#[derive(Clone)]
+struct Projection {
+    rows: Arc<[Con]>,
+    /// For an integer function, its value term over the same atoms ([`value_projected`]).
+    value: Option<Lin>,
+    /// Each quotient the rows read, by its number (its remainder numbered after it): its
+    /// dividend, over the symbols kept and the quotients and remainders numbered before it, and
+    /// its divisor, a constant other than 0.
+    pairs: Arc<HashMap<u32, (Lin, i128)>>,
+}
 
 /// The relation `r` of a callee over the canonical atoms of the canonical key `key`
 /// ([`Walk::claimable`]) with each other variable eliminated ([`presburger::eliminated`]):
@@ -2369,10 +2508,14 @@ type Projection = Arc<[Con]>;
 /// bindings define. Each such variable has one value, or some, at each value of the atoms
 /// kept, so the result holds at a value of the canonical atoms exactly where `r` holds with
 /// the definitions at some values of the others: written at a call's arguments, it is the
-/// callee's relation at them. Each definition is read once (a visited set over the numbers).
-/// `None` when `r` or a definition chooses (a disjunction or a negation), an atom is a
-/// product or an auxiliary variable without a definition, a binding binds an atom of `key`,
-/// or an atom stays ([`presburger::eliminated`]).
+/// callee's relation at them. Where an elimination over symbols alone leaves a variable (a
+/// congruence), the quotients and remainders by constants are kept, over the bound atoms
+/// written as what they are bound to ([`Normal`]), and their own definitions' rows dropped,
+/// since the pairs [`Tr::instance`] makes at a call hold them there (LOAD-call-relation).
+/// Each definition is read once (a visited set over the numbers). `None` when `r` or a
+/// definition chooses (a disjunction or a negation), an atom is a product or an auxiliary
+/// variable without a definition, a binding binds an atom of `key`, or an atom other than a
+/// kept pair stays ([`presburger::eliminated`]).
 fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     use presburger::Atom;
     let own: HashSet<&Arc<str>> = (key.iter().flat_map(|l| l.terms.keys()))
@@ -2423,7 +2566,308 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
         return None;
     }
     let keep = |a: &Atom| matches!(a, Atom::Sym(s) if !bound.contains(s));
-    presburger::eliminated(&rows, &keep).map(Projection::from)
+    if let Some(out) = presburger::eliminated(&rows, &keep) {
+        return Some(Projection {
+            rows: out.into(),
+            value: None,
+            pairs: Arc::default(),
+        });
+    }
+    // The tests' reference reads the body again at the call ([`Scoped::reading_bodies`]).
+    if tr.bodies {
+        return None;
+    }
+    // The elimination leaves a congruence (`x mod 4 == 1`), which no rows over the kept
+    // symbols state: the quotients and remainders by constants are kept too, each a function
+    // of its dividend, so [`Tr::instance`] writes it at a call as the pair of the dividend
+    // written there (LOAD-call-relation). Each row is written over the kept symbols and pairs
+    // ([`Normal`]), and pairs of one dividend and divisor are one: the links of a chain
+    // `h{j}(x) = h{j-1}(x: x) && x mod 4 == 1` leave one pair, not one for each link.
+    let mut normal = Normal::new(tr, &seen);
+    let mut once: HashSet<Con> = HashSet::new();
+    let mut written: Vec<Con> = Vec::with_capacity(rows.len());
+    for c in &rows {
+        let lin = normal.lin(&c.lin).unwrap_or_else(|| normal.renamed(&c.lin));
+        if lin.terms.is_empty() {
+            let holds = match c.rel {
+                presburger::Rel::Ge => !lin.constant.is_negative(),
+                presburger::Rel::Eq => lin.constant.is_zero(),
+            };
+            if holds {
+                continue;
+            }
+        }
+        let c = Con { lin, rel: c.rel };
+        if once.insert(c.clone()) {
+            written.push(c);
+        }
+    }
+    let keep = |a: &Atom| match a {
+        Atom::Sym(s) => !normal.binds.contains_key(s),
+        Atom::Aux(n) => normal.kept(*n),
+        Atom::Product(..) => false,
+    };
+    let rows = presburger::eliminated(&written, &keep)?;
+    // The rows of each pair's own definition, which the pair [`Tr::instance`] makes at a call
+    // holds there: the relation written at a call is the callee's read at it, in its shape.
+    let mut defined: HashSet<Con> = HashSet::new();
+    let reps: Vec<u32> = normal.reps.keys().copied().collect();
+    for q in reps {
+        for c in normal.tr.defs[q as usize].2.cons() {
+            let lin = normal.lin(&c.lin).unwrap_or_else(|| normal.renamed(&c.lin));
+            defined.insert(Con { lin, rel: c.rel });
+        }
+    }
+    let rows: Vec<Con> = rows.into_iter().filter(|c| !defined.contains(c)).collect();
+    Some(Projection {
+        rows: rows.into(),
+        value: None,
+        pairs: normal.pairs(),
+    })
+}
+
+/// The value term `l` of an integer callee over the canonical atoms of the canonical key
+/// `key` ([`Walk::claimable`]) written over its canonical atoms and the inputs it reads, and
+/// the quotients and remainders by constants of their terms ([`Normal`]): each value a claimed
+/// call in it binds written as its callee's term so written, and each atom bound so as what it
+/// is bound to (LOAD-call-relation). A call that does not hold the claim writes it at its
+/// arguments ([`Tr::instance`]), O(the term and its pairs), where reading the body again costs
+/// O(its cone). Each definition is read once (a visited set over the numbers). `None` when a
+/// binding binds an atom of `key`, or an atom is a product or an auxiliary variable of
+/// another kind (`if`, `min`, `abs`, a quotient by a term), whose definition a call would need
+/// a copy of.
+fn value_projected(tr: &Tr, l: &Lin, key: &[Lin]) -> Option<Projection> {
+    use presburger::Atom;
+    let own: HashSet<&Arc<str>> = (key.iter().flat_map(|l| l.terms.keys()))
+        .filter_map(|a| match a {
+            Atom::Sym(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    // Each auxiliary variable `l` reaches through the definitions, once.
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut todo: Vec<Lin> = vec![l.clone()];
+    while let Some(t) = todo.pop() {
+        for a in t.terms.keys() {
+            let Atom::Aux(n) = a else { continue };
+            if !seen.insert(*n) {
+                continue;
+            }
+            let at = match tr.defs.get(*n as usize)?.1.remainder() {
+                true => n.checked_sub(1)?,
+                false => *n,
+            };
+            seen.insert(at);
+            match &tr.defs.get(at as usize)?.1 {
+                What::ByConstant(_, a, _) => todo.push(a.clone()),
+                What::Value(v, pairs) => {
+                    todo.push(v.clone());
+                    todo.extend(pairs.iter().map(|(_, a)| a.clone()));
+                }
+                _ => return None,
+            }
+        }
+    }
+    let mut normal = Normal::new(tr, &seen);
+    if normal.binds.keys().any(|c| own.contains(c)) {
+        return None;
+    }
+    let value = normal.lin(l)?;
+    Some(Projection {
+        rows: Arc::default(),
+        value: Some(value),
+        pairs: normal.pairs(),
+    })
+}
+
+/// The terms of a callee's relation written over the symbols no binding binds and the
+/// quotients and remainders by constants of terms so written, one pair for each dividend and
+/// divisor ([`projected`], [`value_projected`]): each atom a binding binds written as what it
+/// is bound to, each value a claimed call of an integer function binds as its callee's term,
+/// and each pair as the pair of its dividend so written. Exact, since the relation holds each
+/// binding's equality and each pair is a function of its dividend. Each atom is written once
+/// (a memo, filled with an explicit stack, since a chain of n links binds n atoms one to the
+/// next), so all the terms together take time of the definitions read and of their own terms,
+/// times the log of the terms.
+struct Normal<'a> {
+    tr: &'a Tr,
+    /// What each bound atom is bound to.
+    binds: HashMap<Arc<str>, Lin>,
+    /// Each atom's written form, `None` where it is not written.
+    memo: HashMap<presburger::Atom, Option<Lin>>,
+    /// The representative of each dividend written and divisor: the first pair of them.
+    by_key: HashMap<(Lin, i128), u32>,
+    /// Each representative's dividend, written, and divisor.
+    reps: HashMap<u32, (Lin, i128)>,
+}
+
+impl<'a> Normal<'a> {
+    /// The bindings of the definitions `seen` holds.
+    fn new(tr: &'a Tr, seen: &HashSet<u32>) -> Normal<'a> {
+        let mut binds = HashMap::new();
+        for &n in seen {
+            if let What::Bind(pairs) | What::Value(_, pairs) = &tr.defs[n as usize].1 {
+                binds.extend(pairs.iter().map(|(c, a)| (c.clone(), a.clone())));
+            }
+        }
+        Normal {
+            tr,
+            binds,
+            memo: HashMap::new(),
+            by_key: HashMap::new(),
+            reps: HashMap::new(),
+        }
+    }
+
+    /// The atoms the written form of `a` is made from, and whether it is written as it is.
+    fn parts(&self, a: &presburger::Atom) -> Option<Vec<presburger::Atom>> {
+        use presburger::Atom;
+        let atoms = |l: &Lin| l.terms.keys().cloned().collect::<Vec<_>>();
+        match a {
+            Atom::Sym(s) => Some(self.binds.get(s).map(atoms).unwrap_or_default()),
+            Atom::Aux(n) => match &self.tr.defs.get(*n as usize)?.1 {
+                What::ByConstant("mod", ..) => Some(vec![Atom::Aux(n.checked_sub(1)?)]),
+                What::ByConstant(_, a, _) => Some(atoms(a)),
+                What::Value(v, _) => Some(atoms(v)),
+                _ => None,
+            },
+            Atom::Product(..) => None,
+        }
+    }
+
+    /// The written form of `a`, its parts written first.
+    fn atom(&mut self, a: &presburger::Atom) -> Option<Lin> {
+        use presburger::Atom;
+        if let Some(w) = self.memo.get(a) {
+            return w.clone();
+        }
+        let mut stack: Vec<(Atom, bool)> = vec![(a.clone(), false)];
+        let mut open: HashSet<Atom> = HashSet::new();
+        while let Some((b, ready)) = stack.pop() {
+            if self.memo.contains_key(&b) {
+                continue;
+            }
+            let Some(parts) = self.parts(&b) else {
+                self.memo.insert(b, None);
+                continue;
+            };
+            if !ready {
+                if !open.insert(b.clone()) {
+                    // A binding that reaches itself.
+                    self.memo.insert(b, None);
+                    continue;
+                }
+                stack.push((b, true));
+                for p in parts {
+                    if !self.memo.contains_key(&p) {
+                        stack.push((p, false));
+                    }
+                }
+                continue;
+            }
+            let w = self.made(&b);
+            self.memo.insert(b, w);
+        }
+        self.memo.get(a).cloned().flatten()
+    }
+
+    /// The written form of `a`, its parts' written forms in the memo.
+    fn made(&mut self, a: &presburger::Atom) -> Option<Lin> {
+        use presburger::Atom;
+        match a {
+            Atom::Sym(s) => match self.binds.get(s) {
+                Some(to) => self.over(&to.clone()),
+                None => Some(Lin::atom(a.clone())),
+            },
+            Atom::Aux(n) => match &self.tr.defs[*n as usize].1 {
+                What::ByConstant("mod", ..) => {
+                    let q = self.memo.get(&Atom::Aux(n - 1))?.clone()?;
+                    let Some(Atom::Aux(q)) = q.terms.keys().next().cloned() else {
+                        unreachable!("a quotient is written as a pair")
+                    };
+                    Some(Lin::atom(Atom::Aux(q + 1)))
+                }
+                What::ByConstant(_, d, c) => {
+                    let (d, c) = (self.over(&d.clone())?, *c);
+                    let r = *self.by_key.entry((d.clone(), c)).or_insert(*n);
+                    self.reps.entry(r).or_insert((d, c));
+                    Some(Lin::atom(Atom::Aux(r)))
+                }
+                What::Value(v, _) => self.over(&v.clone()),
+                _ => None,
+            },
+            Atom::Product(..) => None,
+        }
+    }
+
+    /// `l` with each atom replaced by its written form in the memo. Time of the terms, times
+    /// the log of their number.
+    fn over(&self, l: &Lin) -> Option<Lin> {
+        let mut terms: BTreeMap<presburger::Atom, Int> = BTreeMap::new();
+        let mut constant = l.constant.clone();
+        for (a, k) in &l.terms {
+            let at = self.memo.get(a)?.as_ref()?;
+            constant = &constant + &(k * &at.constant);
+            for (b, d) in &at.terms {
+                let v = match terms.remove(b) {
+                    Some(o) => &o + &(k * d),
+                    None => k * d,
+                };
+                if !v.is_zero() {
+                    terms.insert(b.clone(), v);
+                }
+            }
+        }
+        Some(Lin { terms, constant })
+    }
+
+    /// The written form of `l`.
+    fn lin(&mut self, l: &Lin) -> Option<Lin> {
+        for a in l.terms.keys() {
+            self.atom(a)?;
+        }
+        self.over(l)
+    }
+
+    /// `l` with each pair written replaced by its representative, other atoms as they are.
+    fn renamed(&self, l: &Lin) -> Lin {
+        use presburger::Atom;
+        let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+        for (a, k) in &l.terms {
+            let a = match (a, self.memo.get(a)) {
+                (Atom::Aux(_), Some(Some(w))) if w.terms.len() == 1 && w.constant.is_zero() => {
+                    match w.terms.iter().next() {
+                        Some((b @ Atom::Aux(_), one)) if one.is_unit() && !one.is_negative() => {
+                            b.clone()
+                        }
+                        _ => a.clone(),
+                    }
+                }
+                _ => a.clone(),
+            };
+            let v = match terms.remove(&a) {
+                Some(o) => &o + k,
+                None => k.clone(),
+            };
+            if !v.is_zero() {
+                terms.insert(a, v);
+            }
+        }
+        Lin {
+            terms,
+            constant: l.constant.clone(),
+        }
+    }
+
+    /// Whether `n` is a representative pair's quotient or remainder.
+    fn kept(&self, n: u32) -> bool {
+        self.reps.contains_key(&n) || n.checked_sub(1).is_some_and(|q| self.reps.contains_key(&q))
+    }
+
+    /// The representatives, as a [`Projection`] holds them.
+    fn pairs(&self) -> Arc<HashMap<u32, (Lin, i128)>> {
+        Arc::new(self.reps.clone())
+    }
 }
 
 /// The classes of the parameters of the functions `lams` binds (each its name and lambda):
@@ -2657,6 +3101,18 @@ fn at_arguments(l: &Lin, key: &[Lin], args: &[Lin]) -> Option<Lin> {
         }
     }
     Some(Lin { terms, constant })
+}
+
+/// Each canonical atom of the canonical key `key` ([`Walk::claimable`]) and its argument among
+/// `args`, as [`Tr::instance`] reads them. Time of the key and the arguments.
+fn arguments_of(key: &[Lin], args: &[Lin]) -> HashMap<Arc<str>, Lin> {
+    use presburger::Atom;
+    (key.iter().zip(args))
+        .filter_map(|(c, a)| match c.terms.keys().next()? {
+            Atom::Sym(c) => Some((c.clone(), a.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// An entry of a translation memo.
@@ -5916,37 +6372,9 @@ impl<'m, 't> Walk<'m, 't> {
                         let c = c.filter(|c| *c != 0)?;
                         let a = arg(0).await?;
                         self.tr(|tr| {
-                            // One pair for each dividend and divisor, so that every `x mod m`
-                            // and `x div m` of one input names the same quotient and remainder.
-                            let key = (a.clone(), Lin::constant(c));
-                            let pick = |n: u32| {
-                                Lin::atom(presburger::Atom::Aux(if p == IntDiv {
-                                    n
-                                } else {
-                                    n + 1
-                                }))
-                            };
-                            if let Some(&n) = tr.pairs.get(&key) {
-                                return Some(pick(n));
-                            }
-                            // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
-                            let n = tr.defs.len() as u32;
-                            tr.pairs.insert(key.clone(), n);
-                            tr.made.push(key);
-                            let (q, r) = (
-                                Lin::atom(presburger::Atom::Aux(n)),
-                                Lin::atom(presburger::Atom::Aux(n + 1)),
-                            );
-                            let c = i128::from(c);
-                            let def = Formula::and(vec![
-                                Formula::Con(Con::eq(&a, &q.times(c).plus(&r))),
-                                Formula::Con(Con::ge(&r, &Lin::constant(0))),
-                                Formula::Con(Con::ge(&Lin::constant(c.abs() - 1), &r)),
-                            ]);
-                            let shown = |op| What::ByConstant(op, a.clone(), c);
-                            tr.defs.push((n, shown("div"), def));
-                            tr.defs.push((n + 1, shown("mod"), Formula::top()));
-                            Some(if p == IntDiv { q } else { r })
+                            let n = tr.pair_by_constant(&a, i128::from(c));
+                            let n = if p == IntDiv { n } else { n + 1 };
+                            Some(Lin::atom(presburger::Atom::Aux(n)))
                         })
                     }
                     Min | Max | Abs => {
@@ -6155,6 +6583,35 @@ impl<'m, 't> Walk<'m, 't> {
         )
     }
 
+    /// The value term of the integer lambda `(body, lam)` over its canonical atoms
+    /// ([`value_projected`]), remembered under the canonical key `key` in the table of
+    /// [`Walk::projection`], so it is made once from the callee's canonical term
+    /// ([`Walk::canonical_lin`]) for all the calls of it that do not hold its claim
+    /// (LOAD-call-relation). A lambda is a test or an integer function, so the two never
+    /// share a key.
+    #[allow(clippy::too_many_arguments)]
+    fn value_projection(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+        key: Vec<Lin>,
+    ) -> Deep<'m, Option<Projection>> {
+        let k = ((body, lam), key.clone());
+        self.translated(
+            |m| &mut m.projections,
+            k,
+            Logged::Projection,
+            move || async move {
+                let l = self.canonical_lin(t, ps, (body, lam), args, env, key.clone());
+                let l = l.await?;
+                self.tr(|tr| value_projected(tr, &l, &key))
+            },
+        )
+    }
+
     /// What [`Walk::canonical_formula`] remembers: the body read under [`Walk::canonical_env`].
     async fn canonical_formula_read(
         &'m self,
@@ -6215,34 +6672,38 @@ impl<'m, 't> Walk<'m, 't> {
     /// O(its arguments) once its callee is translated, whatever map of the parameters the
     /// arguments are (LOAD-chain-affine); when another call holds the claim, the callee's
     /// relation with every other variable eliminated ([`Walk::projection`]), made once for the
-    /// callee and written at the arguments ([`at_arguments`]), so such a call costs O(the rows
-    /// left) (LOAD-affine-cone); otherwise the callee's body read with each parameter bound to
-    /// its argument ([`Walk::formula_call`]), as it is when the callee's canonical relation is
-    /// outside the domain or the elimination leaves a variable.
+    /// callee and written at the arguments ([`Tr::instance`]), so such a call costs O(the rows
+    /// left) (LOAD-affine-cone), where the elimination keeps the quotients and remainders by
+    /// constants it cannot remove, each written at the call as the pair of its dividend
+    /// written there (LOAD-call-relation); otherwise the callee's body read with each parameter
+    /// bound to its argument ([`Walk::formula_call`]), as it is when the callee's canonical
+    /// relation is outside the domain or no projection is made.
     ///
     /// A canonical relation that is one constraint over symbols is written at the arguments
     /// instead ([`at_arguments`]), with no binding and no claim.
     // Complexity tradeoff: a call that holds no claim is its callee's relation with every
-    // variable but the canonical atoms eliminated, written at its arguments; where the
-    // elimination is not exact without new variables, a call of it with other arguments reads
-    // its body again, and the calls in it whose arguments then differ from their callees'
-    // claimed ones, so a function called with k argument lists is read k times, O(k times its
-    // cone): a callee that chooses (a disjunction or a negation: `x != j` in each link), a
-    // product, a congruence left by a `mod` or `div` (`x mod 4 == 1`: `x` is 1 more than a
-    // multiple of 4, which no rows over `x` alone state), or an auxiliary variable of no
-    // definition. Where it is exact, the rows left are one for each linear form over the
-    // canonical atoms, the tighter kept: O(1) for one parameter, and up to the cone's for two or
-    // more, written at each call. Why: the claimed call binds the callee's canonical atoms,
-    // which one relation can bind once, and an exact elimination over the integers needs new
-    // variables for those cases. Trigger: one function with a large cone of such constraints
-    // called with another argument list by each link of a chain, as `h(x: x)` in `p{i}(x) =
-    // h(x: x) && p{i-1}(x: x + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x !=
-    // j`: 0.30 s at 50 links, 12.8 s at 400 (measured once). Bounds through `div` and `mod`
-    // are eliminated: test `l01_38_presburger::one_scope::
-    // the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale`. COMPLEXITY.md row
-    // LOAD-affine-cone. A complete solution would index the canonical atoms by the call, so
-    // each call binds its own copy of them without copying the relation: a relation node
-    // instantiated at the call, which the solver reads with the call's atoms.
+    // variable but the canonical atoms and the quotients and remainders by constants
+    // eliminated, written at its arguments; where no such projection is made, a call of it with
+    // other arguments reads its body again, and the calls in it whose arguments then differ
+    // from their callees' claimed ones, so a function called with k argument lists is read k
+    // times, O(k times its cone): a callee that chooses (a disjunction or a negation: `x != j`
+    // in each link), a product, a quotient by a term, or an auxiliary variable of no definition.
+    // Where it is made, the rows left are one for each linear form over the kept atoms, the
+    // tighter kept: O(1) for one parameter and a chain whose links share one pair (`x mod 4 ==
+    // 1` in each link), and up to the cone's for two or more parameters or many pairs, written
+    // at each call; no exact bound on those rows is made. Why: the claimed call binds the
+    // callee's canonical atoms, which one relation can bind once; an exact elimination of a
+    // choice over the integers keeps each clause, O(the cone) at each call, the same as the
+    // body. Trigger: one function with a large cone of such constraints called with another
+    // argument list by each link of a chain, as `h(x: x)` in `p{i}(x) = h(x: x) && p{i-1}(x: x
+    // + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x != j`: relations 0.051 s
+    // at 50 links, 4.41 s at 400 (measured once). Congruences are kept: test
+    // `l01_38_presburger::one_scope::
+    // the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale`. COMPLEXITY.md
+    // row LOAD-call-relation. A complete solution would index the canonical atoms by the call,
+    // so each call binds its own copy of them without copying the relation: a relation node
+    // instantiated at the call, which the solver reads with the call's atoms; or, for one
+    // parameter, the callee's holes as an interval map (item LOAD-bound-holes).
     async fn formula_called(
         &'m self,
         t: Tid,
@@ -6283,11 +6744,17 @@ impl<'m, 't> Walk<'m, 't> {
                 let p = self.projection(t, ps, (body, lam), Some((args, env)), key.clone());
                 let p = p.await;
                 if let Some(p) = p {
-                    let at = (p.iter()).map(|c| {
-                        let lin = at_arguments(&c.lin, &key, &k.1)?;
-                        Some(Formula::Con(Con { lin, rel: c.rel }))
+                    let to = arguments_of(&key, &k.1);
+                    let at = self.tr(|tr| {
+                        let mut done = HashMap::new();
+                        (p.rows.iter())
+                            .map(|c| {
+                                let lin = tr.instance(&c.lin, &to, Some(&p.pairs), &mut done)?;
+                                Some(Formula::Con(Con { lin, rel: c.rel }))
+                            })
+                            .collect::<Option<Vec<_>>>()
                     });
-                    if let Some(parts) = at.collect::<Option<Vec<_>>>() {
+                    if let Some(parts) = at {
                         let f = Formula::and(parts);
                         self.tr(|tr| tr.bound(&f, &k.1));
                         return Some(f);
@@ -6304,18 +6771,26 @@ impl<'m, 't> Walk<'m, 't> {
 
     /// [`Walk::formula_called`] for an integer function: when the call may be claimed and its
     /// callee's canonical term holds no product, the variable `v` of the binding, defined by
-    /// `v == ` that term; otherwise the callee's body read with each parameter bound to its
+    /// `v == ` that term; when another call holds the claim, the term written over the
+    /// canonical atoms and the quotients and remainders by constants of their terms
+    /// ([`Walk::value_projection`]), made once and written at the arguments ([`Tr::instance`],
+    /// LOAD-call-relation); otherwise the callee's body read with each parameter bound to its
     /// argument ([`Walk::lin_call`]). A product in the term is left to the substitution, since
     /// [`Scoped::written`] writes `v` as the term, and a product of `v` would be a product of
     /// products.
     /// A canonical term over symbols alone is written at the arguments ([`at_arguments`]).
-    // Complexity tradeoff: a call that holds no claim reads its callee's body again, O(its
-    // cone), as [`Walk::formula_called`] does where no elimination is exact: the value of an
-    // integer function read through its auxiliary variables needs a variable of its own at each
-    // call, which no elimination writes. Trigger: an integer function with a large cone called
-    // with another argument list by each link of a chain. Not measured apart: chains of
-    // `div` and `mod` terms nested so are refused by the solver from about 12 links
-    // (`Growth`). COMPLEXITY.md row LOAD-affine-cone.
+    // Complexity tradeoff: a call that holds no claim, of a callee whose term reads an
+    // auxiliary variable other than a quotient or remainder by a constant or a claimed call's
+    // value (`if`, `min`, `abs`, a quotient by a term), reads its callee's body again, O(its
+    // cone), as [`Walk::formula_called`] does where no projection is made: such a variable
+    // needs a copy of its definition at each call, which no projection writes. Trigger: an
+    // integer function with a large cone of such terms called with another argument list by
+    // each link of a chain. Not measured. Quotients and remainders by constants are written
+    // at the call: test `l01_38_presburger::one_scope::
+    // the_relations_of_a_chain_calling_an_integer_function_scale`. Deciding such a chain's
+    // questions (`presburger::extend`) still grows faster than n log n with the remainders
+    // along it: 0.239 s at 50 links, 14.5 s at 400 (measured once), returned by item
+    // LOAD-call-relation. COMPLEXITY.md row LOAD-call-relation.
     async fn lin_called(
         &'m self,
         t: Tid,
@@ -6339,9 +6814,28 @@ impl<'m, 't> Walk<'m, 't> {
             }
             if let Some(l) = l
                 && !l.terms.keys().any(|a| matches!(a, Atom::Product(..)))
-                && let Some(v) = self.binding((body, lam), &k.1, &key, Some(l))
             {
-                return Some(Lin::atom(Atom::Aux(v)));
+                if let Some(v) = self.binding((body, lam), &k.1, &key, Some(l.clone())) {
+                    return Some(Lin::atom(Atom::Aux(v)));
+                }
+                // Another call holds the claim: the callee's term over its canonical atoms
+                // ([`Walk::value_projection`]), made once, written at the arguments, its
+                // quotients and remainders by constants the pairs of its dividends so written
+                // ([`Tr::instance`]), O(the term and its pairs).
+                // The tests' reference reads the body again ([`Scoped::reading_bodies`]).
+                if self.tr(|tr| tr.bodies) {
+                    return self.lin_call(t, ps, (body, lam), args, env).await;
+                }
+                let p = self.value_projection(t, ps, (body, lam), args, env, key.clone());
+                if let Some(p) = p.await
+                    && let Some(v) = &p.value
+                {
+                    let to = arguments_of(&key, &k.1);
+                    let mut done = HashMap::new();
+                    if let Some(s) = self.tr(|tr| tr.instance(v, &to, Some(&p.pairs), &mut done)) {
+                        return Some(s);
+                    }
+                }
             }
         }
         self.lin_call(t, ps, (body, lam), args, env).await
