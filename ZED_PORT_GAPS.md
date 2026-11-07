@@ -2318,3 +2318,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A memo of `Rc<Summarized>` per binder in a `HashMap`, filled on an explicit stack with an `entered` set | `Arms::summaries`, `Ck::summarized` | Shared ownership, mutation of the checker state | A table of summaries keyed by binder, filled in dependency order with the binders |
+
+## Entries from PA-let-stack (`crates/zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `async fn` methods of a struct holding a `frames::Stack`, called through `fn`s returning `Deep` that answer a leaf at once (`Stack::ready`) or start a frame (`Stack::call`), so the walk of the arms and the forward transfer keep their nesting on the heap in plain-recursion order | `Run::forward`, `Run::forward_at`, `Run::walk`, `Run::walk_at` | No `async` or compiler-written state machines (as for PRE-stack-explicit) | Each walk's frames as a sum type with an explicit stack |
+| The scope of the current arm as the top of a `RefCell<Vec<Scope>>` over a `RefCell<&mut Scope>` of the caller, and the arms gathered in a `RefCell<Vec<Arm>>`, shared by all frames | `Run::scope`, `Run::inner`, `Run::outer`, `Run::out` | Mutation shared by frames (gap 1) | State threaded through the frame loop: a list of scopes and a list of arms |

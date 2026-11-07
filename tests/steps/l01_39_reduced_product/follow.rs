@@ -546,8 +546,8 @@ fn random_blocks_of_lets_are_read_exactly() {
 /// summaries it adds kept unsummed, and the test forms the sum of `x_d` once. Before, each
 /// test in a ramp reduced every name bound since the last reduction, `Θ(d²)` (32 to 256: 27.6
 /// times the instructions), and the final test read every `n` (repair of PA-let-block). A
-/// block of 512 overflows the stack of a run: the walk of the arms recurses on the bound terms
-/// (item PA-let-stack; PRE-stack covers only the transfer).
+/// block of 512 overflowed the stack of a run, since the walk of the arms recursed on the bound
+/// terms; it keeps them on the heap now (item PA-let-stack, `deep_let`).
 #[test]
 fn a_block_of_sums_of_ramps_scales() {
     let (scope, terms) = sizes(32, let_chain);

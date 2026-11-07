@@ -37,10 +37,12 @@
 //! later.
 
 use imbl::ordmap::DiffItem;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
+use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::print;
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
@@ -3359,39 +3361,176 @@ fn substitute(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Term {
 
 /// The element of `e`'s value in `scope`: a literal, a value computed from static names, the
 /// revision table's forward transfer over integers, or the join of an `if`'s reachable arms.
-/// `scope` is as it was on return.
+/// `scope` is as it was on return. The walk keeps its `let`s, `if`s and primitives on frames
+/// on the heap ([`Run`]), so any depth of nesting runs on a small thread stack.
 pub fn forward(e: &Term, scope: &mut Scope) -> Product {
-    on_stack(|| forward_in(e, scope))
+    let run = Run::new(scope);
+    run.stack.run(run.forward(e))
 }
 
-fn forward_in(e: &Term, scope: &mut Scope) -> Product {
+/// The walks of [`arms`] and [`forward`], each `let`, `if` and primitive they enter a call on a
+/// frame of its own ([`zed_kernel::frames`]), so that the depth of a term is limited by memory
+/// and not by the thread's stack; the calls run in the order the recursive walks ran them
+/// (item PA-let-stack). The scope the walk is in is the top of `inner`, or `outer` when
+/// `inner` is empty: the scope of an `if` arm is pushed while its arm is walked.
+struct Run<'m> {
+    stack: Stack<'m>,
+    /// The scope the walk starts in.
+    outer: RefCell<&'m mut Scope>,
+    /// The scopes of the arms being walked, innermost last.
+    inner: RefCell<Vec<Scope>>,
+    /// The arms found so far, in the order written.
+    out: RefCell<Vec<Arm>>,
+    /// How many tests the walk has met: the position of the next test's premise.
+    count: std::cell::Cell<u32>,
+}
+
+impl<'m> Run<'m> {
+    fn new(scope: &'m mut Scope) -> Self {
+        Run {
+            stack: Stack::default(),
+            outer: RefCell::new(scope),
+            inner: RefCell::new(Vec::new()),
+            out: RefCell::new(Vec::new()),
+            count: std::cell::Cell::new(0),
+        }
+    }
+
+    /// `f` of the scope the walk is in, borrowed for the call of `f` alone.
+    fn scope<R>(&self, f: impl FnOnce(&mut Scope) -> R) -> R {
+        match self.inner.borrow_mut().last_mut() {
+            Some(s) => f(s),
+            None => f(&mut self.outer.borrow_mut()),
+        }
+    }
+
+    /// [`forward`] of `e` in the scope the walk is in.
+    fn forward(&'m self, e: &'m Term) -> Deep<'m, Product> {
+        match e {
+            Term::Let(..) | Term::If(..) | Term::Prim(..) => {
+                self.stack.call(move || self.forward_at(e))
+            }
+            _ => Stack::ready(self.scope(|s| leaf(e, s))),
+        }
+    }
+
+    async fn forward_at(&'m self, e: &'m Term) -> Product {
+        if self.scope(|s| s.bottom) {
+            return Product::bottom();
+        }
+        match e {
+            Term::Let(x, v, b) => {
+                let p = self.forward(v).await;
+                // A literal compared with the bound value that follows its carrier is, at an
+                // integer, the literal itself, compared with the value just found.
+                let plain = follow(e).filter(|_| p.ty.element.subtype(&Type::int()));
+                let u = self.scope(|s| s.bind(x, p, v));
+                let out = match plain {
+                    // The comparison `Follow::plain` writes, `x` on one side and the literal's
+                    // own term on the other.
+                    Some(f) if !self.scope(|s| s.bottom) => {
+                        let mut xs = Vec::with_capacity(2);
+                        for side in 0..2 {
+                            xs.push(if side == f.at {
+                                self.forward(f.own).await
+                            } else {
+                                self.scope(|s| s.get(x))
+                            });
+                        }
+                        forward_prim(f.op, xs)
+                    }
+                    Some(_) => Product::bottom(),
+                    None => self.forward(b).await,
+                };
+                self.scope(|s| s.unbind(u));
+                out
+            }
+            Term::If(c, a, b) => {
+                let none = Premises::new();
+                let (t, f) = self.scope(|s| (s.assume(c, true, &none), s.assume(c, false, &none)));
+                self.inner.borrow_mut().extend([f, t]);
+                let mut p = self.forward(a).await;
+                self.inner.borrow_mut().pop();
+                p.join(&self.forward(b).await);
+                self.inner.borrow_mut().pop();
+                p
+            }
+            Term::Prim(op, args) => {
+                let mut xs = Vec::with_capacity(args.len());
+                for a in args {
+                    xs.push(self.forward(a).await);
+                }
+                forward_prim(*op, xs)
+            }
+            _ => self.scope(|s| leaf(e, s)),
+        }
+    }
+
+    /// The arms of `t` in the scope the walk is in, appended to `out`; the scope is as it was
+    /// on return.
+    fn walk(&'m self, t: &'m Term) -> Deep<'m, ()> {
+        match t {
+            Term::Let(..) | Term::If(..) | Term::Prim(..) | Term::App(..) => {
+                self.stack.call(move || self.walk_at(t))
+            }
+            _ => Stack::ready(()),
+        }
+    }
+
+    async fn walk_at(&'m self, t: &'m Term) {
+        match t {
+            Term::Let(x, e, b) => {
+                self.walk(e).await;
+                let p = self.forward(e).await;
+                let u = self.scope(|s| s.bind(x, p, e));
+                self.walk(b).await;
+                self.scope(|s| s.unbind(u));
+            }
+            Term::If(c, a, b) => {
+                let count = self.count.get();
+                self.count.set(count + 1);
+                let at = FactAddress {
+                    node: NodeAddress(Vector::unit(Position::root().child(count))),
+                    keypath: Vector::new(),
+                };
+                let prem = Premises::one(Premise::Constraint(at));
+                for (o, arm) in [(true, a), (false, b)] {
+                    let s = self.scope(|s| s.assume(c, o, &prem));
+                    self.out.borrow_mut().push(Arm {
+                        guard: c.to_string(),
+                        outcome: o,
+                        scope: s.clone(),
+                    });
+                    self.inner.borrow_mut().push(s);
+                    self.walk(arm).await;
+                    self.inner.borrow_mut().pop();
+                }
+            }
+            Term::Prim(_, args) => {
+                for a in args {
+                    self.walk(a).await;
+                }
+            }
+            Term::App(f, args) => {
+                self.walk(f).await;
+                for a in args {
+                    self.walk(a).await;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// [`forward`] of a term it does not enter: a literal, a name, or a term whose value is
+/// computed when its free names are static.
+fn leaf(e: &Term, scope: &Scope) -> Product {
     if scope.bottom {
         return Product::bottom();
     }
-    let none = Premises::new();
     match e {
         Term::Lit(v) => return Product::literal(v),
         Term::Var(x) => return scope.get(x),
-        Term::Let(x, v, b) => {
-            let p = forward_in(v, scope);
-            // A literal compared with the bound value that follows its carrier is, at an
-            // integer, the literal itself, compared with the value just found.
-            let plain = follow(e)
-                .filter(|_| p.ty.element.subtype(&Type::int()))
-                .map(|f| f.plain(Term::Var(x.clone())));
-            let u = scope.bind(x, p, v);
-            let out = forward_in(plain.as_ref().unwrap_or(b), scope);
-            scope.unbind(u);
-            return out;
-        }
-        Term::If(c, a, b) => {
-            let mut t = scope.assume(c, true, &none);
-            let mut f = scope.assume(c, false, &none);
-            let mut p = forward_in(a, &mut t);
-            p.join(&forward_in(b, &mut f));
-            return p;
-        }
-        Term::Prim(op, args) => return forward_prim(*op, args, scope),
         _ => {}
     }
     // `forward` does not recurse below this node, so its free names are found once.
@@ -3425,10 +3564,9 @@ fn run_static(t: &Term) -> Option<Product> {
     }
 }
 
-/// [`forward`] of a primitive: its value when every argument has one, else the revision
-/// table's transfer over integers. Each argument is visited once.
-fn forward_prim(op: Prim, args: &[Term], scope: &mut Scope) -> Product {
-    let xs: Vec<Product> = args.iter().map(|a| forward_in(a, scope)).collect();
+/// [`forward`] of a primitive whose arguments have the elements `xs`: its value when every
+/// argument has one, else the revision table's transfer over integers.
+fn forward_prim(op: Prim, xs: Vec<Product>) -> Product {
     if let Some(vs) = xs.iter().map(Product::value).collect::<Option<Vec<_>>>() {
         let t = Term::Prim(op, vs.into_iter().map(|v| Term::Lit(v.clone())).collect());
         if let Some(p) = run_static(&t) {
@@ -3506,55 +3644,13 @@ impl Arm {
 /// Each `if` arm of `term` with its scope, `term`'s free names in `scope`, in the order the
 /// arms are written. The walk enters `let` bindings, `if` arms and primitive and call
 /// arguments; it does not enter a function body or a construct that binds names by pattern.
-/// The premise of each test is its position in the walk.
+/// The premise of each test is its position in the walk. The walk keeps its nesting on frames
+/// on the heap ([`Run`]), so a block of any depth runs on a small thread stack.
 pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
-    on_stack(|| {
-        let mut out = Vec::new();
-        let mut count = 0;
-        walk(term, &mut scope.clone(), &mut out, &mut count);
-        out
-    })
-}
-
-fn walk(t: &Term, scope: &mut Scope, out: &mut Vec<Arm>, count: &mut u32) {
-    match t {
-        Term::Let(x, e, b) => {
-            walk(e, scope, out, count);
-            let p = forward(e, scope);
-            let u = scope.bind(x, p, e);
-            walk(b, scope, out, count);
-            scope.unbind(u);
-        }
-        Term::If(c, a, b) => {
-            let at = FactAddress {
-                node: NodeAddress(Vector::unit(Position::root().child(*count))),
-                keypath: Vector::new(),
-            };
-            *count += 1;
-            let prem = Premises::one(Premise::Constraint(at));
-            for (o, arm) in [(true, a), (false, b)] {
-                let mut s = scope.assume(c, o, &prem);
-                out.push(Arm {
-                    guard: c.to_string(),
-                    outcome: o,
-                    scope: s.clone(),
-                });
-                walk(arm, &mut s, out, count);
-            }
-        }
-        Term::Prim(_, args) => {
-            for a in args {
-                walk(a, scope, out, count);
-            }
-        }
-        Term::App(f, args) => {
-            walk(f, scope, out, count);
-            for a in args {
-                walk(a, scope, out, count);
-            }
-        }
-        _ => {}
-    }
+    let mut scope = scope.clone();
+    let run = Run::new(&mut scope);
+    run.stack.run(run.walk(term));
+    run.out.take()
 }
 
 /// Whether `n` is bounded below and above in `names`: a name not there is unbounded, and an
