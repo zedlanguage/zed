@@ -314,3 +314,280 @@ fn a_name_of_one_integer_value_is_read_through_its_interval() {
     assert_eq!(a[0].scope.get("y").ints().to_string(), "[0..=0]");
     assert!(a[1].reachable() && !a[2].reachable(), "{:#?}", a);
 }
+
+/// The bindings in force at a point of a run, outermost first: an input or a bound value as
+/// its literal, a bound function as its term.
+type Env = Vec<(Arc<str>, Term)>;
+
+/// Whether arm `i` holds the inputs of a run, by the domains the fix prints.
+type Holds<'a> = dyn Fn(usize, &BTreeMap<Arc<str>, Value>) -> bool + 'a;
+
+/// The value of `t` with the bindings `env`; `None` when the run fails.
+fn value_in(t: &Term, env: &Env) -> Option<Value> {
+    let t = env.iter().rev().fold(t.clone(), |b, (n, v)| {
+        Term::Let(n.clone(), Shared::new(v.clone()), Shared::new(b))
+    });
+    Evaluator::new(World::new()).run(&t).ok()
+}
+
+/// Whether `t` holds an `if` the walk enters.
+fn has_arms(t: &Term) -> bool {
+    match t {
+        Term::If(..) => true,
+        Term::Let(_, e, b) => has_arms(e) || has_arms(b),
+        Term::Prim(_, args) => args.iter().any(has_arms),
+        Term::App(f, args) => has_arms(f) || args.iter().any(has_arms),
+        _ => false,
+    }
+}
+
+/// A run of a body at one point, matched against the arms `product::arms` found for it: the
+/// trace numbers the arms as the walk does (an `if` gives its true arm, the arms of its first
+/// branch, its false arm, the arms of its second branch; a `let` the arms of its value, then of
+/// its body; the walk enters no test), and each arm the run reaches must hold the run's values
+/// there. An arm found unreachable holds no value, so no run may reach it.
+struct Trace<'a> {
+    arms: &'a [Arm],
+    /// Whether the arm with this index holds the values; `Scope::contains` but for the
+    /// negative control.
+    holds: &'a Holds<'a>,
+    next: usize,
+    /// The (arm, values) pairs checked.
+    checked: usize,
+    /// Per arm and integer name, the least and greatest value of a run that reached it.
+    seen: BTreeMap<(usize, Arc<str>), (i64, i64)>,
+}
+
+impl Trace<'_> {
+    /// Walks `t`; `live` when the run at `env` reaches `t`.
+    fn walk(&mut self, t: &Term, env: &mut Env, live: bool) -> Result<(), String> {
+        match t {
+            Term::Let(x, e, b) => {
+                self.walk(e, env, live)?;
+                let (v, live) = match &**e {
+                    Term::Lam(..) => ((**e).clone(), live),
+                    _ => match live.then(|| value_in(e, env)).flatten() {
+                        Some(v) => (Term::Lit(v), true),
+                        None => ((**e).clone(), false),
+                    },
+                };
+                env.push((x.clone(), v));
+                let r = self.walk(b, env, live);
+                env.pop();
+                r
+            }
+            Term::If(c, a, b) => {
+                let o = match live.then(|| value_in(c, env)).flatten() {
+                    Some(Value::Bool(o)) => Some(o),
+                    _ => None,
+                };
+                for (outcome, branch) in [(true, a), (false, b)] {
+                    let i = self.next;
+                    self.next += 1;
+                    let here = o == Some(outcome);
+                    if here {
+                        self.reach(i, env)?;
+                    }
+                    self.walk(branch, env, here)?;
+                }
+                Ok(())
+            }
+            Term::Prim(_, args) => self.args(args.iter(), env, live),
+            Term::App(f, args) => self.args(std::iter::once(&**f).chain(args), env, live),
+            _ => Ok(()),
+        }
+    }
+
+    /// Walks the arguments `args`, evaluated in order: one that fails ends the run.
+    fn args<'t>(
+        &mut self,
+        args: impl Iterator<Item = &'t Term> + Clone,
+        env: &mut Env,
+        mut live: bool,
+    ) -> Result<(), String> {
+        let mut rest = args.clone();
+        for a in args {
+            rest.next();
+            self.walk(a, env, live)?;
+            if live && rest.clone().any(has_arms) {
+                live = value_in(a, env).is_some();
+            }
+        }
+        Ok(())
+    }
+
+    fn reach(&mut self, i: usize, env: &Env) -> Result<(), String> {
+        let values: BTreeMap<Arc<str>, Value> = env
+            .iter()
+            .filter_map(|(n, t)| match t {
+                Term::Lit(v) => Some((n.clone(), v.clone())),
+                _ => None,
+            })
+            .collect();
+        self.checked += 1;
+        if !(self.holds)(i, &values) {
+            let a = &self.arms[i];
+            return Err(format!(
+                "the run at {values:?} reaches arm {i} (test {}, outcome {}), whose scope does \
+                 not hold it:\n{}",
+                a.guard, a.outcome, a.scope
+            ));
+        }
+        for (n, v) in &values {
+            if let Value::Int(v) = v {
+                let e = self.seen.entry((i, n.clone())).or_insert((*v, *v));
+                *e = (e.0.min(*v), e.1.max(*v));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The values each input takes in the check: `-12..=12`, and each finite end of the input's
+/// integer pieces in any arm with its two neighbors, so that a domain narrowed past the window
+/// is tested at its ends.
+fn grid(inputs: &[Arc<str>], arms: &[Arm]) -> Vec<Vec<i64>> {
+    inputs
+        .iter()
+        .map(|n| {
+            let mut vs: Vec<i64> = (-12..=12).collect();
+            for a in arms.iter().filter(|a| a.reachable()) {
+                for (lo, hi) in a.scope.get(n).ints().pieces() {
+                    for e in [lo, hi].into_iter().filter_map(|e| e.to_i64()) {
+                        vs.extend([e.saturating_sub(1), e, e.saturating_add(1)]);
+                    }
+                }
+            }
+            vs.sort_unstable();
+            vs.dedup();
+            vs
+        })
+        .collect()
+}
+
+/// Runs `body` at every point of the grid of `inputs` against `arms`, with `holds` as the arm's
+/// test of the values: the trace, or the first run that reaches an arm not holding it.
+fn trace<'a>(
+    body: &Term,
+    inputs: &[Arc<str>],
+    arms: &'a [Arm],
+    holds: &'a Holds<'a>,
+) -> Result<Trace<'a>, String> {
+    let mut t = Trace {
+        arms,
+        holds,
+        next: 0,
+        checked: 0,
+        seen: BTreeMap::new(),
+    };
+    let grid = grid(inputs, arms);
+    let mut at = vec![0; inputs.len()];
+    'points: loop {
+        let mut env: Env = inputs
+            .iter()
+            .zip(&at)
+            .zip(&grid)
+            .map(|((n, &k), vs)| (n.clone(), lit(vs[k])))
+            .collect();
+        t.next = 0;
+        on_stack(|| t.walk(body, &mut env, true))?;
+        assert_eq!(
+            t.next,
+            arms.len(),
+            "the trace numbers the arms as the walk does"
+        );
+        for (k, vs) in at.iter_mut().zip(&grid) {
+            *k += 1;
+            if *k < vs.len() {
+                continue 'points;
+            }
+            *k = 0;
+        }
+        return Ok(t);
+    }
+}
+
+/// The three bodies of one random draw: the shape itself, the shape with `z`'s term as a
+/// function `h`, and two bindings, the second over the first and an input:
+/// `z = <integer term>; u = z + y; if u >= c { 1 } else { 2 }`.
+fn bodies(rng: &mut Rng) -> [Term; 3] {
+    let s = Shape::random(rng);
+    let w = int_term(rng, 2);
+    let c = rng.int(-6, 6);
+    let u = Term::Let(
+        "u".into(),
+        Shared::new(Term::Prim(Prim::Add, vec![var("z"), var("y")])),
+        Shared::new(if_(
+            Term::Prim(Prim::Ge, vec![var("u"), lit(c)]),
+            lit(1),
+            lit(2),
+        )),
+    );
+    [
+        s.body(),
+        helper_body(&s).0,
+        Term::Let("z".into(), Shared::new(w), Shared::new(u)),
+    ]
+}
+
+/// Every run of every random body, at every point of its grid, reaches only arms whose scope
+/// holds the run's values there, and no arm found unreachable; checked for every arm of the
+/// body, those in `z`'s term too. Item PA-walk-multi narrows inputs through bindings over
+/// several of them, which this tests at the narrowed ends.
+#[test]
+fn every_run_of_a_random_body_reaches_only_arms_that_hold_it() {
+    let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    let (mut checked, mut bodies_run) = (0, 0);
+    for seed in [0x1_39, 0x1_39_33, 7] {
+        let mut rng = Rng::new(seed);
+        for _ in 0..300 {
+            for body in bodies(&mut rng) {
+                let arms = zedc::store::product::arms(&body, &ints(&xy));
+                let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
+                let t = trace(&body, &xy, &arms, &holds).unwrap_or_else(|e| panic!("{body}: {e}"));
+                checked += t.checked;
+                bodies_run += 1;
+            }
+        }
+    }
+    assert_eq!(bodies_run, 2700);
+    assert!(checked > 1_000_000, "{checked} checks");
+}
+
+/// The check above fails on a scope one value too narrow: at each arm a run reached, an input
+/// whose least or greatest reached value is a finite end of its domain, with that one value
+/// taken out of the domain, makes the check report a run outside the arm's scope.
+#[test]
+fn the_check_finds_a_domain_one_value_too_narrow() {
+    let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    let mut rng = Rng::new(0x1_39);
+    let (mut ends, mut found) = (0, 0);
+    for _ in 0..40 {
+        for body in bodies(&mut rng) {
+            let arms = zedc::store::product::arms(&body, &ints(&xy));
+            let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
+            let seen = trace(&body, &xy, &arms, &holds)
+                .unwrap_or_else(|e| panic!("{body}: {e}"))
+                .seen;
+            for ((i, n), (least, most)) in seen {
+                let p = arms[i].scope.get(&n);
+                let Some((lo, hi)) = p.ints().bounds().map(|(l, h)| (l.to_i64(), h.to_i64()))
+                else {
+                    continue;
+                };
+                for end in [least, most] {
+                    if lo != Some(end) && hi != Some(end) {
+                        continue;
+                    }
+                    ends += 1;
+                    let narrower = |j: usize, v: &BTreeMap<Arc<str>, Value>| {
+                        holds(j, v) && !(j == i && v.get(&n) == Some(&Value::Int(end)))
+                    };
+                    found += usize::from(trace(&body, &xy, &arms, &narrower).is_err());
+                }
+            }
+        }
+    }
+    assert!(ends > 50, "{ends} reached ends");
+    assert_eq!(found, ends, "every end taken out is found");
+}

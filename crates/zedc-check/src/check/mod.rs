@@ -37,7 +37,6 @@ pub use zedc_types::ty;
 pub mod widen;
 
 mod arms;
-mod images;
 mod walk;
 
 use std::borrow::Cow;
@@ -58,6 +57,7 @@ use zedc_lattice::interval::{
     IntervalSet, Num, bit_word,
 };
 use zedc_lattice::revision::{Op, forward};
+use zedc_preimage::images;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Handle, Ref, Resolution};
 use zedc_syntax::ast::{
@@ -675,7 +675,7 @@ struct Ck<'t, 'a> {
     arms: arms::Arms<'a>,
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
-    reads: HashMap<usize, images::Read>,
+    reads: HashMap<usize, images::Read<Rc<arms::Summarized>>>,
 }
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of

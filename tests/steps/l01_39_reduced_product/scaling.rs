@@ -943,3 +943,83 @@ fn changes_of_one_block_hold_bounded_memory() {
         change_one_block(s, tests);
     });
 }
+
+/// `let z = x1 + … + xk in if x1 >= 0 { let w1 = z + 1 in if x2 >= 0 { let w2 = z + 2 in … } }`,
+/// ending in `if wk >= 0 { 1 } else { 2 }`: each binding reads the summary of `z`, over `k`
+/// inputs, one more of them narrowed since the last read.
+fn sums_read_as_inputs_narrow(k: usize) -> (Vec<Arc<str>>, Term) {
+    let names: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
+    let mut t = Term::If(
+        arc(prim(Prim::Ge, var(&format!("w{k}")), int(0))),
+        arc(int(1)),
+        arc(int(2)),
+    );
+    for i in (1..=k).rev() {
+        let x = format!("x{i}");
+        let on_z = Term::Let(
+            format!("w{i}").into(),
+            arc(prim(Prim::Add, var("z"), int(i as i64))),
+            arc(t),
+        );
+        t = Term::If(arc(prim(Prim::Ge, var(&x), int(0))), arc(on_z), arc(int(0)));
+    }
+    let sum = (2..=k).fold(var("x1"), |s, i| prim(Prim::Add, s, var(&format!("x{i}"))));
+    (names, Term::Let("z".into(), arc(sum), arc(t)))
+}
+
+/// A binding over several inputs narrows each of them (item PA-walk-multi), and a test of it
+/// reads, from the last read of the summary, only the inputs narrowed since: the leaves set in
+/// the trees of what summaries read grow linearly in the number of tests, where reading
+/// every input each time grows with its square.
+#[test]
+fn a_binding_over_many_inputs_narrows_each_and_is_read_in_linear_time() {
+    // `let z = x + y in if y <= 0 { if z >= 5 { 1 } else { 2 } } else { 3 }`: in arm 1, x >= 5.
+    let body = Term::Let(
+        "z".into(),
+        arc(prim(Prim::Add, var("x"), var("y"))),
+        arc(Term::If(
+            arc(prim(Prim::Le, var("y"), int(0))),
+            arc(Term::If(
+                arc(prim(Prim::Ge, var("z"), int(5))),
+                arc(int(1)),
+                arc(int(2)),
+            )),
+            arc(int(3)),
+        )),
+    );
+    let a = super::arms(&body, &ints(&["x".into(), "y".into()]));
+    assert_eq!(
+        a[1].scope.get("x").ints().to_string(),
+        "[5..]",
+        "{:#?}",
+        a[1]
+    );
+    let built: BTreeMap<usize, (Scope, Term)> = [40, 320]
+        .into_iter()
+        .map(|k| {
+            let (names, t) = sums_read_as_inputs_narrow(k);
+            (k, (ints(&names), t))
+        })
+        .collect();
+    let counted = |k: usize| {
+        let (s, t) = &built[&k];
+        scaling::on_a_thread(1 << 26, || {
+            let before = zedc::store::preimage::counts::image_sets();
+            let a = super::arms(t, s);
+            // Every `xi >= 0`, so `z >= 0` and `wk >= k`: only the false arm of `wk >= 0` is unreachable.
+            // The arms in order: each `xi >= 0` true, `wk >= 0` true and false, each `xi >= 0` false.
+            let unreachable: Vec<usize> = (0..a.len()).filter(|&i| !a[i].reachable()).collect();
+            assert_eq!(unreachable, [k + 1], "{k} tests");
+            zedc::store::preimage::counts::image_sets() - before
+        })
+    };
+    let (small, large) = (counted(40), counted(320));
+    assert!(
+        large as f64 <= scaling::RATIO * small as f64,
+        "leaves set: {small} at 40 tests, {large} at 320"
+    );
+    scaling::check("tests of a binding over many inputs", 40, |k| {
+        let (s, t) = &built[&k];
+        super::arms(t, s);
+    });
+}

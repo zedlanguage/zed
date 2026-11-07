@@ -7286,8 +7286,9 @@ pub mod counts {
     use std::cell::Cell;
 
     thread_local! {
-        pub(super) static SUM_NODES: Cell<u64> = const { Cell::new(0) };
-        pub(super) static TERM_BOUNDS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static SUM_NODES: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static TERM_BOUNDS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static IMAGE_SETS: Cell<u64> = const { Cell::new(0) };
     }
 
     /// The nodes `LetPa::sum` has entered on this thread since it started.
@@ -7300,6 +7301,14 @@ pub mod counts {
     /// takes none, where reading it took one for each of its inputs.
     pub fn term_bounds() -> u64 {
         TERM_BOUNDS.get()
+    }
+
+    /// The leaves set in the trees of what summaries read (`images`, items PA-let-narrow-many
+    /// and PA-walk-multi) on this thread since it started: a read from the last read of the
+    /// same or a wider summary sets the inputs changed since, where a read made afresh sets
+    /// every input.
+    pub fn image_sets() -> u64 {
+        IMAGE_SETS.get()
     }
 }
 

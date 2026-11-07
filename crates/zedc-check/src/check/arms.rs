@@ -80,7 +80,7 @@ pub(super) struct Summarized {
     /// takes the largest map of the binders it reads and adds the others' to it.
     pub(super) inputs: imbl::OrdMap<Arc<str>, Product>,
     /// The binder read by the value whose summary has the most inputs, if any: the one whose
-    /// map `inputs` was made from, and whose read ([`images::Read`](super::images::Read)) a
+    /// map `inputs` was made from, and whose read ([`images::Read`](zedc_preimage::images::Read)) a
     /// read of this one starts from.
     pub(super) widest: Option<usize>,
 }

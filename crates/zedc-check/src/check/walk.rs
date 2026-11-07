@@ -11,7 +11,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arms::{Item, Node, Summarized, Translated, prim_of, var};
-use super::images;
 use super::*;
 use zed_kernel::Shared;
 use zedc_lattice::cell::Premises;
@@ -2773,6 +2772,22 @@ fn plain(ty: &Ty) -> Option<KType> {
         .then(|| ty.set.clone())
 }
 
+/// What the input `v` of `sum`, of product `q` in a scope, adds there ([`images::Leaf`]).
+fn leaf(sum: &Summarized, v: &Arc<str>, q: &Product) -> images::Leaf {
+    // The summary holds where each input's integers lie within those it was made over
+    // ([`Scope::bind_summarized`]).
+    let holds = (sum.inputs.get(v)).is_some_and(|d| q.ints().is_subset(d.ints()));
+    images::Leaf {
+        shift: if holds {
+            sum.summary.shift(v, q.ints())
+        } else {
+            zedc_preimage::preimage::Shift::ZERO
+        },
+        fails: usize::from(!holds),
+        premises: q.premises(),
+    }
+}
+
 // The checker's side of the tests around an expression (`arms.rs`): the nodes of a condition
 // and the ints the tests allow an operand. It is written here rather than beside `Arms`, so
 // that `arms.rs` imports none of the checker's own files (step S.1f).
@@ -2955,18 +2970,22 @@ impl<'a> Ck<'_, 'a> {
     /// The integers the summary `sum` of binder `b` takes over the inputs the scope of names
     /// `names` has, at their integers there, and the others at those it was formed over, and
     /// the premises of the inputs the scope has: `None` for the integers when the summary does
-    /// not hold there or was not formed over domains ([`images::leaf`]).
+    /// not hold there or was not formed over domains ([`leaf`]).
     ///
     /// The inputs are kept in a tree with the sum of their shifts, failures and premises
     /// ([`images::Read`]), found from the tree of `b`'s last read, or else of the read of the
     /// binder whose map of inputs `b`'s was made from, by setting the inputs where the two
-    /// differ ([`images::updated`]); afresh from the inputs the scope has, found from the
-    /// smaller of its names and the summary's inputs, when there is none or the differences
-    /// are as many. Each read costs the lesser of the differences and the inputs, times
-    /// `O(log k)`: a chain `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` in
-    /// the scope of `x_k` from `x_(k-2)` in that of `x_(k-1)`, which differ at `q_(k-1)`, in
-    /// `O(log k)`, where reading its `k - 1` narrowed inputs cost `O(k)` a binding and the
-    /// chain `Θ(d²)` (item PA-let-narrow-many). The result is the same either way.
+    /// scopes' names, the two summaries' inputs ([`LetPa::changed_since`]) or their maps of
+    /// inputs differ ([`images::updated`]); afresh from the inputs the scope has, found from
+    /// the smaller of its names and the summary's inputs, when there is none, the summaries
+    /// cannot be compared, or the differences are as many ([`images::fresh`]). Each read costs
+    /// the lesser of the differences and the inputs, times `O(log k)`: a chain
+    /// `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` in the scope of `x_k`
+    /// from `x_(k-2)` in that of `x_(k-1)`, which differ at `q_(k-1)`, in `O(log k)`, where
+    /// reading its `k - 1` narrowed inputs cost `O(k)` a binding and the chain `Θ(d²)` (item
+    /// PA-let-narrow-many). The result is the same either way.
+    ///
+    /// [`LetPa::changed_since`]: zedc_preimage::preimage::LetPa::changed_since
     fn read_image(
         &mut self,
         b: usize,
@@ -2976,19 +2995,18 @@ impl<'a> Ck<'_, 'a> {
         let vars = sum.summary.vars();
         let limit = vars.len().min(names.len());
         let base = (self.reads.get(&b)).or_else(|| sum.widest.and_then(|w| self.reads.get(&w)));
-        let tree = match base.and_then(|r| images::updated(r, sum, names, limit)) {
-            Some(tree) => tree,
-            None => {
-                let here: Vec<(&Arc<str>, &Product)> = if vars.len() <= names.len() {
-                    vars.iter().filter_map(|v| names.get_key_value(v)).collect()
+        let tree = base
+            .and_then(|r| {
+                let own: Box<dyn Iterator<Item = &Arc<str>>> = if Rc::ptr_eq(&r.sum, sum) {
+                    Box::new(std::iter::empty())
                 } else {
-                    (names.iter()).filter(|(v, _)| vars.contains(*v)).collect()
+                    let terms = sum.summary.changed_since(&r.sum.summary)?;
+                    Box::new(terms.chain(images::changed(&r.sum.inputs, &sum.inputs)))
                 };
-                here.into_iter().fold(None, |t, (v, q)| {
-                    images::set(&t, v, Some(images::leaf(sum, v, q)))
-                })
-            }
-        };
+                let changed = own.chain(images::changed(&r.names, names));
+                images::updated(&r.tree, changed, vars, names, limit, |v, q| leaf(sum, v, q))
+            })
+            .unwrap_or_else(|| images::fresh(vars, names, |v, q| leaf(sum, v, q)));
         let total = images::total(&tree);
         let read = images::Read {
             names: names.clone(),

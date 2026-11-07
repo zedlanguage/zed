@@ -39,9 +39,10 @@
 use imbl::ordmap::DiffItem;
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::atomic::{self, AtomicU64};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::print;
@@ -49,9 +50,10 @@ use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
+use super::images;
 use super::preimage::{
-    Classes, Demand, Domains, LetIn, LetPa, Lets, follow_own, let_preimage, let_summary, preimage,
-    relations, witness,
+    Classes, Demand, Domains, LetIn, LetPa, Lets, Shift, follow_own, let_preimage, let_summary,
+    preimage, relations, witness,
 };
 use zedc_int::int::Int;
 use zedc_lattice::affine::Bounds;
@@ -446,6 +448,10 @@ pub struct Scope {
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
     /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
     bindings: imbl::OrdMap<Arc<str>, Binding>,
+    /// The order of each name's binding ([`Orders`]).
+    orders: Orders,
+    /// What the summaries of the bindings read where they were last read ([`Reads`]).
+    reads: Reads,
     /// The order the next binding gets.
     clock: u64,
     /// The names as the last reduction left them, each product then at its own fixed point:
@@ -461,35 +467,106 @@ pub struct Scope {
     lazy: bool,
 }
 
-/// A name's `let` binding in a [`Scope`].
+/// A name's `let` binding in a [`Scope`]; the order of its binding is in [`Scope::orders`].
 #[derive(Clone, PartialEq, Debug)]
 struct Binding {
-    /// The order of the binding: a binding made later has a larger one.
-    order: u64,
     /// The lambda the name is bound to, when it is one.
     function: Option<Shared>,
     /// The summary of the integer the name is bound to, over its inputs ([`Scope::summary`]).
-    summary: Summary,
+    summary: Option<Arc<Held>>,
 }
 
-/// The summary of the value of a `let` ([`LetPa`]), with the order of the binding of each input
-/// it reads and that input's integers when it was made: it holds while each input is that
-/// binding and its integers lie within these ([`Scope::holds`]). A cache, equal in every
+/// The order of each name's binding in a [`Scope`]: a binding made later has a larger one. A
+/// map of its own, apart from the bindings, so that a summary keeps the orders it was made
+/// with ([`Held`]) and not the bindings, which keep summaries in turn.
+type Orders = imbl::OrdMap<Arc<str>, u64>;
+
+/// The summary of the value of a `let` ([`LetPa`]) as its binding keeps it, with what it was
+/// made over: it holds while each input it reads is the binding it was and that input's
+/// integers lie within those it was made over ([`Scope::holds`]). A cache, equal in every
 /// binding, as [`Reduced`] is.
-#[derive(Clone, Default)]
-struct Summary(Option<(LetPa, Vec<Input>)>);
+struct Held {
+    /// A number no other held summary has, by which its reads are kept ([`Reads`]).
+    id: u64,
+    summary: LetPa,
+    /// The integers of the inputs when it was made.
+    made: Made,
+    /// The orders of the bindings when it was made.
+    orders: Orders,
+    /// The held summary with the most inputs among those of the names the value reads, whose
+    /// read the first read of this one starts from ([`Scope::holds`]).
+    widest: Option<u64>,
+}
 
-/// An input of a [`Summary`]: its name, the order of its binding, and its integers when the
-/// summary was made.
-type Input = (Arc<str>, Option<u64>, IntervalSet);
+/// The integers of the inputs of a [`Held`] summary when it was made.
+enum Made {
+    /// Those of the names of the scope it was made in, all its inputs among them.
+    Scope(imbl::OrdMap<Arc<str>, Product>),
+    /// Those given with it ([`Scope::bind_summarized`]).
+    Given(Domains),
+}
 
-impl PartialEq for Summary {
-    fn eq(&self, _: &Summary) -> bool {
+static HELD_IDS: AtomicU64 = AtomicU64::new(0);
+
+impl Held {
+    fn new(summary: LetPa, made: Made, orders: Orders, widest: Option<u64>) -> Arc<Held> {
+        Arc::new(Held {
+            id: HELD_IDS.fetch_add(1, atomic::Ordering::Relaxed),
+            summary,
+            made,
+            orders,
+            widest,
+        })
+    }
+
+    /// What the input `v`, of product `q` in a scope of binding orders `orders`, adds there:
+    /// a failure unless it is the binding it was and its integers lie within those it was made
+    /// over.
+    fn leaf(&self, orders: &Orders, v: &Arc<str>, q: &Product) -> images::Leaf {
+        let made = match &self.made {
+            Made::Scope(names) => names.get(v).map(Product::ints),
+            Made::Given(doms) => doms.get(v),
+        };
+        let holds =
+            made.is_some_and(|d| q.ints().is_subset(d)) && orders.get(v) == self.orders.get(v);
+        images::Leaf {
+            shift: Shift::ZERO,
+            fails: usize::from(!holds),
+            premises: Premises::new(),
+        }
+    }
+}
+
+impl PartialEq for Held {
+    fn eq(&self, _: &Held) -> bool {
         true
     }
 }
 
-impl fmt::Debug for Summary {
+impl fmt::Debug for Held {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
+}
+
+/// For each held summary, by its id, what it read in the scope of its last read
+/// ([`images::Read`]), with the orders of the bindings there, from which the next read is
+/// found ([`Scope::holds`]). A cache shared by the copies of a scope, equal in every scope:
+/// a read finds the same whichever earlier read it starts from.
+/// What one summary read: the scope's names, the summary with the orders of the scope's
+/// bindings, and the tree of its inputs.
+type HeldRead = images::Read<(Arc<Held>, Orders)>;
+
+#[derive(Clone, Default)]
+struct Reads(Arc<Mutex<HashMap<u64, HeldRead>>>);
+
+impl PartialEq for Reads {
+    fn eq(&self, _: &Reads) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Reads {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("..")
     }
@@ -906,6 +983,8 @@ impl Scope {
             exactly: imbl::OrdMap::new(),
             refusals: imbl::OrdSet::new(),
             bindings: imbl::OrdMap::new(),
+            orders: imbl::OrdMap::new(),
+            reads: Reads::default(),
             clock: 0,
             reduced: Reduced::default(),
             seen: Seen::default(),
@@ -1071,16 +1150,18 @@ impl Scope {
         given: Option<(&LetPa, &Domains)>,
     ) -> Unbind {
         let summary = match given {
-            None => Summary::default(),
-            Some((s, doms)) if self.summarizes(&p) => self.held(s.clone(), doms),
-            Some(_) => Summary::default(),
+            Some((s, doms)) if self.summarizes(&p) => {
+                let made = Made::Given(doms.clone());
+                Some(Held::new(s.clone(), made, self.orders.clone(), None))
+            }
+            _ => None,
         };
-        if let Summary(Some((s, inputs))) = &summary
-            && self.holds(inputs)
-            && let Some(image) = s.image(|v| self.names.get(v).map(Product::ints))
+        if let Some(held) = &summary
+            && self.holds(held)
+            && let Some(image) = (held.summary).image(|v| self.names.get(v).map(Product::ints))
         {
             let mut premises = Premises::new();
-            for (v, _, _) in inputs {
+            for v in held.summary.vars() {
                 premises.extend(&self.names[v].premises());
             }
             p.meet_ints(image, &premises);
@@ -1097,8 +1178,8 @@ impl Scope {
             None => self.summarize(e, &p),
             Some(_) => summary,
         };
+        let order = self.clock;
         let binding = Binding {
-            order: self.clock,
             function: matches!(**e, Term::Lam(..)).then(|| e.clone()),
             summary,
         };
@@ -1107,6 +1188,7 @@ impl Scope {
             let before = self.names.clone();
             self.names.insert(x.clone(), p);
             self.bindings.insert(x.clone(), binding);
+            self.orders.insert(x.clone(), order);
             self.seen_fresh(x, &before);
             return Unbind::Fresh(x.clone());
         }
@@ -1143,6 +1225,7 @@ impl Scope {
             self.unwrite(k);
         }
         self.bindings.insert(x.clone(), binding);
+        self.orders.insert(x.clone(), order);
         self.names.insert(x.clone(), p);
         if self.names[x].is_empty() {
             self.bottom = true;
@@ -1162,6 +1245,7 @@ impl Scope {
                 let before = self.names.clone();
                 self.names.remove(&x);
                 self.bindings.remove(&x);
+                self.orders.remove(&x);
                 self.seen_fresh(&x, &before);
             }
             Unbind::Saved(s) => *self = *s,
@@ -1213,28 +1297,19 @@ impl Scope {
 
     /// The summary of `e`, an integer bound to a name of product `p` ([`let_summary`]), over
     /// the names it reads: those bound by `let`s with a summary that holds are read through it,
-    /// and the others are inputs. Costs `e`'s size and its names' domains, not the summaries
-    /// of the names it reads.
-    // Complexity tradeoff: a value this scope summarizes reads one input; one over several
-    // (`x = n + k`) gets no summary here, so a test of `x` in a walk narrows neither `n` nor
-    // `k` through it, where the checker's summaries ([`Scope::bind_summarized`]) do. What is
-    // given up is that narrowing in `product::walk`. Why: a summary over `k` inputs costs
-    // `O(k)` each time it is checked to hold ([`Scope::summary`]), and the walk binds and reads
-    // names in the order of the term, with no memo across bindings to bound it, so a chain of
-    // `d` sums over `d` inputs would cost `Θ(d²)`. Trigger: a value over two inputs or more,
-    // bound by `let` in a term the walk reads. Test:
-    // `l01_39a_bit_words::narrowing::a_value_over_two_inputs_narrows_both`, which shows the
-    // checker's. COMPLEXITY.md row PA-let-narrow. A complete solution would keep each
-    // summary's inputs' orders and domains in a persistent map shared with its parts'.
-    fn summarize(&self, e: &Term, p: &Product) -> Summary {
+    /// and the others are inputs. It keeps the integers of its inputs here as the scope's
+    /// names, and the orders of their bindings as the scope's orders, each a copy in `O(1)` of
+    /// a persistent map. Costs `e`'s size and the domains of the inputs it reads itself, not
+    /// the summaries of the names it reads ([`Scope::inputs_and_lets`]), beside checking that
+    /// those hold ([`Scope::holds`]).
+    fn summarize(&self, e: &Term, p: &Product) -> Option<Arc<Held>> {
         if !self.summarizes(p) {
-            return Summary::default();
+            return None;
         }
-        let (inputs, lets) = self.inputs_and_lets(&stage::free(e));
-        match let_summary(e, &inputs, lets) {
-            Some(s) if s.vars().len() <= 1 => self.held(s, &inputs),
-            _ => Summary::default(),
-        }
+        let (inputs, lets, widest) = self.inputs_and_lets(&stage::free(e), false);
+        let s = let_summary(e, &inputs, lets)?;
+        let made = Made::Scope(self.names.clone());
+        Some(Held::new(s, made, self.orders.clone(), widest))
     }
 
     /// Whether a name of product `p` bound here keeps a summary: an integer in a reachable
@@ -1243,56 +1318,102 @@ impl Scope {
         !self.bottom && p.ty.element.subtype(&Type::int())
     }
 
-    /// The summary `s`, made over the integers `doms` of the inputs it reads, as a binding
-    /// here keeps it: with the order of each input's binding ([`Scope::summary`]); none when
-    /// an input it reads has no integers in `doms`. `O(k log k)` for `k` inputs.
-    fn held(&self, s: LetPa, doms: &Domains) -> Summary {
-        let inputs: Option<Vec<_>> = s
-            .vars()
-            .iter()
-            .map(|v| {
-                let order = self.bindings.get(v).map(|b| b.order);
-                Some((v.clone(), order, doms.get(v)?.clone()))
-            })
-            .collect();
-        Summary(inputs.map(|inputs| (s, inputs)))
+    /// Whether the summary `held` holds here: each input it reads is still the binding it was
+    /// made over, and that input's integers lie within those it was made over (a scope's
+    /// integers only narrow while a name is bound, but a name bound again is another binding).
+    ///
+    /// The inputs are kept in a tree with the number that fail ([`images::Read`]), found from
+    /// the tree of `held`'s last read, or else, for its first, of the last read of the summary
+    /// with the most inputs among those its value reads ([`Held::widest`]), by setting the
+    /// inputs where the two scopes' names or orders, or the two summaries' inputs, integers or
+    /// orders made over, differ ([`images::updated`]); afresh from the inputs the scope has,
+    /// when there is none, the summaries were not both made in a scope, or the differences
+    /// are as many as the inputs ([`images::fresh`]). Each read costs the lesser of the
+    /// differences and the inputs, times `O(log k)` for `k` inputs: a chain
+    /// `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` at the binding of
+    /// `x_k` from `x_(k-2)` read at that of `x_(k-1)`, which differ at a few names, where
+    /// checking each input cost `O(k)` a binding and the chain `Θ(d²)` (item PA-walk-multi).
+    /// The answer is the same whichever read it starts from.
+    fn holds(&self, held: &Arc<Held>) -> bool {
+        // The names whose products or orders differ between the scope of `r` and `s`.
+        fn here<'a>(r: &'a HeldRead, s: &'a Scope) -> impl Iterator<Item = &'a Arc<str>> + 'a {
+            let names = images::changed(&r.names, &s.names);
+            names.chain(images::changed(&r.sum.1, &s.orders))
+        }
+        let vars = held.summary.vars();
+        let limit = vars.len().min(self.names.len());
+        let leaf = |v: &Arc<str>, q: &Product| held.leaf(&self.orders, v, q);
+        let mut reads = self.reads.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let tree = {
+            match reads.get(&held.id) {
+                Some(r) => images::updated(&r.tree, here(r, self), vars, &self.names, limit, leaf),
+                None => (held.widest.and_then(|w| reads.get(&w))).and_then(|r| {
+                    let base = &r.sum.0;
+                    let (Made::Scope(was), Made::Scope(now)) = (&base.made, &held.made) else {
+                        return None;
+                    };
+                    let inputs = (base.summary.vars().diff(vars)).map(|d| match d {
+                        imbl::ordset::DiffItem::Add(v) | imbl::ordset::DiffItem::Remove(v) => v,
+                    });
+                    let changed = (inputs.chain(images::changed(was, now)))
+                        .chain(images::changed(&base.orders, &held.orders))
+                        .chain(here(r, self));
+                    images::updated(&r.tree, changed, vars, &self.names, limit, leaf)
+                }),
+            }
+        }
+        .unwrap_or_else(|| images::fresh(vars, &self.names, leaf));
+        let holds = images::total(&tree).fails == 0 && images::len(&tree) == vars.len();
+        let read = images::Read {
+            names: self.names.clone(),
+            sum: (held.clone(), self.orders.clone()),
+            tree,
+        };
+        reads.insert(held.id, read);
+        holds
     }
 
-    /// Whether the summary `s` held with `inputs` ([`Scope::held`]) holds here: each input it
-    /// reads is still the binding it was made over, and that input's integers lie within those
-    /// it was made over (a scope's integers only narrow while a name is bound, but a name bound
-    /// again is another binding). `O(k)` for `k` inputs.
-    fn holds(&self, inputs: &[Input]) -> bool {
-        inputs.iter().all(|(v, order, dom)| {
-            self.names.get(v).is_some_and(|now| {
-                self.bindings.get(v).map(|b| b.order) == *order && now.ints().is_subset(dom)
-            })
-        })
-    }
-
-    /// The summary of the integer `x` is bound to, when it has one and it holds
-    /// ([`Scope::holds`]).
-    fn summary(&self, x: &Arc<str>) -> Option<LetPa> {
-        let (s, inputs) = self.bindings.get(x)?.summary.0.as_ref()?;
-        self.holds(inputs).then(|| s.clone())
+    /// The summary of the integer `x` is bound to, with the id it is held by, when it has one
+    /// and it holds ([`Scope::holds`]).
+    fn summary(&self, x: &Arc<str>) -> Option<(LetPa, u64)> {
+        let held = self.bindings.get(x)?.summary.as_ref()?;
+        self.holds(held).then(|| (held.summary.clone(), held.id))
     }
 
     /// The integer names of `free`, as inputs over their integers, or, when bound by a `let`
-    /// with a summary that holds ([`Scope::summary`]), as names read through it, the inputs it
-    /// reads then inputs.
-    fn inputs_and_lets(&self, free: &BTreeSet<Arc<str>>) -> (Domains, Lets) {
+    /// with a summary that holds ([`Scope::summary`]), as names read through it, and the id
+    /// of the summary with the most inputs among these. With `all`, the inputs of each
+    /// summary are inputs too, for a test, which narrows them ([`let_preimage`]): `O(k)` for
+    /// `k` inputs, also when none of them narrows, so `k` tests of one name over `k` inputs
+    /// cost `Θ(k²)` (COMPLEXITY.md row PA-walk-multi, residual). Without, only the input of a
+    /// summary over one, which a term of a value other than a sum reads it through (`2 * y` is
+    /// a sum, `y * y` is not), for a value's summary ([`let_summary`]), which does not read the inputs of the
+    /// summaries it adds: so a chain of bindings each adding the one before costs each binding
+    /// its own term, not the inputs of all before it.
+    fn inputs_and_lets(
+        &self,
+        free: &BTreeSet<Arc<str>>,
+        all: bool,
+    ) -> (Domains, Lets, Option<u64>) {
         let int = Type::int();
         let mut inputs = Domains::new();
         let mut lets = Lets::new();
+        let mut widest: Option<(usize, u64)> = None;
         for n in free {
             let p = self.get(n);
             if !self.names.contains_key(n) || !p.ty.element.subtype(&int) {
                 continue;
             }
             match self.summary(n) {
-                Some(summary) => {
-                    for v in summary.vars() {
-                        inputs.insert(v.clone(), self.get(v).ints().clone());
+                Some((summary, id)) => {
+                    let k = summary.vars().len();
+                    if widest.is_none_or(|(w, _)| k > w) {
+                        widest = Some((k, id));
+                    }
+                    if all || k == 1 {
+                        for v in summary.vars() {
+                            inputs.insert(v.clone(), self.get(v).ints().clone());
+                        }
                     }
                     lets.insert(
                         n.clone(),
@@ -1305,7 +1426,7 @@ impl Scope {
                 None => _ = inputs.insert(n.clone(), p.ints().clone()),
             }
         }
-        (inputs, lets)
+        (inputs, lets, widest.map(|(_, id)| id))
     }
 
     /// Records `t` as a written constraint that holds.
@@ -1373,12 +1494,13 @@ impl Scope {
                 continue;
             };
             let Some(f) = &b.function else { continue };
+            let order = self.orders[name];
             let reads = stage::free(f);
-            let later = |m: &Arc<str>| self.bindings.get(m).is_some_and(|c| c.order >= b.order);
+            let later = |m: &Arc<str>| self.orders.get(m).is_some_and(|c| *c >= order);
             if reads.iter().any(later) {
                 continue;
             }
-            reached.push((b.order, name, f));
+            reached.push((order, name, f));
             todo.extend(reads);
         }
         if reached.is_empty() {
@@ -1654,6 +1776,8 @@ impl Scope {
             // Both sides narrow one scope, which bound the names; neither binds one the other
             // does not.
             bindings: self.bindings.clone(),
+            orders: self.orders.clone(),
+            reads: self.reads.clone(),
             clock: self.clock.max(other.clock),
             names,
             // This side's reduced names and what it last projected and enumerated: the join
@@ -2085,7 +2209,18 @@ impl Scope {
             }
             // The names bound by `let`s read through their summaries: the test narrows the
             // inputs they are computed from as well as the names.
-            let (over, lets) = self.inputs_and_lets(&free);
+            //
+            // Complexity tradeoff: each test of a name whose summary reads `k` inputs builds the
+            // domains of all `k` and bounds each term ([`let_preimage`], `Tx::invert_sep`), `O(k)`,
+            // also when none narrows: `k` tests of one such name cost `Θ(k²)` (3,200 and 204,800
+            // term bounds at `k` = 40 and 320, measured). Given up: a test costs its summary's
+            // inputs, not those it narrows. Trigger: many tests of names over many inputs; the
+            // checker reads its tests here too. Test: none at scale; COMPLEXITY.md row
+            // PA-walk-multi, residual. A complete solution would read the summary's bounds from
+            // the sums of its tree of inputs ([`images`]) and find the inputs a test narrows,
+            // those whose term spans more than the slack, from a greatest width kept per subtree,
+            // so that a test costs the inputs it narrows times `O(log k)`.
+            let (over, lets, _) = self.inputs_and_lets(&free, true);
             let through = if lets.is_empty() {
                 Domains::new()
             } else {
