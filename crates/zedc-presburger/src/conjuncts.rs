@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use imbl::{OrdMap, OrdSet};
 
-use super::int::Int;
 use super::presburger::{Atom, Con, Factor, Formula, Lin, Model, Rel};
+use zedc_int::int::Int;
 
 /// The values of a set kept for each name, in a persistent map.
 #[derive(Clone, PartialEq, Debug)]

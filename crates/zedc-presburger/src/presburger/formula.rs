@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::slice;
 use std::sync::Arc;
 
-use crate::store::int::Int;
+use zedc_int::int::Int;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

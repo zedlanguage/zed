@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::formula::Id;
 use super::{Atom, Con, Factor, Formula, Lin, Model, Refusal, decide, satisfiable};
-use crate::store::int::Int;
+use zedc_int::int::Int;
 
 /// Whether a formula holds somewhere and whether its negation does, each with the refusal that
 /// left it undecided.

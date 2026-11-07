@@ -17,8 +17,8 @@ use std::sync::Arc;
 use imbl::OrdMap;
 use imbl::ordmap::DiffItem;
 
-use super::int::Int;
 use super::presburger::{Atom, Con, Formula, Lin, Rel};
+use zedc_int::int::Int;
 
 /// The affine hull of a set of points, as the equalities that hold on it.
 #[derive(Clone, Debug, Default)]

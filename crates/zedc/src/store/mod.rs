@@ -5,16 +5,16 @@
 //! premises each rests on (step L1.24). Step M0.5 fixes the constants and algorithms these
 //! sections leave open; each module names its prelude source.
 
+pub use zedc_int::int;
 pub use zedc_lattice::affine;
 pub use zedc_lattice::cell;
-pub mod conjuncts;
 pub use zedc_lattice::float;
-pub mod hull;
-pub use zedc_int::int;
 pub use zedc_lattice::interval;
 pub use zedc_lattice::iterate;
 pub use zedc_lattice::landmarks;
 pub use zedc_lattice::lattice;
+pub use zedc_presburger::conjuncts;
+pub use zedc_presburger::hull;
 pub use zedc_solvers::linear;
 pub use zedc_solvers::live3;
 pub use zedc_solvers::negsssp;
@@ -22,7 +22,7 @@ pub mod preimage;
 /// The backward transfer before S22a, which tests compare [`preimage`] with.
 #[doc(hidden)]
 pub mod preimage_ref;
-pub mod presburger;
+pub use zedc_presburger::presburger;
 pub mod product;
 pub use zedc_lattice::revision;
 pub use zedc_lattice::wto;

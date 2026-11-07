@@ -23,3 +23,10 @@ workspace = true
 # the linear programs by a count that does not depend on the load (SLABS-count). Off in a release
 # build; zedc's feature `counts` turns it on.
 counts = []
+
+# A dylib's file name does not change with its features, so `cargo test -p zedc-solvers` builds
+# this crate with the features the workspace build gives it (the step tests turn on `counts`
+# through zedc), and does not overwrite the copy the step tests link to.
+[dev-dependencies.zedc-solvers]
+path = "."
+features = ["counts"]

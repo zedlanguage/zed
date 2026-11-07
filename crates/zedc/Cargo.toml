@@ -29,8 +29,15 @@ zedc-syntax.workspace = true
 zedc-int.workspace = true
 zedc-lattice.workspace = true
 zedc-solvers.workspace = true
+zedc-presburger.workspace = true
 
 [dev-dependencies]
+# The tests of store::preimage set store::presburger::TWO_AT_A_TIME, which exists only with this
+# feature.
+zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
+# A dylib's file name does not change with its features, so `cargo test -p zedc` builds
+# zedc-solvers with the feature `counts` the step tests give it, and does not overwrite their copy.
+zedc-solvers = { workspace = true, features = ["counts"] }
 rustix.workspace = true
 zed-alloc-count.workspace = true
 stacker.workspace = true

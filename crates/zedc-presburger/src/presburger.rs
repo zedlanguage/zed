@@ -26,9 +26,9 @@
 //! into one variable (`quotient`), a unimodular change of variables that keeps every
 //! integer point. Two cases are then decided exactly whatever the eliminations would do. Rows
 //! over two variables or fewer are decided by counting the integer points under each piece of
-//! their upper and lower envelopes ([`super::twovar`]). Rows `±x ± y + k >= 0` are decided by
+//! their upper and lower envelopes ([`zedc_solvers::twovar`]). Rows `±x ± y + k >= 0` are decided by
 //! the parity test on the zero-weight cycles of their tight constraint graph
-//! ([`super::utvpi`]); once they are shown to have a point, exact eliminations that add terms
+//! ([`zedc_solvers::utvpi`]); once they are shown to have a point, exact eliminations that add terms
 //! are allowed, since each keeps that form, and they are taken only when a model is wanted.
 //!
 //! When every elimination left would add terms, the box test decides what it can, in one pass
@@ -36,7 +36,7 @@
 //! every row from the bounds its bound rows give (`bounds`); the rows are empty when one of
 //! them is below zero at every point of that box, have a point when one of five points of the
 //! box holds every row (the point nearest zero, the lower and upper corners, and the two
-//! midpoints, `box_point`), are decided completely by [`super::live3`] when three variables are
+//! midpoints, `box_point`), are decided completely by [`zedc_solvers::live3`] when three variables are
 //! live, and are refused otherwise. At the first inexact elimination
 //! the real shadow is tested once (`relaxed_empty`): real-shadow eliminations are taken
 //! while each adds no terms, and the box test ends it; empty, it shows the problem empty. From
@@ -90,10 +90,10 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use imbl::OrdSet;
 
-use super::int::Int;
-use super::interval::{End, IntervalSet, Num};
-use super::linear::{Q, Term};
-use super::{live3, twovar, utvpi};
+use zedc_int::int::Int;
+use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_solvers::linear::{Q, Term};
+use zedc_solvers::{live3, twovar, utvpi};
 
 mod deep;
 pub mod extend;
@@ -543,9 +543,9 @@ impl Formula {
     // COMPLEXITY.md S31b. A complete merge needs the conjunction as a persistent map from each
     // left-hand side to its constraint, shared with the named part and extended at each place.
     pub fn and_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
-        #[cfg(test)]
+        #[cfg(feature = "two-at-a-time")]
         if TWO_AT_A_TIME.get() {
-            return tests::and_keeping_before(fs, keep);
+            return before::and_keeping_before(fs, keep);
         }
         let mut j = Joining::new(true);
         for (i, f) in fs.into_iter().enumerate() {
@@ -572,9 +572,9 @@ impl Formula {
     // COMPLEXITY.md S31b. A complete check needs each kept part's constraints indexed in its
     // node, so that the lookup across it costs O(1) per disjunct.
     pub fn or_keeping(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
-        #[cfg(test)]
+        #[cfg(feature = "two-at-a-time")]
         if TWO_AT_A_TIME.get() {
-            return tests::or_keeping_before(fs, keep);
+            return before::or_keeping_before(fs, keep);
         }
         let mut j = Joining::new(false);
         for (i, f) in fs.into_iter().enumerate() {
@@ -7689,16 +7689,92 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
     Ok(out.into_iter().map(Formula::Con).collect())
 }
 
-#[cfg(test)]
+#[cfg(feature = "two-at-a-time")]
 thread_local! {
     /// Whether [`Formula::and_keeping`] and [`Formula::or_keeping`] join as they did before
     /// [`Joining`], and the translator joins a chain of `&&` or `||` two at a time
-    /// (`preimage::Tx::two_at_a_time`): for the tests that compare the two (ST-formula-k2).
-    pub(super) static TWO_AT_A_TIME: Cell<bool> = const { Cell::new(false) };
+    /// (`preimage::Tx::two_at_a_time`): for the tests that compare the two (ST-formula-k2). Only with
+    /// the feature `two-at-a-time`, which the crate that holds `preimage` turns on for its tests.
+    pub static TWO_AT_A_TIME: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The joins as they were before [`Joining`], which [`TWO_AT_A_TIME`] selects and the tests compare
+/// against.
+#[cfg(any(test, feature = "two-at-a-time"))]
+mod before {
+    use super::*;
+
+    /// `Formula::and_keeping` as it was before `Joining`, to compare against.
+    pub(super) fn and_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+        let mut flat = Vec::new();
+        for (i, f) in fs.into_iter().enumerate() {
+            match f {
+                Formula::And(ref gs) if gs.is_empty() => {}
+                Formula::And(_) if keep(i) => flat.push(f),
+                Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
+                Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
+                g => flat.push(g),
+            }
+        }
+        // Of two constraints on one term, the tighter alone, in the place of the first.
+        let mut out: Vec<Formula> = Vec::new();
+        let mut at: BTreeMap<(BTreeMap<Atom, Int>, Rel), usize> = BTreeMap::new();
+        for g in flat {
+            let Formula::Con(c) = &g else {
+                out.push(g);
+                continue;
+            };
+            let key = (c.lin.terms.clone(), c.rel);
+            match at.get(&key) {
+                Some(&i) => {
+                    let Formula::Con(old) = &out[i] else {
+                        unreachable!("a constraint")
+                    };
+                    if c.rel == Rel::Ge && c.lin.constant < old.lin.constant {
+                        out[i] = g;
+                    } else if c.rel == Rel::Eq && c.lin.constant != old.lin.constant {
+                        return Formula::bottom();
+                    }
+                }
+                None => {
+                    at.insert(key, out.len());
+                    out.push(g);
+                }
+            }
+        }
+        if out.len() == 1 {
+            out.pop().expect("one")
+        } else {
+            Formula::And(Arc::new(out))
+        }
+    }
+
+    /// `Formula::or_keeping` as it was before `Joining`, to compare against.
+    pub(super) fn or_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
+        let mut out = Vec::new();
+        for (i, f) in fs.into_iter().enumerate() {
+            match f {
+                Formula::Or(ref gs) if gs.is_empty() => {}
+                Formula::Or(_) if keep(i) => out.push(f),
+                Formula::Or(_) => out.extend(f.into_parts().expect("a disjunction")),
+                Formula::And(ref gs) if gs.is_empty() => return Formula::top(),
+                g => out.push(g),
+            }
+        }
+        if Formula::complementary(&out) {
+            return Formula::top();
+        }
+        if out.len() == 1 {
+            out.pop().expect("one")
+        } else {
+            Formula::Or(Arc::new(out))
+        }
+    }
 }
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::before::{and_keeping_before, or_keeping_before};
     use super::*;
 
     fn sym(s: &str) -> Atom {
@@ -8158,73 +8234,6 @@ pub(super) mod tests {
                 Box::new(chain(rng, depth - 1)),
                 Box::new(chain(rng, depth - 1)),
             )
-        }
-    }
-
-    /// `Formula::and_keeping` as it was before `Joining`, to compare against.
-    pub(super) fn and_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
-        let mut flat = Vec::new();
-        for (i, f) in fs.into_iter().enumerate() {
-            match f {
-                Formula::And(ref gs) if gs.is_empty() => {}
-                Formula::And(_) if keep(i) => flat.push(f),
-                Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
-                Formula::Or(ref gs) if gs.is_empty() => return Formula::bottom(),
-                g => flat.push(g),
-            }
-        }
-        // Of two constraints on one term, the tighter alone, in the place of the first.
-        let mut out: Vec<Formula> = Vec::new();
-        let mut at: BTreeMap<(BTreeMap<Atom, Int>, Rel), usize> = BTreeMap::new();
-        for g in flat {
-            let Formula::Con(c) = &g else {
-                out.push(g);
-                continue;
-            };
-            let key = (c.lin.terms.clone(), c.rel);
-            match at.get(&key) {
-                Some(&i) => {
-                    let Formula::Con(old) = &out[i] else {
-                        unreachable!("a constraint")
-                    };
-                    if c.rel == Rel::Ge && c.lin.constant < old.lin.constant {
-                        out[i] = g;
-                    } else if c.rel == Rel::Eq && c.lin.constant != old.lin.constant {
-                        return Formula::bottom();
-                    }
-                }
-                None => {
-                    at.insert(key, out.len());
-                    out.push(g);
-                }
-            }
-        }
-        if out.len() == 1 {
-            out.pop().expect("one")
-        } else {
-            Formula::And(Arc::new(out))
-        }
-    }
-
-    /// `Formula::or_keeping` as it was before `Joining`, to compare against.
-    pub(super) fn or_keeping_before(fs: Vec<Formula>, keep: impl Fn(usize) -> bool) -> Formula {
-        let mut out = Vec::new();
-        for (i, f) in fs.into_iter().enumerate() {
-            match f {
-                Formula::Or(ref gs) if gs.is_empty() => {}
-                Formula::Or(_) if keep(i) => out.push(f),
-                Formula::Or(_) => out.extend(f.into_parts().expect("a disjunction")),
-                Formula::And(ref gs) if gs.is_empty() => return Formula::top(),
-                g => out.push(g),
-            }
-        }
-        if Formula::complementary(&out) {
-            return Formula::top();
-        }
-        if out.len() == 1 {
-            out.pop().expect("one")
-        } else {
-            Formula::Or(Arc::new(out))
         }
     }
 

@@ -613,7 +613,7 @@ impl<'a> Side<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::presburger::{Lin, Rel};
+    use crate::presburger::{Lin, Rel};
 
     /// A small generator of numbers, fixed so that the tests are the same each run.
     struct Rng(u64);
