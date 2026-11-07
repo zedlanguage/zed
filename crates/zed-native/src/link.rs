@@ -50,7 +50,7 @@ const LINK_FLAGS: &[&str] = &["-Wl,--gc-sections"];
 /// format). Not in the key: `/etc/ld.so.conf` and the files it includes, which GNU ld reads
 /// only for a library a shared library needs that it found in no directory before them (a
 /// `zedc build` link read none, traced 2026-11-07); the library found that way is listed and
-/// hashed, and a change to them alone is a change of search path, the limit [`kept`] names.
+/// hashed, and a change to them alone is a change of search path, the limit `kept` names.
 /// Not named: `PATH`, through which the driver may find its linker, since the linker's version
 /// enters the key in its place, and variables that change only the language of messages or
 /// where scratch files go.
@@ -478,7 +478,7 @@ impl Record {
         PathBuf::from(path)
     }
 
-    /// The record's bytes: [`Record::FORM`], the output's hash in hexadecimal and a line
+    /// The record's bytes: `Record::FORM`, the output's hash in hexadecimal and a line
     /// break, then each path followed by a zero byte, which no path holds.
     pub fn to_bytes(&self) -> Vec<u8> {
         use std::os::unix::ffi::OsStrExt as _;
