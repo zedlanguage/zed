@@ -412,11 +412,14 @@ pub struct Scope {
     /// at do not depend on the interval, which already lies within them.
     pub enumerated: imbl::OrdSet<Enumerated>,
     /// The top-level parts of the relation already projected: its constraints together, and
-    /// each other conjunct with them, each with the intervals and classes of the names it
-    /// mentions at that projection, which are all a projection reads of them. A part is
-    /// projected again only when one of these has changed since
-    /// (docs/thresholds.md, replacement 4).
-    pub projected: imbl::OrdMap<PartKey, Projected>,
+    /// each other conjunct with them, each with what it was projected with and the intervals
+    /// and classes of the names it mentions at that projection, which are all a projection
+    /// reads of them. A part is projected again only when one of these has changed since
+    /// (docs/thresholds.md, replacement 4). Each part has one entry, which its next
+    /// projection replaces, so the map holds one entry for each part of the relation, not one
+    /// for each change of the equalities or constraints a part is projected with
+    /// ([`PartKey`]).
+    pub projected: imbl::OrdMap<PartKey, (PartWith, Projected)>,
     /// Whether the scope is under `@exact`.
     pub exact: bool,
     /// Under `@exact`, a point that meets the written constraints the last enumeration took: a
@@ -692,24 +695,32 @@ fn syms(f: &Formula) -> Vec<Arc<str>> {
         .collect()
 }
 
-/// What a part of the relation is projected for: its conjunct, and the equalities among the
-/// constraints it is projected with, sorted; `None` in their place for a tree of blocks
-/// projected as a whole. A part is projected again when an equality joins or leaves them; a
-/// new inequality alone does not make it due (a known limit of precision, COMPLEXITY.md), so
-/// that a part costs its conjunct and not the constraints. Third, the leaf of the star whose
-/// block the part is projected in, `None` in the forest: a conjunct among the hubs of a star
-/// is a part of the star's block and of the hubs' block, each with other constraints and
-/// names, and one key for both made each block find the other's snapshot there and project
-/// every such part again at each test (item NARROW-lazy-settle).
-pub type PartKey = (Formula, Option<Arc<[Con]>>, Option<Arc<str>>);
+/// Which part of the relation an entry of [`Scope::projected`] is for: the conjunct it is
+/// projected for, or the least of the constraints for the part of the constraints alone; and
+/// the leaf of the star whose block the part is projected in, `None` in the forest. A
+/// conjunct among the hubs of a star is a part of the star's block and of the hubs' block,
+/// each with other constraints and names, and one key for both made each block find the
+/// other's snapshot there and project every such part again at each test (item
+/// NARROW-lazy-settle). What the part is projected with is beside the key, not in it
+/// ([`PartWith`]): in the key, each change of a block's equalities, or of its constraints for
+/// their own part, left the part's old entry in the map, which grew by one entry for each
+/// change until the conjunct left (item ST-projected-stale).
+pub type PartKey = (Formula, Option<Arc<str>>);
+
+/// What a part of the relation was projected with: the equalities among the constraints it is
+/// projected with, sorted, and, for the part of the constraints alone, their conjunction. A
+/// part is projected again when an equality joins or leaves them; a new inequality alone does
+/// not make a conjunct's part due (a known limit of precision, COMPLEXITY.md), so that a part
+/// costs its conjunct and not the constraints.
+pub type PartWith = (Arc<[Con]>, Option<Formula>);
 
 /// Each of `conjuncts` that is not a constraint, with the constraints, and the constraints
-/// alone when there are any; each part with its key, the conjunct it is projected for, or the
-/// constraints for theirs, in the star of leaf `leaf` if any.
+/// alone when there are any; each part with its key and what it is projected with, in the
+/// star of leaf `leaf` if any.
 fn split<'a>(
     conjuncts: impl Iterator<Item = &'a Formula>,
     leaf: Option<&Arc<str>>,
-) -> Vec<(PartKey, Formula)> {
+) -> Vec<(PartKey, PartWith, Formula)> {
     let (cons, others): (Vec<&Formula>, Vec<&Formula>) =
         conjuncts.partition(|g| matches!(g, Formula::Con(_)));
     let mut eqs: Vec<Con> = cons
@@ -720,19 +731,21 @@ fn split<'a>(
         })
         .collect();
     eqs.sort_unstable();
-    let eqs: Option<Arc<[Con]>> = Some(eqs.into());
+    let eqs: Arc<[Con]> = eqs.into();
+    let least = cons.iter().min().map(|&c| c.clone());
     let base = Formula::and(cons.into_iter().cloned().collect());
-    let mut parts: Vec<(PartKey, Formula)> = others
+    let mut parts: Vec<(PartKey, PartWith, Formula)> = others
         .into_iter()
         .map(|g| {
             (
-                (g.clone(), eqs.clone(), leaf.cloned()),
+                (g.clone(), leaf.cloned()),
+                (eqs.clone(), None),
                 Formula::and(vec![g.clone(), base.clone()]),
             )
         })
         .collect();
-    if base != Formula::top() {
-        parts.push(((base.clone(), eqs, leaf.cloned()), base));
+    if let Some(least) = least.filter(|_| base != Formula::top()) {
+        parts.push(((least, leaf.cloned()), (eqs, Some(base.clone())), base));
     }
     parts
 }
@@ -742,7 +755,7 @@ struct Block {
     /// What is projected: each conjunct that is not a constraint, with the constraints, and
     /// the constraints alone, each with the conjunct it is projected for ([`split`]). A new
     /// conjunct then costs its own part, not the block's.
-    parts: Vec<(PartKey, Formula)>,
+    parts: Vec<(PartKey, PartWith, Formula)>,
     /// The names they mention.
     names: Vec<Arc<str>>,
     /// The leaf, when the block is a star ([`Conjuncts::star`]).
@@ -943,7 +956,7 @@ impl Scope {
             if block
                 .parts
                 .iter()
-                .any(|(key, g)| self.projected.get(key) != Some(&self.snapshot(&syms(g))))
+                .any(|(key, with, g)| !self.is_projected(key, with, &syms(g)))
             {
                 out.push(block);
             }
@@ -1589,14 +1602,22 @@ impl Scope {
             }
         }
         // A part projected on both sides is projected within the join: each side's
-        // intervals lie within its projection, and the join's within their union.
+        // intervals lie within its projection, and the join's within their union. A part
+        // projected with other equalities or constraints on the two sides is not.
         let mut projected = self.projected.clone();
         for d in self.projected.diff(&other.projected) {
             match d {
                 DiffItem::Remove(k, _) => {
                     projected.remove(k);
                 }
-                DiffItem::Update { old: (k, v), .. } => {
+                DiffItem::Update {
+                    old: (k, (with, v)),
+                    new: (_, (theirs, _)),
+                } => {
+                    if with != theirs {
+                        projected.remove(k);
+                        continue;
+                    }
                     let at = v
                         .iter()
                         .map(|(n, _, _)| {
@@ -1604,7 +1625,7 @@ impl Scope {
                             (n.clone(), p.ints().clone(), p.cell.congruence.element)
                         })
                         .collect();
-                    projected.insert(k.clone(), at);
+                    projected.insert(k.clone(), (with.clone(), at));
                 }
                 DiffItem::Add(..) => {}
             }
@@ -2337,7 +2358,7 @@ impl Scope {
         for g in gone {
             let keys: Vec<PartKey> = self
                 .projected
-                .range((Formula::clone(&g), None, None)..)
+                .range((Formula::clone(&g), None)..)
                 .map(|(k, _)| k)
                 .take_while(|k| k.0 == *g)
                 .cloned()
@@ -2416,13 +2437,13 @@ impl Scope {
                     trees.entry(root(&mut parent, i)).or_default().push(&**g);
                 }
             }
-            let parts: Vec<(PartKey, Formula)> = trees
+            let parts: Vec<(PartKey, PartWith, Formula)> = trees
                 .into_values()
                 .flat_map(|tree| split(tree.into_iter(), None))
                 .collect();
-            for (key, g) in parts {
+            for (key, with, g) in parts {
                 let names = syms(&g);
-                self.project_due(&key, &g, &names);
+                self.project_due(key, with, &g, &names);
             }
             return;
         }
@@ -3208,13 +3229,13 @@ impl Scope {
         // Each part is compared with the snapshot of its own names, not the block's: a part
         // new to the block, or a name of another part, leaves it as it was, so a new conjunct
         // costs its own part and not the block's (the walk through a shared name).
-        let names: Vec<Vec<Arc<str>>> = b.parts.iter().map(|(_, g)| syms(g)).collect();
+        let names: Vec<Vec<Arc<str>>> = b.parts.iter().map(|(_, _, g)| syms(g)).collect();
         let mut work: std::collections::VecDeque<usize> = b
             .parts
             .iter()
             .zip(&names)
             .enumerate()
-            .filter(|(_, ((key, _), ns))| self.projected.get(key) != Some(&self.snapshot(ns)))
+            .filter(|(_, ((key, with, _), ns))| !self.is_projected(key, with, ns))
             .map(|(i, _)| i)
             .collect();
         if work.is_empty() {
@@ -3241,7 +3262,7 @@ impl Scope {
         while let Some(i) = work.pop_front() {
             queued[i] = false;
             let before = self.snapshot(&names[i]);
-            self.project_part(&b.parts[i].1);
+            self.project_part(&b.parts[i].2);
             let mut again = false;
             let mut empty = false;
             for (n, old) in names[i].iter().zip(&before) {
@@ -3262,27 +3283,36 @@ impl Scope {
                 break;
             }
             if again {
-                let all = Formula::and(b.parts.iter().map(|(_, g)| g.clone()).collect());
+                let all = Formula::and(b.parts.iter().map(|(_, _, g)| g.clone()).collect());
                 self.project_part(&all);
                 break;
             }
         }
-        for ((key, _), ns) in b.parts.iter().zip(&names) {
+        for ((key, with, _), ns) in b.parts.iter().zip(&names) {
             let at = self.snapshot(ns);
-            self.projected.insert(key.clone(), at);
+            self.projected.insert(key.clone(), (with.clone(), at));
         }
     }
 
-    /// Projects `part`, which mentions `names`, when `key` is new or one of their intervals
-    /// or classes has changed since its last projection. A part keyed by its conjunct alone
-    /// is not projected again when only the constraints it is projected with have grown.
-    fn project_due(&mut self, key: &PartKey, part: &Formula, names: &[Arc<str>]) {
-        if self.projected.get(key) == Some(&self.snapshot(names)) {
+    /// Whether part `key`, which mentions `names`, was last projected with `with` and with
+    /// their intervals and classes as they are now.
+    fn is_projected(&self, key: &PartKey, with: &PartWith, names: &[Arc<str>]) -> bool {
+        self.projected
+            .get(key)
+            .is_some_and(|(w, at)| w == with && *at == self.snapshot(names))
+    }
+
+    /// Projects `part`, which mentions `names`, when `key` is new, was last projected with
+    /// other equalities or constraints than `with`, or one of their intervals or classes has
+    /// changed since its last projection. A conjunct's part is not projected again when only
+    /// the inequalities it is projected with have changed.
+    fn project_due(&mut self, key: PartKey, with: PartWith, part: &Formula, names: &[Arc<str>]) {
+        if self.is_projected(&key, &with, names) {
             return;
         }
         self.project_part(part);
         let at = self.snapshot(names);
-        self.projected.insert(key.clone(), at);
+        self.projected.insert(key, (with, at));
     }
 
     /// Tells the relation whether each of `names` is bounded below and above, as its product
@@ -3336,7 +3366,7 @@ impl Scope {
         let leaf = Atom::Sym(Arc::from(conjuncts::LEAF));
         let bound = |core: &[Arc<Formula>]| -> Option<IntervalSet> {
             let mut out = IntervalSet::top();
-            for (_, part) in split(core.iter().map(|g| &**g), None) {
+            for (_, _, part) in split(core.iter().map(|g| &**g), None) {
                 let (whole, syms) = self.framed(&part);
                 let one = |a: &Atom| match a {
                     Atom::Sym(n) => a == &leaf || self.get(n).ints().pieces().len() <= 1,

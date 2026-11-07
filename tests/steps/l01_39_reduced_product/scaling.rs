@@ -843,3 +843,103 @@ fn an_eager_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales() {
     // item NARROW-eager-star-redo).
     disjunctions_scale("k disjunctions among the hubs of a star, eager", false);
 }
+
+/// The scope of `a` and `b` within `0..=100000`, with `a + b <= 150000` and the disjunction
+/// `a < 3 || b > 7`, and the `k` tests of [`changes_of_one_block_hold_bounded_memory`]: each
+/// tightens `a - b <= c`, and every fourth is followed by an `if a + 2 * b == c` whose arms
+/// are joined, its first arm with one more equality in the block.
+fn changes_of_one_block(k: usize) -> (Scope, Vec<(Term, bool)>) {
+    let p = Premises::new();
+    let (a, b) = (|| var("a"), || var("b"));
+    let s = ["a", "b"]
+        .iter()
+        .fold(ints(&["a".into(), "b".into()]), |s: Scope, n| {
+            s.assume(&prim(Prim::Ge, var(n), int(0)), true, &p).assume(
+                &prim(Prim::Le, var(n), int(100_000)),
+                true,
+                &p,
+            )
+        });
+    let s = s
+        .assume(
+            &prim(Prim::Le, prim(Prim::Add, a(), b()), int(150_000)),
+            true,
+            &p,
+        )
+        .assume(
+            &prim(
+                Prim::Or,
+                prim(Prim::Lt, a(), int(3)),
+                prim(Prim::Gt, b(), int(7)),
+            ),
+            true,
+            &p,
+        );
+    let mut tests = Vec::new();
+    for i in 0..k as i64 {
+        let diff = prim(Prim::Sub, a(), b());
+        tests.push((prim(Prim::Le, diff, int(100_000 - i)), false));
+        if i % 4 == 0 {
+            let sum = prim(Prim::Add, a(), prim(Prim::Mul, int(2), b()));
+            tests.push((prim(Prim::Eq, sum, int(1000 + i)), true));
+        }
+    }
+    (s, tests)
+}
+
+/// Assumes each test of [`changes_of_one_block`] on `s`, joining both arms of those marked.
+fn change_one_block(s: &Scope, tests: &[(Term, bool)]) -> Scope {
+    let p = Premises::new();
+    tests.iter().fold(s.clone(), |s, (t, joined)| {
+        if *joined {
+            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+            j.reduce();
+            j
+        } else {
+            s.assume(t, true, &p)
+        }
+    })
+}
+
+#[test]
+fn changes_of_one_block_hold_bounded_memory() {
+    // A part's last projection is kept by the part, with what it was projected with beside
+    // it (`PartKey`, `PartWith`): each tightening changes the constraints the block's own part
+    // is projected with, and each equality those of the disjunction's part, and the scope
+    // keeps one entry for each part. Keyed by what they were projected with, the entries grew
+    // by one with each change while the conjuncts stayed three: 42 then 322 entries, holding
+    // 103536 then 813712 bytes, at k = 40 then 320 (negative control, not committed; item
+    // ST-projected-stale). The bytes the whole scope leaves allocated still grow, by the
+    // nodes of the union-find of `Blocks`, one for each change (item ST-blocks-stale).
+    let n = 40;
+    let inputs = scaling::inputs(n, changes_of_one_block);
+    let (mut entries, mut held) = (Vec::new(), Vec::new());
+    for k in [n, scaling::FACTOR * n] {
+        let (s, tests) = &inputs[&k];
+        let mut end = change_one_block(s, tests);
+        assert!(!end.bottom, "k = {k}: the scope became empty");
+        entries.push(end.projected.len());
+        let map = std::mem::take(&mut end.projected);
+        let ((), freed) = zed_alloc_count::live(|| drop(map));
+        held.push(-freed.net);
+    }
+    eprintln!(
+        "entries {entries:?} holding {held:?} bytes at k = {n} and {}",
+        scaling::FACTOR * n
+    );
+    assert_eq!(
+        entries[0], entries[1],
+        "the parts' entries grew with the changes: {entries:?}"
+    );
+    assert!(
+        held[1] <= held[0].max(0) + 1024,
+        "the parts' entries held {} bytes after {} changes, {} after {n}",
+        held[1],
+        scaling::FACTOR * n,
+        held[0]
+    );
+    scaling::check("k changes of the constraints of one block", n, |k| {
+        let (s, tests) = &inputs[&k];
+        change_one_block(s, tests);
+    });
+}
