@@ -6,7 +6,7 @@ use num_bigint::BigInt;
 use zed_kernel::Rat;
 use zed_kernel::num::{LiteralRounding, literal_f32, literal_f64};
 use zed_tests::instances::Rng;
-use zed_tests::scaling::check_order;
+use zed_tests::scaling::{self, check_order};
 
 /// The value built out: the plain rational of its digits.
 fn built(r: &Rat) -> Rat {
@@ -376,5 +376,36 @@ fn ten_to_n_costs_its_exponent_and_not_its_digits() {
             assert_eq!(a.to_f64(), Err(LiteralRounding::Infinite));
             assert_eq!(dec(&format!("1e-{n}")).to_f64(), Err(LiteralRounding::Zero));
         },
+    );
+}
+
+/// A kept power `3^n` and the built sum `3^n + 1` agree in every bit a bound reads, so their
+/// order builds `3^n`; that build and the sum's cost O(n log n) in the width (item
+/// KERNEL-sum-tower), not the O(n^1.47) of num-bigint's products they took before.
+#[test]
+fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
+    check_order(
+        "3^n + 1 built and compared with the kept 3^n",
+        1 << 18,
+        1,
+        |n| {
+            let p = int(3).pow(&(n as u64).into()).unwrap();
+            let s = p.add(&int(1)).unwrap();
+            assert!(p < s && s > p && p != s);
+        },
+    );
+    // At n and 8n the 24 times allowed also admits num-bigint's O(n^1.47), 21 times; at n and
+    // 64n it is 452 times against about 90 for O(n log n), so a limit of 3 times 64 tells them
+    // apart.
+    let run = |n: u64| {
+        let p = int(3).pow(&n.into()).unwrap();
+        assert!(p < p.add(&int(1)).unwrap());
+    };
+    scaling::compare(
+        "3^n + 1 built and compared with the kept 3^n: sizes 2^18 and 2^24",
+        "O(n log n) at 64 times the size, with the 3 times over n that RATIO allows at 8n",
+        3.0 * 64.0,
+        || run(1 << 18),
+        || run(1 << 24),
     );
 }

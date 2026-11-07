@@ -488,6 +488,10 @@ impl Rat {
         // `TooLarge`, found before building it. Tested by
         // `kept_powers_agree_with_the_built_value`, `close_products_compare_exactly` and
         // `a_sum_too_large_to_build_is_an_error_naming_its_size` (COMPLEXITY.md K30).
+        // So the cost grows with the value and not with its text: `3 ** 2 ** k + 1` builds
+        // `1.6 * 2^k` bits, 0.78 s at k = 25 and about 4 minutes at k = 33, O(n log n) in the
+        // bits (item KERNEL-sum-tower; whether to keep such a sum unbuilt or refuse it is
+        // QUESTIONS.md A28). Tested by `a_kept_power_beside_its_built_successor_costs_n_log_n`.
         // A complete solution would keep a sum of terms unbuilt, ordered and projected by
         // bounds as products are.
         // Complexity tradeoff: the memory asked for is eight times the wider side's width, a

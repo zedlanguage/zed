@@ -11,9 +11,9 @@ use std::cmp::Ordering;
 
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
-use num_traits::{One, Pow, ToPrimitive, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 
-use super::{LiteralRounding, TooLarge, room};
+use super::{LiteralRounding, TooLarge, built, fast, room};
 
 /// `coef * prod p^e`, every exponent positive; the coefficient is borrowed from the number it
 /// bounds where it can be, so a wide one is not copied.
@@ -73,7 +73,7 @@ impl Bound {
 
     fn mul(&self, other: &Bound, k: u64, up: bool) -> Bound {
         Bound {
-            m: &self.m * &other.m,
+            m: fast::mul(&self.m, &other.m),
             e: &self.e + &other.e,
         }
         .round(k, up)
@@ -141,13 +141,10 @@ impl Product<'_> {
         b
     }
 
-    /// The product itself.
+    /// The product itself, built by [`built`] and [`fast::mul`], O(n log n) in its width.
     fn materialize(&self) -> BigUint {
-        let mut out = self.coef.clone().into_owned();
-        for (p, e) in &self.pows {
-            out *= Pow::pow(BigUint::from(*p), e);
-        }
-        out
+        let pows = built(&self.pows).into_parts().1;
+        fast::mul(&self.coef, &pows)
     }
 
     /// The widest exponent, in bits.
