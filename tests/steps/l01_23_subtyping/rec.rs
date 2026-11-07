@@ -147,9 +147,9 @@ fn the_plans_definitions() {
     let t = Expr::exact(r(0, vec![]), Expr::And(vec![bare("a"), bare("b")]));
     assert_eq!(
         rejected(vec![def("T", &[], t)]),
-        "the type `T` is not monotone in emptiness: a recursive occurrence stands in the \
-         guaranteed domain of a morphism type whose value type may be empty or mentions the \
-         group"
+        "the type `T` is outside the form the checker accepts: a recursive occurrence stands in \
+         the guarantee of `(T) -> (#a & #b)`, whose value type `#a & #b` is empty; the check is \
+         sufficient, not necessary, so a type it refuses may still be monotone in emptiness"
     );
 }
 
@@ -169,14 +169,21 @@ fn other_rejections() {
     assert!(msg(vec![def("N", &[], under_not)]).contains("under a complement"));
     let diff = Expr::Diff(Box::new(ty(Type::int())), Box::new(atom("b", vec![n()])));
     assert!(msg(vec![def("N", &[], diff)]).contains("to the right of `\\`"));
-    assert!(msg(vec![def("U", &[], Expr::exact(n(), n()))]).contains("guaranteed domain"));
+    assert!(
+        msg(vec![def("U", &[], Expr::exact(n(), n()))]).contains("in the guarantee of `(U) -> U`")
+    );
     // A value type that a parameter can make empty: `type F(A) = (F(A)) -> A`, and one that a
     // larger argument shrinks, `(H(A)) -> (int \ A)`.
     let p = || Expr::Param(0);
     let self_ = || r(0, vec![p()]);
-    assert!(msg(vec![def("F", &["A"], Expr::exact(self_(), p()))]).contains("guaranteed"));
+    assert!(
+        msg(vec![def("F", &["A"], Expr::exact(self_(), p()))])
+            .contains("`A` is empty when every parameter is `empty`")
+    );
     let shrinking = Expr::Diff(Box::new(ty(Type::int())), Box::new(p()));
-    assert!(msg(vec![def("H", &["A"], Expr::exact(self_(), shrinking))]).contains("guaranteed"));
+    assert!(
+        msg(vec![def("H", &["A"], Expr::exact(self_(), shrinking))]).contains("so it may be empty")
+    );
     // Parameters that differ across a group.
     let uneven = vec![
         def("A", &["X"], atom("a", vec![r(1, vec![p()])])),

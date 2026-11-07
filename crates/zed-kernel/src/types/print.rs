@@ -56,18 +56,30 @@ impl Type {
         self.surface_at(At::Union)
     }
 
+    /// The type in the surface syntax as an operand of any connective, parenthesized unless it
+    /// is a tuple or one token; `None` where [`Type::surface`] panics, at a node whose text
+    /// names one the walk has not left and that is not a recursive type (item SURFACE-cycle).
+    pub(crate) fn surface_operand(&self) -> Option<Surface> {
+        self.try_surface_at(At::Prim)
+    }
+
     fn surface_at(&self, at: At) -> Surface {
+        self.try_surface_at(at)
+            .expect("a node leaves after those it names, but a recursive type")
+    }
+
+    fn try_surface_at(&self, at: At) -> Option<Surface> {
         let mut p = Printer::default();
         let root = p.refer(Item::Ty(None, self.clone()));
         let Seg::Node(i, _) = root.segs[0] else {
             unreachable!("a reference is one node")
         };
         p.walk(i);
-        p.canon(i);
-        p.render(Text {
+        p.canon(i)?;
+        Some(p.render(Text {
             segs: vec![Seg::Node(i, at)],
             class: root.class,
-        })
+        }))
     }
 }
 
@@ -468,7 +480,7 @@ impl Printer {
     /// one. The walk's order is then found again, and with it the names' numbers.
     // Complexity tradeoff: the tokens of one height are sorted together, so the time is
     // `O(t log t)` in the tokens of all texts, against `O(t)` for the walk alone.
-    fn canon(&mut self, root: usize) {
+    fn canon(&mut self, root: usize) -> Option<()> {
         let n = self.texts.len();
         let mut height: Vec<Option<usize>> =
             self.forced.iter().map(|f| f.as_ref().map(|_| 0)).collect();
@@ -477,16 +489,13 @@ impl Printer {
                 continue;
             }
             let segs = &self.texts[i].as_ref().expect("visited").segs;
-            let h = Pieces::new(segs)
-                .filter_map(|p| match p {
-                    Piece::Node(j, _) => Some(
-                        height[j]
-                            .expect("a node leaves after those it names, but a recursive type"),
-                    ),
-                    Piece::Str(_) => None,
-                })
-                .max()
-                .unwrap_or(0);
+            let mut h = 0;
+            for p in Pieces::new(segs) {
+                if let Piece::Node(j, _) = p {
+                    // A node leaves after those it names, but a recursive type; else `None`.
+                    h = h.max(height[j]?);
+                }
+            }
             height[i] = Some(h + 1);
         }
         let mut levels: Vec<Vec<usize>> = Vec::new();
@@ -517,6 +526,7 @@ impl Printer {
             }
         }
         self.order(root);
+        Some(())
     }
 
     /// The tokens of node `i`, its children by `rank`.

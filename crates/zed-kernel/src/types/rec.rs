@@ -7,13 +7,20 @@
 //!   parts in finitely many steps;
 //! - *regular*: every recursive occurrence passes the group's parameters unchanged, so a type
 //!   has finitely many components;
-//! - *monotone in emptiness*: no recursive occurrence stands under a complement, to the right
-//!   of `\`, or in the guarantee of a morphism type whose value type may be empty or mentions
-//!   the group, since `type T = (T) -> (#a & #b)` is inhabited exactly when it is empty; nor
-//!   in the guarantee of a morphism type whose guarantee and permission differ, or that stands
-//!   under `&`, `\`, a complement or differing domain bounds, directly or through a definition
-//!   named there (cross-review X14: `W = (W) -> int` is accepted, `((W) -> int) & top` and
-//!   `R0 = (R1) -> int; R1 = (int, R0 & ((empty) -> int))` are not).
+//! - *of the form the admission check accepts*: no recursive occurrence stands under a
+//!   complement, to the right of `\`, or in the guarantee of a morphism type whose value type
+//!   may be empty or mentions the group, since `type T = (T) -> (#a & #b)` is inhabited exactly
+//!   when it is empty; nor in the guarantee of a morphism type whose guarantee and permission
+//!   differ, or that stands under `&`, `\`, a complement or differing domain bounds, directly
+//!   or through a definition named there (cross-review X14: `W = (W) -> int` is accepted,
+//!   `((W) -> int) & top` and `R0 = (R1) -> int; R1 = (int, R0 & ((empty) -> int))` are not).
+//!
+//! The admission check is sufficient for the group's emptiness to be monotone in its members'
+//! emptiness, not necessary: `((W) -> int) & top` is monotone and refused (X14). So a refusal
+//! says the type is outside the form the checker accepts, with the reason, the expression where
+//! it holds and, for a definition narrowed where it is named, the definitions it is named
+//! through; it says "not monotone" only of a complement or the right of `\`, each of which is
+//! not monotone in its operand.
 //!
 //! A value type that mentions a parameter may be empty when that parameter is: it counts as
 //! possibly empty when it is empty with every parameter empty, or has a parameter under a
@@ -575,97 +582,205 @@ impl Group {
         }
     }
 
+    /// Whether the group has the form the admission check accepts (module comment). The check
+    /// is sufficient for the group's emptiness to be monotone in its members' emptiness, not
+    /// necessary, so a refusal says the type is outside that form, with the reason, its site
+    /// and, for a definition narrowed where it is named, the definitions it is named through.
     fn monotone(&self) -> Result<(), Rejection> {
         let bodies = &self.0.bodies;
         // A definition is constrained when it is named under `&`, `\`, a complement or the
         // domain bounds of a morphism type whose guarantee and permission differ, or is named
         // anywhere in a constrained definition: there a domain that is exact everywhere else
-        // is narrowed, so the group's emptiness can flip.
-        let mut constrained = vec![false; bodies.len()];
+        // is narrowed, so the group's emptiness can flip. `via` keeps the first reason found
+        // for each, so that a rejection names the path.
+        let mut via: Vec<Option<Via<'_>>> = vec![None; bodies.len()];
         let mut names: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); bodies.len()];
         for (i, body) in bodies.iter().enumerate() {
-            refs(body, false, &mut constrained, &mut names[i]);
+            refs(i, body, &mut via, &mut names[i]);
         }
-        let mut stack: Vec<usize> = (0..bodies.len()).filter(|&i| constrained[i]).collect();
+        let mut stack: Vec<usize> = (0..bodies.len()).filter(|&i| via[i].is_some()).collect();
         while let Some(i) = stack.pop() {
             for &j in &names[i] {
-                if !constrained[j] {
-                    constrained[j] = true;
+                if via[j].is_none() {
+                    via[j] = Some(Via::Named(i));
                     stack.push(j);
                 }
             }
         }
         for (i, body) in bodies.iter().enumerate() {
-            if let Some(why) = self.flipped(body, constrained[i]) {
-                return Err(self.reject(i, format!("is not monotone in emptiness: {why}")));
+            if let Some(why) = self.flipped(i, body, &via) {
+                return Err(self.reject(
+                    i,
+                    format!(
+                        "is outside the form the checker accepts: {why}; the check is \
+                         sufficient, not necessary, so a type it refuses may still be monotone \
+                         in emptiness"
+                    ),
+                ));
             }
         }
         Ok(())
     }
 
-    /// Where in `e` a recursive occurrence stands at a place that makes emptiness not
-    /// monotone, if one does. `constrained` says whether `e` stands under `&`, `\`, a
-    /// complement or differing domain bounds, here or where its definition is named.
+    /// Where in `e`, the body of definition `def`, a recursive occurrence stands at a place the
+    /// admission check refuses, if one does, with the reason. `via` says for each definition
+    /// whether, and why, it is named where a domain may be narrowed.
     /// The search is depth first from a stack, each node before its parts, so the place found
     /// is the first in the order the body is written.
-    fn flipped(&self, e: &Node, constrained: bool) -> Option<String> {
-        let mut todo = vec![(e, constrained)];
-        while let Some((e, constrained)) = todo.pop() {
-            let why = match &e.e {
-            Shape::Not(a) if a.recursive => {
-                Some("a recursive occurrence stands under a complement".into())
-            }
-            Shape::Diff(_, b) if b.recursive => {
-                Some("a recursive occurrence stands to the right of `\\`".into())
-            }
-            Shape::Morphism(l, _, v) if l.recursive && (v.recursive || self.may_be_empty(v)) => {
-                Some(
-                    "a recursive occurrence stands in the guaranteed domain of a morphism type \
-                     whose value type may be empty or mentions the group"
-                        .into(),
-                )
-            }
-            Shape::Morphism(l, u, _) if l.recursive && !same(l, u) => Some(
-                "a recursive occurrence stands in the guaranteed domain of a morphism type \
-                 whose guarantee and permission differ"
-                    .into(),
-            ),
-            Shape::Morphism(l, ..) if l.recursive && constrained => Some(
-                "a recursive occurrence stands in the domain of a morphism type that stands \
-                 under `&`, `\\`, a complement or differing domain bounds, or in a definition \
-                 named there"
-                    .into(),
-            ),
-            Shape::Morphism(l, u, v) => {
-                let inner = constrained || bounded(l, u);
-                todo.extend([(&**v, constrained), (&**u, inner), (&**l, inner)]);
-                None
-            }
-            Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => {
-                todo.extend(e.e.kids().rev().map(|c| (&**c, true)));
-                None
-            }
-            Shape::Param(_)
-            | Shape::Ref(..)
-            | Shape::Type(_)
-            | Shape::Union(_)
-            | Shape::Tuple(_)
-            | Shape::Atom(..) => {
-                todo.extend(e.e.kids().rev().map(|c| (&**c, constrained)));
-                None
-            }
+    fn flipped<'a>(&self, def: usize, e: &'a Node, via: &[Option<Via<'a>>]) -> Option<String> {
+        let start = match via[def] {
+            Some(_) => Under::Def,
+            None => Under::No,
+        };
+        let mut todo = vec![(e, start)];
+        while let Some((e, under)) = todo.pop() {
+            let text = |n: &Node| self.text(def, n);
+            let narrowed = |k| match under {
+                Under::Here(..) => under,
+                Under::No | Under::Def => Under::Here(k, e),
             };
-            if why.is_some() {
-                return why;
+            match &e.e {
+                // Proved: `!a` is not monotone in `a`.
+                Shape::Not(a) if a.recursive => {
+                    let (n, a) = (text(e), text(a));
+                    return Some(format!(
+                        "a recursive occurrence stands under a complement, in `{n}`, which is \
+                         not monotone in `{a}`: a larger `{a}` gives a smaller `{n}`"
+                    ));
+                }
+                // Proved: `a \ b` is not monotone in `b`.
+                Shape::Diff(_, b) if b.recursive => {
+                    let (n, b) = (text(e), text(b));
+                    return Some(format!(
+                        "a recursive occurrence stands to the right of `\\`, in `{n}`, which \
+                         is not monotone in `{b}`: a larger `{b}` gives a smaller `{n}`"
+                    ));
+                }
+                Shape::Morphism(l, u, v) => {
+                    if l.recursive {
+                        let m = text(e);
+                        if let Some(flaw) = self.value_flaw(v) {
+                            return Some(format!(
+                                "a recursive occurrence stands in the guarantee of `{m}`, whose \
+                                 value type `{}` {flaw}",
+                                text(v)
+                            ));
+                        }
+                        if !same(l, u) {
+                            return Some(format!(
+                                "a recursive occurrence stands in the guarantee of `{m}`, whose \
+                                 guarantee `{}` and permission `{}` differ",
+                                text(l),
+                                text(u)
+                            ));
+                        }
+                        match under {
+                            Under::Here(k, s) => {
+                                return Some(format!(
+                                    "a recursive occurrence stands in the guarantee of `{m}`, \
+                                     which stands {}",
+                                    self.narrowing(def, k, s)
+                                ));
+                            }
+                            Under::Def => {
+                                return Some(format!(
+                                    "a recursive occurrence stands in the guarantee of `{m}`, \
+                                     in `{}`, which is narrowed where it is named: {}",
+                                    self.0.defs[def].name,
+                                    self.path(def, via)
+                                ));
+                            }
+                            Under::No => {}
+                        }
+                    }
+                    let inner = match bounded(l, u) {
+                        true => narrowed(Narrowing::Bounds),
+                        false => under,
+                    };
+                    todo.extend([(&**v, under), (&**u, inner), (&**l, inner)]);
+                }
+                Shape::And(_) => {
+                    let inner = narrowed(Narrowing::And);
+                    todo.extend(e.e.kids().rev().map(|c| (&**c, inner)));
+                }
+                Shape::Not(_) => {
+                    let inner = narrowed(Narrowing::Not);
+                    todo.extend(e.e.kids().rev().map(|c| (&**c, inner)));
+                }
+                Shape::Diff(..) => {
+                    let inner = narrowed(Narrowing::Diff);
+                    todo.extend(e.e.kids().rev().map(|c| (&**c, inner)));
+                }
+                Shape::Param(_)
+                | Shape::Ref(..)
+                | Shape::Type(_)
+                | Shape::Union(_)
+                | Shape::Tuple(_)
+                | Shape::Atom(..) => {
+                    todo.extend(e.e.kids().rev().map(|c| (&**c, under)));
+                }
             }
         }
         None
     }
 
-    /// Whether `v`, which mentions no recursive occurrence, is empty at some arguments.
-    fn may_be_empty(&self, v: &Node) -> bool {
-        let none = vec![Type::empty(); self.0.defs[0].params.len()];
-        shrinks(v, false) || eval(v, &Arc::new(Env::ground(none))).is_empty()
+    /// Why the value type `v` of a morphism type whose guarantee is recursive is refused, if it
+    /// is: it mentions the group, or is empty at some arguments.
+    fn value_flaw(&self, v: &Node) -> Option<&'static str> {
+        if v.recursive {
+            return Some("mentions the group");
+        }
+        if shrinks(v, false) {
+            return Some(
+                "has a parameter under a complement or to the right of `\\`, where a larger \
+                 argument gives a smaller type, so it may be empty",
+            );
+        }
+        let n = self.0.defs[0].params.len();
+        if eval(v, &Arc::new(Env::ground(vec![Type::empty(); n]))).is_empty() {
+            return Some(match n {
+                0 => "is empty",
+                _ => "is empty when every parameter is `empty`",
+            });
+        }
+        None
+    }
+
+    /// Where the expression `s` of definition `def` narrows a domain within it, as `k` says.
+    fn narrowing(&self, def: usize, k: Narrowing, s: &Node) -> String {
+        let s = self.text(def, s);
+        match k {
+            Narrowing::And => format!("under `&` in `{s}`"),
+            Narrowing::Not => format!("under a complement in `{s}`"),
+            Narrowing::Diff => format!("in an operand of `\\` in `{s}`"),
+            Narrowing::Bounds => format!("in the domain bounds of `{s}`, which differ"),
+        }
+    }
+
+    /// The definitions `def` is named through, from it to one named where a domain may be
+    /// narrowed. Time linear in the path's text: `via` is a forest, each definition's reason
+    /// set once and after its parent's.
+    fn path(&self, def: usize, via: &[Option<Via<'_>>]) -> String {
+        let name = |i: usize| &self.0.defs[i].name;
+        let mut parts = Vec::new();
+        let mut d = def;
+        loop {
+            match via[d].expect("a definition on the path is constrained") {
+                Via::Named(j) => {
+                    parts.push(format!("`{}` is named in `{}`", name(d), name(j)));
+                    d = j;
+                }
+                Via::Place(j, k, s) => {
+                    parts.push(format!(
+                        "`{}` is named in `{}`, {}",
+                        name(d),
+                        name(j),
+                        self.narrowing(j, k, s)
+                    ));
+                    return parts.join("; ");
+                }
+            }
+        }
     }
 
     /// The group's types at `args`, one per definition. Each is a recursive node that unfolds
@@ -730,11 +845,17 @@ impl Group {
 
     /// `e`, an expression of definition `def`, in the surface syntax.
     fn show(&self, def: usize, e: &Expr) -> String {
+        self.text(def, &Node::of(e, &[], &mut Numbering::default()))
+    }
+
+    /// `e`, a node of definition `def`'s body, in the surface syntax. Time linear in its text.
+    fn text(&self, def: usize, e: &Node) -> String {
         Show {
             defs: &self.0.defs,
             params: &self.0.defs[def].params,
             args: None,
-            e: &Node::of(e, &[], &mut Numbering::default()),
+            e,
+            surface: true,
         }
         .to_string()
     }
@@ -754,30 +875,70 @@ fn digest(defs: &[Def], bodies: &[Arc<Node>]) -> u64 {
     })
 }
 
-/// Records in `names` each definition `e` names, and in `out` each it names at a constrained
-/// place (`Group::flipped`); `constrained` says whether `e` itself stands at one.
-fn refs(e: &Node, constrained: bool, out: &mut [bool], names: &mut BTreeSet<usize>) {
-    let mut todo = vec![(e, constrained)];
-    while let Some((e, constrained)) = todo.pop() {
+/// Where a domain that is exact everywhere else may be narrowed (`Group::flipped`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Narrowing {
+    /// Under `&`.
+    And,
+    /// Under a complement.
+    Not,
+    /// In an operand of `\`.
+    Diff,
+    /// In the domain bounds of a morphism type whose guarantee and permission differ.
+    Bounds,
+}
+
+/// Why a definition is constrained (`Group::monotone`).
+#[derive(Clone, Copy)]
+enum Via<'a> {
+    /// It is named in this definition, which is constrained.
+    Named(usize),
+    /// It is named in this definition at a place narrowed as this, within this expression.
+    Place(usize, Narrowing, &'a Node),
+}
+
+/// Whether, and why, an expression stands where a domain may be narrowed (`Group::flipped`).
+#[derive(Clone, Copy)]
+enum Under<'a> {
+    No,
+    /// Its definition is constrained.
+    Def,
+    /// It stands at a place narrowed as this, within this expression of its body.
+    Here(Narrowing, &'a Node),
+}
+
+/// Records in `names` each definition `e`, the body of definition `def`, names, and in `via`
+/// the first place, in the order the bodies are written, where each is named under `&`, `\`,
+/// a complement or the domain bounds of a morphism type whose guarantee and permission differ.
+fn refs<'a>(def: usize, e: &'a Node, via: &mut [Option<Via<'a>>], names: &mut BTreeSet<usize>) {
+    let mut todo: Vec<(&'a Node, Option<(Narrowing, &'a Node)>)> = vec![(e, None)];
+    while let Some((e, under)) = todo.pop() {
         let inner = match &e.e {
             Shape::Ref(i, _) => {
                 names.insert(*i);
-                out[*i] |= constrained;
-                constrained
+                if let (Some((k, s)), None) = (under, via[*i]) {
+                    via[*i] = Some(Via::Place(def, k, s));
+                }
+                under
             }
-            Shape::And(_) | Shape::Not(_) | Shape::Diff(..) => true,
+            Shape::And(_) => under.or(Some((Narrowing::And, e))),
+            Shape::Not(_) => under.or(Some((Narrowing::Not, e))),
+            Shape::Diff(..) => under.or(Some((Narrowing::Diff, e))),
             Shape::Morphism(l, u, v) => {
-                let dom = constrained || bounded(l, u);
-                todo.extend([(&**l, dom), (&**u, dom), (&**v, constrained)]);
+                let dom = match bounded(l, u) {
+                    true => under.or(Some((Narrowing::Bounds, e))),
+                    false => under,
+                };
+                todo.extend([(&**v, under), (&**u, dom), (&**l, dom)]);
                 continue;
             }
             Shape::Param(_)
             | Shape::Type(_)
             | Shape::Union(_)
             | Shape::Tuple(_)
-            | Shape::Atom(..) => constrained,
+            | Shape::Atom(..) => under,
         };
-        todo.extend(e.e.kids().map(|c| (&**c, inner)));
+        todo.extend(e.e.kids().rev().map(|c| (&**c, inner)));
     }
 }
 
@@ -1293,6 +1454,7 @@ fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
                 params: &[],
                 args: Some(&at.args),
                 e: &named,
+                surface: false,
             }
             .rope()
         },
@@ -1306,6 +1468,11 @@ struct Show<'a> {
     params: &'a [String],
     args: Option<&'a [Type]>,
     e: &'a Node,
+    /// Whether a type that does not mention the group is written in the surface syntax (module
+    /// `print`), as a message writes it, rather than by its name ([`Type::rope`]). One that
+    /// needs definitions of its own, a recursive type, or that the surface printer cannot write
+    /// (item SURFACE-cycle), is written by its name.
+    surface: bool,
 }
 
 impl Show<'_> {
@@ -1329,6 +1496,10 @@ impl Show<'_> {
                     Shape::Ref(i, args) if args.is_empty() => {
                         Rope::cat([Piece::from(self.defs[*i].name.as_str())])
                     }
+                    Shape::Type(t) if self.surface => match t.surface_operand() {
+                        Some(s) if s.defs.is_empty() => Rope::cat([Piece::from(s.root)]),
+                        _ => t.rope(),
+                    },
                     Shape::Type(t) => t.rope(),
                     _ => {
                         todo.push(Step::Build(e));
@@ -1372,11 +1543,10 @@ impl Show<'_> {
                                     Rope::joined("", [u_rope, v], " ->? ", "")
                                 } else {
                                     Rope::cat([
-                                        Piece::from("("),
                                         Piece::from(l_rope),
-                                        Piece::from(" ⊆ dom ⊆ "),
+                                        Piece::from(" .. "),
                                         Piece::from(u_rope),
-                                        Piece::from(") -> "),
+                                        Piece::from(" -> "),
                                         Piece::from(v),
                                     ])
                                 }

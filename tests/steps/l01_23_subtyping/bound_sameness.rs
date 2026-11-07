@@ -46,9 +46,14 @@ fn nested(d: usize, leaf: impl Fn() -> Expr) -> Expr {
     l
 }
 
-const DIFFER: &str = "the type `W` is not monotone in emptiness: a recursive occurrence stands \
-                      in the guaranteed domain of a morphism type whose guarantee and permission \
-                      differ";
+/// Whether `message` refuses `W` for a recursive guarantee that differs from its permission.
+fn differ(message: &str) -> bool {
+    message.starts_with(
+        "the type `W` is outside the form the checker accepts: a recursive occurrence stands in \
+         the guarantee of `",
+    ) && message.contains("` and permission `")
+        && message.contains("` differ; ")
+}
 
 #[test]
 fn equal_bounds_nested_deep_are_the_same() {
@@ -57,9 +62,17 @@ fn equal_bounds_nested_deep_are_the_same() {
     }
 }
 
-const UNDER: &str = "the type `W` is not monotone in emptiness: a recursive occurrence stands \
-                     in the domain of a morphism type that stands under `&`, `\\`, a complement \
-                     or differing domain bounds, or in a definition named there";
+/// Whether `message` refuses `W` for a recursive guarantee in `W`, which is named in differing
+/// domain bounds.
+fn under(message: &str) -> bool {
+    message.starts_with(
+        "the type `W` is outside the form the checker accepts: a recursive occurrence stands in \
+         the guarantee of `",
+    ) && message.contains(
+        "`, in `W`, which is narrowed where it is named: `W` is named in `W`, in the domain \
+         bounds of `",
+    )
+}
 
 /// Bounds that differ only at their innermost level: `(W) .. int -> int` alone is rejected for
 /// its differing bounds. Nested under equal bounds, those differing bounds name `W`, so `W` is
@@ -70,8 +83,13 @@ const UNDER: &str = "the type `W` is not monotone in emptiness: a recursive occu
 fn bounds_differing_deep_inside_differ() {
     for d in [1, 2, 6] {
         let rejected = group(nested(d, || ty(Type::int()))).unwrap_err();
-        let expected = if d == 1 { DIFFER } else { UNDER };
-        assert_eq!(rejected.message, expected, "depth {d}");
+        let message = &rejected.message;
+        let right = if d == 1 {
+            differ(message)
+        } else {
+            under(message)
+        };
+        assert!(right, "depth {d}: {message}");
     }
 }
 
@@ -83,7 +101,15 @@ fn components_in_another_order_differ() {
         pair(ty(Type::int()), r(0)),
         ty(Type::int()),
     );
-    assert_eq!(group(body).unwrap_err().message, DIFFER);
+    let message = group(body).unwrap_err().message;
+    assert!(differ(&message), "{message}");
+    assert!(
+        message.contains(
+            "guarantee of `(W, int) .. (int, W) -> int`, whose guarantee `(W, int)` and \
+             permission `(int, W)` differ"
+        ),
+        "{message}"
+    );
 }
 
 /// `int | empty` and `int` are one type, built apart: bounds holding them are the same.
