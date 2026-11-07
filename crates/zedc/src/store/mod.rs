@@ -10,7 +10,7 @@ pub mod cell;
 pub mod conjuncts;
 pub mod float;
 pub mod hull;
-pub mod int;
+pub use zedc_int::int;
 pub mod interval;
 pub mod iterate;
 pub mod landmarks;

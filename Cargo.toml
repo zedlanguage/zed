@@ -4,6 +4,7 @@ members = [
     "crates/zedc",
     "crates/zedc-base",
     "crates/zedc-syntax",
+    "crates/zedc-int",
     "crates/zed-kernel",
     "crates/zed-rt",
     "crates/zed-cert",
@@ -32,6 +33,7 @@ zed-tools = { path = "crates/zed-tools" }
 zed-alloc-count = { path = "crates/zed-alloc-count" }
 zedc-base = { path = "crates/zedc-base" }
 zedc-syntax = { path = "crates/zedc-syntax" }
+zedc-int = { path = "crates/zedc-int" }
 # The libraries the compiler crates (zedc, zedc-*) share, at one version each.
 blake3 = "1"
 imbl = "7.0.2"

@@ -26,6 +26,7 @@ unicode-script.workspace = true
 zed-kernel.workspace = true
 zedc-base.workspace = true
 zedc-syntax.workspace = true
+zedc-int.workspace = true
 
 [dev-dependencies]
 rustix.workspace = true

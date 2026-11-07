@@ -68,18 +68,10 @@ const KNOWN_CYCLES: &[&str] = &[
     "zedc/check/walk.rs",
     "zedc/elab.rs",
     "zedc/elab/walk.rs",
-    "zedc/store/int.rs",
-    "zedc/store/interval.rs",
-    "zedc/store/landmarks.rs",
-    "zedc/store/linear.rs",
     "zedc/store/live3.rs",
-    "zedc/store/negsssp.rs",
     "zedc/store/presburger.rs",
     "zedc/store/presburger/deep.rs",
     "zedc/store/presburger/deep/canon.rs",
-    "zedc/store/presburger/formula.rs",
-    "zedc/store/twovar.rs",
-    "zedc/store/utvpi.rs",
 ];
 
 #[test]

@@ -1083,6 +1083,7 @@ dependencies = [
  "zed-kernel",
  "zedc",
  "zedc-base",
+ "zedc-int",
  "zedc-syntax",
 ]
 
@@ -1092,6 +1093,16 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "unicode-normalization",
+ "zed-kernel",
+]
+
+[[package]]
+name = "zedc-int"
+version = "0.0.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "zed-kernel",
 ]
 
