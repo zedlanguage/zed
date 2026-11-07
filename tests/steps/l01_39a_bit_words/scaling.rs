@@ -1046,3 +1046,51 @@ fn the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of
         );
     }
 }
+
+/// The probe of item PA-let-multi: `x_0 = n`, then `q_k = n mod 4; x_k = x_(k-1) + q_k` for `k`
+/// up to `d`, and one test `x_d >= 3 d`, which holds only where `n >= 0`, with a bit word on
+/// `n` in its arm.
+fn remainder_chain(d: usize) -> String {
+    let mut s = String::from("x0 = n; ");
+    for k in 1..=d {
+        s += &format!("q{k} = n mod 4; x{k} = x{} + q{k}; ", k - 1);
+    }
+    format!(
+        "f(positional n: int) =\n  {{ {s}if x{d} >= {} {{ popCount(n) }} else {{ 0 }} }};\n",
+        3 * d
+    )
+}
+
+/// The bounds of terms of sums taken while the program `src` is loaded, on this thread.
+fn term_bounds(src: &str) -> u64 {
+    let before = zedc::store::preimage::counts::term_bounds();
+    if let Err(e) = zedc::run::load(src.as_bytes()) {
+        panic!("rejected: {e}");
+    }
+    zedc::store::preimage::counts::term_bounds() - before
+}
+
+#[test]
+fn a_chain_of_sums_over_many_inputs_reads_each_summary_in_its_narrowed_inputs() {
+    // `x_k` has a summary over `k + 1` inputs, `n` and every `q_j` (item PA-let-multi), and
+    // the product of `x_k` reads that of `x_(k-1)` met with its summary's values. Read over
+    // every input, that took the bounds of each of `x_(k-1)`'s terms, `Θ(d²)` for the chain;
+    // the sum keeps its terms' bounds over the domains it was formed over
+    // (`LetPa::image_over`), and a scope with none of the inputs reads none. A count does not
+    // change with the load. Measured: 259 at d = 64 and 2051 at d = 512 (7.92 times); with
+    // every input read, 2210 and 132354 (59.89 times).
+    let n = 64;
+    let large = n * scaling::FACTOR;
+    let (small_src, large_src) = (
+        super::program(&remainder_chain(n)),
+        super::program(&remainder_chain(large)),
+    );
+    let (a, b) = scaling::on_a_thread(1 << 29, || {
+        (term_bounds(&small_src), term_bounds(&large_src))
+    });
+    let ratio = b as f64 / a as f64;
+    assert!(
+        a > 0 && ratio <= 9.0,
+        "`pa_bounds` ran {a} times at d = {n} and {b} at d = {large}: {ratio:.2} times, above 9"
+    );
+}

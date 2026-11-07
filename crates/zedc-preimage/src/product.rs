@@ -901,6 +901,25 @@ impl Scope {
         self.bind_with(x, p, e, Some((s, doms)))
     }
 
+    /// [`Scope::bind`] of `x` to `p` met with `image`, the integers a summary of its value takes
+    /// where the inputs it reads are as this scope has them ([`LetPa::image_over`]), on the
+    /// `premises` of those inputs; the binding keeps no summary of the value. For a caller
+    /// that reads the scope once, through no test, and pays for the inputs this scope has,
+    /// not for all `k` of the summary ([`Scope::bind_summarized`], `O(k)`).
+    pub fn bind_within(
+        &mut self,
+        x: &Arc<str>,
+        mut p: Product,
+        e: &Shared,
+        image: IntervalSet,
+        premises: &Premises,
+    ) -> Unbind {
+        if self.summarizes(&p) {
+            p.meet_ints(image, premises);
+        }
+        self.bind(x, p, e)
+    }
+
     fn bind_with(
         &mut self,
         x: &Arc<str>,

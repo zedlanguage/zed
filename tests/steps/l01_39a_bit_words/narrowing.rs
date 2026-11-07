@@ -494,6 +494,9 @@ struct Block {
     k_range: (i64, i64),
     /// Each binding's coefficients on `n`, `k` and the bindings before it, and its constant.
     lets: Vec<(Vec<i64>, i64)>,
+    /// For each binding, `Some((i, m))` when it is `x mod m` of the name `i` (see `read`) in
+    /// place of its sum.
+    rems: Vec<Option<(usize, i64)>>,
     tested: usize,
     at_least: bool,
     bound: i64,
@@ -507,7 +510,7 @@ impl Block {
         let lo = rng.int(-3, 3);
         let k_range = (lo, lo + rng.int(0, 6));
         let count = rng.int(1, 4) as usize;
-        let lets = (0..count)
+        let lets: Vec<(Vec<i64>, i64)> = (0..count)
             .map(|j| {
                 let mut c: Vec<i64> = (0..j + 2).map(|_| 0).collect();
                 for _ in 0..rng.int(1, 2) {
@@ -520,12 +523,25 @@ impl Block {
         Block {
             guard,
             k_range,
+            rems: vec![None; lets.len()],
             lets,
             tested: rng.below(count),
             at_least: rng.below(4) != 0,
             bound: rng.int(-6, 8),
             read: rng.below(count + 2),
         }
+    }
+
+    /// [`Block::random`] with each binding made a remainder `x mod m` of an earlier name, one
+    /// time in three (item PA-let-multi).
+    fn random_with_remainders(rng: &mut zed_tests::instances::Rng) -> Block {
+        let mut block = Block::random(rng);
+        for j in 0..block.lets.len() {
+            if rng.below(3) == 0 {
+                block.rems[j] = Some((rng.below(j + 2), rng.pick(&[2, 3, 4, 8])));
+            }
+        }
+        block
     }
 
     fn name(i: usize) -> String {
@@ -539,8 +555,11 @@ impl Block {
     /// The values of `n`, `k` and every binding.
     fn values(&self, n: i64, k: i64) -> Vec<i64> {
         let mut vs = vec![n, k];
-        for (c, b) in &self.lets {
-            let v = c.iter().zip(&vs).map(|(c, v)| c * v).sum::<i64>() + b;
+        for ((c, b), rem) in self.lets.iter().zip(&self.rems) {
+            let v = match rem {
+                Some((i, m)) => vs[*i].rem_euclid(*m),
+                None => c.iter().zip(&vs).map(|(c, v)| c * v).sum::<i64>() + b,
+            };
             vs.push(v);
         }
         vs
@@ -564,6 +583,10 @@ impl Block {
     fn source(&self, rows: &[(i64, i64)]) -> String {
         let mut body = String::new();
         for (j, (c, b)) in self.lets.iter().enumerate() {
+            if let Some((i, m)) = self.rems[j] {
+                body += &format!("v{j} = {} mod {m}; ", Block::name(i));
+                continue;
+            }
             let mut e = String::new();
             for (i, &c) in c.iter().enumerate().filter(|(_, c)| **c != 0) {
                 let x = Block::name(i);
@@ -641,26 +664,10 @@ fn a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter() {
         }
         accepted_count += 1;
         by_guard[block.guard] += 1;
-        let mut rows = Vec::new();
-        for n in -40..=40 {
-            for k in -40..=40 {
-                if let Some(v) = block.arm(n, k) {
-                    assert!(v >= 0, "unsound at n = {n}, k = {k}, operand {v}:\n{src}");
-                    if rows.len() < 6 && (n + k) % 7 == 0 {
-                        rows.push((n, k));
-                    }
-                }
-            }
-        }
         if block.read != block.tested + 2 {
             by_summary += 1;
         }
-        rows.extend([(-3, 1), (0, 0), (5, -2)]);
-        let with_rows = block.source(&rows);
-        assert!(
-            rows_pass(&with_rows),
-            "rows differ from the interpreter:\n{with_rows}"
-        );
+        check_against_the_interpreter(&block, &src);
     }
     // Not vacuous, and the item shows: measured 2026-11-07, 115 of the 400 are accepted, 74
     // reading a name other than the tested one, and 25, 64, 26 with no guard, a bound on `k`
@@ -670,4 +677,98 @@ fn a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter() {
         accepted_count >= 110 && by_summary >= 70 && by_guard[2] >= 24,
         "{counts:?}"
     );
+}
+
+/// Where the checker accepted `block`, as `src` without rows: no `(n, k)` of the grid
+/// `-40..=40` squared that reaches the arm gives `popCount` a negative operand, and the rows
+/// the interpreter runs give the values computed here.
+fn check_against_the_interpreter(block: &Block, src: &str) {
+    let mut rows = Vec::new();
+    for n in -40..=40 {
+        for k in -40..=40 {
+            if let Some(v) = block.arm(n, k) {
+                assert!(v >= 0, "unsound at n = {n}, k = {k}, operand {v}:\n{src}");
+                if rows.len() < 6 && (n + k) % 7 == 0 {
+                    rows.push((n, k));
+                }
+            }
+        }
+    }
+    rows.extend([(-3, 1), (0, 0), (5, -2)]);
+    let with_rows = block.source(&rows);
+    assert!(
+        rows_pass(&with_rows),
+        "rows differ from the interpreter:\n{with_rows}"
+    );
+}
+
+#[test]
+fn a_block_with_remainders_is_narrowed_soundly_and_keeps_what_it_accepted() {
+    // Random blocks of sums and remainders `x mod m` over `n` and `k` (item PA-let-multi), as
+    // in the test above. A remainder of a parameter now has the bounds of its modulus where a
+    // summary reads it, so the checker accepts more; it must stay sound against the
+    // interpreter and accept every block the checker before the item accepted (`BEFORE`, 171
+    // of 400, measured at 691a4927). It accepts 193: the 22 more (62, 80, 92, 96, 132, 147,
+    // 166, 167, 180, 191, 244, 256, 266, 281, 304, 315, 320, 329, 342, 356, 366, 367) were each
+    // rejected with an operand of `int`, a remainder read as any integer. Of the blocks still
+    // rejected, two name a narrower operand, both right: 93 (`v1 = k + v0 + 3 >= 8` with
+    // `v0 = n mod 8`, so `k >= -2`) `int[-3..=0]` to `int[-2..=0]`, and 286
+    // (`v2 = k + k mod 3` where `2 * k + 1 >= -1`) `int` to `int[-1..]`; the other 205 name
+    // the same. The test above, of sums alone, accepts the same 115 of 400 as before.
+    const BEFORE: [usize; 171] = [
+        1, 3, 5, 6, 8, 9, 10, 11, 15, 18, 19, 23, 24, 27, 28, 29, 30, 35, 36, 37, 38, 41, 50, 51,
+        52, 54, 55, 57, 59, 60, 63, 66, 67, 68, 70, 71, 76, 78, 79, 85, 86, 87, 88, 91, 95, 97, 98,
+        100, 102, 104, 109, 111, 113, 116, 117, 119, 121, 124, 125, 128, 129, 130, 133, 135, 136,
+        137, 140, 143, 144, 145, 146, 148, 150, 153, 155, 157, 160, 161, 162, 163, 165, 170, 171,
+        172, 175, 177, 178, 179, 184, 195, 196, 198, 199, 201, 205, 206, 211, 213, 214, 215, 218,
+        219, 221, 223, 225, 234, 235, 237, 239, 240, 242, 243, 251, 252, 254, 255, 258, 261, 262,
+        264, 267, 268, 271, 274, 275, 276, 284, 290, 291, 296, 297, 298, 300, 303, 305, 306, 308,
+        310, 316, 318, 319, 321, 323, 327, 330, 339, 340, 341, 343, 345, 348, 349, 350, 352, 358,
+        360, 363, 369, 370, 374, 376, 379, 382, 385, 386, 387, 388, 391, 397, 398, 399,
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x7e3a_11d5);
+    let mut accepted_count = 0;
+    for id in 0..400 {
+        let block = Block::random_with_remainders(&mut rng);
+        let src = block.source(&[]);
+        if !super::accepted(&src) {
+            assert!(
+                BEFORE.binary_search(&id).is_err(),
+                "block {id} was accepted before item PA-let-multi:\n{src}\n{}",
+                super::rejected(&src)
+            );
+            continue;
+        }
+        accepted_count += 1;
+        check_against_the_interpreter(&block, &src);
+    }
+    assert!(accepted_count >= 193, "accepted {accepted_count} of 400");
+}
+
+/// The probe of item PA-let-multi: `x_0 = n`, then `q_k = n mod 4; x_k = x_(k-1) + q_k` for `k`
+/// up to `d`, and a bit word on `n` where `x_d >= 3 d - slack`.
+fn remainders_probe(d: usize, slack: usize) -> String {
+    let mut body = String::from("x0 = n; ");
+    for k in 1..=d {
+        body += &format!("q{k} = n mod 4; x{k} = x{} + q{k}; ", k - 1);
+    }
+    format!(
+        "f(positional n: int) =\n  {{ {body}if x{d} >= {} {{ popCount(n) }} else {{ 0 }} }}\n\
+         test {{ 7 -> 3, -1 -> 0, -5 -> 0 }}\n",
+        3 * d - slack
+    )
+}
+
+#[test]
+fn an_input_reached_through_a_summary_over_several_inputs_keeps_its_bounds() {
+    // Each `q_k = n mod 4` lies in `0..=3`, so `x_d = n + q_1 + ... + q_d >= 3 d` gives
+    // `n >= 0` (item PA-let-multi). Before, `q_k`'s product was taken in a scope that did not
+    // have `n`, so it was any int, and every one of these was rejected, `d` = 1 too.
+    for d in [1, 2, 3, 5, 16] {
+        let src = remainders_probe(d, 0);
+        assert!(rows_pass(&src), "d = {d}:\n{src}");
+    }
+    // The bound is the least it can be: `x_d >= 3 d - 1` holds at `n = -1`.
+    let out = rejected(&remainders_probe(3, 1));
+    assert!(out.contains("popCount"), "{out}");
 }

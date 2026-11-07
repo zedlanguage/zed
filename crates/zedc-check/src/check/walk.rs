@@ -2920,6 +2920,65 @@ impl<'a> Ck<'_, 'a> {
         s
     }
 
+    /// [`Ck::with_bound`] for a scope read once by a binder's value ([`Item::Bound`]), which no
+    /// test narrows: each of `binders` is bound with its product met with its summary's values
+    /// over the inputs `s` has, at their integers there, and the others at those the summary
+    /// was formed over ([`LetPa::image_over`]); the inputs are not bound and the binding keeps
+    /// no summary. The inputs `s` has are found from the smaller of its names and the
+    /// summary's inputs, so a chain `x_k = x_(k-1) + q_k` costs `O(log k)` a binding where
+    /// binding every input of `x_(k-1)` cost `O(k)`, and the chain `Θ(d²)` (item
+    /// PA-let-multi).
+    ///
+    /// [`LetPa::image_over`]: zedc_preimage::preimage::LetPa::image_over
+    fn with_bound_read(&mut self, mut s: Scope, binders: &[usize]) -> Scope {
+        if s.bottom {
+            return s;
+        }
+        for &b in binders {
+            let (Some(p), Some(name)) = (self.arms.bound.get(&b), self.arms.names.get(&b)) else {
+                continue;
+            };
+            if s.names.contains_key(name) {
+                continue;
+            }
+            let (p, name) = (p.clone(), name.clone());
+            let e = Shared::new(Term::Var(name.clone()));
+            let Some(sum) = self.summarized(b) else {
+                s.bind(&name, p, &e);
+                continue;
+            };
+            let vars = sum.summary.vars();
+            let here: Vec<(&Arc<str>, &Product)> = if vars.len() <= s.names.len() {
+                vars.iter()
+                    .filter_map(|v| s.names.get_key_value(v))
+                    .collect()
+            } else {
+                (s.names.iter())
+                    .filter(|(v, _)| vars.contains(*v))
+                    .collect()
+            };
+            // The summary holds where each input's integers lie within those it was made over
+            // ([`Scope::bind_summarized`]).
+            let image = here
+                .iter()
+                .all(|(v, q)| (sum.inputs.get(*v)).is_some_and(|d| q.ints().is_subset(d.ints())))
+                .then(|| {
+                    sum.summary
+                        .image_over(here.iter().map(|(v, q)| (*v, q.ints())))
+                })
+                .flatten();
+            let mut premises = Premises::new();
+            for (_, q) in &here {
+                premises.extend(&q.premises());
+            }
+            match image {
+                Some(image) => s.bind_within(&name, p, &e, image, &premises),
+                None => s.bind(&name, p, &e),
+            };
+        }
+        s
+    }
+
     /// Records, for the binder `b` of `value` bound here, the type here of each narrowed name
     /// the value reads ([`Ck::summarize_value`]): the type a summary of the value takes for
     /// it, which holds wherever `b` is read, since `b` is read only within the narrowing it was
@@ -3009,7 +3068,10 @@ impl<'a> Ck<'_, 'a> {
         // The domains of the inputs the value reads itself, and of the one input of each name
         // it reads through a summary over one, which a term of the value other than a sum
         // reads it through (`2 * y` is a sum, `y * y` is not); not those of every input of the
-        // map, which would cost each binder of a chain the inputs of all before it.
+        // map, which would cost each binder of a chain the inputs of all before it. The sum of
+        // the value is formed over the domains of all of `inputs` below, each input's bounds
+        // taken as its term is put in, so a summary over several inputs keeps them
+        // ([`LetPa::form`], item PA-let-multi).
         let mut domains = Domains::new();
         for l in lets.values() {
             let vars = l.summary.vars();
@@ -3025,7 +3087,7 @@ impl<'a> Ck<'_, 'a> {
             inputs.insert(x, p);
         }
         let summary = let_summary(&t.term, &domains, lets)?;
-        summary.form();
+        summary.form(|v| inputs.get(v).map(Product::ints));
         Some(Summarized { summary, inputs })
     }
 
@@ -3179,7 +3241,21 @@ impl<'a> Ck<'_, 'a> {
                 let t = self.term(value);
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let s = self.scope_or_root(at);
-                let mut s = self.with_bound(s, &t.binders);
+                let mut s = self.with_bound_read(s, &t.binders);
+                // A parameter the value reads that the scope has no product of is any value of
+                // its type where `b` is bound ([`Ck::param_type`]), as [`Ck::summarize_value`]
+                // takes it: so `q = n mod 4` with `n: int` is `int[0..=3]`, and a summary that
+                // reads `q` as an input has its bounds. Costs the value's names, once.
+                if !s.bottom {
+                    for (x, id) in &t.vars {
+                        if self.facts.contains_key(id) || s.names.contains_key(x) {
+                            continue;
+                        }
+                        if let Some(ty) = self.param_type(b, *id).and_then(plain) {
+                            s.bind(x, Product::of_type(ty), &Shared::new(Term::Var(x.clone())));
+                        }
+                    }
+                }
                 s.eager_on(&t.term);
                 let mut p = product::forward(&t.term, &mut s);
                 if let Some(ty) = self.arms.bound_ty.get(&b) {
