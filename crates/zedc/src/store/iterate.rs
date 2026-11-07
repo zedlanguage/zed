@@ -58,6 +58,14 @@ pub fn order<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<Element>, SameKey
 }
 
 /// Phase 1 and then phase 2, from every cell at the bottom, over [`order`].
+///
+/// The result is a post-fixpoint: each cell holds its projection from the result. For a loop
+/// cell whose projection joins its start with its step, the cell is therefore an inductive
+/// invariant, holding the start and closed under one step, so it holds at every iteration and
+/// not only once the values settle. Phase 1 leaves a head only when joining its projection
+/// changes nothing; each narrowing of phase 2 lies between the meet with the projection and
+/// the old element, and for monotone projections that keeps a post-fixpoint one. Tests:
+/// `m0_05_widening_and_iteration::invariant` (item RANGE-invariant-audit).
 pub fn solve<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<L>, SameKey> {
     let order = order(eq)?;
     let mut cells = phase1(eq, &order);

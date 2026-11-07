@@ -9,6 +9,7 @@
 //! stack machine and against the concrete least fixpoint, `widening` for the termination
 //! bound of every lattice, and `revision` on constraints from ordinary programs.
 
+mod invariant;
 mod iteration;
 mod order;
 mod revision;
