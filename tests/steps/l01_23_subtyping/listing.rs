@@ -748,13 +748,21 @@ fn each_value_agrees_with_a_search_of_all_points() {
         match listed(&t) {
             Some(got) => {
                 assert!(finite, "an infinite type listed: {t}");
+                // Listing merges boxes (LIST-box-overlap), and is known finite exactly when
+                // `finite` says so.
                 assert!(t.finite(), "{t}");
                 let want: BTreeSet<Value> = holds.into_iter().cloned().collect();
                 assert_eq!(got, want, "{t}");
                 listed_count += 1;
             }
-            None if finite => missed += 1,
-            None => infinite += 1,
+            None if finite => {
+                assert!(!t.finite(), "{t}");
+                missed += 1
+            }
+            None => {
+                assert!(!t.finite(), "{t}");
+                infinite += 1
+            }
         }
     }
     eprintln!("listed {listed_count}, infinite {infinite}, finite but not known finite {missed}");
@@ -762,4 +770,56 @@ fn each_value_agrees_with_a_search_of_all_points() {
         listed_count > 300 && infinite > 300,
         "{listed_count} listed, {infinite} infinite"
     );
+}
+
+#[test]
+fn exclusive_ors_of_meets_and_overlapping_boxes_list_exactly() {
+    // The exclusive or of `n` meets `side & r(k)`, `r(k) = ((int - (2k + 1), int),)`, made one
+    // at a time as `(x - t) | (t - x)`, its operands in either order, read as one exclusive or
+    // of the nodes they are made from (LIST-box-overlap); with a chain read twice, by a union
+    // too, which is not merged; and boxes equal in all columns but one, of scalars and of
+    // tuples, listed as one box of their union. Each is checked against a search of all points.
+    let one = |t: Type| Type::tuple(vec![t]);
+    let r = |k: usize| {
+        one(Type::tuple(vec![
+            &Type::int() - &lit(2 * k + 1),
+            Type::int(),
+        ]))
+    };
+    let candidates: Vec<Value> = (0..12)
+        .flat_map(|a| (0..3).map(move |b| one_of(pair(int(a), int(b)))))
+        .chain((0..12).flat_map(|a| (0..3).map(move |b| pair(int(a), int(b)))))
+        .collect();
+    let exact = |t: &Type| {
+        let want: BTreeSet<Value> = candidates
+            .iter()
+            .filter(|v| t.contains(v))
+            .cloned()
+            .collect();
+        assert!(t.finite(), "{t}");
+        assert_eq!(listed(t), Some(want), "{t}");
+    };
+    for w in [1, 4, 9] {
+        let side = one(Type::tuple(vec![span(0, w), lit(0)]));
+        for n in 0..6 {
+            let forward = (0..n).fold(Type::empty(), |x, k| xor(&x, &(&side & &r(k))));
+            let backward = (0..n).fold(Type::empty(), |x, k| xor(&(&r(k) & &side), &x));
+            let skipped = (0..n).fold(Type::empty(), |x, k| match k % 2 {
+                0 => xor(&x, &(&side & &r(k))),
+                _ => &x | &(&side & &r(k)),
+            });
+            for t in [&forward, &backward, &skipped] {
+                exact(t);
+                exact(&(t | &(&side - t)));
+                exact(&(&side - t));
+            }
+            assert_eq!(listed(&forward), listed(&backward));
+        }
+        // Boxes `(s(k), 0)` of scalar columns, and `((u - (2k + 1), 0),)` of tuple columns.
+        let scalars = Type::union_all((0..w).map(|k| Type::tuple(vec![span(k, w + 1), lit(0)])));
+        exact(&scalars);
+        let tuples = Type::union_all((0..w).map(|k| &side & &r(k)));
+        exact(&tuples);
+        exact(&(&tuples | &scalars));
+    }
 }

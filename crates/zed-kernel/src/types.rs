@@ -1058,7 +1058,7 @@ impl Type {
         // the type holds finitely many of its tuples, by the emptiness search with a full case
         // split over the tuple types (exponential in them, or a SAT solver), and would follow
         // atom payloads, struct fields and recursive groups into the types they hold.
-        self.finite_order().is_some()
+        self.finite_order(false).is_some()
     }
 
     /// The integers of `self`, when they are a finite set of literals. Its users: the checker's
@@ -1084,10 +1084,15 @@ impl Type {
     /// holds is decided by the kinds of a tuple that has none of its keys (`RowIndex`), the part
     /// read again only where those rows change it (`Graph`); and a tuple is tried once, in the
     /// first box that gives it: the exclusive or of `c` tuple types lists its `c` values in
-    /// about `c log c` steps, not `c²` (LIST-parity-quad, LIST-parity-rest, LIST-xor-finite). Its user is the type facet of a
-    /// product cell (`zedc::store::product`).
+    /// about `c log c` steps, not `c²` (LIST-parity-quad, LIST-parity-rest, LIST-xor-finite).
+    /// Boxes equal in all columns but one are first merged into one box whose column is the
+    /// union of theirs, where that union is a set of scalars or a tuple type of one row
+    /// (`merge_boxes`): `n` boxes `((u - (2k + 1), 0),)` sharing most of `u` are listed as one
+    /// box of `u`, not `n` boxes of `n - 1` values each (LIST-box-overlap). Its user is the
+    /// type facet of a product cell (`zedc::store::product`), which keeps the values as a set.
     pub fn each_value(&self) -> Option<Values> {
-        let (types, boxes): (Vec<Type>, Vec<Vec<Row>>) = self.finite_order()?.into_iter().unzip();
+        let (types, boxes): (Vec<Type>, Vec<Vec<Row>>) =
+            self.finite_order(true)?.into_iter().unzip();
         let index: HashMap<&Type, usize> = types.iter().enumerate().map(|(i, t)| (t, i)).collect();
         // A type is looked up once per box, never per value: two equal types built apart
         // compare by their contents.
@@ -1133,8 +1138,12 @@ impl Type {
 
     /// The types `self`'s values are built from, each with its boxes and after the types in
     /// them, `self` last, when every one is known finite. One visit per type, kept in a visited
-    /// set, and an explicit stack, since the nesting depth follows the input.
-    fn finite_order(&self) -> Option<Vec<(Type, Vec<Row>)>> {
+    /// set, and an explicit stack, since the nesting depth follows the input. With `merge`, each
+    /// type's boxes are merged ([`merge_boxes`]) before the types in them are visited; the
+    /// answer is `None` exactly when it is without, since a merged column is the union of
+    /// columns each of which is visited without merging, finite exactly when they all are.
+    fn finite_order(&self, merge: bool) -> Option<Vec<(Type, Vec<Row>)>> {
+        let mut unions = HashMap::new();
         let mut order = Vec::new();
         let mut seen: HashSet<Type> = HashSet::new();
         let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(self.clone(), None)];
@@ -1146,7 +1155,10 @@ impl Type {
             if !seen.insert(t.clone()) {
                 continue;
             }
-            let boxes = t.boxes()?;
+            let boxes = match merge {
+                true => merge_boxes(t.boxes()?, &mut unions),
+                false => t.boxes()?,
+            };
             let below: Vec<Type> = boxes
                 .iter()
                 .flat_map(|r| r.iter())
@@ -1475,6 +1487,16 @@ impl Lits {
         out
     }
 
+    /// The larger set with the smaller's literals added. Those it lacks are found by walking
+    /// the smaller set, `O(s log l)`, or by a diff of the two, which skips the nodes they
+    /// share, so two sets made from one set, as `u - 1` and `u - 3` are made from `u`, are
+    /// joined in `O(d log l)` for their `d` differing literals. The two walks advance in turn
+    /// and the first to finish is used, as `Atoms::zip` does; a literal already in the larger
+    /// set is not inserted again, so the result shares the larger set's nodes and a chain of
+    /// such unions stays cheap (LIST-box-overlap).
+    // Complexity tradeoff: twice the cheaper walk, so `O(min(s, d + log l) log l)`, against
+    // `O(s log l)` alone, which is quadratic for a chain of `n` unions of sets made from one
+    // set of `n` literals (COMPLEXITY.md K69).
     fn union(a: &Lits, b: &Lits) -> Lits {
         let (large, small) = if a.values.len() >= b.values.len() {
             (a, b)
@@ -1482,7 +1504,25 @@ impl Lits {
             (b, a)
         };
         let mut out = large.clone();
-        for v in &small.values {
+        let mut walk = small.values.iter();
+        let mut diff = large.values.diff(&small.values);
+        let mut missing = Vec::new();
+        loop {
+            if walk.next().is_none() {
+                for v in &small.values {
+                    if !large.values.contains(v) {
+                        out.insert(v);
+                    }
+                }
+                return out;
+            }
+            match diff.next() {
+                None => break,
+                Some(imbl::ordset::DiffItem::Add(v)) => missing.push(v),
+                Some(imbl::ordset::DiffItem::Remove(_)) => {}
+            }
+        }
+        for v in missing {
             out.insert(v);
         }
         out
@@ -2272,6 +2312,144 @@ fn only_row(t: &Type) -> Option<Row> {
         return None;
     };
     (Type::tuple(row.to_vec()) == *t).then(|| row.clone())
+}
+
+/// The boxes of one type, for listing ([`Type::each_value`]), with each set of boxes equal in
+/// all columns but one merged into one box whose column there is the union of theirs, where
+/// that union is known exactly as a set of scalars or a tuple type of one row
+/// ([`union_column`]): the union of the products is the product with that column joined. Boxes
+/// of one length are merged column by column, each pass grouping the boxes by the wrapping sum
+/// of their other columns' hashes, found from the box's sum in constant time, and checking a
+/// box against its group's first only when the sums match; the merged box takes the first's
+/// place, so the boxes not merged keep their order. A pass costs order `b` for its `b` boxes
+/// and `L` for each box checked against another; summed over the `L` passes, the boxes checked
+/// number at most `b ln b` (Han's inequality: the projections of `b` points that drop one
+/// column number `g_i` with `Σ ln(b / g_i) ≤ ln b`, and `b - g_i ≤ b ln(b / g_i)`).
+// Complexity tradeoff: a set of boxes whose union column is neither a set of scalars nor a
+// tuple type of one row differing from the others in one scalar column is listed box by box,
+// as before, at the cost of every tuple of every box, `n²` for `n` boxes of `n` values that
+// overlap. Deciding such a union exactly needs the union type's own boxes, which `|` may give
+// as a meet of joins that is not known finite where the boxes were (`part_boxes`). A merged
+// tuple type is a new type whose values are made again, `L` per value for its row length `L`,
+// once per distinct set of members (kept in `unions`). Test:
+// l01_23_subtyping::scaling::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales;
+// COMPLEXITY.md K69.
+fn merge_boxes(boxes: Vec<Row>, unions: &mut HashMap<Vec<Type>, Option<Type>>) -> Vec<Row> {
+    let hash = |j: usize, t: &Type| mix(j as u64, t.digest());
+    let mut out = Vec::with_capacity(boxes.len());
+    let mut boxes = boxes.into_iter().peekable();
+    while let Some(first) = boxes.next() {
+        // The boxes of one length, which `Type::boxes` gives together.
+        let len = first.len();
+        let mut rows = vec![first];
+        while let Some(r) = boxes.next_if(|r| r.len() == len) {
+            rows.push(r);
+        }
+        let mut sums: Vec<u64> = rows
+            .iter()
+            .map(|r| {
+                r.iter()
+                    .enumerate()
+                    .fold(0, |s: u64, (j, t)| s.wrapping_add(hash(j, t)))
+            })
+            .collect();
+        for i in 0..len {
+            // Per sum of the other columns, the groups with it, by their members.
+            let mut by_sum: HashMap<u64, Vec<usize>> = HashMap::new();
+            let mut groups: Vec<Vec<usize>> = Vec::new();
+            for (x, r) in rows.iter().enumerate() {
+                let ids = by_sum
+                    .entry(sums[x].wrapping_sub(hash(i, &r[i])))
+                    .or_default();
+                let same = ids.iter().copied().find(|&g| {
+                    let first = &rows[groups[g][0]];
+                    (0..len).all(|j| j == i || first[j] == r[j])
+                });
+                match same {
+                    Some(g) => groups[g].push(x),
+                    None => {
+                        ids.push(groups.len());
+                        groups.push(vec![x]);
+                    }
+                }
+            }
+            if groups.len() == rows.len() {
+                continue;
+            }
+            let (mut next, mut next_sums) = (Vec::new(), Vec::new());
+            for g in groups {
+                let members: Vec<Type> = g.iter().map(|&x| rows[x][i].clone()).collect();
+                let union = match g.len() {
+                    1 => None,
+                    _ => unions
+                        .entry(members)
+                        .or_insert_with_key(|m| union_column(m))
+                        .clone(),
+                };
+                match union {
+                    Some(u) => {
+                        let first = &rows[g[0]];
+                        let sum = sums[g[0]]
+                            .wrapping_sub(hash(i, &first[i]))
+                            .wrapping_add(hash(i, &u));
+                        let mut items = first.to_vec();
+                        items[i] = u;
+                        next.push(Row::new(items));
+                        next_sums.push(sum);
+                    }
+                    None => {
+                        for x in g {
+                            next.push(rows[x].clone());
+                            next_sums.push(sums[x]);
+                        }
+                    }
+                }
+            }
+            (rows, sums) = (next, next_sums);
+        }
+        out.extend(rows);
+    }
+    out
+}
+
+/// The union of `ts`, two or more distinct column types of boxes, when it is known exactly
+/// without reading its own boxes: the union of sets of scalars and bare atoms, made by `|`;
+/// or, for tuple types of one row each, equal in all columns but one whose types are such
+/// sets, the tuple type of that row with the union in that column. `None` otherwise. The
+/// unions are made one at a time into the first, so each set is walked at most once, and sets
+/// made from one set are joined by their differing nodes (`Lits::union`).
+fn union_column(ts: &[Type]) -> Option<Type> {
+    let scalar = |t: &Type| match &*t.0 {
+        Node::Parts(p, _) => {
+            p.tuples.lens.is_empty()
+                && !p.tuples.rest
+                && !p.structs
+                && p.morphisms.is_leaf() == Some(false)
+        }
+        _ => false,
+    };
+    let join = |ts: &mut dyn Iterator<Item = &Type>| {
+        let first = ts.next().expect("two or more types").clone();
+        ts.fold(first, |u, t| &u | t)
+    };
+    if ts.iter().all(scalar) {
+        return Some(join(&mut ts.iter()));
+    }
+    let rows: Vec<Row> = ts.iter().map(only_row).collect::<Option<_>>()?;
+    let first = &rows[0];
+    // The one column where the rows differ.
+    let j = (0..first.len()).find(|&j| rows[1].get(j) != Some(&first[j]))?;
+    let agree = rows.iter().all(|r| {
+        r.len() == first.len()
+            && (0..first.len()).all(|k| k == j || r[k] == first[k])
+            && scalar(&r[j])
+    });
+    if !agree {
+        return None;
+    }
+    let mut items = first.to_vec();
+    items[j] = join(&mut rows.iter().map(|r| &r[j]));
+    Some(Type::tuple(items))
 }
 
 /// The tuple type of the meets of the columns of `r` and `s`, two rows of one length.
@@ -3147,6 +3325,8 @@ struct RowIndex {
     /// Per place of a spine, the regions of its scalars ([`place_regions`]), made when first
     /// read.
     places: HashMap<Place, BTreeMap<Value, usize>>,
+    /// Per row, how many tuples' checks it changed in.
+    changes: Vec<usize>,
     /// The part's nodes ([`Graph`]).
     graph: Graph,
 }
@@ -3171,7 +3351,7 @@ struct Blocks {
 
 /// A part as the graph of its distinct lists and expressions, each once, operands before the
 /// expressions that read them and the part last, so that a tuple's value is read by
-/// evaluating again only the nodes the rows with a key of the tuple change ([`Graph::eval`]).
+/// evaluating again only the nodes the rows with a key of the tuple change ([`Graph::apply`]).
 /// Evaluating the whole part read every row of an exclusive or for each tuple, `O(n)` for `n`
 /// rows (LIST-xor-finite: `(0..n, 0) & ((int - 1, int) ^ (int - 3, int) ^ ...)`, whose rows
 /// with a key of a tuple are the side's and one other, far apart in `rows`).
@@ -3186,12 +3366,14 @@ struct Graph {
 }
 
 /// A node of a [`Graph`]: a list, by its position in `lists`, or a connective on nodes, a
-/// union or a meet of any number of them.
+/// union, a meet or an exclusive or of any number of them, the last with the constant joined
+/// to them ([`Graph::parities`]).
 enum Vertex {
     List(usize),
     Not(usize),
     Or(Vec<usize>),
     And(Vec<usize>),
+    Xor(Vec<usize>, bool),
 }
 
 /// A [`Graph`] on a tuple of a class with no key of any row.
@@ -3200,7 +3382,7 @@ struct Base {
     firsts: Vec<Firsts>,
     /// Per node, its value.
     values: Vec<bool>,
-    /// Per union, how many of its operands hold; per meet, how many do not.
+    /// Per union or exclusive or, how many of its operands hold; per meet, how many do not.
     counts: Vec<usize>,
 }
 
@@ -3328,47 +3510,152 @@ impl Graph {
             graph.nodes.push(node);
             at.insert(key(p), n);
         }
-        graph.merged()
+        graph.parities().merged()
+    }
+
+    /// The graph with each choice `c&x | !c&!x` between two complements, and each
+    /// `(x|y) & (!x|!y)`, made one exclusive or ([`Vertex::Xor`]) of the nodes `x` and `y` are
+    /// made from, where nodes are known complements by their forms: a list is the complement
+    /// of one with the same rows and the other value in every block and its tail, `!a` is
+    /// `a`'s, and two exclusive ors of the same nodes with other constants are complements.
+    /// Each node is kept as a node and a polarity (`canon`), equal for equal lists and
+    /// exclusive ors and opposite for complements, so an exclusive or of a chain reads the
+    /// previous link and never its complement, which is read no more. The exclusive or of `n`
+    /// meets `t(i) = s & r(i)` with a common side, made as `(x - t) | (t - x)` one at a time,
+    /// is otherwise a chain of `n` such choices and their complements, every link of which a
+    /// change of `r(0)` changes (LIST-box-overlap); merged ([`Graph::merged`]), it is one
+    /// exclusive or that counts its operands that hold.
+    // Complexity tradeoff: each node is checked once, in constant time but for its key, a
+    // list's blocks or an exclusive or's two operands; a choice whose halves are not known
+    // complements by these forms stays a union of meets.
+    fn parities(mut self) -> Graph {
+        let mut canon: Vec<(usize, bool)> = Vec::with_capacity(self.nodes.len());
+        // A list by its rows and each block's value, flipped so its tail is false.
+        type ListKey = (Vec<(usize, usize, bool)>, Vec<bool>);
+        let mut lists: HashMap<ListKey, (usize, bool)> = HashMap::new();
+        let mut xors: HashMap<[usize; 2], (usize, bool)> = HashMap::new();
+        for n in 0..self.nodes.len() {
+            let opposite = |canon: &[(usize, bool)], a: usize, b: usize| {
+                canon[a].0 == canon[b].0 && canon[a].1 != canon[b].1
+            };
+            // The two operands of a binary node.
+            let two = |v: &Vertex| match v {
+                Vertex::Or(xs) | Vertex::And(xs) if xs.len() == 2 => Some([xs[0], xs[1]]),
+                _ => None,
+            };
+            let choice = match &self.nodes[n] {
+                Vertex::Or(_) | Vertex::And(_) => (|| {
+                    let [p, q] = two(&self.nodes[n])?;
+                    let inner = |x: usize| {
+                        let alike = matches!(
+                            (&self.nodes[n], &self.nodes[x]),
+                            (Vertex::Or(_), Vertex::And(_)) | (Vertex::And(_), Vertex::Or(_))
+                        );
+                        alike.then(|| two(&self.nodes[x])).flatten()
+                    };
+                    let ([a, b], [c, d]) = (inner(p)?, inner(q)?);
+                    let pairs = opposite(&canon, a, c) && opposite(&canon, b, d)
+                        || opposite(&canon, a, d) && opposite(&canon, b, c);
+                    // `a&b | !a&!b` is `!(a ^ b)`; `(a|b) & (!a|!b)` is `a ^ b`.
+                    let negated = matches!(self.nodes[n], Vertex::Or(_));
+                    (pairs && canon[a].0 != canon[b].0).then_some((a, b, negated))
+                })(),
+                _ => None,
+            };
+            let own = (n, false);
+            let c = match (&self.nodes[n], choice) {
+                (_, Some((a, b, negated))) => {
+                    let ((x, px), (y, py)) = (canon[a], canon[b]);
+                    let constant = negated ^ px ^ py;
+                    let key = [x.min(y), x.max(y)];
+                    let &mut (e, ce) = xors.entry(key).or_insert((n, constant));
+                    self.nodes[n] = Vertex::Xor(key.to_vec(), constant);
+                    (e, constant ^ ce)
+                }
+                (Vertex::List(l), None) => {
+                    let b = &self.lists[*l].0;
+                    let flip = b.tail;
+                    let key = (
+                        b.of_row.clone(),
+                        b.values.iter().map(|&v| v ^ flip).collect(),
+                    );
+                    let &mut (e, fe) = lists.entry(key).or_insert((n, flip));
+                    (e, flip ^ fe)
+                }
+                (Vertex::Not(a), None) => (canon[*a].0, !canon[*a].1),
+                _ => own,
+            };
+            canon.push(c);
+            // A node equal to an earlier one, or its complement, reads it.
+            if c.0 != n {
+                self.nodes[n] = Vertex::Xor(vec![c.0], c.1);
+            }
+        }
+        self
     }
 
     /// The graph with each union read by one union only merged into it, and each meet read by
-    /// one meet only into it, each operand of a union or meet once, and the readers of each
-    /// node. A union of `n` parts made one at a time is a chain of `n` unions, whose every node
-    /// a changed row of the first part changed ([`Graph::eval`]); merged, the chain is one
-    /// union that counts its operands that hold.
+    /// one meet only into it, and so each exclusive or into an exclusive or, each operand of a
+    /// union or meet once and of an exclusive or once or not at all, and the readers of each
+    /// node the part reads. A union of `n` parts made one at a time is a chain of `n` unions,
+    /// whose every node a changed row of the first part changed ([`Graph::apply`]); merged, the
+    /// chain is one union that counts its operands that hold.
     // Complexity tradeoff: a merged node takes the operand list of its largest merged operand
     // and adds the others to it, so each operand moves order `log n` times; the lists are then
     // sorted, order `n log n` for `n` nodes.
     fn merged(mut self) -> Graph {
-        let mut readers = vec![0usize; self.nodes.len()];
-        for node in &self.nodes {
-            match node {
-                Vertex::List(_) => {}
-                Vertex::Not(a) => readers[*a] += 1,
-                Vertex::Or(xs) | Vertex::And(xs) => {
-                    xs.iter().for_each(|&x| readers[x] += 1);
+        let len = self.nodes.len();
+        let operands = |v: &Vertex| -> Vec<usize> {
+            match v {
+                Vertex::List(_) => Vec::new(),
+                Vertex::Not(a) => vec![*a],
+                Vertex::Or(xs) | Vertex::And(xs) | Vertex::Xor(xs, _) => xs.clone(),
+            }
+        };
+        // The nodes the part reads, operands before readers.
+        let read = |nodes: &[Vertex]| {
+            let mut read = vec![false; len];
+            read[len - 1] = true;
+            for n in (0..len).rev() {
+                if read[n] {
+                    operands(&nodes[n]).into_iter().for_each(|x| read[x] = true);
                 }
             }
+            read
+        };
+        let reached = read(&self.nodes);
+        let mut readers = vec![0usize; len];
+        for n in (0..len).filter(|&n| reached[n]) {
+            operands(&self.nodes[n])
+                .into_iter()
+                .for_each(|x| readers[x] += 1);
         }
         let alike = |a: &Vertex, b: &Vertex| {
             matches!(
                 (a, b),
-                (Vertex::Or(_), Vertex::Or(_)) | (Vertex::And(_), Vertex::And(_))
+                (Vertex::Or(_), Vertex::Or(_))
+                    | (Vertex::And(_), Vertex::And(_))
+                    | (Vertex::Xor(..), Vertex::Xor(..))
             )
         };
         // Operands come before their readers, so a merged operand is merged already.
-        for n in 0..self.nodes.len() {
+        for n in (0..len).filter(|&n| reached[n]) {
             let operands = match &mut self.nodes[n] {
-                Vertex::Or(xs) | Vertex::And(xs) => std::mem::take(xs),
+                Vertex::Or(xs) | Vertex::And(xs) | Vertex::Xor(xs, _) => std::mem::take(xs),
                 Vertex::List(_) | Vertex::Not(_) => continue,
             };
             let (mut kept, mut taken): (Vec<usize>, Vec<Vec<usize>>) = (Vec::new(), Vec::new());
+            let mut flip = false;
             for x in operands {
                 if readers[x] == 1 && alike(&self.nodes[x], &self.nodes[n]) {
                     // `x` is read by `n` alone, and is read no more.
                     readers[x] = 0;
                     match &mut self.nodes[x] {
                         Vertex::Or(ys) | Vertex::And(ys) => taken.push(std::mem::take(ys)),
+                        Vertex::Xor(ys, c) => {
+                            flip ^= *c;
+                            taken.push(std::mem::take(ys));
+                        }
                         Vertex::List(_) | Vertex::Not(_) => unreachable!("x is like n"),
                     }
                 } else {
@@ -3383,12 +3670,20 @@ impl Graph {
             taken.into_iter().for_each(|ys| all.extend(ys));
             match &mut self.nodes[n] {
                 Vertex::Or(xs) | Vertex::And(xs) => *xs = all,
-                Vertex::List(_) | Vertex::Not(_) => unreachable!("n is a union or a meet"),
+                Vertex::Xor(xs, c) => {
+                    *xs = all;
+                    *c ^= flip;
+                }
+                Vertex::List(_) | Vertex::Not(_) => {
+                    unreachable!("n is a union, meet or exclusive or")
+                }
             }
         }
-        // `p | p` reads its operand once. A merged node is read by none and reads none.
-        self.parents = vec![Vec::new(); self.nodes.len()];
-        for n in 0..self.nodes.len() {
+        // `p | p` reads its operand once, `p ^ p` not at all. A merged node is read by none and
+        // reads none, and a node the part does not read is read by none.
+        let reached = read(&self.nodes);
+        self.parents = vec![Vec::new(); len];
+        for n in (0..len).filter(|&n| reached[n]) {
             match &mut self.nodes[n] {
                 Vertex::List(_) => {}
                 Vertex::Not(a) => self.parents[*a].push(n),
@@ -3397,7 +3692,28 @@ impl Graph {
                     xs.dedup();
                     xs.iter().for_each(|&x| self.parents[x].push(n));
                 }
+                Vertex::Xor(xs, _) => {
+                    xs.sort_unstable();
+                    let mut odd: Vec<usize> = Vec::with_capacity(xs.len());
+                    for &x in xs.iter() {
+                        match odd.last() == Some(&x) {
+                            true => {
+                                odd.pop();
+                            }
+                            false => odd.push(x),
+                        }
+                    }
+                    *xs = odd;
+                    xs.iter().for_each(|&x| self.parents[x].push(n));
+                }
             }
+        }
+        // A list the part does not read is read again for no tuple.
+        for lists in &mut self.lists_of_row {
+            lists.retain(|&l| {
+                let n = self.lists[l].1;
+                reached[n] && matches!(self.nodes[n], Vertex::List(_))
+            });
         }
         self
     }
@@ -3421,6 +3737,10 @@ impl Graph {
                     let failing = xs.iter().filter(|&&x| !values[x]).count();
                     (failing == 0, failing)
                 }
+                Vertex::Xor(xs, c) => {
+                    let holding = xs.iter().filter(|&&x| values[x]).count();
+                    ((holding % 2 == 1) ^ c, holding)
+                }
             };
             values.push(v);
             counts.push(count);
@@ -3432,63 +3752,94 @@ impl Graph {
         }
     }
 
-    /// The part's value when the rows at `changed` take the value beside each, the other of
-    /// their value on `base`'s class: the lists those rows are in are read from their blocks
-    /// ([`Blocks::eval`]), and a node whose operand changed is evaluated again, operands first,
-    /// a union by how many of its operands hold and a meet by how many do not, so a changed
-    /// operand costs its reader order 1. The exclusive or of `n` rows is a tree of depth
-    /// `O(log n)` in expectation (module `xor` of `bdd`), so a changed row changes `O(log n)`
-    /// expressions, and a union of `n` parts is one node ([`Graph::merged`]).
+    /// The changes to `base`, already changed by `under`, when the rows at `changed`, none of
+    /// them in `under`, also take the value beside each, the other of their value on `base`'s
+    /// class: the lists those rows are in are read from their blocks ([`Blocks::eval`]), with
+    /// `under`'s rows in them, and a node whose operand changed is evaluated again, operands
+    /// first, a union by how many of its operands hold and a meet by how many do not, so a
+    /// changed operand costs its reader order 1. The exclusive or of `n` rows is a tree of
+    /// depth `O(log n)` in expectation (module `xor` of `bdd`), so a changed row changes
+    /// `O(log n)` expressions, and a union of `n` parts is one node ([`Graph::merged`]).
     // Complexity tradeoff: a tuple costs the nodes whose value its changed rows change, each
     // with its readers; a node read by many expressions, such as the side of a meet distributed
-    // over a union, sends the change to each. Evaluating the whole part costs every node for
-    // every tuple.
-    fn eval(&self, base: &Base, changed: &[(usize, bool)]) -> bool {
+    // over a union, sends the change to each, which `RowIndex::holds` pays once per set of rows
+    // that recurs (`Class::under`). Evaluating the whole part costs every node for every tuple.
+    fn apply(&self, base: &Base, under: &Overlay, changed: &[(usize, bool)]) -> Overlay {
         let mut by_list: BTreeMap<usize, Vec<(usize, bool)>> = BTreeMap::new();
         for &(i, holds) in changed {
             for &l in &self.lists_of_row[i] {
                 by_list.entry(l).or_default().push((i, holds));
             }
         }
-        type Pending = (HashMap<usize, bool>, HashMap<usize, isize>, BTreeSet<usize>);
-        let change = |n: usize, v: bool, (now, delta, dirty): &mut Pending| {
-            now.insert(n, v);
+        let mut out = Overlay::default();
+        let mut dirty = BTreeSet::new();
+        let change = |n: usize, v: bool, out: &mut Overlay, dirty: &mut BTreeSet<usize>| {
+            out.now.insert(n, v);
             for &p in &self.parents[n] {
                 let d = match (&self.nodes[p], v) {
-                    (Vertex::Or(_), true) | (Vertex::And(_), false) => 1,
-                    (Vertex::Or(_), false) | (Vertex::And(_), true) => -1,
+                    (Vertex::Or(_) | Vertex::Xor(..), true) | (Vertex::And(_), false) => 1,
+                    (Vertex::Or(_) | Vertex::Xor(..), false) | (Vertex::And(_), true) => -1,
                     (Vertex::List(_) | Vertex::Not(_), _) => 0,
                 };
-                *delta.entry(p).or_default() += d;
+                *out.delta.entry(p).or_default() += d;
                 dirty.insert(p);
             }
         };
-        // The changed values, per union or meet the change in its count, and the nodes to read
-        // again.
-        let mut pending: Pending = Default::default();
-        for (l, rows) in by_list {
+        for (l, mut rows) in by_list {
+            rows.extend(under.rows.get(&l).into_iter().flatten().copied());
             let (blocks, n) = &self.lists[l];
-            if blocks.eval(&base.firsts[l], &rows) != base.values[*n] {
-                change(*n, !base.values[*n], &mut pending);
+            let was = under.value(base, *n);
+            if blocks.eval(&base.firsts[l], &rows) != was {
+                change(*n, !was, &mut out, &mut dirty);
             }
+            out.rows.insert(l, rows);
         }
         // Operands come before their readers, so a node taken lowest first has its operands'
         // values settled.
-        while let Some(n) = pending.2.pop_first() {
-            let (now, delta, _) = &pending;
-            let count = || base.counts[n] as isize + delta.get(&n).copied().unwrap_or(0);
+        while let Some(n) = dirty.pop_first() {
+            let count = || {
+                let d = |o: &Overlay| o.delta.get(&n).copied().unwrap_or(0);
+                base.counts[n] as isize + d(under) + d(&out)
+            };
             let v = match &self.nodes[n] {
                 Vertex::List(_) => unreachable!("a list reads no node"),
-                Vertex::Not(a) => !now.get(a).copied().unwrap_or(base.values[*a]),
+                Vertex::Not(a) => !out.now.get(a).copied().unwrap_or(under.value(base, *a)),
                 Vertex::Or(_) => count() > 0,
                 Vertex::And(_) => count() == 0,
+                Vertex::Xor(_, c) => (count().rem_euclid(2) == 1) ^ c,
             };
-            if v != base.values[n] {
-                change(n, v, &mut pending);
+            if v != under.value(base, n) {
+                change(n, v, &mut out, &mut dirty);
             }
         }
+        out
+    }
+
+    /// The part's value on `base` changed by `under` and then by `over`, made from it.
+    fn root(&self, base: &Base, under: &Overlay, over: &Overlay) -> bool {
         let root = self.nodes.len() - 1;
-        pending.0.get(&root).copied().unwrap_or(base.values[root])
+        over.now
+            .get(&root)
+            .copied()
+            .unwrap_or(under.value(base, root))
+    }
+}
+
+/// The changes some rows make to a [`Base`] ([`Graph::apply`]).
+#[derive(Default)]
+struct Overlay {
+    /// Per list those rows are in, they and their values.
+    rows: BTreeMap<usize, Vec<(usize, bool)>>,
+    /// The nodes whose value changes, by their value.
+    now: HashMap<usize, bool>,
+    /// Per union or meet, the change in its count.
+    delta: HashMap<usize, isize>,
+}
+
+impl Overlay {
+    /// The value of node `n`.
+    fn value(&self, base: &Base, n: usize) -> bool {
+        self.now.get(&n).copied().unwrap_or(base.values[n])
     }
 }
 
@@ -3499,6 +3850,19 @@ struct Class {
     open: Vec<bool>,
     /// The part's nodes on such a tuple, made when first needed.
     base: Option<Base>,
+    /// Per set of changed rows a tuple's check applied before its last row, the changes they
+    /// make to `base`, kept from the second time the set recurs: each value of the side of a
+    /// meet distributed over `n` operands changes the side and one operand, and the side's
+    /// change, read by all `n`, is made once, not once per value (LIST-box-overlap).
+    // Complexity tradeoff: a set's changes are kept, order the nodes they change, only when it
+    // recurs, so the memory kept is at most the time spent making them a second time; a set
+    // seen once costs its key.
+    under: HashMap<Vec<(usize, bool)>, Option<Overlay>>,
+    /// Per set of changed rows a tuple's check applied, the part's value: a set every tuple of
+    /// a box changes, such as the side of a meet alone, is applied once.
+    // Complexity tradeoff: one entry per set applied, its key the size of the set, so at most
+    // the time spent applying it.
+    known: HashMap<Vec<(usize, bool)>, bool>,
 }
 
 /// Whether the kinds `chain` of a component are those of a scalar ([`whole`]).
@@ -3612,6 +3976,7 @@ impl RowIndex {
             });
         }
         let graph = Graph::new(&rows, part);
+        let rows_len = rows.len();
         RowIndex {
             rows,
             filing,
@@ -3624,6 +3989,7 @@ impl RowIndex {
             by_kinds: HashMap::new(),
             classes: BTreeMap::new(),
             places: HashMap::new(),
+            changes: vec![0; rows_len],
             graph,
         }
     }
@@ -3684,7 +4050,7 @@ impl RowIndex {
     /// Whether the tuple `v` is in the part indexed; `fits` tells whether a row holds `v`. The
     /// rows with a key of `v` whose value on it is not their value on its class change the
     /// part's nodes on the class, made once per class, and only the nodes they change are
-    /// evaluated again ([`Graph::eval`]). A tuple's kinds
+    /// evaluated again ([`Graph::apply`]). A tuple's kinds
     /// decide most open rows, and are its shape when they decide all; when they leave one
     /// unknown, as for a column of pairs whose first column is given by its complement, the
     /// shape is the tuple's spine ([`spine`]), and each row the kinds leave unknown is read
@@ -3728,6 +4094,7 @@ impl RowIndex {
             by_kinds,
             classes,
             places,
+            changes,
             graph,
             ..
         } = self;
@@ -3759,7 +4126,12 @@ impl RowIndex {
                 ),
             },
         };
-        let Class { open, base } = classes.entry(key).or_insert_with(|| {
+        let Class {
+            open,
+            base,
+            under,
+            known,
+        } = classes.entry(key).or_insert_with(|| {
             let mut erased: Option<Vec<Value>> = None;
             let open = decided
                 .iter()
@@ -3788,18 +4160,50 @@ impl RowIndex {
                     }
                 })
                 .collect();
-            Class { open, base: None }
+            Class {
+                open,
+                base: None,
+                under: HashMap::new(),
+                known: HashMap::new(),
+            }
         });
         let (rows, filing, open) = (&*rows, &*filing, &*open);
         let base = base.get_or_insert_with(|| graph.base(|i| row_default(filing, open, i)));
         // A row that may hold `v` either has a key of `v`, and is in `at`, or holds it as its
         // value on a tuple of the class with no key of it.
-        let changed: Vec<(usize, bool)> = at
+        let mut changed: Vec<(usize, bool)> = at
             .iter()
             .map(|&i| (i, fits(&rows[i])))
             .filter(|&(i, holds)| holds != row_default(filing, open, i))
             .collect();
-        graph.eval(base, &changed)
+        // The rows that changed most often first, so that all but the last are the rows tuples
+        // share, such as the side of a meet, which each value of the side changes; their
+        // changes are kept from the second time they recur on (`Class::under`).
+        for &(i, _) in &changed {
+            changes[i] += 1;
+        }
+        changed.sort_unstable_by_key(|&(i, _)| (std::cmp::Reverse(changes[i]), i));
+        if let Some(&holds) = known.get(&changed) {
+            return holds;
+        }
+        let none = Overlay::default();
+        let Some((last, shared)) = changed.split_last() else {
+            return graph.root(base, &none, &none);
+        };
+        let once;
+        let under = match under.get_mut(shared) {
+            _ if shared.is_empty() => &none,
+            None => {
+                under.insert(shared.to_vec(), None);
+                once = graph.apply(base, &none, shared);
+                &once
+            }
+            Some(kept) => kept.get_or_insert_with(|| graph.apply(base, &none, shared)),
+        };
+        let over = graph.apply(base, under, std::slice::from_ref(last));
+        let holds = graph.root(base, under, &over);
+        known.insert(changed, holds);
+        holds
     }
 }
 

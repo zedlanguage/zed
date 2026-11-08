@@ -1459,11 +1459,14 @@ fn finding_the_boxes_of_a_meet_with_an_exclusive_or_scales() {
     // them compared each `u - (2k + 1)`, made once in the type and again in a box, literal by
     // literal: 10.4M and 174M instructions at 64 and 512 rows; two sets made from one set are
     // now found equal by `==`, which skips their shared nodes, so it is found finite at
-    // `w = n`: 9.1M, 78.6M, 720M at 64, 512 and 4096. Listing it reads every box, 104M and
-    // 6.16G at 64 and 512 for `n / 2` values (LIST-box-overlap), so its listing holds the side
-    // at 64 values. Measured at 64, 512 and 4096 rows: finding the first finite 3.4M, 26.7M,
-    // 221M; the second at a side of 64 10.4M, 82M, 665M; listing the first 13.2M, 122M,
-    // 1.12G; the second 95M, 546M, 4.29G.
+    // `w = n`: 9.1M, 78.6M, 720M at 64, 512 and 4096. Listing it read every box, and checked
+    // each tuple along the chain of `n` exclusive ors of meets, 105M and 6.17G at 64 and 512
+    // for `n / 2` values (LIST-box-overlap); its boxes are now merged into one box of `u`, the
+    // chain is read as one exclusive or, and the side, which every tuple changes, is applied
+    // once: 19.0M, 162M, 1.43G at 64, 512 and 4096. Without the merge 2.0G at 512, without the
+    // exclusive or 1.40G, without applying the side once 0.98G, with the union of literal sets
+    // that copies the smaller set 0.42G, each growing as `n²`. Measured at 64, 512 and 4096
+    // rows: finding the first finite 3.4M, 26.7M, 221M; listing the first 13.2M, 122M, 1.12G.
     let met = scaling::inputs(128, |n| family(n, n, false));
     scaling::check(
         "finding the boxes of a finite type met with the exclusive or",
@@ -1483,12 +1486,8 @@ fn finding_the_boxes_of_a_meet_with_an_exclusive_or_scales() {
         128,
         |n| assert!(wide[&n].finite()),
     );
-    let each = scaling::inputs(128, |n| family(n, 64, true));
     scaling::check("listing a finite type each row met first", 128, |n| {
-        assert_eq!(
-            each[&n].each_value().map(|v| v.count()),
-            Some(listed(n, 64))
-        );
+        assert_eq!(wide[&n].each_value().map(|v| v.count()), Some(listed(n, n)));
     });
     // The union of `n` exclusive ors `((3k | 3k + 1, 0),) ^ ((3k + 1 | 3k + 2, 0),)`, made one
     // at a time: a chain of `n` unions, whose boxes are kept as a union of persistent sets, and
