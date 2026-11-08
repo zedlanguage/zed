@@ -838,10 +838,20 @@ impl<'m> Connect<'m> {
         })
     }
 
-    /// Whether `a` is the complement of `b`, as built.
+    /// Whether `a` is the complement of `b`, as built. Two diagrams are compared by their first
+    /// cells' ids, in constant time: a live cell is the one cell of its contents, so the
+    /// complement of a list, its first cell with the value flipped, is `b` exactly when `b` has
+    /// that cell and value. A list met with its complement is then `false` (or `true` for `|`)
+    /// at once, where a part of it kept as an expression would be narrowed one tuple type a
+    /// pass, order `n²` in its tuple types (the chain of `c` less that of `c + 1`,
+    /// `l01_23_subtyping::one_pass`, COMPLEXITY.md K71).
     async fn same_as_not<A: Literal>(&'m self, a: &Part<A>, b: &Part<A>) -> bool {
         match (a, b) {
-            (Part::Bdd(x), Part::Bdd(y)) => x.is_literal() && x.not() == *y,
+            (Part::Bdd(x), Part::Bdd(y)) => match (x.not(), y) {
+                (Bdd::List(c, v), Bdd::List(d, w)) => c.id == d.id && v == *w,
+                (Bdd::Leaf(p), Bdd::Leaf(q)) => p == *q,
+                (Bdd::List(..), Bdd::Leaf(_)) | (Bdd::Leaf(_), Bdd::List(..)) => false,
+            },
             (Part::Expr(e), _) => e.known().is_some_and(|c| c == *b) || self.not(a).await == *b,
             _ => self.not(b).await == *a,
         }

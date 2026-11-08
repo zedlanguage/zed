@@ -4791,6 +4791,10 @@ pub enum Refusal {
     Residues,
     /// A tuple part that only a split of the box in more than one component at once decides.
     TupleSplit,
+    /// A tuple part of one choice per component with an `&` or `|` whose operands share this
+    /// component through different cells and are not both decision lists or exclusive ors:
+    /// deciding it is the Orthogonal Vectors problem.
+    SharedCells(usize),
     /// A morphism part that neither the meets it forces nor a split into its morphism types
     /// decides.
     MorphismSplit,
@@ -4800,8 +4804,8 @@ pub enum Refusal {
 
 impl Refusal {
     /// What the refusal says to the programmer.
-    pub fn message(self) -> &'static str {
-        match self {
+    pub fn message(self) -> String {
+        let text = match self {
             Refusal::Fork => {
                 "two tuple types of it differ in a recursive component on one box; deciding it \
                  would follow both, which is the subset construction"
@@ -4814,18 +4818,26 @@ impl Refusal {
                 "a tuple part is decided only by a case split in more than one component at \
                  once; write the case split as a union"
             }
+            Refusal::SharedCells(j) => {
+                return format!(
+                    "a tuple part meets parts that pick cells of component {j} in different ways, \
+                 and comparing them is the Orthogonal Vectors problem (no method below \
+                 quadratic time is known); write the meet as a union of cases on component {j}"
+                );
+            }
             Refusal::MorphismSplit => {
                 "a function part is decided neither by the types it forces nor by a split into \
                  its function types"
             }
             Refusal::NoWitness => "it was not proved empty, and no value of it could be built",
-        }
+        };
+        text.to_owned()
     }
 }
 
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.message())
+        f.write_str(&self.message())
     }
 }
 

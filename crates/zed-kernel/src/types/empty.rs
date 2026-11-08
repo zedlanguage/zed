@@ -2235,22 +2235,46 @@ impl<'m> Searching<'m> {
             // that gives no answer has still walked it, `k` walks in all (the choice chain
             // against a swapped one in `l01_23_subtyping::x13` grew 237 times in bytes at 8
             // times `d`, above its order `d²`). Trigger: `may_cover` false. COMPLEXITY.md K71.
-            if may_cover && let Some(empty) = self.one_pass(g, &f, &open).await {
-                return empty;
+            let mut unread = None;
+            if may_cover {
+                match self.one_pass(g, &f, &open).await {
+                    Some(Ok(empty)) => return empty,
+                    Some(Err(j)) => unread = Some(j),
+                    None => {}
+                }
+            }
+            if may_cover
+                && f.eval3(&|_| Some(false)) == Some(false)
+                && let Some(j) = unread
+            {
+                // Complexity tradeoff: a part of one choice per component that the one pass
+                // leaves undecided, at an `&` or `|` whose operands share component `j` and are
+                // not both decision lists or exclusive ors under `!` (such as an `&` of three
+                // lists on two components), counts as inhabited for `is_empty`, and `verdict`
+                // answers `Refused(SharedCells(j))` unless `Searching::refine` finds a value
+                // first. Why: such parts encode Orthogonal Vectors with two components
+                // (component 0 picks one of `n` cells `u`, component 1 one of `n` cells `v`, and
+                // the part is the `and` over the dimensions `d` of `!(U_d & V_d)`, `U_d` the union
+                // of the cells `u` with `u[d] = 1`), so no exact method takes `O(n^(2-e))` time
+                // unless the Orthogonal Vectors hypothesis fails; the split into the open tuple
+                // types below decided them in order `c²` (author's answer A46: refuse). Trigger:
+                // `Choices::pair` meets an operand that is no list or exclusive or. Tests:
+                // `l01_23_subtyping::one_pass::an_orthogonal_vectors_meet_is_refused_naming_its_component`
+                // and `random_parts_out_of_the_class_are_decided_or_refused`. COMPLEXITY.md K71. A
+                // complete solution needs the split, order `c²` and worse with more operands.
+                self.s().give_up(Refusal::SharedCells(j));
+                return false;
             }
             // Complexity tradeoff: a part false when every open tuple type is false, that the
-            // one pass above leaves undecided, is split into its open tuple types, each piece
-            // deciding the whole part again: `k` pieces of a part of `n` nodes, order `c²` on the
-            // comparisons of exclusive ors and of decision lists of `c` tuple types that overlap
-            // (`x & !y`, an `and` whose operands are open on one component through different
-            // cells). Why: such parts encode Orthogonal Vectors with two components (component 0
-            // picks one of `n` cells `u`, component 1 one of `n` cells `v`, and the part is the
-            // `and` over the dimensions `d` of `!(U_d & V_d)`, `U_d` the union of the cells `u`
-            // with `u[d] = 1`), so no exact method takes `O(n^(2-e))` time unless the Orthogonal
-            // Vectors hypothesis fails. Whether to keep this exact split or bound it is the
-            // author's question A46. Trigger: `may_cover`, and `one_pass` gives no answer. Tests:
-            // `l01_23_subtyping::one_pass::overlapping_exclusive_ors_are_compared_at_quadratic_cost`
-            // and `overlapping_decision_lists_are_compared_at_quadratic_cost`. COMPLEXITY.md K71.
+            // one pass above does not read (a tuple type open on two components, or two open
+            // cells of one component that may share a value), is split into its open tuple
+            // types, each piece deciding the whole part again: `k` pieces of a part of `n`
+            // nodes. Why: such parts are covers of the box by tuple types, coNP-hard in
+            // general, and the split keeps the search polynomial. Trigger: `may_cover`, and
+            // `one_pass` finds the part not of one choice per component. Tests: the split's
+            // cases in `l01_23_subtyping::x13` and `l01_23_subtyping::scaling`. COMPLEXITY.md
+            // K71 and the Kept row "emptiness and subtyping of tuple and morphism parts". A
+            // complete solution needs a split of the box in every component.
             if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
                 // A union of parts that share no tuple type is empty when each part is, each
                 // decided on the box with only its own tuple types: `n` parts of `c` tuple types
@@ -2489,9 +2513,51 @@ impl<'m> Searching<'m> {
     /// component a value of one open cell, or of none when the component has such a value, and
     /// is in the tuple types of the cells of its values and no others. So the part is a
     /// function of one choice per component, and [`Choices::decide`] reads it so. `None` when
-    /// the part is not of that structure or `Choices` does not decide it; else whether no tuple
-    /// of the box is in `f`. Each component is compared with the union of its open cells once.
-    async fn one_pass(&'m self, g: &Region, f: &Part<Row>, open: &[usize]) -> Option<bool> {
+    /// the part is not of that structure ([`Searching::layout`]); else whether no tuple of the
+    /// box is in `f`, or `Err` with the component of a meet `Choices` does not read.
+    async fn one_pass(
+        &'m self,
+        g: &Region,
+        f: &Part<Row>,
+        open: &[usize],
+    ) -> Option<Result<bool, usize>> {
+        let l = self.layout(g, open).await?;
+        let at = |a: &Row| l.at[g.index[a]].expect("an atom of the part is open");
+        Some(l.choices(&at).decide(f).map(|inhabited| !inhabited))
+    }
+
+    /// A box inside the tuple part `f` and the box of `g`, read off the choice on each component
+    /// that [`Choices::witness`] finds (step EMPTY-overlap-fast): a component chosen at a cell is
+    /// narrowed to that cell, and one chosen at a value of no open cell to the values outside
+    /// them. `None` when the part is not of the structure of [`Searching::one_pass`] or the pass
+    /// does not decide it; `Some(None)` when no tuple of the box is in `f`. So a value of such
+    /// a part costs one pass, not a search for each tuple type.
+    async fn one_pass_row(
+        &'m self,
+        g: &Region,
+        f: &Part<Row>,
+        open: &[usize],
+    ) -> Option<Option<Vec<Type>>> {
+        let l = self.layout(g, open).await?;
+        let at = |a: &Row| l.at[g.index[a]].expect("an atom of the part is open");
+        let picks = l.choices(&at).witness(f).ok()?;
+        Some(picks.map(|picks| {
+            (picks.iter().enumerate())
+                .map(|(j, pick)| match pick {
+                    Some(Choice::Cell(c)) => &g.r[j] & &g.cells[j][*c].ty,
+                    Some(Choice::Other) => l.rest[j].clone(),
+                    None => g.r[j].clone(),
+                })
+                .collect()
+        }))
+    }
+
+    /// For [`Searching::one_pass`]: the component and cell of each open tuple type of `open`,
+    /// and each component's open cells and the values of the box outside them; `None` when an
+    /// open tuple type is open on two components or misses one, or when two open cells of a
+    /// component may share a value. Each component is compared with the union of its open cells
+    /// once.
+    async fn layout(&'m self, g: &Region, open: &[usize]) -> Option<Layout> {
         let mut at: Vec<Option<(usize, usize)>> = vec![None; g.atoms.len()];
         let mut cells: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
         for &k in open {
@@ -2503,8 +2569,15 @@ impl<'m> Searching<'m> {
             at[k] = Some((j, c));
             cells.entry(j).or_default().insert(c);
         }
-        let (mut count, mut other) = (vec![0; g.r.len()], vec![false; g.r.len()]);
-        for (&j, cs) in &cells {
+        let n = g.r.len();
+        let mut l = Layout {
+            at,
+            count: vec![0; n],
+            other: vec![false; n],
+            cells: vec![Vec::new(); n],
+            rest: g.r.clone(),
+        };
+        for (j, cs) in cells {
             // Two cells that may share a value, as the split into classes reads them (K36),
             // leave the part to the search.
             let held = Held::default();
@@ -2513,16 +2586,12 @@ impl<'m> Searching<'m> {
                 return None;
             }
             let union = Type::union_all(cs.iter().map(|&c| g.cells[j][c].ty.clone()));
-            other[j] = !self.empty(&(&g.r[j] - &union)).await;
-            count[j] = cs.len();
+            l.rest[j] = &g.r[j] - &union;
+            l.other[j] = !self.empty(&l.rest[j]).await;
+            l.count[j] = cs.len();
+            l.cells[j] = cs.into_iter().collect();
         }
-        let at = |a: &Row| at[g.index[a]].expect("an atom of the part is open");
-        let choices = Choices {
-            at: &at,
-            count,
-            other,
-        };
-        choices.decide(f).map(|inhabited| !inhabited)
+        Some(l)
     }
 
     /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
@@ -3124,6 +3193,19 @@ impl<'m> Searching<'m> {
                     }
                     None => {}
                 }
+                // A part of one choice per component: the choice the one pass finds, checked
+                // as any candidate is (step EMPTY-overlap-fast). It replaces the candidate for
+                // each tuple type below, a narrowing of the box each, order `c²` for `c` cells.
+                let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
+                match self.one_pass_row(&b, &g, &open).await {
+                    Some(None) => continue,
+                    Some(Some(row)) => {
+                        if let Some(v) = self.row_rep(&row, f).await {
+                            return Some(v);
+                        }
+                    }
+                    None => {}
+                }
                 if let Some(found) = self.class_rep(&b, &g, *len).await {
                     match found {
                         Some(v) => return Some(v),
@@ -3492,6 +3574,30 @@ impl<'m> Searching<'m> {
     }
 }
 
+/// What [`Searching::layout`] reads of a box for [`Choices`]: the component and cell of each
+/// open tuple type, by its index in the region; for each component, the number of its open
+/// cells, whether it has a value in none of them (`other`), its open cells ascending, and the
+/// box's values outside them (`rest`).
+struct Layout {
+    at: Vec<Option<(usize, usize)>>,
+    count: Vec<usize>,
+    other: Vec<bool>,
+    cells: Vec<Vec<usize>>,
+    rest: Vec<Type>,
+}
+
+impl Layout {
+    /// The choices of the layout, `at` giving the component and cell of an atom.
+    fn choices<'a>(&'a self, at: &'a dyn Fn(&Row) -> (usize, usize)) -> Choices<'a> {
+        Choices {
+            at,
+            count: &self.count,
+            other: &self.other,
+            cells: &self.cells,
+        }
+    }
+}
+
 /// The choices of a tuple of a box for [`Searching::one_pass`]: on each component, one of its
 /// open cells, which puts the tuple in the tuple types of that cell and in no other tuple type
 /// open there, or a value in none of them when the component has one (`other`).
@@ -3499,17 +3605,118 @@ struct Choices<'a> {
     /// The component and cell of each open tuple type.
     at: &'a dyn Fn(&Row) -> (usize, usize),
     /// The number of open cells of each component.
-    count: Vec<usize>,
-    other: Vec<bool>,
+    count: &'a [usize],
+    other: &'a [bool],
+    /// The open cells of each component, ascending.
+    cells: &'a [Vec<usize>],
 }
 
+/// One choice on a component: an open cell, or a value in none of them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Choice {
+    Cell(usize),
+    Other,
+}
+
+/// A part read by [`Choices::read`]: what is known of each node by its id, the decision lists
+/// and exclusive ors read for meets, and the least component of a meet read neither way.
+struct Read<'p> {
+    known: HashMap<u64, Known<'p>>,
+    indexes: HashMap<u64, Index>,
+    blame: Option<usize>,
+}
+
+/// A point of [`Choices::meet`] on a shared component: the component's place among them, its
+/// first block or parity in each operand, and its cell (`None` for a value of no cell either
+/// operand mentions).
+type Point = (usize, usize, usize, Option<usize>);
+
+/// The point [`Choices::meet`] chose on a shared component, without the component's place.
+type MeetPoint = (usize, usize, Option<usize>);
+
+/// A first block of a decision list on a component and the cell giving it (`None` for a value
+/// of no cell the list mentions), for [`Choices::complete`].
+type Block = (usize, Option<usize>);
+
 /// What [`Choices::decide`] knows of a node: whether some choice puts a tuple in it (`sat`) and
-/// whether every choice does (`valid`), each `None` when not known, and the components its
-/// tuple types are open on, in order.
-struct Known {
+/// whether every choice does (`valid`), each `None` when not known, the components its tuple
+/// types are open on, in order, and, for a decision list or an exclusive or under any number of
+/// `!`, that list or exclusive or and whether the `!` are odd in number.
+struct Known<'p> {
     sat: Option<bool>,
     valid: Option<bool>,
     on: std::rc::Rc<[usize]>,
+    leaf: Option<(&'p Part<Row>, bool)>,
+}
+
+/// A decision list read for [`Choices::meet`]: the value of each block and, last, the default;
+/// each component's [`ListComponent`]; and, for the components the other operand is not open
+/// on, each component's latest first block (`by_last`, ascending) and its earliest first block
+/// of each value (`by_first`, ascending).
+struct ListIndex {
+    values: Vec<bool>,
+    components: HashMap<usize, ListComponent>,
+    by_last: Vec<(usize, usize)>,
+    by_first: [Vec<(usize, usize)>; 2],
+}
+
+/// One component of a decision list: for each cell it mentions, the first block one of whose
+/// literals holds of a tuple with that cell (the number of blocks when none does), the same for
+/// a value of no cell it mentions (`rest`), and the cells by that block, all and by the block's
+/// value, ascending.
+struct ListComponent {
+    at: HashMap<usize, usize>,
+    rest: usize,
+    by_block: Vec<(usize, usize)>,
+    by_value: [Vec<(usize, usize)>; 2],
+}
+
+/// An exclusive or read for [`Choices::meet`]: its constant; for each component, whether each
+/// cell it mentions is on an odd number of its tuple types, the even and the odd cells
+/// ascending, and the parities a choice on the component gives (bit 0 even, bit 1 odd); the number of
+/// components that give both, and the sum of the parity of those that give one.
+struct ParityIndex {
+    constant: bool,
+    components: HashMap<usize, ParityComponent>,
+    both: usize,
+    ones: bool,
+}
+
+struct ParityComponent {
+    at: HashMap<usize, bool>,
+    by_parity: [Vec<usize>; 2],
+    parities: u8,
+}
+
+/// A decision list or an exclusive or, read once for every meet it is an operand of.
+enum Index {
+    List(ListIndex),
+    Parity(ParityIndex),
+}
+
+/// The blocks of a decision list whose first block a choice of the shared components may make
+/// give the list the value wanted, the other components chosen freely: every block after the
+/// earliest first block of those components of that value (`low`), and the blocks of that value
+/// up to their latest first block (`high`).
+struct Goal<'i> {
+    values: &'i [bool],
+    want: bool,
+    low: usize,
+    high: usize,
+}
+
+impl Goal<'_> {
+    fn good(&self, block: usize) -> bool {
+        self.low < block || (block <= self.high && self.values[block] == self.want)
+    }
+}
+
+/// An operand of [`Choices::meet`]: a decision list and the blocks wanted of it, or an exclusive
+/// or, the parity wanted of the choices on the shared components (`None` when either does),
+/// and the value wanted of it.
+enum Side<'i> {
+    List(&'i ListIndex, Goal<'i>),
+    Parity(&'i ParityIndex, Option<bool>, bool),
 }
 
 /// The choices on one component fixed so far along a decision list: the cell taken, whether
@@ -3537,21 +3744,81 @@ impl Choices<'_> {
     /// - `!p` some choice is in exactly when not every choice is in `p`;
     /// - `p | q` some choice is in exactly when one is in `p` or in `q`, and `p & q` every choice
     ///   is in exactly when every one is in both;
-    /// - `p & q` some choice is in, and `p | q` every choice is in, read off `p` and `q` only
-    ///   when they are open on no component in common: the choices on their components are then
-    ///   made apart. Operands open on one component through different cells are not (the
-    ///   `may_cover` split and its Complexity tradeoff comment in `Searching::tuples_on`).
-    fn decide(&self, f: &Part<Row>) -> Option<bool> {
-        let mut known: HashMap<u64, Known> = HashMap::new();
+    /// - `p & q` some choice is in, and `p | q` every choice is in, read off `p` and `q` when
+    ///   they are open on no component in common: the choices on their components are then
+    ///   made apart;
+    /// - else, when `p` and `q` are each a decision list or an exclusive or under any number
+    ///   of `!`, by [`Choices::meet`] on the components they share (step EMPTY-overlap-fast).
+    ///
+    /// `Err` names the least component shared by the operands of an `&` or `|` read neither
+    /// way.
+    fn decide(&self, f: &Part<Row>) -> Result<bool, usize> {
+        let read = self.read(f);
+        read.known[&f.id()].sat.ok_or_else(|| {
+            read.blame
+                .expect("an unknown node has a meet read neither way")
+        })
+    }
+
+    /// A choice on each component that puts a tuple in `f`, as [`Choices::decide`] decides it:
+    /// `Ok(None)` when there is none, and `Err` as `decide` gives it. The choice is read back
+    /// from the root ([`Choices::extract`]) and checked against `f`; components no node needs
+    /// are chosen at a value of no open cell, else at their first open cell.
+    fn witness(&self, f: &Part<Row>) -> Result<Option<Vec<Option<Choice>>>, usize> {
+        let mut read = self.read(f);
+        match read.known[&f.id()].sat {
+            None => Err(read
+                .blame
+                .expect("an unknown node has a meet read neither way")),
+            Some(false) => Ok(None),
+            Some(true) => {
+                let mut picks = vec![None; self.count.len()];
+                self.extract(f, &read.known, &mut read.indexes, &mut picks);
+                for (j, pick) in picks.iter_mut().enumerate() {
+                    if pick.is_none()
+                        && let Some(&c) = self.cells[j].first()
+                    {
+                        *pick = Some(if self.other[j] {
+                            Choice::Other
+                        } else {
+                            Choice::Cell(c)
+                        });
+                    }
+                }
+                let holds = |a: &Row| {
+                    let (j, c) = (self.at)(a);
+                    picks[j] == Some(Choice::Cell(c))
+                };
+                assert!(
+                    f.eval(&holds),
+                    "the choice read back from the pass is in the part"
+                );
+                Ok(Some(picks))
+            }
+        }
+    }
+
+    /// Each node of `f` read once, as [`Choices::decide`] says, with the decision lists and
+    /// exclusive ors read for meets and the least component of a meet read neither way.
+    fn read<'p>(&self, f: &'p Part<Row>) -> Read<'p> {
+        let mut known: HashMap<u64, Known<'p>> = HashMap::new();
+        let mut indexes: HashMap<u64, Index> = HashMap::new();
+        let mut blame: Option<usize> = None;
         let mut stack = vec![(f, false)];
         while let Some((p, ready)) = stack.pop() {
             if !ready && known.contains_key(&p.id()) {
                 continue;
             }
             let k = match p.view() {
-                Ok(b) => self.list(b),
+                Ok(b) => Known {
+                    leaf: Some((p, false)),
+                    ..self.list(b)
+                },
                 Err(form) => match p.exclusive_or() {
-                    Some((atoms, constant)) => self.parity(&atoms, constant),
+                    Some((atoms, constant)) => Known {
+                        leaf: Some((p, false)),
+                        ..self.parity(&atoms, constant)
+                    },
                     None => {
                         let (x, y) = match form {
                             Form::Not(q) => (q, None),
@@ -3569,6 +3836,7 @@ impl Choices<'_> {
                                 sat: x.valid.map(|v| !v),
                                 valid: x.sat.map(|v| !v),
                                 on: x.on.clone(),
+                                leaf: x.leaf.map(|(l, not)| (l, !not)),
                             },
                             (Form::Or(..), Some(y)) => {
                                 let apart = apart(&x.on, &y.on);
@@ -3577,11 +3845,19 @@ impl Choices<'_> {
                                     or3(x.valid, y.valid)
                                 } else if x.valid == Some(true) || y.valid == Some(true) {
                                     Some(true)
+                                } else if sat == Some(false) {
+                                    Some(false)
                                 } else {
-                                    sat.filter(|s| !s)
+                                    // Every choice is in `x | y` when none is in `!x & !y`.
+                                    self.pair(x, y, true, &mut indexes, &mut blame).map(|s| !s)
                                 };
                                 let on = union_on(&x.on, &y.on);
-                                Known { sat, valid, on }
+                                Known {
+                                    sat,
+                                    valid,
+                                    on,
+                                    leaf: None,
+                                }
                             }
                             (_, Some(y)) => {
                                 let apart = apart(&x.on, &y.on);
@@ -3590,11 +3866,18 @@ impl Choices<'_> {
                                     and3(x.sat, y.sat)
                                 } else if x.sat == Some(false) || y.sat == Some(false) {
                                     Some(false)
+                                } else if valid == Some(true) {
+                                    Some(true)
                                 } else {
-                                    valid.filter(|v| *v)
+                                    self.pair(x, y, false, &mut indexes, &mut blame)
                                 };
                                 let on = union_on(&x.on, &y.on);
-                                Known { sat, valid, on }
+                                Known {
+                                    sat,
+                                    valid,
+                                    on,
+                                    leaf: None,
+                                }
                             }
                             (_, None) => unreachable!("an `or` and an `and` have two operands"),
                         }
@@ -3603,14 +3886,474 @@ impl Choices<'_> {
             };
             known.insert(p.id(), k);
         }
-        known[&f.id()].sat
+        Read {
+            known,
+            indexes,
+            blame,
+        }
+    }
+
+    /// Writes into `picks` a choice on the components of `f` under which `f` is `true`, as
+    /// `known` says one is, walking down from `f` once: `!p` wants the other value of `p`; an
+    /// `|` wanted true and an `&` wanted false want it of one operand that can give it; an `&`
+    /// wanted true and an `|` wanted false want it of both, apart when they share no component,
+    /// else of the two lists or exclusive ors by [`Choices::pair_picks`], and of neither when
+    /// every choice gives it. A decision list or an exclusive or takes a choice on each of its
+    /// components ([`Choices::complete`]). Two nodes reached share no component, so each node is
+    /// reached at most once and each component chosen once.
+    fn extract<'p>(
+        &self,
+        f: &'p Part<Row>,
+        known: &HashMap<u64, Known<'p>>,
+        indexes: &mut HashMap<u64, Index>,
+        picks: &mut [Option<Choice>],
+    ) {
+        let mut stack = vec![(f, true)];
+        while let Some((p, want)) = stack.pop() {
+            let k = &known[&p.id()];
+            let form = match p.view() {
+                Ok(_) => None,
+                Err(form) => p.exclusive_or().is_none().then_some(form),
+            };
+            let (x, y, or) = match form {
+                None => {
+                    let index = indexes.entry(p.id()).or_insert_with(|| self.index(p));
+                    let side = match &*index {
+                        Index::List(l) => Side::List(l, goal(l, want, &[])),
+                        Index::Parity(q) => Side::Parity(q, self.target(q, want, &[]), want),
+                    };
+                    self.complete(&side, std::iter::empty(), &[], picks);
+                    continue;
+                }
+                Some(Form::Not(q)) => {
+                    stack.push((q, !want));
+                    continue;
+                }
+                Some(Form::Or(a, b)) => (a, b, true),
+                Some(Form::And(a, b)) => (a, b, false),
+            };
+            let gives = |q: &Part<Row>| {
+                let k = &known[&q.id()];
+                if want {
+                    k.sat == Some(true)
+                } else {
+                    k.valid == Some(false)
+                }
+            };
+            if or == want {
+                let one = if gives(x) { x } else { y };
+                assert!(gives(one), "an operand gives what its `|` or `&` gives");
+                stack.push((one, want));
+            } else if apart(&known[&x.id()].on, &known[&y.id()].on) {
+                stack.push((x, want));
+                stack.push((y, want));
+            } else if (k.valid == Some(true) && want) || (k.sat == Some(false) && !want) {
+                // Every choice gives it.
+            } else {
+                self.pair_picks(&known[&x.id()], &known[&y.id()], or, indexes, picks);
+            }
+        }
+    }
+
+    /// Whether some choice puts a tuple in both operands, `x` and `y` open on a component in
+    /// common, each under one more `!` when `not`, by [`Choices::meet`] when
+    /// each is a decision list or an exclusive or under `!`. `None`, with the least shared
+    /// component taken into `blame`, when one is not.
+    fn pair<'p>(
+        &self,
+        x: &Known<'p>,
+        y: &Known<'p>,
+        not: bool,
+        indexes: &mut HashMap<u64, Index>,
+        blame: &mut Option<usize>,
+    ) -> Option<bool> {
+        let shared = shared_on(&x.on, &y.on);
+        let (Some(lx), Some(ly)) = (x.leaf, y.leaf) else {
+            let least = shared[0];
+            *blame = Some(blame.map_or(least, |b| b.min(least)));
+            return None;
+        };
+        let ((px, nx), (py, ny)) = ((lx.0, lx.1 ^ not), (ly.0, ly.1 ^ not));
+        for p in [px, py] {
+            if let Entry::Vacant(e) = indexes.entry(p.id()) {
+                e.insert(self.index(p));
+            }
+        }
+        let side = |p: &Part<Row>, not: bool| match &indexes[&p.id()] {
+            Index::List(l) => Side::List(l, goal(l, !not, &shared)),
+            Index::Parity(q) => Side::Parity(q, self.target(q, !not, &shared), !not),
+        };
+        Some(self.meet(&side(px, nx), &side(py, ny), &shared).is_some())
+    }
+
+    /// For [`Choices::extract`]: writes into `picks` a choice on the components of `x` and `y`
+    /// that puts a tuple in both, each under one more `!` when `not`, as [`Choices::pair`] found
+    /// one: the points [`Choices::meet`] chose on the shared components, a point of no cell
+    /// either mentions taken at such a value, and the other components of each by
+    /// [`Choices::complete`].
+    fn pair_picks(
+        &self,
+        x: &Known<'_>,
+        y: &Known<'_>,
+        not: bool,
+        indexes: &mut HashMap<u64, Index>,
+        picks: &mut [Option<Choice>],
+    ) {
+        let shared = shared_on(&x.on, &y.on);
+        let (Some(lx), Some(ly)) = (x.leaf, y.leaf) else {
+            unreachable!("a meet found inhabited is of two lists or exclusive ors")
+        };
+        let ((px, nx), (py, ny)) = ((lx.0, lx.1 ^ not), (ly.0, ly.1 ^ not));
+        for p in [px, py] {
+            if let Entry::Vacant(e) = indexes.entry(p.id()) {
+                e.insert(self.index(p));
+            }
+        }
+        let side = |p: &Part<Row>, not: bool| match &indexes[&p.id()] {
+            Index::List(l) => Side::List(l, goal(l, !not, &shared)),
+            Index::Parity(q) => Side::Parity(q, self.target(q, !not, &shared), !not),
+        };
+        let (sx, sy) = (side(px, nx), side(py, ny));
+        let chosen = (self.meet(&sx, &sy, &shared)).expect("the meet was found inhabited");
+        for (&s, &(_, _, cell)) in shared.iter().zip(&chosen) {
+            picks[s] = Some(match cell {
+                Some(c) => Choice::Cell(c),
+                None => self.rest_choice(s, |c| sx.mentions(s, c) || sy.mentions(s, c)),
+            });
+        }
+        self.complete(&sx, chosen.iter().map(|p| p.0), &shared, picks);
+        self.complete(&sy, chosen.iter().map(|p| p.1), &shared, picks);
+    }
+
+    /// Writes into `picks` a choice on each component of the list or exclusive or `side` outside
+    /// `shared` that gives it its wanted value, the choices on `shared` giving the first blocks
+    /// or parities `fixed`. A list's value is that of the least first block: when the latest
+    /// first block of each free component gives it, each is chosen there; else the free
+    /// component whose earliest first block of that value is least, and at most every other's
+    /// latest, is chosen at it. An exclusive or's free components are chosen at an even cell
+    /// or none, and one that can give both parities is turned odd when the sum needs it. The
+    /// caller knows such a choice exists.
+    fn complete(
+        &self,
+        side: &Side<'_>,
+        fixed: impl Iterator<Item = usize>,
+        shared: &[usize],
+        picks: &mut [Option<Choice>],
+    ) {
+        let free = |j: &usize| shared.binary_search(j).is_err();
+        match side {
+            Side::List(l, g) => {
+                let end = l.values.len() - 1;
+                let p = fixed.min().unwrap_or(end);
+                let rest = |j: usize, c: &ListComponent| {
+                    (self.other[j] || c.at.len() < self.count[j]).then_some((c.rest, None))
+                };
+                // Each free component's latest first block and earliest of the value wanted,
+                // with the cell giving it (`None` for a value of no cell the list mentions).
+                let mut ends: Vec<(usize, Block, Option<Block>)> = Vec::new();
+                let mut on: Vec<(&usize, &ListComponent)> =
+                    l.components.iter().filter(|(j, _)| free(j)).collect();
+                on.sort_unstable_by_key(|e| e.0);
+                for (&j, c) in on {
+                    let &(i, cell) = c.by_block.last().expect("a component of a list has a cell");
+                    let latest = rest(j, c).filter(|r| r.0 >= i).unwrap_or((i, Some(cell)));
+                    let first = c.by_value[usize::from(g.want)].first();
+                    let first = first.map(|&(i, cell)| (i, Some(cell)));
+                    let of_rest = rest(j, c).filter(|r| l.values[r.0] == g.want);
+                    let earliest = match (first, of_rest) {
+                        (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
+                        (a, b) => a.or(b),
+                    };
+                    ends.push((j, latest, earliest));
+                }
+                let high = ends.iter().map(|e| e.1.0).min().unwrap_or(end);
+                let mut at: Vec<(usize, Block)> = ends.iter().map(|e| (e.0, e.1)).collect();
+                if l.values[p.min(high)] != g.want {
+                    let (k, e) = (ends.iter().enumerate())
+                        .filter_map(|(k, e)| {
+                            e.2.filter(|&(i, _)| i <= high && i < p).map(|e| (k, e))
+                        })
+                        .min_by_key(|(_, e)| e.0)
+                        .expect("a choice gives the list its wanted value");
+                    at[k].1 = e;
+                }
+                for (j, (_, cell)) in at {
+                    let c = &l.components[&j];
+                    picks[j] = Some(match cell {
+                        Some(cell) => Choice::Cell(cell),
+                        None => self.rest_choice(j, |d| c.at.contains_key(&d)),
+                    });
+                }
+            }
+            Side::Parity(q, _, want) => {
+                let mut need = *want ^ q.constant ^ fixed.fold(false, |s, b| s ^ (b == 1));
+                let mut flip = None;
+                let mut on: Vec<(&usize, &ParityComponent)> =
+                    q.components.iter().filter(|(j, _)| free(j)).collect();
+                on.sort_unstable_by_key(|e| e.0);
+                for (&j, c) in on {
+                    let rest = self.other[j] || c.at.len() < self.count[j];
+                    let even = match c.by_parity[0].first() {
+                        Some(&cell) => Some(Choice::Cell(cell)),
+                        None => rest.then(|| self.rest_choice(j, |d| c.at.contains_key(&d))),
+                    };
+                    let odd = c.by_parity[1].first().map(|&cell| Choice::Cell(cell));
+                    match (even, odd) {
+                        (Some(e), o) => {
+                            picks[j] = Some(e);
+                            if let Some(o) = o {
+                                flip = Some((j, o));
+                            }
+                        }
+                        (None, Some(o)) => {
+                            picks[j] = Some(o);
+                            need ^= true;
+                        }
+                        (None, None) => unreachable!("a component of an exclusive or has a cell"),
+                    }
+                }
+                if need {
+                    let (j, o) = flip.expect("a choice gives the exclusive or its wanted value");
+                    picks[j] = Some(o);
+                }
+            }
+        }
+    }
+
+    /// A choice on component `j` of a value of no cell `mentioned` holds: a value of no open cell
+    /// when there is one, else the first open cell not mentioned, found passing over at most
+    /// the cells mentioned. The caller knows one exists.
+    fn rest_choice(&self, j: usize, mentioned: impl Fn(usize) -> bool) -> Choice {
+        if self.other[j] {
+            return Choice::Other;
+        }
+        let c = (self.cells[j].iter().copied())
+            .find(|&c| !mentioned(c))
+            .expect("a component with a value of no cell mentioned has an open cell left");
+        Choice::Cell(c)
+    }
+
+    /// The decision list or exclusive or `p` read for [`Choices::meet`], in time linear in it
+    /// and the log of its size.
+    fn index(&self, p: &Part<Row>) -> Index {
+        if let Ok(b) = p.view() {
+            return Index::List(self.list_index(b));
+        }
+        let (atoms, constant) = p
+            .exclusive_or()
+            .expect("a leaf is a list or an exclusive or");
+        let mut components: HashMap<usize, ParityComponent> = HashMap::new();
+        let mut odd: HashMap<(usize, usize), bool> = HashMap::new();
+        for a in &atoms {
+            *odd.entry((self.at)(a)).or_default() ^= true;
+        }
+        for (&(j, c), &o) in &odd {
+            let e = components.entry(j).or_insert_with(|| ParityComponent {
+                at: HashMap::new(),
+                by_parity: [Vec::new(), Vec::new()],
+                parities: 0,
+            });
+            e.at.insert(c, o);
+            e.by_parity[usize::from(o)].push(c);
+        }
+        let (mut both, mut ones) = (0, false);
+        for (&j, e) in &mut components {
+            for by in &mut e.by_parity {
+                by.sort_unstable();
+            }
+            let rest = self.other[j] || e.at.len() < self.count[j];
+            let [even, odd] = e.by_parity.each_ref().map(|by| !by.is_empty());
+            e.parities = u8::from(even || rest) | (u8::from(odd) << 1);
+            match e.parities {
+                3 => both += 1,
+                2 => ones ^= true,
+                _ => {}
+            }
+        }
+        Index::Parity(ParityIndex {
+            constant,
+            components,
+            both,
+            ones,
+        })
+    }
+
+    /// A decision list read for [`Choices::meet`]. On a component, a literal that takes a cell
+    /// holds of the tuples with that cell, and one that refuses a cell of those with another
+    /// cell or a value of none; so the first block one of whose literals holds is, for a cell,
+    /// the first block that takes it or refuses another cell, and for a value of no cell the
+    /// first block that refuses one. The list's value is that of the least of these first
+    /// blocks over the components.
+    fn list_index(&self, b: &Bdd<Row>) -> ListIndex {
+        /// One component's literals: the first block that takes each cell, and the first two
+        /// blocks that refuse a cell, the second refusing another cell than the first.
+        #[derive(Default)]
+        struct Lits {
+            taken: HashMap<usize, usize>,
+            refused: HashSet<usize>,
+            first: Option<(usize, usize)>,
+            second: Option<usize>,
+        }
+        let l = b.list();
+        let end = l.blocks.len();
+        let mut values: Vec<bool> = l.blocks.iter().map(|(v, _)| *v).collect();
+        values.push(l.tail);
+        let mut lits: HashMap<usize, Lits> = HashMap::new();
+        for (i, (_, block)) in l.blocks.iter().enumerate() {
+            for (a, taken) in block {
+                let (j, c) = (self.at)(a);
+                let e = lits.entry(j).or_default();
+                if *taken {
+                    e.taken.entry(c).or_insert(i);
+                } else {
+                    e.refused.insert(c);
+                    match e.first {
+                        None => e.first = Some((i, c)),
+                        Some((_, d)) if d != c && e.second.is_none() => e.second = Some(i),
+                        Some(_) => {}
+                    }
+                }
+            }
+        }
+        let mut components = HashMap::new();
+        let mut by_last = Vec::new();
+        let mut by_first: [Vec<(usize, usize)>; 2] = [Vec::new(), Vec::new()];
+        for (j, e) in lits {
+            let rest = e.first.map_or(end, |(i, _)| i);
+            let refused = |c: usize| match e.first {
+                Some((i, d)) if d != c => i,
+                Some(_) => e.second.unwrap_or(end),
+                None => end,
+            };
+            let at: HashMap<usize, usize> = (e.taken.keys().chain(&e.refused))
+                .map(|&c| (c, e.taken.get(&c).copied().unwrap_or(end).min(refused(c))))
+                .collect();
+            let mut by_block: Vec<(usize, usize)> = at.iter().map(|(&c, &i)| (i, c)).collect();
+            by_block.sort_unstable();
+            let by_value = [false, true].map(|v| {
+                let at_v = by_block.iter().filter(|&&(i, _)| values[i] == v);
+                at_v.copied().collect::<Vec<_>>()
+            });
+            // The first blocks a choice on `j` can give.
+            let has_rest = self.other[j] || at.len() < self.count[j];
+            let firsts = || {
+                by_block
+                    .iter()
+                    .map(|&(i, _)| i)
+                    .chain(has_rest.then_some(rest))
+            };
+            by_last.push((firsts().max().expect("a component of a list has a cell"), j));
+            for (v, by) in by_first.iter_mut().enumerate() {
+                if let Some(i) = firsts().filter(|&i| usize::from(values[i]) == v).min() {
+                    by.push((i, j));
+                }
+            }
+            let c = ListComponent {
+                at,
+                rest,
+                by_block,
+                by_value,
+            };
+            components.insert(j, c);
+        }
+        by_last.sort_unstable();
+        for by in &mut by_first {
+            by.sort_unstable();
+        }
+        ListIndex {
+            values,
+            components,
+            by_last,
+            by_first,
+        }
+    }
+
+    /// The parity wanted of the choices on the components `shared` for the exclusive or `q` to
+    /// be `want`: `None` when a component outside them gives both parities.
+    fn target(&self, q: &ParityIndex, want: bool, shared: &[usize]) -> Option<bool> {
+        let (mut both, mut ones) = (q.both, q.ones);
+        for s in shared {
+            match q.components[s].parities {
+                3 => both -= 1,
+                2 => ones ^= true,
+                _ => {}
+            }
+        }
+        (both == 0).then_some(want ^ q.constant ^ ones)
+    }
+
+    /// Whether one choice on the components `shared` (ascending) satisfies both operands, each
+    /// with its other components chosen freely. Each component gives points, the first block or
+    /// parity of each operand for one choice: a cell either operand mentions, a value of no cell
+    /// when there is one, and, of the cells only the operand with more cells on it mentions,
+    /// those of one block or parity in two points (the latest, and the least wanted, which is
+    /// all the choice needs of them). So the points of a component cost the fewer cells; two
+    /// lists are decided by a sweep over the first blocks of one ([`lists`]), a list and an
+    /// exclusive or likewise ([`list_parity`]), and two exclusive ors by the four sums of two
+    /// parities ([`parities`]): O(p log p) for `p` points.
+    ///
+    /// The choice found is given back as one point `(x, y, cell)` for each shared component in
+    /// order, `cell` `None` for a value of no cell either operand mentions.
+    fn meet(&self, x: &Side<'_>, y: &Side<'_>, shared: &[usize]) -> Option<Vec<MeetPoint>> {
+        let mut points: Vec<Point> = Vec::new();
+        for (k, &s) in shared.iter().enumerate() {
+            let x_fewer = x.cells(s) <= y.cells(s);
+            let (fewer, more) = if x_fewer { (x, y) } else { (y, x) };
+            let point = |f: usize, m: usize, cell: Option<usize>| {
+                if x_fewer {
+                    (k, f, m, cell)
+                } else {
+                    (k, m, f, cell)
+                }
+            };
+            let mut seen = HashSet::new();
+            for (cell, f) in fewer.each(s) {
+                seen.insert(cell);
+                let m = more.coord(s, cell).unwrap_or_else(|| more.rest(s));
+                points.push(point(f, m, Some(cell)));
+            }
+            let both = seen.iter().filter(|&&c| more.coord(s, c).is_some()).count();
+            if more.cells(s) > both {
+                for (m, cell) in more.unseen(s, &seen).into_iter().flatten() {
+                    points.push(point(fewer.rest(s), m, Some(cell)));
+                }
+            }
+            if self.other[s] || fewer.cells(s) + more.cells(s) - both < self.count[s] {
+                points.push(point(fewer.rest(s), more.rest(s), None));
+            }
+        }
+        let chosen = match (x, y) {
+            (Side::List(_, gx), Side::List(_, gy)) => lists(&mut points, shared.len(), gx, gy),
+            (Side::List(_, gx), Side::Parity(_, ty, _)) => {
+                list_parity(&mut points, shared.len(), gx, *ty)
+            }
+            (Side::Parity(_, tx, _), Side::List(_, gy)) => {
+                for p in &mut points {
+                    *p = (p.0, p.2, p.1, p.3);
+                }
+                let chosen = list_parity(&mut points, shared.len(), gy, *tx);
+                for p in &mut points {
+                    *p = (p.0, p.2, p.1, p.3);
+                }
+                chosen
+            }
+            (Side::Parity(_, tx, _), Side::Parity(_, ty, _)) => {
+                parities(&points, shared.len(), *tx, *ty)
+            }
+        }?;
+        Some(
+            chosen
+                .into_iter()
+                .map(|i| (points[i].1, points[i].2, points[i].3))
+                .collect(),
+        )
     }
 
     /// A decision list read block by block, the choices fixed so far those under which no
     /// literal of an earlier block holds: a block's value is reached when one of its literals
     /// can hold beside them, and the default when every literal can fail. Each literal is
     /// tested and fixed once, in constant expected time.
-    fn list(&self, b: &Bdd<Row>) -> Known {
+    fn list(&self, b: &Bdd<Row>) -> Known<'static> {
         let l = b.list();
         let mut on: Vec<usize> = (l.blocks.iter())
             .flat_map(|(_, lits)| lits.iter().map(|(a, _)| (self.at)(a).0))
@@ -3641,6 +4384,7 @@ impl Choices<'_> {
             sat: Some(reached[1]),
             valid: Some(!reached[0]),
             on: on.into(),
+            leaf: None,
         }
     }
 
@@ -3648,7 +4392,7 @@ impl Choices<'_> {
     /// types a choice puts the tuple in is the number of atoms on the cell chosen, so each
     /// component can add an even number, an odd number or both, and the parities the whole can
     /// reach are added component by component.
-    fn parity(&self, atoms: &[Row], constant: bool) -> Known {
+    fn parity(&self, atoms: &[Row], constant: bool) -> Known<'static> {
         let mut odd: BTreeMap<(usize, usize), bool> = BTreeMap::new();
         for a in atoms {
             *odd.entry((self.at)(a)).or_default() ^= true;
@@ -3678,6 +4422,7 @@ impl Choices<'_> {
             sat: Some(sums[usize::from(!constant)]),
             valid: Some(!sums[usize::from(constant)]),
             on: by.into_keys().collect::<Vec<_>>().into(),
+            leaf: None,
         }
     }
 }
@@ -3768,6 +4513,330 @@ fn or3(x: Option<bool>, y: Option<bool>) -> Option<bool> {
 /// `x & y` of two values that may be unknown.
 fn and3(x: Option<bool>, y: Option<bool>) -> Option<bool> {
     or3(x.map(|v| !v), y.map(|v| !v)).map(|v| !v)
+}
+
+/// The components two sorted lists share, ascending, in time linear in the shorter list and
+/// the log of the longer.
+fn shared_on(x: &[usize], y: &[usize]) -> Vec<usize> {
+    let (short, long) = if x.len() <= y.len() { (x, y) } else { (y, x) };
+    let shared = short.iter().filter(|j| long.binary_search(j).is_ok());
+    shared.copied().collect()
+}
+
+/// The blocks of `l` whose first block on the components `shared` makes it `want` ([`Goal`]).
+/// The least first block of the other components is one of a component that every other can
+/// match or pass: each component's first block can be its earliest of a value, since the
+/// latest first block of the others is at least the least latest first block, which is at
+/// least that earliest when that component has the least. Each list skips at most the
+/// components shared.
+fn goal<'i>(l: &'i ListIndex, want: bool, shared: &[usize]) -> Goal<'i> {
+    let out = |j: &usize| shared.binary_search(j).is_err();
+    let end = l.values.len() - 1;
+    let high = l
+        .by_last
+        .iter()
+        .find(|(_, j)| out(j))
+        .map_or(end, |&(i, _)| i);
+    let low = (l.by_first[usize::from(want)].iter())
+        .find(|(_, j)| out(j))
+        .map(|&(i, _)| i)
+        .filter(|&i| i <= high)
+        .unwrap_or(usize::MAX);
+    Goal {
+        values: &l.values,
+        want,
+        low,
+        high,
+    }
+}
+
+impl Side<'_> {
+    /// The number of cells the operand mentions on component `s`.
+    fn cells(&self, s: usize) -> usize {
+        match self {
+            Side::List(l, _) => l.components[&s].at.len(),
+            Side::Parity(q, ..) => q.components[&s].at.len(),
+        }
+    }
+
+    /// Whether the operand mentions `cell` on component `s`.
+    fn mentions(&self, s: usize, cell: usize) -> bool {
+        match self {
+            Side::List(l, _) => l.components[&s].at.contains_key(&cell),
+            Side::Parity(q, ..) => q.components[&s].at.contains_key(&cell),
+        }
+    }
+
+    /// The first block or parity of the operand on a cell of `s` it mentions.
+    fn coord(&self, s: usize, cell: usize) -> Option<usize> {
+        match self {
+            Side::List(l, _) => l.components[&s].at.get(&cell).copied(),
+            Side::Parity(q, ..) => q.components[&s].at.get(&cell).map(|&o| usize::from(o)),
+        }
+    }
+
+    /// The first block or parity of the operand on a value of `s` of no cell it mentions.
+    fn rest(&self, s: usize) -> usize {
+        match self {
+            Side::List(l, _) => l.components[&s].rest,
+            Side::Parity(..) => 0,
+        }
+    }
+
+    /// The cells the operand mentions on `s`, each with its first block or parity.
+    fn each(&self, s: usize) -> Vec<(usize, usize)> {
+        match self {
+            Side::List(l, _) => l.components[&s].at.iter().map(|(&c, &i)| (c, i)).collect(),
+            Side::Parity(q, ..) => {
+                let at = q.components[&s].at.iter();
+                at.map(|(&c, &o)| (c, usize::from(o))).collect()
+            }
+        }
+    }
+
+    /// Of the cells the operand mentions on `s` and `seen` does not hold, which all meet the
+    /// other operand at its `rest`: for a list the latest first block and the least wanted one,
+    /// for an exclusive or one cell of each parity, each with its cell. Each is found passing
+    /// over at most the cells seen.
+    fn unseen(&self, s: usize, seen: &HashSet<usize>) -> [Option<(usize, usize)>; 2] {
+        let unseen = |&&(_, cell): &&(usize, usize)| !seen.contains(&cell);
+        match self {
+            Side::List(l, g) => {
+                let c = &l.components[&s];
+                let latest = c.by_block.iter().rev().find(unseen).copied();
+                let after = c.by_block.partition_point(|&(i, _)| i <= g.low);
+                let after = c.by_block[after..].iter().find(unseen).copied();
+                let of_value = (c.by_value[usize::from(g.want)].iter())
+                    .find(unseen)
+                    .copied()
+                    .filter(|&(i, _)| g.good(i));
+                let least = match (after, of_value) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                [latest, least.filter(|l| latest.is_none_or(|t| t.0 != l.0))]
+            }
+            Side::Parity(q, ..) => {
+                let c = &q.components[&s];
+                [0, 1].map(|o| {
+                    let cell = c.by_parity[o].iter().find(|cell| !seen.contains(cell));
+                    cell.map(|&cell| (o, cell))
+                })
+            }
+        }
+    }
+}
+
+/// The order the sweeps read points in: `x` descending, then by component, `y` and cell, so
+/// the choice they give back depends on the points alone, not on the order they came in.
+fn by_x_descending(points: &mut [Point]) {
+    points.sort_unstable_by(|p, q| (q.1, p.0, p.2, p.3).cmp(&(p.1, q.0, q.2, q.3)));
+}
+
+/// Whether a choice of one point `(component, x, y, cell)` on each of `components` components
+/// has least `x` wanted by `gx` and least `y` wanted by `gy`, and if so the index of each
+/// component's point. A pair `(p, q)` is the least of a choice when every component has a
+/// point at or above it in both, and one point has `x = p` and one `y = q`, on two components
+/// or one point `(p, q)`. The points are swept by `x` descending: at each `x = p` wanted, the
+/// greatest `q` every component reaches is the least of the components' greatest `y` so far,
+/// and the `y = q` wanted is the least wanted `y` so far on another component than the point
+/// with `x = p`, which needs `y` at least `q`; the two least from two components are kept. The
+/// choice found takes those one or two points and each other component's point of greatest
+/// `y` so far. O(p log p) for `p` points.
+fn lists(points: &mut [Point], components: usize, gx: &Goal, gy: &Goal) -> Option<Vec<usize>> {
+    by_x_descending(points);
+    // Each component's greatest `y` so far and its point.
+    let mut top: Vec<Option<(usize, usize)>> = vec![None; components];
+    let mut tops: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut missing = components;
+    // Each component's least wanted `y` so far and its point.
+    let mut least = vec![(usize::MAX, usize::MAX); components];
+    // The two least wanted `y` so far, on two components.
+    let mut best = [(usize::MAX, usize::MAX); 2];
+    // Every component at its point of greatest `y`, but those of `fixed`.
+    let choose = |top: &[Option<(usize, usize)>], fixed: &[(usize, usize)]| {
+        let mut chosen: Vec<usize> = (top.iter())
+            .map(|t| t.expect("every component has a point").1)
+            .collect();
+        for &(k, n) in fixed {
+            chosen[k] = n;
+        }
+        chosen
+    };
+    let mut i = 0;
+    while i < points.len() {
+        let x = points[i].1;
+        let end = i + points[i..].partition_point(|p| p.1 == x);
+        for (n, &(k, _, y, _)) in (i..end).zip(&points[i..end]) {
+            if top[k].is_none_or(|t| t.0 < y) {
+                match top[k] {
+                    None => missing -= 1,
+                    Some((t, _)) => {
+                        let c = tops.get_mut(&t).expect("a component's top is counted");
+                        *c -= 1;
+                        if *c == 0 {
+                            tops.remove(&t);
+                        }
+                    }
+                }
+                top[k] = Some((y, n));
+                *tops.entry(y).or_default() += 1;
+            }
+            if gy.good(y) && y < least[k].0 {
+                least[k] = (y, n);
+                if best[0].1 == k {
+                    best[0].0 = y;
+                } else {
+                    if best[1].1 == k || y < best[1].0 {
+                        best[1] = (y, k);
+                    }
+                    if best[1].0 < best[0].0 {
+                        best.swap(0, 1);
+                    }
+                }
+            }
+        }
+        if gx.good(x) && missing == 0 {
+            let reach = *tops.keys().next().expect("every component has a point");
+            // The points with `x` here, by `y` and component descending.
+            let mut here: Vec<(usize, usize, usize)> = Vec::new();
+            for (n, &(k, _, y, _)) in (i..end).zip(&points[i..end]) {
+                if gy.good(y) && y <= reach {
+                    return Some(choose(&top, &[(k, n)]));
+                }
+                here.push((y, k, n));
+            }
+            here.sort_by_key(|a| std::cmp::Reverse((a.0, a.1)));
+            let second = here.iter().find(|p| p.1 != here[0].1);
+            for &(y, k, n) in here.first().into_iter().chain(second) {
+                let (q, other) = if best[0].1 == k { best[1] } else { best[0] };
+                if q <= reach.min(y) {
+                    return Some(choose(&top, &[(k, n), (other, least[other].1)]));
+                }
+            }
+        }
+        i = end;
+    }
+    None
+}
+
+/// Whether a choice of one point `(component, x, parity, cell)` on each of `components`
+/// components has least `x` wanted by `gx` and parities summing to `target` (any, when
+/// `None`), and if so the index of each component's point. Swept by `x` descending as
+/// [`lists`], with the parities each component reaches so far and their sum over the
+/// components: at each `x = p` wanted, each point with `x = p` is tried with its component's
+/// part of the sum taken out. The choice found takes that point, an even point of each other
+/// component that has one and else an odd one, and turns one that has both odd when the sum
+/// needs it. O(p log p) for `p` points.
+fn list_parity(
+    points: &mut [Point],
+    components: usize,
+    gx: &Goal,
+    target: Option<bool>,
+) -> Option<Vec<usize>> {
+    by_x_descending(points);
+    // Bit 0 even and bit 1 odd: the parities of each component's points so far, a point of
+    // each, the number of components with none and with both, and the sum of those with one.
+    let mut parities = vec![0u8; components];
+    let mut at = vec![[usize::MAX; 2]; components];
+    let (mut missing, mut both, mut ones) = (components, 0, false);
+    let mut i = 0;
+    while i < points.len() {
+        let x = points[i].1;
+        let end = i + points[i..].partition_point(|p| p.1 == x);
+        for (n, &(k, _, g, _)) in (i..end).zip(&points[i..end]) {
+            let (was, now) = (parities[k], parities[k] | (1 << g));
+            match was {
+                0 if now != 0 => missing -= 1,
+                1 | 2 if now == 3 => ones ^= was == 2,
+                _ => {}
+            }
+            match (was, now) {
+                (0, 2) => ones ^= true,
+                (1 | 2, 3) => both += 1,
+                _ => {}
+            }
+            parities[k] = now;
+            if at[k][g] == usize::MAX {
+                at[k][g] = n;
+            }
+        }
+        if gx.good(x) && missing == 0 {
+            for (n, &(k, _, g, _)) in (i..end).zip(&points[i..end]) {
+                let p = parities[k];
+                let others_both = both - usize::from(p == 3);
+                let others = ones ^ (p == 2);
+                if others_both > 0 || target.is_none_or(|z| others ^ (g == 1) == z) {
+                    let mut chosen = vec![n; components];
+                    let (mut sum, mut flip) = (g == 1, None);
+                    for (j, (&p, at)) in parities.iter().zip(&at).enumerate() {
+                        if j == k {
+                            continue;
+                        }
+                        let even = p & 1 == 1;
+                        chosen[j] = at[usize::from(!even)];
+                        sum ^= !even;
+                        if p == 3 {
+                            flip = Some(j);
+                        }
+                    }
+                    if target.is_some_and(|z| z != sum) {
+                        let j = flip.expect("a component with both parities turns the sum");
+                        chosen[j] = at[j][1];
+                    }
+                    return Some(chosen);
+                }
+            }
+        }
+        i = end;
+    }
+    None
+}
+
+/// Whether a choice of one point `(component, x, y, cell)` of parities on each of
+/// `components` components sums to `tx` in `x` and `ty` in `y` (any, when `None`), and if so
+/// the index of each component's point: the sums reachable, a set of the four pairs, added
+/// component by component, then read back from the last component to the first. O(p) for
+/// `p` points.
+fn parities(
+    points: &[Point],
+    components: usize,
+    tx: Option<bool>,
+    ty: Option<bool>,
+) -> Option<Vec<usize>> {
+    // Each component's point of each pair of parities, the one of least cell.
+    let mut pairs = vec![[usize::MAX; 4]; components];
+    for (n, &(k, x, y, cell)) in points.iter().enumerate() {
+        let e = &mut pairs[k][2 * x + y];
+        if *e == usize::MAX || cell < points[*e].3 {
+            *e = n;
+        }
+    }
+    // The sums reachable by the components before each.
+    let mut reach = vec![1u8; components + 1];
+    for (k, p) in pairs.iter().enumerate() {
+        let mut next = 0;
+        for a in (0..4).filter(|&a| p[a] != usize::MAX) {
+            for r in (0..4).filter(|r| reach[k] >> r & 1 == 1) {
+                next |= 1 << (a ^ r);
+            }
+        }
+        reach[k + 1] = next;
+    }
+    let mut r = (0..4).find(|r| {
+        reach[components] >> r & 1 == 1
+            && tx.is_none_or(|t| (r >> 1 == 1) == t)
+            && ty.is_none_or(|t| (r & 1 == 1) == t)
+    })?;
+    let mut chosen = vec![0; components];
+    for k in (0..components).rev() {
+        let a = (0..4)
+            .find(|&a| pairs[k][a] != usize::MAX && reach[k] >> (a ^ r) & 1 == 1)
+            .expect("a sum reached has a part from each component");
+        chosen[k] = pairs[k][a];
+        r ^= a;
+    }
+    Some(chosen)
 }
 
 /// A literal of a 2-CNF: variable `v` true is `2 * v`, false is `2 * v + 1`, so `l ^ 1` is the

@@ -2601,6 +2601,16 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashMap<usize, Pick>` of the choices along a decision list, each `Pick` holding a `HashSet` of refused cells, updated in place block by block and read hypothetically before each update (`Picks::fits`) | `Choices::list`, `Picks::fix` | Mutation (gap 11) | Persistent maps threaded through the fold over the blocks |
 | A `&dyn Fn(&Row) -> (usize, usize)` closure over the region's index, read for every atom | `Choices::at`, `Searching::one_pass` | none | A function value |
 
+## Entries from EMPTY-overlap-fast (`crates/zed-kernel/src/types/empty.rs`, `types/bdd.rs`, `types.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A top-down walk on an explicit stack of `(node, wanted value)` that fills a `HashMap` of visited node ids and a `Vec<Option<Choice>>` of the choice per component in place, left with `Err(component)` through `?` | `Choices::witness`, `Choices::extract`, `Choices::complete` | Mutation (gap 11), early exit (gap 12) | A fold over the walk's work list threading a persistent map and a persistent sequence, its result a sum of the choices and the refused component |
+| `Option<Option<Vec<Type>>>`: none when the pass does not apply, `Some(None)` when it proves the box empty, `Some(Some(row))` with a value | `Searching::one_pass_row` and the tuple candidate loop of `Searching::rep` | None | A sum of three named cases |
+| `sort_by_key` with `std::cmp::Reverse` on a tuple key, and type aliases for tuples (`Point`, `MeetPoint`, `Block`) | `by_x_descending`, `lists`, `list_parity`, `parities`, `meet` | None | A sort taking a comparison function; records with named fields |
+| A refusal message built by `format!` with `return` from inside a `match` arm, the other arms giving a `&'static str` turned into a `String` after it | `Refusal::message` | Early exit (gap 12) | Each arm gives the text; the one with the component builds it by interpolation |
+| Two diagrams compared by the ids of their first cells, fields of an `Arc` | `Connect::same_as_not` | Identity (gap 1) | The node's identity from the hash-consing table |
+
 ## Entries from PREIMAGE-or-chain (`crates/zedc-preimage/src/preimage.rs`)
 
 | Rust construct | Sites | Gap | At the port |

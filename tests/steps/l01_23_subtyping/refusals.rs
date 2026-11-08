@@ -236,10 +236,11 @@ fn each_refusal_has_its_own_message() {
         Refusal::Fork,
         Refusal::Residues,
         Refusal::TupleSplit,
+        Refusal::SharedCells(0),
         Refusal::MorphismSplit,
         Refusal::NoWitness,
     ];
-    let messages: BTreeSet<&str> = all.iter().map(|r| r.message()).collect();
+    let messages: BTreeSet<String> = all.iter().map(|r| r.message()).collect();
     assert_eq!(messages.len(), all.len());
     assert!(messages.iter().all(|m| !m.is_empty()));
 }
