@@ -189,7 +189,7 @@ AtomExpr      = ATOM                                                            
 This          = 'this'                                                             L2
 OpFunction    = '(' BinOp ')'                                                      L3
 Group         = '(' nest(Expr) ')'                                                 L1
-TupleExpr     = '(' nest(Expr (',' Expr)+ ','?) ')'                                L1
+TupleExpr     = '(' nest(Expr ((',' Expr)+ ','? | ',')) ')'                        L1
 ArrayExpr     = '[' nest((Expr12 % ',' ','?)?) ']'                                 L3
 HoleExpr      = '?'                                                                L15
 Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                      L1
@@ -222,7 +222,7 @@ RangePat      = SignedLit ('..<' SignedLit | '..=' SignedLit | '..')            
 WildPat       = WILD                                                               L2
 IsPat         = Name? 'is' TypeUnion                                               L2
 CtorPat       = Name '(' FieldPat % ',' ','? ')'                                   L2
-TuplePat      = '(' Pattern (',' Pattern)+ ','? ')'                                L2
+TuplePat      = '(' Pattern ((',' Pattern)+ ','? | ',') ')'                        L2
 NamePat       = Name                                                               L2
 AtomPattern   = ATOM ('(' (FieldPat % ',' | Pattern % ',') ','? ')')?              L1
 FieldPat      = Name ':' Pattern?                                                  L1

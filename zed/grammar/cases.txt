@@ -235,7 +235,7 @@ Expr ::: for x in m into (k -> { v }) { x } ::: (for (x in (m (into ( (k -> ({ v
 Expr ::: if m into (k -> { v }) == n { 1 } else { 0 } ::: (if ((m (into ( (k -> ({ v })) ))) == n) ({ 1 }) else ({ 0 }))
 Expr ::: m into (k -> asc a, desc b,) ::: (m (into ( (k -> ((asc a) , (desc b) ,)) )))
 Expr ::: m into (asc a, desc b, -> v) ::: ERROR
-Expr ::: (1,) ::: ERROR
+Expr ::: (1,) ::: (( 1 , ))
 Expr ::: "${x // c}" ::: ERROR
 Expr ::: "${x /* c */ + 2}" ::: "${x /* c */ + 2}"
 Expr ::: if x with { a = 1 } == y { 1 } else { 0 } ::: (if ((x (with { (a = 1) })) == y) ({ 1 }) else ({ 0 }))
@@ -476,3 +476,8 @@ Expr ::: text::chars::len ::: ((text (:: chars)) (:: len))
 Item ::: @fpwarn f(x) = x; ::: (@fpwarn (f ( x ) (= x ;)))
 Expr ::: if c { 2n } else { 1n } ::: (if c ({ 2n }) else ({ 1n }))
 Expr ::: char32("#") ::: (char32 (( "#" )))
+Expr ::: (1) ::: (( 1 ))
+Expr ::: ((1,),) ::: (( (( 1 , )) , ))
+Expr ::: (,) ::: ERROR
+Expr ::: match v { (a,) -> a } ::: (match v { ((( a , )) -> a) })
+Expr ::: match v { (a) -> a } ::: ERROR

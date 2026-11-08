@@ -97,7 +97,7 @@ AtomExpr      : a literal term
 This          : the receiver, or the family a definedness fix defines
 OpFunction    : the primitive as a function
 Group         : ⟦e⟧
-TupleExpr     : the primitive tuple
+TupleExpr     : the primitive tuple; `(e,)` is the one-tuple, and `(e)` is a Group
 ArrayExpr     : the array {0 -> ⟦e0⟧, …, n−1 -> ⟦en−1⟧} of type int[0..<n] -> T, keyed by rank (sec:type_notation)
 HoleExpr      : a hole, reported, whose term is #hole
 Literal       : the literal value; a float literal rounds once to the nearest value of its format, the narrowest it fits or the one its suffix names (sec:domains)
@@ -117,7 +117,7 @@ RangePat      : a Bind x with the guard a <= x && x < b
 WildPat       : the kernel wildcard pattern
 IsPat         : a Bind n with the guard n is T
 CtorPat       : a Bind with S's type test and the guards of its field patterns
-TuplePat      : the kernel tuple pattern
+TuplePat      : the kernel tuple pattern; `(p,)` matches the one-tuple
 NamePat       : the kernel Bind pattern
 AtomPattern   : the kernel atom pattern, payload patterns by position, or by name in field order
 FieldPat      : the pattern of a named payload or struct field; `name:` alone is `name: name`
