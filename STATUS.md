@@ -1,4 +1,5 @@
 # Implementation status
+| PROV-union-growing | ready on branch wt/prov-union-growing (not merged); no spec change | `Provenance::origins` on a union chain whose entries each hold a set one failure larger than the last (COMPLEXITY.md K25, fixed). Each set records the set it was made from and the failures it adds, and a family's tally counts a set on top of a counted base, at the cost of what it adds; the first set counted in an empty tally is counted whole, so a family of one entry costs `O(log n)`. `origins` finds the sets oldest fact first, over the facts `i` reaches, so each family's set is found from the set it was made from and shares its nodes, and the meet of the result's set with each `let` binding is found from the last meet by their difference. `n` = 400 to 6400: 16.5, 36.4, 81.1, 201.7, 411.8 ms (main: 99.8 ms at 400, 1705 ms at 1600). Tests in `m0_09_kernel_evaluator::provenance`: scaling at `n` = 400 and 3200 (old code: fails, 49.4 times the bytes, limit 24); a table of growing entries and a table whose first entry grows, against the search per member; and `provenance::tests` in `zed-kernel`, the tally when the set counted whole leaves or is replaced. `// Complexity tradeoff:` in `origins`: the oldest-first pass reads every reached fact's value, so a failure read beside a large value holding none costs that value's parts, at most the run's work (64,000 entries: 22 ms, against 0.01 ms before and a 340 ms run) |
 
 This file records where the implementation stands, so that the work can be restarted from it.
 The plan is Part G of DESIGN.md, in the spec repository (`../zed`). The repository layout is
@@ -1629,7 +1630,7 @@ Merged into local main and not yet pushed (0 commits); the push follows one full
   failures each entry holds, so `n` entries holding one set of `m` failures cost `n·m` (no
   worse than before). Fixed by PROV-family-entries: entries holding one set are counted once,
   and a changed entry is compared shallowly; entries whose sets grow by one failure each are
-  still `O(n²)` (K25). Since ADDR-keys (COMPLEXITY.md K40), `deep.rs` and `origins` key shared
+  still `O(n²)` (K25); fixed by PROV-union-growing. Since ADDR-keys (COMPLEXITY.md K40), `deep.rs` and `origins` key shared
   sequences by `Items::id`, not by address.
 - From OSP-diag: (a) Fixed by OSP-neglit: `-1.abs`, the case of the rejection row "Prefix `-` on a
   numeric literal's postfix chain", is rejected by the AST builder. (b) Fixed in repair #1: the rows "Named argument before a positional one"

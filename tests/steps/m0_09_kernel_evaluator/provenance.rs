@@ -626,3 +626,101 @@ fn the_origins_of_a_failure_under_deep_replacements_scale() {
         },
     );
 }
+
+/// `let r = (#m0, …, #m{n-1}) in let f0 = fam({0}, k -> r.0) in let f1 = f0 ∪ fam({1}, k ->
+/// f0[0] * r.1) in … f{n-1}[n-1]`: a table that gains one entry per step, each the product of
+/// the last entry and one more reading, so entry `i` holds a set of `i + 1` failures that
+/// holds the set of entry `i - 1`.
+fn growing_entries(n: usize) -> Term {
+    let row = prim(
+        Prim::Tuple,
+        (0..n).map(|i| lit(Value::atom(&format!("m{i}")))).collect(),
+    );
+    let one = |i: usize, body: Term| fam(lit(Family::set([i as i64])), "k", body);
+    let table = |i: usize| var(&format!("f{i}"));
+    let read = get(table(n - 1), lit((n - 1) as i64));
+    let body = (1..n).rev().fold(read, |body, i| {
+        let entry = mul(
+            get(table(i - 1), lit((i - 1) as i64)),
+            nth(var("r"), i as i64),
+        );
+        let_(
+            &format!("f{i}"),
+            prim(Prim::Union, vec![table(i - 1), one(i, entry)]),
+            body,
+        )
+    });
+    let_("r", row, let_("f0", one(0, nth(var("r"), 0)), body))
+}
+
+#[test]
+fn a_failure_read_out_of_a_table_of_growing_entries_is_traced_to_each_literal() {
+    let (v, p) = trace(&growing_entries(6));
+    assert_eq!(v.errs().map(|e| e.len()), Some(6), "{v}");
+    assert_eq!(origin_terms(&p), ["#m0", "#m1", "#m2", "#m3", "#m4", "#m5"]);
+    agrees_with_search(&growing_entries(6));
+}
+
+#[test]
+fn the_origins_of_a_table_of_growing_entries_scale() {
+    // Entry `i` of table `f{i}` holds the `i` failures of entry `i - 1` and one more, and the
+    // fact of each `let` meets the result's `n` failures with its table's set. Found newest
+    // fact first, each set was read entry by entry and shared no nodes with the set it was
+    // made from, so each meet and join cost its size, `O(n²)` in all; found oldest fact
+    // first, each set is made from the last and each meet from the last meet, by their
+    // differences (COMPLEXITY.md K25). The runs are recorded before timing.
+    let n = 400;
+    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, trace(&growing_entries(m)).1))
+        .collect();
+    scaling::check_order(
+        "the origins of a failure read out of n growing entries, by n",
+        n,
+        1,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert_eq!(p.origins(p.result()).len(), m);
+        },
+    );
+}
+
+#[test]
+fn the_sets_of_a_table_whose_first_entry_grows_agree_with_a_search() {
+    // The first set a table's tally counts is counted whole. Each table below changes the entry
+    // holding it by a union with a nested family: by one failure, read from the difference of
+    // the two sets, and by more failures than the set had, while another entry holds one of
+    // them.
+    let level = |xs: &[(i64, &str)]| {
+        Value::Family(Family::of(xs.iter().map(|&(k, x)| (k, Value::atom(x)))))
+    };
+    let table = |es: Vec<(i64, Value)>| lit(Value::Family(Family::of(es)));
+    let union = |x: &str, y: Term| prim(Prim::Union, vec![var(x), y]);
+    let read = |t: &str, k: i64, j: i64| get(get(var(t), lit(k)), lit(j));
+    let close = let_(
+        "t0",
+        table(vec![(0, level(&[(0, "a"), (1, "b"), (2, "c")]))]),
+        let_(
+            "t1",
+            union("t0", table(vec![(0, level(&[(3, "d")]))])),
+            mul(read("t1", 0, 3), read("t0", 0, 1)),
+        ),
+    );
+    let far = let_(
+        "t0",
+        table(vec![(0, level(&[(0, "a")])), (1, level(&[(0, "c")]))]),
+        let_(
+            "t1",
+            union(
+                "t0",
+                table(vec![(0, level(&[(1, "b"), (2, "c"), (3, "d")]))]),
+            ),
+            mul(mul(read("t1", 0, 2), read("t1", 1, 0)), read("t0", 0, 0)),
+        ),
+    );
+    for (t, errs) in [(close, 2), (far, 2)] {
+        let (v, _) = trace(&t);
+        assert_eq!(v.errs().map(|e| e.len()), Some(errs), "{v}");
+        agrees_with_search(&t);
+    }
+}
