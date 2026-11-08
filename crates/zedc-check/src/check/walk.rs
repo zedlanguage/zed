@@ -5082,6 +5082,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             let (mut carriers, mut classes, mut lits) = (0u8, Vec::new(), Vec::new());
+            let mut valued = false;
             for &i in &at {
                 grouped[i] = true;
                 let a = args[i].as_ref().expect("an argument");
@@ -5090,6 +5091,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     continue;
                 }
                 for p in a.ty.pieces() {
+                    valued = true;
                     match (self.class_of(&p), p.carrier()) {
                         (Some(k), _) => classes.push(k),
                         _ if matches!(p, Piece::Var(_)) => {}
@@ -5153,6 +5155,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     Ty::carrier(c)
                 }
+                // Every value of the arguments here passed by under rule 6 (`add(w(n), w(n))`
+                // with `w` giving atoms only): the call never takes place, so the variable
+                // binds to no value.
+                _ if !valued => Ty::empty(),
                 _ => Ty::dynamic(),
             };
             binds.insert(v.clone(), bound);

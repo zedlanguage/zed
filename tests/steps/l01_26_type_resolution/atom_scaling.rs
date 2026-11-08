@@ -363,3 +363,59 @@ fn one_call_passing_the_atoms_of_many_arguments_by_scales() {
         },
     );
 }
+
+/// A function whose undeclared parameter `line` is trimmed through a chain of `n` names, each
+/// bound to the one before it trimmed and written last first, each tested against an atom of
+/// its own: every atom passes out of the chain's trims back to `line` (the author's Q5).
+fn chain_of_computed_names(n: usize) -> String {
+    let names: String = (1..n)
+        .rev()
+        .map(|i| format!("s{i} = trim(s{}); b{i} = s{i} is #a{i}; ", i - 1))
+        .collect();
+    format!(
+        "r(positional line) = {{ {names}s0 = trim(line); b0 = s0 is #a0; s{} else \"\" }};\n",
+        n - 1
+    )
+}
+
+#[test]
+fn a_parameter_trimmed_through_a_chain_of_names_scales() {
+    // Each name's set is the next one's with one atom added, in the order Tarjan's walk
+    // finishes them, whatever order the bindings are written in.
+    let (i, _) = info(&chain_of_computed_names(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let a = i.sigs.values().next().unwrap().expand().pop().unwrap();
+    for k in 0..3 {
+        let atom = Ty::set(KType::atom(&format!("a{k}")));
+        assert!(atom.subtype(&a.params[0]), "{}", a.params[0]);
+    }
+    let units = resolved(400, chain_of_computed_names);
+    scaling::check("a parameter trimmed through a chain of n names", 400, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// A function whose undeclared parameter `line` is trimmed inside `n` nested `else`s, each on
+/// an atom of its own: the inner region passes on to each one around it.
+fn nested_handlers(n: usize) -> String {
+    let open = "(".repeat(n);
+    let handlers: String = (0..n).map(|i| format!(" else #a{i} -> \"{i}\")")).collect();
+    format!("r(positional line) = {open}trim(line){handlers};\n")
+}
+
+#[test]
+fn a_parameter_inside_many_nested_handlers_scales() {
+    let (i, _) = info(&nested_handlers(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
+    let a = i.sigs.values().next().unwrap().expand().pop().unwrap();
+    for k in 0..3 {
+        let atom = Ty::set(KType::atom(&format!("a{k}")));
+        assert!(atom.subtype(&a.params[0]), "{}", a.params[0]);
+    }
+    let units = resolved(200, nested_handlers);
+    scaling::check("a parameter inside n nested handlers", 200, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}

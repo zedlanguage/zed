@@ -2626,3 +2626,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | `HashMap`/`HashSet` keyed by `Type` with `BuildHasherDefault<KeyHasher>`, in `Search` fields and in thread-locals built in a `const` block (`const { RefCell::new(..) }`) | `empty.rs` `ByType`, `TypeSet`, `MEMO`, `VERDICTS`, `DECIDING`, `SHARED`, `Search`; `types.rs` `Equal` in `order` | Interfaces (L10) and thread-locals, as in the `list::KeyHasher` entry | A family keyed by the type's digest in the per-thread store, the hash function given as a parameter |
 | A memo keyed by the operands' node addresses that holds the operands, so no address is reused while the entry lives | `Searching::cut` (`cuts`), as `settles` before it | Identity (node addresses) | A key by node id in the per-thread store |
+
+## Entries from CLASS-atoms (`crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/mod.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Resolver::flow`: a walk of an expression on a `Vec<&Expr>` stack, pushing each recorded use onto `Resolution::flows` | `flow`, `declare` | Mutation of growable vectors (gap 11) | A fold over the expression with the stack and the list of uses as values, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)) |
+| `check::handled`: an iterative Tarjan over edges in compressed rows (`from`, `to` index vectors), with `index`, `low`, `on_stack` vectors and an explicit call stack of `(node, next edge)` | `handled` | Mutation of growable vectors in place (gap 11); indexes as node names | Arrays built once by a fold, the component walk as a fold whose state holds the stacks; the same O(B + R + E) |
+| `Resolver::else_regions: HashMap<Span, usize>`, one region per `else` found by its span | `else_region` | Hashing by a span (gap 1) | A map keyed by the span's two offsets |

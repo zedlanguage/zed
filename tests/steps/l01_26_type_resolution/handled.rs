@@ -235,11 +235,204 @@ fn a_line_bound_to_another_name_takes_the_atoms_that_name_handles() {
 }
 
 #[test]
-fn a_name_bound_to_a_computed_value_handles_nothing_for_the_line() {
-    // `s` is `trim(line)`, not `line`: the `else` handles the atoms of the trimmed value, and
-    // `line` takes no atom, so an atom passed to `r` passes the call by (rule 6).
+fn a_name_bound_to_a_computed_value_takes_what_its_handler_handles() {
+    // Inference runs after bubbling (the author's Q5, 2026-11-07): an atom passed as `line`
+    // passes out of `trim(line)` into `s` by rule 6, and `s else ""` handles it, so `line`
+    // takes every loose atom, as `line: String | #_` would.
     let a = arrow("{ s = trim(line); s else \"\" }");
-    assert!(same(&a.params[0], &string()), "{}", a.params[0]);
+    assert!(
+        same(&a.params[0], &string().union(&loose())),
+        "{}",
+        a.params[0]
+    );
+    assert!(same(&a.result, &string()), "{}", a.result);
+}
+
+#[test]
+fn a_binding_passes_atoms_from_its_name_to_its_value_and_not_back() {
+    // `s = a + b` passes what `s`'s uses handle to `a` and `b`; `a else 0` handles atoms of
+    // `a` alone, so `b` takes none of them.
+    let text = "r(positional a, positional b) = { s = a + b; s else 0 };\n";
+    assert_eq!(
+        sig(text, "r"),
+        "(#_ | T, #_ | T) -> 0 | T for T in int | f64 | rat"
+    );
+    let text = "r(positional a, positional b) = { s = a + b; (a else 0) + s };\n";
+    assert_eq!(
+        sig(text, "r"),
+        "((int, int) -> int) & ((int | #_, int) -> int | #_)"
+    );
+}
+
+#[test]
+fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
+    // The atoms that pass by rule 6 out of a call, an operator, a method or a string hole
+    // on the parameter reach the handler, which removes them: the parameter takes them and
+    // the result has none. A bare `else` takes every loose atom; `else #nf ->`, `is #nf`,
+    // `== #nf` and `!= #nf` take `#nf`.
+    for (body, want) in [
+        ("trim(line) else \"dflt\"", "(String | #_) -> String"),
+        (
+            "trim(line) else #nf -> \"dflt\"",
+            "(String | #nf | #nf(..)) -> String",
+        ),
+        ("(line + 1) else 0", "(int | #_) -> int"),
+        ("line?.trim() else \"dflt\"", "(String | #_) -> String"),
+        ("\"${line + 1}\" else \"dflt\"", "(int | #_) -> String"),
+        (
+            "if trim(line) is #nf { \"dflt\" } else { \"s\" }",
+            "(String | #nf) -> \"dflt\" | \"s\"",
+        ),
+        (
+            "if trim(line) == #nf { \"dflt\" } else { \"s\" }",
+            "(String | #nf) -> \"dflt\" | \"s\"",
+        ),
+        (
+            "if #nf != trim(line) { \"s\" } else { \"dflt\" }",
+            "(String | #nf) -> \"dflt\" | \"s\"",
+        ),
+        (
+            "(trim(line) else #nf -> \"dflt\") else \"other\"",
+            "(String | #_) -> String",
+        ),
+    ] {
+        let text = format!("r(positional line) = {body};\n");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        let printed = sig(&text, "r");
+        assert_eq!(printed, want, "{body}");
+        let t = parse_type(&printed).unwrap_or_else(|e| panic!("{printed}: {e}"));
+        assert_eq!(t.fns[0].to_string(), printed, "{body}");
+    }
+    // Through a helper: `h(x)` passes the atom by just as `trim(x)` does.
+    let text = "h(positional y) = trim(y);\nr(positional line) = h(line) else \"dflt\";\n";
+    assert_eq!(sig(text, "r"), "(String | #_) -> String");
+    assert_eq!(sig(text, "h"), "(String) -> String");
+}
+
+#[test]
+fn an_inferred_parameter_and_its_declared_twin_give_the_same_value_at_each_call() {
+    // Each handler form, with `f` undeclared and `g` declared with the type `f`'s parameter
+    // should infer: every call gives the same value from both (the author's Q5:
+    // `f(positional x) = trim(x) else "dflt"` gives `f(#nf) == "dflt"`, as `g(x: String |
+    // #nf)` does). Before inference ran after bubbling, `f(#nf)` passed `#nf` by. An atom the
+    // handler does not take, `#other`, passes the call by from both.
+    let helper = "h(positional y) = trim(y);\n";
+    let (any, nf) = ("String | #_", "String | #nf");
+    for (body, declared, calls) in [
+        (
+            "trim(x) else \"dflt\"",
+            any,
+            [
+                ("\" a \"", "\"a\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "\"dflt\""),
+            ],
+        ),
+        (
+            "trim(x) else #nf -> \"dflt\"",
+            nf,
+            [
+                ("\" a \"", "\"a\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "#other"),
+            ],
+        ),
+        (
+            "if trim(x) is #nf { \"dflt\" } else { \"s\" }",
+            nf,
+            [
+                ("\" a \"", "\"s\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "#other"),
+            ],
+        ),
+        (
+            "if x == #nf { \"dflt\" } else { trim(x) }",
+            nf,
+            [
+                ("\" a \"", "\"a\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "#other"),
+            ],
+        ),
+        (
+            "if #nf == trim(x) { \"dflt\" } else { \"s\" }",
+            nf,
+            [
+                ("\" a \"", "\"s\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "#other"),
+            ],
+        ),
+        (
+            "if x != #nf { trim(x) } else { \"dflt\" }",
+            nf,
+            [
+                ("\" a \"", "\"a\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "#other"),
+            ],
+        ),
+        (
+            "h(x) else \"dflt\"",
+            any,
+            [
+                ("\" a \"", "\"a\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "\"dflt\""),
+            ],
+        ),
+        (
+            "{ s = trim(x); s else \"dflt\" }",
+            any,
+            [
+                ("\" a \"", "\"a\""),
+                ("#nf", "\"dflt\""),
+                ("#other", "\"dflt\""),
+            ],
+        ),
+    ] {
+        let text =
+            format!("{helper}f(positional x) = {body};\ng(positional x: {declared}) = {body};\n");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        for (arg, want) in calls {
+            let p = format!("{text}a = f({arg});\nb = g({arg});\n");
+            assert_eq!(value(&p, "b"), want, "declared: {body} at {arg}");
+            assert_eq!(value(&p, "a"), want, "inferred: {body} at {arg}");
+        }
+    }
+}
+
+#[test]
+fn an_argument_whose_atoms_a_parameter_takes_in_part_passes_the_rest_by() {
+    // Findings F17 and F27: rule 6 treats each loose atom apart, so the parameter takes `#a`
+    // and `#b` passes the call by.
+    let text = "f(positional x: int | #a) = if x is #a { 0 } else { x + 1 };\n\
+                src(positional n: int) = if n == 0 { #a } else if n == 1 { #b } else { n };\n\
+                g(positional n: int) = f(src(n));\n";
+    for (n, want) in [("0", "0"), ("1", "#b"), ("5", "6")] {
+        let p = format!("{text}y = g({n});\n");
+        assert_eq!(value(&p, "y"), want, "F17 at {n}");
+    }
+    let text = "g(positional x: int | #a) = x else 0;\n\
+                f(positional y: int | #a | #b) = g(y);\n";
+    for (y, want) in [("#a", "0"), ("#b", "#b"), ("5", "5")] {
+        let p = format!("{text}v = f({y});\n");
+        assert_eq!(value(&p, "v"), want, "F27 at {y}");
+    }
+}
+
+#[test]
+fn a_generic_call_whose_arguments_are_atoms_only_passes_them_by() {
+    // Finding F18: every value of both arguments of `add` at its variable `T` passes by, so
+    // the call never takes place, and the `else` around it handles the atoms.
+    let text = "add(positional x, positional y) = x + y;\n\
+                w(positional n: int) = if n == 0 { #a } else { #b };\n\
+                g(positional n: int) = add(w(n), w(n + 1)) else -1;\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    for n in ["0", "1"] {
+        assert_eq!(value(&format!("{text}y = g({n});\n"), "y"), "-1", "at {n}");
+    }
 }
 
 #[test]

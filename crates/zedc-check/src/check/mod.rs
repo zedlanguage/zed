@@ -4388,71 +4388,146 @@ impl<'a> Ck<'_, 'a> {
     }
 }
 
-/// The atoms the uses of each binder handle, by binder: an alias class of binders, joined by
-/// the bindings that are another name (`s = line`), shares one set.
+/// The atoms the uses of each binder handle, by binder.
 struct Handled {
-    /// The class of each binder: the binder that stands for it.
-    root: Vec<usize>,
-    /// The atoms each class handles, by its root.
-    atoms: HashMap<usize, KType>,
+    /// The atoms each binder's uses handle, `None` for none.
+    atoms: Vec<Option<KType>>,
 }
 
 impl Handled {
-    /// The atoms the uses of binder `id` and of the names bound to it handle.
+    /// The atoms the uses of binder `id` handle, through every name bound to a value they
+    /// pass into.
     fn get(&self, id: usize) -> Option<&KType> {
-        self.atoms.get(&self.root[id])
+        self.atoms[id].as_ref()
     }
 }
 
-/// The atoms the uses of each binder handle ([`Resolution::handles`]), through the bindings
-/// that are another name ([`Resolution::aliases`]), so `s = line; s else ""` handles them for
-/// `line`, in whatever order the block writes its bindings. A union-find over the `B`
-/// binders, by size with path halving, joins the `A` aliases; then each of the `H` sites
-/// joins its atoms into its class's persistent set at `O(log H)` each, so the whole costs
-/// `O(B + A α(B) + H log H)`. Each alias has one value, so a class holds at most one binder
-/// that is not an alias, its parameter if it has one.
+/// The atoms the uses of each binder handle (DESIGN.md sec:type_resolution, the author's Q5:
+/// inference runs after bubbling). A binder's uses handle what the regions they flow into
+/// ([`Resolution::flows`]) handle; a region handles its own handler's atoms, what the region
+/// its value passes on to handles, and, for the value of `s = e`, what the uses of `s`
+/// handle. So `s = trim(line); s else ""` handles every loose atom for `line`, in whatever
+/// order the block writes its bindings, while in `{ s = a + b; a else 0 }` the `else` handles
+/// nothing for `b`: a binding passes atoms from its name to its value, not back.
+///
+/// The `B` binders and `R` regions are the nodes of a graph whose `E` edges run from each
+/// node to the nodes whose atoms it takes. Tarjan's algorithm, with an explicit stack, finds
+/// its strongly connected components with every component a node takes from finished
+/// first, and gives each component the union of its own handlers and what it takes, so
+/// the whole is `O(B + R + E)` unions; a cycle, such as a name bound to a value that uses
+/// it, is one component and shares one set. A set only gains atoms along the way.
+// Complexity tradeoff: each union joins two sets of atoms, whose cost grows with the distinct
+// atoms the unit's handlers name (`#a` in `else #a ->`, `is #a`, `== #a`), not with the unit;
+// `Handle::Loose` gives every loose atom at once. Bounding it by the unit's size alone would
+// need sets keyed by the handlers rather than by their atoms, which the checker would then
+// have to expand at each parameter anyway.
 fn handled(res: &Resolution) -> Handled {
-    let n = res.binders.len();
-    let mut root: Vec<usize> = (0..n).collect();
-    let mut size = vec![1usize; n];
-    fn find(root: &mut [usize], mut x: usize) -> usize {
-        while root[x] != x {
-            root[x] = root[root[x]];
-            x = root[x];
-        }
-        x
+    const NONE: usize = usize::MAX;
+    let (b, total) = (res.binders.len(), res.binders.len() + res.regions.len());
+    // The edges in compressed rows: `to[from[v]..from[v + 1]]` are the nodes `v` takes from.
+    let mut edges: Vec<(usize, usize)> = Vec::with_capacity(res.flows.len() + res.regions.len());
+    for (r, region) in res.regions.iter().enumerate() {
+        edges.extend(region.parent.map(|p| (b + r, b + p)));
+        edges.extend(region.into.map(|s| (b + r, s)));
     }
-    let one = |span: &Span| match res.uses.get(span) {
-        Some(Ref::Bound(ids)) if ids.len() == 1 => Some(ids[0]),
-        _ => None,
+    for (span, r) in &res.flows {
+        if let Some(Ref::Bound(ids)) = res.uses.get(span)
+            && ids.len() == 1
+        {
+            edges.push((ids[0], b + r));
+        }
+    }
+    let mut from = vec![0usize; total + 1];
+    for &(v, _) in &edges {
+        from[v + 1] += 1;
+    }
+    for v in 0..total {
+        from[v + 1] += from[v];
+    }
+    let mut to = vec![0usize; edges.len()];
+    let mut fill = from.clone();
+    for &(v, w) in &edges {
+        to[fill[v]] = w;
+        fill[v] += 1;
+    }
+    let own = |v: usize| -> Option<KType> {
+        let region = res.regions.get(v.checked_sub(b)?)?;
+        region
+            .handles
+            .iter()
+            .map(|h| match h {
+                Handle::Loose => atoms(),
+                Handle::Any(n) => any_payload(n),
+                Handle::Bare(n) => KType::atom(n),
+            })
+            .reduce(|x, y| &x | &y)
     };
-    for (id, span) in &res.aliases {
-        let Some(of) = one(span) else { continue };
-        let (a, b) = (find(&mut root, *id), find(&mut root, of));
-        if a != b {
-            let (big, small) = if size[a] >= size[b] { (a, b) } else { (b, a) };
-            root[small] = big;
-            size[big] += size[small];
+    let join = |acc: Option<KType>, a: Option<&KType>| match (acc, a) {
+        (Some(x), Some(y)) => Some(&x | y),
+        (acc, None) => acc,
+        (None, Some(y)) => Some(y.clone()),
+    };
+    let mut value: Vec<Option<KType>> = vec![None; total];
+    let (mut index, mut low, mut on) = (vec![NONE; total], vec![0usize; total], vec![false; total]);
+    let (mut next, mut open, mut members) = (0usize, Vec::new(), Vec::new());
+    // The nodes being visited, each with the next of its edges to follow.
+    let mut call: Vec<(usize, usize)> = Vec::new();
+    for s in 0..total {
+        if index[s] != NONE {
+            continue;
+        }
+        index[s] = next;
+        low[s] = next;
+        next += 1;
+        open.push(s);
+        on[s] = true;
+        call.push((s, from[s]));
+        while let Some(&mut (v, ref mut i)) = call.last_mut() {
+            if *i < from[v + 1] {
+                let w = to[*i];
+                *i += 1;
+                if index[w] == NONE {
+                    index[w] = next;
+                    low[w] = next;
+                    next += 1;
+                    open.push(w);
+                    on[w] = true;
+                    call.push((w, from[w]));
+                } else if on[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            call.pop();
+            if let Some(&(u, _)) = call.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] != index[v] {
+                continue;
+            }
+            members.clear();
+            while let Some(w) = open.pop() {
+                on[w] = false;
+                members.push(w);
+                if w == v {
+                    break;
+                }
+            }
+            // The component's own nodes have no value yet, so only finished ones join.
+            let mut acc = None;
+            for &w in &members {
+                acc = join(acc, own(w).as_ref());
+                for &d in &to[from[w]..from[w + 1]] {
+                    acc = join(acc, value[d].as_ref());
+                }
+            }
+            for &w in &members {
+                value[w].clone_from(&acc);
+            }
         }
     }
-    for x in 0..n {
-        root[x] = find(&mut root, x);
-    }
-    let mut atoms_of: HashMap<usize, KType> = HashMap::new();
-    for (span, h) in &res.handles {
-        let Some(id) = one(span) else { continue };
-        let a = match h {
-            Handle::Loose => atoms(),
-            Handle::Any(n) => any_payload(n),
-            Handle::Bare(n) => KType::atom(n),
-        };
-        let e = atoms_of.entry(root[id]).or_insert_with(KType::empty);
-        *e = &*e | &a;
-    }
-    Handled {
-        root,
-        atoms: atoms_of,
-    }
+    value.truncate(b);
+    Handled { atoms: value }
 }
 
 /// The atom `#name` with any payload or none: what a bare pattern `#name` matches.

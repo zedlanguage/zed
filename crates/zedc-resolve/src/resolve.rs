@@ -172,13 +172,29 @@ pub struct Resolution {
     /// The unit item `@log(#off);`, if the unit has one: it drops the log lines that every
     /// body of the unit writes (DESIGN.md sec:ports). Step L7.3, which writes the lines, reads it.
     pub log_off: Option<Span>,
-    /// Each `e else d`, `e else #a -> d` and `e is T` whose `e` is a name, by the name's text,
-    /// in the order of the text: the atoms the test or the replacement handles. The checker
-    /// gives an undeclared parameter the atoms its uses handle (DESIGN.md sec:type_resolution).
-    pub handles: Vec<(Span, Handle)>,
-    /// Each binding that is another name, `s = line`: the binder of `s` and the text of
-    /// `line`. The uses of `s` handle atoms for `line` (DESIGN.md sec:type_resolution).
-    pub aliases: Vec<(usize, Span)>,
+    /// The regions whose loose atoms reach a handler: the operand of each `e else d`,
+    /// `e else #a -> d` and `e is T`, the other side of each `e == #a` and `e != #a`, and the
+    /// value of each binding `s = e` of one name. The checker gives an undeclared parameter
+    /// the atoms its uses in a region handle (DESIGN.md sec:type_resolution).
+    pub regions: Vec<Region>,
+    /// Each use of a name whose loose atoms pass by rule 6 to the value of a region, by the
+    /// name's text, and the region: the name itself, or an argument, receiver or operand of a
+    /// call or an operator in it, a branch of an `if`, a block's result or a hole of a string,
+    /// at any depth. In written order.
+    pub flows: Vec<(Span, usize)>,
+}
+
+/// A region of value flow whose loose atoms reach a handler (DESIGN.md sec:type_resolution).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Region {
+    /// The atoms its handler handles.
+    pub handles: Vec<Handle>,
+    /// The region the value of this one passes on to: the operand of an `else` whose default
+    /// or operand holds this region's `else`.
+    pub parent: Option<usize>,
+    /// The binder of `s` when the region is the value of `s = e`: the uses of `s` handle what
+    /// passes out of `e`.
+    pub into: Option<usize>,
 }
 
 /// The atoms an `else` or an `is` handles.
@@ -682,6 +698,9 @@ struct Resolver<'u> {
     /// When a printed type is read ([`printed_type`]): the names that stand for its leaves of
     /// layer L10.
     printed: Option<HashSet<Arc<str>>>,
+    /// The region of each `else`'s operand, by the `else`'s text: an `else` inside another
+    /// region gets its region when that region's flow is walked, before the `else` itself.
+    else_regions: HashMap<Span, usize>,
 }
 
 /// A type variable of a bounds clause, while its type is walked.
@@ -1224,11 +1243,13 @@ impl Resolver<'_> {
                         Target::Wild => {}
                     }
                 }
-                if let ([Target::Name(..)], ExprKind::Name(_)) = (targets.as_slice(), &value.kind)
+                if let [Target::Name(..)] = targets.as_slice()
                     && !whole
                     && self.out.binders.len() == id + 1
                 {
-                    self.out.aliases.push((id, value.span));
+                    let r = self.region(Vec::new());
+                    self.out.regions[r].into = Some(id);
+                    self.flow(value, r);
                 }
             }
             StmtKind::Function(f) => {
@@ -1592,6 +1613,89 @@ impl Resolver<'_> {
         self.later(span, &format!("the primed name `{name}`"), "L6.3");
     }
 
+    /// A new region that handles `handles`.
+    fn region(&mut self, handles: Vec<Handle>) -> usize {
+        self.out.regions.push(Region {
+            handles,
+            ..Region::default()
+        });
+        self.out.regions.len() - 1
+    }
+
+    /// The region of the operand of the `else` written at `span`, made when first asked for.
+    fn else_region(&mut self, span: Span) -> usize {
+        if let Some(&r) = self.else_regions.get(&span) {
+            return r;
+        }
+        let r = self.region(Vec::new());
+        self.else_regions.insert(span, r);
+        r
+    }
+
+    /// Records in `region` each use of a name in `e` whose loose atoms pass by rule 6 to the
+    /// value of `e` (DESIGN.md sec:type_resolution): the arguments and receiver of a call, the
+    /// family `m` of `m[k]`, the operands of an operator other than `==` and `!=`, the
+    /// branches of an `if`, a block's result and the holes of a string, at any depth. An
+    /// `else` in it starts a region of its own whose value passes on to `region`; its default
+    /// stays in `region`. A tuple, a record or a lambda ends the walk: its value holds the atom
+    /// rather than being it (struct positions follow L2.6b). Every expression is walked by at
+    /// most one region, the innermost holding it, so the regions of a unit cost `O(n)`
+    /// together.
+    fn flow(&mut self, e: &Expr, region: usize) {
+        let mut stack = vec![e];
+        while let Some(e) = stack.pop() {
+            match &e.kind {
+                ExprKind::Name(_) => self.out.flows.push((e.span, region)),
+                ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } => stack.push(a),
+                ExprKind::Binary("==" | "!=", ..) => {}
+                // The key of `m[k]` is left out: a parameter given atoms there and also
+                // applied through a function parameter, `fs[args[k] else ""]`, is rejected by
+                // the check of the need at each call, as `{ d = k else 0; fs[args[k] else ""] }`
+                // is on main (CLASS-atoms-index-key).
+                ExprKind::Index(a, _) => stack.push(a),
+                ExprKind::Binary(_, a, b) => {
+                    stack.push(b);
+                    stack.push(a);
+                }
+                ExprKind::Call {
+                    callee,
+                    positional,
+                    named,
+                    ..
+                } => {
+                    stack.extend(named.iter().map(|(_, a)| a));
+                    stack.extend(positional);
+                    if !matches!(callee.kind, ExprKind::Name(_)) {
+                        stack.push(callee);
+                    }
+                }
+                ExprKind::Str(parts) => stack.extend(parts.iter().filter_map(|p| match p {
+                    StrPart::Hole(h) => Some(h),
+                    StrPart::Text(_) => None,
+                })),
+                ExprKind::If {
+                    then, otherwise, ..
+                } => {
+                    stack.push(otherwise);
+                    stack.push(then);
+                }
+                ExprKind::Block(stmts) => {
+                    for s in stmts {
+                        if let StmtKind::Return(es) = &s.kind {
+                            stack.extend(es);
+                        }
+                    }
+                }
+                ExprKind::Else { default, .. } => {
+                    let inner = self.else_region(e.span);
+                    self.out.regions[inner].parent = Some(region);
+                    stack.push(default);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// The form `what`, which the parser builds, has its meaning from step `step`.
     fn later(&mut self, span: Span, what: &str, step: &str) {
         self.errors.push(Error {
@@ -1707,6 +1811,18 @@ impl Resolver<'_> {
             ExprKind::Name(n) => self.name(n, e.span),
             ExprKind::Unary(_, a) => todo.push(Task::Expr(a)),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
+                // `e == #a` and `e != #a`, either way round, handle `#a` for `e`.
+                if matches!(e.kind, ExprKind::Binary("==" | "!=", ..)) {
+                    let other = match (&a.kind, &b.kind) {
+                        (ExprKind::Atom(n), _) => Some((n, b)),
+                        (_, ExprKind::Atom(n)) => Some((n, a)),
+                        _ => None,
+                    };
+                    if let Some((n, other)) = other {
+                        let r = self.region(vec![Handle::Bare(n.clone())]);
+                        self.flow(other, r);
+                    }
+                }
                 todo.push(Task::Expr(b));
                 todo.push(Task::Expr(a));
             }
@@ -1728,18 +1844,19 @@ impl Resolver<'_> {
                 this: None,
             }),
             ExprKind::Is { of, ty, .. } => {
-                if let ExprKind::Name(_) = of.kind {
-                    // The written type's atoms: a union nests as deep as its text.
-                    let mut stack = vec![ty];
-                    while let Some(t) = stack.pop() {
-                        match &t.kind {
-                            TypeKind::Atom(a) => {
-                                self.out.handles.push((of.span, Handle::Bare(a.clone())))
-                            }
-                            TypeKind::Union(ts) => stack.extend(ts),
-                            _ => {}
-                        }
+                // The written type's atoms: a union nests as deep as its text.
+                let mut handles = Vec::new();
+                let mut stack = vec![ty];
+                while let Some(t) = stack.pop() {
+                    match &t.kind {
+                        TypeKind::Atom(a) => handles.push(Handle::Bare(a.clone())),
+                        TypeKind::Union(ts) => stack.extend(ts),
+                        _ => {}
                     }
+                }
+                if !handles.is_empty() {
+                    let r = self.region(handles);
+                    self.flow(of, r);
                 }
                 todo.push(Task::Ty(ty));
                 todo.push(Task::Expr(of));
@@ -1749,21 +1866,19 @@ impl Resolver<'_> {
                 pattern,
                 default,
             } => {
-                if let ExprKind::Name(_) = of.kind {
-                    let h = match pattern {
-                        None => Some(Handle::Loose),
-                        Some(Pattern::Atom {
-                            name,
-                            fields,
-                            items,
-                            ..
-                        }) if fields.is_empty() && items.is_empty() => {
-                            Some(Handle::Any(name.clone()))
-                        }
-                        Some(_) => None,
-                    };
-                    self.out.handles.extend(h.map(|h| (of.span, h)));
-                }
+                let h = match pattern {
+                    None => Some(Handle::Loose),
+                    Some(Pattern::Atom {
+                        name,
+                        fields,
+                        items,
+                        ..
+                    }) if fields.is_empty() && items.is_empty() => Some(Handle::Any(name.clone())),
+                    Some(_) => None,
+                };
+                let r = self.else_region(e.span);
+                self.out.regions[r].handles.extend(h);
+                self.flow(of, r);
                 todo.push(Task::Else {
                     span: e.span,
                     pattern: pattern.as_ref(),
