@@ -1632,10 +1632,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DECIDE-front-cost | impl attempt 1 | 2026-11-07 21:05 | cause: front end (nnf 24%, parts/Joining 21%, canonical 16%, take 10% of decide at 16384) around the same utvpi::integer_empty; fix: structural fast path for un |
-| EMPTY-overlap-fast | impl attempt 2 | 2026-11-08 03:36 | ready 61a44454 on 6312395b: witness from the one pass, list complements by cell id, SharedCells refusal; 650 pieces 0 failed with doc build; load 5.67 7.79 6.76 |
-| ENV-bounded-partial | impl attempt 1 | 2026-11-07 20:25 | bounded denotation + ->? / L .. U printing in; running affected groups / load 20.53 14.42 12.61 |
-| XST-r4 | running | 2026-11-08 02:53 |  |
+| XST-r4 | gemini attempt  | 2026-11-08 02:53 | first run died at step 845 (agy http2 GOAWAY server_shutting_down, rc=3) with R4_GEMINI.md through 2(b); relaunched in the same dir with a continuation note (pa |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
