@@ -876,7 +876,7 @@ double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
 clamp(positional v, positional lo, positional hi) -> int { if v < lo { lo } else if v > hi { hi } else { v } }
   test { (5, 0, 8) -> 5, (-1, 0, 8) -> 0, (9, 0, 8) -> 8 }
 @exhaustive romanDigit(n: int[1..=9]) -> Utf8String { … }       // all nine inputs run at build time
-@associative @commutative combine(positional a, positional b) = …;                 // a claim the checker tests, and downgrades on a counterexample
+@associative @commutative combine(positional a, positional b) = …;                 // a claim the checker proves, or rejects with a counterexample
 @memoized report = logs.map(rowCost).sum;
 ```
 
