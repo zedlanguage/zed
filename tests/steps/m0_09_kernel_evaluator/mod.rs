@@ -17,6 +17,7 @@ use zed_tests::scaling::check_order;
 // binary.rs is not a module of this target: crates/zed-native/Cargo.toml builds it as the test
 // `zedc_binary`, since only a test of that package can name the zedc executable.
 mod deep;
+mod empty_levels;
 mod provenance;
 mod scaling;
 mod shared;
@@ -157,7 +158,7 @@ fn stock() -> Value {
 }
 
 #[test]
-fn discard_drops_out_of_stock_items_and_their_emptied_category() {
+fn discard_drops_out_of_stock_items_and_keeps_their_emptied_category() {
     // Keep every category entry; keep an item when its count is above zero.
     let sel = lam(
         &["p", "v"],
@@ -168,10 +169,10 @@ fn discard_drops_out_of_stock_items_and_their_emptied_category() {
         ),
     );
     let out = eval(&discard(lit(stock()), sel)).unwrap();
-    // `veg` held only kale, so its level emptied and its key is gone.
+    // `veg` held only kale, so its level emptied; the key stays above an empty level.
     assert_eq!(
         out.to_string(),
-        r#"{"dairy" -> {"milk" -> 12}, "fruit" -> {"apple" -> 3}}"#
+        r#"{"dairy" -> {"milk" -> 12}, "fruit" -> {"apple" -> 3}, "veg" -> {}}"#
     );
 }
 
@@ -269,7 +270,7 @@ fn an_empty_family_folds_by_the_depth_its_type_gives() {
 
 #[test]
 fn fam_builds_a_table_over_a_domain() {
-    // VAT at 20% for each price band, and a band with no entries drops its key.
+    // VAT at 20% for each price band, and a band with no entries keeps its key.
     let bands = lit(Family::set([100, 250, 1000].map(Value::Int)));
     let vat = fam(
         bands.clone(),
@@ -281,7 +282,10 @@ fn fam_builds_a_table_over_a_domain() {
         "{100 -> 20, 250 -> 50, 1000 -> 200}"
     );
     let nothing = fam(bands, "b", lit(Family::new()));
-    assert_eq!(eval(&nothing).unwrap(), Value::Family(Family::new()));
+    assert_eq!(
+        eval(&nothing).unwrap().to_string(),
+        "{100 -> {}, 250 -> {}, 1000 -> {}}"
+    );
 }
 
 fn edges() -> Value {

@@ -21,7 +21,7 @@ use std::rc::Rc;
 use crate::exact::{CanonicalTree, TreeStep, exact_sum};
 use crate::num::{Test, TooLarge, refused};
 use crate::value::KernelError;
-use crate::value::{Family, Keypath, ieee_min_max};
+use crate::value::{Family, Keypath, all_leaves, ieee_min_max};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -729,6 +729,8 @@ struct Reindex<'t> {
     path: Keypath,
     args: Option<(Value, Value)>,
     key: Option<Value>,
+    /// Whether the leaf being moved is a keypath that ends early, above an empty level.
+    short: bool,
     out: Vec<(Keypath, Value)>,
 }
 
@@ -1238,6 +1240,7 @@ impl<'t> Machine<'_, 't> {
                     path: Vec::new(),
                     args: None,
                     key: None,
+                    short: false,
                     out: Vec::new(),
                 }))
             }
@@ -1400,6 +1403,17 @@ impl<'t> Machine<'_, 't> {
                 st.out.push((vec![k], data(v)?));
                 self.fam(st)
             }
+            Wait::ReindexKey(mut st) if st.short => {
+                // A keypath above an empty level has no leaf for the value map; the empty level
+                // goes beneath the part of the new keypath that its own keys give.
+                st.args = None;
+                self.ev.leave(st.path.len());
+                if let Some(path) = placed(data(v)?) {
+                    let path = key_of(Value::path(path));
+                    st.out.push((path, Value::Family(Family::new())));
+                }
+                self.reindex(st)
+            }
             Wait::ReindexKey(mut st) => {
                 st.key = Some(data(v)?);
                 let (p, leaf) = st.args.take().expect("a `reindex` has a leaf in hand");
@@ -1411,10 +1425,7 @@ impl<'t> Machine<'_, 't> {
             Wait::ReindexValue(mut st) => {
                 let value = data(v)?;
                 self.ev.leave(st.path.len());
-                let key = match st.key.take().expect("a `reindex` has a key in hand") {
-                    Value::Path(keys) => keys.into_vec(),
-                    single => vec![single],
-                };
+                let key = key_of(st.key.take().expect("a `reindex` has a key in hand"));
                 st.out.push((key, value));
                 self.reindex(st)
             }
@@ -1655,9 +1666,13 @@ impl<'t> Machine<'_, 't> {
             }
         }
         // A tuple and an atom's payload hold atoms as data, and `==` has an arrow at every
-        // type, atoms included; every other primitive passes its atoms through, merged.
-        if !matches!(p, Prim::Tuple | Prim::Atom | Prim::Eq | Prim::Ne)
-            && vals.iter().any(|v| matches!(v, Value::Atom(_)))
+        // type, atoms included; every other primitive passes its atoms through, merged. A
+        // keypath holds them too, so that a `reindex` can tell which keys a keypath above an
+        // empty level binds; at a full keypath it merges them (see `key_of`).
+        if !matches!(
+            p,
+            Prim::Tuple | Prim::Path | Prim::Atom | Prim::Eq | Prim::Ne
+        ) && vals.iter().any(|v| matches!(v, Value::Atom(_)))
         {
             let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
             return give(Value::merge_failures(atoms));
@@ -1695,7 +1710,14 @@ impl<'t> Machine<'_, 't> {
         self.ev.enter(&path);
         let p = Value::path(path.clone());
         self.ev.aim(st.kf.1, vec![st.from; 2]);
-        let step = self.call2(&st.kf.0, p.clone(), v.clone());
+        // A keypath above an empty level has no leaf value: the key map reads `#notFound` there,
+        // as it does for a key beyond the keypath's end.
+        st.short = matches!(&v, Value::Family(f) if f.is_empty());
+        let leaf = match st.short {
+            true => Value::atom("notFound"),
+            false => v.clone(),
+        };
+        let step = self.call2(&st.kf.0, p.clone(), leaf);
         st.path = path;
         st.args = Some((p, v));
         self.wait(Wait::ReindexKey(st));
@@ -1766,9 +1788,17 @@ impl<'t> Machine<'_, 't> {
         depth: usize,
     ) -> R<Step<'t>> {
         let leaves = family.leaves();
-        if leaves.iter().any(|(p, _)| p.len() != depth) {
+        // A keypath that ends early, above an empty level, is a leaf holding the empty family.
+        // Directly above the innermost level it is a group with no values, which folds to the
+        // identity or `#empty`; higher up it keeps its key with an empty level beneath.
+        let short = |v: &Value| matches!(v, Value::Family(f) if f.is_empty());
+        if leaves.iter().any(|(p, v)| match short(v) {
+            true => p.len() >= depth,
+            false => p.len() != depth,
+        }) {
             return Err(KernelError::MixedDepth.into());
         }
+        let mut out = Vec::new();
         let groups: Vec<(Keypath, Vec<Value>)> = if depth == 1 {
             let values = leaves.into_iter().map(|(_, v)| v).collect();
             vec![(Vec::new(), values)]
@@ -1776,12 +1806,20 @@ impl<'t> Machine<'_, 't> {
             // Collapse the innermost level beneath each outer keypath.
             let mut groups: BTreeMap<Keypath, Vec<Value>> = BTreeMap::new();
             for (mut path, v) in leaves {
-                path.pop();
-                groups.entry(path).or_default().push(v);
+                match short(&v) {
+                    true if path.len() + 1 == depth => {
+                        groups.entry(path).or_default();
+                    }
+                    true => out.push((path, v)),
+                    false => {
+                        path.pop();
+                        groups.entry(path).or_default().push(v);
+                    }
+                }
             }
             groups.into_iter().collect()
         };
-        self.next_group(Box::new(Fold {
+        self.fold(Box::new(Fold {
             groups: groups.into_iter(),
             op,
             from,
@@ -1790,13 +1828,38 @@ impl<'t> Machine<'_, 't> {
             path: Vec::new(),
             tree: None,
             step: 0,
-            out: Vec::new(),
+            out,
         }))
     }
 
-    /// Reduces the next level, or makes the family of the levels' results.
-    fn next_group(&mut self, mut st: Box<Fold<'t>>) -> R<Step<'t>> {
+    /// Goes on reducing the level in hand in key order, on the canonical tree, then the next
+    /// levels, and at the end makes the family of the levels' results. The `i`th application
+    /// of `op` runs at step `i` of its level. A level that needs no call of `op` (an empty one,
+    /// or one of a single value) goes round the loop, so a fold over many such levels runs in
+    /// constant stack.
+    fn fold(&mut self, mut st: Box<Fold<'t>>) -> R<Step<'t>> {
         loop {
+            if let Some(tree) = st.tree.as_mut() {
+                match tree.advance() {
+                    TreeStep::Join(a, b) => {
+                        self.ev.enter(&[Value::Int(st.step)]);
+                        st.step += 1;
+                        self.ev.aim(st.op.1, vec![st.from; 2]);
+                        let step = self.call2(&st.op.0, a, b);
+                        self.wait(Wait::Fold(st));
+                        return step;
+                    }
+                    TreeStep::Done(v) => {
+                        st.tree = None;
+                        self.ev.leave(st.path.len());
+                        if st.whole {
+                            return give(v);
+                        }
+                        let path = std::mem::take(&mut st.path);
+                        st.out.push((path, v));
+                    }
+                }
+            }
             let Some((path, values)) = st.groups.next() else {
                 return give(Value::Family(Family::from_leaves(st.out)?));
             };
@@ -1813,32 +1876,7 @@ impl<'t> Machine<'_, 't> {
                     st.path = path;
                     st.tree = Some(CanonicalTree::new(values));
                     st.step = 0;
-                    return self.fold(st);
                 }
-            }
-        }
-    }
-
-    /// Goes on reducing a level in key order, on the canonical tree. The `i`th application
-    /// of `op` runs at step `i` of the level.
-    fn fold(&mut self, mut st: Box<Fold<'t>>) -> R<Step<'t>> {
-        match st.tree.as_mut().expect("a level in hand").advance() {
-            TreeStep::Join(a, b) => {
-                self.ev.enter(&[Value::Int(st.step)]);
-                st.step += 1;
-                self.ev.aim(st.op.1, vec![st.from; 2]);
-                let step = self.call2(&st.op.0, a, b);
-                self.wait(Wait::Fold(st));
-                step
-            }
-            TreeStep::Done(v) => {
-                self.ev.leave(st.path.len());
-                if st.whole {
-                    return give(v);
-                }
-                let path = std::mem::take(&mut st.path);
-                st.out.push((path, v));
-                self.next_group(st)
             }
         }
     }
@@ -2114,6 +2152,49 @@ fn reduced(values: &[Value], op: &V<'_>, identity: &Option<Value>) -> Option<Val
         }
     }
     None
+}
+
+/// The keypath a `reindex` writes a leaf at, given the key its key map returned there. A
+/// keypath holding atoms is the failure they merge to, as one key, as for any other primitive
+/// given atoms. Costs the length of the key.
+fn key_of(key: Value) -> Keypath {
+    match key {
+        Value::Path(keys) if keys.iter().any(|k| matches!(k, Value::Atom(_))) => {
+            vec![Value::merge_failures(
+                keys.iter().filter(|k| matches!(k, Value::Atom(_))),
+            )]
+        }
+        Value::Path(keys) => keys.into_vec(),
+        single => vec![single],
+    }
+}
+
+/// Where a `reindex` puts the empty level beneath a keypath that ends early, given the key its
+/// key map returned there (DESIGN.md sec:remap_law): the keys before the first that holds
+/// `#notFound`, which the key map reads beyond the keypath's end and in place of its leaf. `None`
+/// when the first key holds it, since then the new keypath starts with a level the short
+/// keypath does not bind, and the key is dropped. A key map that returns the empty keypath gets
+/// [`KernelError::EmptyKeypath`] from the family built, as at a full keypath. Costs the size of
+/// the key, each shared part read once.
+fn placed(key: Value) -> Option<Keypath> {
+    let mut keys = match key {
+        Value::Path(keys) => keys.into_vec(),
+        single => vec![single],
+    };
+    let unbound = keys.iter().position(|k| {
+        !all_leaves(
+            std::slice::from_ref(k),
+            |v| !matches!(v, Value::Atom(a) if &*a.name == "notFound" && a.args.is_empty()),
+        )
+    });
+    match unbound {
+        Some(0) => None,
+        Some(i) => {
+            keys.truncate(i);
+            Some(keys)
+        }
+        None => Some(keys),
+    }
 }
 
 /// The level of `family`'s top-level entries, before any is tested.

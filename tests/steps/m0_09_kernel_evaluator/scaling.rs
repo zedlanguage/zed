@@ -175,8 +175,10 @@ fn a_family_built_with_families_as_leaves_agrees_with_its_leaves() {
                 (path, v)
             })
             .collect();
+        // An empty family given as a leaf is an empty level beneath its keypath, which is a
+        // leaf of its own.
         let flat = parts.iter().flat_map(|(p, v)| match v {
-            Value::Family(f) => f
+            Value::Family(f) if !f.is_empty() => f
                 .leaves()
                 .into_iter()
                 .map(|(q, w)| ([p.clone(), q].concat(), w))

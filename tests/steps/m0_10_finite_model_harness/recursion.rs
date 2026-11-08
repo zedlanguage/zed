@@ -27,7 +27,7 @@ fn run(t: &Term, schedule: Schedule) -> Result<Value, KernelError> {
 type Graph = Vec<Vec<i64>>;
 
 /// The successor table `node -> successor -> true`. A node with no successors has no entry,
-/// since an empty inner level drops its key.
+/// since its leaves are its edges.
 fn successors(g: &Graph) -> Term {
     let leaves: Vec<_> = g
         .iter()

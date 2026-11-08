@@ -325,9 +325,25 @@ pub(super) fn relation(pairs: &[(i64, i64)]) -> Term {
     lit(Value::Family(Family::from_leaves(leaves).unwrap()))
 }
 
+/// `f` without its empty levels, from depth `depth - 1` up to the top, so that a relation or a
+/// sparse matrix whose row loses every entry loses the row: a key above an empty level is kept
+/// otherwise (DESIGN.md sec:kernel, reference semantics (d)).
+pub(super) fn prune(mut f: Term, depth: i64) -> Term {
+    for d in (1..depth).rev() {
+        f = discard_with(f, |p, v| {
+            if_(
+                eq(prim(Prim::PathLen, vec![p]), lit(d)),
+                lt(lit(0), count(v)),
+                lit(true),
+            )
+        });
+    }
+    f
+}
+
 /// `r · s`: the pairs `(u, w)` with some `v` such that `(u, v)` is in `r` and `(v, w)` in `s`.
 pub(super) fn compose(r: Term, s: Term) -> Term {
-    fam_with(nodes(), |u| {
+    let rows = fam_with(nodes(), |u| {
         let row = fam_with(nodes(), |w| {
             let via = discard_with(nodes(), |p, _| {
                 let v = key(p, 0);
@@ -339,7 +355,8 @@ pub(super) fn compose(r: Term, s: Term) -> Term {
             lt(lit(0), count(via))
         });
         discard_with(row, |_, e| e)
-    })
+    });
+    prune(rows, 2)
 }
 
 pub(super) fn union(a: Term, b: Term) -> Term {
@@ -348,12 +365,13 @@ pub(super) fn union(a: Term, b: Term) -> Term {
 
 /// `a` less the pairs of `b`.
 fn minus(a: Term, b: Term) -> Term {
-    discard_with(a, |p, _| {
+    let rest = discard_with(a, |p, _| {
         not(and(
             eq(prim(Prim::PathLen, vec![p.clone()]), lit(2)),
             found(get(get(b, key(p.clone(), 0)), key(p, 1))),
         ))
-    })
+    });
+    prune(rest, 2)
 }
 
 /// The relation the frontier loop reaches: frames `(old, delta)` from `({}, e)`, each round's
@@ -665,7 +683,7 @@ fn contract(a: Term, b: Term, sum: &Term, times: &Term) -> Term {
             })
         })
     });
-    fold_at(joined, 3, sum.clone(), None)
+    fold_at(prune(joined, 3), 3, sum.clone(), None)
 }
 
 /// Random triples of matrices over `values`, each cell absent with probability 1/4.
@@ -771,7 +789,7 @@ fn law_19_a_star_join_folds_each_arm_before_the_join() {
             })
         });
         let lhs = fold_at(
-            fold_at(fold_at(all, 4, plus(), None), 3, plus(), None),
+            fold_at(fold_at(prune(all, 4), 4, plus(), None), 3, plus(), None),
             2,
             plus(),
             None,

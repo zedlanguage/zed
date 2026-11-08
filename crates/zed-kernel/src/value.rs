@@ -11,8 +11,8 @@
 //! maps each key of one level to a value; a value that is itself a family is the next level
 //! down. A *leaf* is a non-family value, and its *keypath* is the sequence of keys that reaches
 //! it (sec:keypaths). Two rules of (sec:values_morphisms) hold by construction: every keypath
-//! has exactly one writer, and an outer key over an empty level has no keypath, so it is
-//! dropped.
+//! has exactly one writer, and an outer key over an empty level is a keypath that ends early,
+//! so it is kept (sec:kernel, reference semantics (d)).
 //!
 //! The operations on a [`Value`] that follow its nesting (drop, compare, copy and show) each
 //! keep their own stack on the heap, so a value's depth is limited by the machine's memory
@@ -798,8 +798,9 @@ pub fn fresh_id() -> Id {
     })
 }
 
-/// A finite family. No level of a family is empty except a whole family that has no entries.
-/// Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and
+/// A finite family. A level may be empty: in `{"a" -> {}}` the key `"a"` is a keypath that ends
+/// early, with an empty level beneath it, and the family differs from `{}` (DESIGN.md sec:kernel,
+/// reference semantics (d)). Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and
 /// a family one entry larger than another shares all but O(log n) of its nodes with it.
 ///
 /// The second field is the family's [`Id`]: a copy keeps it, and a change takes a new one, so
@@ -890,7 +891,9 @@ impl Levels {
         }
     }
 
-    /// Adds `leaf` at `path`, which `path` reports if it collides.
+    /// Adds `leaf` at `path`, which `path` reports if it collides. A leaf that is the empty
+    /// family is an empty level beneath `path`, which writes no leaf: it collides only with a
+    /// leaf at `path`, and merges with any other level there, empty or not.
     fn insert(&mut self, path: &[Value], leaf: Value) -> Result<(), KernelError> {
         let collision = || KernelError::Collision {
             keypath: path.to_vec(),
@@ -900,8 +903,12 @@ impl Levels {
         for key in above {
             at = self.descend(at, key.key()).ok_or_else(collision)?;
         }
+        let empty = matches!(&leaf, Value::Family(f) if f.is_empty());
         match self.0[at].entry(last.key()) {
-            Entry::Occupied(_) => Err(collision()),
+            Entry::Occupied(slot) => match slot.get() {
+                Slot::Inner(_) | Slot::Leaf(Value::Family(_)) if empty => Ok(()),
+                _ => Err(collision()),
+            },
             Entry::Vacant(slot) => {
                 slot.insert(Slot::Leaf(leaf));
                 Ok(())
@@ -955,8 +962,8 @@ impl Family {
         self.2
     }
 
-    /// A one-level family written out as a literal. A value that is an empty family drops
-    /// its key.
+    /// A one-level family written out as a literal. A value that is an empty family keeps its
+    /// key, with an empty level beneath.
     ///
     /// # Panics
     ///
@@ -981,8 +988,9 @@ impl Family {
     }
 
     /// Builds a family from its leaves. A leaf whose value is a family contributes that
-    /// family's leaves beneath it, sharing the family when nothing else is written there.
-    /// Fails with [`KernelError::Collision`] when two leaves
+    /// family's leaves beneath it, sharing the family when nothing else is written there; a leaf
+    /// whose value is the empty family is an empty level beneath its keypath, which merges with
+    /// any other level there. Fails with [`KernelError::Collision`] when two leaves
     /// share a keypath, or one leaf's keypath is a prefix of another's, and with
     /// [`KernelError::EmptyKeypath`] for a leaf with no keys.
     pub fn from_leaves(
@@ -995,7 +1003,8 @@ impl Family {
                 return Err(KernelError::EmptyKeypath);
             }
             match value {
-                Value::Family(sub) if sub.is_empty() || levels.place(&path, &sub) => {}
+                Value::Family(sub) if sub.is_empty() => levels.insert(&path, Value::Family(sub))?,
+                Value::Family(sub) if levels.place(&path, &sub) => {}
                 Value::Family(sub) => {
                     for (mut sub_path, leaf) in sub.leaves() {
                         let mut whole = path.clone();
@@ -1009,7 +1018,9 @@ impl Family {
         Ok(levels.into_family())
     }
 
-    /// The leaves with their keypaths, in keypath order.
+    /// The leaves with their keypaths, in keypath order. A keypath that ends early, above an
+    /// empty level, is a leaf whose value is the empty family, so that `from_leaves` of the
+    /// leaves is the family again.
     pub fn leaves(&self) -> Vec<(Keypath, Value)> {
         let mut out = Vec::new();
         let mut prefix = Vec::new();
@@ -1017,7 +1028,7 @@ impl Family {
         let mut above = Vec::new();
         loop {
             match level.next() {
-                Some((k, Value::Family(sub))) => {
+                Some((k, Value::Family(sub))) if !sub.is_empty() => {
                     prefix.push(k.clone());
                     above.push(mem::replace(&mut level, sub.0.iter()));
                 }
@@ -1175,7 +1186,10 @@ fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
             (_, Value::Family(y)) => {
                 let mut sub = y;
                 loop {
-                    let (k, v) = sub.0.get_min().expect("no level of a family is empty");
+                    // A leaf of `x` above an empty level of `y` collides at the leaf's keypath.
+                    let Some((k, v)) = sub.0.get_min() else {
+                        return Err(collision(&prefix));
+                    };
                     prefix.push(k.clone());
                     match v {
                         Value::Family(f) => sub = f,
@@ -1936,7 +1950,8 @@ pub(crate) fn copy(from: &[Value], leaf: fn(&Value) -> Value) -> Vec<Value> {
 }
 
 /// Whether `test` holds of every value in `from`, tuples, keypaths and atoms' payloads read to
-/// any depth, stopping at the first that fails. A shared sequence is read once.
+/// any depth, an atom tested before its payload, stopping at the first that fails. A shared
+/// sequence is read once.
 pub(crate) fn all_leaves(from: &[Value], test: fn(&Value) -> bool) -> bool {
     let mut level = from.iter();
     let mut above = Vec::new();
@@ -1944,7 +1959,7 @@ pub(crate) fn all_leaves(from: &[Value], test: fn(&Value) -> bool) -> bool {
     loop {
         let inner = match level.next() {
             Some(Value::Tuple(xs) | Value::Path(xs)) => xs,
-            Some(Value::Atom(a)) => &a.args,
+            Some(v @ Value::Atom(a)) if test(v) => &a.args,
             Some(v) if test(v) => continue,
             Some(_) => return false,
             None => match above.pop() {
@@ -2527,12 +2542,81 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_inner_level_drops_its_key() {
-        let f = Family::of([("a", Value::Int(1)), ("b", Value::Family(Family::new()))]);
-        assert_eq!(f.to_string(), r#"{"a" -> 1}"#);
-        assert_eq!(f.len(), 1);
-        assert!(!f.is_empty());
+    fn an_empty_inner_level_keeps_its_key() {
+        let empty = || Value::Family(Family::new());
+        let f = Family::of([("a", Value::Int(1)), ("b", empty())]);
+        assert_eq!(f.to_string(), r#"{"a" -> 1, "b" -> {}}"#);
+        assert_eq!(f.len(), 2);
         assert!(Family::new().is_empty());
+        let only = Family::of([("b", empty())]);
+        assert!(!only.is_empty());
+        assert_ne!(only, Family::new());
+        // The short keypath is a leaf holding the empty family, so the leaves rebuild the family.
+        assert_eq!(
+            f.leaves(),
+            vec![(kp(&["a"]), Value::Int(1)), (kp(&["b"]), empty())]
+        );
+        assert_eq!(Family::from_leaves(f.leaves()).unwrap(), f);
+        // Deeper: `{"x" -> {"y" -> {}}}` is one keypath of length 2 above an empty level.
+        let deep = Family::from_leaves(vec![(kp(&["x", "y"]), empty())]).unwrap();
+        assert_eq!(deep.to_string(), r#"{"x" -> {"y" -> {}}}"#);
+        assert_eq!(deep.leaves(), vec![(kp(&["x", "y"]), empty())]);
+    }
+
+    #[test]
+    fn an_empty_level_merges_with_levels_and_collides_with_a_leaf() {
+        let empty = || Value::Family(Family::new());
+        // An empty level writes no leaf: leaves beneath its key fill it, in either order, and a
+        // second empty level at the same keypath adds nothing.
+        for leaves in [
+            vec![(kp(&["a"]), empty()), (kp(&["a", "b"]), Value::Int(1))],
+            vec![(kp(&["a", "b"]), Value::Int(1)), (kp(&["a"]), empty())],
+            vec![
+                (kp(&["a"]), empty()),
+                (kp(&["a"]), empty()),
+                (kp(&["a", "b"]), Value::Int(1)),
+            ],
+        ] {
+            let f = Family::from_leaves(leaves).unwrap();
+            assert_eq!(f.to_string(), r#"{"a" -> {"b" -> 1}}"#);
+        }
+        let twice = Family::from_leaves(vec![(kp(&["a"]), empty()), (kp(&["a"]), empty())]);
+        assert_eq!(twice.unwrap().to_string(), r#"{"a" -> {}}"#);
+        // A leaf where the empty level is, in either order, is two writers for one keypath.
+        for (leaves, at) in [
+            (
+                vec![(kp(&["a"]), empty()), (kp(&["a"]), Value::Int(1))],
+                kp(&["a"]),
+            ),
+            (
+                vec![(kp(&["a"]), Value::Int(1)), (kp(&["a"]), empty())],
+                kp(&["a"]),
+            ),
+            (
+                vec![(kp(&["a"]), Value::Int(1)), (kp(&["a", "b"]), empty())],
+                kp(&["a", "b"]),
+            ),
+        ] {
+            assert_eq!(
+                Family::from_leaves(leaves).unwrap_err(),
+                KernelError::Collision { keypath: at }
+            );
+        }
+        // Union: an empty level and a level merge; an empty level and a leaf collide.
+        let a = Family::of([("a", empty())]);
+        let b = Family::from_leaves(vec![(kp(&["a", "b"]), Value::Int(1))]).unwrap();
+        assert_eq!(a.union(&b).unwrap(), b);
+        assert_eq!(b.union(&a).unwrap(), b);
+        assert_eq!(a.union(&a).unwrap(), a);
+        let leaf = Family::of([("a", 1i64)]);
+        for (x, y) in [(&a, &leaf), (&leaf, &a)] {
+            assert_eq!(
+                x.union(y).unwrap_err(),
+                KernelError::Collision {
+                    keypath: kp(&["a"])
+                }
+            );
+        }
     }
 
     #[test]

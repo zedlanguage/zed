@@ -67,17 +67,16 @@ fn law_01_composed_reindex_reads_the_value_the_first_stage_produced() {
 }
 
 #[test]
-fn law_01_identity_reindex_is_the_identity_on_levels_that_are_not_empty() {
+fn law_01_identity_reindex_is_the_identity_and_keeps_empty_levels() {
     let id_k = kv(|p, _| p);
     let id_v = kv(|_, v| v);
     let n = holds(int_maps(2), |m| {
         (reindex(ints(m), id_k.clone(), id_v.clone()), ints(m))
     });
     assert!(n >= 1_800);
-    // The nonempty-level condition has no counterexample among kernel values: a key over
-    // an empty level has no keypath, so a value never holds one (sec:values_morphisms). It
-    // constrains a guaranteed domain, which may claim a key whose level turns out empty;
-    // the `card` facts that discharge it are checked at steps L1.24 and L3.6.
+    // A key over an empty level is a keypath that ends early (sec:kernel, reference semantics
+    // (d)): the identity carries it, so `east` survives and the table differs from the one
+    // without it.
     let warehouses = |east: bool| {
         let mut rows = vec![(
             Value::str("west"),
@@ -86,9 +85,27 @@ fn law_01_identity_reindex_is_the_identity_on_levels_that_are_not_empty() {
         if east {
             rows.push((Value::str("east"), Value::Family(Family::new())));
         }
-        eval(&family(rows)).unwrap()
+        family(rows)
     };
-    assert_eq!(warehouses(true), warehouses(false));
+    assert_ne!(
+        eval(&warehouses(true)).unwrap(),
+        eval(&warehouses(false)).unwrap()
+    );
+    let same = reindex(warehouses(true), id_k.clone(), id_v.clone());
+    assert_eq!(eval(&same).unwrap(), eval(&warehouses(true)).unwrap());
+    // The side condition of laws 1 and 7 for a factor that moves keys between levels: a
+    // transpose has nowhere to put `east`, whose keypath binds no inner key, so a transpose
+    // and its inverse drop it (sec:remap_law).
+    let swap = kv(|p, _| path(vec![key(p.clone(), 1), key(p, 0)]));
+    let there_and_back = reindex(
+        reindex(warehouses(true), swap.clone(), id_v.clone()),
+        swap,
+        id_v,
+    );
+    assert_eq!(
+        eval(&there_and_back).unwrap(),
+        eval(&warehouses(false)).unwrap()
+    );
 }
 
 // Law 2: a discard moves below a reindex as the composed predicate.

@@ -600,7 +600,7 @@ fn steps(p: &UpdatePath) -> Vec<Term> {
 }
 
 /// Whether every key step of `p` is present in `r`; a field is present while its map is
-/// nonempty, since an empty level drops its key.
+/// nonempty, since `record` writes no leaf for an empty map.
 fn present(r: &Record, p: &UpdatePath) -> bool {
     let m = if p.0 == "price" { &r.0 } else { &r.1 };
     !m.is_empty() && p.1.is_none_or(|k| m.iter().any(|e| e.0 == k))
