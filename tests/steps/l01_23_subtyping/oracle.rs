@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Type, Universe, Verdict};
 use zed_kernel::{Family, Value};
 use zed_tests::instances::Rng;
@@ -308,5 +309,343 @@ fn verdicts_agree_with_the_oracle_in_any_order() {
             Verdict::Inhabited => assert!(!b.subtype(&a), "{b} <: {a}"),
             Verdict::Refused(_) => {}
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The two routes of `subtype_verdict` (plan item VERDICT-route)
+// ---------------------------------------------------------------------------------------------
+
+/// How `a.subtype_verdict(b)` and `(a - b).verdict()` compare on one pair, given the exact
+/// answer: the first route may add the simulation's proof only where the search refuses.
+#[derive(Default, Debug)]
+struct Routes {
+    /// Pairs whose two verdicts are the same.
+    same: usize,
+    /// Pairs `subtype_verdict` calls `Empty` and the search refuses.
+    decided_over_refusal: usize,
+    /// Pairs both refuse.
+    refused: usize,
+}
+
+impl Routes {
+    /// Records one pair, and returns whether only the simulation decided it; panics on a verdict
+    /// against `holds` (whether `a <: b`) or on two verdicts that differ in any other way.
+    fn record(&mut self, a: &Type, b: &Type, holds: bool) -> bool {
+        Type::forget_emptiness();
+        let first = a.subtype_verdict(b);
+        Type::forget_emptiness();
+        let second = (a - b).verdict();
+        for v in [&first, &second] {
+            match v {
+                Verdict::Empty => assert!(holds, "{a} <: {b} fails, and a verdict says it holds"),
+                Verdict::Inhabited => assert!(!holds, "{a} <: {b} holds, and a verdict says not"),
+                Verdict::Refused(_) => {}
+            }
+        }
+        match (&first, &second) {
+            (Verdict::Empty, Verdict::Refused(_)) => {
+                self.decided_over_refusal += 1;
+                return true;
+            }
+            (Verdict::Refused(_), Verdict::Refused(_)) => self.refused += 1,
+            (x, y) if x == y => self.same += 1,
+            _ => panic!("{a} <: {b}: subtype_verdict {first:?}, (a - b).verdict() {second:?}"),
+        }
+        false
+    }
+}
+
+#[test]
+fn the_two_routes_agree_on_boolean_types() {
+    // The pairs of `subtyping_agrees_with_the_oracle` and `deep_combinations_are_decided_exactly`,
+    // each compared both ways.
+    let reps = reps();
+    let mut r = Rng::new(5);
+    let mut routes = Routes::default();
+    let sub = |a: &E, b: &E| reps.iter().all(|v| !holds(a, v) || holds(b, v));
+    for i in 0..3000 {
+        let (a, b) = if i % 2 == 0 {
+            (random(&mut r), random(&mut r))
+        } else {
+            (deep(&mut r), deep(&mut r))
+        };
+        let a = match r.below(2) {
+            0 => E::And(Box::new(a), Box::new(b.clone())),
+            _ => a,
+        };
+        let (ta, tb) = (build(&a), build(&b));
+        routes.record(&ta, &tb, sub(&a, &b));
+        routes.record(&tb, &ta, sub(&b, &a));
+    }
+    println!("boolean pairs: {routes:?}");
+    assert!(routes.same > 5000, "{routes:?}");
+}
+
+/// The generator of the cross-review's random recursive systems (wt/xv/Q1Q7/scripts/x_tail.rs,
+/// `rs`), kept bit for bit so that its recorded cases are the same systems here.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self, n: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(2862933555777941757)
+            .wrapping_add(3037000493);
+        ((self.0 >> 33) % n as u64) as usize
+    }
+}
+
+/// One alternative of a definition: `#nil`, `#stop`, `#cons(h, X_j)`, `#cons(h, X_i \ X_j)` or
+/// `(X_i, X_j)`, with `h` a set of heads given as a mask.
+#[derive(Clone, Copy, Debug)]
+enum Alt {
+    Nil,
+    Stop,
+    Cons(u8, usize),
+    ConsDiff(u8, usize, usize),
+    Pair(usize, usize),
+}
+
+/// The heads a value can tell apart: 0, 1 and 2, another integer, and a string.
+const HEADS: usize = 5;
+
+fn head_value(h: usize) -> Value {
+    match h {
+        0..=2 => Value::Int(h as i64),
+        3 => Value::Int(99),
+        _ => Value::str("s"),
+    }
+}
+
+fn head_type(m: u8) -> Type {
+    if m & 31 == 31 {
+        return Type::top();
+    }
+    if m & 15 == 15 {
+        return Type::int();
+    }
+    let mut t = Type::empty();
+    for h in 0..3 {
+        if m >> h & 1 == 1 {
+            t = &t | &Type::lit(&Value::Int(h)).unwrap();
+        }
+    }
+    if m >> 4 & 1 == 1 {
+        t = &t | &Type::string();
+    }
+    t
+}
+
+fn head_mask(g: &mut Lcg) -> u8 {
+    match g.next(6) {
+        0 => 15,
+        1 => 31,
+        2 => 1,
+        3 => 2,
+        4 => 3,
+        _ => 5,
+    }
+}
+
+/// Whether a value with head `h` and tail of membership vector `tail`, or a pair of values of
+/// vectors `pair`, is in `a`.
+fn alt_holds(a: &Alt, h: Option<usize>, tail: Option<u32>, pair: Option<(u32, u32)>) -> bool {
+    match (a, h, tail, pair) {
+        (Alt::Cons(m, j), Some(h), Some(t), _) => m >> h & 1 == 1 && t >> j & 1 == 1,
+        (Alt::ConsDiff(m, i, j), Some(h), Some(t), _) => {
+            m >> h & 1 == 1 && t >> i & 1 == 1 && t >> j & 1 == 0
+        }
+        (Alt::Pair(i, j), _, _, Some((x, y))) => x >> i & 1 == 1 && y >> j & 1 == 1,
+        _ => false,
+    }
+}
+
+/// Every membership vector a finite value has, with one such value, found by closure from
+/// the leaves; the system has at most five definitions, so at most 32 vectors.
+fn reachable(eqs: &[Vec<Alt>]) -> BTreeMap<u32, Value> {
+    let vec_of = |p: &dyn Fn(&Alt) -> bool| -> u32 {
+        (0..eqs.len()).fold(0, |v, i| v | ((eqs[i].iter().any(p) as u32) << i))
+    };
+    let mut seen = BTreeMap::new();
+    seen.insert(vec_of(&|a| matches!(a, Alt::Nil)), Value::atom("nil"));
+    seen.entry(vec_of(&|a| matches!(a, Alt::Stop)))
+        .or_insert(Value::atom("stop"));
+    seen.entry(0).or_insert(Value::Int(7));
+    loop {
+        let cur: Vec<(u32, Value)> = seen.iter().map(|(a, b)| (*a, b.clone())).collect();
+        let mut grew = false;
+        for (v, val) in &cur {
+            for h in 0..HEADS {
+                let u = vec_of(&|a| alt_holds(a, Some(h), Some(*v), None));
+                seen.entry(u).or_insert_with(|| {
+                    grew = true;
+                    Value::atom_with("cons", vec![head_value(h), val.clone()])
+                });
+            }
+            for (w, wal) in &cur {
+                let u = vec_of(&|a| alt_holds(a, None, None, Some((*v, *w))));
+                seen.entry(u).or_insert_with(|| {
+                    grew = true;
+                    Value::Tuple(vec![val.clone(), wal.clone()].into())
+                });
+            }
+        }
+        if !grew {
+            return seen;
+        }
+    }
+}
+
+fn system(g: &mut Lcg) -> Option<(Vec<Vec<Alt>>, Vec<Type>)> {
+    let n = 2 + g.next(4);
+    let eqs: Vec<Vec<Alt>> = (0..n)
+        .map(|_| {
+            let k = 1 + g.next(3);
+            (0..k)
+                .map(|_| match g.next(10) {
+                    0 | 1 => Alt::Nil,
+                    2 => Alt::Stop,
+                    3..=6 => Alt::Cons(head_mask(g), g.next(n)),
+                    7 => Alt::ConsDiff(head_mask(g), g.next(n), g.next(n)),
+                    _ => Alt::Pair(g.next(n), g.next(n)),
+                })
+                .collect()
+        })
+        .collect();
+    let r = |i: usize| Expr::Ref(i, vec![]);
+    let defs = eqs
+        .iter()
+        .enumerate()
+        .map(|(i, alts)| Def {
+            name: format!("X{i}"),
+            params: vec![],
+            body: Expr::Union(
+                alts.iter()
+                    .map(|a| match *a {
+                        Alt::Nil => Expr::Type(Type::atom("nil")),
+                        Alt::Stop => Expr::Type(Type::atom("stop")),
+                        Alt::Cons(m, j) => {
+                            Expr::Atom("cons".into(), vec![Expr::Type(head_type(m)), r(j)])
+                        }
+                        Alt::ConsDiff(m, x, y) => Expr::Atom(
+                            "cons".into(),
+                            vec![
+                                Expr::Type(head_type(m)),
+                                Expr::Diff(Box::new(r(x)), Box::new(r(y))),
+                            ],
+                        ),
+                        Alt::Pair(x, y) => Expr::Tuple(vec![r(x), r(y)]),
+                    })
+                    .collect(),
+            ),
+        })
+        .collect();
+    let group = Group::new(defs).ok()?;
+    Some((eqs, group.instance(vec![])))
+}
+
+/// A Boolean term over the definitions of a system.
+enum F {
+    L(usize),
+    Or(Box<F>, Box<F>),
+    And(Box<F>, Box<F>),
+    Not(Box<F>),
+}
+
+fn term(g: &mut Lcg, leaves: usize, d: usize) -> F {
+    if d == 0 || g.next(4) == 0 {
+        return F::L(g.next(leaves));
+    }
+    let (a, b) = (
+        Box::new(term(g, leaves, d - 1)),
+        Box::new(term(g, leaves, d - 1)),
+    );
+    match g.next(3) {
+        0 => F::Or(a, b),
+        1 => F::And(a, b),
+        _ => F::Not(a),
+    }
+}
+
+fn term_type(f: &F, ts: &[Type]) -> Type {
+    match f {
+        F::L(i) => ts[*i].clone(),
+        F::Or(a, b) => &term_type(a, ts) | &term_type(b, ts),
+        F::And(a, b) => &term_type(a, ts) & &term_type(b, ts),
+        F::Not(a) => !&term_type(a, ts),
+    }
+}
+
+fn term_holds(f: &F, v: u32) -> bool {
+    match f {
+        F::L(i) => v >> i & 1 == 1,
+        F::Or(a, b) => term_holds(a, v) || term_holds(b, v),
+        F::And(a, b) => term_holds(a, v) && term_holds(b, v),
+        F::Not(a) => !term_holds(a, v),
+    }
+}
+
+/// The pair `a`, `b` of system `idx` of `seed`, with a value of `a` outside `b` when there is
+/// one; `None` when the group is rejected.
+fn recursive_pair(seed: u64, idx: usize) -> Option<(Type, Type, Option<Value>)> {
+    let mut g = Lcg((seed << 32) ^ (idx as u64 * 2 + 1));
+    for _ in 0..4 {
+        g.next(2);
+    }
+    let (eqs, ts) = system(&mut g)?;
+    let (fa, fb) = (term(&mut g, ts.len(), 3), term(&mut g, ts.len(), 3));
+    let witness = reachable(&eqs)
+        .into_iter()
+        .find(|(v, _)| term_holds(&fa, *v) && !term_holds(&fb, *v))
+        .map(|(_, w)| w);
+    Some((term_type(&fa, &ts), term_type(&fb, &ts), witness))
+}
+
+/// The pairs of the cross-review's random systems (wt/xv/Q1Q7/REPORT.md, check 4) on which
+/// `subtype_verdict` was `Empty` and `(a - b).verdict()` refused, `a <: b` holding: seed 1,
+/// systems 578, 1837 and 3099.
+const DECIDED_BY_THE_SIMULATION: [(u64, usize); 3] = [(1, 578), (1, 1837), (1, 3099)];
+
+#[test]
+fn the_two_routes_agree_on_recursive_systems() {
+    // Every system of seeds 1 and 2 the cross-review measured: no route says `Empty` where
+    // the other says `Inhabited`, and none is wrong against the closure oracle. The
+    // simulation decides a pair only where the search refuses it.
+    let mut routes = Routes::default();
+    let mut decided = Vec::new();
+    for seed in [1, 2] {
+        for idx in 0..4000 {
+            let Some((a, b, witness)) = recursive_pair(seed, idx) else {
+                continue;
+            };
+            if let Some(w) = &witness {
+                assert!((&a - &b).contains(w), "{w} in {a} \\ {b}");
+            }
+            if routes.record(&a, &b, witness.is_none()) {
+                decided.push((seed, idx));
+            }
+        }
+    }
+    println!("recursive systems: {routes:?}, decided by the simulation alone: {decided:?}");
+    assert!(routes.same > 3900 && routes.refused < 100, "{routes:?}");
+}
+
+#[test]
+fn the_recorded_cases_are_decided_by_the_simulation() {
+    // On each, `a <: b` holds; the simulation proves it, and the search never says otherwise.
+    for (seed, idx) in DECIDED_BY_THE_SIMULATION {
+        let (a, b, witness) = recursive_pair(seed, idx).expect("the group is accepted");
+        assert!(witness.is_none(), "system {idx}: {a} <: {b} fails");
+        Type::forget_emptiness();
+        assert_eq!(
+            a.subtype_verdict(&b),
+            Verdict::Empty,
+            "system {idx}: {a} <: {b}"
+        );
+        assert!(a.subtype(&b), "system {idx}: {a} <: {b}");
+        Type::forget_emptiness();
+        let v = (&a - &b).verdict();
+        assert!(v != Verdict::Inhabited, "system {idx}: {a} \\ {b} is {v:?}");
     }
 }

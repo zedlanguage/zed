@@ -482,6 +482,13 @@ impl Type {
 
     /// The outcome of `self <: other`: `Empty` when it holds, `Inhabited` when a value of `self`
     /// outside `other` was built.
+    ///
+    /// Two routes give it: first the simulation, a proof of `<:` on lists of rows, then the
+    /// verdict of `self - other`. Both are sound, so they never disagree where the search
+    /// decides; this verdict is `(self - other).verdict()` except that it may be `Empty` where
+    /// that one is refused: 3 of 3,999 random recursive pairs (tests `the_two_routes_agree_on_*`
+    /// and `the_recorded_cases_are_decided_by_the_simulation` in `l01_23_subtyping::oracle`;
+    /// COMPLEXITY.md K37).
     pub fn subtype_verdict(&self, other: &Type) -> Verdict {
         if Simulation::default().holds(self, other) {
             Verdict::Empty
