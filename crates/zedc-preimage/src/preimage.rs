@@ -1211,6 +1211,116 @@ impl Defined {
     }
 }
 
+/// The divisors that the constraints of a chain's operands read so far show are not 0, as
+/// [`Defined::shown_nonzero`] finds them, kept by their variable part, so that a constraint
+/// costs O(1) and a divisor's question O(1) whatever the number of constraints before it
+/// ([`Walk::defined_chain`]).
+#[derive(Default)]
+struct Shown {
+    /// For each variable part, the least constant from which up a divisor with that part is
+    /// shown not 0.
+    up: HashMap<BTreeMap<presburger::Atom, Int>, Int>,
+    /// For each variable part, the greatest constant from which down one is.
+    down: HashMap<BTreeMap<presburger::Atom, Int>, Int>,
+    /// The divisors shown not 0 one by one, by `d != 0` or `-d != 0`.
+    exact: HashSet<Lin>,
+}
+
+impl Shown {
+    /// The divisors `t + k` with `k >= 1` are shown not 0.
+    fn above(&mut self, t: &Lin) {
+        let from = &t.constant + &Int::from(1);
+        let e = self
+            .up
+            .entry(t.terms.clone())
+            .or_insert_with(|| from.clone());
+        if from < *e {
+            *e = from;
+        }
+    }
+
+    /// The divisors `t - k` with `k >= 1` are shown not 0.
+    fn below(&mut self, t: &Lin) {
+        let to = &t.constant - &Int::from(1);
+        let e = self
+            .down
+            .entry(t.terms.clone())
+            .or_insert_with(|| to.clone());
+        if to > *e {
+            *e = to;
+        }
+    }
+
+    /// The divisors that the constraint `f`, a part of a conjunction, shows are not 0, the
+    /// forms of [`Defined::shown_nonzero`].
+    fn add(&mut self, f: &Formula) {
+        use presburger::Rel;
+        match f {
+            Formula::Not(g) => match &**g {
+                Formula::Con(c) if c.rel == Rel::Eq => {
+                    self.exact.insert(c.lin.clone());
+                    self.exact.insert(c.lin.times(-1));
+                }
+                // `t < 0`, which is `-t - 1 >= 0`.
+                Formula::Con(c) => {
+                    let t = c.lin.times(-1).minus(&Lin::constant(1));
+                    self.add(&Formula::Con(Con::ge(&t, &Lin::constant(0))));
+                }
+                _ => {}
+            },
+            Formula::Con(c) if c.rel == Rel::Ge => {
+                self.above(&c.lin);
+                self.below(&c.lin.times(-1));
+            }
+            Formula::Con(c) => {
+                for t in [c.lin.clone(), c.lin.times(-1)] {
+                    self.above(&t);
+                    self.below(&t);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The parts of the guard `g`: each part of a conjunction when `parts` holds, as
+    /// [`Defined::arm`] reads them, and `g` itself otherwise.
+    fn add_guard(&mut self, g: &Formula, parts: bool) {
+        match g {
+            Formula::And(gs) if parts => gs.iter().for_each(|p| self.add(p)),
+            _ => self.add(g),
+        }
+    }
+
+    /// Whether `d` is shown not 0.
+    fn holds(&self, d: &Lin) -> bool {
+        self.exact.contains(d)
+            || self.up.get(&d.terms).is_some_and(|k| d.constant >= *k)
+            || self.down.get(&d.terms).is_some_and(|k| d.constant <= *k)
+    }
+
+    /// The condition the operand whose condition is `d` adds where it is read, with the
+    /// divisors `known` not 0 there: `true` when `d`'s `rest` is `true` and each of its
+    /// divisors is in `known` or shown not 0, and `d`'s own formula otherwise, as
+    /// [`Defined::arm`] makes it. O(1) when `known` holds `d`'s divisors, and otherwise the
+    /// union of the two and a question for each of `d`'s divisors.
+    fn arm(&self, d: &Defined, known: Set, sets: &mut DivisorSets) -> Formula {
+        if d.is_top() || !is_true(&d.rest) {
+            return d.formula();
+        }
+        if sets.union(known, d.divisors) == known {
+            return Formula::top();
+        }
+        let sets: &DivisorSets = sets;
+        let mut all = true;
+        sets.each(d.divisors, &mut |x| {
+            all &= sets.contains(known, x) || self.holds(x)
+        });
+        match all {
+            true => Formula::top(),
+            false => d.formula(),
+        }
+    }
+}
 /// Numbers for formulas by their parts, so that two formulas made apart but alike have one
 /// number: each node numbered by its kind and its parts' numbers, and each shared part once,
 /// by its id ([`presburger::Id`]). A key of [`Walk::shared_call_key`] holds the number of each
@@ -7198,6 +7308,8 @@ impl<'m, 't> Walk<'m, 't> {
                 }
                 Callee::Lam(..) => None,
             },
+            Node::If(..) if self.and_if(t).is_some() => self.defined_chain(Prim::And, t, env).await,
+            Node::If(..) if self.or_if(t).is_some() => self.defined_chain(Prim::Or, t, env).await,
             // The guard's condition, and the condition of the arm it takes, where the guard
             // does not show it already ([`Defined::arm`]): `if n != 0 { x mod n } else { 0 }`
             // never fails, so that the disjunction of the two arms is `true` and needs no
@@ -7974,6 +8086,100 @@ impl<'m, 't> Walk<'m, 't> {
             }
             _ => None,
         }
+    }
+
+    /// The condition of the chain of `&&` (`p` is `And`) or `||` that the `if` `head` heads,
+    /// as the elaborator writes them ([`Walk::and_if`], [`Walk::or_if`]): its operands
+    /// `o1, ..., ok` in order, each with its condition `Di` and its formula `Ci`. Unlike
+    /// [`Walk::chain`], the walk also reads through a part the program shares (a prefix of the
+    /// chain bound to a name, or a body cloned while its function stays bound): a condition
+    /// is a fact about the values, the same wherever the part is written, and a part left
+    /// whole would bring back the negation of its whole conjunction. The walk keeps a visited
+    /// set, so a part met twice is read once, at its first place: a `&&` or `||` of an operand
+    /// with itself adds no condition. A `&&` reads `o(i+1)` only where `oi` is `true`,
+    /// so its condition is `D1 ∧ ((C1 ∧ (D2 ∧ ((C2 ∧ ...) ∨ ¬C2))) ∨ ¬C1)`, made from the last
+    /// operand back, and a `||` reads it only where `oi` is `false`, with `Ci` and `¬Ci`
+    /// swapped. Each `Di` past the first is `true` where the divisors of the operands before it
+    /// and the parts of their guards show its divisors are not 0 ([`Shown::arm`]), as
+    /// [`Defined::arm`] makes it at one `if`. The condition is O(k) nodes, each `Ci` shared.
+    /// Read as nested `if`s, the condition of a chain of k `&&` written from the left held the
+    /// negation of each prefix's conjunction, Θ(k²) constraints once the negations were pushed
+    /// in, and the solver's time grew as k³ (PRES-mod-conjuncts); read as nested `if`s from the
+    /// right, it was already this one.
+    // Complexity tradeoff: an operand whose divisors are not all among those of the operands
+    // before it costs a question for each of its divisors, O(m log n), so a chain whose
+    // operands each read a large shared part with a new divisor costs the part's divisors at
+    // each. No point is given up. Trigger: a named term of many quotients read in each operand
+    // beside a divisor of its own. Test
+    // `l01_38_presburger::ladder::a_chain_of_remainders_by_terms_scales`. COMPLEXITY.md row
+    // PRES-mod-conjuncts. A complete solution keeps the divisors not yet shown as a set
+    // difference, met once each.
+    async fn defined_chain(&'m self, p: Prim, head: Tid, env: Eid) -> Option<Defined> {
+        let inner = |u: Tid| match p {
+            Prim::And => self.and_if(u).map(|(g, a, _)| [g, a]),
+            _ => self.or_if(u).map(|(g, _, b)| [g, b]),
+        };
+        let mut ops = Vec::new();
+        let mut todo = vec![head];
+        let mut seen = HashSet::new();
+        while let Some(u) = todo.pop() {
+            if !seen.insert(u) {
+                continue;
+            }
+            if let Some([l, r]) = inner(u)
+                && (u == head || self.constant(u, env).await.is_none())
+            {
+                todo.extend([r, l]);
+                continue;
+            }
+            ops.push(u);
+        }
+        let mut ds = Vec::with_capacity(ops.len());
+        let mut cs = Vec::with_capacity(ops.len());
+        for &u in &ops {
+            ds.push(self.defined(u, env).await?);
+            cs.push(self.formula(u, env).await?);
+        }
+        // Where each operand past the first is read, as the guard of its `if` shows it.
+        let guard = |i: usize| match p {
+            Prim::And => cs[i].clone(),
+            _ => Formula::negate(cs[i].clone()),
+        };
+        let mut shown = Shown::default();
+        let mut known = ds[0].divisors;
+        let mut arms = Vec::with_capacity(ops.len());
+        for i in 1..ops.len() {
+            let parts = p != Prim::And || !self.whole(ops[i - 1], env);
+            shown.add_guard(&guard(i - 1), parts);
+            arms.push(self.tr(|tr| shown.arm(&ds[i], known, &mut tr.sets)));
+            known = self.tr(|tr| tr.sets.union(known, ds[i].divisors));
+        }
+        let mut tail = Formula::top();
+        for i in (0..ops.len() - 1).rev() {
+            let next = match (arms.pop().expect("an arm"), is_true(&tail)) {
+                (a, true) => a,
+                (a, false) if is_true(&a) => tail,
+                (a, false) => keep_all(vec![a, tail]),
+            };
+            if is_true(&next) {
+                tail = next;
+                continue;
+            }
+            let (c, not_c) = (cs[i].clone(), Formula::negate(cs[i].clone()));
+            tail = match p {
+                Prim::And => Formula::or(vec![keep_all(vec![c, next]), not_c]),
+                _ => Formula::or(vec![c, keep_all(vec![not_c, next])]),
+            };
+        }
+        let d0 = ds.swap_remove(0);
+        if is_true(&tail) {
+            return Some(d0);
+        }
+        let rest = Defined {
+            rest: tail,
+            ..Defined::top()
+        };
+        Some(self.tr(|tr| d0.meet(rest, &mut tr.sets)))
     }
 
     /// The formula of a `&&` (`p` is `And`) or a `||` whose term is `head`: the operands of

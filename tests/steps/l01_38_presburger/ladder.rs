@@ -419,11 +419,12 @@ fn guarded_divisors(k: usize) -> (Relation, Relation) {
 fn the_condition_that_no_operation_fails_scales() {
     // One condition `n + i != 0` for each of k divisors, each made once, and k divisors each
     // shown not 0 by the guard of its `||`, so that no condition is left; the translation is
-    // timed at k and 8k. The entailment is checked at k alone: a goal of k conjuncts, each
-    // reading a remainder by a term, costs the Presburger layer more than O(k log k) bytes
-    // with no condition at all (`x mod (n + i) >= 0` for each i, 54 times the bytes at 8k,
-    // measured 2026-11-08), and the conditions are such conjuncts too. COMPLEXITY.md row
-    // RUNG2-definedness.
+    // timed at k and 8k. The entailment is checked at k alone: the goal of guarded remainders
+    // costs the Presburger layer 130 times the work at 8k (measured 2026-11-08), each of its
+    // k negated conjuncts refuted only through the three cases of its remainder, one whole
+    // settling per conjunct (the Complexity tradeoff at `probe`). The unguarded chain and the
+    // sum scale (`a_chain_of_remainders_by_terms_scales`). COMPLEXITY.md rows
+    // RUNG2-definedness and PRES-mod-conjuncts.
     let n = 16;
     for (p, g) in [divisors(n), guarded_divisors(n)] {
         let e = entails(&p, &g);
@@ -435,6 +436,55 @@ fn the_condition_that_no_operation_fails_scales() {
         });
         scaling::check_order("the definedness of k guarded remainders", n, 1, |k| {
             guarded_divisors(k);
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(8 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
+/// The premise `premise` and the goal `x mod (n + 0) >= 0 && ...` over `k` divisors, a chain
+/// of `&&` written from the left, translated.
+fn remainder_chain(premise: &str, k: usize) -> (Relation, Relation) {
+    let head = "ok(x, n)";
+    let goal: Vec<String> = (0..k).map(|i| format!("x mod (n + {i}) >= 0")).collect();
+    let (ps, p) = function(&format!("{head} = {premise};"));
+    let (_, g) = function(&format!("{head} = {};", goal.join(" && ")));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+#[test]
+fn a_chain_of_remainders_by_terms_scales() {
+    // PRES-mod-conjuncts: a `&&` of k conjuncts written from the left, each reading a
+    // remainder by a term of its own. Read as nested `if`s, its condition held the negation of
+    // each prefix, Θ(k²) constraints, and each remainder's definition was repaired by reading
+    // all k definitions that share `n` and `x`: from k = 16 to 128, 28 times the work under
+    // the premise `true` and 22 times the work under `n >= 1` after the first fix alone
+    // (measured 2026-11-08; 2.04G instructions at k = 16 before either). The entailment is
+    // timed at k and 8k. Under `n >= 1` it is proved; under `true` it is refuted at a
+    // divisor 0. COMPLEXITY.md row PRES-mod-conjuncts.
+    let n = 16;
+    let cases = [
+        ("proved", "a chain of remainders by terms", "n >= 1"),
+        ("refuted", "a chain of remainders that may fail", "true"),
+    ];
+    for (verdict, _, premise) in cases {
+        let (p, g) = remainder_chain(premise, n);
+        assert_eq!(kind(&entails(&p, &g)), verdict, "{premise}");
+    }
+    let measure = move || {
+        for (verdict, what, premise) in cases {
+            let inputs = scaling::inputs(n, |k| remainder_chain(premise, k));
+            scaling::check_order(what, n, 1, |k| {
+                let (p, g) = &inputs[&k];
+                assert_eq!(kind(&entails(p, g)), verdict);
+            });
+        }
+        let inputs = scaling::inputs(n, divisors);
+        scaling::check_order("a sum of remainders by terms", n, 1, |k| {
+            let (p, g) = &inputs[&k];
+            assert_eq!(kind(&entails(p, g)), "proved");
         });
     };
     let thread = std::thread::Builder::new().stack_size(8 << 20);

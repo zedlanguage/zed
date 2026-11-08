@@ -1586,6 +1586,40 @@ fn specialize_con(c: &Con, free: &BTreeSet<Atom>, model: &Model) -> Con {
         rel: c.rel,
     }
 }
+/// The atoms of `extra` that no constraint of two or more atoms taken so far reads, re-solved
+/// with every other atom held at `model`: with `extra` specialized there and those atoms'
+/// bounds. A point found is a point of the constraints taken with `extra`, since none of
+/// them reads a re-solved atom but through its bounds. O(`extra` log n): on `k` disjunctions
+/// each of whose disjuncts brings atoms of its own beside one read by all (a remainder by a
+/// term `x mod (n + i)` for each `i`, PRES-mod-conjuncts), [`local_repair`] costs the `k`
+/// constraints that read the shared atom for each disjunct, O(k²) in all.
+fn own_repair(near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
+    let own: BTreeSet<Atom> = (extra.iter())
+        .flat_map(|c| c.lin.terms.keys())
+        .filter(|a| !near.by_atom.contains_key(*a))
+        .cloned()
+        .collect();
+    if own.is_empty() {
+        return None;
+    }
+    let mut local = Vec::with_capacity(extra.len());
+    for c in extra {
+        match c.lin.terms.keys().any(|a| own.contains(a)) {
+            true => local.push(specialize_con(c, &own, model)),
+            false if c.holds(model) => {}
+            false => return None,
+        }
+    }
+    for a in &own {
+        near.bounds(a, &mut local);
+    }
+    let mut m = solve(&local, true).ok()??;
+    for a in own {
+        m.entry(a).or_insert(Int::ZERO);
+    }
+    Some(m)
+}
+
 /// The variables of `extra` re-solved with their neighbors fixed at `model`: with `extra`, the
 /// constraints taken so far that link a variable of `extra` to others, specialized at `model`,
 /// and each variable's bounds.
@@ -3840,7 +3874,18 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         // only them keeps a nest from being read once for each level above it.
                         if let Some(pt) = &point
                             && (d.cons.iter().all(|c| c.holds(pt))
-                                || local_repair(&base.cons, &near, pt, &d.cons).is_some())
+                                || own_repair(&near, pt, &d.cons).is_some())
+                        {
+                            return true;
+                        }
+                        // A bound of the disjunct that the base's bounds leave no value, and only
+                        // then the repair and the refutation that read the constraints linking
+                        // its atoms to others, each exact, so the order changes no answer.
+                        if near.refutes(&d.cons) {
+                            return false;
+                        }
+                        if let Some(pt) = &point
+                            && local_repair(&base.cons, &near, pt, &d.cons).is_some()
                         {
                             return true;
                         }
@@ -3874,7 +3919,10 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         let d = live.pop().expect("one");
                         let repaired = match &point {
                             Some(pt) if d.cons.iter().all(|c| c.holds(pt)) => None,
-                            Some(pt) => Some(local_repair(&base.cons, &near, pt, &d.cons)),
+                            Some(pt) => Some(
+                                own_repair(&near, pt, &d.cons)
+                                    .or_else(|| local_repair(&base.cons, &near, pt, &d.cons)),
+                            ),
                             None => None,
                         };
                         take(&d.cons, &mut base, &mut near);

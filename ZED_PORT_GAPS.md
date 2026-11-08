@@ -2751,3 +2751,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `Option::is_some_and` on a lookup (`HashMap::get`, slice `get`) | `Sig::int_params`, `front::linear_questions` | None | a `match` on the lookup, the missing case `false` |
 | A struct update, `Unit { int_params, ..Unit::default() }` | `elab::lower` | None | a record built with the named field and the others from the default |
 | `return` from the closure passed to `work::stage`, to skip a function | `front::linear_questions` | None | an `if` around the closure's body |
+
+## Entries from PRES-mod-conjuncts (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashMap<BTreeMap<Atom, Int>, Int>` keyed by a term's variable part, updated in place through `entry().or_insert_with` to keep the nearest bound shown | `preimage::Shown::{above, below}` | Mutation | A map threaded through the fold over the chain's operands, each step returning the updated map |
+| A closure capturing `self` and `p` that returns `Option<[Tid; 2]>` from a `match`, and a work list with a `HashSet` of visited nodes popped in a `while let` | `Walk::defined_chain` | Mutation | A recursive descent over the chain returning the operands and the visited set |
+| `solve(..).ok()??`, two `?` on a `Result<Option<_>>` | `presburger::own_repair` | None | A `match` on the result |
