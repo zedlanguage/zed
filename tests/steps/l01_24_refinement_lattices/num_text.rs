@@ -117,7 +117,10 @@ fn reading_a_long_decimal_end_scales() {
 /// An end of 20,000 and of 160,000 digits written in decimal, the value built before timing.
 /// num-bigint writes a number of 32 words or more by halves, dividing by the square powers of
 /// its base, and divides by Burnikel and Ziegler's recursion above 64 words: O(M(n) log n),
-/// with num-bigint's product M (Toom-3 at these sizes, about n^1.46).
+/// with num-bigint's product M (Toom-3 at these sizes, about n^1.46). Measured, it grows about
+/// 2.85 times per doubling at every size from 10,000 to 1,280,000 digits, 23.6 times here, close
+/// to the limit; built without num-bigint as one codegen unit it took 24.8 times (COMPLEXITY.md
+/// K81, which also records the open item for the kernel's printer).
 #[test]
 fn writing_a_long_decimal_end_scales() {
     let ends = scaling::inputs(20_000, |n| {

@@ -90,6 +90,15 @@ debug = false
 # Turning it off also made a one-line zed-kernel rebuild faster and tests no slower (measured).
 lto = "off"
 
+# num-bigint as one codegen unit (L01_24-decimal-scale, COMPLEXITY.md K81). Without ThinLTO its
+# loops call small iterator functions placed in other units (`Zip::new` in `add2` and `sub2`), which
+# then are not inlined: writing 160,000 digits took 16.7% more instructions and 20,000 digits 10.6%
+# more, and `l01_24 writing_a_long_decimal_end_scales` went from 23.5 to 24.8 times (limit 24).
+# One unit inlines them as ThinLTO did: 7.86 M and 185.5 M instructions, 23.6 times. num-bigint is
+# not built incrementally, so this has no thin-lto-past-keys.bin.
+[profile.dev.package.num-bigint]
+codegen-units = 1
+
 # For perf and gdb only: cargo test --profile profiling. Delete build/cargo/profiling afterward.
 [profile.profiling]
 inherits = "dev"
