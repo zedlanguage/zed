@@ -1139,7 +1139,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `std::ptr::eq` on two forms as a shortcut to `Equal` before comparing them structurally | `impl Ord for VertexKey` | Identity (gap 1) | The structural comparison alone, or the runtime's `==` shortcut on shared values; the address comparison before it already leaves only nodes of one binding and one address |
+| `std::ptr::eq` on two forms, and on two keypaths, as a shortcut to `Equal` before comparing them structurally (`same_or_cmp`) | `impl Ord for VertexKey` | Identity (gap 1) | The structural comparison alone, or the runtime's `==` shortcut on shared values; the address comparison before it already leaves only nodes of one binding and one address, and the form comparison only cells of one node |
 | `Ord` written by hand for a struct of three fields, so that the form, a type parameter, is compared last and only on a tie | `VertexKey::cmp` | None | A tuple `(name, address, form)`, which compares left to right (`zed/prelude/iteration.zed`, `solve`) |
 | A stack of `&mut Element` walked to rewrite vertex numbers in place in a nested tree | `wto::ordered_by` | Mutation | A map over the tree of elements that returns a renumbered tree, by an explicit stack or by recursion on the nesting depth |
 
