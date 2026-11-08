@@ -495,9 +495,9 @@ fn compare_by(
                  checked by check_instructions_only"
             );
         }
-        // Never 0, as [`Meter::work`] counts them.
-        let (small_bytes, large_bytes) = (small_bytes.get().max(1), large_bytes.get().max(1));
-        let bytes = large_bytes as f64 / small_bytes as f64;
+        let (small_bytes, large_bytes) = (small_bytes.get(), large_bytes.get());
+        // Never 0 in the ratio, as [`Meter::work`] counts them; the messages print the counts.
+        let bytes = large_bytes.max(1) as f64 / small_bytes.max(1) as f64;
         if measures == Measures::Both && bytes > limit {
             panic!(
                 "{what}: allocated {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes; {why}"
@@ -505,6 +505,24 @@ fn compare_by(
         }
         let ratio = large.units as f64 / small.units as f64;
         if ratio <= limit {
+            let held = match measures {
+                Measures::Both => "",
+                Measures::WorkOnly => ", not held to the limit",
+            };
+            let earlier = if seen.is_empty() {
+                String::new()
+            } else {
+                format!("; before, over the limit: {}", seen.join("; then "))
+            };
+            // Shown by libtest's --show-output or --nocapture: a pass near the limit is seen.
+            eprintln!(
+                "{what}: passed: took {} and {} {}, {ratio:.1} times the work; allocated \
+                 {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes{held}; \
+                 the limit is {limit}{earlier}",
+                small.units,
+                large.units,
+                meter.unit()
+            );
             return;
         }
         seen.push(format!(
@@ -715,6 +733,41 @@ mod tests {
     fn bytes_of_the_order_given_pass() {
         check("a list of n pushed", 10_000, linear_bytes);
         check_order("n² bytes, of order n²", 300, 2, square_of_bytes);
+    }
+
+    /// A passing check prints its measurements, so a pass near the limit is seen: this test
+    /// binary runs `bytes_of_the_order_given_pass` alone, as libtest shows a pass's output.
+    #[test]
+    fn a_passing_check_prints_its_sizes_work_bytes_and_ratios() {
+        let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+            .args([
+                "--exact",
+                "scaling::tests::bytes_of_the_order_given_pass",
+                "--show-output",
+                "--test-threads=1",
+            ])
+            .output()
+            .expect("running this test binary");
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert!(run.status.success(), "{out}");
+        assert!(out.contains("test result: ok. 1 passed"), "{out}");
+        let line = out
+            .lines()
+            .find(|l| l.starts_with("a list of n pushed: sizes 10000 and 80000: passed: took "))
+            .unwrap_or_else(|| panic!("no line of measurements in:\n{out}"));
+        let unit = Meter::new().unit();
+        for part in [
+            format!(" {unit}, "),
+            " times the work; allocated ".into(),
+            " bytes, ".into(),
+            " times the bytes; the limit is 24".into(),
+        ] {
+            assert!(line.contains(&part), "{part:?} not in {line:?}");
+        }
+        assert!(
+            out.contains("n² bytes, of order n²: sizes 300 and 2400: passed: took "),
+            "{out}"
+        );
     }
 
     #[test]
