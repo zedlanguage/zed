@@ -418,11 +418,12 @@ fn a_test_the_relation_carries_to_each_reading_names_the_path_to_it_only() {
     // `ai == n`), and then `n >= -1`, which bounds every `ai` through its relation to `n`. The
     // rejection of `popCount(ai)` names `ai >= n` and `n >= -1`. Following `n` to every test
     // that reads it, each rejection named all `k + 1` tests: 650 to 40,200 notes at `k` = 25
-    // to 200 (61.8 times for 8 times).
+    // to 200 (61.8 times for 8 times). Sizes 100 and 800: at 150 and 1200 the test took 35 s
+    // alone (item NARROW-hub-seed-edges); a quadratic still reads 64 times the work, above 24.
     for rel in ["a# >= n", "n <= a#", "a# == n", "a# >= n - 1"] {
         check_notes(
             "checking k readings related to n, under a test on n",
-            150,
+            100,
             2,
             |k| hub(k, "", rel, &|i| i),
         );
@@ -445,6 +446,39 @@ fn a_test_the_relation_carries_to_each_reading_names_the_path_to_it_in_any_order
         150,
         3,
         |k| hub(k, "m == n", "a# == m", &|i| i),
+    );
+}
+
+/// `k` tests `ai == n` under the test `n >= 0`, one level a line, then the reads
+/// `popCount(ai)` of every reading.
+fn hub_equal(k: usize) -> String {
+    let params: Vec<String> = (0..k).map(|i| format!("positional a{i}: int")).collect();
+    let reads: Vec<String> = (0..k).map(|i| format!("popCount(a{i})")).collect();
+    let mut body = reads.join(" +\n  ");
+    for i in (0..k).rev() {
+        body = format!("if a{i} == n {{\n{body}\n}} else {{ 0 }}");
+    }
+    with_main(format!(
+        "f(\npositional n: int,\n{}\n) =\nif n >= 0 {{\n{body}\n}} else {{ 0 }};\n",
+        params.join(",\n")
+    ))
+}
+
+#[test]
+fn tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each() {
+    // `k` tests `ai == n`. An equality bounds `ai` on both sides, so it is no star
+    // (`Conjuncts::star`): `n` is a hub with `2k` edges in one tree, and a name of the conjunct
+    // each test adds. `Scope::bound_pass` read every edge at each name of a test, and its search
+    // started from every such name, so it read the hub's `O(k)` edges at each of the `k` tests:
+    // on main f9ddc6f1, before item NARROW-hub-seed-edges, 37.4 times the work and 29.1 times
+    // the bytes at `k` = 150 and 1200 (limit 24); now 8.6 and 8.4 times. Only the edges of the
+    // conjunct added are read at a name whose product did not change, and the search starts only
+    // from names whose bound changed or moved.
+    check_alone(
+        "checking k tests that equate a reading to one name",
+        150,
+        1,
+        hub_equal,
     );
 }
 

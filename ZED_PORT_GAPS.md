@@ -2705,3 +2705,9 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A slice pattern with `else` (`let [live] = live[..] else { … continue }`) to require exactly one live ✗ line | `disagreements` | None | A `match` on the sequence's length |
 | A `Vec<bool>` of used changes set by index as fixtures agree, and a `HashSet` of agreed places filled in the loop | `disagreements` | Mutation | A fold over the fixtures whose accumulator holds the used changes and agreed places as sets |
+
+## Entries from NARROW-hub-seed-edges (`zedc-preimage/src/product.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The edges that can lower a seed gathered into a `Vec<Edge>`, then the least bound per seed kept in a `BTreeMap` updated in place, then the labels and the heap updated in place for each seed lowered | `Scope::bound_pass` | Mutation of growable vectors and maps (gap 11) | A fold over the edges into a map from seed to least bound, then a fold over that map that returns the labels, the names moved and the starting heap |

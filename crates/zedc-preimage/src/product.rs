@@ -723,6 +723,10 @@ struct Seeds {
     /// that went or changed with their conjuncts, and those of each conjunct removed from a
     /// tree not of difference constraints and bounds alone, with those of its block.
     names: BTreeSet<Arc<str>>,
+    /// The seeds whose products changed since the last projection, or that a block of another
+    /// tree moved in this one: the only seeds whose bounds may have moved since the bounds were
+    /// a fixed point of the edges ([`Scope::bound_pass`]).
+    changed: BTreeSet<Arc<str>>,
     /// The conjuncts added, and those of the stars that went or changed, which may now be in
     /// the forest.
     added: BTreeSet<Arc<Formula>>,
@@ -2617,6 +2621,7 @@ impl Scope {
             | DiffItem::Update { new: (n, _), .. }) = d;
             any = true;
             seeds.names.insert(n.clone());
+            seeds.changed.insert(n.clone());
             out.extend(
                 self.relation
                     .moved(n, self.lazy)
@@ -2852,6 +2857,9 @@ impl Scope {
                 if let Some(t) = blocks.tree_of_name(n) {
                     let at = fresh.entry(t).or_default();
                     at.names.insert(n.clone());
+                    if seeds.changed.contains(n) {
+                        at.changed.insert(n.clone());
+                    }
                     if seeds.unsure.contains(n) {
                         at.unsure.insert(n.clone());
                     }
@@ -2946,13 +2954,14 @@ impl Scope {
             if shortest && blocks.gaps(t) == Some(0) {
                 let mut at = fresh.remove(&t).unwrap_or_default();
                 at.names.extend(from.iter().cloned());
+                at.changed.extend(from.iter().cloned());
                 if at.names.is_empty() && at.added.is_empty() {
                     continue;
                 }
                 let found = if !at.unsure.is_empty() {
                     Err(Fall::Unsure)
                 } else {
-                    self.shortest(&relation, t, &at.names)
+                    self.shortest(&relation, t, &at)
                 };
                 match found {
                     Ok(Shortest::Moved(ns)) => {
@@ -3064,18 +3073,27 @@ impl Scope {
     /// the projection onto `v` is its integers in `[L_v, H_v]`.
     ///
     /// The bounds were a fixed point of the tree's other conjuncts at the last projection, so
-    /// only paths from the seeds can move one: each seed takes the least bound its edges in
-    /// give it, and a Dijkstra search from the seeds moves the names its paths reach, with the
-    /// weights reduced by the scope's potential ([`Potential`]), which [`Scope::repair`] and
-    /// [`Scope::raise`] have put the edges added and the gaps grown in. In O((s + m) log n)
-    /// for the `s` seeds and the `m` edges at the names whose bound moves, of `n` names, and
-    /// the pieces of each name moved; the tree's other names are not read. `Err` says why the
-    /// tree is to be projected block by block, and nothing has changed.
+    /// only the conjuncts added and the names changed since can move one ([`Seeds::changed`]):
+    /// each seed takes the least bound the edges of the conjuncts added give it, and a changed
+    /// seed the least its edges in give it, since its own bound may have risen; then a Dijkstra
+    /// search from the changed seeds and those lowered moves the names their paths reach, with
+    /// the weights reduced by the scope's potential ([`Potential`]), which [`Scope::repair`]
+    /// and [`Scope::raise`] have put the edges added and the gaps grown in. Any other edge, of
+    /// a conjunct not added between names not changed, held at the fixed point and still
+    /// holds, unless the search lowers its tail and so reads it. In O((s + a + m) log n) for
+    /// the `s` seeds, the `a` conjuncts added, and the `m` edges at the changed seeds and at
+    /// the names whose bound moves, of `n` names, and the pieces of each name moved; the tree's
+    /// other names, and the other edges at a seed, are not read. A name of a conjunct added has
+    /// only that conjunct's edges read, so a hub that each of `k` tests relates to a new name
+    /// costs O(1) a test, not the O(k) edges it has (item NARROW-hub-seed-edges; before it,
+    /// every edge at every seed was read, and the search started from every seed, `k^2` in
+    /// all). `Err` says why the tree is to be projected block by block, and nothing has
+    /// changed.
     fn shortest(
         &mut self,
         relation: &Conjuncts,
         t: BlockId,
-        seeds: &BTreeSet<Arc<str>>,
+        seeds: &Seeds,
     ) -> Result<Shortest, Fall> {
         let up = self.bound_pass(relation, t, seeds, true)?;
         let down = self.bound_pass(relation, t, seeds, false)?;
@@ -3277,9 +3295,10 @@ impl Scope {
 
     /// One side of [`Scope::shortest`]: with `up` the greatest values, along the edges, with
     /// the scope's potential; otherwise the least values negated, along the edges reversed.
-    /// Each seed first takes the least bound its edges in give it, then a Dijkstra search from
-    /// the seeds lowers the names its paths reach, each bound taken to the nearest integer of
-    /// the name at or inside it ([`snap_down`], [`snap_up`]), or kept where the name has none
+    /// Each seed first takes the least bound the edges of the conjuncts added give it, and a
+    /// changed seed the least its edges in give it ([`Seeds::changed`]), then a Dijkstra search
+    /// from the changed seeds and those lowered lowers the names its paths reach, each bound
+    /// taken to the nearest integer of the name at or inside it ([`snap_down`], [`snap_up`]), or kept where the name has none
     /// there, which is bottom. The names lowered, with their new bounds on this side.
     ///
     /// The bounds found do not depend on the potential: a name lowered is pushed again, and
@@ -3295,7 +3314,7 @@ impl Scope {
         &self,
         relation: &Conjuncts,
         t: BlockId,
-        seeds: &BTreeSet<Arc<str>>,
+        seeds: &Seeds,
         up: bool,
     ) -> Result<BTreeMap<Arc<str>, Int>, Fall> {
         // An edge on this side, from and to.
@@ -3335,34 +3354,59 @@ impl Scope {
         };
         let mut moved: BTreeMap<Arc<str>, Int> = BTreeMap::new();
         let mut heap: BinaryHeap<Reverse<(Int, Arc<str>)>> = BinaryHeap::new();
-        for s in seeds {
-            let was = read(&mut label, s)?;
-            let mut l = was.clone();
-            for (_, _, e) in tree_edges(relation, t, s) {
-                let (a, b) = way(&e);
-                if b.as_ref() != Some(s) {
-                    continue;
-                }
-                let by = match &a {
-                    None => Some(e.weight.clone()),
-                    Some(r) => read(&mut label, r)?.map(|lr| &lr + &e.weight),
-                };
-                if let Some(c) = by
-                    && l.as_ref().is_none_or(|x| c < *x)
-                {
-                    l = Some(c);
-                }
-            }
-            if l != was
-                && let Some(by) = l.take()
-            {
-                let at = snap(s, by);
-                moved.insert(s.clone(), at.clone());
-                l = Some(at);
-            }
-            label.insert(s.clone(), l);
+        for s in &seeds.names {
+            read(&mut label, s)?;
         }
-        for s in seeds {
+        // The edges that can lower a seed: each edge into a changed seed, whose own bound may
+        // have risen, as at a join, and each edge of a conjunct added. Every other edge into a
+        // seed held at the bounds of its ends at the fixed point, and comes from a name
+        // unchanged since, at whose bound it holds, or from a changed one, from which the search
+        // below starts.
+        let mut edges: Vec<Edge> = Vec::new();
+        for s in &seeds.changed {
+            edges.extend(
+                tree_edges(relation, t, s)
+                    .into_iter()
+                    .map(|(_, _, e)| e)
+                    .filter(|e| way(e).1.as_ref() == Some(s)),
+            );
+        }
+        for g in &seeds.added {
+            if let Some((e, back)) = conjuncts::edges(g) {
+                edges.push(e);
+                edges.extend(back);
+            }
+        }
+        // The least bound the edges give each seed.
+        let mut least: BTreeMap<Arc<str>, Int> = BTreeMap::new();
+        for e in &edges {
+            let (a, b) = way(e);
+            let Some(s) = b.filter(|s| seeds.names.contains(s)) else {
+                continue;
+            };
+            let by = match &a {
+                None => Some(e.weight.clone()),
+                Some(r) => read(&mut label, r)?.map(|lr| &lr + &e.weight),
+            };
+            if let Some(c) = by
+                && least.get(&s).is_none_or(|x| c < *x)
+            {
+                least.insert(s, c);
+            }
+        }
+        for (s, by) in least {
+            if read(&mut label, &s)?.is_none_or(|was| by < was) {
+                let at = snap(&s, by);
+                moved.insert(s.clone(), at.clone());
+                label.insert(s, Some(at));
+            }
+        }
+        // The search starts from the seeds whose bounds may have moved since the fixed point:
+        // those changed, and those lowered above. At any other seed, its edges out hold.
+        for s in &seeds.names {
+            if !(seeds.changed.contains(s) || moved.contains_key(s)) {
+                continue;
+            }
             if let Some(Some(l)) = label.get(s) {
                 heap.push(Reverse((l - &q(s)?, s.clone())));
             }
