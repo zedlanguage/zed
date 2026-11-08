@@ -1586,14 +1586,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BUILD-incr-stale | impl attempt 1 | 2026-11-07 20:50 | repro attempt 1 (seed at b0fdc72b, fdd60abb's provenance.rs, -p zed-tests --test l01_17 then run_tests --workspace build) links and passes: no repro yet; load 3 |
-| EMPTY-level | impl attempt 1 | 2026-11-07 21:19 | started; worktree wt/empty-level from origin/main |
-| MINMAX-sig-word | impl attempt 1 | 2026-11-07 20:25 | started; worktree /home/luke/Work/wt/minmax-sig-word from origin/main 8874023a |
-| PROV-oldest-failing | impl attempt 1 | 2026-11-07 21:06 | started; worktree from origin/main |
+| BIGINT-fast-mul | impl attempt 1 | 2026-11-07 15:13 | docs written (COMPLEXITY K78 + Crossovers subsection, ZED_PORT_GAPS entries, STATUS row, num.rs room comments); negative control (Garner carry without t>>64) bu |
+| BUILD-incr-stale | impl attempt 1 | 2026-11-07 20:50 | ready bfd19a12 on wt/build-incr-stale (rebased on d5055bcf): lto off; cause confirmed (ThinLTO keys rewritten through hard link, killed build); control fails be |
+| EMPTY-level | impl attempt 1 | 2026-11-07 21:19 | ready af7812f8: atom-key misfire fixed, ports tested, 117 pieces 0 failed |
+| MINMAX-sig-word | repair attempt 1 | 2026-11-07 20:25 | started: join Order needs per (word, side), literal-chain scaling test, min(a, f64(#inf)) check |
+| PROV-oldest-failing | impl attempt 1 | 2026-11-07 21:06 | ready c4818e1f on wt/prov-oldest-failing, rebased on 67a8ad42; targeted tests 0 failed before and after rebase |
 | Q1-LOCAL | measure attempt 1 | 2026-11-03 12:15 | done: 93d423e3 on wt/q1-local; census 30% refused (all Growth, 74% have a point); 10 families refused at every size, time to refusal n log n; equality chain qua |
-| REFUSAL-narrow-cells | impl attempt 1 | 2026-11-07 20:25 | family probe (release, n 8/16/32/64): union of (only_i, parity_i) - (only_i, L) meets L x L: 74M, 343M, 1774M, 10.3G instructions (~n^2.5); difference of unions |
-| ROW-eq-deep | impl attempt 1 | 2026-11-07 20:25 | negative controls (not committed): HEAD 93857183 ty.rs overflows the 8 MiB stack on tuples_built_apart_200000_deep (abort); the fix with union-find off times ou |
-| UTVPI-both-ways | impl attempt 2 | 2026-11-05 19:14 | started: A17 answered (option A, lower Duong's constant); rebasing kept worktree on origin/main |
+| REFUSAL-narrow-cells | repair attempt 1 | 2026-11-07 20:25 | probe: instrumented the fork skip to run refine anyway (ZPROBE), candidate types c1..c9 in a temporary test |
+| ROW-eq-deep | impl attempt 2 | 2026-11-07 20:25 | start: re-measure shallow == in instructions, add fast paths |
+| SPEC-soundness-followups | running | 2026-11-07 21:55 |  |
+| UTVPI-both-ways | impl attempt 2 | 2026-11-05 19:14 | ready c3e84464 (base d5055bcf), 326 tests pass; exponents per doubling k=32..2048: Duong alone 1.02,1.18,1.11,1.06,1.06,1.15; race 1.85,1.74,2.08,(quick win at  |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Claude report in (R2_CLAUDE.md, 35 KB, rc 0); Gemini still running |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
