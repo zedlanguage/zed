@@ -1960,6 +1960,14 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `while let … && …` (a let chain) popping the pairs a truncation undoes from the end of a list | `preimage::Tr::truncate` | None | a loop with `match` and `is` |
 | A `HashMap` keyed by a pair of linear forms, `(Lin, Lin)`, so `a div n` and `a mod n` share one quotient and remainder | `preimage::Tr::div_mod_by_term` | None | a family keyed by the pair, the linear forms compared by content |
 
+## Entries from RUNG2-definedness (`zedc-preimage/src/preimage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent ordered set, `imbl::OrdSet<Lin>`, of the divisors a term reads, met smaller into larger and searched by range (`range(from..)`, `range(..=to).rev()`) for the divisors with one variable part | `preimage::Defined::{meet, with_divisor, shown_nonzero}` | None | an ordered set of linear forms from the prelude, ordered by content, with its range read |
+| `if matches!(p, IntDiv \| Mod) && let n = … && ….is_none()` (a let chain in an `if`) | `Walk::defined_at` | None | `if` on `p` then a `match` on the constant |
+| A struct update, `Defined { rest, ..Defined::top() }` | `Defined::failed`, `Walk::defined_at` | None | a record built with the named field and the others from `top` |
+
 ## Entries from RAT-asks-rest (`zedc-syntax/src/lex`, `ast`, `check/mod.rs`, `mutate.rs`, `zir/binary.rs`, `zir/canon.rs`, `zir/lower.rs`, `canon/serial.rs`, `zed-kernel/src/text.rs`)
 
 | Rust construct | Sites | Gap | At the port |

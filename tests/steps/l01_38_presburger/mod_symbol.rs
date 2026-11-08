@@ -122,14 +122,18 @@ fn a_symbolic_divisor_is_read_by_rung_2_alone() {
     let (ps, t) = function("ok(x, n) = x mod n == 1;");
     assert!(relations(&[&t], &ps, false).is_none());
     let r = &relations(&[&t], &ps, true).expect("in the domain")[0];
-    assert_eq!(r.to_string(), "q1 == 1 where q0 = x div n, q1 = x mod n");
+    // The relation holds where the test gives `true`, which it does not where the divisor is 0
+    // (RUNG2-definedness).
+    let want = "!(n == 0) && q1 == 1 where q0 = x div n, q1 = x mod n";
+    assert_eq!(r.to_string(), want);
 }
 
 /// At each point of the window where the divisor is nonzero, the definitions hold at the
 /// interpreter's quotient and remainder (auxiliary variables 0 and 1, their product atoms read
 /// as products), and the body holds there exactly where the interpreter gives `true`; at each
-/// point where it is zero, where the interpreter fails, the relation holds for some quotient
-/// and remainder. `pair` gives the dividend and divisor at a point.
+/// point where it is zero, where the operation fails, the relation holds for some quotient
+/// and remainder exactly where the interpreter gives `true` (RUNG2-definedness). `pair` gives
+/// the dividend and divisor at a point.
 fn agrees(src: &str, pair: impl Fn(&[i64]) -> (i64, i64)) {
     let (ps, t) = function(src);
     let r = &relations(&[&t], &ps, true).expect("in the domain")[0];
@@ -149,7 +153,7 @@ fn agrees(src: &str, pair: impl Fn(&[i64]) -> (i64, i64)) {
                     .collect(),
             );
             let sat = satisfiable(&f).unwrap_or_else(|e| panic!("{src} at {p:?}: refused: {e}"));
-            assert!(sat.is_some(), "{src} at {p:?}: {r}");
+            assert_eq!(sat.is_some(), holds(&t, &ps, &p), "{src} at {p:?}: {r}");
             continue;
         }
         at.insert(Atom::Aux(0), Int::from(a.div_euclid(d)));

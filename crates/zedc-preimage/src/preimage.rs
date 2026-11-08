@@ -974,9 +974,225 @@ fn residue_relation(
     }
 }
 
+/// Whether `f` is `true` as [`Formula::top`] makes it.
+fn is_true(f: &Formula) -> bool {
+    matches!(f, Formula::And(gs) if gs.is_empty())
+}
+
+/// The condition that a term's value is not an atom ([`Walk::defined`]): each divisor of a
+/// quotient or remainder that the term reads wherever it is read is not 0, and `rest` holds,
+/// the part an `if` adds whose arms read different divisors.
+#[derive(Clone)]
+struct Defined {
+    /// The divisors read wherever the term is read, a set, so that a divisor read at many
+    /// places is one condition.
+    divisors: imbl::OrdSet<Lin>,
+    /// `d != 0` for each of `divisors`, made as the set was, two parts at a time and each kept
+    /// whole ([`Formula::and_keeping`]), so it costs O(1) for each step and may name a divisor
+    /// more than once.
+    nonzero: Formula,
+    rest: Formula,
+}
+
+impl Defined {
+    /// No divisor and nothing else: the value is never an atom.
+    fn top() -> Defined {
+        Defined {
+            divisors: imbl::OrdSet::new(),
+            nonzero: Formula::top(),
+            rest: Formula::top(),
+        }
+    }
+
+    /// The value is always an atom.
+    fn failed() -> Defined {
+        Defined {
+            rest: Formula::bottom(),
+            ..Defined::top()
+        }
+    }
+
+    fn is_top(&self) -> bool {
+        self.divisors.is_empty() && is_true(&self.rest)
+    }
+
+    /// `d != 0`.
+    fn nonzero_of(d: &Lin) -> Formula {
+        Formula::negate(Formula::Con(Con::eq(d, &Lin::constant(0))))
+    }
+
+    /// `self` with the divisor `d` as well.
+    fn with_divisor(self, d: Lin) -> Defined {
+        if self.divisors.contains(&d) {
+            return self;
+        }
+        let nonzero = keep_all(vec![self.nonzero, Defined::nonzero_of(&d)]);
+        Defined {
+            divisors: self.divisors.update(d),
+            nonzero,
+            rest: self.rest,
+        }
+    }
+
+    /// Both conditions. The smaller set is added to the larger
+    /// ([`imbl::OrdSet::union`]), and a set met with itself is kept.
+    // Complexity tradeoff: a meet costs O(min(|a|, |b|) · log n) for divisor sets a and b, so a
+    // term that reads each divisor once costs O(n log² n) in all (each divisor is moved into a
+    // set at least twice its old one's size), but a term that meets two large sets that share
+    // most of their divisors, through a shared subterm read on both sides, costs their size at
+    // each such meet, O(n²) for n of them. Trigger: n operations each of whose operands both
+    // read one shared subterm holding many quotients by terms, in rung 2 alone. Test
+    // `l01_38_presburger::ladder::the_condition_that_no_operation_fails_scales` (each divisor
+    // read once). COMPLEXITY.md row RUNG2-definedness. A complete solution meets persistent
+    // sets by shared subtrees (a treap union, O(m log(n/m + 1))), so a shared part costs O(1).
+    fn meet(self, other: Defined) -> Defined {
+        if other.is_top() {
+            return self;
+        }
+        if self.is_top() {
+            return other;
+        }
+        let same = self.divisors.ptr_eq(&other.divisors);
+        let (divisors, nonzero) = match same {
+            true => (self.divisors, self.nonzero),
+            false => (
+                self.divisors.union(other.divisors),
+                keep_all(vec![self.nonzero, other.nonzero]),
+            ),
+        };
+        Defined {
+            divisors,
+            nonzero,
+            rest: keep_all(vec![self.rest, other.rest]),
+        }
+    }
+
+    /// The condition as a formula, each part kept whole.
+    fn formula(&self) -> Formula {
+        keep_all(vec![self.nonzero.clone(), self.rest.clone()])
+    }
+
+    /// The condition as a formula, each divisor once, for a relation's body.
+    fn flat(&self) -> Formula {
+        let mut parts: Vec<Formula> = self.divisors.iter().map(Defined::nonzero_of).collect();
+        parts.push(self.rest.clone());
+        Formula::and(parts)
+    }
+
+    /// Each divisor of `divisors` that the constraint `f`, a part of a conjunction, shows is not
+    /// 0: `d` for `d != 0` or `-d != 0`, `d >= 1` or `d <= -1` for `t >= 0` with `d` `t + k`
+    /// or `-t - k`, `k >= 1`, and `d != 0` for `t == 0` with `d` `t + k` or `-t - k`,
+    /// `k != 0`. A sorted set holds the divisors with one variable part together, so each
+    /// form costs a search and the divisors it finds.
+    fn shown_nonzero(divisors: &imbl::OrdSet<Lin>, f: &Formula, out: &mut Vec<Lin>) {
+        use presburger::Rel;
+        // The divisors whose variable part is `terms`, from the constant `from` up, or down.
+        let up = |terms: &Lin, from: &Lin, out: &mut Vec<Lin>| {
+            let found = divisors.range(from.clone()..);
+            out.extend(found.take_while(|d| d.terms == terms.terms).cloned());
+        };
+        let down = |terms: &Lin, to: &Lin, out: &mut Vec<Lin>| {
+            let found = divisors.range(..=to.clone()).rev();
+            out.extend(found.take_while(|d| d.terms == terms.terms).cloned());
+        };
+        let one = Lin::constant(1);
+        match f {
+            Formula::Not(g) => match &**g {
+                Formula::Con(c) if c.rel == Rel::Eq => {
+                    let neg = c.lin.times(-1);
+                    for d in [&c.lin, &neg] {
+                        if divisors.contains(d) {
+                            out.push(d.clone());
+                        }
+                    }
+                }
+                // `t < 0`, which is `-t - 1 >= 0`.
+                Formula::Con(c) => {
+                    let t = c.lin.times(-1).minus(&one);
+                    Defined::shown_nonzero(
+                        divisors,
+                        &Formula::Con(Con::ge(&t, &Lin::constant(0))),
+                        out,
+                    )
+                }
+                _ => {}
+            },
+            Formula::Con(c) if c.rel == Rel::Ge => {
+                let neg = c.lin.times(-1);
+                up(&c.lin, &c.lin.plus(&one), out);
+                down(&neg, &neg.minus(&one), out);
+            }
+            Formula::Con(c) => {
+                let neg = c.lin.times(-1);
+                for t in [&c.lin, &neg] {
+                    up(t, &t.plus(&one), out);
+                    down(t, &t.minus(&one), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The condition the arm `d` adds where it is taken, under the guard's formula `g` and
+    /// with the guard's own divisors `known` not 0: `true` when `d`'s `rest` is `true` and
+    /// each of `d`'s divisors is in `known` or is shown not 0 by a part of `g`
+    /// ([`Defined::shown_nonzero`]), and `d`'s own formula otherwise, shared, O(1). `g`'s
+    /// parts are read one by one only when `parts` holds, as the formula of the `if` reads
+    /// them (a guard kept whole is one part there and here).
+    // Complexity tradeoff: each part of the guard costs a search, O(log n), and when `d` has no
+    // more divisors than `known` and the guard's parts show together, each of `d`'s divisors
+    // costs a search too, so an `if` costs O((parts of its guard + min(divisors of its arms,
+    // divisors of its guard and parts)) · log n), where the formula of the `if` costs the parts
+    // of its guard. Trigger: many `if`s whose arms read the same many quotients by terms
+    // under guards that read them too, in rung 2 alone. Test
+    // `l01_38_presburger::ladder::the_condition_that_no_operation_fails_scales`. COMPLEXITY.md
+    // row RUNG2-definedness. A complete solution keeps, with each condition, the divisors its
+    // arms are known to cover, so that an `if` reads only the divisors new to it.
+    fn arm(d: &Defined, g: &Formula, parts: bool, known: &imbl::OrdSet<Lin>) -> Formula {
+        if d.is_top() || !is_true(&d.rest) {
+            return d.formula();
+        }
+        let mut shown = Vec::new();
+        match g {
+            Formula::And(gs) if parts => {
+                for p in gs.iter() {
+                    Defined::shown_nonzero(&d.divisors, p, &mut shown);
+                }
+            }
+            _ => Defined::shown_nonzero(&d.divisors, g, &mut shown),
+        }
+        if d.divisors.len() > known.len() + shown.len() {
+            return d.formula();
+        }
+        let shown: HashSet<Lin> = shown.into_iter().collect();
+        match d
+            .divisors
+            .iter()
+            .all(|x| known.contains(x) || shown.contains(x))
+        {
+            true => Formula::top(),
+            false => d.formula(),
+        }
+    }
+}
+
+/// The conjunction of `fs`, each kept whole ([`Formula::and_keeping`]).
+fn keep_all(fs: Vec<Formula>) -> Formula {
+    Formula::and_keeping(fs, |_| true)
+}
+
 /// The relations the linear-relation domain states for `terms`, tests over the free names
 /// `inputs`, with one numbering of auxiliary variables; products of two symbols are atoms
 /// when `products` holds. `None` when a term is outside the domain.
+///
+/// When `products` holds, a divisor may be a term, which may be 0, where the quotient and the
+/// remainder fail (`Tr::div_mod_by_term`). Each relation then holds exactly where the
+/// interpreter's value of its test is `true`: the test's formula met with the condition that
+/// its value is not the failure (`Walk::defined`, `Tr::definedness`). Rung 2's
+/// `presburger::entails` so proves a goal only where it holds at the points where an
+/// operation fails as well, and refutes only at a point where the interpreter's value of the
+/// goal is not `true` (RUNG2-definedness). The condition costs O(1) for each term and scope
+/// the translation reads, as the formula does.
 pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option<Vec<Relation>> {
     let doms: Domains = inputs
         .iter()
@@ -985,6 +1201,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
     let mut tx = Tx::new();
     tx.start(&doms, Landmarks::none());
     let mut tr = Tr::new(products);
+    tr.definedness = products;
     let mut out = Vec::new();
     for t in terms {
         let root = tx.terms.add(t);
@@ -1520,6 +1737,13 @@ struct Tr {
     /// ([`projected`], [`value_projected`]): the reference [`Scoped::reading_bodies`] gives the
     /// tests.
     bodies: bool,
+    /// Whether a relation holds exactly where the interpreter's value of its test is `true`,
+    /// a point where an operation fails included ([`relations`] for rung 2, RUNG2-definedness):
+    /// the relation is the test's formula met with the condition that its value is not an atom
+    /// ([`Walk::defined`]), and `==` and `!=` of operands that may fail compare the failures
+    /// as the interpreter does ([`Walk::exactly_equal`]). Only a quotient or remainder by a
+    /// term ([`Tr::div_mod_by_term`]) fails at a point of the domain.
+    definedness: bool,
 }
 
 impl Tr {
@@ -1536,6 +1760,7 @@ impl Tr {
             claimed: Vec::new(),
             interfaces: HashMap::new(),
             bodies: false,
+            definedness: false,
         }
     }
 
@@ -1706,9 +1931,11 @@ impl Tr {
     /// the quotient `q` and remainder `r` as auxiliary variables with `a == n * q + r` and
     /// `0 <= r <= |n| - 1` (Euclidean), `n * q` expanded into product atoms ([`Lin::product`]).
     /// The definition is one disjunct for each sign of `n`, so a premise that fixes the sign
-    /// leaves one; where `n` is 0 the operation fails, and `q` and `r` are left free, so no
-    /// fact about them is proved there. `a div n` and `a mod n` share the pair. `None` when `n`
-    /// is a constant or holds a product.
+    /// leaves one; where `n` is 0 the operation fails, and `q` and `r` are left free. A term
+    /// that reads them is so not defined there, and [`relations`] meets each test with the
+    /// condition that its value is not the failure ([`Walk::defined`]), so that nothing is
+    /// proved or refuted of the free values (RUNG2-definedness). `a div n` and `a mod n` share
+    /// the pair. `None` when `n` is a constant or holds a product.
     fn div_mod_by_term(&mut self, p: Prim, a: &Lin, n: &Lin) -> Option<Lin> {
         use presburger::Atom::Aux;
         if n.terms.is_empty() {
@@ -2526,6 +2753,10 @@ struct Memo {
     /// The relations of callees with every variable but their canonical atoms eliminated
     /// ([`Walk::projection`]), by the same keys as `formula_calls`.
     projections: HashMap<CallKey, Entry<Option<Projection>>>,
+    /// The condition that a term's value is not an atom ([`Walk::defined`]).
+    defined: HashMap<At, Entry<Option<Defined>>>,
+    /// [`Memo::defined`] of calls whose arguments cannot fail, by the keys of `formula_calls`.
+    defined_calls: HashMap<CallKey, Entry<Option<Defined>>>,
     /// The translation entries in the order they were made, which a translation that is
     /// undone removes.
     log: Vec<Logged>,
@@ -3187,6 +3418,8 @@ enum Logged {
     LinCall(CallKey),
     FormulaCall(CallKey),
     Projection(CallKey),
+    Defined(At),
+    DefinedCall(CallKey),
 }
 
 /// One of the memo's tables.
@@ -3721,6 +3954,8 @@ impl<'t> Tx<'t> {
                 Logged::LinCall(k) => _ = m.lin_calls.remove(&k),
                 Logged::FormulaCall(k) => _ = m.formula_calls.remove(&k),
                 Logged::Projection(k) => _ = m.projections.remove(&k),
+                Logged::Defined(k) => _ = m.defined.remove(&k),
+                Logged::DefinedCall(k) => _ = m.defined_calls.remove(&k),
             }
         }
     }
@@ -4005,7 +4240,9 @@ impl<'t> Tx<'t> {
 
     /// The formula of the test `t` read in `env`, translated afresh into `tr`: an auxiliary
     /// variable belongs to the relation of the term that made it, so the translations of
-    /// earlier terms are dropped, and those of `tr`'s earlier terms are not reused.
+    /// earlier terms are dropped, and those of `tr`'s earlier terms are not reused. Under
+    /// [`Tr::definedness`], met with the condition that the test's value is not an atom
+    /// ([`Walk::defined`]).
     fn relation(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Formula> {
         let m = &mut self.run.memo;
         m.lin.clear();
@@ -4013,12 +4250,23 @@ impl<'t> Tx<'t> {
         m.lin_calls.clear();
         m.formula_calls.clear();
         m.projections.clear();
+        m.defined.clear();
+        m.defined_calls.clear();
         m.log.clear();
         tr.pairs.clear();
         tr.made.clear();
         tr.cases.clear();
         tr.cased.clear();
-        self.formula(tr, t, env)
+        let body = self.formula(tr, t, env)?;
+        if !tr.definedness {
+            return Some(body);
+        }
+        let w = Walk::translating(self, tr);
+        let d = w.stack.run(w.defined(t, env))?;
+        Some(match d.is_top() {
+            true => body,
+            false => Formula::and(vec![d.flat(), body]),
+        })
     }
 
     /// The relation of the function whose lambda is `lam`, its parameters its canonical atoms,
@@ -6593,7 +6841,7 @@ impl<'m, 't> Walk<'m, 't> {
             }
             Node::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    match self.call_key(body, lam, args, env).await {
+                    match self.shared_call_key(body, lam, args, env).await {
                         Some(k) => {
                             let call = self.translated(
                                 |m| &mut m.lin_calls,
@@ -6713,6 +6961,182 @@ impl<'m, 't> Walk<'m, 't> {
             Logged::Formula,
             move || self.formula_at(t, env),
         )
+    }
+
+    /// The condition, over the inputs and the auxiliary variables of the translation, that the
+    /// value of `t` read in `env` is not an atom, for a relation that must hold exactly where
+    /// the interpreter's value of its test is `true` ([`Tr::definedness`], RUNG2-definedness).
+    /// It follows the interpreter (DESIGN.md M0.9 (a)): only a quotient or remainder by a term
+    /// fails at a point of the domain, where the divisor is 0 ([`Tr::div_mod_by_term`]); every
+    /// other primitive passes an atom of an operand on, `==` and `!=` compare atoms and never
+    /// fail, an `if` fails where its guard fails or where the arm it takes fails, and a `let` or
+    /// a call binds an atom as a value, so the body fails only where it reads one.
+    ///
+    /// With `D` this condition and `C` the formula of a test ([`Walk::formula`]), the test is
+    /// `true` exactly where `D ∧ C` holds, and `false` exactly where `D ∧ ¬C` does, by
+    /// induction on the term: where an operand is defined, its translation is its value, and
+    /// `==` and `!=` of operands that may fail are exact themselves ([`Walk::exactly_equal`]).
+    /// So `¬C` at an `if`'s guard, a `!` and the short-circuit operators, which the elaborator
+    /// writes as `if`s, needs no condition of its own.
+    ///
+    /// Memoized by term and scope, and a call whose arguments cannot fail by its key
+    /// ([`Walk::shared_call_key`]), as the formula is, so it costs O(1) beside each entry of
+    /// the translation: each node of the condition is made once and shared.
+    fn defined(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Defined>> {
+        self.translated(
+            |m| &mut m.defined,
+            (t, env),
+            Logged::Defined,
+            move || self.defined_at(t, env),
+        )
+    }
+
+    async fn defined_at(&'m self, t: Tid, env: Eid) -> Option<Defined> {
+        use Prim::*;
+        if let Some(v) = self.constant(t, env).await {
+            return Some(match v {
+                Value::Atom(_) => Defined::failed(),
+                _ => Defined::top(),
+            });
+        }
+        match self.node(t) {
+            Node::Var(x) => match self.lookup(env, x) {
+                Some((bt, be)) => self.defined(bt, be).await,
+                None => Some(Defined::top()),
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, env);
+                self.defined(b, inner).await
+            }
+            Node::App(f, args) => match self.callee(f, env).ok()? {
+                Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
+                    match self.shared_call_key(body, lam, args, env).await {
+                        Some(k) => {
+                            let call = self.translated(
+                                |m| &mut m.defined_calls,
+                                k,
+                                Logged::DefinedCall,
+                                move || self.defined_call(t, ps, (body, lam), args, env),
+                            );
+                            call.await
+                        }
+                        None => self.defined_call(t, ps, (body, lam), args, env).await,
+                    }
+                }
+                Callee::Prim(p) => {
+                    let c = self.with(|tx| tx.terms.call(t, p, args));
+                    self.defined(c, env).await
+                }
+                Callee::Lam(..) => None,
+            },
+            // The guard's condition, and the condition of the arm it takes, where the guard
+            // does not show it already ([`Defined::arm`]): `if n != 0 { x mod n } else { 0 }`
+            // never fails, so that the disjunction of the two arms is `true` and needs no
+            // case split.
+            Node::If(g, a, b) => {
+                let parts = !self.whole(g, env);
+                let dg = self.defined(g, env).await?;
+                let cg = self.formula(g, env).await?;
+                let (da, db) = (self.defined(a, env).await?, self.defined(b, env).await?);
+                let not_cg = Formula::negate(cg.clone());
+                let known = &dg.divisors;
+                let fa = Defined::arm(&da, &cg, parts, known);
+                let fb = Defined::arm(&db, &not_cg, true, known);
+                if is_true(&fa) && is_true(&fb) {
+                    return Some(dg);
+                }
+                let rest = Formula::or(vec![keep_all(vec![cg, fa]), keep_all(vec![not_cg, fb])]);
+                Some(dg.meet(Defined {
+                    rest,
+                    ..Defined::top()
+                }))
+            }
+            Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
+                if matches!(p, Eq | Ne) {
+                    return Some(Defined::top());
+                }
+                let mut d = Defined::top();
+                for i in 0..args.len() {
+                    d = d.meet(self.defined(self.arg(args, i), env).await?);
+                }
+                if matches!(p, IntDiv | Mod)
+                    && let n = self.arg(args, 1)
+                    && self.constant_int(n, env).await.is_none()
+                {
+                    d = d.with_divisor(self.lin(n, env).await?);
+                }
+                Some(d)
+            }
+            _ => None,
+        }
+    }
+
+    /// [`Walk::lin_call`] for [`Walk::defined`].
+    async fn defined_call(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+    ) -> Option<Defined> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.call_env(ps, args, lam, env);
+        let d = self.defined(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        d
+    }
+
+    /// The key a call is translated under ([`Walk::call_key`]), and `None`, so that the call's
+    /// body is read in the call's own scope, when the relation must hold exactly where its
+    /// test is `true` ([`Tr::definedness`]) and an argument may fail: the key holds the
+    /// arguments' linear terms, which are their values only where they are defined, and an
+    /// argument that fails where another with the same term does not (`(x mod n) * 0` and
+    /// `0`) gives the callee's `==` another value.
+    // Complexity tradeoff: a call with an argument that may fail is not shared with another
+    // call of the same key, so its callee's body is read once for each such call, O(the
+    // callee's cone) each. Trigger: a function called at many places with arguments that hold
+    // a quotient or remainder by a term, in rung 2 alone. A function that calls another twice
+    // so, nested k deep, is read up to 2^k times. Test
+    // `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`.
+    // COMPLEXITY.md row RUNG2-definedness. A complete solution adds each argument's condition
+    // to the key, as an auxiliary variable that holds 1 where it is defined.
+    async fn shared_call_key(
+        &'m self,
+        body: Tid,
+        lam: Eid,
+        args: Span,
+        env: Eid,
+    ) -> Option<CallKey> {
+        let k = self.call_key(body, lam, args, env).await?;
+        if self.tr(|tr| tr.definedness) {
+            for i in 0..args.len() {
+                if !self.defined(self.arg(args, i), env).await?.is_top() {
+                    return None;
+                }
+            }
+        }
+        Some(k)
+    }
+
+    /// `same`, the formula of `a == b` where both operands are defined, made exact where one
+    /// may fail, when the relation must hold exactly where its test is `true`
+    /// ([`Tr::definedness`]): the interpreter compares atoms as data (DESIGN.md M0.9 (a)), and
+    /// the one failure of the domain, `#divByZero`, merged with itself is itself, so `a == b`
+    /// holds where both are defined and `same` holds, and where both fail.
+    async fn exactly_equal(&'m self, same: Formula, a: Tid, b: Tid, env: Eid) -> Option<Formula> {
+        if !self.tr(|tr| tr.definedness) {
+            return Some(same);
+        }
+        let (da, db) = (self.defined(a, env).await?, self.defined(b, env).await?);
+        if da.is_top() && db.is_top() {
+            return Some(same);
+        }
+        let (da, db) = (da.formula(), db.formula());
+        Some(Formula::or(vec![
+            keep_all(vec![da.clone(), db.clone(), same]),
+            keep_all(vec![Formula::negate(da), Formula::negate(db)]),
+        ]))
     }
 
     /// [`Walk::lin_call`] for a test.
@@ -7155,7 +7579,7 @@ impl<'m, 't> Walk<'m, 't> {
             }
             Node::App(f, args) => match self.callee(f, env).ok()? {
                 Callee::Lam(ps, body, lam) if ps.len() == args.len() => {
-                    match self.call_key(body, lam, args, env).await {
+                    match self.shared_call_key(body, lam, args, env).await {
                         Some(k) => {
                             let call = self.translated(
                                 |m| &mut m.formula_calls,
@@ -7239,6 +7663,10 @@ impl<'m, 't> Walk<'m, 't> {
                                 _ => Con::eq(&la, &lb),
                             };
                             let f = Formula::Con(c);
+                            let f = match p {
+                                Eq | Ne => self.exactly_equal(f, a, b, env).await?,
+                                _ => f,
+                            };
                             return Some(if p == Ne { Formula::negate(f) } else { f });
                         }
                         self.tr(|tr| tr.truncate(mark));
@@ -7252,6 +7680,7 @@ impl<'m, 't> Walk<'m, 't> {
                             Formula::and(vec![fa.clone(), fb.clone()]),
                             Formula::and(vec![Formula::negate(fa), Formula::negate(fb)]),
                         ]);
+                        let same = self.exactly_equal(same, a, b, env).await?;
                         Some(if p == Ne { Formula::negate(same) } else { same })
                     }
                     _ => None,

@@ -220,14 +220,215 @@ fn a_refutation_at_a_zero_divisor_is_a_point_where_the_operation_fails() {
     );
     // The contrast: a guard that excludes the zero divisor removes the failing point, and the
     // goal is proved. A residual that drops a `mod` by a divisor that may be zero, as
-    // `(x mod n) * 0 == 0`, is proved today although it is `false` at `n = 0`; that is
-    // follow-up RUNG2-definedness (docs/studies/ladder.md, defect D9), and it is proved
-    // correctly here only where a premise excludes the zero.
+    // `(x mod n) * 0 == 0`, is `false` at `n = 0`, so it is proved only where a premise
+    // excludes the zero (RUNG2-definedness, docs/studies/ladder.md defect D9; the tests
+    // below).
     assert_proved(
         "ok(x, n) = true;",
         "ok(x, n) = if n != 0 { x mod n < n || x mod n < 0 - n } else { true };",
     );
     assert_proved("ok(x, n) = n >= 1;", "ok(x, n) = (x mod n) * 0 == 0;");
+}
+
+/// Rung 2's verdict on `premise` to `goal`, checked against the interpreter: a proved goal
+/// gives `true` at every point of the window where the premise does, and a refutation's
+/// witness is a point where the premise gives `true` and the goal does not.
+fn checked(premise: &str, goal: &str) -> Entailment {
+    let e = rung2(premise, goal);
+    match &e {
+        Entailment::Proved(_) => assert!(true_on_window(premise, goal), "{premise} to {goal}"),
+        Entailment::Refuted(_) => _ = refuted_at(premise, goal),
+        _ => {}
+    }
+    e
+}
+
+#[test]
+fn a_residual_that_drops_a_failing_operation_is_not_proved() {
+    // RUNG2-definedness (D9, U1): the `mod` is gone from the linear term, but at `n = 0` it
+    // gives `#divByZero`, which `* 0` passes on, and `#divByZero == 0` is `false`.
+    for goal in [
+        "ok(x, n) = (x mod n) * 0 == 0;",
+        "ok(x, n) = x mod n - x mod n == 0;",
+    ] {
+        for premise in ["ok(x, n) = true;", "ok(x, n) = n >= 0;"] {
+            let e = checked(premise, goal);
+            assert!(
+                !matches!(e, Entailment::Proved(_)),
+                "{premise} to {goal}: {e}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_point_where_an_operation_fails_is_a_witness_only_where_the_interpreter_agrees() {
+    // RUNG2-definedness (D9, U2 and U3): at `n = 0` the premise `n >= 0 && x mod n == 0` is
+    // `false` (`#divByZero == 0`), so `n = 0` is no witness against `n >= 1`; and
+    // `x mod n == (x + 1) mod n` is `true` there, both sides `#divByZero` (DESIGN.md M0.9
+    // (a): `==` compares atoms).
+    for (p, g) in [
+        ("ok(x, n) = n >= 0 && x mod n == 0;", "ok(x, n) = n >= 1;"),
+        ("ok(x, n) = n == 0;", "ok(x, n) = x mod n == (x + 1) mod n;"),
+    ] {
+        if let Entailment::Refuted(_) = rung2(p, g) {
+            refuted_at(p, g);
+        }
+        // Both hold: the first since the premise fails at `n = 0`, the second since both
+        // sides fail alike.
+        assert!(true_on_window(p, g), "{p} to {g}");
+        assert_proved(p, g);
+    }
+}
+
+#[test]
+fn each_partial_operation_and_each_place_it_fails_in_agrees_with_the_interpreter() {
+    // Only `div` and `mod` by a term fail at a point of the linear-relation domain; each place
+    // a failure can reach the test is checked: an operand of an operation, a `!`, the first
+    // and the second operand of `||` and `&&`, an `if`'s guard and arm, `==` and `!=` of two
+    // operands that may fail, and an argument of a call. Each verdict is checked against the
+    // interpreter, and the kind is fixed.
+    let not_proved = [
+        // `div` as `mod`: `#divByZero * 0` is no integer.
+        ("ok(x, n) = true;", "ok(x, n) = (x div n) * 0 == 0;"),
+        // Under `!`: `!(#divByZero < 0)` is the atom.
+        ("ok(x, n) = true;", "ok(x, n) = !(x mod n < 0);"),
+        // The failing operand first: `#divByZero >= 0 || ...` is the atom; `||` short-circuits
+        // only on `true`.
+        ("ok(x, n) = true;", "ok(x, n) = x mod n >= 0 || n == 0;"),
+        // An `if` on a failing guard is the atom.
+        (
+            "ok(x, n) = true;",
+            "ok(x, n) = if x mod n >= 0 { true } else { true };",
+        ),
+        // A failing arm the guard takes, in an integer `if`.
+        (
+            "ok(x, n) = true;",
+            "ok(x, n) = (if x > 0 { x mod n } else { 0 }) * 0 == 0;",
+        ),
+        // `==` of two tests one of which fails.
+        ("ok(x, n) = true;", "ok(x, n) = (x mod n < 0) == false;"),
+    ];
+    for (p, g) in not_proved {
+        let e = checked(p, g);
+        assert!(!matches!(e, Entailment::Proved(_)), "{p} to {g}: {e}");
+        assert!(!true_on_window(p, g), "{p} to {g}");
+    }
+    let proved = [
+        ("ok(x, n) = n != 0;", "ok(x, n) = (x div n) * 0 == 0;"),
+        // The guard first: `n == 0 || ...` is `true` before the `mod` is read.
+        ("ok(x, n) = true;", "ok(x, n) = n == 0 || x mod n >= 0;"),
+        (
+            "ok(x, n) = true;",
+            "ok(x, n) = n != 0 && x mod n >= 0 || n == 0;",
+        ),
+        // The arm the guard takes never fails.
+        (
+            "ok(x, n) = x <= 0;",
+            "ok(x, n) = (if x > 0 { x mod n } else { 0 }) * 0 == 0;",
+        ),
+        // Two failures compare equal, and differ from every integer and boolean.
+        (
+            "ok(x, n) = true;",
+            "ok(x, n) = (x mod n < 0) == (x mod n < 0);",
+        ),
+        ("ok(x, n) = n == 0;", "ok(x, n) = x mod n != 0;"),
+        ("ok(x, n) = n == 0;", "ok(x, n) = x div n != x;"),
+    ];
+    for (p, g) in proved {
+        let e = checked(p, g);
+        assert!(matches!(e, Entailment::Proved(_)), "{p} to {g}: {e}");
+    }
+}
+
+#[test]
+fn a_call_with_an_argument_that_may_fail_is_read_at_its_place() {
+    // `f((x mod n) * 0)` and `f(0)` pass arguments with the same linear term, `0`, but at
+    // `n = 0` the first is `#divByZero`, so `f` gives `false` there and `true` for `0`. A call
+    // shared by the arguments' terms would prove the goal. Rung 2 does not yet translate a
+    // callee that reads an argument holding a quotient or remainder by a term, with or
+    // without the condition, so it takes nothing here; the call is not shared in any case
+    // ([`Walk::shared_call_key`] in preimage.rs).
+    let f = "f(positional a) = a == 0;\n";
+    for goal in [
+        format!("{f}ok(x, n) = f((x mod n) * 0) == f(0);"),
+        format!("{f}ok(x, n) = f(x mod n);"),
+    ] {
+        let (ps, p) = function("ok(x, n) = true;");
+        let (_, g) = function(&goal);
+        assert!(relations(&[&p, &g], &ps, true).is_none(), "{goal}");
+    }
+    // A call binds an atom as a value: a parameter that is not read does not fail, and a call
+    // with an argument that may fail is read at its place, beside one that is shared.
+    let g = "g(positional a, positional b) = b;\n";
+    for goal in [
+        format!("{g}ok(x, n) = g(x mod n, x) == x;"),
+        format!("{g}ok(x, n) = g(x mod n, x) == g(0, x);"),
+    ] {
+        assert!(true_on_window("ok(x, n) = true;", &goal), "{goal}");
+        let e = checked("ok(x, n) = true;", &goal);
+        assert!(matches!(e, Entailment::Proved(_)), "{goal}: {e}");
+    }
+    // A function whose body fails where its argument is 0, called with one.
+    let h = "h(positional a, positional m) = a mod m;\n";
+    let goal = format!("{h}ok(x, n) = h(x, n) * 0 == 0;");
+    assert!(!matches!(
+        checked("ok(x, n) = true;", &goal),
+        Entailment::Proved(_)
+    ));
+    assert_proved("ok(x, n) = n <= -1;", &goal);
+}
+
+/// The premise `n >= 1` and the goal `(x mod (n + 0)) * 0 + ... == 0` over `k` divisors,
+/// translated.
+fn divisors(k: usize) -> (Relation, Relation) {
+    let head = "ok(x, n)";
+    let goal: Vec<String> = (0..k).map(|i| format!("(x mod (n + {i})) * 0")).collect();
+    let (ps, p) = function(&format!("{head} = n >= 1;"));
+    let (_, g) = function(&format!("{head} = {} == 0;", goal.join(" + ")));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+/// The premise `true` and the goal `(n + 0 == 0 || x mod (n + 0) >= 0) && ...` over `k`
+/// divisors, each guarded by its own test, translated.
+fn guarded_divisors(k: usize) -> (Relation, Relation) {
+    let head = "ok(x, n)";
+    let goal: Vec<String> = (0..k)
+        .map(|i| format!("(n + {i} == 0 || x mod (n + {i}) >= 0)"))
+        .collect();
+    let (ps, p) = function(&format!("{head} = true;"));
+    let (_, g) = function(&format!("{head} = {};", goal.join(" && ")));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+
+#[test]
+fn the_condition_that_no_operation_fails_scales() {
+    // One condition `n + i != 0` for each of k divisors, each made once, and k divisors each
+    // shown not 0 by the guard of its `||`, so that no condition is left; the translation is
+    // timed at k and 8k. The entailment is checked at k alone: a goal of k conjuncts, each
+    // reading a remainder by a term, costs the Presburger layer more than O(k log k) bytes
+    // with no condition at all (`x mod (n + i) >= 0` for each i, 54 times the bytes at 8k,
+    // measured 2026-11-08), and the conditions are such conjuncts too. COMPLEXITY.md row
+    // RUNG2-definedness.
+    let n = 16;
+    for (p, g) in [divisors(n), guarded_divisors(n)] {
+        let e = entails(&p, &g);
+        assert!(matches!(e, Entailment::Proved(_)), "{e}");
+    }
+    let measure = move || {
+        scaling::check_order("the definedness of k remainders by terms", n, 1, |k| {
+            divisors(k);
+        });
+        scaling::check_order("the definedness of k guarded remainders", n, 1, |k| {
+            guarded_divisors(k);
+        });
+    };
+    let thread = std::thread::Builder::new().stack_size(8 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
 }
 
 #[test]
