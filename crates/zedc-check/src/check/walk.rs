@@ -1,8 +1,8 @@
 //! The checker's walk over statements, expressions and declared functions, on a heap stack:
 //! a program nested as deep as memory allows checks on a thread of any stack size.
 //!
-//! Each recursive call of the walk is a [`Job`]. What the caller does with the call's result
-//! is a [`Frame`] pushed below the job, which reads the result from [`M::ret`] when the job
+//! Each recursive call of the walk is a `Job`. What the caller does with the call's result
+//! is a `Frame` pushed below the job, which reads the result from `M::ret` when the job
 //! is done. A sequence of calls is one frame that starts the next call each time it resumes.
 //! The jobs run in the order the calls ran, so the errors, the classes, the needs and the
 //! records come out in the same order.
@@ -17,6 +17,42 @@ use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, Product, Scope};
+
+/// Checks a resolved unit.
+pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
+    check_with(&Tables::new(unit, res), unit)
+}
+
+/// Checks a unit whose binder tables are `t`, as [`check`] does with tables it builds.
+pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
+    KType::forget_emptiness();
+    let mut ck = Ck::new(t);
+    ck.bounds();
+    ck.walk(unit);
+    ck.finish();
+    ck.info
+        .errors
+        .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
+    ck.info.errors.dedup();
+    ck.info
+}
+
+/// The type of the binary operator `op` applied to arguments of the types `args`, with the
+/// errors the application reports: how an operator treats loose and family atoms.
+pub fn operator(op: &str, args: &[Ty]) -> (Ty, Vec<String>) {
+    let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+    let t = Tables::new(&[], &res);
+    let mut ck = Ck::new(&t);
+    let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
+    let (out, _) = ck.apply(
+        &format!("`{op}`"),
+        &op_sig(op),
+        args,
+        true,
+        Span { start: 0, end: 0 },
+    );
+    (out, ck.info.errors.into_iter().map(|e| e.message).collect())
+}
 
 /// What a job gives back.
 pub(super) enum Ret<'a> {
@@ -3400,5 +3436,2032 @@ impl<'a> Ck<'_, 'a> {
         });
         self.arms.terms.insert(e.span, t.clone());
         t
+    }
+}
+
+/// The steps of class solving, of applying a signature and of fitting a function to a slot,
+/// which re-enter the walk: a need checked again at a call checks a call through a value
+/// ([`Ck::call_found`]).
+impl<'t, 'a> Ck<'t, 'a> {
+    /// Component `i` of `v`, destructured into `n` names: of each tuple shape, with `v`'s
+    /// atoms, which `TupleGet` passes. A value of a class needs a tuple of `n` of each type
+    /// the class meets.
+    fn component(&mut self, v: &Ty, i: usize, n: usize, span: Span) -> Ty {
+        let mut out = self.passing(v, "a tuple", span);
+        for p in v.pieces() {
+            match p {
+                Piece::Tuple(cs) if cs.len() == n => out = out.union(&cs[i]),
+                Piece::Dyn => {
+                    if i == 0 {
+                        self.any("destructuring", span);
+                    }
+                }
+                Piece::Var(_) if let Some(k) = self.class_of(&p) => {
+                    let kind = NeedKind::Destructure { i, n };
+                    out = out.union(&self.need(k, kind, true, span));
+                }
+                Piece::Var(_) => out = out.union(&Ty::dynamic()),
+                p if p.is_atoms() => {}
+                p => {
+                    if i == 0 {
+                        self.error(
+                            span,
+                            format!("this value is {}, not a tuple of {n}", self.text(&p.ty())),
+                        );
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The call of `sig` at `span` applied again to `with`, from [`Self::outside_args`], with
+    /// the checker's state restored after, as [`Self::repairs`] tries a call: the loose atoms
+    /// it then gives are those that reach the call's value from outside, which
+    /// [`Self::outside_of`] reads. It selects the arrow the call takes from outside for any
+    /// callee, a declared function, a method, a function value passed to another function or
+    /// computed: `r(x)`, `x.r()`, `x.r`, `ap(r, x)` and `(if c { r } else { r })(x)` alike. A
+    /// trial the arguments do not pass leaves the call's atoms from outside unknown, so all
+    /// its loose atoms. One more application per call that passes a loose atom inside a
+    /// function with a widened parameter.
+    fn try_outside(&mut self, what: &str, sig: &Sig, with: Vec<Option<Arg>>, span: Span) {
+        let applied = self.applied.take();
+        let saved = self.mark();
+        self.trying = true;
+        let (t, _) = self.apply(what, sig, with, false, span);
+        let ok = self.info.errors.len() == saved.errors;
+        self.trying = false;
+        self.undo(&saved);
+        self.applied = applied;
+        self.tried_at(span, ok.then(|| t.loose()));
+    }
+
+    /// The signature `sig` of the function of `level`, which ends: each class of the level
+    /// takes its type, a type variable of the signature named in order of appearance. The
+    /// uses of a class that is a type variable join the signature as its needs; those of a
+    /// class of one type are checked on it now.
+    fn generalize(&mut self, level: usize, mut sig: Sig) -> Arc<Sig> {
+        // The roots of this level, and the classes whose roots have a type by now: each of
+        // the latter takes its root's type in `sig`. A class of a function around goes to
+        // that function's list.
+        let mut own = Vec::new();
+        let mut done = Vec::new();
+        for k in std::mem::take(&mut self.pending[level]) {
+            let r = self.find(k);
+            let at = self.classes[r].level;
+            if self.classes[r].resolved.is_none() {
+                if at < level {
+                    self.pending[at].push(k);
+                    continue;
+                }
+                self.resolve(r);
+                own.push(r);
+            }
+            done.push(k);
+        }
+        let mut needs: Vec<(usize, Need)> = Vec::new();
+        let mut now = Vec::new();
+        for &r in &own {
+            let uses = std::mem::take(&mut self.classes[r].uses);
+            self.classes[r].known.clear();
+            self.classes[r].data = false;
+            match self.classes[r].resolved.clone() {
+                Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(uses),
+                Some(t) => now.extend(uses.into_iter().map(|(_, n)| (n, t.clone()))),
+                None => unreachable!("resolved above"),
+            }
+        }
+        for (n, t) in &now {
+            self.check_on(n, t, n.span);
+        }
+        needs.sort_by_key(|(n, _)| *n);
+        sig.needs = needs.into_iter().map(|(_, n)| n).collect();
+        // Only the classes listed for this level are replaced here, not every class `sig`
+        // holds. A type variable keeps its class's name `$k` until `finish`, so a function
+        // around does not rewrite the signatures inside it at each depth (CHK-curried);
+        // `finish` renames each signature it shows once. A class that takes another class's
+        // variable is replaced at every depth of `sig`, so that its variable is found where
+        // the signature's own are. A class that takes a type with no variable is replaced
+        // only outside the functions `sig` holds: inside them its variable stays, and is read
+        // as its type wherever a function's arrows are read ([`Self::open`], [`Self::stale`]),
+        // and replaced once in what `finish` shows. Replacing it at every depth cost the
+        // size of `sig` at each level, n^2 for n nested lambdas whose parameters each take a
+        // carrier (ledger CHK-carrier, COMPLEXITY.md F77).
+        // Complexity tradeoff: a class bound to another class's variable or to the unknown is
+        // still replaced at every depth, O(size of `sig`) at each level that binds one, so n
+        // nested lambdas that each bind such a class would cost n^2 (no such family measured);
+        // reading it lazily needs each reading site to follow class-to-class links too.
+        let mut deep = Binds::new();
+        let mut outside = Binds::new();
+        for k in done {
+            let v: Arc<str> = format!("${k}").into();
+            let t = self.classes[self.find(k)]
+                .resolved
+                .clone()
+                .expect("resolved");
+            if t.as_var() == Some(&v) {
+                continue;
+            }
+            match is_solved(&t) {
+                true => outside.insert(v, t),
+                false => deep.insert(v, t),
+            };
+        }
+        let mut sig = sig.replace(&deep).replace_outside(&outside);
+        // The classes of this level that are type variables, named in order of appearance.
+        // The names it holds, inside the functions it holds too, are taken; the facts of
+        // those functions are shared, not walked again. A class `outside` replaced is still
+        // inside those functions, and is no type variable.
+        let facts = VarFacts::of(&sig);
+        let mine: HashSet<Arc<str>> = own
+            .iter()
+            .map(|r| Arc::from(format!("${r}")))
+            .filter(|v| facts.classes.contains(v) && !outside.contains_key(v))
+            .collect();
+        // The names before `free` are all taken.
+        let mut n = facts.free;
+        let mut mine_seen = BTreeSet::new();
+        for v in sig.first_seen(&mine) {
+            let r = class_id(&v).expect("a class variable");
+            let name = loop {
+                let name = var_name(n);
+                n += 1;
+                if !facts.names.contains(&name) {
+                    break name;
+                }
+            };
+            if self.classes[r].mask != EVERY {
+                sig.bounds.insert(v.clone(), self.classes[r].mask);
+            }
+            self.classes[r].name = Some(name);
+            mine_seen.insert(v);
+        }
+        // A type variable that does not reach the signature means nothing outside it.
+        for &r in &own {
+            if self.classes[r].name.is_none()
+                && let Some(t) = &self.classes[r].resolved
+                && t.vars.iter().any(|v| class_id(v).is_some())
+            {
+                self.classes[r].resolved = Some(Ty::dynamic());
+            }
+        }
+        sig.own = mine_seen;
+        sig.named = n;
+        sig.facts = Default::default();
+        sig.note_held();
+        self.level -= 1;
+        Arc::new(sig)
+    }
+
+    /// Merges classes `a` and `b`, as `what` at `span` requires; false, changing nothing, if
+    /// they share no carrier. The shorter lists move into the longer, so that each item
+    /// moves `O(log n)` times.
+    fn merge(&mut self, a: usize, b: usize, what: &str, span: Span) -> bool {
+        let (a, b) = (self.find(a), self.find(b));
+        if a == b {
+            return true;
+        }
+        let m = self.classes[a].mask & self.classes[b].mask;
+        if m == 0 {
+            return false;
+        }
+        self.touch(a);
+        self.touch(b);
+        let (root, child) = match self.classes[a].rank < self.classes[b].rank {
+            true => (b, a),
+            false => (a, b),
+        };
+        if self.classes[a].rank == self.classes[b].rank {
+            self.classes[root].rank += 1;
+        }
+        // Each use of one class is checked on what flowed into the other.
+        let mut cross: Vec<(Need, Ty, Span)> = Vec::new();
+        for (x, y) in [(a, b), (b, a)] {
+            for (_, n) in &self.classes[x].uses {
+                for (t, at) in &self.classes[y].flowed {
+                    cross.push((n.clone(), t.clone(), *at));
+                }
+            }
+        }
+        let lowered = self.classes[a].level != self.classes[b].level;
+        let mut lits = std::mem::take(&mut self.classes[child].lits);
+        let mut reasons = std::mem::take(&mut self.classes[child].reasons);
+        let mut uses = std::mem::take(&mut self.classes[child].uses);
+        let mut known = std::mem::take(&mut self.classes[child].known);
+        let data = self.classes[child].data;
+        let mut flowed = std::mem::take(&mut self.classes[child].flowed);
+        let level = self.classes[child].level;
+        let binder = self.classes[child].binder;
+        let generic = self.classes[child].generic;
+        let given = self.classes[child].given;
+        self.classes[child].parent = root;
+        let c = &mut self.classes[root];
+        c.generic &= generic;
+        c.given &= given;
+        c.binder = match (c.binder, binder) {
+            (Some(a), Some(b)) if b.1.start <= a.1.start && a.1.end <= b.1.end => Some(b),
+            (a, b) => a.or(b),
+        };
+        if c.uses.len() < uses.len() {
+            std::mem::swap(&mut c.uses, &mut uses);
+            std::mem::swap(&mut c.known, &mut known);
+        }
+        c.uses.extend(uses);
+        // The uses kept first keep their results, as a scan of the joined `uses` finds them.
+        for (key, result) in known {
+            c.known.entry(key).or_insert(result);
+        }
+        c.data |= data;
+        if c.flowed.len() < flowed.len() {
+            std::mem::swap(&mut c.flowed, &mut flowed);
+        }
+        c.flowed.extend(flowed);
+        if c.lits.len() < lits.len() {
+            std::mem::swap(&mut c.lits, &mut lits);
+        }
+        c.lits.extend(lits);
+        if c.reasons.len() < reasons.len() {
+            std::mem::swap(&mut c.reasons, &mut reasons);
+        }
+        c.reasons.extend(reasons);
+        c.reasons.push(Reason {
+            span,
+            what: what.into(),
+            takes: None,
+        });
+        c.mask = m;
+        c.level = c.level.min(level);
+        if lowered {
+            let mut vars = Vars::default();
+            for (_, n) in &self.classes[root].uses {
+                n.vars_in(&mut vars);
+            }
+            let level = self.classes[root].level;
+            self.lower(vars.order, level);
+        }
+        for (n, t, at) in &cross {
+            self.check_on(n, t, *at);
+        }
+        true
+    }
+
+    /// Records that the use at `span` needs `kind` of each value of class `k`, and gives what
+    /// the use gives: a new class at `k`'s level if `gives`, else nothing. The use is checked
+    /// now on each tuple and function that flowed into the class; on the type the class
+    /// takes, if that is not a type variable, when its function ends; else at each call of
+    /// that function, on the type the call binds the variable to. A use the class has met
+    /// already gives what it gave then, since what a use gives depends only on the type it is
+    /// made of; so a call met twice checks its needs once.
+    fn need(&mut self, k: usize, kind: NeedKind, gives: bool, span: Span) -> Ty {
+        let r = self.find(k);
+        let data = matches!(kind, NeedKind::Data(_));
+        if data && self.classes[r].data {
+            return Ty::empty();
+        }
+        let key = (kind, gives);
+        if let Some(result) = self.classes[r].known.get(&key) {
+            return result.clone();
+        }
+        let (kind, _) = key;
+        let level = self.classes[r].level;
+        let result = gives.then(|| {
+            let j = self.class();
+            self.classes[j].level = level;
+            self.classes[j].given = true;
+            Ty::var(format!("${j}").into())
+        });
+        let need = Need {
+            on: Ty::var(format!("${r}").into()),
+            kind,
+            result: result.clone(),
+            span,
+        };
+        let mut vars = Vars::default();
+        need.vars_in(&mut vars);
+        self.lower(vars.order, level);
+        let flowed = self.classes[r].flowed.clone();
+        self.touch(r);
+        self.needs += 1;
+        let seq = self.needs;
+        let class = &mut self.classes[r];
+        class.uses.push((seq, need.clone()));
+        let given = result.clone().unwrap_or_else(Ty::empty);
+        class.known.insert((need.kind.clone(), gives), given);
+        class.data |= data;
+        for (t, at) in &flowed {
+            self.check_on(&need, t, *at);
+        }
+        result.unwrap_or_else(Ty::empty)
+    }
+
+    /// Checks the use `n` of a class on `t`, which flowed into the class at `span` or which
+    /// the class takes: what the use gives flows into the class of its result.
+    fn check_on(&mut self, n: &Need, t: &Ty, span: Span) {
+        let from = self.info.errors.len();
+        let start = self.need_passed.len();
+        let got = self.meet(n, t, &mut Binds::new(), span);
+        // A use checked on a value that flowed in has no call whose argument gave the atoms.
+        let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
+        for (inner, _, k) in passed {
+            let message = format!(
+                "{inner} does not take {}: an atom passes by only at a call given it",
+                Ty::set(k)
+            );
+            self.error(n.span, message);
+        }
+        if let Some(r) = &n.result
+            && let Some(k) = self.class_of_ty(r)
+            && !self.flow(k, &got, "this use", n.span)
+        {
+            let shown = self.show(r);
+            let got = self.text(&got);
+            self.error(n.span, format!("this use gives {got}, not {shown}"));
+        }
+        self.also(from, n.span, |_| "this use needs it here".to_string());
+    }
+
+    /// The use `n`, of a value of `on`, checked at `span` where the variables of the
+    /// signature that holds it are bound as `binds`; a variable left unbound is unknown.
+    /// Gives what the use gives; `binds` are as they were.
+    fn meet(&mut self, n: &Need, on: &Ty, binds: &mut Binds, span: Span) -> Ty {
+        let mut b = |ck: &Self, t: &Ty| bound(t, binds, |v| ck.is_class(v));
+        let on = b(self, on);
+        self.replaying += 1;
+        let has_vars = |t: &Ty| {
+            let f = t.var_facts();
+            !f.classes.is_empty() || !f.names.is_empty()
+        };
+        self.need_args = match &n.kind {
+            NeedKind::Call { positional, .. } => Some(positional.iter().map(has_vars).collect()),
+            NeedKind::Index(t) => Some(vec![has_vars(t)]),
+            _ => None,
+        };
+        let start = self.refused.len();
+        let out = match &n.kind {
+            NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span),
+            NeedKind::Index(k) => self.at_key(&on, Arg::of(b(self, k)), span),
+            NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
+            NeedKind::Call {
+                what,
+                positional,
+                named,
+                curry,
+            } => {
+                let args = Args {
+                    positional: positional
+                        .iter()
+                        .map(|t| ArgSrc::Got(Box::new(Arg::of(b(self, t)))))
+                        .collect(),
+                    named: named
+                        .iter()
+                        .map(|(m, t)| (m.to_string(), ArgSrc::Got(Box::new(Arg::of(b(self, t))))))
+                        .collect(),
+                };
+                self.call_found(&on, what, args, *curry, span)
+            }
+            NeedKind::Data(what) => {
+                self.data(&on, what, span, span);
+                Ty::empty()
+            }
+            NeedKind::Into { what, ty } => {
+                self.into(&on, ty, what, span);
+                Ty::empty()
+            }
+            NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
+            NeedKind::Narrow(narrow) => self.narrowed(&on, narrow, span),
+        };
+        self.replaying -= 1;
+        self.need_args = None;
+        // Each argument the use's applications passed atoms of by is named by the variables
+        // of its type in the need: an argument of no variable gives them to no call.
+        for (what, i, k) in self.refused.drain(start..).collect::<Vec<_>>() {
+            let t = match &n.kind {
+                NeedKind::Call { positional, .. } => positional.get(i),
+                NeedKind::Index(t) if i == 0 => Some(t),
+                _ => None,
+            };
+            let mut vars = Vars::default();
+            if let Some(t) = t {
+                t.vars_in(&mut vars);
+            }
+            self.need_passed.push((what, vars.order, k));
+        }
+        out
+    }
+
+    /// Checks the needs of `sig`, named `what`, at a call at `span` that binds its variables
+    /// as `binds`, in the order its body met them; binds what each use gives. A need on a
+    /// value of type `_` fails, since the value may be any.
+    ///
+    /// A need met again inside its own check, as by `w(w)` for `w(f) = f(f)`, on the same type
+    /// up to its variables, gives the least result: the inner use first gives nothing, and if
+    /// the check took that, it runs once more with the inner use giving what the first run
+    /// gave. The second result must lie within the first, which then holds every value the
+    /// use may give; otherwise the result is not settled and it is an error. Met again on
+    /// another type, it is an error, since the types could grow without end. So the checks
+    /// nest at most as deep as the program has needs.
+    ///
+    /// A need on a variable of `defer`, or on what such a need gives, is left: the needs left
+    /// are given back.
+    fn replay(
+        &mut self,
+        what: &str,
+        needs: &[Need],
+        binds: &mut Binds,
+        mut defer: BTreeSet<Arc<str>>,
+        span: Span,
+    ) -> Vec<Need> {
+        let mut left = Vec::new();
+        for n in needs {
+            if !defer.is_empty() {
+                let mut vars = Vars::default();
+                n.vars_in(&mut vars);
+                if vars.order.iter().any(|v| defer.contains(v)) {
+                    defer.extend(vars.order);
+                    left.push(n.clone());
+                    continue;
+                }
+            }
+            let from = self.info.errors.len();
+            let on = bound(&n.on, binds, |v| self.is_class(v));
+            let shape = bound(&on, &mut Binds::new(), |v| self.is_class(v));
+            let got = match self.open.iter_mut().find(|o| o.span == n.span) {
+                _ if on.dynamic => {
+                    self.any(&format!("{what}, which needs this of its argument,"), span);
+                    Ty::empty()
+                }
+                Some(o) if o.shape == shape => {
+                    o.used = true;
+                    o.result.clone()
+                }
+                Some(o) => {
+                    let t = o.shape.clone();
+                    let (on, t) = (self.text(&on), self.text(&t));
+                    self.error(
+                        span,
+                        format!(
+                            "{what} needs this of its argument again inside its own check, on \
+                             {on} where it was {t}: the checker does not follow a call at a \
+                             type that may grow without end"
+                        ),
+                    );
+                    Ty::empty()
+                }
+                None => {
+                    // `meet` gives `binds` back as they were, so the second run starts from
+                    // the same ones.
+                    let errors = self.info.errors.len();
+                    self.open.push(Open {
+                        span: n.span,
+                        shape,
+                        result: Ty::empty(),
+                        used: false,
+                    });
+                    let passing = self.need_passed.len();
+                    let mut got = self.meet(n, &on, binds, span);
+                    let used = self.open.last().is_some_and(|o| o.used);
+                    if used && !got.is_empty() {
+                        self.info.errors.truncate(errors);
+                        self.need_passed.truncate(passing);
+                        let o = self.open.last_mut().expect("the need just pushed");
+                        o.result = got.clone();
+                        let first = got;
+                        got = self.meet(n, &on, binds, span);
+                        if !self.subtype(&got, &first) {
+                            let why = got.refused(&first);
+                            let (got, first) = (self.text(&got), self.text(&first));
+                            self.error(
+                                span,
+                                format!(
+                                    "{what} needs this of its argument again inside its own \
+                                     check, and the result is not settled: it gives {got} \
+                                     where the use inside gave {first}{why}"
+                                ),
+                            );
+                        }
+                    }
+                    self.open.pop();
+                    got
+                }
+            };
+            // What the use gives is within its result: a variable there joins it, as for an
+            // argument, and one it leaves unbound gives nothing.
+            if let Some(r) = &n.result {
+                if !self.sub(&got, r, binds) {
+                    let why = got.refused(r);
+                    self.error(
+                        span,
+                        format!(
+                            "{what} gives {} here, which is not {}{why}",
+                            self.text(&got),
+                            self.text(r)
+                        ),
+                    );
+                }
+                for v in &r.vars {
+                    binds.entry(v.clone()).or_insert_with(Ty::empty);
+                }
+            }
+            self.also(from, n.span, |_| {
+                format!("{what} needs this of its argument here")
+            });
+        }
+        left
+    }
+
+    /// Checks that a value of `on` may be passed, by `what` at `span`, at a parameter of the
+    /// closed type `ty`.
+    fn into(&mut self, on: &Ty, ty: &Ty, what: &str, span: Span) {
+        for piece in on.pieces() {
+            let ok = match self.class_of(&piece) {
+                _ if piece == Piece::Dyn => ty.dynamic,
+                _ if matches!(piece, Piece::Var(_)) && self.class_of(&piece).is_none() => true,
+                Some(k) => {
+                    let ok = self.restrict(k, mask_of(ty), what, span);
+                    let kind = NeedKind::Into {
+                        what: what.into(),
+                        ty: ty.clone(),
+                    };
+                    self.need(k, kind, false, span);
+                    ok
+                }
+                None => match &piece {
+                    Piece::Fn(s) if !s.needs.is_empty() => {
+                        self.fit_needs(s, ty, &mut Binds::new(), what, span)
+                    }
+                    _ => self.sub(&piece.ty(), ty, &mut Binds::new()),
+                },
+            };
+            if !ok {
+                let p = self.show(&piece.ty());
+                let why = on.of_piece(&piece).refused(ty);
+                self.error(
+                    span,
+                    format!(
+                        "{what} does not take {p}, which is not {}{why}",
+                        self.text(ty)
+                    ),
+                );
+            }
+        }
+    }
+
+    /// Whether a function of `s`, whose body has needs, may be passed, by `what` at `span`,
+    /// at a parameter of type `p`: `s` applied to the parameters of `p`'s one function type
+    /// gives its result. The application reports its own errors.
+    fn fit_needs(
+        &mut self,
+        s: &Arc<Sig>,
+        p: &Ty,
+        binds: &mut Binds,
+        what: &str,
+        span: Span,
+    ) -> bool {
+        let mut bare = (**s).clone();
+        bare.needs = Vec::new();
+        let [q] = p.fns.iter().collect::<Vec<_>>()[..] else {
+            return false;
+        };
+        if !self.sub(&Ty::func(Arc::new(bare)), p, binds) {
+            return false;
+        }
+        let q = q.replace(binds);
+        let from = self.info.errors.len();
+        let mut ok = true;
+        for a in &q.arrows {
+            let args = a.params.iter().map(|t| Some(Arg::of(t.clone()))).collect();
+            let (r, _) = self.apply(what, s, args, false, span);
+            ok &= self.subtype(&r, &a.result);
+        }
+        ok || self.info.errors.len() > from
+    }
+
+    /// The values of `t` flow into class `k`: a class merges with it, a carrier restricts it
+    /// to that carrier, and a tuple or a function to other values; atoms change nothing, and
+    /// a value of type `_`, which may be any, does not flow.
+    fn flow(&mut self, k: usize, t: &Ty, what: &str, span: Span) -> bool {
+        for p in t.pieces() {
+            let ok = match (self.class_of(&p), p.carrier()) {
+                (Some(j), _) => self.merge(k, j, what, span),
+                _ if p == Piece::Dyn => false,
+                _ if matches!(p, Piece::Var(_)) || p.is_atoms() => true,
+                (None, Some(c)) => self.restrict(k, c.bit(), what, span),
+                (None, None) => self.restrict(k, OTHER, what, span),
+            };
+            if !ok {
+                return false;
+            }
+            if matches!(p, Piece::Tuple(_) | Piece::Fn(_)) {
+                let r = self.find(k);
+                let t = p.ty();
+                let uses: Vec<Need> = self.classes[r]
+                    .uses
+                    .iter()
+                    .map(|(_, n)| n.clone())
+                    .collect();
+                self.touch(r);
+                self.classes[r].flowed.push((t.clone(), span));
+                for n in &uses {
+                    self.check_on(n, &t, span);
+                }
+            }
+        }
+        true
+    }
+
+    /// Binds the names of the pattern `p`, matched on a value of `v`, from the binder `next`
+    /// on, in the order the resolver gave them: each to what the payloads of `v`'s atoms of
+    /// the pattern's name hold there.
+    ///
+    /// The patterns nest as deep as the text, so the walk keeps its own stack: each pattern
+    /// being matched, its atom, the type it is matched on (`None` for `v`), and its next slot.
+    fn bind_pattern(&mut self, p: &Pattern, v: &Ty, mut next: usize) {
+        let atom_of = |p: &Pattern| -> Arc<str> {
+            let Pattern::Atom { name, .. } = p else {
+                unreachable!("resolve rejects the forms of layer L2")
+            };
+            name.as_str().into()
+        };
+        let mut stack: Vec<(&Pattern, Arc<str>, Option<Ty>, usize)> =
+            vec![(p, atom_of(p), None, 0)];
+        while let Some((p, atom, on, i)) = stack.last_mut() {
+            let Pattern::Atom {
+                fields,
+                items,
+                span,
+                ..
+            } = *p
+            else {
+                unreachable!("resolve rejects the forms of layer L2")
+            };
+            let (slot, sub) = match fields.get(*i) {
+                Some((f, sub)) => (Slot::Field(f.as_str().into()), sub.as_ref()),
+                None => match items.get(*i - fields.len()) {
+                    Some(sub) => (Slot::Item(*i - fields.len()), Some(sub)),
+                    None => {
+                        stack.pop();
+                        continue;
+                    }
+                },
+            };
+            *i += 1;
+            let t = self.payload(on.as_ref().unwrap_or(v), atom, &slot, *span);
+            match sub {
+                Some(sub) => stack.push((sub, atom_of(sub), Some(t), 0)),
+                None => {
+                    self.env.insert(next, t);
+                    next += 1;
+                }
+            }
+        }
+    }
+
+    /// What the payloads of the atoms named `atom` among the values of `v` hold at `slot`,
+    /// for a pattern at `span`: what the shapes they were built with hold there, what a need
+    /// gives on a type variable's class, and the unknown where it is not known.
+    fn payload(&mut self, v: &Ty, atom: &Arc<str>, slot: &Slot, span: Span) -> Ty {
+        let mut out = match v.shapes(atom) {
+            Some(ss) => Ty::union_all(ss.iter().filter_map(|s| s.at(slot))),
+            None => Ty::dynamic(),
+        };
+        if v.dynamic {
+            out = out.union(&Ty::dynamic());
+        }
+        for x in &v.vars {
+            let t = match self.class_of(&Piece::Var(x.clone())) {
+                Some(k) => {
+                    let kind = NeedKind::Payload {
+                        atom: atom.clone(),
+                        slot: slot.clone(),
+                    };
+                    self.need(k, kind, true, span)
+                }
+                None => Ty::dynamic(),
+            };
+            out = out.union(&t);
+        }
+        out
+    }
+
+    /// What the test at `span` leaves of `v` where it fails, as `narrow` says. A type variable
+    /// of a class a need gave ([`Class::given`]) leaves what a need gives, so `args[k] else ""`
+    /// in the body of `r(fs, args, k)` holds no `#notFound` at a call that binds `args` to
+    /// `CommandLine` (rule 3 of sec:type_resolution); any other variable is kept whole.
+    fn narrowed(&mut self, v: &Ty, narrow: &Narrow, span: Span) -> Ty {
+        let mut out = match narrow {
+            Narrow::Loose => v.without_loose(),
+            Narrow::Atom(name) => {
+                let mut rest = v.diff(&Ty::set(any_payload(name)));
+                rest.payloads.remove(name.as_ref());
+                rest
+            }
+            Narrow::Not(t) => v.diff_with(t, &|w| self.stale(w)),
+        };
+        for x in &v.vars {
+            if let Some(k) = self.class_of(&Piece::Var(x.clone()))
+                && self.classes[k].given
+            {
+                out.vars.remove(x);
+                let left = self.need(k, NeedKind::Narrow(narrow.clone()), true, span);
+                out = out.union(&left);
+            }
+        }
+        out
+    }
+
+    /// `x ** n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
+    /// expression or the listed `int` values of its type. A class's values are not known here.
+    fn exponent(&mut self, x: &Arg, n: &Arg, e: &'a Expr, span: Span) {
+        let int = KType::int();
+        let ns = &n.ty.set & &int;
+        if (&x.ty.set & &int).is_empty() || ns.is_empty() {
+            return;
+        }
+        let zero = Value::Int(0);
+        let listed = ns.ints_listed();
+        let (ints, narrowed) = self.ints_here(e);
+        let at_least_zero = ints.is_subset(&IntervalSet::range(End::of(0), PosInf))
+            || listed.is_some_and(|vs| {
+                vs.iter().all(|v| {
+                    v.surface_cmp(&zero)
+                        .is_some_and(|o| o != std::cmp::Ordering::Less)
+                })
+            });
+        if !at_least_zero {
+            let shown = match narrowed {
+                true => format!("int{ints}"),
+                false => self.show(&Ty::set(ns)),
+            };
+            let mut notes = Vec::new();
+            if narrowed {
+                notes.extend(self.deciding_notes(e));
+            }
+            notes.extend(self.derive(&[n.at.unwrap_or(span)]));
+            self.error_with(
+                span,
+                format!("`**` on an int needs an exponent of at least 0, and this one is {shown}"),
+                notes,
+            );
+        }
+    }
+
+    /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
+    /// function at any depth. A function it holds is reported at `span` with the derivation of
+    /// the expression at `from`, which gave the value.
+    fn data(&mut self, t: &Ty, what: &str, span: Span, from: Span) {
+        // A function held in the row of a tuple expression was reported at that tuple, with its
+        // derivation: one error for one function, however many tuples and uses it then flows
+        // through, each of which meets the same value, so that fixing the error fixes them all.
+        if let Some(s) = t.unchecked_function() {
+            let s = self.sig_text(s);
+            let notes = self.derive(&[from]);
+            self.error_with(
+                span,
+                format!("{what} takes data, and this value may hold a function, `{s}`"),
+                notes,
+            );
+        }
+        // A class, at any depth, needs data of each of its values. A row that holds no class
+        // or unknown is not entered; nor is one whose classes were checked as data when it
+        // was made, since a class keeps a data need once it has one and a second is nothing.
+        // Of such a row only its unknown is reported, once, as each would be at this span.
+        // A row shared by many paths is visited once.
+        let mut rows = HashSet::new();
+        // A payload shape that holds no class or unknown is not entered either, and a shape is
+        // shared, so one met again by another path is not entered again.
+        let mut shapes = HashSet::new();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            for r in (t.tuples.iter()).filter(|r| r.open() && rows.insert(r.addr())) {
+                match r.data() {
+                    true if r.dynamic() => self.any(what, span),
+                    true => {}
+                    false => stack.extend(r.iter()),
+                }
+            }
+            for v in &t.vars {
+                if let Some(k) = self.class_of(&Piece::Var(v.clone())) {
+                    self.need(k, NeedKind::Data(what.into()), false, span);
+                }
+            }
+            if t.dynamic {
+                self.any(what, span);
+            }
+            // An atom expression does not check its payload as data, since a payload may hold
+            // a function (DESIGN.md, `#atom(t)`), so its classes and unknowns are met here.
+            let open = t.payloads.values().flatten().flatten().filter(|s| s.open());
+            for s in open.filter(|s| shapes.insert(s.as_ptr())) {
+                stack.extend(&s.items);
+                stack.extend(s.fields.values());
+            }
+        }
+    }
+
+    /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
+    fn compare(&mut self, op: &str, x: Arg, y: Arg, span: Span) -> Ty {
+        let what = format!("`{op}`");
+        if x.ty.tuples.is_empty() && y.ty.tuples.is_empty() {
+            return self
+                .apply(&what, &op_sig("<"), vec![Some(x), Some(y)], true, span)
+                .0;
+        }
+        let out = self.passing(&x.ty, &what, span);
+        let out = out.union(&self.passing(&y.ty, &what, span));
+        self.components(&what, &x.ty.without_loose(), &y.ty.without_loose(), span);
+        out.union(&Ty::carrier(Carrier::Bool))
+    }
+
+    /// Checks that each value of `a` compares with each of `b` (sec:order): two numbers of one
+    /// carrier or two values of one other kind, the atoms as data, and two tuples component by
+    /// component as far as the shorter goes, since a proper prefix comes first.
+    fn components(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) {
+        let refuse = |ck: &mut Self, p: &Piece, q: &str| {
+            let p = ck.text(&p.ty());
+            ck.error(span, format!("{what} does not compare {p} with {q}"));
+        };
+        for (s, t) in [(a, b), (b, a)] {
+            let atoms = !s.atoms().is_empty();
+            for p in t.pieces() {
+                let ok = match self.class_of(&p) {
+                    Some(k) if !s.tuples.is_empty() => self.restrict(k, OTHER, what, span),
+                    Some(_) => true,
+                    None => match &p {
+                        Piece::Dyn => false,
+                        Piece::Var(_) | Piece::Tuple(_) => true,
+                        _ if !s.tuples.is_empty() => false,
+                        _ => !atoms || p.is_atoms() || p.carrier().is_none(),
+                    },
+                };
+                if !ok {
+                    let q = if s.tuples.is_empty() {
+                        "an atom"
+                    } else {
+                        "a tuple"
+                    };
+                    return refuse(self, &p, q);
+                }
+            }
+        }
+        for s in &a.tuples {
+            for t in &b.tuples {
+                for (c, d) in s.iter().zip(t) {
+                    self.components(what, c, d, span);
+                }
+            }
+        }
+        let rest = |t: &Ty| Ty {
+            tuples: Vec::new(),
+            ..t.without_atoms()
+        };
+        let (x, y) = (rest(a), rest(b));
+        if !x.is_empty() && !y.is_empty() {
+            self.apply(
+                what,
+                &op_sig("<"),
+                vec![Some(Arg::of(x)), Some(Arg::of(y))],
+                true,
+                span,
+            );
+        }
+    }
+
+    /// Checks each operand of the bit word or integer machine operation `w` against its domain
+    /// (DESIGN.md sec:domains, sec:linalg): `int[0..]` for every one but the `x` of `shl` and
+    /// `shr`, `int[0..<2 ** width]` for the operands read as `width` digits, `int[0..<width]`
+    /// for the `k` of a funnel shift, and a multiple of 8 for the width of `byteSwap`. An operand
+    /// is rejected when its int part is not shown to lie in the domain, from its listed values or
+    /// the interval of its expression, as `**`'s exponent is.
+    fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg, &'a Expr)], span: Span) {
+        let names = zed_kernel::bits::params(p);
+        let shift = matches!(p, Prim::Shl | Prim::Shr);
+        let nonneg = IntervalSet::range(End::of(0), PosInf);
+        let ranges: Vec<Option<IntRange>> =
+            slots.iter().map(|(a, e)| self.int_range(a, e)).collect();
+        let mut fine = true;
+        for (i, (((a, e), r), name)) in slots.iter().zip(&ranges).zip(names).enumerate() {
+            let Some(r) = r else { continue };
+            if shift && i == 0 || r.ints.is_subset(&nonneg) {
+                continue;
+            }
+            fine = false;
+            let at = a.at.unwrap_or(e.span);
+            let shown = &r.shown;
+            let mut notes = vec![Note {
+                span: at,
+                text: format!("`{name}` is this operand, {shown}"),
+            }];
+            if r.narrowed {
+                notes.extend(self.deciding_notes(e));
+            }
+            self.derive_into(&[at], &mut notes);
+            self.error_with(
+                span,
+                format!("`{w}` takes `{name}` in int[0..], and this `{name}` is {shown}"),
+                notes,
+            );
+        }
+        if !fine || !zed_kernel::bits::has_width(p) {
+            return;
+        }
+        let last = slots.len() - 1;
+        let (wa, we) = &slots[last];
+        let Some(rw) = &ranges[last] else {
+            return;
+        };
+        let width = (wa.at.unwrap_or(we.span), rw.shown.as_str());
+        if zed_kernel::bits::whole_bytes(p) && !whole_bytes(rw) {
+            let (aw, sw) = width;
+            let mut notes = vec![Note {
+                span: aw,
+                text: format!("`width` is this operand, {sw}"),
+            }];
+            self.derive_into(&[aw], &mut notes);
+            self.error_with(
+                span,
+                format!("`{w}` takes `width` a multiple of 8, and this `width` is {sw}"),
+                notes,
+            );
+            return;
+        }
+        let smallest = rw.extreme(std::cmp::Ordering::Less);
+        // An operand lies below `2 ** width` when its largest value does below the smallest
+        // width, and below `width` when its largest value is less than the smallest width.
+        for (i, two_pow) in zed_kernel::bits::below_two_pow_width(p)
+            .iter()
+            .map(|&i| (i, true))
+            .chain(zed_kernel::bits::below_width(p).map(|i| (i, false)))
+        {
+            let ((a, e), Some(r)) = (&slots[i], &ranges[i]) else {
+                continue;
+            };
+            let below = r
+                .extreme(std::cmp::Ordering::Greater)
+                .zip(smallest.as_ref())
+                .is_some_and(|(h, l)| match two_pow {
+                    true => zed_kernel::bits::below_two_pow(&h, l),
+                    false => h
+                        .as_integer()
+                        .zip(l.as_integer())
+                        .is_some_and(|(h, l)| h < l),
+                });
+            if !below {
+                let needs = if two_pow {
+                    "int[0..<2 ** width]"
+                } else {
+                    "int[0..<width]"
+                };
+                let operand = (a.at.unwrap_or(e.span), r.shown.as_str());
+                self.width_error(w, names[i], needs, operand, width, span);
+            }
+        }
+    }
+
+    /// The integers an argument may be, when its type has an int part: an interval holding them,
+    /// the values themselves when its type lists them or its text shows its value, and how to
+    /// show them. The interval is what the text shows (see [`Known`]), met with what the tests
+    /// the walk is in show of it ([`Ck::ints_here`]) and with the listed
+    /// values, a value past `i64` read as the end of the interval on its side.
+    fn int_range(&mut self, a: &Arg, e: &'a Expr) -> Option<IntRange> {
+        let ns = &a.ty.set & &KType::int();
+        if ns.is_empty() {
+            return None;
+        }
+        let k = self.known(e);
+        let (mut ints, narrowed) = self.ints_here(e);
+        let listed = ns.ints_listed();
+        let shown_as_type = listed.is_some();
+        let values = match listed {
+            Some(vs) => {
+                let piece = |v: &Value| match v {
+                    Value::Int(n) => (End::of(*n), End::of(*n)),
+                    Value::Big(n) => (Fin(Num::from(&**n)), Fin(Num::from(&**n))),
+                    _ => (NegInf, PosInf),
+                };
+                ints = ints.meet(&IntervalSet::from_pieces(vs.iter().map(piece).collect()));
+                Some(vs)
+            }
+            None => k.value.map(|v| vec![v]),
+        };
+        let shown = match &values {
+            _ if shown_as_type || ints == IntervalSet::top() => self.show(&Ty::set(ns)),
+            Some(vs) => vs[0].to_string(),
+            None => format!("int{ints}"),
+        };
+        Some(IntRange {
+            ints,
+            values,
+            shown,
+            narrowed,
+        })
+    }
+    /// `sig`, named `what`, applied at `span` to `args`, which leave out the parameters
+    /// `missing`: the function of those parameters, each a positional one with no default
+    /// when `section`, whose types and needs are `sig`'s with the variables the arguments
+    /// bind replaced. The needs on the variables of the parameters left out are checked at
+    /// its calls.
+    fn partial(
+        &mut self,
+        sig: &Sig,
+        args: Vec<Option<Arg>>,
+        missing: &[usize],
+        section: bool,
+        what: &str,
+        span: Span,
+    ) -> Ty {
+        let mut out = vec![false; sig.params.len()];
+        missing.iter().for_each(|&j| out[j] = true);
+        let (mut given, mut left) = (Vars::default(), Vars::default());
+        for a in &sig.arrows {
+            for (j, p) in a.params.iter().enumerate() {
+                p.vars_in(if out[j] { &mut left } else { &mut given });
+            }
+        }
+        let given: BTreeSet<Arc<str>> = given.order.into_iter().collect();
+        self.defer = left
+            .order
+            .into_iter()
+            .filter(|v| !given.contains(v))
+            .collect();
+        let (result, kept) = self.apply(&format!("`{what}`"), sig, args, false, span);
+        let Some((binds, needs)) = self.applied.take() else {
+            return result;
+        };
+        if missing.is_empty() {
+            return result;
+        }
+        let params = missing
+            .iter()
+            .map(|&j| match section {
+                true => SParam {
+                    positional: true,
+                    default: None,
+                    ..sig.params[j].clone()
+                },
+                false => sig.params[j].clone(),
+            })
+            .collect();
+        let arrows = kept
+            .iter()
+            .map(|&k| Arrow {
+                params: missing
+                    .iter()
+                    .map(|&j| sig.arrows[k].params[j].clone())
+                    .collect(),
+                result: sig.arrows[k].result.clone(),
+            })
+            .collect();
+        let mut rest = Sig {
+            params,
+            arrows,
+            bounds: sig.bounds.clone(),
+            data: false,
+            needs,
+            own: sig.own.clone(),
+            held: BTreeSet::new(),
+            named: sig.named,
+            facts: Default::default(),
+        };
+        // A variable only the arguments given held is held by no parameter of the rest.
+        rest.note_held();
+        Ty::func(Arc::new(rest.replace(&binds)))
+    }
+
+    /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
+    /// computed index of each tuple `v` may be.
+    fn at_key(&mut self, v: &Ty, x: Arg, span: Span) -> Ty {
+        let mut out = self.passing(v, "a call", span);
+        for p in v.pieces() {
+            match p {
+                Piece::Tuple(cs) => {
+                    let r = self.tuple_at(&cs, &x, span);
+                    out = out.union(&r);
+                }
+                Piece::Fn(sig) => {
+                    let r = self
+                        .apply("this function", &sig, vec![Some(x.clone())], false, span)
+                        .0;
+                    out = out.union(&r);
+                }
+                Piece::Var(_) if let Some(k) = self.class_of(&p) => {
+                    let r = self.need(k, NeedKind::Index(x.ty.clone()), true, span);
+                    out = out.union(&r);
+                }
+                Piece::Dyn => self.any("an application", span),
+                Piece::Var(_) => out = out.union(&Ty::dynamic()),
+                p if p.is_atoms() => {}
+                p => {
+                    let shown = self.text(&p.ty());
+                    self.error(span, format!("this value is {shown}, not a function"));
+                }
+            }
+        }
+        out
+    }
+
+    /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
+    /// a family's entry.
+    fn at_index(&mut self, v: &Ty, i: Option<usize>, x: Arg, span: Span) -> Ty {
+        let mut out = self.passing(v, "an index", span);
+        let shown = x.ty.to_string();
+        for p in v.pieces() {
+            match p {
+                Piece::Fn(sig) if sig.data => {
+                    let r = self
+                        .apply("this family", &sig, vec![Some(x.clone())], true, span)
+                        .0;
+                    out = out.union(&r);
+                }
+                Piece::Tuple(cs) => match i.and_then(|i| cs.get(i)) {
+                    Some(c) => out = out.union(c),
+                    None => self.error(
+                        span,
+                        format!(
+                            "{} has no component {shown}",
+                            self.text(&Ty::of_row(cs.clone()))
+                        ),
+                    ),
+                },
+                Piece::Var(_) if let Some(k) = self.class_of(&p) => {
+                    let kind = NeedKind::Component {
+                        i,
+                        key: x.ty.clone(),
+                    };
+                    out = out.union(&self.need(k, kind, true, span));
+                }
+                Piece::Dyn => self.any(&format!("`[{shown}]`"), span),
+                Piece::Var(_) => out = out.union(&Ty::dynamic()),
+                p if p.is_atoms() => {}
+                p => {
+                    let t = self.text(&p.ty());
+                    self.error(span, format!("`[{shown}]` takes a tuple, not {t}"))
+                }
+            }
+        }
+        out
+    }
+
+    /// A declared function in a slot of the function type `e`: the same number of positional
+    /// parameters and the same named ones, in any order, and types that fit.
+    fn fit_declared(&mut self, id: usize, e: &Arc<Sig>, span: Span) -> Ty {
+        let f = self.t.funcs[&id];
+        let own = self.env.get(&id).cloned().unwrap_or_else(Ty::dynamic);
+        let Some(s) = only_fn(&own) else {
+            return own;
+        };
+        let pos = |s: &Sig| s.params.iter().filter(|p| p.positional).count();
+        let mut from = Vec::new();
+        let mut k = 0;
+        let mut ok = pos(&s) == pos(e) && s.params.len() == e.params.len();
+        let epos: Vec<usize> = (0..e.params.len())
+            .filter(|&j| e.params[j].positional)
+            .collect();
+        for p in &s.params {
+            if !ok {
+                break;
+            }
+            if p.positional {
+                from.push(epos[k]);
+                k += 1;
+            } else {
+                match e
+                    .params
+                    .iter()
+                    .position(|q| !q.positional && q.name == p.name)
+                {
+                    Some(j) => from.push(j),
+                    None => ok = false,
+                }
+            }
+        }
+        if !ok {
+            let names: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+            let call: Vec<String> = names.iter().map(|n| format!("{n}: {n}")).collect();
+            let shown = self.sig_text(e);
+            let menu = [
+                format!(
+                    "repair: declare the parameters of `{}` as `{shown}` passes them, with \
+                     `positional` where it passes by position",
+                    f.name
+                ),
+                format!(
+                    "repair: pass a lambda, `({}) -> {}({})`",
+                    names.join(", "),
+                    f.name,
+                    call.join(", ")
+                ),
+            ];
+            self.rejects_offering(
+                Row::ParameterKinds,
+                span,
+                format!(
+                    "the parameters of `{}` ({}) do not fit `{shown}`: declare them as it passes them, \
+                     with `positional` where it passes by position, or pass a lambda, ({}) -> {}({})",
+                    f.name,
+                    s.params
+                        .iter()
+                        .map(|p| match p.positional {
+                            true => format!("positional {}", p.name),
+                            false => p.name.to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    names.join(", "),
+                    f.name,
+                    call.join(", ")
+                ),
+                menu,
+            );
+            return Ty::func(e.clone());
+        }
+        // `s` with its parameters in `e`'s order.
+        let mut inv = vec![0; from.len()];
+        for (i, &j) in from.iter().enumerate() {
+            inv[j] = i;
+        }
+        let permuted = Sig {
+            bounds: s.bounds.clone(),
+            data: s.data,
+            needs: s.needs.clone(),
+            own: s.own.clone(),
+            held: s.held.clone(),
+            named: s.named,
+            facts: Default::default(),
+            params: e.params.clone(),
+            arrows: s
+                .arrows
+                .iter()
+                .map(|a| Arrow {
+                    params: inv.iter().map(|&i| a.params[i].clone()).collect(),
+                    result: a.result.clone(),
+                })
+                .collect(),
+        };
+        let what = format!("`{}`", f.name);
+        let permuted = Arc::new(permuted);
+        if !self.fits_slot(&permuted, e, &what, span) {
+            // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
+            let why = match permuted.needs.is_empty() {
+                true => ty::why_unfit_with(&permuted, e, &|v| self.stale(v))
+                    .map_or_else(String::new, |w| format!(": {w}")),
+                false => String::new(),
+            };
+            let (s, e) = (self.sig_text(&s), self.sig_text(e));
+            self.error(span, format!("`{}` is `{s}`, not `{e}`{why}", f.name));
+        }
+        if from.iter().enumerate().any(|(i, &j)| i != j) {
+            self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
+        }
+        Ty::func(e.clone())
+    }
+
+    /// Whether the function `s`, named `what` in messages, with its parameters in the order of
+    /// the function type `e`'s, fits a slot of `e`: as a type, or, when its body makes uses of
+    /// its type variables, by those uses checked on the types `e` passes. False only when no
+    /// error says why.
+    fn fits_slot(&mut self, s: &Arc<Sig>, e: &Arc<Sig>, what: &str, span: Span) -> bool {
+        match s.needs.is_empty() {
+            true => ty::fits_sig_with(s, e, &|v| self.stale(v)),
+            false => {
+                let p = Ty::func(e.clone());
+                self.fit_needs(s, &p, &mut Binds::new(), what, span)
+            }
+        }
+    }
+
+    /// The repairs of a rejected application the checker discharges: each argument wrapped
+    /// in a prelude word, when the application then checks, tried with the checker's state
+    /// restored after. At an operator or a call of a prelude word the wrapped argument keeps
+    /// its place, so a failure of the word, `#inexact` of `f64(r)`, passes by as it does where
+    /// the repair is written (rule 6 of sec:type_resolution): `max(f64(r), x)` as
+    /// `f64(r) + x`. At a call of a declared function it has none, so a word whose failure the
+    /// parameter does not take is not offered: `discount(price: int("12"))`. The trial sees
+    /// the application, not where its result goes. An argument of a class is wrapped as a value
+    /// of the carriers the class still holds. A name is shown wrapped, `f64(r)`, and anything
+    /// else as the word around the place shown: the menu of the row for two numeric values
+    /// with no common carrier (DESIGN.md sec:diagnostics). A `rat` literal is offered the
+    /// literals of the other carriers that are the same number exactly, `1.0` for `1r`, in
+    /// place of the words ([`rat_forms`]).
+    fn repairs(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg>],
+        pass: bool,
+        span: Span,
+    ) -> Vec<Note> {
+        let mut out = Vec::new();
+        if self.trying {
+            return out;
+        }
+        // A word is called by its name and has its own signature; a declared function may
+        // share the name only with a signature of its own.
+        let word = what
+            .strip_prefix('`')
+            .and_then(|w| w.strip_suffix('`'))
+            .is_some_and(|w| {
+                zedc_resolve::resolve::prelude_layer(w).is_some() && *word_sig(w) == *sig
+            });
+        let kept = pass || word;
+        for (i, a) in args.iter().enumerate() {
+            let Some(Arg {
+                lit: None,
+                at: Some(at),
+                ty,
+                ..
+            }) = a
+            else {
+                continue;
+            };
+            let held = match self.class_of_ty(ty) {
+                Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
+                _ => ty.clone(),
+            };
+            let t = self.t;
+            let (name, written) = match self.seen.get(at) {
+                Some((_, Src::Name(id))) => (Some(&t.res.binders[*id].name), None),
+                Some((_, Src::Other(e))) => (None, rat_forms(e)),
+                _ => (None, None),
+            };
+            if let Some(forms) = written {
+                for (ty, text) in forms {
+                    if self.repaired(what, sig, args, (i, ty, kept.then_some(*at)), pass, span) {
+                        out.push(Note { span: *at, text });
+                    }
+                }
+                continue;
+            }
+            for w in ["String", "int", "rat", "f64"] {
+                let Some(r) = converted(&word_sig(w), &held) else {
+                    continue;
+                };
+                if self.repaired(what, sig, args, (i, r, kept.then_some(*at)), pass, span) {
+                    let text = match name {
+                        Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
+                        None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
+                    };
+                    out.push(Note { span: *at, text });
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether the application of `sig` to `args` checks with argument `i` replaced by a
+    /// value of type `ty` at the place `at`, if any, tried with the checker's state restored after.
+    fn repaired(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg>],
+        (i, ty, at): (usize, Ty, Option<Span>),
+        pass: bool,
+        span: Span,
+    ) -> bool {
+        let mut with = args.to_vec();
+        with[i] = Some(Arg { at, ..Arg::of(ty) });
+        let saved = self.mark();
+        self.trying = true;
+        self.apply(what, sig, with, pass, span);
+        let ok = self.info.errors.len() == saved.errors;
+        self.trying = false;
+        self.undo(&saved);
+        ok
+    }
+
+    /// Applies `sig` to `args`, a missing one filled by its default. When `pass` holds, as
+    /// for an operator or a prelude word, an argument's atoms pass through, two arguments'
+    /// merged into `#errs`. Gives the result and the arrows kept.
+    fn apply(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        mut args: Vec<Option<Arg>>,
+        pass: bool,
+        span: Span,
+    ) -> (Ty, Vec<usize>) {
+        let mut out = Ty::empty();
+        let need_args = self.need_args.take();
+        if pass {
+            let atoms: Vec<Ty> = args
+                .iter()
+                .flatten()
+                .filter(|a| a.lit.is_none())
+                .map(|a| a.ty.loose_ty())
+                .collect();
+            passed(&mut out, atoms.iter());
+            for a in args.iter_mut().flatten() {
+                a.ty = a.ty.without_loose();
+            }
+        } else {
+            let mut atoms = Vec::new();
+            for (i, a) in args.iter_mut().enumerate() {
+                let Some(a) = a else {
+                    continue;
+                };
+                let loose = a.ty.loose();
+                let from_need = need_args.as_ref().is_some_and(|v| v.get(i) == Some(&true));
+                if loose.is_empty() || (a.at.is_none() && !from_need) {
+                    continue;
+                }
+                // Rule 6 treats each region of the argument apart: the atoms every arrow
+                // omits pass by, and the rest stay in the argument to select an arrow.
+                let refused = self.refused(sig, i, &loose);
+                if refused.is_empty() {
+                    continue;
+                }
+                let Some(at) = a.at else {
+                    // A check of a need, as of `f(v)` in `ap(f, v) = f(v)`: the atoms pass by
+                    // at the call whose argument gave them, which [`Self::apply_one`] finds.
+                    atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
+                    a.ty = a.ty.without(&refused);
+                    self.refused.push((what.into(), i, refused));
+                    continue;
+                };
+                if refused == loose {
+                    atoms.push(a.ty.loose_ty());
+                    a.ty = a.ty.without_loose();
+                } else {
+                    atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
+                    a.ty = a.ty.without(&refused);
+                }
+                self.pass_at(span, at, &refused);
+            }
+            passed(&mut out, atoms.iter());
+        }
+        let defer = std::mem::take(&mut self.defer);
+        let passing = self.need_passed.len();
+        let refusals = self.lit_refused.len();
+        let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
+            (1, _) => self.apply_one(what, sig, 0, &args, defer, span),
+            (_, Some(k)) => self.apply_one(what, sig, k, &args, defer, span),
+            _ => {
+                let r = self.apply_many(what, sig, &mut args, span);
+                self.applied = None;
+                r
+            }
+        };
+        // What a check of a need left when the application failed before taking it.
+        self.need_passed.truncate(passing);
+        // A literal refused is its own error, and the application's none.
+        for refused in self.lit_refused.split_off(refusals) {
+            self.literal_refused(what, sig, &args, refused, pass, span);
+        }
+        match r {
+            Ok((t, kept)) => (out.union(&t), kept),
+            Err(message) => {
+                self.applied = None;
+                let mut notes = self.applied(what, sig, &args, span);
+                let mut seen: HashSet<Note> = notes.iter().cloned().collect();
+                for a in args.iter().flatten() {
+                    for n in self.reasons(&a.ty) {
+                        if seen.insert(n.clone()) {
+                            notes.push(n);
+                        }
+                    }
+                }
+                notes.extend(self.repairs(what, sig, &args, pass, span));
+                if self.no_arrow_at_carrier(what, sig, &args) {
+                    self.rejects_with(Row::NoArrowAtCarrier, span, message, notes);
+                } else if self.no_common_carrier(sig, &args) {
+                    self.rejects_with(Row::NoCommonCarrier, span, message, notes);
+                } else {
+                    self.error_with(span, message, notes);
+                }
+                (out, Vec::new())
+            }
+        }
+    }
+
+    /// Reports a literal of `args` rejected at a parameter of `sig` with the message `m` at
+    /// `s`: in the row of an operator with no arrow at its operands' carrier where that holds
+    /// (`7 / 2`); in the row of two numbers with no common carrier where that holds
+    /// (`q + 1.5` with `q: int`), with the application's derivation and the casts of the other
+    /// operands the checker accepts, `f64(q)`, where the message holds the literal's own
+    /// forms; and in no row otherwise.
+    fn literal_refused(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg>],
+        (s, m): (Span, String),
+        pass: bool,
+        span: Span,
+    ) {
+        if self.no_arrow_at_carrier(what, sig, args) {
+            let notes = self.derive(&[s]);
+            self.rejects_with(Row::NoArrowAtCarrier, s, m, notes);
+        } else if self.no_common_carrier(sig, args) {
+            let mut notes = Vec::new();
+            if !self.trying {
+                notes = self.applied(what, sig, args, span);
+                let mut seen: HashSet<Note> = notes.iter().cloned().collect();
+                for a in args.iter().flatten() {
+                    for n in self.reasons(&a.ty) {
+                        if seen.insert(n.clone()) {
+                            notes.push(n);
+                        }
+                    }
+                }
+                notes.extend(self.repairs(what, sig, args, pass, span));
+            }
+            self.rejects_with(Row::NoCommonCarrier, s, m, notes);
+        } else {
+            self.error(s, m);
+        }
+    }
+
+    fn apply_one(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        k: usize,
+        args: &[Option<Arg>],
+        defer: BTreeSet<Arc<str>>,
+        span: Span,
+    ) -> Result<(Ty, Vec<usize>), String> {
+        let arrow = &sig.arrows[k];
+        let fail = |ck: &Self| Err(ck.rejected(what, args));
+        let mut binds = Binds::new();
+        let mut grouped = vec![false; args.len()];
+        // The arguments each bounded variable stands at, in one pass over the arguments: one
+        // pass per variable over every argument cost `O(v a)`.
+        let mut at_of: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (i, (p, a)) in arrow.params.iter().zip(args).enumerate() {
+            if let Some(v) = p.as_var().filter(|_| a.is_some()) {
+                at_of.entry(&**v).or_default().push(i);
+            }
+        }
+        for (v, &m) in &sig.bounds {
+            let at = at_of.remove(&**v).unwrap_or_default();
+            let lit_at = at
+                .iter()
+                .any(|&i| args[i].as_ref().is_some_and(|a| a.lit.is_some()));
+            if at.len() < 2 && !lit_at {
+                continue;
+            }
+            let (mut carriers, mut classes, mut lits) = (0u8, Vec::new(), Vec::new());
+            for &i in &at {
+                grouped[i] = true;
+                let a = args[i].as_ref().expect("an argument");
+                if let Some(l) = &a.lit {
+                    lits.push(l.clone());
+                    continue;
+                }
+                for p in a.ty.pieces() {
+                    match (self.class_of(&p), p.carrier()) {
+                        (Some(k), _) => classes.push(k),
+                        _ if matches!(p, Piece::Var(_)) => {}
+                        (None, Some(c)) => carriers |= c.bit(),
+                        (None, None) => return fail(self),
+                    }
+                }
+            }
+            let bound = match (carriers.count_ones(), classes.first()) {
+                (n, _) if n > 1 => return fail(self),
+                (1, _) => {
+                    let c = Carrier::of_mask(carriers).next().expect("one carrier");
+                    if m & carriers == 0 {
+                        return fail(self);
+                    }
+                    for &k in &classes {
+                        if !self.restrict(k, c.bit(), what, span) {
+                            return fail(self);
+                        }
+                    }
+                    for l in &lits {
+                        if lit_carrier(&l.value) != c && !adoptable(l, c) {
+                            return fail(self);
+                        }
+                        self.adopt_to(l, c);
+                    }
+                    Ty::carrier(c)
+                }
+                (_, Some(&k)) => {
+                    for &j in &classes[1..] {
+                        if !self.merge(k, j, what, span) {
+                            return fail(self);
+                        }
+                    }
+                    if !self.restrict(k, m, what, span) {
+                        return fail(self);
+                    }
+                    for l in &lits {
+                        if !self.join(k, &self.joining(l), false) {
+                            return fail(self);
+                        }
+                    }
+                    Ty::var(format!("${}", self.find(k)).into())
+                }
+                _ if !lits.is_empty() => {
+                    // The carrier of the bound its literals adopt fewest times to.
+                    let adoptions = |c: Carrier| {
+                        lits.iter()
+                            .all(|l| adoptable(l, c))
+                            .then(|| lits.iter().filter(|l| lit_carrier(&l.value) != c).count())
+                    };
+                    let Some(c) = Carrier::of_mask(m)
+                        .filter_map(|c| adoptions(c).map(|n| (n, c)))
+                        .min_by_key(|&(n, _)| n)
+                        .map(|(_, c)| c)
+                    else {
+                        return fail(self);
+                    };
+                    for l in &lits {
+                        self.adopt_to(l, c);
+                    }
+                    Ty::carrier(c)
+                }
+                _ => Ty::dynamic(),
+            };
+            binds.insert(v.clone(), bound);
+        }
+        for (i, a) in args.iter().enumerate() {
+            let Some(a) = a else {
+                continue;
+            };
+            if grouped[i] {
+                continue;
+            }
+            let p = &arrow.params[i];
+            let generic = match p.as_var().is_some() {
+                true => self.generic_parts(a),
+                false => None,
+            };
+            let a = &match generic {
+                Some(ty) => Cow::Owned(Arg {
+                    ty,
+                    parts: None,
+                    ..a.clone()
+                }),
+                None => Cow::Borrowed(a),
+            };
+            // A parameter that is a class of the function around: the argument flows into it.
+            if let Some(k) = self.class_of_ty(p) {
+                let ok = match &a.lit {
+                    Some(l) => self.join(k, &self.joining(l), false),
+                    None => self.flow(k, &a.ty, what, span),
+                };
+                if !ok {
+                    return fail(self);
+                }
+                continue;
+            }
+            let ty = match adopted(a, p) {
+                // A literal that cannot adopt is its own error, and the application's none.
+                Err((s, m)) => {
+                    self.lit_refused.push((s, m));
+                    continue;
+                }
+                Ok(Some((t, ads))) => {
+                    for (s, v) in ads {
+                        self.put(Undo::Adopt(s, Some(v)));
+                    }
+                    Cow::Owned(t)
+                }
+                Ok(None) => Cow::Borrowed(&a.ty),
+            };
+            if a.lit.is_some() {
+                if !self.sub(&ty, p, &mut binds) {
+                    let why = ty.refused(p);
+                    return Err(format!("{}{why}", self.rejected(what, args)));
+                }
+                continue;
+            }
+            for piece in ty.pieces() {
+                let ok = match self.class_of(&piece) {
+                    _ if piece == Piece::Dyn => p.dynamic,
+                    Some(_) if p.dynamic => true,
+                    Some(_) if !p.vars.is_empty() => self.sub(&ty.of_piece(&piece), p, &mut binds),
+                    Some(k) => {
+                        if !p.tuples.is_empty() || !p.fns.is_empty() {
+                            let kind = NeedKind::Into {
+                                what: what.into(),
+                                ty: p.clone(),
+                            };
+                            self.need(k, kind, false, span);
+                        }
+                        self.restrict(k, mask_of(p), what, span)
+                    }
+                    None => match &piece {
+                        Piece::Fn(s) if !s.needs.is_empty() && !p.fns.is_empty() => {
+                            self.fit_needs(s, p, &mut binds, what, span)
+                        }
+                        _ => self.sub(&ty.of_piece(&piece), p, &mut binds),
+                    },
+                };
+                if !ok {
+                    return Err(self.rejected_at(what, args, Some((i, &piece, p))));
+                }
+            }
+        }
+        // The variables of the parameters of a function the call gives, which only its calls
+        // bind: the needs on them are its own.
+        let partial = !defer.is_empty();
+        let mut defer = defer;
+        let mut taken = Vars::default();
+        arrow.params.iter().for_each(|p| p.vars_in(&mut taken));
+        let mut inner = Vars::default();
+        for s in &arrow.result.fns {
+            s.arrows
+                .iter()
+                .for_each(|a| a.params.iter().for_each(|p| p.vars_in(&mut inner)));
+        }
+        defer.extend(inner.order.into_iter().filter(|v| !taken.contains(v)));
+        let passing = self.need_passed.len();
+        let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
+        // Each bounded variable's binding is within its bound, and of one carrier, or of
+        // other values only: the arrows of an operator each take one. So the classes in it
+        // merge, and what else it holds flows into them.
+        for (v, &m) in &sig.bounds {
+            let Some(t) = binds.get(v).cloned() else {
+                continue;
+            };
+            let mut kinds = 0u8;
+            let mut class: Option<usize> = None;
+            let mut rest = Ty::empty();
+            for piece in t.pieces() {
+                let ok = match (self.class_of(&piece), piece.carrier()) {
+                    (Some(k), _) => {
+                        self.restrict(k, m, what, span)
+                            && match class {
+                                Some(c) => self.merge(c, k, what, span),
+                                None => {
+                                    class = Some(k);
+                                    true
+                                }
+                            }
+                    }
+                    _ if piece == Piece::Dyn => false,
+                    _ if matches!(piece, Piece::Var(_)) => true,
+                    (None, Some(c)) => {
+                        kinds |= c.bit();
+                        rest = rest.union(&piece.ty());
+                        m & c.bit() != 0
+                    }
+                    (None, None) => {
+                        kinds |= OTHER;
+                        rest = rest.union(&piece.ty());
+                        m & OTHER != 0
+                    }
+                };
+                if !ok || kinds.count_ones() > 1 {
+                    return fail(self);
+                }
+            }
+            if let Some(c) = class
+                && kinds != 0
+                && !self.flow(c, &rest, what, span)
+            {
+                return fail(self);
+            }
+        }
+        binds.retain(|v, _| !self.is_class(v));
+        let mut out = Ty::empty();
+        let given: Vec<&Arg> = args.iter().flatten().collect();
+        if given.iter().any(|a| a.ty.dynamic) {
+            out = out.union(&Ty::dynamic());
+        }
+        if given
+            .iter()
+            .all(|a| a.lit.is_some() || a.ty.pieces().iter().any(|p| *p != Piece::Dyn))
+        {
+            let result = close(&arrow.result.replace(&binds), sig, |v| self.is_class(v));
+            out = out.union(&match partial {
+                true => result,
+                false => {
+                    let needs = left.iter().map(|n| n.replace(&binds)).collect();
+                    let (held, now) = hold(&result, needs, |v| self.is_class(v));
+                    self.replay(what, &now, &mut binds, BTreeSet::new(), span);
+                    left.clear();
+                    held
+                }
+            });
+        }
+        out = out.union(&self.pass_needs(what, &arrow.params, args, passing, span)?);
+        self.applied = Some((binds, left));
+        Ok((out, vec![0]))
+    }
+
+    /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:
+    /// an operator, a prelude word, or a section of one. The classes of the arguments merge,
+    /// since every arrow takes one carrier for all its parameters, and its literals join
+    /// them; without a class, each literal adopts the carrier of its parameter on the
+    /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
+    /// the arrows still alive and the carriers they allow where the class stands
+    /// ([`ClassAt`]): a state per such pair, not per combination of pieces.
+    fn apply_many(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &mut [Option<Arg>],
+        span: Span,
+    ) -> Result<(Ty, Vec<usize>), String> {
+        let mut class = None;
+        for a in args.iter().flatten() {
+            for p in a.ty.pieces() {
+                if let Some(k) = self.class_of(&p) {
+                    match class {
+                        None => class = Some(k),
+                        Some(c) => {
+                            if !self.merge(c, k, what, span) {
+                                return Err(self.rejected(what, args));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let kept: Vec<usize> = match class {
+            Some(k) => {
+                for a in args.iter().flatten() {
+                    if let Some(l) = &a.lit
+                        && !self.join(k, l, false)
+                    {
+                        return Err(self.rejected(what, args));
+                    }
+                }
+                (0..sig.arrows.len()).collect()
+            }
+            None => match self.fewest(what, sig, args)? {
+                Some(kept) => kept,
+                // Reported: no value, as a rejected application gives, so that no operator
+                // around it reports it again.
+                None => return Ok((Ty::empty(), Vec::new())),
+            },
+        };
+        // The states: the arrows alive, whether a piece was unknown, the class's place, and
+        // the first pieces that reached it, by argument.
+        type State = (Vec<usize>, bool, ClassAt, Vec<Option<Piece>>);
+        let mut states: Vec<State> = vec![(kept.clone(), false, None, Vec::new())];
+        for (i, a) in args.iter().enumerate() {
+            let pieces: Vec<Option<Piece>> = match a {
+                None => vec![None],
+                Some(a) if a.lit.is_some() && class.is_some() => {
+                    vec![Some(Piece::Var(format!("${}", class.unwrap()).into()))]
+                }
+                Some(a) => a.ty.pieces().into_iter().map(Some).collect(),
+            };
+            let mut next: Vec<State> = Vec::new();
+            for (alive, dyn_, at, path) in &states {
+                for p in &pieces {
+                    let mut at = at.clone();
+                    let (alive, dyn_) = match p {
+                        None => (alive.clone(), *dyn_),
+                        // A class may still take any value its mask allows, so it keeps
+                        // every arrow; the restriction after the arguments narrows it.
+                        Some(p) if self.class_of(p).is_some() => {
+                            let m = at.get_or_insert_with(|| vec![EVERY; sig.arrows.len()]);
+                            for &j in alive {
+                                m[j] &= mask_of(&sig.arrows[j].params[i]);
+                            }
+                            (alive.clone(), *dyn_)
+                        }
+                        Some(Piece::Var(_)) => (alive.clone(), true),
+                        Some(p) => {
+                            let alive = alive
+                                .iter()
+                                .copied()
+                                .filter(|&k| {
+                                    self.sub(&p.ty(), &sig.arrows[k].params[i], &mut Binds::new())
+                                })
+                                .collect();
+                            (alive, *dyn_)
+                        }
+                    };
+                    // Two paths to one set of arrows are one state only when the class stands
+                    // where it meets the same carriers on each: `(line else 0) + bump` has the
+                    // paths `(int, int)` and `($k, int)`, and the second restricts the class.
+                    let same_at = |o: &ClassAt| match (o, &at) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => alive.iter().all(|&j| x[j] == y[j]),
+                        _ => false,
+                    };
+                    if !next
+                        .iter()
+                        .any(|s| s.0 == alive && s.1 == dyn_ && same_at(&s.2))
+                    {
+                        let mut path = path.clone();
+                        path.push(p.clone());
+                        next.push((alive, dyn_, at, path));
+                    }
+                }
+            }
+            states = next;
+        }
+        let mut out = Ty::empty();
+        for (alive, dyn_, at, path) in &states {
+            let shown = |ck: &Self| {
+                let shown: Vec<String> = path
+                    .iter()
+                    .map(|p| p.as_ref().map_or_else(|| "_".into(), |p| ck.show(&p.ty())))
+                    .collect();
+                let pieces: Vec<Option<Ty>> =
+                    path.iter().map(|p| p.as_ref().map(Piece::ty)).collect();
+                let pieces: Vec<Option<&Ty>> = pieces.iter().map(Option::as_ref).collect();
+                let why = refused_among(sig, &kept, &pieces);
+                format!("{what} does not take ({}){why}", shown.join(", "))
+            };
+            match (class, at) {
+                (Some(k), Some(at)) => {
+                    let m = alive.iter().fold(0, |m, &j| m | at[j]);
+                    if alive.is_empty() || !self.restrict(k, m, what, span) {
+                        return Err(shown(self));
+                    }
+                    if *dyn_ {
+                        out = out.union(&Ty::dynamic());
+                        continue;
+                    }
+                    let r = self.find(k);
+                    let km = self.classes[r].mask;
+                    let rel: Vec<(&Arrow, u8)> = alive
+                        .iter()
+                        .map(|&j| (&sig.arrows[j], at[j]))
+                        .filter(|&(_, m)| m & km != 0)
+                        .collect();
+                    let follows = rel.iter().all(|&(a, m)| {
+                        m.count_ones() == 1
+                            && Carrier::of_mask(m)
+                                .next()
+                                .is_some_and(|c| self.subtype(&Ty::carrier(c), &a.result))
+                    });
+                    if follows {
+                        out = out.union(&Ty::var(format!("${r}").into()));
+                        for (a, _) in &rel {
+                            out = out.union(&a.result.of_piece(&Piece::Set(a.result.atoms())));
+                        }
+                    } else {
+                        for (a, _) in &rel {
+                            out = out.union(&close(&a.result, sig, |v| self.is_class(v)));
+                        }
+                    }
+                }
+                _ if *dyn_ => out = out.union(&Ty::dynamic()),
+                _ => {
+                    let Some(&j) = alive.first() else {
+                        return Err(shown(self));
+                    };
+                    let a = &sig.arrows[j];
+                    let mut binds = Binds::new();
+                    for (p, t) in path.iter().zip(&a.params) {
+                        if let Some(p) = p {
+                            self.sub(&p.ty(), t, &mut binds);
+                        }
+                    }
+                    out = out.union(&close(&a.result.subst(&binds), sig, |v| self.is_class(v)));
+                }
+            }
+        }
+        Ok((out, kept))
+    }
+
+    /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
+    fn sum(&mut self, x: Arg, span: Span) -> Ty {
+        let t = &x.ty;
+        let mut out = self.passing(t, "`sum`", span);
+        let add = op_sig("+");
+        for p in t.pieces() {
+            match p {
+                Piece::Tuple(cs) => {
+                    // The components as `+` takes them: a literal written in the tuple stays
+                    // one, and adopts the carrier of the others, which are added first. Each
+                    // `+` takes its two operands in the order they are written, as a message
+                    // shows them.
+                    let args = components(&x, cs.len())
+                        .unwrap_or_else(|| cs.iter().cloned().map(Arg::of).collect());
+                    let mut args: Vec<(usize, Arg)> = args.into_iter().enumerate().collect();
+                    args.sort_by_key(|(_, a)| a.lit.is_some());
+                    let mut args = args.into_iter();
+                    let Some((mut at, mut acc)) = args.next() else {
+                        out = out.union(&Ty::lit(&Value::Int(0)));
+                        continue;
+                    };
+                    for (i, c) in args {
+                        let pair = if i < at { [c, acc] } else { [acc, c] };
+                        let ty = self
+                            .apply("`sum`", &add, pair.map(Some).to_vec(), true, span)
+                            .0;
+                        (at, acc) = (at.min(i), Arg::of(ty));
+                    }
+                    let acc = acc.ty;
+                    if let Some(c) = acc.pieces().iter().find(|p| {
+                        !matches!(p, Piece::Var(_))
+                            && !p.is_atoms()
+                            && !p.carrier().is_some_and(Carrier::numeric)
+                    }) {
+                        let shown = self.text(&c.ty());
+                        self.error(span, format!("`sum` does not take ({shown})"));
+                    }
+                    out = out.union(&acc);
+                }
+                Piece::Dyn => self.any("`sum`", span),
+                Piece::Var(_) => out = out.union(&Ty::dynamic()),
+                p if p.is_atoms() => {}
+                p => {
+                    let shown = self.text(&p.ty());
+                    self.error(span, format!("`sum` does not take ({shown})"))
+                }
+            }
+        }
+        out
     }
 }

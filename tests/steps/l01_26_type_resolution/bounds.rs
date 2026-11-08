@@ -428,7 +428,7 @@ fn check_scales(what: &str, n: usize, make: impl Fn(usize) -> String) {
         .collect();
     zed_tests::scaling::check_order(what, n, 1, |n| {
         let (stmts, res) = &inputs[&n];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }

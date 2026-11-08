@@ -12,7 +12,8 @@
 //! one child and that child's rule, so it costs O(1) per brace. A rejection lists the parent
 //! of every node once, in one walk of the tree, to name the form the brace is the body of.
 
-use super::{Builder, Error, Expr, Note};
+use super::builder::Builder;
+use super::{Error, Expr, Note};
 use crate::lex::Span;
 use zedc_base::rejection::Row;
 

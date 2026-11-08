@@ -24,7 +24,7 @@ fn checks_deep(shapes: &[&str], n: usize) {
                 } else {
                     (&large, &large_res)
                 };
-                let info = zedc::check::check(stmts, res);
+                let info = zedc::check::walk::check(stmts, res);
                 assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
             });
         }
@@ -78,7 +78,7 @@ fn checks_linear(shape: &str, n: usize) {
             } else {
                 (&large, &large_res)
             };
-            let info = zedc::check::check(stmts, res);
+            let info = zedc::check::walk::check(stmts, res);
             assert!(info.errors.is_empty(), "{shape}: {:?}", info.errors);
         });
     });
@@ -193,7 +193,7 @@ fn checks_written(n: usize) {
     for text in written_deep(n) {
         let stmts = zed_tests::deep::statements(&text);
         let res = zedc::resolve::resolve(&stmts).unwrap();
-        let info = zedc::check::check(&stmts, &res);
+        let info = zedc::check::walk::check(&stmts, &res);
         assert!(info.errors.is_empty(), "{n} deep: {:?}", info.errors);
         assert!(info.sigs.values().all(|s| !s.to_string().is_empty()));
     }
@@ -242,7 +242,7 @@ fn bit_words_8000_deep_check_on_a_2_mib_stack() {
             } else {
                 (&large, &large_res)
             };
-            let info = zedc::check::check(stmts, res);
+            let info = zedc::check::walk::check(stmts, res);
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         });
     });

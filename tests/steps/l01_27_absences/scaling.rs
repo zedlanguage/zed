@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use zed_tests::scaling::{self, FACTOR};
-use zedc::check::check;
+use zedc::check::walk::check;
 
 use zed_tests::step_helpers::l01_26_type_resolution::info;
 

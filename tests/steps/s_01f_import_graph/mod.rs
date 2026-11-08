@@ -38,12 +38,11 @@ fn cycles(g: &Graph) -> Vec<Vec<&str>> {
 /// The files of the import cycles still open (item S.1f-rest), as `crate/path`. The tool reads
 /// a call of a method written in another file than its type as an import (a Zed port makes that
 /// `impl` block a unit of its own), and these files are in a cycle through such calls or through
-/// paths: in the compiler (zedc and the crates zedc-* it is split into) the `ast` builder split
-/// over five files, `check/mod.rs` and `check/walk.rs` (one group of mutually recursive
-/// functions), `elab.rs` and `elab/walk.rs`, and `presburger.rs` with `deep.rs` and `canon.rs`;
-/// in zed-kernel the type algebra in `types`. The rest are in a cycle only through calls whose
-/// receiver the tool did not type, each read as an import of every file with a method of that
-/// name. S.1f is done when this list is empty and every crate passes the tool.
+/// paths: in zed-kernel the type algebra in `types`. The compiler (zedc and the crates zedc-* it
+/// is split into) has none since CYCLE-zedc-moves (ZED_PORT_GAPS.md gap 10). The rest are in a
+/// cycle only through calls whose receiver the tool did not type, each read as an import of every
+/// file with a method of that name. S.1f is done when this list is empty and every crate passes
+/// the tool.
 const KNOWN_CYCLES: &[&str] = &[
     "zed-kernel/num.rs",
     "zed-kernel/text.rs",
@@ -57,18 +56,6 @@ const KNOWN_CYCLES: &[&str] = &[
     "zed-kernel/types/rec.rs",
     "zed-kernel/types/rec/walk.rs",
     "zed-kernel/value.rs",
-    "zedc-check/check/mod.rs",
-    "zedc-check/check/walk.rs",
-    "zedc-elab/elab.rs",
-    "zedc-elab/elab/walk.rs",
-    "zedc-presburger/presburger.rs",
-    "zedc-presburger/presburger/deep.rs",
-    "zedc-presburger/presburger/deep/canon.rs",
-    "zedc-syntax/ast/body.rs",
-    "zedc-syntax/ast/mod.rs",
-    "zedc-syntax/ast/neglit.rs",
-    "zedc-syntax/ast/stmts.rs",
-    "zedc-syntax/ast/types.rs",
 ];
 
 #[test]
@@ -106,11 +93,13 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
         "files in an import cycle not known to be: {new:?}"
     );
     // The graphs are the compiler's, not empty ones: every file is reached, with its imports.
-    // The compiler is the crate `zedc` and the crates `zedc-*` it is split into.
+    // The compiler is the crate `zedc` and the crates `zedc-*` it is split into, and none of
+    // them has a cycle (CYCLE-zedc-moves).
     let (mut file_count, mut import_count) = (0, 0);
     for dir in zed_tools::compiler_dirs(&root).expect("the compiler's crates") {
         let sources = imports::read_sources(&dir).expect("the compiler's sources");
         let g = Graph::of(&sources).expect("the compiler's graph");
+        assert!(g.cycles().is_empty(), "{dir}: {:?}", cycles(&g));
         file_count += g.files.len();
         import_count += edges(&g).len();
     }

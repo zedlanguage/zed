@@ -25,7 +25,8 @@ use zed_kernel::provenance::{Position, child, child_mut};
 use zed_kernel::{Prim, Rat, Shared, Term, Value};
 
 use crate::ast::{Stmt, StmtKind};
-use crate::elab::{self, Cones, Mark, Unit};
+use crate::elab::mark::{self, Mark};
+use crate::elab::{self, Cones, Unit};
 use crate::lex::Span;
 use crate::rows;
 use crate::run::{self, Through};
@@ -93,7 +94,7 @@ fn neighbors(p: Prim, quotient: bool) -> &'static [Prim] {
         Prim::Mul if quotient => &[Prim::Div],
         Prim::Mul => &[],
         Prim::Div => &[Prim::Mul],
-        _ => unreachable!("only the operators `elab::mutable` admits are marked"),
+        _ => unreachable!("only the operators `elab::mark::mutable` admits are marked"),
     }
 }
 
@@ -192,7 +193,7 @@ fn sites(
                 "definition {def}'s marked elaboration differs from its elaboration at {at}: {what}"
             ))
         };
-        if let Some(k) = elab::mark_of(m) {
+        if let Some(k) = mark::mark_of(m) {
             let Some(mark) = marks.get(k) else {
                 return differs("a mark has no entry");
             };

@@ -9,9 +9,10 @@
 
 use std::collections::HashMap;
 
+use super::builder::{Builder, Built};
 use super::{
-    Annot, BoundaryItem, Builder, Built, Error, Expr, ExprKind, Field, Function, Import,
-    ImportKind, IndexKey, IndexedDef, Method, Note, Port, Stmt, StmtKind, Struct, Target, TypeDecl,
+    Annot, BoundaryItem, Error, Expr, ExprKind, Field, Function, Import, ImportKind, IndexKey,
+    IndexedDef, Method, Note, Port, Stmt, StmtKind, Struct, TypeDecl,
 };
 use crate::lex::{Part, Span, Tok};
 use zedc_base::address::ContentAddress;
@@ -360,14 +361,6 @@ impl Builder<'_, '_> {
                 })
             })
             .collect()
-    }
-
-    /// The target of node `n`, a `Target`: a name or `_`.
-    pub(super) fn target(&self, n: usize) -> Target {
-        match self.kids(n) {
-            [_] => Target::Name(self.word(self.tree.nodes[n].start).into(), self.span(n)),
-            _ => Target::Wild,
-        }
     }
 
     /// The struct of node `n`, a `Struct`; a field declared twice, or a path imported twice,

@@ -48,6 +48,6 @@ fn checking_many_named_fields_scales() {
     let units = inputs(2_000, |n| resolved(&fields(n)));
     check("checking n named fields", 2_000, |n| {
         let (stmts, res) = &units[&n];
-        assert!(zedc::check::check(stmts, res).errors.is_empty());
+        assert!(zedc::check::walk::check(stmts, res).errors.is_empty());
     });
 }

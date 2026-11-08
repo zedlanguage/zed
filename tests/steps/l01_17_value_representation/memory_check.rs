@@ -273,7 +273,7 @@ fn a_literal_near_a_boundary_refused_under(margin: u64) -> String {
     let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
     let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
     let res = zedc::resolve::resolve(&stmts).expect("it resolves");
-    let info = zedc::check::check(&stmts, &res);
+    let info = zedc::check::walk::check(&stmts, &res);
     assert!(info.errors.is_empty());
     lower_limit_by(margin);
     let Err(mut errs) = zedc::elab::elaborate_checked(&stmts, &res, &info) else {

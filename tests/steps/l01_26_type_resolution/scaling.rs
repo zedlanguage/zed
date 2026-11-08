@@ -222,7 +222,7 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
         .collect();
     scaling::check_order("n curried lambdas using every parameter", n, 1, |m| {
         let (stmts, res) = &built[&m];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -264,7 +264,7 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
         1,
         |m| {
             let (stmts, res) = &built[&m];
-            let info = zedc::check::check(stmts, res);
+            let info = zedc::check::walk::check(stmts, res);
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
@@ -305,7 +305,7 @@ fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
             .collect();
         scaling::check_order("an is test of n curried lambdas", n, 1, |m| {
             let (stmts, res) = &built[&m];
-            let info = zedc::check::check(stmts, res);
+            let info = zedc::check::walk::check(stmts, res);
             assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
         });
     });
@@ -381,7 +381,7 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
         .collect();
     scaling::check_order("a chain of n calls on one value", n, 1, |m| {
         let (stmts, res) = &built[&m];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -492,7 +492,7 @@ fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
     scaling::check("a slot of n arrows nested n deep in parentheses", n, |m| {
         let stmts = &units[&m];
         let res = zedc::resolve::resolve(stmts).unwrap();
-        let info = zedc::check::check(stmts, &res);
+        let info = zedc::check::walk::check(stmts, &res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.sigs.len(), 1);
     });

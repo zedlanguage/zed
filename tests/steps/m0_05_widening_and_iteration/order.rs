@@ -7,7 +7,7 @@ use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zed_tests::scaling;
 use zedc::address::ContentAddress;
 use zedc::ast::unit;
-use zedc::check::check;
+use zedc::check::walk::check;
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;

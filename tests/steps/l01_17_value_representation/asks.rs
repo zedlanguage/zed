@@ -242,7 +242,7 @@ fn literal_errors(texts: &[String], margin: u64, check_short: bool) -> Vec<Strin
                 zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
             let stmts = zedc::ast::unit(text, &tokens, &tree).expect("it is a unit");
             let res = zedc::resolve::resolve(&stmts).expect("it resolves");
-            let info = (!check_short).then(|| zedc::check::check(&stmts, &res));
+            let info = (!check_short).then(|| zedc::check::walk::check(&stmts, &res));
             (stmts, res, info)
         })
         .collect();
@@ -250,7 +250,7 @@ fn literal_errors(texts: &[String], margin: u64, check_short: bool) -> Vec<Strin
     let mut out = Vec::new();
     for (stmts, res, info) in &units {
         let errors = match info {
-            None => zedc::check::check(stmts, res).errors,
+            None => zedc::check::walk::check(stmts, res).errors,
             Some(info) => match zedc::elab::elaborate_checked(stmts, res, info) {
                 Err(errs) => errs,
                 Ok(_) => panic!("elaborated without error"),
@@ -324,7 +324,7 @@ fn checking_a_long_float_literal_costs_order_n() {
             .iter()
             .find(|(k, _, _)| *k == m)
             .expect("a size built");
-        assert!(zedc::check::check(stmts, res).errors.is_empty());
+        assert!(zedc::check::walk::check(stmts, res).errors.is_empty());
     });
 }
 
@@ -505,7 +505,7 @@ fn the_message_for_a_long_literal_is_written_in_memory_asked_first() {
     });
     for (n, stmts, res) in &all {
         lower_limit_by(3 * *n as u64 / 2);
-        let messages: Vec<String> = zedc::check::check(stmts, res)
+        let messages: Vec<String> = zedc::check::walk::check(stmts, res)
             .errors
             .into_iter()
             .map(|e| e.message)
@@ -571,7 +571,7 @@ fn the_rest_of_k30_is_exact_when_its_ask_is_given() {
         zedc::canon::address(&wide(kept), &none),
         zedc::canon::address(&wide(built), &none)
     );
-    let messages: Vec<String> = zedc::check::check(&units, &res)
+    let messages: Vec<String> = zedc::check::walk::check(&units, &res)
         .errors
         .into_iter()
         .map(|e| e.message)
@@ -603,7 +603,7 @@ fn the_message_for_a_long_literal_costs_order_n() {
             .iter()
             .find(|(k, _, _)| *k == m)
             .expect("a size built");
-        assert_eq!(zedc::check::check(stmts, res).errors.len(), 1);
+        assert_eq!(zedc::check::walk::check(stmts, res).errors.len(), 1);
     });
 }
 

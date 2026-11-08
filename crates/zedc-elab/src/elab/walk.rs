@@ -8,9 +8,23 @@
 //! the calls of the recursive walk ran, and each stops where that walk returned early, so the
 //! errors, the temporaries and the marks come out in the same order.
 
+use std::collections::{BTreeSet, HashMap};
 use std::mem;
+use std::sync::Arc;
 
-use super::*;
+use zed_kernel::num::{LiteralRounding, bytes_of, literal_f64, show_f64};
+use zed_kernel::types::Type as KType;
+use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
+
+use zedc_check::check::{self, Fit, Misfit};
+use zedc_resolve::resolve::topo::topo;
+use zedc_resolve::resolve::{Ref, prelude_layer};
+use zedc_stage::defs::Test;
+use zedc_syntax::ast::{Expr, ExprKind, Function, Pattern, Stmt, StmtKind, StrPart, Target};
+use zedc_syntax::lex::{Span, unread_literal};
+
+use super::mark::{Mark, mutable};
+use super::state::{Bind, Elab};
 use zedc_check::check::ty::Sig;
 use zedc_syntax::ast::Param;
 
@@ -1869,4 +1883,41 @@ fn lit_span(e: &Expr) -> Option<Span> {
         _ => e,
     };
     matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float(_)).then_some(inner.span)
+}
+
+fn if_(c: Term, a: Term, b: Term) -> Term {
+    Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
+}
+
+/// How a statement is named in a cycle's error.
+fn what(s: &Stmt) -> String {
+    match &s.kind {
+        StmtKind::Bind { targets, .. } => {
+            let names: Vec<String> = targets
+                .iter()
+                .filter_map(|t| match t {
+                    Target::Name(n, _) => Some(format!("`{n}`")),
+                    Target::Wild => None,
+                })
+                .collect();
+            names.join(" and ")
+        }
+        StmtKind::Function(f) => format!("`{}`", f.name),
+        StmtKind::Push { port, .. } => format!("the push to `{port}`"),
+        StmtKind::Return(_) => "the export".into(),
+        StmtKind::UnitAnnot(a) => format!("the unit item `@{}`", a.name),
+        StmtKind::Struct(_)
+        | StmtKind::Type(_)
+        | StmtKind::Method(_)
+        | StmtKind::Import(_)
+        | StmtKind::Local(_)
+        | StmtKind::Annotated { .. } => {
+            unreachable!("resolve rejects the forms of layer L2")
+        }
+        StmtKind::Mutable(_)
+        | StmtKind::IndexedDef(_)
+        | StmtKind::While(_)
+        | StmtKind::Until(_)
+        | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+    }
 }

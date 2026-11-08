@@ -170,7 +170,7 @@ fn rejecting_negative_literals_at_their_minus_scales() {
             1,
             |m| {
                 let (_, src, stmts, res) = units.iter().find(|(k, _, _, _)| *k == m).unwrap();
-                let info = zedc::check::check(stmts, res);
+                let info = zedc::check::walk::check(stmts, res);
                 assert_eq!(info.errors.len(), 2 * m);
                 assert!(
                     info.errors.iter().all(

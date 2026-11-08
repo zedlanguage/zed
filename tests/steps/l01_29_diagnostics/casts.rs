@@ -211,7 +211,7 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
             let mut errors = 0;
             let units = meter
                 .work(|| {
-                    errors = on_a_thread(256 << 20, || zedc::check::check(&stmts, &res))
+                    errors = on_a_thread(256 << 20, || zedc::check::walk::check(&stmts, &res))
                         .errors
                         .iter()
                         .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
@@ -245,7 +245,7 @@ fn errors(text: &str) -> Vec<zedc::ast::Error> {
     let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
     let stmts = zedc::ast::unit(text, &tokens, &tree).expect("it is a unit");
     let res = zedc::resolve::resolve(&stmts).expect("it resolves");
-    zedc::check::check(&stmts, &res).errors
+    zedc::check::walk::check(&stmts, &res).errors
 }
 
 /// The rows of the errors of checking `text`.
@@ -391,7 +391,7 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
             let mut errors = 0;
             let units = meter
                 .work(|| {
-                    errors = on_a_thread(256 << 20, || zedc::check::check(&stmts, &res))
+                    errors = on_a_thread(256 << 20, || zedc::check::walk::check(&stmts, &res))
                         .errors
                         .iter()
                         .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))

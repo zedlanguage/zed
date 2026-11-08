@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use zedc::ast::Stmt;
+use zedc::check::Info;
 use zedc::check::ty::Sig;
-use zedc::check::{Info, check};
+use zedc::check::walk::check;
 use zedc::resolve::Resolution;
 
 /// The unit `text`, read and resolved: what the checker takes, built before a scaling test

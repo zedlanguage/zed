@@ -329,7 +329,7 @@ fn ready(text: &str) -> Ready {
     let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
     let stmts = zedc::ast::unit(text, &tokens, &tree).unwrap();
     let res = zedc::resolve::resolve(&stmts).unwrap();
-    let info = zedc::check::check(&stmts, &res);
+    let info = zedc::check::walk::check(&stmts, &res);
     assert!(info.errors.is_empty(), "{:?}", info.errors);
     Ready { stmts, res, info }
 }

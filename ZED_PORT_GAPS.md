@@ -27,7 +27,7 @@ the form it has may not meet the cost the compiler needs:
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
-| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f); `zed-kernel`, `zed-native` open (S.1f-rest) | S.2 | Move shared definitions to a file below both sides; no Zed change |
+| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f, and the cycles through calls by CYCLE-zedc-moves); `zed-kernel`, `zed-native` open (S.1f-rest) | S.2 | Move shared definitions to a file below both sides; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
 (mutation, which depends on step L6.13 keeping updates in place, with the report of copies of
@@ -445,6 +445,18 @@ one unit, and only two such groups cross files.
 
 These moves touch the files that ZEDC-split (`zedc` into crates) and the kernel `types` branches
 were changing while S.1f-rest ran, so they were left to be made after those merge.
+
+**The four `zedc` rows are done (CYCLE-zedc-moves).** After ZEDC-split the 32-file component
+was four cycles of 12 files, one per crate; the other files had been in it only through calls
+the tool did not type, which the split into crates removed. Every `zedc` crate now passes the
+tool, and `s_01f_import_graph` checks that each has no cycle. The moves:
+
+| Cycle | Moves |
+|---|---|
+| `zedc-syntax`: `ast/mod`, `body`, `neglit`, `stmts`, `types` | `Builder`, `Level`, `Built`, `Bare` and the steps every form's builder reads (`new`, `span`, `word`, `kids`, `later`, `node`, `take`, `body`, `op`, `range_end`, `once`, `args`, `literal_at`) moved from `ast/mod.rs` to `ast/builder.rs`, below all the others; `target` moved from `stmts.rs` to `types.rs`, which `stmts.rs` already imports. `ast/mod.rs` keeps the entry points, `fill`, `make` and the expression forms, and imports every other file |
+| `zedc-check`: `check/mod`, `check/walk` | `check`, `check_with`, `operator` and the 32 methods of `Ck` that re-enter the walk (`apply`, `apply_many`, `apply_one`, `at_index`, `at_key`, `bind_pattern`, `bit_domains`, `check_on`, `compare`, `component`, `components`, `data`, `exponent`, `fit_declared`, `fit_needs`, `fits_slot`, `flow`, `generalize`, `into`, `int_range`, `literal_refused`, `meet`, `merge`, `narrowed`, `need`, `partial`, `payload`, `repaired`, `repairs`, `replay`, `try_outside`, `sum`) moved to `check/walk.rs`, now `pub mod walk`. The paths are `zedc_check::check::walk::{check, check_with, operator}` (and `zedc::check::walk::…`); no re-export from `check/mod.rs`, which would be an edge from it to `walk.rs` |
+| `zedc-elab`: `elab`, `elab/walk` | `Mark`, `mutable` and `mark_of` moved to `elab/mark.rs` (paths `zedc::elab::mark::{Mark, mutable, mark_of}`); the walk's state `Elab`, `Bind` and their helpers to `elab/state.rs`; `if_` and `what` to `elab/walk.rs`. `elab.rs` keeps the entry points and imports the three |
+| `zedc-presburger`: `presburger`, `presburger/deep`, `deep/canon` | `Names`, `as_is` and the methods of `Factor`, `Atom`, `Lin` and `Con` (arithmetic, `eval`, `holds`, `show`, `Display`) moved from `presburger.rs` to `presburger/formula.rs`, with `Formula::rank` and `Formula::flattens_into` from `deep.rs`, which `canon.rs` calls. No function moved between `presburger.rs` and `deep.rs`: the recursive group `witness`, `holds`, `holds_as` the MIR graph suggested does not exist, as `holds_as` calls only `Con::holds`, so `presburger.rs` imports `deep.rs` and not the reverse |
 
 **The other components the tool found when S.1f-rest began are broken.** `zed-kernel`: `value`,
 `family`, `error` and `deep` were one recursive type (`Value`, `Family`, `Part`, `KernelError`

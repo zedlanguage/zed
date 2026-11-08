@@ -1308,7 +1308,7 @@ fn a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union() 
     scaling::check("a tuple held by n shapes together, by n", 64, |n| {
         Type::forget_emptiness();
         let (stmts, res) = &units[&n];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }

@@ -120,7 +120,7 @@ fn check_alone(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> 
                 .collect();
             scaling::check_order(what, n, power, |m| {
                 let (stmts, res) = &units[&m];
-                let info = zedc::check::check(stmts, res);
+                let info = zedc::check::walk::check(stmts, res);
                 assert!(info.errors.is_empty(), "{:?}", info.errors);
             });
         });

@@ -3,8 +3,8 @@
 //! read the rules from the type representation and the operator rule directly.
 
 use zed_kernel::types::Type as KType;
-use zedc::check::operator;
 use zedc::check::ty::{Carrier, Ty};
+use zedc::check::walk::operator;
 
 /// `#a | #b | …`.
 fn atoms(names: &[&str]) -> Ty {

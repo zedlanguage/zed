@@ -55,7 +55,7 @@ fn tops(text: &str) -> BTreeMap<String, Vec<String>> {
     let Ok(res) = zedc::resolve::resolve(&stmts) else {
         return BTreeMap::new();
     };
-    let info = zedc::check::check(&stmts, &res);
+    let info = zedc::check::walk::check(&stmts, &res);
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (name, t) in &info.tops {
         out.entry(name.clone()).or_default().push(t.to_string());

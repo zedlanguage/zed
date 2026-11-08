@@ -20,13 +20,13 @@ fn through_load(src: &str) -> Vec<String> {
     }
 }
 
-/// The type errors of `src` through `zedc::check::check`, as `line:col: message`.
+/// The type errors of `src` through `zedc::check::walk::check`, as `line:col: message`.
 fn through_check(src: &str) -> Vec<String> {
     let tokens = lex_fence(src).unwrap();
     let tree = parse(src, &tokens, "Unit", TOP).unwrap();
     let stmts = unit(src, &tokens, &tree).unwrap();
     let res = resolve(&stmts).unwrap_or_else(|e| panic!("{src}: {e:?}"));
-    let info = zedc::check::check(&stmts, &res);
+    let info = zedc::check::walk::check(&stmts, &res);
     info.errors
         .iter()
         .map(|e| {
@@ -118,7 +118,7 @@ fn the_bound_walk_scales_linearly() {
         .collect();
     zed_tests::scaling::check_order("bound walk", 250, 1, |n| {
         let (stmts, res) = &units[&n];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
@@ -161,7 +161,7 @@ fn the_port_walk_scales_linearly() {
     zed_tests::scaling::check_order("port walk", 250, 1, |n| {
         let stmts = &units[&n];
         let res = resolve(stmts).unwrap_or_else(|e| panic!("{e:?}"));
-        let info = zedc::check::check(stmts, &res);
+        let info = zedc::check::walk::check(stmts, &res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }

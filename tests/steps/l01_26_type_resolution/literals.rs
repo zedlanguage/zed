@@ -351,7 +351,7 @@ fn checks_linearly(what: &str, n: usize, text: fn(usize) -> String, adopts: fn(u
         .collect();
     scaling::check_order(what, n, 1, |m| {
         let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.adopt.len(), adopts(m));
     });
@@ -565,7 +565,7 @@ fn rejecting_plain_literals_with_their_menus_scales() {
         1,
         |m| {
             let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-            let info = zedc::check::check(stmts, res);
+            let info = zedc::check::walk::check(stmts, res);
             assert_eq!(info.errors.len(), 2 * m);
         },
     );

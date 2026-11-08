@@ -2,7 +2,8 @@
 
 use zed_kernel::{Evaluator, Term, World};
 use zedc::ast::{Stmt, unit};
-use zedc::check::{Info, check};
+use zedc::check::Info;
+use zedc::check::walk::check;
 use zedc::elab::{Unit, elaborate, elaborate_checked};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};

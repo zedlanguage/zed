@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::mem;
 
+use super::builder::{Builder, Built};
 use super::{
-    Builder, Built, Error, Every, Expr, ExprKind, Note, Param, Pattern, Target, Type, TypeBound,
-    TypeKind, TypeParam,
+    Error, Every, Expr, ExprKind, Note, Param, Pattern, Target, Type, TypeBound, TypeKind,
+    TypeParam,
 };
 use crate::lex::{Span, Tok};
 use zedc_base::rejection::Row;
@@ -269,6 +270,14 @@ impl Builder<'_, '_> {
             out.push(p);
         }
         Ok(out)
+    }
+
+    /// The target of node `n`, a `Target`: a name or `_`.
+    pub(super) fn target(&self, n: usize) -> Target {
+        match self.kids(n) {
+            [_] => Target::Name(self.word(self.tree.nodes[n].start).into(), self.span(n)),
+            _ => Target::Wild,
+        }
     }
 
     fn param(&mut self, n: usize) -> Result<Param, Error> {

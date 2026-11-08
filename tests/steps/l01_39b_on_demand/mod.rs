@@ -114,7 +114,7 @@ fn checking_functions_that_ask_for_no_derivation_scales() {
         .collect();
     scaling::check_order("checking n functions with no rejection", n, 1, |k| {
         let (stmts, res) = &units[&k];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(derivation_steps(), 0);
     });
@@ -158,7 +158,7 @@ fn checking_functions_of_many_parameters_scales() {
         .collect();
     scaling::check_order("checking n functions of 40 parameters", n, 1, |k| {
         let (stmts, res) = &units[&k];
-        let info = zedc::check::check(stmts, res);
+        let info = zedc::check::walk::check(stmts, res);
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(derivation_steps(), 0);
     });

@@ -15,8 +15,7 @@ use std::mem;
 use std::slice;
 use std::sync::Arc;
 
-use super::formula::{Con, Formula, Id, Lin, Model, Rel};
-use super::{Names, as_is};
+use super::formula::{Con, Formula, Id, Lin, Model, Names, Rel, as_is};
 
 mod canon;
 
@@ -85,12 +84,6 @@ impl<'a> Iterator for Flat<'a> {
 }
 
 impl Formula {
-    /// Whether `self` is a conjunction or disjunction of the variant `kind`, so that it is read
-    /// as flattened into a parent of that variant ([`Flat`]).
-    fn flattens_into(&self, kind: u8) -> bool {
-        matches!(self, Formula::And(_) | Formula::Or(_)) && self.rank() == kind
-    }
-
     /// The fold of the formula from its constraints up. Each part is reached with a context:
     /// `ctx` at the root, and `down(node, c)` at each part directly under a node reached with
     /// `c`. `up(node, c, results)` gives a node's result from its parts' results, in order.
@@ -297,16 +290,6 @@ impl Formula {
                     out.append(v);
                 }
             }
-        }
-    }
-
-    /// The rank of the variant, in the order in which [`Ord`] puts them.
-    fn rank(&self) -> u8 {
-        match self {
-            Formula::Con(_) => 0,
-            Formula::Not(_) => 1,
-            Formula::And(_) => 2,
-            Formula::Or(_) => 3,
         }
     }
 

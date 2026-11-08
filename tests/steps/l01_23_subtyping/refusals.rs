@@ -369,7 +369,7 @@ fn a_morphism_type_whose_bound_check_was_refused_says_why() {
 
 /// The errors of the operator `op` applied to `args`, through the checker's `apply`.
 fn operator_errors(op: &str, args: &[Ty]) -> Vec<String> {
-    zedc::check::operator(op, args).1
+    zedc::check::walk::operator(op, args).1
 }
 
 #[test]
