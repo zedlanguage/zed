@@ -1566,18 +1566,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DEEP-types-regress | repair attempt 1 | 2026-11-07 18:35 | started: worktree on origin/main 02eb0e09; bisecting 527b4b80..903759e8 (300 first-parent commits) for the deep_types stack overflow and digest failure |
+| DEEP-types-regress | repair attempt 1 | 2026-11-07 18:35 | fix: Env::drop queues args, members and the entry's args on rec's deep queue (Freed::Types/Members), rec::hold keeps that queue past UNIT; deep_types 24/24 pass |
 | EMPTY-morphism-diff-cost | impl attempt 1 | 2026-11-05 18:48 | started; worktree from origin/main e37d4366 |
-| ENV-port | impl attempt 1 | 2026-11-05 04:07 | ready 3bfd4f17 on wt/env-port, spec 737dad4 on wt/env-port-spec; step L1.19c; 339 tests pass in 12 pieces; l01_10 fails on base spec too / load 22.82, 33.95, 37 |
-| FAMILY-eq-fast | impl attempt 1 | 2026-11-07 17:30 | started on 903759e8; worktree /home/luke/Work/wt/family-eq-fast |
-| MINMAX-tuples | repair attempt 1 | 2026-11-04 04:45 | cause found: is_min_max compared the signature with word_sig("min"), equal to op_sig of + - * (same 3 arrows, positional(2)); fixed by call identity (Ck::min_ma |
-| PROV-family-entries | impl attempt 1 | 2026-11-05 04:07 | measured on main (load 28): rows sharing one #errs set n=m 50,100,200,400: 1.0,3.5,14.2,58.9 ms (4x per 2x: n*m); deep replacement n=d 16..128: 0.58,3.3,19.8,13 |
 | REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
-| T11-unit-share | impl attempt 1 | 2026-11-05 04:07 | ready b8933d78 on wt/t11-unit-share (rebased on 02eb0e09): 15 pieces 765 passed with doc check; after rebase l01_28, m0_09, l01_19, zedc 224 passed; fmt, clippy |
-| UTVPI-model | impl attempt 1 | 2026-11-05 04:07 | start: worktree wt/utvpi-model from origin/main e37d4366 |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | started: three shell jobs (codex, gemini, claude) in /home/luke/Work/wt/xst/r2; end line when the last report is read |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+
 
 ## Open points
 
