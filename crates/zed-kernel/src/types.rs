@@ -27,6 +27,7 @@ mod debug;
 mod empty;
 pub use empty::{Refusal, Verdict};
 mod hash;
+pub(crate) use bdd::KeyHasher;
 #[cfg(test)]
 use hash::SALT;
 pub(crate) use hash::mix;

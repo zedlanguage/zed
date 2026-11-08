@@ -33,6 +33,7 @@ use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::mem;
 use std::ops::Deref;
 use std::slice;
@@ -48,6 +49,7 @@ use num_traits::ToPrimitive;
 use crate::deep::{self, Queue};
 use crate::num::{Exact, Rat, TooLarge, bytes_of, read_decimal, room, sign_of};
 use crate::text::{Text, TooLong};
+use crate::types::KeyHasher;
 
 /// A 64-bit float that compares bitwise after NaN canonicalization, as every kernel equation
 /// on a float-bearing value does (sec:kernel, the law catalog): `-0.0` and `0.0` are different
@@ -1151,6 +1153,61 @@ thread_local! {
     static COMPARING: Cell<bool> = const { Cell::new(false) };
     /// The pairs of families a comparison has yet to read.
     static PAIRS: RefCell<Vec<(Family, Family)>> = const { RefCell::new(Vec::new()) };
+    /// How many comparisons are running on this thread, one inside another: `diff` calls `==`
+    /// on the entries it finds, which starts a comparison inside the one that called `diff`.
+    static SCOPES: Cell<usize> = const { Cell::new(0) };
+    /// The pairs of shared sequences and of families that the comparisons running on this
+    /// thread have read to their end with no difference, by relation, and the pairs of
+    /// families an identity comparison has queued. Emptied when the outermost one ends.
+    static READ: RefCell<HashSet<Read, BuildHasherDefault<KeyHasher>>> =
+        RefCell::new(HashSet::default());
+}
+
+/// The pairs a comparison reads are kept while it and every comparison it starts run
+/// ([`READ`]). Sequences and families draw their ids from one counter, no id is drawn twice,
+/// and a value with an id is never changed, so a pair read once has the same answer wherever
+/// the comparison meets it again.
+struct Scope;
+
+impl Scope {
+    fn enter() -> Scope {
+        SCOPES.set(SCOPES.get() + 1);
+        Scope
+    }
+}
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        let left = SCOPES.get() - 1;
+        SCOPES.set(left);
+        if left == 0 {
+            let read = READ.with_borrow_mut(mem::take);
+            drop(read);
+        }
+    }
+}
+
+/// A pair of ids read under a relation. It hashes as three words: the derived hash writes the
+/// relation's discriminant a byte at a time.
+#[derive(PartialEq, Eq)]
+struct Read(Pair, Relation);
+
+impl Hash for Read {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        h.write_u64(self.0.0);
+        h.write_u64(self.0.1);
+        h.write_u64(self.1 as u64);
+    }
+}
+
+/// Whether a comparison running on this thread has read `pair` under `r` already.
+fn was_read(pair: Pair, r: Relation) -> bool {
+    READ.with_borrow(|read| read.contains(&Read(pair, r)))
+}
+
+/// Records that `pair` was read under `r`; false when it was already.
+fn mark_read(pair: Pair, r: Relation) -> bool {
+    READ.with_borrow_mut(|read| read.insert(Read(pair, r)))
 }
 
 /// Drops `part`. A drop reached from inside this one queues its part and returns, so a chain of
@@ -1195,6 +1252,8 @@ struct MapLevel<'a> {
     /// The values of the entry whose keys were compared last.
     values: Option<(&'a Value, &'a Value)>,
     relation: Relation,
+    /// The ids of the two families.
+    pair: Pair,
 }
 
 /// What one comparison found.
@@ -1228,20 +1287,26 @@ fn atoms<'a>(a: &'a Atom, b: &'a Atom, r: Relation) -> Step<'a> {
 
 fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
     let same = a.0.ptr_eq(&b.0);
+    let pair = (a.id(), b.id());
     match r {
         Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
         Relation::Identity if same => Step::Same,
+        // The comparison is the same only if every queued pair is, so a pair queued once is
+        // not queued again.
+        Relation::Identity if !mark_read(pair, r) => Step::Same,
         Relation::Identity => {
             // A family is copied by a reference count, so the queue holds no data.
             PAIRS.with_borrow_mut(|pairs| pairs.push((a.clone(), b.clone())));
             Step::Same
         }
         Relation::Total if same => Step::Same,
+        _ if was_read(pair, r) => Step::Same,
         _ => Step::Enter(Level::Maps(Box::new(MapLevel {
             a: a.0.iter(),
             b: b.0.iter(),
             values: None,
             relation: r,
+            pair,
         }))),
     }
 }
@@ -1271,10 +1336,9 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
             }
         }
         (Value::Tuple(x), Value::Tuple(y), _) => items(x, y, r),
-        (_, _, Relation::SurfaceOrder) => match a.cmp(b) {
-            Ordering::Equal => Step::Same,
-            o => Step::Ends(Some(o)),
-        },
+        // Beneath its tuples the language's order is the total order, read in this walk so
+        // that the pairs it reads are kept with the others.
+        (_, _, Relation::SurfaceOrder) => step(a, b, Relation::Total),
         (Value::Path(x), Value::Path(y), _) => items(x, y, r),
         (Value::Atom(x), Value::Atom(y), _) => atoms(x, y, r),
         (Value::Family(x), Value::Family(y), _) => maps(x, y, r),
@@ -1320,25 +1384,33 @@ fn advance<'a>(level: &mut Level<'a>) -> Step<'a> {
 /// Runs a walk from its first step to the first difference. `None` is an unordered pair; a walk
 /// that ends without one gives `Some(Equal)`. A flat value needs no heap: the stack holds only
 /// the levels above the one in hand. Shared tuples make a value a DAG, so a pair of shared
-/// sequences read to its end is kept, and met again it is the same without a second reading:
-/// the walk is O(distinct pairs), not O(paths).
+/// sequences or of families read to its end is kept, and met again it is the same without a
+/// second reading: the walk is O(distinct pairs), not O(paths). The pairs are kept in [`READ`]
+/// until the outermost comparison ends, so the comparisons that `diff` starts share them.
 fn walk(first: Step<'_>) -> Option<Ordering> {
     let mut level = match first {
         Step::Same | Step::Done => return Some(Ordering::Equal),
         Step::Ends(o) => return o,
         Step::Enter(level) => level,
     };
+    let _scope = Scope::enter();
+    if let Level::Items(.., r, Some(pair)) = &level
+        && was_read(*pair, *r)
+    {
+        return Some(Ordering::Equal);
+    }
     let mut above = Vec::new();
-    let mut read = HashSet::new();
     loop {
         match advance(&mut level) {
             Step::Same => {}
             Step::Ends(o) => return o,
-            Step::Enter(Level::Items(.., r, Some(pair))) if read.contains(&(pair, r)) => {}
+            Step::Enter(Level::Items(.., r, Some(pair))) if was_read(pair, r) => {}
             Step::Enter(inner) => above.push(mem::replace(&mut level, inner)),
             Step::Done => {
-                if let Level::Items(.., r, Some(pair)) = level {
-                    read.insert((pair, r));
+                match &level {
+                    Level::Items(.., r, Some(pair)) => _ = mark_read(*pair, *r),
+                    Level::Maps(m) => _ = mark_read(m.pair, m.relation),
+                    Level::Items(.., None) => {}
                 }
                 match above.pop() {
                     Some(outer) => level = outer,
@@ -1370,11 +1442,13 @@ fn settle(same: bool) -> bool {
 
 /// Whether two sequences of values are the same.
 pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
+    let _scope = Scope::enter();
     settle(walk(items(a, b, Relation::Identity)) == Some(Ordering::Equal))
 }
 
 /// Whether two families are the same.
 pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
+    let _scope = Scope::enter();
     settle(walk(maps(a, b, Relation::Identity)) == Some(Ordering::Equal))
 }
 

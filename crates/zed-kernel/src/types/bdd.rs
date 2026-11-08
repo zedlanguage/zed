@@ -38,7 +38,7 @@ mod list;
 mod set;
 
 use list::Cell;
-pub(super) use list::KeyHasher;
+pub(crate) use list::KeyHasher;
 use set::{Key, NEXT, Set};
 
 #[derive(Clone)]

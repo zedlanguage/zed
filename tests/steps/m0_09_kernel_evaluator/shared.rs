@@ -247,3 +247,195 @@ fn showing_sets_nested_inside_tuples_scales() {
         },
     );
 }
+
+/// `f(0) = bottom`, `f(i + 1) = {x: f(i), y: f(i)}`: a family `depth` levels deep whose levels
+/// each hold the one beneath twice, `depth` families and `2^depth` keypaths.
+fn doubled_family(depth: usize, bottom: Value) -> Value {
+    (0..depth).fold(bottom, |v, _| {
+        Value::Family(Family::of([("x", v.clone()), ("y", v)]))
+    })
+}
+
+#[test]
+fn families_built_apart_that_share_their_levels_compare_by_their_leaves() {
+    let one = doubled_family(12, Value::Int(1));
+    let same = doubled_family(12, Value::Int(1));
+    assert!(one == same);
+    assert_eq!(one.cmp(&same), std::cmp::Ordering::Equal);
+    assert!(one.surface_eq(&same));
+    assert_eq!(one.surface_cmp(&same), Some(std::cmp::Ordering::Equal));
+    // Unequal at the deepest leaf, which every keypath reaches.
+    let two = doubled_family(12, Value::Int(2));
+    assert!(one != two);
+    assert_eq!(one.cmp(&two), std::cmp::Ordering::Less);
+    assert!(!one.surface_eq(&two));
+    assert_eq!(two.surface_cmp(&one), Some(std::cmp::Ordering::Greater));
+    // `-0.0` and `0.0` are two values, and equal under the language's `==`, at every leaf.
+    let neg = doubled_family(12, Value::float(-0.0));
+    let pos = doubled_family(12, Value::float(0.0));
+    assert!(neg != pos);
+    assert_eq!(neg.cmp(&pos), std::cmp::Ordering::Less);
+    assert!(neg.surface_eq(&pos));
+    // A NaN at the bottom is not equal to itself under `==`, though both are one key.
+    let nan = doubled_family(12, Value::float(f64::NAN));
+    let nan_again = doubled_family(12, Value::float(f64::NAN));
+    assert!(nan == nan_again);
+    assert!(!nan.surface_eq(&nan_again));
+}
+
+#[test]
+fn two_empty_families_are_equal_under_every_relation() {
+    let a = Value::Family(Family::new());
+    let b = Value::Family(Family::of(Vec::<(i64, i64)>::new()));
+    assert!(a == b);
+    assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+    assert!(a.surface_eq(&b));
+    assert_eq!(a.surface_cmp(&b), Some(std::cmp::Ordering::Equal));
+    let one = doubled_family(1, Value::Int(1));
+    assert!(a != one);
+    assert!(a < one);
+}
+
+#[test]
+fn a_part_compared_inside_two_families_is_read_once_per_comparison() {
+    // `{0: t, 1: t, ..., n - 1: t}` for one tuple `t` of n numbers, and `(f, f, ..., f)` for
+    // one family `f` of n entries, each built twice apart: n places, one part of size n.
+    let wide = |n: usize| {
+        let t = tuple(n);
+        Value::Family(Family::of((0..n as i64).map(|k| (k, t.clone()))))
+    };
+    let row = |n: usize| {
+        let f = Value::Family(Family::set(0..n as i64));
+        Value::tuple(vec![f; n])
+    };
+    assert!(wide(5) == wide(5));
+    assert!(row(5).surface_eq(&row(5)));
+    assert_eq!(row(5).surface_cmp(&row(5)), Some(std::cmp::Ordering::Equal));
+    // Unequal only in the last entry, whose tuple is one longer.
+    let last = Family::of((0..5).map(|k| (k, if k == 4 { tuple(6) } else { tuple(5) })));
+    assert!(wide(5) != Value::Family(last));
+}
+
+#[test]
+fn comparing_families_that_share_their_levels_scales() {
+    // With no read set for pairs of families, a comparison read every keypath: 2^depth.
+    let values: HashMap<usize, [Value; 4]> = [2000, 16000]
+        .map(|n| {
+            let one = doubled_family(n, Value::Int(1));
+            let same = doubled_family(n, Value::Int(1));
+            let neg = doubled_family(n, Value::float(-0.0));
+            let pos = doubled_family(n, Value::float(0.0));
+            (n, [one, same, neg, pos])
+        })
+        .into();
+    check_order(
+        "equality, order and the language's relations of families, by depth",
+        2000,
+        1,
+        |n| {
+            let [one, same, neg, pos] = &values[&n];
+            assert!(one == same);
+            assert_eq!(one.cmp(same), std::cmp::Ordering::Equal);
+            assert!(one.surface_eq(same));
+            assert_eq!(one.surface_cmp(same), Some(std::cmp::Ordering::Equal));
+            assert!(neg != pos);
+            assert!(neg.surface_eq(pos));
+        },
+    );
+}
+
+#[test]
+fn comparing_one_part_held_in_many_places_scales() {
+    let wide = |n: usize| {
+        let t = tuple(n);
+        Value::Family(Family::of((0..n as i64).map(|k| (k, t.clone()))))
+    };
+    let row = |n: usize| {
+        let f = Value::Family(Family::set(0..n as i64));
+        Value::tuple(vec![f; n])
+    };
+    let values: HashMap<usize, [Value; 4]> = [1000, 8000]
+        .map(|n| (n, [wide(n), wide(n), row(n), row(n)]))
+        .into();
+    check_order(
+        "equality of n entries holding one tuple of n, and the language's relations on a \
+         tuple of n copies of one family of n, by n",
+        1000,
+        1,
+        |n| {
+            let [a, b, c, d] = &values[&n];
+            assert!(a == b);
+            assert!(c.surface_eq(d));
+            assert_eq!(c.surface_cmp(d), Some(std::cmp::Ordering::Equal));
+        },
+    );
+}
+
+/// A copy of `v` that shares no part, each tuple and family built anew.
+fn unshared(v: &Value) -> Value {
+    match v {
+        Value::Tuple(items) => Value::tuple(items.as_slice().iter().map(unshared).collect()),
+        Value::Family(f) => {
+            Value::Family(Family::of(f.iter().map(|(k, v)| (k.clone(), unshared(v)))))
+        }
+        _ => v.clone(),
+    }
+}
+
+#[test]
+fn shared_and_unshared_values_compare_alike_under_every_relation() {
+    // Every value two levels deep over five leaves, as a tuple or a family of two parts, the
+    // two parts one shared value or two; each pair is compared as built and as unshared copies.
+    let leaves = [
+        Value::Int(1),
+        Value::Int(2),
+        Value::float(-0.0),
+        Value::float(0.0),
+        Value::float(f64::NAN),
+    ];
+    let two = |a: &Value, b: &Value| {
+        [
+            Value::tuple(vec![a.clone(), b.clone()]),
+            Value::Family(Family::of([("x", a.clone()), ("y", b.clone())])),
+        ]
+    };
+    let mut one_level = Vec::new();
+    for a in &leaves {
+        for b in &leaves {
+            one_level.extend(two(a, b));
+        }
+    }
+    let mut values = Vec::new();
+    for a in one_level.iter().step_by(3) {
+        for b in one_level.iter().step_by(7) {
+            values.extend(two(a, b));
+        }
+        values.extend(two(a, a));
+    }
+    let copies: Vec<Value> = values.iter().map(unshared).collect();
+    let mut differ = 0;
+    for (a, ca) in values.iter().zip(&copies) {
+        for (b, cb) in values.iter().zip(&copies) {
+            assert_eq!(a == b, ca == cb, "{a} and {b}");
+            assert_eq!(a.cmp(b), ca.cmp(cb), "{a} and {b}");
+            assert_eq!(a.surface_eq(b), ca.surface_eq(cb), "{a} and {b}");
+            assert_eq!(a.surface_cmp(b), ca.surface_cmp(cb), "{a} and {b}");
+            differ += usize::from(a != b);
+        }
+    }
+    assert!(values.len() > 100 && differ > values.len() * values.len() / 2);
+}
+
+#[test]
+fn a_part_read_under_two_relations_in_one_comparison_gets_each_answer() {
+    // The language's order reads the first part by its float order (equal) and the family's
+    // copy of it by the total order (-0.0 before 0.0), in one comparison.
+    let t = Value::tuple(vec![Value::float(-0.0)]);
+    let u = Value::tuple(vec![Value::float(0.0)]);
+    let a = Value::tuple(vec![t.clone(), Value::Family(Family::of([("x", t)]))]);
+    let b = Value::tuple(vec![u.clone(), Value::Family(Family::of([("x", u)]))]);
+    assert_eq!(a.surface_cmp(&b), Some(std::cmp::Ordering::Less));
+    assert_eq!(a.cmp(&b), std::cmp::Ordering::Less);
+    assert!(a != b);
+    assert!(a.surface_eq(&b));
+}

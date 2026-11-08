@@ -892,7 +892,8 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `Arc<[Value]>`, a shared slice with a reference count, and `Arc::default()` for the static empty slice | `Items`, `Atom::fields` | None | Zed values are shared already; the type is a plain tuple |
 | `Arc::strong_count` to tell a shared sequence from one held once, and `Arc::get_mut` to move the parts out of one held once | `Items::is_shared`, `Items::pair`, `Items::into_vec` | Identity, mutation | Removed: the runtime reuses a value held once, and the walks key their read sets by a hash-consed id |
-| The id a sequence carries (`Items::id`, drawn by `fresh_id`, shared by copies) as a key in a `HashSet` or `HashMap`, since ADDR-keys | `deep::walk` (`read`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
+| The id a sequence or family carries (`Items::id`, `Family::id`, drawn by `fresh_id`, shared by copies) as a key in a `HashSet` or `HashMap`, since ADDR-keys and FAMILY-eq-dag | `value::walk` and `value::maps` (`READ`), `deep::copy` (`copied`), `deep::all_leaves` (`read`) | Identity (gap 1) | A family keyed by value, using L6.13a's hash and equality |
+| A thread-local `RefCell<HashSet<Read>>` of pairs read, emptied by the `Drop` of a counted `Scope` when the outermost comparison on the thread ends, so the comparison `imbl::OrdMap::diff` starts inside another shares it (FAMILY-eq-dag) | `value::READ`, `SCOPES`, `Scope` | Mutation (gap 11), no global state | The comparison is one function that threads its read set through its own recursion, including into the comparison of entries |
 
 ## Entries from T11-elab (`zedc-elab/src/elab.rs`, `stage.rs`, `query.rs`)
 

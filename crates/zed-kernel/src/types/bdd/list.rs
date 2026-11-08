@@ -106,11 +106,11 @@ type Piece<A> = (Run<A>, Option<bool>);
 /// (`Part::restrict`'s memo for lists).
 pub(super) type Memo<A> = HashMap<u64, Piece<A>, std::hash::BuildHasherDefault<KeyHasher>>;
 
-/// The hasher of [`Memo`]'s keys and of the thread's tables of live rows and morphism types,
-/// splitmix64's finalizer on the one `u64`: SipHash took an eighth of the restriction of a list
-/// of three blocks.
+/// The hasher of [`Memo`]'s keys, of the thread's tables of live rows and morphism types, and
+/// of the pairs a comparison of values has read (`value::Read`): splitmix64's finalizer on each
+/// `u64` in turn. SipHash took an eighth of the restriction of a list of three blocks.
 #[derive(Default)]
-pub(in crate::types) struct KeyHasher(u64);
+pub(crate) struct KeyHasher(u64);
 
 impl std::hash::Hasher for KeyHasher {
     fn write(&mut self, bytes: &[u8]) {
