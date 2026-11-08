@@ -444,7 +444,7 @@ impl<'a> Same<'a> {
     // depth: types 100,000 deep compare on a 2 MiB stack
     // (types_built_apart_100000_deep_compare_on_a_2_mib_stack). The stack the thread has left
     // is not read: the crates that read it (`stacker`, `libc`) cannot be linked into this
-    // dylib as well as into the test binaries. COMPLEXITY F117.
+    // dylib as well as into the test binaries. COMPLEXITY F118.
     #[inline]
     fn room(&mut self) -> bool {
         let mark = 0u8;
