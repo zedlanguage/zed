@@ -38,6 +38,14 @@ check "a test of deep_heap matches as deep_heap::<test>" "$(echo "$heap" | head 
 check "a union selects both groups" "$(by_binary "$step29" deep_heap)" "$(selected 'l01_29|deep_heap')"
 check "deep_values and deep_scaling are split per test too" "$(by_binary deep_values deep_scaling)" \
   "$(selected '^deep_(values|scaling)$')"
+check "a step selects the deep binaries in its folder" \
+  "$(by_binary l01_22_type_representation deep_types)" "$(selected '^l01_22')"
+check "a step selects each test of a deep binary split per test" \
+  "$(by_binary l01_36_cranelift deep_heap)" "$(selected '^l01_36_cranelift$')"
+check "a test of deep_heap matches as <step>::<test>" "$(echo "$heap" | head -1)" \
+  "$(selected "^l01_36_cranelift::$(echo "$heap" | head -1)\$")"
+check "m0_09 selects deep_values and deep_scaling" \
+  "$(by_binary m0_09_kernel_evaluator deep_values deep_scaling)" "$(selected '^m0_09_')"
 live3=$(echo "$all" | grep '^l01_38_presburger::live3::' | sort)
 bin38=$(echo "$pieces" | awk '$1 ~ /^l01_38_presburger/ { print $3; exit }')
 check "a split module is one piece per test" \

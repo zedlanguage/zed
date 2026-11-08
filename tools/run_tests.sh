@@ -7,7 +7,9 @@
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
 # --only runs only the pieces whose name, or whose group (the step folder, or the test binary's
 # name without its hash, e.g. zedc, deep_heap, short-l01_37_oracle), matches the extended regular
-# expression; a piece of a binary split per test also matches as <group>::<test>. A pattern that
+# expression; a piece of a binary split per test also matches as <group>::<test>. A test binary
+# whose source lies in a step folder under another name (deep_types in l01_22_type_representation)
+# has that folder as a second group, so a selection of the step runs it too. A pattern that
 # matches no piece stops the run with an error. The short-addresses build is made only when a
 # short- piece is selected. --no-doc skips the check that the documentation builds. --list
 # builds what the selection needs, prints the names of the selected pieces and runs nothing.
@@ -150,10 +152,21 @@ step_pieces() {
     step_pieces "$1" "$2" "$m"
   done
 }
+# The step folder of each test binary of tests/Cargo.toml whose source lies in a step folder of
+# another name: deep_types, deep_search, deep_heap, deep_values and deep_scaling.
+declare -A step_of
+while read -r b s; do
+  step_of[$b]=$s
+done < <(awk '
+  /^\[\[test\]\]/ { name = "" }
+  /^name = "/ { name = $3; gsub(/"/, "", name) }
+  /^path = "steps\// && name != "" { split($3, p, "/"); if (p[2] != name) print name, p[2] }
+' tests/Cargo.toml)
 {
   for p in $bins; do
     n=$(basename "$p")
-    if [ -d "tests/steps/${n%-*}" ]; then
+    g=${n%-*}
+    if [ -d "tests/steps/$g" ]; then
       step_pieces "${n%-*}" "$p"
     else
       case $n in
@@ -190,20 +203,20 @@ step_pieces() {
         zed_cert-*) echo "$n crates/zed-cert $p" ;;
         *) echo "$n tests $p" ;;
       esac
-    fi | sed "s|^|${n%-*} |"
+    fi | sed "s|^|$g ${step_of[$g]:-$g} |"
   done
   for p in $short; do
     n=short-$(basename "${p%-*}")
-    echo "$n $n tests $p"
+    echo "$n $n $n tests $p"
   done
   if [ -n "$full" ]; then
     for d in tests/full/*/; do
       n=$(basename "$d")
-      echo "$n $n tests $full $n::"
+      echo "$n $n $n tests $full $n::"
     done
   fi
-} | while read -r group name rest; do
-  selected "$group" "$name" && echo "$name $rest"
+} | while read -r group step name rest; do
+  { selected "$group" "$name" || selected "$step" "$name"; } && echo "$name $rest"
 done >"$out/pieces"
 if [ ! -s "$out/pieces" ]; then
   echo "NO PIECE MATCHES --only '$only'"
