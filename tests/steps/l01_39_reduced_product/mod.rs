@@ -29,6 +29,7 @@ mod scaling;
 mod seed_edges;
 mod spec;
 mod written_address;
+mod xst;
 
 use std::sync::Arc;
 
