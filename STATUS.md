@@ -1541,7 +1541,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | STOPPED: answers change vs main in 3 random chains (one_scope.rs:557): faces now answer holds Ok(true) where the relation whole refuses Err(Shadows); e.g. q=!(x |
+| BUBBLE-spec | spec attempt 1 | 2026-11-07 16:50 | started: worktrees wt/bubble-spec (impl c881d28c, spec dcade0e) |
+| FAMILY-eq-dag | impl attempt 1 | 2026-11-05 04:07 | overhead on unshared input (instructions per comparison, 200k entries each a 2-entry family; main -> fix): == 344.5M -> 407.6M (+18%), cmp 349.7M -> 427.6M (+22 |
+| HEAP-binder-paths | impl attempt 1 | 2026-11-05 04:07 | after: match binding each of n levels 0.229 MB vs 1.83 MB at n=1000/8000 (8.0x, was 61.0x); fused release keeping each level 0.177 MB vs 1.41 MB (8.0x, was 63.8 |
+| LIST-box-overlap | impl attempt 1 | 2026-11-07 09:29 | started on c881d28c: listing the each-row shape at side n is O(n^2) / load 2.23 3.72 11.36 |
+| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | shared-remainder chain +12 at 40 links: all 41 answers identical to 26372a77 (faced and plain, no refusals); (x<10//x>20)&&x mod 4!=1 at +3 on branch: 0.004/6.3 |
+| MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | started in /home/luke/Work/wt/minmax-tuples on c881d28c / load 2.89 3.81 11.30 |
+| REC-canon | impl attempt 1 | 2026-11-05 04:07 | started; worktree rec-canon from origin/main c881d28c; load 1.82 3.66 11.38 |
+| REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/refusal-cost from origin/main c881d28c, load 2.23 3.72 11.36 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
