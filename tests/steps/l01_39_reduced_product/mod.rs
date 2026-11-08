@@ -26,6 +26,7 @@ mod pendants;
 mod random;
 mod refused;
 mod scaling;
+mod seed_edges;
 mod spec;
 
 use std::sync::Arc;
