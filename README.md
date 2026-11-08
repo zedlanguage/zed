@@ -262,13 +262,13 @@ Only the third gives a daily total.
 
 ### Step 6: adding values that may be failures
 
-Merging with `+` gives the right total at `("East", 0)`, but the compiler rejects this line too:
+Merging with `+` gives the right total at `("East", 0)`:
 
 ```zed
-// daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);   // ✗ Unlifted carrier: + is not defined on #notFound
+dailyAll = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);
 ```
 
-The trouble is at `("West", 0)`, where `+` would have to add these two values:
+At `("West", 0)`, `+` would have to add these two values:
 
 **`revenue["West"][0]`**
 
@@ -278,9 +278,19 @@ The trouble is at `("West", 0)`, where `+` would have to add these two values:
 <tr><td><code>pen</code></td><td><code>8</code></td></tr>
 </table>
 
-`+` is defined on integers. Whatever `#notFound + 8` gave, something would be lost without the code saying so: `#notFound` throws away pen's 8, and `8` hides that pad has no price. In step 3, `1 * #notFound` could pass its failure along because the result stays at pad's own keypath, which still says which record failed. A merge puts many keypaths' values at one keypath, so it could keep at most one of their failures, the same loss of information that step 5 ruled out.
+`+` is defined on integers. Adding only the integers would give `8`, which looks like a total and hides that pad has no price. So a merge runs `+` only when none of the values it merges is a failure. Otherwise `+` does not run, and the result is the failures. The type of `dailyAll`'s values is `int | #notFound`, so the code that reads them has to deal with the failure:
 
-There is a second reason. The compiler may add one day's values in any order, splitting them across cores. Suppose a day held two different failures, `#notFound` and `#invalid` (a number that failed to parse), and a merge kept the first failure it met. The result would depend on the order:
+**`dailyAll`**
+
+<table>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>total</code></th></tr>
+<tr><td rowspan="2"><code>East</code></td><td><code>0</code></td><td><code>24</code></td></tr>
+<tr><td><code>1</code></td><td><code>6</code></td></tr>
+<tr><td rowspan="2"><code>West</code></td><td><code>0</code></td><td><code>#notFound</code></td></tr>
+<tr><td><code>1</code></td><td><code>42</code></td></tr>
+</table>
+
+The failures are kept as a set. The compiler may add one day's values in any order, splitting them across cores. Suppose a day held two different failures, `#notFound` and `#invalid` (a number that failed to parse), and a merge kept the first failure it met. The result would depend on the order:
 
 <table>
 <tr><th>Order of the additions</th><th>Result if the first failure wins</th><th>Zed's result</th></tr>
@@ -288,10 +298,10 @@ There is a second reason. The compiler may add one day's values in any order, sp
 <tr><td><code>(#invalid + 8) + #notFound</code></td><td><code>#invalid</code></td><td><code>#errs({#invalid, #notFound})</code></td></tr>
 </table>
 
-So the same program could give different totals on one core and on eight. Zed's `+` keeps both failures, as in step 3, and keeps them in a set rather than a list, because a list would record the order the additions ran in and the two rows would again differ. Pen's `8` is still lost, so the merge stays rejected.
+So the same program could give different totals on one core and on eight. Zed keeps both failures, as in step 3, and keeps them in a set rather than a list, because a list would record the order the additions ran in and the two rows would again differ.
 
 > [!IMPORTANT]
-> **A merge runs only on values its operator is defined for.** A merge over values that may be failures is rejected until the code says what the failures mean: replace them with `else`, filter them out with `where`, or keep them apart, as step 4 did.
+> **A merge gives its total only when every value is one its operator is defined for, and otherwise gives the failures.** Nothing is dropped or replaced unless the code says so. To get a total anyway, say what the failures mean: replace them with `else`, filter them out with `where`, or keep them apart, as step 4 did.
 
 This version counts an unpriced sale as zero revenue:
 
@@ -949,7 +959,7 @@ conf = defaultConfig, port = 8080
 
 There are no exceptions and no null, because in most languages both are ways to fail that a function's type doesn't mention. In Zed the type lists every failure a call can give, and the compiler follows each one to where it is handled. An atom of a named union, such as `Light`, is data and not a failure, so `else` keeps it unless you name it: `x else #red -> #green`.
 
-A `Config | #syntaxError` is not a `Config`. A lookup's failure passes through arithmetic and calls, so if `m[k]` looks up a key that a map `m` may lack, `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction, which merges many values into one, is stricter: it is rejected if its operator might be applied to a failure, for the reasons [Step 6](#step-6-adding-values-that-may-be-failures) shows on the sales data.
+A `Config | #syntaxError` is not a `Config`. A lookup's failure passes through arithmetic and calls, so if `m[k]` looks up a key that a map `m` may lack, `1 + m[k]` has type `int | #notFound`. The failure stays in the type until you handle it. A reduction, which merges many values into one, never applies its operator to a failure: if any of the values is one, the result is the failures, for the reasons [Step 6](#step-6-adding-values-that-may-be-failures) shows on the sales data.
 
 The compiler also adds a failure only where it can't rule it out. `a div b` has type `int` when `b` can be shown never to be zero, and `int | #divByZero` when it can't. `xs[i]` is plain `T` when `i` is known to be in range. Prove the bound, and the failure and its run-time check both disappear.
 
@@ -957,10 +967,10 @@ The compiler also adds a failure only where it can't rule it out. `a div b` has 
 
 Failures sit in collections as ordinary values, so you can test for them and choose what to do with them.
 
-**Syntax:** `r is T`, `r is not T`, `m.allOk`
+**Syntax:** `r is T`, `r is not T`, `m >< op` and `f(m)` on a map `m` that holds failures
 
 > [!NOTE]
-> **`m.allOk`** is `m` when no value is a failure, and otherwise the failures. **`read(path)`** reads a file through the program's `Files` port; it is short for the lookup `fs[path]`. A failed read gives **`#ioError`**, a failed port.
+> **A merge `m >< op`, and passing `m` to a function whose parameter type has no failures,** run `op` or the function when no value of `m` is a failure, and otherwise give the failures without running it. Nothing in the text shows this step, so every error message that it leads to shows where each failure came out. **`read(path)`** reads a file through the program's `Files` port; it is short for the lookup `fs[path]`. A failed read gives **`#ioError`**, a failed port.
 
 ```zed
 results = files.map(f -> read(f)).map(t -> parse(t));
@@ -1017,25 +1027,24 @@ What you can't do is ignore them by accident:
 
 ```zed
 amounts = files.map(f -> int(read(f)));         // int(s) converts text to an int, and can fail
-// sum = amounts >< (+);                        // ✗ Unlifted carrier: some amounts may be failures
+sumAll = amounts >< (+);                        // the sum, or all the failures: + never sees one
 ```
 
-You say what you mean instead:
+Where you mean something else, you say so:
 
 ```zed
 sum1 = amounts.where(a -> a is int) >< (+);     // skip the failures
 sum2 = amounts.map(a -> a else 0) >< (+);       // count them as zero
-sum3 = amounts.allOk >< (+);                    // the sum, or all the failures
 ```
 
 ```text
 input: amounts = 3, #ioError(...), 4
+sumAll = #ioError(...)
 sum1 = 7
 sum2 = 7
-sum3 = #ioError(...)
 
 input: amounts = 3, 5, 4
-sum1 = sum2 = sum3 = 12
+sumAll = sum1 = sum2 = 12
 ```
 
 ## Collections

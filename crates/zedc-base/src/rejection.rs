@@ -96,6 +96,7 @@ rows! {
     StoreSchemaMismatch => "Stored collection whose type and schema disagree",
     LevelDomainsDiffer => "Levels of one name with different domains",
     OutsideRefinement => "Argument outside its parameter's refinement",
+    AtomCannotPassOut => "Loose atom inside an argument at a position from which it cannot pass out of the call",
 }
 
 impl Row {

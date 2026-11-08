@@ -411,7 +411,8 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | «law» mapId ( t : PTree ( int ) ) = t . map ( A : x -> x ) == t ;
   6 | «law» mapCompose ( t : PTree ( int ) ) = t . map ( A : x -> x + 1₍10₎ ) . map ( A : x -> 2₍10₎ * x ) == t . map ( A : x -> 2₍10₎ * ( x + 1₍10₎ ) ) ;
   7 | «law» mapCount ( t : PTree ( int ) ) = count ( t . map ( A : x -> - x ) ) == count ( t ) ;
-  8 | checked ( «positional» t : PTree ( Utf8String ) ) = t . map ( A : s -> int ( s ) ) . allOk ;
+  8 | asInts ( «positional» t : PTree ( int ) ) = t ;
+  9 | checked ( «positional» t : PTree ( Utf8String ) ) = asInts ( t . map ( A : s -> int ( s ) ) ) ;
 == EXAMPLES.md [15. Trees and graphs] 3 L10
   2 | edges : Id ->? [ Id ] = { 1₍10₎ -> [ 2₍10₎ , 3₍10₎ ] , 2₍10₎ -> [ 4₍10₎ ] , 3₍10₎ -> [ 4₍10₎ ] , 4₍10₎ -> [ ] } ;
   3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» [ ] ) . image ;

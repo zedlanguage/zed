@@ -349,7 +349,6 @@ pub const WORDS: &[(&str, u32)] = &[
     ("foldl", 3),
     ("foldr", 3),
     ("reduce", 3),
-    ("allOk", 3),
     ("any", 3),
     ("all", 3),
     ("find", 3),

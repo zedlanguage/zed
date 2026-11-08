@@ -64,11 +64,16 @@ table What each repair gives at `("East", 0)`
 | merge with + | (region -> day -> sku >< (+) -> r) | 24 |
 
 == README.md [Step 6: adding values that may be failures] 1
-runs from L8: its variant reads revenue, defined in Step 3, whose fence is of layer L8
 table `revenue["West"][0]`
 | sku | r |
 | pad | #notFound ✗ |
 | pen | 8 |
+table `dailyAll`
+| region | day | total |
+| East | 0 | 24 |
+| East | 1 | 6 |
+| West | 0 | #notFound |
+| West | 1 | 42 |
 
 == README.md [Step 6: adding values that may be failures] 2
 table `daily` before summing over `sku`
@@ -293,19 +298,19 @@ table `bad`
 
 == README.md [Failures in a pipeline] 2
 comment amounts = files.map(f -> int(read(f))); // int(s) converts text to an int, and can fail
+comment sumAll = amounts >< (+); // the sum, or all the failures: + never sees one
 
 == README.md [Failures in a pipeline] 3
 comment sum1 = amounts.where(a -> a is int) >< (+); // skip the failures
 comment sum2 = amounts.map(a -> a else 0) >< (+); // count them as zero
-comment sum3 = amounts.allOk >< (+); // the sum, or all the failures
 text
 > input: amounts = 3, #ioError(...), 4
+> sumAll = #ioError(...)
 > sum1 = 7
 > sum2 = 7
-> sum3 = #ioError(...)
 >
 > input: amounts = 3, 5, 4
-> sum1 = sum2 = sum3 = 12
+> sumAll = sum1 = sum2 = 12
 
 == README.md [Everything is a map] 1
 comment xs = [3, 1, 4, 1, 5]; // int[0..<5] -> int: keys from 0 up to but not including 5

@@ -313,11 +313,10 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | good = results . where ( r -> r «is» Config ) ;
   9 | bad = results . where ( r -> r «is» «not» Config ) ;
  11 | amounts = files . map ( f -> int ( read ( f ) ) ) ;
- 12 | sum = amounts >< ( + ) ;
- 16 | sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
- 17 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
- 18 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
- 20 | sumAll = amounts . allOk >< ( + ) ;
+ 12 | sumAll = amounts >< ( + ) ;
+ 17 | sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
+ 18 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
+ 19 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
 == DESIGN.md [sec:tour_grammar] 1 L21
   2 | «struct» KeyVal «grammar» { key : Ident str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
