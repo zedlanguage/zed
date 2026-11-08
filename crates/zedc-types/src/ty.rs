@@ -212,31 +212,39 @@ impl FromIterator<Ty> for Row {
 }
 
 impl PartialEq for Row {
-    /// Compares the components on a stack of their own (`Same`): two equal rows built apart
-    /// share no node, and a comparison that recursed once a level overflowed an 8 MiB stack
-    /// a few tens of thousands of levels deep (ROW-eq-deep).
+    /// Compares the components as [`Ty`]'s `==` does, with no stack as deep as the row: two
+    /// equal rows built apart share no node, and a comparison that recursed once a level
+    /// overflowed an 8 MiB stack a few tens of thousands of levels deep (ROW-eq-deep).
     fn eq(&self, other: &Row) -> bool {
-        if Arc::ptr_eq(&self.0, &other.0) {
-            return true;
+        Arc::ptr_eq(&self.0, &other.0) || {
+            let mut lazy = Lazy::default();
+            let equal = self.0.alike(&other.0)
+                && (self.0.cs.iter().zip(&other.0.cs)).all(|(a, b)| outer(&mut lazy, a, b));
+            lazy.rest(equal)
         }
-        let mut same = Same::default();
-        self.0.alike(&other.0) && same.all(self.0.cs.iter().zip(&other.0.cs)) && same.rest()
     }
 }
 
 impl RowData {
     /// Whether it and `other` have equal hashes and as many components: what [`Row`]'s `==`
     /// checks before it compares the components.
+    #[inline]
     fn alike(&self, other: &RowData) -> bool {
         self.digest == other.digest && self.cs.len() == other.cs.len()
     }
 }
 
 impl PartialEq for Ty {
-    /// Compares the two types on a stack of their own (`Same`).
+    /// Compares the two types at their outer level, and the rows, payload shapes and functions
+    /// they hold with a [`Same`], made only for a pair of these that is not one node: with no
+    /// stack as deep as the types, and, for types that hold none, the common case, as cheaply
+    /// as the derived `==` did. Inlined, as the derived `==` was, so a caller in another crate
+    /// compares the outer level without a call.
+    #[inline]
     fn eq(&self, other: &Ty) -> bool {
-        let mut same = Same::default();
-        same.tys(self, other) && same.rest()
+        let mut lazy = Lazy::default();
+        let equal = outer(&mut lazy, self, other);
+        lazy.rest(equal)
     }
 }
 
@@ -263,7 +271,7 @@ impl std::hash::Hash for Ty {
 }
 
 impl Ty {
-    /// Whether it holds a row, a payload shape or a function, which `==` compares on its stack.
+    /// Whether it holds a row, a payload shape or a function, which `==` descends into.
     fn holds_nodes(&self) -> bool {
         !self.tuples.is_empty()
             || !self.fns.is_empty()
@@ -271,127 +279,111 @@ impl Ty {
     }
 }
 
-/// A comparison of two types, two rows, two payload shapes or two signatures, run on a stack
-/// of its own: `==` on types nested as deep as the program needs no recursion that deep.
+/// A comparison of two types, two rows, two payload shapes or two signatures, which needs no
+/// stack as deep as the types: `==` on types nested as deep as the program.
 ///
 /// Each type is compared at its outer level, and the pairs of components of the rows, shapes
-/// and signatures it holds are pushed, to be compared in turn. Two nodes, one from each side,
-/// are assumed equal once their pair is pushed, and the pairs of nodes found equal so are kept
-/// as classes in a union-find (Hopcroft and Karp's test of equivalence): a pair whose nodes are
-/// already in one class is not pushed again. Each push of a recorded pair joins two classes, so
-/// at most one such pair is pushed for each node, and the comparison costs the size of the two types as graphs, not
-/// as trees: two types each holding `n` nodes and `2^n` paths, built apart, cost `O(n)`. The
-/// assumption holds: if every pair pushed is found equal at its outer level, the classes relate
-/// only equal nodes, as the types hold no cycles; and a pair that differs makes `==` false.
+/// and signatures it holds are compared by recursion while the thread's stack has room
+/// ([`Same::room`]); where it has none, they are pushed on `left`, to be compared once the
+/// recursion has returned. Shallow types, the common case, are so compared as a plain
+/// recursion compares them, with nothing pushed and no allocation.
+///
+/// Two nodes, one from each side, are assumed equal once their pair is met, and the pairs of
+/// nodes found equal so are kept as classes in a union-find (Hopcroft and Karp's test of
+/// equivalence): a pair whose nodes are already in one class is not compared again. Each pair
+/// of recorded nodes compared joins two classes, so at most one is compared for each node, and
+/// the comparison costs the size of the two types as graphs, not as trees: two types each
+/// holding `n` nodes and `2^n` paths, built apart, cost `O(n)`. The assumption holds: if every
+/// pair met is found equal at its outer level, the classes relate only equal nodes, as the
+/// types hold no cycles; and a pair that differs makes `==` false.
 ///
 /// A node is known by its address. Every node it records is reachable from the two operands
 /// `==` borrows, so none is freed, and no address is reused, while the comparison runs.
 ///
 /// A pair of nodes neither of which is shared (one owner each, `Arc::strong_count` 1) is not
-/// recorded, so a comparison of types built once and never shared, the common case, allocates
-/// no table. The cost stays linear: an unshared node is reached only through its one owner, so
-/// it is compared once each time the nearest recorded node above it is; each recorded node is
-/// compared again only when its pair joins two classes, and the joins form a forest over the
-/// recorded nodes, so each join can be charged to a node of its own (its child end), which pays
-/// for the unshared nodes below it, each of which lies below one recorded node only. The
-/// records only save work: they are never needed for the answer, as the types hold no cycles.
+/// recorded, so a comparison of types built once and never shared allocates no table. The cost
+/// stays linear: an unshared node is reached only through its one owner, so it is compared once
+/// each time the nearest recorded node above it is; each recorded node is compared again only
+/// when its pair joins two classes, and the joins form a forest over the recorded nodes, so each
+/// join can be charged to a node of its own (its child end), which pays for the unshared nodes
+/// below it, each of which lies below one recorded node only. The records only save work: they
+/// are never needed for the answer, as the types hold no cycles.
+///
+/// A function counts as unshared in the same way when its other owners are only the rows and
+/// shapes on the path to it, which keep it as their held or unchecked function (`above`,
+/// [`Same::shared_sigs`]): those are not met again below it, so a function held once, in a
+/// type built once, is not recorded either.
 #[derive(Default)]
 struct Same<'a> {
-    /// The pair to compare next, kept out of `left`, so a chain of types each holding one
-    /// other, the common nesting, is compared with no allocation.
-    next: Option<(&'a Ty, &'a Ty)>,
-    /// The other pairs of types left to compare.
+    /// The lowest stack address the recursion descends from ([`Same::room`]), set when it first
+    /// descends; 0 before.
+    floor: usize,
+    /// The pairs of types left to compare, pushed where the stack had no room.
     left: Vec<(&'a Ty, &'a Ty)>,
-    /// The index in `class` of each node met, by address.
-    ids: HashMap<*const (), usize, std::hash::BuildHasherDefault<AddressHasher>>,
-    /// For each node met, the node it was joined to, or itself: the union-find forest.
-    class: Vec<usize>,
-    /// For the root of each class, the number of nodes in it.
-    size: Vec<usize>,
+    /// The union-find forest, by address: for each node met, the node it was joined to, or
+    /// itself, and, for the root of a class, the number of nodes in it. One table, so the
+    /// first node recorded costs one allocation.
+    ids: HashMap<*const (), (*const (), usize), std::hash::BuildHasherDefault<AddressHasher>>,
+    /// The functions the rows and shapes on the path to the pair now compared keep as held or
+    /// unchecked, on the left and on the right ([`Same::shared_sigs`]).
+    above: [Above; 2],
 }
+
+/// The stack [`Same`]'s recursion may take, from where it first descends: a small part of the
+/// 2 MiB a thread is given by default, so the caller and what the comparison calls at its
+/// deepest (`==` on scalar types, sets of variables and payload maps) keep the rest.
+const SAME_STACK: usize = 128 << 10;
 
 impl<'a> Same<'a> {
     /// Whether the pairs left, and those they push, are each equal.
     fn rest(mut self) -> bool {
-        while let Some((a, b)) = self.next.take().or_else(|| self.left.pop()) {
-            if !self.tys(a, b) {
+        // A pair pushed is compared away from its path.
+        self.above = Default::default();
+        while let Some((a, b)) = self.left.pop() {
+            if !outer(&mut self, a, b) {
                 return false;
             }
         }
         true
     }
 
-    /// Whether each of `pairs` is equal at its outer level; the nodes they hold are pushed.
-    fn all(&mut self, pairs: impl IntoIterator<Item = (&'a Ty, &'a Ty)>) -> bool {
-        pairs.into_iter().all(|(a, b)| self.tys(a, b))
+    /// Whether either of `x` and `y` has another owner, so the comparison may meet it again.
+    fn shared<T>(x: &Arc<T>, y: &Arc<T>) -> bool {
+        Arc::strong_count(x) > 1 || Arc::strong_count(y) > 1
     }
 
-    /// Whether `a` and `b` are equal at their outer level, and hold as many rows, shapes and
-    /// functions, each pair equal in hash and length; the pairs of these not already in one
-    /// class are pushed.
-    fn tys(&mut self, a: &'a Ty, b: &'a Ty) -> bool {
-        let Ty {
-            set,
-            tuples,
-            fns,
-            vars,
-            dynamic,
-            family,
-            payloads,
-        } = a;
-        *dynamic == b.dynamic
-            && *set == b.set
-            && *family == b.family
-            && *vars == b.vars
-            && tuples.len() == b.tuples.len()
-            && fns.len() == b.fns.len()
-            && payloads.len() == b.payloads.len()
-            && (tuples.iter().zip(&b.tuples)).all(|(x, y)| self.row(x, y))
-            && (fns.iter().zip(&b.fns)).all(|(x, y)| self.func(x, y))
-            // An empty map is the common case, and its iterator is not free.
-            && (payloads.is_empty()
-                || (payloads.iter().zip(&b.payloads)).all(|((k, x), (l, y))| {
-                    k == l
-                        && match (x, y) {
-                            (Some(x), Some(y)) => {
-                                x.len() == y.len()
-                                    && x.iter().zip(y).all(|(p, q)| self.shape(p, q))
-                            }
-                            (None, None) => true,
-                            (Some(_), None) | (None, Some(_)) => false,
-                        }
-                }))
+    /// Whether either of the signatures `x` and `y` has an owner other than the type that
+    /// holds it and the rows and shapes on the path to it that keep it as held or unchecked.
+    /// Those rows and shapes keep the first function they hold, so a signature in a row is
+    /// never alone; counted as shared, each would be recorded, and a comparison of types that
+    /// hold functions and share no node would allocate a table. A signature no other node owns
+    /// is met only through the type that holds it, as an unshared row is.
+    fn shared_sigs(&self, x: &Arc<Sig>, y: &Arc<Sig>) -> bool {
+        let [l, r] = self.above;
+        Arc::strong_count(x) > 1 + l.keeping(x) || Arc::strong_count(y) > 1 + r.keeping(y)
     }
 
-    /// Whether the rows `x` and `y` may be equal; their components are compared ([`Same::push`])
-    /// unless the rows are already in one class.
-    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool {
-        let shared = Arc::strong_count(&x.0) > 1 || Arc::strong_count(&y.0) > 1;
-        x.0.alike(&y.0)
-            && (self.assumed(x.addr(), y.addr(), shared) || self.push(x.0.cs.iter().zip(&y.0.cs)))
+    /// `then` run with `above` set for a pair under rows or shapes whose held and unchecked
+    /// functions are `x` on the left and `y` on the right, and restored after.
+    #[inline]
+    fn under(
+        &mut self,
+        x: [&Option<Arc<Sig>>; 2],
+        y: [&Option<Arc<Sig>>; 2],
+        then: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
+        let [l, r] = self.above;
+        self.above = [l.under(x), r.under(y)];
+        let equal = then(self);
+        self.above = [l, r];
+        equal
     }
 
-    /// Whether the payload shapes `x` and `y` may be equal; their components and fields are
-    /// compared ([`Same::push`]) unless the shapes are already in one class.
-    fn shape(&mut self, x: &'a Shape, y: &'a Shape) -> bool {
-        let shared = Arc::strong_count(&x.0) > 1 || Arc::strong_count(&y.0) > 1;
-        x.0.alike(&y.0)
-            && (self.assumed(Arc::as_ptr(&x.0).cast(), Arc::as_ptr(&y.0).cast(), shared)
-                || self.push(x.0.pairs(&y.0)))
-    }
-
-    /// Whether the functions `x` and `y` may be equal: one node, already in one class, or
-    /// equal at their outer level ([`Same::sig`]).
-    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool {
-        let shared = Arc::strong_count(x) > 1 || Arc::strong_count(y) > 1;
-        self.assumed(Arc::as_ptr(x).cast(), Arc::as_ptr(y).cast(), shared) || self.sig(x, y)
-    }
-
-    /// Whether the signatures `x` and `y` are equal in all but the types of their arrows,
-    /// whose pairs are compared ([`Same::push`]). Their needs are compared by `==` on each type
-    /// they hold, each comparison on a stack of its own: a need's types are variables of the
-    /// signature, or the types of a call's arguments, which nest only as deep as the call's
-    /// text. `facts` is a cache, equal to any other.
+    /// Whether the signatures `x` and `y` are equal, field by field in the order the derived
+    /// `==` took; the types of their arrows are compared by [`Same::descend`]. Their needs are
+    /// compared by `==` on each type they hold, each comparison a `Same` of its own: a need's
+    /// types are variables of the signature, or the types of a call's arguments, which nest
+    /// only as deep as the call's text. `facts` is a cache, equal to any other.
     fn sig(&mut self, x: &'a Sig, y: &'a Sig) -> bool {
         let Sig {
             params,
@@ -405,79 +397,273 @@ impl<'a> Same<'a> {
             named,
             facts: _,
         } = x;
-        let ok = *data == y.data
-            && *word == y.word
-            && *named == y.named
-            && *params == y.params
+        *params == y.params
+            && arrows.len() == y.arrows.len()
+            && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
+                p.params.len() == q.params.len()
+                    && self.descend(
+                        (p.params.iter().zip(&q.params)).chain([(&p.result, &q.result)]),
+                    )
+            })
             && *bounds == y.bounds
+            && *data == y.data
+            && *word == y.word
+            // No needs, the common case, and the slice compare is not free.
+            && ((needs.is_empty() && y.needs.is_empty()) || *needs == y.needs)
             && *own == y.own
             && *held == y.held
-            && arrows.len() == y.arrows.len()
-            && (arrows.iter().zip(&y.arrows)).all(|(p, q)| p.params.len() == q.params.len())
-            && *needs == y.needs;
-        ok && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
-            self.push(
-                p.params
-                    .iter()
-                    .zip(&q.params)
-                    .chain([(&p.result, &q.result)]),
-            )
-        })
+            && *named == y.named
     }
 
-    /// Whether each of `pairs` may be equal: a pair whose left type holds no row, shape or
-    /// function is compared now, as that comparison pushes nothing, and the others are pushed.
-    /// A type holding none is the common component, and a tuple of such types needs no stack.
-    fn push(&mut self, pairs: impl IntoIterator<Item = (&'a Ty, &'a Ty)>) -> bool {
-        pairs.into_iter().all(|(a, b)| match a.holds_nodes() {
-            true => {
-                if let Some(pair) = self.next.replace((a, b)) {
-                    self.left.push(pair);
+    /// Whether each of `pairs` is equal, or, for a pair whose left type holds a row, shape or
+    /// function and where the stack has no room ([`Same::room`]), may be: such a pair is
+    /// pushed on `left`. A pair whose left type holds none is compared now, as that pushes
+    /// nothing.
+    fn descend(&mut self, pairs: impl IntoIterator<Item = (&'a Ty, &'a Ty)>) -> bool {
+        match self.room() {
+            true => pairs.into_iter().all(|(a, b)| outer(self, a, b)),
+            false => pairs.into_iter().all(|(a, b)| match a.holds_nodes() {
+                true => {
+                    self.left.push((a, b));
+                    true
                 }
-                true
-            }
-            false => self.tys(a, b),
-        })
+                false => outer(self, a, b),
+            }),
+        }
     }
 
-    /// Whether the nodes at `x` and `y` are one node or already in one class; if not, their
-    /// classes are joined, so the caller compares them now and no later pair does again. Nodes
-    /// neither of which is `shared` are not recorded: see [`Same`].
-    fn assumed(&mut self, x: *const (), y: *const (), shared: bool) -> bool {
-        if x == y {
-            return true;
+    /// Whether the stack has room to recurse a level deeper: whether the address of this frame
+    /// lies above `floor`, [`SAME_STACK`] below where the recursion first descended.
+    // Complexity tradeoff: none is given up. Whether a pair is compared by recursion or pushed
+    // on `left` changes where it is compared, never the answer or the order of growth, which
+    // is linear in the size of the two types as graphs either way; each pair pushed is compared
+    // by `rest`, from the top of the stack again. Recursion is the faster: it keeps a shallow
+    // type, the common case, as cheap to compare as the derived `==` was
+    // (l01_26_type_resolution deep_types::shallow_types_compare_as_cheaply_as_a_plain_recursion).
+    // The switch is on the stack the recursion has taken, which bounds it whatever the types'
+    // depth: types 100,000 deep compare on a 2 MiB stack
+    // (types_built_apart_100000_deep_compare_on_a_2_mib_stack). The stack the thread has left
+    // is not read: the crates that read it (`stacker`, `libc`) cannot be linked into this
+    // dylib as well as into the test binaries. COMPLEXITY F117.
+    #[inline]
+    fn room(&mut self) -> bool {
+        let mark = 0u8;
+        let here = std::ptr::addr_of!(mark) as usize;
+        if self.floor == 0 {
+            self.floor = here.saturating_sub(SAME_STACK).max(1);
         }
-        if !shared {
-            return false;
-        }
+        here > self.floor
+    }
+
+    /// Whether the rows `x` and `y`, two nodes found alike, are already in one class, or equal
+    /// in each component.
+    fn alike_rows(&mut self, x: &'a Row, y: &'a Row) -> bool {
+        let (x, y) = (&x.0, &y.0);
+        (Self::shared(x, y) && self.assumed(Arc::as_ptr(x).cast(), Arc::as_ptr(y).cast()))
+            || match x.held.is_some() {
+                // A row that holds no function, the common case, keeps none.
+                false => self.descend(x.cs.iter().zip(&y.cs)),
+                true => self.under([&x.held, &x.unchecked], [&y.held, &y.unchecked], |s| {
+                    s.descend(x.cs.iter().zip(&y.cs))
+                }),
+            }
+    }
+
+    /// Whether the payload shapes `x` and `y`, two nodes found alike, are already in one
+    /// class, or equal in each component and field.
+    fn alike_shapes(&mut self, x: &'a Shape, y: &'a Shape) -> bool {
+        (Self::shared(&x.0, &y.0)
+            && self.assumed(Arc::as_ptr(&x.0).cast(), Arc::as_ptr(&y.0).cast()))
+            || {
+                let named = std::cell::Cell::new(true);
+                let (x, y) = (&x.0, &y.0);
+                let equal = match x.held.is_some() {
+                    false => self.descend(x.pairs(y, &named)),
+                    true => self.under([&x.held, &x.unchecked], [&y.held, &y.unchecked], |s| {
+                        s.descend(x.pairs(y, &named))
+                    }),
+                };
+                equal && named.get()
+            }
+    }
+
+    /// Whether the nodes at `x` and `y`, two nodes at least one of them shared, are already in
+    /// one class; if not, their classes are joined, so the caller compares them now and no
+    /// later pair does again.
+    fn assumed(&mut self, x: *const (), y: *const ()) -> bool {
         let (i, j) = (self.root(x), self.root(y));
         if i == j {
             return true;
         }
         // Union by size, the smaller class under the larger.
-        let (small, large) = match self.size[i] < self.size[j] {
+        let (si, sj) = (self.ids[&i].1, self.ids[&j].1);
+        let (small, large) = match si < sj {
             true => (i, j),
             false => (j, i),
         };
-        self.class[small] = large;
-        self.size[large] += self.size[small];
+        self.ids.insert(small, (large, si.min(sj)));
+        self.ids.insert(large, (large, si + sj));
         false
     }
 
     /// The root of the class of the node at `x`, which is met here first if it is new; the
     /// path to it is halved.
-    fn root(&mut self, x: *const ()) -> usize {
-        let next = self.class.len();
-        let mut i = *self.ids.entry(x).or_insert(next);
-        if i == next {
-            self.class.push(next);
-            self.size.push(1);
-        }
-        while self.class[i] != i {
-            self.class[i] = self.class[self.class[i]];
-            i = self.class[i];
+    fn root(&mut self, x: *const ()) -> *const () {
+        let mut up = self.ids.entry(x).or_insert((x, 1)).0;
+        let mut i = x;
+        while up != i {
+            let above = self.ids[&up].0;
+            self.ids.insert(i, (above, 0));
+            i = above;
+            up = self.ids[&i].0;
         }
         i
+    }
+}
+
+/// How [`outer`] compares the rows, payload shapes and functions two types hold.
+trait Nodes<'a> {
+    /// Whether the rows `x` and `y` are equal, or, where the comparison is put off, may be.
+    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool;
+    /// Whether the payload shapes `x` and `y` are equal, or may be.
+    fn shape(&mut self, x: &'a Shape, y: &'a Shape) -> bool;
+    /// Whether the functions `x` and `y` are equal, or may be.
+    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool;
+}
+
+/// Whether `a` and `b` are equal at their outer level, field by field in the order the derived
+/// `==` took, and in the rows, payload shapes and functions they hold, which `n` compares.
+#[inline]
+fn outer<'a>(n: &mut impl Nodes<'a>, a: &'a Ty, b: &'a Ty) -> bool {
+    let Ty {
+        set,
+        tuples,
+        fns,
+        vars,
+        dynamic,
+        family,
+        payloads,
+    } = a;
+    *set == b.set
+        && tuples.len() == b.tuples.len()
+        && (tuples.iter().zip(&b.tuples)).all(|(x, y)| n.row(x, y))
+        && fns.len() == b.fns.len()
+        && (fns.iter().zip(&b.fns)).all(|(x, y)| n.func(x, y))
+        && *vars == b.vars
+        && *dynamic == b.dynamic
+        && *family == b.family
+        && payloads.len() == b.payloads.len()
+        // An empty map is the common case, and its iterator is not free.
+        && (payloads.is_empty()
+            || (payloads.iter().zip(&b.payloads)).all(|((k, x), (l, y))| {
+                k == l
+                    && match (x, y) {
+                        (Some(x), Some(y)) => {
+                            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| n.shape(p, q))
+                        }
+                        (None, None) => true,
+                        (Some(_), None) | (None, Some(_)) => false,
+                    }
+            }))
+}
+
+/// How `==` starts: a pair of rows, payload shapes or functions that is one node is equal, and
+/// the first pair that is not makes the [`Same`] that compares it and the rest. Most types
+/// the checker compares hold none, and no `Same` is made for them.
+#[derive(Default)]
+struct Lazy<'a>(Option<Same<'a>>);
+
+impl<'a> Lazy<'a> {
+    /// The `Same`, made now if it was not.
+    fn same(&mut self) -> &mut Same<'a> {
+        self.0.get_or_insert_with(Same::default)
+    }
+
+    /// Whether `equal`, what the comparison found before the pairs the `Same` put off, holds,
+    /// and those pairs are each equal. It takes the `Lazy`, so no path drops it apart.
+    #[inline]
+    fn rest(self, equal: bool) -> bool {
+        match self.0 {
+            None => equal,
+            // Nothing was put off unless the types are deep, so the call is skipped.
+            Some(same) => equal && (same.left.is_empty() || same.rest()),
+        }
+    }
+}
+
+impl<'a> Nodes<'a> for Lazy<'a> {
+    // Inlined into a caller in another crate, with `Ty`'s `==`: the checks that settle the
+    // common pairs, one node or two that differ, take no call.
+    #[inline]
+    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool {
+        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.same().alike_rows(x, y))
+    }
+
+    #[inline]
+    fn shape(&mut self, x: &'a Shape, y: &'a Shape) -> bool {
+        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.same().alike_shapes(x, y))
+    }
+
+    #[inline]
+    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool {
+        Arc::ptr_eq(x, y) || self.same().func(x, y)
+    }
+}
+
+impl<'a> Nodes<'a> for Same<'a> {
+    /// One node, already in one class, or alike and equal in each component.
+    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool {
+        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.alike_rows(x, y))
+    }
+
+    /// One node, already in one class, or alike and equal in each component and field.
+    fn shape(&mut self, x: &'a Shape, y: &'a Shape) -> bool {
+        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.alike_shapes(x, y))
+    }
+
+    /// One node, already in one class, or equal as signatures ([`Same::sig`]).
+    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool {
+        Arc::ptr_eq(x, y)
+            || (self.shared_sigs(x, y)
+                && self.assumed(Arc::as_ptr(x).cast(), Arc::as_ptr(y).cast()))
+            || self.sig(x, y)
+    }
+}
+
+/// On one side of a [`Same`], the function the row or shape just above the pair compared keeps
+/// as held, by address, and how many references to it the rows and shapes in a run up to it
+/// keep, as held or as unchecked: owners of a signature the comparison may meet that lie on its
+/// path. A row's held function is the first its components hold, so the rows keeping a
+/// function lie on the paths to it; each counted is a node of the path, and a run counts no
+/// more references than there are. A function kept as unchecked only is not counted, and is
+/// so taken for shared, which costs a record, never the answer.
+#[derive(Clone, Copy, Default)]
+struct Above {
+    at: usize,
+    run: usize,
+}
+
+impl Above {
+    /// The same under a row or shape that keeps `held` and `unchecked`.
+    #[inline]
+    fn under(self, [held, unchecked]: [&Option<Arc<Sig>>; 2]) -> Above {
+        let addr = |s: &Option<Arc<Sig>>| s.as_ref().map_or(0, |s| Arc::as_ptr(s).addr());
+        let at = addr(held);
+        let refs = usize::from(at != 0) + usize::from(at != 0 && addr(unchecked) == at);
+        Above {
+            at,
+            run: refs + if at == self.at { self.run } else { 0 },
+        }
+    }
+
+    /// How many references to `s` the rows and shapes it counts keep.
+    #[inline]
+    fn keeping(self, s: &Arc<Sig>) -> usize {
+        if Arc::as_ptr(s).addr() == self.at {
+            self.run
+        } else {
+            0
+        }
     }
 }
 
@@ -569,28 +755,42 @@ impl std::ops::Deref for Shape {
 }
 
 impl PartialEq for Shape {
-    /// Compares the components and fields on a stack of their own (`Same`), as a row does.
+    /// Compares the components and fields as a row does.
     fn eq(&self, other: &Shape) -> bool {
-        if Arc::ptr_eq(&self.0, &other.0) {
-            return true;
+        Arc::ptr_eq(&self.0, &other.0) || {
+            let mut lazy = Lazy::default();
+            let named = std::cell::Cell::new(true);
+            let equal = self.0.alike(&other.0)
+                && (self.0.pairs(&other.0, &named)).all(|(a, b)| outer(&mut lazy, a, b))
+                && named.get();
+            lazy.rest(equal)
         }
-        let mut same = Same::default();
-        self.0.alike(&other.0) && same.all(self.0.pairs(&other.0)) && same.rest()
     }
 }
 
 impl ShapeData {
-    /// Whether it and `other` have equal hashes, as many components and the same field names:
-    /// what [`Shape`]'s `==` checks before it compares the components and fields.
+    /// Whether it and `other` have equal hashes and as many components and fields: what
+    /// [`Shape`]'s `==` checks before it compares the components and fields.
+    #[inline]
     fn alike(&self, other: &ShapeData) -> bool {
         self.digest == other.digest
             && self.items.len() == other.items.len()
-            && self.fields.keys().eq(other.fields.keys())
+            && self.fields.len() == other.fields.len()
     }
 
-    /// Its components and fields, each paired with the one in the same place in `other`.
-    fn pairs<'a>(&'a self, other: &'a ShapeData) -> impl Iterator<Item = (&'a Ty, &'a Ty)> {
-        (self.items.iter().zip(&other.items)).chain(self.fields.values().zip(other.fields.values()))
+    /// Its components and fields, each paired with the one in the same place in `other`, up
+    /// to the first field whose name differs, where `named` is set false.
+    fn pairs<'a: 'b, 'b>(
+        &'a self,
+        other: &'a ShapeData,
+        named: &'b std::cell::Cell<bool>,
+    ) -> impl Iterator<Item = (&'a Ty, &'a Ty)> + 'b {
+        let fields = (self.fields.iter().zip(&other.fields)).map_while(|((k, x), (l, y))| {
+            let same = k == l;
+            named.set(same);
+            same.then_some((x, y))
+        });
+        (self.items.iter().zip(&other.items)).chain(fields)
     }
 }
 
@@ -4307,8 +4507,8 @@ impl<'t> ArrowIndex<'t> {
 }
 
 impl PartialEq for Sig {
-    /// Compares the types of the arrows on a stack of their own (`Same`): a function type
-    /// nests functions as deep as the program.
+    /// Compares the types of the arrows with a `Same`, which needs no stack as deep as they
+    /// are: a function type nests functions as deep as the program.
     fn eq(&self, other: &Sig) -> bool {
         let mut same = Same::default();
         same.sig(self, other) && same.rest()
