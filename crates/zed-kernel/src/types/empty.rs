@@ -3034,9 +3034,22 @@ impl<'m> Searching<'m> {
                     None => continue,
                 }
             }
-            // One candidate for each tuple type left, narrowed by what the part says of it.
+            // The tuple types the part excludes: a value in one is in no value of the part.
+            let (_, excluded) = g.forced();
+            let mut refused = vec![false; b.atoms.len()];
+            for a in &excluded {
+                refused[b.index[a]] = true;
+            }
+            // One candidate for each tuple type left, narrowed by what the part says of it. A
+            // candidate inside a tuple type the part excludes holds no value of it, and the
+            // narrowing or the check of its row would say so, so it is skipped: narrowing it tests
+            // every open cell of its components, n candidates by n cells, order n^2 types on the
+            // pairs of `l01_23_subtyping::refusals::fork_by` (COMPLEXITY.md K35).
             for a in g.distinct_atoms() {
                 let k = b.index[&a];
+                if refused[k] {
+                    continue;
+                }
                 let mark = b.log.len();
                 for j in 0..b.r.len() {
                     if b.is_open(k, j) {
@@ -3058,7 +3071,6 @@ impl<'m> Searching<'m> {
             // tuple type the part excludes, so the tuple is in none of them. Pairs of a list
             // and an integer without those of lists of only 1s or only 2s hold `([0], 0)`,
             // whose list is in neither excluded list type.
-            let (_, excluded) = g.forced();
             for j in 0..b.r.len() {
                 let out = excluded.iter().fold(b.r[j].clone(), |t, a| &t - &a[j]);
                 if out == b.r[j] {

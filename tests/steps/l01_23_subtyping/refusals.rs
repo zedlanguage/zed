@@ -635,3 +635,27 @@ fn a_no_witness_refusal_is_reached_in_the_size_of_the_keys() {
         |n, _| morphism_between_by(n),
     );
 }
+
+/// [`fork_empty`] over 1 to `n`: pairs of lists of integers, without, for each `i`, those whose
+/// first list holds only `i` and those whose first list holds some other integer, each with a
+/// second list of the length parity of `i`. Empty for `n` of 2 or more; the excluded first lists
+/// meet at `[]` and differ, so the strict search refuses it at the fork.
+fn fork_by(n: usize, tag: &str) -> Type {
+    let l = list_named(Type::int(), tag);
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    (1..=n).fold(pair(l.clone(), l.clone()), |t, i| {
+        let only = list_named(lit(i as i64), &format!("{tag}_{i}"));
+        let parity = period_named(2, i % 2, &format!("{tag}_{i}"));
+        let t = &t - &pair(only.clone(), parity.clone());
+        &t - &pair(&l - &only, parity)
+    })
+}
+
+#[test]
+fn a_fork_refusal_is_reached_in_the_size_of_the_pairs() {
+    // Θ(n) excluded pairs. Measured on c881d28c, before REFUSAL-fork-linear: 63M, 221M, 805M and
+    // 3209M instructions at n 8, 16, 32 and 64, order n^2: the search for a value before the
+    // refusal narrowed the box into each excluded pair and tested every other pair there. Now
+    // (REFUSAL-fork-linear) 30.2M and 255.9M instructions at n 8 and 64, 8.5 times.
+    refusal_scales("Fork, by n excluded pairs", 8, Refusal::Fork, fork_by);
+}
