@@ -1012,6 +1012,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return self.bits(m, w, p, None, positional, named, curry, span);
                     }
                     if word_arity(w) != 1 {
+                        self.min_max_calls.insert(span);
                         let args = Args::of(positional, named);
                         return self.call_value(m, &f, what.into(), None, args, curry, span);
                     }
@@ -2486,6 +2487,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.word(m, name, &[], Some(x), span)
                 }
                 Some(1) if word_arity(name) != 1 => {
+                    self.min_max_calls.insert(span);
                     let f = Ty::func(word_sig(name));
                     let args = Args::of(positional, named);
                     self.call_value(m, &f, name.into(), Some(x), args, curry, span);
@@ -4959,9 +4961,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             passed(&mut out, atoms.iter());
         }
+        // `min` and `max` called by name take two tuples; they are told apart by the call, since
+        // `+`, `-` and `*` have their signature.
         if let [Some(x), Some(y)] = args.as_slice()
             && (!x.ty.tuples.is_empty() || !y.ty.tuples.is_empty())
-            && is_min_max(sig)
+            && self.min_max_calls.contains(&span)
         {
             let t = self.min_max_tuples(what, sig, &x.ty, &y.ty, span);
             return (out.union(&t), Vec::new());

@@ -616,6 +616,10 @@ struct Ck<'t, 'a> {
     /// variable of the need: only their atoms may pass by to the call around, the first
     /// application taking it.
     need_args: Option<Vec<bool>>,
+    /// The spans of the calls of the prelude words `min` and `max` by name, as the resolver
+    /// found them: only these take two tuples ([`Self::min_max_tuples`]). An operator or a
+    /// function of the same signature, such as `+`, is not one of them.
+    min_max_calls: HashSet<Span>,
     /// The needs being checked at calls, one inside another.
     open: Vec<Open>,
     /// The variables of the parameters a partial call leaves out: the next application
@@ -691,6 +695,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             refused: Vec::new(),
             need_passed: Vec::new(),
             need_args: None,
+            min_max_calls: HashSet::new(),
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
@@ -4898,12 +4903,6 @@ fn and(ts: Vec<Ty>, overload: bool) -> Ty {
     let mut ts = ts.into_iter();
     let first = ts.next().unwrap_or_else(Ty::dynamic);
     ts.fold(first, |a, b| a.meet(&b))
-}
-
-/// Whether `sig` is the signature of `min` and `max`, which share one ([`word_sig`]). It is
-/// built only for a signature of their size, so other words pay two length tests.
-fn is_min_max(sig: &Sig) -> bool {
-    sig.params.len() == 2 && sig.arrows.len() == 3 && *word_sig("min") == *sig
 }
 
 /// `t` with its tuple shapes of each length joined into one, position by position, and so on

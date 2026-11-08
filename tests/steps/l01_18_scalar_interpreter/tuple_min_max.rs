@@ -75,6 +75,31 @@ fn tuples_min_and_max_cannot_order_are_refused() {
     );
 }
 
+#[test]
+fn an_operator_of_the_same_signature_does_not_take_tuples() {
+    // `+`, `-` and `*` have the arrows of `min` and `max`; only a call of the word itself
+    // takes two tuples. Two tuples under `+` are refused as before, not added componentwise.
+    assert_eq!(
+        errors("y = (-3, 1) + \"a\";\n"),
+        ["`+` does not take ((-3, 1), \"a\") [(-3, 1) + \"a\"]"]
+    );
+    assert_eq!(
+        errors("y = (1, 2) + (3, 4);\n"),
+        ["`+` does not take ((1, 2), (3, 4)) [(1, 2) + (3, 4)]"]
+    );
+    assert_eq!(
+        errors("y = (1, 2) - (3, 4);\n"),
+        ["`-` does not take ((1, 2), (3, 4)) [(1, 2) - (3, 4)]"]
+    );
+    assert_eq!(
+        errors("y = (1, 2) * (3, 4);\n"),
+        ["`*` does not take ((1, 2), (3, 4)) [(1, 2) * (3, 4)]"]
+    );
+    // The word itself, by name or as a method, still takes them.
+    assert_eq!(x("min((1, 2), (3, 4))"), "(1, 2)");
+    assert_eq!(x("(1, 2).max((3, 4))"), "(3, 4)");
+}
+
 /// `min` (`min` true) or `max` of `a` and `b` by the kernel.
 fn pick(min: bool, a: &Value, b: &Value) -> Value {
     let p = if min { Prim::Min } else { Prim::Max };
