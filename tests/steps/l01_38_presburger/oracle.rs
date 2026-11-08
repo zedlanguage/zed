@@ -139,11 +139,13 @@ fn small_coefficients_over_four_variables_match_enumeration() {
     // point (cross-review XR3, Q1); the row test of the box stage (Q1-ROWBOX), two rows
     // bounding one variable by rationals that cross, shows 1 of them empty. `live3`, which
     // decides every part left with three variables, decides 13 more with a point and shows one
-    // more empty: (274, 5, 121). The counts measure how much is decided, not correctness,
-    // which `run` checks on every system against enumeration.
+    // more empty: (274, 5, 121). Exact eliminations counted by the rows they write
+    // (`System::shrink`, Q1-LOCAL) decide 7 more with a point and show 2 more empty: (281, 7,
+    // 112). The counts measure how much is decided, not correctness, which `run` checks on
+    // every system against enumeration.
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (274, 5, 121, 0),
+        (281, 7, 112, 0),
         "{t:?}"
     );
 }
@@ -246,10 +248,12 @@ fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // `live3` decides 20 more with a point and shows 20 more empty: (2631, 9340, 29); without
     // the row test it showed 25 more empty, 5 of them among the 14 the row test shows. Since
     // the `hull3` stage was removed (HULL3-subsumed) `live3` decides its systems too, and the
-    // counts are unchanged.
+    // counts are unchanged. Exact eliminations counted by the rows they write
+    // (`System::shrink`, Q1-LOCAL) decide 3 more with a point and show 2 more empty: (2634,
+    // 9342, 24).
     assert_eq!(
         (t.sat, t.unsat, t.growth, t.shadows),
-        (2631, 9340, 29, 0),
+        (2634, 9342, 24, 0),
         "{t:?}"
     );
     eprintln!("three terms: {t:?}");
@@ -381,8 +385,9 @@ fn answers_do_not_depend_on_names_or_order() {
         assert!(same, "{f}\nrenamed and reordered: {g}\n{a:?}\n{b:?}");
         refused += usize::from(a.is_err());
     }
-    // The refusals are among the answers compared.
-    assert_eq!(refused, 73);
+    // The refusals are among the answers compared: 73 until Q1-LOCAL, whose exact eliminations
+    // counted by the rows they write (`System::shrink`) decide 9 more.
+    assert_eq!(refused, 64);
 }
 
 #[test]
@@ -520,8 +525,10 @@ fn small_coefficients_answer_the_same_under_any_names_and_order() {
         let rows = 2 + rng.below(4);
         small(rng, 4, rows, 7, 20)
     });
-    // The refusals, measured with the row test of the box stage (Q1-ROWBOX) and `live3`.
-    assert_eq!(refused, 896);
+    // The refusals, measured with the row test of the box stage (Q1-ROWBOX) and `live3`: 896;
+    // 839 since Q1-LOCAL, whose exact eliminations counted by the rows they write
+    // (`System::shrink`) decide 57 more.
+    assert_eq!(refused, 839);
 }
 
 #[test]
@@ -531,8 +538,10 @@ fn rows_of_three_terms_answer_the_same_under_any_names_and_order() {
     // which left 13 of 3000 refused without the row test (more than 20 before it). With both,
     // 15 of the 4000 are refused, and each of them is compared under every naming and order.
     // 14 since NAME-ties, whose eliminations go by color a batch at a time, which decides one more.
+    // 13 since Q1-LOCAL, whose exact eliminations counted by the rows they write
+    // (`System::shrink`) decide one more.
     let refused = reorderings(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3));
-    assert_eq!(refused, 14);
+    assert_eq!(refused, 13);
 }
 
 #[test]

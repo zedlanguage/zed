@@ -7,7 +7,11 @@
 //! are those of `oracle::small_coefficients_over_four_variables_match_enumeration` (seed
 //! 0x38_0a) and the fresh-seed family of cross-review XR3 (`wt/xt4/verify-r3/probes/
 //! verify_r3.rs`, seeds 0x5eed_0001 to 0x5eed_0005, 2,000 systems each, its xorshift
-//! generator). The counts are those measured on 2026-11-07 at 8874023a.
+//! generator). Phase 1 measured the counts on 2026-11-07 at 8874023a; phase 2 (pivots chosen by
+//! the rows a pivot leaves, eliminations that write no more terms than they remove, and rows of
+//! two terms implied by another within the bounds dropped) decides more, and the counts below
+//! are those of phase 2, on 2026-11-08. The oracle family went from 274 true, 5 false and 121
+//! refused to 281, 7 and 112.
 //!
 //! The growth tables time `decide` on families of systems at n, 2n, 4n and 8n, each built
 //! before it is timed, and print the instructions with the ratio to n; each test then checks the
@@ -203,15 +207,11 @@ fn census(systems: impl Iterator<Item = Vec<Row>>) -> Census {
     c
 }
 
+/// The refusals of a census: the cause, the truth of the system, and the count.
+type Refused = Vec<(String, &'static str, usize)>;
+
 /// The counts of a census, written for the assertions below.
-fn counts(
-    c: &Census,
-) -> (
-    usize,
-    usize,
-    Vec<(String, &'static str, usize)>,
-    Vec<(usize, usize)>,
-) {
+fn counts(c: &Census) -> (usize, usize, Refused, Vec<(usize, usize)>) {
     (
         c.sat,
         c.unsat,
@@ -225,7 +225,7 @@ fn counts(
 
 /// Refusals all for `Growth`: with an integer point, with no rational point, with a rational
 /// point and no integer one.
-fn g(point: usize, no_rational: usize, rational: usize) -> Vec<(String, &'static str, usize)> {
+fn g(point: usize, no_rational: usize, rational: usize) -> Refused {
     vec![
         ("Growth".to_string(), "integer point", point),
         ("Growth".to_string(), "no rational point", no_rational),
@@ -258,7 +258,7 @@ fn the_census_of_the_oracle_family() {
     println!("Q1-LOCAL census, oracle seed 0x38_0a, 400 systems: {c:?}");
     assert_eq!(
         counts(&c),
-        (274, 5, g(98, 16, 7), vec![(4, 3), (5, 13)]),
+        (281, 7, g(91, 14, 7), vec![(4, 2), (5, 12)]),
         "{c:?}"
     );
 }
@@ -276,7 +276,7 @@ fn the_census_of_fresh_seed_1() {
     let c = fresh_census(0x5eed_0001);
     assert_eq!(
         counts(&c),
-        (1338, 47, g(459, 126, 30), vec![(3, 1), (4, 18), (5, 107)]),
+        (1365, 52, g(432, 121, 30), vec![(3, 1), (4, 16), (5, 104)]),
         "{c:?}"
     );
 }
@@ -286,7 +286,7 @@ fn the_census_of_fresh_seed_2() {
     let c = fresh_census(0x5eed_0002);
     assert_eq!(
         counts(&c),
-        (1342, 48, g(472, 123, 15), vec![(3, 2), (4, 18), (5, 103)]),
+        (1376, 55, g(438, 116, 15), vec![(3, 1), (4, 16), (5, 99)]),
         "{c:?}"
     );
 }
@@ -296,7 +296,7 @@ fn the_census_of_fresh_seed_3() {
     let c = fresh_census(0x5eed_0003);
     assert_eq!(
         counts(&c),
-        (1331, 67, g(419, 162, 21), vec![(3, 2), (4, 32), (5, 128)]),
+        (1353, 77, g(397, 152, 21), vec![(3, 2), (4, 29), (5, 121)]),
         "{c:?}"
     );
 }
@@ -306,7 +306,7 @@ fn the_census_of_fresh_seed_4() {
     let c = fresh_census(0x5eed_0004);
     assert_eq!(
         counts(&c),
-        (1351, 51, g(443, 132, 23), vec![(3, 1), (4, 21), (5, 110)]),
+        (1378, 60, g(416, 125, 21), vec![(3, 1), (4, 17), (5, 107)]),
         "{c:?}"
     );
 }
@@ -316,7 +316,7 @@ fn the_census_of_fresh_seed_5() {
     let c = fresh_census(0x5eed_0005);
     assert_eq!(
         counts(&c),
-        (1323, 71, g(447, 139, 20), vec![(3, 2), (4, 13), (5, 124)]),
+        (1358, 77, g(412, 133, 20), vec![(3, 2), (4, 12), (5, 119)]),
         "{c:?}"
     );
 }
@@ -648,16 +648,10 @@ fn growth_of_the_hub_family() {
 }
 
 #[test]
-fn growth_of_sliding_windows_of_four() {
-    // 9.40x to the refusal.
-    grows("sliding windows of four", 64, Err(Refusal::Growth), |n| {
-        windows(n).0
-    });
-}
-
-#[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds (every row unit, every elimination exact, least fill 2)"]
 fn sliding_windows_of_four_are_decided() {
+    // 9.3x the instructions and 8.4x the bytes from 64 to 512 (load 8 to 12, 2026-11-08). Refused
+    // with Growth at every size until the exact eliminations were also taken by the terms they
+    // write (`System::shrink`): `Sides::fill` counted each opposite pair of windows as growing.
     grows("sliding windows of four", 64, Ok(true), |n| windows(n).0);
 }
 
@@ -670,7 +664,7 @@ fn growth_of_weighted_sliding_windows() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds"]
+#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn weighted_sliding_windows_are_decided() {
     grows("weighted sliding windows", 64, Ok(true), |n| {
         weighted_windows(n).0
@@ -678,14 +672,18 @@ fn weighted_sliding_windows_are_decided() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: decided, but 23.4x the instructions and 32.4x the bytes for 8x (limit 24): solving the chain of equalities writes rows of 3 to n + 1 terms"]
 fn growth_of_offsets_laid_end_to_end() {
+    // 16.8x the instructions and 16.2x the bytes from 64 to 512 (load 27, 2026-11-08), against
+    // 23.4x and 32.4x until the pivot of an equality was taken among the variables no other
+    // equality holds (`pivots`): the chain `o[i+1] == o[i] + l[i]` wrote rows of 3 to n + 1 terms.
     grows("offsets laid end to end", 64, Ok(true), offsets);
 }
 
 #[test]
 fn growth_of_a_convex_valley() {
-    // 9.25x.
+    // 9.4x the instructions and 8.1x the bytes from 64 to 512 (load 27, 2026-11-08). Without
+    // `System::dominated`, once the stage of `System::shrink` was added, 38.1x the bytes: each
+    // step carried one more row `k·x - (k - 1)·y >= -N` implied by the next.
     grows("a convex valley", 64, Ok(true), convex);
 }
 
@@ -698,7 +696,7 @@ fn growth_of_sums_over_grid_squares() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds (every row unit, every elimination exact, least fill 2)"]
+#[ignore = "Q1-LOCAL: refused with Growth though a point holds; every row unit, and every exact elimination left adds 2 terms or more even counted by the rows it writes (treewidth about the side of the grid)"]
 fn sums_over_grid_squares_are_decided() {
     grows("sums over grid squares", 144, Ok(true), |n| {
         grid_squares(side(n)).0
@@ -712,7 +710,7 @@ fn growth_of_a_band_of_four() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds"]
+#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn a_band_of_four_is_decided() {
     grows("a band of four", 64, Ok(true), |n| band(n).0);
 }
@@ -726,7 +724,7 @@ fn growth_of_sparse_random_rows() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds"]
+#[ignore = "Q1-LOCAL: refused with Growth though a point holds; random rows of 3 and 4 variables, where every elimination left adds terms even counted by the rows it writes"]
 fn sparse_random_rows_are_decided() {
     grows("sparse random rows", 64, Ok(true), |n| sparse_random(n).0);
 }
@@ -740,7 +738,7 @@ fn growth_of_chained_blocks_of_five() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds"]
+#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn chained_blocks_of_five_are_decided() {
     grows("chained blocks of five", 32, Ok(true), |n| {
         chained_blocks(n).0
@@ -756,7 +754,7 @@ fn growth_of_a_tree_of_blocks_of_five() {
 }
 
 #[test]
-#[ignore = "Q1-LOCAL: refused today with Growth though a point holds"]
+#[ignore = "Q1-LOCAL: refused with Growth though a point holds; what is left needs inexact eliminations, and dark shadows taken by the terms they write still end in Growth (2026-11-08)"]
 fn a_tree_of_blocks_of_five_is_decided() {
     grows("a tree of blocks of five", 32, Ok(true), |n| {
         tree_blocks(n).0
@@ -791,7 +789,8 @@ fn the_families_with_a_point_have_it() {
             .map(|i| 2 * (2 * i as i64 - (n as i64 - 1)).abs() + 2)
             .collect()
     };
-    let families: Vec<(&str, usize, Box<dyn Fn(usize) -> (Vec<Row>, Vec<i64>)>)> = vec![
+    type Make<'a> = Box<dyn Fn(usize) -> (Vec<Row>, Vec<i64>) + 'a>;
+    let families: Vec<(&str, usize, Make)> = vec![
         ("windows", 64, Box::new(windows)),
         ("weighted windows", 64, Box::new(weighted_windows)),
         ("offsets", 64, Box::new(|n| (offsets(n), offsets_at(n)))),

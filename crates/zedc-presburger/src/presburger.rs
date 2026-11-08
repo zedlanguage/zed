@@ -4838,6 +4838,49 @@ fn opposite(a: &[Term]) -> Vec<Term> {
     a.iter().map(|(i, c)| (*i, -c)).collect()
 }
 
+/// Whether every real point `(x, y)` of the box `b` = [x least, x greatest, y least, y
+/// greatest] with `p·(x, y) + pk >= 0` has `q·(x, y) + qk >= 0`, for rows `p` and `q` over
+/// the same two variables. That part of the box is a polygon, and `q` is least over it at a
+/// corner: a corner of the box that `p` keeps, or where the line of `p` crosses a side of the
+/// box, at `(x / d, y / d)` with `d > 0`. An empty part gives `true`, and then the system has
+/// no point.
+fn implies_in_box(b: &[Int; 4], p: &[Term], pk: &Int, q: &[Term], qk: &Int) -> bool {
+    let (pi, pj, qi, qj) = (&p[0].1, &p[1].1, &q[0].1, &q[1].1);
+    // `d` times `q` at `(x / d, y / d)`.
+    let q_at = |x: &Int, y: &Int, d: &Int| &(&(qi * x) + &(qj * y)) + &(qk * d);
+    for x in [&b[0], &b[1]] {
+        for y in [&b[2], &b[3]] {
+            let kept = !(&(&(pi * x) + &(pj * y)) + pk).is_negative();
+            if kept && q_at(x, y, &Int::ONE).is_negative() {
+                return false;
+            }
+        }
+    }
+    // The line of `p` on the sides `x = X`, at `y = -(pi·X + pk) / pj`, and on the sides
+    // `y = Y`, at `x = -(pj·Y + pk) / pi`; the coefficients of a row are not zero.
+    let cut = |c: &Int, at: &Int, over: &Int| {
+        let (num, d) = (-&(&(c * at) + pk), over.clone());
+        if d.is_negative() {
+            (-&num, -&d)
+        } else {
+            (num, d)
+        }
+    };
+    for x in [&b[0], &b[1]] {
+        let (y, d) = cut(pi, x, pj);
+        if y >= &b[2] * &d && y <= &b[3] * &d && q_at(&(x * &d), &y, &d).is_negative() {
+            return false;
+        }
+    }
+    for y in [&b[2], &b[3]] {
+        let (x, d) = cut(pj, y, pi);
+        if x >= &b[0] * &d && x <= &b[1] * &d && q_at(&x, &(y * &d), &d).is_negative() {
+            return false;
+        }
+    }
+    true
+}
+
 impl Row {
     /// The coefficient at `x[j]`, which the row holds.
     fn at(&self, j: usize) -> &Int {
@@ -4964,6 +5007,8 @@ struct Var {
     rows: BTreeSet<usize>,
     sides: Sides,
     key: usize,
+    /// Its entry in [`System::shrinking`], when it has one.
+    shrink: Option<isize>,
 }
 
 /// A system of inequalities, kept normalized as rows are added and removed: each set of
@@ -4978,6 +5023,17 @@ struct System {
     exact: BTreeSet<Rank>,
     /// The variables whose elimination is inexact, likewise.
     inexact: BTreeSet<Rank>,
+    /// The variables whose elimination is exact and adds no terms as [`System::shrink`]
+    /// counts them, by that count, as of the last [`System::refresh`].
+    shrinking: BTreeSet<Rank>,
+    /// The variables whose rows changed since the last [`System::refresh`].
+    dirty: BTreeSet<usize>,
+    /// Variables whose rows' variables [`System::refresh`] marks first ([`System::touch`]).
+    near: BTreeSet<usize>,
+    /// The number of rows held of each length.
+    lengths: BTreeMap<usize, usize>,
+    /// The place of the opposite of each held row whose opposite is held, both ways.
+    opposites: BTreeMap<usize, usize>,
     /// The variables bounded on one side only.
     one_sided: BTreeSet<usize>,
     /// The variables [`Sides::fixable`] holds of.
@@ -5010,6 +5066,11 @@ impl System {
                 .collect(),
             exact: BTreeSet::new(),
             inexact: BTreeSet::new(),
+            shrinking: BTreeSet::new(),
+            dirty: BTreeSet::new(),
+            near: BTreeSet::new(),
+            lengths: BTreeMap::new(),
+            opposites: BTreeMap::new(),
             one_sided: BTreeSet::new(),
             fixable: BTreeSet::new(),
             meets: BTreeSet::new(),
@@ -5029,20 +5090,34 @@ impl System {
             Norm::True => return,
             Norm::Row(r) => r,
         };
-        if let Some(old) = self.rows.get_mut(&r.a) {
+        if r.a.len() == 2 && !self.rows.contains_key(&r.a) {
+            let Some(weaker) = self.dominated(&r) else {
+                return;
+            };
+            for id in weaker {
+                self.remove(id);
+            }
+        }
+        let id = if let Some(old) = self.rows.get_mut(&r.a) {
             if old.k <= r.k {
                 return;
             }
             old.k = r.k.clone();
+            old.id
         } else {
             let id = self.ids.len();
             self.ids.push(Some(r.a.clone()));
             self.count(&r.a, id, true);
+            *self.lengths.entry(r.a.len()).or_insert(0) += 1;
+            self.touch(&r.a);
             let k = r.k.clone();
             self.rows.insert(r.a.clone(), Held { k, id });
-        }
+            id
+        };
         let opp = opposite(&r.a);
         if let Some((key, o)) = self.rows.get_key_value(opp.as_slice()) {
+            self.opposites.insert(id, o.id);
+            self.opposites.insert(o.id, id);
             let s = &r.k + &o.k;
             if s.is_negative() {
                 self.empty = true;
@@ -5065,6 +5140,7 @@ impl System {
             }
         }
         for (i, c) in a.iter() {
+            self.dirty.insert(*i);
             let v = &mut self.vars[*i];
             let set = if v.sides.inexact() {
                 &mut self.inexact
@@ -5118,11 +5194,103 @@ impl System {
         }
     }
 
+    /// Marks for [`System::refresh`] the variables whose [`System::shrink`] the row `a`, just
+    /// added or removed, can change besides its own: whether a row written is held already. A
+    /// row the elimination of `x[j]` writes holds only variables of the rows of `x[j]`, so
+    /// `x[j]` shares a row with each variable of `a`, and with the one of fewest rows in
+    /// particular. That variable is kept, and [`System::refresh`] marks the variables of its
+    /// rows as they are held then: `x[j]` still shares one of them with it, or that row was
+    /// removed and [`System::count`] marked `x[j]`. Marking here, at a cost of the terms of
+    /// those rows, made every row added beside a sum of n bounded terms cost O(n)
+    /// (`omega::eliminating_the_terms_of_a_long_row_costs_the_row_each_time` took 26.7 times
+    /// the instructions from 128 to 1,024), though most systems never reach the stage that
+    /// reads the marks. Which of several such variables is taken marks other variables but
+    /// changes no count.
+    fn touch(&mut self, a: &Coefs) {
+        if let Some(v) = a
+            .iter()
+            .map(|(i, _)| *i)
+            .min_by_key(|i| (self.vars[*i].rows.len(), *i))
+        {
+            self.near.insert(v);
+        }
+    }
+
+    /// For a row `r` of two terms not held yet: `None` when a held row over the same two
+    /// variables implies it within their bounds and is not implied by it, else the places of
+    /// the held rows over those variables that `r` implies so and that do not imply `r`.
+    ///
+    /// Dropping such a row keeps every point, integer or not: the stronger row and the
+    /// bounds stay. A row is dropped when a row ever added over its pair implies it strictly,
+    /// and implying strictly is transitive, so the rows kept are the same in whatever order
+    /// they are added while the bounds stand. Rows with a held opposite, which may be an
+    /// equality, are left alone. Without this, eliminating a convex chain
+    /// (`q1_local::growth_of_a_convex_valley`) carried rows `k·x - (k - 1)·y >= -N` for every
+    /// k so far, all through the corner (N, N) of the box and each implied by the next, from
+    /// one variable to the next: O(n) rows per step, 38.1 times the bytes for 8 times the
+    /// size.
+    ///
+    /// Complexity tradeoff: the rows of the variable of fewer rows are scanned, O(d) for d
+    /// such rows, on each row of two terms added. Why: rows over one pair are not indexed by
+    /// the pair. Trigger: a pair whose variables both hold many rows; rows kept over one pair
+    /// imply no other strictly, and only pairs with a bound on each side are compared. A
+    /// complete solution would index rows by their pair of variables.
+    fn dominated(&self, r: &Row) -> Option<Vec<usize>> {
+        let mut weaker = Vec::new();
+        let [(i, _), (j, _)] = &r.a[..] else {
+            return Some(weaker);
+        };
+        if self.rows.contains_key(opposite(&r.a).as_slice()) {
+            return Some(weaker);
+        }
+        let bounds = [
+            self.bound(*i, false),
+            self.bound(*i, true),
+            self.bound(*j, false),
+            self.bound(*j, true),
+        ];
+        let [Some(ilo), Some(ihi), Some(jlo), Some(jhi)] = bounds else {
+            return Some(weaker);
+        };
+        let b = [ilo, ihi, jlo, jhi];
+        let v = if self.vars[*i].rows.len() <= self.vars[*j].rows.len() {
+            *i
+        } else {
+            *j
+        };
+        for id in &self.vars[v].rows {
+            let a = self.ids[*id].as_ref().expect("a row held");
+            if a.len() != 2 || a[0].0 != *i || a[1].0 != *j || self.opposites.contains_key(id) {
+                continue;
+            }
+            let k = &self.rows[a].k;
+            let stronger = implies_in_box(&b, a, k, &r.a, &r.k);
+            let implied = implies_in_box(&b, &r.a, &r.k, a, k);
+            if stronger && !implied {
+                return None;
+            }
+            if implied && !stronger {
+                weaker.push(*id);
+            }
+        }
+        Some(weaker)
+    }
+
     /// Removes the held row at place `id`, and returns it.
     fn remove(&mut self, id: usize) -> Row {
         let a = self.ids[id].take().expect("a row held");
         let k = self.rows.remove(&a).expect("a row held").k;
         self.count(&a, id, false);
+        if let Some(o) = self.opposites.remove(&id) {
+            self.opposites.remove(&o);
+        }
+        if let Some(n) = self.lengths.get_mut(&a.len()) {
+            *n -= 1;
+            if *n == 0 {
+                self.lengths.remove(&a.len());
+            }
+        }
+        self.touch(&a);
         Row { a, k }
     }
 
@@ -5200,6 +5368,137 @@ impl System {
         Some(if upper { held.k.clone() } else { -&held.k })
     }
 
+    /// The terms the real shadow of `x[j]` writes less the terms it removes, the rows written
+    /// counted as [`System::add`] keeps them: a row of no term (two opposite rows, or rows
+    /// whose other terms cancel), a row held already, and a row written twice add nothing.
+    /// `None` once the terms written exceed those removed.
+    ///
+    /// Complexity tradeoff: the pairs of lower and upper rows are combined until the terms
+    /// written exceed those removed, so a count costs O((r + z) t log n) for the r terms of the
+    /// variable's rows, z pairs that write nothing new, and rows of t terms; the z pairs are
+    /// not bounded by r, and a variable is counted again each time one of its rows changes
+    /// (from [`System::refresh`]). Two opposite rows, and a bound with another row, are counted
+    /// without writing a row, so a long row that many variables share, as the sum of
+    /// `q1_local::growth_of_offsets_laid_end_to_end`, is not written once per variable (written
+    /// so, that test took 28.5 times the bytes for 8 times the size). Why: knowing exactly
+    /// whether an elimination adds terms needs the rows it writes, and the count that
+    /// `Sides::fill` keeps per row cannot see cancellation or rows held already. Trigger: a variable of d rows whose d^2 / 4 pairs
+    /// mostly write rows held already or constants, its rows changed by many steps before the
+    /// counts are needed; the size of the system plays no part. Rows of a bounded number of
+    /// variables each, as in `q1_local::sliding_windows_of_four_are_decided`, give z = O(1)
+    /// per count and O(1) counts per step. A complete solution would keep, per pair of rows,
+    /// whether it writes a new row, renewed as rows come and go. Given up besides: the bound
+    /// from the lengths of the rows (`apart`) and the count of a bound with another row take
+    /// two pairs that write one row as two rows, so such a variable can be left out, and a
+    /// system decided only through it is refused (`Refusal::Growth`); no answer is wrong,
+    /// since every elimination taken is exact. COMPLEXITY.md row Q1-LOCAL.
+    fn shrink(&self, j: usize) -> Option<isize> {
+        // Constants do not change the terms of a row written, so the rows are taken at 0.
+        let with: Vec<(usize, Row)> = self.vars[j]
+            .rows
+            .iter()
+            .map(|id| {
+                let a = self.ids[*id].clone().expect("a row held");
+                (*id, Row { a, k: Int::ZERO })
+            })
+            .collect();
+        let removed: usize = with.iter().map(|(_, r)| r.a.len()).sum();
+        let (lowers, uppers): (Vec<_>, Vec<_>) =
+            with.iter().partition(|(_, r)| r.at(j).is_positive());
+        // A pair of rows of s and t terms writes a row of at least g = |s - t| terms: `x[j]`
+        // leaves both, and at most the other terms of the shorter cancel. Such a row is held
+        // already only if a held row without `x[j]` has g terms or more, so the pairs with g
+        // above the longest of those, `beyond`, write at least g terms each, unless two of
+        // them write one row. Their sum, from the sorted lengths, shows a long row's
+        // elimination growing without writing a row of it.
+        let mut own: BTreeMap<usize, usize> = BTreeMap::new();
+        for (_, r) in &with {
+            *own.entry(r.a.len()).or_insert(0) += 1;
+        }
+        // Whether a row of `t` terms without `x[j]` is held.
+        let elsewhere = |t: usize| {
+            self.lengths
+                .get(&t)
+                .is_some_and(|n| own.get(&t).is_none_or(|m| n > m))
+        };
+        let beyond = self
+            .lengths
+            .iter()
+            .rev()
+            .find(|(t, n)| own.get(t).is_none_or(|m| *n > m))
+            .map_or(0, |(t, _)| *t);
+        let length = |side: &[&(usize, Row)]| side.iter().map(|(_, r)| r.a.len()).collect();
+        if apart(length(&lowers), length(&uppers), beyond) > removed {
+            return None;
+        }
+        let mut new: BTreeSet<Coefs> = BTreeSet::new();
+        let mut written = 0;
+        for (l, lo) in &lowers {
+            for (h, hi) in &uppers {
+                // Two opposite rows write a constant, and a bound `x[j] >= c` or `x[j] <= c`
+                // with a row of t terms writes that row without `x[j]`: t - 1 terms, new when
+                // no held row has t - 1 terms. Both are known without writing the row, which
+                // keeps a long row shared by many variables from being written for each.
+                // Such a row is not compared with the rows written, so two of them equal
+                // count twice; that can only leave the variable out.
+                if self.opposites.get(l) == Some(h) {
+                    continue;
+                }
+                let other = match (lo.a.len(), hi.a.len()) {
+                    (1, t) | (t, 1) => Some(t - 1).filter(|t| !elsewhere(*t)),
+                    _ => None,
+                };
+                let t = match other {
+                    Some(t) => t,
+                    None => match combine(lo, hi, j, false).normal(false) {
+                        Norm::Row(r) if !self.rows.contains_key(&r.a) => {
+                            let t = r.a.len();
+                            if !new.insert(r.a) {
+                                continue;
+                            }
+                            t
+                        }
+                        _ => continue,
+                    },
+                };
+                written += t;
+                if written > removed {
+                    return None;
+                }
+            }
+        }
+        Some(written as isize - removed as isize)
+    }
+
+    /// Renews [`System::shrinking`] for the variables whose rows changed since it was last
+    /// renewed: those of exact elimination bounded on both sides whose [`System::shrink`] is
+    /// zero or less.
+    fn refresh(&mut self) {
+        for v in std::mem::take(&mut self.near) {
+            for id in &self.vars[v].rows {
+                for (i, _) in self.ids[*id].as_ref().expect("a row held").iter() {
+                    self.dirty.insert(*i);
+                }
+            }
+        }
+        for j in std::mem::take(&mut self.dirty) {
+            let v = &self.vars[j];
+            if let Some(f) = v.shrink {
+                self.shrinking.remove(&(f, v.key, j));
+            }
+            let s = &v.sides;
+            let f = if s.lo > 0 && s.hi > 0 && !s.inexact() {
+                self.shrink(j).filter(|f| *f <= 0)
+            } else {
+                None
+            };
+            if let Some(f) = f {
+                self.shrinking.insert((f, v.key, j));
+            }
+            self.vars[j].shrink = f;
+        }
+    }
+
     /// Eliminates `x[j]` by its real shadow, or its dark one when `dark`; returns its rows.
     fn eliminate(&mut self, j: usize, dark: bool) -> Vec<Row> {
         let with = self.take(j);
@@ -5212,6 +5511,26 @@ impl System {
         }
         with
     }
+}
+
+/// The sum of `|s - t|` over the lengths `s` of `lowers` and `t` of `uppers` that differ by
+/// more than `beyond`, from the sorted lengths with prefix sums: O(d log d) for d rows.
+fn apart(lowers: Vec<usize>, mut hi: Vec<usize>, beyond: usize) -> usize {
+    hi.sort_unstable();
+    let mut below = vec![0; hi.len() + 1];
+    for (i, t) in hi.iter().enumerate() {
+        below[i + 1] = below[i] + t;
+    }
+    let total = below[hi.len()];
+    lowers
+        .into_iter()
+        .map(|s| {
+            // The uppers shorter than `s - beyond`, and those longer than `s + beyond`.
+            let m = hi.partition_point(|t| t + beyond < s);
+            let p = hi.partition_point(|t| *t <= s + beyond);
+            (m * s - below[m]) + (total - below[p] - (hi.len() - p) * s)
+        })
+        .sum()
 }
 
 /// Whether the inequalities have no rational point once each row is normalized, which keeps
@@ -5469,19 +5788,31 @@ fn shape(r: &Row, sys: &System) -> Shape {
 
 /// The variables a step on the equality `e` would choose to define, as `Omega::equality`
 /// chooses: those with a unit coefficient when there are any, otherwise those of least
-/// coefficient, and of these those of least color. More than one is a tie.
-fn pivots(e: &Row, sys: &System) -> Vec<usize> {
-    let key = |i: usize| sys.vars[i].key;
+/// coefficient; of these those that no other equality holds, when there are any (`others`
+/// gives the number of other equalities that hold a variable); and of these those of least
+/// color. More than one is a tie.
+///
+/// A variable no other equality holds is defined without writing into any equality: its
+/// definition is substituted only into the equalities that hold it, and there are none. So
+/// along a chain of equalities each with a variable of its own, as `o[i+1] == o[i] + l[i]`
+/// with each `l[i]` in one equality, or `x[i+1] == x[i] + c`, whose end variables are each in
+/// one equality and leave the next end so, every equality keeps its length, and a step costs
+/// O(t log n) for its t terms. Until Q1-LOCAL the choice went by color alone: on `o[i+1] ==
+/// o[i] + l[i]` a variable of two equalities was chosen, each step added a term to the next
+/// equality, and n pieces cost O(n^2) (23.4 times the instructions and 32.4 times the bytes
+/// from 64 to 512 pieces). Whether another equality holds a variable is structure, not a
+/// name, so the choice is the same under every naming of the variables.
+fn pivots(e: &Row, sys: &System, others: impl Fn(usize) -> usize) -> Vec<usize> {
     let units = e.a.iter().any(|(_, c)| c.is_unit());
-    let pool: Vec<(Int, usize, usize)> =
+    let pool: Vec<(Int, bool, usize, usize)> =
         e.a.iter()
             .filter(|(_, c)| !units || c.is_unit())
-            .map(|(i, c)| (c.abs(), key(*i), *i))
+            .map(|(i, c)| (c.abs(), others(*i) > 0, sys.vars[*i].key, *i))
             .collect();
-    let (m, k, _) = pool.iter().min().expect("a row has a variable").clone();
+    let (m, shared, k, _) = pool.iter().min().expect("a row has a variable").clone();
     pool.into_iter()
-        .filter(|(c, kk, _)| *c == m && *kk == k)
-        .map(|p| p.2)
+        .filter(|(c, sh, kk, _)| *c == m && *sh == shared && *kk == k)
+        .map(|p| p.3)
         .collect()
 }
 
@@ -5619,7 +5950,7 @@ impl Equalities {
                 for (i, _) in r.a.iter() {
                     self.of[*i].insert(s);
                 }
-                let pivots = pivots(&r, sys);
+                let pivots = pivots(&r, sys, |i| self.of[i].len() - 1);
                 for p in &pivots {
                     self.pivot_of[*p].insert(s);
                 }
@@ -5637,12 +5968,19 @@ impl Equalities {
                     pivots,
                 });
                 self.rekey(&vars, s);
+                // A variable now in two equalities was, until now, in the other one alone.
+                for i in &vars {
+                    if self.of[*i].len() == 2 {
+                        let t = *self.of[*i].iter().find(|t| **t != s).expect("another slot");
+                        self.repivot(t, sys);
+                    }
+                }
             }
         }
     }
 
     /// Empties the slot `s`, and returns its row.
-    fn clear(&mut self, s: usize) -> Row {
+    fn clear(&mut self, s: usize, sys: &System) -> Row {
         let Kept { row, key, pivots } = self.rows[s].take().expect("a slot in use");
         self.order.remove(&(key, s));
         self.held.remove(&unsigned(&row));
@@ -5654,7 +5992,38 @@ impl Equalities {
             self.of[*i].remove(&s);
         }
         self.rekey(&vars, s);
+        // A variable now in one equality was, until now, in another as well.
+        for i in &vars {
+            if self.of[*i].len() == 1 {
+                let t = *self.of[*i].first().expect("a slot");
+                self.repivot(t, sys);
+            }
+        }
         row
+    }
+
+    /// Chooses again the variables a step on slot `t` would define. The choice ([`pivots`])
+    /// changes only when one of its variables comes to be held by another equality or ceases
+    /// to be, and that variable is then held by at most two equalities, so a change to an
+    /// equality renews at most one other slot for each of its variables.
+    fn repivot(&mut self, t: usize, sys: &System) {
+        let row = &self.rows[t].as_ref().expect("a slot in use").row;
+        let new = pivots(row, sys, |i| self.of[i].len() - 1);
+        let degree = self.degree(&new);
+        let held = self.rows[t].as_mut().expect("a slot in use");
+        if held.pivots == new {
+            return;
+        }
+        for p in &held.pivots {
+            self.pivot_of[*p].remove(&t);
+        }
+        for p in &new {
+            self.pivot_of[*p].insert(t);
+        }
+        self.order.remove(&(held.key.clone(), t));
+        held.key.2 = degree;
+        self.order.insert((held.key.clone(), t));
+        held.pivots = new;
     }
 
     /// Renews the degree in the key of each slot but `s` whose step would define one of
@@ -5683,10 +6052,13 @@ impl Equalities {
         self.now += 1;
     }
 
-    /// Replaces `x[j]` by `def` in each equality that holds it.
+    /// Replaces `x[j]` by `def` in each equality that holds it. `of[j]` stays exact while the
+    /// equalities are rewritten one by one (`clear` takes each from it), since the choice of
+    /// pivots of an equality not yet rewritten counts the others that hold `x[j]`.
     fn subst(&mut self, j: usize, def: &Row, sys: &mut System) {
-        for s in std::mem::take(&mut self.of[j]) {
-            let r = self.clear(s);
+        let slots: Vec<usize> = self.of[j].iter().copied().collect();
+        for s in slots {
+            let r = self.clear(s, sys);
             self.put(s, r.subst(j, def), sys);
         }
     }
@@ -5943,6 +6315,23 @@ impl Omega {
                     _ => {}
                 }
             }
+            // `Sides::fill` counts every term a pair of rows writes, so an exact elimination
+            // can add nothing and still be counted as growing: two opposite rows `l <= a·x <=
+            // u` combine to a constant, a lower and an upper row that share other variables
+            // with opposite signs cancel them, and a row written may be held already. The
+            // variables whose exact elimination adds no terms when so counted are taken next,
+            // as `System::least` gives them; when two of least count share a row, none is taken
+            // here and the stages below go on, so no name decides.
+            if tie.is_none() {
+                self.sys.refresh();
+                if let Some((_, Ok(js))) = self.sys.least(&[&self.sys.shrinking]) {
+                    for j in js {
+                        let rows = self.sys.eliminate(j, false);
+                        self.steps.push(Step::Chosen(j, rows));
+                    }
+                    continue;
+                }
+            }
             // Every elimination left adds terms. Three live variables, with a unit side or
             // not, are decided by `live3` below, after the box. Until HULL3-subsumed a
             // variable with a unit coefficient in every row on one side was first projected
@@ -5986,16 +6375,22 @@ impl Omega {
             // elimination that adds terms multiplies lower by upper bounds, so the rows can grow
             // doubly exponentially in the variables eliminated (Fourier–Motzkin), and the dark
             // and gray shadows of the full Omega test add an exponential search on top; trying
-            // every point of the box is exponential in the variables. Trigger: four or more
-            // live variables whose every elimination pairs more bounds than it removes and
-            // whose rows are not all `±x ± y + k >= 0`; the size of the system plays no part.
-            // (Three live variables are decided completely, by `live3` below.) Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+            // every point of the box is exponential in the variables, and the integer points of
+            // sparse rows of three variables over 0 and 1 hold 3-SAT. Trigger: four or more live
+            // variables, rows not all `±x ± y + k >= 0`, every inexact elimination adding terms
+            // as `Sides::fill` counts them, and every exact one adding terms even counted by the
+            // rows it writes (`System::shrink`); the size of the system plays no part. Measured
+            // in `l01_38_presburger::q1_local` (Q1-LOCAL, 2026-11-08): weighted sliding
+            // windows, a band of four, blocks of five chained or as a tree, sums over grid
+            // squares and sparse random rows, each with a point, are refused at every size.
+            // (Three live variables are decided completely, by `live3` below.) Tests:
+            // `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
             // `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
             // `l01_38_presburger::scaling::the_shifted_sparse_family_scales`,
             // `l01_38_presburger::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,
             // `l01_38_presburger::scaling::the_box_stage_with_a_hub_in_one_row_per_block_scales`.
-            // COMPLEXITY.md rows S18, Q1-ROWBOX and Kept "Fourier–Motzkin pairs". A complete
-            // solution would run the growing eliminations of the full Omega test (or another
+            // COMPLEXITY.md rows S18, Q1-ROWBOX, Q1-LOCAL and Kept "Fourier–Motzkin pairs". A
+            // complete solution would run the growing eliminations of the full Omega test (or another
             // complete Presburger procedure) and accept their exponential worst case, or find a
             // structural class of growing systems over four variables or more decidable in
             // O(n log n).
@@ -6194,24 +6589,11 @@ impl Omega {
     /// step, however large it was. When two variables tie for the choice, the tie, with the
     /// equality, and the equality is left in its slot.
     fn equality(&mut self, s: usize) -> Result<(), Tied> {
-        let e = self.es.clear(s);
+        let e = self.es.clear(s, &self.sys);
         let key = |i: usize| self.sys.vars[i].key;
-        let units: Vec<usize> =
-            e.a.iter()
-                .filter(|(_, c)| c.is_unit())
-                .map(|(i, _)| *i)
-                .collect();
-        let pool: Vec<(Int, usize, usize)> = if units.is_empty() {
-            e.a.iter().map(|(i, c)| (c.abs(), key(*i), *i)).collect()
-        } else {
-            units.iter().map(|&i| (Int::ONE, key(i), i)).collect()
-        };
-        let (m, k, _) = pool.iter().min().expect("a row has a variable").clone();
-        let tied: Vec<usize> = pool
-            .iter()
-            .filter(|(c, kk, _)| *c == m && *kk == k)
-            .map(|p| p.2)
-            .collect();
+        let units = e.a.iter().any(|(_, c)| c.is_unit());
+        // The slot is out of the equalities, so each count is of the others.
+        let tied = pivots(&e, &self.sys, |i| self.es.of[i].len());
         // `x - y == d` between two variables of one color, as `Ties` does in `solve`: the
         // greater is defined by the lesser, which is a choice by the values, not the names; when
         // `d` is zero the two are equal at every point, so defining either leaves the same rows
@@ -6230,7 +6612,7 @@ impl Omega {
             return Err(Tied { vars: tied, rows });
         }
         let y = tied[0];
-        if !units.is_empty() {
+        if units {
             self.define(y, &e);
             return Ok(());
         }
@@ -6273,7 +6655,7 @@ impl Omega {
         }) {
             return false;
         }
-        let rows: Vec<Row> = slots.iter().map(|s| self.es.clear(*s)).collect();
+        let rows: Vec<Row> = slots.iter().map(|s| self.es.clear(*s, &self.sys)).collect();
         let vars: Vec<usize> = rows
             .iter()
             .flat_map(|r| r.a.iter().map(|(i, _)| *i))
@@ -6393,7 +6775,7 @@ impl Omega {
             if self.es.rows[s].is_none() {
                 continue;
             }
-            let r = self.es.clear(s);
+            let r = self.es.clear(s, &self.sys);
             let opp: Coefs = opposite(&r.a).into();
             let lesser = if r.a < opp { r.a.clone() } else { opp.clone() };
             self.sys.loose.insert(lesser);

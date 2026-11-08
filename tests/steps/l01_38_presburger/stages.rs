@@ -1028,7 +1028,9 @@ fn rows_with_a_rational_point_are_not_shown_empty_by_the_box() {
     // the row test of the box keeps them: they are refused with Growth, as before the row
     // test (deciding them needs a complete method at four live variables, cross-review XR3
     // Q1). A box test that showed empty a system with a rational point would answer Ok(false).
-    // With x3 or x0 unbounded below they keep their points.
+    // With x3 or x0 unbounded below they keep their points. With x3 unbounded below its
+    // exact elimination adds no terms once the rows it writes are counted (`System::shrink`,
+    // Q1-LOCAL), and they are decided, with a model that `answers` checks.
     for free in [None, Some(0), Some(3)] {
         for s in 8..=11 {
             let (rows, f) = crossing(s, free);
@@ -1036,7 +1038,12 @@ fn rows_with_a_rational_point_are_not_shown_empty_by_the_box() {
             if free.is_none() {
                 assert!(enumerate(&rows, 4, 4), "s = {s}");
             }
-            answers(&f, Err(Refusal::Growth));
+            let answer = if free == Some(3) {
+                Ok(true)
+            } else {
+                Err(Refusal::Growth)
+            };
+            answers(&f, answer);
         }
     }
 }
@@ -1048,15 +1055,23 @@ fn rows_the_one_pass_test_does_not_show_empty_stay_refused() {
     // (the resolvent stage that would was not adopted, XR3 Q1). With x3 unbounded below even
     // the rows of `CROSSING` are not shown empty: the row with -7·x3 then bounds only x3.
     // Measured 2026-11-03; a stronger complete method may later decide these Ok(false).
+    // With x0 unbounded below they stay refused. With x3 unbounded below they are decided
+    // since Q1-LOCAL: the exact elimination of x3 adds no terms counted by the rows it writes
+    // (`System::shrink`), and the rows left show no point (measured 2026-11-08).
     for s in 1..=7 {
         let (rows, f) = crossing(s, None);
         assert!(rationally_empty(&rows, 4), "s = {s}");
         assert!(!enumerate(&rows, 4, 4), "s = {s}");
         answers(&f, Err(Refusal::Growth));
+        let (rows, f) = crossing(s, Some(0));
+        assert!(rationally_empty(&rows, 4), "s = {s}");
+        answers(&f, Err(Refusal::Growth));
     }
-    let (rows, f) = crossing(0, Some(3));
-    assert!(rationally_empty(&rows, 4));
-    answers(&f, Err(Refusal::Growth));
+    for s in 0..=7 {
+        let (rows, f) = crossing(s, Some(3));
+        assert!(rationally_empty(&rows, 4), "s = {s}");
+        answers(&f, Ok(false));
+    }
 }
 
 #[test]
