@@ -2266,7 +2266,10 @@ impl VarFacts {
 // all those of the rows it meets (a call's fresh classes, a signature's own), which the range
 // tells apart. Tests `replacing_in_rows_shared_on_many_paths_scales`,
 // `rows_shared_on_many_paths_scale` and `rows_made_from_disjoint_variable_sets_scale`
-// (l01_26); COMPLEXITY.md F93.
+// (l01_26); COMPLEXITY.md F93. Open: rows whose classes cover every bit and a wide range,
+// or whose names cover every bit, met by `n` replacements of variables they do not hold,
+// cost `O(n^2)` (test `replacing_variables_no_row_holds_in_rows_on_every_bit_scales`,
+// ignored, 60.1 times the bytes for 8 times the rows).
 #[derive(Clone, Copy, Debug)]
 struct VarBits {
     /// The smallest `k` of a class variable `$k`, `usize::MAX` for none.

@@ -5806,6 +5806,8 @@ impl Ck<'_, '_> {
             }
             found.insert(p.node(), clean);
         }
+        #[cfg(debug_assertions)]
+        self.check_clean(t, binds, &out);
         if self.gens.len() <= self.level {
             self.gens.resize(self.level + 1, 0);
         }
@@ -5864,6 +5866,107 @@ impl Ck<'_, '_> {
                 let c = &self.classes[self.find(k)];
                 c.name.is_none() && c.level <= self.level
             })
+    }
+
+    /// The check of [`Self::clean`] (debug builds, with `ZEDC_CHECK_CLEAN` naming a file; see
+    /// [`clean_check`]): walks every row and shape of `t`, the memo ignored, and asserts that
+    /// each one the memo holds holds only classes that last, at any depth, and that the walk
+    /// finds the variables `out`, what [`Self::unbound`] found with the memo, holds. Called
+    /// before `unbound` records what it found.
+    #[cfg(debug_assertions)]
+    fn check_clean(&self, t: &Ty, binds: &Binds, out: &BTreeSet<Arc<str>>) {
+        if clean_check::path().is_none() {
+            return;
+        }
+        let mut full = BTreeSet::new();
+        self.outer_vars(t, binds, &mut full);
+        let mut seen = HashSet::new();
+        let mut order = Vec::new();
+        let mut stack: Vec<(Inner, bool)> = Inner::of(t).map(|p| (p, false)).collect();
+        while let Some((p, done)) = stack.pop() {
+            if done {
+                order.push(p);
+                continue;
+            }
+            if !seen.insert(p.node()) {
+                continue;
+            }
+            stack.push((p, true));
+            for c in p.tys() {
+                let new = Inner::of(c).filter(|q| !seen.contains(&q.node()));
+                stack.extend(new.map(|q| (q, false)));
+            }
+        }
+        let mut found: HashMap<Node, bool> = HashMap::new();
+        let mut held = 0;
+        for p in order {
+            let mut clean = true;
+            for c in p.tys() {
+                let outer = self.outer_vars(c, binds, &mut full);
+                clean = clean && outer && Inner::of(c).all(|q| found[&q.node()]);
+            }
+            if self.is_clean(p.node()) {
+                held += 1;
+                assert!(
+                    clean,
+                    "the memo of clean rows holds {:?}, which holds a variable that is not a \
+                     lasting class",
+                    p.node()
+                );
+            }
+            found.insert(p.node(), clean);
+        }
+        assert_eq!(
+            &full, out,
+            "the walk with the memo of clean rows finds other variables than the walk without it"
+        );
+        clean_check::count(held);
+    }
+}
+
+/// The check of the memo of rows that hold only lasting classes ([`Ck::clean`]), compiled only
+/// in a debug build and run only when the environment variable `ZEDC_CHECK_CLEAN` names a
+/// file: each [`Ck::unbound`] then also walks the whole type without the memo
+/// ([`Ck::check_clean`]), and each check appends to the file a line with how many queries it
+/// checked and how many rows and shapes it found in the memo.
+#[cfg(debug_assertions)]
+mod clean_check {
+    use std::cell::Cell;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    thread_local! {
+        /// The queries checked and the rows and shapes found in the memo, since the last flush.
+        static COUNTS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+
+    /// The file the counts go to, if the check is on.
+    pub(super) fn path() -> Option<&'static Path> {
+        PATH.get_or_init(|| std::env::var_os("ZEDC_CHECK_CLEAN").map(PathBuf::from))
+            .as_deref()
+    }
+
+    /// Counts one query, in which `held` rows and shapes were found in the memo.
+    pub(super) fn count(held: u64) {
+        COUNTS.with(|c| {
+            let (q, h) = c.get();
+            c.set((q + 1, h + held));
+        });
+    }
+
+    /// Appends the counts since the last flush to the file, when the check is on.
+    pub(super) fn flush() {
+        let Some(p) = path() else { return };
+        let (q, h) = COUNTS.replace((0, 0));
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        writeln!(f, "queries {q} held {h}").unwrap_or_else(|e| panic!("{}: {e}", p.display()));
     }
 }
 

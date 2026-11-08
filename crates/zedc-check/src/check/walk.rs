@@ -47,6 +47,8 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     ck.bounds();
     ck.walk(unit);
     ck.finish();
+    #[cfg(debug_assertions)]
+    clean_check::flush();
     ck.info
         .errors
         .sort_by(|a, b| (a.span, &a.message).cmp(&(b.span, &b.message)));
@@ -3903,6 +3905,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// class of one type are checked on it now. The needs lose the atoms of `strip`
     /// ([`Self::strip_widened`]).
     fn generalize(&mut self, level: usize, mut sig: Sig, strip: &[(usize, KType)]) -> Arc<Sig> {
+        // Levels nest: the one that ends is the innermost, so that `self.gens[level]` below
+        // expires every entry of [`Self::clean`] that may hold a class this names.
+        debug_assert_eq!(
+            level, self.level,
+            "the level that ends is the innermost one"
+        );
         // The roots of this level, and the classes whose roots have a type by now: each of
         // the latter takes its root's type in `sig`. A class of a function around goes to
         // that function's list.
@@ -7324,5 +7332,50 @@ mod tests {
         ck.data(&row, "a tuple", at, at);
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
+    }
+
+    /// A row the memo of clean rows found clean at a level is walked again once that level
+    /// ends: the end names the level's classes, which then no longer last, so [`Ck::bound`]
+    /// at the level around binds the variable the row holds (CK-data-memo). Kept past the
+    /// end, the entry would pass the row by and leave the named variable unbound.
+    #[test]
+    fn a_row_found_clean_is_walked_again_after_its_level_ends() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t);
+        ck.level += 1;
+        ck.pending.push(Vec::new());
+        let k = ck.class();
+        let v: Arc<str> = format!("${k}").into();
+        let row = Ty::tuple(vec![Ty::var(v.clone()), Ty::lit(&Value::int(1.into()))]);
+        let node = row.tuples[0].node();
+        assert_eq!(ck.bound(&row, &mut Binds::new()), row);
+        assert!(ck.is_clean(node));
+        let sig = Sig {
+            params: vec![SParam {
+                name: "x".into(),
+                positional: true,
+                default: None,
+            }],
+            arrows: vec![Arrow {
+                params: vec![row.clone()],
+                result: Ty::empty(),
+            }],
+            bounds: BTreeMap::new(),
+            data: false,
+            word: None,
+            needs: Vec::new(),
+            own: BTreeSet::new(),
+            held: BTreeSet::new(),
+            named: 0,
+            facts: Default::default(),
+        };
+        ck.generalize(1, sig, &[]);
+        assert_eq!(ck.level, 0);
+        assert!(ck.classes[k].name.is_some());
+        assert!(!ck.is_clean(node));
+        let mut dynamic = Binds::new();
+        dynamic.insert(v, Ty::dynamic());
+        assert_eq!(ck.bound(&row, &mut Binds::new()), row.replace(&dynamic));
     }
 }
