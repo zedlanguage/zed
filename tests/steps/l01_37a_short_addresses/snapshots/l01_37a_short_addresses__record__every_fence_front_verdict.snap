@@ -112,7 +112,7 @@ EXAMPLES.md [18. Files, stores, and the world] 2: rejected: [Diagnostic { line: 
 EXAMPLES.md [18. Files, stores, and the world] 3: rejected: [Diagnostic { line: 2, col: 8, message: "this form (ReduceTail) is built from layer L7", steps: [], row: None }]
 EXAMPLES.md [18. Files, stores, and the world] 4: rejected: [Diagnostic { line: 2, col: 8, message: "this form (ReduceTail) is built from layer L7", steps: [], row: None }]
 EXAMPLES.md [18. Files, stores, and the world] 5: rejected: [Diagnostic { line: 2, col: 1, message: "this form (Signature) is built from layer L7", steps: [], row: None }, Diagnostic { line: 3, col: 1, message: "this form (Signature) is built from layer L7", steps: [], row: None }]
-EXAMPLES.md [18. Files, stores, and the world] 6: rejected: [Diagnostic { line: 2, col: 1, message: "this form (Signature) is built from layer L7", steps: [], row: None }]
+EXAMPLES.md [18. Files, stores, and the world] 6: rejected: [Diagnostic { line: 2, col: 15, message: "this form (ReduceTail) is built from layer L7", steps: [], row: None }]
 EXAMPLES.md [18. Files, stores, and the world] 7: rejected: [Diagnostic { line: 3, col: 89, message: "no token starts with '…' (U+2026)", steps: [], row: None }]
 EXAMPLES.md [18. Files, stores, and the world] 8: rejected: [Diagnostic { line: 2, col: 59, message: "no token starts with '…' (U+2026)", steps: [], row: None }]
 EXAMPLES.md [18. Files, stores, and the world] 9: rejected: [Diagnostic { line: 2, col: 8, message: "`http` is not defined", steps: [], row: None }, Diagnostic { line: 2, col: 17, message: "`url` is not defined", steps: [], row: None }]
