@@ -29,6 +29,7 @@ Plain decimal literal whose own format is not the format expected
 Two numeric values with no common carrier
 Match binder unused in its guard and arm
 Capitalized free name used once in a signature and nowhere in the body
+Capitalized free name in a `struct` field
 Remap output name that names a source level and resolves to a value in scope
 Method declared on a value
 Prefix `-` on a numeric literal's postfix chain
