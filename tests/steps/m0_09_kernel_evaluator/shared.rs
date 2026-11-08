@@ -439,3 +439,47 @@ fn a_part_read_under_two_relations_in_one_comparison_gets_each_answer() {
     assert!(a != b);
     assert!(a.surface_eq(&b));
 }
+
+#[test]
+fn comparing_families_made_from_one_family_scales() {
+    // `h_i = h_0 | {1000 + i: i}` for one family `h_0` of 101 entries, one of them a family `f`
+    // of n entries: the n families have n ids but share the map node that holds `f`, so `f` is
+    // met n times though it is held in one entry of one map. Each side is built apart.
+    let made = |n: usize| {
+        let f = Value::Family(Family::set(0..n as i64));
+        let h0 =
+            Family::of((0..=100i64).map(|k| (k, if k == 0 { f.clone() } else { Value::Int(k) })));
+        let h =
+            (0..n as i64).map(|i| Value::Family(h0.union(&Family::of([(1000 + i, i)])).unwrap()));
+        Value::tuple(h.collect())
+    };
+    assert!(made(3) == made(3));
+    assert_eq!(made(3).cmp(&made(3)), std::cmp::Ordering::Equal);
+    let other = |n: usize| {
+        let f = Value::Family(Family::set(1..=n as i64));
+        let h0 =
+            Family::of((0..=100i64).map(|k| (k, if k == 0 { f.clone() } else { Value::Int(k) })));
+        Value::tuple(
+            (0..n as i64)
+                .map(|i| Value::Family(h0.union(&Family::of([(1000 + i, i)])).unwrap()))
+                .collect(),
+        )
+    };
+    assert!(made(3) != other(3));
+    assert_eq!(made(3).cmp(&other(3)), std::cmp::Ordering::Less);
+    assert!(!made(3).surface_eq(&other(3)));
+    let values: HashMap<usize, [Value; 2]> = [1000, 8000].map(|n| (n, [made(n), made(n)])).into();
+    check_order(
+        "equality, order and the language's relations of n families made from one family \
+         that holds a family of n, by n",
+        1000,
+        1,
+        |n| {
+            let [a, b] = &values[&n];
+            assert!(a == b);
+            assert_eq!(a.cmp(b), std::cmp::Ordering::Equal);
+            assert!(a.surface_eq(b));
+            assert_eq!(a.surface_cmp(b), Some(std::cmp::Ordering::Equal));
+        },
+    );
+}
