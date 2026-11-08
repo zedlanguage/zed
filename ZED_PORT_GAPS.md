@@ -2628,6 +2628,14 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A post-order walk of a type on a `Vec` of steps (`enum Step` owning the types) and a `Vec` of results, the joined components of each type taken off with `split_off`, and a `HashMap<Ty, Ty>` of the types already joined, keyed by the type's value through its cached digest | `one_shape_per_length` | Mutation of growable vectors and of a map (gap 11); hashing by a cached digest (gap 1) | A fold with the step stack and the map as values, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)); the map keyed by the type's content digest |
 | `Sig::word: Option<Arc<str>>`, the prelude word a signature is, included in its digest, so the checker tells `min` from `+` of the same arrows wherever the function value goes | `Sig`, `word_sig`, `Ck::apply` | None | A field of the signature's record |
 
+## Entries from MINMAX-sig-word (`crates/zedc-check/src/check/walk.rs`, `crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A new variant of the enum `NeedKind` with named fields (`Order { what, word, other, first }`), matched with `..` rest patterns in `tys`, `every_ty`, `into_tys` and `map_tys` | `ty.rs`, `Ck::meet` | None: Zed has sums of records and record patterns with a rest | A member of the need sum |
+| A fixed-size array `[bool; 2]` updated by index inside a loop over `[(a, b), (b, a)].into_iter().enumerate()` | `Ck::min_max_tuples` | Mutation of an array element (gap 11) | A pair of booleans returned by a fold over the two sides |
+| A closure capturing another closure (`only` calls `rest`) | `Ck::min_max_tuples` | None | Two local functions |
+
 ## Entries from EMPTY-morphism-next (`crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/empty.rs`)
 
 | Rust construct | Sites | Gap | At the port |
