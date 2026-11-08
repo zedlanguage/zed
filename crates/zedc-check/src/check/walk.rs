@@ -1012,7 +1012,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return self.bits(m, w, p, None, positional, named, curry, span);
                     }
                     if word_arity(w) != 1 {
-                        self.min_max_calls.insert(span);
                         let args = Args::of(positional, named);
                         return self.call_value(m, &f, what.into(), None, args, curry, span);
                     }
@@ -2487,7 +2486,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.word(m, name, &[], Some(x), span)
                 }
                 Some(1) if word_arity(name) != 1 => {
-                    self.min_max_calls.insert(span);
                     let f = Ty::func(word_sig(name));
                     let args = Args::of(positional, named);
                     self.call_value(m, &f, name.into(), Some(x), args, curry, span);
@@ -4588,6 +4586,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             arrows,
             bounds: sig.bounds.clone(),
             data: false,
+            word: None,
             needs,
             own: sig.own.clone(),
             held: BTreeSet::new(),
@@ -4754,6 +4753,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let permuted = Sig {
             bounds: s.bounds.clone(),
             data: s.data,
+            word: None,
             needs: s.needs.clone(),
             own: s.own.clone(),
             held: s.held.clone(),
@@ -4961,11 +4961,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             passed(&mut out, atoms.iter());
         }
-        // `min` and `max` called by name take two tuples; they are told apart by the call, since
-        // `+`, `-` and `*` have their signature.
+        // `min` and `max` take two tuples, wherever they are called from; they are told apart by
+        // the word the signature is, not by its arrows, which `+`, `-` and `*` share.
         if let [Some(x), Some(y)] = args.as_slice()
             && (!x.ty.tuples.is_empty() || !y.ty.tuples.is_empty())
-            && self.min_max_calls.contains(&span)
+            && matches!(sig.word.as_deref(), Some("min" | "max"))
         {
             let t = self.min_max_tuples(what, sig, &x.ty, &y.ty, span);
             return (out.union(&t), Vec::new());

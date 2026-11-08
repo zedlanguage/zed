@@ -2611,3 +2611,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A per-thread `HashMap` with `BuildHasherDefault<KeyHasher>` (the digest as the hash), each bucket a `Vec<Weak<Set>>`; a set removes itself from its bucket when dropped | `bdd::set::SetTable`, `Slot`, `make`, `Drop for Set`, `Tables::new` | Weak references and drop hooks (as in K66 and K70) | A hash map keyed by digest in the per-thread store, entries removed when the set is freed |
 | Pointer identity of a thread-local `Type` read through `LocalKey::with(\|k\| Arc::ptr_eq(..))` to recognize the empty and top types | `Type::zip_at_once`, `Morphism::cmp` | Identity (equality shortcuts) and thread-locals | A tag on the node for the empty and top types, compared as values |
+
+## Entries from MINMAX-stack (`crates/zedc-check/src/check/mod.rs`, `walk.rs`, `crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A post-order walk of a type on a `Vec` of steps (`enum Step` owning the types) and a `Vec` of results, the joined components of each type taken off with `split_off`, and a `HashMap<Ty, Ty>` of the types already joined, keyed by the type's value through its cached digest | `one_shape_per_length` | Mutation of growable vectors and of a map (gap 11); hashing by a cached digest (gap 1) | A fold with the step stack and the map as values, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)); the map keyed by the type's content digest |
+| `Sig::word: Option<Arc<str>>`, the prelude word a signature is, included in its digest, so the checker tells `min` from `+` of the same arrows wherever the function value goes | `Sig`, `word_sig`, `Ck::apply` | None | A field of the signature's record |

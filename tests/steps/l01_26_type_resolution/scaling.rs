@@ -935,6 +935,7 @@ fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
                 params: Vec::new(),
                 bounds: BTreeMap::new(),
                 data: false,
+                word: None,
                 needs: Vec::new(),
                 named: 0,
                 facts: Facts::default(),

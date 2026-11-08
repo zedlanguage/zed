@@ -616,10 +616,6 @@ struct Ck<'t, 'a> {
     /// variable of the need: only their atoms may pass by to the call around, the first
     /// application taking it.
     need_args: Option<Vec<bool>>,
-    /// The spans of the calls of the prelude words `min` and `max` by name, as the resolver
-    /// found them: only these take two tuples ([`Self::min_max_tuples`]). An operator or a
-    /// function of the same signature, such as `+`, is not one of them.
-    min_max_calls: HashSet<Span>,
     /// The needs being checked at calls, one inside another.
     open: Vec<Open>,
     /// The variables of the parameters a partial call leaves out: the next application
@@ -695,7 +691,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             refused: Vec::new(),
             need_passed: Vec::new(),
             need_args: None,
-            min_max_calls: HashSet::new(),
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
@@ -2527,6 +2522,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 arrows: vec![arrow.clone()],
                 bounds: sig.bounds.clone(),
                 data: sig.data,
+                word: None,
                 needs: Vec::new(),
                 own: sig.own.clone(),
                 held: sig.held.clone(),
@@ -3927,6 +3923,7 @@ fn op_sig(op: &str) -> Sig {
         arrows,
         bounds: BTreeMap::new(),
         data: false,
+        word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
@@ -3999,6 +3996,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         arrows,
         bounds: BTreeMap::new(),
         data: false,
+        word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
@@ -4043,6 +4041,7 @@ fn bit_sig(p: Prim) -> Arc<Sig> {
         }],
         bounds: BTreeMap::new(),
         data: false,
+        word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
@@ -4493,6 +4492,7 @@ fn port(key: Carrier, io: bool) -> Ty {
         }],
         bounds: BTreeMap::new(),
         data: key == Carrier::Int,
+        word: None,
         needs: Vec::new(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
@@ -4920,27 +4920,62 @@ fn and(ts: Vec<Ty>, overload: bool) -> Ty {
 // 100 and 800 links allocated 36.9 MB and 1966.5 MB, 53.4 times (2026-11-07). Joined, each
 // result has one shape per length and the chain is linear; what is lost is only which
 // components went together, which `min` and `max` of numbers and tuples never test.
+//
+// The types are joined after their components, on a stack of their own, since a tuple type
+// nests as deep as the program; and each distinct type once, kept in `done` by its value, since
+// the components of a type share their parts, and `t(k + 1) = (t(k), t(k))` joined part by part
+// would cost 2^k.
 fn one_shape_per_length(t: &Ty) -> Ty {
-    if t.tuples.is_empty() {
-        return t.clone();
+    enum Step {
+        /// Join this type: its components first.
+        Enter(Ty),
+        /// Join this type from the joins of its components, the last on `out`: one shape for
+        /// each of these lengths, in order.
+        Exit(Ty, Vec<usize>),
     }
-    let mut by_len: BTreeMap<usize, Vec<&[Ty]>> = BTreeMap::new();
-    for row in &t.tuples {
-        by_len.entry(row.len()).or_default().push(row);
+    let mut done: HashMap<Ty, Ty> = HashMap::new();
+    let mut out: Vec<Ty> = Vec::new();
+    let mut stack = vec![Step::Enter(t.clone())];
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Enter(t) if t.tuples.is_empty() => out.push(t),
+            Step::Enter(t) => {
+                if let Some(joined) = done.get(&t) {
+                    out.push(joined.clone());
+                    continue;
+                }
+                let mut by_len: BTreeMap<usize, Vec<&[Ty]>> = BTreeMap::new();
+                for row in &t.tuples {
+                    by_len.entry(row.len()).or_default().push(row);
+                }
+                let lens: Vec<usize> = by_len.keys().copied().collect();
+                // The union at each position of the shapes of each length, in order, so that
+                // their joins are on `out` in order when `t` is joined.
+                let parts: Vec<Ty> = by_len
+                    .into_values()
+                    .flat_map(|rows| {
+                        (0..rows[0].len()).map(move |i| Ty::union_all(rows.iter().map(|r| &r[i])))
+                    })
+                    .collect();
+                stack.push(Step::Exit(t, lens));
+                stack.extend(parts.into_iter().rev().map(Step::Enter));
+            }
+            Step::Exit(mut t, lens) => {
+                let mut parts = out
+                    .split_off(out.len() - lens.iter().sum::<usize>())
+                    .into_iter();
+                let rows: Vec<Ty> = (lens.iter())
+                    .map(|&n| Ty::tuple(parts.by_ref().take(n).collect()))
+                    .collect();
+                let tuples = std::mem::take(&mut t.tuples);
+                let joined = t.union(&Ty::union_all(&rows));
+                t.tuples = tuples;
+                out.push(joined.clone());
+                done.insert(t, joined);
+            }
+        }
     }
-    let rows = by_len.into_values().map(|rows| {
-        Ty::tuple(
-            (0..rows[0].len())
-                .map(|i| one_shape_per_length(&Ty::union_all(rows.iter().map(|r| &r[i]))))
-                .collect(),
-        )
-    });
-    let rows: Vec<Ty> = rows.collect();
-    Ty {
-        tuples: Vec::new(),
-        ..t.clone()
-    }
-    .union(&Ty::union_all(&rows))
+    out.pop().expect("the type is joined")
 }
 
 #[cfg(test)]
@@ -4994,5 +5029,42 @@ mod tests {
         // Rolling back to before the first write leaves no entry at all.
         ck.undo(&Mark { log: 0, errors: 0 });
         assert!(ck.info.passes.is_empty());
+    }
+
+    /// The tuple type `(... ((leaf, 1), 2) ..., depth)`.
+    fn nested(leaf: Ty, depth: usize) -> Ty {
+        (1..=depth).fold(leaf, |t, k| {
+            Ty::tuple(vec![t, Ty::lit(&Value::int(k.into()))])
+        })
+    }
+
+    /// Its hash, which is read from the digests of its rows, so two types nested deep are
+    /// compared without walking them.
+    fn digest(t: &Ty) -> u64 {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        BuildHasherDefault::<DefaultHasher>::default().hash_one(t)
+    }
+
+    /// The type of `min` of two tuples nested 200,000 deep, one with an `int` at the bottom and
+    /// one with an `f64`, is joined at every level on the 8 MiB stack of a main thread: one
+    /// shape per level, `int | f64` at the bottom. Joined by recursion, once per level, it
+    /// overflowed that stack.
+    #[test]
+    fn one_shape_per_length_joins_a_tuple_nested_deep_on_a_main_sized_stack() {
+        const DEPTH: usize = 20_000;
+        let (int, f64) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::F64));
+        let both = nested(int.clone(), DEPTH).union(&nested(f64.clone(), DEPTH));
+        assert_eq!(both.tuples.len(), 2);
+        let want = digest(&nested(int.union(&f64), DEPTH));
+        let joined = std::thread::Builder::new()
+            .stack_size(8 << 20)
+            .spawn(move || {
+                let joined = one_shape_per_length(&both);
+                (joined.tuples.len(), digest(&joined))
+            })
+            .expect("starting the thread")
+            .join()
+            .expect("joining on an 8 MiB stack");
+        assert_eq!(joined, (1, want));
     }
 }

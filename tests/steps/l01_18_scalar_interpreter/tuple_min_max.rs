@@ -3,7 +3,7 @@
 
 use super::x;
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::step_helpers::l01_16_elaboration::{checked, errors};
+use zed_tests::step_helpers::l01_16_elaboration::{checked, errors, value};
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
 
 #[test]
@@ -222,4 +222,81 @@ fn checking_min_of_two_tuples_of_n_components_scales() {
     zed_tests::scaling::check("checking `min` of two tuples of n components", 2000, |n| {
         built[&n].check();
     });
+}
+
+#[test]
+fn min_and_max_through_a_function_value_take_two_tuples() {
+    // The word itself is passed, so a call through the name or parameter that holds it takes
+    // two tuples as a call of `min` by name does.
+    let v = |text: &str| value(text, "x");
+    assert_eq!(v("f = min;\nx = f((1, 2), (1, 3));\n"), "(1, 2)");
+    assert_eq!(v("g = max;\nx = g((1, 2), (1, 3));\n"), "(1, 3)");
+    assert_eq!(
+        v(
+            "ap(positional h, positional a, positional b) = h(a, b);\nx = ap(min, (1, 2), (0, 9));\n"
+        ),
+        "(0, 9)"
+    );
+    assert_eq!(v("f = max;\nx = f(f((5, 1), (4, 9)), (5, 0));\n"), "(5, 1)");
+    // It refuses through the name what it refuses by its own.
+    assert_eq!(
+        errors("f = min;\ny = f((1, 2), 3);\n"),
+        ["`f` does not take (1, 2) and 3: it takes two tuples or two numbers [f((1, 2), 3)]"]
+    );
+}
+
+#[test]
+fn a_function_of_the_arrows_of_min_that_is_not_min_does_not_take_tuples() {
+    // A parameter declared with the arrows of `min` is any function of those arrows, `+` among
+    // them: the tuple rule follows the word, not the signature.
+    assert_eq!(
+        errors(
+            "ap(positional h: (positional a: int, positional b: int) -> int, positional p: (int, int), positional q: (int, int)) = h(p, q);\n"
+        ),
+        ["`h` does not take ((int, int), (int, int)) [h(p, q)]"]
+    );
+}
+
+/// The unit `a0 = (1.0, 0); b0 = (2.0, 0);`, then `a{k}` and `b{k}` for k up to `n` as `link`
+/// makes them from the name of the one before, then `x = min(a{n}, b{n});`.
+fn nested_unit(
+    n: usize,
+    link: fn(&str, usize) -> String,
+) -> zed_tests::step_helpers::l01_16_elaboration::Checked {
+    let mut text = String::from("a0 = (1.0, 0);\nb0 = (2.0, 0);\n");
+    for k in 1..=n {
+        for side in ["a", "b"] {
+            let before = format!("{side}{}", k - 1);
+            text.push_str(&format!("{side}{k} = {};\n", link(&before, k)));
+        }
+    }
+    text.push_str(&format!("x = min(a{n}, b{n});\n"));
+    checked(&text)
+}
+
+#[test]
+fn checking_min_of_two_tuples_nested_n_deep_scales() {
+    // `a{k} = (a{k - 1}, k)`: the type of `x` joins the two shapes at each of n levels.
+    let built = zed_tests::scaling::inputs(400, |n| {
+        nested_unit(n, |before, k| format!("({before}, {k})"))
+    });
+    zed_tests::scaling::check("checking `min` of two tuples nested n deep", 400, |n| {
+        built[&n].check();
+    });
+}
+
+#[test]
+fn checking_min_of_two_tuples_nested_n_deep_through_shared_parts_scales() {
+    // `a{k} = (a{k - 1}, a{k - 1})`: 2^n paths through n distinct types on each side, each
+    // joined once.
+    let built = zed_tests::scaling::inputs(400, |n| {
+        nested_unit(n, |before, _| format!("({before}, {before})"))
+    });
+    zed_tests::scaling::check(
+        "checking `min` of two tuples nested n deep through shared parts",
+        400,
+        |n| {
+            built[&n].check();
+        },
+    );
 }

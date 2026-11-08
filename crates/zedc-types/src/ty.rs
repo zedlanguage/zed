@@ -822,6 +822,7 @@ impl<'b> Replacer<'b> {
             arrows,
             bounds,
             data: s.data,
+            word: s.word.clone(),
             needs,
             own,
             held,
@@ -1056,6 +1057,7 @@ impl Rebuild for Settle<'_> {
                 .map(|(v, m)| (v.clone(), *m))
                 .collect(),
             data: s.data,
+            word: s.word.clone(),
             needs,
             own: s.own.iter().filter(open).cloned().collect(),
             held: s.held.iter().filter(open).cloned().collect(),
@@ -1084,6 +1086,11 @@ pub struct Sig {
     /// Whether it is a family: a morphism held as data (sec:values_morphisms), shown, compared
     /// and put in a tuple as a value, and looked up through its arrows.
     pub data: bool,
+    /// The prelude word it is, if it is one: the function itself, not its arrows. `min` and
+    /// `max` take two tuples, which `+`, of the same arrows, does not (DESIGN.md
+    /// sec:reduction, item 5), wherever the word is called from: by name, as a method, or
+    /// through a name or parameter it was passed to.
+    pub word: Option<Arc<str>>,
     /// What the body needs of the values of its type variables, in the order the body met
     /// the uses: each call checks them again with the variables bound (DESIGN.md rule 4).
     pub needs: Vec<Need>,
@@ -3324,6 +3331,7 @@ fn arrow_text(s: &Sig, a: &Arrow) -> String {
             .filter_map(|v| Some((v.clone(), *s.bounds.get(v)?)))
             .collect(),
         data: s.data,
+        word: None,
         needs: Vec::new(),
         own: vs
             .order
@@ -4176,7 +4184,7 @@ impl Sig {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let hash = |s: &Sig| {
             *s.facts.2.get_or_init(|| {
-                let parts = (&s.params, &s.arrows, &s.bounds, s.data);
+                let parts = (&s.params, &s.arrows, &s.bounds, s.data, &s.word);
                 let more = (&s.needs, &s.own, &s.held, s.named);
                 BuildHasherDefault::<DefaultHasher>::default().hash_one((parts, more))
             })
@@ -4325,6 +4333,7 @@ impl Sig {
             }],
             bounds: BTreeMap::new(),
             data: false,
+            word: None,
             needs: Vec::new(),
             own: BTreeSet::new(),
             held: BTreeSet::new(),
@@ -4881,6 +4890,7 @@ mod tests {
             arrows,
             bounds: BTreeMap::new(),
             data: false,
+            word: None,
             needs: Vec::new(),
             own: ["T".into(), "B".into()].into_iter().collect(),
             held: BTreeSet::new(),
