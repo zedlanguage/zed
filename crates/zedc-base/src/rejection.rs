@@ -33,6 +33,8 @@ rows! {
     MissingAlgebraicObligation => "Missing algebraic obligation",
     UndischargeableEnsure => "Undischargeable `@ensure`",
     UnsatisfiableConstraints => "Unsatisfiable declared constraints",
+    // No diagnostic uses this row yet: plan row H10-refuse emits it.
+    UndecidablePremise => "Undecidable premise class",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
         "Obligation below proof grade",
