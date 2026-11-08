@@ -117,7 +117,7 @@ fn a_deep_pattern_binds_the_last_element() {
         let [(x, node)] = &out[..] else {
             panic!("{} binders", out.len())
         };
-        assert_eq!(paths.path(*node).len(), DEPTH + 1);
+        assert_eq!(paths.path(*node).len(), DEPTH, "one part per level entered");
         assert_eq!(h.value(*x).unwrap(), Value::str("last"));
     }
 }
