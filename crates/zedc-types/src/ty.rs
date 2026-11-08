@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{Names, ProgramNames, fresh_name};
@@ -63,6 +64,8 @@ pub struct Row(Arc<RowData>);
 
 struct RowData {
     cs: Vec<Ty>,
+    /// Its number, which no other row or shape made in this process has ([`Node`]).
+    id: Node,
     /// The hash of the components.
     digest: u64,
     /// Whether a component holds a type variable or the unknown, outside functions, at any
@@ -86,10 +89,9 @@ struct RowData {
     /// tuple expression: a function it held then was reported at that tuple, and a function
     /// that took the place of a variable since is reported by the variable's data need.
     checked: bool,
-    /// The variables a component holds at any depth, inside functions and payloads too: so
-    /// replacing variables keeps whole a row that holds none of them, and the variables of a
-    /// type are found at the cost of its outer level.
-    vars: VarFacts,
+    /// The variables a component holds at any depth, inside functions and payloads too, as
+    /// bits ([`VarBits`]): so replacing variables keeps whole a row that holds none of them.
+    bits: VarBits,
     /// The kernel type of the tuple shape ([`Row::kernel`]): none when a component holds a
     /// function, a variable or the unknown at any depth.
     kernel: Option<KType>,
@@ -146,8 +148,8 @@ impl Row {
             true => None,
             false => cs.iter().find_map(|c| c.unchecked_function().cloned()),
         };
-        let mut vars = VarFacts::default();
-        cs.iter().for_each(|c| vars.ty(c));
+        let mut bits = VarBits::default();
+        cs.iter().for_each(|c| bits.ty(c));
         let fixed = cs.iter().all(|c| {
             c.vars.is_empty()
                 && c.fns.is_empty()
@@ -189,6 +191,7 @@ impl Row {
         let void = cs.iter().any(Ty::lists_nothing);
         Row(Arc::new(RowData {
             cs,
+            id: Node::next(),
             digest,
             open,
             dynamic,
@@ -197,7 +200,7 @@ impl Row {
             fixed,
             data,
             checked,
-            vars,
+            bits,
             kernel,
             exact,
             point,
@@ -221,12 +224,6 @@ impl Row {
     // made, whether or not it is read, and keeps it.
     fn kernel(&self) -> Option<KType> {
         self.0.kernel.clone()
-    }
-
-    /// Whether a component holds one of the variables `binds` replaces, at any depth, inside
-    /// functions and payloads too.
-    fn holds_any(&self, binds: &Binds) -> bool {
-        self.0.vars.holds_any(binds)
     }
 
     /// Whether a component holds a type variable or the unknown, outside functions, at any
@@ -264,9 +261,34 @@ impl Row {
             .get_or_init(|| Keys::new(self.0.cs.iter().map(class).collect()))
     }
 
+    /// Its number, the same for each path to a shared row and never another row's or shape's.
+    pub fn node(&self) -> Node {
+        self.0.id
+    }
+
+    /// Whether a component holds a variable at any depth, inside functions and payloads too.
+    pub fn holds_vars(&self) -> bool {
+        !self.0.bits.is_empty()
+    }
+
     /// The components, to change.
     pub fn to_vec(&self) -> Vec<Ty> {
         self.0.cs.clone()
+    }
+}
+
+/// The number of a row or payload shape, given when it is made from one count for the whole
+/// process: no two rows or shapes have the same one, and a node that is dropped does not pass
+/// its number on to a later one, as it may pass on its address. A memo that outlives one walk,
+/// and so may outlive a node it holds, is keyed by it (`Ck::data`, `Ck::bound`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Node(u64);
+
+impl Node {
+    /// The next number.
+    fn next() -> Node {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Node(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 
@@ -1069,6 +1091,8 @@ pub struct ShapeData {
     pub items: Vec<Ty>,
     /// Its fields, by name.
     pub fields: BTreeMap<Arc<str>, Ty>,
+    /// Its number, which no other row or shape made in this process has ([`Node`]).
+    id: Node,
     /// The hash of the components and fields.
     digest: u64,
     /// Whether a component or field holds a type variable or the unknown, outside functions,
@@ -1086,8 +1110,8 @@ pub struct ShapeData {
     /// replacing variables, or settling them, keeps the shape whole.
     fixed: bool,
     /// The variables its components and fields hold at any depth, inside functions and
-    /// payloads too.
-    vars: VarFacts,
+    /// payloads too, as bits (`VarBits`).
+    bits: VarBits,
     /// The payload as a kernel type, with its atoms' payloads read: a tuple of its items.
     /// None when it has fields, which only a normal form with a mark of their names tells
     /// apart ([`Forms`]), or when a component holds a function, a variable or the unknown at
@@ -1266,8 +1290,8 @@ impl Shape {
         });
         let held = cs().find_map(|c| c.held_function().cloned());
         let unchecked = cs().find_map(|c| c.unchecked_function().cloned());
-        let mut vars = VarFacts::default();
-        cs().for_each(|c| vars.ty(c));
+        let mut bits = VarBits::default();
+        cs().for_each(|c| bits.ty(c));
         // Each component's exact kernel type reads what its rows and shapes keep, so this
         // costs the outer levels of the components.
         let exact = match open || held.is_some() || !fields.is_empty() {
@@ -1282,13 +1306,14 @@ impl Shape {
         Shape(Arc::new(ShapeData {
             items,
             fields,
+            id: Node::next(),
             digest,
             held,
             unchecked,
             open,
             dynamic,
             fixed,
-            vars,
+            bits,
             exact,
             wide,
             open_atoms,
@@ -1296,16 +1321,26 @@ impl Shape {
         }))
     }
 
-    /// Whether a component or field holds one of the variables `binds` replaces, at any depth,
-    /// inside functions and payloads too.
-    fn holds_any(&self, binds: &Binds) -> bool {
-        self.0.vars.holds_any(binds)
-    }
-
     /// Whether a component or field holds a type variable or the unknown, outside functions,
     /// at any depth.
     pub fn open(&self) -> bool {
         self.0.open
+    }
+
+    /// Whether a component or field holds the unknown, outside functions, at any depth.
+    pub fn dynamic(&self) -> bool {
+        self.0.dynamic
+    }
+
+    /// Its number, the same for each path to a shared shape and never another shape's or row's.
+    pub fn node(&self) -> Node {
+        self.0.id
+    }
+
+    /// Whether a component or field holds a variable at any depth, inside functions and
+    /// payloads too.
+    pub fn holds_vars(&self) -> bool {
+        !self.bits.is_empty()
     }
 
     /// The address of what it holds, which only tells one shared shape from another.
@@ -1821,7 +1856,7 @@ impl Rebuild for Replacer<'_> {
         let kept = match self.mode {
             _ if r.0.fixed => true,
             Mode::Outside if !r.open() => true,
-            _ => !self.holds(&r.0.vars, &BTreeSet::new()),
+            _ => !self.binds.index().meets(&r.0.bits),
         };
         kept.then(|| {
             self.made_row(r, r);
@@ -1841,7 +1876,7 @@ impl Rebuild for Replacer<'_> {
         let kept = match self.mode {
             _ if s.fixed => true,
             Mode::Outside if !s.open() => true,
-            _ => !self.holds(&s.vars, &BTreeSet::new()),
+            _ => !self.binds.index().meets(&s.bits),
         };
         kept.then(|| {
             self.made_shape(s, s);
@@ -1922,7 +1957,7 @@ impl Rebuild for Subst<'_> {
     }
 
     fn known_row(&mut self, r: &Row) -> Option<Row> {
-        match r.holds_any(self.binds) {
+        match self.binds.index().meets(&r.0.bits) {
             false => Some(r.clone()),
             true => self.made.rows.get(&Arc::as_ptr(&r.0)).cloned(),
         }
@@ -1933,7 +1968,7 @@ impl Rebuild for Subst<'_> {
     }
 
     fn known_shape(&mut self, s: &Shape) -> Option<Shape> {
-        match s.holds_any(self.binds) {
+        match self.binds.index().meets(&s.bits) {
             false => Some(s.clone()),
             true => self.made.shapes.get(&s.as_ptr()).cloned(),
         }
@@ -2098,6 +2133,9 @@ pub struct Sig {
 ///
 /// And it keeps the signature's hash ([`Sig::digest`]), made from the hashes of the
 /// functions it holds, so a set of functions hashes each at the cost of its outer level.
+///
+/// And the bits of its variables (`VarBits`), made from its facts, so a row that holds it
+/// reads them in `O(1)`.
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
@@ -2109,6 +2147,7 @@ pub struct Facts(
     std::sync::OnceLock<VarFacts>,
     std::sync::OnceLock<Arc<Sig>>,
     std::sync::OnceLock<u64>,
+    std::sync::OnceLock<VarBits>,
 );
 
 impl Clone for Facts {
@@ -2154,31 +2193,11 @@ impl VarFacts {
         self.classes.contains(v) || self.names.contains(v)
     }
 
-    /// Whether it holds no variable.
-    fn is_empty(&self) -> bool {
-        self.classes.is_empty() && self.names.is_empty()
-    }
-
-    /// Whether it holds one of the variables `binds` replaces: each bind looked up in it, or
-    /// each of its variables in `binds`, whichever has fewer.
-    fn holds_any(&self, binds: &Binds) -> bool {
-        match binds.len() <= self.classes.len() + self.names.len() {
-            true => binds.keys().any(|v| self.holds(v)),
-            false => (self.classes.iter().chain(&self.names)).any(|v| binds.contains_key(v)),
-        }
-    }
-
     /// The facts of the arrows and needs of `s`, worked out now; for a signature not yet
     /// held in a type, which may still change.
     pub fn of(s: &Sig) -> VarFacts {
         let mut g = VarFacts::default();
-        for a in &s.arrows {
-            a.params.iter().for_each(|p| g.ty(p));
-            g.ty(&a.result);
-        }
-        for n in &s.needs {
-            n.tys().for_each(|t| g.ty(t));
-        }
+        g.tys(sig_tys(s));
         let extra = s.bounds.keys().chain(&s.own).chain(&s.held);
         extra.for_each(|v| add(&mut g.names, v));
         g.free = g.free.max(s.named);
@@ -2188,32 +2207,213 @@ impl VarFacts {
         g
     }
 
-    /// Adds the variables of `t`: those of its rows, payload shapes and functions as each
-    /// keeps them, so the cost is that of its outer level.
-    fn ty(&mut self, t: &Ty) {
-        for v in &t.vars {
-            match class_id(v) {
-                Some(_) => add(&mut self.classes, v),
-                None => add(&mut self.names, v),
+    /// Adds the variables of the types `roots`, at any depth: the facts of each function they
+    /// hold as it keeps them, and each row and payload shape that may hold a variable
+    /// ([`VarBits`]) entered once. A row keeps no set of its own, which for each node of a
+    /// shared DAG would be its transitive closure (question A8), so the cost is that of the
+    /// rows and shapes that hold variables, as at the first walk of them.
+    fn tys<'a>(&mut self, roots: impl IntoIterator<Item = &'a Ty>) {
+        let mut seen = HashSet::new();
+        let mut stack: Vec<&Ty> = roots.into_iter().collect();
+        while let Some(t) = stack.pop() {
+            for v in &t.vars {
+                match class_id(v) {
+                    Some(_) => add(&mut self.classes, v),
+                    None => add(&mut self.names, v),
+                }
+            }
+            for s in &t.fns {
+                self.held(s.facts());
+            }
+            for r in &t.tuples {
+                self.free = self.free.max(r.0.bits.free);
+                if !r.0.bits.is_empty() && seen.insert(r.node()) {
+                    stack.extend(r.iter());
+                }
+            }
+            for s in t.payload_shapes() {
+                self.free = self.free.max(s.bits.free);
+                if !s.bits.is_empty() && seen.insert(s.node()) {
+                    stack.extend(s.items.iter().chain(s.fields.values()));
+                }
             }
         }
-        for r in &t.tuples {
-            self.held(&r.0.vars);
-        }
-        for s in t.payload_shapes() {
-            self.held(&s.vars);
-        }
-        for s in &t.fns {
-            self.held(s.facts());
-        }
     }
-
     /// Adds the facts of a function it holds: of each set, the larger is kept and the smaller
     /// one added to it, so each variable is copied O(log n) times over a nest of n.
     fn held(&mut self, f: &VarFacts) {
         merge(&mut self.classes, &f.classes);
         merge(&mut self.names, &f.names);
         self.free = self.free.max(f.free);
+    }
+}
+
+/// What a row or payload shape keeps of the variables it holds at any depth, inside functions
+/// and payloads too, in place of their set (CK-data-memo, question A8): the smallest and the
+/// largest `k` of its class variables `$k`, a bit for each class variable and one for each
+/// other variable, which other variables may share, and the first variable name the functions
+/// it holds leave free. Each is made from its components' in `O(1)` per row or function a
+/// component holds at its outer level. A set for each row is the transitive closure of a DAG:
+/// a row made from two that share no variable, `z(k) = (x(k), y(k))`, copied one of the two
+/// sets, `O(n^2 log n)` over `n` rows (COMPLEXITY.md F93). The sets of a type's variables are
+/// worked out by a walk ([`Ty::var_facts`]).
+// Complexity tradeoff: the bits and the range of classes say only that a row may hold a
+// variable, so a replacement may rebuild a row that holds none of the variables it binds: one
+// that binds a class `$k` inside the row's range and on one of its bits (`$k` and `$(k + 64)`
+// share one), or a name whose hash shares a bit with one of the row's names. It then costs
+// the rows that may hold one, not those that do: at worst `O(rows)` per replacement, against
+// `O(n^2 log n)` to keep exact sets. The classes a check binds are mostly newer or older than
+// all those of the rows it meets (a call's fresh classes, a signature's own), which the range
+// tells apart. Tests `replacing_in_rows_shared_on_many_paths_scales`,
+// `rows_shared_on_many_paths_scale` and `rows_made_from_disjoint_variable_sets_scale`
+// (l01_26); COMPLEXITY.md F93.
+#[derive(Clone, Copy, Debug)]
+struct VarBits {
+    /// The smallest `k` of a class variable `$k`, `usize::MAX` for none.
+    lo: usize,
+    /// The largest `k` of a class variable `$k`, 0 for none.
+    hi: usize,
+    /// Bit `k mod 64` for each class variable `$k`.
+    classes: u64,
+    /// A bit for each other variable, by the hash of its name.
+    names: u64,
+    /// The first `n` such that no function it holds holds the `n`th variable name, or more
+    /// ([`VarFacts::free`]); the largest of its functions'.
+    free: usize,
+}
+
+impl Default for VarBits {
+    fn default() -> VarBits {
+        VarBits {
+            lo: usize::MAX,
+            hi: 0,
+            classes: 0,
+            names: 0,
+            free: 0,
+        }
+    }
+}
+
+impl VarBits {
+    /// The bit of the variable `v`.
+    fn of_var(v: &str) -> VarBits {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        match class_id(v) {
+            Some(k) => VarBits {
+                lo: k,
+                hi: k,
+                classes: 1 << (k % 64),
+                ..VarBits::default()
+            },
+            None => VarBits {
+                names: 1 << (BuildHasherDefault::<DefaultHasher>::default().hash_one(v) % 64),
+                ..VarBits::default()
+            },
+        }
+    }
+
+    /// The bits of the facts `f` of a function.
+    fn of_facts(f: &VarFacts) -> VarBits {
+        let mut b = VarBits {
+            free: f.free,
+            ..VarBits::default()
+        };
+        (f.classes.iter().chain(&f.names)).for_each(|v| b.add(VarBits::of_var(v)));
+        b
+    }
+
+    /// Adds `other`.
+    fn add(&mut self, other: VarBits) {
+        self.lo = self.lo.min(other.lo);
+        self.hi = self.hi.max(other.hi);
+        self.classes |= other.classes;
+        self.names |= other.names;
+        self.free = self.free.max(other.free);
+    }
+
+    /// Adds the bits of `t`, at the cost of its outer level: its rows, payload shapes and
+    /// functions each keep theirs.
+    fn ty(&mut self, t: &Ty) {
+        t.vars.iter().for_each(|v| self.add(VarBits::of_var(v)));
+        t.tuples.iter().for_each(|r| self.add(r.0.bits));
+        t.payload_shapes().for_each(|s| self.add(s.bits));
+        t.fns.iter().for_each(|s| self.add(s.bits()));
+    }
+
+    /// Whether it has no variable's bit.
+    fn is_empty(&self) -> bool {
+        self.classes == 0 && self.names == 0
+    }
+}
+
+/// The variables a [`Binds`] binds, as [`VarBits`] reads them: how many are on each bit, the
+/// bits on which some are, and the `k` of each class variable `$k` in order, so a row whose
+/// range of classes holds none of them is found in `O(log)` of their number. Kept by the
+/// binds as they change, each change in `O(log)`.
+#[derive(Clone)]
+struct BindKeys {
+    /// How many names are on each bit of [`VarBits::names`].
+    names: [u32; 64],
+    /// How many class variables are on each bit of [`VarBits::classes`].
+    classes: [u32; 64],
+    /// The bits of the names and of the classes on which some are.
+    bits: VarBits,
+    /// The `k` of each class variable `$k` among them.
+    ks: BTreeSet<usize>,
+}
+
+impl BindKeys {
+    /// The variables of `binds`.
+    fn of(binds: &BTreeMap<Arc<str>, Ty>) -> BindKeys {
+        let mut keys = BindKeys {
+            names: [0; 64],
+            classes: [0; 64],
+            bits: VarBits::default(),
+            ks: BTreeSet::new(),
+        };
+        binds.keys().for_each(|v| keys.add(v));
+        keys
+    }
+
+    /// Adds the variable `v`, which it does not hold.
+    fn add(&mut self, v: &str) {
+        let b = VarBits::of_var(v);
+        let (counts, bit) = match class_id(v) {
+            Some(k) => {
+                self.ks.insert(k);
+                (&mut self.classes, b.classes)
+            }
+            None => (&mut self.names, b.names),
+        };
+        counts[bit.trailing_zeros() as usize] += 1;
+        self.bits.classes |= b.classes;
+        self.bits.names |= b.names;
+    }
+
+    /// Removes the variable `v`, which it holds.
+    fn remove(&mut self, v: &str) {
+        let b = VarBits::of_var(v);
+        let (counts, bits, bit) = match class_id(v) {
+            Some(k) => {
+                self.ks.remove(&k);
+                (&mut self.classes, &mut self.bits.classes, b.classes)
+            }
+            None => (&mut self.names, &mut self.bits.names, b.names),
+        };
+        let i = bit.trailing_zeros() as usize;
+        counts[i] -= 1;
+        if counts[i] == 0 {
+            *bits &= !bit;
+        }
+    }
+
+    /// Whether a row or shape of the bits `b` may hold one of them: a name that shares a bit,
+    /// or a class on one of `b`'s bits and inside its range.
+    fn meets(&self, b: &VarBits) -> bool {
+        if self.bits.names & b.names != 0 {
+            return true;
+        }
+        self.bits.classes & b.classes != 0 && self.ks.range(b.lo..=b.hi).next().is_some()
     }
 }
 
@@ -2896,8 +3096,152 @@ impl Piece {
     }
 }
 
-/// The binding of type variables made while applying an arrow.
-pub type Binds = BTreeMap<Arc<str>, Ty>;
+/// The binding of type variables made while applying an arrow, read as the map it is, with
+/// the index of its variables a replacement reads (`BindKeys`): made at the first replacement
+/// and kept as the binding changes, so each replacement starts in `O(1)` and not in the size
+/// of the binding, which a call of `n` needs each replaced with the call's binding of `n`
+/// variables would pay `n` times.
+#[derive(Clone, Default)]
+pub struct Binds {
+    map: BTreeMap<Arc<str>, Ty>,
+    keys: std::sync::OnceLock<BindKeys>,
+}
+
+impl Binds {
+    /// No binding.
+    pub fn new() -> Binds {
+        Binds::default()
+    }
+
+    /// The index of its variables, made now if not yet.
+    fn index(&self) -> &BindKeys {
+        self.keys.get_or_init(|| BindKeys::of(&self.map))
+    }
+
+    /// Binds `v` to `t`, giving what it was bound to.
+    pub fn insert(&mut self, v: Arc<str>, t: Ty) -> Option<Ty> {
+        if let Some(keys) = self.keys.get_mut()
+            && !self.map.contains_key(&v)
+        {
+            keys.add(&v);
+        }
+        self.map.insert(v, t)
+    }
+
+    /// Unbinds `v`, giving what it was bound to.
+    pub fn remove(&mut self, v: &str) -> Option<Ty> {
+        let out = self.map.remove(v);
+        if let Some(keys) = self.keys.get_mut()
+            && out.is_some()
+        {
+            keys.remove(v);
+        }
+        out
+    }
+
+    /// What `v` is bound to, bound to `f()` first if it is not bound.
+    pub fn or_insert_with(&mut self, v: Arc<str>, f: impl FnOnce() -> Ty) -> &mut Ty {
+        if !self.map.contains_key(&v) {
+            self.insert(v.clone(), f());
+        }
+        self.map.get_mut(&v).expect("bound just now")
+    }
+
+    /// What `v` is bound to, to change.
+    pub fn get_mut(&mut self, v: &str) -> Option<&mut Ty> {
+        self.map.get_mut(v)
+    }
+
+    /// The types bound, to change.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Ty> {
+        self.map.values_mut()
+    }
+
+    /// Keeps the bindings `f` keeps.
+    pub fn retain(&mut self, mut f: impl FnMut(&Arc<str>, &mut Ty) -> bool) {
+        let keys = self.keys.get_mut();
+        match keys {
+            None => self.map.retain(f),
+            Some(keys) => self.map.retain(|v, t| {
+                let keep = f(v, t);
+                if !keep {
+                    keys.remove(v);
+                }
+                keep
+            }),
+        }
+    }
+}
+
+impl std::ops::Deref for Binds {
+    type Target = BTreeMap<Arc<str>, Ty>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl fmt::Debug for Binds {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.map.fmt(f)
+    }
+}
+
+impl PartialEq for Binds {
+    fn eq(&self, other: &Binds) -> bool {
+        self.map == other.map
+    }
+}
+
+impl Extend<(Arc<str>, Ty)> for Binds {
+    fn extend<I: IntoIterator<Item = (Arc<str>, Ty)>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|(v, t)| {
+            self.insert(v, t);
+        });
+    }
+}
+
+impl FromIterator<(Arc<str>, Ty)> for Binds {
+    fn from_iter<I: IntoIterator<Item = (Arc<str>, Ty)>>(iter: I) -> Binds {
+        Binds {
+            map: iter.into_iter().collect(),
+            keys: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+impl<const N: usize> From<[(Arc<str>, Ty); N]> for Binds {
+    fn from(pairs: [(Arc<str>, Ty); N]) -> Binds {
+        pairs.into_iter().collect()
+    }
+}
+
+impl From<BTreeMap<Arc<str>, Ty>> for Binds {
+    fn from(map: BTreeMap<Arc<str>, Ty>) -> Binds {
+        Binds {
+            map,
+            keys: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+impl IntoIterator for Binds {
+    type Item = (Arc<str>, Ty);
+    type IntoIter = std::collections::btree_map::IntoIter<Arc<str>, Ty>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.into_iter()
+    }
+}
+
+impl<'b> IntoIterator for &'b Binds {
+    type Item = (&'b Arc<str>, &'b Ty);
+    type IntoIter = std::collections::btree_map::Iter<'b, Arc<str>, Ty>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.iter()
+    }
+}
 
 /// How a comparison reads a variable of the types on one side ([`Env`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -5608,12 +5952,22 @@ impl Ty {
         }
     }
 
-    /// Every variable in it at any depth, as sets: at the cost of its outer level, since each
-    /// row, payload shape and function keeps its own.
+    /// Every variable in it at any depth, as sets: at the cost of the rows and payload shapes
+    /// that hold one, each entered once, since each function keeps its own.
     pub fn var_facts(&self) -> VarFacts {
         let mut f = VarFacts::default();
-        f.ty(self);
+        f.tys([self]);
         f
+    }
+
+    /// Whether it holds a variable at any depth, inside functions and payloads too: at the cost
+    /// of its outer level, since each row, payload shape and function keeps whether it holds
+    /// one.
+    pub fn holds_vars(&self) -> bool {
+        !self.vars.is_empty()
+            || self.tuples.iter().any(Row::holds_vars)
+            || self.payload_shapes().any(Shape::holds_vars)
+            || self.fns.iter().any(|s| !s.bits().is_empty())
     }
 
     /// Every variable in it, in order of first appearance.
@@ -5657,7 +6011,7 @@ impl Ty {
                 }
             }
             stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(Walk::Row));
-            let open = t.payload_shapes().filter(|s| !s.vars.is_empty());
+            let open = t.payload_shapes().filter(|s| !s.bits.is_empty());
             stack.extend(open.map(Walk::Shape));
             for s in &t.fns {
                 for a in &s.arrows {
@@ -6112,7 +6466,7 @@ async fn accepts<'m>(
         .find(|v| !cx.rigid.contains_key(*v) && !cx.fns.contains_key(*v))
     {
         Some(v) => {
-            let b = binds.entry(v.clone()).or_insert_with(Ty::empty);
+            let b = binds.or_insert_with(v.clone(), Ty::empty);
             *b = b.union(&of.of_piece(p));
             true
         }
@@ -7423,6 +7777,11 @@ impl Sig {
         self.facts.0.get_or_init(|| VarFacts::of(self))
     }
 
+    /// The bits of its variables, made from its facts at the first call.
+    fn bits(&self) -> VarBits {
+        *self.facts.3.get_or_init(|| VarBits::of_facts(self.facts()))
+    }
+
     /// The signatures of the functions it holds at any depth for which `lacks` holds, each
     /// after those it holds and once: the walk stops at a signature for which `lacks` fails,
     /// so it costs the signatures returned and their parts. It looks in the types of the
@@ -8483,6 +8842,48 @@ mod tests {
                 "{fit} fit, {unfit} do not, {together} fit only together"
             );
         }
+    }
+
+    /// The index of a binding's variables ([`BindKeys`]), kept as the binding changes after a
+    /// replacement made it, lets each replacement and substitution replace exactly what one
+    /// with an index made anew does: a row whose variable is bound is entered, and one whose
+    /// variable was unbound, by `remove` or `retain`, is kept whole. The variables are classes
+    /// on the same bit (`$1`, `$65`), classes far apart and names.
+    #[test]
+    fn the_index_of_a_binding_follows_its_changes() {
+        let vars = ["$1", "$65", "$3", "$700", "a", "b", "c"];
+        let t = Ty::tuple(
+            vars.iter()
+                .map(|v| {
+                    let one = Ty::lit(&Value::int(1.into()));
+                    Ty::tuple(vec![Ty::tuple(vec![Ty::var((*v).into()), one])])
+                })
+                .collect(),
+        );
+        let int = Ty::carrier(Carrier::Int);
+        let check = |b: &Binds| {
+            let fresh = Binds::from((**b).clone());
+            assert_eq!(t.replace(b), t.replace(&fresh), "{b:?}");
+            assert_eq!(t.subst(b), t.subst(&fresh), "{b:?}");
+        };
+        let mut b: Binds = [("$1".into(), int.clone()), ("a".into(), int.clone())].into();
+        check(&b);
+        b.insert("$65".into(), int.clone());
+        b.insert("b".into(), int.clone());
+        check(&b);
+        b.remove("$1");
+        b.remove("a");
+        check(&b);
+        b.or_insert_with("$700".into(), || int.clone());
+        b.or_insert_with("$65".into(), Ty::empty);
+        b.extend([("c".into(), int.clone()), ("$3".into(), int.clone())]);
+        check(&b);
+        b.retain(|v, _| !v.starts_with('$') || &**v == "$3");
+        check(&b);
+        b.retain(|_, _| false);
+        assert_eq!(t.replace(&b), t);
+        b.insert("$1".into(), int.clone());
+        check(&b);
     }
 
     #[test]

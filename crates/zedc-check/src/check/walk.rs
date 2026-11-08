@@ -4012,6 +4012,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig.named = n;
         sig.facts = Default::default();
         sig.note_held();
+        // The rows [`Self::clean`] found at this level may hold its classes, which it named.
+        self.ends += 1;
+        if self.gens.len() <= level {
+            self.gens.resize(level + 1, 0);
+        }
+        self.gens[level] = self.ends;
         self.level -= 1;
         Arc::new(sig)
     }
@@ -4353,22 +4359,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// signature that holds it are bound as `binds`; a variable left unbound is unknown.
     /// Gives what the use gives; `binds` are as they were.
     fn meet(&mut self, n: &Need, on: &Ty, binds: &mut Binds, span: Span) -> Ty {
-        let mut b = |ck: &Self, t: &Ty| bound(t, binds, |v| ck.is_class(v));
-        let on = b(self, on);
+        let on = self.bound(on, binds);
         self.replaying += 1;
-        let has_vars = |t: &Ty| {
-            let f = t.var_facts();
-            !f.classes.is_empty() || !f.names.is_empty()
-        };
         self.need_args = match &n.kind {
-            NeedKind::Call { positional, .. } => Some(positional.iter().map(has_vars).collect()),
-            NeedKind::Index(t) => Some(vec![has_vars(t)]),
+            NeedKind::Call { positional, .. } => {
+                Some(positional.iter().map(Ty::holds_vars).collect())
+            }
+            NeedKind::Index(t) => Some(vec![t.holds_vars()]),
             _ => None,
         };
         let start = self.refused.len();
         let out = match &n.kind {
             NeedKind::Component { i, key } => self.at_index(&on, *i, Arg::of(key.clone()), span),
-            NeedKind::Index(k) => self.at_key(&on, Arg::of(b(self, k)), span),
+            NeedKind::Index(k) => {
+                let k = Arg::of(self.bound(k, binds));
+                self.at_key(&on, k, span)
+            }
             NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
             NeedKind::Call {
                 what,
@@ -4379,11 +4385,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let args = Args {
                     positional: positional
                         .iter()
-                        .map(|t| ArgSrc::Got(Box::new(Arg::of(b(self, t)))))
+                        .map(|t| ArgSrc::Got(Box::new(Arg::of(self.bound(t, binds)))))
                         .collect(),
                     named: named
                         .iter()
-                        .map(|(m, t)| (m.to_string(), ArgSrc::Got(Box::new(Arg::of(b(self, t))))))
+                        .map(|(m, t)| {
+                            (
+                                m.to_string(),
+                                ArgSrc::Got(Box::new(Arg::of(self.bound(t, binds)))),
+                            )
+                        })
                         .collect(),
                 };
                 self.call_found(&on, what, args, *curry, span)
@@ -4410,7 +4421,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 other,
                 first,
             } => {
-                let other = b(self, other);
+                let other = self.bound(other, binds);
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
                 self.min_max_tuples(what, &word_sig(word), x, y, span)
             }
@@ -4472,8 +4483,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             let from = self.info.errors.len();
-            let on = bound(&n.on, binds, |v| self.is_class(v));
-            let shape = bound(&on, &mut Binds::new(), |v| self.is_class(v));
+            let on = self.bound(&n.on, binds);
+            let shape = self.bound(&on, &mut Binds::new());
             let got = match self.open.iter_mut().find(|o| o.span == n.span) {
                 _ if on.dynamic => {
                     self.any(&format!("{what}, which needs this of its argument,"), span);
@@ -4565,7 +4576,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     );
                 }
                 for v in &r.vars {
-                    binds.entry(v.clone()).or_insert_with(Ty::empty);
+                    binds.or_insert_with(v.clone(), Ty::empty);
                 }
             }
             self.also(from, n.span, |_| {
@@ -5224,18 +5235,30 @@ impl<'t, 'a> Ck<'t, 'a> {
         // or unknown is not entered; nor is one whose classes were checked as data when it
         // was made, since a class keeps a data need once it has one and a second is nothing.
         // Of such a row only its unknown is reported, once, as each would be at this span.
-        // A row shared by many paths is visited once.
+        // A row shared by many paths is visited once. Nor is a row or shape that an earlier
+        // check entered ([`Self::data_checked`]) entered again: of the rows `p(s, v) = (s, (s,
+        // v))` called `n` times nests, the `k`th call's need meets the `k` rows of `s`, which
+        // the call before entered, so the calls cost `O(n)` in all and not `O(n^2)`.
         let mut rows = HashSet::new();
         // A payload shape that holds no class or unknown is not entered either, and a shape is
         // shared, so one met again by another path is not entered again.
         let mut shapes = HashSet::new();
+        // The rows and shapes entered that hold no unknown, for `data_checked` once each class
+        // they hold has its need.
+        let mut entered = Vec::new();
         let mut stack = vec![t];
         while let Some(t) = stack.pop() {
-            for r in (t.tuples.iter()).filter(|r| r.open() && rows.insert(r.addr())) {
+            for r in (t.tuples.iter()).filter(|r| r.open() && rows.insert(r.node())) {
                 match r.data() {
                     true if r.dynamic() => self.any(what, span),
                     true => {}
-                    false => stack.extend(r.iter()),
+                    false if self.data_checked.contains(&r.node()) => {}
+                    false => {
+                        if !r.dynamic() {
+                            entered.push(r.node());
+                        }
+                        stack.extend(r.iter());
+                    }
                 }
             }
             for v in &t.vars {
@@ -5249,9 +5272,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             // An atom expression does not check its payload as data, since a payload may hold
             // a function (DESIGN.md, `#atom(t)`), so its classes and unknowns are met here.
             let open = t.payloads.values().flatten().flatten().filter(|s| s.open());
-            for s in open.filter(|s| shapes.insert(s.as_ptr())) {
+            for s in open.filter(|s| shapes.insert(s.node())) {
+                if self.data_checked.contains(&s.node()) {
+                    continue;
+                }
+                if !s.dynamic() {
+                    entered.push(s.node());
+                }
                 stack.extend(&s.items);
                 stack.extend(s.fields.values());
+            }
+        }
+        for n in entered {
+            if self.data_checked.insert(n) && self.trying {
+                self.log.push(Undo::DataChecked(n, false));
             }
         }
     }
@@ -7251,4 +7285,44 @@ fn passed_repairs(p: &str, d: &IntDomain, span: Span) -> Vec<Note> {
     .into_iter()
     .map(|text| Note { span, text })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A trial that enters a row is undone with the memos of the rows it entered: the data
+    /// check of `($k, 1)` in a trial gives class `k` its data need and enters the row in
+    /// [`Ck::data_checked`], and [`Ck::bound`] records the row in [`Ck::clean`]; undone, the
+    /// class has no need and neither memo holds the row, so a check after the trial enters the
+    /// row again and gives the class its need again (CK-data-memo). Kept after the trial, the
+    /// memo would let that check pass the row by and the class would never need data.
+    #[test]
+    fn a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t);
+        let k = ck.class();
+        let row = Ty::tuple(vec![
+            Ty::var(format!("${k}").into()),
+            Ty::lit(&Value::int(1.into())),
+        ]);
+        let node = row.tuples[0].node();
+        let at = Span { start: 1, end: 2 };
+        let saved = ck.mark();
+        ck.trying = true;
+        ck.data(&row, "a tuple", at, at);
+        assert_eq!(ck.bound(&row, &mut Binds::new()), row);
+        assert!(ck.classes[k].data);
+        assert!(ck.data_checked.contains(&node));
+        assert!(ck.is_clean(node));
+        ck.trying = false;
+        ck.undo(&saved);
+        assert!(!ck.classes[k].data);
+        assert!(!ck.data_checked.contains(&node));
+        assert!(!ck.clean.contains_key(&node));
+        ck.data(&row, "a tuple", at, at);
+        assert!(ck.classes[k].data);
+        assert!(ck.data_checked.contains(&node));
+    }
 }

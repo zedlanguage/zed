@@ -74,8 +74,9 @@ use zedc_syntax::lex::{Span, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, OTHER, Piece, SParam,
-    Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_name, mask_text,
+    Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, Node, OTHER, Piece,
+    SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, fresh_name,
+    mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -842,6 +843,22 @@ struct Ck<'t, 'a> {
     lines_out: HashSet<String>,
     /// The classes; class `k` is the type variable `$k`.
     classes: Vec<Class>,
+    /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
+    /// they hold at any depth had a data need from it, which the class keeps, so a later check
+    /// of data that meets one again has nothing to add and does not enter it. Kept in the log
+    /// while a repair is tried, since a trial undoes the classes' needs.
+    data_checked: HashSet<Node>,
+    /// The rows and payload shapes [`Self::bound`] found to hold only classes at any depth,
+    /// each with the level it was at and that level's count of ends (`gens`): a class stays a
+    /// class until the function of its level ends and names it, and a class's level only goes
+    /// down, so the entry holds while that level has not ended since. A later replay that
+    /// meets one has no variable in it to make unknown and does not enter it. Kept in the log
+    /// while a repair is tried, since a trial undoes the classes it joined.
+    clean: HashMap<Node, (usize, u64)>,
+    /// For each level, the count of ends ([`Self::generalize`]) when it last ended, 0 for none.
+    gens: Vec<u64>,
+    /// The count of ends so far.
+    ends: u64,
     /// How many declared functions are being checked, one inside another.
     level: usize,
     /// The classes each of those functions resolves when it ends, by its level.
@@ -948,6 +965,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             rough: false,
             lines_out: HashSet::new(),
             classes: Vec::new(),
+            data_checked: HashSet::new(),
+            clean: HashMap::new(),
+            gens: Vec::new(),
+            ends: 0,
             level: 0,
             pending: vec![Vec::new()],
             needs: 0,
@@ -3895,6 +3916,10 @@ enum Undo {
     Witness(Span, Option<usize>),
     /// A class, while a repair is tried.
     Class(usize, Box<Class>),
+    /// Whether a row or payload shape is among [`Ck::data_checked`], while a repair is tried.
+    DataChecked(Node, bool),
+    /// The entry of a row or payload shape in [`Ck::clean`], while a repair is tried.
+    Clean(Node, Option<(usize, u64)>),
 }
 
 /// How long the log and the errors were at a point.
@@ -3928,6 +3953,16 @@ impl Ck<'_, '_> {
         if let Undo::Class(k, c) = w {
             return Undo::Class(k, Box::new(std::mem::replace(&mut self.classes[k], *c)));
         }
+        if let Undo::DataChecked(n, now) = w {
+            let was = match now {
+                true => !self.data_checked.insert(n),
+                false => self.data_checked.remove(&n),
+            };
+            return Undo::DataChecked(n, was);
+        }
+        if let Undo::Clean(n, v) = w {
+            return Undo::Clean(n, set!(self.clean, n, v));
+        }
         let i = &mut self.info;
         match w {
             Undo::Adopt(k, v) => Undo::Adopt(k, set!(i.adopt, k, v)),
@@ -3950,7 +3985,7 @@ impl Ck<'_, '_> {
             }
             Undo::Follows(k, v) => Undo::Follows(k, set!(i.follows, k, v)),
             Undo::Witness(k, v) => Undo::Witness(k, set!(i.witness, k, v)),
-            Undo::Class(..) => unreachable!("a class is set above"),
+            Undo::Class(..) | Undo::DataChecked(..) | Undo::Clean(..) => unreachable!("set above"),
         }
     }
 
@@ -5685,23 +5720,151 @@ fn is_solved(t: &Ty) -> bool {
     t.vars.is_empty() && !t.dynamic
 }
 
-/// `t` with its variables replaced by `binds`, and each that is not a class and `binds`
-/// leaves unbound by the unknown. Those are added to `binds` for the replacement and removed
-/// after it, so `binds` is as it was and each need costs the size of `t` and `log` of the
-/// size of `binds`, not a copy of `binds`.
-fn bound(t: &Ty, binds: &mut Binds, is_class: impl Fn(&str) -> bool) -> Ty {
-    let vars = t.var_facts();
-    let add: Vec<_> = (vars.classes.iter().chain(&vars.names))
-        .filter(|v| !is_class(v) && !binds.contains_key(*v))
-        .collect();
-    for v in &add {
-        binds.insert((*v).clone(), Ty::dynamic());
+/// A row or payload shape, as [`Ck::unbound`] walks them.
+#[derive(Clone, Copy)]
+enum Inner<'t> {
+    Row(&'t ty::Row),
+    Shape(&'t Shape),
+}
+
+impl<'t> Inner<'t> {
+    /// The rows and payload shapes of `t` at its outer level that hold a variable.
+    fn of(t: &'t Ty) -> impl Iterator<Item = Inner<'t>> {
+        let rows = t.tuples.iter().filter(|r| r.holds_vars()).map(Inner::Row);
+        let shapes = t.payloads.values().flatten().flatten();
+        rows.chain(shapes.filter(|s| s.holds_vars()).map(Inner::Shape))
     }
-    let out = t.replace(binds);
-    for v in add {
-        binds.remove(v);
+
+    fn node(self) -> Node {
+        match self {
+            Inner::Row(r) => r.node(),
+            Inner::Shape(s) => s.node(),
+        }
     }
-    out
+
+    /// Its components, and its fields.
+    fn tys(self) -> impl Iterator<Item = &'t Ty> {
+        let (items, fields) = match self {
+            Inner::Row(r) => (r.iter(), None),
+            Inner::Shape(s) => (s.items.iter(), Some(s.fields.values())),
+        };
+        items.chain(fields.into_iter().flatten())
+    }
+}
+
+impl Ck<'_, '_> {
+    /// `t` with its variables replaced by `binds`, and each that is not a class and `binds`
+    /// leaves unbound by the unknown. Those are added to `binds` for the replacement and
+    /// removed after it, so `binds` is as it was and each need costs the size of `t` and `log`
+    /// of the size of `binds`, not a copy of `binds`; a row or shape of `t` that an earlier
+    /// call found to hold only classes is not entered ([`Self::clean`]).
+    fn bound(&mut self, t: &Ty, binds: &mut Binds) -> Ty {
+        let add = self.unbound(t, binds);
+        for v in &add {
+            binds.insert(v.clone(), Ty::dynamic());
+        }
+        let out = t.replace(binds);
+        for v in &add {
+            binds.remove(v);
+        }
+        out
+    }
+
+    /// The variables of `t` at any depth that are not classes and that `binds` leaves unbound.
+    /// Each row and payload shape that holds a variable and is not known to hold only classes
+    /// is entered once, its parts before it, and is recorded in [`Self::clean`] if it holds
+    /// only classes that last ([`Self::lasting`]): of the rows `p(s, v) = (s, (s, v))` called
+    /// `n` times nests, the `k`th call's replay meets the `k` rows of `s`, which the call before
+    /// recorded, so the calls cost `O(n)` in all and not `O(n^2)`.
+    fn unbound(&mut self, t: &Ty, binds: &Binds) -> BTreeSet<Arc<str>> {
+        let mut out = BTreeSet::new();
+        self.outer_vars(t, binds, &mut out);
+        // The parts in an order that puts each after the parts it holds.
+        let mut seen = HashSet::new();
+        let mut order = Vec::new();
+        let mut stack: Vec<(Inner, bool)> = self.parts(t).map(|p| (p, false)).collect();
+        while let Some((p, done)) = stack.pop() {
+            if done {
+                order.push(p);
+                continue;
+            }
+            if !seen.insert(p.node()) {
+                continue;
+            }
+            stack.push((p, true));
+            for c in p.tys() {
+                let new = self.parts(c).filter(|q| !seen.contains(&q.node()));
+                stack.extend(new.map(|q| (q, false)));
+            }
+        }
+        let mut found: HashMap<Node, bool> = HashMap::new();
+        for p in order {
+            let mut clean = true;
+            for c in p.tys() {
+                let outer = self.outer_vars(c, binds, &mut out);
+                clean = clean && outer && self.parts(c).all(|q| found[&q.node()]);
+            }
+            found.insert(p.node(), clean);
+        }
+        if self.gens.len() <= self.level {
+            self.gens.resize(self.level + 1, 0);
+        }
+        let at = (self.level, self.gens[self.level]);
+        for (n, _) in found.into_iter().filter(|&(_, clean)| clean) {
+            let was = self.clean.insert(n, at);
+            if self.trying {
+                self.log.push(Undo::Clean(n, was));
+            }
+        }
+        out
+    }
+
+    /// The rows and payload shapes of `t` at its outer level that hold a variable and are not
+    /// known to hold only classes that last.
+    fn parts<'t>(&self, t: &'t Ty) -> impl Iterator<Item = Inner<'t>> {
+        Inner::of(t).filter(|p| !self.is_clean(p.node()))
+    }
+
+    /// Whether the row or shape `n` is known to hold only classes that last: it was found to
+    /// at a level that has not ended since.
+    fn is_clean(&self, n: Node) -> bool {
+        self.clean
+            .get(&n)
+            .is_some_and(|&(l, g)| l <= self.level && self.gens.get(l) == Some(&g))
+    }
+
+    /// Adds to `out` the variables of `t` at its outer level, and in the functions it holds,
+    /// that are not classes and that `binds` leaves unbound; gives whether each is a class that
+    /// lasts.
+    fn outer_vars(&self, t: &Ty, binds: &Binds, out: &mut BTreeSet<Arc<str>>) -> bool {
+        let held = t.fns.iter().flat_map(|s| {
+            let f = s.facts();
+            f.classes.iter().chain(&f.names)
+        });
+        let mut all = true;
+        for v in t.vars.iter().chain(held) {
+            if self.lasting(v) {
+                continue;
+            }
+            all = false;
+            if !self.is_class(v) && !binds.contains_key(v) {
+                out.insert(v.clone());
+            }
+        }
+        all
+    }
+
+    /// Whether `v` is the variable of a class that stays one while the level now has not
+    /// ended: its root is unnamed and of this level or one around it, and a root is named only
+    /// when its level ends ([`Self::generalize`]), and a class's level only goes down.
+    fn lasting(&self, v: &str) -> bool {
+        class_id(v)
+            .filter(|&k| k < self.classes.len())
+            .is_some_and(|k| {
+                let c = &self.classes[self.find(k)];
+                c.name.is_none() && c.level <= self.level
+            })
+    }
 }
 
 /// The carriers a value of `t` may be of, and [`OTHER`] if it may be a tuple, a function or

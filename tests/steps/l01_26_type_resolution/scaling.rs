@@ -806,8 +806,10 @@ fn variables(prefix: &str, n: usize) -> BTreeMap<usize, Vec<Ty>> {
 /// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`: each row merges the variables of its two
 /// components, `k` and `k + 1` of them, the second set made from the first by adding `Vk`
 /// (ROW-made-cost). Inserting each variable of the smaller set cost `O(k log k)` a row, and
-/// took 70.6 times the instructions at 2,000 against 250; `Row::made` now also steps over the
-/// nodes the two sets share (`check::ty::merge`), 10.0 times (COMPLEXITY.md F93).
+/// took 70.6 times the instructions at 2,000 against 250; stepping over the nodes the two sets
+/// share took 10.0 times. A row now keeps no set, only the bits of its variables and the range
+/// of its classes, `O(1)` a row, and the variables of the last row are listed by one walk that
+/// enters each row once (CK-data-memo, COMPLEXITY.md F93).
 #[test]
 fn rows_made_from_overlapping_variable_sets_scale() {
     let n = 250;
@@ -823,11 +825,12 @@ fn rows_made_from_overlapping_variable_sets_scale() {
 
 /// `n` rows `z(k) = (x(k), y(k))`, with `x(k) = (x(k-1), Ak)` and `y(k) = (y(k-1), Bk)`: each
 /// `z(k)` holds a set of `2k` variables no other row holds, made from two sets that share no
-/// node, so `Row::made` costs `O(n^2 log n)` here (71.2 times the instructions and 39.4 times
-/// the bytes at 2,000 against 250). Keeping a set for each row is the transitive closure of a
-/// DAG; open for the author, question A8 (COMPLEXITY.md F93).
+/// node. When each row kept its set, `Row::made` cost `O(n^2 log n)` here (71.2 times the
+/// instructions and 39.4 times the bytes at 2,000 against 250), since those sets are the
+/// transitive closure of a DAG. A row now keeps flags, the bits of its variables and the
+/// range of its classes, `O(1)` a row, and the variables of the last row are listed by one
+/// walk (author's answer A8 as amended by A20; CK-data-memo, COMPLEXITY.md F93).
 #[test]
-#[ignore = "O(n^2 log n), open until the author answers question A8: COMPLEXITY.md F93, ROW-made-cost"]
 fn rows_made_from_disjoint_variable_sets_scale() {
     let n = 250;
     let (xs, ys) = (variables("A", n), variables("B", n));
@@ -976,17 +979,18 @@ fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
     );
 }
 
-/// The program family checks with no walk that follows each of its `2^n` paths; it is of
-/// order `n^2`, not `n`, because each call `p(s, v)` replays its data need on `s`, a type of
-/// `k` rows at the `k`th call (`Ck::data`): open, COMPLEXITY.md F97. This O(n^2) awaits the
-/// author's approval, question A20; it is not approved. The test measures the cost as it is
-/// now, so that the `2^n` paths do not return unseen; power 2 here is not a claim that O(n^2)
-/// is acceptable, and the fix of A20 lowers it to 1.
+/// The program family checks with no walk that follows each of its `2^n` paths, and in time
+/// linear in `n`: each call `p(s, v)` replays its data need on `s`, a type of `k` rows at the
+/// `k`th call, and `Ck::data` enters only the one row the call before made, since it keeps the
+/// rows it entered. `Ck::bound` likewise skips the rows it found to hold only classes that
+/// outlast the call (`Ck::clean`), and a replacement reads the index its binding keeps
+/// (`Binds`) rather than building one from all the binds (CK-data-memo, COMPLEXITY.md F97; it
+/// was of order `n^2`).
 #[test]
-fn rows_shared_on_many_paths_scale_as_n_squared() {
+fn rows_shared_on_many_paths_scale() {
     for (what, call) in [("a function of n shared rows", false), ("its call", true)] {
-        let units = resolved(25, |n| shared_rows(n, call));
-        scaling::check_order(what, 25, 2, |m| {
+        let units = resolved(400, |n| shared_rows(n, call));
+        scaling::check_order(what, 400, 1, |m| {
             assert_eq!(units[&m].type_errors(), Vec::<String>::new());
         });
     }
