@@ -5733,8 +5733,9 @@ impl Ty {
     }
 
     /// Writes the start of its text to `out`, and pushes the parts that follow to `parts`, in
-    /// order.
-    fn parts<'a>(&'a self, out: &mut String, parts: &mut Vec<Print<'a>>) {
+    /// order; with `found`, without its atom `#notFound`, as the value type of a morphism type
+    /// is written ([`Sig::morphism`]).
+    fn parts<'a>(&'a self, out: &mut String, parts: &mut Vec<Print<'a>>, found: bool) {
         let mut first = true;
         // An atom whose payloads are known prints each payload's type, `#ioError(op: String,
         // path: String, why: String)` (L29-print); the kernel set holds it with any payload.
@@ -5751,6 +5752,8 @@ impl Ty {
             &self.set - &KType::union_all(listed)
         });
         let set = rest.as_ref().unwrap_or(&self.set);
+        let kept = found.then(|| set - &KType::atom("notFound"));
+        let set = kept.as_ref().unwrap_or(set);
         if !set.is_empty() {
             first = false;
             out.push_str(&set.surface_in_union().to_string());
@@ -5809,12 +5812,54 @@ enum Print<'a> {
     Text(&'a str),
     Ty(&'a Ty),
     Sig(&'a Sig),
+    /// The value type of a morphism type: a type without its atom `#notFound`.
+    Found(&'a Ty),
     /// A signature written as a family ([`Sig::family_parts`]).
     Family(&'a Sig),
     /// The end of a type's text ([`Ty::write_vars`]), and whether nothing of it is written yet.
     Vars(&'a Ty, bool),
     /// The bounds clause of a signature, which closes the variables it opened.
     Bounds(&'a Sig, Vec<(Arc<str>, u8)>),
+}
+
+/// A signature written as a morphism type ([`Sig::morphism`]).
+enum Morphism<'a> {
+    /// `K ->? V`: the key type, and the result, `V | #notFound`.
+    Partial { key: &'a Ty, value: &'a Ty },
+    /// `L .. U -> V`: the guarantee, the permission and the value type.
+    Bounded {
+        lower: &'a Ty,
+        upper: &'a Ty,
+        value: &'a Ty,
+    },
+}
+
+impl<'a> Morphism<'a> {
+    /// Pushes the parts of its text to `parts`, in order. A key type that holds a tuple is
+    /// parenthesized, so that `((int, int)) ->? V` is not read as two parameters.
+    fn parts(&self, parts: &mut Vec<Print<'a>>) {
+        let key = |t: &'a Ty, parts: &mut Vec<Print<'a>>| {
+            if t.tuples.is_empty() {
+                parts.push(Print::Ty(t));
+            } else {
+                parts.extend([Print::Text("("), Print::Ty(t), Print::Text(")")]);
+            }
+        };
+        match *self {
+            Morphism::Partial { key: k, value } => {
+                key(k, parts);
+                parts.extend([Print::Text(" ->? "), Print::Found(value)]);
+            }
+            Morphism::Bounded {
+                lower,
+                upper,
+                value,
+            } => {
+                parts.extend([Print::Ty(lower), Print::Text(" .. "), Print::Ty(upper)]);
+                parts.extend([Print::Text(" -> "), Print::Ty(value)]);
+            }
+        }
+    }
 }
 
 /// Writes `start` to `out`. A type nests as deep as the program, so the writing keeps its own
@@ -5827,7 +5872,8 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
         let from = stack.len();
         match part {
             Print::Text(text) => out.push_str(text),
-            Print::Ty(t) => t.parts(out, &mut stack),
+            Print::Ty(t) => t.parts(out, &mut stack, false),
+            Print::Found(t) => t.parts(out, &mut stack, true),
             Print::Sig(s) => s.parts(scope, &mut stack),
             Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, first) => t.write_vars(first, out, scope),
@@ -5873,6 +5919,11 @@ impl Sig {
     /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order.
     fn parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
         let bounds = scope.open(self);
+        if let Some(m) = self.morphism() {
+            m.parts(parts);
+            parts.push(Print::Bounds(self, bounds));
+            return;
+        }
         let several = self.arrows.len() != 1;
         let mut first = true;
         for a in &self.arrows {
@@ -5894,6 +5945,48 @@ impl Sig {
             }
         }
         parts.push(Print::Bounds(self, bounds));
+    }
+
+    /// The morphism type it is written as, if it is one: a function of one unnamed positional
+    /// parameter whose one arrow may answer `#notFound` is `K ->? V`, and one whose arrows are
+    /// `(L) -> V` and `(U) -> V | #notFound`, with `L` within `U` and not equal to it, is
+    /// `L .. U -> V` (DESIGN.md sec:type_language: a message prints a morphism type in that
+    /// form when its bounds differ). Each reads back to the arrows the checker denotes it by.
+    fn morphism(&self) -> Option<Morphism<'_>> {
+        let [p] = &self.params[..] else {
+            return None;
+        };
+        if !p.positional || !p.name.is_empty() {
+            return None;
+        }
+        let miss = KType::atom("notFound");
+        match &self.arrows[..] {
+            // A result of `#notFound` alone is written as it is, `(K) -> #notFound`.
+            [a] if (&miss - &a.result.set).is_empty() && a.result != Ty::set(miss.clone()) => {
+                Some(Morphism::Partial {
+                    key: &a.params[0],
+                    value: &a.result,
+                })
+            }
+            [a, b] => {
+                let (lower, upper) = (&a.params[0], &b.params[0]);
+                let set_only = |t: &Ty| {
+                    t.tuples.is_empty() && t.fns.is_empty() && t.vars.is_empty() && !t.dynamic
+                };
+                (set_only(lower)
+                    && set_only(upper)
+                    && *lower != Ty::empty()
+                    && lower != upper
+                    && lower.union(upper) == *upper
+                    && b.result == a.result.union(&Ty::set(miss)))
+                .then_some(Morphism::Bounded {
+                    lower,
+                    upper,
+                    value: &a.result,
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Whether it is a family that maps each key of one key type to itself, its lookup that

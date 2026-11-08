@@ -264,13 +264,13 @@ fn a_merged_failure_reads_back() {
 }
 
 /// A partial map `K ->? V` is the function type whose lookup is `V | #notFound`
-/// (sec:type_language), printed `(K) -> V | #notFound`, which reads back to it; an `#errs`
+/// (sec:type_language), printed `K ->? V` as `#morphism` of sec:introspection writes it, which reads back to it; an `#errs`
 /// family reads back through the same rule, its lookup `E | #notFound`.
 #[test]
 fn a_partial_map_reads_back_with_its_miss() {
     let partial = back("String ->? int");
     assert_eq!(partial, back("(String) -> int | #notFound"));
-    assert_eq!(partial.to_string(), "((String) -> int | #notFound)");
+    assert_eq!(partial.to_string(), "(String ->? int)");
     assert_ne!(partial, back("String -> int"));
     let built = zedc::check::ty::errs_of(back("#a | #b"));
     let shown = built.to_string();
@@ -623,5 +623,59 @@ fn reading_an_overload_nested_in_parentheses_back_scales() {
                 assert_eq!(ty.fns[0].arrows.len(), size);
             },
         );
+    }
+}
+
+/// A morphism type is printed as sec:introspection's `#morphism` writes it: `K ->? V` when its
+/// guarantee is empty, `L .. U -> V` when its bounds differ, and each text reads back to the
+/// same type as an argument, a union member, a tuple component, a key and a value.
+#[test]
+fn morphism_types_print_as_written_and_read_back_in_every_position() {
+    for (text, shown) in [
+        ("String ->? int", "(String ->? int)"),
+        ("(String) -> int | #notFound", "(String ->? int)"),
+        ("(String) -> #notFound", "((String) -> #notFound)"),
+        ("(String ->? int) | int", "int | (String ->? int)"),
+        ("(String ->? int, int)", "((String ->? int), int)"),
+        ("int ->? (String ->? int)", "(int ->? (String ->? int))"),
+        ("(int ->? int) ->? int", "((int ->? int) ->? int)"),
+        ("((int, int)) ->? int", "(((int, int)) ->? int)"),
+        ("((int) -> int) ->? int", "(((int) -> int) ->? int)"),
+        (
+            "(k: String) -> int | #notFound",
+            "((k: String) -> int | #notFound)",
+        ),
+        ("T ->? T for T in int | f64", "(T ->? T for T in int | f64)"),
+        (
+            "int .. int | String -> bool",
+            "(int .. int | String -> bool)",
+        ),
+        ("#a .. #a | #b -> int", "(#a .. #a | #b -> int)"),
+        ("int .. int -> bool", "((int) -> bool)"),
+        ("!_ .. int -> bool", "(int ->? bool)"),
+        (
+            "((int) -> bool) & ((int | String) -> bool | #notFound)",
+            "(int .. int | String -> bool)",
+        ),
+        (
+            "((int) -> bool) & ((String) -> bool | #notFound)",
+            "(((int) -> bool) & ((String) -> bool | #notFound))",
+        ),
+        (
+            "(int .. int | String -> bool, int)",
+            "((int .. int | String -> bool), int)",
+        ),
+        (
+            "int .. int | String -> (int .. int | String -> bool)",
+            "(int .. int | String -> (int .. int | String -> bool))",
+        ),
+        (
+            "(x: int .. int | String -> bool) -> int",
+            "((x: (int .. int | String -> bool)) -> int)",
+        ),
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), shown, "{text}");
+        assert_eq!(mismatch(&t, shown), None, "{text}");
     }
 }

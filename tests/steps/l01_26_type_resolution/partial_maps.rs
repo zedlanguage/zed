@@ -2,7 +2,10 @@
 //! `->?` row): the type promises no key, so the lookup is `V | #notFound`, which the program
 //! must dispose of before the value reaches a place that does not take it. A total function
 //! type `K -> V` answers on every key, so its lookup is `V` alone. This checker keeps one domain
-//! per function, so `K ->? V` is the function type `(K) -> V | #notFound`, and is printed so.
+//! per function, so `K ->? V` is the function type `(K) -> V | #notFound`, printed `K ->? V`
+//! as `#morphism` of sec:introspection writes it. A bounded map `L .. U -> V` is the two arrows
+//! `(L) -> V` and `(U) -> V | #notFound`: a key in `L` finds its value, a key in `U` alone may
+//! not, and a key not inside `U` is a static error (the lookup rows of sec:type_language).
 
 use zed_tests::scaling;
 
@@ -12,7 +15,7 @@ use super::{Resolved, sig, type_errors};
 fn a_lookup_in_a_partial_map_may_be_not_found() {
     assert_eq!(
         sig("price(m: String ->? int, k: String) = m[k];", "price"),
-        "(m: ((String) -> int | #notFound), k: String) -> int | #notFound"
+        "(m: (String ->? int), k: String) -> int | #notFound"
     );
 }
 
@@ -31,7 +34,7 @@ fn else_disposes_of_the_miss() {
             "price(m: String ->? int, k: String) = m[k] else 0;",
             "price"
         ),
-        "(m: ((String) -> int | #notFound), k: String) -> int"
+        "(m: (String ->? int), k: String) -> int"
     );
 }
 
@@ -65,7 +68,7 @@ fn a_miss_passes_by_a_call_that_takes_the_value_type() {
              f(m: String ->? int, k: String) = twice(m[k]);\n",
             "f"
         ),
-        "(m: ((String) -> int | #notFound), k: String) -> int | #notFound"
+        "(m: (String ->? int), k: String) -> int | #notFound"
     );
 }
 
@@ -86,7 +89,7 @@ fn a_partial_map_of_partial_maps_misses_at_either_step() {
             "seen(m: String ->? (int ->? bool), k: String, i: int) = m[k][i];",
             "seen"
         ),
-        "(m: ((String) -> #notFound | ((int) -> bool | #notFound)), k: String, i: int) \
+        "(m: (String ->? (int ->? bool)), k: String, i: int) \
          -> bool | #notFound"
     );
 }
@@ -111,7 +114,7 @@ fn checking_many_and_deep_partial_maps_scales() {
     assert_eq!(type_errors(&many(3)), Vec::<String>::new(), "{}", many(3));
     assert_eq!(
         sig(&many(2), "g"),
-        "(m: ((String) -> #notFound | ((String) -> int | #notFound))) -> int"
+        "(m: (String ->? (String ->? int))) -> int"
     );
     let units: std::collections::BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
         .into_iter()
@@ -124,6 +127,170 @@ fn checking_many_and_deep_partial_maps_scales() {
         |n| {
             let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+/// `f(m: M, k: K) = m[k];` with the map type `M` and the key type `K`: the signature of `f`.
+fn lookup(m: &str, k: &str) -> String {
+    sig(&format!("f(m: {m}, k: {k}) = m[k];"), "f")
+}
+
+#[test]
+fn a_key_in_the_guarantee_of_a_bounded_map_finds_its_value() {
+    assert_eq!(
+        lookup("int .. int | String -> bool", "int"),
+        "(m: (int .. int | String -> bool), k: int) -> bool"
+    );
+    assert_eq!(
+        sig("f(m: #a .. #a | #b -> int) = m[#a];", "f"),
+        "(m: (#a .. #a | #b -> int)) -> int"
+    );
+}
+
+#[test]
+fn a_key_in_the_permission_alone_may_be_not_found() {
+    assert_eq!(
+        lookup("int .. int | String -> bool", "String"),
+        "(m: (int .. int | String -> bool), k: String) -> bool | #notFound"
+    );
+    assert_eq!(
+        lookup("int .. int | String -> bool", "int | String"),
+        "(m: (int .. int | String -> bool), k: int | String) -> bool | #notFound"
+    );
+    assert_eq!(
+        sig("f(m: #a .. #a | #b -> int) = m[#b];", "f"),
+        "(m: (#a .. #a | #b -> int)) -> int | #notFound"
+    );
+    // An atom key that may lie outside the guarantee selects the arrow of the permission,
+    // not the first arrow that takes some of its atoms.
+    assert_eq!(
+        lookup("#a .. #a | #b | #c -> int", "#a | #b"),
+        "(m: (#a .. #a | #b | #c -> int), k: #a | #b) -> int | #notFound"
+    );
+}
+
+#[test]
+fn a_key_not_inside_the_permission_is_a_static_error() {
+    assert_eq!(
+        type_errors("f(m: int .. int | String -> bool, k: bool) = m[k];"),
+        ["this function does not take (bool) [m[k]]"]
+    );
+    assert_eq!(
+        type_errors("f(m: int .. int | String -> bool, k: int | bool) = m[k];"),
+        ["this function does not take (bool) [m[k]]"]
+    );
+}
+
+#[test]
+fn bounds_that_meet_are_a_total_map_and_an_empty_guarantee_a_partial_one() {
+    assert_eq!(
+        lookup("int .. int -> bool", "int"),
+        "(m: ((int) -> bool), k: int) -> bool"
+    );
+    assert_eq!(
+        sig("f(m: String ->? int) = m;", "f"),
+        "(m: (String ->? int)) -> (String ->? int)"
+    );
+}
+
+#[test]
+fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
+    let pass = "f(m: int .. int | String -> bool) = m;\n";
+    assert_eq!(
+        type_errors(&format!("{pass}g = f(m: (k) -> true);")),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        type_errors(&format!(
+            "{pass}h(positional k: int | String) = true;\ng = f(m: h);"
+        )),
+        Vec::<String>::new()
+    );
+    // A function that may answer `#notFound` promises no key of the guarantee.
+    assert_eq!(
+        type_errors(&format!("{pass}g = f(m: (k) -> #notFound);")),
+        [
+            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool [#notFound]"
+        ]
+    );
+}
+
+#[test]
+fn a_bounded_map_reads_back_in_every_position() {
+    for (m, shown) in [
+        (
+            "(int .. int | String -> bool, int)",
+            "((int .. int | String -> bool), int)",
+        ),
+        (
+            "(int .. int | String -> bool) | int",
+            "int | (int .. int | String -> bool)",
+        ),
+        (
+            "int .. int | String -> (int .. int | String -> bool)",
+            "(int .. int | String -> (int .. int | String -> bool))",
+        ),
+        ("(String ->? int, int)", "((String ->? int), int)"),
+        ("(String ->? int) | int", "int | (String ->? int)"),
+        ("(int ->? int) ->? int", "((int ->? int) ->? int)"),
+    ] {
+        let text = format!("f(m: {m}) = m;");
+        assert_eq!(
+            sig(&text, "f"),
+            format!("(m: {shown}) -> {shown}"),
+            "{text}"
+        );
+        let again = format!("f(m: {shown}) = m;");
+        assert_eq!(sig(&again, "f"), sig(&text, "f"), "{again}");
+    }
+}
+
+/// `n` bounded maps looked up by a key of their permission, and one bounded map nested `n`
+/// deep looked up `n` times.
+fn bounded(n: usize) -> String {
+    let params: Vec<String> = (0..n)
+        .map(|i| format!("m{i}: int .. int | String -> int, k{i}: String"))
+        .collect();
+    let reads: Vec<String> = (0..n).map(|i| format!("(m{i}[k{i}] else 0)")).collect();
+    let deep = format!(
+        "{}bool{}",
+        "int .. int | String -> (".repeat(n),
+        ")".repeat(n)
+    );
+    format!(
+        "f({}) = {};\ng(m: {deep}, k: int) = m{} else false;\n",
+        params.join(", "),
+        reads.join(" + "),
+        "[k]".repeat(n)
+    )
+}
+
+#[test]
+fn checking_and_printing_many_and_deep_bounded_maps_scales() {
+    assert_eq!(
+        type_errors(&bounded(3)),
+        Vec::<String>::new(),
+        "{}",
+        bounded(3)
+    );
+    assert_eq!(
+        sig(&bounded(2), "g"),
+        "(m: (int .. int | String -> (int .. int | String -> bool)), k: int) -> bool"
+    );
+    let units: std::collections::BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
+        .into_iter()
+        .map(|m| (m, Resolved::new(&bounded(m))))
+        .collect();
+    scaling::check_order(
+        "n bounded maps, and one nested n deep, looked up and printed",
+        100,
+        1,
+        |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+            let printed: usize = info.sigs.values().map(|s| s.to_string().len()).sum();
+            assert!(printed > n, "{printed}");
         },
     );
 }

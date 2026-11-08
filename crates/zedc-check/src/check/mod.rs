@@ -2896,16 +2896,30 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.taking(sig, &loose)
     }
 
-    /// The first arrow of `sig` whose parameter `i` takes the atoms `loose[i]`, for each `i`
-    /// where they are not empty.
+    /// Whether the parameter `p` of an arrow of `sig` takes every one of the atoms `loose`.
+    fn takes_all(&self, sig: &Sig, p: &Ty, loose: &KType) -> bool {
+        if let Some(&m) = p.as_var().and_then(|v| sig.bounds.get(v)) {
+            return m & OTHER != 0;
+        }
+        p.dynamic
+            || !p.vars.is_empty()
+            || self.class_of_ty(p).is_some()
+            || (loose - &p.set).is_empty()
+    }
+
+    /// The first arrow of `sig` whose parameter `i` takes every atom of `loose[i]`, for each
+    /// `i` where they are not empty, or else the first that takes some of them. The first rule
+    /// keeps a key `#a | #b` of `#a .. #a | #b -> V`, whose arrows are `(#a) -> V` and
+    /// `(#a | #b) -> V | #notFound`, from the arrow that takes `#a` alone (rule 6 of DESIGN.md
+    /// sec:type_resolution: the region `#b` has the second arrow only).
     fn taking(&self, sig: &Sig, loose: &[KType]) -> Option<usize> {
-        sig.arrows.iter().position(|arrow| {
-            arrow
-                .params
-                .iter()
-                .zip(loose)
-                .all(|(p, l)| *l == KType::empty() || !self.refused_at(sig, p, l))
-        })
+        let first = |fits: &dyn Fn(&Ty, &KType) -> bool| {
+            sig.arrows.iter().position(|arrow| {
+                (arrow.params.iter().zip(loose)).all(|(p, l)| *l == KType::empty() || fits(p, l))
+            })
+        };
+        first(&|p, l| self.takes_all(sig, p, l))
+            .or_else(|| first(&|p, l| !self.refused_at(sig, p, l)))
     }
 
     /// The message of an application that does not check: the arguments, each class shown
@@ -5046,13 +5060,17 @@ impl<'a> Denote<'a> {
                 steps.extend([Step::Unbind(outer), Step::Ty(ty)]);
                 return;
             }
-            // This checker keeps one domain per function: the permission.
-            TypeKind::Bounded { upper, result, .. } => {
+            TypeKind::Bounded {
+                lower,
+                upper,
+                result,
+            } => {
                 steps.extend([
                     Step::Make(t),
                     Step::Ty(result),
                     Step::Close,
                     Step::Ty(upper),
+                    Step::Ty(lower),
                     Step::Open,
                 ]);
                 return;
@@ -5113,15 +5131,49 @@ impl<'a> Denote<'a> {
                     .collect();
                 self.sig(names, tys, result)
             }
+            // A morphism `L .. U -> V` answers `V` on a key of its guarantee `L`, and only
+            // `V | #notFound` on a key of its permission `U` (DESIGN.md sec:type_language, lookup
+            // typing). This checker keeps one domain per arrow, so it is the arrow `(L) -> V`
+            // and then `(U) -> V | #notFound`: rule 6 takes the first for a key within `L`. With
+            // an empty guarantee only the second is left, which is `U ->? V`; with the guarantee
+            // equal to the permission only the first, which is `U -> V`.
             TypeKind::Bounded { .. } => {
                 let result = vals.pop().expect("a bounded function's result is denoted");
-                let upper = vals.pop().expect("a bounded function's bound is denoted");
+                let upper = vals
+                    .pop()
+                    .expect("a bounded function's permission is denoted");
+                let lower = vals
+                    .pop()
+                    .expect("a bounded function's guarantee is denoted");
                 let names = vec![SParam {
                     name: String::new().into(),
                     positional: true,
                     default: None,
                 }];
-                self.sig(names, vec![upper], result)
+                let missed = result.union(&Ty::set(KType::atom("notFound")));
+                let arrows = if lower == upper {
+                    vec![Arrow {
+                        params: vec![upper],
+                        result,
+                    }]
+                } else if lower == Ty::empty() {
+                    vec![Arrow {
+                        params: vec![upper],
+                        result: missed,
+                    }]
+                } else {
+                    vec![
+                        Arrow {
+                            params: vec![lower],
+                            result,
+                        },
+                        Arrow {
+                            params: vec![upper],
+                            result: missed,
+                        },
+                    ]
+                };
+                self.sig_of(names, arrows)
             }
             _ => unreachable!("only a type with parts is made from them"),
         }
@@ -5146,8 +5198,22 @@ impl<'a> Denote<'a> {
     /// The signature of the function type opened last, with the bounds of the variables it
     /// is the home of.
     fn sig(&mut self, names: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Ty {
+        self.sig_of(
+            names,
+            vec![Arrow {
+                params: tys,
+                result,
+            }],
+        )
+    }
+
+    /// [`Self::sig`], of the arrows `arrows`, each with a type for each of `names`.
+    fn sig_of(&mut self, names: Vec<SParam>, arrows: Vec<Arrow>) -> Ty {
         let open = self.open.pop().expect("each function type is opened first");
-        let mut sig = Sig::one(names, tys, result);
+        let mut arrows = arrows.into_iter();
+        let first = arrows.next().expect("a function type has an arrow");
+        let mut sig = Sig::one(names, first.params, first.result);
+        sig.arrows.extend(arrows);
         sig.own.extend(open.bounds.keys().cloned());
         sig.bounds = open.bounds;
         sig.held = open.held;
