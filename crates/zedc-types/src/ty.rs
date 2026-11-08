@@ -236,7 +236,7 @@ impl RowData {
 
 impl PartialEq for Ty {
     /// Compares the two types at their outer level, and the rows, payload shapes and functions
-    /// they hold with a [`Same`], made only for a pair of these that is not one node: with no
+    /// they hold with a `Same`, made only for a pair of these that is not one node: with no
     /// stack as deep as the types, and, for types that hold none, the common case, as cheaply
     /// as the derived `==` did. Inlined, as the derived `==` was, so a caller in another crate
     /// compares the outer level without a call.
