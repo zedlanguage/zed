@@ -815,7 +815,7 @@ main(args: CommandLine, clock: Stream(Instant) with period(0.01r)) -> (stdout: L
 
 <!-- EXAMPLES.md:842 layer L1: ring L1, word L1 (Utf8String), label none; section [18. Files, stores, and the world] 8 -->
 ```zed
-// [prop] — a port for environment variables, which the spec does not name
+// [d4] sec:ports, step L1.19c — the environment variables as a lookup port
 main(env: Utf8String ->? Utf8String) -> (stdout: Lines) { … }
 ```
 
