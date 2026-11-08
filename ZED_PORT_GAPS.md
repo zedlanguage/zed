@@ -348,7 +348,7 @@ in the type; where it does not, `#bug` stays in the type, reaches the callers' t
 
 | Solution | Empirical result | Score | Reasoning |
 |---|---|--:|---|
-| **Chosen.** An atom `#bug(String)` in the codomain of each function that can reach a broken invariant; indexing is `v[i] else #bug("…")` | not run | 8 | Needs no spec change, and keeps G5 and line 711. The cost first counted against it, that the atom enters the result type of nearly every function, holds only where an invariant is unproved: wherever the checker proves it, the member is deleted. The functions that keep it are the list of proofs still missing, which `zedc check` prints |
+| **Chosen.** An atom `#bug(message)` in the codomain of each function that can reach a broken invariant; indexing is `v[i] else #bug("…")` | not run | 8 | Needs no spec change, and keeps G5 and line 711. The cost first counted against it, that the atom enters the result type of nearly every function, holds only where an invariant is unproved: wherever the checker proves it, the member is deleted. The functions that keep it are the list of proofs still missing, which `zedc check` prints |
 | An L1 word `bug(message)` of empty type, which stops the program and reports the message and its provenance | not run | 3 | Keeps result types small, and the empty type keeps it out of unions. But it breaks G5: it is a written stop that the compiler does not rule out, and a program could halt in a way its types do not show. Needs the spec changes listed below |
 
 The word `bug` was rejected because it contradicts DESIGN.md at these places (each confirmed when
