@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
+use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, satisfiable};
 use zedc::store::utvpi::{Search, integer_empty, integer_point_by};
@@ -229,14 +230,138 @@ fn a_disjunction_of_unit_rows_is_decided_and_placed() {
     // `x5 - x0` in `[1, 4]`: no choice of arms reaches it.
     let gap = path(0, 1, 4);
     assert_eq!(decide(&gap), Ok(false), "{gap}");
-    // `satisfiable` takes for each disjunction the first arm that meets what it has taken, and
-    // never undoes one: on five disjunctions it may take two steps down and be refused
-    // (`Refusal::Disjuncts`, the tradeoff at `presburger::pick`). With one disjunction, the last
-    // step, its first arm misses and the second gives the point, placed from the potential.
+    // `satisfiable` searches as `decide` does: for each disjunction it takes the first arm that
+    // meets what it has taken and the rows the disjunctions imply (each step in `[-9, 2]`), and
+    // never undoes one. Without those rows it took two steps down, which the three steps left
+    // cannot balance, and was refused (`Refusal::Disjuncts`); with them a second step down leaves
+    // the rest a sum of at least 16 from three steps of at most 2, so it is not taken.
+    let m = satisfiable(&f).expect("answered").expect("a point");
+    assert!(f.holds(&m), "{m:?} fails {f}");
+    assert_eq!(value(&m, 5), value(&m, 0));
+    let down = (0..5).filter(|&i| value(&m, i + 1) < value(&m, i)).count();
+    assert_eq!(down, 1, "{m:?}");
+    assert_eq!(satisfiable(&gap), Ok(None), "{gap}");
+    // With one disjunction, the last step, its first arm misses and the second gives the point,
+    // placed from the potential.
     let one = path(4, 0, 0);
     assert_eq!(decide(&one), Ok(true), "{one}");
     let m = satisfiable(&one).expect("answered").expect("a point");
     assert!(one.holds(&m), "{m:?} fails {one}");
     assert_eq!(value(&m, 5), value(&m, 0));
     assert_eq!(value(&m, 5) - value(&m, 4), -8);
+}
+
+/// A path of `n` steps `x[i+1] - x[i]`, each in `[1, 2]` or in `[-9, -8]`, with `x[n] == x[0]`:
+/// a point takes between `n/10` and `n/5` steps down.
+fn round_trip(n: usize) -> Formula {
+    let mut parts: Vec<Formula> = (0..n)
+        .map(|i| Formula::or(vec![between(i + 1, i, 1, 2), between(i + 1, i, -9, -8)]))
+        .collect();
+    parts.push(between(n, 0, 0, 0));
+    Formula::and(parts)
+}
+
+/// The steps down of a point of [`round_trip`], checked to be one.
+fn steps_down(n: usize, f: &Formula) -> usize {
+    let m = satisfiable(f).expect("answered").expect("a point");
+    assert!(f.holds(&m), "{m:?} fails a round trip of {n}");
+    (0..n).filter(|&i| value(&m, i + 1) < value(&m, i)).count()
+}
+
+#[test]
+fn satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows() {
+    // Up to five variables, each in `[-3, 3]`, three to eight disjunctions of two or three arms,
+    // each arm one or two unit rows: whenever `decide` answers, `satisfiable` gives the same
+    // answer, and the point it gives meets the formula; both agree with enumeration. Before
+    // `satisfiable` asked the rows the disjunctions imply, as `decide` does, it was refused on
+    // some of these where `decide` answered.
+    let mut rng = Rng::new(0x9e_ed1);
+    let (mut with, mut without) = (0, 0);
+    for _ in 0..400 {
+        let n = 2 + rng.below(4);
+        let mut rows: Vec<Row> = (0..n)
+            .flat_map(|i| [row(&[(i, 1)], 3), row(&[(i, -1)], 3)])
+            .collect();
+        let unit = |rng: &mut Rng| {
+            let a = rng.below(n);
+            let b = (a + 1 + rng.below(n - 1)) % n;
+            let s = |rng: &mut Rng| if rng.below(2) == 0 { 1 } else { -1 };
+            let (ca, cb) = (s(rng), s(rng));
+            row(&[(a, ca), (b, cb)], rng.int(-4, 1))
+        };
+        for _ in 0..rng.below(n) {
+            rows.push(unit(&mut rng));
+        }
+        let mut parts = vec![formula(&rows)];
+        let mut ors: Vec<Vec<Vec<Row>>> = Vec::new();
+        for _ in 0..3 + rng.below(6) {
+            let arms: Vec<Vec<Row>> = (0..2 + rng.below(2))
+                .map(|_| (0..1 + rng.below(2)).map(|_| unit(&mut rng)).collect())
+                .collect();
+            parts.push(Formula::or(arms.iter().map(|a| formula(a)).collect()));
+            ors.push(arms);
+        }
+        let f = Formula::and(parts);
+        // Whether some point of the box meets the rows and one arm of each disjunction.
+        let expected = {
+            let mut p = vec![Int::from(-3); n];
+            'points: loop {
+                if meets(&rows, &p) && ors.iter().all(|arms| arms.iter().any(|a| meets(a, &p))) {
+                    break true;
+                }
+                for v in &mut p {
+                    if *v < Int::from(3) {
+                        *v = &*v + &Int::ONE;
+                        continue 'points;
+                    }
+                    *v = Int::from(-3);
+                }
+                break false;
+            }
+        };
+        let Ok(decided) = decide(&f) else {
+            continue;
+        };
+        assert_eq!(decided, expected, "{f}");
+        let found = satisfiable(&f).unwrap_or_else(|e| panic!("{e:?} where decide answers {f}"));
+        assert_eq!(found.is_some(), decided, "{f}");
+        if let Some(m) = found {
+            assert!(f.holds(&m), "{m:?} fails {f}");
+            with += 1;
+        } else {
+            without += 1;
+        }
+    }
+    assert!(
+        with > 100 && without > 100,
+        "{with} with a point, {without} without"
+    );
+}
+
+#[test]
+fn a_round_trip_of_steps_up_or_down_is_placed() {
+    // Every length from 1 to 40: a point exactly when some `m` steps down balance `n - m` up,
+    // `8m <= 2(n - m)` and `9m >= n - m`, so from 5 on, and at 1 to 4 none.
+    for n in 1..=40 {
+        let f = round_trip(n);
+        let any = (0..=n).any(|m| 10 * m >= n && 5 * m <= n);
+        assert_eq!(decide(&f), Ok(any), "a round trip of {n}");
+        if any {
+            let down = steps_down(n, &f);
+            assert!(10 * down >= n && 5 * down <= n, "{down} of {n} down");
+        } else {
+            assert_eq!(satisfiable(&f), Ok(None), "a round trip of {n}");
+        }
+    }
+}
+
+/// The point of a round trip of 64 and of 512 steps, each up or down, built first.
+#[test]
+fn the_point_of_a_round_trip_scales() {
+    let (small, large) = (round_trip(64), round_trip(scaling::FACTOR * 64));
+    steps_down(64, &small);
+    steps_down(scaling::FACTOR * 64, &large);
+    scaling::check("the point of a round trip of steps up or down", 64, |m| {
+        drop(satisfiable(if m == 64 { &small } else { &large }));
+    });
 }

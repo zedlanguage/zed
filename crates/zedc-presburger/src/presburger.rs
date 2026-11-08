@@ -686,12 +686,33 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
 }
 
 /// [`satisfiable`] of a formula whose names no longer matter ([`Renamed`]): searched as
-/// [`decide_inner`] searches it, with the atoms that [`absorb`] projected away given values.
+/// [`decide_inner`] searches it, with the rows the disjunctions imply asked first and the
+/// atoms that [`absorb`] projected away given values. The implied rows hold at every point of
+/// the formula, so a point with them is a point of the formula; they keep [`pick`] from taking
+/// a disjunct that leaves the disjunctions after it no point within their hulls, which on a
+/// path of steps each up or down took two steps down that the rest could not balance
+/// (`l01_38_presburger::model::a_disjunction_of_unit_rows_is_decided_and_placed`).
+// Complexity tradeoff: as in [`decide_inner`], a formula refused with the implied rows is
+// asked twice, so it costs up to twice what it cost before; the first ask stops at the
+// refusal. No answer is given up: one refused with the rows is asked as before without them.
 fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     let (p, gone) = absorbed(f, &[]);
-    let m = match settle(p, true)? {
-        None => None,
-        Some(p) => found(p)?,
+    let implied = if old_path() {
+        Vec::new()
+    } else {
+        disjunction_hulls(&p.ors)
+    };
+    let ask = |mut p: Parts, rows: Vec<Con>| -> Result<Option<Model>, Refusal> {
+        p.cons.extend(rows);
+        match settle(p, true)? {
+            None => Ok(None),
+            Some(p) => found(p),
+        }
+    };
+    let m = if implied.is_empty() {
+        ask(p, implied)?
+    } else {
+        ask(p, implied).or_else(|_| ask(absorbed(f, &[]).0, Vec::new()))?
     };
     Ok(m.map(|mut m| {
         repair(&mut m, &gone);
