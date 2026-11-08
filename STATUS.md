@@ -1605,10 +1605,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| LADDER-study | merge attempt 1 | 2026-11-07 23:26 | done in batch 67, 753fc780 |
-| NARROW-hub-seed-edges | impl attempt 1 | 2026-11-08 01:04 | cause confirmed: '==' makes no star, hub n in the tree, seed loop and Dijkstra pop read its O(k) edges each test; fix limits seed reads to added conjuncts' edge |
+| BATCH-70 | running | 2026-11-08 02:45 |  |
+| C2-chain | impl attempt 1 | 2026-11-08 00:07 | started; reading brief and products code |
+| CASES-count-468 | impl attempt 1 | 2026-11-08 02:31 | started in /home/luke/Work/wt/cases-count-468 on f14762b6 |
+| CHK-need-bound | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/chk-need-bound seeded from origin/main 12e60866; load 1.34 1.12 2.92 |
+| CK-data-memo | impl attempt cont | 2026-11-07 23:45 | start: risk 2 (VarBits every-bit O(n²)), rebase on origin/main first |
+| KEY-written-addr | impl attempt 1 | 2026-11-08 02:20 | started in /home/luke/Work/wt/key-written-addr on origin/main 12e60866 / load 0.61 1.01 2.94 |
+| NARROW-hub-seed-edges | tests attempt 2 | 2026-11-08 01:04 | controls: V1 (no added edges) fails star test after rewrite to a real star; V2 (no == back edge) and V3 (no edges into changed seeds) masked; V4 (search not fro |
+| ORDER-rename | impl attempt 1 | 2026-11-05 04:07 | ready: option A implemented, wt/order-rename 222d2a91 on origin/main 12e60866; m0_05 56 passed, zedc_lattice 18 passed; load 31 |
+| RUNG2-carrier | impl attempt 1 | 2026-11-08 00:07 | start |
+| SCALE-first-run | impl attempt 1 | 2026-11-05 04:07 | ready e71928ad: fmt, clippy pass; 685-piece selection 0 scaling failures (load 22-47); after rebase 207 pieces 0 failed (load 19-37); final doc run zed_tests/ze |
 | SETS-study | research attempt 1 | 2026-11-07 23:43 | Codex report in (rc 0); Gemini and Claude still running |
+| VARIANT-sync | impl attempt 1 | 2026-11-05 04:07 | ready: wt/variant-sync ea044de7; 25 pieces 1 failed (l01_08 cases, pre-existing on main); load 30.68 33.34 21.41 16/4061 945018 |
+| VERDICT-route | impl attempt 1 | 2026-11-05 04:07 | ready at 301301c4 on wt/verdict-route: fmt, clippy clean; l01_23_subtyping + zed_kernel 80 pieces 0 failed (load 23-54), x13/E4b pass; doc check blocked by pre- |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Gemini timed out (rc 124 after 5 h) with no R2_GEMINI.md; probes and fetched papers kept; its target/ and build/ deleted; round 2 processed from the Codex and C |
+| XST-r3-meta | running | 2026-11-08 02:23 |  |
 | XST-r3 | running | 2026-11-08 00:31 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
