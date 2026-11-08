@@ -1587,13 +1587,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | BIGINT-fast-mul | impl attempt 1 | 2026-11-07 15:13 | docs written (COMPLEXITY K78 + Crossovers subsection, ZED_PORT_GAPS entries, STATUS row, num.rs room comments); negative control (Garner carry without t>>64) bu |
+| CHECK-else-notfound | running | 2026-11-07 22:18 |  |
+| CLASS-atoms-followups | impl attempt 1 | 2026-11-07 21:58 | start: worktree wt/class-atoms-followups from origin/main fce1436d, with CHECK-else-notfound |
 | EMPTY-level | impl attempt 1 | 2026-11-07 21:19 | ready af7812f8: atom-key misfire fixed, ports tested, 117 pieces 0 failed |
-| MINMAX-sig-word | repair attempt 1 | 2026-11-07 20:25 | started: join Order needs per (word, side), literal-chain scaling test, min(a, f64(#inf)) check |
+| L01_24-decimal-scale | running | 2026-11-07 22:58 |  |
+| MINMAX-sig-word | repair attempt 1 | 2026-11-07 20:25 | ready a73dd357 on 0d9d714c: Order needs joined per site; literal chain 12.5x at 40/320 (was 61.5x); still superlinear (3.1x/doubling at 1280) from unjoined call |
 | PROV-oldest-failing | impl attempt 1 | 2026-11-07 21:06 | ready c4818e1f on wt/prov-oldest-failing, rebased on 67a8ad42; targeted tests 0 failed before and after rebase |
 | Q1-LOCAL | measure attempt 1 | 2026-11-03 12:15 | done: 93d423e3 on wt/q1-local; census 30% refused (all Growth, 74% have a point); 10 families refused at every size, time to refusal n log n; equality chain qua |
-| REFUSAL-narrow-cells | repair attempt 1 | 2026-11-07 20:25 | probe: instrumented the fork skip to run refine anyway (ZPROBE), candidate types c1..c9 in a temporary test |
-| ROW-eq-deep | impl attempt 2 | 2026-11-07 20:25 | start: re-measure shallow == in instructions, add fast paths |
-| SPEC-soundness-followups | running | 2026-11-07 21:55 |  |
+| REFUSAL-narrow-cells | repair attempt 1 | 2026-11-07 20:25 | ready ac90b620 on 0d9d714c: main's answers kept (new kept-value test), dou/uod/pair-top linear, 130/131 targeted pieces pass (l01_24 decimal-writing scaling 24. |
+| ROW-eq-deep | impl attempt 2 | 2026-11-07 20:25 | ready d5a24e04 rebased on 0d9d714c; all shallow cases at or below the old ==; targeted 563 pieces pass but l01_24 writing_a_long_decimal_end_scales (24.8x of 24 |
+| SPEC-soundness-followups | spec attempt 1 | 2026-11-07 21:55 | items 12(b)-14 done, zed a5ccd11, zed-impl 0d9d714c, conflict tables and dagview override updated; branch 25611791 ready |
+| TEXT-cmp-fast | impl attempt 1 | 2026-11-07 21:50 | ready 0afb0a1c: rebased on ab2e4e56, fmt+clippy clean, 7 pieces (zed_kernel, zed_rt, l01_17, l01_18, l01_19, m0_05) 0 failed with docs, load 9 |
 | UTVPI-both-ways | impl attempt 2 | 2026-11-05 19:14 | ready c3e84464 (base d5055bcf), 326 tests pass; exponents per doubling k=32..2048: Duong alone 1.02,1.18,1.11,1.06,1.06,1.15; race 1.85,1.74,2.08,(quick win at  |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Claude report in (R2_CLAUDE.md, 35 KB, rc 0); Gemini still running |
 
