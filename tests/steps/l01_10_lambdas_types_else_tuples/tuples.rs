@@ -1,4 +1,4 @@
-//! A tuple has two or more components; one trailing comma is allowed, and `(e,)` is no tuple.
+//! A tuple has one or more components; one trailing comma is allowed, and `(e,)` is the one-tuple (QUESTIONS A21).
 
 use super::check;
 
@@ -10,6 +10,6 @@ fn tuples() {
         ("((1, 2), 3)", "(tuple (tuple 1 2) 3)"),
         ("(x, y).swap", "(. (tuple x y) swap)"),
         ("(e)", "e"),
-        ("(e,)", "syntax"),
+        ("(e,)", "(tuple e)"),
     ]);
 }
