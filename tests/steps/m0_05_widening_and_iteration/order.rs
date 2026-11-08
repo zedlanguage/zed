@@ -602,7 +602,7 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
 
 // ---- Renaming a local binding (plan row ORDER-rename) -------------------------------------
 
-/// `walk(n: int[-2..=0]) = loop { while a < 100; a' = c + 1 with a = n; b = a + 2; c = b + 2; }`
+/// `walk(n: int[-2..=0]) = loop { a' = c + 1 with a = n; b = a + 2; c = b + 2; while a < 100; }`
 /// in the kernel, `gen(n, a -> { b = a + 2; c = b + 2; c + 1 }, a -> a < 100)` with the guard
 /// before each step, its three local names given: the frame variable `a` is a parameter of the
 /// step and of the guard, and `b` and `c` are `let`s inside the step.
