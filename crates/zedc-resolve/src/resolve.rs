@@ -493,10 +493,8 @@ const ANNOTATIONS: &[(&str, u32)] = &[
     ("checked", 10),
     ("invariant", 15),
     ("ensure", 15),
-    ("proved", 15),
     ("exhaustive", 15),
     ("exact", 15),
-    ("strict", 15),
     ("associative", 16),
     ("commutative", 16),
     ("idempotent", 16),
@@ -1541,9 +1539,9 @@ impl Resolver<'_> {
         });
     }
 
-    /// The unit item `a;`, written as the statement at `span`. Two annotations are unit items:
-    /// `@log(#off);`, which this layer accepts, and `@strict;`, of layer L15. Each other way to
-    /// write one is refused with its reason.
+    /// The unit item `a;`, written as the statement at `span`. One annotation is a unit item,
+    /// `@log(#off);`, which this layer accepts. Each other way to write one is refused with its
+    /// reason.
     fn unit_annotation(&mut self, a: &Annot, span: Span) {
         let name = &a.name;
         let fail = |message: String| Error {
@@ -1553,7 +1551,6 @@ impl Resolver<'_> {
             notes: Vec::new(),
         };
         let error = match annotation_layer(name) {
-            Some(_) if name == "strict" => return self.annotation(a),
             None | Some(2) => return self.annotation(a),
             Some(_) if name != "log" => fail(format!(
                 "`@{name}` annotates a declaration and is not a unit item; write it before \

@@ -4,7 +4,7 @@ Missing algebraic obligation
 Undischargeable `@ensure`
 Unsatisfiable declared constraints
 Quantifier in a law over a domain that is not finite
-Obligation below proof grade under `--strict` / `@proved` / `total` / `@decides`
+Obligation below proof grade
 Non-exhaustive `match`
 Unreachable `match` arm
 `.fold` on a type that has none

@@ -50,11 +50,18 @@ fn each_annotation_names_its_layer() {
             &["`@memoized` is an annotation of layer L18 [@memoized]"],
         ),
         (
-            "@log @strict @exhaustive\nf(x) = x;",
+            "@log @exact @exhaustive\nf(x) = x;",
             &[
                 "`@log` is an annotation of layer L7 [@log]",
-                "`@strict` is an annotation of layer L15 [@strict]",
+                "`@exact` is an annotation of layer L15 [@exact]",
                 "`@exhaustive` is an annotation of layer L15 [@exhaustive]",
+            ],
+        ),
+        (
+            "@strict @proved\nf(x) = x;",
+            &[
+                "`@strict` is not an annotation [@strict]",
+                "`@proved` is not an annotation [@proved]",
             ],
         ),
         (

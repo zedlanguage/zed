@@ -35,7 +35,7 @@ rows! {
     UnsatisfiableConstraints => "Unsatisfiable declared constraints",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     BelowProofGrade =>
-        "Obligation below proof grade under `--strict` / `@proved` / `total` / `@decides`",
+        "Obligation below proof grade",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     FoldWithNone => "`.fold` on a type that has none",
