@@ -1632,7 +1632,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| XST-r4 | gemini attempt  | 2026-11-08 02:53 | first run died at step 845 (agy http2 GOAWAY server_shutting_down, rc=3) with R4_GEMINI.md through 2(b); relaunched in the same dir with a continuation note (pa |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
