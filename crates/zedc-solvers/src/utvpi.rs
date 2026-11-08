@@ -25,7 +25,9 @@
 //! [`negsssp::Rounds`]), cheap when shortest paths hold few negative edges. The third is
 //! Duong's deterministic near-linear search ([`negsssp`]), which bounds the worst case
 //! (COMPLEXITY.md, C24). The first two share their labels, and a second such pair searches the
-//! graph with every edge turned around, whose potential negated is one of the graph.
+//! graph with every edge turned around, whose potential negated is one of the graph. The pairs
+//! take no step while the units they have done exceed those Duong's search expects still to
+//! need ([`negsssp::Progress`]).
 //!
 //! \[UTVPI\]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
 //! Constraints", FroCoS 2005.
@@ -43,7 +45,8 @@ use zedc_int::int::Int;
 pub enum Search {
     /// The pass in topological order when the graph has no cycle, otherwise Goldberg and
     /// Radzik's search, BF-Dijkstra and Duong's one unit of work each in turn, the first two also
-    /// on the reversed graph, the first to finish deciding: what [`integer_empty`] uses.
+    /// on the reversed graph, the first to finish deciding; the first two stop while their units
+    /// exceed those Duong's search expects still to need: what [`integer_empty`] uses.
     First,
     /// Goldberg and Radzik's search alone, on every graph.
     GoldbergRadzik,
@@ -306,15 +309,23 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // every edge turned around, is quick for the pair: a potential `q` of the reverse gives the
     // potential `-q` of the graph (`q(u) <= q(v) + w` is `-q(v) <= -q(u) + w`), and the two
     // have the same cycles, so the same negative ones. A second shared pair therefore searches
-    // the reverse; each unit of Duong's search is followed by one step of each pair, so the race
-    // does at most a constant times the units of the search that finishes. On that family it
+    // the reverse; each unit of Duong's search is followed by one step of each pair (four quick
+    // units), so the race does at most a constant times the units of the search that finishes.
+    // Once Duong's search has an estimate of the units it still needs (`negsssp::Progress`),
+    // the pairs take no step while the units they have done exceed it, and resume if it rises:
+    // they never spend more than the leader is expected still to need, so a race that Duong's
+    // search wins costs about twice its units rather than five times (RACE-constant). On that family it
     // takes 24.2M to 198M instructions (8.2 times), and the three families above stay at 7.8
     // to 8.1 times. A graph that holds that family and its reverse in one component is slow in
     // both directions, so Duong's search finishes first; with its constant factor lowered
     // (`negsssp`: BF-Dijkstra tried first at each step, padded balls peeled off, the next
     // potential doubled when that helps, scans over the negative edges only) the race grows 21.2
     // times from k = 128 to 1,024, 78.7 before (`stages::split_bad_gor_both_ways_scales`,
-    // UTVPI-both-ways), and the families above stay within 1% of their cost before. Inferred
+    // UTVPI-both-ways), and the families above stay within 1% of their cost before. With the
+    // pairs stopped against the estimate, the race at k = 1,024 takes 7.0G instructions, 2.8
+    // times Duong's search alone, 10.0G and 4.1 times before, and 10.8 times from k = 128 to
+    // 1,024; the quick families cost 1% more (the count of units) and give the same points. At
+    // k = 128 and 256 the winner can change and so can the point, never the decision. Inferred
     // from a model, quick searches quadratic and Duong's linear on a family, with Duong's
     // search first to finish from k* on: the race grows about 8·k*/k times from k to 8k for
     // k*/8 <= k <= k*, so past the limit of 24 for k < k*/3, whatever quick searches race; only
@@ -325,7 +336,13 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     let back_edges = reversed(out);
     let mut ahead = Shared::new(out);
     let mut back = Shared::new(&back_edges);
-    let raced = negsssp::potential(out, || {
+    // The units the two pairs have done.
+    let mut quick: u64 = 0;
+    let raced = negsssp::potential(out, |duong| {
+        if duong.left().is_some_and(|left| quick > left) {
+            return Ok(());
+        }
+        quick += 4;
         if let Some(found) = ahead.step() {
             return Err(found);
         }

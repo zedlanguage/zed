@@ -924,6 +924,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | Three buffers of reduced weights reused across steps, the chosen one swapped into place by `std::mem::swap` and the others cleared | `negsssp::Solver::run` | Mutation | The chosen list bound as the next step's value; the others dropped |
 | Edges kept in compressed rows (a start offset per vertex into flat target and weight vectors), cleared and refilled each step | `negsssp::Rows`, `Aux`, `Solver::run` | Mutation | An array of rows built once per step by a fold, or a map from vertex to its slice |
 
+## Entries from RACE-constant (`zedc-solvers/src/negsssp.rs`, `utvpi.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Cell<u64>` and `Cell<Option<u64>>` in a `Progress` that the solver writes through `&self` while the caller's closure reads it, both holding shared references | `negsssp::Progress`, `potential`, `Solver::run` | Mutation | The solver passes the units done and its estimate to each tick as values; the tick's caller keeps them in its state |
+| A counter captured by `&mut` in the caller's `FnMut` tick, compared with the leader's estimate to skip the pairs' steps | `utvpi::race` | Mutation | The count carried in the race's state receiver, returned by each tick |
+
 ## Entries from T14-low (`zed-native/src/lib.rs`, `codegen.rs`)
 
 | Rust construct | Sites | Gap | At the port |

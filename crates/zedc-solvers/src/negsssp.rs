@@ -14,13 +14,15 @@
 //! bound and the measurements.
 //!
 //! The work is done in units, a heap pop or an edge examined, and the caller's `tick` is called
-//! once per unit; an error from it ends the search with that error. `utvpi` uses this to run
-//! Goldberg and Radzik's search and BF-Dijkstra ([`Rounds`]) one unit each after each unit of
-//! this one.
+//! once per unit, with the units the search expects still to need once it has an estimate; an
+//! error from it ends the search with that error. `utvpi` uses this to run Goldberg and
+//! Radzik's search and BF-Dijkstra ([`Rounds`]) one unit each after each unit of this one,
+//! until together they have done more units than this one expects still to need.
 //!
 //! \[D\]: T. Duong, "Deterministic negative-weight single-source shortest paths in near-linear
 //! time", arXiv 2609.05590 (2026).
 
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::convert::Infallible;
@@ -46,13 +48,18 @@ fn unit<H>(tick: &mut impl FnMut() -> Result<(), H>) -> Step<(), H> {
 
 /// A potential of the graph `out`, its edges `u → (v, w)`: integers `p` with
 /// `p(v) <= p(u) + w` on every edge, or `None` when the graph has a negative cycle. `tick` is
-/// called once per unit of work; its first error is returned.
+/// called once per unit of work, with what the search has done and expects still to do
+/// ([`Progress`]); its first error is returned.
 pub fn potential<H>(
     out: &[Vec<(usize, Int)>],
-    tick: impl FnMut() -> Result<(), H>,
+    mut tick: impl FnMut(&Progress) -> Result<(), H>,
 ) -> Result<Option<Vec<Int>>, H> {
     let graph = Graph::new(out);
-    let mut solver = Solver::new(&graph, tick);
+    let progress = Progress::default();
+    let mut solver = Solver::new(&graph, &progress, || {
+        progress.done.set(progress.done.get() + 1);
+        tick(&progress)
+    });
     match solver.run() {
         Ok(p) => Ok(Some(p)),
         Err(Stop::Negative) => Ok(None),
@@ -60,9 +67,47 @@ pub fn potential<H>(
     }
 }
 
+/// The units of work the search has done, and once a step of Goldberg's scaling has ended in
+/// Duong's recursion, the units it expects to do in all: those done, the steps left times the
+/// most units a step of the recursion has taken, and the final Dijkstra search. The steps left
+/// are at most `⌈log₂ need⌉` for the least reduced weight `-need`, since each step leaves
+/// every reduced weight at least `-W / 2` for the power of two `W >= need`; the final search
+/// takes at most `n + 2m` units, a heap entry for each vertex and each edge and an edge each.
+/// The cost of a step to come is estimated by the dearest so far, not proved, and an estimate
+/// that proves too low is raised at the next step. On the both-ways family of `utvpi` at
+/// k = 1,024, on its component of 12,284 vertices, the first step of the recursion ended at
+/// 1.95M units with an estimate of 14.0M, the steps left bounded by 17, and the search ended
+/// at 6.7M units after 7 such steps; on a component of 6,141 vertices, an estimate of 6.7M
+/// against 4.9M. The bound on the steps left is loose since the doubled `psi` cuts `need` by
+/// more than half (RACE-constant).
+#[derive(Default)]
+pub struct Progress {
+    done: Cell<u64>,
+    total: Cell<Option<u64>>,
+}
+
+impl Progress {
+    /// The units the search expects still to need, once it has an estimate.
+    pub fn left(&self) -> Option<u64> {
+        self.total
+            .get()
+            .map(|total| total.saturating_sub(self.done.get()))
+    }
+}
+
+/// `⌈log₂ x⌉` for `x >= 1`.
+fn ceil_log2_int(x: &Int) -> u64 {
+    let (mut p, mut b) = (Int::ONE, 0);
+    while p < *x {
+        p = &p + &p;
+        b += 1;
+    }
+    b
+}
+
 /// [`potential`] run to its end.
 pub fn potential_alone(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
-    match potential(out, || Ok::<(), Infallible>(())) {
+    match potential(out, |_| Ok::<(), Infallible>(())) {
         Ok(found) => found,
         Err(never) => match never {},
     }
@@ -372,6 +417,7 @@ type Cover = Vec<(Vec<usize>, bool)>;
 
 struct Solver<'g, H, F> {
     g: &'g Graph,
+    progress: &'g Progress,
     tick: F,
     /// This scaling step's weights shifted by `W / 2`, and clipped at 0 (\[D\] eq. scale).
     c: Vec<Int>,
@@ -405,7 +451,7 @@ struct Solver<'g, H, F> {
 }
 
 impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
-    fn new(g: &'g Graph, tick: F) -> Self {
+    fn new(g: &'g Graph, progress: &'g Progress, tick: F) -> Self {
         let n = g.mass.len();
         let m0: u64 = g.mass.iter().sum();
         let l = ceil_log2(m0).max(1);
@@ -414,6 +460,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         let n_h = 384 * l;
         Solver {
             g,
+            progress,
             tick,
             c: Vec::new(),
             ell: Vec::new(),
@@ -474,11 +521,14 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         let two = Int::from(2);
         // Whether each step first tries BF-Dijkstra ([`Solver::quick`]).
         let mut quick = true;
+        // The most units a step of the recursion has taken, for [`Progress`].
+        let mut dearest = 0;
         loop {
             let need = -&low;
             if need <= Int::ONE {
                 break;
             }
+            let begun = self.progress.done.get();
             // A step: a potential valid for `c = r + W/2` leaves every reduced weight at least
             // `-W/2`.
             self.big_w = power_of_two_at_least(&need);
@@ -563,6 +613,18 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                 }
                 std::mem::swap(&mut r, &mut once);
                 low = low_once;
+            }
+            if !quick {
+                let done = self.progress.done.get();
+                dearest = dearest.max(done - begun);
+                let need = -&low;
+                let steps = if need <= Int::ONE {
+                    0
+                } else {
+                    ceil_log2_int(&need)
+                };
+                let last = (n + 2 * m) as u64;
+                self.progress.total.set(Some(done + steps * dearest + last));
             }
         }
         // Every reduced weight is at least -1. Dijkstra on `r + 1`, each vertex starting at

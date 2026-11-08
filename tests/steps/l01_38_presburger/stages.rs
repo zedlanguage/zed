@@ -551,6 +551,38 @@ fn split_bad_gor_is_decided() {
 }
 
 #[test]
+fn the_race_agrees_where_the_pairs_stop_against_duong() {
+    // At k = 128 and 256 the quick pairs stop once their units exceed those Duong's search
+    // expects still to need, and the search that finishes first differs from the race before
+    // RACE-constant (the point found differs too); the decision must not.
+    for k in [128, 256] {
+        let (n, rows) = split_bad_gor_both_ways(k);
+        assert!(!empty(n, &rows), "k = {k}");
+    }
+}
+
+#[test]
+fn the_race_costs_little_more_than_duong_where_duong_wins() {
+    // At k = 1,024 Duong's search finishes first. With the quick pairs stopped once their
+    // units exceed those it expects still to need, the race took 2.9 times its instructions
+    // (6.6G against 2.3G, load 7); with a step of each pair after every unit of Duong's, 4.2
+    // times (9.6G), which this test fails (RACE-constant).
+    let (n, rows) = split_bad_gor_both_ways(1024);
+    let terms: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
+    scaling::compare(
+        "the race against Duong's search alone, BAD-GOR split both ways at k = 1,024",
+        "the race should cost about twice the search that finishes first (RACE-constant)",
+        3.5,
+        || {
+            std::hint::black_box(integer_empty_by(n, &terms, Search::Duong));
+        },
+        || {
+            std::hint::black_box(integer_empty(n, &terms));
+        },
+    );
+}
+
+#[test]
 fn split_bad_gor_scales() {
     // Measured in instructions from k = 128 to k = 1,024 (UTVPI-both-slow, load 58 to 68):
     // Goldberg and Radzik's search alone 32.7M to 1,694M (51.8 times), BF-Dijkstra alone 46.6M
@@ -573,11 +605,13 @@ fn split_bad_gor_scales() {
 #[test]
 fn split_bad_gor_both_ways_scales() {
     // Slow for both quick searches on the graph and on its reverse, so Duong's search finishes
-    // first. From k = 128 to 1,024 the race takes 445M to 9,425M instructions (21.2 times; 17.2
-    // times the bytes; load 11 to 21). Before Duong's constant factor was lowered it took 385M
-    // to 30,322M (78.7 times; UTVPI-both-ways): a race of quadratic searches with Duong's passes
-    // such a family only from about a third of the size where Duong's search starts to finish
-    // first (COMPLEXITY.md C24).
+    // first. From k = 128 to 1,024 the race takes 651M to 7,033M instructions (10.8 times; 9.5
+    // times the bytes; load 20), with the quick pairs stopped once their units exceed those
+    // Duong's search expects still to need; with a step of each pair after every unit of
+    // Duong's, 450M to 9,620M (21.4 times; RACE-constant). Before Duong's constant factor
+    // was lowered it took 385M to 30,322M (78.7 times; UTVPI-both-ways): a race of quadratic
+    // searches with Duong's passes such a family only from about a third of the size where
+    // Duong's search starts to finish first (COMPLEXITY.md C24).
     let (small, large) = (
         split_bad_gor_both_ways(128),
         split_bad_gor_both_ways(scaling::FACTOR * 128),
