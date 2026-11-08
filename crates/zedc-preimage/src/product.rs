@@ -8,9 +8,10 @@
 //! - the interval and the congruence narrow each other, and a single value fixes both;
 //! - the projection of the linear relation onto a name meets its interval;
 //! - a finite set and the interval narrow each other;
-//! - the type loses `int` when the interval or the congruence is empty, keeps only the literals
-//!   of a finite interval or a finite set, and gives its literals back to the finite set and
-//!   the interval;
+//! - the type loses `int` when the interval or the congruence is empty, keeps only its own
+//!   integer literals within the interval, the member of a one-member interval, or the members
+//!   of a finite set, and gives its literals back to the finite set and the interval; an
+//!   interval of more members is never listed, whatever its width;
 //! - enumeration: a name of type within `int` whose finite set lists its integers keeps only the members at which each written constraint on it holds, the
 //!   constraint's other names static and its form shown to end ([`stage::ends`]); a
 //!   constraint whose form does not show it ends removes nothing. A range is left to the
@@ -52,8 +53,8 @@ use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
 use super::images;
 use super::preimage::{
-    Classes, Demand, Domains, LetIn, LetPa, Lets, Shift, TermBounds, follow_own, let_narrowing,
-    let_summary, preimage, relations, witness,
+    Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
+    let_narrowing, let_summary, preimage_listed, relations, witness,
 };
 use zedc_int::int::Int;
 use zedc_lattice::affine::Bounds;
@@ -276,17 +277,20 @@ impl Product {
         if self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom {
             self.ty.meet(&!&int, &prem);
         } else {
-            // The type's integers narrowed to the interval, listed only when the list is no
-            // longer than what is listed from: the type's own integer literals, or an interval
-            // with no more members than its two endpoints a piece.
+            // The type's integers narrowed to the interval: the type's own integer literals,
+            // which the source lists, met with the interval; or, for a type that lists none,
+            // the interval's one member when it has one, which is a value and not a list.
             //
-            // Complexity tradeoff: an interval with more members than that is not listed, so
-            // the type keeps all of `int` there and loses what listing would carry into it.
-            // Why: listing an interval costs time and space in its members, which can be
-            // exponential in the bits written. Trigger: a finite interval set whose members
-            // exceed twice its pieces, a measure relative to the written endpoints and not a
-            // constant. Test:
-            // `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`.
+            // Complexity tradeoff: an interval of more than one member whose type lists no
+            // literals is not listed, whatever its width, so the type keeps all of `int` there
+            // and loses what listing would carry into it; `int[0..=1]` and `int[0..=1000]` are
+            // read alike. Why: listing an interval costs time and space in its members, which
+            // can be exponential in the bits written, and a rule by width would change what
+            // is known when one member is added (DESIGN.md L1.25, author's answer to Q11).
+            // Trigger: a name whose type lists no integer literals and whose interval holds
+            // two or more members. Tests:
+            // `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`,
+            // `l01_39_reduced_product::controls::ranges_of_every_width_list_nothing`.
             // COMPLEXITY.md row C5. A complete solution would let the type language hold
             // integer ranges, so that the interval enters the type without listing.
             let x = self.ints();
@@ -296,27 +300,10 @@ impl Product {
                         .filter(|v| !matches!(v, Value::Int(n) if !x.contains(*n)))
                         .collect(),
                 ),
-                None => {
-                    let most = Num::from(2 * x.pieces().len() as i128);
-                    let size = x.pieces().iter().try_fold(Num::ZERO, |n, p| match p {
-                        (End::Fin(a), End::Fin(b)) => Some(&(&n + &(b - a)) + &Num::ONE),
-                        _ => None,
-                    });
-                    size.filter(|n| *n <= most).map(|_| {
-                        let mut out = Vec::new();
-                        for p in x.pieces() {
-                            let (End::Fin(a), End::Fin(b)) = p else {
-                                unreachable!("every piece is finite")
-                            };
-                            let mut v = a.clone();
-                            while v <= *b {
-                                out.push(Value::from(&v));
-                                v = &v + &Num::ONE;
-                            }
-                        }
-                        out
-                    })
-                }
+                None => match x.bounds() {
+                    Some((End::Fin(a), End::Fin(b))) if a == b => Some(vec![Value::from(a)]),
+                    _ => None,
+                },
             };
             if let Some(vs) = vs {
                 let lits = Type::union_all(vs.iter().filter_map(Type::lit));
@@ -377,8 +364,9 @@ impl fmt::Display for Product {
 }
 
 /// The integers of `p` when its finite set lists them: every member an integer. The finite
-/// set holds the literals the source lists, and an interval's members only where they are no
-/// more than its endpoints, so the list is no longer than what it is read from.
+/// set holds the literals the source lists (a type's literals, a literal equated with the
+/// name) and the one member of a one-member interval, never the members of a wider interval,
+/// so the list is no longer than what the source lists.
 fn listed(p: &Product) -> Option<Vec<i64>> {
     let FiniteSet::Set(vs) = &p.cell.finite.element else {
         return None;
@@ -2428,11 +2416,27 @@ impl Scope {
         // The preimage of the outcome.
         let mut exact = false;
         if !inputs.is_empty() {
+            // A name whose finite set lists its integers (`x: {0, 1, 2}`) is a listed input,
+            // its domain the interval met with the list, so that the preimage may enumerate it
+            // at a cost in the members listed; any other name is a range, whatever its width.
+            let mut listed_names = Listed::new();
             let doms: Domains = inputs
                 .iter()
-                .map(|n| (n.clone(), self.get(n).ints().clone()))
+                .map(|n| {
+                    let p = self.get(n);
+                    let d = match listed(&p) {
+                        Some(vs) => {
+                            listed_names.insert(n.clone());
+                            p.ints().meet(&IntervalSet::from_pieces(
+                                vs.iter().map(|&v| (End::of(v), End::of(v))).collect(),
+                            ))
+                        }
+                        None => p.ints().clone(),
+                    };
+                    (n.clone(), d)
+                })
                 .collect();
-            let pre = preimage(t, &doms, &Demand::Bool(outcome));
+            let pre = preimage_listed(t, &doms, &listed_names, &Demand::Bool(outcome));
             exact = pre.exact;
             if let Some(cause) = pre.refusal {
                 self.refuse(Refused {

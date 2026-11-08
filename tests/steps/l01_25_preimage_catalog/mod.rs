@@ -31,7 +31,7 @@ use zed_kernel::Shared;
 
 use zed_kernel::{Term, Value, eval};
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::preimage::{Demand, Domains, Preimage, preimage};
+use zedc::store::preimage::{Demand, Domains, Preimage, preimage, preimage_listed};
 
 pub(crate) use zed_tests::step_helpers::l01_25_preimage_catalog::{doms, function, shown};
 
@@ -43,6 +43,12 @@ pub(crate) fn listed(ds: &[(&str, &[i64])]) -> Domains {
             (n.into(), IntervalSet::from_pieces(pieces))
         })
         .collect()
+}
+
+/// The preimage of `demand` under `body` over `ds`, each name's set one the source lists
+/// member by member ([`listed`]).
+pub(crate) fn pre_listed(body: &Term, ds: &Domains, demand: &Demand) -> Preimage {
+    preimage_listed(body, ds, &ds.keys().cloned().collect(), demand)
 }
 
 /// The preimage of `demand` under the function `src`, over `ds`.

@@ -26,7 +26,8 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{
-    Classes, Demand, Domains, Preimage, class_domain_reads, exact_preimage, preimage,
+    Classes, Demand, Domains, Listed, Preimage, class_domain_reads, exact_preimage, preimage,
+    preimage_listed,
 };
 use zedc::store::preimage_ref as before;
 use zedc::store::presburger::{Atom, Model, Refusal};
@@ -430,7 +431,15 @@ impl Diffs {
     /// counts as narrower when only the box differs, both are inexact, and the new box is a
     /// sound subset of the one before; every other difference is found.
     fn preimage(&mut self, what: &str, t: &Term, ds: &Domains, d: &Demand) {
-        let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, &old(d)));
+        self.preimage_listed(what, t, ds, &Listed::new(), d);
+    }
+
+    /// [`Diffs::preimage`], the names of `listed` having domains the source lists.
+    fn preimage_listed(&mut self, what: &str, t: &Term, ds: &Domains, listed: &Listed, d: &Demand) {
+        let (now, then) = (
+            preimage_listed(t, ds, listed, d),
+            before::preimage_listed(t, ds, listed, &old(d)),
+        );
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
         // Plan item S22e-wide: a split by remainders over many periods answers with its box and
         // the classes' relation, exact on the box, where the linear stage stated its own
@@ -1208,8 +1217,8 @@ fn random_terms_keep_their_preimages() {
                 } else {
                     t
                 };
-                let ds = domains(&mut rng);
-                diffs.preimage("random term", &t, &ds, &d);
+                let (ds, listed) = domains(&mut rng);
+                diffs.preimage_listed("random term", &t, &ds, &listed, &d);
             }
         }
         for seed in 1000..1010 {
@@ -1220,8 +1229,8 @@ fn random_terms_keep_their_preimages() {
                 } else {
                     (int_term(&mut rng, 4), int_demand(&mut rng))
                 };
-                let ds = domains(&mut rng);
-                diffs.preimage("random term, depth 4", &t, &ds, &d);
+                let (ds, listed) = domains(&mut rng);
+                diffs.preimage_listed("random term, depth 4", &t, &ds, &listed, &d);
             }
         }
         for (seed, test) in [(7, false), (77, true)] {

@@ -304,12 +304,13 @@ fn chains_over_wide_domains_keep_their_preimages() {
         "{refuted_before:?}"
     );
     // The summary reads values past `i128` (its numbers are unbounded), where the transfer
-    // before read the `if` arm by arm: its box is the same or narrower, exact more often, and found
-    // without running each input where the one before ran them.
+    // before read the `if` arm by arm: its box is the same or narrower and exact more often. Neither
+    // runs each input of a range (LIST-size), so the one box the transfer before found exact by
+    // running its inputs is now inexact there and counts as exact now.
     // Each is sound by the interpreter, inside the box before and exact wherever it was.
     assert_eq!(
         (narrower.len(), now_exact.len(), not_enumerated.len()),
-        (20, 245, 1),
+        (20, 246, 0),
         "narrower:\n{}\nnow exact:\n{}",
         narrower[..narrower.len().min(3)].join("\n"),
         now_exact[..now_exact.len().min(3)].join("\n")
@@ -436,8 +437,10 @@ fn values_past_i128_are_summarized_exactly() {
         }
     }
     let count = |s: Same| kinds.iter().filter(|k| **k == s).count();
-    // Of the 18, the transfer before gave the same preimage in 14; in 1 the same box inexact, in
-    // 2 a wider box, and in 1 the same exact box by running each input. None differs otherwise.
+    // Of the 18, the transfer before gave the same preimage in 14; in 1 the same box inexact and in
+    // 3 a wider box. None differs otherwise. The third wider box is `[-50..=-10, 0..=0]` under the
+    // demand `(..=-10) | (2^63-2..=2^63)`: before LIST-size the transfer before ran the input `0`
+    // and dropped it, and a range is no longer run input by input (LIST-size).
     assert_eq!(
         (
             count(Same::Equal),
@@ -446,7 +449,7 @@ fn values_past_i128_are_summarized_exactly() {
             count(Same::NotEnumerated),
             count(Same::Differ),
         ),
-        (14, 1, 2, 1, 0)
+        (14, 1, 3, 0, 0)
     );
 }
 

@@ -64,15 +64,22 @@ fn a_binding_read_from_a_static_if_is_static() {
 
 #[test]
 fn a_negated_equality_excludes_the_literal_by_complement() {
-    // Types, intervals and finite sets are exact, so `!=` removes the one value from each.
+    // Types, intervals and finite sets are exact, so `!=` removes the one value from each. A range
+    // lists no members, so it has no finite set (LIST-size); the same members listed have one.
     let src = "ok = (n) -> if n >= 0 && n <= 3 { if n != 2 { n } else { 0 } } else { 0 };";
     accepted(src);
     let (_, _, a) = arms_of(src);
     let n = arm(&a, "(n != 2)", true).scope.get("n");
     assert_eq!(n.ints().to_string(), "[0..=1, 3..=3]");
-    assert_eq!(n.to_string().lines().nth(1), Some("finite {0, 1, 3}"));
+    assert_eq!(n.to_string(), "ints [0..=1, 3..=3]\ntype (\\ int 2)\n");
     let two = arm(&a, "(n != 2)", false).scope.get("n");
     assert_eq!(two.value(), Some(&zed_kernel::Value::Int(2)));
+    let src = "ok = (n) -> if n == 0 || n == 1 || n == 2 || n == 3 { if n != 2 { n } else { 0 } } else { 0 };";
+    accepted(src);
+    let (_, _, a) = arms_of(src);
+    let n = arm(&a, "(n != 2)", true).scope.get("n");
+    assert_eq!(n.ints().to_string(), "[0..=1, 3..=3]");
+    assert_eq!(n.to_string().lines().nth(2), Some("finite {0, 1, 3}"));
 }
 
 #[test]

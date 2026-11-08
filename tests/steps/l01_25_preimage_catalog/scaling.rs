@@ -10,7 +10,7 @@ use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage, relations};
 
-use super::{doms, shown};
+use super::{doms, listed, pre_listed, shown};
 
 fn var(x: &str) -> Term {
     Term::Var(x.into())
@@ -736,4 +736,27 @@ fn long_shared_arms_under_recursion() {
         32,
         shared_arms_under_recursion,
     );
+}
+
+/// `x * x mod 10 == 9` with `x` listed as the `n` members `0, 3, 6, …`: a listed set is
+/// enumerated, each member run once, so the time is of the order of the list the source wrote
+/// (LIST-size). The same members as a range are never enumerated, whatever their number.
+#[test]
+fn a_listed_set_is_enumerated_in_time_of_its_length() {
+    let make = |n: usize| {
+        let members: Vec<i64> = (0..n as i64).map(|k| 3 * k).collect();
+        let sq = prim(Prim::Mul, var("x"), var("x"));
+        let t = prim(Prim::Eq, prim(Prim::Mod, sq, int(10)), int(9));
+        (t, listed(&[("x", &members)]))
+    };
+    let (t, ds) = make(8);
+    assert_eq!(
+        shown(&pre_listed(&t, &ds, &Demand::Bool(true))),
+        "x [3..=3]; exact; enumerated"
+    );
+    let inputs = scaling::inputs(512, make);
+    scaling::check("a listed set of `n` members, enumerated", 512, |n| {
+        let (t, ds) = &inputs[&n];
+        pre_listed(t, ds, &Demand::Bool(true));
+    });
 }

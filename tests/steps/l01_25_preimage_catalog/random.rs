@@ -11,7 +11,9 @@ use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::lattice::Congruence;
-use zedc::store::preimage::{Classes, Demand, Domains, exact_preimage, preimage};
+use zedc::store::preimage::{
+    Classes, Demand, Domains, Listed, exact_preimage, preimage, preimage_listed,
+};
 
 use super::{check, meets, points};
 
@@ -158,24 +160,27 @@ fn domain(rng: &mut Rng) -> IntervalSet {
     }
 }
 
-/// Random domains of `x` and `y`; one case in two is a listed box: `x` listed, its values
-/// apart from one another, and `y` one value.
-pub(super) fn domains(rng: &mut Rng) -> Domains {
+/// Random domains of `x` and `y`, with the names whose members the source lists; one case in
+/// two is a listed box: `x` listed, its values apart from one another, and `y` one listed
+/// value.
+pub(super) fn domains(rng: &mut Rng) -> (Domains, Listed) {
     let point = |v: i64| IntervalSet::from_pieces(vec![(End::of(v), End::of(v))]);
-    let (x, y) = if rng.below(2) == 0 {
+    let (x, y, listed) = if rng.below(2) == 0 {
         let lo = rng.int(-15, 10);
         let xs = (0..rng.int(1, 8)).map(|k| (End::of(lo + 2 * k), End::of(lo + 2 * k)));
         (
             IntervalSet::from_pieces(xs.collect()),
             point(rng.int(-15, 15)),
+            Listed::from(["x".into(), "y".into()]),
         )
     } else {
-        (domain(rng), domain(rng))
+        (domain(rng), domain(rng), Listed::new())
     };
-    [("x", x), ("y", y)]
+    let ds = [("x", x), ("y", y)]
         .into_iter()
         .map(|(k, v)| (Arc::<str>::from(k), v))
-        .collect()
+        .collect();
+    (ds, listed)
 }
 
 /// A random demand on an integer term: up to two intervals.
@@ -227,8 +232,8 @@ fn run_with(seed: u64, cases: usize, test: bool, calls: bool) -> Tally {
         } else {
             term
         };
-        let ds = domains(&mut rng);
-        let p = preimage(&term, &ds, &demand);
+        let (ds, listed) = domains(&mut rng);
+        let p = preimage_listed(&term, &ds, &listed, &demand);
         assert!(p.stops.is_empty(), "{term}: {:?}", p.stops);
         for (k, v) in &p.domains {
             assert!(v.is_subset(&ds[k]), "{term}: {k} {v} is outside its domain");

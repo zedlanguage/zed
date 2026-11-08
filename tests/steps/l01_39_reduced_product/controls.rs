@@ -134,6 +134,30 @@ fn a_listed_set_is_enumerated_and_a_range_is_not() {
     assert_eq!(s.get("n").ints().to_string(), "[1..=6]");
 }
 
+#[test]
+fn ranges_of_every_width_list_nothing() {
+    // `n * n mod 7 != 1` fails at 1 and holds at 0, 2 and 3. A range lists no members, so
+    // over `0..=1`, `0..=2` and `0..=3` the constraint is left to interval reasoning alike,
+    // with no finite set; the same members listed are enumerated.
+    let t = prim(
+        Prim::Ne,
+        vec![
+            prim(
+                Prim::Mod,
+                vec![prim(Prim::Mul, vec![var("n"), var("n")]), lit(7)],
+            ),
+            lit(1),
+        ],
+    );
+    for hi in 1..=3 {
+        let n = written(within(0, hi), t.clone()).get("n");
+        assert_eq!(n.ints().to_string(), format!("[0..={hi}]"));
+        assert!(!n.to_string().contains("finite"), "0..={hi}: {n}");
+    }
+    let s = written(among(&[0, 1, 2]), t);
+    assert_eq!(s.get("n").ints().to_string(), "[0..=0, 2..=2]");
+}
+
 /// `count(k) > 1 || n == 0` for a `count` that takes about `2k` steps.
 fn slow_unless_zero(k: Term) -> Term {
     let half = || prim(Prim::IntDiv, vec![var("k"), lit(2)]);

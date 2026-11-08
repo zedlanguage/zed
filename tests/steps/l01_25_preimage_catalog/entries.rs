@@ -1,8 +1,8 @@
 //! The catalog's entries on ordinary preconditions and guards. Each preimage is printed and
 //! checked against the interpreter over a window of each domain.
 
-use super::{check, doms, function, listed, pre, shown};
-use zedc::store::preimage::{Demand, preimage};
+use super::{check, doms, function, listed, pre, pre_listed, shown};
+use zedc::store::preimage::Demand;
 
 /// The preimage of `true` under `src` over `ds`, printed, after checking it on the window
 /// `-60..=60`.
@@ -153,19 +153,36 @@ fn a_comparison_of_two_terms_constrains_their_difference() {
 
 #[test]
 fn a_listed_box_is_enumerated_and_a_range_is_not() {
-    // Each piece holds no more members than its endpoints, so the box is listed.
+    // The source lists each member, so the box is enumerated whatever the members are; the
+    // listed sets merge adjacent members into pieces, and a piece of any width is listed.
     let src = "ok(x) = x * x mod 10 == 9;\n";
-    let ds = listed(&[("x", &[0, 1, 3, 4, 7, 13, 14, 17, 18])]);
-    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
-    check(&function(src).1, &ds, &Demand::Bool(true), &p, (0, 20));
-    assert_eq!(
-        shown(&p),
-        "x [3..=3, 7..=7, 13..=13, 17..=17]; exact; enumerated"
-    );
-    // The same members within a range are left to the catalog, however few they are.
+    for members in [
+        &[0, 1, 3, 4, 7, 13, 14, 17, 18][..],
+        &(0..=18).collect::<Vec<i64>>()[..],
+    ] {
+        let ds = listed(&[("x", members)]);
+        let p = pre_listed(&function(src).1, &ds, &Demand::Bool(true));
+        check(&function(src).1, &ds, &Demand::Bool(true), &p, (0, 20));
+        assert_eq!(
+            shown(&p),
+            "x [3..=3, 7..=7, 13..=13, 17..=17]; exact; enumerated"
+        );
+    }
+    // The same members as a range are left to the catalog, however few they are.
     assert_eq!(
         holds(src, &[("x", Some(0), Some(18))]),
         "x [3..=3, 5..=17]; necessary"
+    );
+    // A list and a range of the same members differ by spelling: `{0, 1, 2}` is enumerated
+    // and `int[0..=2]` is not.
+    let src = "ok(x) = x * (x - 1) == 0;\n";
+    let ds = listed(&[("x", &[0, 1, 2])]);
+    let p = pre_listed(&function(src).1, &ds, &Demand::Bool(true));
+    check(&function(src).1, &ds, &Demand::Bool(true), &p, (0, 2));
+    assert_eq!(shown(&p), "x [0..=1]; exact; enumerated");
+    assert_eq!(
+        holds(src, &[("x", Some(0), Some(2))]),
+        "x [0..=2]; necessary"
     );
     // Not a box: the projection, necessary only.
     assert_eq!(
@@ -178,11 +195,33 @@ fn a_listed_box_is_enumerated_and_a_range_is_not() {
 }
 
 #[test]
+fn ranges_of_every_width_are_read_by_one_method() {
+    // `x * (x - 1)` is 0 at 0 and 1 only. A range is never enumerated, so `int[0..=1]`,
+    // `int[0..=2]` and `int[0..=3]` are all read by the catalog, which keeps each whole as
+    // necessary: adding a member does not change the kind of answer. Before LIST-size
+    // `int[0..=1]` alone was enumerated, to `x [0..=1]; exact; enumerated`.
+    let src = "ok(x) = x * (x - 1) == 0;\n";
+    let shown_at = |hi: i64| holds(src, &[("x", Some(0), Some(hi))]);
+    assert_eq!(
+        [shown_at(1), shown_at(2), shown_at(3)],
+        [
+            "x [0..=1]; necessary",
+            "x [0..=2]; necessary",
+            "x [0..=3]; necessary"
+        ]
+    );
+    for hi in 1..=3 {
+        let p = pre(src, &[("x", Some(0), Some(hi))], &Demand::Bool(true));
+        assert!(!p.enumerated, "int[0..={hi}] was enumerated: {}", shown(&p));
+    }
+}
+
+#[test]
 fn a_division_that_can_fail_keeps_only_the_points_that_do_not() {
     // `100 div d` fails at `d == 0`, which no preimage of a demand holds.
     let src = "ok(d) = 100 div d >= 20;\n";
     let ds = listed(&[("d", &[-10, -1, 0, 2, 5, 6, 10])]);
-    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    let p = pre_listed(&function(src).1, &ds, &Demand::Bool(true));
     check(&function(src).1, &ds, &Demand::Bool(true), &p, (-10, 10));
     assert_eq!(shown(&p), "d [2..=2, 5..=5]; exact; enumerated");
 }
@@ -324,7 +363,7 @@ fn a_test_that_can_fail_is_not_combined_as_a_boolean() {
     );
     let src = "ok(x) = (10 div x < 100) == (10 div x < 50);\n";
     let ds = listed(&[("x", &[-3, 0, 3])]);
-    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    let p = pre_listed(&function(src).1, &ds, &Demand::Bool(true));
     check(&function(src).1, &ds, &Demand::Bool(true), &p, (-3, 3));
     assert_eq!(shown(&p), "x [-3..=-3, 0..=0, 3..=3]; exact; enumerated");
 }

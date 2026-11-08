@@ -46,9 +46,10 @@
 //! Euclidean `div` and `mod` by a constant, `min`, `max`, `abs`, branches and the tests over
 //! them) is narrowed to the relation's projection on each input, within the box, and is exact
 //! when the box entails the relation; when it is not, the relation is kept with the box. And a
-//! result that is still not exact over a listed box (every piece of every input's set holding
-//! no more members than its endpoints, at most one input with more than one member), of a term whose form shows that it ends, is
-//! enumerated: the term is run at each point, and the result is the projection of the points
+//! result that is still not exact over a listed box (every input's set one whose members the
+//! source lists, `x: {0, 1, 2}` and not `x: int[0..=2]` whatever its width, at most one input
+//! with more than one member; [`preimage_listed`]), of a term whose form shows that it ends,
+//! is enumerated: the term is run at each point, and the result is the projection of the points
 //! that meet the demand, exact when they form a box. An enumeration that meets a term the
 //! evaluator cannot run removes nothing.
 //!
@@ -62,7 +63,7 @@
 //! that meets the demand, and the same search stops at the first.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -90,6 +91,13 @@ fn decided(d: &Demand, v: &Value) -> Res {
 
 /// An interval per input name.
 pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
+
+/// The input names whose domains are sets the source lists member by member
+/// ([`preimage_listed`]).
+pub type Listed = BTreeSet<Arc<str>>;
+
+/// No input listed.
+const NONE_LISTED: &Listed = &Listed::new();
 
 /// What the term's value must be.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -196,16 +204,29 @@ fn run_closed(t: &Term) -> Option<Value> {
 }
 
 /// The preimage of `demand` under `term`, whose free names in `inputs` range over their
-/// domains.
+/// domains, no domain one whose members the source lists ([`preimage_listed`]).
 pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
-    on_stack(|| preimage_of(term, inputs, demand))
+    on_stack(|| preimage_of(term, inputs, NONE_LISTED, demand))
 }
 
-/// [`preimage`] on the caller's stack.
-fn preimage_of(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
+/// [`preimage`], the domains of the names in `listed` being sets whose members the source
+/// lists (`x: {0, 1, 2}`), each holding no member the source does not list: a box over them
+/// may be enumerated ([`enumerate`]). A domain the source gives as a range (`int[0..=2]`) is
+/// not listed, whatever its width.
+pub fn preimage_listed(
+    term: &Term,
+    inputs: &Domains,
+    listed: &Listed,
+    demand: &Demand,
+) -> Preimage {
+    on_stack(|| preimage_of(term, inputs, listed, demand))
+}
+
+/// [`preimage_listed`] on the caller's stack.
+fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
     let mut tx = Tx::new();
     let root = tx.terms.add(term);
-    preimage_in(&mut tx, root, term, inputs, demand)
+    preimage_in(&mut tx, root, term, inputs, listed, demand)
 }
 
 /// The inputs on which the piecewise-affine summary of `term` ([`Pa`]) takes a value in `z`,
@@ -328,6 +349,7 @@ fn preimage_in(
     root: Tid,
     term: &Term,
     inputs: &Domains,
+    listed: &Listed,
     demand: &Demand,
 ) -> Preimage {
     let marks = tx.landmarks(inputs, demand);
@@ -426,7 +448,7 @@ fn preimage_in(
     {
         match split_residues(tx, root, &r.dom, demand, &marks, false) {
             Split::Exact(dom) => r = Whole { dom, exact: true },
-            Split::Wide(dom, found) => return wide(term, dom, found, demand, stops),
+            Split::Wide(dom, found) => return wide(term, dom, found, listed, demand, stops),
             Split::NotExact | Split::Deferred => {}
         }
     }
@@ -437,7 +459,7 @@ fn preimage_in(
             let v = v.meet(&r.dom[&k]);
             (k, v)
         });
-        return wide(term, dom.collect(), found, demand, stops);
+        return wide(term, dom.collect(), found, listed, demand, stops);
     }
     let (mut relation, mut refusal) = (None, None);
     if !r.exact
@@ -454,7 +476,7 @@ fn preimage_in(
         }
     }
     if !r.exact
-        && let Some(e) = enumerate(term, &r.dom, demand)
+        && let Some(e) = enumerate(term, &r.dom, listed, demand)
     {
         r = e;
         enumerated = true;
@@ -482,12 +504,13 @@ fn wide(
     term: &Term,
     dom: Domains,
     (rel, why): ClassRelation,
+    listed: &Listed,
     demand: &Demand,
     mut stops: Vec<Stop>,
 ) -> Preimage {
     let mut r = Whole { dom, exact: false };
     let mut enumerated = false;
-    if let Some(e) = enumerate(term, &r.dom, demand) {
+    if let Some(e) = enumerate(term, &r.dom, listed, demand) {
         r = e;
         enumerated = true;
     }
@@ -9842,34 +9865,39 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 }
 
 /// The projection of the points of a listed box at which the term meets the demand: every
-/// input's set is listed, each piece holding no more members than its two endpoints (the rule
-/// by which a type lists an interval), and at most one input has more than one member, so the
-/// points number no more than the endpoints written (docs/thresholds.md, replacement 8). The
+/// input's set is empty or one the source lists member by member (`listed`,
+/// [`preimage_listed`]), and at most one input has more than one member, so the points
+/// number no more than the members the source lists (docs/thresholds.md, replacement 8). The
 /// term's form must show that it ends ([`stage::ends`]). A range is left to the catalog and the
-/// linear relation.
+/// linear relation, whatever its width: `int[0..=1]`, `int[0..=2]` and `int[0..=3]` are read
+/// by the same steps, and `{0, 1, 2}` is enumerated (DESIGN.md L1.25, author's answer to Q11).
 ///
-/// Complexity tradeoff: a box with a range wider than its endpoints, with two or more inputs
-/// of several members, or with a term whose ending is not shown is not enumerated; it gets
-/// the catalog's and the linear relation's answer, which may be wider. Why: the points of a
-/// box are the product of its axes, exponential in the inputs and in the bits of each range,
-/// and a term not shown to end may not end. Trigger: those three properties of the box and
-/// the term, each relative to what is written, never a constant. Test:
-/// `l01_25_preimage_catalog::entries::a_listed_box_is_enumerated_and_a_range_is_not`.
+/// Complexity tradeoff: a box with an input the source gives as a range, with two or more
+/// inputs of several members, or with a term whose ending is not shown is not enumerated; it
+/// gets the catalog's and the linear relation's answer, which may be wider. Why: the points
+/// of a box are the product of its axes, exponential in the inputs and in the bits of each
+/// range, and a term not shown to end may not end. Trigger: those three properties of the
+/// box and the term, each read from what is written, never from a width or a constant. Tests:
+/// `l01_25_preimage_catalog::entries::a_listed_box_is_enumerated_and_a_range_is_not`,
+/// `l01_25_preimage_catalog::entries::ranges_of_every_width_are_read_by_one_method`.
 /// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
 /// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
-fn enumerate(term: &Term, dom: &Domains, demand: &Demand) -> Option<Whole> {
+fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Option<Whole> {
     let mut axes: Vec<(Arc<str>, Vec<Num>)> = Vec::new();
     for (k, s) in dom {
+        if !s.is_empty() && !listed.contains(k) {
+            return None;
+        }
+        // Each member of a listed set is one the source lists, so this costs the list.
         let mut vs = Vec::new();
         for (lo, hi) in s.pieces() {
-            match (lo, hi) {
-                (Fin(lo), Fin(hi)) if (hi - lo) <= Num::ONE => {
-                    vs.push(lo.clone());
-                    if hi != lo {
-                        vs.push(hi.clone());
-                    }
-                }
-                _ => return None,
+            let (Fin(lo), Fin(hi)) = (lo, hi) else {
+                return None;
+            };
+            let mut v = lo.clone();
+            while v <= *hi {
+                vs.push(v.clone());
+                v = &v + &Num::ONE;
             }
         }
         axes.push((k.clone(), vs));
@@ -9951,7 +9979,7 @@ pub fn exact_preimage(
     demand: &Demand,
 ) -> Preimage {
     on_stack(|| {
-        let mut p = preimage_of(term, inputs, demand);
+        let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
         if p.exact {
             // Every point of the box meets the demand, so the classes alone narrow it.
             p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
@@ -10019,7 +10047,7 @@ pub fn witness(
         return Some(None);
     };
     if !stage::ends(term) {
-        let r = preimage_of(term, &dom, demand);
+        let r = preimage_of(term, &dom, NONE_LISTED, demand);
         let narrowed: Domains = dom
             .iter()
             .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
@@ -10149,7 +10177,7 @@ fn branch(
         let b = if b.values().all(is_point) {
             b
         } else {
-            let r = preimage_in(&mut tx, top, term, &b, demand);
+            let r = preimage_in(&mut tx, top, term, &b, NONE_LISTED, demand);
             let narrowed: Domains = b
                 .iter()
                 .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))

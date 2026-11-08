@@ -8,7 +8,7 @@ use zed_kernel::{Family, GuardPos, Prim, Term, Value};
 use zed_tests::kernel::{add, eq, fam, fix_lattice, fold, lt, rc, sub};
 use zedc::store::preimage::{Demand, StopKind, preimage};
 
-use super::{check, doms, function, listed, pre, shown};
+use super::{check, doms, function, listed, pre, pre_listed, shown};
 
 /// The preimage of `true` under `src` over `ds`, printed, after checking it on the window
 /// `-150..=150`.
@@ -29,7 +29,7 @@ fn a_string_operation_stops_the_transfer() {
     // still reported.
     let src = "ok(x) = len(String(x)) <= 2;\n";
     let ds = listed(&[("x", &[-100, -10, -9, 0, 9, 10, 99, 100])]);
-    let p = preimage(&function(src).1, &ds, &Demand::Bool(true));
+    let p = pre_listed(&function(src).1, &ds, &Demand::Bool(true));
     check(&function(src).1, &ds, &Demand::Bool(true), &p, (-100, 100));
     assert_eq!(
         shown(&p),
@@ -83,7 +83,7 @@ fn a_term_outside_the_scalar_catalog_is_reported() {
     assert_eq!(wide.stops[0].kind, StopKind::Outside);
     // On a listed domain the enumeration decides it, and the stop is still reported.
     let ds = listed(&[("x", &[-10, 2, 3, 5, 10])]);
-    let p = preimage(&t, &ds, &Demand::Bool(true));
+    let p = pre_listed(&t, &ds, &Demand::Bool(true));
     check(&t, &ds, &Demand::Bool(true), &p, (-10, 10));
     assert_eq!(
         shown(&p),
@@ -150,7 +150,7 @@ fn a_fold_between_the_demand_and_an_input_stops_the_transfer() {
     assert_eq!(p.stops[0].kind, StopKind::Outside);
     // On a listed domain the enumeration decides it, and the stop is still reported.
     let ds = listed(&[("x", &[0, 5, 6, 100])]);
-    let p = preimage(&t, &ds, &Demand::Bool(true));
+    let p = pre_listed(&t, &ds, &Demand::Bool(true));
     check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
     assert_eq!(
         shown(&p),
@@ -186,7 +186,7 @@ fn a_gen_between_the_demand_and_an_input_stops_the_transfer() {
     // A `gen` is not shown to end, so a listed domain is not enumerated either: the box is
     // the whole listed domain.
     let ds = listed(&[("x", &[-1, 2, 3, 4])]);
-    let p = preimage(&t, &ds, &Demand::Bool(true));
+    let p = pre_listed(&t, &ds, &Demand::Bool(true));
     check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
     assert_eq!(
         shown(&p),
@@ -217,7 +217,7 @@ fn a_fix_between_the_demand_and_an_input_stops_the_transfer() {
     assert_eq!(p.stops[0].kind, StopKind::Outside);
     // Nor is a `fix` shown to end: on a listed domain the box is the whole domain.
     let ds = listed(&[("x", &[-5, 10, 11, 12, 40])]);
-    let p = preimage(&t, &ds, &Demand::Bool(true));
+    let p = pre_listed(&t, &ds, &Demand::Bool(true));
     check(&t, &ds, &Demand::Bool(true), &p, (-150, 150));
     assert_eq!(
         shown(&p),

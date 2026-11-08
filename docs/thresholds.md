@@ -218,10 +218,11 @@ reduction lists. Each former use is bounded by its own inputs instead.
 - *Preimages.* The cap on every input's box is gone; the forward check that a box meets the
   demand stays. `x mod c` lists the first and last periods its operand's interval meets
   exactly and the periods between as one piece: at most 2p + 1 pieces for p pieces of
-  remainders, exact when there are at most two periods. A small domain is then enumerated
-  as before.
-- *Reduction listings* (`product.rs`). The type is narrowed to an interval's members only
-  when they number at most two a piece, so the list is no longer than the interval; a type's
+  remainders, exact when there are at most two periods. A domain whose members the source
+  lists is then enumerated as before; a range is not, however few its members (LIST-size).
+- *Reduction listings* (`product.rs`). The type is narrowed to an interval's member only
+  when the interval has one member, and a range of more members is never listed, whatever
+  its width (LIST-size; it was "at most two a piece" before); a type's
   own integer literals are filtered by the interval at any count, since the type already
   writes them; and a type known finite (`Type::finite`) gives its values one at a time
   (`Type::each_value`, T6; its inner types made one value at a time too, TD-values), with no size rule: the earlier rule that a tuple's rows be no
@@ -426,14 +427,22 @@ Enumerate only a set whose members are listed, so the work is linear in what is 
 not in the size of the numbers. Two places enumerate:
 
 - The reduced product (`store/product.rs`) enumerates a name whose finite set lists its
-  integers. The finite set holds the literals the source writes, and an interval's members
-  only where they are no more than its endpoints, so the list is no longer than its source.
-  A range such as `int[0..=100]` is left to the interval, congruence and relation domains,
-  however few members it has.
-- The preimage catalog (`store/preimage.rs`) enumerates a box in which every piece of every
-  input's set holds no more members than its two endpoints, and at most one input has more
-  than one member, so the points number no more than the endpoints written. A product of
-  two listed sets is not enumerated: its points grow as the product of the lists.
+  integers. The finite set holds the literals the source writes, and the member of a
+  one-member interval; an interval of more members is never listed, whatever its width.
+  A range such as `int[0..=100]` or `int[0..=2]` is left to the interval, congruence and
+  relation domains, however few members it has.
+- The preimage catalog (`store/preimage.rs`) enumerates a box in which every input's set is
+  one whose members the source lists (`preimage_listed`, given the names the reduced
+  product lists), and at most one input has more than one member, so the points number no
+  more than the members written. A product of two listed sets is not enumerated: its points
+  grow as the product of the lists.
+
+The rule is the spelling, not the width (LIST-size, author's answer to Q11 A): a list and a
+range of the same members differ, so `x: {0, 1, 2}` is enumerated and `x: int[0..=2]` is
+not, and `int[0..=1]`, `int[0..=2]` and `int[0..=3]` are read by one method. Before
+LIST-size both places also enumerated a set each of whose pieces held no more members than
+its two endpoints, so `int[0..=1]` was enumerated and `int[0..=2]` was not: a change of
+method at a width, which replacement 8 rules out.
 
 Each evaluation runs with no fuel and only when the term's form shows that it ends
 (`stage::ends`, replacement 6); otherwise the constraint removes nothing. The evaluator's
@@ -454,9 +463,9 @@ with the congruence `1 mod 4`, which still represents the set exactly, and the o
 keeps 5. DESIGN L1.39's `isPrime(p)` example, which gave `{2}` over `int[0..=100]`, now
 gives the interval only; a domain that represents primality, or a listed domain, is needed
 to recover it; `@exact` (replacement 8a) gives the member-by-member answer on request.
-Integer sets merge adjacent members, so a source list of three or more
-consecutive values reaches the preimage catalog as a range and is not enumerated; the
-reduced product reads the finite set, which does not merge them.
+Integer sets merge adjacent members, so whether a set is listed is passed by name beside
+its domain rather than read from its pieces: a source list of consecutive values, such as
+`{0, 1, …, 18}`, is enumerated though its set is one piece (LIST-size).
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|
