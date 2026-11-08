@@ -1596,8 +1596,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BIGINT-fast-mul | impl attempt 1 | 2026-11-07 15:13 | docs written (COMPLEXITY K78 + Crossovers subsection, ZED_PORT_GAPS entries, STATUS row, num.rs room comments); negative control (Garner carry without t>>64) bu |
+| BIGINT-fast-mul | impl attempt 1 | 2026-11-07 15:13 | ready beffad0a on wt/bigint-fast-mul, base origin/main 4cfab2be; clippy clean; 6 of 7 pieces pass with doc check, l01_24 decimal-end 24.8x is the known main fai |
+| LADDER-study | impl attempt 1 | 2026-11-07 23:26 | started; worktree wt/ladder-study off origin/main |
+| LIST-size | impl attempt 1 | 2026-11-07 23:41 | started: reading brief, row, Q11 and code sites |
 | Q1-LOCAL | measure attempt 1 | 2026-11-03 12:15 | done: 93d423e3 on wt/q1-local; census 30% refused (all Growth, 74% have a point); 10 families refused at every size, time to refusal n log n; equality chain qua |
+| SETS-study | running | 2026-11-07 23:43 |  |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Claude report in (R2_CLAUDE.md, 35 KB, rc 0); Gemini still running |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
