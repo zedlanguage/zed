@@ -118,7 +118,13 @@ fn unshared(text: &str) -> String {
 fn debug_writes_the_derived_text_with_each_shared_node_once() {
     // debug_text.txt is the text the derived `Debug`s wrote, a recursion, for these types; it
     // was written again by `unshared` when step CHAIN-zip-size changed the diagrams (decision
-    // lists, with other digests) and the exclusive ors (one form, module `bdd::xor`).
+    // lists, with other digests) and the exclusive ors (one form, module `bdd::xor`), and again
+    // for two later changes of digest (repair DEEP-types-regress): CHAIN-deep-atom (07d4247a)
+    // made a decision list a treap of blocks, hashed as a tree, which changes the digests of
+    // diagrams and so the order of a connective's operands (`Part::before`); REC-canon
+    // (6cf6b730) hashes a recursive member by its group's canonical form, which changes the
+    // digest of the one sample with a `Tree` instance. The text is the same when this test runs
+    // alone, among the others and on one thread.
     let expected = include_str!("debug_text.txt");
     let samples = debug_samples::samples();
     assert_eq!(samples.len(), expected.lines().count());
@@ -531,6 +537,36 @@ fn instantiating_a_group_scales() {
                 assert!(g.instance(vec![Type::int()])[0] == first);
             }
             first
+        },
+    );
+}
+
+#[test]
+fn a_recursive_type_nested_deep_in_its_own_arguments_is_released() {
+    // Each `Tree(…)` holds its argument, the instance below it, and was dropped by a recursion as
+    // deep as the nesting once the end of its unit or of its thread freed it (repair
+    // DEEP-types-regress). Freed both ways, on a thread of the usual 2 MiB stack.
+    scaling::on_a_thread(2 << 20, || {
+        drop(trees(&tree("Ended", "A"), Type::int(), TREES));
+        Type::forget_emptiness();
+    });
+    scaling::on_a_thread(2 << 20, || {
+        drop(trees(&tree("Exited", "A"), Type::int(), TREES));
+    });
+}
+
+#[test]
+fn releasing_a_recursive_type_nested_deep_in_its_own_arguments_scales() {
+    // Built and freed on a thread of its own, at the end of its unit, from a group of its own.
+    scales_at(
+        "Tree(Tree(..)) n deep, built and released at the end of its unit",
+        1000,
+        |_, i| i,
+        |n, i| {
+            scaling::on_a_thread(2 << 20, || {
+                drop(trees(&tree(&format!("R{i}x{n}"), "A"), Type::int(), n));
+                Type::forget_emptiness();
+            })
         },
     );
 }

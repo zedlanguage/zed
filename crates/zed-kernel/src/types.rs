@@ -5361,23 +5361,34 @@ pub mod rec {
         }
     }
 
-    /// A part of an expression or tree whose owner is being dropped (module `deep`): an expression
-    /// nested deep is freed in a loop, on any stack.
+    /// A part of an expression, tree or instance whose owner is being dropped (module `deep`): an
+    /// expression nested deep, or an instance nested deep in its own arguments, is freed in a
+    /// loop, on any stack.
     #[expect(dead_code, reason = "a part is held only to be dropped")]
     enum Freed {
         Expr(Expr),
         Exprs(Vec<Expr>),
         Shape(Shape),
         Nodes(Vec<Arc<Node>>),
+        /// An instance's arguments, and its members (`Env`'s `Drop`, in module `group`).
+        Types(Vec<Type>),
+        Members(Vec<Mutex<Option<Type>>>),
     }
 
     thread_local! {
-        /// The parts of expressions and trees waiting to be dropped.
+        /// The parts of expressions, trees and instances waiting to be dropped.
         static FREED: deep::Queue<Freed> = const { deep::Queue::new() };
     }
 
     fn free(part: Freed) {
         deep::free_in(&FREED, part);
+    }
+
+    /// Keeps the queues that free types and instances until after the thread-locals first used
+    /// after this call, such as a thread's unit (`unfold::Unit`), which holds instances.
+    fn hold() {
+        super::hold();
+        deep::hold(&FREED);
     }
 
     /// An expression's parts are freed in a loop, not by recursion.

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
-use super::{Checked, Def, Env, Expr, Group, Node, Rejection, Shape, same};
+use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
 use crate::types::bdd::KeyHasher;
 use crate::types::{Type, bytes, mix};
 
@@ -744,17 +744,35 @@ fn unguarded(e: &Expr, out: &mut BTreeSet<usize>) {
     }
 }
 
-/// An instance leaves [`INSTANCES`]; its arguments, and the entry's, are dropped after the lock
-/// is released.
+/// An instance leaves [`INSTANCES`]. Its arguments and members, and the entry's arguments, are
+/// queued (module `deep`) after the lock is released: an argument may hold another instance
+/// nested as deep in its own arguments, as in `Tree(Tree(… int …))`, and dropping it here would
+/// recurse once per level of nesting.
 impl Drop for Env {
     fn drop(&mut self) {
-        let Some(g) = &self.group else { return };
-        let key = (self.thread, g.0.number, std::mem::take(&mut self.args));
+        if !self.members.is_empty() {
+            free(Freed::Members(std::mem::take(&mut self.members)));
+        }
+        let args = std::mem::take(&mut self.args);
+        let Some(g) = &self.group else {
+            return free_types(args);
+        };
+        let key = (self.thread, g.0.number, args);
         let removed = INSTANCES.lock().ok().and_then(|mut t| {
             let mine = t.get(&key).is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
             mine.then(|| t.remove_entry(&key)).flatten()
         });
-        drop(removed);
+        free_types(key.2);
+        if let Some(((_, _, entry), _)) = removed {
+            free_types(entry);
+        }
+    }
+}
+
+/// Queues an instance's types to be dropped (module `deep`); none, when there are none.
+fn free_types(types: Vec<Type>) {
+    if !types.is_empty() {
+        free(Freed::Types(types));
     }
 }
 
