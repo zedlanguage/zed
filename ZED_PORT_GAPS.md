@@ -2432,6 +2432,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A local `#[derive(PartialEq, Eq, Hash)] struct Congruence` turned into a `Con` key with a placeholder atom `Atom::Product(Aux(u32::MAX), Aux(u32::MAX))` | `Congruence::key`, `extend::clause_key` | None | A record or union value used as the key directly |
 | `Model` (`HashMap<Atom, Int>`) filled in place by `solved` before a check | `extend::solved`, `extend::met` | Mutation (gap 11) | `solved` returns the extended map |
 
+## Entries from LOAD-bound-holes (`crates/zedc-presburger/src/presburger/extend.rs`, `extend/holes.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent treap of `Option<Arc<Node>>` whose `split` and `join` copy the path they walk, shared between faces by `Arc` clone | `holes::Holes`, `holes::split`, `holes::join` | None (Zed values are shared and immutable) | A persistent ordered map from the stdlib catalog of step L2.11, or the same treap as a recursive union value |
+| A union-find with offsets in a `Vec<(Int, usize, Int)>` (each atom equal to `s` times its parent plus `d`), each path compressed in place by `find(&mut up, i)` | `extend::unit_classes` | Mutation (gap 11) | A persistent map from index to `(s, parent, d)` returned by `find`, or the union-find of the stdlib catalog of step L2.11 |
+
 ## Entries from LOAD-extend-refuses (`crates/zedc-presburger/src/presburger/extend.rs`)
 
 | Rust construct | Sites | Gap | At the port |

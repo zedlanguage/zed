@@ -344,9 +344,7 @@ mod tests {
             let got: Vec<i64> = (-60..60).filter(|&z| h.holds(&int(z))).collect();
             assert_eq!(got, want);
             let written: Vec<i64> = (-60..60)
-                .filter(|&z| {
-                    (h.intervals().iter()).any(|(lo, hi)| *lo <= int(z) && int(z) <= *hi)
-                })
+                .filter(|&z| (h.intervals().iter()).any(|(lo, hi)| *lo <= int(z) && int(z) <= *hi))
                 .collect();
             assert_eq!(written, want);
             // Merging gives the union, in either order.

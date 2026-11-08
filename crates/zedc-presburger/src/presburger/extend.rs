@@ -190,7 +190,10 @@ impl Extending {
     // feasibility after adding a constraint has no procedure in time of the constraint alone
     // (an added constraint may move every point, and the elimination the solver does is not
     // kept). Trigger: a chain of tests whose constraints each exclude the point of the test it
-    // calls. Test `l01_38_presburger::extend::a_chain_whose_points_move_is_decided_whole`, which
+    // calls, and a chain with no point at all, such as `q = (x < 10 || x > 20) && x mod 4 !=
+    // 1` moved by 3 (from the fourth link `x + 3k` takes every residue mod 4): each link is
+    // decided whole and refused (`Shadows`), 6.3 s at 12 links and 24.6 s at 16 on
+    // LOAD-bound-holes, as slow on main. Test `l01_38_presburger::extend::a_chain_whose_points_move_is_decided_whole`, which
     // measures it, and `l01_38_presburger::one_scope::the_questions_of_a_chain_of_tests_scale`
     // for the chain whose points serve. COMPLEXITY.md row LOAD-chain-share. A complete
     // solution needs an incremental integer procedure: a simplex kept from the callee, with
@@ -214,8 +217,10 @@ impl Extending {
     /// (the canonical atoms a claimed call binds, or the atoms of the arguments of a callee's
     /// body read again: `preimage::Scoped::interface`), so that a link whose point is found
     /// beside a kept part reads that part through its face (`Face`, LOAD-call-summary). The
-    /// answers are those [`Extending::defined`] gives, since each face is exact; every formula
-    /// asked of one `Extending` is read with the same `iface`.
+    /// answers are those [`Extending::defined`] gives, since each face is exact, but that a
+    /// point the faces give ([`Faces::free`]) answers where the conjunction decided whole is
+    /// refused (LOAD-bound-holes); every formula asked of one `Extending` is read with the same
+    /// `iface`.
     pub fn defined_with(
         &mut self,
         f: &Formula,
@@ -660,7 +665,10 @@ impl Faces {
     /// it projects out, as in [`Faces::met`], and the point gives no value to those atoms.
     /// `None` where no part has a face, an atom a face projects out is read beside it, or the
     /// solver finds no point or refuses, so that the conjunction is then decided whole, as
-    /// before. Time of [`Faces::read`], and of the solver on the faces and the holes.
+    /// before. A point found here is a point of the conjunction, so it answers where the
+    /// solver refuses the conjunction whole (`Err(Shadows)` on chains whose congruences meet
+    /// moved holes); those answers are checked point by point in the random tests. Time of
+    /// [`Faces::read`], and of the solver on the faces and the holes.
     fn free(
         &self,
         known: &HashMap<Id, Known>,
@@ -827,12 +835,12 @@ impl Face {
 }
 
 /// `clauses` with the clauses `d || y >= b` that share `d` and the side of the bound on `y`
-/// said once, by the tightest bound, where `d` does not read `y` (LOAD-bound-holes): `(d || y
-/// >= b) && (d || y >= b')` is `d || y >= max(b, b')`. A clause `d || (r && !d)` is read as
-/// `d || r` first, which it is. So a chain whose links move the bound of `x mod 6 == 5 || x <
-/// 50`, read at one remainder ([`same_divisions`]), keeps two clauses and not two a link. The
-/// merged clause stands where the first of its clauses stood. Time of the clauses, near
-/// linear.
+/// said once, by the tightest bound, where `d` does not read `y` (LOAD-bound-holes):
+/// `(d || y >= b) && (d || y >= b')` is `d || y >= max(b, b')`. A clause `d || (r && !d)` is
+/// read as `d || r` first, which it is. So a chain whose links move the bound of
+/// `x mod 6 == 5 || x < 50`, read at one remainder ([`same_divisions`]), keeps two clauses and
+/// not two a link. The merged clause stands where the first of its clauses stood. Time of the
+/// clauses, near linear.
 fn rays_once(clauses: Vec<Formula>) -> Vec<Formula> {
     // `d || r` from `d || (r && !d)`, and the bound `r` on its one atom as `(y, upper, b)`:
     // `y >= b`, or `y <= b` when `upper`.
@@ -903,7 +911,13 @@ fn rays_once(clauses: Vec<Formula>) -> Vec<Formula> {
                 // y >= b: y - b >= 0.
                 false => one(1, -&b),
             };
-            Formula::or(vec![d, Formula::Con(Con { lin: r, rel: Rel::Ge })])
+            Formula::or(vec![
+                d,
+                Formula::Con(Con {
+                    lin: r,
+                    rel: Rel::Ge,
+                }),
+            ])
         })
         .collect()
 }
@@ -1419,7 +1433,7 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
 /// `b` written as its class's, by the first such row. So the clauses of a chain whose links
 /// bind `x@{i-1} == x@i + 12` read the caller's atom however deep the chain, and not that of
 /// the link below (LOAD-bound-holes). Exact, since the rows stay. Time of the rows, near
-/// linear: a union of the classes by their atoms, the path halved on the way.
+/// linear: a union of the classes by their atoms, each path compressed on the way.
 fn unit_classes(
     rows: &[Con],
     read: &HashSet<Atom>,
@@ -1439,7 +1453,9 @@ fn unit_classes(
         }
     }
     for c in rows {
-        let Some(((a, _), (b, _))) = unit(c) else { continue };
+        let Some(((a, _), (b, _))) = unit(c) else {
+            continue;
+        };
         for x in [a, b] {
             if !index.contains_key(x) {
                 index.insert(x, atoms.len());
@@ -1473,7 +1489,9 @@ fn unit_classes(
     }
     let prefer = |x: &Atom, y: &Atom| (!keep.contains(x), x) < (!keep.contains(y), y);
     for c in rows {
-        let Some(((a, k), (b, e))) = unit(c) else { continue };
+        let Some(((a, k), (b, e))) = unit(c) else {
+            continue;
+        };
         if k.abs() != Int::ONE || e.abs() != Int::ONE {
             continue;
         }
@@ -1504,17 +1522,23 @@ fn unit_classes(
         constant: d,
     };
     let mut to: HashMap<Atom, Lin> = HashMap::new();
-    for i in 0..atoms.len() {
+    for (i, &a) in atoms.iter().enumerate() {
         let (s, r, d) = find(&mut up, i);
-        if r != i && !keep.contains(atoms[i]) {
-            to.insert(atoms[i].clone(), lin(s, r, d));
+        if r != i && !keep.contains(a) {
+            to.insert(a.clone(), lin(s, r, d));
         }
     }
     let mut also: HashMap<Atom, Lin> = HashMap::new();
     for c in rows {
-        let Some(((x, kx), (y, ky))) = unit(c) else { continue };
+        let Some(((x, kx), (y, ky))) = unit(c) else {
+            continue;
+        };
         for ((a, k), (b, e)) in [((x, kx), (y, ky)), ((y, ky), (x, kx))] {
-            if k.abs() != Int::ONE || !read.contains(a) || to.contains_key(a) || also.contains_key(a) {
+            if k.abs() != Int::ONE
+                || !read.contains(a)
+                || to.contains_key(a)
+                || also.contains_key(a)
+            {
                 continue;
             }
             let (s, r, d) = find(&mut up, index[b]);
@@ -1824,16 +1848,19 @@ fn read_at(m: &Point, atoms: &std::collections::BTreeSet<Atom>) -> Model {
 /// the point is checked against each set in O(log n), and the holes are written out as clauses
 /// only where the solver is asked. Time of `f`, O(log n) for each set of holes, and, where the
 /// solver is asked, of the holes.
-fn met_outside(m: &Point, f: &Formula, holes: &[(&Atom, &Holes)]) -> Result<Option<Point>, Refusal> {
+fn met_outside(
+    m: &Point,
+    f: &Formula,
+    holes: &[(&Atom, &Holes)],
+) -> Result<Option<Point>, Refusal> {
     if holes.is_empty() {
         return met(m, f);
     }
     let mut atoms = f.atoms();
     atoms.extend(holes.iter().map(|(a, _)| (*a).clone()));
     let mut at = read_at(m, &atoms);
-    let outside = |at: &Model| {
-        (holes.iter()).all(|(a, h)| !h.holds(at.get(*a).unwrap_or(&Int::ZERO)))
-    };
+    let outside =
+        |at: &Model| (holes.iter()).all(|(a, h)| !h.holds(at.get(*a).unwrap_or(&Int::ZERO)));
     if (f.holds(&at) && outside(&at)) || (solved(&mut at, f) && f.holds(&at) && outside(&at)) {
         let mut out = m.clone();
         for a in atoms {
@@ -2515,9 +2542,7 @@ mod tests {
     fn con(terms: &[(u32, i64)], c: i64, rel: Rel) -> Con {
         Con {
             lin: Lin {
-                terms: (terms.iter())
-                    .map(|&(n, k)| (a(n), Int::from(k)))
-                    .collect(),
+                terms: (terms.iter()).map(|&(n, k)| (a(n), Int::from(k))).collect(),
                 constant: Int::from(c),
             },
             rel,

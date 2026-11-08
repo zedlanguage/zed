@@ -522,10 +522,12 @@ fn answers_are_those_of_the_whole(src: &str) {
 /// Checks that each answer of each function of `src`, read under one scope and decided from the
 /// answers of the conjunctions it extends, is the same, refusals too, when each kept part is
 /// read through its face where one is made (`Extending::defined_with`) as when none is
-/// (`Extending::defined`), and is the one the body closed over the definitions it reaches has,
-/// decided whole, wherever that is decided: no question decided whole is refused from parts
-/// (LOAD-extend-refuses); in the unit's order and in the reverse. A question the solver
-/// refuses whole may be answered from parts. Returns how many answers the whole gave.
+/// (`Extending::defined`), except that a face may answer where none refuses, and then its
+/// answer is the one found point by point (`enumerated`; LOAD-bound-holes); a face never
+/// refuses where none answers. Each answer is the one the body closed over the definitions it
+/// reaches has, decided whole, wherever that is decided: no question decided whole is refused
+/// from parts (LOAD-extend-refuses); in the unit's order and in the reverse. A question the
+/// solver refuses whole may be answered from parts. Returns how many answers the whole gave.
 fn answers_with_faces_are_those_without(src: &str) -> usize {
     use zedc::store::presburger::extend::Extending;
     use zedc::store::presburger::{Formula, decide};
@@ -554,7 +556,29 @@ fn answers_with_faces_are_those_without(src: &str) -> usize {
             let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
             let b = plain.defined(&r, &|n| scoped.def(n));
             let w = scoped.written(&r);
-            assert_eq!(a, b, "`{name}` with faces and without in\n{src}\n{w}");
+            for (side, got, without) in
+                [("holds", &a.holds, &b.holds), ("fails", &a.fails, &b.fails)]
+            {
+                match (got, without) {
+                    (Ok(g), Err(_)) => {
+                        let (holds, fails) = enumerated(&w);
+                        let want = if side == "holds" { holds } else { fails };
+                        assert_eq!(
+                            *g, want,
+                            "`{name}` {side} with faces, by points, in\n{src}\n{w}"
+                        );
+                    }
+                    (Err(_), Ok(_)) => {
+                        panic!(
+                            "`{name}` {side} refused with faces, answered without, in\n{src}\n{w}"
+                        )
+                    }
+                    _ => assert_eq!(
+                        got, without,
+                        "`{name}` {side} with faces and without in\n{src}\n{w}"
+                    ),
+                }
+            }
             for (got, f) in [
                 (&a.holds, expected.body.clone()),
                 (&a.fails, Formula::negate(expected.body.clone())),
@@ -567,6 +591,61 @@ fn answers_with_faces_are_those_without(src: &str) -> usize {
         }
     }
     decided
+}
+
+/// Whether the body of `w` holds somewhere and whether it fails somewhere, found point by point:
+/// `w` reads one symbol, bounded below and above by rows of its body's top conjunction, and at
+/// each value from the lower bound to one past the upper the definitions fix every division
+/// (`satisfiable`), and the body is read at those values (`Formula::holds`). Past the upper
+/// bound the body fails, and so does it below the lower; the point one past the upper stands
+/// for those.
+fn enumerated(w: &Relation) -> (bool, bool) {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel, satisfiable};
+    let syms: Vec<Atom> = (w.body.atoms().into_iter())
+        .chain(w.defined().atoms())
+        .filter(|a| matches!(a, Atom::Sym(_)))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let [x] = &syms[..] else {
+        panic!("{w}: reads {} symbols, not one", syms.len())
+    };
+    let (mut lo, mut hi) = (None::<i64>, None::<i64>);
+    let mut top = vec![&w.body];
+    while let Some(p) = top.pop() {
+        if let Formula::And(parts) = p {
+            top.extend(parts.iter());
+            continue;
+        }
+        let Formula::Con(c) = p else { continue };
+        let k = c
+            .lin
+            .terms
+            .get(x)
+            .map(|k| i64::try_from(k.to_i128().unwrap()).unwrap());
+        let b = i64::try_from(c.lin.constant.to_i128().unwrap()).unwrap();
+        match (c.rel, c.lin.terms.len(), k) {
+            // `x + b >= 0` and `-x + b >= 0`.
+            (Rel::Ge, 1, Some(1)) => lo = Some(lo.map_or(-b, |l| l.max(-b))),
+            (Rel::Ge, 1, Some(-1)) => hi = Some(hi.map_or(b, |h| h.min(b))),
+            _ => {}
+        }
+    }
+    let (Some(lo), Some(hi)) = (lo, hi) else {
+        panic!("{w}: no bounds on {x:?} in the top conjunction")
+    };
+    let defined = w.defined();
+    let (mut holds, mut fails) = (false, false);
+    for v in lo..=hi + 1 {
+        let fixed = Formula::Con(Con::eq(&Lin::atom(x.clone()), &Lin::constant(v)));
+        let m = satisfiable(&Formula::and(vec![defined.clone(), fixed.clone()]))
+            .unwrap_or_else(|e| panic!("{w}: definitions refused at {v}: {e:?}"))
+            .unwrap_or_else(|| panic!("{w}: no definitions at {v}"));
+        assert!(defined.holds(&m) && fixed.holds(&m), "{w}: {m:?} at {v}");
+        let b = w.body.holds(&m);
+        (holds, fails) = (holds || b, fails || !b);
+    }
+    (holds, fails)
 }
 
 /// The drifting chain of LOAD-call-summary, `q` and `p0` followed by `p{i}(x) = q(x: x) &&
@@ -1758,10 +1837,14 @@ fn the_questions_of_a_chain_moving_bounds_beside_a_shared_remainder_scale() {
     // kept its own bound atom, quotient and remainder, and a clause each, so a link read the
     // chain: 3.06 s at 40 links, 25.4 s at 80 (debug, measured once). Now the bindings are
     // followed to the caller's atom, the divisions of one term by 6 read one remainder, and
-    // the clauses `r == 5 || x <= b` keep the tightest `b`: 0.111, 0.369 s at 40, 80 links.
+    // the clauses `r == 5 || x <= b` keep the tightest `b`: 0.111, 0.369 s at 40, 80 links,
+    // about 2.4 ms a link. Sized 8 and 64: without these three steps the cost of a link grows
+    // until about link 60 and then stays, so 40 and 320 passed the limit, where 8 and 64 fail
+    // it (243 times the bytes; 189, 181 and 64 times without each step alone). Link 76 alone
+    // costs about 0.15 s at any length, so the sizes stay below it.
     questions_scale(
         "a chain whose links move bounds beside a shared remainder",
-        40,
+        8,
         "q(x: int) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50) && x > 0 \
          && x < 1000000;\np0(x: int) = x > 0;\n",
         rising_link,
@@ -1826,12 +1909,15 @@ fn random_hole_chain(rng: &mut zed_tests::instances::Rng) -> String {
 fn each_answer_of_a_random_chain_moving_holes_is_the_answer_of_the_relation_whole() {
     // LOAD-bound-holes: random chains mixing moved holes, bounds beside a shared remainder and
     // other disjunctions, each answer with faces (holes, merged bounds, one remainder for each
-    // divided term) the same as without, refusals too, and the same as `decide`'s on the
-    // relation written whole wherever that is decided, in both orders of the bodies.
+    // divided term) the same as without, refusals too, but where only the faces answer, and
+    // then the answer found point by point; and the same as `decide`'s on the relation written
+    // whole wherever that is decided, in both orders of the bodies. The 40 chains give 1510
+    // answers of the whole (measured); the 16th takes most of the time, and its `p9` holds
+    // where only the faces find the point (`Faces::free`).
     let mut rng = zed_tests::instances::Rng::new(0x401e5);
     let mut decided = 0;
     for _ in 0..40 {
         decided += answers_with_faces_are_those_without(&random_hole_chain(&mut rng));
     }
-    assert!(decided >= 400, "{decided} answers of the whole");
+    assert!(decided >= 1200, "{decided} answers of the whole");
 }
