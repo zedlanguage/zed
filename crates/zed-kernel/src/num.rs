@@ -32,7 +32,7 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
 use fast::built;
-pub use fast::{mul as mul_uint, mul_int, pow as pow_uint};
+pub use fast::{mul as mul_uint, mul_int, pow as pow_uint, to_decimal};
 pub use room::{LiteralRounding, TooLarge, bytes_of, room};
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
@@ -289,7 +289,9 @@ impl Rat {
         // reciprocals held at once), the zeros of a kept power of ten, and the copy of the text
         // into the value: the peak heap was at most 4.53 times that over numbers of 2^12 to
         // 2^20 bits, plain, kept powers and rationals (2026-11-06, glibc's mmap threshold
-        // fixed at 128 KiB). So a text needing less is refused when the free
+        // fixed at 128 KiB), and with the printer of NUM-print-fast, whose levels keep their
+        // transforms, at most 6.11 times over plain numbers of 2^14 to 2^19 words and 5.50 over
+        // `3 ** k` to 6.4 million (2026-11-08). So a text needing less is refused when the free
         // memory lies between the two, and none aborts. Tested by
         // `printing_a_wide_number_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would write the digits by halves into memory reserved once.

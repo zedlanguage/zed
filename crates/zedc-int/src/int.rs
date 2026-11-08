@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
-use zed_kernel::num::{TooLarge, mul_int, mul_uint, pow_uint, read_digits, room};
+use zed_kernel::num::{TooLarge, mul_int, mul_uint, pow_uint, read_digits, room, to_decimal};
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division.
@@ -290,7 +290,7 @@ impl fmt::Display for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Repr::Small(v) => write!(f, "{v}"),
-            Repr::Big(v) => write!(f, "{v}"),
+            Repr::Big(v) => write_decimal(f, v),
         }
     }
 }
@@ -2645,10 +2645,19 @@ impl fmt::Display for Num {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Word::Small(v) => write!(f, "{v}"),
-            Word::Big(v) => write!(f, "{v}"),
-            Word::Kept(k) => write!(f, "{}", k.expand()),
+            Word::Big(v) => write_decimal(f, v),
+            Word::Kept(k) => write_decimal(f, &k.expand()),
         }
     }
+}
+
+/// `v` in decimal, as num-bigint writes it, the digits by [`to_decimal`]: O(n log^2 n) for `n`
+/// words, against num-bigint's `n^1.5` (COMPLEXITY.md K81).
+fn write_decimal(f: &mut fmt::Formatter<'_>, v: &BigInt) -> fmt::Result {
+    if v.sign() == Sign::Minus {
+        f.write_str("-")?;
+    }
+    f.write_str(&to_decimal(v.magnitude()))
 }
 
 #[cfg(test)]
