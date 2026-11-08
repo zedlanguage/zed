@@ -60,8 +60,10 @@
 //! nodes and its emptiness results per thread. Run on one thread, every run after the first read
 //! the first's results: the union of 16 and 128 morphism differences
 //! (`l01_23_subtyping::scaling`) took 7.0 times the work from the second run and 48.0 times from
-//! a fresh start (F44). Memos a run's input holds, such as a `Db`'s results or a type's printed
-//! text, are the test's to make fresh.
+//! a fresh start (F44). A new thread does not empty the memos a run's input holds, such as a
+//! `Db`'s results or a type's printed text, or a table the process keeps for all threads, so the
+//! first run of each size, which fills them, is held to the limit too: the warm-up at `n`
+//! against the first run at `8n` (SCALE-first-run).
 
 use std::cell::Cell;
 use std::hint::black_box;
@@ -252,8 +254,16 @@ impl Meter {
 
     /// The least work and the least bytes of the runs of `f`.
     fn least(&mut self, f: impl Fn()) -> Work {
-        (0..self.repeats().0)
-            .map(|_| self.work(&f))
+        self.least_with(None, f)
+    }
+
+    /// [`Meter::least`] of `first`, a run of `f` already measured, and as many more runs of `f`
+    /// as make up the meter's count.
+    fn least_with(&mut self, first: Option<Work>, f: impl Fn()) -> Work {
+        let more = self.repeats().0 - usize::from(first.is_some());
+        first
+            .into_iter()
+            .chain((0..more).map(|_| self.work(&f)))
             .reduce(|a, b| Work {
                 units: a.units.min(b.units),
                 bytes: a.bytes.min(b.bytes),
@@ -459,11 +469,20 @@ pub fn compare(
     )
 }
 
-/// [`compare`] by the given meter and measures. Each run is [`alone`]; a first run builds what
-/// the process keeps once for all threads, such as the grammar. Counts of instructions need the
-/// least of two runs and one measurement, and processor time the fastest of five and three
-/// measurements. The bytes do not change with load, so the first measurement over the limit
-/// fails.
+/// [`compare`] by the given meter and measures. Each run is [`alone`]. Counts of instructions
+/// need the least of two runs and one measurement, and processor time the fastest of five and
+/// three measurements. The bytes do not change with load, so the first measurement over the
+/// limit fails.
+///
+/// Before the least is taken, the first run of each size is held to the same limit: the warm-up
+/// at the smaller size against the first run at the larger. A memo that outlives a run's thread
+/// (a table the process keeps and does not key by thread, or one in the test's input, such as a
+/// `Db`'s results or a type's printed text) is filled by the first run of a size, and every later
+/// run of that size finds the work done, so the least of the runs measures memo hits. The
+/// warm-up also builds what the process keeps once for all threads, such as the grammar, which
+/// raises its count a little and so loosens this ratio a little at a small `n`. The bytes of the
+/// first runs are held on every meter, their work only on a count of instructions, since one run
+/// cannot give processor time's three measurements.
 fn compare_by(
     meter: &mut Meter,
     measures: Measures,
@@ -473,7 +492,9 @@ fn compare_by(
     small: impl Fn() + Sync,
     large: impl Fn() + Sync,
 ) {
-    alone(&small);
+    let warm_bytes = Cell::new(0);
+    let mut warm = Some(meter.work(|| warm_bytes.set(alone(&small))));
+    let mut first_runs = String::new();
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
         // The bytes compared are those `alone` counts inside its thread, not the meter's: those
@@ -483,11 +504,15 @@ fn compare_by(
         let (small_bytes, large_bytes, large_most) =
             (Cell::new(u64::MAX), Cell::new(u64::MAX), Cell::new(0));
         let small = meter.least(|| small_bytes.set(small_bytes.get().min(alone(&small))));
-        let large = meter.least(|| {
+        let run_large = || {
             let bytes = alone(&large);
             large_bytes.set(large_bytes.get().min(bytes));
             large_most.set(large_most.get().max(bytes));
-        });
+        };
+        // The first run at the larger size, before any other: its bytes are the only ones in
+        // `large_bytes` until the rest of the runs.
+        let first = warm.map(|warm| (warm, meter.work(run_large), large_bytes.get()));
+        let large = meter.least_with(first.map(|(_, run, _)| run), run_large);
         if measures == Measures::Both && large_most.get() == 0 {
             panic!(
                 "{what}: the larger run allocated no bytes, on its thread or any thread it \
@@ -495,6 +520,35 @@ fn compare_by(
                  checked by check_instructions_only"
             );
         }
+        if let Some((warm, run, run_bytes)) = first {
+            let ratio = run.units as f64 / warm.units as f64;
+            let warm_bytes = warm_bytes.get();
+            let bytes = run_bytes.max(1) as f64 / warm_bytes.max(1) as f64;
+            let memo = "the runs after the first of a size can find its work done in a memo \
+                        that outlives a run's thread, kept by the process or in the test's \
+                        input, so the first runs are held to the limit too";
+            if measures == Measures::Both && bytes > limit {
+                panic!(
+                    "{what}: the first runs allocated {warm_bytes} and {run_bytes} bytes, \
+                     {bytes:.1} times the bytes; {memo}; {why}"
+                );
+            }
+            if meter.instructions && ratio > limit {
+                panic!(
+                    "{what}: the first runs took {} and {} {}, {ratio:.1} times the work; \
+                     {memo}; {why}",
+                    warm.units,
+                    run.units,
+                    meter.unit()
+                );
+            }
+            first_runs = format!(
+                "; the first runs took {} and {}, {ratio:.1} times the work, and allocated \
+                 {warm_bytes} and {run_bytes} bytes, {bytes:.1} times the bytes",
+                warm.units, run.units
+            );
+        }
+        warm = None;
         let (small_bytes, large_bytes) = (small_bytes.get(), large_bytes.get());
         // Never 0 in the ratio, as [`Meter::work`] counts them; the messages print the counts.
         let bytes = large_bytes.max(1) as f64 / small_bytes.max(1) as f64;
@@ -518,7 +572,7 @@ fn compare_by(
             eprintln!(
                 "{what}: passed: took {} and {} {}, {ratio:.1} times the work; allocated \
                  {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes{held}; \
-                 the limit is {limit}{earlier}",
+                 the limit is {limit}{first_runs}{earlier}",
                 small.units,
                 large.units,
                 meter.unit()
@@ -761,6 +815,7 @@ mod tests {
             " times the work; allocated ".into(),
             " bytes, ".into(),
             " times the bytes; the limit is 24".into(),
+            "; the first runs took ".into(),
         ] {
             assert!(line.contains(&part), "{part:?} not in {line:?}");
         }
@@ -932,6 +987,37 @@ mod tests {
         assert_eq!(fresh.into_inner(), small + large);
     }
 
+    /// A quadratic pass behind a memo the process keeps for all threads, keyed by size, as a
+    /// table not keyed by thread is: the first run of each size does `n²` work and allocates `n²`
+    /// bytes, every later run finds the size in the memo and does `n`. The least of the runs sees
+    /// only the later runs, 8 times at both measures; the first runs are 64 times.
+    #[test]
+    fn a_memo_that_outlives_a_thread_does_not_hide_the_work_of_the_first_runs() {
+        static DONE: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+        let memoized = |n: usize| {
+            let done = DONE.lock().unwrap().contains(&n);
+            if done {
+                work(n, 1, 2);
+                linear_bytes(n);
+            } else {
+                work(n, 2, 2);
+                black_box(vec![1u8; n * n]);
+                DONE.lock().unwrap().push(n);
+            }
+        };
+        let message = message_of(|| check("a memoized quadratic", 300, memoized));
+        assert!(message.contains("the first runs "), "{message}");
+        assert!(message.contains("64.0 times the "), "{message}");
+        // Once both sizes are in the memo, every run is linear and passes.
+        check("a memoized quadratic, memo full", 300, memoized);
+        // The work of the first runs, without their bytes, on a count of instructions; processor
+        // time holds only their bytes (see `compare_by`).
+        if Meter::new().instructions {
+            let message = message_of(|| check_instructions_only("work only", 200, 1, memoized));
+            assert!(message.contains("the first runs took "), "{message}");
+        }
+    }
+
     /// The passes of the loops of [`counted_spin`] on every thread of the process; only
     /// `a_meter_measures_by_any_counter_it_is_given` runs them.
     static SPUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1006,8 +1092,8 @@ mod tests {
             )
         });
         assert!(
-            message.contains("1000000 and 64000000, 64.0 times the work")
-                && message.contains("in passes"),
+            message
+                .contains("the first runs took 1000000 and 64000000 passes, 64.0 times the work"),
             "{message}"
         );
     }
