@@ -6,10 +6,13 @@
 //! one, with it the head of each component and so the widening points. The traversal visits
 //! the vertices, and each vertex's successors, in the order of their keys ([`VertexKey`]): by
 //! name, then by the content address of the static node, then by that node's canonical form
-//! compared structurally, then by the keypath of the vertex's fact address. Nothing in a key
-//! says where a declaration or a binding is written, so moving one changes no head; renaming
-//! one may. [`ordered_by`] computes the order from the keys; [`weak_topological_order`] is the
-//! traversal itself, over vertices already numbered in the order to visit them.
+//! compared structurally, then by the keypath of the vertex's fact address. The name is the
+//! one the unit's address hashes: a declaration's written name, a local binder's de Bruijn
+//! level (step M0.7). Nothing in a key says where a declaration or a binding is written, so
+//! moving one changes no head; renaming a declaration may, as it changes the address, and
+//! renaming a local binding changes nothing. [`ordered_by`] computes the order from the keys;
+//! [`weak_topological_order`] is the traversal itself, over vertices already numbered in the
+//! order to visit them.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -17,15 +20,19 @@ use std::fmt;
 use zedc_base::address::ContentAddress;
 use zedc_syntax::lex::Span;
 
-/// What the traversal orders a vertex by (DESIGN.md step M0.5): the binding name that ends the
-/// vertex's fact address (a node inside an expression takes its binding's), then the content
-/// address of its static node, then that node's canonical form `F` compared structurally, then
-/// the dynamic keypath `P` of the fact address, so the order is total without trusting a hash
-/// as identity. The cells of one static node, one per keypath (a family key, a fold step, an
-/// iterate), share the first three parts, and the keypath tells them apart.
+/// What the traversal orders a vertex by (DESIGN.md step M0.5): the name the unit's address
+/// hashes for the binding that ends the vertex's fact address (a node inside an expression
+/// takes its binding's), then the content address of its static node, then that node's
+/// canonical form `F` compared structurally, then the dynamic keypath `P` of the fact address,
+/// so the order is total without trusting a hash as identity. The cells of one static node,
+/// one per keypath (a family key, a fold step, an iterate), share the first three parts, and
+/// the keypath tells them apart.
 #[derive(Clone, Copy, Debug)]
 pub struct VertexKey<'a, F, P> {
-    /// The binding name.
+    /// The name the unit's address hashes for the binding: a declaration's written name, or a
+    /// local binder's de Bruijn level as the canonicalizer writes it (`\0` and the level,
+    /// `zedc_zir::canon::binders::level_name`), so a local rename changes no key. No written
+    /// name contains U+0000, so every local sorts before every declaration.
     pub name: &'a str,
     /// The content address of the static node.
     pub address: ContentAddress,

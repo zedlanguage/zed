@@ -10,6 +10,7 @@ use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zed_tests::scaling;
 use zedc::address::ContentAddress;
 use zedc::ast::unit;
+use zedc::canon::binders::{level_name, level_of};
 use zedc::check::walk::check;
 use zedc::lex::{Span, lex_fence};
 use zedc::parse::{TOP, parse};
@@ -694,12 +695,36 @@ fn abc_member(rng: &mut Rng) -> System {
     if rng.below(2) == 0 { eq } else { eq.bare() }
 }
 
-/// The same system with its local bindings renamed to `names`. Only the name part of each
-/// key changes: the address and the canonical form of a cell's node write a local binding
-/// as its level (step M0.7), so a local rename leaves both, and the unit's address, alone.
-fn renamed_locals(eq: &System, names: &[String]) -> System {
-    let mut out = eq.clone();
-    out.names = names.to_vec();
+/// The names the content address hashes for `walk`'s local bindings `a`, `b` and `c`, read off
+/// the binders of its canonical form (step M0.7): the frame variable of the step
+/// `a -> { b = …; c = …; … }` and its two `let`s, each a de Bruijn level.
+fn hashed_names(names: [&str; 3]) -> Vec<String> {
+    use zed_kernel::term::Term;
+    let body = zedc::canon::canonicalize(&walk(names)).body;
+    let Term::Lam(_, generate) = &body else {
+        panic!("`walk` is a function: {body:?}")
+    };
+    let Term::Gen { step, .. } = &**generate else {
+        panic!("`walk`'s body is a loop: {generate:?}")
+    };
+    let Term::Lam(frame, lets) = &**step else {
+        panic!("the step is a function: {step:?}")
+    };
+    let Term::Let(b, _, rest) = &**lets else {
+        panic!("the step binds `b`: {lets:?}")
+    };
+    let Term::Let(c, _, _) = &**rest else {
+        panic!("the step binds `c`: {rest:?}")
+    };
+    [&frame[0], b, c].map(|s| s.to_string()).into()
+}
+
+/// The loop's system keyed as the traversal keys it (DESIGN.md step M0.5): each cell of a
+/// local binding takes the name the unit's address hashes for that binding, not the name
+/// written in `names`, both in its own key and in the forms of the cells that read it.
+fn keyed_by_level(eq: &System, names: [&str; 3]) -> System {
+    let mut out = System::named(hashed_names(names), eq.init.clone(), eq.terms.clone());
+    out.bare = eq.bare;
     out
 }
 
@@ -730,37 +755,38 @@ fn outcome(eq: &System) -> Outcome {
 }
 
 #[test]
-fn a_rename_that_keeps_the_order_of_the_local_names_changes_nothing() {
-    // Each local name replaced by another in the same order: the keys compare as before, so
-    // the heads, the cells and the verdict are those of the unit as written.
+fn a_local_binding_is_keyed_by_its_level_and_sorts_before_every_declaration() {
+    // `walk`'s three bindings are at levels 1, 2 and 3 (`n` is at 0) whatever they are
+    // called, and a level name begins with U+0000, which no written name contains, so a local
+    // cell sorts before every declaration and the order stays total.
+    let want: Vec<String> = (1..=3).map(|l| level_name(l).to_string()).collect();
+    assert_eq!(hashed_names(["a", "b", "c"]), want);
+    assert_eq!(hashed_names(["z", "b", "c"]), want);
     let mut rng = Rng::new(0x0e4b);
     for _ in 0..RANDOM_INSTANCES {
-        let eq = abc_member(&mut rng);
-        let mut names = local_names(&mut rng, 3);
-        names.sort();
-        assert_eq!(
-            outcome(&renamed_locals(&eq, &names)),
-            outcome(&eq),
-            "{names:?}"
-        );
+        let n = local_names(&mut rng, 3);
+        assert_eq!(hashed_names([&n[0], &n[1], &n[2]]), want, "{n:?}");
+    }
+    for (l, name) in want.iter().enumerate() {
+        assert_eq!(level_of(name), Some(l + 1));
+        assert!(name.as_str() < "a" && name.as_str() < "A" && name.as_str() < "_");
     }
 }
 
 #[test]
-#[ignore = "ORDER-rename: fails under DESIGN's order by binding name; question for the author"]
 fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_verdict() {
     // Two units with one content address must get one verdict (DESIGN.md step M0.11, cited by
     // [Bourdoncle] in the bibliography). A local rename keeps the address
-    // (`renaming_a_loops_local_bindings_keeps_the_units_address`), but the traversal orders
-    // the cells by binding name first, so the rename can move the head.
+    // (`renaming_a_loops_local_bindings_keeps_the_units_address`), and the traversal keys a
+    // local cell by the level the address hashes, so the rename changes no key.
     //
     // The witness is `walk` (see [`walk`]), whose loop gives the cells
     // `a = [-2..=0] ⊔ (c + 1); b = (a ⊓ [..=99]) + 2; c = b + 2`, with the landmarks -2, 0
-    // and 99 that its text writes. As written the head is `a`, the least name; `a` is widened
-    // to `[-2..=104]` and narrowing does not cut the gap back out, so `a != 1` is not proved.
-    // With `a` renamed `z` the head is `b`, `a` comes out `[-2..=0, 3..=104]`, and `a != 1`
-    // is proved. A run takes `a` through -2..=0, 3..=5, 8..=10, …, so `a` is never 1.
-    let witness = |names: [&str; 3]| {
+    // and 99 that its text writes. Keyed by written names, its head was `a` as written and `b`
+    // with `a` renamed `z`, and only the copy proved `a != 1`. Keyed by level, both have the
+    // frame variable, level 1, as head: `a` is widened to `[-2..=104]` and `a != 1` is not
+    // proved in either, which is sound, as a run takes `a` through -2..=0, 3..=5, 8..=10, ….
+    let witness = {
         use super::Term;
         let step = |from, offset, filter| {
             vec![Term {
@@ -770,7 +796,7 @@ fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_v
             }]
         };
         System::named(
-            names.iter().map(|s| s.to_string()).collect(),
+            vec!["a".into(), "b".into(), "c".into()],
             vec![
                 IntervalSet::of(-2, 0),
                 IntervalSet::empty(),
@@ -783,20 +809,22 @@ fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_v
             ],
         )
     };
-    let written = witness(["a", "b", "c"]);
-    let copy = renamed_locals(&written, &["z".into(), "b".into(), "c".into()]);
-    assert!(!written.concrete((-12, 120))[0].contains(&1));
+    assert!(!witness.concrete((-12, 120))[0].contains(&1));
+    let written = outcome(&keyed_by_level(&witness, ["a", "b", "c"]));
+    assert_eq!(outcome(&keyed_by_level(&witness, ["z", "b", "c"])), written);
+    assert_eq!(written.head, 0);
+    assert_eq!(written.cells, ["[-2..=104]", "[0..=101]", "[2..=103]"]);
+    assert!(!written.proved.contains(&(0, 1)));
 
-    assert_eq!(outcome(&copy), outcome(&written), "the witness `walk`");
     // The search over the a/b/c family and random local names.
     let mut rng = Rng::new(0x0e4c);
     for _ in 0..RANDOM_INSTANCES {
         let eq = abc_member(&mut rng);
-        let names = local_names(&mut rng, 3);
+        let n = local_names(&mut rng, 3);
         assert_eq!(
-            outcome(&renamed_locals(&eq, &names)),
-            outcome(&eq),
-            "{names:?}: {eq:?}"
+            outcome(&keyed_by_level(&eq, [&n[0], &n[1], &n[2]])),
+            outcome(&keyed_by_level(&eq, ["a", "b", "c"])),
+            "{n:?}: {eq:?}"
         );
     }
 }

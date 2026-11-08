@@ -27,9 +27,11 @@ pub trait Equations<L: Lattice> {
     type Keypath: Ord;
     /// For each cell, the cells its projection reads.
     fn reads(&self) -> &[Vec<usize>];
-    /// What the traversal orders cell `v` by: its binding name, the content address of its
-    /// static node, that node's canonical form and the keypath of its fact address (DESIGN.md
-    /// step M0.5).
+    /// What the traversal orders cell `v` by: the name the unit's address hashes for its
+    /// binding (a declaration's written name, a local binder's de Bruijn level), the content
+    /// address of its static node, that node's canonical form and the keypath of its fact
+    /// address (DESIGN.md step M0.5). A cell of a local binding must not be keyed by the
+    /// written name: two units with one address would then get two verdicts.
     fn key(&self, v: usize) -> VertexKey<'_, Self::Form, Self::Keypath>;
     /// Where cell `v`'s static node is written, for the refusal of two cells with one key;
     /// the order never reads it.
