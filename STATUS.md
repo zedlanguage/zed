@@ -1630,19 +1630,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| DECIDE-front-cost | running | 2026-11-07 21:05 |  |
-| EMPTY-overlap-fast | impl attempt 1 | 2026-11-08 03:36 | BLOCKED: /home full (0 bytes free); test build fails with ENOSPC; no code written; worktree clean at c53d0a85 / load 30.83 31.70 21.69 |
-| ENV-bounded-partial | running | 2026-11-07 20:25 |  |
-| FENCE-front-snapshot | running | 2026-11-08 05:12 |  |
-| OMEGA-splinter-cap | impl attempt 1 | 2026-11-08 04:10 | ready 55477c6d on ecdf52e4: splinters split again while live variables fall, Shadows otherwise; 204 pieces 0 failed with doc tests; load 12.29 12.75 13.89 |
-| PRES-mod-conjuncts | impl attempt 1 | 2026-11-08 01:02 | ready at 680c0f0d on origin/main ecdf52e4; 953 passed 0 failed; guarded-chain residual 130x needs XR-algos / load 19.25 16.12 15.13 |
-| RACE-constant | impl attempt 1 | 2026-11-07 22:16 | ready a0a8f61a on origin/main ecdf52e4: pairs stop once their units exceed Duong's estimated remaining units; both-ways k=1024 race/Duong 4.11 -> 2.77, split_ba |
-| REFUSAL-finite-pairs | running | 2026-11-07 22:53 |  |
+| DECIDE-front-cost | impl attempt 1 | 2026-11-07 21:05 | cause: front end (nnf 24%, parts/Joining 21%, canonical 16%, take 10% of decide at 16384) around the same utvpi::integer_empty; fix: structural fast path for un |
+| EMPTY-overlap-fast | impl attempt 2 | 2026-11-08 03:36 | design done (exact pairwise sweeps for shared list/parity meets, refusal SharedCells); coding |
+| ENV-bounded-partial | impl attempt 1 | 2026-11-07 20:25 | bounded denotation + ->? / L .. U printing in; running affected groups / load 20.53 14.42 12.61 |
 | XST-r4 | running | 2026-11-08 02:53 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
-- ATOM-payload-sub: ready on wt/atom-payload-sub, not yet merged.
 
 ## Open points
 
