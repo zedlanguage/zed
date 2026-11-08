@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::address::ContentAddress;
+use zedc::lex::Span;
 use zedc::store::affine::{Affine, Bounds};
 use zedc::store::interval::End;
 use zedc::store::interval::IntervalSet;
@@ -84,15 +85,21 @@ impl System {
 
 impl Equations<Bounds> for System {
     type Form = ();
+    type Keypath = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+    fn key(&self, v: usize) -> VertexKey<'_, (), ()> {
         VertexKey {
             name: &self.names[v],
             address: ContentAddress([0; 32]),
             form: &(),
+            keypath: &(),
         }
+    }
+    /// The systems here are built, not read from source, so no cell has a place in a text.
+    fn span(&self, _: usize) -> Span {
+        Span { start: 0, end: 0 }
     }
     fn eval(&self, v: usize, cells: &[Bounds]) -> Bounds {
         self.terms[v].iter().fold(self.init[v].clone(), |acc, t| {

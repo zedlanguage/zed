@@ -2,13 +2,14 @@
 //! fixpoint, and on the loops whose values the landmarks decide.
 
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
+use zedc::lex::Span;
 use zedc::store::interval::IntervalSet;
 use zedc::store::iterate::{Equations, Scopes, narrow, order, phase1, solve};
 use zedc::store::landmarks::Landmarks;
 use zedc::store::lattice::Lattice;
 use zedc::store::wto::{Element, VertexKey};
 
-use super::{System, Term, is_post_fixpoint, iv, name_key, numbered_names};
+use super::{System, Term, is_post_fixpoint, iv, line, name_key, numbered_names};
 
 /// One instruction of the flattened order.
 #[derive(Clone, Copy, Debug)]
@@ -291,11 +292,15 @@ struct Levels(Vec<Vec<usize>>, Vec<String>);
 
 impl Equations<IntervalSet> for Levels {
     type Form = ();
+    type Keypath = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.0
     }
-    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+    fn key(&self, v: usize) -> VertexKey<'_, (), ()> {
         name_key(&self.1, v)
+    }
+    fn span(&self, v: usize) -> Span {
+        line(v)
     }
     fn eval(&self, _: usize, _: &[IntervalSet]) -> IntervalSet {
         IntervalSet::empty()

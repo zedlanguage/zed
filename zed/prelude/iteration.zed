@@ -6,11 +6,13 @@
 // A system of equations has one cell per vertex 0..n; reads[v] lists the cells
 // v's projection reads, and eval(v, cells) is that projection. The dependency
 // graph has an edge from u to every cell that reads u. key(v) is the tuple
-// (name, address, form) of DESIGN.md step M0.5: the binding name that ends the
-// cell's fact address, the content address of its static node and that node's
-// canonical form. Tuples compare left to right, so a form is compared only
-// when the names and the addresses are equal. The numbering of the cells does
-// not enter the result.
+// (name, address, form, keypath) of DESIGN.md step M0.5: the binding name that
+// ends the cell's fact address, the content address of its static node, that
+// node's canonical form and the keypath of the fact address. Tuples compare
+// left to right, so a form is compared only when the names and the addresses
+// are equal, and a keypath only when the forms are too; the keypath tells
+// apart the cells of one static node. The numbering of the cells does not
+// enter the result.
 
 // A system also has its landmarks (lattice.zed): marks(v) gives those written
 // in cell v's equation. They bound every chain of widenings and narrowings, so
@@ -180,8 +182,9 @@ phase2(positional sys, positional marks, positional cells) = {
 distinct(positional sys, positional by, positional i) =
   i + 1 >= by::len || (sys.key(by[i]) != sys.key(by[i + 1]) && distinct(sys, by, i + 1));
 
-// Two cells with one key are refused: no order of the traversal tells them
-// apart, and the one they were numbered in is where they were written.
+// Two cells with one key are refused: they are one fact address given two
+// cells, no order of the traversal tells them apart, and the one they were
+// numbered in is where they were written.
 solve(positional sys) = {
   by = sys.reads::domain.sort(asc v -> sys.key(v));
   succ = dependencyGraph(sys.reads).map(s -> s.sort(asc w -> sys.key(w)));

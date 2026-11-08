@@ -1146,6 +1146,7 @@ dependencies = [
  "zed-kernel",
  "zedc-base",
  "zedc-int",
+ "zedc-syntax",
 ]
 
 [[package]]

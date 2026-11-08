@@ -15,18 +15,25 @@
 
 use super::landmarks::Landmarks;
 use super::lattice::Lattice;
-use super::wto::{Element, SameKey, VertexKey, ordered_by};
+use super::wto::{Element, SameKey, Tie, VertexKey, ordered_by};
+use zedc_syntax::lex::Span;
 
 /// A system of equations over a lattice: one cell per vertex, `0..n`. The numbering does not
 /// enter the result: the order of iteration comes from the cells' keys.
 pub trait Equations<L: Lattice> {
-    /// The canonical form of a cell's static node, the last part of its key.
+    /// The canonical form of a cell's static node, the third part of its key.
     type Form: Ord;
+    /// The keypath of a cell's fact address, the fourth and last part of its key.
+    type Keypath: Ord;
     /// For each cell, the cells its projection reads.
     fn reads(&self) -> &[Vec<usize>];
     /// What the traversal orders cell `v` by: its binding name, the content address of its
-    /// static node and that node's canonical form (DESIGN.md step M0.5).
-    fn key(&self, v: usize) -> VertexKey<'_, Self::Form>;
+    /// static node, that node's canonical form and the keypath of its fact address (DESIGN.md
+    /// step M0.5).
+    fn key(&self, v: usize) -> VertexKey<'_, Self::Form, Self::Keypath>;
+    /// Where cell `v`'s static node is written, for the refusal of two cells with one key;
+    /// the order never reads it.
+    fn span(&self, v: usize) -> Span;
     /// The forward projection into cell `v` from the current cells.
     fn eval(&self, v: usize, cells: &[L]) -> L;
     /// The values written in the equation of cell `v`, where a widening or a narrowing may
@@ -51,10 +58,14 @@ pub fn dependency_graph(reads: &[Vec<usize>]) -> Vec<Vec<usize>> {
 }
 
 /// The weak topological order of the system's dependency graph, the traversal visiting the
-/// cells in the order of their keys; refused when two cells have one key.
+/// cells in the order of their keys; refused, with the spans of both, when two cells have one
+/// key.
 pub fn order<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<Element>, SameKey> {
     let keys: Vec<_> = (0..eq.reads().len()).map(|v| eq.key(v)).collect();
-    ordered_by(&dependency_graph(eq.reads()), &keys)
+    ordered_by(&dependency_graph(eq.reads()), &keys).map_err(|Tie(u, w)| SameKey {
+        cells: [u, w],
+        spans: [eq.span(u), eq.span(w)],
+    })
 }
 
 /// Phase 1 and then phase 2, from every cell at the bottom, over [`order`].

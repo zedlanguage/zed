@@ -9,12 +9,13 @@
 use std::cell::Cell;
 
 use zed_tests::scaling;
+use zedc::lex::Span;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::{Equations, order, phase1};
 use zedc::store::landmarks::Landmarks;
 use zedc::store::wto::{Element, VertexKey};
 
-use super::{name_key, numbered_names};
+use super::{line, name_key, numbered_names};
 
 /// `depth` nested counters; cell `k` reads itself, the loop around it and the loop inside it.
 struct Nest {
@@ -38,11 +39,15 @@ impl Nest {
 
 impl Equations<IntervalSet> for Nest {
     type Form = ();
+    type Keypath = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+    fn key(&self, v: usize) -> VertexKey<'_, (), ()> {
         name_key(&self.names, v)
+    }
+    fn span(&self, v: usize) -> Span {
+        line(v)
     }
     fn eval(&self, k: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.evals.set(self.evals.get() + 1);
@@ -130,11 +135,15 @@ struct Counter {
 
 impl Equations<IntervalSet> for Counter {
     type Form = ();
+    type Keypath = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+    fn key(&self, v: usize) -> VertexKey<'_, (), ()> {
         name_key(&self.names, v)
+    }
+    fn span(&self, v: usize) -> Span {
+        line(v)
     }
     fn eval(&self, _: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.evals.set(self.evals.get() + 1);
@@ -183,11 +192,15 @@ struct Beside {
 
 impl Equations<IntervalSet> for Beside {
     type Form = ();
+    type Keypath = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+    fn key(&self, v: usize) -> VertexKey<'_, (), ()> {
         name_key(&self.names, v)
+    }
+    fn span(&self, v: usize) -> Span {
+        line(v)
     }
     fn eval(&self, v: usize, cells: &[IntervalSet]) -> IntervalSet {
         if v > 0 {

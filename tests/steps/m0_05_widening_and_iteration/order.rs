@@ -1,14 +1,17 @@
 //! The order the traversal visits the cells in (DESIGN.md step M0.5): by name, then by the
-//! content address of the static node, then by that node's canonical form, never by where an
-//! equation is written. Moving an equation changes no head and no cell; renaming one may
-//! change the head, and does so the same way wherever the equations are written.
+//! content address of the static node, then by that node's canonical form, then by the keypath
+//! of the cell's fact address, never by where an equation is written. Moving an equation
+//! changes no head and no cell; renaming one may change the head, and does so the same way
+//! wherever the equations are written.
 
+use zed_kernel::Value;
+use zed_kernel::provenance::Vector;
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zed_tests::scaling;
 use zedc::address::ContentAddress;
 use zedc::ast::unit;
 use zedc::check::walk::check;
-use zedc::lex::lex_fence;
+use zedc::lex::{Span, lex_fence};
 use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 use zedc::store::interval::IntervalSet;
@@ -17,7 +20,7 @@ use zedc::store::landmarks::Landmarks;
 use zedc::store::wto::{Element, SameKey, VertexKey};
 
 use super::iteration::three_cell_loop;
-use super::{System, iv};
+use super::{System, iv, line};
 
 /// The six orders the three equations of a loop can be written in: `ix[k]` is the place of
 /// the `k`-th equation.
@@ -198,9 +201,11 @@ fn nodes_of_one_binding_are_ordered_by_address_and_then_by_form() {
 }
 
 #[test]
-fn two_cells_with_one_key_are_refused_wherever_they_are_written() {
-    // Two cells with the same name, address and form: no order of the traversal tells them
-    // apart, so the only order left is the written one, and the order is refused instead.
+fn two_cells_with_one_key_are_refused_with_their_spans_wherever_they_are_written() {
+    // Two cells with the same name, address, form and keypath are one fact address given two
+    // cells: no order of the traversal tells them apart, so the only order left is the
+    // written one, and the order is refused instead, naming where both are written. The same
+    // two cells at different keypaths are two facts, and are ordered.
     let eq = System::named(
         vec!["x".into(), "x".into(), "y".into()],
         vec![
@@ -213,14 +218,212 @@ fn two_cells_with_one_key_are_refused_wherever_they_are_written() {
     for old in [[0, 1, 2], [2, 1, 0], [1, 2, 0], [2, 0, 1]] {
         let m = eq.renumbered(&old);
         let err = order(&m).unwrap_err();
-        let SameKey(u, w) = err;
+        let SameKey {
+            cells: [u, w],
+            spans,
+        } = err;
         assert!(u < w && m.names[u] == "x" && m.names[w] == "x", "{err}");
+        // The spans are those the two cells were written at, cells 0 and 1 of `eq`.
+        assert_eq!(spans, [m.spans[u], m.spans[w]]);
+        let mut written = spans;
+        written.sort_by_key(|s| s.start);
+        assert_eq!(written, [line(0), line(1)], "{old:?}");
         assert_eq!(solve(&m).unwrap_err(), err);
+        let text = err.to_string();
         assert!(
-            err.to_string()
-                .contains("same name, content address and canonical form")
+            text.contains("same name, content address, canonical form and keypath")
+                && text.contains(&format!(
+                    "bytes {}..{} and {}..{}",
+                    spans[0].start, spans[0].end, spans[1].start, spans[1].end
+                )),
+            "{text}"
         );
+        // With no edges the traversal visits x@[0], x@[1], y in the order of their keys, and
+        // the order lists the vertex visited last first. Swapping the keypaths swaps the cells.
+        let y = 3 - u - w;
+        for (a, b) in [(u, w), (w, u)] {
+            let mut apart = m.clone();
+            apart.keypaths[a] = path(&[1]);
+            apart.keypaths[b] = path(&[0]);
+            let order = order(&apart).unwrap();
+            let vertices: Vec<usize> = order.iter().flat_map(Element::vertices).collect();
+            assert_eq!(vertices, [y, a, b], "{old:?}: keypath [0] before [1]");
+        }
     }
+}
+
+/// The keypath of integer keys `keys`, outermost first.
+fn path(keys: &[i64]) -> Vector<Value> {
+    keys.iter().map(|&k| Value::Int(k)).collect()
+}
+
+/// The loop `a = 0 ⊔ c; b = a + 1; c = b ⊓ int[..=4]` with its three cells as cells of one
+/// static node, as the iterates of one equation are: one name, one address and one canonical
+/// form, `a`, `b` and `c` at the keypaths `paths`, the equations written at `ix`. Only the keys
+/// change; the equations stay those of the loop, so the cells show which cell is the head.
+fn one_node_loop(paths: [&[i64]; 3], ix: [usize; 3]) -> System {
+    let mut eq = three_cell_loop(["x", "x", "x"], ix).bare();
+    eq.addresses = vec![ContentAddress([3; 32]); 3];
+    let form = eq.forms[0].clone();
+    eq.forms = vec![form; 3];
+    for (&k, p) in ix.iter().zip(paths) {
+        eq.keypaths[k] = path(p);
+    }
+    eq
+}
+
+/// The head of a system that is one loop.
+fn head(order: &[Element]) -> usize {
+    let [Element::Component { head, .. }] = order else {
+        panic!("one loop: {order:?}");
+    };
+    *head
+}
+
+#[test]
+fn cells_of_one_node_are_ordered_by_their_keypaths_in_every_order_of_the_equations() {
+    // Before the keypath was a part of the key, these three cells had one key and the order
+    // was refused. Keypaths compare key by key, each key in the order of values, a shorter
+    // keypath before a longer one it begins: [2] < [2, 0] < [10], where an order of the
+    // printed keys would put [10] first.
+    for (paths, want_head, want_c) in [
+        // `a` at the least keypath heads the loop, and the bound on `c` survives phase 1.
+        ([&[2][..], &[2, 0], &[10]], 0, iv(Some(1), Some(4))),
+        // `c` at the least keypath heads it, and phase 1 widens the bound on `c` away.
+        ([&[10][..], &[2, 0], &[2]], 2, iv(Some(1), None)),
+        // `b` at the least: [2] before [2, 0] before [10].
+        ([&[2, 0][..], &[2], &[10]], 1, iv(Some(1), Some(4))),
+    ] {
+        let want = cells_by_name_and_keypath(&one_node_loop(paths, SIX[0]));
+        for ix in SIX {
+            let eq = one_node_loop(paths, ix);
+            let order = order(&eq).unwrap();
+            assert_eq!(head(&order), ix[want_head], "{paths:?} at {ix:?}");
+            assert_eq!(phase1(&eq, &order)[ix[2]], want_c, "{paths:?} at {ix:?}");
+            assert_eq!(solve(&eq).unwrap()[ix[2]], iv(Some(1), Some(4)));
+            assert_eq!(cells_by_name_and_keypath(&eq), want, "{paths:?} at {ix:?}");
+        }
+    }
+}
+
+/// The cells of `eq` after both phases, each with its name and keypath, sorted.
+fn cells_by_name_and_keypath(eq: &System) -> Vec<(String, Vector<Value>, String)> {
+    let both = solve(eq).unwrap();
+    let mut out: Vec<_> = (0..eq.names.len())
+        .map(|v| {
+            (
+                eq.names[v].clone(),
+                eq.keypaths[v].clone(),
+                both[v].to_string(),
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The part of `eq` that checking the cells `from` reaches: those cells and every cell their
+/// projections read, at any depth, as checking one file traces only the constraints reachable
+/// from it. A visited set keeps each cell once.
+fn reached(eq: &System, from: &[usize]) -> System {
+    let mut seen = vec![false; eq.names.len()];
+    let mut todo: Vec<usize> = from.to_vec();
+    while let Some(v) = todo.pop() {
+        if !std::mem::replace(&mut seen[v], true) {
+            todo.extend(&eq.reads[v]);
+        }
+    }
+    let old: Vec<usize> = (0..seen.len()).filter(|&v| seen[v]).collect();
+    let mut new = vec![usize::MAX; seen.len()];
+    for (v, &o) in old.iter().enumerate() {
+        new[o] = v;
+    }
+    let mut sub = eq.clone();
+    sub.init = old.iter().map(|&o| eq.init[o].clone()).collect();
+    sub.terms = old
+        .iter()
+        .map(|&o| {
+            eq.terms[o]
+                .iter()
+                .map(|t| super::Term {
+                    from: new[t.from],
+                    ..t.clone()
+                })
+                .collect()
+        })
+        .collect();
+    sub.reads = old
+        .iter()
+        .map(|&o| eq.reads[o].iter().map(|&u| new[u]).collect())
+        .collect();
+    sub.names = old.iter().map(|&o| eq.names[o].clone()).collect();
+    sub.addresses = old.iter().map(|&o| eq.addresses[o]).collect();
+    sub.forms = old.iter().map(|&o| eq.forms[o].clone()).collect();
+    sub.keypaths = old.iter().map(|&o| eq.keypaths[o].clone()).collect();
+    sub.spans = old.iter().map(|&o| eq.spans[o]).collect();
+    sub
+}
+
+#[test]
+fn checking_one_file_gives_the_cells_checking_all_files_gives() {
+    // Random systems whose cells are all cells of one static node, told apart only by their
+    // keypaths, each cell in one of three files. Checking every file at once (batch) and
+    // checking one file, which traces only the cells that file reaches, give each cell the
+    // same value, and so do the equations reversed and rotated.
+    let mut rng = Rng::new(0x0b4e);
+    let mut cut = 0;
+    for _ in 0..RANDOM_INSTANCES {
+        let mut eq = System::random(&mut rng);
+        if rng.below(2) == 0 {
+            eq = eq.bare();
+        }
+        let n = eq.names.len();
+        let form = eq.forms[0].clone();
+        let mut keys: Vec<Vector<Value>> = Vec::new();
+        while keys.len() < n {
+            let len = 1 + rng.below(2);
+            let p: Vec<i64> = (0..len).map(|_| rng.int(-3, 12)).collect();
+            let p = path(&p);
+            if !keys.contains(&p) {
+                keys.push(p);
+            }
+        }
+        eq.names = vec!["x".into(); n];
+        eq.addresses = vec![ContentAddress([9; 32]); n];
+        eq.forms = vec![form; n];
+        eq.keypaths = keys;
+        let batch = solve(&eq).unwrap();
+        if order(&eq)
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Element::Component { .. }))
+        {
+            cut += 1;
+        }
+        let files: Vec<usize> = (0..n).map(|_| rng.below(3)).collect();
+        for file in 0..3 {
+            let mine: Vec<usize> = (0..n).filter(|&v| files[v] == file).collect();
+            let sub = reached(&eq, &mine);
+            let single = solve(&sub).unwrap();
+            for (v, cell) in single.iter().enumerate() {
+                let o = (0..n)
+                    .find(|&o| eq.keypaths[o] == sub.keypaths[v])
+                    .expect("a reached cell is a cell of the system");
+                assert_eq!(*cell, batch[o], "file {file}, cell {o}: {eq:?}");
+            }
+        }
+        let want = cells_by_name_and_keypath(&eq);
+        let mut moves: Vec<Vec<usize>> = vec![(0..n).rev().collect()];
+        moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
+        for old in moves {
+            assert_eq!(
+                cells_by_name_and_keypath(&eq.renumbered(&old)),
+                want,
+                "{old:?}"
+            );
+        }
+    }
+    assert!(cut > RANDOM_INSTANCES / 4, "{cut} systems with a loop");
 }
 
 /// Cells with given reads and keys, whose equations give nothing: the cost of the order alone.
@@ -229,19 +432,25 @@ struct Keyed {
     names: Vec<String>,
     address: ContentAddress,
     forms: Vec<Vec<u32>>,
+    keypaths: Vec<Vector<Value>>,
 }
 
 impl Equations<IntervalSet> for Keyed {
     type Form = Vec<u32>;
+    type Keypath = Vector<Value>;
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, Vec<u32>> {
+    fn key(&self, v: usize) -> VertexKey<'_, Vec<u32>, Vector<Value>> {
         VertexKey {
             name: &self.names[v],
             address: self.address,
             form: &self.forms[v],
+            keypath: &self.keypaths[v],
         }
+    }
+    fn span(&self, v: usize) -> Span {
+        line(v)
     }
     fn eval(&self, _: usize, _: &[IntervalSet]) -> IntervalSet {
         IntervalSet::empty()
@@ -252,7 +461,7 @@ impl Equations<IntervalSet> for Keyed {
 }
 
 /// `n` cells, cell `v` reading `read(v)`, named by `name(v)`, each form 8 numbers that differ
-/// only in the last.
+/// only in the last, each keypath empty.
 fn keyed(n: usize, read: impl Fn(usize) -> Vec<usize>, name: impl Fn(usize) -> String) -> Keyed {
     Keyed {
         reads: (0..n).map(read).collect(),
@@ -261,6 +470,7 @@ fn keyed(n: usize, read: impl Fn(usize) -> Vec<usize>, name: impl Fn(usize) -> S
         forms: (0..n)
             .map(|v| [vec![5; 7], vec![v as u32]].concat())
             .collect(),
+        keypaths: vec![Vector::new(); n],
     }
 }
 
@@ -305,6 +515,24 @@ fn the_order_of_one_bindings_nodes_scales() {
         21_000,
         |n| keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], |_| "x".to_string()),
     );
+}
+
+#[test]
+fn the_order_of_one_nodes_cells_scales() {
+    // Every cell is a cell of one static node: one name, one address and equal forms of eight
+    // numbers, held apart, so every comparison reads both forms and then the keypaths, a
+    // string key and a scrambled integer key. n log n comparisons of keys of a fixed length.
+    order_scales("the keyed order of one node's cells", 21_000, |n| {
+        let mut eq = keyed(n, |v| vec![v - v % 3 + (v + 2) % 3], |_| "x".to_string());
+        eq.forms = vec![vec![5; 8]; n];
+        eq.keypaths = (0..n)
+            .map(|v| {
+                let k = (v as u64).wrapping_mul(2_654_435_761) % 100_000_007;
+                Vector::from(vec![Value::str("k"), Value::Int(k as i64)])
+            })
+            .collect();
+        eq
+    });
 }
 
 /// What the checker finds in `text`: each declared function's signature and each top-level

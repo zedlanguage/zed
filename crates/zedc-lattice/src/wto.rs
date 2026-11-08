@@ -6,74 +6,100 @@
 //! one, with it the head of each component and so the widening points. The traversal visits
 //! the vertices, and each vertex's successors, in the order of their keys ([`VertexKey`]): by
 //! name, then by the content address of the static node, then by that node's canonical form
-//! compared structurally. Nothing in a key says where a declaration or a binding is written,
-//! so moving one changes no head; renaming one may. [`ordered_by`] computes the order from
-//! the keys; [`weak_topological_order`] is the traversal itself, over vertices already
-//! numbered in the order to visit them.
+//! compared structurally, then by the keypath of the vertex's fact address. Nothing in a key
+//! says where a declaration or a binding is written, so moving one changes no head; renaming
+//! one may. [`ordered_by`] computes the order from the keys; [`weak_topological_order`] is the
+//! traversal itself, over vertices already numbered in the order to visit them.
 
 use std::cmp::Ordering;
 use std::fmt;
 
 use zedc_base::address::ContentAddress;
+use zedc_syntax::lex::Span;
 
 /// What the traversal orders a vertex by (DESIGN.md step M0.5): the binding name that ends the
 /// vertex's fact address (a node inside an expression takes its binding's), then the content
-/// address of its static node, then that node's canonical form `F` compared structurally, so
-/// the order is total without trusting a hash as identity.
+/// address of its static node, then that node's canonical form `F` compared structurally, then
+/// the dynamic keypath `P` of the fact address, so the order is total without trusting a hash
+/// as identity. The cells of one static node, one per keypath (a family key, a fold step, an
+/// iterate), share the first three parts, and the keypath tells them apart.
 #[derive(Clone, Copy, Debug)]
-pub struct VertexKey<'a, F> {
+pub struct VertexKey<'a, F, P> {
     /// The binding name.
     pub name: &'a str,
     /// The content address of the static node.
     pub address: ContentAddress,
     /// The static node's canonical form.
     pub form: &'a F,
+    /// The keypath of the fact address, in the checker the keys of
+    /// `zed_kernel::provenance::FactAddress::keypath` compared in order, each in the total
+    /// order of values.
+    pub keypath: &'a P,
 }
 
-impl<F: Ord> Ord for VertexKey<'_, F> {
+impl<F: Ord, P: Ord> Ord for VertexKey<'_, F, P> {
     /// The canonical forms are compared only when the names and the addresses are equal, and
-    /// not at all when both keys hold the same form: equal references are equal forms.
+    /// the keypaths only when the forms are too; neither is read when both keys hold the same
+    /// one: equal references are equal values.
     fn cmp(&self, other: &Self) -> Ordering {
         self.name
             .cmp(other.name)
             .then_with(|| self.address.cmp(&other.address))
-            .then_with(|| {
-                if std::ptr::eq(self.form, other.form) {
-                    Ordering::Equal
-                } else {
-                    self.form.cmp(other.form)
-                }
-            })
+            .then_with(|| same_or_cmp(self.form, other.form))
+            .then_with(|| same_or_cmp(self.keypath, other.keypath))
     }
 }
 
-impl<F: Ord> PartialOrd for VertexKey<'_, F> {
+/// `a` against `b`, equal at once when they are the same value.
+fn same_or_cmp<T: Ord>(a: &T, b: &T) -> Ordering {
+    if std::ptr::eq(a, b) {
+        Ordering::Equal
+    } else {
+        a.cmp(b)
+    }
+}
+
+impl<F: Ord, P: Ord> PartialOrd for VertexKey<'_, F, P> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<F: Ord> PartialEq for VertexKey<'_, F> {
+impl<F: Ord, P: Ord> PartialEq for VertexKey<'_, F, P> {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
-impl<F: Ord> Eq for VertexKey<'_, F> {}
+impl<F: Ord, P: Ord> Eq for VertexKey<'_, F, P> {}
 
-/// Two vertices whose keys are equal, by their numbers, the lower first. In a store built from
-/// a content-addressed program they are one cell; the traversal could visit them only in the
-/// order they were numbered, which is where they were written, so the order is refused.
+/// Two vertices whose keys are equal, by their numbers, the lower first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SameKey(pub usize, pub usize);
+pub struct Tie(pub usize, pub usize);
+
+/// Two cells with one key, by their numbers, the lower first, and the spans of the source
+/// their static nodes were written at. A key is the whole fact address, so the two are one
+/// fact given two cells: a defect of the store that built them, never of the program. The
+/// traversal could visit them only in the order they were numbered, which is where they were
+/// written, so the order is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SameKey {
+    /// The two cells.
+    pub cells: [usize; 2],
+    /// Where each cell's static node is written, in the order of `cells`.
+    pub spans: [Span; 2],
+}
 
 impl fmt::Display for SameKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let [a, b] = self.cells;
+        let [s, t] = self.spans;
         write!(
             f,
-            "vertices {} and {} have the same name, content address and canonical form, so no \
-             order of the traversal tells them apart",
-            self.0, self.1
+            "cells {a} and {b}, written at bytes {}..{} and {}..{}, have the same name, \
+             content address, canonical form and keypath: one fact has two cells in the store, \
+             so no order of the traversal tells them apart",
+            s.start, s.end, t.start, t.end
         )
     }
 }
@@ -82,11 +108,11 @@ impl std::error::Error for SameKey {}
 
 /// Each vertex's place in the order of `keys`: `O(n log n)` comparisons of keys, then `n - 1`
 /// more to find equal neighbors.
-pub fn ranks<K: Ord>(keys: &[K]) -> Result<Vec<usize>, SameKey> {
+pub fn ranks<K: Ord>(keys: &[K]) -> Result<Vec<usize>, Tie> {
     let mut by: Vec<usize> = (0..keys.len()).collect();
     by.sort_unstable_by(|&a, &b| keys[a].cmp(&keys[b]));
     if let Some(w) = by.windows(2).find(|w| keys[w[0]] == keys[w[1]]) {
-        return Err(SameKey(w[0].min(w[1]), w[0].max(w[1])));
+        return Err(Tie(w[0].min(w[1]), w[0].max(w[1])));
     }
     let mut rank = vec![0; keys.len()];
     for (i, &v) in by.iter().enumerate() {
@@ -100,7 +126,7 @@ pub fn ranks<K: Ord>(keys: &[K]) -> Result<Vec<usize>, SameKey> {
 /// the order of the keys. The vertices are numbered by their keys, the graph is traversed so
 /// numbered, and the order is given back in the original numbers: `O(n log n)` comparisons of
 /// keys, `O(E log E)` to sort the successor lists, and the traversal.
-pub fn ordered_by<K: Ord>(succ: &[Vec<usize>], keys: &[K]) -> Result<Vec<Element>, SameKey> {
+pub fn ordered_by<K: Ord>(succ: &[Vec<usize>], keys: &[K]) -> Result<Vec<Element>, Tie> {
     let rank = ranks(keys)?;
     let mut by = vec![0; rank.len()];
     for (v, &r) in rank.iter().enumerate() {

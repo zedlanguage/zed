@@ -17,12 +17,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_tests::scaling;
+use zedc::lex::Span;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::{Equations, solve};
 use zedc::store::landmarks::Landmarks;
 use zedc::store::wto::VertexKey;
 
-use super::{iv, name_key};
+use super::{iv, line, name_key};
 
 /// The loop cell `y = start ⊔ ((a * y) div b + x)`, `0 < a < b`, `x` in `int[x.0..=x.1]`.
 struct Recurrence {
@@ -90,11 +91,15 @@ impl Recurrence {
 
 impl Equations<IntervalSet> for Recurrence {
     type Form = ();
+    type Keypath = ();
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, ()> {
+    fn key(&self, v: usize) -> VertexKey<'_, (), ()> {
         name_key(&self.names, v)
+    }
+    fn span(&self, v: usize) -> Span {
+        line(v)
     }
     fn eval(&self, _: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.evals.fetch_add(1, Ordering::Relaxed);

@@ -16,6 +16,7 @@ crate-type = ["rlib", "dylib"]
 zed-kernel.workspace = true
 zedc-base.workspace = true
 zedc-int.workspace = true
+zedc-syntax.workspace = true
 
 [lints]
 workspace = true

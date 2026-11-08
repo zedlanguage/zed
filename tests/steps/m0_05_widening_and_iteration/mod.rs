@@ -19,8 +19,11 @@ mod wto;
 
 use std::collections::BTreeSet;
 
+use zed_kernel::Value;
+use zed_kernel::provenance::Vector;
 use zed_tests::instances::Rng;
 use zedc::address::ContentAddress;
+use zedc::lex::Span;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::iterate::Equations;
 use zedc::store::landmarks::Landmarks;
@@ -40,7 +43,9 @@ type Form = (String, Vec<(String, String, i64)>);
 
 /// A system of interval equations, `cell[v] = init[v] ⊔ ⋃ terms[v]`: the shape the store's
 /// equations take for loop counters, accumulators and bounds checks. Each cell has a key:
-/// its binding name, the content address of its equation and the equation's canonical form.
+/// its binding name, the content address of its equation, the equation's canonical form and
+/// the keypath of its fact address, empty unless a test gives one. Cell `v` is written at the
+/// span [`line`]`(v)`.
 #[derive(Clone, Debug)]
 struct System {
     init: Vec<IntervalSet>,
@@ -51,6 +56,8 @@ struct System {
     names: Vec<String>,
     addresses: Vec<ContentAddress>,
     forms: Vec<Form>,
+    keypaths: Vec<Vector<Value>>,
+    spans: Vec<Span>,
 }
 
 impl System {
@@ -63,6 +70,7 @@ impl System {
     /// The system with the given names, which several cells may share, as the nodes of one
     /// binding's expression do; each cell's address is the hash of its form.
     fn named(names: Vec<String>, init: Vec<IntervalSet>, terms: Vec<Vec<Term>>) -> Self {
+        let n = names.len();
         let reads = terms
             .iter()
             .map(|ts| {
@@ -94,6 +102,8 @@ impl System {
             names,
             addresses,
             forms,
+            keypaths: vec![Vector::new(); n],
+            spans: (0..n).map(line).collect(),
         }
     }
 
@@ -121,6 +131,9 @@ impl System {
             terms,
         );
         s.addresses = old.iter().map(|&o| self.addresses[o]).collect();
+        s.forms = old.iter().map(|&o| self.forms[o].clone()).collect();
+        s.keypaths = old.iter().map(|&o| self.keypaths[o].clone()).collect();
+        s.spans = old.iter().map(|&o| self.spans[o]).collect();
         s.bare = self.bare;
         s
     }
@@ -201,15 +214,20 @@ fn random_filter(rng: &mut Rng) -> IntervalSet {
 
 impl Equations<IntervalSet> for System {
     type Form = Form;
+    type Keypath = Vector<Value>;
     fn reads(&self) -> &[Vec<usize>] {
         &self.reads
     }
-    fn key(&self, v: usize) -> VertexKey<'_, Form> {
+    fn key(&self, v: usize) -> VertexKey<'_, Form, Vector<Value>> {
         VertexKey {
             name: &self.names[v],
             address: self.addresses[v],
             form: &self.forms[v],
+            keypath: &self.keypaths[v],
         }
+    }
+    fn span(&self, v: usize) -> Span {
+        self.spans[v]
     }
     fn eval(&self, v: usize, cells: &[IntervalSet]) -> IntervalSet {
         self.terms[v].iter().fold(self.init[v].clone(), |acc, t| {
@@ -260,11 +278,20 @@ fn iv(lo: Option<i64>, hi: Option<i64>) -> IntervalSet {
 }
 
 /// The key of cell `v` of a system whose cells are told apart by their names alone.
-fn name_key(names: &[String], v: usize) -> VertexKey<'_, ()> {
+fn name_key(names: &[String], v: usize) -> VertexKey<'_, (), ()> {
     VertexKey {
         name: &names[v],
         address: ContentAddress([0; 32]),
         form: &(),
+        keypath: &(),
+    }
+}
+
+/// The span of cell `v` of a system written one equation to a line of ten bytes.
+fn line(v: usize) -> Span {
+    Span {
+        start: 10 * v,
+        end: 10 * v + 9,
     }
 }
 
