@@ -690,118 +690,209 @@ impl<'a> Tally<'a> {
 /// Whether values hold a failure, as [`Fact::holds_failure`] records it when a run makes a
 /// fact: that a value is a failure, or holds one in a tuple, a keypath or a family's value, the
 /// places [`Provenance::origins`] reads. Each non-empty sequence and family is read once, by its
-/// id, and a family made from another by adding entries (`Family::extend`, [`Family::union`])
-/// is read from the other's count by the difference of the two, when that lists fewer items
-/// than the family has entries. A run with provenance so reads each distinct part of its
-/// values once, `O(log n)` for each item of a difference or entry: the parts it made, at the
-/// cost of making them, and the literals and port data it read. An id names one content for
-/// good, since [`fresh_id`](crate::value::fresh_id) never draws one twice.
+/// id. A family made from another ([`Family::union`], `Family::extend`) holds each entry of the
+/// other, or one holding all of its leaves, so it holds a failure when the other does, unread;
+/// made from one holding none, it is read by the difference of the two, when that lists fewer
+/// items than the family has entries. The value of a union the run evaluates is not read at all:
+/// it holds a failure exactly when one of its operands does ([`Holds::set`]). A run with
+/// provenance so reads each distinct part of its values once, `O(log n)` for each item of a
+/// difference or entry: the parts it made, at the cost of making them, and the literals and port
+/// data it read. An id names one content for good, since [`fresh_id`](crate::value::fresh_id)
+/// never draws one twice.
 #[derive(Default, Debug)]
 pub(crate) struct Holds {
     /// Whether each non-empty sequence read holds a failure, by its id.
-    items: HashMap<Id, bool>,
-    /// For each non-empty family read, by its id: the number of its entries whose value holds a
-    /// failure, and the family, against which one made from it is compared.
-    families: HashMap<Id, (usize, Family)>,
+    items: HashMap<Id, bool, ById>,
+    /// Each non-empty family read, by its id: `None` if it holds a failure, else the family,
+    /// against which one made from it is compared.
+    families: HashMap<Id, Option<Family>, ById>,
 }
+
+/// The hasher of the maps of [`Holds`]: `types::KeyHasher`, a few multiplications per id in
+/// place of the default hasher's SipHash.
+type ById = std::hash::BuildHasherDefault<crate::types::KeyHasher>;
 
 /// What [`Holds::of`] does next.
 enum Visit<'v> {
+    /// Reads a value, unless it was read since it was planned.
     Enter(&'v Value),
-    /// Records the sequence, its values read.
-    Items(&'v Items),
-    /// Records the family: `count` of its entries hold a failure, besides those whose values
-    /// are on the stack of values to count from `from` on, which are read.
+    /// Records a sequence or a family, the values it planned read.
+    Record(Record<'v>),
+}
+
+/// A sequence or a family whose values not read before are planned above it. It holds a
+/// failure if `found`, or if one of those values does: a sequence's among its items, a
+/// family's on the stack of values to read from `from` on.
+enum Record<'v> {
+    Items {
+        items: &'v Items,
+        found: bool,
+        unread: bool,
+    },
     Family {
         family: &'v Family,
-        count: usize,
+        found: bool,
         from: usize,
     },
 }
 
 impl Holds {
-    /// Whether `v` holds a failure; the parts of `v` not read before are read now.
+    /// Whether `v` holds a failure; the parts of `v` not read before are read now. A value whose
+    /// parts were all read before needs no stack: a fact made of parts other facts hold.
     pub(crate) fn of(&mut self, v: &Value) -> bool {
-        let mut todo = vec![Visit::Enter(v)];
-        // The values each family planned in `todo` has yet to count, a family's after those
-        // of the families that hold it.
+        if let Some(holds) = self.read(v) {
+            return holds;
+        }
+        let mut todo = Vec::new();
+        // The values each family planned in `todo` has yet to read, a family's after those of
+        // the families that hold it.
         let mut pending = Vec::new();
+        let top = self.plan(v, &mut todo, &mut pending);
         while let Some(visit) = todo.pop() {
             match visit {
-                Visit::Enter(v) => self.enter(v, &mut todo, &mut pending),
-                Visit::Items(xs) => {
-                    let holds = xs.iter().any(|x| self.known(x));
-                    self.items.insert(xs.id(), holds);
+                Visit::Enter(x) if self.read(x).is_none() => {
+                    let below = todo.len();
+                    let record = self.plan(x, &mut todo, &mut pending);
+                    todo.insert(below, Visit::Record(record));
                 }
-                Visit::Family {
-                    family,
-                    count,
-                    from,
-                } => {
-                    let added = pending.drain(from..).filter(|x| self.known(x)).count();
-                    self.families
-                        .insert(family.id(), (count + added, family.clone()));
+                Visit::Enter(_) => {}
+                Visit::Record(record) => {
+                    self.record(record, &mut pending);
                 }
             }
         }
-        self.known(v)
+        self.record(top, &mut pending)
+    }
+
+    /// Records that `v`, a family, holds a failure exactly when `holds`, known without reading
+    /// it.
+    pub(crate) fn set(&mut self, v: &Value, holds: bool) {
+        if let Value::Family(f) = v
+            && !f.is_empty()
+        {
+            self.families.insert(f.id(), (!holds).then(|| f.clone()));
+        }
     }
 
     /// Whether `v`, whose parts are all read, holds a failure.
     fn known(&self, v: &Value) -> bool {
+        self.read(v).expect("its parts are read")
+    }
+
+    /// Whether `v` holds a failure, when that needs no part of it read: `None` for a non-empty
+    /// sequence or family not read before.
+    fn read(&self, v: &Value) -> Option<bool> {
         match v {
-            Value::Atom(_) => true,
-            Value::Tuple(xs) | Value::Path(xs) => !xs.is_empty() && self.items[&xs.id()],
-            Value::Family(f) => !f.is_empty() && self.families[&f.id()].0 > 0,
-            _ => false,
+            Value::Atom(_) => Some(true),
+            Value::Tuple(xs) | Value::Path(xs) if !xs.is_empty() => {
+                self.items.get(&xs.id()).copied()
+            }
+            Value::Family(f) if !f.is_empty() => self.families.get(&f.id()).map(Option::is_none),
+            _ => Some(false),
         }
     }
 
-    /// Plans the reading of `v`'s parts not yet read. The values a family's visit counts are
-    /// planned after it, so they are read before it is taken from the stack.
-    fn enter<'v>(&self, v: &'v Value, todo: &mut Vec<Visit<'v>>, pending: &mut Vec<&'v Value>) {
+    /// Reads what of `v`, a sequence or family not read before, its parts read before decide,
+    /// and plans the reading of the others on `todo`, a family's also on `pending`.
+    fn plan<'v>(
+        &self,
+        v: &'v Value,
+        todo: &mut Vec<Visit<'v>>,
+        pending: &mut Vec<&'v Value>,
+    ) -> Record<'v> {
         match v {
-            Value::Tuple(xs) | Value::Path(xs)
-                if !xs.is_empty() && !self.items.contains_key(&xs.id()) =>
-            {
-                todo.push(Visit::Items(xs));
-                todo.extend(xs.iter().map(Visit::Enter));
-            }
-            Value::Family(f) if !f.is_empty() && !self.families.contains_key(&f.id()) => {
-                let from = pending.len();
-                let count = self.shared_with_base(f, pending).unwrap_or_else(|| {
-                    pending.extend(f.0.values());
-                    0
-                });
-                todo.push(Visit::Family {
-                    family: f,
-                    count,
-                    from,
-                });
-                todo.extend(pending[from..].iter().map(|x| Visit::Enter(x)));
-            }
-            _ => {}
-        }
-    }
-
-    /// The number of entries of `f` that hold a failure among those it shares with the family
-    /// it was made from, when that family was read and the difference of the two lists fewer
-    /// items than `f` has entries. The values the difference adds or changes go on `pending`.
-    fn shared_with_base<'v>(&self, f: &'v Family, pending: &mut Vec<&'v Value>) -> Option<usize> {
-        let (count, base) = self.families.get(&f.from())?;
-        let diff = base.shallow_diff(f, f.len())?;
-        let mut count = *count;
-        for d in diff {
-            match d {
-                DiffItem::Add(_, new) => pending.push(new),
-                DiffItem::Remove(_, old) => count -= usize::from(self.known(old)),
-                DiffItem::Update { old, new } => {
-                    count -= usize::from(self.known(old.1));
-                    pending.push(new.1);
+            Value::Tuple(xs) | Value::Path(xs) => {
+                let (mut found, mut unread) = (false, false);
+                for x in xs.iter() {
+                    match self.read(x) {
+                        Some(holds) => found |= holds,
+                        None => {
+                            unread = true;
+                            todo.push(Visit::Enter(x));
+                        }
+                    }
+                }
+                Record::Items {
+                    items: xs,
+                    found,
+                    unread,
                 }
             }
+            Value::Family(f) => {
+                let from = pending.len();
+                let mut found = false;
+                // Reads the values until one holds a failure.
+                let mut read = |xs: &mut dyn Iterator<Item = &'v Value>| {
+                    for x in xs {
+                        match self.read(x) {
+                            Some(true) => {
+                                found = true;
+                                break;
+                            }
+                            Some(false) => {}
+                            None => {
+                                pending.push(x);
+                                todo.push(Visit::Enter(x));
+                            }
+                        }
+                    }
+                };
+                // Made from a family holding a failure, it holds that failure. Made from one
+                // holding none, it holds one if a value of the difference does: a removed or
+                // replaced value held none.
+                // Id 0: made from no family.
+                let base = (f.from() != 0)
+                    .then(|| self.families.get(&f.from()))
+                    .flatten();
+                match base {
+                    Some(None) => found = true,
+                    Some(Some(base)) => match base.shallow_diff(f, f.len()) {
+                        Some(diff) => read(&mut diff.into_iter().filter_map(|d| match d {
+                            DiffItem::Add(_, new) | DiffItem::Update { new: (_, new), .. } => {
+                                Some(new)
+                            }
+                            DiffItem::Remove(..) => None,
+                        })),
+                        None => read(&mut f.0.values()),
+                    },
+                    None => read(&mut f.0.values()),
+                }
+                Record::Family {
+                    family: f,
+                    found,
+                    from,
+                }
+            }
+            _ => unreachable!("only a sequence or a family not read before is planned"),
         }
-        Some(count)
+    }
+
+    /// Records a sequence or a family whose values planned are all read; whether it holds a
+    /// failure.
+    fn record(&mut self, record: Record<'_>, pending: &mut Vec<&Value>) -> bool {
+        match record {
+            Record::Items {
+                items,
+                found,
+                unread,
+            } => {
+                let holds = found || (unread && items.iter().any(|x| self.known(x)));
+                self.items.insert(items.id(), holds);
+                holds
+            }
+            Record::Family {
+                family,
+                found,
+                from,
+            } => {
+                let mut rest = pending.drain(from..);
+                let holds = found || rest.any(|x| self.known(x));
+                drop(rest);
+                let kept = (!holds).then(|| family.clone());
+                self.families.insert(family.id(), kept);
+                holds
+            }
+        }
     }
 }
 
@@ -1508,16 +1599,21 @@ mod tests {
         let late = || Value::atom("late");
         let tuple = Value::tuple;
         let fam = |es: Vec<(i64, Value)>| Family::of(es);
-        // A family of 64 entries holding one failure, and families made from it.
+        // A family of 64 entries holding one failure, one holding none, and families made from
+        // each by adding entries.
         let base = fam((0..64)
             .map(|k| (k, if k == 5 { late() } else { Value::Int(k) }))
             .collect());
-        let made = |entries: Vec<(i64, Value)>| {
-            let mut f = base.clone();
+        let clean = fam((0..64).map(|k| (k, Value::Int(k))).collect());
+        let from = |f: &Family, entries: Vec<(i64, Value)>| {
+            let mut f = f.clone();
             f.extend(entries.into_iter().map(|(k, x)| (Value::Int(k), x)));
             Value::Family(f)
         };
+        let made = |entries| from(&base, entries);
+        let made_clean = |entries| from(&clean, entries);
         let nested = fam(vec![(0, Value::Family(base.clone()))]);
+        let clean_nested = fam(vec![(0, Value::Family(clean.clone()))]);
         let values = vec![
             Value::Int(3),
             late(),
@@ -1531,17 +1627,30 @@ mod tests {
             // A failure only in a key is not read.
             Value::Family(Family::set([late()])),
             Value::Family(base.clone()),
-            // The entry holding the failure is replaced, then another gains one, then both.
-            made(vec![(5, Value::Int(5))]),
-            made(vec![(9, tuple(vec![late()]))]),
-            made(vec![(5, Value::Int(5)), (9, late())]),
-            // A family made from no other, one made from it by a union, and one whose difference
-            // from the family it was made from is as large as it.
+            Value::Family(clean.clone()),
+            // Made from a family holding a failure, unread; made from one holding none, read by
+            // the entries added: none holding a failure, one deep in a tuple, one family.
+            made(vec![(64, Value::Int(64))]),
+            made_clean(vec![(64, Value::Int(64)), (65, Value::Int(65))]),
+            made_clean(vec![(64, Value::Int(64)), (65, tuple(vec![late()]))]),
+            made_clean(vec![(70, Value::Family(base.clone()))]),
+            // A family made from no other, and families made from it and from one holding no
+            // failure by a union: beside an entry, and merging a failure into a family entry.
             Value::Family(nested.clone()),
             Value::Family(
                 Family::union(&nested, &fam(vec![(1, Value::Int(0))])).expect("disjoint"),
             ),
-            made((0..64).map(|k| (k, Value::Int(-k))).collect()),
+            Value::Family(clean_nested.clone()),
+            Value::Family(Family::union(&clean_nested, &fam(vec![(1, late())])).expect("disjoint")),
+            Value::Family(
+                Family::union(
+                    &clean_nested,
+                    &fam(vec![(0, Value::Family(fam(vec![(100, late())])))]),
+                )
+                .expect("disjoint"),
+            ),
+            // Made from a family holding none by adding more entries than it has.
+            made_clean((64..256).map(|k| (k, Value::Int(k))).collect()),
             // The same tuple twice in one value is read once.
             {
                 let t = tuple(vec![late()]);

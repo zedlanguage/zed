@@ -636,7 +636,13 @@ fn family(v: Value) -> R<Family> {
 enum Frame<'t> {
     /// Records the fact of `term` when it gives a value. `outer` holds the reads of the node
     /// around it, which go back in place however the term ended.
-    Fact { at: At, outer: Vec<Option<usize>> },
+    /// `union` when the term is a union, whose value holds a failure exactly when one of its two
+    /// operands does.
+    Fact {
+        at: At,
+        outer: Vec<Option<usize>>,
+        union: bool,
+    },
     /// Ends a pure region.
     Pure,
     /// Leaves a call that recorded its call site.
@@ -952,7 +958,7 @@ impl<'t> Machine<'_, 't> {
     /// Goes on from `frame` with how the term above it ended.
     fn resume(&mut self, frame: Frame<'t>, out: R<V<'t>>) -> R<Step<'t>> {
         match frame {
-            Frame::Fact { at, outer } => self.fact(at, outer, out),
+            Frame::Fact { at, outer, union } => self.fact(at, outer, union, out),
             Frame::Pure => {
                 self.ev.pure -= 1;
                 out.map(Step::Give)
@@ -985,11 +991,18 @@ impl<'t> Machine<'_, 't> {
             return out;
         }
         let outer = std::mem::take(&mut t.reads);
-        self.frames.push(Frame::Fact { at, outer });
+        let union = matches!(term, Term::Prim(Prim::Union, _));
+        self.frames.push(Frame::Fact { at, outer, union });
         self.node(term, at, env)
     }
 
-    fn fact(&mut self, at: At, outer: Vec<Option<usize>>, out: R<V<'t>>) -> R<Step<'t>> {
+    fn fact(
+        &mut self,
+        at: At,
+        outer: Vec<Option<usize>>,
+        union: bool,
+        out: R<V<'t>>,
+    ) -> R<Step<'t>> {
         let t = self.ev.trace.as_mut().expect("provenance is recorded");
         let inputs = std::mem::replace(&mut t.reads, outer);
         let v = out?;
@@ -999,7 +1012,24 @@ impl<'t> Machine<'_, 't> {
             V::Data(d) => Some(d.clone()),
             _ => None,
         };
-        let holds_failure = value.as_ref().is_some_and(|d| t.holds.of(d));
+        // The two reads of a union are the facts of its operands, whose data were read when they
+        // were made: whether its value holds a failure is known unread, where a family made from
+        // one holding none would be read by the difference of the two (`Holds`).
+        let of_operands = union
+            && matches!(value, Some(Value::Family(_)))
+            && inputs.len() == 2
+            && inputs
+                .iter()
+                .all(|i| i.is_some_and(|i| t.facts[i].value.is_some()));
+        let holds_failure = match &value {
+            Some(d) if of_operands => {
+                let holds = inputs.iter().flatten().any(|&i| t.facts[i].holds_failure);
+                t.holds.set(d, holds);
+                holds
+            }
+            Some(d) => t.holds.of(d),
+            None => false,
+        };
         t.facts.push(Fact {
             address: FactAddress {
                 node: NodeAddress(node),

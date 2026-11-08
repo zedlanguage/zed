@@ -28,7 +28,7 @@ mod empty;
 mod hash;
 #[cfg(test)]
 use hash::SALT;
-pub(crate) use hash::mix;
+pub(crate) use hash::{KeyHasher, mix};
 mod print;
 
 use imbl::ordmap::DiffItem;

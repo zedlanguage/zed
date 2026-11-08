@@ -1077,9 +1077,17 @@ impl Family {
     }
 
     /// Adds the entries at the top level, sharing all but O(m log n) of the map's nodes with the
-    /// family it was cloned from, for m entries.
+    /// family it was cloned from, for m entries. A key already held keeps its value
+    /// (`merge_failures` adds a member twice): a family made from another holds each of its
+    /// entries, which `provenance::Holds` reads it by.
     pub(crate) fn extend(&mut self, entries: impl IntoIterator<Item = (Value, Value)>) {
-        self.0.extend(entries);
+        for (k, v) in entries {
+            debug_assert!(
+                self.0.get(&k).is_none_or(|old| *old == v),
+                "an entry of the family is replaced by another value"
+            );
+            self.0.insert(k, v);
+        }
         if !self.0.is_empty() {
             self.2 = self.1;
             self.1 = fresh_id();
@@ -1826,6 +1834,11 @@ fn settle(c: &Comparisons, same: bool) -> bool {
 
 /// Whether two sequences of values are the same.
 pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
+    // One shared sequence, or two empty ones: equal without a walk. The entries `diff` compares
+    // inside two families made one from the other are mostly such copies.
+    if a.same(b) {
+        return true;
+    }
     COMPARISONS.with(|c| {
         let _scope = Scope::enter(c);
         settle(
@@ -1837,7 +1850,15 @@ pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
 
 /// Whether two families are the same.
 pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
+    // One shared map: equal without a walk, as for sequences in `items_eq`.
+    if a.0.ptr_eq(&b.0) {
+        return true;
+    }
     COMPARISONS.with(|c| {
+        // Within `Family::shallow_diff`, two maps not shared differ unread (`open`).
+        if c.shallow.get() {
+            return false;
+        }
         let _scope = Scope::enter(c);
         settle(
             c,
