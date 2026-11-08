@@ -3,6 +3,7 @@ Unlifted carrier
 Missing algebraic obligation
 Undischargeable `@ensure`
 Unsatisfiable declared constraints
+Undecidable premise class
 Quantifier in a law over a domain that is not finite
 Obligation below proof grade
 Non-exhaustive `match`
