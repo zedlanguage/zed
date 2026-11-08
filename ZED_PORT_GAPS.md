@@ -1960,11 +1960,13 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `while let … && …` (a let chain) popping the pairs a truncation undoes from the end of a list | `preimage::Tr::truncate` | None | a loop with `match` and `is` |
 | A `HashMap` keyed by a pair of linear forms, `(Lin, Lin)`, so `a div n` and `a mod n` share one quotient and remainder | `preimage::Tr::div_mod_by_term` | None | a family keyed by the pair, the linear forms compared by content |
 
-## Entries from RUNG2-definedness (`zedc-preimage/src/preimage.rs`)
+## Entries from RUNG2-definedness (`zedc-preimage/src/preimage.rs`, `divisors.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A persistent ordered set, `imbl::OrdSet<Lin>`, of the divisors a term reads, met smaller into larger and searched by range (`range(from..)`, `range(..=to).rev()`) for the divisors with one variable part | `preimage::Defined::{meet, with_divisor, shown_nonzero}` | None | an ordered set of linear forms from the prelude, ordered by content, with its range read |
+| Hash-consed canonical treaps of divisors: nodes in a `Vec` addressed by `u32` numbers, found by `(divisor, left, right)` in a `HashMap` before they are made, priorities a fixed hash of the divisor (`BuildHasherDefault<DefaultHasher>::hash_one`), unions memoized by the pair of numbers, and ordered searches from a bound by recursion | `divisors::Sets`, `preimage::Defined::{meet, with_divisor, arm, shown_nonzero}` | Identity (gap 1); Mutation (the node table and memos) | A map from the content of a node to the node, its digest the key; the table and memos threaded as state, or a runtime intern table |
+| Structural numbering of formulas: a memo by `presburger::Id` and one by shape (`enum Shape { Con, Not, And, Or }` of child numbers), filled on an explicit stack | `preimage::FormulaNumbers`, used by `Walk::shared_call_key` | Identity (gap 1); Mutation | The formula's digest as the key, confirmed by contents |
+| `RefCell` and `Cell` captured by a closure passed to `map_cons`, to collect a failure and a substitution while the formula is rebuilt | `preimage::Defined::instance` | Mutation | A fold that returns the rebuilt formula with the failure flag |
 | `if matches!(p, IntDiv \| Mod) && let n = … && ….is_none()` (a let chain in an `if`) | `Walk::defined_at` | None | `if` on `p` then a `match` on the constant |
 | A struct update, `Defined { rest, ..Defined::top() }` | `Defined::failed`, `Walk::defined_at` | None | a record built with the named field and the others from `top` |
 

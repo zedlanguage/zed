@@ -2,6 +2,7 @@
 //! test's condition, the reference transfer it is compared with, and the reduced product of the
 //! domains. `zedc` re-exports each module at its old path (`zedc::store::preimage`, ...).
 
+mod divisors;
 pub mod images;
 pub mod preimage;
 /// The backward transfer before S22a, which tests compare [`preimage`] with. Built only with

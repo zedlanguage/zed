@@ -347,7 +347,8 @@ fn a_call_with_an_argument_that_may_fail_is_read_at_its_place() {
     // `n = 0` the first is `#divByZero`, so `f` gives `false` there and `true` for `0`. A call
     // shared by the arguments' terms would prove the goal. Rung 2 does not yet translate a
     // callee that reads an argument holding a quotient or remainder by a term, with or
-    // without the condition, so it takes nothing here; the call is not shared in any case
+    // without the condition, so it takes nothing here; the call is shared only with calls
+    // whose arguments have the same terms and the same conditions
     // ([`Walk::shared_call_key`] in preimage.rs).
     let f = "f(positional a) = a == 0;\n";
     for goal in [
@@ -572,6 +573,107 @@ fn products_of_premises_in_pairs_scale() {
             let e = entails(p, g);
             assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
         });
+    };
+    let thread = std::thread::Builder::new().stack_size(8 << 20);
+    thread.spawn(measure).unwrap().join().unwrap();
+}
+
+/// `g{k}`, which calls `g{k-1}` twice, each time with the argument `b mod (b + 1)`, which fails
+/// at `b = -1`, and so on down to `g0(a, b) = b >= 0`; and `ok(x, n) = g{k}(x, n)`. Not `f`,
+/// since `f64` names a type.
+fn nested_double_calls(k: usize) -> String {
+    let mut src = String::from("g0(positional a, positional b) = b >= 0;\n");
+    for i in 1..=k {
+        let j = i - 1;
+        src.push_str(&format!(
+            "g{i}(positional a, positional b) = g{j}(b mod (b + 1), b) && g{j}(b mod (b + 1), b);\n"
+        ));
+    }
+    src.push_str(&format!("ok(x, n) = g{k}(x, n);"));
+    src
+}
+
+/// `t(a, b) = a mod (a mod (... (a mod b)))`, k remainders deep, whose condition holds k
+/// divisors. Its parameters are not named as `ok`'s, which elaboration would rename.
+fn deep_divisor(k: usize) -> String {
+    let mut t = String::from("b");
+    for _ in 0..k {
+        t = format!("a mod ({t})");
+    }
+    format!("t(positional a, positional b) = {t};\n")
+}
+
+/// Over [`deep_divisor`]'s `t` of k divisors, k remainders by `t(x, n) + j` summed, each
+/// operand's condition the k divisors and its own, met one by one.
+fn met_divisors(k: usize) -> String {
+    let sum: Vec<String> = (0..k).map(|j| format!("y mod (t(x, n) + {j})")).collect();
+    format!("{}ok(x, y, n) = {} >= 0;", deep_divisor(k), sum.join(" + "))
+}
+
+/// Over [`deep_divisor`]'s `t` of k divisors, k `if`s whose arm reads the divisors its guard
+/// reads.
+fn guarded_arms(k: usize) -> String {
+    let arms: Vec<String> = (0..k)
+        .map(|j| format!("(if x mod t(x, n) >= {j} {{ y mod t(x, n) >= 0 }} else {{ true }})"))
+        .collect();
+    format!("{}ok(x, y, n) = {};", deep_divisor(k), arms.join(" && "))
+}
+
+/// The relation of `ok` in `src`.
+fn ok_relation(src: &str) -> Relation {
+    let (ps, g) = function(src);
+    let mut rs = relations(&[&g], &ps, true).expect("in the domain");
+    rs.pop().expect("one relation")
+}
+
+#[test]
+fn calls_whose_arguments_may_fail_alike_share_one_translation() {
+    // The two calls of `g{k-1}` in `g{k}` pass arguments made apart but alike, with the same
+    // terms and the same conditions, so they share one translation ([`Walk::shared_call_key`]
+    // in preimage.rs). The argument `b mod (b + 1)` fails at `b = -1`, but no callee reads
+    // it, so `ok` is `n >= 0`.
+    for k in [1, 2, 3] {
+        let goal = nested_double_calls(k);
+        assert!(true_on_window("ok(x, n) = n >= 0;", &goal), "{k}");
+        assert!(!true_on_window("ok(x, n) = n >= -1;", &goal), "{k}");
+        assert_proved("ok(x, n) = n >= 0;", &goal);
+        let e = checked("ok(x, n) = n >= -1;", &goal);
+        assert!(!matches!(e, Entailment::Proved(_)), "{k}: {e}");
+    }
+}
+
+#[test]
+fn the_conditions_of_shared_divisors_scale() {
+    // k remainders whose divisors each read the k divisors of `t`, met one by one, and k
+    // `if`s whose arm reads its guard's divisors: each meet and each test of the arm's
+    // divisors against the guard's is a union of the sets of divisors, which share their
+    // parts ([`Sets::union`] in divisors.rs), where a copy of the sets made each O(k), O(k²)
+    // in all (28.0 times the bytes at 8k for the remainders, k = 128, measured 2026-11-08;
+    // 10.2 now). And k functions each calling the one before twice with an argument that may
+    // fail, translated once each, where reading each such call at its place read 2^k calls
+    // (0.48 s at k = 12, 34 s at k = 18, measured 2026-11-08).
+    let k = 128;
+    // Each fails where `n = 0`; a verdict is checked against the interpreter (`checked`).
+    for src in [met_divisors(2), guarded_arms(2)] {
+        assert!(!true_on_window("ok(x, y, n) = true;", &src), "{src}");
+        let e = checked("ok(x, y, n) = true;", &src);
+        assert!(!matches!(e, Entailment::Proved(_)), "{src}: {e}");
+    }
+    let measure = move || {
+        scaling::check_order("k remainders by terms over k shared divisors", k, 1, |k| {
+            ok_relation(&met_divisors(k));
+        });
+        scaling::check_order("k guards over k shared divisors", k, 1, |k| {
+            ok_relation(&guarded_arms(k));
+        });
+        scaling::check_order(
+            "k nested pairs of calls with arguments that may fail",
+            k,
+            1,
+            |k| {
+                ok_relation(&nested_double_calls(k));
+            },
+        );
     };
     let thread = std::thread::Builder::new().stack_size(8 << 20);
     thread.spawn(measure).unwrap().join().unwrap();

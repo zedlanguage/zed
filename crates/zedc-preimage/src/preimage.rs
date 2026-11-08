@@ -62,7 +62,7 @@
 //! which can have as many pieces as the box has points; it asks [`witness`] for one point
 //! that meets the demand, and the same search stops at the first.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
@@ -82,6 +82,8 @@ use zedc_lattice::lattice::{Congruence, Lattice};
 use zedc_lattice::revision::{self, Exponent, Op, Tonicity, reduce_congruence};
 use zedc_presburger::presburger::{self, Con, Formula, Joining, Lin, Mark, Refusal, Relation};
 use zedc_stage::stage;
+
+use crate::divisors::{EMPTY, Set, Sets as DivisorSets};
 
 /// The box of a term whose value `v` is known: every point when `v` meets the demand, none
 /// otherwise.
@@ -984,9 +986,10 @@ fn is_true(f: &Formula) -> bool {
 /// the part an `if` adds whose arms read different divisors.
 #[derive(Clone)]
 struct Defined {
-    /// The divisors read wherever the term is read, a set, so that a divisor read at many
-    /// places is one condition.
-    divisors: imbl::OrdSet<Lin>,
+    /// The divisors read wherever the term is read, a set of [`Tr::sets`], so that a divisor
+    /// read at many places is one condition, and two conditions with the same divisors share
+    /// one set.
+    divisors: Set,
     /// `d != 0` for each of `divisors`, made as the set was, two parts at a time and each kept
     /// whole ([`Formula::and_keeping`]), so it costs O(1) for each step and may name a divisor
     /// more than once.
@@ -998,7 +1001,7 @@ impl Defined {
     /// No divisor and nothing else: the value is never an atom.
     fn top() -> Defined {
         Defined {
-            divisors: imbl::OrdSet::new(),
+            divisors: EMPTY,
             nonzero: Formula::top(),
             rest: Formula::top(),
         }
@@ -1013,7 +1016,7 @@ impl Defined {
     }
 
     fn is_top(&self) -> bool {
-        self.divisors.is_empty() && is_true(&self.rest)
+        self.divisors == EMPTY && is_true(&self.rest)
     }
 
     /// `d != 0`.
@@ -1021,49 +1024,46 @@ impl Defined {
         Formula::negate(Formula::Con(Con::eq(d, &Lin::constant(0))))
     }
 
-    /// `self` with the divisor `d` as well.
-    fn with_divisor(self, d: Lin) -> Defined {
-        if self.divisors.contains(&d) {
+    /// `self` with the divisor `d` as well. O(log n).
+    fn with_divisor(self, d: &Lin, sets: &mut DivisorSets) -> Defined {
+        let one = sets.single(d);
+        let divisors = sets.union(self.divisors, one);
+        if divisors == self.divisors {
             return self;
         }
-        let nonzero = keep_all(vec![self.nonzero, Defined::nonzero_of(&d)]);
         Defined {
-            divisors: self.divisors.update(d),
-            nonzero,
+            divisors,
+            nonzero: keep_all(vec![self.nonzero, Defined::nonzero_of(d)]),
             rest: self.rest,
         }
     }
 
-    /// Both conditions. The smaller set is added to the larger
-    /// ([`imbl::OrdSet::union`]), and a set met with itself is kept.
-    // Complexity tradeoff: a meet costs O(min(|a|, |b|) · log n) for divisor sets a and b, so a
-    // term that reads each divisor once costs O(n log² n) in all (each divisor is moved into a
-    // set at least twice its old one's size), but a term that meets two large sets that share
-    // most of their divisors, through a shared subterm read on both sides, costs their size at
-    // each such meet, O(n²) for n of them. Trigger: n operations each of whose operands both
-    // read one shared subterm holding many quotients by terms, in rung 2 alone. Test
-    // `l01_38_presburger::ladder::the_condition_that_no_operation_fails_scales` (each divisor
-    // read once). COMPLEXITY.md row RUNG2-definedness. A complete solution meets persistent
-    // sets by shared subtrees (a treap union, O(m log(n/m + 1))), so a shared part costs O(1).
-    fn meet(self, other: Defined) -> Defined {
+    /// Both conditions. The divisor sets are joined by the parts they do not share
+    /// ([`DivisorSets::union`]), O(m log(n/m + 1)) for m divisors of one not in the other, and O(1)
+    /// for a set met with itself or again with the same set; a set that holds the other keeps
+    /// its own `nonzero`.
+    fn meet(self, other: Defined, sets: &mut DivisorSets) -> Defined {
         if other.is_top() {
             return self;
         }
         if self.is_top() {
             return other;
         }
-        let same = self.divisors.ptr_eq(&other.divisors);
-        let (divisors, nonzero) = match same {
-            true => (self.divisors, self.nonzero),
-            false => (
-                self.divisors.union(other.divisors),
-                keep_all(vec![self.nonzero, other.nonzero]),
-            ),
+        let divisors = sets.union(self.divisors, other.divisors);
+        let nonzero = match divisors {
+            d if d == self.divisors => self.nonzero,
+            d if d == other.divisors => other.nonzero,
+            _ => keep_all(vec![self.nonzero, other.nonzero]),
+        };
+        let rest = match (is_true(&self.rest), is_true(&other.rest)) {
+            (true, _) => other.rest,
+            (_, true) => self.rest,
+            _ => keep_all(vec![self.rest, other.rest]),
         };
         Defined {
             divisors,
             nonzero,
-            rest: keep_all(vec![self.rest, other.rest]),
+            rest,
         }
     }
 
@@ -1072,28 +1072,61 @@ impl Defined {
         keep_all(vec![self.nonzero.clone(), self.rest.clone()])
     }
 
-    /// The condition as a formula, each divisor once, for a relation's body.
-    fn flat(&self) -> Formula {
-        let mut parts: Vec<Formula> = self.divisors.iter().map(Defined::nonzero_of).collect();
+    /// The condition as a formula, each divisor once and in their order, for a relation's
+    /// body.
+    fn flat(&self, sets: &DivisorSets) -> Formula {
+        let mut parts = Vec::with_capacity(sets.len(self.divisors) as usize + 1);
+        sets.each(self.divisors, &mut |d| parts.push(Defined::nonzero_of(d)));
         parts.push(self.rest.clone());
         Formula::and(parts)
+    }
+
+    /// The condition written at a call: each canonical atom that `to` maps replaced by its
+    /// argument, and each quotient and remainder by a constant written there
+    /// ([`Tr::instance`]). `None` when a divisor or a part of `rest` reads another auxiliary
+    /// variable or a product. Time of the condition, times the log of its divisors.
+    fn instance(&self, tr: &mut Tr, to: &HashMap<Arc<str>, Lin>) -> Option<Defined> {
+        let mut done = HashMap::new();
+        let mut divisors = Vec::with_capacity(tr.sets.len(self.divisors) as usize);
+        tr.sets
+            .each(self.divisors, &mut |d| divisors.push(d.clone()));
+        let mut out = Defined::top();
+        for d in &divisors {
+            let d = tr.instance(d, to, None, &mut done)?;
+            out = out.with_divisor(&d, &mut tr.sets);
+        }
+        if is_true(&self.rest) {
+            return Some(out);
+        }
+        let (tr, done, failed) = (RefCell::new(tr), RefCell::new(done), Cell::new(false));
+        let rest = self.rest.map_cons(&|c| {
+            let lin = tr
+                .borrow_mut()
+                .instance(&c.lin, to, None, &mut done.borrow_mut());
+            match lin {
+                Some(lin) => Formula::Con(Con { lin, rel: c.rel }),
+                None => {
+                    failed.set(true);
+                    Formula::top()
+                }
+            }
+        });
+        (!failed.get()).then_some(Defined { rest, ..out })
     }
 
     /// Each divisor of `divisors` that the constraint `f`, a part of a conjunction, shows is not
     /// 0: `d` for `d != 0` or `-d != 0`, `d >= 1` or `d <= -1` for `t >= 0` with `d` `t + k`
     /// or `-t - k`, `k >= 1`, and `d != 0` for `t == 0` with `d` `t + k` or `-t - k`,
-    /// `k != 0`. A sorted set holds the divisors with one variable part together, so each
-    /// form costs a search and the divisors it finds.
-    fn shown_nonzero(divisors: &imbl::OrdSet<Lin>, f: &Formula, out: &mut Vec<Lin>) {
+    /// `k != 0`. A set in order holds the divisors with one variable part together, so each
+    /// form costs a search, O(log n), and the divisors it finds.
+    fn shown_nonzero(sets: &DivisorSets, divisors: Set, f: &Formula, out: &mut Vec<Lin>) {
         use presburger::Rel;
         // The divisors whose variable part is `terms`, from the constant `from` up, or down.
         let up = |terms: &Lin, from: &Lin, out: &mut Vec<Lin>| {
-            let found = divisors.range(from.clone()..);
-            out.extend(found.take_while(|d| d.terms == terms.terms).cloned());
+            sets.up(divisors, from, &|d: &Lin| d.terms == terms.terms, out);
         };
         let down = |terms: &Lin, to: &Lin, out: &mut Vec<Lin>| {
-            let found = divisors.range(..=to.clone()).rev();
-            out.extend(found.take_while(|d| d.terms == terms.terms).cloned());
+            sets.down(divisors, to, &|d: &Lin| d.terms == terms.terms, out);
         };
         let one = Lin::constant(1);
         match f {
@@ -1101,7 +1134,7 @@ impl Defined {
                 Formula::Con(c) if c.rel == Rel::Eq => {
                     let neg = c.lin.times(-1);
                     for d in [&c.lin, &neg] {
-                        if divisors.contains(d) {
+                        if sets.contains(divisors, d) {
                             out.push(d.clone());
                         }
                     }
@@ -1110,6 +1143,7 @@ impl Defined {
                 Formula::Con(c) => {
                     let t = c.lin.times(-1).minus(&one);
                     Defined::shown_nonzero(
+                        sets,
                         divisors,
                         &Formula::Con(Con::ge(&t, &Lin::constant(0))),
                         out,
@@ -1138,41 +1172,102 @@ impl Defined {
     /// each of `d`'s divisors is in `known` or is shown not 0 by a part of `g`
     /// ([`Defined::shown_nonzero`]), and `d`'s own formula otherwise, shared, O(1). `g`'s
     /// parts are read one by one only when `parts` holds, as the formula of the `if` reads
-    /// them (a guard kept whole is one part there and here).
-    // Complexity tradeoff: each part of the guard costs a search, O(log n), and when `d` has no
-    // more divisors than `known` and the guard's parts show together, each of `d`'s divisors
-    // costs a search too, so an `if` costs O((parts of its guard + min(divisors of its arms,
-    // divisors of its guard and parts)) · log n), where the formula of the `if` costs the parts
-    // of its guard. Trigger: many `if`s whose arms read the same many quotients by terms
-    // under guards that read them too, in rung 2 alone. Test
-    // `l01_38_presburger::ladder::the_condition_that_no_operation_fails_scales`. COMPLEXITY.md
-    // row RUNG2-definedness. A complete solution keeps, with each condition, the divisors its
-    // arms are known to cover, so that an `if` reads only the divisors new to it.
-    fn arm(d: &Defined, g: &Formula, parts: bool, known: &imbl::OrdSet<Lin>) -> Formula {
+    /// them (a guard kept whole is one part there and here). Whether `known` holds `d`'s
+    /// divisors is their union ([`DivisorSets::union`]): O(1) when the arm reads the guard's
+    /// divisors, as `if n != 0 { x mod n } else { 0 }` and `if x mod n >= 1 { y mod n } else
+    /// { 0 }` do, and O(m log(n/m + 1)) for m divisors of the arm not in the guard; then each
+    /// part of the guard costs a search, O(log n), where the formula of the `if` costs the
+    /// part.
+    fn arm(d: &Defined, g: &Formula, parts: bool, known: Set, sets: &mut DivisorSets) -> Formula {
         if d.is_top() || !is_true(&d.rest) {
             return d.formula();
+        }
+        if sets.union(known, d.divisors) == known {
+            return Formula::top();
         }
         let mut shown = Vec::new();
         match g {
             Formula::And(gs) if parts => {
                 for p in gs.iter() {
-                    Defined::shown_nonzero(&d.divisors, p, &mut shown);
+                    Defined::shown_nonzero(sets, d.divisors, p, &mut shown);
                 }
             }
-            _ => Defined::shown_nonzero(&d.divisors, g, &mut shown),
+            _ => Defined::shown_nonzero(sets, d.divisors, g, &mut shown),
         }
-        if d.divisors.len() > known.len() + shown.len() {
+        if shown.is_empty()
+            || sets.len(d.divisors) as usize > sets.len(known) as usize + shown.len()
+        {
             return d.formula();
         }
-        let shown: HashSet<Lin> = shown.into_iter().collect();
-        match d
-            .divisors
-            .iter()
-            .all(|x| known.contains(x) || shown.contains(x))
-        {
+        let mut covered = known;
+        for x in &shown {
+            let one = sets.single(x);
+            covered = sets.union(covered, one);
+        }
+        match sets.union(covered, d.divisors) == covered {
             true => Formula::top(),
             false => d.formula(),
         }
+    }
+}
+
+/// Numbers for formulas by their parts, so that two formulas made apart but alike have one
+/// number: each node numbered by its kind and its parts' numbers, and each shared part once,
+/// by its id ([`presburger::Id`]). A key of [`Walk::shared_call_key`] holds the number of each
+/// argument's condition. Time of the nodes not numbered before.
+#[derive(Default)]
+struct FormulaNumbers {
+    by_id: HashMap<presburger::Id, u32>,
+    by_shape: HashMap<Shape, u32>,
+}
+
+/// A node of a formula over its parts' numbers ([`FormulaNumbers`]).
+#[derive(PartialEq, Eq, Hash)]
+enum Shape {
+    Con(Con),
+    Not(u32),
+    And(Vec<u32>),
+    Or(Vec<u32>),
+}
+
+impl FormulaNumbers {
+    /// The number of `f`: after its parts, on an explicit stack, as deep as the formula.
+    fn number(&mut self, f: &Formula) -> u32 {
+        fn parts(g: &Formula) -> &[Formula] {
+            match g {
+                Formula::Con(_) => &[],
+                Formula::Not(h) => std::slice::from_ref(&**h),
+                Formula::And(hs) | Formula::Or(hs) => hs,
+            }
+        }
+        let mut todo = vec![(f, false)];
+        let mut out: Vec<u32> = Vec::new();
+        while let Some((g, ready)) = todo.pop() {
+            let id = (!matches!(g, Formula::Con(_))).then(|| presburger::Id::any(g));
+            if !ready {
+                if let Some(&n) = id.and_then(|id| self.by_id.get(&id)) {
+                    out.push(n);
+                    continue;
+                }
+                todo.push((g, true));
+                todo.extend(parts(g).iter().rev().map(|h| (h, false)));
+                continue;
+            }
+            let ns = out.split_off(out.len() - parts(g).len());
+            let shape = match g {
+                Formula::Con(c) => Shape::Con(c.clone()),
+                Formula::Not(_) => Shape::Not(ns[0]),
+                Formula::And(_) => Shape::And(ns),
+                Formula::Or(_) => Shape::Or(ns),
+            };
+            let next = self.by_shape.len() as u32;
+            let n = *self.by_shape.entry(shape).or_insert(next);
+            if let Some(id) = id {
+                self.by_id.insert(id, n);
+            }
+            out.push(n);
+        }
+        out.pop().expect("the number of the formula")
     }
 }
 
@@ -1273,6 +1368,8 @@ struct Translations {
     lin_calls: HashMap<CallKey, Entry<Option<Lin>>>,
     formula_calls: HashMap<CallKey, Entry<Option<Formula>>>,
     projections: HashMap<CallKey, Entry<Option<Projection>>>,
+    defined: HashMap<At, Entry<Option<Defined>>>,
+    defined_calls: HashMap<CallKey, Entry<Option<Defined>>>,
 }
 
 impl Memo {
@@ -1284,6 +1381,8 @@ impl Memo {
             lin_calls: std::mem::take(&mut self.lin_calls),
             formula_calls: std::mem::take(&mut self.formula_calls),
             projections: std::mem::take(&mut self.projections),
+            defined: std::mem::take(&mut self.defined),
+            defined_calls: std::mem::take(&mut self.defined_calls),
         }
     }
 
@@ -1292,6 +1391,7 @@ impl Memo {
         (self.lin, self.formula) = (t.lin, t.formula);
         (self.lin_calls, self.formula_calls) = (t.lin_calls, t.formula_calls);
         self.projections = t.projections;
+        (self.defined, self.defined_calls) = (t.defined, t.defined_calls);
     }
 }
 
@@ -1345,7 +1445,9 @@ impl<'t> Scoped<'t> {
     /// for `body` closed by the scope's lets, under lets outside them that bind each
     /// parameter to its input. A parameter so names its input whatever the scope binds, a
     /// prelude word or a definition of the unit; an input named like a prelude word, `min`,
-    /// is the input. Products of two symbols are atoms when `products` holds. `None` when the
+    /// is the input. Products of two symbols are atoms when `products` holds, and then the
+    /// relation holds the condition that the test's value is not an atom, as [`relations`]'s
+    /// does (`Tr::definedness`, RUNG2-definedness). `None` when the
     /// body is outside the domain. Time of the body, of the parameters and of the parts of the
     /// scope no earlier body read.
     ///
@@ -1405,10 +1507,20 @@ impl<'t> Scoped<'t> {
                 let bodies = self.tr.bodies;
                 self.tr = Tr::new(products);
                 self.tr.bodies = bodies;
+                self.tr.definedness = products;
             }
         }
-        let body = match lam {
-            Some(l) => tx.question(&mut self.tr, l),
+        // The relation, and the condition that the test's value is not an atom where the
+        // relation must hold exactly where the test is `true` ([`Tr::definedness`]).
+        let definedness = self.tr.definedness;
+        let (body, defined) = match lam {
+            Some(l) => {
+                let body = tx.question(&mut self.tr, l);
+                (
+                    body,
+                    definedness.then(|| tx.question_defined(&mut self.tr, l)),
+                )
+            }
             None => {
                 // Each parameter bound to its atom, read where the scope binds nothing. The
                 // atom's term is the body's own, so what is found of it is dropped with the
@@ -1420,8 +1532,20 @@ impl<'t> Scoped<'t> {
                     let to = (tx.terms.own_var(x), ROOT);
                     scope = tx.bind(scope, p, to);
                 }
-                tx.formula(&mut self.tr, root, scope)
+                let body = tx.formula(&mut self.tr, root, scope);
+                (
+                    body,
+                    definedness.then(|| tx.defined(&mut self.tr, root, scope)),
+                )
             }
+        };
+        let body = match (body, defined) {
+            (body, None) => body,
+            (Some(body), Some(Some(d))) => Some(match d.is_top() {
+                true => body,
+                false => Formula::and(vec![d.flat(&self.tr.sets), body]),
+            }),
+            _ => None,
         };
         tx.run.memo.log.clear();
         tx.drop_fresh();
@@ -1744,6 +1868,11 @@ struct Tr {
     /// as the interpreter does ([`Walk::exactly_equal`]). Only a quotient or remainder by a
     /// term ([`Tr::div_mod_by_term`]) fails at a point of the domain.
     definedness: bool,
+    /// The sets of divisors of the conditions [`Walk::defined`] makes ([`Defined`]).
+    sets: DivisorSets,
+    /// The numbers of the conditions' other parts, for the keys of calls
+    /// ([`Walk::shared_call_key`]).
+    numbers: FormulaNumbers,
 }
 
 impl Tr {
@@ -1761,6 +1890,8 @@ impl Tr {
             interfaces: HashMap::new(),
             bodies: false,
             definedness: false,
+            sets: DivisorSets::default(),
+            numbers: FormulaNumbers::default(),
         }
     }
 
@@ -2779,8 +2910,11 @@ type Entry<V> = (V, usize);
 /// another entry under its key by then.
 type Unheld = Box<dyn FnOnce(&mut Memo)>;
 
-/// A call to translate: the lambda, by its body and scope, and its arguments' linear terms.
-type CallKey = (At, Vec<Lin>);
+/// A call to translate: the lambda, by its body and scope, its arguments' linear terms, and,
+/// when an argument may fail ([`Tr::definedness`]), the condition that each argument is not an
+/// atom, by the number of its divisor set and of its other part ([`Walk::shared_call_key`]);
+/// empty when none may.
+type CallKey = (At, Vec<Lin>, Vec<(Set, u32)>);
 
 /// A callee's relation with every variable but its canonical atoms and the inputs it reads
 /// eliminated ([`Walk::projection`]): constraints over symbols, and over the quotients and
@@ -3537,6 +3671,12 @@ impl<D: Hash + Eq + Clone + 'static> Key for (At, D) {
     }
 }
 
+impl Key for CallKey {
+    fn at(&self) -> At {
+        self.0
+    }
+}
+
 impl<'t> Tx<'t> {
     fn new() -> Self {
         Tx {
@@ -4261,11 +4401,10 @@ impl<'t> Tx<'t> {
         if !tr.definedness {
             return Some(body);
         }
-        let w = Walk::translating(self, tr);
-        let d = w.stack.run(w.defined(t, env))?;
+        let d = self.defined(tr, t, env)?;
         Some(match d.is_top() {
             true => body,
-            false => Formula::and(vec![d.flat(), body]),
+            false => Formula::and(vec![d.flat(&tr.sets), body]),
         })
     }
 
@@ -4281,6 +4420,28 @@ impl<'t> Tx<'t> {
         let w = Walk::translating(self, tr);
         w.stack
             .run(w.canonical_formula(l, ps, (body, env), None, key))
+    }
+
+    /// The condition that the value of the function whose lambda is `lam` is not an atom
+    /// ([`Walk::defined`]), over the atoms [`Tx::question`] reads, on a new stack
+    /// ([`Walk::canonical_defined`]).
+    fn question_defined(&mut self, tr: &mut Tr, (l, env): At) -> Option<Defined> {
+        let Node::Lam(ps, body) = self.node(l) else {
+            unreachable!("a lambda")
+        };
+        let key = (0..ps.len())
+            .map(|i| Lin::atom(presburger::Atom::Sym(self.class(ps, i, (body, env)))))
+            .collect();
+        let w = Walk::translating(self, tr);
+        w.stack
+            .run(w.canonical_defined(l, ps, (body, env), None, key))
+    }
+
+    /// The condition that the value of `t` in `env` is not an atom ([`Walk::defined`]), on a
+    /// new stack.
+    fn defined(&mut self, tr: &mut Tr, t: Tid, env: Eid) -> Option<Defined> {
+        let w = Walk::translating(self, tr);
+        w.stack.run(w.defined(t, env))
     }
 
     /// The canonical atom of the `i`-th parameter of the lambda whose body and scope are
@@ -6655,7 +6816,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        Some(((body, lam), lins))
+        Some(((body, lam), lins, Vec::new()))
     }
 
     /// The linear term an integer term states over the inputs.
@@ -7014,9 +7175,9 @@ impl<'m, 't> Walk<'m, 't> {
                         Some(k) => {
                             let call = self.translated(
                                 |m| &mut m.defined_calls,
-                                k,
+                                k.clone(),
                                 Logged::DefinedCall,
-                                move || self.defined_call(t, ps, (body, lam), args, env),
+                                move || self.defined_called(t, ps, (body, lam), args, env, k),
                             );
                             call.await
                         }
@@ -7039,17 +7200,18 @@ impl<'m, 't> Walk<'m, 't> {
                 let cg = self.formula(g, env).await?;
                 let (da, db) = (self.defined(a, env).await?, self.defined(b, env).await?);
                 let not_cg = Formula::negate(cg.clone());
-                let known = &dg.divisors;
-                let fa = Defined::arm(&da, &cg, parts, known);
-                let fb = Defined::arm(&db, &not_cg, true, known);
+                let known = dg.divisors;
+                let fa = self.tr(|tr| Defined::arm(&da, &cg, parts, known, &mut tr.sets));
+                let fb = self.tr(|tr| Defined::arm(&db, &not_cg, true, known, &mut tr.sets));
                 if is_true(&fa) && is_true(&fb) {
                     return Some(dg);
                 }
                 let rest = Formula::or(vec![keep_all(vec![cg, fa]), keep_all(vec![not_cg, fb])]);
-                Some(dg.meet(Defined {
+                let d = Defined {
                     rest,
                     ..Defined::top()
-                }))
+                };
+                Some(self.tr(|tr| dg.meet(d, &mut tr.sets)))
             }
             Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
                 if matches!(p, Eq | Ne) {
@@ -7057,18 +7219,93 @@ impl<'m, 't> Walk<'m, 't> {
                 }
                 let mut d = Defined::top();
                 for i in 0..args.len() {
-                    d = d.meet(self.defined(self.arg(args, i), env).await?);
+                    let e = self.defined(self.arg(args, i), env).await?;
+                    d = self.tr(|tr| d.meet(e, &mut tr.sets));
                 }
                 if matches!(p, IntDiv | Mod)
                     && let n = self.arg(args, 1)
                     && self.constant_int(n, env).await.is_none()
                 {
-                    d = d.with_divisor(self.lin(n, env).await?);
+                    let n = self.lin(n, env).await?;
+                    d = self.tr(|tr| d.with_divisor(&n, &mut tr.sets));
                 }
                 Some(d)
             }
             _ => None,
         }
+    }
+
+    /// The condition of the call at `t` of the lambda `(body, lam)` under its key `k`
+    /// ([`Walk::shared_call_key`]). When the call may be claimed ([`Walk::claimable`]), it is
+    /// its callee's condition over its canonical atoms ([`Walk::canonical_defined`]), made once
+    /// for every call of it, as the relation is ([`Walk::formula_called`]): `true` when that
+    /// is `true`; as it is, beside the constraint of the binding, when the call holds the
+    /// callee's claim, so that the binding's definition writes the canonical atoms as the
+    /// arguments; and written at the arguments when another call holds it
+    /// ([`Defined::instance`]). A call reads no claim of its own here, since the claim's kind
+    /// is its formula's or its term's to choose. Otherwise, and where the condition reads an
+    /// auxiliary variable the writing cannot copy, it is the callee's body read in the call's
+    /// scope ([`Walk::defined_call`]).
+    // Complexity tradeoff: a call that holds no claim costs its callee's condition, written at
+    // its arguments, O(the condition's divisors and parts), or its callee's cone where the
+    // condition reads a quotient by a term or another variable of no copy, as a call that
+    // holds no claim costs its callee's projection or its cone for the relation
+    // ([`Walk::formula_called`]). Trigger: a function whose condition is large called with
+    // another argument list by each link of a chain. Test
+    // `l01_38_presburger::one_scope::the_relations_of_a_chain_dividing_by_its_argument_scale`.
+    // COMPLEXITY.md row RUNG2-definedness. A complete solution is the one of the relation
+    // (LOAD-call-relation): the canonical atoms indexed by the call.
+    #[allow(clippy::too_many_arguments)]
+    async fn defined_called(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Span,
+        env: Eid,
+        k: CallKey,
+    ) -> Option<Defined> {
+        use presburger::Atom;
+        if let Some(key) = self.claimable(ps, &k) {
+            // A key equal to the call's own is the entry being made, so read it here.
+            let at = Some((args, env));
+            let d = match key == k.1 {
+                true => (self.canonical_defined_read(t, ps, (body, lam), at, key.clone())).await,
+                false => {
+                    self.canonical_defined(t, ps, (body, lam), at, key.clone())
+                        .await
+                }
+            };
+            if let Some(d) = d {
+                if d.is_top() || key == k.1 {
+                    return Some(d);
+                }
+                // The constraint of the binding, `b == n` or `b == value`, when the call holds
+                // the claim.
+                let held = self.tr(|tr| match tr.claims.get(&(body, lam)) {
+                    Some((a, n)) if *a == k.1 => {
+                        let at = match &tr.defs[*n as usize].1 {
+                            What::Value(l, _) => l.clone(),
+                            _ => Lin::constant(*n as i64),
+                        };
+                        Some(Formula::Con(Con::eq(&Lin::atom(Atom::Aux(*n)), &at)))
+                    }
+                    _ => None,
+                });
+                if let Some(rest) = held {
+                    let b = Defined {
+                        rest,
+                        ..Defined::top()
+                    };
+                    return Some(self.tr(|tr| d.meet(b, &mut tr.sets)));
+                }
+                let to = arguments_of(&key, &k.1);
+                if let Some(d) = self.tr(|tr| d.instance(tr, &to)) {
+                    return Some(d);
+                }
+            }
+        }
+        self.defined_call(t, ps, (body, lam), args, env).await
     }
 
     /// [`Walk::lin_call`] for [`Walk::defined`].
@@ -7087,20 +7324,52 @@ impl<'m, 't> Walk<'m, 't> {
         d
     }
 
-    /// The key a call is translated under ([`Walk::call_key`]), and `None`, so that the call's
-    /// body is read in the call's own scope, when the relation must hold exactly where its
-    /// test is `true` ([`Tr::definedness`]) and an argument may fail: the key holds the
-    /// arguments' linear terms, which are their values only where they are defined, and an
-    /// argument that fails where another with the same term does not (`(x mod n) * 0` and
-    /// `0`) gives the callee's `==` another value.
-    // Complexity tradeoff: a call with an argument that may fail is not shared with another
-    // call of the same key, so its callee's body is read once for each such call, O(the
-    // callee's cone) each. Trigger: a function called at many places with arguments that hold
-    // a quotient or remainder by a term, in rung 2 alone. A function that calls another twice
-    // so, nested k deep, is read up to 2^k times. Test
-    // `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`.
-    // COMPLEXITY.md row RUNG2-definedness. A complete solution adds each argument's condition
-    // to the key, as an auxiliary variable that holds 1 where it is defined.
+    /// The condition of the lambda `(body, lam)` over its canonical atoms, as the canonical key
+    /// `key` gives them, remembered under that key as [`Walk::canonical_formula`] remembers the
+    /// relation, so every claimable call of it and its own question share one.
+    fn canonical_defined(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Option<(Span, Eid)>,
+        key: Vec<Lin>,
+    ) -> Deep<'m, Option<Defined>> {
+        let k = ((body, lam), key.clone(), Vec::new());
+        self.translated(
+            |m| &mut m.defined_calls,
+            k,
+            Logged::DefinedCall,
+            move || self.canonical_defined_read(t, ps, (body, lam), args, key),
+        )
+    }
+
+    /// What [`Walk::canonical_defined`] remembers: the body read under [`Walk::canonical_env`].
+    async fn canonical_defined_read(
+        &'m self,
+        t: Tid,
+        ps: Span,
+        (body, lam): At,
+        args: Option<(Span, Eid)>,
+        key: Vec<Lin>,
+    ) -> Option<Defined> {
+        let place = self.with(|tx| tx.enter(t, body))?;
+        let inner = self.canonical_env(ps, lam, args, &key);
+        let d = self.defined(body, inner).await;
+        self.with(|tx| tx.leave(body, place));
+        d
+    }
+
+    /// The key a call is translated under ([`Walk::call_key`]), with, when the relation must
+    /// hold exactly where its test is `true` ([`Tr::definedness`]) and an argument may fail,
+    /// the condition that each argument is not an atom, by the number of its set of divisors
+    /// ([`DivisorSets`]) and of its other part ([`FormulaNumbers`]). The arguments' linear terms are
+    /// their values only where they are defined, and an argument that fails where another with
+    /// the same term does not (`(x mod n) * 0` and `0`) gives the callee's `==` another value,
+    /// so two calls share a translation only when their arguments have the same terms and the
+    /// same conditions. Two calls whose arguments were made apart but alike,
+    /// `f(x mod n, n) && f(x mod n, n)`, so share one, and k functions, each calling the one
+    /// before twice so, are read once each. O(the arguments) beside their translations.
     async fn shared_call_key(
         &'m self,
         body: Tid,
@@ -7108,13 +7377,20 @@ impl<'m, 't> Walk<'m, 't> {
         args: Span,
         env: Eid,
     ) -> Option<CallKey> {
-        let k = self.call_key(body, lam, args, env).await?;
-        if self.tr(|tr| tr.definedness) {
-            for i in 0..args.len() {
-                if !self.defined(self.arg(args, i), env).await?.is_top() {
-                    return None;
-                }
-            }
+        let mut k = self.call_key(body, lam, args, env).await?;
+        if !self.tr(|tr| tr.definedness) {
+            return Some(k);
+        }
+        let mut conds = Vec::with_capacity(args.len());
+        for i in 0..args.len() {
+            conds.push(self.defined(self.arg(args, i), env).await?);
+        }
+        if conds.iter().any(|d| !d.is_top()) {
+            k.2 = self.tr(|tr| {
+                (conds.iter())
+                    .map(|d| (d.divisors, tr.numbers.number(&d.rest)))
+                    .collect()
+            });
         }
         Some(k)
     }
@@ -7161,15 +7437,17 @@ impl<'m, 't> Walk<'m, 't> {
     /// whether the lambda's claim is free is [`Walk::binding`]'s question. Each constant is
     /// itself, so constants still fold in the callee, and so is the atom of the parameter's
     /// class ([`Tx::class`]); each other argument is the canonical atom of its parameter
-    /// ([`Tx::canonical`]).
-    fn claimable(&self, ps: Span, (lam, args): &CallKey) -> Option<Vec<Lin>> {
+    /// ([`Tx::canonical`]). A call with an argument that may fail ([`Walk::shared_call_key`])
+    /// is not claimed: its canonical atoms would stand for values that may be atoms.
+    fn claimable(&self, ps: Span, (lam, args, conds): &CallKey) -> Option<Vec<Lin>> {
         use presburger::Atom;
-        let free = self.with(|tx| {
-            tx.fresh.as_ref().is_some_and(|f| !f.of_body(*lam))
-                && args.iter().any(|l| !l.terms.is_empty())
-                && !(args.iter().flat_map(|l| l.terms.keys()))
-                    .any(|a| matches!(a, Atom::Product(..)))
-        });
+        let free = conds.is_empty()
+            && self.with(|tx| {
+                tx.fresh.as_ref().is_some_and(|f| !f.of_body(*lam))
+                    && args.iter().any(|l| !l.terms.is_empty())
+                    && !(args.iter().flat_map(|l| l.terms.keys()))
+                        .any(|a| matches!(a, Atom::Product(..)))
+            });
         free.then(|| {
             self.with(|tx| {
                 (args.iter().enumerate())
@@ -7267,7 +7545,7 @@ impl<'m, 't> Walk<'m, 't> {
         args: Option<(Span, Eid)>,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Formula>> {
-        let k = ((body, lam), key.clone());
+        let k = ((body, lam), key.clone(), Vec::new());
         self.translated(
             |m| &mut m.formula_calls,
             k,
@@ -7288,7 +7566,7 @@ impl<'m, 't> Walk<'m, 't> {
         args: Option<(Span, Eid)>,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Projection>> {
-        let k = ((body, lam), key.clone());
+        let k = ((body, lam), key.clone(), Vec::new());
         self.translated(
             |m| &mut m.projections,
             k,
@@ -7317,7 +7595,7 @@ impl<'m, 't> Walk<'m, 't> {
         env: Eid,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Projection>> {
-        let k = ((body, lam), key.clone());
+        let k = ((body, lam), key.clone(), Vec::new());
         self.translated(
             |m| &mut m.projections,
             k,
@@ -7356,7 +7634,7 @@ impl<'m, 't> Walk<'m, 't> {
         env: Eid,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Lin>> {
-        let k = ((body, lam), key.clone());
+        let k = ((body, lam), key.clone(), Vec::new());
         self.translated(
             |m| &mut m.lin_calls,
             k,

@@ -48,7 +48,9 @@ fn closed(cones: &Cones<'_>, ps: &[Arc<str>], body: &Term) -> Option<Relation> {
 /// `r` written with its auxiliary variables numbered in the order they are first met: in the
 /// body, then in the definitions met, each after the one before. A relation one body reads
 /// through definitions made for another numbers them in the order they were made
-/// (`Scoped::written`), so two relations equal but for that numbering have one shape.
+/// (`Scoped::written`), so two relations equal but for that numbering have one shape. A
+/// definition no formula meets is left out: the closed relation keeps those of a quotient its
+/// body folds away (`(x mod n) * 0 == 0` is `n != 0`), which constrain nothing.
 fn shape(r: &Relation) -> String {
     use std::collections::HashMap;
     // Each `Aux(n)`, and each `q{n}` that a definition's written term names, renamed by `at`,
@@ -110,7 +112,6 @@ fn shape(r: &Relation) -> String {
         at.insert(*n, order.len());
         order.push(*n);
     }
-    assert_eq!(order.len(), r.defs.len(), "every definition met: {r:?}");
     out.join("\n")
 }
 
@@ -131,7 +132,84 @@ const UNITS: &[&str] = &[
     // A chain, each function calling the one before.
     "c0(x: int) = x > 0;\nc1(x: int) = c0(x: x) && x > 1;\nc2(x: int) = c1(x: x + 1) && x > 2;\n\
      c3(x: int) = c2(x: x) || c0(x: x - 3);",
+    DIVIDING,
 ];
+
+/// Quotients and remainders by terms, which fail where the divisor is 0, read at the
+/// functions' places and through calls: a call that holds its callee's claim (`u3`), calls
+/// that do not, written at their arguments (`u5`), a callee with an `if` on a remainder (`u6`
+/// of `u4`), and a callee whose condition reads a remainder, which a call that does not hold
+/// the claim reads at its place (`u8` of `u7`) (RUNG2-definedness).
+const DIVIDING: &str = "u1(x: int, n: int) = n == 0 && x mod n == 5;\n\
+     u2(x: int, n: int) = (x mod n) * 0 == 0;\n\
+     u3(x: int, n: int) = u2(x: x, n: n) && x div n >= 0;\n\
+     u4(x: int, n: int) = if x mod n >= 1 { x div n > 0 } else { true };\n\
+     u5(x: int, n: int) = u2(x: x + 1, n: n - 1) && u2(x: x, n: n + 2);\n\
+     u6(x: int, n: int) = u4(x: x + 1, n: n) || u4(x: x, n: n - 1);\n\
+     u7(x: int, n: int) = if x mod n >= 1 { x mod (n + 1) > 0 } else { true };\n\
+     u8(x: int, n: int) = u7(x: x + 1, n: n) && u7(x: x, n: n - 1);";
+
+#[test]
+fn a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true() {
+    // The path `front::linear_questions` reads, with products: at each point of a window the
+    // relation, as written, holds exactly where the body closed over the unit gives `true`
+    // (DESIGN.md M0.9 (a)), in the unit's order and in the reverse. The point is written into
+    // the relation and its definitions, so that a product of a parameter and a quotient is
+    // linear there.
+    use std::collections::HashMap;
+    use zedc::store::presburger::{Atom, Con, Factor, Formula, Lin, decide};
+    let at_point = |f: &Formula, p: &HashMap<Arc<str>, i64>| {
+        let atom = |x: &Factor| match x {
+            Factor::Sym(s) => match p.get(s) {
+                Some(v) => Lin::constant(*v),
+                None => Lin::atom(Atom::Sym(s.clone())),
+            },
+            Factor::Aux(n) => Lin::atom(Atom::Aux(*n)),
+        };
+        f.map_cons(&|c: &Con| {
+            let mut lin = Lin {
+                terms: Default::default(),
+                constant: c.lin.constant.clone(),
+            };
+            for (a, k) in &c.lin.terms {
+                let term = match a {
+                    Atom::Sym(s) => atom(&Factor::Sym(s.clone())),
+                    Atom::Aux(n) => Lin::atom(Atom::Aux(*n)),
+                    Atom::Product(x, y) => match (atom(x), atom(y)) {
+                        (x, y) if x.terms.is_empty() => y.times(x.constant),
+                        (x, y) if y.terms.is_empty() => x.times(y.constant),
+                        _ => Lin::atom(a.clone()),
+                    },
+                };
+                lin = lin.plus(&term.times(k.clone()));
+            }
+            Formula::Con(Con { lin, rel: c.rel })
+        })
+    };
+    let unit = elab(DIVIDING).unwrap();
+    let cones = Cones::new(&unit);
+    let lets = lets(&unit);
+    let fs = functions(&unit);
+    for order in [
+        (0..fs.len()).collect::<Vec<_>>(),
+        (0..fs.len()).rev().collect(),
+    ] {
+        let mut scoped = Scoped::new(&lets);
+        for i in order {
+            let (name, ps, body) = fs[i];
+            let r = scoped.relation(body, ps, ps, true).expect(name);
+            let w = scoped.written(&r);
+            let closed = prelude(cones.close(body.clone()));
+            for p in super::window(ps.len(), -4, 4) {
+                let point = ps.iter().cloned().zip(p.iter().copied()).collect();
+                let f = Formula::and(vec![w.defined(), w.body.clone()]);
+                let got = decide(&at_point(&f, &point)).expect("decided");
+                let want = super::holds(&closed, ps, &p);
+                assert_eq!(got, want, "`{name}` at {p:?}: {w}");
+            }
+        }
+    }
+}
 
 #[test]
 fn a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body() {
@@ -1384,6 +1462,27 @@ fn the_relations_of_a_chain_with_a_second_call_whose_points_move_scale() {
         |i| {
             format!(
                 "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    );
+}
+
+#[test]
+fn the_relations_of_a_chain_dividing_by_its_argument_scale() {
+    // `q`, whose condition holds four divisors, called by every link with another argument
+    // list, and each link called by the next with a moved one: the condition of a call that
+    // holds no claim is its callee's, written at its arguments ([`Walk::defined_called`] in
+    // preimage.rs).
+    relations_scale(
+        "the relations of a chain dividing by its argument",
+        50,
+        "q(x: int, n: int) = x mod n + x mod (n + 1) + x div (n + 2) + x div (n + 3) >= 0;\n\
+         p0(x: int, n: int) = x mod n >= 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int, n: int) = q(x: x, n: n + {i}) && p{}(x: x + 1, n: n) && x < {};\n",
                 i - 1,
                 1000 * i
             )
