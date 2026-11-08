@@ -1623,11 +1623,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| ATOM-payload-sub | impl attempt 1 | 2026-11-05 08:33 | started; reading brief, branch 7a6af0fa, rebasing on origin/main; load 10.21 5.44 6.17 |
-| H10-hull | running | 2026-11-08 04:16 |  |
-| OMEGA-splinter-cap | impl attempt 1 | 2026-11-08 04:10 | baseline l01_38 200 pieces 0 failed; experiment: plain recursion into splinters never ends (k-variable splinter keeps the live count: depth 41, rows 8 to 992 on |
-| PRES-mod-conjuncts | impl attempt 1 | 2026-11-08 01:02 | DISK FULL on /home (0 free of 1.7T): my frame-pointer profiling build failed with ENOSPC; deleted my profiling build (7.2G) and perf data; perf dwarf unwinding  |
-| RACE-constant | impl attempt 1 | 2026-11-07 22:16 | worktree created at origin/main c53d0a85, seeded |
+| DECIDE-front-cost | running | 2026-11-07 21:05 |  |
+| EMPTY-overlap-fast | impl attempt 1 | 2026-11-08 03:36 | BLOCKED: /home full (0 bytes free); test build fails with ENOSPC; no code written; worktree clean at c53d0a85 / load 30.83 31.70 21.69 |
+| ENV-bounded-partial | running | 2026-11-07 20:25 |  |
+| FENCE-front-snapshot | running | 2026-11-08 05:12 |  |
+| OMEGA-splinter-cap | impl attempt 1 | 2026-11-08 04:10 | ready 55477c6d on ecdf52e4: splinters split again while live variables fall, Shadows otherwise; 204 pieces 0 failed with doc tests; load 12.29 12.75 13.89 |
+| PRES-mod-conjuncts | impl attempt 1 | 2026-11-08 01:02 | ready at 680c0f0d on origin/main ecdf52e4; 953 passed 0 failed; guarded-chain residual 130x needs XR-algos / load 19.25 16.12 15.13 |
+| RACE-constant | impl attempt 1 | 2026-11-07 22:16 | ready a0a8f61a on origin/main ecdf52e4: pairs stop once their units exceed Duong's estimated remaining units; both-ways k=1024 race/Duong 4.11 -> 2.77, split_ba |
+| REFUSAL-finite-pairs | running | 2026-11-07 22:53 |  |
 | XST-r4 | running | 2026-11-08 02:53 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
