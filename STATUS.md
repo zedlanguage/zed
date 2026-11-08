@@ -1602,11 +1602,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CK-data-memo | impl attempt 1 | 2026-11-07 23:45 | data memo keyed by Node in place; shared family 400/3200 at 18.9x, profiling the rest |
-| LIST-size | impl attempt 1 | 2026-11-07 23:41 | ready: impl d8a5f0ff on wt/list-size (origin/main a0c81bb8), spec 61de78d on wt/list-size-spec; l01_25/l01_39/zedc_preimage 192 pieces pass except deep_let time |
 | Q1-LOCAL | impl attempt 1 | 2026-11-03 12:15 | rebased on origin/main (71 commits); baseline groups l01_38_presburger, l01_24, l01_25, l01_39, zedc_presburger unit: 346 pieces, 1 failed (l01_39_reduced_produ |
 | RUNG2-definedness | impl attempt 1 | 2026-11-08 00:07 | started; worktree wt/rung2-definedness on wt/ladder-study e5223be9 (stack after LADDER-study) |
 | SETS-study | research attempt 1 | 2026-11-07 23:43 | Codex report in (rc 0); Gemini and Claude still running |
-| ST-holes-known-limit | impl attempt 1 | 2026-11-08 00:17 | baseline l01_39 by module on origin/main 9d07c0ac: 22 pieces, 194 passed, 1 ignored, 0 failed (load 39-54) |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Gemini timed out (rc 124 after 5 h) with no R2_GEMINI.md; probes and fetched papers kept; its target/ and build/ deleted; round 2 processed from the Codex and C |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
