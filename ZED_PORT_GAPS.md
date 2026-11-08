@@ -2766,3 +2766,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A memo `RefCell<HashMap<KType, KType>>` filled inside a `&self` method | `Forms::cut` | Mutation (gap 11) | `cut` takes and returns the memo with the result, or the forms are built in one pass that threads it |
 | Atom names that start with a NUL (`"\0fn 3"`), names no program writes, as marks in a normal form | `mark`, `fields_mark`, `Forms::number_marks` | None | the same strings; the kernel needs no change |
+
+## Entries from ENV-bounded-partial (`crates/zedc-types/src/ty.rs`, `crates/zedc-check/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A closure taking `&dyn Fn(&Ty, &KType) -> bool`, called with two predicates | `Ck::taking` | Function values | a function with a function-typed parameter |
+| `bool::then_some` building the `Option` of a struct of borrowed parts | `Sig::morphism` | None | `if … { … } else { #notFound }` |
+| An enum of borrowed parts (`Morphism<'a>`) that lives only while printing | `Sig::morphism`, `Morphism::parts` | Lifetimes | a union of the two shapes, holding the types by value |
