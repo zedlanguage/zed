@@ -1625,14 +1625,16 @@ pub fn errs() -> KType {
 /// The type of the failures that merge into `#errs`, each from the type `e` of the failures
 /// that meet: `#errs(E ->? E)`, the family that maps each distinct failure to itself
 /// (DESIGN.md sec:failure), whose exact keys are not kept. Its payload is a family, so its
-/// signature is data and prints with `->?`.
+/// signature is data and prints with `->?`; a lookup in it is a failure of `E` or `#notFound`,
+/// as for any `K ->? V` (sec:type_language), which is how the printed type reads back.
 pub fn errs_of(e: Ty) -> Ty {
     let param = SParam {
         name: "".into(),
         positional: true,
         default: None,
     };
-    let mut family = Sig::one(vec![param], vec![e.clone()], e);
+    let found = e.union(&Ty::set(KType::atom("notFound")));
+    let mut family = Sig::one(vec![param], vec![e], found);
     family.data = true;
     let mut t = Ty::set(errs());
     let shape = Shape::new(vec![Ty::func(Arc::new(family))], BTreeMap::new());
@@ -4645,22 +4647,25 @@ impl Sig {
         parts.push(Print::Bounds(self, bounds));
     }
 
-    /// Whether it is a family with one key type and no tuple or function in that type, so that
-    /// [`Sig::family_parts`] can write it bare.
+    /// Whether it is a family that maps each key of one key type to itself, its lookup that
+    /// key type or `#notFound`, as [`errs_of`] builds, with no tuple or function in that type,
+    /// so that [`Sig::family_parts`] can write it bare.
     fn is_family(&self) -> bool {
         matches!((&self.params[..], &self.arrows[..]), ([p], [a])
-            if self.data && p.positional && a.params[0].tuples.is_empty() && a.params[0].fns.is_empty())
+            if self.data && p.positional && a.params[0].tuples.is_empty() && a.params[0].fns.is_empty()
+                && a.result == a.params[0].union(&Ty::set(KType::atom("notFound"))))
     }
 
     /// Opens its variables in `scope` and pushes the parts of its text as a family, a partial
-    /// map `K ->? V` (DESIGN.md sec:values_morphisms), to `parts`, in order. Its key type is
-    /// written bare, as [`Sig::is_family`] leaves none that could be read as parameters.
+    /// map `K ->? K` (DESIGN.md sec:values_morphisms), to `parts`, in order: its key type, bare,
+    /// as [`Sig::is_family`] leaves none that could be read as parameters, twice, since `->?`
+    /// adds the `#notFound` of its lookup (sec:type_language).
     fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
         let bounds = scope.open(self);
-        let a = &self.arrows[0];
-        parts.push(Print::Ty(&a.params[0]));
+        let key = &self.arrows[0].params[0];
+        parts.push(Print::Ty(key));
         parts.push(Print::Text(" ->? "));
-        parts.push(Print::Ty(&a.result));
+        parts.push(Print::Ty(key));
         parts.push(Print::Bounds(self, bounds));
     }
 }

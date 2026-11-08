@@ -19,6 +19,7 @@ mod is_chains;
 mod literals;
 mod named_calls;
 mod narrowing;
+mod partial_maps;
 mod payload_variables;
 mod random;
 mod scaling;

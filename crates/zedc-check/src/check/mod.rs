@@ -4810,8 +4810,16 @@ impl<'a> Denote<'a> {
                 let a = vals.pop().expect("a difference's operands are denoted");
                 a.diff(&b)
             }
-            TypeKind::Arrow { params, .. } => {
-                let result = vals.pop().expect("a function type's result is denoted");
+            // A partial map `K ->? V` promises no key, so a lookup is `V | #notFound`
+            // (DESIGN.md sec:type_language); this checker keeps one domain per function, so
+            // that is the result of its arrow.
+            TypeKind::Arrow {
+                params, partial, ..
+            } => {
+                let mut result = vals.pop().expect("a function type's result is denoted");
+                if *partial {
+                    result = result.union(&Ty::set(KType::atom("notFound")));
+                }
                 let tys = vals.split_off(vals.len() - params.len());
                 let names = params
                     .iter()

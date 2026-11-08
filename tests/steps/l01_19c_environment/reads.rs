@@ -63,23 +63,24 @@ fn a_variable_the_program_does_not_read_may_hold_anything() {
 }
 
 #[test]
-fn a_miss_left_undisposed_stops_the_run() {
-    // The checker types a `->?` lookup as its value type alone, not `V | #notFound` as
-    // sec:type_language says (follow-up ARROW-partial-notFound), so the miss is found at the
-    // push.
+fn a_miss_left_undisposed_is_rejected_before_the_run() {
+    // `env[name]` is `String | #notFound` (sec:type_language, `->?`), and a `Lines` port takes
+    // no `#notFound`, so the program is rejected whether or not the variable is set.
     let src = "main(env: String ->? String) -> (stdout: Lines) {\n  stdout <- env[\"ZED_A\"];\n}\n";
-    let set = run("undisposed", src, &[("ZED_A", b"/h")]);
-    assert_eq!(
-        (set.status, set.stdout.as_str()),
-        (0, "/h\n"),
-        "{}",
-        set.stderr
-    );
-    let unset = run("undisposed", src, &[]);
-    assert_eq!(
-        (unset.status, unset.stdout.as_str(), unset.stderr.as_str()),
-        (1, "", "port `stdout` takes strings; #notFound was pushed\n")
-    );
+    for given in [&[("ZED_A", &b"/h"[..])][..], &[]] {
+        let out = run("undisposed", src, given);
+        assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+        assert!(
+            out.stderr.contains(
+                "2:13: a `Lines` port takes a `String` or a family of strings, not \
+                 String | #notFound"
+            ) && out
+                .stderr
+                .contains("this expression gives String | #notFound"),
+            "{}",
+            out.stderr
+        );
+    }
 }
 
 #[test]

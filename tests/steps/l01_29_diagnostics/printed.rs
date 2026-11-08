@@ -263,6 +263,28 @@ fn a_merged_failure_reads_back() {
     );
 }
 
+/// A partial map `K ->? V` is the function type whose lookup is `V | #notFound`
+/// (sec:type_language), printed `(K) -> V | #notFound`, which reads back to it; an `#errs`
+/// family reads back through the same rule, its lookup `E | #notFound`.
+#[test]
+fn a_partial_map_reads_back_with_its_miss() {
+    let partial = back("String ->? int");
+    assert_eq!(partial, back("(String) -> int | #notFound"));
+    assert_eq!(partial.to_string(), "((String) -> int | #notFound)");
+    assert_ne!(partial, back("String -> int"));
+    let built = zedc::check::ty::errs_of(back("#a | #b"));
+    let shown = built.to_string();
+    assert_eq!(shown, "#errs(#a | #b ->? #a | #b)");
+    assert_eq!(mismatch(&built, &shown), None, "{shown}");
+    let errs = back(&shown);
+    let family = &errs.payloads["errs"].as_ref().expect("a payload")[0].items[0].fns[0];
+    assert_eq!(
+        family.arrows[0].result,
+        back("#a | #b | #notFound"),
+        "{family}"
+    );
+}
+
 #[test]
 fn the_three_leaves_of_layer_l10_read_back() {
     assert_eq!(back("_"), Ty::dynamic());
