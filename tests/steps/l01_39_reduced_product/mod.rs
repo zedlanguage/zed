@@ -28,6 +28,7 @@ mod refused;
 mod scaling;
 mod seed_edges;
 mod spec;
+mod written_address;
 
 use std::sync::Arc;
 

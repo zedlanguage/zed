@@ -2711,3 +2711,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | The edges that can lower a seed gathered into a `Vec<Edge>`, then the least bound per seed kept in a `BTreeMap` updated in place, then the labels and the heap updated in place for each seed lowered | `Scope::bound_pass` | Mutation of growable vectors and maps (gap 11) | A fold over the edges into a map from seed to least bound, then a fold over that map that returns the labels, the names moved and the starting heap |
+
+## Entries from KEY-written-addr (`crates/zedc-preimage/src/address.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A node's id, `Shared::id`, as the key of `HashMap`s that hold each shared part's height and free names, and its canonical form for each binding of its free names; a pair of ids as the key of the parts compared equal | `Canon::info`, `Canon::arms`, `Canon::done`, `order` | Identity (gap 1) | A node id given when the node is made, as gap 1 decides; the maps as persistent maps keyed by it |
+| Two walks on explicit stacks of enums that borrow the term (`Read`, `Step`, `Pair`), with the results of the parts on a second stack drained at each exit | `Canon::read`, `Canon::canonical`, `order` | References into values (Rust lifetimes) and mutation (gap 11) | A fold over the term with the stacks as lists threaded through the loop's state; the borrowed parts as the values themselves |
+| A digest built one 64-bit word at a time with wrapping multiplication and shifts (splitmix64's finalizer) | `Digest` | None: the prelude's 64-bit words wrap (gap 4, built) | The same words with `u64` wrapping operators |
+| `Ord` written by hand for a key type (digest, then a walk of the two terms), so a persistent map orders its keys by it | `impl Ord for Address` | None | A comparison function the map takes, or the key's `compare` member |

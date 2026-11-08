@@ -51,6 +51,7 @@ use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, on_stack};
 
+use super::address::Address;
 use super::images;
 use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
@@ -390,16 +391,16 @@ pub struct Scope {
     pub names: imbl::OrdMap<Arc<str>, Product>,
     /// The relation the integer names meet, with no auxiliary variable.
     pub relation: Conjuncts,
-    /// The written constraints that hold, a test and its negations by printed text, each
-    /// with its free names.
-    pub written: imbl::OrdMap<String, (Term, Vec<Arc<str>>)>,
-    /// The texts of the written constraints on each name.
-    written_by: Uses<String>,
+    /// The written constraints that hold, a test and its negations by content address (each
+    /// held as its canonical term, [`Address::term`]), each with its free names.
+    pub written: imbl::OrdMap<Address, Vec<Arc<str>>>,
+    /// The addresses of the written constraints on each name.
+    written_by: Uses<Address>,
     /// Whether no state reaches this scope.
     pub bottom: bool,
     /// Whether each name is already the bottom, in a scope no state reaches ([`Emptied`]).
     emptied: Emptied,
-    /// The written constraints already enumerated, each as its text with the values of its
+    /// The written constraints already enumerated, each as its address with the values of its
     /// static names. A second enumeration removes nothing more: the members a constraint holds
     /// at do not depend on the interval, which already lies within them.
     pub enumerated: imbl::OrdSet<Enumerated>,
@@ -622,7 +623,7 @@ type Projection = (imbl::OrdMap<Arc<str>, Product>, Conjuncts);
 /// The names, written constraints and enumerated ones an enumeration found.
 type Enumeration = (
     imbl::OrdMap<Arc<str>, Product>,
-    imbl::OrdMap<String, (Term, Vec<Arc<str>>)>,
+    imbl::OrdMap<Address, Vec<Arc<str>>>,
     imbl::OrdSet<Enumerated>,
 );
 
@@ -1043,8 +1044,8 @@ enum Due {
     Blocks(BTreeSet<BlockId>, Seeds),
 }
 
-/// A written constraint's text with the values of its static names.
-pub type Enumerated = (String, Vec<(Arc<str>, Value)>);
+/// A written constraint's address with the values of its static names.
+pub type Enumerated = (Address, Vec<(Arc<str>, Value)>);
 
 /// What [`Scope::unbind`] needs to undo a [`Scope::bind`].
 #[derive(Debug)]
@@ -1402,7 +1403,7 @@ impl Scope {
             self.settle(&leaves);
             self.relation.forget(x);
         }
-        let gone: Vec<String> = self.written_by.of(x).cloned().collect();
+        let gone: Vec<Address> = self.written_by.of(x).cloned().collect();
         for k in &gone {
             self.unwrite(k);
         }
@@ -1651,24 +1652,24 @@ impl Scope {
         }
     }
 
-    /// Records `t` as a written constraint that holds.
+    /// Records `t` as a written constraint that holds, by its content address: a constraint
+    /// that differs from one already written only in the names of its binders is that one.
     pub fn write(&mut self, t: Term) {
-        let k = t.to_string();
+        let k = Address::of(&t);
         self.unwrite(&k);
         let free: Vec<Arc<str>> = stage::free(&t).into_iter().collect();
         for n in &free {
             self.written_by.add(n, &k);
             self.relation.pin(n, true);
         }
-        self.written.insert(k, (t, free));
+        self.written.insert(k, free);
     }
 
-    /// Forgets the written constraint of text `k`.
-    fn unwrite(&mut self, k: &str) {
-        if let Some((_, free)) = self.written.remove(k) {
-            let k = k.to_string();
+    /// Forgets the written constraint of address `k`.
+    fn unwrite(&mut self, k: &Address) {
+        if let Some(free) = self.written.remove(k) {
             for n in &free {
-                self.written_by.remove(n, &k);
+                self.written_by.remove(n, k);
                 if self.written_by.count(n) == 0 {
                     self.relation.pin(n, false);
                 }
@@ -1831,12 +1832,9 @@ impl Scope {
         // A written constraint one side holds alone pins its names there and not in the join,
         // which may make one of them a star's leaf there ([`Conjuncts::pin`]).
         for d in self.written.diff(&other.written) {
-            let (DiffItem::Add(_, (_, free))
-            | DiffItem::Remove(_, (_, free))
-            | DiffItem::Update {
-                old: (_, (_, free)),
-                ..
-            }) = d;
+            let (DiffItem::Add(_, free)
+            | DiffItem::Remove(_, free)
+            | DiffItem::Update { old: (_, free), .. }) = d;
             differ.extend(free.iter().cloned());
         }
         let mut leaves = differ.clone();
@@ -1929,7 +1927,7 @@ impl Scope {
         // The written and enumerated constraints both sides hold.
         let (mut written, mut written_by) = (self.written.clone(), self.written_by.clone());
         for d in self.written.diff(&other.written) {
-            if let DiffItem::Remove(k, (_, free)) = d {
+            if let DiffItem::Remove(k, free) = d {
                 written.remove(k);
                 for n in free {
                     written_by.remove(n, k);
@@ -4086,7 +4084,7 @@ impl Scope {
         if self.exact {
             self.enumerate_exactly(last.as_ref());
         }
-        let texts: BTreeSet<String> = match last {
+        let due: BTreeSet<Address> = match last {
             None => self.written.keys().cloned().collect(),
             Some((names, written, enumerated)) => {
                 let mut out = BTreeSet::new();
@@ -4111,10 +4109,10 @@ impl Scope {
                 out
             }
         };
-        let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = texts
+        let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = due
             .into_iter()
-            .filter_map(|text| {
-                let (c, free) = self.written.get(&text)?;
+            .filter_map(|k| {
+                let free = self.written.get(&k)?;
                 if !free.iter().all(|n| self.names.contains_key(n)) {
                     return None;
                 }
@@ -4124,9 +4122,9 @@ impl Scope {
                     .filter(|n| !statics.contains_key(*n))
                     .cloned()
                     .collect();
-                let key = (text, statics.clone().into_iter().collect());
+                let key = (k.clone(), statics.clone().into_iter().collect());
                 (open.len() <= 1 && !self.enumerated.contains(&key))
-                    .then(|| substitute(c, &statics))
+                    .then(|| substitute(k.term(), &statics))
                     .filter(stage::ends)
                     .map(|c| (c, open, key))
             })
@@ -4213,7 +4211,7 @@ impl Scope {
     /// by the search of the whole group, which is what the search of each group in full
     /// would find.
     fn enumerate_exactly(&mut self, last: Option<&Enumeration>) {
-        let mut due: BTreeSet<String> = BTreeSet::new();
+        let mut due: BTreeSet<Address> = BTreeSet::new();
         match last {
             None => due.extend(self.written.keys().cloned()),
             Some((names, written, _)) => {
@@ -4224,7 +4222,7 @@ impl Scope {
                         }
                         // The constraints on its names: a group whose search gave no answer
                         // may fall apart into groups that give one.
-                        DiffItem::Remove(_, (_, free)) => {
+                        DiffItem::Remove(_, free) => {
                             for n in free {
                                 due.extend(self.written_by.of(n).cloned());
                             }
@@ -4243,15 +4241,15 @@ impl Scope {
         // The names of the groups searched whole in this call.
         let mut searched: BTreeSet<Arc<str>> = BTreeSet::new();
         let yes = Demand::Bool(true);
-        while let Some(text) = todo.pop_first() {
-            let Some((c, open)) = self.taken(&text) else {
+        while let Some(k) = todo.pop_first() {
+            let Some((c, open)) = self.taken(&k) else {
                 // A constraint due that is no longer taken may have linked groups, as a
                 // removed one did: the constraints on its names are due in its place.
-                if due.remove(&text)
-                    && let Some((_, free)) = self.written.get(&text)
+                if due.remove(&k)
+                    && let Some(free) = self.written.get(&k)
                 {
                     for n in free {
-                        todo.extend(self.written_by.of(n).filter(|k| **k != text).cloned());
+                        todo.extend(self.written_by.of(n).filter(|j| **j != k).cloned());
                     }
                 }
                 continue;
@@ -4274,7 +4272,7 @@ impl Scope {
             let (dom, classes) = self.box_of(&free);
             if let Some(Some(w)) = witness(&substitute(&c, &fixed), &dom, &classes, &yes) {
                 for n in &free {
-                    todo.extend(self.written_by.of(n).filter(|k| **k != text).cloned());
+                    todo.extend(self.written_by.of(n).filter(|j| **j != k).cloned());
                 }
                 self.exactly.extend(w);
                 continue;
@@ -4306,11 +4304,11 @@ impl Scope {
         }
     }
 
-    /// The written constraint of text `text` as [`Scope::enumerate_exactly`] takes it, with
+    /// The written constraint of address `k` as [`Scope::enumerate_exactly`] takes it, with
     /// its static names substituted, and its open names; `None` when it is not taken: a free
     /// name not in scope, no open name, or an open name not a bounded integer.
-    fn taken(&self, text: &str) -> Option<(Term, BTreeSet<Arc<str>>)> {
-        let (c, free) = self.written.get(text)?;
+    fn taken(&self, k: &Address) -> Option<(Term, BTreeSet<Arc<str>>)> {
+        let free = self.written.get(k)?;
         if !free.iter().all(|n| self.names.contains_key(n)) {
             return None;
         }
@@ -4327,7 +4325,8 @@ impl Scope {
                     && matches!(p.ints().bounds(), Some((End::Fin(_), End::Fin(_))))
             })
         };
-        (!open.is_empty() && open.iter().all(bounded_int)).then(|| (substitute(c, &statics), open))
+        (!open.is_empty() && open.iter().all(bounded_int))
+            .then(|| (substitute(k.term(), &statics), open))
     }
 
     /// Whether `v` lies in the interval and the class of the name `n`.
@@ -4352,16 +4351,16 @@ impl Scope {
     }
 
     /// The group of a taken constraint whose open names are `open`: the conjunction of the
-    /// taken constraints linked to it by shared open names, in the order of their texts, and
+    /// taken constraints linked to it by shared open names, in the order of their addresses, and
     /// their open names. Each constraint and name is visited once.
     fn group(&self, open: impl IntoIterator<Item = Arc<str>>) -> (Term, BTreeSet<Arc<str>>) {
         let mut names: BTreeSet<Arc<str>> = open.into_iter().collect();
         let mut todo: Vec<Arc<str>> = names.iter().cloned().collect();
-        let mut texts: BTreeSet<&String> = BTreeSet::new();
-        let mut taken: BTreeMap<&String, Term> = BTreeMap::new();
+        let mut seen: BTreeSet<&Address> = BTreeSet::new();
+        let mut taken: BTreeMap<&Address, Term> = BTreeMap::new();
         while let Some(n) = todo.pop() {
             for k in self.written_by.of(&n) {
-                if !texts.insert(k) {
+                if !seen.insert(k) {
                     continue;
                 }
                 let Some((t, more)) = self.taken(k) else {
