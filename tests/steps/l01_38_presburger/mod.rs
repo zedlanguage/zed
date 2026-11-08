@@ -18,6 +18,7 @@ mod disj_groups;
 mod entailment;
 mod extend;
 mod ids;
+mod ladder;
 mod live3;
 mod mod_symbol;
 mod model;

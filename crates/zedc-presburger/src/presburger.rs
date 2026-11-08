@@ -7678,20 +7678,78 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             }
         }
     }
-    let base = Formula::and(vec![
-        premises.defined(),
-        Formula::and(
-            linear
-                .iter()
-                .map(|l| {
-                    Formula::Con(Con {
-                        lin: l.clone(),
-                        rel: Rel::Ge,
-                    })
+    // The rows of the premises, their definitions and the linear inequalities, in parts that
+    // share no atom, by union-find over the atoms each row mentions; and the linear rows on
+    // each atom. A factor's bounds are its hull over its own part: the other parts constrain
+    // other atoms, so where the premises have a point the hull is the hull over all of them,
+    // and where they have none they entail any goal. Taking the hull over all the premises for
+    // each factor cost O(factors × premises) (LADDER-study,
+    // `l01_38_presburger::ladder::products_of_premises_in_pairs_scale`). Complexity tradeoff:
+    // factors that share one part each still decide that part, O(factors × part) for one
+    // part; why: the bounds of every atom of a part at once would need a bound propagation the
+    // store does not have. Trigger: products whose factors one chain of premises connects.
+    // COMPLEXITY.md row C2.
+    let rows: Vec<Formula> = premises
+        .defs
+        .iter()
+        .map(|(_, _, f)| f.clone())
+        .chain(linear.iter().map(|l| {
+            Formula::Con(Con {
+                lin: l.clone(),
+                rel: Rel::Ge,
+            })
+        }))
+        .collect();
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut ids: BTreeMap<Atom, usize> = BTreeMap::new();
+    let mut parent: Vec<usize> = Vec::new();
+    let mut firsts: Vec<Option<usize>> = Vec::with_capacity(rows.len());
+    // A row with no atom holds or fails alone; where one fails the premises have no point.
+    let mut consistent = true;
+    for r in &rows {
+        let atoms: Vec<usize> = r
+            .atoms()
+            .into_iter()
+            .map(|a| {
+                *ids.entry(a).or_insert_with(|| {
+                    parent.push(parent.len());
+                    parent.len() - 1
                 })
-                .collect(),
-        ),
-    ]);
+            })
+            .collect();
+        if let Some((&a, rest)) = atoms.split_first() {
+            for &b in rest {
+                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                parent[rb] = ra;
+            }
+        } else if !r.holds(&Model::new()) {
+            consistent = false;
+        }
+        firsts.push(atoms.first().copied());
+    }
+    let mut part_rows: BTreeMap<usize, Vec<Formula>> = BTreeMap::new();
+    for (r, first) in rows.into_iter().zip(firsts) {
+        if let Some(a) = first {
+            let root = find(&mut parent, a);
+            part_rows.entry(root).or_default().push(r);
+        }
+    }
+    let parts: BTreeMap<usize, Formula> = part_rows
+        .into_iter()
+        .map(|(root, rs)| (root, Formula::and(rs)))
+        .collect();
+    let mut on_atom: BTreeMap<&Atom, Vec<usize>> = BTreeMap::new();
+    for (i, l) in linear.iter().enumerate() {
+        for a in l.terms.keys() {
+            on_atom.entry(a).or_default().push(i);
+        }
+    }
     let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
     let factors: BTreeSet<Factor> = wanted
         .iter()
@@ -7699,13 +7757,17 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
         .collect();
     for s in factors {
         let atom = s.atom();
-        let mut set: Vec<Lin> = linear
-            .iter()
-            .filter(|l| l.terms.contains_key(&atom))
-            .cloned()
-            .collect();
+        let mut set: Vec<Lin> = on_atom.get(&atom).map_or_else(Vec::new, |is| {
+            is.iter().map(|&i| linear[i].clone()).collect()
+        });
         let x = Lin::atom(atom.clone());
-        if let Some((lo, hi)) = hull(&base, &atom)?.bounds() {
+        let part = match ids.get(&atom) {
+            Some(&id) if consistent => Some(&parts[&find(&mut parent, id)]),
+            _ => None,
+        };
+        if let Some(part) = part
+            && let Some((lo, hi)) = hull(part, &atom)?.bounds()
+        {
             if let End::Fin(l) = lo {
                 set.push(x.minus(&Lin::constant(l)));
             }
