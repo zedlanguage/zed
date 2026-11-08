@@ -9,7 +9,7 @@ use std::thread;
 
 use zed_tests::scaling;
 use zedc::store::int::Int;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, satisfiable};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, Shared, satisfiable};
 
 /// The default stack of a test thread.
 const STACK: usize = 2 << 20;
@@ -117,7 +117,7 @@ fn small_formulas_print_compare_and_hash_as_before() {
     assert_eq!(
         format!(
             "{:?}",
-            Formula::Not(Arc::new(Formula::Or(Arc::new(vec![]))))
+            Formula::Not(Shared::new(Formula::Or(Shared::new(vec![]))))
         ),
         "Not(Or([]))"
     );
@@ -137,10 +137,10 @@ fn small_formulas_print_compare_and_hash_as_before() {
         b.clone(),
         not_a.clone(),
         Formula::top(),
-        Formula::And(Arc::new(vec![a.clone()])),
-        Formula::And(Arc::new(vec![a.clone(), b.clone()])),
-        Formula::And(Arc::new(vec![b.clone()])),
-        Formula::And(Arc::new(vec![not_a.clone()])),
+        Formula::And(Shared::new(vec![a.clone()])),
+        Formula::And(Shared::new(vec![a.clone(), b.clone()])),
+        Formula::And(Shared::new(vec![b.clone()])),
+        Formula::And(Shared::new(vec![not_a.clone()])),
         Formula::bottom(),
         either.clone(),
     ];

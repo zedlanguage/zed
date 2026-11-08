@@ -7,10 +7,11 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 use std::slice;
 use std::sync::Arc;
 
+use zed_kernel::value::fresh_id;
 use zedc_int::int::Int;
 
 /// A variable of a relation.
@@ -62,10 +63,10 @@ pub struct Con {
 }
 
 /// A quantifier-free formula over linear constraints. Each compound node holds its parts
-/// behind an [`Arc`], so a copy costs O(1) and shares them, and a part may be held by many
-/// parents: the formula of a `let`-bound test is held once at each use (COMPLEXITY.md S31).
-/// Every pass over a formula reads a shared part once per call (`deep`), so its cost is the
-/// number of distinct parts. Drop, compare, hash and show do not recurse on its depth. Two
+/// behind a [`Shared`] handle, so a copy costs O(1) and shares them, and a part may be held by
+/// many parents: the formula of a `let`-bound test is held once at each use (COMPLEXITY.md
+/// S31). Every pass over a formula reads a shared part once per call (`deep`), so its cost is
+/// the number of distinct parts. Drop, compare, hash and show do not recurse on its depth. Two
 /// formulas are compared as the derived order would compare their trees written out, but a
 /// part compared with itself is equal at once: a lookup of a conjunct in the maps keyed by
 /// formulas finds the very formula it holds, and would otherwise walk the whole of it.
@@ -73,32 +74,92 @@ pub enum Formula {
     /// A constraint.
     Con(Con),
     /// Negation.
-    Not(Arc<Formula>),
+    Not(Shared<Formula>),
     /// Conjunction; empty is `true`.
-    And(Arc<Vec<Formula>>),
+    And(Shared<Vec<Formula>>),
     /// Disjunction; empty is `false`.
-    Or(Arc<Vec<Formula>>),
+    Or(Shared<Vec<Formula>>),
+}
+
+/// The parts of a compound node of a [`Formula`], shared: a copy is a reference count. They
+/// carry the id they were given when they were made: copies share it, no other parts have it,
+/// and parts changed in place ([`Shared::change`]) take a new one. So a pass that meets a
+/// shared part again knows it by its id ([`Id`]): memo and visited keys are ids or structure,
+/// never addresses (SYNTHESIS fact 2), as with `zed_kernel::Shared`. The id does not change what
+/// the formula means: equality, order, hash and show read the parts alone.
+pub struct Shared<T>(Arc<Held<T>>);
+
+struct Held<T> {
+    id: u64,
+    body: T,
+}
+
+impl<T> Shared<T> {
+    /// `body`, shared, with a new id.
+    pub fn new(body: T) -> Shared<T> {
+        Shared(Arc::new(Held {
+            id: fresh_id(),
+            body,
+        }))
+    }
+
+    /// The parts, to change in place when `this` is their only holder. They take a new id,
+    /// since what the old id named is no longer these parts.
+    pub fn change(this: &mut Shared<T>) -> Option<&mut T> {
+        let held = Arc::get_mut(&mut this.0)?;
+        held.id = fresh_id();
+        Some(&mut held.body)
+    }
+
+    /// The parts, when `this` is their only holder, only to move them out before the node
+    /// goes, so the id is kept.
+    pub(super) fn get_mut(this: &mut Shared<T>) -> Option<&mut T> {
+        Arc::get_mut(&mut this.0).map(|h| &mut h.body)
+    }
+
+    /// The number of holders of the parts.
+    pub fn strong_count(this: &Shared<T>) -> usize {
+        Arc::strong_count(&this.0)
+    }
+
+    /// Whether the two handles hold the same parts.
+    pub fn same(a: &Shared<T>, b: &Shared<T>) -> bool {
+        a.0.id == b.0.id
+    }
+}
+
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Shared<T> {
+        Shared(Arc::clone(&self.0))
+    }
+}
+
+impl<T> Deref for Shared<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0.body
+    }
 }
 
 /// A satisfying assignment, each atom absent from it zero.
 pub type Model = BTreeMap<Atom, Int>;
 
-/// A compound part of a formula, held, so that it lives as long as the key, and compared and
-/// hashed as the one part it is, not by its content. Two keys are equal when they hold the
-/// same part, so a part that two parents hold is found by either.
-pub struct Id(Formula);
-
-impl Clone for Id {
-    fn clone(&self) -> Id {
-        Id(self.0.clone())
-    }
-}
+/// The key of a compound part of a formula: the id of its [`Shared`] parts, so two keys are
+/// equal when they name the same part, and a part that two parents hold is found by either.
+/// Ids are never reused, so a key needs not hold its part, and no result may depend on their
+/// values: they are only compared and hashed, and no map keyed by them is iterated.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Id(u64);
 
 impl Id {
     /// The key of `f`, a compound part.
     pub fn any(f: &Formula) -> Id {
-        debug_assert!(!matches!(f, Formula::Con(_)), "a compound part");
-        Id(f.clone())
+        match f {
+            Formula::Con(_) => unreachable!("a key names a compound part"),
+            Formula::Not(g) => Id(g.0.id),
+            Formula::And(gs) | Formula::Or(gs) => Id(gs.0.id),
+        }
     }
 
     /// The key of `f` when another holder shares it, so that a pass may reach it again, or
@@ -139,29 +200,6 @@ impl Id {
         }
         twice
     }
-
-    /// Where the part is kept, which names it while the key holds it.
-    fn at(&self) -> *const () {
-        match &self.0 {
-            Formula::Con(_) => unreachable!("a key holds a compound part"),
-            Formula::Not(g) => Arc::as_ptr(g).cast(),
-            Formula::And(gs) | Formula::Or(gs) => Arc::as_ptr(gs).cast(),
-        }
-    }
-}
-
-impl PartialEq for Id {
-    fn eq(&self, other: &Id) -> bool {
-        self.at() == other.at()
-    }
-}
-
-impl Eq for Id {}
-
-impl Hash for Id {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.at().hash(state)
-    }
 }
 
 impl Formula {
@@ -178,8 +216,8 @@ impl Formula {
     pub(super) fn is_shared(&self) -> bool {
         match self {
             Formula::Con(_) => false,
-            Formula::Not(g) => Arc::strong_count(g) > 1,
-            Formula::And(gs) | Formula::Or(gs) => Arc::strong_count(gs) > 1,
+            Formula::Not(g) => Shared::strong_count(g) > 1,
+            Formula::And(gs) | Formula::Or(gs) => Shared::strong_count(gs) > 1,
         }
     }
 

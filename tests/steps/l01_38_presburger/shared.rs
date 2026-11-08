@@ -13,7 +13,9 @@ use std::sync::Arc;
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::int::Int;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, project, satisfiable};
+use zedc::store::presburger::{
+    Atom, Con, Formula, Lin, Model, Shared, decide, project, satisfiable,
+};
 
 fn sym(n: &str) -> Lin {
     Lin::atom(Atom::Sym(n.into()))
@@ -33,15 +35,15 @@ fn con(a: i64, b: i64, c: i64, eq: bool) -> Formula {
 }
 
 fn and(fs: Vec<Formula>) -> Formula {
-    Formula::And(Arc::new(fs))
+    Formula::And(Shared::new(fs))
 }
 
 fn or(fs: Vec<Formula>) -> Formula {
-    Formula::Or(Arc::new(fs))
+    Formula::Or(Shared::new(fs))
 }
 
 fn not(f: Formula) -> Formula {
-    Formula::Not(Arc::new(f))
+    Formula::Not(Shared::new(f))
 }
 
 /// The formula with a copy of each part at each place that holds it, so that no part has

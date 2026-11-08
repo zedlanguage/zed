@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use super::{Atom, Con, Formula, Lin, Rel};
+use super::{Atom, Con, Formula, Lin, Rel, Shared};
 use zedc_int::int::Int;
 
 /// A treap of disjoint intervals of the base coordinate, ordered by their lower ends, each
@@ -241,7 +241,7 @@ impl Holes {
             .map(|(lo, hi)| {
                 let below = Con::ge(&Lin::constant(&lo - &Int::ONE), &y);
                 let above = Con::ge(&y, &Lin::constant(&hi + &Int::ONE));
-                Formula::Or(Arc::new(vec![Formula::Con(below), Formula::Con(above)]))
+                Formula::Or(Shared::new(vec![Formula::Con(below), Formula::Con(above)]))
             })
             .collect()
     }

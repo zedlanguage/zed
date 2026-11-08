@@ -91,6 +91,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use imbl::OrdSet;
 
 use zed_kernel::refine::Refine;
+use zed_kernel::value::fresh_id;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_solvers::linear::{Q, Term};
@@ -100,7 +101,7 @@ mod deep;
 pub mod extend;
 mod formula;
 
-pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel};
+pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
 /// words (sec:diagnostics), and each is a property of the system's shape, never of its size
@@ -209,12 +210,12 @@ impl fmt::Display for Refusal {
 impl Formula {
     /// `true`.
     pub fn top() -> Formula {
-        Formula::And(Arc::new(Vec::new()))
+        Formula::And(Shared::new(Vec::new()))
     }
 
     /// `false`.
     pub fn bottom() -> Formula {
-        Formula::Or(Arc::new(Vec::new()))
+        Formula::Or(Shared::new(Vec::new()))
     }
 
     /// The conjunction, flattened, `true` dropped and `false` absorbing.
@@ -420,7 +421,7 @@ impl Formula {
             Formula::Not(_) => f.into_negated().expect("a negation"),
             Formula::And(ref gs) if gs.is_empty() => Formula::bottom(),
             Formula::Or(ref gs) if gs.is_empty() => Formula::top(),
-            g => Formula::Not(Arc::new(g)),
+            g => Formula::Not(Shared::new(g)),
         }
     }
 
@@ -461,7 +462,7 @@ impl Formula {
         while let Some(g) = stack.pop() {
             match g {
                 Formula::And(gs) => {
-                    if seen.insert(Arc::as_ptr(gs)) {
+                    if seen.insert(Id::any(g)) {
                         stack.extend(gs.iter().rev());
                     }
                 }
@@ -621,9 +622,9 @@ impl Joining {
         if self.out.len() == 1 {
             self.out.pop().expect("one")
         } else if self.and {
-            Formula::And(Arc::new(self.out))
+            Formula::And(Shared::new(self.out))
         } else {
-            Formula::Or(Arc::new(self.out))
+            Formula::Or(Shared::new(self.out))
         }
     }
 }
@@ -2667,6 +2668,7 @@ fn probe(mut p: Parts) -> Result<Option<Parts>, Refusal> {
                     ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
                     atoms: OnceCell::new(),
                     failed: Cell::new(0),
+                    id: Cell::new(0),
                 };
                 q.put(&d);
                 if !matches!(settle(q, false), Ok(None)) {
@@ -2717,6 +2719,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
         ors,
         atoms: OnceCell::new(),
         failed: Cell::new(0),
+        id: Cell::new(0),
     };
     for (x, lo, hi) in d.cons.iter().filter_map(one_bound) {
         // `upper`: the bound is `x <= v`; otherwise `x >= v`. An equality is a bound both
@@ -3019,6 +3022,7 @@ fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts, implied: &Near) -> Optio
             .collect(),
         atoms: OnceCell::new(),
         failed: Cell::new(0),
+        id: Cell::new(0),
     };
     q.put(d);
     let m = pick(&q, true).ok()?;
@@ -3032,7 +3036,7 @@ fn point_with(p: &Parts, held: &[Vec<bool>], d: &Parts, implied: &Near) -> Optio
 /// disjunctions, each a list of disjuncts, each disjunct the parts of it. A disjunct is shared,
 /// not copied, when it is handed to a search or a level below, so that a disjunction nested
 /// `d` deep is copied at no level above it.
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct Parts {
     cons: Vec<Con>,
     ors: Vec<Vec<Rc<Parts>>>,
@@ -3042,6 +3046,22 @@ struct Parts {
     /// The stamp of the last search ([`Parts::witness`]) that found the parts not to hold at its
     /// values, so that the search does not read them again while its values are unchanged.
     failed: Cell<u64>,
+    /// The id of a disjunct, drawn the first time it is asked for ([`Parts::id`]), 0 until
+    /// then. Like the atoms it is asked only of a disjunct, which is not changed once made.
+    id: Cell<u64>,
+}
+
+impl Clone for Parts {
+    /// A copy, which may be changed, so it takes its own id when one is asked of it.
+    fn clone(&self) -> Parts {
+        Parts {
+            cons: self.cons.clone(),
+            ors: self.ors.clone(),
+            atoms: self.atoms.clone(),
+            failed: self.failed.clone(),
+            id: Cell::new(0),
+        }
+    }
 }
 
 /// Drops the disjuncts nested below on an explicit stack, not by recursion on their depth
@@ -3338,6 +3358,16 @@ impl Parts {
         true
     }
 
+    /// The id of the parts, drawn the first time it is asked for: no other parts have it, so
+    /// a memo keyed by it ([`BelowKey`]) knows a disjunct shared by several disjunctions,
+    /// and ids are never reused, so the memo needs not hold the disjunct.
+    fn id(&self) -> u64 {
+        if self.id.get() == 0 {
+            self.id.set(fresh_id());
+        }
+        self.id.get()
+    }
+
     /// The atoms of the parts. Each disjunct's set is found once, from its disjuncts' sets:
     /// it starts as the largest of them, shared, and the atoms of the others and of its own
     /// constraints are added to it. An atom is then added only to a set at least twice the
@@ -3412,7 +3442,7 @@ fn nnf(f: &Formula, sign: bool) -> Formula {
             };
             // A node held elsewhere is a part passed through whole, already sorted.
             if let Formula::And(gs) | Formula::Or(gs) = &mut out
-                && let Some(gs) = Arc::get_mut(gs)
+                && let Some(gs) = Shared::change(gs)
             {
                 gs.sort();
             }
@@ -6839,7 +6869,7 @@ fn project_parts(
             // with it, the disjunct is asked again with the base's groups, as before.
             let kernel = kernels[j][t].take();
             let key: BelowKey = (
-                Rc::as_ptr(d),
+                d.id(),
                 match &kernel {
                     Some(k) => k.clone(),
                     None => (roots.iter())
@@ -6867,7 +6897,7 @@ fn project_parts(
                     }),
                 })
             };
-            let found_rs = if let Some((_, r)) = memo.get(&key) {
+            let found_rs = if let Some(r) = memo.get(&key) {
                 r.clone()
             } else {
                 let settled = match pre_d {
@@ -6884,7 +6914,7 @@ fn project_parts(
                     };
                     r = answer(settled, memo);
                 }
-                memo.insert(key, (Rc::clone(d), r.clone()));
+                memo.insert(key, r.clone());
                 r
             };
             let (rs, has_point) = match found_rs {
@@ -7035,16 +7065,16 @@ fn project_parts(
     Ok((out, skipped))
 }
 
-/// A disjunct of [`project_parts`] below the top, by address, with the constraints of the base
-/// groups it is read with and the symbols it is asked for.
-type BelowKey = (*const Parts, Vec<Con>, Vec<Atom>);
+/// A disjunct of [`project_parts`] below the top, by its id ([`Parts::id`]), with the
+/// constraints of the base groups it is read with and the symbols it is asked for.
+type BelowKey = (u64, Vec<Con>, Vec<Atom>);
 
-/// The answers of [`project_parts`] for the disjuncts below the top already read, each with
-/// the disjunct it is keyed by, held so that its address is not reused. A disjunct shared by
-/// several disjunctions (a named disjunction used as a disjunct at each of several places,
-/// COMPLEXITY.md S31b) is then projected once for each base and set of symbols, not once for
-/// each path to it, which is exponential in the depth when the shared disjunctions nest.
-type Below = HashMap<BelowKey, (Rc<Parts>, Result<(Each, bool), Refusal>)>;
+/// The answers of [`project_parts`] for the disjuncts below the top already read. A disjunct
+/// shared by several disjunctions (a named disjunction used as a disjunct at each of several
+/// places, COMPLEXITY.md S31b) is then projected once for each base and set of symbols, not
+/// once for each path to it, which is exponential in the depth when the shared disjunctions
+/// nest.
+type Below = HashMap<BelowKey, Result<(Each, bool), Refusal>>;
 
 /// A disjunct with a point and its projections, each with the index of its symbol, sorted.
 type Projected<'a> = (&'a Parts, Vec<(usize, IntervalSet)>);
@@ -7741,7 +7771,7 @@ mod before {
         if out.len() == 1 {
             out.pop().expect("one")
         } else {
-            Formula::And(Arc::new(out))
+            Formula::And(Shared::new(out))
         }
     }
 
@@ -7763,7 +7793,7 @@ mod before {
         if out.len() == 1 {
             out.pop().expect("one")
         } else {
-            Formula::Or(Arc::new(out))
+            Formula::Or(Shared::new(out))
         }
     }
 }
@@ -8214,9 +8244,9 @@ pub(super) mod tests {
             k => {
                 let parts = (0..=rng.below(3)).map(|_| small(rng, depth - 1)).collect();
                 if k % 2 == 0 {
-                    Formula::And(Arc::new(parts))
+                    Formula::And(Shared::new(parts))
                 } else {
-                    Formula::Or(Arc::new(parts))
+                    Formula::Or(Shared::new(parts))
                 }
             }
         }

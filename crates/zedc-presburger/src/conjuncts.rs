@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use imbl::{OrdMap, OrdSet};
 
-use super::presburger::{Atom, Con, Factor, Formula, Lin, Model, Rel};
+use super::presburger::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use zedc_int::int::Int;
 
 /// The values of a set kept for each name, in a persistent map.
@@ -1007,7 +1007,7 @@ impl Conjuncts {
         if gs.len() == 1 {
             gs.pop().expect("one")
         } else {
-            Formula::And(Arc::new(gs))
+            Formula::And(Shared::new(gs))
         }
     }
 
@@ -1052,20 +1052,22 @@ impl Conjuncts {
     /// a chain of names each conjoining the two before it would otherwise be read once for
     /// each path to it, a number exponential in its length.
     fn and_held(&mut self, f: Formula, held: &mut Held, p: &mut Pending) {
-        let mut seen: HashSet<*const Vec<Formula>> = HashSet::new();
-        // The shared conjunctions read, held so that their addresses are not reused.
-        let mut read: Vec<Formula> = Vec::new();
+        // The conjunctions read, by id: a copy of one read before is passed over even when the
+        // copies read are gone and it is the last holder.
+        let mut seen: HashSet<Id> = HashSet::new();
         let mut stack = vec![f];
         while let Some(g) = stack.pop() {
             let Formula::And(gs) = &g else {
                 self.and_one(g, held, p);
                 continue;
             };
-            if Arc::strong_count(gs) == 1 {
+            if !seen.insert(Id::any(&g)) {
+                continue;
+            }
+            if Shared::strong_count(gs) == 1 {
                 stack.extend(g.into_parts().expect("a conjunction").into_iter().rev());
-            } else if seen.insert(Arc::as_ptr(gs)) {
+            } else {
                 stack.extend(gs.iter().rev().cloned());
-                read.push(g);
             }
         }
     }

@@ -8,7 +8,8 @@ use zed_tests::{instances::Rng, scaling};
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
-    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, decide, entails, project, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, Shared, decide, entails, project,
+    satisfiable,
 };
 
 fn sym(s: &str) -> Atom {
@@ -475,9 +476,9 @@ fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
     };
     match f {
         Formula::Con(_) => f.clone(),
-        Formula::Not(g) => Formula::Not(Arc::new(turned(std::slice::from_ref(&**g)).remove(0))),
-        Formula::And(gs) => Formula::And(Arc::new(turned(gs))),
-        Formula::Or(gs) => Formula::Or(Arc::new(turned(gs))),
+        Formula::Not(g) => Formula::Not(Shared::new(turned(std::slice::from_ref(&**g)).remove(0))),
+        Formula::And(gs) => Formula::And(Shared::new(turned(gs))),
+        Formula::Or(gs) => Formula::Or(Shared::new(turned(gs))),
     }
 }
 

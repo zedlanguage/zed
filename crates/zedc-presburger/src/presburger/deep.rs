@@ -13,9 +13,8 @@ use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::slice;
-use std::sync::Arc;
 
-use super::formula::{Con, Formula, Id, Lin, Model, Names, Rel, as_is};
+use super::formula::{Con, Formula, Id, Lin, Model, Names, Rel, Shared, as_is};
 
 mod canon;
 
@@ -256,7 +255,7 @@ impl Formula {
     /// them and copied, one level deep, when one does, or `None` for another formula.
     pub fn into_parts(mut self) -> Option<Vec<Formula>> {
         match &mut self {
-            Formula::And(gs) | Formula::Or(gs) => Some(match Arc::get_mut(gs) {
+            Formula::And(gs) | Formula::Or(gs) => Some(match Shared::get_mut(gs) {
                 Some(v) => mem::take(v),
                 None => gs.to_vec(),
             }),
@@ -268,7 +267,7 @@ impl Formula {
     /// for another formula.
     pub fn into_negated(mut self) -> Option<Formula> {
         match &mut self {
-            Formula::Not(g) => Some(match Arc::get_mut(g) {
+            Formula::Not(g) => Some(match Shared::get_mut(g) {
                 Some(h) => mem::replace(h, hole()),
                 None => (**g).clone(),
             }),
@@ -281,12 +280,12 @@ impl Formula {
         match self {
             Formula::Con(_) => {}
             Formula::Not(g) => {
-                if let Some(h) = Arc::get_mut(g) {
+                if let Some(h) = Shared::get_mut(g) {
                     out.push(mem::replace(h, hole()));
                 }
             }
             Formula::And(gs) | Formula::Or(gs) => {
-                if let Some(v) = Arc::get_mut(gs) {
+                if let Some(v) = Shared::get_mut(gs) {
                     out.append(v);
                 }
             }
@@ -304,9 +303,9 @@ impl Formula {
     /// Whether the two compound nodes are one part.
     fn same(&self, other: &Formula) -> bool {
         match (self, other) {
-            (Formula::Not(a), Formula::Not(b)) => Arc::ptr_eq(a, b),
+            (Formula::Not(a), Formula::Not(b)) => Shared::same(a, b),
             (Formula::And(a), Formula::And(b)) | (Formula::Or(a), Formula::Or(b)) => {
-                Arc::ptr_eq(a, b)
+                Shared::same(a, b)
             }
             _ => false,
         }
@@ -332,9 +331,9 @@ impl Clone for Formula {
     fn clone(&self) -> Formula {
         match self {
             Formula::Con(c) => Formula::Con(c.clone()),
-            Formula::Not(g) => Formula::Not(Arc::clone(g)),
-            Formula::And(gs) => Formula::And(Arc::clone(gs)),
-            Formula::Or(gs) => Formula::Or(Arc::clone(gs)),
+            Formula::Not(g) => Formula::Not(g.clone()),
+            Formula::And(gs) => Formula::And(gs.clone()),
+            Formula::Or(gs) => Formula::Or(gs.clone()),
         }
     }
 }
@@ -452,7 +451,7 @@ impl Ord for Formula {
                         level.b.advance();
                         continue;
                     }
-                    // Whether each is shared, read before a key raises its count.
+                    // Whether each is shared.
                     let (sx, sy) = (x.is_shared(), y.is_shared());
                     let key = (Id::any(x), Id::any(y));
                     if equal.contains(&key) {

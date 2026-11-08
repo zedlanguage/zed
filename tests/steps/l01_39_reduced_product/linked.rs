@@ -12,7 +12,7 @@ use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::{Conjuncts, edges, names};
 use zedc::store::interval::End;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, Rel, Shared};
 use zedc::store::product::{Product, Scope};
 
 use super::ints;
@@ -752,16 +752,16 @@ fn a_disjunction_of_a_constraint_and_its_complement_is_true() {
         &Lin::atom(Atom::Sym("x".into())).minus(&Lin::atom(Atom::Sym("y".into()))),
     ));
     let kept = Formula::or(vec![diff("x", "y", 3), gap.clone()]);
-    assert_eq!(kept, Formula::Or(Arc::new(vec![diff("x", "y", 3), gap])));
+    assert_eq!(kept, Formula::Or(Shared::new(vec![diff("x", "y", 3), gap])));
     let apart = Formula::or(vec![diff("x", "y", 3), diff("y", "z", 0)]);
     assert_eq!(
         apart,
-        Formula::Or(Arc::new(vec![diff("x", "y", 3), diff("y", "z", 0)]))
+        Formula::Or(Shared::new(vec![diff("x", "y", 3), diff("y", "z", 0)]))
     );
     // Twice the same constraint is not its own complement.
     assert_eq!(
         Formula::or(vec![diff("x", "y", 0), diff("x", "y", 0)]),
-        Formula::Or(Arc::new(vec![diff("x", "y", 0), diff("x", "y", 0)]))
+        Formula::Or(Shared::new(vec![diff("x", "y", 0), diff("x", "y", 0)]))
     );
 }
 
@@ -783,7 +783,7 @@ fn a_compound_disjunct_and_its_negation_are_kept_as_written() {
     let not_g = Formula::negate(g.clone());
     assert_eq!(
         Formula::or(vec![g.clone(), not_g.clone()]),
-        Formula::Or(Arc::new(vec![g, not_g]))
+        Formula::Or(Shared::new(vec![g, not_g]))
     );
     // Inside a nest, a constraint and its negation are still found at any depth.
     let inner = Formula::or(vec![diff("x", "y", 3), Formula::negate(diff("x", "y", 3))]);

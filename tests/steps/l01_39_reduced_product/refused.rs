@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, project_each};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, Shared, project_each};
 use zedc::store::product::{Asked, Refused, Scope};
 
 fn sym(s: &str) -> Atom {
@@ -34,7 +34,7 @@ fn growth() -> Formula {
 fn the_cause_of_a_refused_disjunct_is_returned() {
     let f = Formula::and(vec![
         ge(&[("v", 1)], 0),
-        Formula::Or(Arc::new(vec![growth(), ge(&[("v", 1)], -5)])),
+        Formula::Or(Shared::new(vec![growth(), ge(&[("v", 1)], -5)])),
     ]);
     let (hulls, skipped) = project_each(&f, &[sym("v")]).expect("the base has a point");
     assert_eq!(skipped, vec![Refusal::Growth], "{hulls:?}");
@@ -42,7 +42,7 @@ fn the_cause_of_a_refused_disjunct_is_returned() {
     // Without the refused disjunct, nothing is skipped.
     let f = Formula::and(vec![
         ge(&[("v", 1)], 0),
-        Formula::Or(Arc::new(vec![ge(&[("v", 1)], -9), ge(&[("v", 1)], -5)])),
+        Formula::Or(Shared::new(vec![ge(&[("v", 1)], -9), ge(&[("v", 1)], -5)])),
     ]);
     let (_, skipped) = project_each(&f, &[sym("v")]).expect("a point");
     assert!(skipped.is_empty(), "{skipped:?}");

@@ -14,7 +14,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::interval::{End, IntervalSet, Num};
-use zedc::store::presburger::{self, Atom, Con, Formula, Lin};
+use zedc::store::presburger::{self, Atom, Con, Formula, Lin, Shared};
 use zedc::store::product::Scope;
 
 use super::ints;
@@ -208,7 +208,7 @@ fn formula(items: &[Item]) -> Formula {
                 seen.push(c.clone());
                 con(c)
             }
-            Item::Ne(c) => Formula::Not(Arc::new(con(c))),
+            Item::Ne(c) => Formula::Not(Shared::new(con(c))),
             Item::Or(arms) => Formula::or(
                 arms.iter()
                     .map(|a| Formula::and(a.iter().map(con).collect()))

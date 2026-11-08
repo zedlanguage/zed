@@ -138,6 +138,13 @@ three ways, all confirmed:
   the union that builds a chain's `#errs(E ->? E)` costs the entries that differ, not the
   smaller map. A port needs a diff of two persistent maps that skips shared nodes, from the
   runtime or by the content digests of gap 1.
+- **Ids drawn when a node is made** (ADDR-presburger, COMPLEXITY K74). `presburger::Shared<T>`
+  (`zedc-presburger/src/presburger/formula.rs`) keeps a `u64` from the global counter
+  `fresh_id` beside each compound part of a formula, and `Shared::change` uses `Arc::get_mut`
+  (a unique handle) to change a part in place and draw a new id; `Parts` (`presburger.rs`)
+  draws its id lazily into a `Cell<u64>` (gap 3). A Zed program has no global counter and no
+  test of uniqueness: a port numbers the parts when the formula is built, as the id-indexed
+  graphs of gap 3 do, and changes a part by building a new one.
   VERDICT-group-readers added one: `Type::group` (`zed-kernel/types.rs`, `rec::Key::group`)
   names a recursive group by the address of the `rec::Env` its members share, so the walk of
   `decide_groups_read` (`types/empty.rs`) notes each group once in O(1) per member met. A port

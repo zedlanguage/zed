@@ -34,9 +34,8 @@
 //! multiple of the moduli.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
-use super::formula::Rel;
+use super::formula::{Rel, Shared};
 use super::{
     Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, nnf, satisfiable, shadow,
 };
@@ -1138,7 +1137,9 @@ fn clause_key(f: &Formula, lone: &dyn Fn(&Atom) -> bool) -> Formula {
             Formula::Con(c) => {
                 Formula::Con(Congruence::of(c, lone).map_or_else(|| c.clone(), Congruence::key))
             }
-            Formula::Not(_) => Formula::Not(Arc::new(parts.into_iter().next().expect("one part"))),
+            Formula::Not(_) => {
+                Formula::Not(Shared::new(parts.into_iter().next().expect("one part")))
+            }
             Formula::And(_) | Formula::Or(_) => {
                 let and = matches!(g, Formula::And(_));
                 let mut kids: Vec<Formula> = Vec::new();
@@ -1156,8 +1157,8 @@ fn clause_key(f: &Formula, lone: &dyn Fn(&Atom) -> bool) -> Formula {
                 kids.sort();
                 kids.dedup();
                 match and {
-                    true => Formula::And(Arc::new(kids)),
-                    false => Formula::Or(Arc::new(kids)),
+                    true => Formula::And(Shared::new(kids)),
+                    false => Formula::Or(Shared::new(kids)),
                 }
             }
         },
@@ -2348,11 +2349,11 @@ impl Summaries {
                 return None;
             }
             let id = Id::any(&d);
-            if !seen.insert(id.clone()) {
+            if !seen.insert(id) {
                 continue;
             }
             let s = self.summary(&d, def)?;
-            if !bottoms.insert(s.bottom.clone()) {
+            if !bottoms.insert(s.bottom) {
                 return None;
             }
             for h in &s.hidden {
@@ -2398,16 +2399,16 @@ impl Summaries {
                 stack.pop();
                 continue;
             }
-            open.insert(id.clone());
+            open.insert(id);
             match self.make(top, &id, def) {
                 Made::Done(s) => {
-                    self.by.insert(id.clone(), s);
+                    self.by.insert(id, s);
                     open.remove(&id);
                     stack.pop();
                 }
                 Made::First(g) if !open.contains(&Id::any(&g)) => stack.push(g),
                 Made::First(_) => {
-                    self.by.insert(id.clone(), None);
+                    self.by.insert(id, None);
                     open.remove(&id);
                     stack.pop();
                 }
@@ -2464,7 +2465,7 @@ impl Summaries {
         let Some((gid, g)) = input else {
             return Made::Done(Some(Summary {
                 rows: d.clone(),
-                bottom: id.clone(),
+                bottom: *id,
                 hidden: HashSet::new(),
             }));
         };
@@ -2517,7 +2518,7 @@ impl Summaries {
         }
         Made::Done(Some(Summary {
             rows: Formula::and(out.into_iter().map(Formula::Con).collect()),
-            bottom: below.bottom.clone(),
+            bottom: below.bottom,
             hidden,
         }))
     }

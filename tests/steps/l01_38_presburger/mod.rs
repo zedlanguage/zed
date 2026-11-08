@@ -17,6 +17,7 @@ mod deep;
 mod disj_groups;
 mod entailment;
 mod extend;
+mod ids;
 mod live3;
 mod mod_symbol;
 mod names;
