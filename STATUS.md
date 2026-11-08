@@ -1624,15 +1624,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ATOM-payload-sub | impl attempt 1 | 2026-11-05 08:33 | started; reading brief, branch 7a6af0fa, rebasing on origin/main; load 10.21 5.44 6.17 |
-| C2-chain | impl attempt 1 | 2026-11-08 00:07 | ready: 26813684 rebased on e92dcb96, fmt and clippy clean, 202 pieces 0 failed after rebase, board-check-docs silent |
-| CHK-need-bound | impl attempt 1 | 2026-11-05 04:07 | ready 2e11a5f1 on wt/chk-need-bound (origin/main 3203273f), spec 8ef4ca5 on wt/chk-need-bound-spec (DOCS-TODO 30); l01_39a generic 16 tests; affected groups 101 |
-| EMPTY-overlap-fast | impl attempt 1 | 2026-11-08 03:36 | read brief, A46, K71, empty.rs one_pass/Choices and may_cover split; designing a conjunction decider (lists by dominance sweep, xors by elimination against the  |
 | H10-hull | running | 2026-11-08 04:16 |  |
-| KEY-written-addr | impl attempt 1 | 2026-11-08 02:20 | ready 906057f1 on e92dcb96 (batch 70); 26 pieces, random_body timeout under load then passed alone 39.5 s; board-check-docs clean |
-| OMEGA-splinter-cap | impl attempt 1 | 2026-11-08 04:10 | worktree made at origin/main c53d0a85, seeded; reading presburger.rs splinter code |
-| PRES-mod-conjuncts | impl attempt 1 | 2026-11-08 01:02 | reproduced on C2-chain head: goal of k conjuncts x mod (n+i) >= 0, entails() instr/bytes k=16,32,64,128: premise true (refuted) 17.7M/3.9M, 47.1M/11.2M, 143M/35 |
+| OMEGA-splinter-cap | impl attempt 1 | 2026-11-08 04:10 | baseline l01_38 200 pieces 0 failed; experiment: plain recursion into splinters never ends (k-variable splinter keeps the live count: depth 41, rows 8 to 992 on |
+| PRES-mod-conjuncts | impl attempt 1 | 2026-11-08 01:02 | DISK FULL on /home (0 free of 1.7T): my frame-pointer profiling build failed with ENOSPC; deleted my profiling build (7.2G) and perf data; perf dwarf unwinding  |
 | RACE-constant | impl attempt 1 | 2026-11-07 22:16 | worktree created at origin/main c53d0a85, seeded |
-| RUNG2-carrier | impl attempt 1 | 2026-11-08 00:07 | ready: a9976bec, 625 pieces 0 failed with doc tests (load 6.2 to 18.3) |
 | XST-r4 | running | 2026-11-08 02:53 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
