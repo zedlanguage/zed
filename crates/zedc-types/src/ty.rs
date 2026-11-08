@@ -3653,8 +3653,8 @@ impl Ty {
     /// The kernel type of its scalars, atoms with their payloads read, kind-wide part and
     /// tuples, leaving out its own functions, variables and unknown: none when a tuple or
     /// payload holds a function, a variable, the unknown or a payload with fields at any
-    /// depth, which only [`Forms`] compares. Each row and shape keeps its own, so this costs
-    /// the outer level.
+    /// depth, which only the normal forms of a comparison compare. Each row and shape keeps
+    /// its own, so this costs the outer level.
     pub fn exact_data(&self) -> Option<KType> {
         let rows = (self.tuples.iter().map(|r| r.0.exact.clone())).collect::<Option<Vec<_>>>()?;
         let set = payload_set(&self.set, &self.payloads, |_, s| s.0.exact.clone())?;
