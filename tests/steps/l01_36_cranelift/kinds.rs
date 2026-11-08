@@ -6,13 +6,14 @@ use std::sync::Mutex;
 
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::{Pattern, Text, Value};
-use zed_rt::{Heap, Obj, Word};
+use zed_rt::{Heap, Obj, Paths, Word};
 use zed_tests::scaling;
 
 /// Whether `w` matches `is t`.
 fn is(h: &mut Heap, w: Word, t: &Type) -> bool {
     let p = Pattern::Is(t.clone());
-    h.matches(&p, w, &mut Vec::new(), &mut Vec::new()).unwrap()
+    h.matches(&p, w, &mut Paths::default(), &mut Vec::new())
+        .unwrap()
 }
 
 /// A heap holding the tuple `("s0", "s1", …)` of `n` strings in `n + 1` cells, and its word.

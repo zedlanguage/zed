@@ -16,5 +16,5 @@ pub mod stack;
 
 #[cfg(feature = "counts")]
 pub use heap::Survivor;
-pub use heap::{Heap, Obj, Stats, Word};
+pub use heap::{Heap, Obj, Paths, Stats, Word};
 pub use stack::Stack;

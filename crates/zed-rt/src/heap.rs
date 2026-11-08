@@ -303,6 +303,117 @@ struct Reading {
     parts: Vec<Value>,
 }
 
+/// Where the binders of a match are in the scrutinee: a tree of the parts [`Heap::matches`]
+/// entered, each node its parent node and its part index there. A binder's path is one node,
+/// so no binder copies the path above it: a binder at each of `d` levels costs `d` nodes, not
+/// `d²/2` part indices (HEAP-binder-paths).
+#[derive(Debug, Default)]
+pub struct Paths {
+    /// Each node's parent node and part index, in the order entered, which is preorder.
+    nodes: Vec<(usize, usize)>,
+}
+
+impl Paths {
+    /// The node of the whole scrutinee, the empty path.
+    pub const ROOT: usize = usize::MAX;
+
+    /// The node of part `part` of the word at node `parent`.
+    pub fn push(&mut self, parent: usize, part: usize) -> usize {
+        self.nodes.push((parent, part));
+        self.nodes.len() - 1
+    }
+
+    /// The part indices from the scrutinee to node `n`, in O(depth of `n`).
+    pub fn path(&self, mut n: usize) -> Vec<usize> {
+        let mut p = Vec::new();
+        while n != Self::ROOT {
+            let (up, i) = self.nodes[n];
+            p.push(i);
+            n = up;
+        }
+        p.reverse();
+        p
+    }
+
+    /// Whether no node was entered.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Removes every node, keeping the buffer.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+    }
+}
+
+/// A node of [`Kept`]: links to its first child and its next sibling (0 for none: slot 0 is
+/// the root, which is no one's child), whether a kept binder is there, and whether it is on the
+/// way to one.
+#[derive(Clone, Default)]
+struct Link {
+    first: usize,
+    next: usize,
+    kept: bool,
+    on: bool,
+}
+
+/// The nodes of a [`Paths`] on the way to the kept binders of a fused release, each with its
+/// children in preorder. Node `n` is slot `n + 1` and the root slot 0, so [`Paths::ROOT`]
+/// wraps to 0.
+struct Kept<'a> {
+    paths: &'a Paths,
+    links: Vec<Link>,
+}
+
+impl<'a> Kept<'a> {
+    /// O(nodes + kept): each node is marked once, a walk up stopping at a marked node, and the
+    /// marked ones are linked to their parents in one pass from the last.
+    fn new(paths: &'a Paths, kept: &[usize]) -> Self {
+        let size = if kept.is_empty() {
+            1
+        } else {
+            paths.nodes.len() + 1
+        };
+        let mut links = vec![Link::default(); size];
+        for &k in kept {
+            let mut x = k.wrapping_add(1);
+            links[x].kept = true;
+            while !links[x].on {
+                links[x].on = true;
+                if x == 0 {
+                    break;
+                }
+                x = paths.nodes[x - 1].0.wrapping_add(1);
+            }
+        }
+        for x in (1..size).rev() {
+            if links[x].on {
+                let up = paths.nodes[x - 1].0.wrapping_add(1);
+                links[x].next = links[up].first;
+                links[up].first = x;
+            }
+        }
+        Kept { paths, links }
+    }
+
+    /// The children of slot `x` on the way to a kept binder, in preorder.
+    fn kids(&self, x: usize) -> impl Iterator<Item = usize> + '_ {
+        let mut k = self.links[x].first;
+        std::iter::from_fn(move || {
+            (k != 0).then(|| {
+                let at = k;
+                k = self.links[k].next;
+                at
+            })
+        })
+    }
+
+    /// The part index of slot `x`, which is not the root.
+    fn part(&self, x: usize) -> usize {
+        self.paths.nodes[x - 1].1
+    }
+}
+
 /// The sub-patterns of a pattern [`Heap::matches`] has entered.
 enum Subs<'p> {
     /// Positional: pattern `i` reads part `i`.
@@ -742,33 +853,37 @@ impl Heap {
         Ok(Some(self.free_cell(w.index())))
     }
 
-    /// The fused release of step L1.34 of scrutinee `w`, keeping the parts at the paths
-    /// `kept`: a cell with count 1 is freed without a count write, the kept parts' references
-    /// moving out of it and the others dropped; a shared cell gives each kept part a
-    /// reference and loses one.
-    pub fn release(&mut self, w: Word, kept: &[&[usize]]) -> Result<(), String> {
+    /// The fused release of step L1.34 of scrutinee `w`, keeping the parts at the nodes `kept`
+    /// of `paths`: a cell with count 1 is freed without a count write, the kept parts'
+    /// references moving out of it and the others dropped; a shared cell gives each kept part a
+    /// reference and loses one. O(cells freed + nodes of `paths`): each node on the way to a
+    /// kept part is read once, where a list of paths read each path from the top, O(d²) for a
+    /// binder at each of `d` levels (HEAP-binder-paths).
+    pub fn release(&mut self, w: Word, paths: &Paths, kept: &[usize]) -> Result<(), String> {
+        let tree = Kept::new(paths, kept);
         let mut todo = Vec::new();
-        self.release_one(w, kept, &mut todo)?;
-        // An empty list of paths on the stack is a part nothing keeps.
+        self.release_one(w, &tree, &[0], &mut todo)?;
+        // An empty list of nodes on the stack is a part nothing keeps.
         while let Some((part, sub)) = todo.pop() {
             if sub.is_empty() {
                 self.dec(part)?;
             } else {
-                self.release_one(part, &sub, &mut todo)?;
+                self.release_one(part, &tree, &sub, &mut todo)?;
             }
         }
         Ok(())
     }
 
-    /// One cell of a fused release: the parts of a cell it frees go on `todo`, the first on top,
-    /// each with the paths kept in it.
-    fn release_one<'k>(
+    /// One cell of a fused release, at the slots `at` of `tree`: the parts of a cell it frees
+    /// go on `todo`, the first on top, each with its slots on the way to a kept part.
+    fn release_one(
         &mut self,
         w: Word,
-        kept: &[&'k [usize]],
-        todo: &mut Vec<(Word, Vec<&'k [usize]>)>,
+        tree: &Kept<'_>,
+        at: &[usize],
+        todo: &mut Vec<(Word, Vec<usize>)>,
     ) -> Result<(), String> {
-        if w.tag != Word::CELL || kept.iter().any(|p| p.is_empty()) {
+        if w.tag != Word::CELL || at.iter().any(|&x| tree.links[x].kept) {
             return Ok(());
         }
         self.obj(w)?;
@@ -776,42 +891,60 @@ impl Heap {
         if c.count == 1 {
             c.count = 0;
             let parts = self.free_cell(w.index()).take_parts();
-            // Each kept path goes to the part it starts at, in one step.
+            // Each child goes to the part it reads, in one step.
             let mut sub = vec![Vec::new(); parts.len()];
-            for p in kept {
-                let Some(s) = sub.get_mut(p[0]) else {
+            for kid in at.iter().flat_map(|&x| tree.kids(x)) {
+                let i = tree.part(kid);
+                let Some(s) = sub.get_mut(i) else {
                     return Err(format!(
-                        "runtime: a kept path reads part {} of a cell of {} parts",
-                        p[0],
+                        "runtime: a kept path reads part {i} of a cell of {} parts",
                         parts.len()
                     ));
                 };
-                s.push(&p[1..]);
+                s.push(kid);
             }
             todo.extend(parts.into_iter().zip(sub).rev());
         } else {
-            for p in kept {
-                let part = self.at(w, p)?;
-                self.inc(part)?;
+            for &x in at {
+                self.inc_kept(w, tree, x)?;
             }
             self.dec(w)?;
         }
         Ok(())
     }
 
-    /// The part of `w` at the path of part indices `path`, or the first constant on the way
-    /// there: every part of a constant is a constant, which [`Heap::inc`] does not count.
-    fn at(&self, mut w: Word, path: &[usize]) -> Result<Word, String> {
-        for &i in path {
-            if w.tag == Word::VAL {
-                break;
+    /// Gives each kept part below slot `x` of `tree`, which is at word `w`, a reference, in
+    /// preorder. A constant on the way stops the walk below it: every part of a constant is a
+    /// constant, which [`Heap::inc`] does not count. Paths nest as deep as patterns, so the
+    /// parts in progress are on a stack.
+    fn inc_kept(&mut self, w: Word, tree: &Kept<'_>, x: usize) -> Result<(), String> {
+        let mut todo: Vec<(Word, usize)> = Vec::new();
+        let push = |todo: &mut Vec<(Word, usize)>, w: Word, x: usize| {
+            let start = todo.len();
+            todo.extend(tree.kids(x).map(|k| (w, k)));
+            todo[start..].reverse();
+        };
+        push(&mut todo, w, x);
+        while let Some((holder, k)) = todo.pop() {
+            if holder.tag == Word::VAL {
+                continue;
             }
-            w = match self.obj(w)? {
-                Some(o) => o.parts()[i],
-                None => return Err(format!("runtime: a word tagged {} has no parts", w.tag)),
+            let part = match self.obj(holder)? {
+                Some(o) => o.parts()[tree.part(k)],
+                None => {
+                    return Err(format!(
+                        "runtime: a word tagged {} has no parts",
+                        holder.tag
+                    ));
+                }
             };
+            if tree.links[k].kept {
+                self.inc(part)?;
+            } else {
+                push(&mut todo, part, k);
+            }
         }
-        Ok(w)
+        Ok(())
     }
 
     /// Part `i` of closure `w`, borrowed: a capture.
@@ -953,31 +1086,20 @@ impl Heap {
         Ok(t.contains(&self.value(w)?))
     }
 
-    /// Whether `w` matches `p`, as the kernel matches a value: on success, `out` holds each
-    /// binder's word and its path of part indices inside `w`, in preorder. A function
-    /// matches only `_`, a name, and `is T` for a type `T` of functions.
+    /// Whether `w` matches `p`, as the kernel matches a value: `out` gets each binder's word
+    /// and its node in `paths`, in preorder, and `paths` a node for each part entered, those
+    /// before a failure included. A function matches only `_`, a name, and `is T` for a type
+    /// `T` of functions. Patterns nest as deep as the source writes them, so the patterns in
+    /// progress are on a stack, each with its next part.
     pub fn matches(
         &mut self,
         p: &Pattern,
         w: Word,
-        at: &mut Vec<usize>,
-        out: &mut Vec<(Word, Vec<usize>)>,
+        paths: &mut Paths,
+        out: &mut Vec<(Word, usize)>,
     ) -> Result<bool, String> {
-        let start = at.len();
-        let r = self.match_all(p, w, at, out);
-        at.truncate(start);
-        r
-    }
-
-    /// [`Heap::matches`], leaving `at` where it stopped. Patterns nest as deep as the source
-    /// writes them, so the patterns in progress are on a stack, each with its next part.
-    fn match_all(
-        &mut self,
-        p: &Pattern,
-        w: Word,
-        at: &mut Vec<usize>,
-        out: &mut Vec<(Word, Vec<usize>)>,
-    ) -> Result<bool, String> {
+        // The node of the part being read.
+        let mut at = Paths::ROOT;
         let mut stack: Vec<Matching<'_>> = Vec::new();
         let (mut p, mut w) = (p, w);
         loop {
@@ -995,7 +1117,7 @@ impl Heap {
                     if stack.is_empty() {
                         return Ok(true);
                     }
-                    at.pop();
+                    at = paths.nodes[at].0;
                 }
                 let m = stack.last_mut().expect("a pattern is in progress");
                 let k = m.next;
@@ -1015,7 +1137,7 @@ impl Heap {
                     Some((i, q)) => {
                         w = self.part(m.holder, i);
                         p = q;
-                        at.push(i);
+                        at = paths.push(at, i);
                         break;
                     }
                     None => {
@@ -1027,20 +1149,21 @@ impl Heap {
         }
     }
 
-    /// Reads `w` against `p`, leaving any sub-patterns to [`Heap::match_all`].
+    /// Reads `w` against `p`, leaving any sub-patterns to [`Heap::matches`]; a binder gets the
+    /// node `at`.
     fn match_shallow<'p>(
         &mut self,
         p: &'p Pattern,
         w: Word,
-        at: &[usize],
-        out: &mut Vec<(Word, Vec<usize>)>,
+        at: usize,
+        out: &mut Vec<(Word, usize)>,
     ) -> Result<Shallow<'p>, String> {
         let yes = |m: bool| if m { Shallow::Yes } else { Shallow::No };
         if self.is_function(w)? {
             return Ok(match p {
                 Pattern::Wild => Shallow::Yes,
                 Pattern::Bind(_) => {
-                    out.push((w, at.to_vec()));
+                    out.push((w, at));
                     Shallow::Yes
                 }
                 Pattern::Is(t) => yes(t.functions()),
@@ -1057,7 +1180,7 @@ impl Heap {
         Ok(match p {
             Pattern::Wild => Shallow::Yes,
             Pattern::Bind(_) => {
-                out.push((w, at.to_vec()));
+                out.push((w, at));
                 Shallow::Yes
             }
             Pattern::Lit(l) => yes(self.equals(w, l)?),
@@ -1096,6 +1219,13 @@ impl Heap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The nodes of one path, and the node at its end.
+    fn one_path(p: &[usize]) -> (Paths, usize) {
+        let mut paths = Paths::default();
+        let end = p.iter().fold(Paths::ROOT, |at, &i| paths.push(at, i));
+        (paths, end)
+    }
 
     #[test]
     fn a_pair_of_strings_is_three_cells_and_frees_whole() {
@@ -1161,9 +1291,10 @@ mod tests {
             .unwrap();
         let mut out = Vec::new();
         let p = Pattern::Tuple(vec![Pattern::Bind("x".into()), Pattern::Wild]);
-        assert!(h.matches(&p, w, &mut Vec::new(), &mut out).unwrap());
-        assert_eq!(out[0].1, vec![0]);
-        h.release(w, &[&[0]]).unwrap();
+        let mut paths = Paths::default();
+        assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
+        assert_eq!(paths.path(out[0].1), vec![0]);
+        h.release(w, &paths, &[out[0].1]).unwrap();
         // The pair is freed without a write, `b` dropped once; `a` is kept, uncounted.
         assert_eq!(
             (h.stats.increments, h.stats.decrements, h.live()),
@@ -1178,7 +1309,8 @@ mod tests {
         let k = h.uncounted(Value::tuple(vec![Value::Int(1), Value::str("x")]));
         let t = h.alloc(Obj::Tuple(vec![k, Word::int(2)]));
         h.inc(t).unwrap();
-        h.release(t, &[&[0, 1]]).unwrap();
+        let (paths, end) = one_path(&[0, 1]);
+        h.release(t, &paths, &[end]).unwrap();
         assert_eq!((h.stats.increments, h.stats.decrements), (1, 1));
         assert_eq!(h.live(), 1);
     }
@@ -1188,8 +1320,9 @@ mod tests {
         let mut h = Heap::new();
         let t = h.alloc(Obj::Tuple(vec![Word::int(1)]));
         h.inc(t).unwrap();
+        let (paths, end) = one_path(&[0, 0]);
         assert_eq!(
-            h.release(t, &[&[0, 0]]).unwrap_err(),
+            h.release(t, &paths, &[end]).unwrap_err(),
             "runtime: a word tagged 0 has no parts"
         );
     }
@@ -1200,10 +1333,13 @@ mod tests {
         let w = h.uncounted(Value::atom_with("some", vec![Value::Int(3)]));
         let mut out = Vec::new();
         let p = Pattern::Atom("some".into(), vec![Pattern::Bind("n".into())]);
-        assert!(h.matches(&p, w, &mut Vec::new(), &mut out).unwrap());
+        assert!(h.matches(&p, w, &mut Paths::default(), &mut out).unwrap());
         assert_eq!(out[0].0, Word::int(3));
         let q = Pattern::Atom("none".into(), vec![]);
-        assert!(!h.matches(&q, w, &mut Vec::new(), &mut Vec::new()).unwrap());
+        assert!(
+            !h.matches(&q, w, &mut Paths::default(), &mut Vec::new())
+                .unwrap()
+        );
         assert_eq!(h.stats.allocations, 0);
     }
 

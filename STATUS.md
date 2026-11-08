@@ -1552,6 +1552,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
+- HEAP-binder-paths: binder paths as parent-indexed nodes (`zed_rt::Paths`); fused release builds the tree of kept nodes once; match and release at a binder per level 8.0x bytes for 8x depth, was 61.0x and 63.8x
+
 
 ## Open points
 

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Text, Value, World};
-use zed_rt::{Heap, Obj, Word};
+use zed_rt::{Heap, Obj, Paths, Word};
 use zed_tests::deep::{SHAPES, in_atom, in_named_atom, in_tuple, nested};
 use zed_tests::scaling;
 use zedc::zir::lower::lower;
@@ -59,6 +59,13 @@ fn bind(x: &str) -> Pattern {
     Pattern::Bind(x.into())
 }
 
+/// The nodes of the path `p` alone, and the node at its end.
+fn one_path(p: &[usize]) -> (Paths, usize) {
+    let mut paths = Paths::default();
+    let end = p.iter().fold(Paths::ROOT, |at, &i| paths.push(at, i));
+    (paths, end)
+}
+
 /// A port that gives the same value for every key.
 #[derive(Debug)]
 struct Same(Value);
@@ -105,25 +112,23 @@ fn a_deep_pattern_binds_the_last_element() {
         let mut h = Heap::new();
         let w = h.fresh(&value(DEPTH, Value::str("last"))).unwrap();
         let p = pattern(DEPTH, bind("x"));
-        let (mut at, mut out) = (vec![9], Vec::new());
-        assert!(h.matches(&p, w, &mut at, &mut out).unwrap());
-        assert_eq!(at, [9], "the path comes back as it went in");
-        let [(x, path)] = &out[..] else {
+        let (mut paths, mut out) = (Paths::default(), Vec::new());
+        assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
+        let [(x, node)] = &out[..] else {
             panic!("{} binders", out.len())
         };
-        assert_eq!(path.len(), DEPTH + 1);
+        assert_eq!(paths.path(*node).len(), DEPTH + 1);
         assert_eq!(h.value(*x).unwrap(), Value::str("last"));
     }
 }
 
 #[test]
-fn a_difference_at_the_bottom_fails_and_restores_the_path() {
+fn a_difference_at_the_bottom_fails_with_no_binder() {
     let mut h = Heap::new();
     let w = h.fresh(&nested(in_tuple, DEPTH, Value::Int(1))).unwrap();
     let p = in_tuples(DEPTH, Pattern::Lit(Value::Int(2)));
-    let (mut at, mut out) = (vec![3, 4], Vec::new());
-    assert!(!h.matches(&p, w, &mut at, &mut out).unwrap());
-    assert_eq!(at, [3, 4]);
+    let mut out = Vec::new();
+    assert!(!h.matches(&p, w, &mut Paths::default(), &mut out).unwrap());
     assert!(out.is_empty());
 }
 
@@ -134,10 +139,10 @@ fn releasing_a_deep_list_keeps_only_the_last_element() {
         .fresh(&nested(in_tuple, DEPTH, Value::str("last")))
         .unwrap();
     let p = in_tuples(DEPTH, bind("x"));
-    let (mut at, mut out) = (Vec::new(), Vec::new());
-    assert!(h.matches(&p, w, &mut at, &mut out).unwrap());
-    let (x, path) = out.pop().unwrap();
-    h.release(w, &[&path]).unwrap();
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
+    assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
+    let (x, node) = out.pop().unwrap();
+    h.release(w, &paths, &[node]).unwrap();
     assert_eq!(h.live(), 1);
     assert_eq!(h.stats.frees, DEPTH as u64);
     assert_eq!(h.value(x).unwrap(), Value::str("last"));
@@ -151,7 +156,8 @@ fn a_shared_tail_stays_for_its_other_owner() {
     let tail = h.alloc(Obj::Tuple(vec![name, Word::int(1)]));
     h.inc(tail).unwrap();
     let head = h.alloc(Obj::Tuple(vec![Word::int(0), tail]));
-    h.release(head, &[&[1, 0]]).unwrap();
+    let (paths, end) = one_path(&[1, 0]);
+    h.release(head, &paths, &[end]).unwrap();
     assert_eq!(h.live(), 2, "the head goes; the tail and the name stay");
     // The tail is still held, and the name now has a reference for the binder as well.
     h.dec(tail).unwrap();
@@ -172,11 +178,11 @@ fn a_record_binds_in_the_order_of_its_pattern() {
             ("lines".into(), lines),
         ],
     );
-    let (mut at, mut out) = (Vec::new(), Vec::new());
-    assert!(h.matches(&p, w, &mut at, &mut out).unwrap());
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
+    assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
     let got: Vec<_> = out
         .iter()
-        .map(|(x, path)| (h.value(*x).unwrap(), path.clone()))
+        .map(|(x, node)| (h.value(*x).unwrap(), paths.path(*node)))
         .collect();
     // The fields of a value are in name order: customer, lines, total.
     assert_eq!(
@@ -200,14 +206,14 @@ fn a_missing_field_fails_after_the_fields_before_it() {
             ("discount".into(), bind("discount")),
         ],
     );
-    let (mut at, mut out) = (vec![5], Vec::new());
-    assert!(!h.matches(&p, w, &mut at, &mut out).unwrap());
-    assert_eq!(at, [5]);
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
+    assert!(!h.matches(&p, w, &mut paths, &mut out).unwrap());
     assert_eq!(
         out.len(),
         1,
         "the binder before the missing field was reached"
     );
+    assert_eq!(paths.path(out[0].1), [2]);
 }
 
 #[test]
@@ -216,15 +222,15 @@ fn a_wrong_length_or_name_does_not_match() {
     let w = h
         .fresh(&Value::tuple(vec![Value::Int(1), Value::Int(2)]))
         .unwrap();
-    let (mut at, mut out) = (Vec::new(), Vec::new());
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
     for p in [
         Pattern::Tuple(vec![Pattern::Wild]),
         Pattern::Atom("pair".into(), vec![Pattern::Wild, Pattern::Wild]),
         Pattern::AnyAtom,
     ] {
-        assert!(!h.matches(&p, w, &mut at, &mut out).unwrap());
+        assert!(!h.matches(&p, w, &mut paths, &mut out).unwrap());
     }
-    assert!(at.is_empty() && out.is_empty());
+    assert!(paths.is_empty() && out.is_empty());
 }
 
 #[test]
@@ -235,12 +241,15 @@ fn a_function_matches_a_binder_and_no_shape() {
         caps: Vec::new(),
     });
     let w = h.alloc(Obj::Tuple(vec![f, Word::int(1)]));
-    let (mut at, mut out) = (Vec::new(), Vec::new());
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
     let p = Pattern::Tuple(vec![bind("f"), Pattern::Wild]);
-    assert!(h.matches(&p, w, &mut at, &mut out).unwrap());
-    assert_eq!(out, [(f, vec![0])]);
+    assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
+    let [(x, node)] = out[..] else {
+        panic!("{} binders", out.len())
+    };
+    assert_eq!((x, paths.path(node)), (f, vec![0]));
     let shape = Pattern::Tuple(vec![Pattern::Tuple(Vec::new()), Pattern::Wild]);
-    assert!(!h.matches(&shape, w, &mut at, &mut out).unwrap());
+    assert!(!h.matches(&shape, w, &mut paths, &mut out).unwrap());
 }
 
 #[test]
@@ -369,19 +378,22 @@ fn matching_a_deep_pattern_scales() {
         let mut heaps = heaps.lock().unwrap();
         let (_, (h, w)) = heaps.iter_mut().find(|(m, _)| *m == n).unwrap();
         let p = &patterns.iter().find(|(m, _)| *m == n).unwrap().1;
-        assert!(h.matches(p, *w, &mut Vec::new(), &mut Vec::new()).unwrap());
+        assert!(
+            h.matches(p, *w, &mut Paths::default(), &mut Vec::new())
+                .unwrap()
+        );
     });
 }
 
 #[test]
 fn releasing_a_deep_value_scales() {
-    let paths = [N, scaling::FACTOR * N].map(|n| (n, vec![1; n]));
+    let paths = [N, scaling::FACTOR * N].map(|n| (n, one_path(&vec![1; n])));
     let heaps = Mutex::new(
         [N, scaling::FACTOR * N].map(|n| (n, (0..RUNS).map(|_| list_heap(n)).collect::<Vec<_>>())),
     );
     let used = Mutex::new(Vec::new());
     scaling::check("Heap::release on a list", N, |n| {
-        let path = &paths.iter().find(|(m, _)| *m == n).unwrap().1;
+        let (paths, end) = &paths.iter().find(|(m, _)| *m == n).unwrap().1;
         let (mut h, w) = {
             let mut heaps = heaps.lock().unwrap();
             heaps
@@ -392,7 +404,7 @@ fn releasing_a_deep_value_scales() {
                 .pop()
                 .unwrap()
         };
-        h.release(w, &[path]).unwrap();
+        h.release(w, paths, &[*end]).unwrap();
         used.lock().unwrap().push(h);
     });
 }

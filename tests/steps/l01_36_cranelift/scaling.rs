@@ -11,7 +11,7 @@ use zed_kernel::Shared;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Value, World};
-use zed_rt::{Heap, Obj, Word};
+use zed_rt::{Heap, Obj, Paths, Word};
 use zed_tests::deep::{in_tuple, nested};
 use zed_tests::scaling;
 use zedc::zir::memory;
@@ -504,7 +504,7 @@ fn rate_table(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
 /// Matches `p` against `w` and checks the end of the table is bound.
 fn read_to_the_end(h: &mut Heap, p: &Pattern, w: Word) {
     let mut out = Vec::new();
-    assert!(h.matches(p, w, &mut Vec::new(), &mut out).unwrap());
+    assert!(h.matches(p, w, &mut Paths::default(), &mut out).unwrap());
     assert_eq!(out[0].0, Word::int(0));
 }
 
@@ -554,6 +554,161 @@ fn reading_a_value_whose_parts_share_cells_scales() {
             std::hint::black_box(h.value(*w).unwrap());
         },
     );
+}
+
+/// A heap holding an invoice of `depth` lines, `("line 0", ("line 1", … "total"))`, and the
+/// pattern `(l0, (l1, … total))` that binds every line: a binder at each level, the one at
+/// level `k` at a path of `k + 1` parts. The pattern is never dropped: a pattern drops by
+/// recursion.
+fn invoice(depth: usize) -> (Heap, Word, ManuallyDrop<Pattern>) {
+    let mut h = Heap::new();
+    let v = (0..depth).rev().fold(Value::str("total"), |rest, k| {
+        Value::tuple(vec![Value::str(&format!("line {k}")), rest])
+    });
+    let w = h.fresh(&v).unwrap();
+    let p = (0..depth).fold(Pattern::Bind("total".into()), |p, k| {
+        Pattern::Tuple(vec![Pattern::Bind(format!("l{k}").into()), p])
+    });
+    (h, w, ManuallyDrop::new(p))
+}
+
+/// Matches an invoice against its pattern: the heap, the scrutinee, its paths and binders.
+fn matched_invoice(depth: usize) -> (Heap, Word, Paths, Vec<(Word, usize)>) {
+    let (mut h, w, p) = invoice(depth);
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
+    assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
+    (h, w, paths, out)
+}
+
+/// The spine cell `level` levels below the top of an invoice.
+fn spine(h: &Heap, w: Word, level: usize) -> Word {
+    (0..level).fold(w, |c, _| match h.obj(c).unwrap() {
+        Some(Obj::Tuple(xs)) => xs[1],
+        _ => panic!("an invoice line"),
+    })
+}
+
+#[test]
+fn each_line_of_an_invoice_binds_at_its_own_path() {
+    let (mut h, _, paths, out) = matched_invoice(4);
+    let got: Vec<_> = out
+        .iter()
+        .map(|&(x, node)| (h.value(x).unwrap(), paths.path(node)))
+        .collect();
+    let want: Vec<_> = (0..4)
+        .map(|k| {
+            (
+                Value::str(&format!("line {k}")),
+                [vec![1; k], vec![0]].concat(),
+            )
+        })
+        .chain([(Value::str("total"), vec![1; 4])])
+        .collect();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn a_pattern_with_no_binder_releases_the_whole_invoice() {
+    let (mut h, w, _) = invoice(4);
+    let p = (0..4).fold(Pattern::Wild, |p, _| Pattern::Tuple(vec![Pattern::Wild, p]));
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
+    assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
+    assert!(out.is_empty());
+    h.release(w, &paths, &[]).unwrap();
+    assert_eq!((h.live(), h.stats.increments), (0, 0));
+}
+
+/// Every set of kept lines of an invoice 4 deep, with the scrutinee held once or a spine cell
+/// held twice: the fused release leaves each kept line live with a reference for its binder,
+/// and the counts it writes are those the paths of the kept lines give: a cell held once is
+/// freed with no write, and a shared one gives each kept line below it one reference and
+/// loses one.
+#[test]
+fn a_fused_release_keeps_exactly_the_kept_lines() {
+    const DEPTH: usize = 4;
+    for held in [None, Some(0), Some(1), Some(3)] {
+        for set in 0..1u32 << (DEPTH + 1) {
+            let (mut h, w, paths, out) = matched_invoice(DEPTH);
+            let other = held.map(|level| spine(&h, w, level));
+            if let Some(c) = other {
+                h.inc(c).unwrap();
+            }
+            let (writes, frees) = (h.stats.increments, h.stats.frees);
+            let kept: Vec<usize> = (0..=DEPTH).filter(|b| set >> b & 1 == 1).collect();
+            let nodes: Vec<usize> = kept.iter().map(|&b| out[b].1).collect();
+            h.release(w, &paths, &nodes).unwrap();
+            // Line `b` is below the shared cell when the cell is above its level.
+            let below = |b: usize| held.is_some_and(|level| level <= b);
+            let shared_kept = kept.iter().filter(|&&b| below(b)).count() as u64;
+            let freed_spine = held.unwrap_or(DEPTH) as u64;
+            let freed_lines = (0..freed_spine as usize)
+                .filter(|b| set >> b & 1 == 0)
+                .count() as u64;
+            let last = u64::from(held.is_none() && set >> DEPTH & 1 == 0);
+            let what = format!("held {held:?}, kept {kept:?}");
+            assert_eq!(h.stats.increments - writes, shared_kept, "{what}");
+            assert_eq!(
+                h.stats.frees - frees,
+                freed_spine + freed_lines + last,
+                "{what}"
+            );
+            for &b in &kept {
+                let x = out[b].0;
+                let want = match b {
+                    DEPTH => Value::str("total"),
+                    b => Value::str(&format!("line {b}")),
+                };
+                assert_eq!(h.value(x).unwrap(), want, "{what}");
+                h.dec(x).unwrap();
+            }
+            if let Some(c) = other {
+                h.dec(c).unwrap();
+            }
+            assert_eq!(h.live(), 0, "{what}");
+        }
+    }
+}
+
+/// A binder at every level of a pattern `n` deep records its path without copying the path
+/// above it (HEAP-binder-paths): a copy per binder made `n²/2` parts.
+#[test]
+fn a_binder_at_every_level_of_a_deep_pattern_scales() {
+    heap_scales(
+        "a match binding each of n levels",
+        1000,
+        invoice,
+        |(h, w, p), n| {
+            let (mut paths, mut out) = (Paths::default(), Vec::new());
+            assert!(h.matches(p, *w, &mut paths, &mut out).unwrap());
+            assert_eq!(out.len(), n + 1);
+        },
+    );
+}
+
+/// The fused release of an invoice `n` deep keeping every line reads each node on the way to
+/// a kept line once, not each line's path from the top (HEAP-binder-paths), with the invoice
+/// held once (each spine cell freed) and held twice (each line given a reference).
+#[test]
+fn releasing_a_binder_at_every_level_scales() {
+    for shared in [false, true] {
+        heap_scales(
+            &format!("a fused release keeping each of n levels, shared {shared}"),
+            1000,
+            |n| {
+                let (mut h, w, paths, out) = matched_invoice(n);
+                if shared {
+                    h.inc(w).unwrap();
+                }
+                let kept: Vec<usize> = out.iter().map(|&(_, node)| node).collect();
+                (h, w, paths, kept)
+            },
+            |(h, w, paths, kept), n| {
+                h.release(*w, paths, kept).unwrap();
+                let live = if shared { 2 * n + 1 } else { n + 1 };
+                assert_eq!(h.live(), live as u64);
+            },
+        );
+    }
 }
 
 /// `#cons(n-1, #cons(…, #cons(0, #nil)))`: a list of `n` atoms, each built on the one before.

@@ -9,7 +9,7 @@ use zed_kernel::Shared;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Pattern, Term, Text, Value};
-use zed_rt::{Heap, Obj, Word};
+use zed_rt::{Heap, Obj, Paths, Word};
 use zed_tests::deep::{in_tuple, nested};
 
 use super::{kernel, native};
@@ -31,7 +31,7 @@ fn rate_table(depth: usize) -> Value {
 /// Matches `p` against `w`, which must match; the binders' words.
 fn bound(h: &mut Heap, p: &Pattern, w: Word) -> Vec<Word> {
     let mut out = Vec::new();
-    assert!(h.matches(p, w, &mut Vec::new(), &mut out).unwrap());
+    assert!(h.matches(p, w, &mut Paths::default(), &mut out).unwrap());
     out.into_iter().map(|(w, _)| w).collect()
 }
 
@@ -78,7 +78,7 @@ fn a_part_of_a_constant_bound_once_reads_the_same_after_more_matches() {
     assert_eq!(h.value(first).unwrap(), north);
     let missing = Pattern::Fields("rates".into(), vec![("express".into(), bind("e"))]);
     assert!(
-        !h.matches(&missing, w, &mut Vec::new(), &mut Vec::new())
+        !h.matches(&missing, w, &mut Paths::default(), &mut Vec::new())
             .unwrap()
     );
 }
@@ -89,7 +89,8 @@ fn a_constant_matches_as_the_kernel_matches_it() {
     let order = Value::atom_with("order", vec![Value::str("Ada"), Value::Int(3)]);
     let path = Value::path(vec![Value::Int(1), Value::Int(2)]);
     let (o, k) = (h.uncounted(order), h.uncounted(path));
-    let yes = |h: &mut Heap, p: &Pattern, w| h.matches(p, w, &mut Vec::new(), &mut Vec::new());
+    let yes =
+        |h: &mut Heap, p: &Pattern, w| h.matches(p, w, &mut Paths::default(), &mut Vec::new());
     let named = Pattern::Atom("order".into(), vec![bind("who"), Pattern::Wild]);
     assert!(yes(&mut h, &named, o).unwrap());
     assert!(yes(&mut h, &Pattern::AnyAtom, o).unwrap());
@@ -107,9 +108,12 @@ fn a_constant_matches_as_the_kernel_matches_it() {
         "order".into(),
         vec![Pattern::Lit(Value::str("Ada")), bind("n")],
     );
-    let mut out = Vec::new();
-    assert!(h.matches(&lit, o, &mut Vec::new(), &mut out).unwrap());
-    assert_eq!(out, [(Word::int(3), vec![1])]);
+    let (mut paths, mut out) = (Paths::default(), Vec::new());
+    assert!(h.matches(&lit, o, &mut paths, &mut out).unwrap());
+    let [(x, node)] = out[..] else {
+        panic!("{} binders", out.len())
+    };
+    assert_eq!((x, paths.path(node)), (Word::int(3), vec![1]));
 }
 
 #[test]
@@ -198,7 +202,7 @@ fn vast() -> Text {
 fn a_literal_pattern_reads_a_string_only_when_the_lengths_agree() {
     let mut h = Heap::new();
     let is = |h: &mut Heap, s: Word, l: Value| {
-        h.matches(&Pattern::Lit(l), s, &mut Vec::new(), &mut Vec::new())
+        h.matches(&Pattern::Lit(l), s, &mut Paths::default(), &mut Vec::new())
             .unwrap()
     };
     // Lengths that differ: answered from the kept length, none of the text read.
@@ -224,7 +228,7 @@ fn a_literal_pattern_compares_a_tuple_part_by_part() {
     let one_x = Value::tuple(vec![Value::Int(1), Value::str("x")]);
     let one_y = Value::tuple(vec![Value::Int(1), Value::str("y")]);
     for w in [t, k] {
-        let mut is = |l| h.matches(&lit(l), w, &mut Vec::new(), &mut Vec::new());
+        let mut is = |l| h.matches(&lit(l), w, &mut Paths::default(), &mut Vec::new());
         assert!(is(one_x.clone()).unwrap());
         assert!(!is(one_y.clone()).unwrap());
         assert!(!is(Value::tuple(vec![Value::Int(1)])).unwrap());
@@ -234,8 +238,13 @@ fn a_literal_pattern_compares_a_tuple_part_by_part() {
     // A float literal compares bitwise, as the kernel does.
     let f = Word::scalar(&Value::float(-0.0)).unwrap();
     let zero = |h: &mut Heap, l: f64| {
-        h.matches(&lit(Value::float(l)), f, &mut Vec::new(), &mut Vec::new())
-            .unwrap()
+        h.matches(
+            &lit(Value::float(l)),
+            f,
+            &mut Paths::default(),
+            &mut Vec::new(),
+        )
+        .unwrap()
     };
     assert_eq!(
         (zero(&mut h, -0.0), zero(&mut h, 0.0)),
@@ -253,7 +262,7 @@ fn a_literal_pattern_on_a_state_word_is_an_error() {
         .matches(
             &Pattern::Lit(Value::Int(1)),
             Word::state(),
-            &mut Vec::new(),
+            &mut Paths::default(),
             &mut Vec::new(),
         )
         .unwrap_err();
@@ -278,7 +287,7 @@ fn an_is_pattern_reads_a_constant_and_a_kernel_value_in_place() {
         .fresh(&Value::tuple(vec![Value::Int(1), Value::str("x")]))
         .unwrap();
     let is = |h: &mut Heap, t: Type, w| {
-        h.matches(&Pattern::Is(t), w, &mut Vec::new(), &mut Vec::new())
+        h.matches(&Pattern::Is(t), w, &mut Paths::default(), &mut Vec::new())
             .unwrap()
     };
     assert!(is(&mut h, Type::string(), name));

@@ -15,12 +15,12 @@ use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
 use zedc::zir::memory::Mode;
 
-use zed_rt::{Heap, Obj, Word};
+use zed_rt::{Heap, Obj, Paths, Word};
 
 use crate::tables::{NodeInfo, Tables};
 
-/// A match's binders: each word and its path in the scrutinee.
-type Binders = Vec<(Word, Vec<usize>)>;
+/// A match's binders: each word and its node in the [`Paths`] of the scrutinee.
+type Binders = Vec<(Word, usize)>;
 
 /// The kernel's decision on a match: the arm and its number of binders, or the failure value.
 type Decision = Result<(usize, usize), Value>;
@@ -641,10 +641,12 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
     let scrut = ins[0];
     let function = s.heap.is_function(scrut)?;
     let mut found = None;
+    let mut paths = Paths::default();
     if !function {
         for (i, p) in ps.iter().enumerate() {
             let mut out = Vec::new();
-            if s.heap.matches(p, scrut, &mut Vec::new(), &mut out)? {
+            paths.clear();
+            if s.heap.matches(p, scrut, &mut paths, &mut out)? {
                 found = Some((i, out));
                 break;
             }
@@ -662,7 +664,7 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
                 }
                 // A pattern that matches a function binds it whole or not at all (data holds
                 // no function), so each binder is the scrutinee, at the empty path.
-                (i, vec![(scrut, Vec::new()); n])
+                (i, vec![(scrut, Paths::ROOT); n])
             }
             Err(v) => {
                 failed(s, ni, ins, v)?;
@@ -687,9 +689,9 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
                 words.push(Word::err());
             }
         }
-        let kept_paths: Vec<&[usize]> = kept.iter().map(|b| binders[*b].1.as_slice()).collect();
         if t.fuse {
-            s.heap.release(scrut, &kept_paths)?;
+            let kept_nodes: Vec<usize> = kept.iter().map(|b| binders[*b].1).collect();
+            s.heap.release(scrut, &paths, &kept_nodes)?;
         } else {
             for b in &kept {
                 s.heap.inc(binders[*b].0)?;
