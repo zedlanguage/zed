@@ -16,6 +16,7 @@ pub mod frames;
 pub mod num;
 pub mod print;
 pub mod provenance;
+pub mod refine;
 pub mod term;
 pub mod text;
 pub mod types;

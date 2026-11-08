@@ -1173,6 +1173,7 @@ dependencies = [
  "imbl",
  "num-bigint",
  "num-traits",
+ "zed-kernel",
  "zedc-int",
  "zedc-lattice",
  "zedc-presburger",

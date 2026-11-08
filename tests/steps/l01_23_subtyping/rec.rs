@@ -89,8 +89,9 @@ fn definitions_written_alike_at_equal_arguments_are_one_type() {
     };
     assert!(pair(int_or_string.clone()) == pair(&Type::string() | &Type::int()));
     assert!(pair(int_or_string) != pair(Type::int()));
-    // A definition renamed, or with its parameter renamed, is written otherwise: another type,
-    // with the same values.
+    // A definition renamed is written otherwise and prints otherwise: another type, with the
+    // same values. One with its parameter renamed prints alike, so it is the same type, its
+    // canonical form the same (item REC-canon).
     let a_t = |name: &str, param: &str| {
         let t = || r(0, vec![Expr::Param(0)]);
         Group::new(vec![def(
@@ -105,10 +106,10 @@ fn definitions_written_alike_at_equal_arguments_are_one_type() {
         .instance(vec![Type::int()])
         .remove(0)
     };
-    for other in [a_t("Tree2", "A"), a_t("Tree", "B")] {
-        assert!(other != at_int);
-        assert!(other.subtype(&at_int) && at_int.subtype(&other));
-    }
+    let renamed = a_t("Tree2", "A");
+    assert!(renamed != at_int);
+    assert!(renamed.subtype(&at_int) && at_int.subtype(&renamed));
+    assert!(a_t("Tree", "B") == at_int);
     assert!(a_t("Tree", "A") == at_int);
 }
 

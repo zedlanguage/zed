@@ -203,7 +203,8 @@ struct Checked {
     /// counts the groups the process made before, so it only finds a table entry: no digest
     /// and no order reads it (deterministic checking, repair REC-id-order).
     number: u64,
-    /// The hash of the definitions ([`digest`]), from which its types' digests are made.
+    /// The hash of the definitions ([`digest`]), by which [`GROUPS`] finds the group; its types'
+    /// digests are made from the canonical form's ([`Canon`]).
     digest: u64,
     defs: Vec<Def>,
     /// Each body as a shared tree.
@@ -214,6 +215,32 @@ struct Checked {
     plain: Vec<bool>,
     /// The plain definitions, each after those it names.
     order: Vec<usize>,
+    /// The canonical form, made when the group is first instantiated ([`canon`]).
+    canon: OnceLock<Canon>,
+}
+
+/// A group's canonical form (item REC-canon): the coarsest partition of its bodies' nodes in
+/// which two nodes of one class have the same head and, place by place, children of one class,
+/// a recursive occurrence standing for the body it names. The classes are numbered by the
+/// structure alone ([`crate::refine`]), so a copy of the group with its definitions renamed
+/// and listed in another order has the same form, and its members and parts the same classes.
+/// Two nodes of one class unfold alike to every depth, and so denote one type.
+#[derive(Debug)]
+struct Canon {
+    /// A hash of the classes, in order.
+    digest: u64,
+    /// Each class, in order: a node of it, and its children's classes in place order.
+    classes: Vec<(Arc<Node>, Vec<u32>)>,
+    /// The class of each definition's body.
+    member: Vec<u32>,
+    /// The class of each node, by its number (`Node::at`), an occurrence taking its body's;
+    /// `u32::MAX` for an argument of a recursive occurrence, which is not read.
+    at: Vec<u32>,
+    /// A hash of each node's spelling, by its number: its shape with each occurrence by the
+    /// name it is written with, which is what a part kept unevaluated prints as (`Show`).
+    spell: Vec<u64>,
+    /// Each node, by its number; `None` for an argument of a recursive occurrence.
+    node: Vec<Option<Arc<Node>>>,
 }
 
 /// An expression as a shared tree, each node knowing whether it mentions the group, so that a
@@ -363,8 +390,8 @@ impl Shape {
         }
     }
 
-    /// The top of the shape, without its children or type, for [`Checked::order`]: the kind, the
-    /// index of a parameter or definition, and an atom's name.
+    /// The top of the shape, without its children or type, for [`Canon::order`] and [`canon`]:
+    /// the kind, the index of a parameter or definition, and an atom's name.
     fn head(&self) -> (u8, usize, &str) {
         match self {
             Shape::Param(i) => (1, *i, ""),
@@ -494,6 +521,7 @@ impl Group {
             bodies,
             plain,
             order,
+            canon: OnceLock::new(),
         }));
         g.regular()?;
         g.contractive()?;
@@ -519,6 +547,13 @@ impl Group {
     /// The definitions.
     pub fn defs(&self) -> &[Def] {
         &self.0.defs
+    }
+
+    /// The canonical form, made on first use.
+    fn canon(&self) -> &Canon {
+        self.0
+            .canon
+            .get_or_init(|| canon(&self.0.bodies, &self.0.defs))
     }
 
     fn reject(&self, def: usize, why: String) -> Rejection {
@@ -813,7 +848,7 @@ impl Group {
             group: Some(self.clone()),
             digest: args
                 .iter()
-                .fold(mix(12, self.0.digest), |h, t| mix(h, t.digest())),
+                .fold(mix(12, self.canon().digest), |h, t| mix(h, t.digest())),
             args,
             members: (0..self.0.defs.len()).map(|_| Mutex::new(None)).collect(),
             judged: OnceLock::new(),
@@ -1237,15 +1272,21 @@ impl Env {
 
 /// What a recursive node stands for, by which it is hashed and ordered: a member of a group, or
 /// a part of a body kept unevaluated (by its node's place, `Node::at`), at the group's
-/// arguments. It is made of the definitions and the arguments alone, so a type's digest and its
-/// place in every order do not depend on what the process built before it, and checking a
-/// program alone or after another agrees (deterministic checking, repair REC-id-order). Two
-/// nodes with equal keys denote one type: one group at equal arguments is one instance
-/// ([`INSTANCES`]), and a part evaluates alike wherever it is made.
+/// arguments. It is hashed and ordered by the group's canonical form ([`Canon`]), the class of
+/// the member or part in it, what it prints as (a member's name, a part's spelling) and the
+/// arguments, so a type's digest and its place in every order do not depend on what the
+/// process built before it, and checking a program alone or after another agrees
+/// (deterministic checking, repair REC-id-order); nor on the order the definitions are listed
+/// in (item REC-canon). Two nodes with equal keys denote one type, since their classes unfold
+/// alike at equal arguments, and print alike, so which of them a union keeps is never seen.
+/// The names count for that alone: a copy with its definitions renamed is the same type by
+/// two-way subtyping, but another node.
 pub(super) struct Key {
     digest: u64,
     env: Arc<Env>,
     at: At,
+    /// The class of the member or part in its group's canonical form.
+    class: u32,
 }
 
 /// Which type of an instance a key names.
@@ -1259,11 +1300,43 @@ enum At {
 
 impl Key {
     fn new(env: Arc<Env>, at: At) -> Key {
-        let digest = match at {
-            At::Member(i) => mix(mix(4, env.digest), i as u64),
-            At::Part(n) => mix(mix(13, env.digest), u64::from(n)),
+        let (group, canon) = (env.group(), env.group().canon());
+        let (class, spell) = match at {
+            At::Member(i) => (
+                canon.member[i],
+                mix(15, bytes(group.0.defs[i].name.as_bytes())),
+            ),
+            At::Part(n) => (canon.at[n as usize], canon.spell[n as usize]),
         };
-        Key { digest, env, at }
+        let digest = mix(
+            mix(mix(env.digest, u64::from(class)), u64::from(at.kind())),
+            spell,
+        );
+        Key {
+            digest,
+            env,
+            at,
+            class,
+        }
+    }
+
+    /// The order of two keys of equal class by what they print as: a member by its
+    /// definition's name, a part by its spelling ([`spelled`]).
+    fn spelling(&self, other: &Key) -> std::cmp::Ordering {
+        let (a, b) = (&self.env.group().0, &other.env.group().0);
+        match (self.at, other.at) {
+            (At::Member(i), At::Member(j)) => a.defs[i].name.cmp(&b.defs[j].name),
+            (At::Part(n), At::Part(m)) if !(Arc::ptr_eq(a, b) && n == m) => {
+                spelled(a.part(n), &a.defs, b.part(m), &b.defs)
+            }
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+
+    /// Whether the key names a member or a part, and its class: what orders two keys of one
+    /// group after their digests.
+    fn rank(&self) -> (u8, u32) {
+        (self.at.kind(), self.class)
     }
 
     pub(super) fn digest(&self) -> u64 {
@@ -1297,63 +1370,79 @@ impl Key {
         )
     }
 
-    /// The order of two keys: by digest, place, the groups' definitions and the arguments. What
-    /// the definitions' shapes decide is decided here; the pairs of types inside them that tie
-    /// in digest, then the arguments, are pushed to `types` in the order they are to be compared
-    /// when the rest ties, by the caller's loop (`bdd::order`), so that no type is compared by
-    /// recursion here. Time linear in the definitions where the groups differ and tie in
-    /// digest, and constant otherwise.
+    /// The order of two keys: by digest, kind and class, the groups' canonical forms, the
+    /// spelling and the arguments. What the forms' shapes decide is decided here; the pairs of
+    /// types inside them that tie in digest, then the arguments, are pushed to `types` in the
+    /// order they are to be compared when the rest ties, by the caller's loop (`bdd::order`), so
+    /// that no type is compared by recursion here. Time linear in the classes where the groups
+    /// differ and tie in digest, linear in the part where two parts are spelled alike, and
+    /// constant otherwise.
     pub(super) fn order<'a>(
         &'a self,
         other: &'a Key,
         types: &mut Vec<(&'a Type, &'a Type)>,
     ) -> std::cmp::Ordering {
-        let c = self.digest.cmp(&other.digest).then(self.at.cmp(&other.at));
-        if c.is_ne() || Arc::ptr_eq(&self.env, &other.env) {
+        let c = self
+            .digest
+            .cmp(&other.digest)
+            .then(self.rank().cmp(&other.rank()));
+        if c.is_ne() {
             return c;
         }
-        let (a, b) = (&self.env.group().0, &other.env.group().0);
-        if !Arc::ptr_eq(a, b) {
-            let c = a.order(b, types);
+        if Arc::ptr_eq(&self.env, &other.env) {
+            return self.spelling(other);
+        }
+        let (a, b) = (self.env.group(), other.env.group());
+        if !Arc::ptr_eq(&a.0, &b.0) {
+            let c = a.canon().order(b.canon(), types);
             if c.is_ne() {
                 return c;
             }
+        }
+        let c = self.spelling(other);
+        if c.is_ne() {
+            return c;
         }
         types.extend(self.env.args.iter().zip(&other.env.args));
         std::cmp::Ordering::Equal
     }
 }
 
+impl At {
+    fn kind(self) -> u8 {
+        match self {
+            At::Member(_) => 0,
+            At::Part(_) => 1,
+        }
+    }
+}
+
 impl Checked {
-    /// The order of two groups' definitions, after their digests: names, parameters, then the
-    /// bodies node by node in a loop of its own, each type in them by digest; the pairs of types
-    /// that tie in digest are pushed to `types` ([`Key::order`]).
+    /// The node of number `n`, which a key names, so the form is made.
+    fn part(&self, n: u32) -> &Node {
+        let canon = self.canon.get().expect("a key's group has its form");
+        canon.node[n as usize].as_deref().expect("a part is read")
+    }
+}
+
+impl Canon {
+    /// The order of two groups' canonical forms, after their digests: the classes in order, each
+    /// by its head, its children's classes and the type it holds by digest; the pairs of types
+    /// that tie in digest are pushed to `types` ([`Key::order`]). Time linear in the classes.
     fn order<'a>(
         &'a self,
-        other: &'a Checked,
+        other: &'a Canon,
         types: &mut Vec<(&'a Type, &'a Type)>,
     ) -> std::cmp::Ordering {
         let c = self
             .digest
             .cmp(&other.digest)
-            .then(self.defs.len().cmp(&other.defs.len()));
+            .then(self.classes.len().cmp(&other.classes.len()));
         if c.is_ne() {
             return c;
         }
-        for (d, e) in self.defs.iter().zip(&other.defs) {
-            let c = d.name.cmp(&e.name).then_with(|| d.params.cmp(&e.params));
-            if c.is_ne() {
-                return c;
-            }
-        }
-        let mut stack: Vec<(&Node, &Node)> = (self.bodies.iter().zip(&other.bodies).rev())
-            .map(|(x, y)| (&**x, &**y))
-            .collect();
-        while let Some((x, y)) = stack.pop() {
-            let (p, q) = (x.e.kids(), y.e.kids());
-            let c = (x.digest.cmp(&y.digest))
-                .then_with(|| x.e.head().cmp(&y.e.head()))
-                .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
+        for ((x, xs), (y, ys)) in self.classes.iter().zip(&other.classes) {
+            let c = x.e.head().cmp(&y.e.head()).then_with(|| xs.cmp(ys));
             if c.is_ne() {
                 return c;
             }
@@ -1363,11 +1452,214 @@ impl Checked {
                     c => return c,
                 }
             }
-            // The counts are equal, so the pairs from the ends are the pairs in reverse.
-            stack.extend(p.rev().zip(q.rev()).map(|(p, q)| (&**p, &**q)));
         }
         std::cmp::Ordering::Equal
     }
+}
+
+/// The canonical form of a group whose bodies are `bodies` ([`Canon`]). The graph has a vertex
+/// for each node of the bodies but a recursive occurrence, and one for each place a node has a
+/// child at, colored by the place, with an arc from the child to the place and from the place
+/// to the node; an occurrence of a definition stands for the node of its body, through a chain
+/// of occurrences, which contractiveness ends. A node starts colored by its head, a type held
+/// by its order. Refinement by the arcs' tails ([`crate::refine`]) then splits two nodes
+/// exactly when some place holds children of two colors: its coarsest stable coloring is the
+/// partition in which nodes of one class unfold alike. O((N + M) log N) for N nodes and M
+/// children, besides the O(N log N) comparisons of the starting sort, of which those of two
+/// types cost what [`Type::cmp`] costs.
+fn canon(bodies: &[Arc<Node>], defs: &[Def]) -> Canon {
+    // The nodes by number, but the arguments of an occurrence, which are not read.
+    let mut nodes: Vec<&Arc<Node>> = Vec::new();
+    let mut todo: Vec<&Arc<Node>> = bodies.iter().collect();
+    while let Some(n) = todo.pop() {
+        nodes.push(n);
+        if !matches!(n.e, Shape::Ref(..)) {
+            todo.extend(n.e.kids());
+        }
+    }
+    let count = nodes.iter().map(|n| n.at as usize + 1).max().unwrap_or(0);
+    // The node each body is, through its chain of occurrences.
+    let mut root: Vec<Option<usize>> = vec![None; bodies.len()];
+    for i in 0..bodies.len() {
+        let mut chain = Vec::new();
+        let mut d = i;
+        let at = loop {
+            if let Some(r) = root[d] {
+                break r;
+            }
+            chain.push(d);
+            match &bodies[d].e {
+                Shape::Ref(j, _) => d = *j,
+                _ => break bodies[d].at as usize,
+            }
+        };
+        for d in chain {
+            root[d] = Some(at);
+        }
+    }
+    let root: Vec<usize> = root
+        .into_iter()
+        .map(|r| r.expect("each body's node"))
+        .collect();
+    // Vertices: the nodes, then the places.
+    let mut vertex = vec![u32::MAX; count];
+    let mut of: Vec<&Arc<Node>> = Vec::new();
+    for n in &nodes {
+        if !matches!(n.e, Shape::Ref(..)) {
+            vertex[n.at as usize] = of.len() as u32;
+            of.push(n);
+        }
+    }
+    let target = |c: &Node| -> usize {
+        let at = match &c.e {
+            Shape::Ref(j, _) => root[*j],
+            _ => c.at as usize,
+        };
+        vertex[at] as usize
+    };
+    let v = of.len();
+    // Each place: the node and the child's vertex.
+    let mut places: Vec<(usize, usize, usize)> = Vec::new();
+    for (u, n) in of.iter().enumerate() {
+        for (k, c) in n.e.kids().enumerate() {
+            places.push((u, k, target(c)));
+        }
+    }
+    let size = v + places.len();
+    let mut color = vec![0; size];
+    let mut sorted: Vec<usize> = (0..v).collect();
+    let head = |a: usize, b: usize| {
+        let (x, y) = (&of[a].e, &of[b].e);
+        x.head()
+            .cmp(&y.head())
+            .then_with(|| x.kids().count().cmp(&y.kids().count()))
+            .then_with(|| match (x, y) {
+                (Shape::Type(s), Shape::Type(t)) => s.cmp(t),
+                _ => std::cmp::Ordering::Equal,
+            })
+    };
+    sorted.sort_by(|&a, &b| head(a, b));
+    let mut next = 0;
+    for (i, &a) in sorted.iter().enumerate() {
+        if i > 0 && head(sorted[i - 1], a).is_ne() {
+            next += 1;
+        }
+        color[a] = next;
+    }
+    next += usize::from(v > 0);
+    let widest = places.iter().map(|p| p.1 + 1).max().unwrap_or(0);
+    for (e, &(_, k, _)) in places.iter().enumerate() {
+        color[v + e] = next + k;
+    }
+    next += widest;
+    // The vertices counted when the class of a vertex refines: a child's places, a place's node.
+    let mut start = vec![0; size + 1];
+    for (e, &(_, _, c)) in places.iter().enumerate() {
+        start[c + 1] += 1;
+        start[v + e + 1] = 1;
+    }
+    for x in 0..size {
+        start[x + 1] += start[x];
+    }
+    let mut adj = vec![0; start[size]];
+    let mut cursor = start[..size].to_vec();
+    for (e, &(u, _, c)) in places.iter().enumerate() {
+        adj[cursor[c]] = v + e;
+        cursor[c] += 1;
+        adj[cursor[v + e]] = u;
+    }
+    let degree = (0..size)
+        .map(|x| start[x + 1] - start[x])
+        .max()
+        .unwrap_or(0);
+    let mut refine = crate::refine::Refine::new(color, next, degree);
+    refine.run(&start, &adj);
+    let color = refine.color;
+    // The nodes' colors, numbered from 0 in their order.
+    let mut class = vec![u32::MAX; size];
+    for &c in &color[..v] {
+        class[c] = 0;
+    }
+    let mut classes = 0;
+    for c in &mut class {
+        if *c == 0 {
+            *c = classes;
+            classes += 1;
+        }
+    }
+    let class_of = |u: usize| class[color[u]];
+    let mut reps: Vec<Option<(Arc<Node>, Vec<u32>)>> = vec![None; classes as usize];
+    for (u, n) in of.iter().enumerate() {
+        let rep = &mut reps[class_of(u) as usize];
+        if rep.is_none() {
+            let kids = n.e.kids().map(|c| class_of(target(c))).collect();
+            *rep = Some(((*n).clone(), kids));
+        }
+    }
+    let classes: Vec<(Arc<Node>, Vec<u32>)> = reps
+        .into_iter()
+        .map(|r| r.expect("a node of each class"))
+        .collect();
+    let mut at = vec![u32::MAX; count];
+    for n in &nodes {
+        at[n.at as usize] = class_of(target(n));
+    }
+    let member = root.iter().map(|&r| class_of(vertex[r] as usize)).collect();
+    let digest = classes.iter().fold(14, |h, (n, kids)| {
+        kids.iter()
+            .fold(mix(h, n.e.tag()), |h, &k| mix(h, u64::from(k)))
+    });
+    // The spellings, children first: a node's number is above its children's.
+    let mut node: Vec<Option<Arc<Node>>> = vec![None; count];
+    for n in &nodes {
+        node[n.at as usize] = Some((*n).clone());
+    }
+    let mut spell = vec![0; count];
+    for n in node.iter().flatten() {
+        spell[n.at as usize] = match &n.e {
+            Shape::Ref(j, _) => mix(2, bytes(defs[*j].name.as_bytes())),
+            e => e.kids().fold(e.tag(), |h, c| mix(h, spell[c.at as usize])),
+        };
+    }
+    Canon {
+        digest,
+        classes,
+        member,
+        at,
+        spell,
+        node,
+    }
+}
+
+/// The order of two nodes of one class by their spelling ([`Canon::spell`]), `defs` naming the
+/// definitions each one's occurrences name: by head, an occurrence by the name it is written
+/// with, then the children in place order, in a loop. The types they hold are not read: two
+/// nodes of one class hold equal ones. Time linear in the nodes.
+fn spelled(x: &Node, xs: &[Def], y: &Node, ys: &[Def]) -> std::cmp::Ordering {
+    fn head<'a>(n: &'a Node, defs: &'a [Def]) -> (u8, usize, &'a str) {
+        match &n.e {
+            Shape::Ref(i, _) => (2, 0, defs[*i].name.as_str()),
+            e => e.head(),
+        }
+    }
+    let mut stack: Vec<(&Node, &Node)> = vec![(x, y)];
+    while let Some((x, y)) = stack.pop() {
+        let c = (head(x, xs).cmp(&head(y, ys)))
+            .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
+        if c.is_ne() {
+            return c;
+        }
+        if !matches!(x.e, Shape::Ref(..)) {
+            // The counts are equal, so the pairs from the ends are the pairs in reverse.
+            stack.extend(
+                x.e.kids()
+                    .rev()
+                    .zip(y.e.kids().rev())
+                    .map(|(p, q)| (&**p, &**q)),
+            );
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 /// The type `e` denotes in `env`. Each expression's type is built once its parts' are, from a

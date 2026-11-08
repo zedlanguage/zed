@@ -325,14 +325,16 @@ fn answers_do_not_depend_on_the_order_types_are_built() {
     assert_eq!(forward, backward);
 }
 
-/// Recursive types have no canonical form: a group is one type per member when its definitions
-/// are written alike (`rec::INSTANCES`), but a copy with its definitions renamed and listed in
-/// another order is another node. No answer reads the node: each copy gets the same verdict,
-/// each holds the other, and a type made of either is decided alike.
+/// Recursive types have a canonical form (item REC-canon): a copy of a group with its definitions
+/// listed in another order is the same node, member for member, as a group written alike. A copy
+/// with its definitions renamed prints otherwise, so it is another node (deterministic checking:
+/// a union keeps one of two equal nodes, and which must not show). No answer reads the node:
+/// each copy gets the same verdict, each holds the other, and a type made of either is decided
+/// alike.
 #[test]
 fn copies_of_a_group_built_apart_get_the_same_answers() {
-    let renamed = |p: usize, k: usize| {
-        // `period(p, k)` with each `P{i}` named `Q{p - 1 - i}` and listed in reverse.
+    let copy = |p: usize, k: usize, letter: &str| {
+        // `period(p, k)` with each `P{i}` named `{letter}{i}` and listed in reverse.
         let at = |i: usize| p - 1 - i;
         let defs = (0..p)
             .rev()
@@ -342,7 +344,7 @@ fn copies_of_a_group_built_apart_get_the_same_answers() {
                     vec![Expr::Type(Type::int()), Expr::Ref(at((i + 1) % p), vec![])],
                 );
                 Def {
-                    name: format!("Q{}", at(i)),
+                    name: format!("{letter}{i}"),
                     params: vec![],
                     body: match i == k {
                         true => Expr::Union(vec![Expr::Type(Type::atom("nil")), cons]),
@@ -355,12 +357,13 @@ fn copies_of_a_group_built_apart_get_the_same_answers() {
     };
     for p in [1, 2, 3, 4, 6] {
         for k in 0..p {
-            let (a, b, c) = (period(p, k), period(p, k), renamed(p, k));
+            let (a, b) = (period(p, k), period(p, k));
+            let (c, d) = (copy(p, k, "P"), copy(p, k, "Q"));
             assert!(
-                a == b && a != c,
-                "{p} {k}: written alike, one node; renamed, another"
+                a == b && a == c && a != d,
+                "{p} {k}: written alike or reordered, one node; renamed, another"
             );
-            for x in [&b, &c] {
+            for x in [&b, &c, &d] {
                 Type::forget_emptiness();
                 assert_eq!(a.verdict(), x.verdict(), "{p} {k}");
                 assert!(a.subtype(x) && x.subtype(&a), "{p} {k}");

@@ -229,6 +229,158 @@ fn answers_do_not_depend_on_order_or_numbering() {
     assert!(checked > 0, "some family group is admitted");
 }
 
+/// `bodies` named as [`group`] names them, node `v` placed at `place[v]` and keeping its name.
+fn renumbered_named(g: &G, place: &[usize]) -> Vec<Type> {
+    let mut names = vec![String::new(); place.len()];
+    for (v, &at) in place.iter().enumerate() {
+        names[at] = format!("N{v}");
+    }
+    let defs = names
+        .into_iter()
+        .zip(renumbered(g, place))
+        .map(|(name, body)| Def {
+            name,
+            params: vec![],
+            body,
+        })
+        .collect();
+    Group::new(defs)
+        .expect("a renumbered group is admitted")
+        .instance(vec![])
+}
+
+/// A copy of a group with its definitions listed in another order is the group, member for
+/// member (item REC-canon), and gets the same verdicts, refusals with the same causes. Across
+/// all the family groups, members that are one type get one answer from the reference, which
+/// reads no node, and one verdict.
+#[test]
+fn reordered_copies_of_family_groups_are_the_groups() {
+    let (mut checked, mut refused) = (0, BTreeMap::new());
+    let mut by_type: BTreeMap<Type, Vec<(String, bool, Verdict)>> = BTreeMap::new();
+    for name in FAMILIES {
+        for n in [2, 3, 5] {
+            let g = family(name, n);
+            let Ok(types) = group(bodies(&g)) else {
+                continue;
+            };
+            let k = g.k.len();
+            let place: Vec<usize> = (0..k).map(|v| k - 1 - v).collect();
+            let copy = renumbered_named(&g, &place);
+            for v in 0..k {
+                assert!(copy[place[v]] == types[v], "{name}:{n}: node {v}");
+            }
+            let want = reference::answers(&g);
+            Type::forget_emptiness();
+            let first: Vec<Verdict> = types.iter().map(Type::verdict).collect();
+            Type::forget_emptiness();
+            let again: Vec<Verdict> = (0..k).map(|v| copy[place[v]].verdict()).collect();
+            assert_eq!(first, again, "{name}:{n}");
+            for (v, t) in types.into_iter().enumerate() {
+                if let Verdict::Refused(why) = &first[v] {
+                    *refused.entry(format!("{why:?}")).or_insert(0) += 1;
+                }
+                let at = format!("{name}:{n}: node {v}");
+                by_type.entry(t).or_default().push((at, want[v], first[v]));
+            }
+            checked += 1;
+        }
+    }
+    let mut merged = 0;
+    for same in by_type.values() {
+        for (at, w, verdict) in &same[1..] {
+            assert_eq!(
+                (w, verdict),
+                (&same[0].1, &same[0].2),
+                "{at} and {}",
+                same[0].0
+            );
+            merged += 1;
+        }
+    }
+    eprintln!("family groups checked: {checked}, members merged: {merged}, refused: {refused:?}");
+    assert!(checked > 0, "some family group is admitted");
+}
+
+/// A group of one member with its parameter renamed is the group; two groups that differ at
+/// one member keep that member, and every member reaching it, apart; a member is the member of
+/// another group that unfolds alike and has its name.
+#[test]
+fn the_canonical_form_keeps_apart_what_differs() {
+    let ring = |a: &str| {
+        let body = Expr::Union(vec![nil(), cons(Type::int(), r(0))]);
+        single(a, body)
+    };
+    assert!(ring("L") == ring("L"));
+    assert!(ring("L") != ring("M") && ring("L").subtype(&ring("M")));
+    assert!(ring("L") != single("L", Expr::Union(vec![nil(), cons(Type::string(), r(0))])));
+    let three = |tail: &str| {
+        group_named(vec![
+            (
+                "A",
+                Expr::Union(vec![nil(), Expr::Atom("a".into(), vec![r(1)])]),
+            ),
+            ("B", Expr::Atom(tail.into(), vec![r(0)])),
+            ("C", Expr::Atom("c".into(), vec![r(2)])),
+        ])
+    };
+    let (x, y) = (three("b"), three("d"));
+    assert!(
+        x[0] != y[0] && x[1] != y[1],
+        "the differing member and the one reaching it"
+    );
+    assert!(x[0] == three("b")[0] && x[1] == three("b")[1]);
+    // A cycle of two members that unfold alike, and a cycle of one: each member is the one of
+    // its name, and the two members are apart, since they print otherwise.
+    let twins = group_named(vec![
+        ("L", Expr::Union(vec![nil(), cons(Type::int(), r(1))])),
+        ("M", Expr::Union(vec![nil(), cons(Type::int(), r(0))])),
+    ]);
+    assert!(twins[0] == ring("L") && twins[1] == ring("M") && twins[0] != twins[1]);
+}
+
+static RINGS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A ring of `n` definitions, the first of which ends the list: `n` classes, the most the
+/// refinement can split a group into, each split by one round from the end.
+fn marked_ring(n: usize) -> Group {
+    let ring = RINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let defs = (0..n)
+        .map(|i| {
+            let link = cons(Type::int(), r((i + 1) % n));
+            Def {
+                name: format!("R{ring}_{i}"),
+                params: vec![],
+                body: match i {
+                    0 => Expr::Union(vec![nil(), link]),
+                    _ => link,
+                },
+            }
+        })
+        .collect();
+    Group::new(defs).unwrap()
+}
+
+/// The canonical form of one component of `n` members, each its own class, is made in
+/// O(n log n): each group is new, so no table holds its form.
+#[test]
+fn the_canonical_form_of_a_component_scales() {
+    let (n, (small_runs, large_runs)) = (2048, scaling::Meter::new().runs());
+    let pool = |m: usize, runs: usize| {
+        std::sync::Mutex::new((0..runs).map(|_| marked_ring(m)).collect::<Vec<_>>())
+    };
+    let (small, large) = (pool(n, small_runs), pool(scaling::FACTOR * n, large_runs));
+    scaling::check("the canonical form of a ring of definitions", n, |m| {
+        let pool = if m == n { &small } else { &large };
+        let g = pool
+            .lock()
+            .expect("the pool of groups")
+            .pop()
+            .expect("one group per run");
+        let types = g.instance(vec![]);
+        assert_eq!(types.len(), m);
+    });
+}
+
 /// The one type of a group of one definition, `name = body`.
 fn single(name: &str, body: Expr) -> Type {
     group_named(vec![(name, body)]).remove(0)

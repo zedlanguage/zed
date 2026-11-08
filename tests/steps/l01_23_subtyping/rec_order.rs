@@ -40,20 +40,32 @@ fn period(cell: &str, p: usize, k: usize) -> Type {
 
 /// The members of [`period`]'s group: member `i` is the lists of length `k - i` modulo `p`.
 fn periods(cell: &str, p: usize, k: usize) -> Vec<Type> {
-    let defs = (0..p)
+    copied_periods("", false, cell, p, k)
+}
+
+/// [`periods`] with each definition's name prefixed by `prefix`, a renamed copy, and when
+/// `reversed` the definitions listed in reverse, a reordered copy; member `i` is still the
+/// `i`th returned.
+fn copied_periods(prefix: &str, reversed: bool, cell: &str, p: usize, k: usize) -> Vec<Type> {
+    let at = |i: usize| if reversed { p - 1 - i } else { i };
+    let mut defs: Vec<(usize, Def)> = (0..p)
         .map(|i| {
             let cons = atom(
                 cell,
-                vec![Expr::Type(Type::int()), Expr::Ref((i + 1) % p, vec![])],
+                vec![Expr::Type(Type::int()), Expr::Ref(at((i + 1) % p), vec![])],
             );
             let body = match i == k {
                 true => Expr::Union(vec![bare("nil"), cons]),
                 false => cons,
             };
-            def(&format!("{cell}{p}_{i}"), body)
+            (at(i), def(&format!("{prefix}{cell}{p}_{i}"), body))
         })
         .collect();
-    Group::new(defs).unwrap().instance(vec![])
+    defs.sort_by_key(|(place, _)| *place);
+    let types = Group::new(defs.into_iter().map(|(_, d)| d).collect())
+        .unwrap()
+        .instance(vec![]);
+    (0..p).map(|i| types[at(i)].clone()).collect()
 }
 
 /// The program checked: lists of periodic lengths, a list whose tail is written as a union
@@ -77,32 +89,45 @@ fn program() -> Vec<Type> {
     .unwrap()
     .instance(vec![]);
     ts.extend(s);
-    let even_odd = Group::new(vec![
+    ts.extend(even_odd(""));
+    ts
+}
+
+/// `Even` and `Odd`, each name prefixed by `prefix` and `Odd` listed first when the prefix is
+/// not empty: two definitions recursive with each other through parts kept unevaluated.
+fn even_odd(prefix: &str) -> Vec<Type> {
+    let flip = !prefix.is_empty();
+    let (even, odd) = (usize::from(flip), usize::from(!flip));
+    let mut defs = vec![
         def(
-            "Even",
+            &format!("{prefix}Even"),
             Expr::Union(vec![
                 bare("z"),
                 atom(
                     "s",
-                    vec![Expr::Union(vec![Expr::Ref(1, vec![]), bare("x")])],
+                    vec![Expr::Union(vec![Expr::Ref(odd, vec![]), bare("x")])],
                 ),
             ]),
         ),
         def(
-            "Odd",
+            &format!("{prefix}Odd"),
             atom(
                 "s",
-                vec![Expr::Union(vec![Expr::Ref(0, vec![]), bare("y")])],
+                vec![Expr::Union(vec![Expr::Ref(even, vec![]), bare("y")])],
             ),
         ),
-    ])
-    .unwrap()
-    .instance(vec![]);
-    ts.extend(even_odd);
-    ts
+    ];
+    if flip {
+        defs.reverse();
+    }
+    let types = Group::new(defs).unwrap().instance(vec![]);
+    vec![types[even].clone(), types[odd].clone()]
 }
 
-/// Another program, checked first in the `after` child: recursive types of other names.
+/// Another program, checked first in the `after` child: recursive types of other names, and
+/// copies of the program's types, renamed or listed in another order, of which the reordered
+/// are the program's types (item REC-canon), with unions and pairs of them made before the
+/// program makes its own.
 fn other_program() {
     for p in 1..=9 {
         for k in 0..p {
@@ -110,6 +135,25 @@ fn other_program() {
             assert!(!t.is_empty());
         }
     }
+    let mut copies: Vec<Type> = [(1, 0), (2, 0), (2, 1), (3, 0), (3, 2), (4, 1), (6, 5)]
+        .into_iter()
+        .flat_map(|(p, k)| {
+            [("Copy", false), ("", true)]
+                .map(|(prefix, reversed)| copied_periods(prefix, reversed, "cons", p, k).remove(0))
+        })
+        .collect();
+    copies.extend(even_odd("Copy"));
+    let mut made = Vec::new();
+    for a in &copies {
+        for b in &copies {
+            made.push(a | b);
+            made.push(Type::tuple(vec![a.clone(), b.clone()]));
+        }
+    }
+    made.push(Type::union_all(
+        copies.iter().map(|t| Type::tuple(vec![t.clone()])),
+    ));
+    assert!(made.iter().all(|t| !t.is_empty()));
 }
 
 /// What the program's checking shows, one line per fact: each type's digest (by the hash of
