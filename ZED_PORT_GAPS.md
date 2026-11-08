@@ -2604,3 +2604,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Two more default methods on the `Lookup` trait, `calls` (whether a port is called rather than read) and `function` (the key value of a function argument, from its body), asked by the evaluator through the trait object | `zed_kernel::eval::Lookup::calls`, `Lookup::function`, `Machine::call_port`, `Port::calls`, `Port::function` | Traits (`interface` is L10; `dyn Lookup` becomes a port, catalog above) | Two more fields of the port's record, with the default values given where the record is built |
 | An `AtomicBool` in the run, set from `&self` inside `Lookup::get` when a call took a function argument, read once after the run | `Run::function`, `Port::get`, `Mixer::eval` | Mutation (gap 11) | The run returns, beside its value and its list of calls, whether a call took a function argument |
 | An `Arc<BTreeMap<Arc<str>, Arc<Stub>>>` of every stub of a run, shared by each port so a token argument resolves to its stub | `Port::ports`, `Port::with`, `run_with` | None | A map value passed to each port's record |
+
+## Entries from EMPTY-morphism-diff-cost (`crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/bdd/set.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A per-thread `HashMap` with `BuildHasherDefault<KeyHasher>` (the digest as the hash), each bucket a `Vec<Weak<Set>>`; a set removes itself from its bucket when dropped | `bdd::set::SetTable`, `Slot`, `make`, `Drop for Set`, `Tables::new` | Weak references and drop hooks (as in K66 and K70) | A hash map keyed by digest in the per-thread store, entries removed when the set is freed |
+| Pointer identity of a thread-local `Type` read through `LocalKey::with(\|k\| Arc::ptr_eq(..))` to recognize the empty and top types | `Type::zip_at_once`, `Morphism::cmp` | Identity (equality shortcuts) and thread-locals | A tag on the node for the empty and top types, compared as values |
