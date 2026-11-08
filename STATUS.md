@@ -1632,6 +1632,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| TABLE-short-scan | impl attempt 1 | 2026-11-07 12:26 | start: worktree /home/luke/Work/wt/table-short-scan on origin/main 007abbf8 |
+| TEST-audit | audit attempt 1 | 2026-11-08 13:02 | instrumented build done (4.2 GB, rc 0); starting whole suite under coverage, -j 4, --no-doc; load 7.55 11.55 8.89 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
