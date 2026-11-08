@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs every test in pieces, one test binary, step folder, module or slow test each, each under a
 # 60 s limit, and prints a line per piece as it ends. Usage, from a checkout's root:
-#   tools/run_tests.sh [--full] [--only <ERE>] [--no-doc] [--list] [jobs]
+#   tools/run_tests.sh [--full] [--only <ERE>] [--no-doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
 # Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
@@ -13,12 +13,17 @@
 # matches no piece stops the run with an error. The short-addresses build is made only when a
 # short- piece is selected. --no-doc skips the check that the documentation builds. --list
 # builds what the selection needs, prints the names of the selected pieces and runs nothing.
+# A run without --only saves the table of all pieces in its log directory; --list --reuse-table
+# selects from that table without building or listing the binaries, for tests of the selection.
+# The table is as the run that wrote it left it: with --full or not, and stale once the test
+# binaries are rebuilt. --logs puts the logs, the table and the piece list in <dir> instead of
+# build/test-logs, so two runs in one checkout do not overwrite each other's files.
 # The build is `cargo test --workspace --no-run`, which does nothing on a tree already built
 # that way, so a run after such a build starts the pieces at once.
-# A failed piece keeps its output in build/test-logs/<piece>.log. Every piece runs in the
-# systemd slice zedtests.slice, whose 112 GB limit holds across all checkouts together. A load
-# above the number of cores raises the limit of the pieces that start under it in proportion.
-features= full_suite= only= list= doc=1 jobs=6
+# A failed piece keeps its output in build/test-logs/<piece>.log, or in the --logs directory.
+# Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
+# checkouts together. A load above the number of cores raises the limit of the pieces that start under it in proportion.
+features= full_suite= only= list= reuse= logs= doc=1 jobs=6
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -32,14 +37,27 @@ while [ $# -gt 0 ]; do
       ;;
     --no-doc) doc= ;;
     --list) list=1 doc= ;;
+    --reuse-table) reuse=1 ;;
+    --logs)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "--logs needs a directory"
+        exit 2
+      fi
+      logs=$2
+      shift
+      ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--no-doc] [--list] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--no-doc] [--list] [--reuse-table] [--logs <dir>] [jobs])"
       exit 2
       ;;
   esac
   shift
 done
+if [ -n "$reuse" ] && [ -z "$list" ]; then
+  echo "--reuse-table needs --list"
+  exit 2
+fi
 if [ -n "$only" ]; then
   { [[ x =~ $only ]]; } 2>/dev/null
   if [ $? = 2 ]; then
@@ -69,8 +87,32 @@ if [ -n "$full_suite" ]; then
   fi
 fi
 root=$(pwd)
-out=$root/build/test-logs
+out=${logs:-build/test-logs}
+[[ $out == /* ]] || out=$root/$out
 mkdir -p "$out"
+# Writes the pieces of the table on stdin that --only selects to $out/pieces, one per line: its
+# name, directory and command. A line of the table is a piece's group, step folder, then those.
+select_pieces() {
+  while read -r group step name rest; do
+    { selected "$group" "$name" || selected "$step" "$name"; } && echo "$name $rest"
+  done >"$out/pieces"
+  if [ ! -s "$out/pieces" ]; then
+    echo "NO PIECE MATCHES --only '$only'"
+    exit 1
+  fi
+}
+if [ -n "$reuse" ]; then
+  if [ ! -s "$out/table" ]; then
+    echo "--reuse-table: no $out/table; run tools/run_tests.sh --list without --only first"
+    exit 1
+  fi
+  select_pieces <"$out/table"
+  cut -d ' ' -f 1 "$out/pieces"
+  exit 0
+fi
+# A run without --only writes the table of every piece; a run with it, a table of its own.
+table=$out/table
+[ -z "$only" ] || table=$out/listing
 if ! cargo test --workspace $features --no-run --message-format=short >"$out/build.log" 2>&1; then
   tail -40 "$out/build.log"
   echo "BUILD FAILED"
@@ -215,13 +257,8 @@ done < <(awk '
       echo "$n $n $n tests $full $n::"
     done
   fi
-} | while read -r group step name rest; do
-  { selected "$group" "$name" || selected "$step" "$name"; } && echo "$name $rest"
-done >"$out/pieces"
-if [ ! -s "$out/pieces" ]; then
-  echo "NO PIECE MATCHES --only '$only'"
-  exit 1
-fi
+} >"$table"
+select_pieces <"$table"
 if [ -n "$list" ]; then
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
