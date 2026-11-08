@@ -28,7 +28,7 @@ fn the_unit_item_builds_apart_from_the_declarations() {
         "(annotated (@log #off) (def quiet (x) = x))"
     );
     // Any annotation followed by `;` alone is the unit item; resolution says which are.
-    assert_eq!(shown("@strict;"), "(unit @strict)");
+    assert_eq!(shown("@exact;"), "(unit @exact)");
     assert_eq!(shown("@log(#on);"), "(unit (@log #on))");
     assert_eq!(shown("@log;"), "(unit @log)");
 }
@@ -87,7 +87,7 @@ fn the_unit_item_formats_to_its_text() {
             "// No log lines from this unit.\n@log(#off);\n\nf(x) = x;\n",
             "// No log lines from this unit.\n@log(#off);\n\nf(x) = x;\n",
         ),
-        ("@strict ;", "@strict;\n"),
+        ("@exact ;", "@exact;\n"),
     ];
     for (text, want) in cases {
         let tokens = lex(text).unwrap();
@@ -98,7 +98,7 @@ fn the_unit_item_formats_to_its_text() {
 
 #[test]
 fn the_unit_item_needs_its_semicolon() {
-    for text in ["@log(#off)", "@log(#off)\n", "@log(#off) @strict;"] {
+    for text in ["@log(#off)", "@log(#off)\n", "@log(#off) @exact;"] {
         let tokens = lex(text).unwrap();
         assert!(
             parse(text, &tokens, "Unit", TOP).is_err(),
