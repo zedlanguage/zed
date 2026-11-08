@@ -20,6 +20,7 @@ mod extend;
 mod ids;
 mod live3;
 mod mod_symbol;
+mod model;
 mod names;
 mod near;
 mod omega;

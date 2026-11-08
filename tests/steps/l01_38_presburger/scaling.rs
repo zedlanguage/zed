@@ -663,13 +663,12 @@ fn a_grid_of_differences_is_decided_in_scale() {
     });
 }
 
-/// The point of a grid of 33 and of 93 names, 4224 and 34224 rows (8.1 times). `decide`
-/// takes 9.3 times the instructions there and `satisfiable` on the empty grid 10.1 times, but
-/// placing the point takes 31.1 times (2026-11-05; 18.8 times from 12 to 33 names): once
-/// `utvpi::integer_empty` has shown a point, `Omega::run` places it by eliminating every
-/// variable with fill allowed. COMPLEXITY.md S38; open: UTVPI-model, whose fix runs this.
+/// The point of a grid of 33 and of 93 names, 4224 and 34224 rows (8.1 times). Until
+/// UTVPI-model, once `utvpi::integer_empty` had shown a point, `Omega::run` placed it by
+/// eliminating every variable with fill allowed, and this took 31.1 times the instructions
+/// (2026-11-05); the point is now rounded from a potential (`utvpi::integer_point`).
+/// COMPLEXITY.md S38.
 #[test]
-#[ignore = "COMPLEXITY.md S38, open under UTVPI-model: fails now, 31.1 times"]
 fn the_point_of_a_larger_grid_of_differences_scales() {
     let (small, large) = (grid(33), grid(93));
     point_of("a grid of 33", &small);
@@ -681,4 +680,37 @@ fn the_point_of_a_larger_grid_of_differences_scales() {
         || drop(satisfiable(&small)),
         || drop(satisfiable(&large)),
     );
+}
+
+/// `x[a] - x[b] + k >= 0` for each ordered pair of neighbors in a sparse expander, three
+/// neighbors `2v + 1`, `3v + 2` and `v + 1` of each `v`, with `k` a hidden potential's difference
+/// plus 1 to 3, so a point exists (cross-review xt2, its `expander` family).
+fn expander(n: usize) -> Formula {
+    let mut g = Rng::new(0x38_9e);
+    let p: Vec<i64> = (0..n).map(|_| g.int(0, 1000)).collect();
+    let mut r = Vec::new();
+    for v in 0..n {
+        for u in [(2 * v + 1) % n, (3 * v + 2) % n, (v + 1) % n] {
+            if u == v {
+                continue;
+            }
+            for (a, b) in [(v, u), (u, v)] {
+                r.push(row(&[(a, 1), (b, -1)], g.int(1, 3) + p[a] - p[b], false));
+            }
+        }
+    }
+    Formula::and(r)
+}
+
+/// The point of `expander`'s rows at 256 and 2048 variables, checked against each row
+/// (UTVPI-model). Before, placing it eliminated with fill allowed: 277M to 1,500M instructions
+/// from 128 to 256 variables (cross-review xt2, note3b.tsv).
+#[test]
+fn the_point_of_an_expander_of_differences_scales() {
+    let (small, large) = (expander(256), expander(scaling::FACTOR * 256));
+    point_of("an expander of differences", &small);
+    point_of("an expander of differences", &large);
+    scaling::check("the point of an expander of differences", 256, |m| {
+        drop(satisfiable(if m == 256 { &small } else { &large }));
+    });
 }

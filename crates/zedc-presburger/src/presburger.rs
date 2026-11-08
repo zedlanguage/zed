@@ -5718,9 +5718,6 @@ struct Omega {
     /// Whether a gray shadow with three variables left is decided by `live3` in place of a
     /// dark shadow with a gap: set when a splinter is run again after its first run left one.
     exact3: bool,
-    /// Whether an exact elimination may add terms: set once a system of rows `±x ± y + k >= 0`
-    /// is shown to have a point, since its eliminations are all exact and keep that form.
-    fill_ok: bool,
     /// The first tie among equalities, which were then kept as pairs of opposite rows.
     loose_tie: Option<Tied>,
     /// The equalities whose coefficients a step has reduced but not yet to a unit: each is
@@ -5755,7 +5752,6 @@ impl Omega {
             gray: Vec::new(),
             gap: false,
             exact3: false,
-            fill_ok: false,
             loose_tie: None,
             working: Vec::new(),
             cycled: false,
@@ -5838,21 +5834,12 @@ impl Omega {
             }
             let mut tie: Option<Tied> = None;
             match self.sys.least(&[&self.sys.exact]) {
-                Some((fill, _)) if fill > 0 && !self.fill_ok => {}
+                Some((fill, _)) if fill > 0 => {}
                 Some((_, Ok(js))) => {
                     for j in js {
                         let rows = self.sys.eliminate(j, false);
                         self.steps.push(Step::Chosen(j, rows));
                     }
-                    continue;
-                }
-                // Once `fill_ok` is set the rows are `±x ± y + k >= 0` and have a point, and
-                // their eliminations are exact and keep that form, so the answer is known and
-                // the order of the rest only places the point found.
-                Some((_, Err(_))) if self.fill_ok => {
-                    let &(_, _, j) = self.sys.exact.first().expect("a variable");
-                    let rows = self.sys.eliminate(j, false);
-                    self.steps.push(Step::Chosen(j, rows));
                     continue;
                 }
                 Some((_, Err(t))) => tie = Some(t),
@@ -5873,17 +5860,27 @@ impl Omega {
                 continue;
             }
             if self.sys.wide_rows == 0 {
-                // Every elimination is exact, and each adds terms or is tied.
+                // Every elimination is exact, and each adds terms or is tied. The rows are
+                // decided, and their point placed, from a potential of their constraint graph
+                // (`utvpi::integer_point`): the search `utvpi::integer_empty` makes, then one
+                // linear pass, with no elimination. Until UTVPI-model
+                // the point was placed by eliminating every variable with fill allowed, which
+                // grew the rows (COMPLEXITY.md S38).
                 let rows: Vec<(&[Term], &Int)> =
                     self.sys.rows.iter().map(|(a, h)| (&**a, &h.k)).collect();
-                if utvpi::integer_empty(self.sys.vars.len(), &rows) {
-                    return Leaf::Empty;
-                }
+                let n = self.sys.vars.len();
                 if !self.want {
-                    return Leaf::Point(Vec::new());
+                    return if utvpi::integer_empty(n, &rows) {
+                        Leaf::Empty
+                    } else {
+                        Leaf::Point(Vec::new())
+                    };
                 }
-                self.fill_ok = true;
-                continue;
+                let Some(v) = utvpi::integer_point(n, &rows) else {
+                    return Leaf::Empty;
+                };
+                start = v;
+                break;
             }
             if tie.is_none() {
                 match self.sys.least(&[&self.sys.inexact]) {

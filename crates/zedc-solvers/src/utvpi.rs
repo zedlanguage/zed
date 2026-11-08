@@ -61,6 +61,29 @@ pub fn integer_empty(n: usize, rows: &[(&[Term], &Int)]) -> bool {
 
 /// [`integer_empty`] with the potential found by `search`; every search gives the same answer.
 pub fn integer_empty_by(n: usize, rows: &[(&[Term], &Int)], search: Search) -> bool {
+    let out = graph(n, rows);
+    match potential_by(&out, search) {
+        Some(p) => odd_zero_cycle(n, &out, &p),
+        None => true,
+    }
+}
+
+/// An integer point of the rows, each of one or two terms with unit coefficients, over `n`
+/// variables, by variable, or `None` when they have none. A variable in no row is 0.
+pub fn integer_point(n: usize, rows: &[(&[Term], &Int)]) -> Option<Vec<Int>> {
+    integer_point_by(n, rows, Search::First)
+}
+
+/// [`integer_point`] with the potential found by `search`; every search finds a point exactly
+/// when the rows have one, though not always the same point.
+pub fn integer_point_by(n: usize, rows: &[(&[Term], &Int)], search: Search) -> Option<Vec<Int>> {
+    let out = graph(n, rows);
+    let p = potential_by(&out, search)?;
+    rounded(n, &out, &p)
+}
+
+/// The constraint graph of the rows over `n` variables (see the module documentation).
+fn graph(n: usize, rows: &[(&[Term], &Int)]) -> Vec<Vec<(usize, Int)>> {
     // The literal `-c·x` of a term `c·x`, as a node.
     let lit = |(j, c): &Term| if c.is_negative() { 2 * j } else { 2 * j + 1 };
     let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); 2 * n];
@@ -78,16 +101,75 @@ pub fn integer_empty_by(n: usize, rows: &[(&[Term], &Int)], search: Search) -> b
             _ => unreachable!("a row of one or two terms"),
         }
     }
-    let found = match search {
-        Search::First => potential(&out),
-        Search::GoldbergRadzik => goldberg_radzik(&out),
-        Search::BfDijkstra => bf_dijkstra(&out),
-        Search::Duong => negsssp::potential_alone(&out),
-    };
-    match found {
-        Some(p) => odd_zero_cycle(n, &out, &p),
-        None => true,
+    out
+}
+
+/// A potential of the graph `out` found by `search`, or `None` when it has a negative cycle.
+fn potential_by(out: &[Vec<(usize, Int)>], search: Search) -> Option<Vec<Int>> {
+    match search {
+        Search::First => potential(out),
+        Search::GoldbergRadzik => goldberg_radzik(out),
+        Search::BfDijkstra => bf_dijkstra(out),
+        Search::Duong => negsssp::potential_alone(out),
     }
+}
+
+/// An integer point of the rows whose constraint graph `out`, over the literals of `n`
+/// variables, has the potential `p`, or `None` when they have none; in time linear in the
+/// nodes and edges, with no elimination.
+///
+/// The graph maps each edge `u → v` of weight `w` to its twin `¬v → ¬u` of the same weight, so
+/// `q(u) = -p(¬u)` is a potential too, and so is their mean `s(u) = (p(u) - p(¬u)) / 2`, with
+/// `s(¬u) = -s(u)`: `s(+x)` is a rational point, each value an integer or an integer and a half.
+/// Rounding each half to an integer, down or up, with `¬u` rounded the other way, keeps every
+/// edge `u → v` with `s(v) - s(u) < w`: the difference moves by at most 1, and is below `w` by
+/// a half when one end is an integer, and by 1 or more when both are halves and the edge is not
+/// tight. A tight edge, `s(v) - s(u) = w`, joins two halves and holds after rounding exactly when
+/// `v` is rounded down whenever `u` is (the edge `¬l → l` of a row of one term, of even weight,
+/// is never tight between halves). These implications over the halves, each with its twin
+/// `¬v → ¬u`, are a 2-SAT problem whose implication graph is the graph of the tight edges, solved
+/// by its strongly connected components (Aspvall, Plass and Tarjan, "A linear-time algorithm for
+/// testing the truth of certain quantified boolean formulas", IPL 8, 1979): it has no solution
+/// exactly when some `u` and `¬u` share a component. Then the tight cycle through both is a
+/// zero-weight cycle of the graph whose part from `u` to `¬u` weighs `s(¬u) - s(u) = -2 s(u)`,
+/// odd, so the rows have no integer point (Lahiri and Musuvathi); otherwise the rounding is one.
+/// The components test therefore decides the rows as `odd_zero_cycle` does.
+fn rounded(n: usize, out: &[Vec<(usize, Int)>], p: &[Int]) -> Option<Vec<Int>> {
+    // `twice[u]` is `2 s(u)`, odd exactly at a half.
+    let twice: Vec<Int> = (0..2 * n).map(|u| &p[u] - &p[u ^ 1]).collect();
+    let tight: Vec<Vec<usize>> = out
+        .iter()
+        .zip(&twice)
+        .map(|(es, tu)| {
+            if !tu.is_odd() {
+                return Vec::new();
+            }
+            es.iter()
+                .filter(|(v, w)| &twice[*v] - tu == w + w)
+                .map(|(v, _)| *v)
+                .collect()
+        })
+        .collect();
+    let comp = components(&tight, |v| *v);
+    // Tarjan's search numbers each component after every component it reaches, so the literal
+    // `u` with `comp[u] < comp[¬u]` lies after `¬u` in a topological order of the implications,
+    // and rounding it down, its twin up, breaks none of them.
+    let two = Int::from(2);
+    (0..n)
+        .map(|j| {
+            let (plus, minus) = (2 * j, 2 * j + 1);
+            let down = twice[plus].div_floor(&two);
+            if !twice[plus].is_odd() {
+                Some(down)
+            } else if comp[plus] == comp[minus] {
+                None
+            } else if comp[plus] < comp[minus] {
+                Some(down)
+            } else {
+                Some(&down + &Int::ONE)
+            }
+        })
+        .collect()
 }
 
 /// Whether a zero-weight cycle of the graph `out` over the literals of `n` variables passes
@@ -565,9 +647,44 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::{
-        At, Int, Shared, bf_dijkstra, goldberg_radzik, negated, negsssp, odd_zero_cycle, potential,
-        race, reversed,
+        At, Int, Shared, bf_dijkstra, goldberg_radzik, graph, negated, negsssp, odd_zero_cycle,
+        potential, race, reversed, rounded,
     };
+
+    /// The rows `x0 - x1 >= 0`, `x1 - x0 >= 0`, `1 - x0 - x1 >= 0`, and with `odd` also
+    /// `x0 + x1 - 1 >= 0`, over two variables.
+    fn halves(odd: bool) -> Vec<Vec<(usize, Int)>> {
+        let t = |c0: i64, c1: i64| vec![(0, Int::from(c0)), (1, Int::from(c1))];
+        let mut rows = vec![
+            (t(1, -1), Int::ZERO),
+            (t(-1, 1), Int::ZERO),
+            (t(-1, -1), Int::ONE),
+        ];
+        if odd {
+            rows.push((t(1, 1), Int::from(-1)));
+        }
+        let rows: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(a, k)| (&a[..], k)).collect();
+        graph(2, &rows)
+    }
+
+    #[test]
+    fn halves_on_tight_edges_are_rounded_together() {
+        // `p(+x) = 1`, `p(-x) = 0` is a potential of both graphs, whose rational point is
+        // (1/2, 1/2), on tight edges both ways between `x0` and `x1`: rounding `x0` up forces
+        // `x1` down through `x0 + x1 <= 1` and up through `x0 == x1`, so both go down.
+        let p = [Int::ONE, Int::ZERO, Int::ONE, Int::ZERO];
+        for odd in [false, true] {
+            let out = halves(odd);
+            for (u, es) in out.iter().enumerate() {
+                for (v, w) in es {
+                    assert!(p[*v] <= &p[u] + w, "a potential");
+                }
+            }
+            let point = rounded(2, &out, &p);
+            assert_eq!(point.is_none(), odd_zero_cycle(2, &out, &p));
+            assert_eq!(point, (!odd).then(|| vec![Int::ZERO, Int::ZERO]));
+        }
+    }
 
     #[test]
     fn acyclic_signed_edges_have_an_exact_potential() {
