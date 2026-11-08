@@ -599,3 +599,204 @@ fn a_unit_reversed_and_rotated_gives_the_same_types_and_diagnostics() {
         );
     }
 }
+
+// ---- Renaming a local binding (plan row ORDER-rename) -------------------------------------
+
+/// `walk(n: int[-2..=0]) = loop { while a < 100; a' = c + 1 with a = n; b = a + 2; c = b + 2; }`
+/// in the kernel, `gen(n, a -> { b = a + 2; c = b + 2; c + 1 }, a -> a < 100)` with the guard
+/// before each step, its three local names given: the frame variable `a` is a parameter of the
+/// step and of the guard, and `b` and `c` are `let`s inside the step.
+fn walk(names: [&str; 3]) -> zedc::canon::Def {
+    use zed_kernel::Shared;
+    use zed_kernel::term::build::{lam, let_, lit, prim, var};
+    use zed_kernel::term::{GuardPos, Prim, Term};
+    let [a, b, c] = names;
+    let plus = |x: &str, k: i64| prim(Prim::Add, vec![var(x), lit(k)]);
+    let step = lam(&[a], let_(b, plus(a, 2), let_(c, plus(b, 2), plus(c, 1))));
+    let guard = lam(&[a], prim(Prim::Lt, vec![var(a), lit(100)]));
+    zedc::canon::Def {
+        name: "walk".into(),
+        domain: None,
+        facets: vec![],
+        body: lam(
+            &["n"],
+            Term::Gen {
+                init: Shared::new(var("n")),
+                step: Shared::new(step),
+                guard: Shared::new(guard),
+                pos: GuardPos::Before,
+            },
+        ),
+    }
+}
+
+/// The content address of `d`, every free name hashed by name.
+fn address_of(d: &zedc::canon::Def) -> ContentAddress {
+    zedc::canon::address(d, &|_| None).expect("memory for the address")
+}
+
+/// `n` distinct random local names of one to five lower-case letters.
+fn local_names(rng: &mut Rng, n: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    while out.len() < n {
+        let len = 1 + rng.below(5);
+        let s: String = (0..len)
+            .map(|_| char::from(b'a' + rng.below(26) as u8))
+            .collect();
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+#[test]
+fn renaming_a_loops_local_bindings_keeps_the_units_address() {
+    // The canonicalizer writes every local binder as its de Bruijn level (step M0.7), so the
+    // loop of `walk` has one address whatever its three bindings are called; the unit's own
+    // name is part of its interface and changes it.
+    let want = address_of(&walk(["a", "b", "c"]));
+    for names in [
+        ["a", "b", "_c"],
+        ["z", "b", "c"],
+        ["b", "a", "c"],
+        ["c", "b", "a"],
+    ] {
+        assert_eq!(address_of(&walk(names)), want, "{names:?}");
+    }
+    let mut rng = Rng::new(0x0e4a);
+    for _ in 0..RANDOM_INSTANCES {
+        let n = local_names(&mut rng, 3);
+        assert_eq!(address_of(&walk([&n[0], &n[1], &n[2]])), want, "{n:?}");
+    }
+    let mut other = walk(["a", "b", "c"]);
+    other.name = "walk2".into();
+    assert_ne!(address_of(&other), want);
+}
+
+/// The loop `a = init ⊔ (c ⊓ fa) + ka; b = (a ⊓ fb) + kb; c = (b ⊓ fc) + kc` of the a/b/c
+/// family, its cells numbered a, b, c, with random initial value, filters and offsets.
+fn abc_member(rng: &mut Rng) -> System {
+    use super::{Term, random_filter};
+    let lo = rng.int(-5, 5);
+    let init = IntervalSet::of(lo, lo + rng.int(0, 3));
+    let mut term = |from| Term {
+        from,
+        filter: random_filter(rng),
+        offset: rng.int(-2, 2),
+    };
+    let terms = vec![vec![term(2)], vec![term(0)], vec![term(1)]];
+    let eq = System::named(
+        vec!["a".into(), "b".into(), "c".into()],
+        vec![init, IntervalSet::empty(), IntervalSet::empty()],
+        terms,
+    );
+    if rng.below(2) == 0 { eq } else { eq.bare() }
+}
+
+/// The same system with its local bindings renamed to `names`. Only the name part of each
+/// key changes: the address and the canonical form of a cell's node write a local binding
+/// as its level (step M0.7), so a local rename leaves both, and the unit's address, alone.
+fn renamed_locals(eq: &System, names: &[String]) -> System {
+    let mut out = eq.clone();
+    out.names = names.to_vec();
+    out
+}
+
+/// What the checker concludes about a loop: the head, the cells after phase 1 and after both
+/// phases, and the verdict, which `v != x` checks it proves for each cell `v` and each `x` in
+/// `-12..=12`.
+#[derive(Debug, PartialEq, Eq)]
+struct Outcome {
+    head: usize,
+    phase1: Vec<String>,
+    cells: Vec<String>,
+    proved: Vec<(usize, i64)>,
+}
+
+fn outcome(eq: &System) -> Outcome {
+    let order = order(eq).unwrap();
+    let cells = solve(eq).unwrap();
+    let proved = (0..cells.len())
+        .flat_map(|v| (-12..=12).map(move |x| (v, x)))
+        .filter(|&(v, x)| !cells[v].contains(x))
+        .collect();
+    Outcome {
+        head: head(&order),
+        phase1: phase1(eq, &order).iter().map(|c| c.to_string()).collect(),
+        cells: cells.iter().map(|c| c.to_string()).collect(),
+        proved,
+    }
+}
+
+#[test]
+fn a_rename_that_keeps_the_order_of_the_local_names_changes_nothing() {
+    // Each local name replaced by another in the same order: the keys compare as before, so
+    // the heads, the cells and the verdict are those of the unit as written.
+    let mut rng = Rng::new(0x0e4b);
+    for _ in 0..RANDOM_INSTANCES {
+        let eq = abc_member(&mut rng);
+        let mut names = local_names(&mut rng, 3);
+        names.sort();
+        assert_eq!(
+            outcome(&renamed_locals(&eq, &names)),
+            outcome(&eq),
+            "{names:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "ORDER-rename: fails under DESIGN's order by binding name; question for the author"]
+fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_verdict() {
+    // Two units with one content address must get one verdict (DESIGN.md step M0.11, cited by
+    // [Bourdoncle] in the bibliography). A local rename keeps the address
+    // (`renaming_a_loops_local_bindings_keeps_the_units_address`), but the traversal orders
+    // the cells by binding name first, so the rename can move the head.
+    //
+    // The witness is `walk` (see [`walk`]), whose loop gives the cells
+    // `a = [-2..=0] ⊔ (c + 1); b = (a ⊓ [..=99]) + 2; c = b + 2`, with the landmarks -2, 0
+    // and 99 that its text writes. As written the head is `a`, the least name; `a` is widened
+    // to `[-2..=104]` and narrowing does not cut the gap back out, so `a != 1` is not proved.
+    // With `a` renamed `z` the head is `b`, `a` comes out `[-2..=0, 3..=104]`, and `a != 1`
+    // is proved. A run takes `a` through -2..=0, 3..=5, 8..=10, …, so `a` is never 1.
+    let witness = |names: [&str; 3]| {
+        use super::Term;
+        let step = |from, offset, filter| {
+            vec![Term {
+                from,
+                filter,
+                offset,
+            }]
+        };
+        System::named(
+            names.iter().map(|s| s.to_string()).collect(),
+            vec![
+                IntervalSet::of(-2, 0),
+                IntervalSet::empty(),
+                IntervalSet::empty(),
+            ],
+            vec![
+                step(2, 1, IntervalSet::top()),
+                step(0, 2, iv(None, Some(99))),
+                step(1, 2, IntervalSet::top()),
+            ],
+        )
+    };
+    let written = witness(["a", "b", "c"]);
+    let copy = renamed_locals(&written, &["z".into(), "b".into(), "c".into()]);
+    assert!(!written.concrete((-12, 120))[0].contains(&1));
+
+    assert_eq!(outcome(&copy), outcome(&written), "the witness `walk`");
+    // The search over the a/b/c family and random local names.
+    let mut rng = Rng::new(0x0e4c);
+    for _ in 0..RANDOM_INSTANCES {
+        let eq = abc_member(&mut rng);
+        let names = local_names(&mut rng, 3);
+        assert_eq!(
+            outcome(&renamed_locals(&eq, &names)),
+            outcome(&eq),
+            "{names:?}: {eq:?}"
+        );
+    }
+}
