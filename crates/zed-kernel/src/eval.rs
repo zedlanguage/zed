@@ -2338,7 +2338,7 @@ fn too_large(p: Prim, e: crate::num::TooLarge) -> KernelError {
 /// item 5): a NaN in either position gives a NaN, and `-0.0` is below `0.0`, so
 /// `min(-0.0, 0.0)` is `-0.0` and `max(-0.0, 0.0)` is `0.0` in both orders. Rust's
 /// `f64::minimum` is not stable, and `f64::min` returns the other operand of a NaN.
-fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
+pub(crate) fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         return f64::NAN;
     }
@@ -2444,6 +2444,14 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         }
         (Prim::Min | Prim::Max, [Float(a), Float(b)]) => {
             Value::float(ieee_min_max(p == Prim::Min, a.get(), b.get()))
+        }
+        // Two tuples: the first component in which they differ decides (DESIGN.md sec:reduction).
+        (Prim::Min | Prim::Max, [a @ Value::Tuple(_), b @ Value::Tuple(_)]) => {
+            match a.selects(b, p == Prim::Min) {
+                Some(true) => a.clone(),
+                Some(false) => b.clone(),
+                None => return ty(&vals),
+            }
         }
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max, [a, b]) => {
             let same = match (a.number_kind(), b.number_kind()) {

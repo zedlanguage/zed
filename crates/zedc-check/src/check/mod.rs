@@ -4900,6 +4900,42 @@ fn and(ts: Vec<Ty>, overload: bool) -> Ty {
     ts.fold(first, |a, b| a.meet(&b))
 }
 
+/// Whether `sig` is the signature of `min` and `max`, which share one ([`word_sig`]). It is
+/// built only for a signature of their size, so other words pay two length tests.
+fn is_min_max(sig: &Sig) -> bool {
+    sig.params.len() == 2 && sig.arrows.len() == 3 && *word_sig("min") == *sig
+}
+
+/// `t` with its tuple shapes of each length joined into one, position by position, and so on
+/// down through the components: the type of `min` or `max` of two tuples.
+// Complexity tradeoff: the union of the shapes keeps which components go together, but a chain
+// `a(i) = min(a(i - 1), (i, 0.5, i))` then holds i shapes at step i and checking it is O(n^2):
+// 100 and 800 links allocated 36.9 MB and 1966.5 MB, 53.4 times (2026-11-07). Joined, each
+// result has one shape per length and the chain is linear; what is lost is only which
+// components went together, which `min` and `max` of numbers and tuples never test.
+fn one_shape_per_length(t: &Ty) -> Ty {
+    if t.tuples.is_empty() {
+        return t.clone();
+    }
+    let mut by_len: BTreeMap<usize, Vec<&[Ty]>> = BTreeMap::new();
+    for row in &t.tuples {
+        by_len.entry(row.len()).or_default().push(row);
+    }
+    let rows = by_len.into_values().map(|rows| {
+        Ty::tuple(
+            (0..rows[0].len())
+                .map(|i| one_shape_per_length(&Ty::union_all(rows.iter().map(|r| &r[i]))))
+                .collect(),
+        )
+    });
+    let rows: Vec<Ty> = rows.collect();
+    Ty {
+        tuples: Vec::new(),
+        ..t.clone()
+    }
+    .union(&Ty::union_all(&rows))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

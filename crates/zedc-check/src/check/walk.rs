@@ -4325,6 +4325,77 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// `min` or `max`, whose signature is `sig`, applied to `x` and `y`, one of them holding a
+    /// tuple (DESIGN.md sec:reduction, item 5): two tuples of one length, each pair of
+    /// components two numbers of one kind or two tuples checked the same way, and no atom in a
+    /// component. The result is one of the two, so its type is the union of theirs. The tuple
+    /// shapes of one length on each side are joined position by position, so each level is read
+    /// once rather than once per pair of shapes, and a pair of component types met again
+    /// through shared rows is not read again: the check is linear in the types read.
+    fn min_max_tuples(&mut self, what: &str, sig: &Sig, x: &Ty, y: &Ty, span: Span) -> Ty {
+        let mut todo = vec![(x.clone(), y.clone())];
+        let mut seen = HashSet::new();
+        while let Some(pair) = todo.pop() {
+            if seen.contains(&pair) {
+                continue;
+            }
+            let (a, b) = &pair;
+            let atoms = &a.atoms() | &b.atoms();
+            let rest = |t: &Ty| {
+                Ty {
+                    tuples: Vec::new(),
+                    ..t.without_atoms()
+                }
+                .is_empty()
+            };
+            if !atoms.is_empty() {
+                let atoms = self.text(&Ty::set(atoms));
+                self.error(
+                    span,
+                    format!("{what} does not order {atoms} in a tuple; handle it before {what}"),
+                );
+            } else if a.tuples.is_empty() && b.tuples.is_empty() {
+                self.apply(
+                    what,
+                    sig,
+                    vec![Some(Arg::of(a.clone())), Some(Arg::of(b.clone()))],
+                    true,
+                    span,
+                );
+            } else if a.tuples.is_empty() || b.tuples.is_empty() || !rest(a) || !rest(b) {
+                let (s, t) = (self.text(a), self.text(b));
+                self.error(
+                    span,
+                    format!("{what} does not take {s} and {t}: it takes two tuples or two numbers"),
+                );
+            } else {
+                // The components at each position of the shapes of each length.
+                let mut by_len: BTreeMap<usize, [Vec<&[Ty]>; 2]> = BTreeMap::new();
+                for (side, t) in [a, b].into_iter().enumerate() {
+                    for row in &t.tuples {
+                        by_len.entry(row.len()).or_default()[side].push(row);
+                    }
+                }
+                for (n, [s, t]) in by_len {
+                    if s.is_empty() || t.is_empty() {
+                        let (s, t) = (self.text(a), self.text(b));
+                        self.error(
+                            span,
+                            format!("{what} does not take {s} and {t}: a tuple of {n} components has none of its length to compare with"),
+                        );
+                        continue;
+                    }
+                    for i in 0..n {
+                        let join = |rows: &[&[Ty]]| Ty::union_all(rows.iter().map(|r| &r[i]));
+                        todo.push((join(&s), join(&t)));
+                    }
+                }
+            }
+            seen.insert(pair);
+        }
+        one_shape_per_length(&x.union(y))
+    }
+
     /// Checks each operand of the bit word or integer machine operation `w` against its domain
     /// (DESIGN.md sec:domains, sec:linalg): `int[0..]` for every one but the `x` of `shl` and
     /// `shr`, `int[0..<2 ** width]` for the operands read as `width` digits, `int[0..<width]`
@@ -4887,6 +4958,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.pass_at(span, at, &refused);
             }
             passed(&mut out, atoms.iter());
+        }
+        if let [Some(x), Some(y)] = args.as_slice()
+            && (!x.ty.tuples.is_empty() || !y.ty.tuples.is_empty())
+            && is_min_max(sig)
+        {
+            let t = self.min_max_tuples(what, sig, &x.ty, &y.ty, span);
+            return (out.union(&t), Vec::new());
         }
         let defer = std::mem::take(&mut self.defer);
         let passing = self.need_passed.len();

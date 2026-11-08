@@ -47,6 +47,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
 
 use crate::deep::{self, Queue};
+use crate::eval::ieee_min_max;
 use crate::num::{Exact, Rat, TooLarge, bytes_of, read_decimal, room, sign_of};
 use crate::text::{Text, TooLong};
 use crate::types::KeyHasher;
@@ -546,6 +547,23 @@ impl Value {
     /// tuples compare component by component in that order. `None` when they are unordered.
     pub fn surface_cmp(&self, other: &Value) -> Option<Ordering> {
         surface_cmp(self, other)
+    }
+
+    /// Whether `min(self, other)` (`min` true) or `max(self, other)` is `self`, for two values of
+    /// one kind (DESIGN.md sec:reduction, item 5): two tuples are ordered lexicographically, and
+    /// the first component in which they differ decides, by `min` or `max` of the two components
+    /// there, so that two floats that differ are decided by IEEE 754-2019 `minimum` or
+    /// `maximum` (a NaN is taken by both, and `-0.0` is below `0.0`), and two equal values give
+    /// `self`. `None` when a pair of components is of two kinds or two tuples differ in length.
+    /// The walk reads each distinct pair of shared tuples once, so it costs
+    /// O(distinct pairs of components read).
+    pub fn selects(&self, other: &Value, min: bool) -> Option<bool> {
+        let r = if min { Relation::Min } else { Relation::Max };
+        walk(step(self, other, r)).map(|o| match o {
+            Ordering::Equal => true,
+            Ordering::Less => min,
+            Ordering::Greater => !min,
+        })
     }
 
     /// The language's `==` (sec:failure, M0.11): structural, except that two floats compare
@@ -1229,6 +1247,14 @@ enum Relation {
     SurfaceEq,
     /// The language's order: IEEE 754 floats, and tuples by component.
     SurfaceOrder,
+    /// The order `min` selects the lesser of: [`Relation::Total`], except that of two floats
+    /// that differ the one IEEE 754-2019 `minimum` gives is the lesser, so a NaN is below
+    /// every other float and `-0.0` below `0.0`.
+    Min,
+    /// The order `max` selects the greater of: [`Relation::Total`], except that of two floats
+    /// that differ the one IEEE 754-2019 `maximum` gives is the greater, so a NaN is above
+    /// every other float and `-0.0` below `0.0`.
+    Max,
 }
 
 /// The two sequences of entries under comparison at one depth.
@@ -1273,8 +1299,15 @@ fn items<'a>(a: &'a Items, b: &'a Items, r: Relation) -> Step<'a> {
     match r {
         // One shared sequence is bitwise equal to itself; the IEEE 754 relations read it,
         // since a NaN inside is not equal to itself.
-        Relation::Identity | Relation::Total if a.same(b) => Step::Same,
-        Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
+        Relation::Identity | Relation::Total | Relation::Min | Relation::Max if a.same(b) => {
+            Step::Same
+        }
+        // `min` and `max` take two tuples of one length only.
+        Relation::Identity | Relation::SurfaceEq | Relation::Min | Relation::Max
+            if a.len() != b.len() =>
+        {
+            Step::Ends(None)
+        }
         _ => Step::Enter(Level::Items(a.iter(), b.iter(), r, Items::pair(a, b))),
     }
 }
@@ -1300,7 +1333,7 @@ fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
             PAIRS.with_borrow_mut(|pairs| pairs.push((a.clone(), b.clone())));
             Step::Same
         }
-        Relation::Total if same => Step::Same,
+        Relation::Total | Relation::Min | Relation::Max if same => Step::Same,
         _ if was_read(pair, r) => Step::Same,
         _ => Step::Enter(Level::Maps(Box::new(MapLevel {
             a: a.0.iter(),
@@ -1324,6 +1357,25 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
                 Some(Ordering::Equal) => Step::Same,
                 o => Step::Ends(o),
             }
+        }
+        // `min` and `max` order two values of one kind only, as at the top level.
+        (_, _, Relation::Min | Relation::Max)
+            if a.number_kind() != b.number_kind()
+                || (a.number_kind().is_none() && mem::discriminant(a) != mem::discriminant(b)) =>
+        {
+            Step::Ends(None)
+        }
+        (Value::Float(x), Value::Float(y), Relation::Min | Relation::Max) if x == y => Step::Same,
+        (Value::Float(x), Value::Float(y), Relation::Min | Relation::Max) => {
+            let min = r == Relation::Min;
+            // The float `minimum` or `maximum` gives is the lesser under `Min` and the greater
+            // under `Max`; two floats that differ bitwise are never both given.
+            let first = F64::new(ieee_min_max(min, x.get(), y.get())) == *x;
+            Step::Ends(Some(if first == min {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }))
         }
         // Two numbers are equal by their normal forms, which reads no bounds on their values;
         // only a coefficient divisible by a prime the other keeps as a power is copied, and

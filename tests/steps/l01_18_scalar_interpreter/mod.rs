@@ -9,6 +9,7 @@ mod literals;
 mod prim_names;
 mod rat_text;
 mod scaling;
+mod tuple_min_max;
 mod words;
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
