@@ -47,7 +47,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | «type» Bound = int | Ast | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
-  4 | «struct» FloatClass { finite : bool , nonNaN : bool , width : #f16 | #bf16 | #f32 | #f64 }
+  4 | «struct» FloatClass { min : f64 , max : f64 , nonNaN : bool , width : #f16 | #bf16 | #f32 | #f64 }
   5 | «struct» Constraints {
   6 | subject : Ast ,
   7 | interval : Interval | [ Interval ] | #none ,
