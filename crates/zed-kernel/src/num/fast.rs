@@ -510,6 +510,19 @@ fn nonzero_words(x: &BigUint) -> usize {
 pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
     let (la, lb) = (words(a), words(b));
     let (short, long) = (la.min(lb), la.max(lb));
+    // Complexity tradeoff: two timed crossovers of algorithms with identical results, nothing
+    // given up. A product whose narrower factor has at most `MUL_LEAF` words, and one above it
+    // where `toom_cost` is the least of the three computed costs, is num-bigint's Toom-3, about
+    // `n^1.465`, in place of the O(n log n) transforms, because num-bigint was measured faster
+    // there (the timings, dates and loads are in the doc comments of `MUL_LEAF` and
+    // `TOOM_COST`). Every method gives the same product (tests
+    // `l01_17_value_representation::subquadratic::products_agree_with_num_bigint_across_the_crossovers`
+    // and `tests::products_agree_with_num_bigint`, with the leaf and `TOOM_COST` set so the
+    // transforms are reached at small sizes); the growth above the leaf is tested by
+    // `a_dense_product_scales` (COMPLEXITY.md K82 and section "Crossovers", BIGINT-fast-mul).
+    // A complete solution solves the crossings from the methods' cost formulas rather than
+    // from timings; both constants are to be measured again at the Zed port (ZED_PORT_GAPS.md,
+    // "Entries from BIGINT-fast-mul").
     if short <= MUL_LEAF {
         return a * b;
     }
@@ -521,8 +534,9 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
     // `a_sparse_product_scales` and `products_agree_with_num_bigint` (COMPLEXITY.md K30).
     let rows = (nonzero_words(a) as u128 * lb as u128).min(nonzero_words(b) as u128 * la as u128);
     let (cost, piece) = transform_plan(short, long);
-    // A crossover set from timings (`TOOM_COST`): num-bigint's product where its computed cost
-    // is the least, which follows the transform's steps at each power of two of its points.
+    // The second crossover of the tradeoff above (`TOOM_COST`): num-bigint's product where its
+    // computed cost is the least, which follows the transform's steps at each power of two of
+    // its points.
     if toom_cost(short, long) <= rows.min(cost) as f64 {
         return a * b;
     }
