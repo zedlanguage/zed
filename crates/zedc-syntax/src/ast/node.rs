@@ -355,7 +355,7 @@ pub enum StmtKind {
         /// The declaration.
         decl: Box<Stmt>,
     },
-    /// `@log(#off);` or `@strict;`: an annotation of the enclosing unit, an item of its own.
+    /// `@log(#off);`: an annotation of the enclosing unit, an item of its own.
     UnitAnnot(Annot),
 }
 

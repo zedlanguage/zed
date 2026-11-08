@@ -68,10 +68,7 @@ fn every_other_unit_item_is_refused_with_its_reason() {
             "1:1: `@fused` annotates a declaration and is not a unit item; write it before \
              the declaration it annotates",
         ),
-        (
-            "@strict;\nf(x) = x;",
-            "1:1: `@strict` is an annotation of layer L15",
-        ),
+        ("@strict;\nf(x) = x;", "1:1: `@strict` is not an annotation"),
         ("@quiet;\nf(x) = x;", "1:1: `@quiet` is not an annotation"),
     ];
     for &(text, want) in cases {

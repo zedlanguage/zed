@@ -910,7 +910,7 @@ mirror(positional t: Tree) = match t { #leaf -> #leaf, Node(l:, v:, r:) -> Node(
 law mirrorKeepsSize(t: Tree) = size(mirror(t)) == size(t)                              // the `proof` clause ends the declaration, as `test` does
   proof { byInduction(t) }                                                              // structural induction on Tree; `ih` is bound in the step; the tactic is compile-time Zed returning a Proof
                                                                                         // law 21 proves it with no induction: t -> size(mirror(t)) satisfies size's fold equation, + being commutative
-law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);   // Obligated: below proof grade — reported, property-tested, and no rewrite is licensed by it
+law sortIdempotent(xs: [int]) = xs.sort(asc x -> x).sort(asc x -> x) == xs.sort(asc x -> x);   // ✗ Obligation below proof grade: Obligated, which licenses nothing; the menu offers a `proof { }`
 ```
 
 <!-- EXAMPLES.md:938 layer L15: ring L15, word L15 (@invariant), label none; section [20. Testing, properties, and proofs] 5 -->
@@ -968,7 +968,7 @@ q = exec(db, "select …" ++ userInput);     // ✗ Taint at a sink whose parame
 // [d4*] sec:checking_in_zed — `parity` is the evidence facet declared there
 half(positional x: int with parity(#even)) = x div 2;
 g(n: int with parity(#odd)) = half(n + n);            // ✓ #odd + #odd is #even, and #add's soundness law is Proved
-k(n: int with parity(#odd), m: int) = half(n * m);    // m carries no parity fact, so #mul gives #either: the demand stays the run-time test holds(#even, n * m), and k returns int | #invalid
+k(n: int with parity(#odd), m: int) = half(n * m);    // ✗ Obligation below proof grade: m carries no parity fact, so #mul gives #either and holds(#even, n * m) is not proved; the menu offers m: int with parity(#even)
 seven = 7 with parity(#odd);                          // attaching a fact is an obligation: holds(#odd, 7) runs at build
 ```
 
