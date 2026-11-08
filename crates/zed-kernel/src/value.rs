@@ -903,7 +903,7 @@ impl Levels {
         for key in above {
             at = self.descend(at, key.key()).ok_or_else(collision)?;
         }
-        let empty = matches!(&leaf, Value::Family(f) if f.is_empty());
+        let empty = matches!(&leaf, Value::Family(f) if Family::is_empty(f));
         match self.0[at].entry(last.key()) {
             Entry::Occupied(slot) => match slot.get() {
                 Slot::Inner(_) | Slot::Leaf(Value::Family(_)) if empty => Ok(()),
