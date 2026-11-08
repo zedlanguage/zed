@@ -1,6 +1,6 @@
-Expr ::: -x ** 2 ::: (- (x ** 2))
-Expr ::: a ** b ** c ::: (a ** (b ** c))
-Expr ::: 2 ** -1 ::: (2 ** (- 1))
+Expr ::: -x ^ 2 ::: (- (x ^ 2))
+Expr ::: a ^ b ^ c ::: (a ^ (b ^ c))
+Expr ::: 2 ^ -1 ::: (2 ^ (- 1))
 Expr ::: !x.isNaN ::: (! (x (. isNaN)))
 Expr ::: -1 div 4 ::: ((- 1) div 4)
 Expr ::: 0..<s::len - 1 ::: (0 (..< ((s (:: len)) - 1)))
@@ -56,15 +56,24 @@ Item ::: d = @fpsafe x - y else 0.0; ::: (d = ((@fpsafe (x - y)) (else 0.0)) ;)
 Item ::: v = @timeout(d) fetch(u) else 0; ::: (v = ((@timeout ( d ) (fetch (( u )))) (else 0)) ;)
 Item ::: v = @timeout(2r) fs[p] + longPure(xs); ::: (v = (@timeout ( 2r ) ((fs ([ p ])) + (longPure (( xs ))))) ;)
 Item ::: d = x + @fpsafe y - z; ::: (d = (x + (@fpsafe (y - z))) ;)
-Item ::: d = @fpsafe x ** 2; ::: (d = (@fpsafe (x ** 2)) ;)
+Item ::: d = @fpsafe x ^ 2; ::: (d = (@fpsafe (x ^ 2)) ;)
 Item@6 ::: d = @fpsafe (x - y); ::: ERROR
 Item@6 ::: v = @timeout(d) fetch(u); ::: ERROR
 Item ::: r = @approx(relErr: 0.001) rsqrt(x); ::: (r = (@approx ( (relErr : 0.001) ) (rsqrt (( x )))) ;)
-Item ::: r = @approx(absErr: 2 ** -20) sin(x) * 2.0; ::: (r = (@approx ( (absErr : (2 ** (- 20))) ) ((sin (( x ))) * 2.0)) ;)
+Item ::: r = @approx(absErr: 2 ^ -20) sin(x) * 2.0; ::: (r = (@approx ( (absErr : (2 ^ (- 20))) ) ((sin (( x ))) * 2.0)) ;)
 Item ::: r = @approx(relErr: e) (-f(x)); ::: (r = (@approx ( (relErr : e) ) (( (- (f (( x )))) ))) ;)
 Item ::: r = @approx(relErr: 0.001) (1.0 / x); ::: (r = (@approx ( (relErr : 0.001) ) (( (1.0 / x) ))) ;)
 Item ::: r = -@approx(relErr: 0.001) rsqrt(x); ::: (r = (- (@approx ( (relErr : 0.001) ) (rsqrt (( x ))))) ;)
 Item ::: r = @approx(relErr: 0.001); ::: ERROR
+Expr@8 ::: x into (@f a && ? b) ::: ERROR
+Expr@15 ::: x into (@f a && ? b) ::: ERROR
+Expr@15 ::: x into ((@f a) && ? b) ::: (x (into ( ((( (@f a) )) && ? b) )))
+Expr@8 ::: @f a < b <= c ::: ERROR
+Expr@22 ::: @f a < b <= c ::: (@f (a < b <= c))
+Expr@22 ::: a < @f b <= c ::: (a < (@f (b <= c)))
+Expr ::: a != @f b || c == d ::: (a != (@f (b || (c == d))))
+Expr ::: if @f c { 1 } else { 2 } ::: (if (@f c) ({ 1 }) else ({ 2 }))
+Expr ::: [@f a, b] ::: ([ (@f a) , b ])
 Item ::: tree = exact + 1; ::: (tree = (exact + 1) ;)
 Expr ::: xs >< tree ::: (xs (>< tree))
 Expr ::: xs >< max tree else 0 ::: ((xs (>< max tree)) (else 0))

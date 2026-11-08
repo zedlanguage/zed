@@ -5,13 +5,13 @@ use zed_tests::step_helpers::l01_16_elaboration::{errors, term, value};
 #[test]
 fn integers_widen_past_64_bits_and_narrow_back() {
     let src = "max = 9223372036854775807;\nnext = max + 1;\nback = next - 1;\n\
-               same = back == max;\ngoogol = 10 ** 100;\n";
+               same = back == max;\ngoogol = 10 ^ 100;\n";
     assert_eq!(value(src, "next"), "9223372036854775808");
     assert_eq!(value(src, "same"), "true");
     assert_eq!(
         value(src, "googol"),
         format!("1{}", "0".repeat(100)),
-        "`**` past 64 bits"
+        "`^` past 64 bits"
     );
     // The most negative machine integer is a literal past 64 bits, negated.
     let src = "lo = -9223372036854775808;\nn = lo - 1;\n";
@@ -38,8 +38,8 @@ fn big_literals_in_any_base_and_euclidean_division() {
 
 #[test]
 fn powers_of_zero_one_and_minus_one_stay_small() {
-    let src = "a = 1 ** 100000000000000000000;\nb = (-1) ** 100000000000000000001;\n\
-               c = 0 ** 100000000000000000000;\nd = 7 ** 0;\n";
+    let src = "a = 1 ^ 100000000000000000000;\nb = (-1) ^ 100000000000000000001;\n\
+               c = 0 ^ 100000000000000000000;\nd = 7 ^ 0;\n";
     assert_eq!(value(src, "a"), "1");
     assert_eq!(value(src, "b"), "-1");
     assert_eq!(value(src, "c"), "0");
@@ -48,9 +48,9 @@ fn powers_of_zero_one_and_minus_one_stay_small() {
 
 #[test]
 fn a_number_far_past_a_machine_word_is_exact() {
-    // `3 ** 10000000` has 4.7 million digits and `1e999999r` a million: both are kept as
+    // `3 ^ 10000000` has 4.7 million digits and `1e999999r` a million: both are kept as
     // powers of primes, so their remainders, order and quotients come without the digits.
-    let src = "huge = 3 ** 10000000;\nlast = huge mod 1000;\nbelow = huge < 3 ** 10000001;\n\
+    let src = "huge = 3 ^ 10000000;\nlast = huge mod 1000;\nbelow = huge < 3 ^ 10000001;\n\
                x = 1e999999r;\nten = x / 1e999998r;\ntiny = 1r / x * 1e1000000r;\n";
     assert_eq!(value(src, "last"), "1");
     assert_eq!(value(src, "below"), "true");

@@ -91,7 +91,7 @@ fn a_tolerance_on_a_difference_gives_one_or_two_pieces() {
         backward(&Op::Abs, 0, &top(), &top(), &iv(Some(3), None)).to_string(),
         "[..=-3, 3..]"
     );
-    // `x ** 2` between 10 and 50: x is 4 to 7 in either sign.
+    // `x ^ 2` between 10 and 50: x is 4 to 7 in either sign.
     assert_eq!(
         backward(
             &Op::Pow(2u32.into()),
@@ -103,7 +103,7 @@ fn a_tolerance_on_a_difference_gives_one_or_two_pieces() {
         .to_string(),
         "[-7..=-4, 4..=7]"
     );
-    // `x ** 3` up to -8: x at most -2.
+    // `x ^ 3` up to -8: x at most -2.
     assert_eq!(
         backward(
             &Op::Pow(3u32.into()),

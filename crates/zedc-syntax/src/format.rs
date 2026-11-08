@@ -126,7 +126,7 @@ fn binary_level(op: &str) -> u8 {
         "<" | "<=" | ">" | ">=" => RELATION,
         "+" | "-" | "++" => ADDITIVE,
         "*" | "/" | "div" | "mod" => ADDITIVE + 1,
-        "**" => POWER,
+        "^" => POWER,
         _ => unreachable!("{op} is no binary operator of layer L1"),
     }
 }

@@ -28,7 +28,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `FINITE_SET_LIMIT` 64 | store/lattice.rs | removed (3c): an interval or type with more members was not listed |
 | `WIDENING_DELAY` 3 | store/iterate.rs | removed (3): which changes of a loop head were joins and which widenings |
 | `i64` interval ends | store/interval.rs `End::from_i128`, presburger.rs `hull_from`, affine.rs `Bounds::offset` | removed (10): an end past `i64` was rounded out to `i64::MAX` or `i64::MIN`, a hull bound past it was dropped, an offset past it dropped the bound, and a preimage through such an end was not claimed exact |
-| `i64` congruence classes | store/lattice.rs `Congruence` (modulus `u64`, residue `i64`), canon/domain.rs `least_class`, store/revision.rs; also `Affine::times` and the `u32` exponent of `Op::Pow` | fixed (TD-cong, COMPLEXITY.md S36): the modulus and residue are `Num`, `least_class` and the meet are exact at any size, `Affine::times` is exact, and `x ** k` is exact for every exponent held as a `Num` that is not kept; `Exponent::Past`, a kept exponent and a kept base that is not bare raised past `u32` still bound the end outward |
+| `i64` congruence classes | store/lattice.rs `Congruence` (modulus `u64`, residue `i64`), canon/domain.rs `least_class`, store/revision.rs; also `Affine::times` and the `u32` exponent of `Op::Pow` | fixed (TD-cong, COMPLEXITY.md S36): the modulus and residue are `Num`, `least_class` and the meet are exact at any size, `Affine::times` is exact, and `x ^ k` is exact for every exponent held as a `Num` that is not kept; `Exponent::Past`, a kept exponent and a kept base that is not bare raised past `u32` still bound the end outward |
 | `HEAD_ITERATIONS` 64 | store/iterate.rs | removed (3): a component was set to the top |
 | `NARROWING_ROUNDS` 64 | store/iterate.rs | removed (3): phase 2 stopped with the values it had |
 | `REDUCTION_ROUNDS` 16 | store/product.rs | removed (3) |
@@ -41,7 +41,7 @@ the list: running out of them is a build failure, never a different answer (DESI
 | `SATURATION_ITERATIONS` 8, `SATURATION_NODES` 10^4 | zed-kernel budgets.rs | removed (8): never read; rung 3 is not built |
 | `DEFAULT_FUEL` 10^8 | zed-kernel eval.rs | removed (8): a compile-time evaluation stopped |
 | `POWER_FACTORS` 64 | store/preimage.rs | removed (CAP-power; COMPLEXITY.md S30): a product of more equal factors was read by the entry for `*`, not as a power |
-| `u32` exponent of `Op::Pow` | store/revision.rs | removed (CAP-pow32; COMPLEXITY.md S30b): a product of more than `u32::MAX` equal factors, or `x ** k` with a larger `k`, was not read as a power |
+| `u32` exponent of `Op::Pow` | store/revision.rs | removed (CAP-pow32; COMPLEXITY.md S30b): a product of more than `u32::MAX` equal factors, or `x ^ k` with a larger `k`, was not read as a power |
 
 Not thresholds: `TOP` 29 (the number of grammar layers), `MIN_STEPS`, `MIN_MEMORY`
 (resources). `MIN_NESTED_CALLS` is a minimum the spec guarantees; the evaluator has no
@@ -651,8 +651,8 @@ Now an end is `End::Fin(Num)` (`store/int.rs`): one machine word while the value
 `i64`, a big integer past it, and a value in `i64` has one form, so a big result back in
 range is a word again. A value outside `i128` built from a power is kept as
 `(c * core + d) / den`, where the core is a power `b^e` or a power of a floor root of a kept
-power, so the bound of `x ** 100000000`, of `x ** 100000000 + 1` and the cube root of
-`2 ** 100000000` are built and compared in time polynomial in the bits of the coefficients,
+power, so the bound of `x ^ 100000000`, of `x ^ 100000000 + 1` and the cube root of
+`2 ^ 100000000` are built and compared in time polynomial in the bits of the coefficients,
 the base and the exponents, not in their 10^8 bits. Sums with values that are not kept or
 share the core, products with values that are not kept, `div`, `mod` and gcd by them, powers
 and roots keep the form; the cases that write a value out are listed in COMPLEXITY.md S33.
@@ -677,7 +677,7 @@ scaling work rose 1.35 times at `n` = 200 and 1.46 times at 1600 (2196148 to 297
 13492726 to 19691847 instructions); the work at `2^200` did not change.
 
 Kept powers: `ends::the_bound_of_a_large_power_is_built_and_compared_without_its_digits`
-(`x ** 10^8` for x in 2..=3, forward, backward and comparisons, in under a second),
+(`x ^ 10^8` for x in 2..=3, forward, backward and comparisons, in under a second),
 `ends::kept_powers_order_and_hash_as_their_values_written_out` (400 random powers and
 neighbors against `BigInt`) and `scaling::power_bounds_scale_with_the_bits_of_the_exponent`
 (k = 10^6 to 8 * 10^6: 94863 to 101568 instructions, 1.1 times, limit 3). Negative control,

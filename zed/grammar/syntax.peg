@@ -141,9 +141,10 @@ Multiplicative = Multiplicative ('*' | '/' | 'div' | 'mod') Prefix              
 Prefix        = ('-' | '!') Prefix                                                 L1
               | AnnotExpr                                                          L7
               | ~Power                                                             L1
-AnnotExpr     = ANNOT '(' nest(Args?) ')' !'-' Or                                  L7
-              | ANNOT Or                                                           L7
-Power         = Postfix '**' Prefix                                                L1
+AnnotExpr     = ANNOT '(' nest(Args?) ')' !'-' Or &AnnotEnd                        L7
+              | ANNOT Or &AnnotEnd                                                 L7
+AnnotEnd      = ')' | ']' | '}' | ',' | ';' | 'else' | '{' | END                   L7
+Power         = Postfix '^' Prefix                                                L1
               | ~Postfix                                                           L1
 Postfix       = Postfix Suffix                                                     L1
               | ~Primary                                                           L1
@@ -195,7 +196,7 @@ TupleExpr     = '(' nest(Expr ((',' Expr)+ ','? | ',')) ')'                     
 ArrayExpr     = '[' nest((Expr12 % ',' ','?)?) ']'                                 L3
 HoleExpr      = '?'                                                                L15
 Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                      L1
-BinOp         = '+' | '-' | '*' | '/' | '**' | '++' | 'div' | 'mod' | '&&' | '||' | '==' | '!=' | '<=' | '<' | '>=' | '>'   L3
+BinOp         = '+' | '-' | '*' | '/' | '^' | '++' | 'div' | 'mod' | '&&' | '||' | '==' | '!=' | '<=' | '<' | '>=' | '>'   L3
 
 Block         = '{' nest(Item* Expr?) '}'                                          L1
               | Display                                                            L2
@@ -249,7 +250,7 @@ JoinExpr      = And ('||' And)+                                                 
               | Relation '==' Relation                                             L8
               | '(' nest(JoinExpr) ')'                                             L8
 Key           = WILD | Additive                                                    L8
-KeyOp         = '(' | '[' | '.' | '?.' | '*.' | '::' | '**' | '*' | '/' | 'div' | 'mod' | '+' | '-' | '++'   L8
+KeyOp         = '(' | '[' | '.' | '?.' | '*.' | '::' | '^' | '*' | '/' | 'div' | 'mod' | '+' | '-' | '++'   L8
 
 Type          = Arrow TypeFacet* TypeWhere? TypeBounds?                            L1
 TypeFacet     = 'with' FacetCall                                                   L7

@@ -57,15 +57,15 @@ fn a_rational_reads_as_string_writes_it_or_as_a_decimal() {
 fn a_number_to_f64_must_be_exactly_representable() {
     assert_eq!(x("f64(3)"), "3.0");
     assert_eq!(
-        x("f64(2 ** 60)"),
+        x("f64(2 ^ 60)"),
         "1152921504606847000.0",
         "the shortest digits that read back"
     );
-    assert_eq!(x("f64(2 ** 60 + 1)"), "#inexact", "2^60 + 1 needs 61 bits");
+    assert_eq!(x("f64(2 ^ 60 + 1)"), "#inexact", "2^60 + 1 needs 61 bits");
     assert_eq!(x("f64(3r/8r)"), "0.375");
     assert_eq!(x("f64(1r/3r)"), "#inexact");
-    assert_eq!(x("f64(rat(1) / rat(2 ** 1074))"), "5.0e-324");
-    assert_eq!(x("f64(rat(1) / rat(2 ** 1075))"), "#inexact");
+    assert_eq!(x("f64(rat(1) / rat(2 ^ 1074))"), "5.0e-324");
+    assert_eq!(x("f64(rat(1) / rat(2 ^ 1075))"), "#inexact");
 }
 
 #[test]

@@ -49,7 +49,7 @@ fn a_rate_of_a_rate_divides_from_the_left() {
 
 #[test]
 fn a_power_of_a_power_stays_right_associative() {
-    assert_eq!(tree("2 ** 3 ** 2", "Expr"), "(2 ** (3 ** 2))");
+    assert_eq!(tree("2 ^ 3 ^ 2", "Expr"), "(2 ^ (3 ^ 2))");
 }
 
 #[test]

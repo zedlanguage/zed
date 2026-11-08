@@ -10,8 +10,8 @@ fn check(text: &str, want: &str) {
 #[test]
 fn spacing_and_parentheses_are_normalized() {
     check(
-        "area(w,h)=w*h;\nmean(a,b)=((a+b))/2;\nf(x)=-(-x)**2;\n",
-        "area(w, h) = w * h;\nmean(a, b) = (a + b) / 2;\nf(x) = -(-x) ** 2;\n",
+        "area(w,h)=w*h;\nmean(a,b)=((a+b))/2;\nf(x)=-(-x)^2;\n",
+        "area(w, h) = w * h;\nmean(a, b) = (a + b) / 2;\nf(x) = -(-x) ^ 2;\n",
     );
     check(
         "g(x)=(x-1)-(x-2);\nh(x)=x-(1-2);\nok(x)=(x<1)==(x<2);\n",

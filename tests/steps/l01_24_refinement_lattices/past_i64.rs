@@ -1,5 +1,5 @@
 //! Congruences, affine coefficients and power exponents at and past the 64-bit range (TD-cong).
-//! A class's modulus and residue, an affine bound's coefficients and the exponent of `x ** k`
+//! A class's modulus and residue, an affine bound's coefficients and the exponent of `x ^ k`
 //! are unbounded integers, so a fact about values near `i64::MAX`, near `-2^127` or far past
 //! them is exact: a class is not widened to every integer, a coefficient is not dropped, and
 //! a power with an exponent past `u32` is not bounded outward.
@@ -261,16 +261,16 @@ fn point(v: Num) -> IntervalSet {
 
 #[test]
 fn powers_past_u32_are_exact() {
-    // `3 ** 2^32`, past `u32`: the square of `3 ** 2^31`, found without the exponent.
+    // `3 ^ 2^32`, past `u32`: the square of `3 ^ 2^31`, found without the exponent.
     let k = 1i128 << 32;
     let want = Num::from(9).pow(1 << 31);
     assert_eq!(forward(&pow(k), &point(n(3)), &point(n(3))), point(want));
-    // `(-2) ** i64::MAX`: odd, so negative; and `2 ** (2^127 - 1)`, `2 ** -2^127`'s magnitude.
+    // `(-2) ^ i64::MAX`: odd, so negative; and `2 ^ (2^127 - 1)`, `2 ^ -2^127`'s magnitude.
     let neg = forward(&pow(n(MAX)), &point(n(-2)), &point(n(-2)));
     assert_eq!(neg, point(-&Num::pow2(&n(MAX))));
     let big = forward(&pow(n(i128::MAX)), &point(n(2)), &point(n(2)));
     assert_eq!(big, point(Num::pow2(&n(i128::MAX))));
-    // An exponent past `i128` written out: `2 ** 2^200` and `(-1) ** (2^200 + 1)`.
+    // An exponent past `i128` written out: `2 ^ 2^200` and `(-1) ^ (2^200 + 1)`.
     let e = two_big(200);
     assert_eq!(
         forward(&pow(e.clone()), &point(n(2)), &point(n(2))),
@@ -283,7 +283,7 @@ fn powers_past_u32_are_exact() {
     // A kept power raised past `u32`: its exponents multiply.
     let x = forward(&pow(k), &point(two(200)), &point(two(200)));
     assert_eq!(x, point(Num::pow2(&n(200 * k))));
-    // Over a range: `x ** (2^32 + 1)` is increasing.
+    // Over a range: `x ^ (2^32 + 1)` is increasing.
     let r = IntervalSet::of(-2, 3);
     assert_eq!(
         forward(&pow(k + 1), &r, &r),
@@ -296,24 +296,24 @@ fn powers_past_u32_are_exact() {
 
 #[test]
 fn roots_past_u32_are_exact() {
-    // `x ** 2^32 <= 3 ** 2^32 - 1` holds for `x` in `-2..=2`; the bound for `u32::MAX` gave
+    // `x ^ 2^32 <= 3 ^ 2^32 - 1` holds for `x` in `-2..=2`; the bound for `u32::MAX` gave
     // `-3..=3`.
     let k = 1i128 << 32;
     let top = &Num::from(3).pow_by(&n(k)).unwrap() - &Num::ONE;
     let z = IntervalSet::range(End::of(0), End::Fin(top.clone()));
     let all = IntervalSet::top();
     assert_eq!(backward(&pow(k), 0, &all, &all, &z), IntervalSet::of(-2, 2));
-    // `x ** (2^32 + 1) >= 2 ** (2^32 + 1)`: `x >= 2`.
+    // `x ^ (2^32 + 1) >= 2 ^ (2^32 + 1)`: `x >= 2`.
     let z = IntervalSet::range(End::Fin(Num::pow2(&n(k + 1))), End::PosInf);
     assert_eq!(
         backward(&pow(k + 1), 0, &all, &all, &z),
         IntervalSet::range(End::of(2), End::PosInf)
     );
-    // `x ** (2^32 + 1) == 2 * 3 ** (2^32 + 1)`: no integer, the root lying between 3 and 4.
+    // `x ^ (2^32 + 1) == 2 * 3 ^ (2^32 + 1)`: no integer, the root lying between 3 and 4.
     let v = &Num::from(3).pow_by(&n(k + 1)).unwrap() * &n(2);
     let r = backward(&pow(k + 1), 0, &all, &all, &point(v));
     assert!(r.is_empty(), "{r}");
-    // `x ** (2^32 + 1) == 3 ** (2^32 + 1) + 1`, a sum: no integer. The prime factors of `2^32 + 1`
+    // `x ^ (2^32 + 1) == 3 ^ (2^32 + 1) + 1`, a sum: no integer. The prime factors of `2^32 + 1`
     // are 641 and 6700417, so the residue test first applies at the prime 1283.
     let v = &Num::from(3).pow_by(&n(k + 1)).unwrap() + &Num::ONE;
     let r = backward(&pow(k + 1), 0, &all, &all, &point(v));
@@ -323,7 +323,7 @@ fn roots_past_u32_are_exact() {
 #[test]
 fn an_exponent_with_no_exact_form_bounds_outward() {
     // Corner cases. A sum past `i128` raised past `u32` has no kept form: the bound is
-    // `2 ** u32::MAX` toward 0 and infinite away from it, and it is sound.
+    // `2 ^ u32::MAX` toward 0 and infinite away from it, and it is sound.
     let s = &two(200) + &Num::ONE;
     let k = 1i128 << 32;
     let x = forward(&pow(k), &point(s.clone()), &point(s));
@@ -331,7 +331,7 @@ fn an_exponent_with_no_exact_form_bounds_outward() {
         x,
         IntervalSet::range(End::Fin(Num::from(2).pow(u32::MAX)), End::PosInf)
     );
-    // A kept exponent, `2 ** 200` from a power: the same bound; the bases -1, 0 and 1 are
+    // A kept exponent, `2 ^ 200` from a power: the same bound; the bases -1, 0 and 1 are
     // exact by its parity.
     let e = two(200);
     let x = forward(&pow(e.clone()), &point(n(5)), &point(n(5)));
@@ -346,7 +346,7 @@ fn an_exponent_with_no_exact_form_bounds_outward() {
             point(n(want))
         );
     }
-    // The exponent 0 past `u32`'s parity reading: `x ** 0` is 1, and the class of the empty
+    // The exponent 0 past `u32`'s parity reading: `x ^ 0` is 1, and the class of the empty
     // join is the bottom.
     assert_eq!(
         forward(&pow(0), &IntervalSet::of(-5, 5), &IntervalSet::of(-5, 5)),
@@ -395,8 +395,8 @@ fn classes_affine_bounds_and_powers_past_i64_scale_linearly() {
             .collect::<BTreeMap<_, _>>();
         assert_eq!(a.times(n(i128::MIN)).terms.len(), count);
     });
-    // `x ** (2^32 + 1)` over n pieces, and the reduction of n pieces onto a class past `i64`.
-    scaling::check("x ** (2^32 + 1) over n pieces", 400, |count| {
+    // `x ^ (2^32 + 1)` over n pieces, and the reduction of n pieces onto a class past `i64`.
+    scaling::check("x ^ (2^32 + 1) over n pieces", 400, |count| {
         let x = IntervalSet::from_pieces(
             (0..count as i64)
                 .map(|i| (End::of(10 * i + 2), End::of(10 * i + 5)))

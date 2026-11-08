@@ -164,9 +164,9 @@ axioms = [
   Axiom(op: ">", carrier: #string, property: #composes(">=", ">")),
   Axiom(op: ">=", carrier: #string, property: #composes(">", ">")),
   // The bit words of step L1.39a, on their domain `int[0..]`. None takes a width, so no law
-  // wraps: `shl(x, k)` is the exact `x * 2 ** k` for every int `x`, `shl(1, 64)` is `2 ** 64`,
-  // and `shr(x, k)` is the Euclidean `x div 2 ** k`, which rounds toward negative infinity.
-  // `#selfInverse(e)` is `op(a, a) == e`; `#powerOfTwo(g)` is `op(x, k) == g(x, 2 ** k)`.
+  // wraps: `shl(x, k)` is the exact `x * 2 ^ k` for every int `x`, `shl(1, 64)` is `2 ^ 64`,
+  // and `shr(x, k)` is the Euclidean `x div 2 ^ k`, which rounds toward negative infinity.
+  // `#selfInverse(e)` is `op(a, a) == e`; `#powerOfTwo(g)` is `op(x, k) == g(x, 2 ^ k)`.
   Axiom(op: "bitAnd", carrier: #int, property: #associative),
   Axiom(op: "bitAnd", carrier: #int, property: #commutative),
   Axiom(op: "bitAnd", carrier: #int, property: #idempotent),

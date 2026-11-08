@@ -497,7 +497,7 @@ fn comparing_numbers_that_agree_in_n_bits_costs_order_n() {
     });
 }
 
-/// The plan's example `2 ** 2 ** 40 + 1 < 2 ** 2 ** 40 + 2` stops before the comparison: each
+/// The plan's example `2 ^ 2 ^ 40 + 1 < 2 ^ 2 ^ 40 + 2` stops before the comparison: each
 /// sum needs `2^40` bits, and CAP-bits refuses the sum `+` itself.
 #[test]
 fn the_plan_example_is_refused_at_the_sum() {

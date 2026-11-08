@@ -167,14 +167,14 @@ fn the_checker_reads_each_binding_of_a_chain_once() {
 
 #[test]
 fn a_constant_no_bit_word_reads_is_not_folded() {
-    // `x = 3 ** e + 5 ** e;` with `x` read by nothing: the checker reads a binder's value only
+    // `x = 3 ^ e + 5 ^ e;` with `x` read by nothing: the checker reads a binder's value only
     // for a bit word or an exponent that reads its name, so the work does not grow with `e`.
     // Folded at its binder, the sum takes time that grows faster than its digits.
     check_alone(
-        "checking an unread constant 3 ** e + 5 ** e",
+        "checking an unread constant 3 ^ e + 5 ^ e",
         200_000,
         0,
-        |e| with_main(format!("x = 3 ** {e} + 5 ** {e};\n")),
+        |e| with_main(format!("x = 3 ^ {e} + 5 ^ {e};\n")),
     );
 }
 

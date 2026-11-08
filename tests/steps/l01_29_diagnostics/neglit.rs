@@ -82,7 +82,7 @@ fn each_repair_is_accepted_and_prints_its_value() {
 fn only_a_chain_on_a_numeric_literal_under_a_prefix_minus_is_rejected() {
     let cases = [
         // The rejected forms: spaced, float, rational, hexadecimal, a longer chain, a call,
-        // an index, inside a call's argument, under `**`'s right operand, doubled.
+        // an index, inside a call's argument, under `^`'s right operand, doubled.
         ("- 1.abs", true),
         ("-2.5.abs", true),
         ("-0.5r.abs", true),
@@ -91,10 +91,10 @@ fn only_a_chain_on_a_numeric_literal_under_a_prefix_minus_is_rejected() {
         ("-1.clamp(0, 8)", true),
         ("-1[0]", true),
         ("f(-1.abs)", true),
-        ("2 ** -1.abs", true),
+        ("2 ^ -1.abs", true),
         ("--1.abs", true),
         // Accepted: no chain, a grouped base, a grouped chain, a name as base, binary minus,
-        // `!`, and a power, whose `-` applies to `1.abs ** 2` as `-x ** 2` is `-(x ** 2)`.
+        // `!`, and a power, whose `-` applies to `1.abs ^ 2` as `-x ^ 2` is `-(x ^ 2)`.
         ("-1", false),
         ("-(1).abs", false),
         ("-(1.abs)", false),
@@ -102,7 +102,7 @@ fn only_a_chain_on_a_numeric_literal_under_a_prefix_minus_is_rejected() {
         ("-x.abs", false),
         ("x - 1.abs", false),
         ("!1.abs", false),
-        ("-1.abs ** 2", false),
+        ("-1.abs ^ 2", false),
         ("-1 div 4", false),
     ];
     let wrong: Vec<String> = cases

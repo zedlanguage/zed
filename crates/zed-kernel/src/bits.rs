@@ -15,7 +15,7 @@
 //! An operation on machine integers whose result fits is computed in machine arithmetic. Past
 //! that, the shifts, `bitNot`, the rotations, `mulHi` and the funnel shifts are products,
 //! quotients, remainders and sums of powers of two, which [`Rat`] keeps as exponents, so
-//! `shl(1, 2 ** 40)` costs a few words. The digit-wise words, `bitAnd`, `bitOr`, `bitXor`,
+//! `shl(1, 2 ^ 40)` costs a few words. The digit-wise words, `bitAnd`, `bitOr`, `bitXor`,
 //! `popCount`, `leadingZeros`, `trailingZeros`, `bitReverse`, `byteSwap`, `pdep` and `pext`,
 //! build their operands' digits, asking the system for the memory first, as
 //! [`Rat::to_integer`] does; `bitReverse` and `byteSwap` build only the digits of `x` and keep
@@ -205,8 +205,8 @@ fn domain(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<(), KernelError> {
             return Err(outside(
                 p,
                 names[i],
-                "int[0..<2 ** width]",
-                "at least 2 ** width",
+                "int[0..<2 ^ width]",
+                "at least 2 ^ width",
             ));
         }
     }
@@ -268,8 +268,8 @@ fn small(p: Prim, args: &[Value]) -> Result<Option<Value>, KernelError> {
                 return Err(outside(
                     p,
                     params(p)[i],
-                    "int[0..<2 ** width]",
-                    "at least 2 ** width",
+                    "int[0..<2 ^ width]",
+                    "at least 2 ^ width",
                 ));
             }
         }
@@ -648,11 +648,11 @@ mod tests {
         );
         assert_eq!(
             err(Prim::MulHi, &[1, 256, 8]),
-            "`mulHi` needs `b` in int[0..<2 ** width], and it is at least 2 ** width"
+            "`mulHi` needs `b` in int[0..<2 ^ width], and it is at least 2 ^ width"
         );
         assert_eq!(
             err(Prim::FunnelShr, &[256, 0, 0, 8]),
-            "`funnelShr` needs `hi` in int[0..<2 ** width], and it is at least 2 ** width"
+            "`funnelShr` needs `hi` in int[0..<2 ^ width], and it is at least 2 ^ width"
         );
         assert_eq!(
             err(Prim::Pdep, &[-1, 3]),

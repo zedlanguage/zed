@@ -57,7 +57,7 @@ arity(positional op) = match op { #neg -> 1, #pow(k:) -> 1, #abs -> 1, _ -> 2 };
 //   *        no bound when 0 is in both z and the other argument; otherwise
 //            z / other over the nonzero sign parts of the other argument,
 //            rounded outward
-//   ** k     k = 0: no bound; odd k: the signed integer k-th roots of z, one
+//   ^ k     k = 0: no bound; odd k: the signed integer k-th roots of z, one
 //            piece; even k: the roots of z cut to 0.., in two pieces of
 //            opposite sign
 //   abs      two pieces, -z and z, with z cut to 0..
@@ -110,7 +110,7 @@ reduceFinite(positional xs, positional s) =
 // arguments in the order false < true: `x < y` and `x <= y` fall with x and
 // rise with y, `x > y` and `x >= y` the other way, `!x` falls, `&&` and `||`
 // rise in both, and `==` and `!=` have no tonicity. Shifts and scalings by a
-// constant, Euclidean `div` by a constant, and `x ** k` invert exactly at their
+// constant, Euclidean `div` by a constant, and `x ^ k` invert exactly at their
 // endpoints; `mod` by a constant inverts exactly within the operand's bounded
 // interval; a branch is the union of its arms under their guards; any other
 // operator takes the HC4 table above, necessary only.

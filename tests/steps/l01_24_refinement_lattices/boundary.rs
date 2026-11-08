@@ -152,13 +152,13 @@ fn products_quotients_and_powers_that_land_on_an_edge_have_its_one_form() {
             min.clone(),
         ),
         // Powers.
-        ("(-2) ** 127", Num::from(-2).pow(127), min.clone()),
-        ("2 ** 127", Num::from(2).pow(127), past.clone()),
-        ("(-2) ** 63", Num::from(-2).pow(63), -two_to(63)),
-        ("2 ** 63", Num::from(2).pow(63), two_to(63)),
+        ("(-2) ^ 127", Num::from(-2).pow(127), min.clone()),
+        ("2 ^ 127", Num::from(2).pow(127), past.clone()),
+        ("(-2) ^ 63", Num::from(-2).pow(63), -two_to(63)),
+        ("2 ^ 63", Num::from(2).pow(63), two_to(63)),
         ("pow2(127)", Num::pow2(&Num::from(127)), past.clone()),
         (
-            "(-(2^63)) ** 2 * 2",
+            "(-(2^63)) ^ 2 * 2",
             &Num::from(-two_to(63)).pow(2) * &Num::from(2),
             past.clone(),
         ),
@@ -249,7 +249,7 @@ fn products_quotients_and_powers_that_land_on_an_edge_have_its_one_form() {
         ),
         // Conversions from the kernel's integers, kept as powers of their primes.
         (
-            "Rat 2 ** 127",
+            "Rat 2 ^ 127",
             Num::from(
                 &zed_kernel::num::Rat::int(BigInt::from(2))
                     .pow(&127u32.into())
@@ -258,7 +258,7 @@ fn products_quotients_and_powers_that_land_on_an_edge_have_its_one_form() {
             past.clone(),
         ),
         (
-            "Rat (-2) ** 127",
+            "Rat (-2) ^ 127",
             Num::from(
                 &zed_kernel::num::Rat::int(BigInt::from(-2))
                     .pow(&127u32.into())
@@ -425,7 +425,7 @@ fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
 /// terms, not their product or the digits of the value.
 #[test]
 fn negating_a_kept_sum_scales_with_its_terms() {
-    /// `b ** 200` over the odd `b` from `3 + 2 * lo` to below `3 + 2 * hi`, added in halves so
+    /// `b ^ 200` over the odd `b` from `3 + 2 * lo` to below `3 + 2 * hi`, added in halves so
     /// that building it costs `n log n` term operations.
     fn sum(lo: usize, hi: usize) -> Num {
         if hi - lo == 1 {

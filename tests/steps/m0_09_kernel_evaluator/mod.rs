@@ -1016,7 +1016,7 @@ fn a_called_port_keeps_minus_zero_apart_and_keys_functions() {
     );
 }
 
-/// A power does not depend on how it is written: `x ** e` gives what `x ** a * x ** b` gives
+/// A power does not depend on how it is written: `x ^ e` gives what `x ^ a * x ^ b` gives
 /// for `a + b = e`, at sizes far past any machine word, and each square of a power is below the next.
 #[test]
 fn a_power_is_the_product_of_its_halves() {
@@ -1035,10 +1035,10 @@ fn a_power_is_the_product_of_its_halves() {
     for (x, e) in cases {
         let whole = eval(&pow(&x, e)).unwrap();
         let halves = eval(&mul(pow(&x, e / 2), pow(&x, e - e / 2))).unwrap();
-        assert_eq!(whole, halves, "{x:?} ** {e} and its halves differ");
+        assert_eq!(whole, halves, "{x:?} ^ {e} and its halves differ");
         let square = |e: i64| mul(pow(&x, e), pow(&x, e));
         let next = bin(Prim::Lt, square(e), square(e + 1));
-        assert_eq!(eval(&next).unwrap(), Value::Bool(true), "{x:?} ** {e}");
+        assert_eq!(eval(&next).unwrap(), Value::Bool(true), "{x:?} ^ {e}");
     }
 }
 
@@ -1074,7 +1074,7 @@ fn a_power_by_a_huge_exponent() {
 }
 
 /// `0`, `1` and `-1` raised to an exponent that is itself a power past any machine word,
-/// `2 ** 2 ** 33`, read the exponent's parity from its kept form and build nothing.
+/// `2 ^ 2 ^ 33`, read the exponent's parity from its kept form and build nothing.
 #[test]
 fn a_unit_to_a_kept_power_builds_no_exponent() {
     let exp = bin(Prim::Pow, lit(2), bin(Prim::Pow, lit(2), lit(33)));
@@ -1138,9 +1138,9 @@ fn a_sum_too_large_to_build_is_an_error_naming_its_size() {
     }
 }
 
-/// Printing a number builds its digits. `String(2 ** 2 ** 100)` would need `2^100` bits, so
-/// it is an error naming that size, given before any digit is built; `2 ** 2 ** 16` prints
-/// all of its 19729 digits, and `10 ** 10 ** 6` its million zeros.
+/// Printing a number builds its digits. `String(2 ^ 2 ^ 100)` would need `2^100` bits, so
+/// it is an error naming that size, given before any digit is built; `2 ^ 2 ^ 16` prints
+/// all of its 19729 digits, and `10 ^ 10 ^ 6` its million zeros.
 #[test]
 fn printing_a_number_too_large_to_build_is_an_error_naming_its_size() {
     let show = |t: Term| prim(Prim::Show, vec![t]);

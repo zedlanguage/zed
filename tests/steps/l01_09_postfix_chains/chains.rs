@@ -46,14 +46,14 @@ fn suffixes_apply_left_to_right() {
 #[test]
 fn a_chain_is_an_operand_of_the_operators_around_it() {
     check(&[
-        // DESIGN.md: `accel(pos[i-1]) * dt ** 2`
+        // DESIGN.md: `accel(pos[i-1]) * dt ^ 2`
         (
-            "accel(pos[i - 1]) * dt ** 2",
-            "(* (call accel (index pos (- i 1))) (** dt 2))",
+            "accel(pos[i - 1]) * dt ^ 2",
+            "(* (call accel (index pos (- i 1))) (^ dt 2))",
         ),
         ("-x.abs", "(- (. x abs))"),
-        ("-x ** 2", "(- (** x 2))"),
-        ("2 ** -1", "(** 2 (- 1))"),
+        ("-x ^ 2", "(- (^ x 2))"),
+        ("2 ^ -1", "(^ 2 (- 1))"),
         ("!done && xs.len > 0", "(&& (! done) (> (. xs len) 0))"),
         ("a - b - c", "(- (- a b) c)"),
         ("(a - b).abs", "(. (- a b) abs)"),

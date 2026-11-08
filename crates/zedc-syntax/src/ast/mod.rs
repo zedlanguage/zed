@@ -318,7 +318,7 @@ impl<'a, 's> Builder<'a, 's> {
                     span: self.span(n),
                 })
             }
-            "Power" => self.binary("**", kids[0], kids[1]),
+            "Power" => self.binary("^", kids[0], kids[1]),
             "Postfix" => {
                 let e = self.node(kids[0])?;
                 self.suffix(e, kids[1])

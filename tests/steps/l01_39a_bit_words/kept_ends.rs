@@ -2,7 +2,7 @@
 //! zeros of a kept end, a shift right of one and a power of 2 by a kept exponent are found from
 //! the kept form, without the value's digits. Each is checked against the value written out,
 //! at sizes where writing it out is cheap, and the bit words' rules on widths near `i64::MAX`,
-//! whose ends `2 ** w - 1` have about `2^63` digits, finish at once.
+//! whose ends `2 ^ w - 1` have about `2^63` digits, finish at once.
 
 use std::collections::HashMap;
 
@@ -36,17 +36,17 @@ fn values() -> Vec<(String, Num)> {
     let mut out: Vec<(String, Num)> = Vec::new();
     for k in [126, 127, 128, 129, 200, 1000, 4097] {
         let p = pow2(k);
-        out.push((format!("2 ** {k}"), p.clone()));
-        out.push((format!("2 ** {k} - 1"), &p - &one));
-        out.push((format!("2 ** {k} + 1"), &p + &one));
-        out.push((format!("2 ** {k} - 2 ** {}", k - 1), &p - &pow2(k - 1)));
+        out.push((format!("2 ^ {k}"), p.clone()));
+        out.push((format!("2 ^ {k} - 1"), &p - &one));
+        out.push((format!("2 ^ {k} + 1"), &p + &one));
+        out.push((format!("2 ^ {k} - 2 ^ {}", k - 1), &p - &pow2(k - 1)));
         out.push((
-            format!("3 * 2 ** {k} + 5"),
+            format!("3 * 2 ^ {k} + 5"),
             &(&p * &Num::from(3)) + &Num::from(5),
         ));
-        out.push((format!("2 ** {k} + 2 ** {}", k - 100), &p + &pow2(k - 100)));
+        out.push((format!("2 ^ {k} + 2 ^ {}", k - 100), &p + &pow2(k - 100)));
         out.push((
-            format!("(2 ** {k} + 6) div 2"),
+            format!("(2 ^ {k} + 6) div 2"),
             (&p + &Num::from(6)).div_floor(&Num::from(2)),
         ));
     }
@@ -54,16 +54,16 @@ fn values() -> Vec<(String, Num)> {
         let three = Num::from(3).pow(e);
         let five = Num::from(5).pow(e);
         let twelve = Num::from(12).pow(e);
-        out.push((format!("3 ** {e}"), three.clone()));
-        out.push((format!("3 ** {e} - 1"), &three - &one));
-        out.push((format!("12 ** {e}"), twelve.clone()));
-        out.push((format!("3 ** {e} + 5 ** {e}"), &three + &five));
+        out.push((format!("3 ^ {e}"), three.clone()));
+        out.push((format!("3 ^ {e} - 1"), &three - &one));
+        out.push((format!("12 ^ {e}"), twelve.clone()));
+        out.push((format!("3 ^ {e} + 5 ^ {e}"), &three + &five));
         out.push((
-            format!("3 ** {e} - 2 ** {}", e + 1),
+            format!("3 ^ {e} - 2 ^ {}", e + 1),
             &three - &pow2(i64::from(e) + 1),
         ));
         out.push((
-            format!("12 ** {e} * 5 ** {e} + 2 ** {e}"),
+            format!("12 ^ {e} * 5 ^ {e} + 2 ^ {e}"),
             &(&twelve * &Num::from(5).pow(e + 1)) + &pow2(i64::from(e)),
         ));
     }
@@ -91,7 +91,7 @@ fn bits_and_trailing_zeros_of_kept_ends_are_those_written_out() {
 
 #[test]
 fn the_trailing_zeros_of_a_kept_root_are_those_written_out() {
-    // floor(3 ** (k / 2)) for odd k is kept as a root, whose digits the low bits need.
+    // floor(3 ^ (k / 2)) for odd k is kept as a root, whose digits the low bits need.
     for k in [301u32, 1001] {
         let r = Num::from(3).pow(k).floor_root(2);
         let v = written(&r);
@@ -119,7 +119,7 @@ fn a_shift_right_of_a_kept_end_keeps_its_form() {
             for k in [127, 128, 150, w - 1, w] {
                 let q = x.div_floor(&pow2(k));
                 let expected = written(x).div_floor(&(BigInt::from(1) << k));
-                assert_eq!(written(&q), expected, "floor(({x}) / 2 ** {k})");
+                assert_eq!(written(&q), expected, "floor(({x}) / 2 ^ {k})");
                 let out = bit_word(
                     Prim::Shr,
                     &[IntervalSet::point(x.clone()), IntervalSet::single(k)],
@@ -132,7 +132,7 @@ fn a_shift_right_of_a_kept_end_keeps_its_form() {
 
 #[test]
 fn a_power_of_2_by_a_kept_exponent_stays_kept() {
-    // 2 ** (2 ** 200): its bits are 2 ** 200 + 1 and its trailing zeros 2 ** 200, from the
+    // 2 ^ (2 ^ 200): its bits are 2 ^ 200 + 1 and its trailing zeros 2 ^ 200, from the
     // exponent alone; written out it would take 2^200 bits.
     let e = pow2(200);
     let p = Num::pow2(&e);
@@ -162,7 +162,7 @@ fn single_kept_operands_give_the_value() {
 
 #[test]
 fn the_rules_on_widths_near_i64_max_read_the_bits_of_kept_ends() {
-    // x in [0..] with a width near i64::MAX is met with [0..=2 ** w - 1], an end of about 2^63
+    // x in [0..] with a width near i64::MAX is met with [0..=2 ^ w - 1], an end of about 2^63
     // digits, whose bits each rule reads.
     let w = i64::MAX;
     let x = IntervalSet::range(End::of(1), PosInf);
@@ -182,7 +182,7 @@ fn the_rules_on_widths_near_i64_max_read_the_bits_of_kept_ends() {
 }
 
 /// Kept ends at the exponent `k`, each with the power of 2 that a shift right divides it by
-/// when its terms are multiples of that power (a shift of `3 ** k` writes it out; see
+/// when its terms are multiples of that power (a shift of `3 ^ k` writes it out; see
 /// `Num::div_floor`).
 fn ends(k: i64) -> Vec<(Num, Option<Num>)> {
     let one = Num::ONE;
@@ -204,7 +204,7 @@ fn ends(k: i64) -> Vec<(Num, Option<Num>)> {
 #[test]
 fn bits_and_trailing_zeros_of_kept_ends_do_not_grow_with_the_exponent() {
     // The bits, trailing zeros and shift right of kept ends of exponents k and 8k, and the
-    // rules that read the bits of 2 ** k - 1. Written out, each grows with the digits, 8
+    // rules that read the bits of 2 ^ k - 1. Written out, each grows with the digits, 8
     // times or more.
     let n = 1 << 20;
     let built: HashMap<usize, Vec<(Num, Option<Num>)>> = [n, scaling::FACTOR * n]

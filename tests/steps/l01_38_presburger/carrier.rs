@@ -306,16 +306,16 @@ fn the_int_parameters_of_a_signature_scale() {
 
 #[test]
 fn a_float_times_zero_and_a_float_power_are_not_read_as_integers() {
-    // The plan row's cases: `x * 0.0` is NaN at an infinity and at NaN, and `x ** 2.0` is NaN
+    // The plan row's cases: `x * 0.0` is NaN at an infinity and at NaN, and `x ^ 2.0` is NaN
     // at NaN, so neither law holds over `f64`; over `int` rung 2 proves both. A power of an
     // `f64` takes an `f64` exponent, which rung 2 does not read (`Op::Pow` takes an integer
-    // literal), so `**` was outside the domain at `f64` before the filter too.
+    // literal), so `^` was outside the domain at `f64` before the filter too.
     let t1 = ok("x", "f64", "true");
     not_read_at_floats(&t1, &ok("x", "f64", "x * 0.0 == 0.0"), &[f64::INFINITY]);
-    not_read_at_floats(&t1, &ok("x", "f64", "x ** 2.0 >= 0.0"), &[f64::NAN]);
+    not_read_at_floats(&t1, &ok("x", "f64", "x ^ 2.0 >= 0.0"), &[f64::NAN]);
     let t1 = ok("x", "int", "true");
     proved(&t1, &ok("x", "int", "x * 0 == 0"));
-    proved(&t1, &ok("x", "int", "x ** 2 == x * x"));
+    proved(&t1, &ok("x", "int", "x ^ 2 == x * x"));
 }
 
 #[test]

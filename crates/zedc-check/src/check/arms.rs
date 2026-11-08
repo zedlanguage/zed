@@ -1,6 +1,6 @@
 //! The ints the tests around an expression allow it: the scope of the reduced product
 //! ([`zedc_preimage::product`]) at each arm of an `if`, at the second side of `&&` and `||`
-//! and in each case of a condition. A bit word's operand (L1.39a) and the exponent of `**`
+//! and in each case of a condition. A bit word's operand (L1.39a) and the exponent of `^`
 //! (L1.17) are read through it, so `if n >= 0 { popCount(n) }` is accepted (DESIGN.md L1.39:
 //! a test narrows a scope).
 //!

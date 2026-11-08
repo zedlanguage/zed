@@ -1857,7 +1857,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let carried = [&x.ty, &y.ty]
                     .iter()
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
-                if op == "**" {
+                if op == "^" {
                     self.exponent(&x, &y, b, span);
                 }
                 let sig = op_sig(op);
@@ -4413,7 +4413,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// `x ** n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
+    /// `x ^ n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
     /// expression or the listed `int` values of its type. A class's values are not known here:
     /// an exponent of a type variable takes its ints at least 0 ([`Self::floor`]), and a base
     /// of one, under an exponent not shown to be at least 0, takes no int (CHK-need-bound).
@@ -4424,7 +4424,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let x_generic = !x.ty.vars.is_empty();
         if !n.ty.vars.is_empty() && (x_int || x_generic) {
             let d = IntDomain {
-                what: "`**` on an int takes an exponent in int[0..]".into(),
+                what: "`^` on an int takes an exponent in int[0..]".into(),
                 below_two_pow: None,
             };
             self.floor(&n.ty, e, d, span);
@@ -4437,7 +4437,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ints.is_subset(&IntervalSet::range(End::of(0), PosInf)) || listed_at_least_zero(&ns);
         if !at_least_zero && x_generic {
             let d = IntDomain {
-                what: "`**` with an exponent not shown to be at least 0 takes no int base".into(),
+                what: "`^` with an exponent not shown to be at least 0 takes no int base".into(),
                 below_two_pow: None,
             };
             self.no_int_vars(&x.ty, &d, x.at.unwrap_or(span));
@@ -4454,7 +4454,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             notes.extend(self.derive(&[n.at.unwrap_or(span)]));
             self.error_with(
                 span,
-                format!("`**` on an int needs an exponent of at least 0, and this one is {shown}"),
+                format!("`^` on an int needs an exponent of at least 0, and this one is {shown}"),
                 notes,
             );
         }
@@ -4490,7 +4490,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Records the [`NeedKind::InDomain`] need `n` on the open parameter `id`. The domains are
-    /// nested, `int[0..]` holding every `int[0..<2 ** w]` and a smaller `w` the smaller domain,
+    /// nested, `int[0..]` holding every `int[0..<2 ^ w]` and a smaller `w` the smaller domain,
     /// so one need per binder decides each call: the smallest domain, from its first use.
     fn floor_on(&mut self, id: usize, n: Need) {
         let width = |n: &Need| match &n.kind {
@@ -4600,7 +4600,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Checks each [`NeedKind::InDomain`] need of `sig`, called as `what` at `span`, on the
     /// argument at its parameter (CHK-need-bound): from the interval of the argument's
-    /// expression and the listed ints of its type, as `**`'s exponent is. A parameter of no
+    /// expression and the listed ints of its type, as `^`'s exponent is. A parameter of no
     /// declared type of the function the call is in takes the need on, with the link of the
     /// call; a value of another type variable takes no int outside the domain. The parameters
     /// `leaving` are left to the function a partial call gives.
@@ -5028,10 +5028,10 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Checks each operand of the bit word or integer machine operation `w` against its domain
     /// (DESIGN.md sec:domains, sec:linalg): `int[0..]` for every one but the `x` of `shl` and
-    /// `shr`, `int[0..<2 ** width]` for the operands read as `width` digits, `int[0..<width]`
+    /// `shr`, `int[0..<2 ^ width]` for the operands read as `width` digits, `int[0..<width]`
     /// for the `k` of a funnel shift, and a multiple of 8 for the width of `byteSwap`. An operand
     /// is rejected when its int part is not shown to lie in the domain, from its listed values or
-    /// the interval of its expression, as `**`'s exponent is.
+    /// the interval of its expression, as `^`'s exponent is.
     fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg<'a>, &'a Expr)], span: Span) {
         let names = zed_kernel::bits::params(p);
         let shift = matches!(p, Prim::Shl | Prim::Shr);
@@ -5076,7 +5076,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let last = slots.len() - 1;
         // An operand of a type variable read as `width` digits, under a width of an int type,
-        // takes the ints below `2 ** w`, `w` the smallest width, as a need on its parameter.
+        // takes the ints below `2 ^ w`, `w` the smallest width, as a need on its parameter.
         // The other relations to `width` are between two operands, which a need on one
         // parameter does not carry: an operand of a type variable in one is rejected here
         // (CHK-need-bound).
@@ -5096,7 +5096,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let (name, at) = (names[i], a.at.unwrap_or(e.span));
             if let Some(s) = smallest.as_ref().filter(|_| two_pow.contains(&i)) {
                 let d = IntDomain {
-                    what: format!("`{w}` takes `{name}` in int[0..<2 ** width]").into(),
+                    what: format!("`{w}` takes `{name}` in int[0..<2 ^ width]").into(),
                     below_two_pow: Some(Width(s.clone())),
                 };
                 self.floor(&a.ty, e, d, span);
@@ -5141,7 +5141,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let smallest = rw.extreme(std::cmp::Ordering::Less);
-        // An operand lies below `2 ** width` when its largest value does below the smallest
+        // An operand lies below `2 ^ width` when its largest value does below the smallest
         // width, and below `width` when its largest value is less than the smallest width.
         for (i, two_pow) in zed_kernel::bits::below_two_pow_width(p)
             .iter()
@@ -5163,7 +5163,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 });
             if !below {
                 let needs = if two_pow {
-                    "int[0..<2 ** width]"
+                    "int[0..<2 ^ width]"
                 } else {
                     "int[0..<width]"
                 };

@@ -31,7 +31,7 @@ fn a_square_bound_is_read_as_a_power_and_inverted_exactly() {
         "x [3..]; exact"
     );
     assert_eq!(
-        holds("ok(x) = x ** 2 >= 50;\n", &[any("x")]),
+        holds("ok(x) = x ^ 2 >= 50;\n", &[any("x")]),
         "x [..=-8, 8..]; exact"
     );
 }

@@ -9,7 +9,7 @@
 // cluster as its least point index followed by its members.
 struct Pt { x: int, y: int }
 
-d2(positional p, positional q) = (p.x - q.x) ** 2 + (p.y - q.y) ** 2;
+d2(positional p, positional q) = (p.x - q.x) ^ 2 + (p.y - q.y) ^ 2;
 
 closest(positional pts, positional label) =      // (distance², cluster, cluster), least first
   (for i -> p in pts, j -> q in pts where i < j && label[i] != label[j] {

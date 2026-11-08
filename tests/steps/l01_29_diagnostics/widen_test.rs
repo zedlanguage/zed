@@ -80,7 +80,7 @@ fn zedc_test_prints_the_warning_zedc_run_prints() {
   [5] 4:17: `side` is 3037000500 here
       4 |   area = side * side;
         |                 ^^^^
-  [6] 4:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2 ** k`, k at most 64
+  [6] 4:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2 ^ k`, k at most 64
       4 |   area = side * side;
         |          ^^^^^^^^^^^
   address: {address}

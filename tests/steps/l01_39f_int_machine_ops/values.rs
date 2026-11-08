@@ -7,9 +7,9 @@ use super::{word, x};
 
 #[test]
 fn the_named_cases() {
-    assert_eq!(x("mulHi(2 ** 63, 4, width: 64)"), "2");
+    assert_eq!(x("mulHi(2 ^ 63, 4, width: 64)"), "2");
     assert_eq!(
-        x("mulHi(2 ** 64 - 1, 2 ** 64 - 1, width: 64)"),
+        x("mulHi(2 ^ 64 - 1, 2 ^ 64 - 1, width: 64)"),
         (u128::from(u64::MAX) - 1).to_string()
     );
     assert_eq!(x("bitReverse(1, width: 8)"), "128");
@@ -21,7 +21,7 @@ fn the_named_cases() {
 
 #[test]
 fn a_receiver_is_the_first_operand() {
-    assert_eq!(x("3.mulHi(2 ** 63, width: 64)"), "1");
+    assert_eq!(x("3.mulHi(2 ^ 63, width: 64)"), "1");
     assert_eq!(x("0x80.bitReverse(width: 8)"), "1");
     assert_eq!(x("0xA1B2.byteSwap(width: 16)"), "45729");
     assert_eq!(x("0b11.pdep(0b1001)"), "9");
@@ -83,35 +83,35 @@ fn funnel_shl_of_one_word_twice_is_rotl() {
 fn zero_all_ones_and_the_top_digit_through_the_surface() {
     let p64 = "18446744073709551615";
     for (e, v) in [
-        ("mulHi(0, 2 ** 64 - 1, width: 64)", "0"),
-        ("mulHi(2 ** 63, 2 ** 63, width: 64)", "4611686018427387904"),
-        ("mulHi(2 ** 127, 2, width: 128)", "1"),
+        ("mulHi(0, 2 ^ 64 - 1, width: 64)", "0"),
+        ("mulHi(2 ^ 63, 2 ^ 63, width: 64)", "4611686018427387904"),
+        ("mulHi(2 ^ 127, 2, width: 128)", "1"),
         ("bitReverse(0, width: 64)", "0"),
-        ("bitReverse(2 ** 64 - 1, width: 64)", p64),
-        ("bitReverse(2 ** 63, width: 64)", "1"),
+        ("bitReverse(2 ^ 64 - 1, width: 64)", p64),
+        ("bitReverse(2 ^ 63, width: 64)", "1"),
         (
             "bitReverse(1, width: 128)",
             "170141183460469231731687303715884105728",
         ),
         ("byteSwap(0, width: 64)", "0"),
-        ("byteSwap(2 ** 64 - 1, width: 64)", p64),
-        ("byteSwap(2 ** 63, width: 64)", "128"),
+        ("byteSwap(2 ^ 64 - 1, width: 64)", p64),
+        ("byteSwap(2 ^ 63, width: 64)", "128"),
         ("byteSwap(0, width: 0)", "0"),
-        ("pdep(2 ** 64 - 1, 0)", "0"),
-        ("pdep(12345, 2 ** 64 - 1)", "12345"),
-        ("pdep(2 ** 70 + 5, 2 ** 64 - 1)", "5"),
-        ("pext(2 ** 64 - 1, 0)", "0"),
-        ("pext(2 ** 70 + 5, 2 ** 64 - 1)", "5"),
-        ("pext(2 ** 63, 2 ** 63)", "1"),
-        ("funnelShl(2 ** 63, 0, 1, width: 64)", "0"),
-        ("funnelShl(0, 2 ** 63, 1, width: 64)", "1"),
+        ("pdep(2 ^ 64 - 1, 0)", "0"),
+        ("pdep(12345, 2 ^ 64 - 1)", "12345"),
+        ("pdep(2 ^ 70 + 5, 2 ^ 64 - 1)", "5"),
+        ("pext(2 ^ 64 - 1, 0)", "0"),
+        ("pext(2 ^ 70 + 5, 2 ^ 64 - 1)", "5"),
+        ("pext(2 ^ 63, 2 ^ 63)", "1"),
+        ("funnelShl(2 ^ 63, 0, 1, width: 64)", "0"),
+        ("funnelShl(0, 2 ^ 63, 1, width: 64)", "1"),
         (
-            "funnelShl(2 ** 64 - 1, 0, 63, width: 64)",
+            "funnelShl(2 ^ 64 - 1, 0, 63, width: 64)",
             "9223372036854775808",
         ),
         ("funnelShr(1, 0, 1, width: 64)", "9223372036854775808"),
-        ("funnelShr(0, 2 ** 64 - 1, 63, width: 64)", "1"),
-        ("funnelShr(2 ** 64 - 1, 2 ** 64 - 1, 0, width: 64)", p64),
+        ("funnelShr(0, 2 ^ 64 - 1, 63, width: 64)", "1"),
+        ("funnelShr(2 ^ 64 - 1, 2 ^ 64 - 1, 0, width: 64)", p64),
     ] {
         assert_eq!(x(e), v, "{e}");
     }

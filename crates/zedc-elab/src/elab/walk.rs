@@ -1721,7 +1721,7 @@ impl<'a> Elab<'a> {
             "/" => Prim::Div,
             "div" => Prim::IntDiv,
             "mod" => Prim::Mod,
-            "**" => Prim::Pow,
+            "^" => Prim::Pow,
             "++" => Prim::Concat,
             _ => return self.error(e.span, format!("`{op}` is not an L1 operator")),
         };

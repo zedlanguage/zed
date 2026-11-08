@@ -29,7 +29,7 @@ law binomial(R: CommRing(T), x: T, y: T, n: int[0..]) = pow(M: R, x: x + y, n:) 
 **2. Sum of a row of binomial coefficients** (`Nat.sum_range_choose` 1/2)
 - Proof: cite #1 at x = y = 1, then rung 3. Nothing missing.
 ```zed
-law rowSum(n: int[0..]) = (0..=n).map(m -> choose(n, m)).sum == 2 ** n proof { #use(rule: binomial, args: [intRing, 1, 1, n]) }
+law rowSum(n: int[0..]) = (0..=n).map(m -> choose(n, m)).sum == 2 ^ n proof { #use(rule: binomial, args: [intRing, 1, 1, n]) }
 ```
 
 **3. Gauss sum** (`Finset.sum_range_id_mul_two` 1/7)
@@ -105,7 +105,7 @@ law primeTwoLe(p: int[0..]) = isPrime(p).implies(p >= 2);
 - Proof: induction on the set.
 - Missing: induction over a collection. `#induction` schemes cover only `int[lo..]` and recursive unions (D:991, D:2262).
 ```zed
-law cardPowerset(s: Set(T)) = s.powerset.count == 2 ** s.count proof { byCollectionInduction(s) }
+law cardPowerset(s: Set(T)) = s.powerset.count == 2 ^ s.count proof { byCollectionInduction(s) }
 ```
 
 **14. `List.reverse_reverse` (1/1 plus a 1/3 helper) and `List.length_append` (1/3)**

@@ -277,7 +277,7 @@ program                            units  ring table (word)     label enabled ag
 ```
 program                            units  ring table (word)     label enabled agree
 neg-gpu-target.zed                     1    L7 L27 (#gpu)          L7     L27 NO
-neg-parse-error.zed                PARSE FAIL neg-parse-error.zed: line 5 near 'stdout'; expected '!=' '&&' '(' '*' '**' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' '||'
+neg-parse-error.zed                PARSE FAIL neg-parse-error.zed: line 5 near 'stdout'; expected '!=' '&&' '(' '*' '^' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' '||'
 neg-sort-at-L4.zed                     1    L5 L5 (sort)           L4      L5 NO
 neg-take-at-L4.zed                     1    L1 L5 (take)           L4      L5 NO
 pos-gpu-atom.zed                       1    L2 L3 (map)            L3      L3 yes
@@ -332,7 +332,7 @@ variants/06-matrix-multiply-remap.zed L8
 variants/20-taint-error.zed L7
 variants/23-join-zoo-remap.zed L8
 controls/neg-gpu-target.zed L7
-controls/neg-parse-error.zed FAIL line 5 near 'stdout'; expected '!=' '&&' '(' '*' '**' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' '||'
+controls/neg-parse-error.zed FAIL line 5 near 'stdout'; expected '!=' '&&' '(' '*' '^' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' '||'
 controls/neg-sort-at-L4.zed L5
 controls/neg-take-at-L4.zed L1
 controls/pos-gpu-atom.zed L2

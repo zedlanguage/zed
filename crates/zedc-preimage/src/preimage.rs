@@ -16,7 +16,7 @@
 //! - `+`, `-` and `*` with one constant operand, and Euclidean `div` and `mod` by a constant,
 //!   invert exactly, `mod` within the operand's forward interval, its first and last periods
 //!   exactly and the periods between them as one piece;
-//! - `-x`, `abs` and `**` by a constant invert exactly at their endpoints, by the tonicity of
+//! - `-x`, `abs` and `^` by a constant invert exactly at their endpoints, by the tonicity of
 //!   each sign part (the M0.5 revision table); a product of one value `k` times is read as its
 //!   `k`th power first (sec:constraints);
 //! - `min` and `max` invert exactly with a constant operand, and with two operands when the
@@ -2352,7 +2352,7 @@ pub fn tonicity(p: Prim, arg: usize) -> Option<Tonicity> {
     (t != Tonicity::None).then_some(t)
 }
 
-/// The revision table's operator for a primitive, with the constant exponent of `**`.
+/// The revision table's operator for a primitive, with the constant exponent of `^`.
 fn op(p: Prim, exponent: Option<Exponent>) -> Option<Op> {
     Some(match p {
         Prim::Add => Op::Add,
@@ -5381,7 +5381,7 @@ impl<'m, 't> Walk<'m, 't> {
 
     /// The constant integer `t`, of any size, when it is written out: a coefficient of a summary
     /// ([`Pa`]) is unbounded, so a constant past the 64-bit range is summarized like any other.
-    /// A power the kernel keeps unbuilt (`3 ** 2^32`) is not written out here, which would cost
+    /// A power the kernel keeps unbuilt (`3 ^ 2^32`) is not written out here, which would cost
     /// time and memory in its digits; the transfer before reads it as kept.
     async fn constant_coef(&'m self, t: Tid, env: Eid) -> Option<Int> {
         match self.constant(t, env).await? {
@@ -5391,7 +5391,7 @@ impl<'m, 't> Walk<'m, 't> {
         }
     }
 
-    /// The constant exponent `t` of a `**`, when it is an integer at least 0, of any size: a
+    /// The constant exponent `t` of a `^`, when it is an integer at least 0, of any size: a
     /// kernel integer past the 64-bit range is kept as the kernel holds it, unbuilt.
     async fn exponent(&'m self, t: Tid, env: Eid) -> Option<Exponent> {
         match self.constant(t, env).await? {
@@ -6149,7 +6149,7 @@ impl<'m, 't> Walk<'m, 't> {
         if let Op::Pow(k) = o
             && k.is_zero()
         {
-            // `c ** 0` is 1 wherever `c` is an integer.
+            // `c ^ 0` is 1 wherever `c` is an integer.
             return if z.contains(1) {
                 self.back(c, env, Demand::Ints(IntervalSet::top())).await
             } else {
@@ -6169,7 +6169,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// region that is not a box, and finding it costs the points of the box (or is
     /// undecidable for polynomial tests over unbounded integers). Trigger: an operator with
     /// no exact catalog entry (anything but shifts, scalings, `div` and `mod` by a constant,
-    /// `**`, and branches), or two operands that both read inputs. Test:
+    /// `^`, and branches), or two operands that both read inputs. Test:
     /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
     /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
     /// searches the box at a cost in its points.

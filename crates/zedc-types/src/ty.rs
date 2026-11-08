@@ -1968,7 +1968,7 @@ pub enum NeedKind {
         /// Whether the value is the first operand.
         first: bool,
     },
-    /// A use that takes an int in its domain, as `**`'s exponent and a bit word's operand do,
+    /// A use that takes an int in its domain, as `^`'s exponent and a bit word's operand do,
     /// of a value whose ints the body shows no bound of and which is no parameter: the value
     /// holds no int, or only ints listed in the domain (CHK-need-bound).
     NoInt(IntDomain),
@@ -1989,8 +1989,8 @@ pub enum NeedKind {
     },
 }
 
-/// The ints a use takes, as `**`'s exponent and a bit word's operand do: those at least 0, and
-/// below `2 ** width` for an operand read as `width` binary digits (CHK-need-bound).
+/// The ints a use takes, as `^`'s exponent and a bit word's operand do: those at least 0, and
+/// below `2 ^ width` for an operand read as `width` binary digits (CHK-need-bound).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IntDomain {
     /// The use, in words, as an error states it.
@@ -1999,7 +1999,7 @@ pub struct IntDomain {
     pub below_two_pow: Option<Width>,
 }
 
-/// The width of a bit word, an int at least 0, kept as its value: `2 ** width` is never built.
+/// The width of a bit word, an int at least 0, kept as its value: `2 ^ width` is never built.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Width(pub Value);
 

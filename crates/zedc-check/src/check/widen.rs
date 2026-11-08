@@ -3,11 +3,11 @@
 //! result may not, so the value it gives is held as a big integer.
 //!
 //! Each `int` expression gets the interval of its values, `int[lo..=hi]`, from its integer
-//! literals (as the checker adopts them), the operators `+`, `-`, `*`, `div`, `mod` and `**`,
+//! literals (as the checker adopts them), the operators `+`, `-`, `*`, `div`, `mod` and `^`,
 //! the names bound by `=` to one name, and the joins of `if`, `else` and a block's `return`.
 //! Anything else, a parameter or a call among them, is any `int`, and so is a value past the
 //! word: an operand already past the word was widened upstream or given, and only the
-//! operation that crosses is reported. The left operand of `mod 2 ** k`, k at most 64, built
+//! operation that crosses is reported. The left operand of `mod 2 ^ k`, k at most 64, built
 //! from `+`, `-`, `*` and unary `-`, is computed in wrapping arithmetic (sec:domains), and
 //! nothing in it, or in the modulus, is reported.
 //!
@@ -49,11 +49,11 @@ enum Kind {
     Neg,
     /// `div`.
     Div,
-    /// `mod` by anything but a power of two up to `2 ** 64`.
+    /// `mod` by anything but a power of two up to `2 ^ 64`.
     Mod,
-    /// `mod 2 ** k`, k at most 64: its left operand wraps.
+    /// `mod 2 ^ k`, k at most 64: its left operand wraps.
     Wrap(u32),
-    /// `**`.
+    /// `^`.
     Pow,
     /// The join of the first this many children: the branches of an `if`, both sides of an
     /// `else`, a block's `return`.
@@ -79,7 +79,7 @@ struct Node<'a> {
     first: u32,
     /// The root expression it is part of: a binding's value, a pushed value, a body.
     root: u32,
-    /// Whether it is inside the wrapping left operand of `mod 2 ** k`, or is that modulus.
+    /// Whether it is inside the wrapping left operand of `mod 2 ^ k`, or is that modulus.
     wrap: bool,
 }
 
@@ -302,7 +302,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                         kids(self, &[a, b], false);
                         Kind::Div
                     }
-                    (None, "**", _) => {
+                    (None, "^", _) => {
                         kids(self, &[a, b], false);
                         Kind::Pow
                     }
@@ -602,7 +602,7 @@ impl<'t, 'a> Walk<'t, 'a> {
         notes.push(Note {
             span: n.e.span,
             text: "repair: if wrapping arithmetic is meant, reduce the value with \
-                   `mod 2 ** k`, k at most 64"
+                   `mod 2 ^ k`, k at most 64"
                 .to_string(),
         });
         Error {
@@ -669,7 +669,7 @@ impl<'t, 'a> Walk<'t, 'a> {
 }
 
 /// Whether `e` is computed in wrapping arithmetic when it is inside the left operand of
-/// `mod 2 ** k`: `+`, `-`, `*`, unary `-` and literals (sec:domains).
+/// `mod 2 ^ k`: `+`, `-`, `*`, unary `-` and literals (sec:domains).
 fn wraps(e: &Expr) -> bool {
     matches!(
         e.kind,
@@ -684,8 +684,8 @@ fn magnitude(digits: &str, radix: u32) -> Option<u128> {
     u128::from_str_radix(digits, radix).ok()
 }
 
-/// `k` when `e` is a power of two `2 ** k` with k at most 64, written as one literal or as
-/// `2 ** k` of two literals.
+/// `k` when `e` is a power of two `2 ^ k` with k at most 64, written as one literal or as
+/// `2 ^ k` of two literals.
 fn power_of_two(e: &Expr) -> Option<u32> {
     let k = match &e.kind {
         ExprKind::Int { radix, digits, .. } => {
@@ -695,7 +695,7 @@ fn power_of_two(e: &Expr) -> Option<u32> {
             }
             v.trailing_zeros()
         }
-        ExprKind::Binary("**", b, k) => match (&b.kind, &k.kind) {
+        ExprKind::Binary("^", b, k) => match (&b.kind, &k.kind) {
             (
                 ExprKind::Int { radix, digits, .. },
                 ExprKind::Int {
@@ -799,7 +799,7 @@ fn rem((a, b): Word, (c, d): Word) -> Option<Word> {
     Some((0, if a >= 0 { top.min(b) } else { top }))
 }
 
-/// `x ** n` over the intervals, with `n` at least 0, or `None` when a value is past `i128`.
+/// `x ^ n` over the intervals, with `n` at least 0, or `None` when a value is past `i128`.
 /// For a fixed exponent the ends are at the base's ends or at 0; for a fixed base of size at
 /// least 2 the size grows with the exponent, so the ends are at the two smallest and the two
 /// largest exponents, one of each parity.
@@ -821,7 +821,7 @@ fn pow((a, b): Word, (el, eh): Word) -> Option<(i128, i128)> {
     out
 }
 
-/// `x ** k`, `k` at least 0, or `None` past `i128`.
+/// `x ^ k`, `k` at least 0, or `None` past `i128`.
 fn power(x: i128, k: i64) -> Option<i128> {
     match x {
         0 => Some(i128::from(k == 0)),

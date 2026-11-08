@@ -603,7 +603,7 @@ Counts: 1495 routines, 57704 uses.
 | `core::num::i64::div_euclid` | 1 | 1 | `crates/zedc-int/src/int.rs:180` | `a div b` |
 | `core::num::i64::leading_zeros` | 1 | 1 | `crates/zed-kernel/src/bits.rs:180` | `leadingZeros(a, width: 64)` |
 | `core::num::i64::rem_euclid` | 5 | 2 | `crates/zedc-check/src/check/widen.rs:793` | `a mod b` |
-| `core::num::i64::saturating_add` | 1 | 1 | `crates/zedc-check/src/check/widen.rs:811` | `min(max(a + b, -(2 ** 63)), 2 ** 63 - 1)` |
+| `core::num::i64::saturating_add` | 1 | 1 | `crates/zedc-check/src/check/widen.rs:811` | `min(max(a + b, -(2 ^ 63)), 2 ^ 63 - 1)` |
 | `core::num::i64::signum` | 1 | 1 | `crates/zedc-int/src/int.rs:1872` | `if a > 0 { 1 } else if a < 0 { -1 } else { 0 }` |
 | `core::num::i64::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/bits.rs:200` | `trailingZeros(a, width: 64)` |
 | `core::num::i64::unsigned_abs` | 16 | 5 | `crates/zed-kernel/src/num/bound.rs:110` | `abs(a)` |
@@ -611,8 +611,8 @@ Counts: 1495 routines, 57704 uses.
 | `core::num::u128::checked_pow` | 1 | 1 | `crates/zedc-int/src/int.rs:2006` | missing |
 | `core::num::u128::from_str_radix` | 1 | 1 | `crates/zedc-check/src/check/widen.rs:684` | row STD-num |
 | `core::num::u128::is_power_of_two` | 1 | 1 | `crates/zedc-check/src/check/widen.rs:693` | `popCount(a) == 1` |
-| `core::num::u128::saturating_add` | 2 | 1 | `crates/zedc-preimage/src/preimage.rs:5572` | `min(a + b, 2 ** 128 - 1)` |
-| `core::num::u128::saturating_mul` | 4 | 1 | `crates/zedc-preimage/src/preimage.rs:5572` | `min(a * b, 2 ** 128 - 1)` |
+| `core::num::u128::saturating_add` | 2 | 1 | `crates/zedc-preimage/src/preimage.rs:5572` | `min(a + b, 2 ^ 128 - 1)` |
+| `core::num::u128::saturating_mul` | 4 | 1 | `crates/zedc-preimage/src/preimage.rs:5572` | `min(a * b, 2 ^ 128 - 1)` |
 | `core::num::u128::saturating_sub` | 3 | 1 | `crates/zed-kernel/src/words.rs:392` | `max(a - b, 0)` |
 | `core::num::u128::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/num/fast.rs:381` | `trailingZeros(a, width: 128)` |
 | `core::num::u128::wrapping_neg` | 1 | 1 | `crates/zed-kernel/src/num/fast.rs:1021` | missing |
@@ -632,16 +632,16 @@ Counts: 1495 routines, 57704 uses.
 | `core::num::u64::leading_zeros` | 7 | 5 | `crates/zed-kernel/src/exact.rs:61` | `leadingZeros(a, width: 64)` |
 | `core::num::u64::next_multiple_of` | 1 | 1 | `crates/zed-kernel/src/num/fast.rs:1126` | missing |
 | `core::num::u64::overflowing_add` | 7 | 1 | `crates/zed-kernel/src/num/fast.rs:452` | missing |
-| `core::num::u64::overflowing_sub` | 5 | 2 | `crates/zed-kernel/src/exact.rs:35` | `((a - b) mod 2 ** 64, a < b)` |
+| `core::num::u64::overflowing_sub` | 5 | 2 | `crates/zed-kernel/src/exact.rs:35` | `((a - b) mod 2 ^ 64, a < b)` |
 | `core::num::u64::rotate_left` | 3 | 3 | `crates/zed-kernel/src/provenance.rs:50` | `rotl(a, n, width: 64)` |
-| `core::num::u64::saturating_add` | 9 | 1 | `crates/zedc-base/src/cost.rs:67` | `min(a + b, 2 ** 64 - 1)` |
-| `core::num::u64::saturating_mul` | 3 | 2 | `crates/zedc-base/src/cost.rs:67` | `min(a * b, 2 ** 64 - 1)` |
+| `core::num::u64::saturating_add` | 9 | 1 | `crates/zedc-base/src/cost.rs:67` | `min(a + b, 2 ^ 64 - 1)` |
+| `core::num::u64::saturating_mul` | 3 | 2 | `crates/zedc-base/src/cost.rs:67` | `min(a * b, 2 ^ 64 - 1)` |
 | `core::num::u64::to_le_bytes` | 18 | 11 | `crates/zed-native/src/exe.rs:68` | row STD-num |
 | `core::num::u64::trailing_zeros` | 3 | 2 | `crates/zed-kernel/src/num/factor.rs:13` | `trailingZeros(a, width: 64)` |
-| `core::num::u64::wrapping_add` | 7 | 4 | `crates/zed-kernel/src/eval.rs:1980` | `(a + b) mod 2 ** 64` |
-| `core::num::u64::wrapping_mul` | 23 | 6 | `crates/zed-kernel/src/eval.rs:1982` | `(a * b) mod 2 ** 64` |
+| `core::num::u64::wrapping_add` | 7 | 4 | `crates/zed-kernel/src/eval.rs:1980` | `(a + b) mod 2 ^ 64` |
+| `core::num::u64::wrapping_mul` | 23 | 6 | `crates/zed-kernel/src/eval.rs:1982` | `(a * b) mod 2 ^ 64` |
 | `core::num::u64::wrapping_neg` | 2 | 1 | `crates/zed-kernel/src/num/fast.rs:201` | missing |
-| `core::num::u64::wrapping_sub` | 6 | 2 | `crates/zed-kernel/src/num/fast.rs:195` | `(a - b) mod 2 ** 64` |
+| `core::num::u64::wrapping_sub` | 6 | 2 | `crates/zed-kernel/src/num/fast.rs:195` | `(a - b) mod 2 ^ 64` |
 | `core::num::u8::count_ones` | 4 | 1 | `crates/zedc-check/src/check/mod.rs:2392` | `popCount(a)` |
 | `core::num::u8::is_ascii_digit` | 12 | 8 | `crates/zed-kernel/src/num.rs:124` | missing |
 | `core::num::u8::is_ascii_hexdigit` | 1 | 1 | `crates/zedc-syntax/src/lex/string.rs:204` | missing |
@@ -653,11 +653,11 @@ Counts: 1495 routines, 57704 uses.
 | `core::num::usize::ilog2` | 1 | 1 | `crates/zed-kernel/src/num.rs:1068` | `63 - leadingZeros(a, width: 64)` |
 | `core::num::usize::isolate_lowest_one` | 2 | 1 | `crates/zedc-preimage/src/preimage.rs:756` | row STD-num |
 | `core::num::usize::next_power_of_two` | 3 | 1 | `crates/zed-kernel/src/num/fast.rs:380` | missing |
-| `core::num::usize::saturating_add` | 1 | 1 | `crates/zedc-presburger/src/conjuncts.rs:1662` | `min(a + b, 2 ** 64 - 1)` |
+| `core::num::usize::saturating_add` | 1 | 1 | `crates/zedc-presburger/src/conjuncts.rs:1662` | `min(a + b, 2 ^ 64 - 1)` |
 | `core::num::usize::saturating_sub` | 8 | 7 | `crates/zed-kernel/src/print.rs:871` | `max(a - b, 0)` |
 | `core::num::usize::to_le_bytes` | 2 | 1 | `crates/zed-native/src/link.rs:742` | missing |
 | `core::num::usize::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/exact.rs:195` | `trailingZeros(a, width: 64)` |
-| `core::num::usize::wrapping_sub` | 1 | 1 | `crates/zedc-zir/src/canon/binders.rs:416` | `(a - b) mod 2 ** 64` |
+| `core::num::usize::wrapping_sub` | 1 | 1 | `crates/zedc-zir/src/canon/binders.rs:416` | `(a - b) mod 2 ^ 64` |
 | `core::ops::arith::<&u32 as Add<u32>>::add` | 3 | 1 | `crates/zedc-presburger/src/presburger.rs:7434` | `a + b` |
 | `core::ops::arith::<&u64 as Mul<Self>>::mul` | 3 | 1 | `crates/zedc-int/src/int.rs:1629` | `a * b` |
 | `core::ops::arith::<&usize as Add<usize>>::add` | 10 | 4 | `crates/zed-kernel/src/text.rs:256` | `a + b` |
@@ -733,15 +733,15 @@ Counts: 1495 routines, 57704 uses.
 | `core::ops::arith::Neg::neg` | 1 | 1 | `crates/zedc-base/src/axioms.rs:137` | `-a` |
 | `core::ops::arith::Sub::sub` | 12 | 4 | `crates/zed-kernel/src/num.rs:955` | `a - b` |
 | `core::ops::bit::<&bool as Not>::not` | 14 | 8 | `crates/zed-kernel/src/eval.rs:2258` | `!a` |
-| `core::ops::bit::<&i128 as BitAnd<i128>>::bitand` | 3 | 1 | `crates/zedc-int/src/int.rs:140` | `bitAnd(a mod 2 ** 128, b)` |
-| `core::ops::bit::<&i64 as BitAnd<i64>>::bitand` | 3 | 1 | `crates/zedc-int/src/int.rs:1897` | `bitAnd(a mod 2 ** 64, b)` |
+| `core::ops::bit::<&i128 as BitAnd<i128>>::bitand` | 3 | 1 | `crates/zedc-int/src/int.rs:140` | `bitAnd(a mod 2 ^ 128, b)` |
+| `core::ops::bit::<&i64 as BitAnd<i64>>::bitand` | 3 | 1 | `crates/zedc-int/src/int.rs:1897` | `bitAnd(a mod 2 ^ 64, b)` |
 | `core::ops::bit::<&u64 as Not>::not` | 1 | 1 | `crates/zed-kernel/src/num/fast.rs:320` | missing |
 | `core::ops::bit::<&u64 as Shr<usize>>::shr` | 3 | 1 | `crates/zedc-zir/src/zir/legalize.rs:72` | `shr(a, n)` |
 | `core::ops::bit::<bool as BitAndAssign<Self>>::bitand_assign` | 102 | 11 | `crates/zed-kernel/src/exact.rs:111` | `a && b` |
 | `core::ops::bit::<bool as BitOr<Self>>::bitor` | 3 | 1 | `crates/zedc-presburger/src/presburger/deep.rs:480` | `a \|\| b` |
 | `core::ops::bit::<bool as BitOrAssign<Self>>::bitor_assign` | 90 | 12 | `crates/zed-kernel/src/num/fast.rs:751` | `a \|\| b` |
 | `core::ops::bit::<bool as Not>::not` | 1281 | 99 | `crates/zed-kernel/src/bits.rs:118` | `!a` |
-| `core::ops::bit::<i128 as BitXor<Self>>::bitxor` | 3 | 1 | `crates/zedc-preimage/src/preimage.rs:6090` | `bitXor(a mod 2 ** 128, b mod 2 ** 128)` |
+| `core::ops::bit::<i128 as BitXor<Self>>::bitxor` | 3 | 1 | `crates/zedc-preimage/src/preimage.rs:6090` | `bitXor(a mod 2 ^ 128, b mod 2 ^ 128)` |
 | `core::ops::bit::<i128 as Shl<i64>>::shl` | 6 | 1 | `crates/zed-kernel/src/bits.rs:202` | `shl(a, n)` |
 | `core::ops::bit::<i128 as Shl<u32>>::shl` | 3 | 1 | `crates/zedc-check/src/check/widen.rs:550` | `shl(a, n)` |
 | `core::ops::bit::<i128 as Shl<u64>>::shl` | 18 | 1 | `crates/zed-kernel/src/num/fast.rs:1026` | missing |
@@ -1171,7 +1171,7 @@ Counts: 1495 routines, 57704 uses.
 | `num_bigint::bigint::BigInt::iter_u64_digits` | 1 | 1 | `crates/zed-kernel/src/num/fast.rs:1018` | missing |
 | `num_bigint::bigint::BigInt::magnitude` | 76 | 6 | `crates/zed-kernel/src/bits.rs:145` | `abs(a)` |
 | `num_bigint::bigint::BigInt::nth_root` | 1 | 1 | `crates/zedc-int/src/int.rs:2155` | row STD-num |
-| `num_bigint::bigint::BigInt::pow` | 1 | 1 | `crates/zedc-int/src/int.rs:2156` | `a ** n` |
+| `num_bigint::bigint::BigInt::pow` | 1 | 1 | `crates/zedc-int/src/int.rs:2156` | `a ^ n` |
 | `num_bigint::bigint::BigInt::sign` | 26 | 5 | `crates/zed-kernel/src/num.rs:299` | missing |
 | `num_bigint::bigint::BigInt::to_biguint` | 1 | 1 | `crates/zed-kernel/src/num.rs:427` | missing |
 | `num_bigint::bigint::BigInt::trailing_zeros` | 9 | 3 | `crates/zed-kernel/src/num.rs:1107` | missing |
@@ -1211,8 +1211,8 @@ Counts: 1495 routines, 57704 uses.
 | `num_bigint::bigint::multiplication::<BigInt as MulAssign<Self>>::mul_assign` | 3 | 1 | `crates/zed-kernel/src/num.rs:236` | `a * b` |
 | `num_bigint::bigint::multiplication::<Sign as Mul<Self>>::mul` | 6 | 1 | `crates/zed-kernel/src/num/fast.rs:576` | missing |
 | `num_bigint::bigint::multiplication::<i32 as Mul<BigInt>>::mul` | 6 | 1 | `crates/zed-kernel/src/num.rs:994` | `a * b` |
-| `num_bigint::bigint::power::<BigInt as Pow<&BigUint>>::pow` | 1 | 1 | `crates/zed-kernel/src/num.rs:236` | `a ** n` |
-| `num_bigint::bigint::power::<BigInt as Pow<u32>>::pow` | 2 | 1 | `crates/zed-kernel/src/num.rs:1582` | `a ** n` |
+| `num_bigint::bigint::power::<BigInt as Pow<&BigUint>>::pow` | 1 | 1 | `crates/zed-kernel/src/num.rs:236` | `a ^ n` |
+| `num_bigint::bigint::power::<BigInt as Pow<u32>>::pow` | 2 | 1 | `crates/zed-kernel/src/num.rs:1582` | `a ^ n` |
 | `num_bigint::bigint::shift::<&BigInt as Shl<u32>>::shl` | 3 | 1 | `crates/zedc-int/src/int.rs:1127` | `shl(a, n)` |
 | `num_bigint::bigint::shift::<&BigInt as Shl<u64>>::shl` | 21 | 2 | `crates/zed-kernel/src/num/fast.rs:923` | `shl(a, n)` |
 | `num_bigint::bigint::shift::<&BigInt as Shr<u64>>::shr` | 18 | 2 | `crates/zed-kernel/src/num/fast.rs:962` | `shr(a, n)` |
@@ -1253,7 +1253,7 @@ Counts: 1495 routines, 57704 uses.
 | `num_bigint::biguint::BigUint::new` | 2 | 1 | `crates/zed-kernel/src/num/fast.rs:527` | missing |
 | `num_bigint::biguint::BigUint::nth_root` | 1 | 1 | `crates/zedc-int/src/int.rs:871` | row STD-num |
 | `num_bigint::biguint::BigUint::parse_bytes` | 1 | 1 | `crates/zed-kernel/src/value.rs:482` | row STD-num |
-| `num_bigint::biguint::BigUint::pow` | 2 | 2 | `crates/zed-kernel/src/num/fast.rs:1162` | `a ** n` |
+| `num_bigint::biguint::BigUint::pow` | 2 | 2 | `crates/zed-kernel/src/num/fast.rs:1162` | `a ^ n` |
 | `num_bigint::biguint::BigUint::sqrt` | 1 | 1 | `crates/zedc-int/src/int.rs:603` | row STD-num |
 | `num_bigint::biguint::BigUint::to_u64_digits` | 1 | 1 | `crates/zed-kernel/src/num/fast.rs:705` | missing |
 | `num_bigint::biguint::BigUint::trailing_zeros` | 11 | 5 | `crates/zed-kernel/src/bits.rs:247` | missing |
@@ -1304,8 +1304,8 @@ Counts: 1495 routines, 57704 uses.
 | `num_bigint::biguint::multiplication::<BigUint as MulAssign<&BigUint>>::mul_assign` | 3 | 1 | `crates/zedc-int/src/int.rs:586` | `a * b` |
 | `num_bigint::biguint::multiplication::<BigUint as MulAssign<u32>>::mul_assign` | 3 | 1 | `crates/zedc-int/src/int.rs:608` | `a * b` |
 | `num_bigint::biguint::multiplication::<BigUint as MulAssign<u64>>::mul_assign` | 9 | 2 | `crates/zed-kernel/src/types/empty.rs:957` | `a * b` |
-| `num_bigint::biguint::power::<&BigUint as Pow<Self>>::pow` | 1 | 1 | `crates/zed-kernel/src/num.rs:686` | `a ** n` |
-| `num_bigint::biguint::power::<BigUint as Pow<u32>>::pow` | 1 | 1 | `crates/zed-kernel/src/num.rs:1054` | `a ** n` |
+| `num_bigint::biguint::power::<&BigUint as Pow<Self>>::pow` | 1 | 1 | `crates/zed-kernel/src/num.rs:686` | `a ^ n` |
+| `num_bigint::biguint::power::<BigUint as Pow<u32>>::pow` | 1 | 1 | `crates/zed-kernel/src/num.rs:1054` | `a ^ n` |
 | `num_bigint::biguint::shift::<&BigUint as Shl<u32>>::shl` | 3 | 1 | `crates/zed-kernel/src/num/fast.rs:705` | missing |
 | `num_bigint::biguint::shift::<&BigUint as Shl<u64>>::shl` | 21 | 3 | `crates/zed-kernel/src/num/bound.rs:86` | `shl(a, n)` |
 | `num_bigint::biguint::shift::<&BigUint as Shl<usize>>::shl` | 6 | 1 | `crates/zed-kernel/src/num/bound.rs:120` | `shl(a, n)` |

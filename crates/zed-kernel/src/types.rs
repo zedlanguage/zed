@@ -1467,7 +1467,7 @@ impl Type {
     }
 
     /// The integers of `self`, when they are a finite set of literals. Its users: the checker's
-    /// test that the exponent of `x ** n` is at least 0 (`zedc::check`, `exponent`) and the
+    /// test that the exponent of `x ^ n` is at least 0 (`zedc::check`, `exponent`) and the
     /// type facet of a product cell (`zedc::store::product`).
     pub fn ints_listed(&self) -> Option<Vec<Value>> {
         let p = self.p();

@@ -20,7 +20,7 @@ fn two_to(e: u32) -> BigInt {
     BigInt::from(2).pow(e)
 }
 
-/// `2^e` kept as a power of 2, as `2 ** e` evaluates.
+/// `2^e` kept as a power of 2, as `2 ^ e` evaluates.
 fn two_pow(e: u32) -> Rat {
     Rat::int(BigInt::from(2))
         .pow(&BigUint::from(e))

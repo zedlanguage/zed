@@ -562,7 +562,7 @@ fn fin(e: &End) -> &Num {
 /// operation (step L1.39f, DESIGN.md sec:linalg) on the intervals of its int operands, in
 /// parameter order with the width last: a set holding `p(args)` for every tuple of members on
 /// which `p` is defined. Each operand is first met with its domain, `int[0..]` for every one
-/// but the `x` of `shl` and `shr`, the operands read as `w` digits with `int[0..<2 ** w]` and
+/// but the `x` of `shl` and `shr`, the operands read as `w` digits with `int[0..<2 ^ w]` and
 /// the `k` of a funnel shift with `int[0..<w]`, for the largest `w`; an operand left empty
 /// gives the empty set, and operands that are each one integer give the word's value. Every end
 /// is exact at any size.
@@ -575,7 +575,7 @@ fn fin(e: &End) -> &Num {
 /// `x` is. `shl` and `shr` are the product and the floor quotient by `2^k`, monotone in `x` and,
 /// on each sign of `x`, in `k`, so each sign part of each piece of `x` maps by its corners; a
 /// shift right by at least the digits of `x` gives 0 or -1, so `k` is read up to those digits.
-/// `f64Bits` is in `int[0..<2 ** 64]`. `mulHi` is monotone in each factor and falls as `w`
+/// `f64Bits` is in `int[0..<2 ^ 64]`. `mulHi` is monotone in each factor and falls as `w`
 /// grows, so it lies in `(lo_a * lo_b) div 2^hi_w ..= (hi_a * hi_b) div 2^lo_w`, below
 /// `2^hi_w`; `bitReverse` and `byteSwap` lie below `2^w`, 0 exactly when `x` is, as the
 /// rotations do; `pdep` lies in `0..=hi_mask`, since its one digits are some of the mask's;

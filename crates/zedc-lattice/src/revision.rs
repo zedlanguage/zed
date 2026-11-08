@@ -29,7 +29,7 @@ pub enum Op {
     Neg,
     /// `x * y`.
     Mul,
-    /// `x ** k` for a constant `k >= 0` of any size, held exactly. Every entry reads whether
+    /// `x ^ k` for a constant `k >= 0` of any size, held exactly. Every entry reads whether
     /// `k` is 0 and its parity in O(1) time; an endpoint is exact for every `k` that is not
     /// kept, and bounded outward otherwise (`pow_end`).
     Pow(Exponent),
@@ -45,12 +45,12 @@ pub enum Op {
     Max,
 }
 
-/// The constant exponent `k >= 0` of `x ** k`, of any size, held exactly.
+/// The constant exponent `k >= 0` of `x ^ k`, of any size, held exactly.
 #[derive(Clone, Debug)]
 pub enum Exponent {
     /// A constant of any size, or the number of factors of a product of one value (S30),
     /// which has `d` bits for a squaring name nested `d` deep. A kernel integer past the
-    /// 64-bit range is kept as the kernel holds it, prime powers unbuilt: `10 ** 10 ** 9` is
+    /// 64-bit range is kept as the kernel holds it, prime powers unbuilt: `10 ^ 10 ^ 9` is
     /// two kept powers, where it is 3.3·10^9 bits built.
     Num(Num),
 }
@@ -476,17 +476,17 @@ pub fn backward(
     own.meet(&narrowed)
 }
 
-/// The members of `x` with `x ** k` in `lo..=hi`, for `k >= 1`, as at most two pieces.
+/// The members of `x` with `x ^ k` in `lo..=hi`, for `k >= 1`, as at most two pieces.
 fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
-    // The largest r >= 0 with r ** k <= v, for v >= 0, or a greater bound when `k` has no
+    // The largest r >= 0 with r ^ k <= v, for v >= 0, or a greater bound when `k` has no
     // exact form.
     let floor_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
         if let Some(r) = v.floor_root_by(k.num()) {
             return Fin(r);
         }
-        // Complexity tradeoff: see `pow_end`, a kept `k` (past `2 ** 127`). `r ** k` exceeds `v`
-        // for every `r >= 2` while `v < 2 ** u32::MAX`, so the root is then exact (0 or 1); past
+        // Complexity tradeoff: see `pow_end`, a kept `k` (past `2 ^ 127`). `r ^ k` exceeds `v`
+        // for every `r >= 2` while `v < 2 ^ u32::MAX`, so the root is then exact (0 or 1); past
         // that the bound is the root for `u32::MAX`, which is at least the root for `k`.
         Fin(if *v <= Num::ONE {
             v.clone()
@@ -496,7 +496,7 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
             v.floor_root(u32::MAX)
         })
     };
-    // The least r >= 0 with r ** k >= v, for v >= 0, or a smaller bound when `k` has no exact
+    // The least r >= 0 with r ^ k >= v, for v >= 0, or a smaller bound when `k` has no exact
     // form.
     let ceil_root = |v: &End| -> End {
         let Fin(v) = v else { return PosInf };
@@ -531,22 +531,22 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
     vec![(-&r_hi, -&r_lo), (r_lo, r_hi)]
 }
 
-/// `x ** k` at a finite end `x`, rounded outward in `dir`: exact for every `k` that is not
+/// `x ^ k` at a finite end `x`, rounded outward in `dir`: exact for every `k` that is not
 /// kept ([`Num::pow_by`]), with a kept power for a result past `i128`. A count of factors is
 /// exact at any size (S30b), so a squaring name nested 33 deep is exact.
 ///
 /// Complexity tradeoff: two exponents have no exact form, and for them the end is bounded
-/// by `2 ** u32::MAX` on the side toward 0 and is infinite on the side away from 0, for
-/// `abs(x) >= 2`: a kept exponent, such as `2 ** 200` or the kernel's `10 ** 10 ** 9`, whose
+/// by `2 ^ u32::MAX` on the side toward 0 and is infinite on the side away from 0, for
+/// `abs(x) >= 2`: a kept exponent, such as `2 ^ 200` or the kernel's `10 ^ 10 ^ 9`, whose
 /// power would need a kept atom with a kept exponent; and a kept base that is not bare (a
 /// sum) with `k` past `u32`, whose expansion squares its terms about 32 times. Why: an atom
 /// with a kept exponent needs an approximation whose shift is itself kept (a tower), and
 /// how such values compare is not specified (open: POW-tower). Trigger:
-/// `x ** (2 ** 200)` on a base other than -1, 0 and 1, or `(2 ** 200 + 1) ** (2 ** 40)`.
+/// `x ^ (2 ^ 200)` on a base other than -1, 0 and 1, or `(2 ^ 200 + 1) ^ (2 ^ 40)`.
 /// Test: `l01_25_preimage_catalog::powers::an_exponent_of_any_size_is_read_by_its_parity`
 /// and `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
 /// COMPLEXITY.md S36. A complete solution would keep the exponent of a kept power as a kept
-/// value, and `s ** k` as an atom.
+/// value, and `s ^ k` as an atom.
 fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
     if let Some(v) = x.pow_by(k.num()) {
         return Fin(v);

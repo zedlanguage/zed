@@ -2408,7 +2408,7 @@ fn as_key(k: &Value) -> Cow<'_, Value> {
     }
 }
 
-/// An integer `+`, `-`, `*`, `div`, `mod` or `**` of two integers, either of either width:
+/// An integer `+`, `-`, `*`, `div`, `mod` or `^` of two integers, either of either width:
 /// in a machine word when the result fits, else unbounded. `None` for a negative power;
 /// [`KernelError::NumberTooLarge`] when a number it must build does not fit in memory.
 fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelError> {
@@ -2439,7 +2439,7 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
         Prim::Mod => x.rem_euclid(&y),
         _ if y.is_negative() => return Ok(None),
         // `0`, `1` and `-1` to any power are read from the exponent's sign and parity, so
-        // `1 ** 2 ** 2 ** 33` builds no exponent.
+        // `1 ^ 2 ^ 2 ^ 33` builds no exponent.
         _ => match a {
             Value::Int(u @ -1..=1) => {
                 let one = *u == 1 || (*u == -1 && y.is_even());

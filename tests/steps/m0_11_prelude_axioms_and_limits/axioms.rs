@@ -62,7 +62,7 @@ fn call(op: &str, args: Vec<Term>) -> Term {
         "shl" => Prim::Shl,
         "shr" => Prim::Shr,
         "div" => Prim::IntDiv,
-        "**" => Prim::Pow,
+        "^" => Prim::Pow,
         "square" => return prim(Prim::Mul, vec![args[0].clone(), args[0].clone()]),
         // `quot(a, b)`, for `b > 0`, is the quotient rounded toward zero, which `div` is not at
         // a negative `a`.
@@ -220,7 +220,7 @@ pub(super) fn check_word(a: &Axiom, w: u32) -> Result<usize, String> {
     Ok(n)
 }
 
-/// Checks `op(x, k) == g(x, 2 ** k)`, a [`Law::PowerOfTwo`] of a shift, for every `x` of `xs`
+/// Checks `op(x, k) == g(x, 2 ^ k)`, a [`Law::PowerOfTwo`] of a shift, for every `x` of `xs`
 /// and `k` of `ks`. Both sides must give a value: an error on both is no agreement here.
 fn check_shift(a: &Axiom, xs: &[Value], ks: &[Value]) -> Result<usize, String> {
     let Law::PowerOfTwo(g) = a.law else {
@@ -232,7 +232,7 @@ fn check_shift(a: &Axiom, xs: &[Value], ks: &[Value]) -> Result<usize, String> {
         for k in ks {
             n += 1;
             let l = eval(&call(a.op, vec![v(x), v(k)]));
-            let pow = call("**", vec![lit(Value::Int(2)), v(k)]);
+            let pow = call("^", vec![lit(Value::Int(2)), v(k)]);
             let r = eval(&call(g, vec![v(x), pow]));
             match (&l, &r) {
                 (Ok(p), Ok(q)) if p == q => {}

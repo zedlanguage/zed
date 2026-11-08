@@ -100,7 +100,7 @@ pub enum Law {
     Composes(&'static str, &'static str),
     /// `op(a, a) == e`: every value is its own inverse, `e` the identity.
     SelfInverse(Const),
-    /// For an `op(x, k)` with `k >= 0`, `op(x, k) == g(x, 2 ** k)`, `g` the named operator: a
+    /// For an `op(x, k)` with `k >= 0`, `op(x, k) == g(x, 2 ^ k)`, `g` the named operator: a
     /// shift is a product or a quotient by a power of two.
     PowerOfTwo(&'static str),
 }
@@ -272,8 +272,8 @@ pub const AXIOMS: &[Axiom] = &[
     ax(">", String, Composes(">=", ">")),
     ax(">=", String, Composes(">", ">")),
     // The bit words of step L1.39a, on their domain `int[0..]`. None takes a width, so no law
-    // wraps: `shl(x, k)` is the exact `x * 2 ** k` for every int `x`, `shl(1, 64)` is `2 ** 64`,
-    // and `shr(x, k)` is the Euclidean `x div 2 ** k`, which rounds toward negative infinity.
+    // wraps: `shl(x, k)` is the exact `x * 2 ^ k` for every int `x`, `shl(1, 64)` is `2 ^ 64`,
+    // and `shr(x, k)` is the Euclidean `x div 2 ^ k`, which rounds toward negative infinity.
     ax("bitAnd", Int, Associative),
     ax("bitAnd", Int, Commutative),
     ax("bitAnd", Int, Idempotent),

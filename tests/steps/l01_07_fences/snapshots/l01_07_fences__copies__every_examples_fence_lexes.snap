@@ -46,11 +46,11 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | r = - 7₍10₎ «mod» 2₍10₎ ;
   5 | h = f64 ( 7₍10₎ ) / 2₍10₎n ;
   6 | t = 1r / 3r ;
-  7 | big = 2₍10₎ ** 100₍10₎ ;
+  7 | big = 2₍10₎ ^ 100₍10₎ ;
   8 | m = 1000000₍10₎ ; hex = FF₍16₎ ; bits = 1011₍2₎ ; sci = 1.5e-3f ;
   9 | half = 0.5f ;
  10 | dbl = h * 2₍10₎n ;
- 12 | y = x ** 2₍10₎ + 2₍10₎ * x + 1₍10₎ ;
+ 12 | y = x ^ 2₍10₎ + 2₍10₎ * x + 1₍10₎ ;
  13 | b : u8 = 255₍10₎ ;
  14 | w : i32 = shl ( 1₍10₎ , 30₍10₎ ) ;
  15 | z = 7₍10₎ / 2₍10₎ ;
@@ -132,7 +132,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | stats ( «positional» data : [ f64 ] ) {
   6 | n = f64 ( data :: len ) ;
   7 | mean = data . sum / n ;
-  8 | sd = ( data . map ( x -> ( x - mean ) ** 2₍10₎ ) . sum / n ) . sqrt ;
+  8 | sd = ( data . map ( x -> ( x - mean ) ^ 2₍10₎ ) . sum / n ) . sqrt ;
   9 | «return» { mean : , sd : } ;
  10 | }
  11 | m = stats ( xs ) . mean ;
@@ -240,7 +240,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   3 | p = Point ( x : 1₍10₎n , y : 2₍10₎n ) ;
   4 | p2 = p «with» { x = 3₍10₎n } ;
   5 | px = p . x ;
-  6 | dist ( «positional» a : Point , «positional» b : Point ) = ( ( a . x - b . x ) ** 2₍10₎ + ( a . y - b . y ) ** 2₍10₎ ) . sqrt ;
+  6 | dist ( «positional» a : Point , «positional» b : Point ) = ( ( a . x - b . x ) ^ 2₍10₎ + ( a . y - b . y ) ^ 2₍10₎ ) . sqrt ;
   7 | «struct» Circle { c : Point , r : f64 }
   8 | «struct» Round { «import» Rect , r : f64 }
 == EXAMPLES.md [10. Structs and updates] 2 L10
@@ -384,9 +384,9 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | even ( «positional» n ) = «if» n == 0₍10₎ { «true» } «else» { odd ( n - 1₍10₎ ) } ;
   8 | odd ( «positional» n ) = «if» n == 0₍10₎ { «false» } «else» { even ( n - 1₍10₎ ) } ;
 == EXAMPLES.md [14. Recursion] 2 L6
-  2 | next ( «positional» s ) = ( s * 6364136223846793005₍10₎ + 1442695040888963407₍10₎ ) «mod» ( 2₍10₎ ** 64₍10₎ ) ;
+  2 | next ( «positional» s ) = ( s * 6364136223846793005₍10₎ + 1442695040888963407₍10₎ ) «mod» ( 2₍10₎ ^ 64₍10₎ ) ;
   3 | rnd [ i «in» 0₍10₎ .. ] = next ( rnd [ i - 1₍10₎ ] ) «with» rnd [ - 1₍10₎ ] = seed ;
-  4 | dice = rnd . map ( r -> ( ( r «div» 2₍10₎ ** 32₍10₎ ) «mod» 6₍10₎ ) + 1₍10₎ ) ;
+  4 | dice = rnd . map ( r -> ( ( r «div» 2₍10₎ ^ 32₍10₎ ) «mod» 6₍10₎ ) + 1₍10₎ ) ;
   5 | tenRolls = «for» i «in» 0₍10₎ ..< 10₍10₎ { dice [ i ] } ;
 == EXAMPLES.md [15. Trees and graphs] 1 L10
   2 | «type» Tree = #leaf | Node ;

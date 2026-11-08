@@ -78,7 +78,7 @@ pub enum Prim {
     /// `a ++ b`, two strings joined. It is not `Add`, so no law of `+` (commutativity) is
     /// ever read as one of `++`.
     Concat,
-    /// `a ** b`: an int to a non-negative int power, or a float to a float power.
+    /// `a ^ b`: an int to a non-negative int power, or a float to a float power.
     Pow,
     /// Builds an atom: `atom("err", (), 1)` is `#err(1)` and `atom("err", ("code",), 3)` is
     /// `#err(code: 3)`. The first argument is the name, the second the field names of a

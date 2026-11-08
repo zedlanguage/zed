@@ -48,7 +48,7 @@ reader that folds it is written by the step named.
 | Rule | Semantics | Form | Reader and its direction | Decision |
 |---|---|---|---|---|
 | `Arrow` | right | `TypeUnion '->' Arrow` | `arrow` `ast/types.rs:108`–`:120`, right | keep |
-| `Prefix`, `Power` | right | `('-' \| '!') Prefix`, `Postfix '**' Prefix` | `ast/mod.rs:495`, `:503`, right; formatter `format.rs:682` | keep |
+| `Prefix`, `Power` | right | `('-' \| '!') Prefix`, `Postfix '^' Prefix` | `ast/mod.rs:495`, `:503`, right; formatter `format.rs:682` | keep |
 | `TypeNot` | right | `'!' TypeNot` | not built (L10) | keep |
 | `Lambda` body | right | `... '->' (Block \| Expr)` | `lambda` `ast/mod.rs:566` | keep |
 | `If` else-if | right | `'if' ... 'else' (If \| Block)` | `ast/mod.rs:532` | keep |

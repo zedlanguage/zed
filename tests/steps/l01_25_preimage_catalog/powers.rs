@@ -1,4 +1,4 @@
-//! A product whose factors are all one value, `k` of them, is read as its power `e ** k`
+//! A product whose factors are all one value, `k` of them, is read as its power `e ^ k`
 //! before revision (DESIGN.md sec:constraints, "How a constraint reaches the domains"), for
 //! any `k`: its preimage is that of the power written out. Products of factors that differ
 //! are not powers, and the reading costs time linear in the product.
@@ -68,7 +68,7 @@ fn shifted() -> Term {
     prim(Prim::Add, var("i"), int(1))
 }
 
-/// Asserts that `test(product)` and `test(f ** k)` have the same preimage over `ds`, and
+/// Asserts that `test(product)` and `test(f ^ k)` have the same preimage over `ds`, and
 /// returns it printed.
 fn same_as_power(
     f: &Term,
@@ -154,7 +154,7 @@ fn a_power_reads_as_one_whatever_its_demand_on_the_value() {
 
 #[test]
 fn factors_bound_to_names_are_followed() {
-    // `y = i * i; z = y * y * … * y` with 40 factors `y`: `i ** 80`.
+    // `y = i * i; z = y * y * … * y` with 40 factors `y`: `i ^ 80`.
     let ds = doms(&[("i", Some(-50), Some(50))]);
     let t = bind(
         "y",
@@ -168,7 +168,7 @@ fn factors_bound_to_names_are_followed() {
 
 #[test]
 fn a_product_shared_by_names_counts_each_factor_it_stands_for() {
-    // `x1 = i * i; x2 = x1 * x1; …; x20 <= 1`: `i ** 2^20`, read once per name.
+    // `x1 = i * i; x2 = x1 * x1; …; x20 <= 1`: `i ^ 2^20`, read once per name.
     let ds = doms(&[("i", Some(-50), Some(50))]);
     let depth = 20;
     let mut body = at_most(var(&format!("x{depth}")), 1);
@@ -189,7 +189,7 @@ fn a_product_shared_by_names_counts_each_factor_it_stands_for() {
     assert_eq!(shown(&p), "i [-1..=1]; exact");
 }
 
-/// `x1 = i * i; x2 = x1 * x1; …; x<depth> = …; test(x<depth>)`: `i ** 2^depth` written as
+/// `x1 = i * i; x2 = x1 * x1; …; x<depth> = …; test(x<depth>)`: `i ^ 2^depth` written as
 /// `depth` names, each the square of the one before it.
 fn squares(depth: usize, test: Term) -> Term {
     let mut body = test;
@@ -213,7 +213,7 @@ fn big(n: BigInt) -> Term {
     Term::Lit(Value::int(n))
 }
 
-/// `f ** k` for an exponent `k` written as a term.
+/// `f ^ k` for an exponent `k` written as a term.
 fn power_of(f: &Term, k: Term) -> Term {
     prim(Prim::Pow, f.clone(), k)
 }
@@ -221,7 +221,7 @@ fn power_of(f: &Term, k: Term) -> Term {
 #[test]
 fn a_shared_count_past_the_exponent_width_is_read_as_its_power() {
     // `x1 = i * i; …; x32 <= 0`: 2^32 factors, one more than `u32` holds, read as
-    // `i ** 2^32`: an even power, 0 only at `i = 0`.
+    // `i ^ 2^32`: an even power, 0 only at `i = 0`.
     let ds = doms(&[("i", Some(-3), Some(3))]);
     for depth in [31, 32, 33, 64, 65, 200] {
         let k = big(BigInt::from(1) << depth);
@@ -250,7 +250,7 @@ fn a_shared_count_past_the_exponent_width_is_read_as_its_power() {
 
 #[test]
 fn a_count_of_any_size_gives_an_exact_end() {
-    // `x<d> == 3 ** 2^d`: the count is held exactly, so the end `3 ** 2^d` is exact and the
+    // `x<d> == 3 ^ 2^d`: the count is held exactly, so the end `3 ^ 2^d` is exact and the
     // answer is `i = ±3` at every depth, as for the small form at depth 3. Corner: the counts
     // 2^32 - 1, the largest in `u32`, and 2^32, one past it.
     let ds = doms(&[("i", Some(-3), Some(3))]);
@@ -265,8 +265,8 @@ fn a_count_of_any_size_gives_an_exact_end() {
         assert_eq!(shown(&p), "i [-3..=-3, 3..=3]; exact", "{depth}");
         let direct = prim(Prim::Eq, power_of(&var("i"), big(k.clone())), three_to(k));
         assert_eq!(p, pre(&direct, &ds), "{depth}");
-        // `x<d> - 1 == 3 ** 2^d`: one more than the end, no integer. The sum is formed by the
-        // preimage, kept; the kernel writes out a constant `3 ** 2^d + 1`.
+        // `x<d> - 1 == 3 ^ 2^d`: one more than the end, no integer. The sum is formed by the
+        // preimage, kept; the kernel writes out a constant `3 ^ 2^d + 1`.
         let k = BigInt::from(1) << depth;
         let t = squares(
             depth,
@@ -279,7 +279,7 @@ fn a_count_of_any_size_gives_an_exact_end() {
         assert_eq!(shown(&pre(&t, &ds)), "i []; exact", "{depth} + 1");
     }
     // `p1 = i * x1; p2 = p1 * x2; …; p31 = p30 * x31`: 1 + 2 + … + 2^31 = 2^32 - 1 factors,
-    // an odd count, so `p31 == 3 ** (2^32 - 1)` is `i = 3`.
+    // an odd count, so `p31 == 3 ^ (2^32 - 1)` is `i = 3`.
     let k = (BigInt::from(1) << 32) - 1;
     let mut body = prim(Prim::Eq, var("p31"), three_to(k));
     for n in (1..=31).rev() {
@@ -300,7 +300,7 @@ fn a_count_of_any_size_gives_an_exact_end() {
 
 #[test]
 fn a_power_with_a_small_exponent_keeps_every_solution() {
-    // `i ** k` against the interpreter at every point, for `k` from 0 to 70, and the same
+    // `i ^ k` against the interpreter at every point, for `k` from 0 to 70, and the same
     // count of factors written out as a product.
     let ds = doms(&[("i", Some(-6), Some(6))]);
     for k in 0..=70usize {
@@ -322,8 +322,8 @@ fn a_power_with_a_small_exponent_keeps_every_solution() {
 
 #[test]
 fn an_exponent_of_any_size_is_read_by_its_parity() {
-    // `i ** k <= 0` over `-3..=3`: `i <= 0` for an odd `k`, `i = 0` for an even one, and every
-    // `i` for `k = 0`. `i ** k == 1`: 1 for an odd `k`, -1 and 1 for an even one.
+    // `i ^ k <= 0` over `-3..=3`: `i <= 0` for an odd `k`, `i = 0` for an even one, and every
+    // `i` for `k = 0`. `i ^ k == 1`: 1 for an odd `k`, -1 and 1 for an even one.
     let ds = doms(&[("i", Some(-3), Some(3))]);
     let two = BigInt::from(2);
     let ten = || big(BigInt::from(10));
@@ -336,10 +336,10 @@ fn an_exponent_of_any_size_is_read_by_its_parity() {
         ("i64::MAX", int(i64::MAX), true),
         ("2^64", big(two.pow(64)), false),
         ("2^64 + 1", big(two.pow(64) + 1), true),
-        // `10 ** 10 ** 9` and `3 ** 10 ** 9`, which the kernel holds as unbuilt prime powers:
+        // `10 ^ 10 ^ 9` and `3 ^ 10 ^ 9`, which the kernel holds as unbuilt prime powers:
         // built, each would be over a billion bits.
-        ("10 ** 10 ** 9", power_of(&ten(), billion()), false),
-        ("3 ** 10 ** 9", power_of(&int(3), billion()), true),
+        ("10 ^ 10 ^ 9", power_of(&ten(), billion()), false),
+        ("3 ^ 10 ^ 9", power_of(&int(3), billion()), true),
     ];
     for (name, k, odd) in cases {
         let le0 = at_most(power_of(&var("i"), k.clone()), 0);
@@ -352,13 +352,13 @@ fn an_exponent_of_any_size_is_read_by_its_parity() {
             (_, false) => ("i [0..=0]; exact", "i [-1..=-1, 1..=1]; exact", 1, 2),
         };
         let p = pre(&le0, &ds);
-        assert_eq!(shown(&p), le0_want, "i ** {name} <= 0");
+        assert_eq!(shown(&p), le0_want, "i ^ {name} <= 0");
         let met = check(&le0, &ds, &Demand::Bool(true), &p, (-1, 1));
-        assert_eq!(met, le0_met, "i ** {name} <= 0");
+        assert_eq!(met, le0_met, "i ^ {name} <= 0");
         let p = pre(&eq1, &ds);
-        assert_eq!(shown(&p), eq1_want, "i ** {name} == 1");
+        assert_eq!(shown(&p), eq1_want, "i ^ {name} == 1");
         let met = check(&eq1, &ds, &Demand::Bool(true), &p, (-1, 1));
-        assert_eq!(met, eq1_met, "i ** {name} == 1");
+        assert_eq!(met, eq1_met, "i ^ {name} == 1");
     }
 }
 
@@ -399,7 +399,7 @@ fn factors_that_differ_are_not_a_power() {
 #[test]
 fn a_product_with_a_different_factor_holds_powers_inside_it() {
     // `(i * i * … * i) * j <= 1`, 100 factors `i`: the inner product is still read as
-    // `i ** 100`, so its interval is `[0..=50 ** 100]` and not that of 100 independent
+    // `i ^ 100`, so its interval is `[0..=50 ^ 100]` and not that of 100 independent
     // factors, which would hold negative values.
     let ds = doms(&[("i", Some(-50), Some(50)), ("j", Some(1), Some(50))]);
     let t = at_most(prim(Prim::Mul, product(&var("i"), 100), var("j")), 1);

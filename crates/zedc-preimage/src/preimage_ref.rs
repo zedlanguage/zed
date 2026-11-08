@@ -21,7 +21,7 @@
 //! - `+`, `-` and `*` with one constant operand, and Euclidean `div` and `mod` by a constant,
 //!   invert exactly, `mod` within the operand's forward interval, its first and last periods
 //!   exactly and the periods between them as one piece;
-//! - `-x`, `abs` and `**` by a constant invert exactly at their endpoints, by the tonicity of
+//! - `-x`, `abs` and `^` by a constant invert exactly at their endpoints, by the tonicity of
 //!   each sign part (the M0.5 revision table); a product of one value `k` times is read as its
 //!   `k`th power first (sec:constraints);
 //! - `min` and `max` invert exactly with a constant operand, and with two operands when the
@@ -208,7 +208,7 @@ fn run_closed(t: &Term) -> Option<Value> {
 /// Complexity tradeoff: a product of more than 64 equal factors is not read as a power, so it
 /// is read as nested products (the HC4 entry for `*`), wider than the power's exact inverse. Why
 /// given: the power would leave `i64`; that reason does not hold, since `Int` is unbounded
-/// and `x ** k` inverts by a k-th root at a cost in the bits of its bounds. Trigger: more than
+/// and `x ^ k` inverts by a k-th root at a cost in the bits of its bounds. Trigger: more than
 /// 64 equal factors. Test:
 /// `l01_25_preimage_catalog::scopes::equal_factors_written_twice_are_read_as_a_square`
 /// (below the constant only). COMPLEXITY.md row C19. This switches behavior at a constant
@@ -462,7 +462,7 @@ pub fn tonicity(p: Prim, arg: usize) -> Option<Tonicity> {
     (t != Tonicity::None).then_some(t)
 }
 
-/// The revision table's operator for a primitive, with the constant exponent of `**`.
+/// The revision table's operator for a primitive, with the constant exponent of `^`.
 fn op(p: Prim, exponent: Option<u32>) -> Option<Op> {
     Some(match p {
         Prim::Add => Op::Add,
@@ -2453,7 +2453,7 @@ impl<'t> Tx<'t> {
     /// interval of `c`.
     fn back_unary(&mut self, o: Op, c: Tid, env: Eid, z: &IntervalSet) -> Res {
         if matches!(&o, Op::Pow(k) if k.is_zero()) {
-            // `c ** 0` is 1 wherever `c` is an integer.
+            // `c ^ 0` is 1 wherever `c` is an integer.
             return if z.contains(1) {
                 self.back_at(c, env, &Demand::Ints(IntervalSet::top()))
             } else {
@@ -2473,7 +2473,7 @@ impl<'t> Tx<'t> {
     /// region that is not a box, and finding it costs the points of the box (or is
     /// undecidable for polynomial tests over unbounded integers). Trigger: an operator with
     /// no exact catalog entry (anything but shifts, scalings, `div` and `mod` by a constant,
-    /// `**`, and branches), or two operands that both read inputs. Test:
+    /// `^`, and branches), or two operands that both read inputs. Test:
     /// `l01_25_preimage_catalog::entries::a_strict_disjunction_with_a_failing_side_is_necessary_only`.
     /// COMPLEXITY.md row C16. A complete solution is `@exact` ([`exact_preimage`]), which
     /// searches the box at a cost in its points.

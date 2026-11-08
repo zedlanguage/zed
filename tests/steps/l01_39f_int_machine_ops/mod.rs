@@ -2,7 +2,7 @@
 //! `pext`, `funnelShl` and `funnelShr` (DESIGN.md sec:linalg, machine operations), kernel
 //! primitives on the unbounded `int` with the operand domains of the bit words and forward
 //! transfer on intervals. An operand outside its domain is a type error at the call with its
-//! derivation: a negative one, one read as `width` digits that is not below `2 ** width`, a
+//! derivation: a negative one, one read as `width` digits that is not below `2 ^ width`, a
 //! funnel shift's `k` that is not below `width`, and a width of `byteSwap` that is not a
 //! multiple of 8.
 

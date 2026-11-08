@@ -54,7 +54,8 @@ const NOT_MODES: &[&str] = &[
     "at",
     "yields",
     "above",
-    "across", //
+    "across",
+    "between", //
     // Subjects of the verb "builds": "the step builds", "the stage builds".
     "step",
     "stage",

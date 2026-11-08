@@ -9,7 +9,7 @@
 //! A [`Rat`] is `n/d * prod p^e`: a reduced rational, and powers of primes with unbounded
 //! exponents that are kept as exponents, not built. A decimal literal with an exponent is the
 //! case of the primes 2 and 5, so `1.345e932` is `269 * 2^929 * 5^930` and costs its digits
-//! and the exponent's, not the value's 3100 bits; `2 ** 2 ** 40` is `2^(2^40)`. Products,
+//! and the exponent's, not the value's 3100 bits; `2 ^ 2 ^ 40` is `2^(2^40)`. Products,
 //! quotients and powers add and multiply exponents. Order is decided by bounds on the two
 //! values (`bound`), equality by the normal form, and a sum builds only the part of the
 //! operands above their common powers. Printing builds the digits, at a cost proportional to
@@ -291,7 +291,7 @@ impl Rat {
         // 2^20 bits, plain, kept powers and rationals (2026-11-06, glibc's mmap threshold
         // fixed at 128 KiB), and with the printer of NUM-print-fast, whose levels keep their
         // transforms, at most 6.11 times over plain numbers of 2^14 to 2^19 words and 5.50 over
-        // `3 ** k` to 6.4 million (2026-11-08). So a text needing less is refused when the free
+        // `3 ^ k` to 6.4 million (2026-11-08). So a text needing less is refused when the free
         // memory lies between the two, and none aborts. Tested by
         // `printing_a_wide_number_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would write the digits by halves into memory reserved once.
@@ -415,13 +415,13 @@ impl Rat {
         // Complexity tradeoff: the part `m` that is not a power of 10, and every number that is
         // not a decimal, is built and written in full, at a cost proportional to its digits,
         // since the type syntax has no power to write it with. Of a literal, `m` is the
-        // literal's digits; only a computed constant such as `2r ** 400000`, `1r / 2r ** 400000`
+        // literal's digits; only a computed constant such as `2r ^ 400000`, `1r / 2r ^ 400000`
         // or `1r / 3r` has an `m` beyond its source, and printing its type then costs the
         // digits of `m`, the size of the output. A number that is not a decimal has no literal
         // and prints as the quotient `nr/dr`, which the type syntax cannot write. Nothing is
         // refused. Tested by `a_computed_power_prints_its_digits` (COMPLEXITY.md K30). A
         // complete solution would give types a written power and quotient, such as
-        // `2r ** 400000` and `1r / 3r`, and print the kept powers as they are.
+        // `2r ^ 400000` and `1r / 3r`, and print the kept powers as they are.
         if !den.is_one() || !below.is_empty() {
             return self.to_string();
         }
@@ -508,13 +508,13 @@ impl Rat {
         // each operand is built, at the cost of its size.
         // Complexity tradeoff: a sum is kept as one rational times powers, so the part of each
         // operand above the common powers is built, at a cost proportional to the size of the
-        // sum's coefficient; `10 ** 10 ** 9 + 1` builds the billion digits, while
-        // `10 ** 10 ** 9 + 10 ** 10 ** 9` builds nothing. This is the cost of the output in this
+        // sum's coefficient; `10 ^ 10 ^ 9 + 1` builds the billion digits, while
+        // `10 ^ 10 ^ 9 + 10 ^ 10 ^ 9` builds nothing. This is the cost of the output in this
         // form, and no input is refused for its size; a part that does not fit in memory is
         // `TooLarge`, found before building it. Tested by
         // `kept_powers_agree_with_the_built_value`, `close_products_compare_exactly` and
         // `a_sum_too_large_to_build_is_an_error_naming_its_size` (COMPLEXITY.md K30).
-        // So the cost grows with the value and not with its text: `3 ** 2 ** k + 1` builds
+        // So the cost grows with the value and not with its text: `3 ^ 2 ^ k + 1` builds
         // `1.6 * 2^k` bits, 0.78 s at k = 25 and about 4 minutes at k = 33, O(n log n) in the
         // bits (item KERNEL-sum-tower; whether to keep such a sum unbuilt or refuse it is
         // QUESTIONS.md A28). Tested by `a_kept_power_beside_its_built_successor_costs_n_log_n`.
@@ -646,7 +646,7 @@ impl Rat {
     }
 
     /// `a^e`. Powers of primes multiply their exponents, and a numerator or denominator that
-    /// fits in 64 bits is factored into primes, so `10 ** 10 ** 9` is `2^(10^9) * 5^(10^9)`.
+    /// fits in 64 bits is factored into primes, so `10 ^ 10 ^ 9` is `2^(10^9) * 5^(10^9)`.
     /// [`TooLarge`] when a wider part's power is built and the system refuses the memory.
     pub fn pow(&self, e: &BigUint) -> Result<Rat, TooLarge> {
         if e.is_zero() {
@@ -722,7 +722,7 @@ impl Rat {
 
     /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. An exact
     /// division gives `0` and a dividend in `0 ..< |m|` gives itself, without building either;
-    /// otherwise a power of a prime is reduced by modular exponentiation, so `10 ** 10 ** 9 mod
+    /// otherwise a power of a prime is reduced by modular exponentiation, so `10 ^ 10 ^ 9 mod
     /// 7` builds no large number. [`TooLarge`] when the divisor is built, or the two are
     /// compared to more bits than the system gives memory for.
     pub fn rem_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
@@ -744,8 +744,8 @@ impl Rat {
     fn rem_built(&self, m: &Rat) -> Result<Rat, TooLarge> {
         // Complexity tradeoff: a remainder that is neither `0` nor the dividend itself is
         // found by building the divisor `m`, at a cost proportional to `m`'s size, which bounds
-        // the remainder's; `3 ** 10 ** 9 mod 2 ** 10 ** 9` builds `2^(10^9)`, while
-        // `10 ** 10 ** 12 mod 2 ** 10 ** 12` and `5 mod 2 ** 10 ** 12` build nothing. An input
+        // the remainder's; `3 ^ 10 ^ 9 mod 2 ^ 10 ^ 9` builds `2^(10^9)`, while
+        // `10 ^ 10 ^ 12 mod 2 ^ 10 ^ 12` and `5 mod 2 ^ 10 ^ 12` build nothing. An input
         // is refused only when the memory asked for it is refused: its divisor built, the
         // remainder of its coefficient (`rem`, 24 times `m`'s width) or a modular-power step
         // (32 times, below), each a measured bound that can exceed the real need; any of these
@@ -818,8 +818,8 @@ impl Rat {
         // Complexity tradeoff: a quotient that is not exact and not `0` or `±1` is found by
         // building the remainder (`rem_built`) and the part of the dividend above the powers
         // it shares with the remainder (`Rat::add`), at a cost proportional to the dividend's
-        // size, near the quotient's; `3 ** 10 ** 9 div 2 ** 10 ** 9` builds both, while
-        // `10 ** 10 ** 12 div 2 ** 10 ** 12` builds nothing. An input is refused only when the
+        // size, near the quotient's; `3 ^ 10 ^ 9 div 2 ^ 10 ^ 9` builds both, while
+        // `10 ^ 10 ^ 12 div 2 ^ 10 ^ 12` builds nothing. An input is refused only when the
         // memory asked for its parts is refused, by the measured bounds of `rem_built` and
         // `exact_div`, which can exceed the real need; any of these refused is `TooLarge`.
         // Tested by `a_kept_power_modulo_a_wide_number_is_refused_below_its_ask`,

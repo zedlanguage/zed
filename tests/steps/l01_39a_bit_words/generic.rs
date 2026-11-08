@@ -1,15 +1,15 @@
-//! A bit word or `**` on a value of a type-variable type (CHK-need-bound): the use records a
+//! A bit word or `^` on a value of a type-variable type (CHK-need-bound): the use records a
 //! need of the function on the parameter that gives the value, its ints in the word's domain,
 //! `int[0..]` or, for an operand read as `width` digits under a width of an int type,
-//! `int[0..<2 ** w]` for the smallest width `w`. Each call checks it with the caller's ints,
+//! `int[0..<2 ^ w]` for the smallest width `w`. Each call checks it with the caller's ints,
 //! from the interval of the argument's expression and the listed ints of its type, and a
 //! caller that passes on a parameter of no declared type takes the need on. A rejection shows
 //! the argument's derivation and each call that passed the value on, down to the use.
 //!
 //! The kernel raises `KernelError::Type` at these places, and a generic use of each is
 //! rejected before the program runs (`each_kernel_type_error_has_a_rejected_generic_use`):
-//! - `**` on ints with a negative exponent (zed-kernel eval.rs `prim_data`);
-//! - a bit word's operand below 0, above `2 ** width`, a funnel shift's `k` not below
+//! - `^` on ints with a negative exponent (zed-kernel eval.rs `prim_data`);
+//! - a bit word's operand below 0, above `2 ^ width`, a funnel shift's `k` not below
 //!   `width`, and a `byteSwap` width not a multiple of 8 (bits.rs `outside`, `not_bytes`);
 //! - `f64Bits` of a value that is not an f64, and a bit word of one that is not an int
 //!   (bits.rs `word`);
@@ -42,7 +42,7 @@ fn prints(name: &str, src: &str) -> String {
 /// Each word with the parameter `n` as one operand, the domain `n` takes, an argument in it
 /// and the value the word gives on it.
 const WORDS: [(&str, &str, &str, &str); 15] = [
-    ("2 ** n", "int[0..]", "3", "8"),
+    ("2 ^ n", "int[0..]", "3", "8"),
     ("bitAnd(n, 6)", "int[0..]", "3", "2"),
     ("bitAnd(6, n)", "int[0..]", "3", "2"),
     ("bitOr(n, 1)", "int[0..]", "2", "3"),
@@ -50,11 +50,11 @@ const WORDS: [(&str, &str, &str, &str); 15] = [
     ("shl(1, n)", "int[0..]", "3", "8"),
     ("shr(16, n)", "int[0..]", "3", "2"),
     ("popCount(n)", "int[0..]", "7", "3"),
-    ("bitNot(n, width: 8)", "int[0..<2 ** 8]", "200", "55"),
-    ("leadingZeros(n, width: 8)", "int[0..<2 ** 8]", "1", "7"),
-    ("trailingZeros(n, width: 8)", "int[0..<2 ** 8]", "8", "3"),
-    ("rotl(n, 1, width: 8)", "int[0..<2 ** 8]", "129", "3"),
-    ("rotr(n, 1, width: 8)", "int[0..<2 ** 8]", "3", "129"),
+    ("bitNot(n, width: 8)", "int[0..<2 ^ 8]", "200", "55"),
+    ("leadingZeros(n, width: 8)", "int[0..<2 ^ 8]", "1", "7"),
+    ("trailingZeros(n, width: 8)", "int[0..<2 ^ 8]", "8", "3"),
+    ("rotl(n, 1, width: 8)", "int[0..<2 ^ 8]", "129", "3"),
+    ("rotr(n, 1, width: 8)", "int[0..<2 ^ 8]", "3", "129"),
     ("rotl(1, n, width: 8)", "int[0..]", "3", "8"),
     ("rotr(5, n, width: 8)", "int[0..]", "1", "130"),
 ];
@@ -113,7 +113,7 @@ fn a_wrapper_passes_the_need_on_and_the_message_shows_each_call() {
 #[test]
 fn a_chain_of_wrappers_names_every_call_in_order() {
     let out = rejected(
-        "f(positional n) = 2 ** n;\ng(positional m) = f(m);\nh(positional k) { j = k; return g(j); }\nx = h(-3);\n",
+        "f(positional n) = 2 ^ n;\ng(positional m) = f(m);\nh(positional k) { j = k; return g(j); }\nx = h(-3);\n",
     );
     assert!(
         out.starts_with("4:5: `h` takes `k` in int[0..], and this `k` is -3"),
@@ -121,13 +121,13 @@ fn a_chain_of_wrappers_names_every_call_in_order() {
     );
     let first = out.find("`j` is passed on as `m` of `g` here").expect(&out);
     let second = out.find("`m` is passed on as `n` of `f` here").expect(&out);
-    let last = (out.find("`**` on an int takes an exponent in int[0..] here")).expect(&out);
+    let last = (out.find("`^` on an int takes an exponent in int[0..] here")).expect(&out);
     assert!(first < second && second < last, "{out}");
 }
 
 #[test]
 fn f_of_3_gives_8_and_f_of_2_point_0_stays_rejected() {
-    let defs = "f(positional n) = 2 ** n;";
+    let defs = "f(positional n) = 2 ^ n;";
     assert_eq!(prints("generic_pow", &printing(defs, "String(f(3))")), "8");
     let out = rejected(&format!("{defs}\nx = f(2.0);\n"));
     assert!(
@@ -138,14 +138,14 @@ fn f_of_3_gives_8_and_f_of_2_point_0_stays_rejected() {
 
 #[test]
 fn an_unknown_int_is_rejected_and_the_kernel_would_stop_on_it() {
-    let src = "f(positional n) = 2 ** n;\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(f(int(stdin[1]) else 0));\n}\n";
+    let src = "f(positional n) = 2 ^ n;\nmain(stdin: Lines) -> (stdout: Lines) {\n  stdout <- String(f(int(stdin[1]) else 0));\n}\n";
     let out = rejected(src);
     assert!(
         out.starts_with("3:20: `f` takes `n` in int[0..], and this `n` is int"),
         "{out}"
     );
     assert!(!out.contains("type error"), "{out}");
-    // The negative control: the term `2 ** -1`, which the checker no longer lets through, stops
+    // The negative control: the term `2 ^ -1`, which the checker no longer lets through, stops
     // the kernel at run time, the error the need now reports at the call.
     let t = Term::Prim(
         Prim::Pow,
@@ -155,7 +155,7 @@ fn an_unknown_int_is_rejected_and_the_kernel_would_stop_on_it() {
         .run(&t)
         .unwrap_err()
         .to_string();
-    assert_eq!(stop, "type error: `**` applied to `int`, `int`");
+    assert_eq!(stop, "type error: `^` applied to `int`, `int`");
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn a_lambda_and_a_curried_call_take_the_need() {
         ),
         "2"
     );
-    let defs = "p(b, e) = b ** e;\nq = p(b: 2, ...);";
+    let defs = "p(b, e) = b ^ e;\nq = p(b: 2, ...);";
     let out = rejected(&format!("{defs}\ny = q(e: -1);\n"));
     assert!(
         out.starts_with("3:5: `q` takes `e` in int[0..], and this `e` is -1"),
@@ -228,13 +228,13 @@ fn the_smallest_width_decides() {
         "g(positional x) = bitNot(x, width: 16);\nf(positional x) = g(x) + bitNot(x, width: 8);\n";
     let out = rejected(&format!("{defs}y = f(300);\n"));
     assert!(
-        out.starts_with("3:5: `f` takes `x` in int[0..<2 ** 8], and this `x` is 300"),
+        out.starts_with("3:5: `f` takes `x` in int[0..<2 ^ 8], and this `x` is 300"),
         "{out}"
     );
     assert!(accepted(&format!("{defs}y = f(255);\n")));
     let out = rejected("f(positional x) = bitNot(x, width: 4);\ny = f(16);\n");
     assert!(
-        out.contains("`f` takes `x` in int[0..<2 ** 4], and this `x` is 16"),
+        out.contains("`f` takes `x` in int[0..<2 ^ 4], and this `x` is 16"),
         "{out}"
     );
 }
@@ -268,10 +268,10 @@ fn a_relation_between_two_operands_of_type_variables_is_rejected_at_the_use() {
 #[test]
 fn each_kernel_type_error_has_a_rejected_generic_use() {
     for (defs, call, msg) in [
-        // A domain: `**`'s exponent, an operand, `2 ** width`; funnel `k` and `byteSwap`'s
+        // A domain: `^`'s exponent, an operand, `2 ^ width`; funnel `k` and `byteSwap`'s
         // width are in a_relation_between_two_operands_of_type_variables_is_rejected_at_the_use.
         (
-            "f(positional n) = 2 ** n;",
+            "f(positional n) = 2 ^ n;",
             "f(-1)",
             "`f` takes `n` in int[0..]",
         ),
@@ -283,12 +283,12 @@ fn each_kernel_type_error_has_a_rejected_generic_use() {
         (
             "f(positional n) = bitNot(n, width: 8);",
             "f(256)",
-            "in int[0..<2 ** 8]",
+            "in int[0..<2 ^ 8]",
         ),
         (
             "f(positional h) = funnelShl(h, 1, 3, width: 8);",
             "f(300)",
-            "in int[0..<2 ** 8]",
+            "in int[0..<2 ^ 8]",
         ),
         (
             "f(positional x) = pdep(x, 5);",
@@ -404,8 +404,8 @@ fn check_scales(what: &str, n: usize, make: impl Fn(usize) -> String) {
     });
 }
 
-/// A function whose parameter takes three needs, from `**`, `popCount` and `bitNot`.
-const USES: &str = "f(positional n) = 2 ** n + popCount(n) + bitNot(n, width: 8);\n";
+/// A function whose parameter takes three needs, from `^`, `popCount` and `bitNot`.
+const USES: &str = "f(positional n) = 2 ^ n + popCount(n) + bitNot(n, width: 8);\n";
 
 #[test]
 fn call_sites_scale_linearly() {

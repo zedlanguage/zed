@@ -2233,7 +2233,7 @@ pub enum KernelError {
     /// `bits` bits of memory asked for it (sec:domains says when a number is built). The number
     /// is a value of the language; this evaluator cannot run the program on this machine.
     NumberTooLarge {
-        /// The operator: `+`, `-`, `div`, `mod`, `**`, `String` printing a number, or `int` or
+        /// The operator: `+`, `-`, `div`, `mod`, `^`, `String` printing a number, or `int` or
         /// `rat` reading one from a string.
         op: &'static str,
         /// The memory asked for, in bits: a measured multiple of the number's size, not the size

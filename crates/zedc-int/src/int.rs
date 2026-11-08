@@ -307,7 +307,7 @@ enum Word {
 
 /// `(c_1 * core_1 + ... + c_n * core_n + d) / den`, kept unexpanded, where each core is a
 /// product of powers of integers and of floor roots. A bound such as that of
-/// `x ** 100000000 + 1`, `3 ** 100000000 + 5 ** 99999999` or `floor(2 ** (100000000 / 3))` is
+/// `x ^ 100000000 + 1`, `3 ^ 100000000 + 5 ^ 99999999` or `floor(2 ^ (100000000 / 3))` is
 /// then built and compared in time polynomial in the bits of the numbers written here, not in
 /// the bits of the value. Invariants: `n >= 1`; the cores are in decreasing order of value and
 /// no two are equal by [`Core::same`]; no `c_i` is zero; the terms whose cores are powers of
@@ -327,7 +327,7 @@ struct Kept {
 enum Atom {
     /// An integer at least 2.
     Int(BigUint),
-    /// `floor(rad ** (1 / k))`, with `k >= 2`, `rad` above zero with cores of `Int` atoms only,
+    /// `floor(rad ^ (1 / k))`, with `k >= 2`, `rad` above zero with cores of `Int` atoms only,
     /// and the root at least `2^127`. A root of a root is one root of the first radicand, so
     /// the nesting stops here.
     Root {
@@ -372,7 +372,7 @@ impl Ord for Memo {
     }
 }
 
-/// `a_1 ** e_1 * ... * a_m ** e_m`, with `m >= 1`, the atoms distinct and in increasing order,
+/// `a_1 ^ e_1 * ... * a_m ^ e_m`, with `m >= 1`, the atoms distinct and in increasing order,
 /// and every `e_i >= 1`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Core(Vec<(Atom, BigUint)>);
@@ -556,7 +556,7 @@ impl Approx {
         .truncate(bits)
     }
 
-    /// `self ** exp`, for `self >= 0`, by squaring: `O(bits of exp)` products. Each product
+    /// `self ^ exp`, for `self >= 0`, by squaring: `O(bits of exp)` products. Each product
     /// adds a relative error of at most `2^-bits`, and a power multiplies the relative error
     /// by its exponent.
     fn pow(&self, exp: &BigUint, bits: u64) -> Approx {
@@ -581,7 +581,7 @@ impl Approx {
     }
 }
 
-/// `base ** exp`, written out: its cost is that of the value's digits.
+/// `base ^ exp`, written out: its cost is that of the value's digits.
 fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
     let mut m = BigUint::from(1u32);
     for i in (0..exp.bits()).rev() {
@@ -593,7 +593,7 @@ fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
     m
 }
 
-/// `(r, m)` with `b == r ** m` and `r` not a perfect power, for `b >= 2`. Square roots are taken
+/// `(r, m)` with `b == r ^ m` and `r` not a perfect power, for `b >= 2`. Square roots are taken
 /// while `b` is a square; then each odd prime `p` below the bits of `b` is tried as the index of
 /// a root ([`OddPart::root`]), and tried again after it succeeds. A root found for a larger
 /// prime is no power of a smaller one, since `b` would then have been. Each failed index costs
@@ -602,7 +602,7 @@ fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
 /// root, or an index that passes the filters there without being one, adds one `p`-th power.
 fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
     let mut m = BigUint::from(1u32);
-    // r >= 2, so r ** p has at least p + 1 bits.
+    // r >= 2, so r ^ p has at least p + 1 bits.
     while b.bits() > 2 {
         let r = b.sqrt();
         if mul_uint(&r, &r) != b {
@@ -672,7 +672,7 @@ impl OddPart {
         OddPart { v, o, residues }
     }
 
-    /// The `r` with `r ** p == 2^v * o`, for an odd prime `p`, when there is one. Such an `r`
+    /// The `r` with `r ^ p == 2^v * o`, for an odd prime `p`, when there is one. Such an `r`
     /// is `2^(v / p)` times the odd `p`-th root of `o`, which is below `2^s` for `s` the bits of
     /// `o` over `p`, rounded up, and so is the one odd `p`-th root of `o` modulo `2^s`
     /// ([`odd_root_mod_pow2`]). That candidate is checked by its bit count and modulo
@@ -687,7 +687,7 @@ impl OddPart {
         }
         let n = self.o.bits();
         let r = odd_root_mod_pow2(&self.o, p, n.div_ceil(p));
-        // r ** p has more than p * (bits(r) - 1) bits and at most p * bits(r).
+        // r ^ p has more than p * (bits(r) - 1) bits and at most p * bits(r).
         let rb = r.bits();
         if n <= p * (rb - 1) || n > p * rb {
             return None;
@@ -700,7 +700,7 @@ impl OddPart {
     }
 }
 
-/// `x ** e` modulo `q`, for `q` below `2^64`.
+/// `x ^ e` modulo `q`, for `q` below `2^64`.
 fn pow_mod(x: u64, mut e: u64, q: u64) -> u64 {
     let mul = |a: u64, b: u64| (u128::from(a) * u128::from(b) % u128::from(q)) as u64;
     let (mut base, mut out) = (x % q, 1 % q);
@@ -714,10 +714,10 @@ fn pow_mod(x: u64, mut e: u64, q: u64) -> u64 {
     out
 }
 
-/// The odd `x < 2^k` with `x ** p == o` modulo `2^k`, for `o` odd, `p` an odd prime and
-/// `k >= 1`. Since `p` is odd, `x -> x ** p` permutes the odd residues modulo `2^k`, so there is
+/// The odd `x < 2^k` with `x ^ p == o` modulo `2^k`, for `o` odd, `p` an odd prime and
+/// `k >= 1`. Since `p` is odd, `x -> x ^ p` permutes the odd residues modulo `2^k`, so there is
 /// exactly one. Newton's method over the 2-adic integers finds it from `x = 1`, right modulo
-/// 2: `p * x ** (p - 1)` is odd, so each step doubles the bits that are right. The cost is
+/// 2: `p * x ^ (p - 1)` is odd, so each step doubles the bits that are right. The cost is
 /// `O(M(k) log(p k))`, with `M(k)` that of a product of `k` bits.
 fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
     let mut x = BigUint::from(1u32);
@@ -727,7 +727,7 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
         let unit = BigUint::from(1u32) << j;
         let mask = &unit - 1u32;
         let y = pow_mod_pow2(&x, p - 1, &mask);
-        // x ** p - o, and the derivative p * x ** (p - 1), modulo 2^j.
+        // x ^ p - o, and the derivative p * x ^ (p - 1), modulo 2^j.
         let f = (mul_uint(&y, &x) + &unit - (o & &mask)) & &mask;
         let d = (y * p) & &mask;
         let step = mul_uint(&f, &inverse_mod_pow2(&d, j)) & &mask;
@@ -736,7 +736,7 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
     x
 }
 
-/// `x ** e` modulo `mask + 1`, a power of 2.
+/// `x ^ e` modulo `mask + 1`, a power of 2.
 fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
     let mut out = BigUint::from(1u32);
     for i in (0..u64::BITS - e.leading_zeros()).rev() {
@@ -797,7 +797,7 @@ fn coprime_base<'a>(xs: impl Iterator<Item = &'a BigUint>) -> Vec<BigUint> {
     base
 }
 
-/// The exponents of `∏ b ** e` over a coprime `base` of which every `b` is a product of
+/// The exponents of `∏ b ^ e` over a coprime `base` of which every `b` is a product of
 /// powers, one per element of the base.
 fn exponents_over<'a>(
     base: &[BigUint],
@@ -817,7 +817,7 @@ fn exponents_over<'a>(
     out
 }
 
-/// The multiplicity `k` of `c >= 2` in `rest`, divided out of it: by `c`, `c ** 2`, `c ** 4`
+/// The multiplicity `k` of `c >= 2` in `rest`, divided out of it: by `c`, `c ^ 2`, `c ^ 4`
 /// and so on while each divides, and then by the same powers in decreasing order, which take
 /// the binary digits of what is left. That is `O(log k)` divisions and squares, of at most
 /// twice the bits of `rest`, where dividing by `c` once per factor would make `k`.
@@ -835,7 +835,7 @@ fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
         let square = mul_uint(top, top);
         pows.push(Cow::Owned(square));
     }
-    // c ** (2^t), the last power, does not divide what is left, so its multiplicity is below
+    // c ^ (2^t), the last power, does not divide what is left, so its multiplicity is below
     // 2^t.
     pows.pop();
     for (i, pw) in pows.iter().enumerate().rev() {
@@ -890,8 +890,8 @@ impl Atom {
 }
 
 impl Core {
-    /// `base ** exp`, for `base >= 2`, over the least integer of which `base` is a power
-    /// ([`least_root`]): `9 ** e` is `3 ** (2 * e)`, so that equal powers of integers are
+    /// `base ^ exp`, for `base >= 2`, over the least integer of which `base` is a power
+    /// ([`least_root`]): `9 ^ e` is `3 ^ (2 * e)`, so that equal powers of integers are
     /// equal in form, and powers of one integer fold ([`fold`]).
     fn power(base: BigUint, exp: BigUint) -> Core {
         let (base, m) = least_root(base);
@@ -921,12 +921,12 @@ impl Core {
     /// Whether two cores have one value. The atoms on which they differ in form are taken
     /// from both by one merge of their atom lists, with exponents less those of the other;
     /// the integers among them are written over a coprime base ([`coprime_base`]), on which a
-    /// product of powers has one form, so `6 ** e * 5 ** f` and `2 ** e * 3 ** e * 5 ** f`
+    /// product of powers has one form, so `6 ^ e * 5 ^ f` and `2 ^ e * 3 ^ e * 5 ^ f`
     /// are found equal by 6, 2 and 3 alone. The cost is that of the coprime base of the
     /// integers written differently, nothing for the atoms the cores share.
     // Complexity tradeoff: two cores whose roots differ in form are taken to differ here,
     // though two roots of different radicands may have one value (the floor cube roots of
-    // `2 ** (3 * e + 1)` and of `2 ** (3 * e + 1) + 1`), so such cores are found equal only by
+    // `2 ^ (3 * e + 1)` and of `2 ^ (3 * e + 1) + 1`), so such cores are found equal only by
     // `value_cmp` once the approximations are exact, at the bits of the value; the answer
     // stays exact. Why: whether two floor roots are equal is whether a `k`-th power lies
     // between their radicands, which needs the roots' digits. Trigger: a sum, difference or
@@ -1056,12 +1056,12 @@ impl Core {
         Core(out)
     }
 
-    /// `self ** k`.
+    /// `self ^ k`.
     fn pow(&self, k: &BigUint) -> Core {
         Core(self.0.iter().map(|(a, e)| (a.clone(), e * k)).collect())
     }
 
-    /// `self ** (1 / k)`, when `k` divides every exponent.
+    /// `self ^ (1 / k)`, when `k` divides every exponent.
     fn exact_root(&self, k: &BigUint) -> Option<Core> {
         self.0
             .iter()
@@ -1112,11 +1112,11 @@ impl Core {
     }
 }
 
-/// `v = q * b ** g + r` with `r` in `(-b ** g / 2, b ** g / 2]`, as `(r, q)`. When the bits of
-/// `b` and `g` show that `b ** g` exceeds `2 * |v|`, then `r = v` and `q = 0` with no power
+/// `v = q * b ^ g + r` with `r` in `(-b ^ g / 2, b ^ g / 2]`, as `(r, q)`. When the bits of
+/// `b` and `g` show that `b ^ g` exceeds `2 * |v|`, then `r = v` and `q = 0` with no power
 /// computed, so a power is computed only when it has at most about twice the bits of `v`.
 fn balance(v: BigInt, b: &BigUint, g: &BigUint) -> (BigInt, BigInt) {
-    // 2 * |v| < 2^lim, and b ** g >= 2^(g * (bits(b) - 1)).
+    // 2 * |v| < 2^lim, and b ^ g >= 2^(g * (bits(b) - 1)).
     let lim = v.bits() + 1;
     let Some(g) = u64::try_from(g)
         .ok()
@@ -1134,18 +1134,18 @@ fn balance(v: BigInt, b: &BigUint, g: &BigUint) -> (BigInt, BigInt) {
 }
 
 /// Folds the terms whose cores are powers of one integer `b`: in increasing order of exponent,
-/// each coefficient but the last is brought into `(-b ** g / 2, b ** g / 2]`, with `g` the gap
+/// each coefficient but the last is brought into `(-b ^ g / 2, b ^ g / 2]`, with `g` the gap
 /// to the next exponent, and the rest carried to the next. The lower terms of such a group
 /// then add to less than its top term in magnitude, so the group is zero exactly when it has
 /// no terms left, has the sign of its top coefficient, and is at least a quarter of its top
-/// term for `b >= 3` (for `b = 2`, at least `2^-n` of it with `n` terms). `3 ** (e + 1) -
-/// 3 * 3 ** e` folds to nothing, and `3 ** (e + 1) - 3 ** e - 2 * 3 ** e` likewise, so a
+/// term for `b >= 3` (for `b = 2`, at least `2^-n` of it with `n` terms). `3 ^ (e + 1) -
+/// 3 * 3 ^ e` folds to nothing, and `3 ^ (e + 1) - 3 ^ e - 2 * 3 ^ e` likewise, so a
 /// difference of equal values in such forms is found to be zero with no digits written out.
-/// A power of an integer is kept as a power of its least root (`Core::power`), so `3 * 9 ** e`
-/// and `3 ** (2 * e + 1)` are one group. The cost is one sort of the terms and, per term, a
+/// A power of an integer is kept as a power of its least root (`Core::power`), so `3 * 9 ^ e`
+/// and `3 ^ (2 * e + 1)` are one group. The cost is one sort of the terms and, per term, a
 /// power of `b` of at most about twice the bits of its coefficient.
 // Complexity tradeoff: only powers of one integer are folded. Terms over products of powers of
-// several integers, as `2 ** (e + 1) * 5 ** e` against `2 * 10 ** e`, or over roots stay apart,
+// several integers, as `2 ^ (e + 1) * 5 ^ e` against `2 * 10 ^ e`, or over roots stay apart,
 // so a sum of them that cancels in their high bits is found small, or zero, only once the
 // approximations are exact, at the bits of the value; the answer stays exact. Why: a carry
 // between two such terms runs along each integer of a coprime base of their cores at once,
@@ -1207,9 +1207,9 @@ fn collect(mut terms: Vec<(BigInt, Core)>) -> Vec<(BigInt, Core)> {
     out
 }
 
-/// `floor(rad ** (1 / k))` to `bits` bits, for `rad` above zero, with whether `rad` is a
+/// `floor(rad ^ (1 / k))` to `bits` bits, for `rad` above zero, with whether `rad` is a
 /// perfect `k`-th power when that is decided at this precision. The root `y` is found to
-/// `bits` bits as `r * 2^t` by bisection on `r`, each step comparing `(r * 2^t) ** k` with
+/// `bits` bits as `r * 2^t` by bisection on `r`, each step comparing `(r * 2^t) ^ k` with
 /// `rad` at `bits` bits, so the cost is `O(bits * bits of k)` products of `bits`-bit numbers,
 /// whatever the size of `rad` or `k`. Only a step that both bounds certify moves a bound, so
 /// the range always holds `y`. Once `bits` reaches the bits of `rad`, every comparison is
@@ -1220,7 +1220,7 @@ fn collect(mut terms: Vec<(BigInt, Core)>) -> Vec<(BigInt, Core)> {
 // only a power and a comparison, both certified in interval arithmetic, while a Newton step
 // on intervals needs a division and a proof that the step keeps the root inside its range.
 // Trigger: comparing a kept root with a value that agrees with it in many leading bits, as
-// `5 ** (k / 2)` against the square root of `3 ** k + 5 ** k`, which needs about `0.26 * k`
+// `5 ^ (k / 2)` against the square root of `3 ^ k + 5 ^ k`, which needs about `0.26 * k`
 // bits. Test: `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`
 // (roots compared with their neighbors one apart); COMPLEXITY.md S33. A complete solution
 // would refine the root by interval Newton steps from the bisection bracket, doubling the
@@ -1251,7 +1251,7 @@ fn root_approx(rad: &Kept, k: &BigUint, bits: u64) -> (Approx, Option<bool>) {
         }
         .pow(k, bits)
     };
-    // The largest r with (r * 2^t) ** k <= rad certified: r_lo = at(q_min) holds by the
+    // The largest r with (r * 2^t) ^ k <= rad certified: r_lo = at(q_min) holds by the
     // bound, and at(q_max) is past y.
     let (mut lo, mut hi) = (at(&q_min), at(&q_max));
     while &hi - &lo > BigInt::from(1u32) {
@@ -1263,7 +1263,7 @@ fn root_approx(rad: &Kept, k: &BigUint, bits: u64) -> (Approx, Option<bool>) {
         }
     }
     let r_lo = lo;
-    // The least r with (r * 2^t) ** k > rad certified.
+    // The least r with (r * 2^t) ^ k > rad certified.
     let (mut lo, mut hi) = (at(&q_min), at(&q_max));
     while &hi - &lo > BigInt::from(1u32) {
         let mid: BigInt = (&lo + &hi) >> 1u32;
@@ -1389,7 +1389,7 @@ impl Kept {
         ))
     }
 
-    /// `floor(self ** (1 / k))` or, when `up`, the ceiling, for `self` above zero and
+    /// `floor(self ^ (1 / k))` or, when `up`, the ceiling, for `self` above zero and
     /// `k >= 2`.
     fn root(&self, k: &BigUint, up: bool) -> Num {
         if let Some(core) = self.bare() {
@@ -1402,7 +1402,7 @@ impl Kept {
             }
             match core.0.as_slice() {
                 [(Atom::Int(base), exp)] => {
-                    // b ** (e / k) = b ** (e' / k') in lowest terms, with k' >= 2 since k does
+                    // b ^ (e / k) = b ^ (e' / k') in lowest terms, with k' >= 2 since k does
                     // not divide e; b is not a perfect power (`Core::power`), so this is
                     // irrational, and its ceiling is one past its floor.
                     let g = Integer::gcd(exp, k);
@@ -1411,7 +1411,7 @@ impl Kept {
                     return if up { &r + &Num::ONE } else { r };
                 }
                 [(Atom::Root { rad, k: k1, .. }, exp)] if exp.is_one() && !up => {
-                    // floor(floor(y) ** (1 / k)) = floor(y ** (1 / k)) for y >= 0.
+                    // floor(floor(y) ^ (1 / k)) = floor(y ^ (1 / k)) for y >= 0.
                     return Num(Word::Kept(rad.clone())).root_floor(&(k1 * k));
                 }
                 _ => {}
@@ -1434,7 +1434,7 @@ impl Kept {
         // root, or the ceiling root of a bare root. Test:
         // `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`
         // (roots 2 to 5 of multiples of kept roots); COMPLEXITY.md S33. A complete solution
-        // would keep nested roots `floor(floor(r ** (1 / k)) * c + d) ** (1 / j)` as their own
+        // would keep nested roots `floor(floor(r ^ (1 / k)) * c + d) ^ (1 / j)` as their own
         // atoms, compared by approximation as roots are now.
         Num::from(self.expand()).root_big(k, up)
     }
@@ -1447,12 +1447,12 @@ impl Kept {
     /// for `j` = 64 and then twice as many until it is not 0 there; a part with `v - m >= j` is 0
     /// modulo `2^j` and is not read, so no power of 2 past `2^j` is built. Less the trailing
     /// zeros of `den`, which divides the numerator, that is the answer, exact. For a bare power
-    /// `b ** e` it is `e` times the trailing zeros of `b`, found at `j` = 64. The cost is
+    /// `b ^ e` it is `e` times the trailing zeros of `b`, found at `j` = 64. The cost is
     /// `O(n log e)` products of `j` bits for `n` terms and exponents of `log e` bits, with `j`
     /// at most twice the trailing zeros of the numerator over `2^m`: the low bits in which its
     /// parts cancel, not the bits of the value.
     fn trailing_zeros(&self) -> Option<BigUint> {
-        /// A part `2^v * c * product(b ** e)` of the numerator, with `c` and each `b` odd.
+        /// A part `2^v * c * product(b ^ e)` of the numerator, with `c` and each `b` odd.
         struct Part<'a> {
             v: BigUint,
             c: BigInt,
@@ -1507,7 +1507,7 @@ impl Kept {
         }
     }
 
-    /// The exponent `k` when the value is `2 ** k`.
+    /// The exponent `k` when the value is `2 ^ k`.
     fn pow2_exponent(&self) -> Option<&BigUint> {
         match self.bare()?.int_power() {
             Some((b, k)) if !self.negative && *b == BigUint::from(2u32) => Some(k),
@@ -1581,22 +1581,22 @@ impl Kept {
 
 /// Whether `x`, above zero with integer atoms only, is a perfect `k`-th power. Each round
 /// tests one more prime `p` with `g = gcd(k, p - 1) > 1`: a `k`-th power `a` not divisible by
-/// `p` has `a ** ((p - 1) / g) == 1` modulo `p`, so a failure proves `x` is not one, and for a
+/// `p` has `a ^ ((p - 1) / g) == 1` modulo `p`, so a failure proves `x` is not one, and for a
 /// value that is not a `k`-th power about `1 - 1/g` of such primes show it. When the number
 /// of primes tested reaches a power of two, `x` is also compared with the `k`-th power of its
 /// root at twice the last precision, which decides a perfect power once the precision reaches
 /// the bits of `x`. Each comparison then costs a constant factor more than the last, and the
 /// residue tests cost one per prime. Doubling the precision for every prime instead reached
-/// `2 ** n` bits by the `n`-th prime, while a `k` whose prime factors are all large
-/// (`2 ** 32 + 1 = 641 * 6700417`) gets no residue test below the prime `2 * 641 + 1`, so
-/// `3 ** (2 ** 32 + 1) + 1` did not finish.
+/// `2 ^ n` bits by the `n`-th prime, while a `k` whose prime factors are all large
+/// (`2 ^ 32 + 1 = 641 * 6700417`) gets no residue test below the prime `2 * 641 + 1`, so
+/// `3 ^ (2 ^ 32 + 1) + 1` did not finish.
 // Complexity tradeoff: a value that is a perfect `k`-th power passes every prime, so it is
 // decided only when the precision reaches the bits of `x`, at the cost of its digits and of
 // one residue test for each 64 bits of `x`; the answer is exact. Why: a proof that a number
 // given as a sum of powers is a perfect power needs its root in a closed form, and no general
 // closed form is known for a root of a sum.
 // Trigger: the ceiling root (`ceil_root`) of a kept value that is not a bare power and is a
-// perfect `k`-th power, such as `(2 ** 200 + 1) ** 2` read as a sum. Test:
+// perfect `k`-th power, such as `(2 ^ 200 + 1) ^ 2` read as a sum. Test:
 // `l01_24_refinement_lattices::ends::kept_values_with_no_kept_form_are_written_out`;
 // COMPLEXITY.md S33. A complete solution would find the root as a kept value (a sum of
 // powers whose `k`-th power is `x`, by matching the leading terms) and check it exactly.
@@ -1790,7 +1790,7 @@ impl Num {
     // cost of the digits of its cores; the answer is exact. Why: the terms cancel only by
     // carries between products of powers of several integers, or between roots, which `fold`
     // does not make. Trigger: a sum or difference of kept values in such forms whose value is
-    // small, as `2 ** (e + 1) * 5 ** e + 1 - 2 * 10 ** e`. Test:
+    // small, as `2 ^ (e + 1) * 5 ^ e + 1 - 2 * 10 ^ e`. Test:
     // `l01_24_refinement_lattices::ends::kept_values_with_no_kept_form_are_written_out`;
     // COMPLEXITY.md S33. A complete solution is that of `fold`, which would cancel these terms.
     fn kept(terms: Vec<(BigInt, Core)>, d: BigInt, den: BigUint) -> Num {
@@ -1930,9 +1930,9 @@ impl Num {
     /// The bits of the kept value `self`, whose form is `k`, from its approximation at 64 bits
     /// and then at twice as many. When the bounds `lo * 2^s` and `hi * 2^s` of `abs(self)`
     /// have one bit count, that is the answer: so for a bare power of 2 at once, since its
-    /// approximation is exact, and for any other bare power `b ** e` once the precision passes
+    /// approximation is exact, and for any other bare power `b ^ e` once the precision passes
     /// the bits of `e` and those on which `e * log2(b)` agrees with an integer. When the counts
-    /// are `l` and `l + 1`, as for `2 ** k - 1`, whose bounds lie on both sides of `2^k` at
+    /// are `l` and `l + 1`, as for `2 ^ k - 1`, whose bounds lie on both sides of `2^k` at
     /// every precision short of its digits, one comparison of `abs(self)` with `2^l` decides,
     /// as the sign of a kept difference whose equal cores cancel. The answer is exact; the cost
     /// is that of the approximations and of that comparison, not of the value's digits.
@@ -1986,21 +1986,21 @@ impl Num {
         }
     }
 
-    /// `2 ** e` for `e >= 0`, kept as a power when it does not fit in `i128`.
+    /// `2 ^ e` for `e >= 0`, kept as a power when it does not fit in `i128`.
     // Complexity tradeoff: a kept `e` is written out, at the cost of its digits, since the
-    // exponents of a core are written out; the answer is exact, and `2 ** e` stays kept. Why:
+    // exponents of a core are written out; the answer is exact, and `2 ^ e` stays kept. Why:
     // a power whose exponent is itself kept needs an atom with a kept exponent, whose
     // approximation, residues and comparisons are not built. Trigger: `shl`, `bitNot`, `rotl`
     // or `rotr` with a count or width outside `i128`, or `bitOr`, `bitXor` or `trailingZeros`
     // on an operand of more than about `2^127` bits. Test:
     // `l01_39a_bit_words::kept_ends::a_power_of_2_by_a_kept_exponent_stays_kept`; COMPLEXITY.md
-    // S33. A complete solution would keep `b ** x` for a kept `x` as an atom, approximated by
+    // S33. A complete solution would keep `b ^ x` for a kept `x` as an atom, approximated by
     // `Approx::pow` on an approximation of `x`.
     pub fn pow2(e: &Num) -> Num {
         Num::power(false, BigUint::from(2u32), e.big().magnitude().clone())
     }
 
-    /// `base ** exp`, negated when `negative`, in its one form: in `i128` arithmetic when it
+    /// `base ^ exp`, negated when `negative`, in its one form: in `i128` arithmetic when it
     /// fits there, else kept as a power. Finding whether it fits stops at the first product
     /// past `i128`, so it costs `O(bits of exp)` word operations.
     fn power(negative: bool, base: BigUint, exp: BigUint) -> Num {
@@ -2023,7 +2023,7 @@ impl Num {
         Num::bare(negative, Core::power(base, exp))
     }
 
-    /// `self ** k`. A value that does not fit in `i128` is kept: a bare power or root as one
+    /// `self ^ k`. A value that does not fit in `i128` is kept: a bare power or root as one
     /// with its exponents times `k`, other kept values by squaring, so the cost is that of
     /// the terms of the result (up to `C(n + k, k)` for `n` terms), not of its digits.
     pub fn pow(&self, k: u32) -> Num {
@@ -2047,17 +2047,17 @@ impl Num {
                     };
                 }
                 // Complexity tradeoff: a power of a kept value that is not bare is expanded into
-                // its terms, up to `C(n + k - 1, k)` of them for `n` terms, so `(x ** e + 1) **
+                // its terms, up to `C(n + k - 1, k)` of them for `n` terms, so `(x ^ e + 1) **
                 // 1000000` holds a million terms with coefficients of up to a million bits; the
                 // answer is exact. Why: a kept power of a sum needs a new atom, a power of a kept
                 // value, with its own approximation (`Approx::pow`), residues (`modpow` of the
                 // sum's residue) and rules for collecting it with expanded terms. Trigger: an
                 // exponent `k` on an interval whose end is a kept sum, as the bound of
-                // `(x ** e + 1) ** k`. Test:
+                // `(x ^ e + 1) ^ k`. Test:
                 // `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`
                 // (squares of sums) and `ends::sums_of_unrelated_large_powers_keep_their_form`
-                // (a cube of `2 ** k + 1`); COMPLEXITY.md S33. A complete solution would keep
-                // `s ** k` as an atom for a kept sum `s`.
+                // (a cube of `2 ^ k + 1`); COMPLEXITY.md S33. A complete solution would keep
+                // `s ^ k` as an atom for a kept sum `s`.
                 let mut r = Num::ONE;
                 for i in (0..u32::BITS - k.leading_zeros()).rev() {
                     r = &r * &r;
@@ -2073,7 +2073,7 @@ impl Num {
         }
     }
 
-    /// `self ** k` for `k >= 0` of any size, or `None` when no form holds it: when `k` is
+    /// `self ^ k` for `k >= 0` of any size, or `None` when no form holds it: when `k` is
     /// kept, or `self` is a kept value that is not bare and `k` is past `u32`. A power of a
     /// value that is not kept is kept as a power, with its exponent `k`, never written out.
     pub fn pow_by(&self, k: &Num) -> Option<Num> {
@@ -2092,9 +2092,9 @@ impl Num {
             }
             // Complexity tradeoff: a kept value that is not bare raised past `u32` has no form;
             // it is `None` and the caller bounds outward. Why: expanding it squares its terms
-            // about 32 times, past any memory. Trigger: `(2 ** 200 + 1) ** (2 ** 40)`. Test:
+            // about 32 times, past any memory. Trigger: `(2 ^ 200 + 1) ^ (2 ^ 40)`. Test:
             // `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
-            // COMPLEXITY.md S36. A complete solution would keep `s ** k` as an atom for a kept
+            // COMPLEXITY.md S36. A complete solution would keep `s ^ k` as an atom for a kept
             // sum `s`.
             Word::Kept(x) => {
                 let core = x.bare()?;
@@ -2127,13 +2127,13 @@ impl Num {
         })
     }
 
-    /// The greatest `r >= 0` with `r ** k <= self`, for `self >= 0` and `k >= 1`. The root of
+    /// The greatest `r >= 0` with `r ^ k <= self`, for `self >= 0` and `k >= 1`. The root of
     /// a kept value is kept, exact when the value is a power whose exponent `k` divides.
     pub fn floor_root(&self, k: u32) -> Num {
         self.root(k, false)
     }
 
-    /// The least `r >= 0` with `r ** k >= self`, for `self >= 0` and `k >= 1`.
+    /// The least `r >= 0` with `r ^ k >= self`, for `self >= 0` and `k >= 1`.
     pub fn ceil_root(&self, k: u32) -> Num {
         self.root(k, true)
     }
@@ -2156,7 +2156,7 @@ impl Num {
             // 0 and 1 are their own roots.
             return self.clone();
         }
-        // For v >= 2 and k at least its bits, 1 ** k <= v < 2 ** k.
+        // For v >= 2 and k at least its bits, 1 ^ k <= v < 2 ^ k.
         let Some(k) = u32::try_from(k).ok().filter(|k| u64::from(*k) < v.bits()) else {
             return Num::from(if up { 2 } else { 1 });
         };
@@ -2168,9 +2168,9 @@ impl Num {
         }
     }
 
-    /// `floor(self ** (1 / k))` for `self` above zero with integer atoms only or not kept, and
+    /// `floor(self ^ (1 / k))` for `self` above zero with integer atoms only or not kept, and
     /// `k >= 2`: kept as a root when it is at least `2^127`, which holds exactly when
-    /// `self >= 2 ** (127 * k)`, else found by bisection on the 127 bits of the root.
+    /// `self >= 2 ^ (127 * k)`, else found by bisection on the 127 bits of the root.
     fn root_floor(&self, k: &BigUint) -> Num {
         let Word::Kept(x) = &self.0 else {
             return self.root_big(k, false);
@@ -2503,8 +2503,8 @@ impl Ord for Num {
     }
 }
 
-/// `a` against `b`, of one sign, when `a` is `±floor(rad ** (1 / k)) ** (m * k)` and `b` lies
-/// at or past `±rad ** m`: that power is at most `rad ** m`, and below it unless `rad` is a
+/// `a` against `b`, of one sign, when `a` is `±floor(rad ^ (1 / k)) ^ (m * k)` and `b` lies
+/// at or past `±rad ^ m`: that power is at most `rad ^ m`, and below it unless `rad` is a
 /// perfect `k`-th power, so no digits of the root are needed. This is the comparison of an
 /// image of a root bound with the bound it came from, where approximations would agree to
 /// every bit of the root.
@@ -2581,7 +2581,7 @@ impl Hash for Num {
     // bucket per sign, so a lookup among n of them costs n comparisons; the answers stay
     // exact. Why: a hash that agrees on equal values must be a function of the value alone,
     // computed alike from every form, and a big value may equal a kept root
-    // (`floor(3 ** (901 / 3))` written out and kept), whose residues, leading bits and bit
+    // (`floor(3 ^ (901 / 3))` written out and kept), whose residues, leading bits and bit
     // count each need the root's digits or, near a power of 2, the value's. Trigger: a hash
     // map or set holding many interval ends outside i128. Test:
     // `l01_24_refinement_lattices::ends::equal_values_in_different_forms_hash_alike`;
@@ -2640,7 +2640,7 @@ impl fmt::Display for Num {
     // past i64 with this). Test:
     // `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`
     // (each value against its text); COMPLEXITY.md S33. A complete solution would print a
-    // kept value in its own form, as Zed text such as `3 ** 100000000 + 1`, which parses
+    // kept value in its own form, as Zed text such as `3 ^ 100000000 + 1`, which parses
     // back to the same value.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {

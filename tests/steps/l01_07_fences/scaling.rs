@@ -47,7 +47,7 @@ fn comparing_n_variants_with_their_fences_scales() {
     let made = inputs(1_000, |n| {
         let fences: Vec<DocFence> = (0..n)
             .map(|i| DocFence {
-                key: format!("DESIGN.md [sec:s] {i}"),
+                key: format!("DESIGN.md [sec:grammar] {i}"),
                 at: format!("DESIGN.md:{}", 5 * i + 1),
                 layer: 1,
                 ring: 1,
@@ -88,7 +88,7 @@ fn comparing_one_long_variant_scales() {
         let lines: String = (0..n).map(|i| format!("a{i} = {i};\n")).collect();
         let of = "// b = x;   // \u{2717} no x";
         let fence = DocFence {
-            key: "DESIGN.md [sec:s] 1".into(),
+            key: "DESIGN.md [sec:grammar] 1".into(),
             at: "DESIGN.md:1".into(),
             layer: 1,
             ring: 1,

@@ -25,8 +25,8 @@ fn scalar_refuses_every_int_that_is_not_a_scalar_value() {
         "56000",
         "57343",
         "1114112",
-        "2 ** 64",
-        "-(2 ** 70)",
+        "2 ^ 64",
+        "-(2 ^ 70)",
     ] {
         assert_eq!(x(&format!("scalar({n})")), "#notScalar", "{n}");
     }

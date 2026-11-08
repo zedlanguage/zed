@@ -42,19 +42,16 @@ fn an_integer_literal_beside_a_float_is_rejected_with_its_menu() {
         ),
         "250.0"
     );
-    // Of two literals of two carriers the integer is rejected: `2 ** 0.5` is no `2.0 ** 0.5`.
+    // Of two literals of two carriers the integer is rejected: `2 ^ 0.5` is no `2.0 ^ 0.5`.
     assert_eq!(
-        type_errors("root2 = 2 ** 0.5;\n"),
+        type_errors("root2 = 2 ^ 0.5;\n"),
         [
             "`2` is an int where `f64` is expected; a literal takes no other carrier; write `2.0` \
           or `2n` [2]"
         ]
     );
-    assert_eq!(
-        value("root2 = 2.0 ** 0.5;\n", "root2"),
-        "1.4142135623730951"
-    );
-    assert!(adopted("root2 = 2.0 ** 0.5;\n").is_empty());
+    assert_eq!(value("root2 = 2.0 ^ 0.5;\n", "root2"), "1.4142135623730951");
+    assert!(adopted("root2 = 2.0 ^ 0.5;\n").is_empty());
 }
 
 #[test]

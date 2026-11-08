@@ -24,6 +24,8 @@ fn expected_errors() {
         "p = Point(x: 1 y: 2);",
         // `\` cannot follow a `|` union, so it is not expected here (`TypeUnion`)
         "type Bound = int | #unbounded\nlimit: Bound = 10;",
+        // power is `^`; `**` is two `*` (sec:grammar, Power)
+        "y = x ** 2;",
     ]
     .map(report)
     .join("\n");

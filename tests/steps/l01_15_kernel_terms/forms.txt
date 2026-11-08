@@ -180,7 +180,7 @@ discounted(subtotal, 10, customerTier)
         fee
       )
     ) <=
-    ((-base) ** 2)
+    ((-base) ^ 2)
   ) &&
   (prefix ++ suffix)
 )
@@ -188,14 +188,14 @@ discounted(subtotal, 10, customerTier)
 (
   (
     (total - (discount - fee)) <=
-    ((-base) ** 2)
+    ((-base) ^ 2)
   ) &&
   (prefix ++ suffix)
 )
 --- infix operators, width 80
-(((total - (discount - fee)) <= ((-base) ** 2)) && (prefix ++ suffix))
+(((total - (discount - fee)) <= ((-base) ^ 2)) && (prefix ++ suffix))
 --- infix operators, on one line
-(((total - (discount - fee)) <= ((-base) ** 2)) && (prefix ++ suffix))
+(((total - (discount - fee)) <= ((-base) ^ 2)) && (prefix ++ suffix))
 --- primitives written by name, width 20
 (
   min(left, right),

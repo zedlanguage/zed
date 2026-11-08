@@ -43,8 +43,8 @@ fn an_elaborated_term_reads_back_as_itself() {
         ("(a, b) -> !(a < b)", "(a, b) -> !(a < b)"),
         ("(a) -> -(-a)", "a -> -(-a)"),
         ("(c) -> !(!c)", "c -> !(!c)"),
-        ("(a) -> (-a) ** 2", "a -> ((-a) ** 2)"),
-        ("(a) -> -a ** 2", "a -> -(a ** 2)"),
+        ("(a) -> (-a) ^ 2", "a -> ((-a) ^ 2)"),
+        ("(a) -> -a ^ 2", "a -> -(a ^ 2)"),
         ("(a, b) -> a - -b", "(a, b) -> (a - -b)"),
         ("(t) -> t[0]", "t -> t[0]"),
         ("(t) -> t[0][1]", "t -> t[0][1]"),
@@ -76,7 +76,7 @@ fn a_built_term_reads_back_with_its_parentheses() {
             prim(Prim::Not, vec![prim(Prim::Not, vec![lit(true)])]),
             "!(!true)",
         ),
-        (prim(Prim::Pow, vec![neg(lit(2)), lit(2)]), "((-2) ** 2)"),
+        (prim(Prim::Pow, vec![neg(lit(2)), lit(2)]), "((-2) ^ 2)"),
         (
             nth(
                 app(

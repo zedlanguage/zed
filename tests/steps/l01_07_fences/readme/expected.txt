@@ -209,7 +209,7 @@ text
 > hi() = "Hi, Ann!"
 
 == README.md [Numbers] 1
-comment big = 2 ** 100; // 2 to the power 100, the exact integer, with no overflow
+comment big = 2 ^ 100; // 2 to the power 100, the exact integer, with no overflow
 check big == 1267650600228229401496703205376
 comment third = 1r / 3r; // an exact rational
 check third * 3r == 1r
@@ -770,10 +770,10 @@ text
 > Chunk.parse(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2A, crc: 7)
 
 == README.md [Symbolic math] 1
-comment e = expand(p); // x ** 2 + 2r * x + 1r
+comment e = expand(p); // x ^ 2 + 2r * x + 1r
 comment d = derivative(p); // 2r * x + 2r
 text
-> e = x ** 2 + 2r * x + 1r
+> e = x ^ 2 + 2r * x + 1r
 > d = 2r * x + 2r
 
 == README.md [Tests next to the code] 1

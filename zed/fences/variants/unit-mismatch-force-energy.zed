@@ -57,7 +57,7 @@ s = v.serialize;                   // "(1.0,2.0,3.0)" — phrase grammars skip i
 stats(positional data: [f64]) {
   n = f64(data::len);                // conversion by type application — no cast syntax
   mean = data.sum / n;
-  sd   = (data.map(x -> (x - mean) ** 2).sum / n).sqrt;
+  sd   = (data.map(x -> (x - mean) ^ 2).sum / n).sqrt;
   return { mean:, sd: };     // one export, a record display: each field is its own node
 }
 m = stats(xs).mean;                // sd's sub-graph never runs
@@ -87,7 +87,7 @@ out = files.map(read).map(parse).map(transform);
 bad = out.where(r -> r is not Row);   // every failure carries file, offset, wave, and cause
 
 // 17 — Declared history, inferred storage: the compiler keeps exactly two frames.
-pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] + accel(pos[i-1]) * dt ** 2
+pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] + accel(pos[i-1]) * dt ^ 2
   with pos[-1] = p0, pos[-2] = p0 - v0*dt;
 last = pos[n-1] else p0;    // dependence window = 2 ⇒ a two-slot ring; no array exists
 // traj = pos::frames;      // demanding the history would turn storage back on — a different plan

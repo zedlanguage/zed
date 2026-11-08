@@ -162,7 +162,7 @@ fn a_bound_of_2_to_the_200_is_kept_exactly() {
     assert_eq!(forward(&Op::Mul, &h, &h), IntervalSet::point(Num::from(&p)));
 }
 
-/// `n ** k` as an end.
+/// `n ^ k` as an end.
 fn pow(n: i64, k: u32) -> Num {
     Num::from(n).pow(k)
 }
@@ -174,7 +174,7 @@ fn hash_of(v: &Num) -> u64 {
 
 #[test]
 fn the_bound_of_a_large_power_is_built_and_compared_without_its_digits() {
-    // `x ** 100000000` with x in 2..=3: 2^(10^8) ..= 3^(10^8), numbers of 10^8 and about
+    // `x ^ 100000000` with x in 2..=3: 2^(10^8) ..= 3^(10^8), numbers of 10^8 and about
     // 1.6 * 10^8 bits, kept as powers so the check takes no time to write them out.
     let k = 100_000_000;
     let start = std::time::Instant::now();
@@ -211,7 +211,7 @@ fn the_bound_of_a_large_power_is_built_and_compared_without_its_digits() {
     let took = start.elapsed();
     assert!(
         took < std::time::Duration::from_secs(1),
-        "the bound of x ** 10^8 took {took:?}"
+        "the bound of x ^ 10^8 took {took:?}"
     );
 }
 
@@ -276,7 +276,7 @@ fn kept_powers_order_and_hash_as_their_values_written_out() {
     }
 }
 
-/// Values in kept forms with the same values written out: `(c * b ** k + d) div n` for bases
+/// Values in kept forms with the same values written out: `(c * b ^ k + d) div n` for bases
 /// sharing roots and exponents past i128, with coefficients in and past i64; roots of powers
 /// that are kept as roots, and sums, products and powers of them; and neighbors one apart.
 fn kept_values(rng: &mut zed_tests::instances::Rng) -> Vec<(Num, BigInt)> {
@@ -346,7 +346,7 @@ fn kept_forms_compute_as_their_values_written_out() {
         assert_eq!(hash_of(a), hash_of(&Num::from(x)), "{x}");
         assert_eq!(a.to_string(), x.to_string());
         assert_eq!(-a, Num::from(-x), "-{x}");
-        assert_eq!(a.pow(3), Num::from(x.pow(3)), "{x} ** 3");
+        assert_eq!(a.pow(3), Num::from(x.pow(3)), "{x} ^ 3");
         for r in 2..=5u32 {
             let m = x.abs();
             let (lo, hi) = (a.abs().floor_root(r), a.abs().ceil_root(r));
@@ -380,7 +380,7 @@ fn kept_forms_compute_as_their_values_written_out() {
 
 #[test]
 fn arithmetic_and_roots_on_a_large_power_keep_its_form() {
-    // `x ** k + 1`, `k * x ** k` and `x ** k - 1` for x in 2..=3 and k = 10^8, and the cube
+    // `x ^ k + 1`, `k * x ^ k` and `x ^ k - 1` for x in 2..=3 and k = 10^8, and the cube
     // root of 2^k: kept forms, so each takes no time to write out its 10^8 bits.
     let k = 100_000_000;
     let start = std::time::Instant::now();
@@ -539,7 +539,7 @@ fn kept_values_with_no_kept_form_are_written_out() {
     assert_eq!(hash_of(&edge), hash_of(&Num::from(i64::MAX as i128 + 5)));
 }
 
-/// `3 ** e * 9 ** (e + 1) - 3 ** (3 * e + 2)`, which is zero, with the same value in other
+/// `3 ^ e * 9 ^ (e + 1) - 3 ^ (3 * e + 2)`, which is zero, with the same value in other
 /// forms: each a sum or product of powers of integers that share factors.
 fn equal_cores(e: u32) {
     // 3^e * 9^(e + 1) = 3^(3e + 2): 9 is kept as 3^2, so the product is one power of 3 and the
@@ -632,7 +632,7 @@ fn equal_values_in_different_forms_hash_alike() {
 fn a_wide_end_is_kept_as_a_power_of_its_least_root() {
     let n = 4096;
     let end: BigInt = (BigInt::from(1) << n) + 3;
-    // 2^n + 3 is no perfect power: its cube is the cube written out, and the bound of x ** 3
+    // 2^n + 3 is no perfect power: its cube is the cube written out, and the bound of x ^ 3
     // up to it.
     let cube = Num::from(end.clone()).pow(3);
     assert_eq!(cube, Num::from(end.pow(3)));

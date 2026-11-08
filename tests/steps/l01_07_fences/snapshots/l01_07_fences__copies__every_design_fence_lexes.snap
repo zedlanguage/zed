@@ -107,7 +107,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | _ -> Utf8String ( v ) ,
   6 | } ;
 == DESIGN.md [sec:symbolic] 1 L22
-  1 | p = ( ( x : rat ) -> ( x + 1r ) ** 2₍10₎ ) :: source ;
+  1 | p = ( ( x : rat ) -> ( x + 1r ) ^ 2₍10₎ ) :: source ;
   2 | e = expand ( p ) ;
   3 | d = derivative ( p ) ;
 == DESIGN.md [sec:verification] 1 L15
@@ -369,7 +369,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  56 | stats ( «positional» data : [ f64 ] ) {
  57 | n = f64 ( data :: len ) ;
  58 | mean = data . sum / n ;
- 59 | sd = ( data . map ( x -> ( x - mean ) ** 2₍10₎ ) . sum / n ) . sqrt ;
+ 59 | sd = ( data . map ( x -> ( x - mean ) ^ 2₍10₎ ) . sum / n ) . sqrt ;
  60 | «return» { mean : , sd : } ;
  61 | }
  62 | m = stats ( xs ) . mean ;
@@ -381,7 +381,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  76 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
  85 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
  86 | bad = out . where ( r -> r «is» «not» Row ) ;
- 89 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ** 2₍10₎
+ 89 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ^ 2₍10₎
  90 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
  91 | last = pos [ n - 1₍10₎ ] «else» p0 ;
  96 | report = logs . map ( rowCost ) . sum ;

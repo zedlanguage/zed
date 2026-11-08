@@ -363,7 +363,7 @@ fn ends_of_2_to_the_200_scale_linearly() {
     check_ends("ends near 2^200", num_bigint::BigInt::from(1) << 200);
 }
 
-/// The bound of `x ** k` for x in 2..=3, its demand back on x, and its order against another
+/// The bound of `x ^ k` for x in 2..=3, its demand back on x, and its order against another
 /// power: kept as powers, so the work grows with the bits of `k`, not with the `k` bits of
 /// the bound.
 fn power_bounds(k: usize) {
@@ -386,7 +386,7 @@ fn power_bounds(k: usize) {
 fn power_bounds_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
     scaling::compare(
-        "the bound of x ** k: k = 10^6 and 8 * 10^6",
+        "the bound of x ^ k: k = 10^6 and 8 * 10^6",
         "the work is of order the bits of k, which grow by 3 of about 20, so 3 times allows \
          for noise and fails for any work that grows with k itself",
         3.0,
@@ -432,7 +432,7 @@ fn kept_ends_scale_linearly() {
     });
 }
 
-/// `x ** k + 1`, `k * x ** k - 1` and the cube root of `2 ** k`, with their order: kept forms,
+/// `x ^ k + 1`, `k * x ^ k - 1` and the cube root of `2 ^ k`, with their order: kept forms,
 /// so the work grows with the bits of `k`, not with the `k` bits of the values.
 fn kept_arithmetic(k: usize) {
     use zedc::store::interval::Num;
@@ -466,8 +466,8 @@ fn kept_arithmetic_scales_with_the_bits_of_the_exponent() {
     // k and 8k must both be 1 or 2 mod 3, so both cube roots are irrational.
     let n = n + 1;
     scaling::compare(
-        "x ** k + 1, k * x ** k - 1, the cube root of 2 ** k, 3 ** k + 5 ** k, 3 ** (k + 1) - 3 ** k and \
-         (2 ** k + 1) ** 3: k = 10^6 + 1 and 8 times it",
+        "x ^ k + 1, k * x ^ k - 1, the cube root of 2 ^ k, 3 ^ k + 5 ^ k, 3 ^ (k + 1) - 3 ^ k and \
+         (2 ^ k + 1) ^ 3: k = 10^6 + 1 and 8 times it",
         "the work is of order the bits of k, which grow by 3 of about 20, so 3 times allows \
          for noise and fails for any work that grows with k itself",
         3.0,
@@ -476,8 +476,8 @@ fn kept_arithmetic_scales_with_the_bits_of_the_exponent() {
     );
 }
 
-/// `3 ** e * 9 ** (e + 1) - 3 ** (3e + 2)` and `6 ** e * 5 ** (e + 1) - 2 ** e * 3 ** e *
-/// 5 ** (e + 1)`: integer bases reduced to their least roots and cores compared over a coprime
+/// `3 ^ e * 9 ^ (e + 1) - 3 ^ (3e + 2)` and `6 ^ e * 5 ^ (e + 1) - 2 ^ e * 3 ^ e *
+/// 5 ^ (e + 1)`: integer bases reduced to their least roots and cores compared over a coprime
 /// base, so each difference cancels with work of order the bits of `e`.
 fn equal_cores(e: usize) {
     use zedc::store::interval::Num;
@@ -494,8 +494,8 @@ fn equal_cores(e: usize) {
 fn equal_cores_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
     scaling::compare(
-        "3 ** e * 9 ** (e + 1) - 3 ** (3e + 2) and 6 ** e * 5 ** (e + 1) - 2 ** e * 3 ** e * \
-         5 ** (e + 1): e = 10^6 and 8 * 10^6",
+        "3 ^ e * 9 ^ (e + 1) - 3 ^ (3e + 2) and 6 ^ e * 5 ^ (e + 1) - 2 ^ e * 3 ^ e * \
+         5 ^ (e + 1): e = 10^6 and 8 * 10^6",
         "the work is of order the bits of e, which grow by 3 of about 20, so 3 times allows \
          for noise and fails for any work that grows with e itself",
         3.0,
@@ -504,7 +504,7 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
     );
 }
 
-/// The bound of `x ** 3` for `x` in `[0, 2^n + 3]`, and the cube of the end itself: the end is
+/// The bound of `x ^ 3` for `x` in `[0, 2^n + 3]`, and the cube of the end itself: the end is
 /// kept as a power of its least root, found by a 2-adic root per prime index below its bits,
 /// at the cost of a few products of its bits, not of a root of all its bits per index.
 fn cube_of_a_wide_end(base: &num_bigint::BigInt) {
@@ -525,13 +525,13 @@ fn the_cube_of_a_wide_end_scales_with_its_bits() {
         (num_bigint::BigInt::from(1) << (scaling::FACTOR * n)) + 3,
     );
     scaling::check(
-        "the cube of an end of 2^n + 3 and the image of x ** 3 up to it: n bits",
+        "the cube of an end of 2^n + 3 and the image of x ^ 3 up to it: n bits",
         n,
         |m| cube_of_a_wide_end(if m == n { &small } else { &large }),
     );
 }
 
-/// `(2^n * 3) ** 1000` against `2 ** (1000 n) * 3 ** 1000`: the cores are written over the
+/// `(2^n * 3) ^ 1000` against `2 ^ (1000 n) * 3 ^ 1000`: the cores are written over the
 /// coprime base 2, 3, found by taking every power of a shared factor out at once, so the
 /// equality costs a few products of `n` bits, not `n` divisions.
 fn equal_over_a_wide_base((x, y): &(zedc::store::interval::Num, zedc::store::interval::Num)) {
@@ -556,7 +556,7 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
     let n = 65536;
     let (small, large) = (pair(n), pair(scaling::FACTOR * n));
     scaling::check(
-        "(2^n * 3) ** 1000 against 2 ** (1000 n) * 3 ** 1000: n bits",
+        "(2^n * 3) ^ 1000 against 2 ^ (1000 n) * 3 ^ 1000: n bits",
         n,
         |m| equal_over_a_wide_base(if m == n { &small } else { &large }),
     );

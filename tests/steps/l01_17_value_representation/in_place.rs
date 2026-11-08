@@ -307,7 +307,7 @@ fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
     assert_eq!((coef.bits(), coef.magnitude().count_ones()), (half, half));
 }
 
-/// A hash kept as a power, `3 ** 2 ** 27`, reduced modulo a wide number `2^(2^26)
+/// A hash kept as a power, `3 ^ 2 ^ 27`, reduced modulo a wide number `2^(2^26)
 /// + 1`, under a margin of 28 times the divisor's width: the remainder of the coefficient
 /// asks for 24 times and is given, and the modular-power steps ask for 32 times, a measured
 /// bound above their peak of 25.2 times, and are refused, although they might fit there
@@ -366,7 +366,7 @@ fn a_type_error_on_a_wide_number_names_its_type_when_memory_is_short() {
         ),
         (
             prim(Prim::BitNot, vec![wide(), num(8)]),
-            "`bitNot` needs `x` in int[0..<2 ** width], and it is at least 2 ** width",
+            "`bitNot` needs `x` in int[0..<2 ^ width], and it is at least 2 ^ width",
         ),
     ];
     lower_limit();

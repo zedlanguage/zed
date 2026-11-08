@@ -59,16 +59,16 @@ fn each_operand_is_checked() {
 fn an_x_wider_than_its_width_is_rejected() {
     let out = rejected("x = bitNot(8, width: 3);\n");
     assert!(
-        out.contains("`bitNot` takes `x` in int[0..<2 ** width], and this `x` is 8 with `width` 3"),
+        out.contains("`bitNot` takes `x` in int[0..<2 ^ width], and this `x` is 8 with `width` 3"),
         "{out}"
     );
     assert!(out.contains("`width` is this operand, 3"), "{out}");
-    let out = rejected("x = rotr(2 ** 64, 1, width: 64);\n");
+    let out = rejected("x = rotr(2 ^ 64, 1, width: 64);\n");
     assert!(
-        out.contains("`rotr` takes `x` in int[0..<2 ** width]"),
+        out.contains("`rotr` takes `x` in int[0..<2 ^ width]"),
         "{out}"
     );
-    assert!(accepted("x = rotr(2 ** 64 - 1, 1, width: 64);\n"));
+    assert!(accepted("x = rotr(2 ^ 64 - 1, 1, width: 64);\n"));
     assert!(accepted("x = trailingZeros(255, width: 8);\n"));
     assert!(!accepted("x = trailingZeros(256, width: 8);\n"));
 }
@@ -99,7 +99,7 @@ fn an_operand_not_shown_in_its_domain_is_rejected() {
 #[test]
 fn shown_operands_are_accepted() {
     assert!(accepted("x = bitAnd(shl(1, 3), 5);\n"));
-    assert!(accepted("x = popCount(2 ** 64 + 1);\n"));
+    assert!(accepted("x = popCount(2 ^ 64 + 1);\n"));
     assert!(accepted("x = shl(-5, 2);\nlow = shr(-5, 1);\n"));
     assert!(accepted("mask = 255;\nx = bitAnd(51966, mask);\n"));
     assert!(accepted("x = 12.bitAnd(10).bitXor(3);\n"));
@@ -147,7 +147,7 @@ fn the_kernel_rejects_values_outside_the_domain() {
     );
     assert_eq!(
         err(Prim::BitNot, &[8, 3]),
-        "`bitNot` needs `x` in int[0..<2 ** width], and it is at least 2 ** width"
+        "`bitNot` needs `x` in int[0..<2 ^ width], and it is at least 2 ^ width"
     );
     assert_eq!(
         err(Prim::Rotl, &[1, -1, 3]),
@@ -166,7 +166,7 @@ fn a_name_carries_what_its_text_shows() {
     assert!(accepted(
         "k = 2 + 1;\nx = shr(1024, k);\nlow = bitAnd(x, 255);\ny = popCount(low);\n"
     ));
-    assert!(accepted("k = 2 + 1;\ny = 2 ** k;\n"));
+    assert!(accepted("k = 2 + 1;\ny = 2 ^ k;\n"));
     let out = rejected("k = 2 - 3;\ny = popCount(k);\n");
     assert!(
         out.contains("`popCount` takes `x` in int[0..], and this `x` is -1"),
@@ -190,7 +190,7 @@ fn bit_words_nested_in_each_other_are_each_checked_with_the_inner_values() {
         out.starts_with("1:5: `bitAnd` takes `a` in int[0..], and this `a` is -1"),
         "{out}"
     );
-    // The width is 2, and 15 does not lie below `2 ** 2`.
+    // The width is 2, and 15 does not lie below `2 ^ 2`.
     let out = rejected("x = leadingZeros(bitAnd(255, 15), width: bitAnd(6, 3));\n");
-    assert!(out.contains("takes `x` in int[0..<2 ** width]"), "{out}");
+    assert!(out.contains("takes `x` in int[0..<2 ^ width]"), "{out}");
 }

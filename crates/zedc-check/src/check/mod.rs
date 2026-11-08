@@ -682,7 +682,7 @@ struct Ck<'t, 'a> {
     /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
     /// takes the entry.
     tried: HashMap<Span, Option<KType>>,
-    /// The scopes the tests the walk is in make, which narrow the ints a bit word or `**`
+    /// The scopes the tests the walk is in make, which narrow the ints a bit word or `^`
     /// reads.
     arms: arms::Arms<'a>,
     /// For each binder read by a binder's value, what its summary read in the scope of its
@@ -2720,7 +2720,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 | "/"
                 | "div"
                 | "mod"
-                | "**"
+                | "^"
                 | "++"
                 | "<"
                 | "<="
@@ -4071,7 +4071,7 @@ fn op_sig(op: &str) -> Sig {
             [arrows(&[F64], 2, same), arrows(&[Rat], 2, div0)].concat(),
         ),
         "div" | "mod" => (2, arrows(&[Int], 2, div0)),
-        "**" => (2, arrows(&[Int, F64], 2, same)),
+        "^" => (2, arrows(&[Int, F64], 2, same)),
         "++" => (2, arrows(&[Str], 2, same)),
         "<" => (2, arrows(&[Int, F64, Rat, Str, Bool], 2, bool_)),
         "&&" => (2, arrows(&[Bool], 2, bool_)),
@@ -4253,11 +4253,11 @@ fn at_least_zero() -> IntervalSet {
     IntervalSet::range(End::of(0), PosInf)
 }
 
-/// The domain `d` as a type, `int[0..]` or `int[0..<2 ** w]`.
+/// The domain `d` as a type, `int[0..]` or `int[0..<2 ^ w]`.
 fn domain_text(d: &IntDomain) -> String {
     match &d.below_two_pow {
         None => "int[0..]".into(),
-        Some(w) => format!("int[0..<2 ** {}]", w.0),
+        Some(w) => format!("int[0..<2 ^ {}]", w.0),
     }
 }
 
@@ -4268,7 +4268,7 @@ fn value_in(d: &IntDomain, v: &Value) -> bool {
         && (d.below_two_pow.as_ref()).is_none_or(|w| zed_kernel::bits::below_two_pow(v, &w.0))
 }
 
-/// Whether the interval `ints` lies in the domain `d`: below `2 ** w` when its largest value is.
+/// Whether the interval `ints` lies in the domain `d`: below `2 ^ w` when its largest value is.
 fn ints_in(d: &IntDomain, ints: &IntervalSet) -> bool {
     if !ints.is_subset(&at_least_zero()) {
         return false;
@@ -4438,7 +4438,7 @@ impl<'a> Ck<'_, 'a> {
         match &e.kind {
             ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
             ExprKind::Unary("-", a) => vec![&**a],
-            ExprKind::Binary(o, a, b) if *o == "**" || int_op(o).is_some() => vec![&**a, &**b],
+            ExprKind::Binary(o, a, b) if *o == "^" || int_op(o).is_some() => vec![&**a, &**b],
             _ => self.bit_call(e).map_or_else(Vec::new, |(_, es)| es),
         }
     }
@@ -4546,7 +4546,7 @@ impl<'a> Ck<'_, 'a> {
                     },
                 }
             }
-            ExprKind::Binary("**", a, b) => {
+            ExprKind::Binary("^", a, b) => {
                 let (x, n) = (self.memo(a), self.memo(b));
                 if let (Some(x), Some(n)) = (&x.value, &n.value) {
                     return fold(Prim::Pow, vec![x.clone(), n.clone()]).unwrap_or_else(Known::top);

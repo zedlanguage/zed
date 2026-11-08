@@ -1,8 +1,8 @@
 //! The forward transfer of the machine operations on intervals: sound on random operand
 //! intervals at widths up to 128 (each sampled member's value lies in the result), exact on
 //! single values, and as tight as DESIGN.md step L1.39f states: `mulHi` and `bitReverse` and
-//! `byteSwap` below `2 ** w`, `pdep` at most `mask`, `pext` below `2 ** popCount(mask)` and
-//! at most `x`. DESIGN gives no bound for the funnel shifts; they take the hull below `2 ** w`.
+//! `byteSwap` below `2 ^ w`, `pdep` at most `mask`, `pext` below `2 ^ popCount(mask)` and
+//! at most `x`. DESIGN gives no bound for the funnel shifts; they take the hull below `2 ^ w`.
 
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Value};
@@ -22,10 +22,10 @@ fn holds(s: &IntervalSet, v: &Value) -> bool {
 }
 
 fn end(n: u128) -> End {
-    End::from(i128::try_from(n).expect("below 2 ** 127"))
+    End::from(i128::try_from(n).expect("below 2 ^ 127"))
 }
 
-/// `[lo..=hi]`, at any size below `2 ** 127`.
+/// `[lo..=hi]`, at any size below `2 ^ 127`.
 fn range(lo: u128, hi: u128) -> IntervalSet {
     IntervalSet::range(end(lo), end(hi))
 }
@@ -84,7 +84,7 @@ fn the_transfer_is_sound_on_random_intervals() {
                 _ => (u128::from(w), u128::from(w) + rng.below(4) as u128),
             }
         };
-        // The operands, in parameter order: an int below `2 ** w`, a mask, a count below `w`.
+        // The operands, in parameter order: an int below `2 ^ w`, a mask, a count below `w`.
         let ivs: Vec<(u128, u128)> = match p {
             Prim::MulHi => vec![
                 interval(&mut rng, w),
@@ -167,7 +167,7 @@ fn the_bounds_design_states() {
     let r = |lo: i64, hi: i64| IntervalSet::of(lo, hi);
     let all = IntervalSet::top();
     let from = |lo: i64| IntervalSet::range(End::of(lo), PosInf);
-    // `mulHi` by the corners: `(20 * 40) div 2^8 ..= (30 * 50) div 2^8`, and below `2 ** w`.
+    // `mulHi` by the corners: `(20 * 40) div 2^8 ..= (30 * 50) div 2^8`, and below `2 ^ w`.
     assert_eq!(
         bit_word(Prim::MulHi, &[r(20, 30), r(40, 50), r(8, 8)]),
         r(3, 5)
@@ -185,7 +185,7 @@ fn the_bounds_design_states() {
         bit_word(Prim::MulHi, &[r(16, 16), r(16, 16), r(4, 8)]),
         r(1, 16)
     );
-    // `bitReverse` and `byteSwap` below `2 ** w`, from 1 when 0 is not a member.
+    // `bitReverse` and `byteSwap` below `2 ^ w`, from 1 when 0 is not a member.
     assert_eq!(
         bit_word(Prim::BitReverse, &[all.clone(), r(8, 8)]),
         r(0, 255)
@@ -196,7 +196,7 @@ fn the_bounds_design_states() {
         bit_word(Prim::ByteSwap, &[all.clone(), r(16, 16)]),
         r(0, 65535)
     );
-    // `pdep` at most `mask`; `pext` at most `x` and below `2 ** digits(mask)`.
+    // `pdep` at most `mask`; `pext` at most `x` and below `2 ^ digits(mask)`.
     assert_eq!(
         bit_word(Prim::Pdep, &[all.clone(), r(0, 0b11010)]),
         r(0, 0b11010)
@@ -207,7 +207,7 @@ fn the_bounds_design_states() {
     );
     assert_eq!(bit_word(Prim::Pext, &[r(0, 6), r(0, 0b11010)]), r(0, 6));
     assert_eq!(bit_word(Prim::Pext, &[all.clone(), from(0)]), from(0));
-    // The funnel shifts: the hull below `2 ** w`, 0 when both halves are.
+    // The funnel shifts: the hull below `2 ^ w`, 0 when both halves are.
     assert_eq!(
         bit_word(
             Prim::FunnelShl,

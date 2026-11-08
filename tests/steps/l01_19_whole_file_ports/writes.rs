@@ -68,13 +68,13 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
     assert_eq!(run("branches", src, "no\n", &[]).stdout, "declined\n");
 }
 
-/// `2 ** 2 ** 100` is a value, kept as a power of 2, but adding 1 must build its `2^100`
+/// `2 ^ 2 ^ 100` is a value, kept as a power of 2, but adding 1 must build its `2^100`
 /// bits: the run stops with an error naming that size, before anything is written, and the
 /// process does not abort.
 #[test]
 fn a_number_too_large_to_build_stops_the_run() {
     let src = "main() -> (stdout: Lines) {\n  stdout <- \"start\";\n  \
-               stdout <- String(2 ** 2 ** 100 + 1);\n}\n";
+               stdout <- String(2 ^ 2 ^ 100 + 1);\n}\n";
     let out = run("too_large", src, "", &[]);
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(
@@ -88,11 +88,11 @@ fn a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.stdout, "");
 }
 
-/// Printing `2 ** 2 ** 100` must build its `2^100` bits: the run stops with an error naming
+/// Printing `2 ^ 2 ^ 100` must build its `2^100` bits: the run stops with an error naming
 /// that size, at once, and the process does not abort.
 #[test]
 fn printing_a_number_too_large_to_build_stops_the_run() {
-    let src = "main() -> (stdout: Lines) {\n  stdout <- String(2 ** 2 ** 100);\n}\n";
+    let src = "main() -> (stdout: Lines) {\n  stdout <- String(2 ^ 2 ^ 100);\n}\n";
     let out = run("print_too_large", src, "", &[]);
     assert_eq!(out.status, 1, "{}", out.stderr);
     assert!(

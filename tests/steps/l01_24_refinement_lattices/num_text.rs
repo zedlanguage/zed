@@ -187,7 +187,7 @@ fn a_written_end_is_num_bigints_text() {
         (7, 1000),
     ] {
         let text = BigInt::from(base).pow(k).to_string();
-        assert_eq!(Num::from(base).pow(k).to_string(), text, "{base} ** {k}");
+        assert_eq!(Num::from(base).pow(k).to_string(), text, "{base} ^ {k}");
     }
 }
 

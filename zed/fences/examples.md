@@ -70,12 +70,12 @@ q   = 7 div 2;             // 3      integers divide with div and mod (Euclidean
 r   = -7 mod 2;            // 1      (-7) mod 2 — unary minus binds tighter than mod; the remainder is never negative
 h   = f64(7) / 2n;         // 3.5    a cast is the type applied to the value
 t   = 1r / 3r;             // exact: rat
-big = 2 ** 100;            // int has no width; ** binds tighter than * and than unary minus, and associates to the right
+big = 2 ^ 100;            // int has no width; ^ binds tighter than * and than unary minus, and associates to the right
 m   = 1_000_000;  hex = 0xFF;  bits = 0b1011;  sci = 1.5e-3;
 half = 0.5;                // f16: never .5 — a float literal starts with a digit, and is the first of f16, f32, f64 that holds it to within half a unit of its last digit; a suffix, as in 0.5f64, names the format
 dbl = h * 2n;              // 7.0    h is an f64, and 2n takes the format of the other operand
 // bad = h * 2.0;          // ✗ Plain decimal literal whose own format is not the format expected: 2.0 is an f16 and h an f64; no operator converts
-y   = x ** 2 + 2*x + 1;
+y   = x ^ 2 + 2*x + 1;
 b: u8 = 255;               // u8 = int[0..=255]; 256 here is a type error, not a wrap
 w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordinary functions
 z   = 7 / 2;               // ✗ Operator with no arrow at its operands' carrier: `/` is for the float formats and rat only
@@ -209,7 +209,7 @@ q, r = divmod(7, 2);
 stats(positional data: [f64]) {
   n = f64(data::len);
   mean = data.sum / n;
-  sd   = (data.map(x -> (x - mean) ** 2).sum / n).sqrt;
+  sd   = (data.map(x -> (x - mean) ^ 2).sum / n).sqrt;
   return { mean:, sd: };                 // a record display: one export, two fields, each pruned on its own
 }
 m = stats(xs).mean;
@@ -384,7 +384,7 @@ struct Point { x: f64, y: f64 }
 p  = Point(x: 1n, y: 2n);
 p2 = p with { x = 3n };                // an update is a new value
 px = p.x;                               // p.x ≡ p[#x]
-dist(positional a: Point, positional b: Point) = ((a.x - b.x) ** 2 + (a.y - b.y) ** 2).sqrt;
+dist(positional a: Point, positional b: Point) = ((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2).sqrt;
 struct Circle { c: Point, r: f64 }
 struct Round  { import Rect, r: f64 }   // field embedding: Rect's fields, plus r
 ```
@@ -629,9 +629,9 @@ odd(positional n)  = if n == 0 { false } else { even(n - 1) };
 <!-- EXAMPLES.md:654 layer L6: ring L6, word L3 (map), label none; section [14. Recursion] 2 -->
 ```zed
 // [d4*] sec:power — a pseudo-random sequence is a recurrence with a seed
-next(positional s) = (s * 6364136223846793005 + 1442695040888963407) mod (2 ** 64);
+next(positional s) = (s * 6364136223846793005 + 1442695040888963407) mod (2 ^ 64);
 rnd[i in 0..] = next(rnd[i-1]) with rnd[-1] = seed;
-dice = rnd.map(r -> ((r div 2 ** 32) mod 6) + 1);   // the high bits: an LCG's low bit alternates
+dice = rnd.map(r -> ((r div 2 ^ 32) mod 6) + 1);   // the high bits: an LCG's low bit alternates
 tenRolls = for i in 0..<10 { dice[i] };
 ```
 

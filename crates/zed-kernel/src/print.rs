@@ -81,7 +81,7 @@ fn infix(p: Prim) -> Option<&'static str> {
         And => " && ",
         Or => " || ",
         Concat => " ++ ",
-        Pow => " ** ",
+        Pow => " ^ ",
         _ => return None,
     })
 }
@@ -442,8 +442,8 @@ impl<'a> Pieces<'a> {
                 self.end();
             }
             Term::Prim(p, args) => match (infix(*p), &args[..]) {
-                // The left operand of `**` is a postfix expression (sec:grammar, Power), so
-                // `-x ** 2` would read as `-(x ** 2)`.
+                // The left operand of `^` is a postfix expression (sec:grammar, Power), so
+                // `-x ^ 2` would read as `-(x ^ 2)`.
                 (Some(sep), [a, b]) => {
                     self.list("(", sep, ")");
                     if *p == Prim::Pow {
