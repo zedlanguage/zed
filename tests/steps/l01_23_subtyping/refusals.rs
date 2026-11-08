@@ -772,3 +772,60 @@ fn a_value_found_by_refining_a_forked_part_is_kept() {
         assert!(!t.is_empty(), "{t}");
     }
 }
+
+/// Pairs of integers met with the union over `i` from 1 to `n` of the pairs of `0` or `i` and
+/// `0`, less the pairs of `0` or `i` and any integer, which hold them: each difference is empty,
+/// and so is the type. When `kept` is `Some(m)`, the `m`th difference takes out only the pairs
+/// whose first is `m`, and leaves `(0, 0)`.
+fn pairs_less_holders(n: usize, kept: Option<usize>) -> Type {
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let union = (1..=n).fold(Type::empty(), |u, i| {
+        let zero_or_i = &lit(0) | &lit(i as i64);
+        let first = match kept {
+            Some(m) if m == i => lit(i as i64),
+            _ => zero_or_i.clone(),
+        };
+        &u | &(&pair(zero_or_i, lit(0)) - &pair(first, Type::int()))
+    });
+    &pair(Type::int(), Type::int()) & &union
+}
+
+#[test]
+fn a_union_of_pairs_less_pairs_holding_them_is_decided_operand_by_operand() {
+    // Empty, and with one difference that leaves `(0, 0)`, wherever it stands, inhabited.
+    for n in [1, 2, 5] {
+        Type::forget_emptiness();
+        let t = pairs_less_holders(n, None);
+        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+        assert!(t.is_empty(), "{t}");
+        for m in 1..=n {
+            Type::forget_emptiness();
+            let t = pairs_less_holders(n, Some(m));
+            assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+            assert!(!t.is_empty(), "{t}");
+        }
+    }
+}
+
+#[test]
+fn a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size() {
+    // The cells `0 | i` of the first components all share `0`, so they fall in one class, and
+    // the part, false outside its tuple types, was split into its `2n` tuple types, each piece
+    // deciding the whole part: 9.2M, 37.1M, 149.8M, 601.9M and 2392M instructions at n 8, 16,
+    // 32, 64 and 128 on cf4e1fda, order n^2. The differences share no tuple type, so each is
+    // now decided on the box alone: 1.27M, 2.45M, 4.77M, 9.56M and 18.8M (COMPLEXITY.md K80).
+    big(|| {
+        scaling::check(
+            "Empty, by a union of n pairs less pairs that hold them",
+            8,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!(
+                    pairs_less_holders(n, None).verdict(),
+                    Verdict::Empty,
+                    "at {n}"
+                );
+            },
+        )
+    });
+}

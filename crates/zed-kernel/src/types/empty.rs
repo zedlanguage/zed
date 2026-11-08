@@ -2252,6 +2252,19 @@ impl<'m> Searching<'m> {
             // `l01_23_subtyping::one_pass::overlapping_exclusive_ors_are_compared_at_quadratic_cost`
             // and `overlapping_decision_lists_are_compared_at_quadratic_cost`. COMPLEXITY.md K71.
             if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
+                // A union of parts that share no tuple type is empty when each part is, each
+                // decided on the box with only its own tuple types: `n` parts of `c` tuple types
+                // each cost order `n c`, not the `n c` pieces by the whole part of the split
+                // below (`l01_23_subtyping::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
+                // COMPLEXITY.md K80).
+                if let Some(parts) = f.disjoint_disjuncts() {
+                    for d in parts {
+                        if !self.piece(g.r.clone(), d, true).await {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
                 for &k in &open {
                     let mark = g.log.len();
                     for j in 0..g.r.len() {
