@@ -1151,7 +1151,7 @@ With three sample users, `group` adds the `city` level above the keys that were 
 <tr><td><code>3</code></td><td><code>Cid, Oslo</code></td></tr>
 </table>
 
-`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Where SQL's `GROUP BY` must aggregate right away, a group here is just a level of the map, which you can reduce, read or reshape later. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` (this function never gives two inputs one output) or a database's unique constraint, is checked at run time instead, and the result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
+`group` adds a level, so nothing can be lost. The inner map keeps the users' original keys, exactly those of that city's users, which is why the inner arrow is `->`. Only cities with users occur, and each group is nonempty. Where SQL's `GROUP BY` must aggregate right away, a group here is just a level of the map, which you can reduce, read or reshape later. Since `rekey` can make two entries land on one key, the compiler demands evidence that the new key is unique, such as a function it can see never collides. If it can't see that, the error names the key expression and the evidence that would make it legal. A claim it can't prove, such as `@injective` (this function never gives two inputs one output), is an error too. The error offers a form you write instead, which groups by the new key and checks each group at run time, so its result type gains `#collision`. When two entries really do collide, it shows both. No value ever silently overwrites another in Zed.
 
 ### Remapping
 
@@ -2103,7 +2103,7 @@ A type can state a range or a condition on its values.
 **Syntax:** `int[lo..=hi]`, `x.refine(p)`, `@ensure`
 
 > [!NOTE]
-> **`x.refine(p)`** is `x`, or the failure **`#invalid`** if the condition `p` fails. The check runs at run time unless the compiler can settle it first. **`@ensure`** on a definition forbids run-time checks in it: each condition has to be proved instead.
+> **`x.refine(p)`** is `x`, or the failure **`#invalid`** if the condition `p` fails. The check runs at run time unless the compiler can settle it first. A range or condition in a type, such as a parameter's `int[0..=10]`, is different: the compiler has to prove it, and if it can't, the build fails and the error offers `refine` as the check you write yourself. **`@ensure`** on a definition forbids even the run-time checks you wrote in it: each condition has to be proved instead.
 
 ```zed
 struct Span { lo: int, hi: int[lo..] }
@@ -2353,7 +2353,7 @@ A `law` states a property of your code for the compiler to prove or test.
 **Syntax:** `law name(x: T) = expression;`
 
 > [!NOTE]
-> **`law name(x: T) = expression;`** claims that a `bool` expression holds for every `x`. The compiler tries to prove it and otherwise tests it, and reports its *grade*, how far it got. **`@proved`**, **`@strict`** and the compiler flag **`--strict`** make the build fail on a law that isn't proved.
+> **`law name(x: T) = expression;`** claims that a `bool` expression holds for every `x`. The compiler tries to prove it and reports its *grade*, how far it got. A law that isn't proved makes the build fail.
 
 ```zed
 // double is the function from Tests next to the code above.
@@ -2373,7 +2373,7 @@ the build reports for each of these three laws isn't worked out here, since it
 depends on the compiler's rewrites.
 ```
 
-A test checks the cases you thought of, and a law states what has to hold for every input. The compiler tries to prove a law with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and automatic proof methods it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. An unproved law doesn't stop the build unless you ask it to with `@proved`, `@strict` or `--strict`.
+A test checks the cases you thought of, and a law states what has to hold for every input. The compiler tries to prove a law with a fixed ladder of methods. For a domain whose members the source lists, such as `bool` or a set of atoms, it checks every case, and otherwise it tries the rewrites and automatic proof methods it has. If those fail, the law is tested on generated inputs. It then reports how far it got: exhaustively checked, proved, checked up to a bound, tested, assumed or unknown. A test on generated inputs can find a counterexample but can't prove the law, so a law that isn't exhaustively checked or proved stops the build, and the error shows how far each method got.
 
 The optimizer can use proved laws as rewrites. A `law` that was only tested is never used to rewrite your program. An `@associative` annotation that was only tested can still choose a fixed regrouping, and the report says so.
 
