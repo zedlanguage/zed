@@ -195,7 +195,7 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
     // name or the written name and `@k` (`crate::elab`), and a written name holds no `@`
     // (`crate::lex::name`). O(n) in the size of the parameter lists.
     type Key<'a> = (&'a str, Vec<&'a str>);
-    type Lams<'a> = Vec<(&'a [Arc<str>], &'a Shared)>;
+    type Lams<'a> = Vec<(&'a [Arc<str>], &'a Shared, &'a Arc<str>)>;
     let mut defs: std::collections::HashMap<Key, Lams> = std::collections::HashMap::new();
     for d in unit.defs.iter().rev() {
         if let Term::Lam(ps, body) = &*d.term {
@@ -203,7 +203,7 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             (defs
                 .entry((d.name.as_str(), written.collect()))
                 .or_default())
-            .push((ps, body));
+            .push((ps, body, &d.kernel));
         }
     }
     // The prelude and every definition, as one chain of lets, each after those it uses, as
@@ -231,7 +231,7 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             f.name.as_str(),
             f.params.iter().map(|p| p.name.as_str()).collect(),
         );
-        let Some((ps, body)) = defs.get_mut(&key).and_then(Vec::pop) else {
+        let Some((ps, body, kernel)) = defs.get_mut(&key).and_then(Vec::pop) else {
             continue;
         };
         work::stage(Stage::Linear, Some(&f.name), || {
@@ -258,6 +258,18 @@ pub fn linear_questions(stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
             // and their names do not change with the other functions of the unit. The auxiliary
             // variables of the constraints are numbered from 0 in the order the scope made them,
             // which an earlier function that made one of them first may change.
+            // Rung 2 reads arithmetic as integer arithmetic, so a question is asked only of a
+            // function whose parameters all take only `int`s (RUNG2-carrier): one of `f64`,
+            // `rat`, `bool` or a type variable that may be `f64` or `rat` is outside the domain,
+            // as a float or rational literal is. `Scoped::relation` reads every parameter as an
+            // integer input, so a function with an `int` parameter beside a `f64` one asks
+            // nothing, even of a body that reads only the `int`. A function the checker gave no
+            // signature asks nothing.
+            let all_int = (unit.int_params.get(kernel))
+                .is_some_and(|ints| ints.len() == f.params.len() && ints.iter().all(|&i| i));
+            if !all_int {
+                return;
+            }
             let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
             if let Some(r) = scoped.relation(body, ps, &inputs, true) {
                 let mut answers =

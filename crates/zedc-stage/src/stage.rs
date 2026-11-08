@@ -1305,6 +1305,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
         defs: Vec::new(),
         tests: unit.tests.clone(),
         warnings: Vec::new(),
+        int_params: Default::default(),
     };
     for d in &unit.defs {
         if !demanded.contains(&d.kernel) {

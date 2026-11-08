@@ -100,7 +100,16 @@ fn lower<'a>(
 ) -> (Unit, Option<Vec<Mark>>, Vec<Error>) {
     let mut e = Elab::new(t, info);
     e.marks = marks;
-    let mut out = Unit::default();
+    // Which parameters of each declared function take only `int`s, for rung 2, which reads
+    // arithmetic as integer arithmetic (`Sig::int_params`, RUNG2-carrier). O(functions ×
+    // arrows × parameters).
+    let int_params = (e.info.sigs.iter())
+        .map(|(&id, sig)| (e.names[id].clone(), sig.int_params()))
+        .collect();
+    let mut out = Unit {
+        int_params,
+        ..Unit::default()
+    };
     if let Some((binds, _)) = e.scope(unit, true) {
         out.defs = binds
             .into_iter()

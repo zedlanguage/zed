@@ -1280,6 +1280,13 @@ fn keep_all(fs: Vec<Formula>) -> Formula {
 /// `inputs`, with one numbering of auxiliary variables; products of two symbols are atoms
 /// when `products` holds. `None` when a term is outside the domain.
 ///
+/// The terms carry no types, and `+`, `-`, `*`, `div`, `mod`, `-x` and the comparisons are
+/// read as integer arithmetic, so the caller passes as `inputs` only the names that hold
+/// `int`s alone (`Sig::int_params` in zedc-types; RUNG2-carrier, LADDER-study D6): at `f64`,
+/// `(a + b) + c == a + (b + c)` is false, and read over integers it would be proved. A name
+/// not in `inputs` puts a term that reads it outside the domain, and a literal is read only
+/// when it is an integer, so a term over any other carrier is `None`.
+///
 /// When `products` holds, a divisor may be a term, which may be 0, where the quotient and the
 /// remainder fail (`Tr::div_mod_by_term`). Each relation then holds exactly where the
 /// interpreter's value of its test is `true`: the test's formula met with the condition that
@@ -1448,7 +1455,8 @@ impl<'t> Scoped<'t> {
     /// is the input. Products of two symbols are atoms when `products` holds, and then the
     /// relation holds the condition that the test's value is not an atom, as [`relations`]'s
     /// does (`Tr::definedness`, RUNG2-definedness). `None` when the
-    /// body is outside the domain. Time of the body, of the parameters and of the parts of the
+    /// body is outside the domain. Every parameter is read as an integer, as in [`relations`], so the
+    /// caller asks only of a function whose parameters all hold `int`s alone (RUNG2-carrier). Time of the body, of the parameters and of the parts of the
     /// scope no earlier body read.
     ///
     /// The body of a function the scope binds is read over its parameters' canonical atoms

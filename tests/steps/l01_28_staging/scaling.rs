@@ -177,6 +177,7 @@ fn deep_units(n: usize) -> Vec<(&'static str, Unit, Term)> {
         }],
         tests: Arc::new([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     };
     // Built once per shape: cloning a term recursed (step T2-types).
     let ends = || (0..n).fold(lit(0), |a, _| prim(Prim::Add, vec![a, lit(1)]));
@@ -236,6 +237,7 @@ fn mixing_a_unit_does_not_copy_its_warnings() {
         defs: with.defs.clone(),
         tests: with.tests.clone(),
         warnings: Vec::new(),
+        int_params: with.int_params.clone(),
     };
     let bytes = |u: &Unit| {
         let start = zed_alloc_count::allocated();

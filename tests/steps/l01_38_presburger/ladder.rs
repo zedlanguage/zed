@@ -63,7 +63,7 @@ fn true_on_window(premise: &str, goal: &str) -> bool {
         .all(|w| !holds(&p, &ps, w) || holds(&g, &ps, w))
 }
 
-const TRUE: &str = "ok(x, y) = true;";
+const TRUE: &str = "ok(x: int, y: int) = true;";
 
 #[test]
 fn products_of_two_symbols_are_settled_in_the_polynomial_normal_form() {
@@ -111,7 +111,10 @@ fn a_false_product_fact_is_never_proved_and_a_refutation_is_only_a_real_one() {
     // refutation is a real refutation and comes with a trace").
     for (premise, goal) in [
         ("ok(y, w) = y >= 0 && w <= 0;", "ok(y, w) = y * w >= 0;"),
-        ("ok(x, y, z) = y <= z;", "ok(x, y, z) = x * y <= x * z;"),
+        (
+            "ok(x: int, y: int, z: int) = y <= z;",
+            "ok(x, y, z) = x * y <= x * z;",
+        ),
     ] {
         assert!(!true_on_window(premise, goal), "{goal} is false");
         match rung2(premise, goal) {
@@ -149,9 +152,12 @@ fn false_linear_and_min_max_facts_are_refuted_with_a_witness_the_interpreter_con
         [0, 1]
     );
     refuted_at(TRUE, "ok(x, y) = (2 * x) mod 2 == 2;");
-    refuted_at("ok(a, b, c) = a <= c;", "ok(a, b, c) = max(a, b) <= c;");
+    refuted_at(
+        "ok(a: int, b: int, c: int) = a <= c;",
+        "ok(a, b, c) = max(a, b) <= c;",
+    );
     assert_proved(
-        "ok(a, b, c) = a <= c && b <= c;",
+        "ok(a: int, b: int, c: int) = a <= c && b <= c;",
         "ok(a, b, c) = max(a, b) <= c;",
     );
 }
@@ -167,15 +173,18 @@ fn clamp_is_in_range_exactly_when_lo_is_at_most_hi() {
     let chain = format!("{CLAMP}ok(x, lo, hi) = lo <= clamp(x, lo, hi) && clamp(x, lo, hi) <= hi;");
     let minmax = "ok(x, lo, hi) = lo <= max(lo, min(x, hi)) && max(lo, min(x, hi)) <= hi;";
     for range in [chain.as_str(), minmax] {
-        assert_proved("ok(x, lo, hi) = lo <= hi;", range);
-        assert!(!true_on_window("ok(x, lo, hi) = true;", range));
+        assert_proved("ok(x: int, lo: int, hi: int) = lo <= hi;", range);
+        assert!(!true_on_window(
+            "ok(x: int, lo: int, hi: int) = true;",
+            range
+        ));
     }
     // Without the premise, `max` of `min` is refuted at a point with `lo > hi`; the `if`
     // chain, three nested disjunctions, is refused, so the obligation goes on to rung 5,
     // whose split on `v < l` gives halves rung 2 refutes.
-    let w = refuted_at("ok(x, lo, hi) = true;", minmax);
+    let w = refuted_at("ok(x: int, lo: int, hi: int) = true;", minmax);
     assert!(w[1] > w[2], "{w:?}");
-    let e = rung2("ok(x, lo, hi) = true;", &chain);
+    let e = rung2("ok(x: int, lo: int, hi: int) = true;", &chain);
     assert!(matches!(e, Entailment::Refused(_)), "{e}");
 }
 

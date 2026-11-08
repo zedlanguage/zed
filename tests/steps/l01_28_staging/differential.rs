@@ -73,6 +73,7 @@ fn unit(defs: Vec<(&str, Term)>) -> Unit {
         defs,
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     }
 }
 

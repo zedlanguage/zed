@@ -2736,3 +2736,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `HashMap<usize, Need>` from a parameter's binder to its one need, replaced when a smaller domain comes (`surface_cmp` of two widths), and drained by `remove` when the function's signature is made | `Ck::floors`, `floor_on`, `floors_into` | Mutation (gap 11) | A morphism from binder to need in the walk's state, folded over the uses and read once at the signature |
 | A singly linked list of call links shared by `Arc` (`Via { at, text, next: Option<Arc<Via>> }`), walked by a `while let` into a `Vec` of notes inside a closure that runs only when an error is reported | `Ck::floors_at` | None: shared immutable lists | A list of links; the notes a map over it, made in the error branch |
 | A `loop` over names bound to names with a visited `HashSet<usize>`, left by `return` | `Ck::open_param` | Early exit (gap 12), mutation (gap 11) | A recursive function over the binding facts with the visited set as an argument |
+
+## Entries from RUNG2-carrier (`crates/zedc-types/src/ty.rs`, `zedc-elab/src/elab.rs`, `zedc-stage/src/defs.rs`, `zedc/src/front.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Option::is_some_and` on a lookup (`HashMap::get`, slice `get`) | `Sig::int_params`, `front::linear_questions` | None | a `match` on the lookup, the missing case `false` |
+| A struct update, `Unit { int_params, ..Unit::default() }` | `elab::lower` | None | a record built with the named field and the others from the default |
+| `return` from the closure passed to `work::stage`, to skip a function | `front::linear_questions` | None | an `if` around the closure's body |

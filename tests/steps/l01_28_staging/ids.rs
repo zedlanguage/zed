@@ -101,6 +101,7 @@ fn built(k: usize, order: impl Iterator<Item = i64>) -> (Unit, Vec<(u64, u64)>) 
         defs: vec![def],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     };
     (unit, ids)
 }

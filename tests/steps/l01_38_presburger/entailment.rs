@@ -7,14 +7,35 @@ use zedc::store::preimage::relations;
 
 use super::{holds, point};
 use zed_tests::step_helpers::l01_25_preimage_catalog::function;
+use zed_tests::step_helpers::l01_26_type_resolution::sig_of;
 
 /// What rung 2 concludes from the body of `ok` in `premise` to the body of `ok` in `goal`,
 /// the two translated in one call, so that their auxiliary variables are numbered apart.
 pub(super) fn rung2(premise: &str, goal: &str) -> Entailment {
+    verdict(premise, goal)
+        .unwrap_or_else(|| panic!("{premise} to {goal}: outside the linear-relation domain"))
+}
+
+/// [`rung2`], or `None` where the premise or the goal is outside the linear-relation domain.
+/// Rung 2 reads arithmetic as integer arithmetic, so it is given only the parameters the
+/// checker gives only `int`s (`Sig::int_params`, RUNG2-carrier); a body that reads another is
+/// outside the domain. The premise and the goal stand for one obligation over one function, so
+/// a parameter is `int` when it is in either: one side without a literal on it, `ok(x, n) =
+/// true;`, leaves it generic, and the other gives it its type. The tests never give a
+/// parameter `int` on one side and another type on the other.
+pub(super) fn verdict(premise: &str, goal: &str) -> Option<Entailment> {
     let (ps, p) = function(premise);
     let (_, g) = function(goal);
-    let rs = relations(&[&p, &g], &ps, true).expect("in the linear-relation domain");
-    entails(&rs[0], &rs[1])
+    let (pi, gi) = (
+        sig_of(premise, "ok").int_params(),
+        sig_of(goal, "ok").int_params(),
+    );
+    let inputs: Vec<_> = (ps.iter().zip(pi.iter().zip(&gi)))
+        .filter(|&(_, (&p, &g))| p || g)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let rs = relations(&[&p, &g], &inputs, true)?;
+    Some(entails(&rs[0], &rs[1]))
 }
 
 const GOAL: &str = "ok(y, w, x, h) = y * w + x < h * w;";
@@ -66,7 +87,7 @@ fn a_product_is_bounded_only_through_the_premises_on_its_factors() {
     // point whose product atoms are not the products, so the goal is not proved, and not
     // refuted either (it is false at `w = -1`, which rung 2 does not search for).
     let e = rung2(
-        "ok(y, w, x, h) = y <= h;",
+        "ok(y: int, w: int, x: int, h: int) = y <= h;",
         "ok(y, w, x, h) = y * w <= h * w;",
     );
     // Any such point will do, so the point is checked, not its text: the premise holds, the
@@ -107,7 +128,10 @@ fn the_next_index_is_not_in_bounds_from_the_current_one() {
 
 #[test]
 fn contradictory_premises_entail_anything() {
-    let e = rung2("ok(x, y) = x < y && y < x;", "ok(x, y) = x == y + 7;");
+    let e = rung2(
+        "ok(x: int, y: int) = x < y && y < x;",
+        "ok(x, y) = x == y + 7;",
+    );
     assert!(matches!(e, Entailment::Proved(_)), "{e}");
 }
 
@@ -140,14 +164,14 @@ fn abs_and_branches_are_stated_through_their_cases() {
         ("ok(a, b) = true;", "ok(a, b) = abs(a - b) >= 0;"),
         ("ok(a, b) = a < 0;", "ok(a, b) = abs(a) == -a;"),
         (
-            "ok(a, b) = true;",
+            "ok(a: int, b: int) = true;",
             "ok(a, b) = (if a < b { b - a } else { a - b }) == abs(a - b);",
         ),
     ] {
         let e = rung2(premise, goal);
         assert!(matches!(e, Entailment::Proved(_)), "{goal}: {e}");
     }
-    let e = rung2("ok(a, b) = true;", "ok(a, b) = abs(a) == a;");
+    let e = rung2("ok(a: int, b: int) = true;", "ok(a, b) = abs(a) == a;");
     assert_eq!(e.to_string(), "refuted: countermodel a = -1");
 }
 

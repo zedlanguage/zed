@@ -66,6 +66,7 @@ fn unit(d: usize, shared: bool) -> Unit {
         defs: vec![def("f", f), def("main", main)],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     }
 }
 
@@ -143,6 +144,7 @@ fn the_effects_of_a_part_shared_by_both_arms_are_read() {
         defs: vec![def("n", lit(5i64)), def("main", ifs(12, true, &bottom))],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     };
     // Every name read is build-stage: the build evaluates the whole chain.
     let pure = of(var("n"));
@@ -242,6 +244,7 @@ fn lets(d: usize, shared: bool) -> Unit {
         defs: vec![def("main", Term::Lam(vec!["x".into(), "c".into()], body))],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     }
 }
 
@@ -325,6 +328,7 @@ fn built(d: usize, a: i64, b: i64, shared: bool) -> Unit {
         defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     }
 }
 
@@ -428,6 +432,7 @@ fn composed(d: usize, shared: bool) -> Unit {
         defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     }
 }
 
@@ -499,6 +504,7 @@ fn a_call_at_minus_zero_is_answered_apart_from_zero() {
         defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     };
     let (mixed, report) = stage::mix(&unit, &["main"]);
     let printed = mixed.defs[0].term.to_string();
@@ -534,6 +540,7 @@ fn a_call_at_a_long_join_is_mixed_as_written() {
         defs: vec![def("main", Term::Lam(vec!["c".into()], Shared::new(main)))],
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     };
     let (mixed, report) = stage::mix(&unit, &["main"]);
     assert!(
@@ -570,6 +577,7 @@ fn reporting_a_term_left_to_run_whose_arms_are_one_part_scales() {
             defs: vec![def("w", w), def("main", main)],
             tests: Arc::from([]),
             warnings: Vec::new(),
+            int_params: Default::default(),
         };
         (unit, t)
     }

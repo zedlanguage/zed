@@ -5036,6 +5036,32 @@ impl Sig {
         out
     }
 
+    /// For each parameter, whether every value it takes on every arrow is an `int`: its type
+    /// on each arrow is `int` or a refinement of it, and each type variable it holds ranges
+    /// over `int` alone. A parameter of a variable bounded by `int | f64 | rat`, of `f64` or of
+    /// `rat` is not, and neither is one that may hold an atom, a tuple, a function or the
+    /// unknown. Rung 2 reads `+`, `-`, `*`, `div`, `mod`, `-x` and the comparisons as integer
+    /// arithmetic, so its callers pass it only these parameters (RUNG2-carrier). Without
+    /// [`Sig::expand`]'s product of the bounds: O(arrows × parameters), each type's scalar set
+    /// tested once.
+    pub fn int_params(&self) -> Vec<bool> {
+        let int = KType::int();
+        let only_int = Carrier::Int.bit();
+        let is_int = |p: &Ty| {
+            !p.dynamic
+                && p.fns.is_empty()
+                && p.tuples.is_empty()
+                && (p.vars.iter()).all(|v| self.bounds.get(v) == Some(&only_int))
+                && p.set.subtype(&int)
+        };
+        (0..self.params.len())
+            .map(|i| {
+                !self.arrows.is_empty()
+                    && (self.arrows.iter()).all(|a| a.params.get(i).is_some_and(is_int))
+            })
+            .collect()
+    }
+
     /// Whether it has the same parameter names and kinds as `other`.
     pub fn same_kinds(&self, other: &Sig) -> bool {
         self.params.len() == other.params.len()

@@ -11,6 +11,7 @@
 //! search over disjunctions and its repair of one disjunct.
 
 mod canonical;
+mod carrier;
 mod checker;
 mod controls;
 mod deep;

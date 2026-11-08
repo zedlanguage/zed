@@ -33,6 +33,7 @@ pub(super) fn unit(defs: Vec<Def>) -> Unit {
         defs,
         tests: Arc::from([]),
         warnings: Vec::new(),
+        int_params: Default::default(),
     }
 }
 

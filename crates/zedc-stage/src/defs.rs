@@ -1,6 +1,7 @@
 //! What elaboration gives: a unit's definitions and the cases of its `test` tables, which the
 //! stager, the runner and the queries read below elaboration.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::{Shared, Term};
@@ -48,6 +49,11 @@ pub struct Unit {
     /// machine word (DESIGN.md sec:domains). `front::compile` moves them out, placed in the
     /// source, and leaves this empty.
     pub warnings: Vec<Error>,
+    /// For each declared function, by its kernel name, whether each parameter takes only `int`s
+    /// on every arrow the checker gives it (`Sig::int_params`): the parameters rung 2 may read
+    /// as integers (RUNG2-carrier). `front::linear_questions` reads them; a mixed unit, which
+    /// nothing asks a question of, leaves this empty.
+    pub int_params: HashMap<Arc<str>, Vec<bool>>,
 }
 
 /// The name the program wrote for the binder whose kernel name is `kernel`: the kernel name
