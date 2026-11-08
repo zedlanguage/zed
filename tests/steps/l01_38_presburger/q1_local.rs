@@ -635,6 +635,20 @@ fn chained_blocks_empty(n: usize) -> Vec<Row> {
 // size: its active test pins that answer and checks the time to the refusal, and an ignored test
 // asks for the right answer (`the_families_with_a_point_have_it` shows the point). Ratios from n
 // to 8n measured on 2026-11-07 at 8874023a, load about 20, are in each comment.
+//
+// Each refusal comes from the stage that refuses once every elimination left adds terms
+// (`Refusal::Growth`), not from the splinters. An experiment on 2026-11-08 (not kept) took,
+// at that point, the variable of least fill on the primal graph of the rows, by its exact
+// shadow where a side is unit and by its dark shadow with splinters otherwise. The largest
+// bag (a variable and its neighbors) of the min-fill and min-degree orders, at n to 8n:
+// 4 for weighted windows and the band, 5 for blocks chained or as a tree, from 19 to 55 for
+// grid squares (it grows with the side) and from 36 to 295 for sparse random rows (it grows
+// with n). The band was then decided at every size, rows of 4 terms at most, about 13 times
+// the instructions from 64 to 512 without the choice's own cost. Weighted windows (at 64, 128
+// and 512, not at 256) and both kinds of blocks were refused with `Refusal::Shadows`: a
+// splinter of a splinter, which the solver never searches, a fixed depth of one. Grid squares
+// from n = 36 and sparse random rows from n = 16 ran past 60 s (sparse random at n = 8 went
+// from 32 rows to 3,755 in four eliminations), and stay refused by their form.
 
 #[test]
 fn growth_of_the_hub_family() {
@@ -673,10 +687,16 @@ fn weighted_sliding_windows_are_decided() {
 
 #[test]
 fn growth_of_offsets_laid_end_to_end() {
-    // 16.8x the instructions and 16.2x the bytes from 64 to 512 (load 27, 2026-11-08), against
-    // 23.4x and 32.4x until the pivot of an equality was taken among the variables no other
-    // equality holds (`pivots`): the chain `o[i+1] == o[i] + l[i]` wrote rows of 3 to n + 1 terms.
-    grows("offsets laid end to end", 64, Ok(true), offsets);
+    // 9.3x the instructions and 8.0x the bytes from 256 to 2048, 2.09x, 2.15x and 2.08x per
+    // doubling (load 14, 2026-11-08); from 64 to 512, 9.3x and 8.0x. Before, `Omega::flush`
+    // resolved every definition of the chain in full (1, 2, ..., n terms) and
+    // `System::refresh` read the sum of the n lengths once for each of them, both O(n^2):
+    // 16.8x and 16.2x from 64 to 512 (2.37x, 2.53x, 2.81x per doubling), and 34.2x and 30.4x
+    // from 256 to 2048 (2.88x, 3.28x, 3.63x), which fails here; so the sizes start at 256.
+    // Before that, 23.4x and 32.4x from 64 to 512 until the pivot of an equality was taken
+    // among the variables no other equality holds (`pivots`): the chain
+    // `o[i+1] == o[i] + l[i]` wrote rows of 3 to n + 1 terms.
+    grows("offsets laid end to end", 256, Ok(true), offsets);
 }
 
 #[test]
@@ -813,4 +833,134 @@ fn the_families_with_a_point_have_it() {
     let (blocks, p) = chained_blocks(32);
     let rows = chained_blocks_empty(32);
     assert!(holds_at(&blocks, &p) && !holds_at(&rows, &p));
+}
+
+// Order.
+
+/// `rows` in an order drawn from `seed`, and with the variables renamed by a permutation drawn
+/// from it: `x[i]` becomes `x[p[i]]`. Both by Fisher-Yates.
+fn shuffled(rows: &[Row], seed: u64) -> Vec<Row> {
+    let mut rng = Rng::new(seed);
+    let n = rows
+        .iter()
+        .flat_map(|(t, _)| t.iter().map(|(i, _)| i + 1))
+        .max()
+        .unwrap_or(0);
+    let mut p: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        p.swap(i, rng.below(i + 1));
+    }
+    let mut out: Vec<Row> = rows
+        .iter()
+        .map(|(t, k)| (t.iter().map(|(i, c)| (p[*i], *c)).collect(), *k))
+        .collect();
+    for i in (1..out.len()).rev() {
+        out.swap(i, rng.below(i + 1));
+    }
+    out
+}
+
+/// The answers on `rows` taken incrementally, on one thread: each prefix of eight chunks of the
+/// rows decided in turn, then the whole written as the conjunction of those chunks, each kept as
+/// a conjunction of its own ([`Formula::and_keeping`]). Returns the prefixes' answers and the
+/// whole's.
+fn incrementally(rows: &[Row]) -> (Vec<Result<bool, Refusal>>, Result<bool, Refusal>) {
+    let size = rows.len().div_ceil(8).max(1);
+    let chunks: Vec<Formula> = rows.chunks(size).map(|c| system(c, "x")).collect();
+    scaling::on_a_thread(1 << 28, || {
+        let prefixes = (1..chunks.len())
+            .map(|k| decide(&Formula::and_keeping(chunks[..k].to_vec(), |_| true)))
+            .collect();
+        (prefixes, decide(&Formula::and_keeping(chunks, |_| true)))
+    })
+}
+
+/// The answer on `rows` is the same, true, false or a refusal with the same cause, as written
+/// and in five orders with the variables renamed ([`shuffled`]), each decided at once on a
+/// thread of its own and incrementally ([`incrementally`]); and no prefix is empty where the
+/// whole has a point. A refusal is compared by its cause, as a [`Refusal::Tie`] names the
+/// variables. Returns the answer, short ([`short`]).
+///
+/// `decide` sorts the constraints by their terms before `solve` sees them, so an order of the
+/// rows alone never reaches the solver; the names of the variables do, and `solve` puts the
+/// rows in the order of `canonical` instead (its doc). Negative controls (2026-11-08): with
+/// `solve` taking the rows in the order it is given them and `System::add` leaving in place
+/// the held rows a new row implies, so that the rows kept depend on the order, every answer
+/// stayed the same; with `solve` refusing when the first row it is given has an odd constant,
+/// the oracle's family failed at its first renaming at once and fresh seed 1 incrementally.
+fn order_free(what: &str, rows: &[Row]) -> String {
+    let once = |rows: &[Row]| {
+        let f = system(rows, "x");
+        short(&scaling::on_a_thread(1 << 28, || decide(&f)))
+    };
+    let answer = once(rows);
+    for seed in [None, Some(1), Some(2), Some(3), Some(4), Some(5)] {
+        let rows = seed.map_or_else(|| rows.to_vec(), |s| shuffled(rows, 0x0d_e7 + s));
+        assert_eq!(once(&rows), answer, "{what}, order {seed:?}, at once");
+        let (prefixes, whole) = incrementally(&rows);
+        assert_eq!(
+            short(&whole),
+            answer,
+            "{what}, order {seed:?}, incrementally"
+        );
+        if answer == "point" {
+            assert!(
+                !prefixes.contains(&Ok(false)),
+                "{what}, order {seed:?}: a prefix is empty and the whole has a point"
+            );
+        }
+    }
+    answer
+}
+
+#[test]
+fn the_answer_of_each_family_is_free_of_the_order_of_its_rows() {
+    let families: Vec<(&str, Vec<Row>, &str)> = vec![
+        ("windows", windows(64).0, "point"),
+        ("weighted windows", weighted_windows(64).0, "Growth"),
+        ("offsets", offsets(64), "point"),
+        ("convex", convex(64), "point"),
+        ("band", band(64).0, "Growth"),
+        ("sparse random", sparse_random(64).0, "Growth"),
+        ("chained blocks", chained_blocks(32).0, "Growth"),
+        ("tree blocks", tree_blocks(32).0, "Growth"),
+        (
+            "chained blocks, far contradiction",
+            chained_blocks_empty(32),
+            "empty",
+        ),
+        (
+            "the hub family",
+            super::scaling::blocks_with_a_hub(64),
+            "Growth",
+        ),
+    ];
+    for (what, rows, expected) in families {
+        assert_eq!(order_free(what, &rows), expected, "{what}");
+    }
+}
+
+#[test]
+fn the_answer_over_grid_squares_is_free_of_the_order_of_its_rows() {
+    let rows = grid_squares(side(144)).0;
+    assert_eq!(order_free("grid squares", &rows), "Growth");
+}
+
+#[test]
+fn the_answers_of_the_oracle_family_are_free_of_the_order_of_their_rows() {
+    let mut rng = Rng::new(0x38_0a);
+    let answers: Vec<_> = (0..400)
+        .map(|_| order_free("oracle", &oracle(&mut rng)))
+        .collect();
+    // The census's counts: the orders change no answer.
+    let decided = |b: &str| answers.iter().filter(|a| *a == b).count();
+    assert_eq!((decided("point"), decided("empty")), (281, 7));
+}
+
+#[test]
+fn the_answers_of_fresh_seed_1_are_free_of_the_order_of_their_rows() {
+    let mut rng = XorShift(0x5eed_0001);
+    for _ in 0..2000 {
+        let _ = order_free("fresh seed 1", &fresh(&mut rng));
+    }
 }

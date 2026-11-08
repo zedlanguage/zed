@@ -5032,6 +5032,8 @@ struct System {
     near: BTreeSet<usize>,
     /// The number of rows held of each length.
     lengths: BTreeMap<usize, usize>,
+    /// The places of the held rows of two terms, by their two variables, the lesser first.
+    pairs: HashMap<(usize, usize), BTreeSet<usize>>,
     /// The place of the opposite of each held row whose opposite is held, both ways.
     opposites: BTreeMap<usize, usize>,
     /// The variables bounded on one side only.
@@ -5070,6 +5072,7 @@ impl System {
             dirty: BTreeSet::new(),
             near: BTreeSet::new(),
             lengths: BTreeMap::new(),
+            pairs: HashMap::new(),
             opposites: BTreeMap::new(),
             one_sided: BTreeSet::new(),
             fixable: BTreeSet::new(),
@@ -5109,6 +5112,9 @@ impl System {
             self.ids.push(Some(r.a.clone()));
             self.count(&r.a, id, true);
             *self.lengths.entry(r.a.len()).or_insert(0) += 1;
+            if let [(i, _), (j, _)] = &r.a[..] {
+                self.pairs.entry((*i, *j)).or_default().insert(id);
+            }
             self.touch(&r.a);
             let k = r.k.clone();
             self.rows.insert(r.a.clone(), Held { k, id });
@@ -5230,11 +5236,19 @@ impl System {
     /// one variable to the next: O(n) rows per step, 38.1 times the bytes for 8 times the
     /// size.
     ///
-    /// Complexity tradeoff: the rows of the variable of fewer rows are scanned, O(d) for d
-    /// such rows, on each row of two terms added. Why: rows over one pair are not indexed by
-    /// the pair. Trigger: a pair whose variables both hold many rows; rows kept over one pair
-    /// imply no other strictly, and only pairs with a bound on each side are compared. A
-    /// complete solution would index rows by their pair of variables.
+    /// The rows over the pair are found in [`System::pairs`], O(1) expected.
+    ///
+    /// Complexity tradeoff: the new row is compared with each of the p rows kept over its
+    /// pair, O(p) for each row of two terms added. Why: which rows imply which depends on the
+    /// bounds, so the rows of a pair are not kept in an order that a search could use. Trigger:
+    /// a pair with many rows of which none implies another strictly within the bounds, each a
+    /// side of the polygon they cut from the box. Measured (Q1-LOCAL, 2026-11-08): the largest p
+    /// was 10 (a tree of blocks of five, n = 256), 7 or less from n = 512 to 2,048 with no
+    /// growth in n, 3 in the convex valley, 5 in the oracle's family; the comparisons were 4%
+    /// of the rows added or less. A complete solution would keep only the sides of the
+    /// polygon that the rows of the pair together cut from the box, in order of the angle of
+    /// their normals as dynamic half-plane intersection does, and find the sides a new row
+    /// meets by binary search, O(log p).
     fn dominated(&self, r: &Row) -> Option<Vec<usize>> {
         let mut weaker = Vec::new();
         let [(i, _), (j, _)] = &r.a[..] else {
@@ -5253,14 +5267,12 @@ impl System {
             return Some(weaker);
         };
         let b = [ilo, ihi, jlo, jhi];
-        let v = if self.vars[*i].rows.len() <= self.vars[*j].rows.len() {
-            *i
-        } else {
-            *j
+        let Some(ids) = self.pairs.get(&(*i, *j)) else {
+            return Some(weaker);
         };
-        for id in &self.vars[v].rows {
+        for id in ids {
             let a = self.ids[*id].as_ref().expect("a row held");
-            if a.len() != 2 || a[0].0 != *i || a[1].0 != *j || self.opposites.contains_key(id) {
+            if self.opposites.contains_key(id) {
                 continue;
             }
             let k = &self.rows[a].k;
@@ -5281,6 +5293,14 @@ impl System {
         let a = self.ids[id].take().expect("a row held");
         let k = self.rows.remove(&a).expect("a row held").k;
         self.count(&a, id, false);
+        if let [(i, _), (j, _)] = &a[..]
+            && let Some(ids) = self.pairs.get_mut(&(*i, *j))
+        {
+            ids.remove(&id);
+            if ids.is_empty() {
+                self.pairs.remove(&(*i, *j));
+            }
+        }
         if let Some(o) = self.opposites.remove(&id) {
             self.opposites.remove(&o);
         }
@@ -5472,10 +5492,17 @@ impl System {
 
     /// Renews [`System::shrinking`] for the variables whose rows changed since it was last
     /// renewed: those of exact elimination bounded on both sides whose [`System::shrink`] is
-    /// zero or less.
+    /// zero or less. The rows of the variables [`System::touch`] kept are each read once,
+    /// however many of those variables hold them: until Q1-LOCAL a row of n terms shared by n
+    /// such variables was read n times in one call, O(n^2)
+    /// (`q1_local::growth_of_offsets_laid_end_to_end`).
     fn refresh(&mut self) {
+        let mut seen: HashSet<usize> = HashSet::new();
         for v in std::mem::take(&mut self.near) {
             for id in &self.vars[v].rows {
+                if !seen.insert(*id) {
+                    continue;
+                }
                 for (i, _) in self.ids[*id].as_ref().expect("a row held").iter() {
                     self.dirty.insert(*i);
                 }
@@ -6836,36 +6863,64 @@ impl Omega {
     /// only variables defined after it, or none, so each is resolved from the last back.
     fn flush(&mut self) {
         let defs = std::mem::take(&mut self.pending);
-        let mut whole: BTreeMap<usize, Row> = BTreeMap::new();
-        for (j, def) in defs.iter().rev() {
-            let r = resolve(def, &whole);
-            whole.insert(*j, r);
-        }
+        let at: HashMap<usize, usize> =
+            defs.iter().enumerate().map(|(p, (j, _))| (*j, p)).collect();
         let mut rows = Vec::new();
         for (j, _) in &defs {
             rows.extend(self.sys.take(*j));
         }
         for r in rows {
-            self.sys.add(resolve(&r, &whole));
+            let r = resolve(&r, &defs, &at);
+            self.sys.add(r);
         }
     }
 }
 
-/// `r` with each variable `whole` defines replaced by its definition.
-fn resolve(r: &Row, whole: &BTreeMap<usize, Row>) -> Row {
+/// `r` with each variable that `defs` defines replaced by its definition, and the variables
+/// of that definition defined in turn, until no defined variable is left; `at` gives the place
+/// in `defs` of each variable defined. A definition holds only variables defined after it, so
+/// the defined variables are taken in the order of their places: when one is taken, every
+/// variable whose definition holds it has been replaced, and its coefficient is final. A
+/// coefficient that sums to zero ends that path, so `o[n] - o[n-5]` along a chain of
+/// definitions `o[i+1] = o[i] + l[i]` takes five definitions, not n.
+///
+/// Until Q1-LOCAL each definition was first resolved in full, from the last back, and each row
+/// then took the resolved forms of its variables: along a chain of n definitions the resolved
+/// forms have 1, 2, ..., n terms, O(n^2) however few rows held the chain
+/// (`q1_local::growth_of_offsets_laid_end_to_end`: 4.0 times the terms per doubling).
+///
+/// Complexity tradeoff: a row costs O(w log w) for the w definitions it reaches with a
+/// nonzero coefficient, which can exceed the terms it ends with when they cancel late: m rows
+/// that each reach the whole of a chain of n definitions and cancel most of it cost O(m n).
+/// Why: the coefficients are known only once the definitions are expanded, and no sum of a
+/// chain is kept to subtract. Trigger: many rows that each hold a variable at the end of a
+/// long chain of definitions and also terms that cancel the chain; the size of the system
+/// alone plays no part. Rows that end as long as the definitions they reach cost what writing
+/// them costs. A complete solution would keep the definitions of a chain as prefix sums, so
+/// that a difference of two of them is read in O(log n).
+fn resolve(r: &Row, defs: &[(usize, Row)], at: &HashMap<usize, usize>) -> Row {
     let mut sum: BTreeMap<usize, Int> = BTreeMap::new();
+    let mut open: BTreeMap<usize, Int> = BTreeMap::new();
     let mut k = r.k.clone();
+    let mut put = |v: usize, c: Int, open: &mut BTreeMap<usize, Int>| {
+        let into = match at.get(&v) {
+            Some(p) => open.entry(*p),
+            None => sum.entry(v),
+        };
+        let held = into.or_insert(Int::ZERO);
+        *held = &*held + &c;
+    };
     for (v, c) in r.a.iter() {
-        if let Some(d) = whole.get(v) {
-            k = &k + &(c * &d.k);
-            for (w, e) in d.a.iter() {
-                let t = c * e;
-                let at = sum.entry(*w).or_insert(Int::ZERO);
-                *at = &*at + &t;
-            }
-        } else {
-            let at = sum.entry(*v).or_insert(Int::ZERO);
-            *at = &*at + c;
+        put(*v, c.clone(), &mut open);
+    }
+    while let Some((p, c)) = open.pop_first() {
+        if c.is_zero() {
+            continue;
+        }
+        let d = &defs[p].1;
+        k = &k + &(&c * &d.k);
+        for (w, e) in d.a.iter() {
+            put(*w, &c * e, &mut open);
         }
     }
     Row {
