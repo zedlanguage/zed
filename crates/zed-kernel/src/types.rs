@@ -673,6 +673,10 @@ enum Step<'a> {
     Equal(u64, u64),
 }
 
+/// The pairs of node ids [`order`] found equal, hashed by `hash::KeyHasher`: the default hasher
+/// seeds itself per set and runs SipHash on each pair (EMPTY-morphism-next).
+type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<hash::KeyHasher>>;
+
 /// The order of the pair in `first`, the order of contents that `Ord` gives every type, row,
 /// morphism type, part, diagram and expression: two types by digest, then by their parts field
 /// by field (a recursive node after every other, two of them by key, `rec::Key::order`); two
@@ -686,7 +690,7 @@ enum Step<'a> {
 /// diagrams over rows, so where the digests tie (short-addresses build, step L1.37a, or a 64-bit
 /// collision) two types n deep are compared n levels down (SHORT-stack-l01_22).
 fn order(first: Step<'_>) -> Ordering {
-    let mut equal = HashSet::new();
+    let mut equal = Equal::default();
     // The first step is held apart, so that a comparison its digests decide allocates nothing.
     let mut steps = Vec::new();
     let mut next = Some(first);
@@ -755,7 +759,7 @@ fn items<'a>(
     mut x: std::slice::Iter<'a, Type>,
     mut y: std::slice::Iter<'a, Type>,
     steps: &mut Vec<Step<'a>>,
-    equal: &HashSet<(u64, u64)>,
+    equal: &Equal,
 ) -> Ordering {
     loop {
         match (x.next(), y.next()) {
@@ -784,7 +788,7 @@ fn types<'a>(
     a: &'a Type,
     b: &'a Type,
     steps: &mut Vec<Step<'a>>,
-    equal: &HashSet<(u64, u64)>,
+    equal: &Equal,
 ) -> Ordering {
     if Arc::ptr_eq(&a.0, &b.0) {
         return Ordering::Equal;
@@ -912,7 +916,7 @@ fn tuple_lens<'a>(
     (p, q): (&'a Lens, &'a Lens),
     from: Bound<usize>,
     steps: &mut Vec<Step<'a>>,
-    equal: &HashSet<(u64, u64)>,
+    equal: &Equal,
 ) -> Ordering {
     // Complexity tradeoff: as in `atom_names`, O(log n) to resume against a step a fifth the size.
     let (mut x, mut y) = (
@@ -945,7 +949,7 @@ fn tuple_lens<'a>(
 fn walk<'a, A: Ordered>(
     w: Walk<'a, A>,
     steps: &mut Vec<Step<'a>>,
-    equal: &HashSet<(u64, u64)>,
+    equal: &Equal,
 ) -> Ordering {
     match w {
         Walk::Parts(Part::Bdd(a), Part::Bdd(b)) => walk(Walk::Bdds(a, b), steps, equal),

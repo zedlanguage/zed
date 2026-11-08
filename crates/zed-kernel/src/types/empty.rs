@@ -68,6 +68,7 @@
 use std::cell::{RefCell, RefMut};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::BuildHasherDefault;
 use std::future::Future;
 use std::ops::{ControlFlow, Range};
 use std::pin::Pin;
@@ -77,22 +78,36 @@ use num_bigint::BigUint;
 
 use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Kind, decide};
+use super::hash::KeyHasher;
 use super::rec::unfold::eval;
 use super::rec::{self, Env};
 use super::{Atoms, Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Tuples, Type, Verdict};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 
+/// The hasher of the maps and sets keyed by types: a type hashes as its digest, made once when it
+/// is built, so a lookup reads one node of the type, where a search of a `BTreeMap` compared the
+/// key with some `log n` others, each comparison reading another node (EMPTY-morphism-next).
+/// Equal digests are told apart by `Eq`, which compares contents.
+type Digests = BuildHasherDefault<KeyHasher>;
+
+/// A map keyed by types, hashed by their digests.
+type ByType<V> = HashMap<Type, V, Digests>;
+
+/// A set of types, hashed by their digests.
+type TypeSet = HashSet<Type, Digests>;
+
 thread_local! {
-    static MEMO: RefCell<BTreeMap<Type, bool>> = const { RefCell::new(BTreeMap::new()) };
+    static MEMO: RefCell<ByType<bool>> = const { RefCell::new(ByType::with_hasher(Digests::new())) };
     /// The verdict of each type asked. A verdict is decided by a search that reads no kept
     /// result, or with the other members of its recursive group ([`group_verdicts`]), so it is
     /// a function of the type alone, and keeping it changes no answer: these
     /// are the types proved empty and those with a checked value, and the refusals.
-    static VERDICTS: RefCell<BTreeMap<Type, Verdict>> = const { RefCell::new(BTreeMap::new()) };
+    static VERDICTS: RefCell<ByType<Verdict>> =
+        const { RefCell::new(ByType::with_hasher(Digests::new())) };
     /// The members of the groups whose verdicts are being decided ([`group_verdicts`]): a search
     /// decides such a member itself, where it reads the verdict of any other member.
-    static DECIDING: RefCell<BTreeSet<Type>> = const { RefCell::new(BTreeSet::new()) };
+    static DECIDING: RefCell<TypeSet> = const { RefCell::new(TypeSet::with_hasher(Digests::new())) };
     /// The values the searches of [`group_verdicts`] built, one list per search, each value by
     /// its number there, as [`Search::shown`] holds them: read, never changed, by the searches
     /// that read a member's value ([`Rep::Of`]), until `Type::forget_emptiness`.
@@ -103,7 +118,8 @@ thread_local! {
     static STORES: RefCell<Vec<Vec<Rep>>> = const { RefCell::new(Vec::new()) };
     /// For each member given `Inhabited` by [`group_verdicts`] with a value its searches built:
     /// the list in `STORES` and the value's number there.
-    static SHARED: RefCell<BTreeMap<Type, (usize, usize)>> = const { RefCell::new(BTreeMap::new()) };
+    static SHARED: RefCell<ByType<(usize, usize)>> =
+        const { RefCell::new(ByType::with_hasher(Digests::new())) };
 }
 
 /// Keeps the verdicts of `members`, the recursive members of one group. A member the group's
@@ -643,7 +659,7 @@ impl Simulation {
 struct Search {
     /// Each type read, by its number here; a type built apart from an equal one is compared
     /// with it in full once per read.
-    ids: BTreeMap<Type, usize>,
+    ids: ByType<usize>,
     types: Vec<Type>,
     /// One answer per type: true, empty, until the rule fails for it.
     answer: Vec<bool>,
@@ -659,7 +675,7 @@ struct Search {
     round: BTreeSet<usize>,
     /// Types shown inhabited by a checked value; permanent.
     witnessed: BTreeSet<usize>,
-    reps: BTreeMap<Type, Option<usize>>,
+    reps: ByType<Option<usize>>,
     /// The values shown, each once, by number.
     shown: Vec<Rep>,
     /// The number here of each value of another search read ([`Rep::Of`]), by its list in
@@ -668,7 +684,7 @@ struct Search {
     /// For each such value whose parts were read in ([`Search::local`]), the number of the value
     /// made of them.
     expanded: HashMap<usize, usize>,
-    members: BTreeMap<(usize, Type), Option<bool>>,
+    members: HashMap<(usize, Type), Option<bool>, Digests>,
     /// Each type read as the value type of a morphism.
     value_reads: BTreeSet<usize>,
     /// Types proved empty for good: a morphism with such a value type has no value. All other
@@ -680,7 +696,7 @@ struct Search {
     /// For each type, the types it read.
     reads: Vec<Vec<usize>>,
     /// The types whose value is being built, and how many closures rest on one of them.
-    building: BTreeSet<Type>,
+    building: TypeSet,
     resting: usize,
     /// The representatives kept, in order, so those resting on a failed build are dropped.
     built: Vec<Type>,
@@ -688,7 +704,7 @@ struct Search {
     read: Vec<Type>,
     /// For each type, the kept failures that read its missing value: they are sought again when
     /// it gets one ([`Searching::retry`]).
-    waiting: BTreeMap<Type, Vec<Type>>,
+    waiting: ByType<Vec<Type>>,
     /// Whether a closure was tested against a type that holds some morphisms.
     unsure: bool,
     /// Whether a type was settled in this phase, after answers that read it as inhabited.
@@ -719,7 +735,7 @@ struct Search {
     /// Key types with no value shown yet.
     keys: BTreeSet<Type>,
     /// What is known of each list type met, by the rule on pure cycles.
-    cycles: BTreeMap<Type, Option<Cycle>>,
+    cycles: ByType<Option<Cycle>>,
     /// The meet (`true`) or difference (`false`) of each pair of nodes `settles` tested, built
     /// once, by the nodes' addresses; the operands are kept with it, so no address is reused.
     cuts: BTreeMap<(usize, usize, bool), (Type, Type, Type)>,
