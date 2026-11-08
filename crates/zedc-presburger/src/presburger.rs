@@ -7733,16 +7733,8 @@ fn point_of(rows: &[Con]) -> Option<Model> {
     Some(model)
 }
 
-/// The least and greatest values of a symbol over a formula.
-fn hull(c: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
-    match satisfiable_inner(c)? {
-        Some(m) => hull_from(c, sym, &m),
-        None => Ok(IntervalSet::empty()),
-    }
-}
-
-/// [`hull`] given a point `m` of the formula. A side with no bound is found by one question,
-/// [`unbounded`]. A bound is then found by the monotone questions "is there a point with the
+/// The least and greatest values of a symbol over a formula, given a point `m` of it. A side
+/// with no bound is found by one question, [`unbounded`]. A bound is then found by the monotone questions "is there a point with the
 /// symbol at most `v`" and "at least `v`", searched outward from the point's value with steps
 /// that double, then by bisection, so it takes O(log d) questions for a bound at distance d,
 /// each on integers of O(log d) bits. Every bound is exact at any magnitude.
@@ -8092,6 +8084,7 @@ fn entails_inner(premises: &Relation, goal: &Relation) -> Result<Entailment, Ref
 /// add higher-degree products of premises (Positivstellensatz certificates), at a cost
 /// polynomial of growing degree.
 fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusal> {
+    use std::collections::hash_map::Entry;
     let mut wanted = BTreeSet::new();
     for f in [&premises.body, &goal.body] {
         for a in f.atoms() {
@@ -8121,11 +8114,7 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
     // other atoms, so where the premises have a point the hull is the hull over all of them,
     // and where they have none they entail any goal. Taking the hull over all the premises for
     // each factor cost O(factors × premises) (LADDER-study,
-    // `l01_38_presburger::ladder::products_of_premises_in_pairs_scale`). Complexity tradeoff:
-    // factors that share one part each still decide that part, O(factors × part) for one
-    // part; why: the bounds of every atom of a part at once would need a bound propagation the
-    // store does not have. Trigger: products whose factors one chain of premises connects.
-    // COMPLEXITY.md row C2.
+    // `l01_38_presburger::ladder::products_of_premises_in_pairs_scale`).
     let rows: Vec<Formula> = premises
         .defs
         .iter()
@@ -8187,6 +8176,21 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             on_atom.entry(a).or_default().push(i);
         }
     }
+    // What each part gives its factors, found once for the part when its first factor is
+    // reached: `None` when it has no point; otherwise a point and, when its rows are difference
+    // constraints and bounds, the hulls of all its atoms from one shortest-path pass
+    // ([`difference_hulls`], O(m log n) for m rows over n atoms), which are those
+    // [`hull_from`] finds. Asking [`hull_from`] for each factor cost O(factors × part) on one
+    // part (C2-chain,
+    // `l01_38_presburger::ladder::products_whose_factors_one_chain_connects_scale`).
+    // Complexity tradeoff: a part with another row (a coefficient other than ±1, three atoms,
+    // a disjunction, an auxiliary definition such as a remainder's) still asks [`hull_from`]'s
+    // O(log d) questions of the whole part for each of its factors, O(factors × part); why:
+    // the integer hull of every atom of a general linear system at once would need integer
+    // projection onto each atom, an integer program of its own. Trigger: products whose
+    // factors one chain of such rows connects. COMPLEXITY.md row C2.
+    type Given = Option<(Model, Option<HashMap<Atom, IntervalSet>>)>;
+    let mut given: HashMap<usize, Given> = HashMap::new();
     let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
     let factors: BTreeSet<Factor> = wanted
         .iter()
@@ -8198,13 +8202,38 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             is.iter().map(|&i| linear[i].clone()).collect()
         });
         let x = Lin::atom(atom.clone());
-        let part = match ids.get(&atom) {
-            Some(&id) if consistent => Some(&parts[&find(&mut parent, id)]),
+        let root = match ids.get(&atom) {
+            Some(&id) if consistent => Some(find(&mut parent, id)),
             _ => None,
         };
-        if let Some(part) = part
-            && let Some((lo, hi)) = hull(part, &atom)?.bounds()
-        {
+        let mut asked = None;
+        let hull = match root {
+            None => None,
+            Some(root) => {
+                let part = &parts[&root];
+                let found = match given.entry(root) {
+                    Entry::Occupied(e) => e.into_mut(),
+                    Entry::Vacant(e) => e.insert(satisfiable_inner(part)?.map(|m| {
+                        let cons: Option<Vec<&Con>> = (part.conjuncts().into_iter())
+                            .map(|g| match g {
+                                Formula::Con(c) => Some(c),
+                                _ => None,
+                            })
+                            .collect();
+                        let all = cons.and_then(|cs| difference_hulls(&cs, &m));
+                        (m, all)
+                    })),
+                };
+                match &*found {
+                    None => None,
+                    Some((m, all)) => match all.as_ref().and_then(|all| all.get(&atom)) {
+                        Some(h) => Some(h),
+                        None => Some(&*asked.insert(hull_from(part, &atom, m)?)),
+                    },
+                }
+            }
+        };
+        if let Some((lo, hi)) = hull.and_then(IntervalSet::bounds) {
             if let End::Fin(l) = lo {
                 set.push(x.minus(&Lin::constant(l)));
             }

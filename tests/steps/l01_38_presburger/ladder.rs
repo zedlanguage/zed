@@ -578,6 +578,57 @@ fn products_of_premises_in_pairs_scale() {
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
+/// The chain `z0 >= 0 && z1 >= z0 + 1 && ... && z{k-1} >= z{k-2} + 1 && z{k-1} <= 2 * k`, the
+/// links `x{i} >= z{i} && y{i} >= z{i}`, and the goal `x0 * y0 + ... >= 0`, translated: `k`
+/// products whose factors one chain of premises connects, so that every factor lies in one part
+/// of the premise rows, and each is bounded below by its own constant `i`, which only the chain
+/// gives.
+fn product_chain(k: usize) -> (Relation, Relation) {
+    let names: Vec<String> = (0..k).map(|i| format!("x{i}, y{i}, z{i}")).collect();
+    let head = format!("ok({})", names.join(", "));
+    let mut premise = vec!["z0 >= 0".to_string()];
+    premise.extend((1..k).map(|i| format!("z{i} >= z{} + 1", i - 1)));
+    premise.push(format!("z{} <= {}", k - 1, 2 * k));
+    premise.extend((0..k).map(|i| format!("x{i} >= z{i} && y{i} >= z{i}")));
+    let goal: Vec<String> = (0..k).map(|i| format!("x{i} * y{i}")).collect();
+    let (ps, p) = function(&format!("{head} = {};", premise.join(" && ")));
+    let (_, g) = function(&format!("{head} = {} >= 0;", goal.join(" + ")));
+    let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
+    let g = rs.pop().expect("two relations");
+    (rs.pop().expect("two relations"), g)
+}
+#[test]
+fn products_whose_factors_one_chain_connects_scale() {
+    // Every factor lies in one part, the chain; its atoms are bounded in one pass over the
+    // part, not each by its own questions over the whole part (C2-chain).
+    let n = 16;
+    let built = scaling::inputs(n, product_chain);
+    let measure = move || {
+        scaling::check("a sum of products along one chain entailed", n, |k| {
+            let (p, g) = &built[&k];
+            let e = entails(p, g);
+            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+        });
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn a_chain_bounds_each_factor_by_the_whole_chain() {
+    // `x0 * x2 >= 3` needs `x2 >= 3`, which no row on `x2` states: it follows from the chain
+    // `x0 >= 1`, `x1 >= x0 + 1`, `x2 >= x1 + 1`, through `(x0 - 1) * (x2 - 3) >= 0`. With
+    // `x2 >= 1` in place of the last link it fails at `x0 = x2 = 1`.
+    assert_proved(
+        "ok(x0, x1, x2) = x0 >= 1 && x1 >= x0 + 1 && x2 >= x1 + 1;",
+        "ok(x0, x1, x2) = x0 * x2 >= 3;",
+    );
+    let e = rung2(
+        "ok(x0, x1, x2) = x0 >= 1 && x1 >= x0 + 1 && x2 >= 1;",
+        "ok(x0, x1, x2) = x0 * x2 >= 3;",
+    );
+    assert!(!matches!(e, Entailment::Proved(_)), "{e}");
+}
+
 /// `g{k}`, which calls `g{k-1}` twice, each time with the argument `b mod (b + 1)`, which fails
 /// at `b = -1`, and so on down to `g0(a, b) = b >= 0`; and `ok(x, n) = g{k}(x, n)`. Not `f`,
 /// since `f64` names a type.

@@ -2720,3 +2720,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Two walks on explicit stacks of enums that borrow the term (`Read`, `Step`, `Pair`), with the results of the parts on a second stack drained at each exit | `Canon::read`, `Canon::canonical`, `order` | References into values (Rust lifetimes) and mutation (gap 11) | A fold over the term with the stacks as lists threaded through the loop's state; the borrowed parts as the values themselves |
 | A digest built one 64-bit word at a time with wrapping multiplication and shifts (splitmix64's finalizer) | `Digest` | None: the prelude's 64-bit words wrap (gap 4, built) | The same words with `u64` wrapping operators |
 | `Ord` written by hand for a key type (digest, then a walk of the two terms), so a persistent map orders its keys by it | `impl Ord for Address` | None | A comparison function the map takes, or the key's `compare` member |
+
+## Entries from C2-chain (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `HashMap<usize, Option<(Model, Option<HashMap<Atom, IntervalSet>>)>>` filled for a part the first time one of its factors is reached, through `entry` with a fallible computation in the `Vacant` arm (`?` returns a refusal from inside the match) | `products` | Lazy cells (gap 3), Mutation (gap 11) | Each part's point and hulls computed for all parts that hold a factor before the loop over factors, as a fold over the parts that stops at the first refusal |
+| `Option::insert` into a local declared before the match, so that an arm can return a reference to a hull computed in that arm alongside references into the map | `products` | Lazy cells (gap 3) | The arms return the hull by value; the map's hulls are shared values in Zed, so no copy is made |
