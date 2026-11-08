@@ -369,6 +369,22 @@ impl Reader {
 
     /// The names the lambda `k`, called, calls by name, when its form shows that a call ends
     /// once each of them ends; `None` when no binding of them makes it end.
+    ///
+    /// Invariant (item STAGE-stub-called): the answer is `None` when the body of `k` calls a
+    /// name bound inside `k` (a parameter, a pattern variable or a family's key), calls
+    /// anything but a primitive, a lambda or a name (the result of a call, an `if`), or holds a
+    /// `fix` or a `gen`. [`Mixer::shown`] sets `call_ends` and [`Mixer::stub`] gives a stub from
+    /// this answer alone, so a function with a stub calls only prelude words, lambdas and
+    /// functions with stubs, and never a function handed to it ([`Port::function`]): this is
+    /// why each run of [`fill`] ends. A stub of `w = (f) -> f(f)` would make `w(w)` ask its own
+    /// port at its own token without end. Tests that fail when this reading admits such a
+    /// function:
+    /// `l01_28_staging::cone::calls_at_float_zeros_and_at_functions_give_what_they_give_as_written`
+    /// (through the parameter of `apply`, from seed 2),
+    /// `l01_28_staging::cone::calls_through_a_parameter_a_pattern_a_result_or_a_key_are_left_to_run`
+    /// (each of the four ways), and
+    /// `l01_28_staging::mix::a_term_whose_form_does_not_show_it_ends_is_left_to_run` (the build
+    /// of `w(w)` no longer ends).
     fn called(&mut self, k: &Shared) -> Option<Vec<Arc<str>>> {
         let needs = self.read(Part::held(k))?;
         Some(self.names_in(needs).cloned().collect())
@@ -1874,7 +1890,16 @@ impl Lookup for Port {
         true
     }
 
-    /// The token of the stub whose lambda has the body `body`: `port(#0, .., #n)`.
+    /// The token of the stub whose lambda has the body `body`: `port(#0, .., #n)`. A lambda
+    /// written in place and a primitive have none, and a call at one stops the run.
+    ///
+    /// Invariant (item STAGE-stub-called): a stub is given only to a function that calls
+    /// nothing through a parameter ([`Reader::called`]), so the run of a stub's answer at a
+    /// key holding a token never calls the function the token stands for: it binds the token
+    /// to that stub's lambda only to pass it on or give it back as written, and the run calls
+    /// only functions whose calls end. If a function that calls through a parameter had a
+    /// stub, an answer at its own token, as in `w(w)` with `w = (f) -> f(f)`, would ask itself
+    /// again and [`fill`] would not end.
     fn function(&self, body: &Term) -> Option<Value> {
         let Term::App(f, _) = body else {
             return None;

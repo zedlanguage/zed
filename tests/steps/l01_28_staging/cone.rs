@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
-use zed_kernel::{Prim, Shared, Term, Value};
+use zed_kernel::{Family, Pattern, Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::elab::{Def, Unit};
@@ -713,6 +713,64 @@ fn calls_at_float_zeros_and_at_functions_give_what_they_give_as_written() {
             let (u, calls) = stub_float_unit(&mut rng, n);
             mixes_as_written(&u, &calls, seed);
         }
+    });
+}
+
+/// `d0 = (y) -> y + 1.0` and four functions that call through a name not bound by `let`:
+/// `apply = (q, y) -> q(y)` through a parameter, `arm = (y) -> match d0 { g => g(y) }`
+/// through a pattern variable, `twice = (y) -> pick(y)(y)` with `pick = (x) -> d0` through
+/// the result of a call, and `keys = (y) -> fam({1}, i -> i(y))` through a family's key.
+/// The form of none of them shows that a call ends, so none has a stub (item
+/// STAGE-stub-called) and each call from `main` is left to run whole with "its form does not
+/// show that it ends", as `stage::ends` answers of the call closed. Were any of them given a
+/// stub, its call would be run at build time and give a value or a type error instead.
+#[test]
+fn calls_through_a_parameter_a_pattern_a_result_or_a_key_are_left_to_run() {
+    deep(|| {
+        let y = || var("y");
+        let d0 = lam(&["y"], prim(Prim::Add, vec![y(), float(1.0)]));
+        let apply = lam(&["q", "y"], app(var("q"), vec![y()]));
+        let arm = Term::Match(
+            Shared::new(var("d0")),
+            vec![(Pattern::Bind("g".into()), app(var("g"), vec![y()]))],
+        );
+        let pick = lam(&["x"], var("d0"));
+        let twice = app(app(var("pick"), vec![y()]), vec![y()]);
+        let keys = Term::Fam {
+            domain: Shared::new(Term::Lit(Value::Family(Family::set([1i64])))),
+            var: "i".into(),
+            body: Shared::new(app(var("i"), vec![y()])),
+        };
+        let calls = vec![
+            app(var("apply"), vec![var("d0"), float(1.0)]),
+            app(var("arm"), vec![float(1.0)]),
+            app(var("twice"), vec![float(1.0)]),
+            app(var("keys"), vec![float(1.0)]),
+        ];
+        let site = |t: &Term| prim(Prim::Add, vec![t.clone(), var("c")]);
+        let main = lam(&["c"], prim(Prim::Tuple, calls.iter().map(site).collect()));
+        let u = unit(vec![
+            def("d0", d0),
+            def("apply", apply),
+            def("arm", lam(&["y"], arm)),
+            def("pick", pick),
+            def("twice", lam(&["y"], twice)),
+            def("keys", lam(&["y"], keys)),
+            def("main", main.clone()),
+        ]);
+        for t in &calls {
+            assert!(!stage::ends(&u.close(t.clone())), "{t:?}");
+        }
+        let (mixed, report) = stage::mix(&u, &["main"]);
+        let main_mixed = mixed.defs.last().expect("main");
+        assert_eq!(main_mixed.term.to_string(), main.to_string());
+        let mut want: Vec<String> = calls.iter().map(|t| format!("{t:?}: {FORM}")).collect();
+        let site = |s: &String| calls.iter().any(|t| s.starts_with(&format!("{t:?}: ")));
+        let mut got: Vec<String> = left(&report).into_iter().filter(site).collect();
+        got.sort();
+        want.sort();
+        assert_eq!(got, want);
+        mixes_as_written(&u, &calls, 0);
     });
 }
 
