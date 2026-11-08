@@ -75,7 +75,7 @@ pub(crate) fn wave(
                     ));
                 }
             },
-            PortKind::Files => {
+            PortKind::Files | PortKind::Env => {
                 files.insert(
                     name,
                     Arc::new(Given(interp::prelude(cones.close_with(arg.clone(), swap)))),

@@ -76,6 +76,9 @@ path = "steps/l01_19a_command_line/mod.rs"
 name = "l01_19b_record_address"
 path = "steps/l01_19b_record_address/mod.rs"
 [[test]]
+name = "l01_19c_environment"
+path = "steps/l01_19c_environment/mod.rs"
+[[test]]
 name = "l01_20_provenance"
 path = "steps/l01_20_provenance/mod.rs"
 [[test]]

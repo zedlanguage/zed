@@ -1694,6 +1694,15 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | `let mut first = true`, cleared at the end of each pass of the loop over the record's entries, so a `program` entry is accepted only first | `Record::from_bytes` | Mutation (gap 11) | A fold over the entries with the entry's index, or a match on the head of the list of entries |
 | `split_first_chunk::<32>()` reading the address out of the executable's data | `exe::Program::decode` | Bytes (gap 5) | A slice of the first 32 bytes of the data, once Zed has bytes |
 
+## Entries from L1.19c (`zedc/src/run.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `std::env::vars_os` and `OsStr::to_str`, the variables as bytes decoded to UTF-8 at each read | `run::command`, `run::executable`, `Environment::get` | Bytes (gap 5) | None needed: the host takes the variables and the program reads the port, a lookup of `Utf8String`s |
+| `BTreeMap<OsString, OsString>` built from an iterator | `Environment::new` | None: a Zed family keyed by name | The family of the variables, built by the host |
+| `OnceLock<String>` set by the first read of a value that is not UTF-8, read when the run stops | `Environment::get`, `run::stopped` | Lazy cells (gap 3) and Mutation (gap 11) | The read gives a usage-error atom that the run's driver tests for, in place of a flag beside the lookup |
+| `Arc<dyn Lookup>` chosen per port by a closure (`run::local`) | `run::local` | Traits (dynamic dispatch) | A match on the port's kind giving one of two lookups of one type |
+
 ## Entries from ISSUE1-else-atoms (`zedc-resolve/src/resolve.rs`, `zedc-check/src/check/mod.rs`, `check/walk.rs`)
 
 | Rust construct | Sites | Gap | At the port |

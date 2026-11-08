@@ -213,6 +213,7 @@ mod tests {
                 ("stdin".into(), PortKind::Lines),
                 ("fs".into(), PortKind::Files),
                 ("args".into(), PortKind::CommandLine),
+                ("env".into(), PortKind::Env),
             ],
             outputs: vec!["stdout".into(), "log".into()],
         };

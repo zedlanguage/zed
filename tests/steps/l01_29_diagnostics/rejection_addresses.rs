@@ -112,7 +112,7 @@ fn a_main_that_zedc_run_refuses_prints_its_place_and_address() {
     assert_eq!(
         err,
         format!(
-            "{file}:2:6: port `n` of `main` is `Lines`, `Files` or `CommandLine` at layer L1\n  \
+            "{file}:2:6: port `n` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` at layer L1\n  \
              address: {a}\n"
         )
     );

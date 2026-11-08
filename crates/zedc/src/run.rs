@@ -13,9 +13,10 @@
 //! [`Program::replay`] runs it again without reading the world, and only against that program
 //! (step L1.19b).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, World};
 
@@ -37,6 +38,8 @@ pub enum PortKind {
     Files,
     /// `CommandLine`, the arguments after `--`, keyed by position from 1 (step L1.19a).
     CommandLine,
+    /// `String ->? String`, the environment variables, a lookup by name (step L1.19c).
+    Env,
 }
 
 /// A way to run a closed term in an evaluator, in place of [`Evaluator::run`]: through
@@ -73,8 +76,8 @@ pub struct Ports {
 }
 
 impl Ports {
-    /// The ports as text, one per line, `lines`, `files`, `args` or `out` and the name: what
-    /// an executable holds.
+    /// The ports as text, one per line, `lines`, `files`, `args`, `env` or `out` and the name:
+    /// what an executable holds.
     pub fn to_text(&self) -> String {
         let mut text = String::new();
         for (name, kind) in &self.inputs {
@@ -82,6 +85,7 @@ impl Ports {
                 PortKind::Lines => "lines",
                 PortKind::Files => "files",
                 PortKind::CommandLine => "args",
+                PortKind::Env => "env",
             };
             text.push_str(&format!("{word} {name}\n"));
         }
@@ -102,6 +106,7 @@ impl Ports {
                 Some(("lines", name)) => Some((name, PortKind::Lines)),
                 Some(("files", name)) => Some((name, PortKind::Files)),
                 Some(("args", name)) => Some((name, PortKind::CommandLine)),
+                Some(("env", name)) => Some((name, PortKind::Env)),
                 Some(("out", name)) => {
                     ports.outputs.push(name.to_string());
                     continue;
@@ -115,8 +120,9 @@ impl Ports {
     }
 
     /// Runs one wave on these ports, as [`Program::run_args`] does, with the wave run by `run`
-    /// in an evaluator that holds the ports: an executable's way to run its own code. The
-    /// wave's record names no program, since ports alone do not say which; the caller names it.
+    /// in an evaluator that holds the ports: an executable's way to run its own code. `files`
+    /// gives the lookup behind each `Files` and environment input by its name. The wave's
+    /// record names no program, since ports alone do not say which; the caller names it.
     pub fn run(
         &self,
         lines: &BTreeMap<String, Vec<u8>>,
@@ -176,7 +182,7 @@ impl Ports {
                     world = world.input(name, split_lines(name, bytes));
                     record.lines.insert(name.clone(), bytes.clone());
                 }
-                PortKind::Files => world = world.source(name, files(name)),
+                PortKind::Files | PortKind::Env => world = world.source(name, files(name)),
                 PortKind::CommandLine => {
                     world = world.input(name, arguments(args));
                     record.args = args.to_vec();
@@ -218,9 +224,9 @@ pub struct Wave {
     pub record: Record,
 }
 
-/// The inputs a wave read: each `Lines` port's bytes, each `Files` port's reads, and the
-/// command-line arguments when a `CommandLine` port reads them; and the content address of the
-/// program that read them.
+/// The inputs a wave read: each `Lines` port's bytes, each `Files` and environment port's
+/// reads, and the command-line arguments when a `CommandLine` port reads them; and the content
+/// address of the program that read them.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Record {
     /// The content address of the program whose wave this is ([`Program::address`]); `None`
@@ -229,7 +235,8 @@ pub struct Record {
     pub program: Option<ContentAddress>,
     /// The bytes of each `Lines` port.
     pub lines: BTreeMap<String, Vec<u8>>,
-    /// The paths read from each `Files` port and what each read gave.
+    /// The keys read from each `Files` port (paths) and each environment port (names), and
+    /// what each read gave.
     pub files: BTreeMap<String, BTreeMap<Value, Value>>,
     /// The arguments after `--`, in order; empty when `main` has no `CommandLine` port.
     pub args: Vec<String>,
@@ -332,14 +339,23 @@ pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, ast::Error>
         message,
         notes: Vec::new(),
     };
+    let is_string = |t: &ast::Type| matches!(&t.kind, TypeKind::Name(n) if n == "String");
     let kind = |p: &ast::Param| match p.ty.as_ref().map(|t| &t.kind) {
         Some(TypeKind::Name(n)) if n == "Lines" => Ok(PortKind::Lines),
         Some(TypeKind::Name(n)) if n == "Files" => Ok(PortKind::Files),
         Some(TypeKind::Name(n)) if n == "CommandLine" => Ok(PortKind::CommandLine),
+        Some(TypeKind::Arrow {
+            params,
+            partial: true,
+            result,
+        }) if is_string(result) && matches!(&params[..], [k] if is_string(&k.ty)) => {
+            Ok(PortKind::Env)
+        }
         _ => Err(refused(
             p.span,
             format!(
-                "port `{}` of `main` is `Lines`, `Files` or `CommandLine` at layer L1",
+                "port `{}` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` \
+                 at layer L1",
                 p.name
             ),
         )),
@@ -631,6 +647,80 @@ impl Lookup for Disk {
     }
 }
 
+/// An environment input port over a process's variables (step L1.19c), taken once before the
+/// wave, so the wave sees one value per name: the value, or `#notFound` for a name that is not
+/// set. A value that is not UTF-8 stops the wave as a usage error naming the variable, kept in
+/// [`Environment::not_utf8`]; it is found at the read, so a variable the program does not read
+/// stops nothing. Taking the variables costs O(n log n) for n variables, and a read O(log n).
+#[derive(Debug)]
+pub struct Environment {
+    vars: BTreeMap<OsString, OsString>,
+    not_utf8: OnceLock<String>,
+}
+
+impl Environment {
+    /// The port over the variables `vars`, as [`std::env::vars_os`] gives them.
+    pub fn new(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Environment {
+        Environment {
+            vars: vars.into_iter().collect(),
+            not_utf8: OnceLock::new(),
+        }
+    }
+
+    /// The usage error of the first read of a variable whose value is not UTF-8, if any.
+    pub fn not_utf8(&self) -> Option<&str> {
+        self.not_utf8.get().map(String::as_str)
+    }
+}
+
+impl Lookup for Environment {
+    fn get(&self, key: &Value) -> Result<Value, String> {
+        let Value::Str(name) = key else {
+            return Err(format!(
+                "an environment variable's name is a String, not {key}"
+            ));
+        };
+        let name = name.flat();
+        match self.vars.get(OsStr::new(&*name)) {
+            None => Ok(Value::atom("notFound")),
+            Some(v) => match v.to_str() {
+                Some(v) => Ok(Value::str(v)),
+                None => {
+                    let why = format!("environment variable `{name}` is not UTF-8");
+                    // A second such read cannot happen: the first stops the wave.
+                    let _ = self.not_utf8.set(why.clone());
+                    Err(why)
+                }
+            },
+        }
+    }
+}
+
+/// The lookup behind each `Files` and environment input of `ports` in a run on this machine,
+/// by the port's name: the file system, or `env` for an environment port.
+fn local(ports: &Ports, env: &Arc<Environment>) -> impl Fn(&str) -> Arc<dyn Lookup> {
+    let envs: BTreeSet<String> = ports
+        .inputs
+        .iter()
+        .filter(|(_, k)| *k == PortKind::Env)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let env = Arc::clone(env);
+    move |name| match envs.contains(name) {
+        true => Arc::clone(&env) as Arc<dyn Lookup>,
+        false => Arc::new(Disk),
+    }
+}
+
+/// The exit status and message of a wave that stopped with `why`: a usage error, 2, when it
+/// stopped at a variable of `env` that is not UTF-8, and otherwise 1.
+fn stopped(env: &Environment, why: String) -> (u8, String) {
+    match env.not_utf8() {
+        Some(usage) => (2, usage.to_string()),
+        None => (1, why),
+    }
+}
+
 /// Why line `n` of a `Lines` input is `#ioError`. The port runtime (`zed_rt::ports`) gives
 /// the same text.
 fn not_utf8(n: usize) -> String {
@@ -768,13 +858,27 @@ impl Record {
 /// `CommandLine` input holds the words after `--`, which a replay ignores for the recorded
 /// ones; a `Lines` output writes the file bound to it, or standard output or error if it is
 /// `stdout` or `stderr`. Returns the exit status: 0, 1 when the program fails or a write
-/// fails, 2 for a usage error, among them a word that is not UTF-8.
+/// fails, 2 for a usage error, among them a word that is not UTF-8 or a read of an
+/// environment variable whose value is not. An environment input holds this process's
+/// variables.
 pub fn command(
     args: &[impl AsRef<std::ffi::OsStr>],
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
+    command_in(args, std::env::vars_os(), stdin, stdout, stderr)
+}
+
+/// [`command`] with `vars` the variables an environment input holds.
+pub fn command_in(
+    args: &[impl AsRef<std::ffi::OsStr>],
+    vars: impl IntoIterator<Item = (OsString, OsString)>,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> u8 {
+    let env = Arc::new(Environment::new(vars));
     let words = match words(args) {
         Ok(words) => words,
         Err(why) => {
@@ -782,7 +886,7 @@ pub fn command(
             return 2;
         }
     };
-    match command_inner(&words, stdin, stdout, stderr) {
+    match command_inner(&words, &env, stdin, stdout, stderr) {
         Ok(()) => 0,
         Err((status, why)) => {
             let _ = writeln!(stderr, "{why}");
@@ -830,6 +934,7 @@ fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
 
 fn command_inner(
     words: &Words<'_>,
+    env: &Arc<Environment>,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -864,12 +969,13 @@ fn command_inner(
         }
         None => {
             let lines = options.read_lines(program.ports(), stdin)?;
+            let files = local(program.ports(), env);
             work::stage(Stage::Run, Some("main"), || {
-                program.run_args(&lines, &words.args, |_| Arc::new(Disk))
+                program.run_args(&lines, &words.args, files)
             })
         }
     }
-    .map_err(|e| (1, e))?;
+    .map_err(|e| stopped(env, e))?;
     options.finish(&wave, stdout, stderr)
 }
 
@@ -1079,9 +1185,10 @@ pub fn executable(
         })?;
         options.check(ports)?;
         let lines = options.read_lines(ports, stdin)?;
+        let env = Arc::new(Environment::new(std::env::vars_os()));
         let mut wave = ports
-            .run(&lines, &words.args, |_| Arc::new(Disk), run)
-            .map_err(|e| (1, e))?;
+            .run(&lines, &words.args, local(ports, &env), run)
+            .map_err(|e| stopped(&env, e))?;
         wave.record.program = Some(address);
         options.finish(&wave, stdout, stderr)
     });

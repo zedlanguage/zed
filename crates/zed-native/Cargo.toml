@@ -29,6 +29,11 @@ path = "../../tests/steps/m0_09_kernel_evaluator/binary.rs"
 name = "command_line_binary"
 path = "../../tests/steps/l01_19a_command_line/binary.rs"
 
+# The executable given environment variables (step L1.19c).
+[[test]]
+name = "environment_binary"
+path = "../../tests/steps/l01_19c_environment/binary.rs"
+
 # `zedc build` run as a user runs it (step L1.36a).
 [[test]]
 name = "build_binary"

@@ -118,6 +118,8 @@ fn a_main_whose_ports_are_not_l1_reports_once_and_runs_no_row() {
                test { 1 -> \"x\\n\" }\n";
     assert_eq!(
         checks(src),
-        ["1:6: port `n` of `main` is `Lines`, `Files` or `CommandLine` at layer L1"]
+        [
+            "1:6: port `n` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` at layer L1"
+        ]
     );
 }
