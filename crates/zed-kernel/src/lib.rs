@@ -14,6 +14,7 @@ pub mod eval;
 pub mod exact;
 pub mod frames;
 pub mod num;
+pub mod paths;
 pub mod print;
 pub mod provenance;
 pub mod refine;

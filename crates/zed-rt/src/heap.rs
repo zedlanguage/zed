@@ -26,6 +26,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::{mem, slice};
 
+use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::Pattern;
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::{Atom, Fields, Items, SharedParts, Value};
@@ -301,117 +302,6 @@ struct Making<'v> {
 struct Reading {
     w: Word,
     parts: Vec<Value>,
-}
-
-/// Where the binders of a match are in the scrutinee: a tree of the parts [`Heap::matches`]
-/// entered, each node its parent node and its part index there. A binder's path is one node,
-/// so no binder copies the path above it: a binder at each of `d` levels costs `d` nodes, not
-/// `d²/2` part indices (HEAP-binder-paths).
-#[derive(Debug, Default)]
-pub struct Paths {
-    /// Each node's parent node and part index, in the order entered, which is preorder.
-    nodes: Vec<(usize, usize)>,
-}
-
-impl Paths {
-    /// The node of the whole scrutinee, the empty path.
-    pub const ROOT: usize = usize::MAX;
-
-    /// The node of part `part` of the word at node `parent`.
-    pub fn push(&mut self, parent: usize, part: usize) -> usize {
-        self.nodes.push((parent, part));
-        self.nodes.len() - 1
-    }
-
-    /// The part indices from the scrutinee to node `n`, in O(depth of `n`).
-    pub fn path(&self, mut n: usize) -> Vec<usize> {
-        let mut p = Vec::new();
-        while n != Self::ROOT {
-            let (up, i) = self.nodes[n];
-            p.push(i);
-            n = up;
-        }
-        p.reverse();
-        p
-    }
-
-    /// Whether no node was entered.
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    /// Removes every node, keeping the buffer.
-    pub fn clear(&mut self) {
-        self.nodes.clear();
-    }
-}
-
-/// A node of [`Kept`]: links to its first child and its next sibling (0 for none: slot 0 is
-/// the root, which is no one's child), whether a kept binder is there, and whether it is on the
-/// way to one.
-#[derive(Clone, Default)]
-struct Link {
-    first: usize,
-    next: usize,
-    kept: bool,
-    on: bool,
-}
-
-/// The nodes of a [`Paths`] on the way to the kept binders of a fused release, each with its
-/// children in preorder. Node `n` is slot `n + 1` and the root slot 0, so [`Paths::ROOT`]
-/// wraps to 0.
-struct Kept<'a> {
-    paths: &'a Paths,
-    links: Vec<Link>,
-}
-
-impl<'a> Kept<'a> {
-    /// O(nodes + kept): each node is marked once, a walk up stopping at a marked node, and the
-    /// marked ones are linked to their parents in one pass from the last.
-    fn new(paths: &'a Paths, kept: &[usize]) -> Self {
-        let size = if kept.is_empty() {
-            1
-        } else {
-            paths.nodes.len() + 1
-        };
-        let mut links = vec![Link::default(); size];
-        for &k in kept {
-            let mut x = k.wrapping_add(1);
-            links[x].kept = true;
-            while !links[x].on {
-                links[x].on = true;
-                if x == 0 {
-                    break;
-                }
-                x = paths.nodes[x - 1].0.wrapping_add(1);
-            }
-        }
-        for x in (1..size).rev() {
-            if links[x].on {
-                let up = paths.nodes[x - 1].0.wrapping_add(1);
-                links[x].next = links[up].first;
-                links[up].first = x;
-            }
-        }
-        Kept { paths, links }
-    }
-
-    /// The children of slot `x` on the way to a kept binder, in preorder.
-    fn kids(&self, x: usize) -> impl Iterator<Item = usize> + '_ {
-        let mut k = self.links[x].first;
-        std::iter::from_fn(move || {
-            (k != 0).then(|| {
-                let at = k;
-                k = self.links[k].next;
-                at
-            })
-        })
-    }
-
-    /// The part index of slot `x`, which is not the root.
-    fn part(&self, x: usize) -> usize {
-        self.paths.nodes[x - 1].1
-    }
 }
 
 /// The sub-patterns of a pattern [`Heap::matches`] has entered.
@@ -862,7 +752,7 @@ impl Heap {
     pub fn release(&mut self, w: Word, paths: &Paths, kept: &[usize]) -> Result<(), String> {
         let tree = Kept::new(paths, kept);
         let mut todo = Vec::new();
-        self.release_one(w, &tree, &[0], &mut todo)?;
+        self.release_one(w, &tree, &[Paths::ROOT], &mut todo)?;
         // An empty list of nodes on the stack is a part nothing keeps.
         while let Some((part, sub)) = todo.pop() {
             if sub.is_empty() {
@@ -874,8 +764,8 @@ impl Heap {
         Ok(())
     }
 
-    /// One cell of a fused release, at the slots `at` of `tree`: the parts of a cell it frees
-    /// go on `todo`, the first on top, each with its slots on the way to a kept part.
+    /// One cell of a fused release, at the nodes `at` of `tree`: the parts of a cell it frees
+    /// go on `todo`, the first on top, each with its nodes on the way to a kept part.
     fn release_one(
         &mut self,
         w: Word,
@@ -883,7 +773,7 @@ impl Heap {
         at: &[usize],
         todo: &mut Vec<(Word, Vec<usize>)>,
     ) -> Result<(), String> {
-        if w.tag != Word::CELL || at.iter().any(|&x| tree.links[x].kept) {
+        if w.tag != Word::CELL || at.iter().any(|&x| tree.kept(x)) {
             return Ok(());
         }
         self.obj(w)?;
@@ -913,7 +803,7 @@ impl Heap {
         Ok(())
     }
 
-    /// Gives each kept part below slot `x` of `tree`, which is at word `w`, a reference, in
+    /// Gives each kept part below node `x` of `tree`, which is at word `w`, a reference, in
     /// preorder. A constant on the way stops the walk below it: every part of a constant is a
     /// constant, which [`Heap::inc`] does not count. Paths nest as deep as patterns, so the
     /// parts in progress are on a stack.
@@ -938,7 +828,7 @@ impl Heap {
                     ));
                 }
             };
-            if tree.links[k].kept {
+            if tree.kept(k) {
                 self.inc(part)?;
             } else {
                 push(&mut todo, part, k);
@@ -1117,7 +1007,7 @@ impl Heap {
                     if stack.is_empty() {
                         return Ok(true);
                     }
-                    at = paths.nodes[at].0;
+                    at = paths.parent(at);
                 }
                 let m = stack.last_mut().expect("a pattern is in progress");
                 let k = m.next;
