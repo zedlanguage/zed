@@ -510,6 +510,7 @@ impl Evaluator {
             drops: Rc::default(),
             globals,
             made: HashMap::new(),
+            short_paths: Vec::new(),
         }
         .run(term, env);
         drop(watch);
@@ -847,6 +848,10 @@ struct Machine<'e, 't> {
     globals: Option<&'t Globals>,
     /// The value of each of them made so far, by position.
     made: HashMap<usize, V<'t>>,
+    /// The sequence ids of the keypaths above an empty level whose `reindex` key map is
+    /// running, innermost last: `pathKey` past the end of one of them reads [`unbound`]. One
+    /// entry per `reindex` nested inside a key map, so a few.
+    short_paths: Vec<crate::value::Id>,
 }
 
 impl<'t> Machine<'_, 't> {
@@ -1407,9 +1412,9 @@ impl<'t> Machine<'_, 't> {
                 // A keypath above an empty level has no leaf for the value map; the empty level
                 // goes beneath the part of the new keypath that its own keys give.
                 st.args = None;
+                self.short_paths.pop();
                 self.ev.leave(st.path.len());
                 if let Some(path) = placed(data(v)?) {
-                    let path = key_of(Value::path(path));
                     st.out.push((path, Value::Family(Family::new())));
                 }
                 self.reindex(st)
@@ -1599,6 +1604,15 @@ impl<'t> Machine<'_, 't> {
                 args.len()
             ));
         }
+        // A key past the end of a keypath above an empty level, read by the key map of a
+        // `reindex`, is unbound. `short_paths` holds one id per `reindex` nested in a key map.
+        if p == Prim::PathKey
+            && let [V::Data(Value::Path(keys)), V::Data(Value::Int(i))] = &args[..]
+            && usize::try_from(*i).is_ok_and(|i| i >= keys.as_slice().len())
+            && self.short_paths.contains(&keys.id())
+        {
+            return give(unbound());
+        }
         // `f[k]` on the family a definedness fix is building.
         if p == Prim::Get && matches!(args[0], V::Partial(_)) {
             let Ok([V::Partial(part), k]) = <[V<'t>; 2]>::try_from(args) else {
@@ -1667,8 +1681,8 @@ impl<'t> Machine<'_, 't> {
         }
         // A tuple and an atom's payload hold atoms as data, and `==` has an arrow at every
         // type, atoms included; every other primitive passes its atoms through, merged. A
-        // keypath holds them too, so that a `reindex` can tell which keys a keypath above an
-        // empty level binds; at a full keypath it merges them (see `key_of`).
+        // keypath holds them too: a key may be an atom held as data, and a `reindex` reads which
+        // keys a keypath above an empty level binds from where its own `unbound` atom lands.
         if !matches!(
             p,
             Prim::Tuple | Prim::Path | Prim::Atom | Prim::Eq | Prim::Ne
@@ -1710,12 +1724,16 @@ impl<'t> Machine<'_, 't> {
         self.ev.enter(&path);
         let p = Value::path(path.clone());
         self.ev.aim(st.kf.1, vec![st.from; 2]);
-        // A keypath above an empty level has no leaf value: the key map reads `#notFound` there,
-        // as it does for a key beyond the keypath's end.
+        // A keypath above an empty level binds no leaf value and no key past its end: the key
+        // map reads the kernel's own atom [`unbound`] there, not `#notFound`, which a key may
+        // hold as data.
         st.short = matches!(&v, Value::Family(f) if f.is_empty());
-        let leaf = match st.short {
-            true => Value::atom("notFound"),
-            false => v.clone(),
+        let leaf = match (st.short, &p) {
+            (true, Value::Path(keys)) => {
+                self.short_paths.push(keys.id());
+                unbound()
+            }
+            _ => v.clone(),
         };
         let step = self.call2(&st.kf.0, p.clone(), leaf);
         st.path = path;
@@ -2155,23 +2173,29 @@ fn reduced(values: &[Value], op: &V<'_>, identity: &Option<Value>) -> Option<Val
 }
 
 /// The keypath a `reindex` writes a leaf at, given the key its key map returned there. A
-/// keypath holding atoms is the failure they merge to, as one key, as for any other primitive
-/// given atoms. Costs the length of the key.
+/// keypath holds atoms as data, as a tuple does (DESIGN.md M0.9 (a)), so a key that is an atom
+/// keeps its place: the identity reindex of `{#red -> {1 -> 5}}` is itself. Costs the length of
+/// the key.
 fn key_of(key: Value) -> Keypath {
     match key {
-        Value::Path(keys) if keys.iter().any(|k| matches!(k, Value::Atom(_))) => {
-            vec![Value::merge_failures(
-                keys.iter().filter(|k| matches!(k, Value::Atom(_))),
-            )]
-        }
         Value::Path(keys) => keys.into_vec(),
         single => vec![single],
     }
 }
 
+/// The kernel's own atom for what a keypath above an empty level does not bind: its leaf, and
+/// its keys past its end. Its name is no Zed identifier, so no program writes it, and a key
+/// holding `#notFound` or any other atom as data is not taken for it.
+fn unbound() -> Value {
+    Value::atom(UNBOUND)
+}
+
+/// The name of [`unbound`].
+const UNBOUND: &str = "unbound key";
+
 /// Where a `reindex` puts the empty level beneath a keypath that ends early, given the key its
 /// key map returned there (DESIGN.md sec:remap_law): the keys before the first that holds
-/// `#notFound`, which the key map reads beyond the keypath's end and in place of its leaf. `None`
+/// [`unbound`], which the key map reads past the keypath's end and in place of its leaf. `None`
 /// when the first key holds it, since then the new keypath starts with a level the short
 /// keypath does not bind, and the key is dropped. A key map that returns the empty keypath gets
 /// [`KernelError::EmptyKeypath`] from the family built, as at a full keypath. Costs the size of
@@ -2184,7 +2208,7 @@ fn placed(key: Value) -> Option<Keypath> {
     let unbound = keys.iter().position(|k| {
         !all_leaves(
             std::slice::from_ref(k),
-            |v| !matches!(v, Value::Atom(a) if &*a.name == "notFound" && a.args.is_empty()),
+            |v| !matches!(v, Value::Atom(a) if &*a.name == UNBOUND && a.args.is_empty()),
         )
     });
     match unbound {

@@ -237,3 +237,105 @@ fn a_fold_over_many_levels_that_need_no_call_runs_in_constant_stack() {
     assert_eq!(out.get(&Value::Int(4)), Some(&Value::Int(0)));
     assert_eq!(out.get(&Value::Int(5)), Some(&Value::Int(5)));
 }
+
+/// Outer keys `#notFound` and `#red`, atoms held as data, and `"b"`; with `full`, each over
+/// one entry, else the two atoms over empty levels.
+fn atom_keyed(full: bool) -> Term {
+    let atoms = [(Value::atom("notFound"), 5), (Value::atom("red"), 6)];
+    let rows = atoms.into_iter().map(|(a, v)| match full {
+        true => (vec![a, Value::Int(1)], Value::Int(v)),
+        false => (vec![a], empty()),
+    });
+    let b = (vec![s("b"), Value::Int(3)], Value::Int(7));
+    lit(Family::from_leaves(rows.chain([b])).unwrap())
+}
+
+/// Keeps the entries above 5, and every key of the outer level.
+fn above_five(f: Term) -> Term {
+    discard_with(f, |p, v| {
+        if_(
+            eq(prim(Prim::PathLen, vec![p]), lit(1)),
+            lit(true),
+            prim(Prim::Gt, vec![v, lit(5)]),
+        )
+    })
+}
+
+#[test]
+fn a_key_that_is_an_atom_is_not_taken_for_an_unbound_key() {
+    let total = |f| fold_at(f, 2, Term::PrimFn(Prim::Add), Some(lit(0)));
+    // At full keypaths: the identity reindex keeps each atom key and its level.
+    let full = atom_keyed(true);
+    let written = r#"{#notFound -> {1 -> 5}, #red -> {1 -> 6}, "b" -> {3 -> 7}}"#;
+    assert_eq!(show(&full), written);
+    assert_eq!(show(&rekey_outer(full.clone(), |k| k)), written);
+    assert_eq!(
+        show(&total(full.clone())),
+        r#"{#notFound -> 5, #red -> 6, "b" -> 7}"#
+    );
+    assert_eq!(
+        show(&above_five(full)),
+        r#"{#notFound -> {}, #red -> {1 -> 6}, "b" -> {3 -> 7}}"#
+    );
+    // Above empty levels: the same, and only a move that puts an unbound level first drops them.
+    let short = atom_keyed(false);
+    let written = r#"{#notFound -> {}, #red -> {}, "b" -> {3 -> 7}}"#;
+    assert_eq!(show(&short), written);
+    assert_eq!(show(&rekey_outer(short.clone(), |k| k)), written);
+    assert_eq!(
+        show(&total(short.clone())),
+        r#"{#notFound -> 0, #red -> 0, "b" -> 7}"#
+    );
+    assert_eq!(show(&above_five(short.clone())), written);
+    let swapped = reindex(
+        short,
+        func(|[p, _]| path(vec![key(p.clone(), 1), key(p, 0)])),
+        func(|[_, v]| v),
+    );
+    assert_eq!(show(&swapped), r#"{3 -> {"b" -> 7}}"#);
+}
+
+#[test]
+fn a_key_map_that_reads_past_the_end_gets_the_unbound_key_only_there() {
+    // A key map that returns `#notFound` itself, at a full keypath and above an empty level,
+    // writes it as a key: only reads past the end of the keypath are unbound.
+    let m = lit(table(&[("b", 1, 7)], &["a"]));
+    let tagged = reindex(
+        m.clone(),
+        func(|[p, _]| path(vec![key(p, 0), lit(Value::atom("notFound"))])),
+        func(|[_, v]| v),
+    );
+    assert_eq!(
+        show(&tagged),
+        r#"{"a" -> {#notFound -> {}}, "b" -> {#notFound -> 7}}"#
+    );
+    // `pathKey` past the end of another keypath is still `#notFound`.
+    let other = reindex(
+        m,
+        func(|[p, _]| path(vec![key(p, 0), key(path(vec![lit(s("z"))]), 1)])),
+        func(|[_, v]| v),
+    );
+    assert_eq!(
+        show(&other),
+        r#"{"a" -> {#notFound -> {}}, "b" -> {#notFound -> 7}}"#
+    );
+}
+
+#[test]
+fn rank_ranks_keys_that_hold_atoms_as_data() {
+    // `<` passes a bare atom through (DESIGN.md M0.9 (a)), so the kernel ranks keys that hold
+    // atoms inside a tuple, `(#notFound, 0)`, which `<` orders like any other tuple.
+    let t = |a: Value, n: i64| Value::tuple(vec![a, Value::Int(n)]);
+    let m = lit(Family::from_leaves([
+        (vec![t(Value::atom("notFound"), 0)], empty()),
+        (
+            vec![t(Value::atom("notFound"), 1), Value::Int(1)],
+            Value::Int(7),
+        ),
+        (vec![t(Value::atom("red"), 0), Value::Int(2)], Value::Int(8)),
+    ])
+    .unwrap());
+    let below = |x: Term| count(discard_with(keyset(m.clone()), |q, _| lt(key(q, 0), x)));
+    let ranked = rekey_outer(m.clone(), below);
+    assert_eq!(show(&ranked), "{0 -> {}, 1 -> {1 -> 7}, 2 -> {2 -> 8}}");
+}

@@ -1,7 +1,7 @@
 //! Writes: one whole-value push per port per wave, committed when the wave ends, each with
 //! an acknowledgment; a failed write aborts the wave.
 
-use zed_kernel::Value;
+use zed_kernel::{Family, Value};
 use zedc::run::{commit, join_lines};
 
 use super::{dir, run};
@@ -198,4 +198,35 @@ fn usage_errors_exit_2() {
         "a program that does not parse fails, with its position"
     );
     assert!(out.stderr.contains("prog.zed:1:"), "{}", out.stderr);
+}
+
+#[test]
+fn an_empty_level_pushed_writes_no_line() {
+    // A family whose entry is an empty level, flat or nested, writes the lines of its strings
+    // and nothing for the empty level, the bytes written before empty levels were kept.
+    let empty = || Value::Family(Family::new());
+    let flat = Family::from_leaves([
+        (vec![Value::Int(1)], Value::str("a")),
+        (vec![Value::Int(2)], empty()),
+        (vec![Value::Int(3)], Value::str("b")),
+    ])
+    .unwrap();
+    let nested = Family::from_leaves([
+        (vec![Value::Int(1), Value::Int(1)], Value::str("a")),
+        (vec![Value::Int(2)], empty()),
+        (vec![Value::Int(3), Value::Int(1)], Value::str("b")),
+    ])
+    .unwrap();
+    for f in [flat, nested] {
+        let v = Value::Family(f);
+        assert_eq!(join_lines("stdout", &v), Ok(b"a\nb\n".to_vec()), "{v}");
+        assert_eq!(
+            zed_rt::ports::write("stdout", &v),
+            Ok(b"a\nb\n".to_vec()),
+            "{v}"
+        );
+    }
+    let only = Value::Family(Family::from_leaves([(vec![Value::Int(1)], empty())]).unwrap());
+    assert_eq!(join_lines("stdout", &only), Ok(Vec::new()));
+    assert_eq!(zed_rt::ports::write("stdout", &only), Ok(Vec::new()));
 }

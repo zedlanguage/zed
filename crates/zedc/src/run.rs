@@ -613,7 +613,14 @@ pub fn arguments(args: &[String]) -> Value {
 /// The bytes a push of `v` writes to `Lines` port `port`: each string, then `\n`.
 pub fn join_lines(port: &str, v: &Value) -> Result<Vec<u8>, String> {
     let lines: Vec<Value> = match v {
-        Value::Family(f) => f.leaves().into_iter().map(|(_, v)| v).collect(),
+        // An empty level holds no line, so it writes nothing, as before empty levels were
+        // kept (DESIGN.md says only that a family of strings writes one line per entry).
+        Value::Family(f) => f
+            .leaves()
+            .into_iter()
+            .map(|(_, v)| v)
+            .filter(|v| !matches!(v, Value::Family(f) if f.is_empty()))
+            .collect(),
         v => vec![v.clone()],
     };
     let mut out = Vec::new();
