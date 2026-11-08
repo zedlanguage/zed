@@ -83,6 +83,18 @@ struct RowData {
     /// The kernel type of the tuple shape ([`Row::kernel`]): none when a component holds a
     /// function, a variable or the unknown at any depth.
     kernel: Option<KType>,
+    /// The kernel type of the tuple shape with its atoms' payloads read ([`Ty::exact_data`]):
+    /// none where [`Self::kernel`] has none.
+    exact: Option<KType>,
+    /// The first kind-wide part, `(..)` or `{..}`, a component holds at any depth outside
+    /// functions, in payloads too: a part that may hold a function ([`Ty::held_wide`]).
+    wide: Option<KType>,
+    /// Whether a component lists the payloads of an atom at any depth outside functions: when
+    /// not, [`Self::exact`] is [`Self::kernel`].
+    listed: bool,
+    /// Whether a component, at any depth outside functions, in payloads too, holds the atoms
+    /// of every name it does not list ([`Ty::open_atoms`]).
+    open_atoms: bool,
 }
 
 impl Row {
@@ -131,6 +143,20 @@ impl Row {
                 .collect::<Option<Vec<_>>>()
                 .map(KType::tuple),
         };
+        // A row with no payload listed at any depth reads no payload, so its exact kernel
+        // type is its kernel type, made once.
+        let listed = cs
+            .iter()
+            .any(|c| !c.payloads.is_empty() || c.tuples.iter().any(|r| r.0.listed));
+        let exact = match (&kernel, listed) {
+            (None, _) => None,
+            (Some(k), false) => Some(k.clone()),
+            (Some(_), true) => (cs.iter().map(Ty::exact_data))
+                .collect::<Option<Vec<_>>>()
+                .map(KType::tuple),
+        };
+        let wide = cs.iter().find_map(Ty::held_wide);
+        let open_atoms = cs.iter().any(Ty::open_atoms);
         Row(Arc::new(RowData {
             cs,
             digest,
@@ -143,6 +169,10 @@ impl Row {
             checked,
             vars,
             kernel,
+            exact,
+            wide,
+            listed,
+            open_atoms,
         }))
     }
 
@@ -745,6 +775,16 @@ pub struct ShapeData {
     /// The variables its components and fields hold at any depth, inside functions and
     /// payloads too.
     vars: VarFacts,
+    /// The payload as a kernel type, with its atoms' payloads read: a tuple of its items.
+    /// None when it has fields, which only a normal form with a mark of their names tells
+    /// apart ([`Forms`]), or when a component holds a function, a variable or the unknown at
+    /// any depth.
+    exact: Option<KType>,
+    /// The first kind-wide part a component or field holds at any depth outside functions.
+    wide: Option<KType>,
+    /// Whether a component or field, at any depth outside functions, holds the atoms of every
+    /// name it does not list ([`Ty::open_atoms`]).
+    open_atoms: bool,
 }
 
 impl std::ops::Deref for Shape {
@@ -910,6 +950,16 @@ impl Shape {
         let unchecked = cs().find_map(|c| c.unchecked_function().cloned());
         let mut vars = VarFacts::default();
         cs().for_each(|c| vars.ty(c));
+        // Each component's exact kernel type reads what its rows and shapes keep, so this
+        // costs the outer levels of the components.
+        let exact = match open || held.is_some() || !fields.is_empty() {
+            true => None,
+            false => (items.iter().map(Ty::exact_kernel))
+                .collect::<Option<Vec<_>>>()
+                .map(KType::tuple),
+        };
+        let wide = cs().find_map(Ty::held_wide);
+        let open_atoms = cs().any(Ty::open_atoms);
         Shape(Arc::new(ShapeData {
             items,
             fields,
@@ -920,6 +970,9 @@ impl Shape {
             dynamic,
             fixed,
             vars,
+            exact,
+            wide,
+            open_atoms,
         }))
     }
 
@@ -1012,6 +1065,71 @@ fn join_payloads(ts: &[&Ty]) -> BTreeMap<Arc<str>, Option<Vec<Shape>>> {
 /// Whether `set` may hold an atom named `n` with a payload.
 fn holds_payload(set: &KType, n: &str) -> bool {
     !(set & &KType::atom_with(n, &KType::top())).is_empty()
+}
+
+/// A value no program writes, one for each `name`: the bare atom of a name that starts with
+/// a NUL, which no atom written has. Marks of two names are apart. The normal form of payloads
+/// and tuples ([`Forms`]) puts one where a payload's fields end and one for each function
+/// compared, and takes the marks out of each component that holds the atoms of every name it
+/// does not list ([`Forms::cut`]), so only the same mark holds a mark.
+///
+/// Not a function of the kernel, which no component holds either: the kernel builds no value
+/// of a function type in a union of payloads, so `#a(x: 0, f: (int) -> int) | … <: #a(x: int,
+/// f: (int) -> String)` was refused for want of a value, and that search grew as `n^1.6`.
+fn mark(name: &str) -> KType {
+    KType::atom(name)
+}
+
+/// The name of the mark of the field names of a payload with fields, in name order.
+fn fields_mark(fields: &BTreeMap<Arc<str>, Ty>) -> String {
+    let mut name = String::from("\u{0}fields");
+    for f in fields.keys() {
+        name.push(' ');
+        name.push_str(f);
+    }
+    name
+}
+
+/// The kernel type of a payload of the components `ks`, items then fields: a tuple of them,
+/// and, when it has fields, after them a mark of the fields' names, so that a payload with
+/// fields is held only by one with the same names, or by a payload not known.
+fn payload_form(mut ks: Vec<KType>, fields: &BTreeMap<Arc<str>, Ty>) -> KType {
+    if !fields.is_empty() {
+        ks.push(mark(&fields_mark(fields)));
+    }
+    KType::tuple(ks)
+}
+
+/// `set` with the payloads `payloads` lists read: each listed atom of `set` holds the payloads
+/// `form` gives of its shapes (and none other), and an atom whose payload is not known any
+/// payload. None when `form` gives none for a shape.
+///
+/// Each name costs a meet and a union with the payloads of its shapes, so the set costs the
+/// size of its listed payloads, not the product of the names and their shapes.
+fn payload_set(
+    set: &KType,
+    payloads: &BTreeMap<Arc<str>, Option<Vec<Shape>>>,
+    mut form: impl FnMut(&Arc<str>, &Shape) -> Option<KType>,
+) -> Option<KType> {
+    let mut listed = Vec::new();
+    let mut read = Vec::new();
+    for (n, ss) in payloads {
+        let Some(ss) = ss else { continue };
+        let all = KType::atom_with(n, &KType::top());
+        let p = ss.iter().map(|s| form(n, s)).collect::<Option<Vec<_>>>()?;
+        // A payload of no value is left out, so a name whose payloads hold none is built as
+        // empty: the kernel then has no union of empty rows to prove empty one by one.
+        let p: Vec<KType> = p.into_iter().filter(|k| *k != KType::empty()).collect();
+        if !p.is_empty() {
+            read.push(&(set & &all) & &KType::atom_with(n, &KType::union_all(p)));
+        }
+        listed.push(all);
+    }
+    if listed.is_empty() {
+        return Some(set.clone());
+    }
+    let rest = set - &KType::union_all(listed);
+    Some(KType::union_all(std::iter::once(rest).chain(read)))
 }
 
 /// A walk that rebuilds the types it is given from what they hold at every depth:
@@ -2652,33 +2770,149 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// [`Ty::sub`] of `t` and `other` inside the comparisons of function types the state holds.
     async fn sub_in(&'m self, t: &Ty, other: &Ty, binds: &mut Binds) -> bool {
-        // `other` as a kernel type, built at most once, when a tuple piece needs it.
-        let mut whole: Option<Option<KType>> = None;
+        // The scalars, atoms with their payloads, kind-wide part and tuples of `t` are decided
+        // together, once, by the kernel on their normal forms ([`Comparing::by_form`]), which
+        // sees shapes that hold a piece only together. Trying each shape of `other` in turn
+        // cost every shape times the components; the kernel splits the components once. Where
+        // the normal form is not made (a variable, which a shape of `other` may bind) or the
+        // kernel refused, each piece is tried by the rule of one shape, which is sound.
+        let mut form: Option<Option<bool>> = None;
         for p in t.pieces() {
-            // A tuple piece of a type with no variable, function or unknown is decided by the
-            // kernel, which sees shapes that hold it only together. Trying each shape in turn
-            // costs every shape times the components; the kernel splits the components once.
-            // The rule of one shape is sound, so it is tried only when the kernel refused.
-            // So is a kind-wide part, which tuple shapes of `other` may hold only together.
-            let a = match &p {
-                Piece::Tuple(cs) => cs.kernel(),
-                Piece::Set(s) if !(s & &wide()).is_empty() => Some(s.clone()),
+            let decided = match &p {
+                Piece::Set(_) | Piece::Tuple(_) => match form {
+                    Some(d) => d,
+                    None => *form.insert(self.by_form(t, other).await),
+                },
                 _ => None,
             };
-            let decided = a.and_then(|a| {
-                let b = whole.get_or_insert_with(|| other.kernel()).as_ref()?;
-                match a.subtype_verdict(b) {
-                    Verdict::Empty => Some(true),
-                    Verdict::Inhabited => Some(false),
-                    Verdict::Refused(_) => None,
-                }
-            });
             let ok = match decided {
                 Some(ok) => ok,
                 None => accepts(other, &p, t, binds, self).await,
             };
             if !ok {
                 return false;
+            }
+        }
+        true
+    }
+
+    /// Whether the scalars, atoms with their payloads, kind-wide part and tuples of `t` are all
+    /// in `other`, decided by the kernel on the normal forms of the two sides ([`Forms`]), or
+    /// nothing where the forms are not made or the kernel refused. False, with no pair tried,
+    /// for the class [`Forms::tie`] names.
+    async fn by_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
+        if other.dynamic {
+            return Some(true);
+        }
+        // A variable of `other` may be bound to a piece, which the forms do not do.
+        if !other.vars.is_empty() {
+            return None;
+        }
+        let verdict = match (t.exact_data(), other.exact_data()) {
+            (Some(a), Some(b)) => a.subtype_verdict(&b),
+            _ => {
+                let mut forms = Forms::default();
+                let (left, right) = forms.places(t, other)?;
+                if forms.tied(&left, &right).is_some() {
+                    return Some(false);
+                }
+                for f in left.values().flatten() {
+                    forms.id(f);
+                }
+                forms.number_marks();
+                // Each function of `t` not on the same place of `other` is compared with each of
+                // `other` there: by [`Forms::tied`], one side has at most one, so the pairs are
+                // as many as the functions.
+                for (place, gs) in &right {
+                    let Some(fs) = left.get(place) else { continue };
+                    let unlike: Vec<&Arc<Sig>> = fs.iter().filter(|f| !gs.contains(*f)).collect();
+                    for g in gs {
+                        let mut fit = Vec::new();
+                        if fs.contains(g) {
+                            fit.push(forms.id(g));
+                        }
+                        for f in &unlike {
+                            let (f, g) = ((*f).clone(), g.clone());
+                            if self.fits(f.clone(), Env::new(), g, Env::new()).await {
+                                fit.push(forms.id(&f));
+                            }
+                        }
+                        forms.fits.insert((place.clone(), g.clone()), fit);
+                    }
+                }
+                let a = forms.form(t, true);
+                let b = forms.form(other, false);
+                a.subtype_verdict(&b)
+            }
+        };
+        match verdict {
+            Verdict::Empty => Some(true),
+            Verdict::Inhabited => Some(false),
+            Verdict::Refused(_) => None,
+        }
+    }
+
+    /// Whether each component and field of the payload `a` is in the one of `b` at its place
+    /// ([`Comparing::sub_by_shape`]), `b` of as many items and the same field names, in a
+    /// frame of its own: with `b` and what it binds.
+    fn shape_in(&'m self, a: Shape, b: Shape, mut binds: Binds) -> Deep<'m, (bool, Binds)> {
+        self.stack.call(move || async move {
+            let pairs =
+                (a.items.iter().zip(&b.items)).chain(a.fields.values().zip(b.fields.values()));
+            for (x, y) in pairs {
+                if !self.sub_by_shape(x, y, &mut binds).await {
+                    return (false, binds);
+                }
+            }
+            (true, binds)
+        })
+    }
+
+    /// Whether the payloads `of` gives the atoms of `s` are in those `t` gives them, where the
+    /// normal forms were not made ([`Comparing::by_form`]): a payload not known is in a payload
+    /// not known only, and each payload shape is in one of `t`'s shapes of the same length and
+    /// field names, by the rule of one shape, binding `t`'s variables.
+    ///
+    /// Complexity tradeoff: the shapes of `t` are grouped by length and field names, so a shape
+    /// is tried only against those of its group, but within a group each is tried in turn.
+    /// What is given up: a payload union with a variable is checked in the product of the
+    /// shapes of one group on each side. Why: a variable may be bound by one shape and not by
+    /// another, so which shape holds a payload is a choice the kernel does not make; without a
+    /// variable, the normal forms decide the payloads in the size of the two sides. Structure:
+    /// `#a(T, 1) | … <: #a(int, int) | …`, `n` shapes of one length on each side, with a type
+    /// variable. Test: `tests/steps/l01_22_type_representation/kinds.rs`,
+    /// `payloads_with_a_variable_are_compared_shape_by_shape`; COMPLEXITY.md F124. A complete
+    /// solution would bind the variables by unification over the normal forms, with the
+    /// variables as marks.
+    async fn payloads_in(&'m self, s: &KType, of: &Ty, t: &Ty, binds: &mut Binds) -> bool {
+        let Some(names) = s.atom_names() else {
+            return true;
+        };
+        for (n, _) in names {
+            if !holds_payload(s, n) {
+                continue;
+            }
+            // A payload `t` does not know holds any payload.
+            let Some(rs) = t.shapes(n) else { continue };
+            let Some(ls) = of.shapes(n) else { return false };
+            let key = |s: &Shape| (s.items.len(), s.fields.keys().cloned().collect::<Vec<_>>());
+            let mut groups: HashMap<_, Vec<&Shape>> = HashMap::new();
+            for r in rs {
+                groups.entry(key(r)).or_default().push(r);
+            }
+            for l in ls {
+                let mut ok = false;
+                for r in groups.get(&key(l)).into_iter().flatten() {
+                    let (fit, b) = self.shape_in(l.clone(), (*r).clone(), binds.clone()).await;
+                    if fit {
+                        *binds = b;
+                        ok = true;
+                        break;
+                    }
+                }
+                if !ok {
+                    return false;
+                }
             }
         }
         true
@@ -2731,6 +2965,278 @@ impl<'m, 's> Comparing<'m, 's> {
         out.tuples = kept;
         out.set = KType::union_all(std::iter::once(out.set).chain(rest));
         out
+    }
+}
+
+/// Where a component sits in the tuple or payload that holds it: the kernel compares a
+/// component only with those at the same place, so a function is compared only with the
+/// functions of the other side at its place ([`Forms`]).
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Place {
+    /// Component `.1` of a row of `.0` components.
+    Row(usize, usize),
+    /// Component `.3`, items then fields, of a payload of the atom `.0` with `.1` items and
+    /// fields whose names hash to `.2`.
+    Payload(Arc<str>, usize, u64, usize),
+}
+
+/// The functions met at each place, each once.
+type PlaceFns = HashMap<Place, HashSet<Arc<Sig>>>;
+
+/// A row, or a payload shape of the atom named, met by [`Forms`].
+#[derive(Clone, Copy)]
+enum Node<'a> {
+    Row(&'a Row),
+    Shape(&'a Arc<str>, &'a Shape),
+}
+
+impl<'a> Node<'a> {
+    /// The rows and payload shapes of `c` whose form is not their exact kernel type
+    /// ([`Node::kept`]).
+    fn below(c: &'a Ty) -> impl Iterator<Item = Node<'a>> {
+        let rows = c.tuples.iter().map(Node::Row);
+        let shapes = (c.payloads.iter())
+            .flat_map(|(n, ss)| ss.iter().flatten().map(move |s| Node::Shape(n, s)));
+        rows.chain(shapes).filter(|n| n.kept().is_none())
+    }
+
+    /// Its exact kernel type, when that is its form: none when it holds a function, a variable,
+    /// the unknown or a payload with fields at any depth, which a form marks, or a set that
+    /// holds the atoms of every name it does not list, from which a form cuts the marks.
+    fn kept(self) -> Option<&'a KType> {
+        let (exact, open_atoms) = match self {
+            Node::Row(r) => (&r.0.exact, r.0.open_atoms),
+            Node::Shape(_, s) => (&s.exact, s.open_atoms),
+        };
+        exact.as_ref().filter(|_| !open_atoms)
+    }
+
+    /// The node on the side `left`, as [`Forms::made`] keeps it: a shape with the name of its
+    /// atom, since its places name it.
+    fn key(self, left: bool) -> (*const (), bool, Option<Arc<str>>) {
+        match self {
+            Node::Row(r) => (Arc::as_ptr(&r.0).cast(), left, None),
+            Node::Shape(n, s) => (s.as_ptr().cast(), left, Some(n.clone())),
+        }
+    }
+
+    /// Its components, each with its place.
+    fn comps(self) -> Vec<(Place, &'a Ty)> {
+        match self {
+            Node::Row(r) => (r.iter().enumerate())
+                .map(|(i, c)| (Place::Row(r.len(), i), c))
+                .collect(),
+            Node::Shape(n, s) => {
+                use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+                let names = BuildHasherDefault::<DefaultHasher>::default()
+                    .hash_one(s.fields.keys().collect::<Vec<_>>());
+                let len = s.items.len();
+                (s.items.iter().chain(s.fields.values()).enumerate())
+                    .map(|(i, c)| (Place::Payload(n.clone(), len, names, i), c))
+                    .collect()
+            }
+        }
+    }
+}
+
+/// The normal forms of the two sides of a comparison of scalars, atoms with their payloads
+/// and tuples, which hold functions or the unknown: kernel types the kernel decides in the
+/// size of the two sides, in place of trying each tuple shape and payload of one side against
+/// each of the other.
+///
+/// Each function of the side compared is a mark of its own ([`mark`]), one for equal
+/// functions; each function of the other side holds the marks of the functions at its place
+/// that are equal to it or fit it, found before the forms are made ([`Comparing::by_form`]);
+/// the unknown of the side compared is a mark only the unknown of the other holds. A payload
+/// with fields is its items and fields in name order, then a mark of the names
+/// ([`payload_form`]). A variable on either side, or the unknown on the other, is not put in a
+/// form: a shape may bind a variable, and the unknown holds any value.
+#[derive(Default)]
+struct Forms {
+    /// The number of each function of the side compared, by equality.
+    ids: HashMap<Arc<Sig>, usize>,
+    /// The functions of the side compared that each function of the other side holds, at
+    /// each place, by number.
+    fits: HashMap<(Place, Arc<Sig>), Vec<usize>>,
+    /// The form of each node of the rows and shapes met, by [`Node::key`].
+    made: HashMap<(*const (), bool, Option<Arc<str>>), KType>,
+    /// The names of the marks of the field names of the payloads met on either side.
+    fields: HashSet<String>,
+    /// Every mark the two forms may hold: of each function of the side compared, of the
+    /// unknown and of each set of field names met; none until the functions are numbered.
+    marks: Option<KType>,
+    /// Each set that holds the atoms of every name it does not list, with the marks cut out.
+    cuts: RefCell<HashMap<KType, KType>>,
+}
+
+impl Forms {
+    /// The number of the function `f` of the side compared.
+    fn id(&mut self, f: &Arc<Sig>) -> usize {
+        let next = self.ids.len();
+        *self.ids.entry(f.clone()).or_insert(next)
+    }
+
+    /// The functions at each place of the rows and payloads of `t` and of `other`, or none
+    /// when either holds a variable, or `other` the unknown, outside functions.
+    fn places(&mut self, t: &Ty, other: &Ty) -> Option<(PlaceFns, PlaceFns)> {
+        let left = Forms::fns(t, true, &mut self.fields)?;
+        Some((left, Forms::fns(other, false, &mut self.fields)?))
+    }
+
+    /// The functions at each place of the rows and payloads of `t`, met once each over a
+    /// visited set, since rows and shapes are shared: none when it holds a variable outside
+    /// functions, or the unknown and is not `left`. The names of the marks of the field names
+    /// of its payloads go to `fields`.
+    fn fns(t: &Ty, left: bool, fields: &mut HashSet<String>) -> Option<PlaceFns> {
+        let mut out = PlaceFns::new();
+        let mut seen = HashSet::new();
+        let mut stack: Vec<Node> = Node::below(t).collect();
+        while let Some(n) = stack.pop() {
+            if !seen.insert(n.key(left)) {
+                continue;
+            }
+            if let Node::Shape(_, s) = n
+                && !s.fields.is_empty()
+            {
+                fields.insert(fields_mark(&s.fields));
+            }
+            for (place, c) in n.comps() {
+                if !c.vars.is_empty() || (!left && c.dynamic) {
+                    return None;
+                }
+                if !c.fns.is_empty() {
+                    out.entry(place).or_default().extend(c.fns.iter().cloned());
+                }
+                stack.extend(Node::below(c));
+            }
+        }
+        Some(out)
+    }
+
+    /// A place where two or more functions of the side compared, equal to none of the other
+    /// side's there, meet two or more of the other side's.
+    ///
+    /// Complexity tradeoff: which of those fits which is not tried. What is given up: such a
+    /// comparison is refused with its own clause ([`Ty::refused`]), though each pair could be
+    /// compared. Why: the pairs are the product of the two sides' functions at the place, and
+    /// a union of `n` shapes on each side, each with its own function there, would cost `n^2`
+    /// comparisons of functions. Structure: `(f, 1) | (g, "a") <: ((int) -> int, int) |
+    /// ((String) -> String, String)` with `f` and `g` of other types than those written. Test:
+    /// `tests/steps/l01_22_type_representation/kinds.rs`,
+    /// `functions_unlike_on_both_sides_at_one_place_are_refused`; COMPLEXITY.md F124. A
+    /// complete solution would order the functions at a place by their parameters and results,
+    /// so that those a function fits are found by a search in that order, not by trying each.
+    fn tied(&self, left: &PlaceFns, right: &PlaceFns) -> Option<Place> {
+        right.iter().find_map(|(place, gs)| {
+            let fs = left.get(place)?;
+            let unlike = fs.iter().filter(|f| !gs.contains(*f)).count();
+            (unlike >= 2 && gs.len() >= 2).then(|| place.clone())
+        })
+    }
+
+    /// Why `t <: other` was refused, if it was for the class [`Forms::tied`] names.
+    fn tie(t: &Ty, other: &Ty) -> Option<&'static str> {
+        if other.dynamic || !other.vars.is_empty() {
+            return None;
+        }
+        let mut forms = Forms::default();
+        let (left, right) = forms.places(t, other)?;
+        forms.tied(&left, &right).map(|_| {
+            "two or more functions at one place of a tuple or payload are each unlike two or \
+             more functions there in the type expected, and which fits which is not compared"
+        })
+    }
+
+    /// The normal form of the scalars, atoms with their payloads, kind-wide part and tuples of
+    /// `t`, on the side compared if `left`. Its rows and shapes are made bottom up, each once,
+    /// on a stack of its own, since they nest as deep as the program.
+    fn form(&mut self, t: &Ty, left: bool) -> KType {
+        let mut stack: Vec<(Node, bool)> = Node::below(t).map(|n| (n, false)).collect();
+        while let Some((n, ready)) = stack.pop() {
+            let key = n.key(left);
+            if self.made.contains_key(&key) {
+                continue;
+            }
+            if !ready {
+                stack.push((n, true));
+                for (_, c) in n.comps() {
+                    stack.extend(Node::below(c).map(|n| (n, false)));
+                }
+                continue;
+            }
+            let ks: Vec<KType> = (n.comps().into_iter())
+                .map(|(place, c)| self.comp(c, &place, left))
+                .collect();
+            // A component of no value, as a function of the other side that no function fits,
+            // leaves the tuple or payload no value: built as empty, not as a row the kernel
+            // would prove empty again in each comparison.
+            let k = match n {
+                _ if ks.contains(&KType::empty()) => KType::empty(),
+                Node::Row(_) => KType::tuple(ks),
+                Node::Shape(_, s) => payload_form(ks, &s.fields),
+            };
+            self.made.insert(key, k);
+        }
+        self.data(t, left)
+    }
+
+    /// The form of `t`'s scalars, atoms with their payloads, kind-wide part and tuples, its
+    /// rows and shapes made, the marks cut from its set.
+    fn data(&self, t: &Ty, left: bool) -> KType {
+        let form = |n: Node| n.kept().cloned().or_else(|| self.made.get(&n.key(left)).cloned());
+        let shape = |n: &Arc<str>, s: &Shape| form(Node::Shape(n, s));
+        let set = payload_set(&self.cut(&t.set), &t.payloads, shape).expect("each shape is made");
+        let rows = (t.tuples.iter()).map(|r| form(Node::Row(r)).expect("each row is made"));
+        KType::union_all(std::iter::once(set).chain(rows))
+    }
+
+    /// Numbers the marks ([`Forms::marks`]), once the functions of the side compared are.
+    fn number_marks(&mut self) {
+        let fns = (0..self.ids.len()).map(|i| format!("\u{0}fn {i}"));
+        let names = fns.chain(self.fields.iter().cloned());
+        let marks = names.map(|n| mark(&n)).chain([mark("\u{0}unknown")]);
+        self.marks = Some(KType::union_all(marks));
+    }
+
+    /// `set` without the marks, when it holds the atoms of every name it does not list: a
+    /// component written `#_` holds no function, so its form holds no mark ([`mark`]).
+    ///
+    /// Complexity tradeoff: each such set is cut once per comparison, at the cost of the
+    /// marks. What is given up: `k` distinct sets of that kind against `m` marks cost `k m`.
+    /// Why: the kernel has no set of all atoms whose names start with a NUL, so the marks are
+    /// taken out by name, and each set keeps the names it leaves out. Structure: a union of `n`
+    /// tuples `(#_ - #a_i, f_i)` against one of `n` functions. Test:
+    /// `tests/steps/l01_22_type_representation/kinds.rs`,
+    /// `marks_are_cut_from_sets_of_all_atoms`; COMPLEXITY.md F124. A complete solution would
+    /// give the kernel a part for marks, which no type written holds.
+    fn cut(&self, set: &KType) -> KType {
+        let Some(marks) = &self.marks else {
+            return set.clone();
+        };
+        if set.atom_names().is_some() {
+            return set.clone();
+        }
+        (self.cuts.borrow_mut().entry(set.clone()))
+            .or_insert_with(|| set - marks)
+            .clone()
+    }
+
+    /// The form of the component `c` at `place`.
+    fn comp(&self, c: &Ty, place: &Place, left: bool) -> KType {
+        let mut ks = vec![self.data(c, left)];
+        for f in &c.fns {
+            let ids = match left {
+                true => std::slice::from_ref(&self.ids[f]),
+                false => {
+                    (self.fits.get(&(place.clone(), f.clone()))).map_or(&[][..], Vec::as_slice)
+                }
+            };
+            ks.extend(ids.iter().map(|i| mark(&format!("\u{0}fn {i}"))));
+        }
+        if c.dynamic {
+            ks.push(mark("\u{0}unknown"));
+        }
+        KType::union_all(ks)
     }
 }
 
@@ -3045,9 +3551,10 @@ impl Ty {
     }
 
     /// Whether it holds no function at any depth (a variable or the unknown may still stand
-    /// for one): a type whose values the differential oracle compares (step L1.37).
+    /// for one): a type whose values the differential oracle compares (step L1.37). A
+    /// kind-wide part, `(..)` or `{..}`, holds tuples and structs that hold functions.
     pub fn first_order(&self) -> bool {
-        self.held_function().is_none()
+        self.held_function().is_none() && self.held_wide().is_none()
     }
 
     /// A function it may hold, at any depth, in its tuples and its atoms' payloads; a family
@@ -3125,6 +3632,48 @@ impl Ty {
         ))
     }
 
+    /// [`Self::kernel`] with the payloads of its atoms read: `#a(String)` is not in
+    /// `#a(int, int)`, where [`Self::kernel`] holds every `#a` with a payload.
+    pub fn exact_kernel(&self) -> Option<KType> {
+        if !self.fns.is_empty() || !self.vars.is_empty() || self.dynamic {
+            return None;
+        }
+        self.exact_data()
+    }
+
+    /// The kernel type of its scalars, atoms with their payloads read, kind-wide part and
+    /// tuples, leaving out its own functions, variables and unknown: none when a tuple or
+    /// payload holds a function, a variable, the unknown or a payload with fields at any
+    /// depth, which only [`Forms`] compares. Each row and shape keeps its own, so this costs
+    /// the outer level.
+    pub fn exact_data(&self) -> Option<KType> {
+        let rows = (self.tuples.iter().map(|r| r.0.exact.clone())).collect::<Option<Vec<_>>>()?;
+        let set = payload_set(&self.set, &self.payloads, |_, s| s.0.exact.clone())?;
+        Some(KType::union_all(std::iter::once(set).chain(rows)))
+    }
+
+    /// A kind-wide part, `(..)` or `{..}`, it holds at any depth outside functions, in its
+    /// tuples and its atoms' payloads: every tuple or struct, those that hold a function among
+    /// them. Read at its outer level, since each row and shape keeps the one it holds.
+    pub fn held_wide(&self) -> Option<KType> {
+        let own = &self.set & &wide();
+        if !own.is_empty() {
+            return Some(own);
+        }
+        (self.tuples.iter().find_map(|r| r.0.wide.clone()))
+            .or_else(|| self.payload_shapes().find_map(|s| s.wide.clone()))
+    }
+
+    /// Whether its set, or a row or payload shape at any depth outside functions, holds the
+    /// atoms of every name it does not list, as `#_` does: such a set holds the marks of a
+    /// normal form ([`mark`]) unless they are cut out ([`Forms::cut`]). Read at its outer level,
+    /// since each row and shape keeps its own.
+    fn open_atoms(&self) -> bool {
+        self.set.atom_names().is_none()
+            || self.tuples.iter().any(|r| r.0.open_atoms)
+            || self.payload_shapes().any(|s| s.open_atoms)
+    }
+
     /// Whether every value of `self` is in `other`, with no variable bound.
     pub fn subtype(&self, other: &Ty) -> bool {
         let mut b = Binds::new();
@@ -3133,13 +3682,13 @@ impl Ty {
 
     /// The kernel's verdict on `self <: other`, on what of `self` is outside `other`: `Empty`
     /// when it holds, `Inhabited` when a value outside was built. On kernel types, or on the
-    /// scalar sets when either holds a function, variable or unknown; `Empty` when `other` is
-    /// the unknown.
+    /// scalar sets when either holds a function, variable, unknown or payload with fields at
+    /// any depth; `Empty` when `other` is the unknown.
     pub fn verdict(&self, other: &Ty) -> Verdict {
         if other.dynamic {
             return Verdict::Empty;
         }
-        match (self.kernel(), other.kernel()) {
+        match (self.exact_kernel(), other.exact_kernel()) {
             (Some(a), Some(b)) => a.subtype_verdict(&b),
             _ => self.set.subtype_verdict(&other.set),
         }
@@ -3151,6 +3700,9 @@ impl Ty {
     /// refuses ([`why_unfit`]), and nothing if it was decided. A refusal claims nothing about
     /// the types, so a message that reads as a counterexample would be wrong.
     pub fn refused(&self, other: &Ty) -> String {
+        if let Some(why) = Forms::tie(self, other) {
+            return format!(" (not decided: {why})");
+        }
         match self.verdict(other) {
             Verdict::Refused(r) => format!(" (not decided: {})", r.message()),
             // A function that a cover the checker refuses would take ([`why_unfit`]).
@@ -3492,13 +4044,16 @@ async fn accepts<'m>(
         match p {
             Piece::Dyn => false,
             Piece::Set(s) => {
-                let cx = c.cx.borrow();
-                s.subtype(&t.set)
-                    || t.vars.iter().any(|w| {
-                        cx.rigid.get(w).is_some_and(|&m| {
-                            Carrier::of_mask(m).all(|c| s.subtype(&(&t.set | &c.ty())))
+                let held = {
+                    let cx = c.cx.borrow();
+                    s.subtype(&t.set)
+                        || t.vars.iter().any(|w| {
+                            cx.rigid.get(w).is_some_and(|&m| {
+                                Carrier::of_mask(m).all(|c| s.subtype(&(&t.set | &c.ty())))
+                            })
                         })
-                    })
+                };
+                held && c.payloads_in(s, of, t, binds).await
             }
             // A kind-wide part that holds every tuple of the length holds it, whatever it holds.
             Piece::Tuple(cs) if KType::tuple(vec![KType::top(); cs.len()]).subtype(&t.set) => true,

@@ -317,7 +317,7 @@ fn a_use_that_takes_data_refuses_every_tuple() {
     // A block that ends `return h, 1` builds a tuple that holds a function, and `(..)` takes it,
     // so `==`, interpolation and `String` on a value of `(..)` are refused where they are
     // written, at any depth, as they are on a value whose function is known.
-    let errors = crate::l01_26_type_resolution::type_errors;
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     let call = "g() = f(x: { h(y) = y; return h, 1; });\n";
     for (body, what, at) in [
         ("x == x", "`==`", "x == x"),
@@ -342,10 +342,7 @@ fn with_payloads(name: &str, shapes: Vec<Vec<Ty>>) -> Ty {
     let mut t = Ty::set(Type::atom_with(name, &Type::top()));
     let shapes = shapes
         .into_iter()
-        .map(|items| Shape {
-            items,
-            fields: Default::default(),
-        })
+        .map(|items| Shape::new(items, Default::default()))
         .collect();
     t.payloads.insert(name.into(), Some(shapes));
     t
@@ -398,3 +395,213 @@ fn a_kind_wide_part_deep_in_tuples_is_found_once() {
         assert!(!t.first_order());
     });
 }
+
+#[test]
+fn tuples_and_payloads_that_hold_functions_are_decided_by_their_normal_forms() {
+    // A function is in another where it fits it, inside a tuple, in a payload, by position or
+    // by field; shapes that hold a tuple only together still hold it.
+    for (member, whole) in [
+        ("((int) -> int, 1)", "((int) -> int, int)"),
+        (
+            "(#a0 | #a1, (int) -> int)",
+            "(#a0, (int) -> int) | (#a1, (int) -> int)",
+        ),
+        ("#a((int) -> int)", "#a((int) -> int) | #b"),
+        ("#a((int | String) -> int)", "#a((int) -> int)"),
+        (
+            "#a((int) -> int, 1) | #a((int) -> int, 2)",
+            "#a((int) -> int, int)",
+        ),
+        ("#a(x: int)", "#a(x: int | String)"),
+        ("#a(x: int, y: (int) -> int)", "#a(x: int, y: (int) -> int)"),
+        ("#a(x: int)", "#a(..)"),
+        ("(#a((int) -> int),)", "(#a(..),)"),
+    ] {
+        assert!(ty(member).subtype(&ty(whole)), "{member} <: {whole}");
+    }
+    for (member, whole) in [
+        ("((int) -> int, \"a\")", "((int) -> int, int)"),
+        (
+            "(#a0 | #a2, (int) -> int)",
+            "(#a0, (int) -> int) | (#a1, (int) -> int)",
+        ),
+        ("#a((int) -> int)", "#a((String) -> int)"),
+        ("#a((int) -> int)", "#a((int | String) -> int)"),
+        ("#a(x: int)", "#a(y: int)"),
+        ("#a(int)", "#a(x: int)"),
+        ("#a(x: int)", "#a(int)"),
+        (
+            "#a(x: int, y: (int) -> int)",
+            "#a(x: int, y: (int) -> String)",
+        ),
+        ("#a(..)", "#a((int) -> int)"),
+    ] {
+        assert!(!ty(member).subtype(&ty(whole)), "{member} </: {whole}");
+    }
+}
+
+#[test]
+fn marks_are_cut_from_sets_of_all_atoms() {
+    // A form puts an atom no program writes where a function or a payload's fields are; `#_`
+    // beside it holds every atom written and none of those.
+    for (member, whole) in [
+        ("((int) -> int, #b)", "((int) -> int, #_)"),
+        ("(#_, (int) -> int)", "(#_, (int) -> int)"),
+        ("#a(#b, (int) -> int)", "#a(#_, (int) -> int)"),
+        ("#a(x: #b)", "#a(x: #_)"),
+        ("#c(#a(x: 1))", "#c(#_)"),
+    ] {
+        assert!(ty(member).subtype(&ty(whole)), "{member} <: {whole}");
+    }
+    for (member, whole) in [
+        ("((int) -> int, 1)", "(#_, int)"),
+        ("#a((int) -> int)", "#a(#_)"),
+        ("#a(x: 1)", "#a(int, #_)"),
+        ("#a(1, (int) -> int)", "#a(int, #_)"),
+        ("(_, 1)", "(#_, int)"),
+    ] {
+        assert!(!ty(member).subtype(&ty(whole)), "{member} </: {whole}");
+    }
+}
+
+#[test]
+fn functions_unlike_on_both_sides_at_one_place_are_refused() {
+    // Two functions of `t`, equal to none of the expected type's, meet two of its at one place:
+    // which fits which is not compared (COMPLEXITY.md F112), and the clause says so.
+    let (t, u) = (
+        ty("((int | String) -> int, 1) | ((int | rat) -> int, 2)"),
+        ty("((int) -> int, int) | ((String) -> int, int)"),
+    );
+    assert!(!t.subtype(&u));
+    assert!(
+        t.refused(&u).contains("not decided: two or more functions"),
+        "{}",
+        t.refused(&u)
+    );
+    // One function on either side is compared with each on the other.
+    for (member, whole) in [
+        (
+            "((int | String) -> int, 1)",
+            "((int) -> int, int) | ((String) -> int, int)",
+        ),
+        (
+            "((int | String) -> int, 1) | ((int | rat) -> int, 2)",
+            "((int) -> int, int)",
+        ),
+        // Functions equal on both sides are matched by equality, however many.
+        (
+            "((int) -> int, 1) | ((String) -> int, 2)",
+            "((int) -> int, int) | ((String) -> int, int)",
+        ),
+    ] {
+        let (m, w) = (ty(member), ty(whole));
+        assert!(m.subtype(&w), "{member} <: {whole}");
+        assert_eq!(m.refused(&w), "", "{member} <: {whole}");
+    }
+}
+
+#[test]
+fn payloads_with_a_variable_are_compared_shape_by_shape() {
+    // A variable of the expected type is bound by the shape that holds the payload, and a
+    // payload not known is in a payload not known only.
+    let a_of = |t: Ty| {
+        let mut out = Ty::set(Type::atom_with("a", &Type::top()));
+        out.payloads.insert(
+            "a".into(),
+            Some(vec![Shape::new(vec![t, int(1)], Default::default())]),
+        );
+        out
+    };
+    let (member, whole) = (
+        with_payloads("a", vec![vec![ty("String"), int(1)]]),
+        a_of(Ty::var("T".into())),
+    );
+    let mut binds = Default::default();
+    assert!(member.sub(&whole, &mut binds));
+    assert_eq!(
+        binds.get("T").map(|t: &Ty| t.to_string()),
+        Some("String".to_string())
+    );
+    let mut binds = Default::default();
+    assert!(!ty("#a(..)").sub(&whole, &mut binds));
+    let mut binds = Default::default();
+    assert!(!with_payloads("a", vec![vec![ty("String"), int(2)]]).sub(&whole, &mut binds));
+}
+
+#[test]
+fn payloads_that_hold_functions_are_compared_in_the_size_of_the_union() {
+    // `#a0((int) -> #r0, 0) | … ` against the same with `(int) -> #r_i | #s` and `int`: one
+    // function on each side at each place, so each is compared once; trying each payload
+    // against each was n² comparisons (A6, 2026-11-08).
+    let union = |n: usize, f: &dyn Fn(usize) -> String| {
+        let parts: Vec<String> = (0..n).map(|i| format!("#a{i}({})", f(i))).collect();
+        ty(&parts.join(" | "))
+    };
+    let inputs = scaling::inputs(256, |n| {
+        (
+            union(n, &|i| format!("(int) -> #r{i}, {i}")),
+            union(n, &|i| format!("(int) -> #r{i} | #s, int")),
+            union(n, &|i| format!("(int) -> #s, {i}")),
+        )
+    });
+    scaling::check("n payloads that hold functions against n", 256, |n| {
+        let (small, wide, other) = &inputs[&n];
+        assert!(small.subtype(wide));
+        assert!(!small.subtype(other));
+    });
+    // One atom: `#a((int) -> int, 0) | …` against the same payloads in the other order, and
+    // against them with `String` results, all of one length, which trying each payload against
+    // each of its length compared in `n²`.
+    let one = |n: usize, order: &dyn Fn(usize) -> usize, r: &str| {
+        let parts: Vec<String> = (0..n)
+            .map(|i| format!("#a((int) -> {r}, {})", order(i)))
+            .collect();
+        ty(&parts.join(" | "))
+    };
+    let inputs = scaling::inputs(256, |n| {
+        (
+            one(n, &|i| i, "int"),
+            one(n, &|i| n - 1 - i, "int"),
+            one(n, &|i| n - 1 - i, "String"),
+        )
+    });
+    scaling::check("n payloads of one atom that hold functions against n", 256, |n| {
+        let (small, same, other) = &inputs[&n];
+        assert!(small.subtype(same));
+        assert!(!small.subtype(other));
+    });
+}
+
+#[test]
+fn payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_of_the_union() {
+    // `#a(x: 0, f: (int) -> int) | … | #a(x: n-1, …)` against `#a(x: int, f: (int) -> int)`,
+    // and `(#a0 | … | #a(n-1), (int) -> int)` against the n shapes `(#a_i, (int) -> int)`,
+    // which hold it only together (K38).
+    let inputs = scaling::inputs(256, |n| {
+        let fields: Vec<String> = (0..n)
+            .map(|i| format!("#a(x: {i}, f: (int) -> int)"))
+            .collect();
+        let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
+        let shapes: Vec<String> = atoms
+            .iter()
+            .map(|a| format!("({a}, (int) -> int)"))
+            .collect();
+        (
+            ty(&fields.join(" | ")),
+            ty(&format!("({}, (int) -> int)", atoms.join(" | "))),
+            ty(&shapes.join(" | ")),
+        )
+    });
+    let whole = ty("#a(x: int, f: (int) -> int)");
+    let not = ty("#a(x: int, f: (int) -> String)");
+    scaling::check("n payloads with fields that hold functions", 256, |n| {
+        let (fields, _, _) = &inputs[&n];
+        assert!(fields.subtype(&whole));
+        assert!(!fields.subtype(&not));
+    });
+    scaling::check("a tuple that holds a function, held by n shapes", 256, |n| {
+        let (_, tuple, shapes) = &inputs[&n];
+        assert!(tuple.subtype(shapes));
+    });
+}
+

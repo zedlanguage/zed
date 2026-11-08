@@ -4733,6 +4733,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 format!("{what} takes data, and this value may hold a function, `{s}`"),
                 notes,
             );
+        } else if let Some(w) = t.held_wide() {
+            // `(..)` and `{..}` hold every tuple and struct, those that hold a function too: a
+            // block that ends `return h, 1` gives one.
+            self.error(
+                span,
+                format!(
+                    "{what} takes data, and this value, of `{}`, may hold a function",
+                    Ty::set(w)
+                ),
+            );
         }
         // A class, at any depth, needs data of each of its values. A row that holds no class
         // or unknown is not entered; nor is one whose classes were checked as data when it
