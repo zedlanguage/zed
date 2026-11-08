@@ -1542,14 +1542,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAMILY-eq-dag | impl attempt 1 | 2026-11-05 04:07 | overhead on unshared input (instructions per comparison, 200k entries each a 2-entry family; main -> fix): == 344.5M -> 407.6M (+18%), cmp 349.7M -> 427.6M (+22 |
-| LIST-box-overlap | impl attempt 1 | 2026-11-07 09:29 | started on c881d28c: listing the each-row shape at side n is O(n^2) / load 2.23 3.72 11.36 |
-| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | shared-remainder chain +12 at 40 links: all 41 answers identical to 26372a77 (faced and plain, no refusals); (x<10//x>20)&&x mod 4!=1 at +3 on branch: 0.004/6.3 |
-| MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | started in /home/luke/Work/wt/minmax-tuples on c881d28c / load 2.89 3.81 11.30 |
-| REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/refusal-cost from origin/main c881d28c, load 2.23 3.72 11.36 |
+| CYCLE-kernel-moves | impl attempt 1 | 2026-11-07 01:22 | measured on 6640b4cf: same 12-file kernel component (30 files, 102 imports, 87 untyped calls); step 1 done: type order (Step, order) and Literal impls of Row/Mo |
+| FAMILY-eq-dag | impl attempt 1 | 2026-11-05 04:07 | ready 80eb2124 on wt/family-eq-dag (rebased on 6640b4cf, COMPLEXITY row renumbered K72); fmt, clippy clean; 80 pieces / 612 tests pass with doc (m0_09, l01_15,  |
+| LIST-box-overlap | impl attempt 1 | 2026-11-07 09:29 | ready 42f09224 on wt/list-box-overlap: listing at side n 19.0M/162M/1.43G (64/512/4096), was 105M/6.17G (64/512); controls at 512/1024 each n²: no merge 1.99G/7 |
+| LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | ready at db578742, rebased on origin/main; groups 266/266 pass with docs; fmt, clippy and board-check clean; after rebase one faced refusal (p4 holds, reverse o |
+| MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | ready at 83ef4304 (spec 6dc7b9f): 61 pieces pass incl. 9 new tuple_min_max tests; clippy and fmt clean / load 18.36 23.88 23.08 |
+| REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
+| STAGE-stub-fast | impl attempt 1 | 2026-11-07 17:16 | pre-existing flaw reproduced on main's stage: h(g(1), 2) with g = (x) -> f is left to run with 'the program's result is a function' (as written gives 2); test c |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
-
 
 
 ## Open points
