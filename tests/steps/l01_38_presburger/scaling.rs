@@ -383,7 +383,7 @@ fn pughs_example_in_a_chain_scales() {
 }
 
 /// Rows `Σ c·x[i] + k >= 0`.
-fn rows_of(rows: &[Row]) -> Formula {
+pub(super) fn rows_of(rows: &[Row]) -> Formula {
     Formula::and(
         rows.iter()
             .map(|(t, k)| {
@@ -402,7 +402,7 @@ fn rows_of(rows: &[Row]) -> Formula {
 /// the first, every variable in [-4, 4]. The hub joins the blocks into one part with `n - 1`
 /// wide rows of the hub; no row is below zero over the box and no two rows bound a variable
 /// past each other, so the box stage passes every row once and the question is refused.
-fn blocks_with_a_hub(n: usize) -> Vec<Row> {
+pub(super) fn blocks_with_a_hub(n: usize) -> Vec<Row> {
     let mut r: Vec<Row> = [
         ([5, 5, -7, -4], 3),
         ([7, -7, -3, -6], 40),

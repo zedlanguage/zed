@@ -927,7 +927,7 @@ pub(super) type Row = (Vec<(usize, i64)>, i64);
 /// Whether the rows `Σ c·x[i] + k >= 0` over `n` variables have no rational point:
 /// Fourier–Motzkin over every variable, each row divided by the gcd of its entries, with
 /// checked `i128` arithmetic (the rows here are small enough; an overflow panics).
-fn rationally_empty(rows: &[Row], n: usize) -> bool {
+pub(super) fn rationally_empty(rows: &[Row], n: usize) -> bool {
     let mut cur: Vec<(Vec<i128>, i128)> = rows
         .iter()
         .map(|(t, k)| {

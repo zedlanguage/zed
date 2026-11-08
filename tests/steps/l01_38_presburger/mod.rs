@@ -29,6 +29,7 @@ mod one_scope;
 mod oracle;
 mod preimage;
 mod probe;
+mod q1_local;
 pub(crate) mod random;
 mod repair;
 pub(crate) mod scaling;
