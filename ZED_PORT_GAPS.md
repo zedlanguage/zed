@@ -917,6 +917,13 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | A `Vec<usize>` of lowered nodes with a `Vec<bool>` of membership, drained by `std::mem::take`, so two searches hand each other only what changed | `utvpi::GoldbergRadzik`, `negsssp::Rounds::take_lowered`, `utvpi::Shared::step` | Mutation | A persistent set of changed nodes passed between the two searches' states |
 | Two resumable searches in one struct, each `&mut` field borrowed apart while the other is read | `utvpi::Shared::step` | None | Two coroutines, or two states in one record updated together |
 
+## Entries from UTVPI-both-ways (`zedc-solvers/src/negsssp.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Three buffers of reduced weights reused across steps, the chosen one swapped into place by `std::mem::swap` and the others cleared | `negsssp::Solver::run` | Mutation | The chosen list bound as the next step's value; the others dropped |
+| Edges kept in compressed rows (a start offset per vertex into flat target and weight vectors), cleared and refilled each step | `negsssp::Rows`, `Aux`, `Solver::run` | Mutation | An array of rows built once per step by a fold, or a map from vertex to its slice |
+
 ## Entries from T14-low (`zed-native/src/lib.rs`, `codegen.rs`)
 
 | Rust construct | Sites | Gap | At the port |

@@ -571,14 +571,13 @@ fn split_bad_gor_scales() {
 }
 
 #[test]
-#[ignore = "UTVPI-both-ways: the race grows past the limit on this family"]
 fn split_bad_gor_both_ways_scales() {
-    // Slow for both quick searches on the graph and on its reverse: from k = 128 to 1,024 the
-    // race takes 385M to 30,322M instructions (78.7 times; 51.2 times the bytes), and took 298M
-    // to 21,980M (73.6 times) before the pair on the reverse was added (UTVPI-both-slow, load 39
-    // to 54). COMPLEXITY.md C24 gives the model: a race of quadratic searches with
-    // Duong's passes such a family only from about a third of the size where Duong's search
-    // starts to finish first.
+    // Slow for both quick searches on the graph and on its reverse, so Duong's search finishes
+    // first. From k = 128 to 1,024 the race takes 445M to 9,425M instructions (21.2 times; 17.2
+    // times the bytes; load 11 to 21). Before Duong's constant factor was lowered it took 385M
+    // to 30,322M (78.7 times; UTVPI-both-ways): a race of quadratic searches with Duong's passes
+    // such a family only from about a third of the size where Duong's search starts to finish
+    // first (COMPLEXITY.md C24).
     let (small, large) = (
         split_bad_gor_both_ways(128),
         split_bad_gor_both_ways(scaling::FACTOR * 128),

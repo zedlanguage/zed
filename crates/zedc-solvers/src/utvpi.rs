@@ -310,8 +310,11 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // does at most a constant times the units of the search that finishes. On that family it
     // takes 24.2M to 198M instructions (8.2 times), and the three families above stay at 7.8
     // to 8.1 times. A graph that holds that family and its reverse in one component is slow in
-    // both directions, and the race on it grows 78.7 times from k = 128 to 1,024, past the limit
-    // (`stages::split_bad_gor_both_ways_scales`, ignored, open: item UTVPI-both-ways). Inferred
+    // both directions, so Duong's search finishes first; with its constant factor lowered
+    // (`negsssp`: BF-Dijkstra tried first at each step, padded balls peeled off, the next
+    // potential doubled when that helps, scans over the negative edges only) the race grows 21.2
+    // times from k = 128 to 1,024, 78.7 before (`stages::split_bad_gor_both_ways_scales`,
+    // UTVPI-both-ways), and the families above stay within 1% of their cost before. Inferred
     // from a model, quick searches quadratic and Duong's linear on a family, with Duong's
     // search first to finish from k* on: the race grows about 8·k*/k times from k to 8k for
     // k*/8 <= k <= k*, so past the limit of 24 for k < k*/3, whatever quick searches race; only

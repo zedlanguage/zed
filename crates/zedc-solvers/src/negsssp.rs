@@ -376,6 +376,11 @@ struct Solver<'g, H, F> {
     /// This scaling step's weights shifted by `W / 2`, and clipped at 0 (\[D\] eq. scale).
     c: Vec<Int>,
     ell: Vec<Int>,
+    /// The edges of negative `c` in compressed rows: those out of `u` are
+    /// `neg_to[neg_start[u]..neg_start[u + 1]]`, of weights `neg_w` there.
+    neg_start: Vec<usize>,
+    neg_to: Vec<usize>,
+    neg_w: Vec<Int>,
     /// This scaling step's `W`.
     big_w: Int,
     l: u64,
@@ -412,6 +417,9 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
             tick,
             c: Vec::new(),
             ell: Vec::new(),
+            neg_start: Vec::new(),
+            neg_to: Vec::new(),
+            neg_w: Vec::new(),
             big_w: Int::ONE,
             l,
             scale0: Int::from(i128::from(32 * n0)),
@@ -451,17 +459,22 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         let k = Int::from(n + 1);
         let scaled: Vec<Int> = g.w.iter().map(|w| w * &k).collect();
         let mut phi = vec![Int::ZERO; n];
-        let mut r = vec![Int::ZERO; m];
-        let two = Int::from(2);
-        loop {
-            let mut low = Int::ZERO;
-            for e in 0..m {
-                unit(&mut self.tick)?;
-                r[e] = &(&scaled[e] + &phi[g.from[e]]) - &phi[g.to[e]];
-                if r[e] < low {
-                    low = r[e].clone();
-                }
+        // The reduced weights under `phi`, and the least of them and 0.
+        let mut r = Vec::with_capacity(m);
+        let mut low = Int::ZERO;
+        for x in &scaled {
+            unit(&mut self.tick)?;
+            if *x < low {
+                low = x.clone();
             }
+            r.push(x.clone());
+        }
+        // The reduced weights under the two candidates for the next `phi`.
+        let (mut once, mut twice): (Vec<Int>, Vec<Int>) = (Vec::new(), Vec::new());
+        let two = Int::from(2);
+        // Whether each step first tries BF-Dijkstra ([`Solver::quick`]).
+        let mut quick = true;
+        loop {
             let need = -&low;
             if need <= Int::ONE {
                 break;
@@ -470,23 +483,86 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
             // `-W/2`.
             self.big_w = power_of_two_at_least(&need);
             let half = self.big_w.div_floor(&two);
-            self.c = r.iter().map(|x| x + &half).collect();
-            self.ell = self
-                .c
-                .iter()
-                .map(|x| {
-                    if x.is_negative() {
-                        Int::ZERO
+            self.c.clear();
+            self.ell.clear();
+            self.neg_start.clear();
+            self.neg_to.clear();
+            self.neg_w.clear();
+            self.neg_start.push(0);
+            // Complexity tradeoff: one unit per vertex and per negative edge, not per edge; an edge of
+            // `c` at least 0 costs one addition here, and the step passes over every edge with one
+            // unit each below, so the step stays O(m) units. A unit per edge took the both-ways
+            // family from 21.2 to 24.9 times from k = 128 to 1,024; no unit for the edges at all
+            // made each unit of Duong's search cost more and slowed the race by up to 5% on the
+            // families the quick searches win (UTVPI-both-ways).
+            for u in 0..n {
+                unit(&mut self.tick)?;
+                for e in g.out(u) {
+                    let c = &r[e] + &half;
+                    if c.is_negative() {
+                        unit(&mut self.tick)?;
+                        self.ell.push(Int::ZERO);
+                        self.neg_to.push(g.to[e]);
+                        self.neg_w.push(c.clone());
                     } else {
-                        x.clone()
+                        self.ell.push(c.clone());
                     }
-                })
-                .collect();
-            let d0 = power_of_two_at_least(&(&Int::from(n) * &self.big_w));
-            let all: Vec<usize> = (0..n).collect();
-            let psi = self.solve(&all, d0)?;
-            for (p, q) in phi.iter_mut().zip(&psi) {
-                *p = &*p + q;
+                    self.c.push(c);
+                }
+                self.neg_start.push(self.neg_to.len());
+            }
+            // Complexity tradeoff: each step first gives BF-Dijkstra on `c` one unit of work per
+            // edge, and once it runs out the steps after go straight to Duong's recursion. While
+            // `W` is large few edges of `c` are negative and the search ends in a few rounds
+            // (UTVPI-both-ways: 144 to 253K units at the steps of 12,284 vertices where the
+            // recursion takes 384K to 473K); as `W` falls its rounds grow past the recursion's
+            // work and stay past it (to 77M units against 748K), so it is tried until it first
+            // runs out. Either potential is valid for `c`, and the cost over the recursion alone
+            // is at most one pass over the edges.
+            let found = if quick { self.quick()? } else { None };
+            let psi = match found {
+                Some(psi) => psi,
+                None => {
+                    quick = false;
+                    let d0 = power_of_two_at_least(&(&Int::from(n) * &self.big_w));
+                    let all: Vec<usize> = (0..n).collect();
+                    self.solve(&all, d0)?
+                }
+            };
+            // The next `phi` is `phi + psi`, or `phi + 2·psi` when that leaves the least reduced
+            // weight higher: any potential is valid as the next, and the least reduced weight
+            // gives the next step's `W`. On the both-ways family the later steps need
+            // much the same `psi` again, and doubling it took the steps from 27 to 16
+            // (UTVPI-both-ways). One pass over the edges finds both.
+            let (mut low_once, mut low_twice) = (Int::ZERO, Int::ZERO);
+            once.clear();
+            twice.clear();
+            for e in 0..m {
+                unit(&mut self.tick)?;
+                let delta = &psi[g.from[e]] - &psi[g.to[e]];
+                let a = &r[e] + &delta;
+                let b = &a + &delta;
+                if a < low_once {
+                    low_once = a.clone();
+                }
+                if b < low_twice {
+                    low_twice = b.clone();
+                }
+                once.push(a);
+                twice.push(b);
+            }
+            if low_twice > low_once {
+                for (p, q) in phi.iter_mut().zip(&psi) {
+                    *p = &(&*p + q) + q;
+                }
+                std::mem::swap(&mut r, &mut twice);
+                low = low_twice;
+            } else {
+                for (p, q) in phi.iter_mut().zip(&psi) {
+                    *p = &*p + q;
+                }
+                std::mem::swap(&mut r, &mut once);
+                low = low_once;
             }
         }
         // Every reduced weight is at least -1. Dijkstra on `r + 1`, each vertex starting at
@@ -525,17 +601,61 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         Ok(found)
     }
 
+    /// BF-Dijkstra on `c` from labels 0 (\[D\] Lemma l.129), given one unit of work per edge: a
+    /// potential valid for `c`, or `None` when the units run out first.
+    fn quick(&mut self) -> Step<Option<Vec<Int>>, H> {
+        let g = self.g;
+        let n = g.mass.len();
+        // The tails of the negative edges: the only nodes that lower a label at first.
+        let seeds: Vec<usize> = (0..n)
+            .filter(|&u| self.neg_start[u] < self.neg_start[u + 1])
+            .collect();
+        let mut left = g.to.len();
+        let tick = &mut self.tick;
+        // A label that falls in round `n` shows a walk shorter than every simple path, so a
+        // negative cycle of `c`, which is one of the weights: `c >= r`, and a cycle's `r` is
+        // `n + 1` times its weight.
+        let found = bf_dijkstra(
+            Rows {
+                start: &g.start,
+                to: &g.to,
+                w: &self.c,
+            },
+            Rows {
+                start: &self.neg_start,
+                to: &self.neg_to,
+                w: &self.neg_w,
+            },
+            vec![Int::ZERO; n],
+            &seeds,
+            n as u64,
+            &mut || {
+                if left == 0 {
+                    return Err(None);
+                }
+                left -= 1;
+                tick().map_err(Some)
+            },
+        );
+        match found {
+            Ok(p) => Ok(Some(p)),
+            Err(Stop::Negative) => Err(Stop::Negative),
+            Err(Stop::Tick(Some(h))) => Err(Stop::Tick(h)),
+            Err(Stop::Tick(None)) => Ok(None),
+        }
+    }
+
     /// A potential valid for `c` on `G[x]`, in the order of `x` (\[D\] Algorithm 3). The depth of
     /// the recursion is at most `log_{8/7} M₀ + log₂(d₀ / W) + 2`: each child has at most 7/8
     /// of its parent's mass or half its `d`.
     fn solve(&mut self, x: &[usize], d: Int) -> Step<Vec<Int>, H> {
-        let g = self.g;
         let id = self.stamp(x);
         let mut negative = false;
         'scan: for &u in x {
-            for e in g.out(u) {
+            unit(&mut self.tick)?;
+            for &v in &self.neg_to[self.neg_start[u]..self.neg_start[u + 1]] {
                 unit(&mut self.tick)?;
-                if self.member[g.to[e]] == id && self.c[e].is_negative() {
+                if self.member[v] == id {
                     negative = true;
                     break 'scan;
                 }
@@ -639,13 +759,16 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
             pads.push(pad);
         }
         let cover = if 4 * mass_plus >= m {
+            self.peel(x, id, pid, d, m, 0, &mut pads_plus)?;
             let rest: Vec<usize> = x.iter().copied().filter(|&v| self.plus[v] != pid).collect();
             pads_plus
                 .into_iter()
                 .chain(std::iter::once(rest))
+                .filter(|y| !y.is_empty())
                 .map(|y| (y, false))
                 .collect()
         } else {
+            self.peel(x, id, pid, d, m, 1, &mut pads_minus)?;
             let rest: Vec<usize> = x
                 .iter()
                 .copied()
@@ -653,10 +776,93 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                 .collect();
             std::iter::once(rest)
                 .chain(pads_minus.into_iter().rev())
+                .filter(|y| !y.is_empty())
                 .map(|y| (y, false))
                 .collect()
         };
         Ok(cover)
+    }
+
+    /// More balls on `side` (0 outward, 1 inward) once its union holds a quarter of the mass `m`
+    /// of `x`: from the first vertex outside the union in the order of `x`, each grown as in
+    /// [`Solver::decompose`] in the set outside the balls before it, until one is heavy or the
+    /// union covers `x`. Each light ball's pad is pushed to `pads` and its core joins the
+    /// union. Each ball is one more `δ₀`-padded split of the rest, so the ascents of a walk stay
+    /// at most its length over `δ₀` (\[D\] Lemma l.337, padding composition), and each shell is
+    /// charged to its own core as in the loop of [`Solver::decompose`]. Without them the rest,
+    /// up to 3/4 of the mass, is decomposed again one level down, and this repeats for 4 to 5
+    /// levels of nearly the whole set on the both-ways family; with them, and the doubled `psi`
+    /// of [`Solver::run`], the vertices decomposed in all steps on a component of 6,141 vertices
+    /// fell from 337K to 162K (UTVPI-both-ways).
+    #[allow(clippy::too_many_arguments)]
+    fn peel(
+        &mut self,
+        x: &[usize],
+        id: u64,
+        pid: u64,
+        d: &Int,
+        m: u64,
+        side: usize,
+        pads: &mut Vec<Vec<usize>>,
+    ) -> Step<(), H> {
+        let g = self.g;
+        let mut cursor = 0;
+        loop {
+            let union = if side == 0 { &self.plus } else { &self.minus };
+            while cursor < x.len() && union[x[cursor]] == pid {
+                cursor += 1;
+            }
+            if cursor == x.len() {
+                return Ok(());
+            }
+            let s = x[cursor];
+            let epoch = self.next_id();
+            let mut ball = Ball::default();
+            let Solver {
+                ell,
+                member,
+                plus,
+                minus,
+                outward,
+                inward,
+                tick,
+                l,
+                scale0,
+                ..
+            } = self;
+            let (search, union) = if side == 0 {
+                (outward, plus)
+            } else {
+                (inward, minus)
+            };
+            search.start(epoch, s);
+            loop {
+                if search.settling.is_some() {
+                    search.relax_one(g, ell, |v| member[v] == id && union[v] != pid, tick)?;
+                    continue;
+                }
+                let next = search.peek(tick)?;
+                let at = Radii {
+                    m,
+                    l: *l,
+                    scale: scale0,
+                    d,
+                };
+                match ball.feed(next.as_ref().map(|(v, x)| (*v, x)), &g.mass, &at) {
+                    Fed::Took => {
+                        search.begin(next.expect("a ball takes only a vertex it is offered"));
+                    }
+                    Fed::Heavy => return Ok(()),
+                    Fed::Light => break,
+                }
+            }
+            for &v in &ball.core {
+                union[v] = pid;
+            }
+            let mut pad = ball.core;
+            pad.extend(ball.shell);
+            pads.push(pad);
+        }
     }
 
     /// The heavy case of \[D\] Lemma 4.4 around the center `s`: the lightest shell of width `δ_h`
@@ -835,9 +1041,8 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                 zeta[2 * total + slot] = high.cloned().unwrap_or(Int::ZERO);
             }
         }
-        let mut astart = Vec::with_capacity(3 * total + 1);
-        let (mut ato, mut aw): (Vec<usize>, Vec<Int>) = (Vec::new(), Vec::new());
-        astart.push(0);
+        // Its edges, the negative ones apart ([`Aux`]).
+        let mut aux = Aux::new(3 * total);
         // Connectors: from the copy of `u` in child `i`, for each edge `u → v` of `G[x]`, to the
         // prefix chain of `v` at its last child up to `i`, and to its suffix chain at its first
         // child after `i`. `edges` holds each edge and the place reached in `v`'s row.
@@ -870,62 +1075,138 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                     let base = &self.c[*e] + &phi[slot];
                     if *place > begin {
                         let node = total + *place - 1;
-                        ato.push(node);
-                        aw.push(&base - &zeta[node]);
+                        aux.edge(node, &base - &zeta[node]);
                     }
                     if *place < end {
                         let node = 2 * total + *place;
-                        ato.push(node);
-                        aw.push(&base - &zeta[node]);
+                        aux.edge(node, &base - &zeta[node]);
                     }
                 }
-                astart.push(ato.len());
+                aux.end_row();
             }
         }
         for k in 0..ns {
             for slot in mstart[k]..mstart[k + 1] {
                 if slot > mstart[k] {
-                    ato.push(total + slot - 1);
-                    aw.push(&zeta[total + slot] - &zeta[total + slot - 1]);
+                    aux.edge(
+                        total + slot - 1,
+                        &zeta[total + slot] - &zeta[total + slot - 1],
+                    );
                 }
-                ato.push(slot);
-                aw.push(&zeta[total + slot] - &phi[slot]);
-                astart.push(ato.len());
+                aux.edge(slot, &zeta[total + slot] - &phi[slot]);
+                aux.end_row();
             }
         }
         for k in 0..ns {
             for slot in mstart[k]..mstart[k + 1] {
                 if slot + 1 < mstart[k + 1] {
-                    ato.push(2 * total + slot + 1);
-                    aw.push(&zeta[2 * total + slot] - &zeta[2 * total + slot + 1]);
+                    aux.edge(
+                        2 * total + slot + 1,
+                        &zeta[2 * total + slot] - &zeta[2 * total + slot + 1],
+                    );
                 }
-                ato.push(slot);
-                aw.push(&zeta[2 * total + slot] - &phi[slot]);
-                astart.push(ato.len());
+                aux.edge(slot, &zeta[2 * total + slot] - &phi[slot]);
+                aux.end_row();
             }
         }
         // The source has an edge of weight -ζ to every node: the starting labels.
         let start: Vec<Int> = zeta.iter().map(|z| -z).collect();
-        let dist = bf_dijkstra(&astart, &ato, &aw, start, &seeds, self.eta, &mut self.tick)?;
+        let dist = bf_dijkstra(
+            aux.rows(),
+            aux.negative_rows(),
+            start,
+            &seeds,
+            self.eta,
+            &mut self.tick,
+        )?;
         Ok((0..ns)
             .map(|k| &dist[mstart[k]] + &phi[mstart[k]])
             .collect())
     }
 }
 
-/// Distances in the graph `start`, `to`, `w` in compressed rows from a source with an edge of
+/// A graph in compressed rows: the edges out of `x` go to `to[start[x]..start[x + 1]]`, of
+/// weights `w` there.
+#[derive(Clone, Copy)]
+struct Rows<'a> {
+    start: &'a [usize],
+    to: &'a [usize],
+    w: &'a [Int],
+}
+
+/// A graph built row by row, its negative edges kept in rows of their own.
+struct Aux {
+    start: Vec<usize>,
+    to: Vec<usize>,
+    w: Vec<Int>,
+    neg_start: Vec<usize>,
+    neg_to: Vec<usize>,
+    neg_w: Vec<Int>,
+}
+
+impl Aux {
+    fn new(nodes: usize) -> Aux {
+        let mut start = Vec::with_capacity(nodes + 1);
+        start.push(0);
+        Aux {
+            neg_start: start.clone(),
+            start,
+            to: Vec::new(),
+            w: Vec::new(),
+            neg_to: Vec::new(),
+            neg_w: Vec::new(),
+        }
+    }
+
+    /// An edge out of the current node.
+    fn edge(&mut self, y: usize, w: Int) {
+        if w.is_negative() {
+            self.neg_to.push(y);
+            self.neg_w.push(w);
+        } else {
+            self.to.push(y);
+            self.w.push(w);
+        }
+    }
+
+    /// Ends the current node's row.
+    fn end_row(&mut self) {
+        self.start.push(self.to.len());
+        self.neg_start.push(self.neg_to.len());
+    }
+
+    /// The edges of weight at least 0.
+    fn rows(&self) -> Rows<'_> {
+        Rows {
+            start: &self.start,
+            to: &self.to,
+            w: &self.w,
+        }
+    }
+
+    /// The negative edges.
+    fn negative_rows(&self) -> Rows<'_> {
+        Rows {
+            start: &self.neg_start,
+            to: &self.neg_to,
+            w: &self.neg_w,
+        }
+    }
+}
+
+/// Distances in the graph of the edges of `graph` and `negative` from a source with an edge of
 /// weight `label[x]` to each node `x`, the first round started from `seeds`, by Dijkstra's
-/// search on the edges of weight at least 0 with a round of the negative edges after each (\[D\]
-/// Lemma l.129). After round `k` each label is at most the weight of every walk with `k`
+/// search on the edges of `graph` of weight at least 0 with a round of the edges of `negative`
+/// after each (\[D\] Lemma l.129). `negative` holds every negative edge of `graph`, and only
+/// negative edges, so a round of them passes no others. After round `k` each label is at most the weight of every walk with `k`
 /// negative edges besides the source's, so a label
 /// that falls in round `eta` shows a walk shorter than all with `eta` negative edges, and the
 /// caller's negative cycle (\[D\] Theorem 3.1). A cycle of parent pointers is a negative cycle
 /// (the walk to the root of Cherkassky and Goldberg); it is looked for after each round, from
 /// the nodes whose label changed, each node visited once.
 fn bf_dijkstra<H>(
-    start: &[usize],
-    to: &[usize],
-    w: &[Int],
+    graph: Rows,
+    negative: Rows,
     mut label: Vec<Int>,
     seeds: &[usize],
     eta: u64,
@@ -959,6 +1240,7 @@ fn bf_dijkstra<H>(
             }
             settled_in[x] = round;
             settled.push(x);
+            let Rows { start, to, w } = graph;
             for e in start[x]..start[x + 1] {
                 unit(tick)?;
                 if w[e].is_negative() {
@@ -973,12 +1255,10 @@ fn bf_dijkstra<H>(
                 }
             }
         }
+        let Rows { start, to, w } = negative;
         for &x in &settled {
             for e in start[x]..start[x + 1] {
                 unit(tick)?;
-                if !w[e].is_negative() {
-                    continue;
-                }
                 let y = to[e];
                 let candidate = &label[x] + &w[e];
                 if candidate < label[y] {
@@ -1165,10 +1445,22 @@ impl<'a> Rounds<'a> {
 mod tests {
     use std::convert::Infallible;
 
-    use super::{Int, Stop, bf_dijkstra};
+    use super::{Aux, Int, Rows, Stop, bf_dijkstra};
 
-    /// A graph `u → (v, w)` in the compressed rows [`bf_dijkstra`] reads.
-    fn rows(out: &[Vec<(usize, i64)>]) -> (Vec<usize>, Vec<usize>, Vec<Int>) {
+    /// A graph `u → (v, w)` built in [`Aux`], the negative edges apart.
+    fn split(out: &[Vec<(usize, i64)>]) -> Aux {
+        let mut aux = Aux::new(out.len());
+        for edges in out {
+            for &(v, x) in edges {
+                aux.edge(v, Int::from(x));
+            }
+            aux.end_row();
+        }
+        aux
+    }
+
+    /// The same graph with every edge in one set of rows.
+    fn whole(out: &[Vec<(usize, i64)>]) -> (Vec<usize>, Vec<usize>, Vec<Int>) {
         let mut start = vec![0];
         let (mut to, mut w) = (Vec::new(), Vec::new());
         for edges in out {
@@ -1183,20 +1475,32 @@ mod tests {
 
     /// [`bf_dijkstra`] from labels 0, the first round started from the tails of the negative
     /// edges as [`super::Solver::merge`] starts it, with the round bound `eta`; `None` for a
-    /// negative cycle.
+    /// negative cycle. It runs on the edges of weight at least 0 as the merge passes them, and
+    /// on all the edges as [`super::Solver::quick`] passes them, and the two must agree.
     fn search(out: &[Vec<(usize, i64)>], eta: u64) -> Option<Vec<Int>> {
-        let (start, to, w) = rows(out);
         let seeds: Vec<usize> = (0..out.len())
             .filter(|&u| out[u].iter().any(|&(_, x)| x < 0))
             .collect();
-        let label = vec![Int::ZERO; out.len()];
-        match bf_dijkstra(&start, &to, &w, label, &seeds, eta, &mut || {
-            Ok::<(), Infallible>(())
-        }) {
-            Ok(d) => Some(d),
-            Err(Stop::Negative) => None,
-            Err(Stop::Tick(never)) => match never {},
-        }
+        let aux = split(out);
+        let (start, to, w) = whole(out);
+        let run = |graph: Rows| {
+            let label = vec![Int::ZERO; out.len()];
+            match bf_dijkstra(graph, aux.negative_rows(), label, &seeds, eta, &mut || {
+                Ok::<(), Infallible>(())
+            }) {
+                Ok(d) => Some(d),
+                Err(Stop::Negative) => None,
+                Err(Stop::Tick(never)) => match never {},
+            }
+        };
+        let found = run(aux.rows());
+        let all = Rows {
+            start: &start,
+            to: &to,
+            w: &w,
+        };
+        assert_eq!(run(all), found, "graph {out:?}");
+        found
     }
 
     /// The reference: Bellman–Ford from labels 0, `n` passes over every edge; a label that
