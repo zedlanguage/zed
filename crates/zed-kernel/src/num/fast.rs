@@ -72,7 +72,7 @@
 //! zeros to its fixed width. The largest power's reciprocal is found by Newton's iteration to
 //! only the precision that division and the level below need; each power below is a
 //! [`Level`] whose reciprocal is derived from the one above by one product and one cyclic
-//! product ([`derive`]), and whose reciprocal and power are transformed once for all its
+//! product ([`derive()`]), and whose reciprocal and power are transformed once for all its
 //! divisions. A division at a level takes one product for the quotient and one cyclic product
 //! of half its length for the remainder, which lies in `[0, 4d)` and so is found modulo
 //! `2^(64 m) - 1`. Each level divides numbers of `n` bits in total, O(M(n)), over
@@ -1364,12 +1364,13 @@ impl<'a> Divisor<'a> {
     }
 }
 
-/// The decimal digits of `x`, by halves: `x = high * 10^(L 2^i) + low`, `L` being
-/// [`PRINT_LEAF`], each half written alone and the low half padded with zeros to its width.
-/// The widest power, which divides once, is divided by a reciprocal of only the precision
-/// that division and the level below need; each power below it is a [`Level`], its
-/// reciprocal derived from the one above ([`derive`]), transformed once and reused by every
-/// division at its level. O(M(n) log n), the recursion `log2(n / L)` deep.
+/// The decimal digits of `x`, by halves: `x = high * 10^(L 2^i) + low`, `L` being 597, each
+/// half written alone and the low half padded with zeros to its width. The widest power, which
+/// divides once, is divided by a reciprocal of only the precision that division and the level
+/// below need; each power below it has its reciprocal derived from the one above by one
+/// product and one cyclic product, transformed once and reused by every division at its level.
+/// O(M(n) log n), the recursion `log2(n / L)` deep. Numbers of fewer than 60,000 words are
+/// written by num-bigint, which is faster there; the text is the same.
 pub fn to_decimal(x: &BigUint) -> String {
     // Complexity tradeoff: a number of fewer than `PRINT_WHOLE` words is printed whole by
     // num-bigint, whose printing is faster there: it costs about 2.85 times as much per
@@ -1410,7 +1411,7 @@ pub fn to_decimal(x: &BigUint) -> String {
     // K81).
     let n = top.bits();
     // The quotient has at most `k` bits. The reciprocal of `top` is taken to `p` bits, enough
-    // for the quotient and for the level below (see [`derive`]), which needs `p >= w + 3`
+    // for the quotient and for the level below (see [`derive()`]), which needs `p >= w + 3`
     // for its `w` bits of words, its square being `top`.
     let k = x.bits() - n + 1;
     let p = powers
@@ -1540,7 +1541,7 @@ fn derive(
 impl Printer {
     /// The levels of the powers `10^(L 2^i)` listed, each the square of the one before,
     /// those of at most [`PRINT_HANDOFF`] words left to leaves, given `above = (ya, ea)`, the
-    /// reciprocal of the square of the widest as [`derive`] takes it; each level's reciprocal
+    /// reciprocal of the square of the widest as [`derive()`] takes it; each level's reciprocal
     /// is derived from the one above.
     fn new(powers: Vec<BigUint>, above: (BigUint, u64)) -> Printer {
         let first = powers
@@ -2034,7 +2035,7 @@ mod tests {
         }
     }
 
-    /// [`derive`] from the reciprocal of `d^2` and from it plus 1 to 4 (with 3 more bits),
+    /// [`derive()`] from the reciprocal of `d^2` and from it plus 1 to 4 (with 3 more bits),
     /// against the reciprocal of `d` by num-bigint's division, for powers of ten and random `d`.
     #[test]
     fn derived_reciprocals_agree_with_division() {
