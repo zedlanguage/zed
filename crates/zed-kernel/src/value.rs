@@ -49,7 +49,6 @@ use num_traits::ToPrimitive;
 use crate::deep::{self, Queue};
 use crate::num::{Exact, Rat, TooLarge, bytes_of, read_decimal, room, sign_of};
 use crate::text::{Text, TooLong};
-use crate::types::KeyHasher;
 
 /// `minimum(a, b)` (`min` true) or `maximum(a, b)` of IEEE 754-2019 (DESIGN.md sec:reduction,
 /// item 5): a NaN in either position gives a NaN, and `-0.0` is below `0.0`, so
@@ -1088,14 +1087,14 @@ impl Family {
         other: &'a Family,
         limit: usize,
     ) -> Option<Vec<DiffItem<'a, 'a, Value, Value>>> {
-        /// Clears [`SHALLOW`] when the walk ends.
+        /// Clears `shallow` ([`Comparisons`]) when the walk ends.
         struct Shallow;
         impl Drop for Shallow {
             fn drop(&mut self) {
-                SHALLOW.set(false);
+                COMPARISONS.with(|c| c.shallow.set(false));
             }
         }
-        SHALLOW.set(true);
+        COMPARISONS.with(|c| c.shallow.set(true));
         let _shallow = Shallow;
         let mut out = Vec::new();
         for d in self.0.diff(&other.0) {
@@ -1214,36 +1213,92 @@ pub(crate) enum Part {
 thread_local! {
     /// The parts of values waiting to be dropped.
     static PARTS: Queue<Part> = const { Queue::new() };
-    /// Whether a comparison further up this thread's stack is already reading [`PAIRS`].
-    static COMPARING: Cell<bool> = const { Cell::new(false) };
+    /// The state of the comparisons running on this thread.
+    static COMPARISONS: Comparisons = const {
+        Comparisons {
+            comparing: Cell::new(false),
+            pairs: RefCell::new(Vec::new()),
+            scopes: Cell::new(0),
+            read: RefCell::new(
+                [const { ReadSet::with_hasher(BuildHasherDefault::new()) }; RELATIONS],
+            ),
+            shallow: Cell::new(false),
+        }
+    };
+}
+
+/// The state of the comparisons running on one thread, in one thread local: the kernel is a
+/// shared library in the test build, where each access to a thread local is a call, and a
+/// comparison reads it once and passes it down. Two families compared by `==` inside `diff`
+/// took 6 accesses each when every field was a thread local of its own (K73).
+struct Comparisons {
+    /// Whether a comparison further up this thread's stack is already reading `pairs`.
+    comparing: Cell<bool>,
     /// The pairs of families a comparison has yet to read.
-    static PAIRS: RefCell<Vec<(Family, Family)>> = const { RefCell::new(Vec::new()) };
+    pairs: RefCell<Vec<(Family, Family)>>,
     /// How many comparisons are running on this thread, one inside another: `diff` calls `==`
     /// on the entries it finds, which starts a comparison inside the one that called `diff`.
-    static SCOPES: Cell<usize> = const { Cell::new(0) };
+    scopes: Cell<usize>,
     /// By relation, the pairs of shared sequences and of families that the comparisons running
     /// on this thread have read to their end with no difference, the pairs the walk in hand has
     /// entered and not yet left, and under identity the pairs of families queued. Emptied when
     /// the outermost comparison ends.
-    static READ: RefCell<[ReadSet; RELATIONS]> = const {
-        RefCell::new([const { ReadSet::with_hasher(BuildHasherDefault::new()) }; RELATIONS])
-    };
+    read: RefCell<[ReadSet; RELATIONS]>,
     /// Whether [`Family::shallow_diff`] is running: two families that do not share their map
     /// are then taken to differ, without reading them.
-    static SHALLOW: Cell<bool> = const { Cell::new(false) };
+    shallow: Cell<bool>,
 }
 
-/// The number of relations, one set of pairs each in [`READ`]: [`Relation::Max`] is the last.
+impl Comparisons {
+    /// Records that a walk enters `pair` under `r`; false when a comparison running on this
+    /// thread has entered it already. One lookup per pair: a pair is kept from the moment it is
+    /// entered, and [`Comparisons::leave`] takes it out again when the walk ends at a difference
+    /// first.
+    fn enter(&self, pair: Pair, r: Relation) -> bool {
+        self.read.borrow_mut()[r as usize].insert(pair)
+    }
+
+    /// Takes `pair` out of the pairs read under `r`: the walk ended before reading it to its end.
+    fn leave(&self, pair: Pair, r: Relation) {
+        self.read.borrow_mut()[r as usize].remove(&pair);
+    }
+}
+
+/// The number of relations, one set of pairs each in `read` ([`Comparisons`]):
+/// [`Relation::Max`] is the last.
 const RELATIONS: usize = Relation::Max as usize + 1;
 
-/// The pairs of ids read under one relation. A pair hashes as its two words with
-/// [`KeyHasher`]; SipHash took 60 to 80% more instructions per pair of families (K73).
-type ReadSet = HashSet<Pair, BuildHasherDefault<KeyHasher>>;
+/// The pairs of ids read under one relation.
+type ReadSet = HashSet<Pair, BuildHasherDefault<PairHasher>>;
+
+/// The hasher of [`ReadSet`]: each word folded in by one 64 by 64 to 128 bit multiply, whose
+/// two halves are added by exclusive or. Ids come from one counter in the runtime, not from
+/// input. SipHash took 60 to 80% more instructions per pair of families than splitmix64's
+/// finalizer on each word, and that finalizer 45 more per pair than this (K73).
+#[derive(Default)]
+struct PairHasher(u64);
+
+impl std::hash::Hasher for PairHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        let m = u128::from(self.0 ^ x) * 0x9e37_79b9_7f4a_7c15_u128;
+        self.0 = (m as u64) ^ ((m >> 64) as u64);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
 
 /// The pairs a comparison reads are kept while it and every comparison it starts run
-/// ([`READ`]). Sequences and families draw their ids from one counter, no id is drawn twice,
-/// and a value with an id is never changed, so a pair read once has the same answer wherever
-/// the comparison meets it again.
+/// (`read` in [`Comparisons`]). Sequences and families draw their ids from one counter, no id
+/// is drawn twice, and a value with an id is never changed, so a pair read once has the same
+/// answer wherever the comparison meets it again.
 ///
 /// Every pair of families a walk enters is kept, however the two are held. Keeping only the
 /// pairs that can be met again would need to know which families are held in more than one
@@ -1254,36 +1309,36 @@ type ReadSet = HashSet<Pair, BuildHasherDefault<KeyHasher>>;
 /// once per family that shares that map's node, and a pair met n times and read each time
 /// costs n times its size (`comparing_families_made_from_one_family_scales`). A sequence is
 /// different: it is one `Arc` with no inner nodes, so one held once is kept by no pair.
-struct Scope;
+struct Scope<'c>(&'c Comparisons);
 
-impl Scope {
-    fn enter() -> Scope {
-        SCOPES.set(SCOPES.get() + 1);
-        Scope
+impl<'c> Scope<'c> {
+    fn enter(c: &'c Comparisons) -> Self {
+        c.scopes.set(c.scopes.get() + 1);
+        Scope(c)
     }
 }
 
-impl Drop for Scope {
+impl Drop for Scope<'_> {
     fn drop(&mut self) {
-        let left = SCOPES.get() - 1;
-        SCOPES.set(left);
+        let left = self.0.scopes.get() - 1;
+        self.0.scopes.set(left);
         if left == 0 {
-            let read = READ.with_borrow_mut(mem::take);
-            drop(read);
+            for set in self.0.read.borrow_mut().iter_mut() {
+                // Complexity tradeoff: a set is emptied in place, keeping its table for the
+                // next comparison, which then does not grow it again (13 to 16 million
+                // instructions of 630 on 200 000 pairs, K73); emptying takes time in proportion
+                // to the table, so a table more than 8 times the pairs it held is freed
+                // instead. Either way the cost is at most a constant times the pairs this
+                // comparison added, and a thread keeps at most a table 8 times the size of the
+                // last comparison's pairs.
+                if set.len() * 8 < set.capacity() {
+                    *set = ReadSet::default();
+                } else {
+                    set.clear();
+                }
+            }
         }
     }
-}
-
-/// Records that a walk enters `pair` under `r`; false when a comparison running on this
-/// thread has entered it already. One lookup per pair: a pair is kept from the moment it is
-/// entered, and [`leave`] takes it out again when the walk ends at a difference first.
-fn enter(pair: Pair, r: Relation) -> bool {
-    READ.with_borrow_mut(|read| read[r as usize].insert(pair))
-}
-
-/// Takes `pair` out of the pairs read under `r`: the walk ended before reading it to its end.
-fn leave(pair: Pair, r: Relation) {
-    READ.with_borrow_mut(|read| read[r as usize].remove(&pair));
 }
 
 /// Drops `part`. A drop reached from inside this one queues its part and returns, so a chain of
@@ -1293,7 +1348,7 @@ pub(crate) fn free(part: Part) {
 }
 
 /// Which relation a walk over two values computes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Relation {
     /// The total order of [`Ord`].
     Total,
@@ -1324,25 +1379,61 @@ enum Level<'a> {
         Relation,
         Option<Pair>,
     ),
-    /// On the heap: a map iterator is many times the size of a slice iterator, and tuples
-    /// are the common level.
-    Maps(Box<MapLevel<'a>>),
+    /// The entries of two families: the last of the walk's map levels. A map iterator is many
+    /// times the size of a slice iterator, and tuples are the common level, so the map levels
+    /// are kept apart, on a stack of their own that one walk allocates once.
+    Maps,
 }
 
-impl Level<'_> {
-    /// The pair of ids the level is kept by in [`READ`], with its relation; none for two
-    /// sequences each held once.
-    fn read(&self) -> Option<(Pair, Relation)> {
-        match self {
-            Level::Items(.., r, pair) => pair.map(|pair| (pair, *r)),
-            Level::Maps(m) => Some((m.pair, m.relation)),
-        }
-    }
+/// A level a walk is to enter.
+enum Enter<'a> {
+    /// The two sequences, and the pair of their ids when either is shared.
+    Items(
+        slice::Iter<'a, Value>,
+        slice::Iter<'a, Value>,
+        Relation,
+        Option<Pair>,
+    ),
+    /// The two families.
+    Maps(&'a Family, &'a Family, Relation),
+}
 
-    /// Whether the level is to be read: false when a comparison running on this thread has
-    /// entered its pair already. Kept from now on.
-    fn enter(&self) -> bool {
-        self.read().is_none_or(|(pair, r)| enter(pair, r))
+/// The level `enter` opens, its map's entries pushed on `maps`, and its pair kept in `read`
+/// ([`Comparisons`]) from now on. `Ok(None)` when there is nothing to read here: a comparison
+/// running on this thread has entered that pair already, or under identity the two families
+/// are queued, to be read with `diff` ([`settle`]). `Err` ends the walk with its result. A pair
+/// met again is found before its map iterators are made.
+fn open<'a>(
+    c: &Comparisons,
+    enter: Enter<'a>,
+    maps: &mut Vec<MapLevel<'a>>,
+) -> Result<Option<Level<'a>>, Option<Ordering>> {
+    match enter {
+        Enter::Items(a, b, r, pair) => Ok(pair
+            .is_none_or(|pair| c.enter(pair, r))
+            .then_some(Level::Items(a, b, r, pair))),
+        Enter::Maps(_, _, Relation::Identity) if c.shallow.get() => Err(None),
+        Enter::Maps(a, b, relation) => {
+            let pair = (a.id(), b.id());
+            // The comparison is the same only if every queued pair is, so a pair queued once
+            // is not queued again.
+            if !c.enter(pair, relation) {
+                return Ok(None);
+            }
+            if relation == Relation::Identity {
+                // A family is copied by a reference count, so the queue holds no data.
+                c.pairs.borrow_mut().push((a.clone(), b.clone()));
+                return Ok(None);
+            }
+            maps.push(MapLevel {
+                a: a.0.iter(),
+                b: b.0.iter(),
+                values: None,
+                relation,
+                pair,
+            });
+            Ok(Some(Level::Maps))
+        }
     }
 }
 
@@ -1364,7 +1455,7 @@ enum Step<'a> {
     /// The result of the whole walk: a difference, or `None` for an unordered pair.
     Ends(Option<Ordering>),
     /// The two are the same only if their parts are.
-    Enter(Level<'a>),
+    Enter(Enter<'a>),
     /// The level has no entries left on either side.
     Done,
 }
@@ -1382,7 +1473,7 @@ fn items<'a>(a: &'a Items, b: &'a Items, r: Relation) -> Step<'a> {
         {
             Step::Ends(None)
         }
-        _ => Step::Enter(Level::Items(a.iter(), b.iter(), r, Items::pair(a, b))),
+        _ => Step::Enter(Enter::Items(a.iter(), b.iter(), r, Items::pair(a, b))),
     }
 }
 
@@ -1395,27 +1486,10 @@ fn atoms<'a>(a: &'a Atom, b: &'a Atom, r: Relation) -> Step<'a> {
 
 fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
     let same = a.0.ptr_eq(&b.0);
-    let pair = (a.id(), b.id());
     match r {
         Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
-        Relation::Identity if same => Step::Same,
-        Relation::Identity if SHALLOW.get() => Step::Ends(None),
-        // The comparison is the same only if every queued pair is, so a pair queued once is
-        // not queued again.
-        Relation::Identity if !enter(pair, r) => Step::Same,
-        Relation::Identity => {
-            // A family is copied by a reference count, so the queue holds no data.
-            PAIRS.with_borrow_mut(|pairs| pairs.push((a.clone(), b.clone())));
-            Step::Same
-        }
-        Relation::Total | Relation::Min | Relation::Max if same => Step::Same,
-        _ => Step::Enter(Level::Maps(Box::new(MapLevel {
-            a: a.0.iter(),
-            b: b.0.iter(),
-            values: None,
-            relation: r,
-            pair,
-        }))),
+        Relation::Identity | Relation::Total | Relation::Min | Relation::Max if same => Step::Same,
+        _ => Step::Enter(Enter::Maps(a, b, r)),
     }
 }
 
@@ -1485,14 +1559,17 @@ fn side<'a>(a: bool, b: bool) -> Step<'a> {
     }
 }
 
-/// Takes the next entry of `level`.
-fn advance<'a>(level: &mut Level<'a>) -> Step<'a> {
+/// Takes the next entry of `level`, whose map entries, if any, are the last of `maps`.
+fn advance<'a>(level: &mut Level<'a>, maps: &mut [MapLevel<'a>]) -> Step<'a> {
     match level {
         Level::Items(a, b, r, _) => match (a.next(), b.next()) {
             (Some(x), Some(y)) => step(x, y, *r),
             (x, y) => side(x.is_some(), y.is_some()),
         },
-        Level::Maps(level) => {
+        Level::Maps => {
+            let level = maps
+                .last_mut()
+                .expect("a map level has its entries on the stack");
             if let Some((v, w)) = level.values.take() {
                 return step(v, w, level.relation);
             }
@@ -1513,43 +1590,78 @@ fn advance<'a>(level: &mut Level<'a>) -> Step<'a> {
 /// the levels above the one in hand. Shared tuples make a value a DAG, so a pair of shared
 /// sequences or of families is kept when the walk enters it, and met again it is the same
 /// without a second reading: the walk is O(distinct pairs), not O(paths). The pairs are kept in
-/// [`READ`] until the outermost comparison ends, so the comparisons that `diff` starts share
+/// `read` ([`Comparisons`]) until the outermost comparison ends, so the comparisons that `diff` starts share
 /// them. A pair met again while it is being read would be a cycle, which no value has; a walk
 /// that ends at a difference inside another comparison takes out the pairs it has not read to
 /// their end, so that the comparison around it finds only pairs read with no difference.
 fn walk(first: Step<'_>) -> Option<Ordering> {
-    let mut level = match first {
-        Step::Same | Step::Done => return Some(Ordering::Equal),
-        Step::Ends(o) => return o,
-        Step::Enter(level) => level,
-    };
-    let _scope = Scope::enter();
-    if !level.enter() {
-        return Some(Ordering::Equal);
+    match first {
+        Step::Same | Step::Done => Some(Ordering::Equal),
+        Step::Ends(o) => o,
+        Step::Enter(first) => COMPARISONS.with(|c| walk_in(c, first)),
     }
+}
+
+/// [`walk`] with this thread's [`Comparisons`] in hand.
+fn walk_with(c: &Comparisons, first: Step<'_>) -> Option<Ordering> {
+    match first {
+        Step::Same | Step::Done => Some(Ordering::Equal),
+        Step::Ends(o) => o,
+        Step::Enter(first) => walk_in(c, first),
+    }
+}
+
+/// [`walk`] from the first level it enters.
+fn walk_in(c: &Comparisons, first: Enter<'_>) -> Option<Ordering> {
+    let _scope = Scope::enter(c);
+    let mut maps = Vec::new();
+    let mut level = match open(c, first, &mut maps) {
+        Ok(Some(level)) => level,
+        Ok(None) => return Some(Ordering::Equal),
+        Err(o) => return o,
+    };
     let mut above = Vec::new();
     loop {
-        match advance(&mut level) {
-            Step::Same => {}
-            Step::Ends(o) => {
-                // The outermost comparison empties the set as it ends.
-                if SCOPES.get() > 1 {
-                    for (pair, r) in above.iter().chain([&level]).filter_map(Level::read) {
-                        leave(pair, r);
-                    }
+        let o = match advance(&mut level, &mut maps) {
+            Step::Same => continue,
+            Step::Ends(o) => o,
+            Step::Enter(Enter::Items(a, b, r, pair)) => {
+                if pair.is_none_or(|pair| c.enter(pair, r)) {
+                    above.push(mem::replace(&mut level, Level::Items(a, b, r, pair)));
                 }
-                return o;
+                continue;
             }
-            Step::Enter(inner) => {
-                if inner.enter() {
+            Step::Enter(inner) => match open(c, inner, &mut maps) {
+                Ok(Some(inner)) => {
                     above.push(mem::replace(&mut level, inner));
+                    continue;
+                }
+                Ok(None) => continue,
+                Err(o) => o,
+            },
+            Step::Done => {
+                if let Level::Maps = level {
+                    maps.pop();
+                }
+                match above.pop() {
+                    Some(outer) => level = outer,
+                    None => return Some(Ordering::Equal),
+                }
+                continue;
+            }
+        };
+        // The walk ends at a difference. The outermost comparison empties the set as it ends.
+        if c.scopes.get() > 1 {
+            for l in above.iter().chain([&level]) {
+                if let Level::Items(.., r, Some(pair)) = l {
+                    c.leave(*pair, *r);
                 }
             }
-            Step::Done => match above.pop() {
-                Some(outer) => level = outer,
-                None => return Some(Ordering::Equal),
-            },
+            for m in &maps {
+                c.leave(m.pair, m.relation);
+            }
         }
+        return o;
     }
 }
 
@@ -1557,31 +1669,42 @@ fn walk(first: Step<'_>) -> Option<Ordering> {
 /// started while the queue is being read leaves its families in the queue: `diff` calls `==`
 /// on the entries it finds, inside imbl, where no stack of ours can reach, and this keeps that
 /// call from nesting.
-fn settle(same: bool) -> bool {
-    if COMPARING.get() {
+fn settle(c: &Comparisons, same: bool) -> bool {
+    if c.comparing.get() {
         return same;
     }
-    COMPARING.set(true);
+    c.comparing.set(true);
     let mut all = same;
-    while all && let Some((a, b)) = PAIRS.with_borrow_mut(Vec::pop) {
+    let pop = || c.pairs.borrow_mut().pop();
+    while all && let Some((a, b)) = pop() {
         all = a.0.diff(&b.0).next().is_none();
     }
-    COMPARING.set(false);
-    let left = PAIRS.with_borrow_mut(mem::take);
+    c.comparing.set(false);
+    let left = mem::take(&mut *c.pairs.borrow_mut());
     drop(left);
     all
 }
 
 /// Whether two sequences of values are the same.
 pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
-    let _scope = Scope::enter();
-    settle(walk(items(a, b, Relation::Identity)) == Some(Ordering::Equal))
+    COMPARISONS.with(|c| {
+        let _scope = Scope::enter(c);
+        settle(
+            c,
+            walk_with(c, items(a, b, Relation::Identity)) == Some(Ordering::Equal),
+        )
+    })
 }
 
 /// Whether two families are the same.
 pub(crate) fn families_eq(a: &Family, b: &Family) -> bool {
-    let _scope = Scope::enter();
-    settle(walk(maps(a, b, Relation::Identity)) == Some(Ordering::Equal))
+    COMPARISONS.with(|c| {
+        let _scope = Scope::enter(c);
+        settle(
+            c,
+            walk_with(c, maps(a, b, Relation::Identity)) == Some(Ordering::Equal),
+        )
+    })
 }
 
 /// The total order on two sequences of values.
@@ -2373,5 +2496,24 @@ mod tests {
             s.to_string(),
             "recursion stalled: entries 1, 2 depend on each other"
         );
+    }
+
+    #[test]
+    fn a_table_of_pairs_is_kept_only_for_a_comparison_of_like_size() {
+        // A comparison empties the table of pairs it filled and keeps it for the next, which
+        // then does not grow it again. Emptying takes time in proportion to the table, so a
+        // comparison that adds far fewer pairs frees it: small comparisons after a large one do
+        // not each empty the large table.
+        let small = |k: i64| Value::Family(Family::of([("x", Value::Int(k))]));
+        let large = || Value::Family(Family::of((0..1000).map(|k| (k, small(k)))));
+        let capacity =
+            || COMPARISONS.with(|c| c.read.borrow()[Relation::Identity as usize].capacity());
+        assert!(large() == large());
+        let kept = capacity();
+        assert!(kept > 1000);
+        assert!(large() == large());
+        assert_eq!(capacity(), kept);
+        assert!(small(1) == small(1));
+        assert_eq!(capacity(), 0);
     }
 }

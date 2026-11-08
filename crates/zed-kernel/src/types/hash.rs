@@ -13,10 +13,9 @@ pub(crate) fn mix(a: u64, b: u64) -> u64 {
 }
 
 /// The hasher of the memo of restricted list cells (`bdd::list::Memo`), of the thread's tables of
-/// live rows, morphism types and set nodes, and of the pairs a comparison of values has read
-/// (`value::Read`): splitmix64's finalizer on each `u64` in turn. SipHash took an eighth of the
-/// restriction of a list of three blocks. It is here, beside `mix`, so that `bdd::set` hashes
-/// with it without importing `bdd` (s_01f_import_graph).
+/// live rows, morphism types and set nodes: splitmix64's finalizer on each `u64` in turn.
+/// SipHash took an eighth of the restriction of a list of three blocks. It is here, beside
+/// `mix`, so that `bdd::set` hashes with it without importing `bdd` (s_01f_import_graph).
 #[derive(Default)]
 pub(crate) struct KeyHasher(u64);
 

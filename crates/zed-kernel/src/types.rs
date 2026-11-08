@@ -26,7 +26,6 @@ pub mod bes;
 mod debug;
 mod empty;
 mod hash;
-pub(crate) use bdd::KeyHasher;
 #[cfg(test)]
 use hash::SALT;
 pub(crate) use hash::mix;
