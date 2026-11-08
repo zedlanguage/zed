@@ -433,7 +433,7 @@ impl Canon {
     fn open(&self, f: &mut Vec<Entry>) {
         let (s, k) = f.pop().expect("a symbol on top");
         match &self.syms[s] {
-            Sym::Run(_, x, n) => f.push((*x, n * k)),
+            Sym::Run(_, x, n) => f.push((*x, zed_kernel::num::mul_uint(n, &k))),
             Sym::Chunk(_, xs) => {
                 if !k.is_one() {
                     f.push((s, k - 1u8));

@@ -169,3 +169,78 @@ fn printing_a_wide_number_scales() {
         assert!(!at(&inputs, n, m).numer_text().is_empty());
     });
 }
+
+/// Item BIGINT-fast-mul: `zed_kernel::num::mul_uint`, `mul_int` and `pow_uint` give
+/// num-bigint's products on both sides of each crossover (512 words, and the computed costs
+/// above it, where num-bigint's product, rows over nonzero words or the transforms are taken):
+/// random factors, all-ones words, powers of two and their successors, one word by a number of
+/// 2^17 words, zero, and every pair of signs.
+#[test]
+fn products_agree_with_num_bigint_across_the_crossovers() {
+    use zed_kernel::num::{mul_int, mul_uint, pow_uint};
+    let ones = |w: usize| (BigUint::one() << (64 * w)) - 1u32;
+    let two = |w: usize| BigUint::one() << (64 * w - 1);
+    let forms = |w: usize, seed: u64| {
+        [
+            random(w, seed).into_parts().1,
+            ones(w),
+            two(w),
+            two(w) + 1u32,
+        ]
+    };
+    let shapes = [
+        (1, 1),
+        (1, 1 << 17),
+        (511, 511),
+        (512, 512),
+        (513, 513),
+        (513, 70_000),
+        (1024, 1024),
+        (1536, 1536),
+        (2048, 2048),
+        (2049, 2049),
+        (2560, 2560),
+        (3000, 9000),
+        (4097, 4097),
+    ];
+    let mut checked = 0;
+    for (k, &(s, l)) in shapes.iter().enumerate() {
+        for x in forms(s, 2 * k as u64) {
+            for y in forms(l, 2 * k as u64 + 1) {
+                let want = &x * &y;
+                assert_eq!(mul_uint(&x, &y), want, "{s} by {l} words");
+                assert_eq!(mul_uint(&y, &x), want, "{l} by {s} words");
+                checked += 2;
+            }
+        }
+    }
+    assert_eq!(checked, 13 * 4 * 4 * 2);
+    let x = random(3000, 40);
+    let y = random(5000, 41);
+    for (a, b) in [(&x, &y), (&-&x, &y), (&x, &-&y), (&-&x, &-&y)] {
+        assert_eq!(mul_int(a, b), a * b);
+    }
+    let zero = BigUint::zero();
+    assert_eq!(mul_uint(&zero, &ones(5000)), zero);
+    assert_eq!(mul_int(&BigInt::zero(), &-&x), BigInt::zero());
+    let base = random(700, 42).into_parts().1;
+    assert_eq!(pow_uint(&base, 5), num_traits::Pow::pow(&base, 5u32));
+    assert_eq!(pow_uint(&base, 0), BigUint::one());
+}
+
+/// A product of two dense numbers of n words, by `Rat::mul` and so `zed_kernel::num::mul_int`:
+/// transforms modulo three primes, O(n log n), where num-bigint's Toom-3 is O(n^1.465).
+#[test]
+fn a_dense_product_scales() {
+    let n = 1 << 13;
+    let inputs = built(n, |m| (int(random(m, 50)), int(random(m, 51))));
+    let (x, y) = at(&inputs, n, n);
+    assert_eq!(
+        x.mul(y).expect("memory is given").integer_factors().0,
+        &(random(n, 50) * random(n, 51))
+    );
+    check("a product of two dense numbers of n words", n, |m| {
+        let (x, y) = at(&inputs, n, m);
+        assert!(!x.mul(y).expect("memory is given").is_zero());
+    });
+}

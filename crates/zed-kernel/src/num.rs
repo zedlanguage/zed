@@ -32,6 +32,7 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use bound::{Format, Product};
 use fast::built;
+pub use fast::{mul as mul_uint, mul_int, pow as pow_uint};
 pub use room::{LiteralRounding, TooLarge, bytes_of, room};
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
@@ -178,7 +179,7 @@ impl Rat {
         }
         let (t, rest) = valuation_upto(digits, 2, k);
         let (f, num) = valuation_upto(rest, 5, k);
-        let den = BigInt::from(fast::pow(BigUint::from(5u32), k - f) << (k - t));
+        let den = BigInt::from(fast::pow(&BigUint::from(5u32), k - f) << (k - t));
         Rat::plain(num, den)
     }
 
@@ -213,11 +214,13 @@ impl Rat {
     pub fn to_integer(&self) -> Result<BigInt, TooLarge> {
         // Complexity tradeoff: the memory asked for is eight times the integer's width, a
         // measured bound, not a proved one, on building it power by power (each power by
-        // num-bigint's squaring and the running product by `num::fast::mul`): the peak heap
-        // was at most 3.85 times the width over integers of 2^14 to 2^24 bits, one prime,
-        // several primes, and a wide coefficient times a power (2026-11-06, glibc's mmap
-        // threshold fixed at 128 KiB). So an integer needing
-        // less is refused when the free memory lies between the two, and none aborts. Tested by
+        // squaring with `num::fast::mul`, and the running product by it): the peak heap was at
+        // most 3.85 times the width over integers of 2^14 to 2^24 bits, one prime, several
+        // primes, and a wide coefficient times a power (2026-11-06, glibc's mmap threshold
+        // fixed at 128 KiB, the powers then by num-bigint's squaring). With the powers by
+        // `num::fast::pow` (2026-11-07) a power alone peaked at 6.43 times its width, below the
+        // ask; the whole build was not measured again. So an integer needing less is refused
+        // when the free memory lies between the two, and none aborts. Tested by
         // `building_a_kept_power_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the build for its own memory.
         room(
@@ -231,11 +234,12 @@ impl Rat {
 
     /// The integer it is, built, with no check of its size. It must be an integer.
     fn integer_built(&self) -> BigInt {
-        let mut out = self.num.clone();
-        for (p, e) in self.pows.iter() {
-            out *= Pow::pow(BigInt::from(*p), e.magnitude());
-        }
-        out
+        let pows: Vec<(u64, BigUint)> = self
+            .pows
+            .iter()
+            .map(|(p, e)| (*p, e.magnitude().clone()))
+            .collect();
+        fast::mul_int(&self.num, &built(&pows))
     }
 
     /// Whether the integer it is is even: a positive power of 2, or an even coefficient. It
@@ -326,7 +330,7 @@ impl Rat {
         if !self.is_plain() {
             // Complexity tradeoff: the memory asked for is eight times the width of the two
             // sides together, the factor `to_integer` asks for the same build (powers by
-            // squaring, the product by num-bigint's multiplication), whose peak it measured at
+            // squaring, the product by `num::fast::mul`), whose peak it measured at
             // 5.49 times the width; this build was not measured on its own, and a power of 2
             // here is a shift, which needs less. So a number needing less is refused when the
             // free memory lies between the two, and none aborts. Tested by
@@ -344,7 +348,7 @@ impl Rat {
                 .collect();
             match pows.is_empty() {
                 true => Cow::Borrowed(coef.magnitude()),
-                false => Cow::Owned(coef.magnitude() * built(&pows).magnitude()),
+                false => Cow::Owned(fast::mul(coef.magnitude(), built(&pows).magnitude())),
             }
         }
         Ok((
@@ -470,8 +474,10 @@ impl Rat {
             // `num::fast`): the peak heap was at most 9.24 times that width over numerators
             // and denominators of 3 to 2^16 words, and the gcd alone of two parts with a common
             // factor at most 8.83 times their sum (2026-11-06, glibc's mmap threshold fixed at
-            // 128 KiB). So a sum needing less is refused when
-            // the free memory lies between the two, and none aborts. Tested by `a_wide_
+            // 128 KiB). The products have been by `num::fast::mul_int` since BIGINT-fast-mul
+            // (2026-11-07), at most 5.00 times a product's width; the sum was not measured
+            // again. So a sum needing less is refused when the free memory lies between the
+            // two, and none aborts. Tested by `a_wide_
             // rational_difference_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
             // complete solution would ask each allocation of the reduction for its own memory,
             // which needs a reduction written here rather than num-bigint's.
@@ -479,8 +485,11 @@ impl Rat {
             let d = self.den.bits() + b.den.bits();
             room(BigUint::from(n + d) << 4u32)?;
             return Ok(Rat::new(
-                signed(&self.num * &b.den, &b.num * &self.den),
-                &self.den * &b.den,
+                signed(
+                    fast::mul_int(&self.num, &b.den),
+                    fast::mul_int(&b.num, &self.den),
+                ),
+                fast::mul_int(&self.den, &b.den),
             )
             .expect("den > 0"));
         }
@@ -531,11 +540,11 @@ impl Rat {
             .map(|(n, rest, d)| width(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
         let [x, y] = sizes;
         room((x.max(y) + 1u32) << 3u32)?;
-        let ra = &a.num * built(&rest_a);
-        let rb = &b.num * built(&rest_b);
+        let ra = fast::mul_int(&a.num, &built(&rest_a));
+        let rb = fast::mul_int(&b.num, &built(&rest_b));
         Ok(Rat::build(
-            signed(ra * &b.den, rb * &a.den),
-            &a.den * &b.den,
+            signed(fast::mul_int(&ra, &b.den), fast::mul_int(&rb, &a.den)),
+            fast::mul_int(&a.den, &b.den),
             common,
         ))
     }
@@ -546,17 +555,18 @@ impl Rat {
     pub fn mul(&self, b: &Rat) -> Result<Rat, TooLarge> {
         if self.is_plain() && b.is_plain() && self.den.is_one() && b.den.is_one() {
             // Complexity tradeoff: the memory asked for a product of two integers is eight
-            // times the product's width, a measured bound, not a proved one, on num-bigint's
-            // multiplication (Toom-3, whose parts and their products are held at once): the
-            // peak heap was at most 5.0 times the product's width over operands of 2^8 to 2^18
-            // words, balanced, unbalanced and all ones. So a product needing less is refused
-            // when the free memory lies between the two, and none aborts. Tested by
+            // times the product's width, a measured bound, not a proved one, on `num::fast::mul`
+            // (num-bigint's Toom-3 or the three residue lists of the transform, held at once):
+            // the peak heap was at most 5.00 times the product's width over operands of 2^8 to
+            // 2^18 words, balanced, unbalanced, all ones and squares (2026-11-07, BIGINT-fast-mul;
+            // 5.0 with num-bigint alone). So a product needing less is refused when the free
+            // memory lies between the two, and none aborts. Tested by
             // `a_product_or_quotient_of_wide_numbers_is_refused_when_memory_is_short`
             // (COMPLEXITY.md K30).
             // A complete solution would be a multiplication whose scratch is allocated once,
             // its size known by construction.
             room(BigUint::from(self.num.bits() + b.num.bits()) << 3u32)?;
-            return Ok(Rat::int(&self.num * &b.num));
+            return Ok(Rat::int(fast::mul_int(&self.num, &b.num)));
         }
         self.scaled(&b.num, &b.den, &b.pows, |x, y| x + y)
     }
@@ -586,7 +596,8 @@ impl Rat {
         // (`valuation`): the peak heap was at most 7.5 times that width for products and
         // quotients of rationals of 2^6 to 2^14 words, plain and with kept powers, at most 10.3
         // times when a kept prime divides a coefficient of 2^8 to 2^16 words, and the
-        // reduction alone of an exact quotient at most 10.9 times (`exact_div`). So a product
+        // reduction alone of an exact quotient at most 10.9 times (`exact_div`); the products
+        // have been by `num::fast::mul_int` since 2026-11-07, not measured again here. So a product
         // or quotient needing less is refused when the free memory lies between the two, and
         // none aborts. Tested by
         // `a_product_or_quotient_of_wide_numbers_is_refused_when_memory_is_short`
@@ -596,8 +607,8 @@ impl Rat {
         let bits = self.num.bits() + self.den.bits() + up.bits() + down.bits();
         room(BigUint::from(bits) << 4u32)?;
         Ok(Rat::build(
-            &self.num * up,
-            &self.den * down,
+            fast::mul_int(&self.num, up),
+            fast::mul_int(&self.den, down),
             merge(&self.pows, pows, f),
         ))
     }
@@ -644,12 +655,14 @@ impl Rat {
         }
         let parts = [self.num.magnitude(), self.den.magnitude()];
         // Complexity tradeoff: the memory asked for is eight times the width of the built
-        // powers together, a measured bound, not a proved one, on num-bigint's power by
-        // squaring (each square by Toom-3, the base and the running result held at once), the
-        // numerator's power held while the denominator's is built: the peak heap was at most
-        // 6.09 times the width over bases of 2^10 to 2^22 bits and exponents 2 to 31, and 3.55
-        // times it for a rational with both parts wide. So a power needing less is refused when
-        // the free memory lies between the two, and none aborts. Tested by
+        // powers together, a measured bound, not a proved one, on `num::fast::pow`,
+        // by squaring (each square by `num::fast::mul`, the base and the running result held at
+        // once), the numerator's power held while the denominator's is built: the peak heap of
+        // a power was at most 6.43 times the width over bases of 2^10 to 2^22 bits and
+        // exponents 2 to 31 (2026-11-07, BIGINT-fast-mul; 6.09 with num-bigint's power), and
+        // 3.55 times it for a rational with both parts wide (measured with num-bigint's). So a
+        // power needing less is refused when the free memory lies between the two, and none
+        // aborts. Tested by
         // `a_power_of_a_wide_base_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the power for its own memory.
         let wide: u64 = parts
@@ -661,8 +674,11 @@ impl Rat {
             room((BigUint::from(wide) * e) << 3u32)?;
         }
         let times = BigInt::from(e.clone());
-        let mut pows: Vec<(u64, BigInt)> =
-            self.pows.iter().map(|(p, x)| (*p, x * &times)).collect();
+        let mut pows: Vec<(u64, BigInt)> = self
+            .pows
+            .iter()
+            .map(|(p, x)| (*p, fast::mul_int(x, &times)))
+            .collect();
         let mut raised = [BigInt::one(), BigInt::one()];
         for (i, part) in parts.into_iter().enumerate() {
             if part.is_one() {
@@ -683,7 +699,10 @@ impl Rat {
                 // by `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
                 // A complete solution would keep an opaque base `b^e` beside the primes, with
                 // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
-                None => raised[i] = BigInt::from(Pow::pow(part, e)),
+                None => {
+                    let e = e.to_u64().expect("an exponent whose power fits in memory");
+                    raised[i] = BigInt::from(fast::pow(part, e));
+                }
             }
         }
         pows.sort_unstable_by_key(|(p, _)| *p);

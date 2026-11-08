@@ -30,8 +30,9 @@
 //! doubling the padded length doubles the time, and sizes between two powers cost the same. A
 //! square needs one forward transform fewer. A factor with few nonzero words (as `2^s + 1`,
 //! which the exact numbers keep) is multiplied by schoolbook over those words
-//! ([`sparse_mul`]); [`mul`] takes whichever of the two computed costs ([`transform_plan`]) is
-//! lower, with no size constant, and num-bigint's Toom-3 at or below [`MUL_LEAF`].
+//! ([`sparse_mul`]). Above [`MUL_LEAF`] words in the narrower factor, [`mul`] takes whichever of
+//! three computed costs is lowest: rows over nonzero words, the transforms ([`transform_plan`])
+//! and num-bigint's product ([`TOOM_COST`]); at or below it, num-bigint's.
 //!
 //! **Division** ([`div_rem`], [`reciprocal`], [`settle`]). To divide by `b` of `k` bits, find
 //! `y = floor(2^2k / b)`, then `q = floor(a y / 2^2k)`: two products. `y` comes from Newton's
@@ -72,22 +73,26 @@
 //! width. Each level divides numbers of `n` bits in total, O(M(n)), over `log2(n / L)` levels:
 //! O(M(n) log n). The leaves are printed by num-bigint.
 //!
-//! **Where the constants lose** (measured 2026-11-06, COMPLEXITY.md section "Crossovers"). A
-//! transform product costs three convolutions and the recombination, so num-bigint's Toom-3 is
-//! faster up to about 4096 words. Newton division costs several full products per quotient,
-//! and is slower than num-bigint's Burnikel and Ziegler division at every size measured, up to
-//! 8192 words; printing, which divides at each level, is slower from about 1024 to 131072
-//! words. The gcd gains from about 300 words, since num-bigint's is quadratic. Open for the
-//! port: why division costs 2.6 to 3.8 times num-bigint's from 2048 to 8192 words (candidates:
-//! the full product `a2 y` of which only the high half is used, the product `q b` in
-//! [`settle`], a reciprocal built at each call), and whether printing's excess is division's.
+//! **Where the constants lose** (measured 2026-11-06 and, for products, 2026-11-07;
+//! COMPLEXITY.md section "Crossovers"). A transform product costs three convolutions and the
+//! recombination, so num-bigint's product is faster up to about 1024 words a factor, and
+//! again just above each power of two of the transform's points, up to about 6144 words, where
+//! the padding nearly doubles the transform's time. Newton division costs several full
+//! products per quotient, and is slower than num-bigint's Burnikel and Ziegler division at
+//! every size measured, up to 8192 words (2026-11-06); printing, which divides at each level,
+//! is slower from about 1024 to 131072 words. The gcd gains from about 300 words, since
+//! num-bigint's is quadratic. Open for the port: why division costs 2.6 to 3.8 times
+//! num-bigint's from 2048 to 8192 words (candidates: the full product `a2 y` of which only the
+//! high half is used, the product `q b` in [`settle`], a reciprocal built at each call), and
+//! whether printing's excess is division's.
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
 //! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
-//! [`PRINT_LEAF`] and the cost constants [`TRANSFORM_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`].
-//! [`HALF_LEAF`] is derived, not measured. The Rust constructs that need a Zed form are listed
-//! in ZED_PORT_GAPS.md, section "Entries from NUM-subquad".
+//! [`PRINT_LEAF`] and the cost constants [`TOOM_COST`], [`TRANSFORM_COST`], [`SPARSE_WORD`],
+//! [`SPARSE_STEP`]. [`HALF_LEAF`] is derived, not measured. The Rust constructs that need a Zed
+//! form are listed in ZED_PORT_GAPS.md, sections "Entries from NUM-subquad" and "Entries from
+//! BIGINT-fast-mul".
 //!
 //! Each leaf is a crossover between two methods whose results are identical, set from timings
 //! rather than solved from the two methods' cost formulas. The author accepted this for now
@@ -107,15 +112,40 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
-/// multiplication: the crossover measured on 2026-11-05, both about 0.33 ms at 1024 words
-/// (load 68). Measured again on 2026-11-06 at load 1, the transform takes 1.50 times
-/// num-bigint's time at 1024 words, 1.18 at 2048, 0.96 at 4096 and 0.56 at 16384, so the
-/// curves cross near 4096 words (COMPLEXITY.md, "Crossovers"). The product does not depend on
-/// it; the unit tests use a smaller leaf, so that they reach the transforms at small sizes.
+/// multiplication, the other methods' costs not computed. Measured on 2026-11-07 at load 34
+/// to 41 (BIGINT-fast-mul), the transform took 1.74 times num-bigint's time at 256 by 256
+/// words, 1.30 at 512 by 512, 1.16 at 256 by 65536 and 1.07 at 512 by 65536, slower at every
+/// shape measured with the narrower at 512 words or fewer; above, [`TOOM_COST`] decides. It
+/// was 1024 from 2026-11-05 (load 68), when the transform's constant was higher (COMPLEXITY.md,
+/// "Crossovers"). The product does not depend on it; the unit tests use a smaller leaf, so
+/// that they reach the transforms at small sizes.
 #[cfg(not(test))]
-const MUL_LEAF: usize = 1024;
+const MUL_LEAF: usize = 512;
 #[cfg(test)]
 const MUL_LEAF: usize = 48;
+
+/// num-bigint 0.4.8's cost of a product of `s` by `l >= s` words, per `l s^0.465`, in the
+/// units of [`TRANSFORM_COST`]. Its multiplication is Toom-3 above 256 words, `s^log3(5)` =
+/// `s^1.465` for balanced factors, and cuts the longer factor in halves while it has twice
+/// the other's words (`biguint/multiplication.rs` lines 102 to 166), so `l / s` such products.
+/// Measured on 2026-11-07 at load 34 to 41 (BIGINT-fast-mul): 9.1 to 13.4 ns per `l s^0.465`,
+/// 10.7 on average from 1024 words, over balanced factors of 256 to 16384 words and 256 to
+/// 8192 by 65536 words, against 1.03 ns a word product of `sparse_mul`. With it [`mul`] takes
+/// num-bigint's product at 1536 by 1536 words (measured 1.23 times faster than the transform)
+/// and 2560 by 2560 (1.19), just above a power of two of the transform's points, and the
+/// transform at 2048 by 2048 (0.81 of num-bigint's time), 4096 (0.64) and 16384 (0.40). At
+/// 3072 by 3072 the two costs differ by 5% and the transform is taken; its time there was
+/// bimodal over repeated runs at load 15 to 29, 1.01 or 1.38 times num-bigint's, with the
+/// same transform steady at 4096 by 4096 (cause not measured; COMPLEXITY.md, "Crossovers"). The
+/// product does not depend on it; the unit tests never take num-bigint's product above
+/// [`MUL_LEAF`], so that they reach the transforms. Measured again at the port to Zed.
+#[cfg(not(test))]
+const TOOM_COST: f64 = 10.4;
+#[cfg(test)]
+const TOOM_COST: f64 = f64::INFINITY;
+
+/// `log3(5) - 1`, the exponent of the narrower factor in [`TOOM_COST`].
+const TOOM_POWER: f64 = 0.465;
 
 /// The bits at or below which the divisor, or the quotient, goes to num-bigint's division,
 /// which then costs at most this many bits times the dividend's. The result does not depend
@@ -157,8 +187,11 @@ const PRINT_LEAF: usize = 1024;
 /// product of [`sparse_mul`]: measured on 2026-11-05 at 1024 to 8192 words a factor, 23 to
 /// 28 ns per `n log2(n)` against 1.2 to 2 ns a word product (load 45 to 55). Only which of
 /// two equal results is computed depends on it. Measured again at the port to Zed, with the
-/// leaves above.
-const TRANSFORM_COST: u128 = 20;
+/// leaves above. After BIGINT-fast-mul (twiddles and loaded words reduced with no division,
+/// Garner's constants computed at compile time, the stages whose only root is 1 with no
+/// product), measured on 2026-11-07 at load 34 to 41: 10.8 to 13.1 ns per `n log2(n)` over
+/// 512 to 262,144 points (12.2 on average), against 1.03 ns a word product: 12.
+const TRANSFORM_COST: u128 = 12;
 
 /// The cost of a word of a step of [`sparse_div_rem`], and of a step besides its words (the
 /// quotient word's estimate is a 128-bit division), in the units of [`TRANSFORM_COST`]:
@@ -214,6 +247,15 @@ impl Field {
         if u >= self.p { u - self.p } else { u }
     }
 
+    /// `x mod p` for any 64-bit `x`, without a division: with `q = floor(x / 2^62) <= 3`,
+    /// `x - q p = (x mod 2^62) + q (2^62 - p)` lies in `[0, 2p)`, since each prime is above
+    /// `2^62 - 2^57` (`2^62 + 3 * 2^57 < 2p`), and one subtraction finishes it.
+    #[inline]
+    fn reduce(&self, x: u64) -> u64 {
+        let r = x - (x >> 62) * self.p;
+        if r >= self.p { r - self.p } else { r }
+    }
+
     #[inline]
     fn add(&self, a: u64, b: u64) -> u64 {
         let s = a + b;
@@ -252,9 +294,12 @@ impl Field {
         let w = self.pow(self.to_mont(self.root), (self.p - 1) / n as u64);
         let mut tw = vec![(0, 0); n / 2];
         // `mul(t, w)` of `t` in plain form and `w` in Montgomery form is `t w` in plain form.
+        // The Shoup quotient `s = floor(t 2^64 / p)` is found without a division: with
+        // `r = t 2^64 mod p` (`to_mont(t)`), `s p = t 2^64 - r` is exact, so
+        // `s = -r p^-1 mod 2^64 = r neg_inv`, and `s < 2^64` since `t < p`.
         let mut t = 1;
         for x in &mut tw {
-            *x = (t, ((u128::from(t) << 64) / u128::from(self.p)) as u64);
+            *x = (t, self.to_mont(t).wrapping_mul(self.neg_inv));
             t = self.mul(t, w);
         }
         tw
@@ -275,7 +320,7 @@ impl Field {
     fn forward(&self, a: &mut [u64], tw: &[(u64, u64)]) {
         let p2 = 2 * self.p;
         let mut half = a.len() / 2;
-        while half >= 1 {
+        while half > 1 {
             let stride = a.len() / (2 * half);
             for block in a.chunks_exact_mut(2 * half) {
                 let (lo, hi) = block.split_at_mut(half);
@@ -288,6 +333,12 @@ impl Field {
                 }
             }
             half /= 2;
+        }
+        // The last stage's only root is 1.
+        if half == 1 {
+            for pair in a.as_chunks_mut::<2>().0 {
+                lazy_butterfly(p2, pair);
+            }
         }
     }
 
@@ -305,18 +356,23 @@ impl Field {
             *y = if d >= p2 { d - p2 } else { d };
         };
         let n = a.len();
-        let mut half = 1;
+        // The first stage's only root is 1.
+        if n >= 2 {
+            for pair in a.as_chunks_mut::<2>().0 {
+                lazy_butterfly(p2, pair);
+            }
+        }
+        let mut half = 2;
         while half < n {
             let stride = n / (2 * half);
             for block in a.chunks_exact_mut(2 * half) {
                 let (lo, hi) = block.split_at_mut(half);
                 let v = hi[0];
                 butterfly(&mut lo[0], &mut hi[0], v);
-                for ((x, y), (w, s)) in lo[1..]
-                    .iter_mut()
-                    .zip(hi[1..].iter_mut())
-                    .zip(tw[stride..half * stride].iter().step_by(stride).rev())
-                {
+                // Root `j` is entry `(half - j) stride` of the table, indexed directly: an
+                // iterator stepping backward computed its length by a division in every block.
+                for (j, (x, y)) in lo.iter_mut().zip(hi.iter_mut()).enumerate().skip(1) {
+                    let (w, s) = tw[(half - j) * stride];
                     let v = self.shoup(*y, (self.p - w, !s));
                     butterfly(x, y, v);
                 }
@@ -337,7 +393,7 @@ impl Field {
         // One word more than the points, for the product's top word (see [`mul`]).
         let load = |x: &BigUint| {
             let mut v: Vec<u64> = Vec::with_capacity(n + 1);
-            v.extend(x.iter_u64_digits().map(|d| d % self.p));
+            v.extend(x.iter_u64_digits().map(|d| self.reduce(d)));
             v.resize(n, 0);
             self.forward(&mut v, &tw);
             v
@@ -365,6 +421,45 @@ impl Field {
     }
 }
 
+/// The constants of Garner's form of the Chinese remainder theorem over [`FIELDS`], computed
+/// once at compile time (each product computed them before, by exponentiations whose u128
+/// remainders took a fifth of a 64-word product's time).
+struct Garner {
+    /// `p0^-1 mod p1`, in Montgomery form modulo `p1`.
+    inv01: u64,
+    /// `(p0 p1)^-1 mod p2`, in Montgomery form modulo `p2`.
+    inv012: u64,
+    /// `p0 mod p2`, in Montgomery form modulo `p2`.
+    p0_in_2: u64,
+    /// `p0 p1`.
+    p01: u128,
+}
+
+/// `x 2^64 mod p`, the Montgomery form, at compile time.
+const fn mont_of(x: u64, p: u64) -> u64 {
+    (((x as u128) << 64) % p as u128) as u64
+}
+
+const GARNER: Garner = {
+    let [p0, p1, p2] = [FIELDS[0].p, FIELDS[1].p, FIELDS[2].p];
+    let p01 = p0 as u128 * p1 as u128;
+    Garner {
+        inv01: mont_of(inv_mod(p0 % p1, p1), p1),
+        inv012: mont_of(inv_mod((p01 % p2 as u128) as u64, p2), p2),
+        p0_in_2: mont_of(p0 % p2, p2),
+        p01,
+    }
+};
+
+/// A butterfly whose root is 1 on values below `p2 = 2p`: `(u + v, u - v)`, each in `[0, 2p)`.
+#[inline]
+fn lazy_butterfly(p2: u64, pair: &mut [u64; 2]) {
+    let [u, v] = *pair;
+    let (s, d) = (u + v, u + p2 - v);
+    pair[0] = if s >= p2 { s - p2 } else { s };
+    pair[1] = if d >= p2 { d - p2 } else { d };
+}
+
 /// Three primes `c * 2^50 + 1` with a generator each; their product exceeds `2^185`, above
 /// every coefficient of a product of `2^50` words, `2^50 * 2^128`.
 const FIELDS: [Field; 3] = [
@@ -375,7 +470,7 @@ const FIELDS: [Field; 3] = [
 
 /// The cost of a product by transforms whose coefficients number `coeffs`, in units of one
 /// word product of [`sparse_mul`]: `TRANSFORM_COST n log2(n)` for `n` points, the constant
-/// measured on 2026-11-05 (see [`TRANSFORM_COST`]).
+/// measured (see [`TRANSFORM_COST`]).
 fn transform_cost(coeffs: usize) -> u128 {
     let n = coeffs.next_power_of_two() as u128;
     TRANSFORM_COST * n * u128::from(n.trailing_zeros().max(1))
@@ -407,12 +502,15 @@ fn nonzero_words(x: &BigUint) -> usize {
     x.iter_u64_digits().filter(|&d| d != 0).count()
 }
 
-/// `a * b`, by num-bigint when the narrower has at most [`MUL_LEAF`] words, else by rows over
-/// the nonzero words of one factor ([`sparse_mul`]) or by transforms modulo three primes
-/// joined by the Chinese remainder theorem, O(n log n), whichever costs less.
-pub(crate) fn mul(a: &BigUint, b: &BigUint) -> BigUint {
+/// `a * b`. When the narrower factor has at most `MUL_LEAF` (512) words, by num-bigint's
+/// multiplication; above that, by whichever of three methods has the least computed cost:
+/// num-bigint's (Toom-3, about `n^1.465`), rows over the nonzero words of one factor, or
+/// transforms modulo three primes joined by the Chinese remainder theorem, O(n log n). Every
+/// method gives the same product; only the time depends on the choice.
+pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
     let (la, lb) = (words(a), words(b));
-    if la.min(lb) <= MUL_LEAF {
+    let (short, long) = (la.min(lb), la.max(lb));
+    if short <= MUL_LEAF {
         return a * b;
     }
     // Complexity tradeoff: rows over the nonzero words cost `nonzero(a) words(b)` word
@@ -422,14 +520,32 @@ pub(crate) fn mul(a: &BigUint, b: &BigUint) -> BigUint {
     // the same product. A dense factor costs O(n) more for the count. Tested by
     // `a_sparse_product_scales` and `products_agree_with_num_bigint` (COMPLEXITY.md K30).
     let rows = (nonzero_words(a) as u128 * lb as u128).min(nonzero_words(b) as u128 * la as u128);
+    let (cost, piece) = transform_plan(short, long);
+    // A crossover set from timings (`TOOM_COST`): num-bigint's product where its computed cost
+    // is the least, which follows the transform's steps at each power of two of its points.
+    if toom_cost(short, long) <= rows.min(cost) as f64 {
+        return a * b;
+    }
+    if rows <= cost {
+        return sparse_mul(a, b);
+    }
+    pieces_mul(a, b, piece)
+}
+
+/// num-bigint's cost of a product of `short <= long` words, `TOOM_COST long short^0.465`, in
+/// the units of [`TRANSFORM_COST`].
+fn toom_cost(short: usize, long: usize) -> f64 {
+    TOOM_COST * long as f64 * (short as f64).powf(TOOM_POWER)
+}
+
+/// `a * b` by transforms, the longer factor cut into pieces of `piece` words (whole when it
+/// has no more), as [`transform_plan`] chose.
+fn pieces_mul(a: &BigUint, b: &BigUint, piece: usize) -> BigUint {
+    let (la, lb) = (words(a), words(b));
     let (short, long) = match la <= lb {
         true => (a, b),
         false => (b, a),
     };
-    let (cost, piece) = transform_plan(la.min(lb), la.max(lb));
-    if rows <= cost {
-        return sparse_mul(a, b);
-    }
     if piece >= words(long) {
         return transform_mul(a, b);
     }
@@ -485,19 +601,22 @@ fn transform_mul(a: &BigUint, b: &BigUint) -> BigUint {
     r1.truncate(coeffs);
     r1.shrink_to_fit();
     let r2 = f2.convolve(a, other, n);
-    // Garner's form: c = v0 + v1 p0 + v2 p0 p1, each `v_i < p_i`.
-    let inv01 = f1.to_mont(inv_mod(f0.p % f1.p, f1.p));
-    let p01 = u128::from(f0.p) * u128::from(f1.p);
-    let inv012 = f2.to_mont(inv_mod((p01 % u128::from(f2.p)) as u64, f2.p));
-    let p0_in_2 = f2.to_mont(f0.p % f2.p);
+    // Garner's form: c = v0 + v1 p0 + v2 p0 p1, each `v_i < p_i`, with the constants of
+    // [`GARNER`].
+    let Garner {
+        inv01,
+        inv012,
+        p0_in_2,
+        p01,
+    } = GARNER;
     let (p01_lo, p01_hi) = (p01 as u64, (p01 >> 64) as u64);
     // The coefficients are written over `r0` as the product's words: coefficient `i` is read
     // before word `i` is written.
     let mut carry = 0u128;
     for i in 0..coeffs {
         let v0 = r0[i];
-        let v1 = f1.mul(f1.sub(r1[i], v0 % f1.p), inv01);
-        let low = f2.add(v0 % f2.p, f2.mul(v1, p0_in_2));
+        let v1 = f1.mul(f1.sub(r1[i], f1.reduce(v0)), inv01);
+        let low = f2.add(f2.reduce(v0), f2.mul(v1, p0_in_2));
         let v2 = f2.mul(f2.sub(r2[i], low), inv012);
         // c = s + v2 p01_lo + v2 p01_hi 2^64, with s = v0 + v1 p0 < 2^125.
         let s = u128::from(v0) + u128::from(v1) * u128::from(f0.p);
@@ -558,9 +677,9 @@ fn sparse_mul(a: &BigUint, b: &BigUint) -> BigUint {
 }
 
 /// `x^-1 mod p` for a prime `p` and `x` not a multiple of it, by Fermat.
-fn inv_mod(x: u64, p: u64) -> u64 {
-    let (mut b, mut e, mut r) = (u128::from(x), p - 2, 1u128);
-    let p = u128::from(p);
+const fn inv_mod(x: u64, p: u64) -> u64 {
+    let (mut b, mut e, mut r) = (x as u128, p - 2, 1u128);
+    let p = p as u128;
     while e > 0 {
         if e & 1 == 1 {
             r = r * b % p;
@@ -572,12 +691,13 @@ fn inv_mod(x: u64, p: u64) -> u64 {
 }
 
 /// `a * b` of signed numbers, by [`mul`].
-pub(crate) fn mul_int(a: &BigInt, b: &BigInt) -> BigInt {
+pub fn mul_int(a: &BigInt, b: &BigInt) -> BigInt {
     BigInt::from_biguint(a.sign() * b.sign(), mul(a.magnitude(), b.magnitude()))
 }
 
 /// `b^e`, by squaring with [`mul`].
-pub(crate) fn pow(mut b: BigUint, mut e: u64) -> BigUint {
+pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
+    let mut b = Cow::Borrowed(b);
     let mut r = BigUint::one();
     while e > 0 {
         if e & 1 == 1 {
@@ -585,7 +705,7 @@ pub(crate) fn pow(mut b: BigUint, mut e: u64) -> BigUint {
         }
         e >>= 1;
         if e > 0 {
-            b = mul(&b, &b);
+            b = Cow::Owned(mul(&b, &b));
         }
     }
     r
@@ -1230,7 +1350,7 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> BigInt {
             (2, false) => twos = Some(e),
             _ => {
                 let e = e.to_u64().expect("a power whose bits fit in memory");
-                out = mul(&out, &pow(BigUint::from(*p), e));
+                out = mul(&out, &pow(&BigUint::from(*p), e));
             }
         }
     }

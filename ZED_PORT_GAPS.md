@@ -2040,6 +2040,17 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Leaf sizes that differ between the unit tests and the build (`#[cfg(test)]` constants), so the unit tests reach the transforms at small sizes | `MUL_LEAF`, `GCD_LEAF` | No conditional compilation | A parameter of the routine, or a build mode of the unit, as in the entry from SLABS-count |
 | Leaf sizes and cost constants set from timings of the Rust code, crossovers between methods with identical results (author decision 2026-11-06) | `MUL_LEAF`, `DIV_LEAF`, `RECIP_LEAF`, `GCD_LEAF`, `PRINT_LEAF`, `TRANSFORM_COST`, `SPARSE_WORD`, `SPARSE_STEP` | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers", compare with the curves recorded there, and explain the anomalies listed there; a method never slower than the other is used alone |
 | A divisor borrowed or owned (`Cow<'a, BigUint>`) beside its reciprocal, built once and used for every block | `Divisor` | None | Zed shares values; the divisor is a value and the reciprocal a field beside it |
+
+## Entries from BIGINT-fast-mul (`zed-kernel/src/num/fast.rs`, `num.rs`, `zedc-int/src/int.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Re-measure: the leaf and cost constants of the product's three-way choice, set from timings of the Rust code on 2026-11-07 (load 16 to 41), results identical | `MUL_LEAF` (512), `TOOM_COST` (10.4), `TOOM_POWER`, `TRANSFORM_COST` (12) | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers", BIGINT-fast-mul; compare with the grid there; explain the bimodal time at 3072 by 3072 words; at the port num-bigint's product is replaced by Zed's own, so `TOOM_COST` is measured against that one, and dropped if one method is never slower |
+| A cost of num-bigint's product as `f64` with `powf` | `toom_cost` | Floating point in cost decisions | A rational or integer approximation of `s^0.465` (for example a table by the bit length of `s`), since only the choice depends on it |
+| Pairs of transform points taken as `[u64; 2]` by `as_chunks_mut::<2>()` and destructured, butterflies on `&mut [u64; 2]` | `lazy_butterfly`, `Field::forward`, `Field::inverse` | Mutation (gap 11), Machine integers | An array updated in place by index pairs, as for the other stages |
+| Garner's constants and inverses modulo the primes computed by `const fn` at compile time | `GARNER`, `inv_mod` | None | Constants found by partial evaluation of the same function (no separate constant evaluator) |
+| A factor borrowed or owned (`Cow<BigUint>`) through the squarings of a power | `pow` | None | Zed shares values; the base is a value rebound at each squaring |
+
 ## Entries from CAST-menu-check and CAST-menu-rest (`zedc-check/src/check/mod.rs`)
 - No new gap. The carriers of an argument are a `u8` mask with one bit per carrier, and the disjointness test runs over a `u16` with one bit per mask value; Zed writes both as sets of a four-member enum (bit operations, gap 1 where the masks are packed). The literal refusals of an application are pushed to a `Vec` on the checker and split off after it (mutation, gap 2), which the port writes as a list the application returns. A trial of a repair saves the checker's state, applies and undoes (as F6 and the CAST-menu entry).
 

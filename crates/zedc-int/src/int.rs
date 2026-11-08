@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
-use zed_kernel::num::{TooLarge, read_digits, room};
+use zed_kernel::num::{TooLarge, mul_int, mul_uint, pow_uint, read_digits, room};
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division.
@@ -239,7 +239,7 @@ impl Mul for &Int {
                 return v.into();
             }
         }
-        (&*self.big() * &*other.big()).into()
+        mul_int(&self.big(), &other.big()).into()
     }
 }
 
@@ -491,13 +491,13 @@ impl Approx {
     /// The product, to `bits` bits.
     fn mul(&self, o: &Approx, bits: u64) -> Approx {
         let (lo, hi) = if !below_zero(&self.lo) && !below_zero(&o.lo) {
-            (&self.lo * &o.lo, &self.hi * &o.hi)
+            (mul_int(&self.lo, &o.lo), mul_int(&self.hi, &o.hi))
         } else {
             let mut ps = [
-                &self.lo * &o.lo,
-                &self.lo * &o.hi,
-                &self.hi * &o.lo,
-                &self.hi * &o.hi,
+                mul_int(&self.lo, &o.lo),
+                mul_int(&self.lo, &o.hi),
+                mul_int(&self.hi, &o.lo),
+                mul_int(&self.hi, &o.hi),
             ];
             ps.sort();
             let [lo, _, _, hi] = ps;
@@ -585,9 +585,9 @@ impl Approx {
 fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
     let mut m = BigUint::from(1u32);
     for i in (0..exp.bits()).rev() {
-        m = &m * &m;
+        m = mul_uint(&m, &m);
         if exp.bit(i) {
-            m *= base;
+            m = mul_uint(&m, base);
         }
     }
     m
@@ -605,7 +605,7 @@ fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
     // r >= 2, so r ** p has at least p + 1 bits.
     while b.bits() > 2 {
         let r = b.sqrt();
-        if &r * &r != b {
+        if mul_uint(&r, &r) != b {
             break;
         }
         b = r;
@@ -696,8 +696,7 @@ impl OddPart {
             let rq = u64::try_from(&r % q).expect("below q");
             pow_mod(rq, p, q) == oq
         });
-        let k = u32::try_from(p).expect("below the bits of a base held in memory");
-        (agree && r.pow(k) == self.o).then(|| r << shift)
+        (agree && pow_uint(&r, p) == self.o).then(|| r << shift)
     }
 }
 
@@ -729,9 +728,9 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
         let mask = &unit - 1u32;
         let y = pow_mod_pow2(&x, p - 1, &mask);
         // x ** p - o, and the derivative p * x ** (p - 1), modulo 2^j.
-        let f = (&y * &x + &unit - (o & &mask)) & &mask;
+        let f = (mul_uint(&y, &x) + &unit - (o & &mask)) & &mask;
         let d = (y * p) & &mask;
-        let step = (f * inverse_mod_pow2(&d, j)) & &mask;
+        let step = mul_uint(&f, &inverse_mod_pow2(&d, j)) & &mask;
         x = (x + unit - step) & mask;
     }
     x
@@ -741,9 +740,9 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
 fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
     let mut out = BigUint::from(1u32);
     for i in (0..u64::BITS - e.leading_zeros()).rev() {
-        out = (&out * &out) & mask;
+        out = mul_uint(&out, &out) & mask;
         if e >> i & 1 == 1 {
-            out = (out * x) & mask;
+            out = mul_uint(&out, x) & mask;
         }
     }
     out
@@ -758,8 +757,8 @@ fn inverse_mod_pow2(d: &BigUint, k: u64) -> BigUint {
         j = (2 * j).min(k);
         let unit = BigUint::from(1u32) << j;
         let mask = &unit - 1u32;
-        let t = (d * &z) & &mask;
-        z = (z * ((unit + 2u32 - t) & &mask)) & mask;
+        let t = mul_uint(d, &z) & &mask;
+        z = mul_uint(&z, &((unit + 2u32 - t) & &mask)) & mask;
     }
     z
 }
@@ -833,7 +832,7 @@ fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
         }
         *rest = q;
         k += 1 << (pows.len() - 1);
-        let square = &**top * &**top;
+        let square = mul_uint(top, top);
         pows.push(Cow::Owned(square));
     }
     // c ** (2^t), the last power, does not divide what is left, so its multiplicity is below
@@ -1083,10 +1082,9 @@ impl Core {
     /// The value, written out: its cost is that of the value's digits, and for a root that of
     /// a root of the radicand's digits.
     fn expand(&self) -> BigUint {
-        self.0
-            .iter()
-            .map(|(a, e)| expand_pow(&a.expand(), e))
-            .product()
+        self.0.iter().fold(BigUint::one(), |r, (a, e)| {
+            mul_uint(&r, &expand_pow(&a.expand(), e))
+        })
     }
 
     /// Bounds on the bits of the value and of the widest number [`Core::expand`] builds: each
@@ -1314,7 +1312,7 @@ impl Kept {
     /// The value, written out: its cost is that of the value's digits.
     fn expand(&self) -> BigInt {
         let num = self.terms.iter().fold(self.d.clone(), |s, (c, core)| {
-            s + c * BigInt::from(core.expand())
+            s + mul_int(c, &BigInt::from(core.expand()))
         });
         num / BigInt::from(self.den.clone())
     }
@@ -2163,7 +2161,7 @@ impl Num {
             return Num::from(if up { 2 } else { 1 });
         };
         let r = v.nth_root(k);
-        if up && r.pow(k) != *v {
+        if up && pow_uint(r.magnitude(), u64::from(k)) != *v.magnitude() {
             (r + 1u32).into()
         } else {
             r.into()
@@ -2418,21 +2416,21 @@ impl Mul for &Num {
                 let mut terms = Vec::with_capacity((x.terms.len() + 1) * (y.terms.len() + 1));
                 for (a, p) in &x.terms {
                     for (b, q) in &y.terms {
-                        terms.push((a * b, p.times(q)));
+                        terms.push((mul_int(a, b), p.times(q)));
                     }
                     if !y.d.is_zero() {
-                        terms.push((a * &y.d, p.clone()));
+                        terms.push((mul_int(a, &y.d), p.clone()));
                     }
                 }
                 if !x.d.is_zero() {
                     for (b, q) in &y.terms {
-                        terms.push((&x.d * b, q.clone()));
+                        terms.push((mul_int(&x.d, b), q.clone()));
                     }
                 }
-                Num::kept(terms, &x.d * &y.d, &x.den * &y.den)
+                Num::kept(terms, mul_int(&x.d, &y.d), mul_uint(&x.den, &y.den))
             }
             // Neither is kept.
-            _ => (&*self.big() * &*other.big()).into(),
+            _ => mul_int(&self.big(), &other.big()).into(),
         }
     }
 }
