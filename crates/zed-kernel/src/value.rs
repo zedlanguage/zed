@@ -33,7 +33,6 @@ use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
-use std::hash::BuildHasherDefault;
 use std::mem;
 use std::ops::Deref;
 use std::slice;
@@ -1220,7 +1219,7 @@ thread_local! {
             pairs: RefCell::new(Vec::new()),
             scopes: Cell::new(0),
             read: RefCell::new(
-                [const { ReadSet::with_hasher(BuildHasherDefault::new()) }; RELATIONS],
+                [const { ReadSet::new() }; RELATIONS],
             ),
             shallow: Cell::new(false),
         }
@@ -1260,7 +1259,7 @@ impl Comparisons {
 
     /// Takes `pair` out of the pairs read under `r`: the walk ended before reading it to its end.
     fn leave(&self, pair: Pair, r: Relation) {
-        self.read.borrow_mut()[r as usize].remove(&pair);
+        self.read.borrow_mut()[r as usize].remove(pair);
     }
 }
 
@@ -1268,30 +1267,138 @@ impl Comparisons {
 /// [`Relation::Max`] is the last.
 const RELATIONS: usize = Relation::Max as usize + 1;
 
-/// The pairs of ids read under one relation.
-type ReadSet = HashSet<Pair, BuildHasherDefault<PairHasher>>;
+/// The pairs of ids read under one relation: a set in one array of slots, found by linear
+/// probing from the slot the pair's hash gives, the empty slot being `(0, 0)`. The slots are a
+/// power of two in number and at most half full, so a lookup reads two slots on average. It
+/// takes fewer instructions per pair than `HashSet` with the same hash, which also keeps a
+/// byte of tags per slot and reads it first (K73).
+struct ReadSet {
+    slots: Vec<Pair>,
+    len: usize,
+}
 
-/// The hasher of [`ReadSet`]: each word folded in by one 64 by 64 to 128 bit multiply, whose
-/// two halves are added by exclusive or. Ids come from one counter in the runtime, not from
-/// input. SipHash took 60 to 80% more instructions per pair of families than splitmix64's
-/// finalizer on each word, and that finalizer 45 more per pair than this (K73).
-#[derive(Default)]
-struct PairHasher(u64);
+/// The empty slot of a [`ReadSet`]. No pair kept is `(0, 0)`: id 0 is the empty sequence's and
+/// the empty family's, and two empty values are read in O(1), so they are not kept.
+const EMPTY: Pair = (0, 0);
 
-impl std::hash::Hasher for PairHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(u64::from(b));
+impl ReadSet {
+    const fn new() -> Self {
+        ReadSet {
+            slots: Vec::new(),
+            len: 0,
         }
     }
 
-    fn write_u64(&mut self, x: u64) {
-        let m = u128::from(self.0 ^ x) * 0x9e37_79b9_7f4a_7c15_u128;
-        self.0 = (m as u64) ^ ((m >> 64) as u64);
+    /// The slot a search for `pair` starts at: each id folded in by one 64 by 64 to 128 bit
+    /// multiply, whose two halves are added by exclusive or. Ids come from one counter in the
+    /// runtime, not from input. SipHash took 60 to 80% more instructions per pair of families
+    /// than splitmix64's finalizer on each id, and that finalizer 45 more per pair than this.
+    #[inline(always)]
+    fn home(&self, (a, b): Pair) -> usize {
+        let fold = |x: u64| {
+            let m = u128::from(x) * 0x9e37_79b9_7f4a_7c15_u128;
+            (m as u64) ^ ((m >> 64) as u64)
+        };
+        (fold(fold(a) ^ b) as usize) & (self.slots.len() - 1)
     }
 
-    fn finish(&self) -> u64 {
-        self.0
+    /// Adds `pair`; false when it is there already.
+    #[inline]
+    fn insert(&mut self, pair: Pair) -> bool {
+        if pair == EMPTY {
+            return true;
+        }
+        if 2 * (self.len + 1) > self.slots.len() {
+            self.grow();
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = self.home(pair);
+        loop {
+            let slot = self.slots[i];
+            if slot == pair {
+                return false;
+            }
+            if slot == EMPTY {
+                self.slots[i] = pair;
+                self.len += 1;
+                return true;
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    /// Takes `pair` out, if it is there. The pairs after it in its run that could sit in its
+    /// slot move back, so every pair stays reachable from its home slot with no empty slot
+    /// between (deletion by backward shift).
+    fn remove(&mut self, pair: Pair) {
+        if pair == EMPTY || self.len == 0 {
+            return;
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = self.home(pair);
+        loop {
+            let slot = self.slots[i];
+            if slot == EMPTY {
+                return;
+            }
+            if slot == pair {
+                break;
+            }
+            i = (i + 1) & mask;
+        }
+        let mut j = i;
+        loop {
+            j = (j + 1) & mask;
+            let slot = self.slots[j];
+            if slot == EMPTY {
+                break;
+            }
+            // The pair at `j` may move to the hole at `i` unless its home lies cyclically
+            // after `i`, up to `j`.
+            let home = self.home(slot);
+            if (j.wrapping_sub(home) & mask) >= (j.wrapping_sub(i) & mask) {
+                self.slots[i] = slot;
+                i = j;
+            }
+        }
+        self.slots[i] = EMPTY;
+        self.len -= 1;
+    }
+
+    /// Doubles the slots, 16 at the least, and puts each pair back.
+    #[cold]
+    fn grow(&mut self) {
+        let size = (2 * self.slots.len()).max(16);
+        let old = mem::replace(&mut self.slots, vec![EMPTY; size]);
+        let mask = self.slots.len() - 1;
+        for pair in old.into_iter().filter(|&p| p != EMPTY) {
+            let mut i = self.home(pair);
+            while self.slots[i] != EMPTY {
+                i = (i + 1) & mask;
+            }
+            self.slots[i] = pair;
+        }
+    }
+
+    /// The number of slots.
+    #[cfg(test)]
+    fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Takes every pair out. Complexity tradeoff: the slots are kept for the next comparison,
+    /// which then does not grow them again (13 to 16 million instructions of 630 on 200 000
+    /// pairs, K73); emptying takes time in proportion to the slots, so slots more than 8 times
+    /// the pairs they held are freed instead. Either way the cost is at most a constant times
+    /// the pairs this comparison added, and a thread keeps at most 8 times as many slots as
+    /// the last comparison's pairs.
+    fn clear(&mut self) {
+        if self.len * 8 < self.slots.len() {
+            self.slots = Vec::new();
+        } else {
+            self.slots.fill(EMPTY);
+        }
+        self.len = 0;
     }
 }
 
@@ -1324,18 +1431,7 @@ impl Drop for Scope<'_> {
         self.0.scopes.set(left);
         if left == 0 {
             for set in self.0.read.borrow_mut().iter_mut() {
-                // Complexity tradeoff: a set is emptied in place, keeping its table for the
-                // next comparison, which then does not grow it again (13 to 16 million
-                // instructions of 630 on 200 000 pairs, K73); emptying takes time in proportion
-                // to the table, so a table more than 8 times the pairs it held is freed
-                // instead. Either way the cost is at most a constant times the pairs this
-                // comparison added, and a thread keeps at most a table 8 times the size of the
-                // last comparison's pairs.
-                if set.len() * 8 < set.capacity() {
-                    *set = ReadSet::default();
-                } else {
-                    set.clear();
-                }
+                set.clear();
             }
         }
     }
@@ -1493,28 +1589,46 @@ fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
     }
 }
 
-/// Compares two values as far as their top level decides.
+/// Compares two values as far as their top level decides. The relations other than identity,
+/// the total order and the language's `==` branch off first, so that those three, the common
+/// ones, take the arms they took before `min` and `max` were added, and no arm calls `step`
+/// again: a recursive `step` is not inlined into the walk (K73).
+#[inline(always)]
 fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
-    match (a, b, r) {
-        (Value::Float(x), Value::Float(y), Relation::SurfaceEq) => match x.get() == y.get() {
-            true => Step::Same,
-            false => Step::Ends(None),
+    match r {
+        Relation::SurfaceOrder => surface_order_step(a, b),
+        Relation::Min | Relation::Max => min_max_step(a, b, r),
+        _ => plain_step(a, b, r),
+    }
+}
+
+/// [`step`] under [`Relation::SurfaceOrder`]: floats by IEEE 754 and tuples by component; beneath
+/// its tuples the language's order is the total order, read in this walk so that the pairs it
+/// reads are kept with the others.
+fn surface_order_step<'a>(a: &'a Value, b: &'a Value) -> Step<'a> {
+    match (a, b) {
+        (Value::Float(x), Value::Float(y)) => match x.get().partial_cmp(&y.get()) {
+            Some(Ordering::Equal) => Step::Same,
+            o => Step::Ends(o),
         },
-        (Value::Float(x), Value::Float(y), Relation::SurfaceOrder) => {
-            match x.get().partial_cmp(&y.get()) {
-                Some(Ordering::Equal) => Step::Same,
-                o => Step::Ends(o),
-            }
-        }
-        // `min` and `max` order two values of one kind only, as at the top level.
-        (_, _, Relation::Min | Relation::Max)
-            if a.number_kind() != b.number_kind()
-                || (a.number_kind().is_none() && mem::discriminant(a) != mem::discriminant(b)) =>
-        {
-            Step::Ends(None)
-        }
-        (Value::Float(x), Value::Float(y), Relation::Min | Relation::Max) if x == y => Step::Same,
-        (Value::Float(x), Value::Float(y), Relation::Min | Relation::Max) => {
+        (Value::Tuple(x), Value::Tuple(y)) => items(x, y, Relation::SurfaceOrder),
+        _ => plain_step(a, b, Relation::Total),
+    }
+}
+
+/// [`step`] under [`Relation::Min`] or [`Relation::Max`], which order two values of one kind
+/// only, as at the top level, and two floats that differ by IEEE 754-2019 `minimum` or `maximum`.
+#[cold]
+#[inline(never)]
+fn min_max_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
+    if a.number_kind() != b.number_kind()
+        || (a.number_kind().is_none() && mem::discriminant(a) != mem::discriminant(b))
+    {
+        return Step::Ends(None);
+    }
+    match (a, b) {
+        (Value::Float(x), Value::Float(y)) if x == y => Step::Same,
+        (Value::Float(x), Value::Float(y)) => {
             let min = r == Relation::Min;
             // The float `minimum` or `maximum` gives is the lesser under `Min` and the greater
             // under `Max`; two floats that differ bitwise are never both given.
@@ -1525,6 +1639,19 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
                 Ordering::Greater
             }))
         }
+        _ => plain_step(a, b, r),
+    }
+}
+
+/// [`step`] under identity, the total order and the language's `==`, and beneath the checks of
+/// the other relations.
+#[inline(always)]
+fn plain_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
+    match (a, b, r) {
+        (Value::Float(x), Value::Float(y), Relation::SurfaceEq) => match x.get() == y.get() {
+            true => Step::Same,
+            false => Step::Ends(None),
+        },
         // Two numbers are equal by their normal forms, which reads no bounds on their values;
         // only a coefficient divisible by a prime the other keeps as a power is copied, and
         // under a watched run that copy asks for its memory first (`Rat`'s `==`).
@@ -1536,11 +1663,9 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
                 false => Step::Ends(None),
             }
         }
-        (Value::Tuple(x), Value::Tuple(y), _) => items(x, y, r),
-        // Beneath its tuples the language's order is the total order, read in this walk so
-        // that the pairs it reads are kept with the others.
-        (_, _, Relation::SurfaceOrder) => step(a, b, Relation::Total),
-        (Value::Path(x), Value::Path(y), _) => items(x, y, r),
+        (Value::Tuple(x), Value::Tuple(y), _) | (Value::Path(x), Value::Path(y), _) => {
+            items(x, y, r)
+        }
         (Value::Atom(x), Value::Atom(y), _) => atoms(x, y, r),
         (Value::Family(x), Value::Family(y), _) => maps(x, y, r),
         _ => match a.scalar_cmp(b) {
@@ -2515,5 +2640,108 @@ mod tests {
         assert_eq!(capacity(), kept);
         assert!(small(1) == small(1));
         assert_eq!(capacity(), 0);
+    }
+
+    /// The pairs `(k, k + 2^40)` for `k` from 1, as one comparison of two values built apart
+    /// enters them: ids drawn in order from one counter on each side.
+    fn drawn_pairs(n: usize) -> Vec<Pair> {
+        (1..=n as u64).map(|k| (k, k + (1 << 40))).collect()
+    }
+
+    #[test]
+    fn the_table_of_pairs_holds_what_a_set_holds() {
+        // Pairs from a few ids, so runs of occupied slots form, meet and wrap past the last
+        // slot; each insert, removal and lookup is checked against `HashSet`. A removal moves
+        // later pairs of its run back, and a pair must stay findable from its home slot.
+        let mut table = ReadSet::new();
+        let mut set = HashSet::new();
+        let mut x: u64 = 0x2545_f491_4f6c_dd1d;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let pair = (x % 23, (x >> 8) % 19);
+            if pair == EMPTY {
+                // Two empty values are read at once and never kept.
+                assert!(table.insert(pair));
+                assert!(table.insert(pair));
+                table.remove(pair);
+                continue;
+            }
+            match x >> 60 {
+                0..=8 => assert_eq!(table.insert(pair), set.insert(pair), "insert {pair:?}"),
+                9..=14 => {
+                    table.remove(pair);
+                    set.remove(&pair);
+                }
+                _ => {
+                    table.clear();
+                    set.clear();
+                }
+            }
+            assert_eq!(table.len, set.len());
+        }
+        for a in 0..23 {
+            for b in 0..19 {
+                let pair = (a, b);
+                if pair != EMPTY {
+                    // Inserting a pair present gives false and changes nothing.
+                    let present = set.contains(&pair);
+                    assert_eq!(!table.insert(pair), present, "{pair:?}");
+                    if !present {
+                        table.remove(pair);
+                    }
+                }
+            }
+        }
+        assert_eq!(table.len, set.len());
+    }
+
+    #[test]
+    fn a_pair_taken_out_leaves_the_pairs_after_it_findable() {
+        // Every pair of a large table taken out in the order it went in, each removal moving
+        // pairs back: afterward none is found and every slot is empty.
+        let pairs = drawn_pairs(5_000);
+        let mut table = ReadSet::new();
+        for &p in &pairs {
+            assert!(table.insert(p));
+        }
+        for (i, &p) in pairs.iter().enumerate() {
+            table.remove(p);
+            assert_eq!(table.len, pairs.len() - i - 1);
+            if i % 997 == 0 {
+                assert!(pairs[i + 1..].iter().all(|&q| !table.insert(q)));
+            }
+        }
+        assert!(table.slots.iter().all(|&s| s == EMPTY));
+    }
+
+    #[test]
+    fn the_table_of_pairs_scales() {
+        // n pairs entered, every other one taken out again, as a walk that ends at a difference
+        // inside another comparison does, and all n met again. Each step is O(1) on average:
+        // the slots are at most half full and the hash spreads ids drawn in order.
+        let inputs: HashMap<usize, Vec<Pair>> = [20_000, 160_000]
+            .into_iter()
+            .map(|n| (n, drawn_pairs(n)))
+            .collect();
+        crate::scaling::check_order(
+            "the table of pairs: n entered, n/2 taken out, n met again",
+            20_000,
+            1,
+            |n| {
+                let pairs = &inputs[&n];
+                let mut table = ReadSet::new();
+                for &p in pairs {
+                    assert!(table.insert(p));
+                }
+                for &p in pairs.iter().step_by(2) {
+                    table.remove(p);
+                }
+                let again = pairs.iter().filter(|&&p| table.insert(p)).count();
+                assert_eq!(again, n.div_ceil(2));
+                table.clear();
+            },
+        );
     }
 }
