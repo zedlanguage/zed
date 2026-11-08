@@ -842,7 +842,9 @@ impl<'a> Formatter<'a> {
             Pattern::Wild(_) => self.put("_"),
             Pattern::Tuple(items, _) => {
                 self.put("(");
-                then![stack; Job::Patterns(items), put(")")];
+                // `(p,)` is the one-tuple pattern; `(p)` is no pattern.
+                let close = if items.len() == 1 { ",)" } else { ")" };
+                then![stack; Job::Patterns(items), put(close)];
             }
             Pattern::Struct { name, fields, .. } => {
                 self.put(format!("{name}("));
@@ -1195,9 +1197,11 @@ impl<'a> Formatter<'a> {
             }
             ExprKind::Tuple(items) => {
                 self.put("(");
+                // `(e,)` is the one-tuple; `(e)` is only `e` in parentheses.
+                let close = if items.len() == 1 { ",)" } else { ")" };
                 then![stack;
                     Job::Exprs { exprs: items, min: LAMBDA, ind },
-                    put(")"),
+                    put(close),
                 ];
             }
             ExprKind::Lambda { params, body } => {
