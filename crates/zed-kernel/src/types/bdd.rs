@@ -34,8 +34,8 @@ use super::mix;
 
 mod set;
 
+pub(crate) use super::hash::KeyHasher;
 use list::Cell;
-pub(crate) use list::KeyHasher;
 use set::{Key, NEXT, Set};
 
 /// A connective of two operands.
@@ -1937,7 +1937,7 @@ mod list {
     use std::sync::{Arc, OnceLock, Weak};
 
     use super::set::{self, Key, NEXT, Set, Tree};
-    use super::{Bdd, Literal, Owned, Part, mix};
+    use super::{Bdd, KeyHasher, Literal, Owned, Part, mix};
 
     /// A node of a sequence of blocks: a block and the sequences of the blocks before and after
     /// it. A cell that is the root of a list's sequence is the list, with the value of its first
@@ -2015,31 +2015,6 @@ mod list {
     /// The pieces of the cells restricted, by twice the cell's id plus the value of its first block
     /// (`Part::restrict`'s memo for lists).
     pub(super) type Memo<A> = HashMap<u64, Piece<A>, std::hash::BuildHasherDefault<KeyHasher>>;
-
-    /// The hasher of [`Memo`]'s keys, of the thread's tables of live rows and morphism types, and
-    /// of the pairs a comparison of values has read (`value::Read`): splitmix64's finalizer on
-    /// each `u64` in turn. SipHash took an eighth of the restriction of a list of three blocks.
-    #[derive(Default)]
-    pub(crate) struct KeyHasher(u64);
-
-    impl std::hash::Hasher for KeyHasher {
-        fn write(&mut self, bytes: &[u8]) {
-            for &b in bytes {
-                self.write_u64(u64::from(b));
-            }
-        }
-
-        fn write_u64(&mut self, x: u64) {
-            let mut z = (self.0.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            self.0 = z ^ (z >> 31);
-        }
-
-        fn finish(&self) -> u64 {
-            self.0
-        }
-    }
 
     fn id<A: Literal>(t: &Seq<A>) -> u64 {
         t.as_ref().map_or(0, |c| c.id)

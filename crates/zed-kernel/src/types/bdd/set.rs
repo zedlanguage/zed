@@ -63,7 +63,7 @@ pub(in crate::types) type Tree<A> = Option<Arc<Set<A>>>;
 pub(in crate::types) type SetTable<A> = std::collections::HashMap<
     Slot,
     Vec<Weak<Set<A>>>,
-    std::hash::BuildHasherDefault<super::KeyHasher>,
+    std::hash::BuildHasherDefault<crate::types::hash::KeyHasher>,
 >;
 
 /// The key of a node's bucket in its [`SetTable`]: the hash of its atom, whether the atom is
@@ -80,7 +80,7 @@ fn slot<A: Atom>(key: &Key<A>, left: u64, right: u64) -> Slot {
 impl<A: Atom> Drop for Set<A> {
     fn drop(&mut self) {
         let k = slot(&self.key, id(self.left.as_ref()), id(self.right.as_ref()));
-        A::unsets(|t| {
+        A::unsets(|t: &mut SetTable<A>| {
             // The node has no entry when it was made on another thread.
             if let Some(bucket) = t.get_mut(&k) {
                 bucket.retain(|w| !std::ptr::eq(w.as_ptr(), self));
