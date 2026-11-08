@@ -724,3 +724,61 @@ fn the_sets_of_a_table_whose_first_entry_grows_agree_with_a_search() {
         agrees_with_search(&t);
     }
 }
+
+/// `fam({0, …, n-1}, k -> (k, k))[2].1 * #late`: a failure read beside a table of `n` rows that
+/// hold none.
+fn late_beside_table(n: usize) -> Term {
+    let keys = lit(Family::set((0..n as i64).map(Value::Int)));
+    let table = fam(keys, "k", prim(Prim::Tuple, vec![var("k"), var("k")]));
+    mul(nth(get(table, lit(2)), 1), lit(Value::atom("late")))
+}
+
+#[test]
+fn the_origins_of_a_failure_read_beside_a_table_holding_none_cost_nothing_for_the_table() {
+    // Found oldest fact first, the sets were found over every fact the failure's fact reaches,
+    // so the table's `n` rows were read, `O(n log n)`; facts whose values hold no failure are
+    // now left out, and the cost does not depend on `n` (COMPLEXITY.md K25). The runs are
+    // recorded before timing.
+    let n = 8000;
+    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, trace(&late_beside_table(m)).1))
+        .collect();
+    scaling::check_order(
+        "the origins of a failure read beside a table of n rows holding none, by n",
+        n,
+        0,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert_eq!(p.origins(p.result()).len(), 1);
+        },
+    );
+}
+
+#[test]
+fn a_table_whose_rows_hold_failures_in_some_entries_agrees_with_a_search() {
+    // Rows `0` and `3` hold `#late`, the others none; the read of row 1 holds none, and its
+    // product with row 3's reading holds the failure of row 3 only.
+    let keys = lit(Family::set((0..6).map(Value::Int)));
+    let row = if_(
+        prim(
+            Prim::Eq,
+            vec![prim(Prim::Mod, vec![var("k"), lit(3)]), lit(0)],
+        ),
+        prim(Prim::Tuple, vec![var("k"), var("e")]),
+        prim(Prim::Tuple, vec![var("k"), var("k")]),
+    );
+    let t = let_(
+        "e",
+        lit(Value::atom("late")),
+        let_(
+            "t",
+            fam(keys, "k", row),
+            mul(nth(get(var("t"), lit(1)), 1), nth(get(var("t"), lit(3)), 1)),
+        ),
+    );
+    let (v, p) = trace(&t);
+    assert_eq!(v, Value::atom("late"));
+    assert_eq!(origin_terms(&p), ["#late"]);
+    agrees_with_search(&t);
+}

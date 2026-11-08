@@ -1092,11 +1092,11 @@ impl Family {
     /// with differs, unread, so an entry listed as changed may be equal. With `==`, each such
     /// family is read down to its first difference, which on nested families made one from
     /// another is as deep as they are (COMPLEXITY.md K25).
-    pub(crate) fn shallow_diff<'a>(
+    pub(crate) fn shallow_diff<'a, 'b>(
         &'a self,
-        other: &'a Family,
+        other: &'b Family,
         limit: usize,
-    ) -> Option<Vec<DiffItem<'a, 'a, Value, Value>>> {
+    ) -> Option<Vec<DiffItem<'a, 'b, Value, Value>>> {
         /// Clears `shallow` ([`Comparisons`]) when the walk ends.
         struct Shallow;
         impl Drop for Shallow {

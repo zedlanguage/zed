@@ -960,6 +960,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `BTreeMap::pop_last` as a worklist taken in descending key order, each step adding entries at smaller keys | `Provenance::origins` | Key range queries (gap 9), mutation | `.last` and a `patch` removing that key on an ordered map, in a state receiver; or a fold over the fact indices from `i` down to 0, which visits facts the pass would skip |
 | `BTreeMap::entry(k).or_insert_with` as a memo filled during the pass | `Provenance::origins` | Mutation | A state receiver over a map, or the members each fact holds computed for all facts before the pass |
+| A memo by sequence and family id kept in the evaluator's trace for a run, filled as each fact is made by an explicit stack whose family visits count the values a side stack holds from a mark, `Vec::drain` from that mark when the visit is taken (PROV-oldest-failing) | `Holds::of` | Mutation, identity (gap 1) | A state receiver over the memo, threaded through the run with the facts; the ids are the content digests of gap 1 |
 
 ## Entries from T11-preimage (`zedc-preimage/src/preimage.rs`)
 

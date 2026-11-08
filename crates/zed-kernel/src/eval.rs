@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use num_bigint::BigInt;
 
-use crate::provenance::{Fact, FactAddress, NodeAddress, Position, Provenance};
+use crate::provenance::{Fact, FactAddress, Holds, NodeAddress, Position, Provenance};
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
 use crate::value::Value;
 
@@ -384,6 +384,8 @@ struct Trace {
     /// The call site and the facts of the arguments of the next closure call.
     site: Option<At>,
     args: Vec<Option<usize>>,
+    /// Which values the run's facts hold failures in, read as each fact is made.
+    holds: Holds,
 }
 
 /// A position of the evaluated term during a run, numbered as the run reaches it: the run's own
@@ -499,6 +501,7 @@ impl Evaluator {
             t.nodes = vec![Position::root()];
             t.ids.clear();
             t.facts.clear();
+            t.holds = Holds::default();
             marks = (t.calls.len(), t.keys.len());
         }
         // The order of numbers inside family keys and comparisons asks the system for the
@@ -518,6 +521,7 @@ impl Evaluator {
             // A run that stopped with an error left the regions it was inside.
             t.calls.truncate(marks.0);
             t.keys.truncate(marks.1);
+            t.holds = Holds::default();
             if out.is_ok() {
                 t.term = Some(term.clone());
             }
@@ -991,16 +995,19 @@ impl<'t> Machine<'_, 't> {
         let v = out?;
         let mut node = t.calls.clone();
         node.push_back(t.nodes[at as usize].clone());
+        let value = match &v {
+            V::Data(d) => Some(d.clone()),
+            _ => None,
+        };
+        let holds_failure = value.as_ref().is_some_and(|d| t.holds.of(d));
         t.facts.push(Fact {
             address: FactAddress {
                 node: NodeAddress(node),
                 keypath: t.keys.clone(),
             },
-            value: match &v {
-                V::Data(d) => Some(d.clone()),
-                _ => None,
-            },
+            value,
             inputs: inputs.into_iter().flatten().collect(),
+            holds_failure,
         });
         let id = t.facts.len() - 1;
         t.reads.push(Some(id));

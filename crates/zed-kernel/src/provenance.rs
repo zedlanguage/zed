@@ -213,6 +213,9 @@ pub struct Fact {
     pub value: Option<Value>,
     /// The facts it read, by index into [`Provenance::facts`], in the order it read them.
     pub inputs: Vec<usize>,
+    /// Whether its value is a failure or holds one in a tuple, a keypath or a family's value,
+    /// false for a function. [`Provenance::origins`] reads only the facts for which it is true.
+    pub holds_failure: bool,
 }
 
 /// The run graph of one evaluation: its facts, each after the facts it read.
@@ -317,24 +320,33 @@ impl Provenance {
             nodes: HashMap::new(),
             last: 0,
         };
-        // The sets are found oldest fact first, over the facts `i` reaches by its inputs, each
-        // taken once: a family's set is then found after that of the family it was made from,
-        // and from it, by what was added ([`Held::base`]), so the two share their nodes and the
-        // meets below are read from their differences. Newest first, a set found before the
-        // set it was made from is read entry by entry and shares no nodes with it.
-        // Complexity tradeoff: this reads the values of every fact `i` reaches, where the pass
-        // below reads only the inputs of facts that hold a member, so a failure read next to a
-        // large value holding none now costs that value's distinct parts, `O(m log m)` for `m`
-        // parts, at most the work of the run that made them (a table of 64,000 entries beside
-        // `#late`: 22 ms, against 0.01 ms before and 340 ms for the run). In exchange, a chain
-        // of sets each one failure larger than the last costs `O(n log n)`, not `O(n²)`
-        // (COMPLEXITY.md K25).
+        // The sets are found oldest fact first, over the facts `i` reaches by inputs whose
+        // values hold a failure ([`Fact::holds_failure`]), each taken once: a family's set is
+        // then found after that of the family it was made from, and from it, by what was added
+        // ([`Held::base`]), so the two share their nodes and the meets below are read from
+        // their differences. Newest first, a set found before the set it was made from is read
+        // entry by entry and shares no nodes with it. A fact whose value holds no failure holds
+        // no member, so the search of the pass below never goes through it, and it and the
+        // facts it alone reaches are left out: a failure read next to a large value holding
+        // none costs nothing for that value.
+        // Complexity tradeoff: this reads the values of every fact `i` reaches through values
+        // holding failures, where the pass below reads only the inputs of facts that hold a
+        // member, so a failure read next to a large value holding other failures costs that
+        // value's distinct parts, `O(m log m)` for `m` parts, at most the work of the run that
+        // made them. In exchange, a chain of sets each one failure larger than the last costs
+        // `O(n log n)`, not `O(n²)` (COMPLEXITY.md K25). Reading only the facts that hold a
+        // member would need the members each value holds before the values are read.
         let mut reached = vec![i];
         let mut taken = HashSet::from([i]);
         let mut next = 0;
         while let Some(&j) = reached.get(next) {
             next += 1;
-            reached.extend(self.facts[j].inputs.iter().filter(|k| taken.insert(**k)));
+            reached.extend(
+                self.facts[j]
+                    .inputs
+                    .iter()
+                    .filter(|k| self.facts[**k].holds_failure && taken.insert(**k)),
+            );
         }
         reached.sort_unstable();
         for k in reached {
@@ -356,7 +368,9 @@ impl Provenance {
             let mut found = Found::new();
             for &k in &self.facts[j].inputs {
                 debug_assert!(k < j, "a fact reads only facts completed before it");
-                let Some(v) = &self.facts[k].value else {
+                // An input holding no failure holds no member: its set is empty.
+                let input = &self.facts[k];
+                let Some(v) = input.value.as_ref().filter(|_| input.holds_failure) else {
                     continue;
                 };
                 let common = last.of(&at_j, held.of(v).found);
@@ -670,6 +684,124 @@ impl<'a> Tally<'a> {
                 self.sets.insert(x, n - 1);
             }
         }
+    }
+}
+
+/// Whether values hold a failure, as [`Fact::holds_failure`] records it when a run makes a
+/// fact: that a value is a failure, or holds one in a tuple, a keypath or a family's value, the
+/// places [`Provenance::origins`] reads. Each non-empty sequence and family is read once, by its
+/// id, and a family made from another by adding entries (`Family::extend`, [`Family::union`])
+/// is read from the other's count by the difference of the two, when that lists fewer items
+/// than the family has entries. A run with provenance so reads each distinct part of its
+/// values once, `O(log n)` for each item of a difference or entry: the parts it made, at the
+/// cost of making them, and the literals and port data it read. An id names one content for
+/// good, since [`fresh_id`](crate::value::fresh_id) never draws one twice.
+#[derive(Default, Debug)]
+pub(crate) struct Holds {
+    /// Whether each non-empty sequence read holds a failure, by its id.
+    items: HashMap<Id, bool>,
+    /// For each non-empty family read, by its id: the number of its entries whose value holds a
+    /// failure, and the family, against which one made from it is compared.
+    families: HashMap<Id, (usize, Family)>,
+}
+
+/// What [`Holds::of`] does next.
+enum Visit<'v> {
+    Enter(&'v Value),
+    /// Records the sequence, its values read.
+    Items(&'v Items),
+    /// Records the family: `count` of its entries hold a failure, besides those whose values
+    /// are on the stack of values to count from `from` on, which are read.
+    Family {
+        family: &'v Family,
+        count: usize,
+        from: usize,
+    },
+}
+
+impl Holds {
+    /// Whether `v` holds a failure; the parts of `v` not read before are read now.
+    pub(crate) fn of(&mut self, v: &Value) -> bool {
+        let mut todo = vec![Visit::Enter(v)];
+        // The values each family planned in `todo` has yet to count, a family's after those
+        // of the families that hold it.
+        let mut pending = Vec::new();
+        while let Some(visit) = todo.pop() {
+            match visit {
+                Visit::Enter(v) => self.enter(v, &mut todo, &mut pending),
+                Visit::Items(xs) => {
+                    let holds = xs.iter().any(|x| self.known(x));
+                    self.items.insert(xs.id(), holds);
+                }
+                Visit::Family {
+                    family,
+                    count,
+                    from,
+                } => {
+                    let added = pending.drain(from..).filter(|x| self.known(x)).count();
+                    self.families
+                        .insert(family.id(), (count + added, family.clone()));
+                }
+            }
+        }
+        self.known(v)
+    }
+
+    /// Whether `v`, whose parts are all read, holds a failure.
+    fn known(&self, v: &Value) -> bool {
+        match v {
+            Value::Atom(_) => true,
+            Value::Tuple(xs) | Value::Path(xs) => !xs.is_empty() && self.items[&xs.id()],
+            Value::Family(f) => !f.is_empty() && self.families[&f.id()].0 > 0,
+            _ => false,
+        }
+    }
+
+    /// Plans the reading of `v`'s parts not yet read. The values a family's visit counts are
+    /// planned after it, so they are read before it is taken from the stack.
+    fn enter<'v>(&self, v: &'v Value, todo: &mut Vec<Visit<'v>>, pending: &mut Vec<&'v Value>) {
+        match v {
+            Value::Tuple(xs) | Value::Path(xs)
+                if !xs.is_empty() && !self.items.contains_key(&xs.id()) =>
+            {
+                todo.push(Visit::Items(xs));
+                todo.extend(xs.iter().map(Visit::Enter));
+            }
+            Value::Family(f) if !f.is_empty() && !self.families.contains_key(&f.id()) => {
+                let from = pending.len();
+                let count = self.shared_with_base(f, pending).unwrap_or_else(|| {
+                    pending.extend(f.0.values());
+                    0
+                });
+                todo.push(Visit::Family {
+                    family: f,
+                    count,
+                    from,
+                });
+                todo.extend(pending[from..].iter().map(|x| Visit::Enter(x)));
+            }
+            _ => {}
+        }
+    }
+
+    /// The number of entries of `f` that hold a failure among those it shares with the family
+    /// it was made from, when that family was read and the difference of the two lists fewer
+    /// items than `f` has entries. The values the difference adds or changes go on `pending`.
+    fn shared_with_base<'v>(&self, f: &'v Family, pending: &mut Vec<&'v Value>) -> Option<usize> {
+        let (count, base) = self.families.get(&f.from())?;
+        let diff = base.shallow_diff(f, f.len())?;
+        let mut count = *count;
+        for d in diff {
+            match d {
+                DiffItem::Add(_, new) => pending.push(new),
+                DiffItem::Remove(_, old) => count -= usize::from(self.known(old)),
+                DiffItem::Update { old, new } => {
+                    count -= usize::from(self.known(old.1));
+                    pending.push(new.1);
+                }
+            }
+        }
+        Some(count)
     }
 }
 
@@ -1359,5 +1491,68 @@ mod tests {
         check(&t, &[set(3)], "leave 4");
         t.leave(set(3));
         check(&t, &[], "leave 3 last");
+    }
+
+    /// Whether `v` is a failure or holds one where [`Holds`] reads, read as a tree.
+    fn holds_by_tree(v: &Value) -> bool {
+        match v {
+            Value::Atom(_) => true,
+            Value::Tuple(xs) | Value::Path(xs) => xs.iter().any(holds_by_tree),
+            Value::Family(f) => f.iter().any(|(_, x)| holds_by_tree(x)),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn holds_agrees_with_a_tree_read_over_values_and_families_made_from_others() {
+        let late = || Value::atom("late");
+        let tuple = Value::tuple;
+        let fam = |es: Vec<(i64, Value)>| Family::of(es);
+        // A family of 64 entries holding one failure, and families made from it.
+        let base = fam((0..64)
+            .map(|k| (k, if k == 5 { late() } else { Value::Int(k) }))
+            .collect());
+        let made = |entries: Vec<(i64, Value)>| {
+            let mut f = base.clone();
+            f.extend(entries.into_iter().map(|(k, x)| (Value::Int(k), x)));
+            Value::Family(f)
+        };
+        let nested = fam(vec![(0, Value::Family(base.clone()))]);
+        let values = vec![
+            Value::Int(3),
+            late(),
+            Value::atom_with("missing", vec![Value::Int(1)]),
+            tuple(vec![]),
+            tuple(vec![Value::Int(1), Value::Int(2)]),
+            tuple(vec![Value::Int(1), tuple(vec![late()])]),
+            Value::path(vec![Value::Int(0), late()]),
+            Value::Family(fam(vec![])),
+            Value::Family(fam(vec![(0, Value::Int(1))])),
+            // A failure only in a key is not read.
+            Value::Family(Family::set([late()])),
+            Value::Family(base.clone()),
+            // The entry holding the failure is replaced, then another gains one, then both.
+            made(vec![(5, Value::Int(5))]),
+            made(vec![(9, tuple(vec![late()]))]),
+            made(vec![(5, Value::Int(5)), (9, late())]),
+            // A family made from no other, one made from it by a union, and one whose difference
+            // from the family it was made from is as large as it.
+            Value::Family(nested.clone()),
+            Value::Family(
+                Family::union(&nested, &fam(vec![(1, Value::Int(0))])).expect("disjoint"),
+            ),
+            made((0..64).map(|k| (k, Value::Int(-k))).collect()),
+            // The same tuple twice in one value is read once.
+            {
+                let t = tuple(vec![late()]);
+                tuple(vec![t.clone(), t])
+            },
+        ];
+        let mut holds = Holds::default();
+        for v in &values {
+            assert_eq!(holds.of(v), holds_by_tree(v), "{v}");
+            // A value read again is known without reading it.
+            assert_eq!(holds.of(v), holds_by_tree(v), "{v} again");
+        }
     }
 }
