@@ -1573,10 +1573,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAMILY-eq-reserve | impl attempt 1 | 2026-11-07 19:16 | negative controls, run once, not committed: never freeing the kept table fails a_table_of_pairs_is_kept_only_for_a_comparison_of_like_size (capacity 1792, expec |
+| DEEP-heap-last | repair attempt 1 | 2026-11-07 19:51 | ready 7365c7ef on wt/deep-heap-last (origin/main 93857183, not behind): test expectation fixed to DEPTH (code right, culprit d199886b kept the old [9] prefix co |
+| EMPTY-morphism-next | impl attempt 1 | 2026-11-07 19:32 | hashed the Type-keyed maps of empty.rs (ids, reps, MEMO, VERDICTS, DECIDING, SHARED, building, waiting, cycles, members) and order's equal set: not-under compar |
+| FAMILY-eq-reserve | impl attempt 1 | 2026-11-07 19:16 | ready: f1d5a8f5 on wt/family-eq-reserve, rebased on 93857183, 626 targeted tests pass; 2% target not met (== +6.6%, cmp +4.3%, surface_eq +4.9%) |
+| HEAP-paths-shared | impl attempt 1 | 2026-11-07 19:32 | scaling: l01_36 a_binder_at_every_level_of_a_deep_pattern_scales, releasing_a_binder_at_every_level_scales, l01_34 a_binder_at_every_level_of_a_deep_match_scale |
 | PROV-union-growing | impl attempt 1 | 2026-11-07 19:32 | reproduced on main 373e609a: growing-entries origins n=100,200,400,800,1600: 7.2, 25.1, 99.8, 404.8, 1705.3 ms (4x per doubling, O(n^2)); load 25 |
 | REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
-| XST-r2 | research attempt 1 | 2026-11-07 18:56 | Codex report in (R2_CODEX.md, 49 KB, rc 0); Claude and Gemini still running |
+| ROW-eq-deep | impl attempt 1 | 2026-11-07 20:25 | worktree /home/luke/Work/wt/row-eq-deep on wt/row-eq-deep from origin/main 93857183, seeded |
+| SCALE-pass-ratio | impl attempt 1 | 2026-11-07 20:25 | start: print measurements on passing check_order |
+| TESTS-deep-groups | impl attempt 1 | 2026-11-07 19:51 | ready 369785b7 on wt/tests-deep-groups, not behind origin/main 93857183 |
+| UTVPI-greedy-pick | impl attempt 1 | 2026-11-07 19:32 | negative control for (1), old satisfiable_inner: a_disjunction_of_unit_rows, a_round_trip (refused at n=1..4 where decide says false) and the round-trip scaling |
+| XST-r2 | research attempt 1 | 2026-11-07 18:56 | Claude report in (R2_CLAUDE.md, 35 KB, rc 0); Gemini still running |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
