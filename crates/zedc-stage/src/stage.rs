@@ -20,11 +20,12 @@
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use zed_kernel::types::Type;
 use zed_kernel::{
-    Evaluator, Global, Globals, KernelError, Lookup, Pattern, Prim, Shared, Term, Value, World,
+    Evaluator, Global, Globals, KernelError, Lookup, Pattern, Shared, Term, Value, World,
 };
 
 use crate::defs::{Def, Unit};
@@ -1660,10 +1661,13 @@ const FORM: &str = "its form does not show that it ends";
 /// The value of the closed term `t` under the prelude, its calls of the functions of `stubs`
 /// answered by their ports for the run `calls`.
 fn run_with(t: Term, stubs: &[Arc<Stub>], calls: &Arc<Run>) -> Result<Value, KernelError> {
+    let ports: Arc<BTreeMap<Arc<str>, Arc<Stub>>> =
+        Arc::new(stubs.iter().map(|s| (s.port.clone(), s.clone())).collect());
     let world = stubs.iter().fold(World::new(), |w, s| {
         let port = Port {
             stub: s.clone(),
             run: calls.clone(),
+            ports: ports.clone(),
         };
         w.source(&s.port, Arc::new(port))
     });
@@ -1680,16 +1684,19 @@ type Said = Result<Value, Option<String>>;
 /// gives, so the two runs differ only where a stub's call fails. A stub's call fails where the
 /// call as written fails, and its error is then the as-written error kept in the stub's table
 /// ([`Run::failed`]); or where the stub itself fails: at a call inside a pure region, an
-/// argument holding a function, one a key cannot tell apart or an answer that cannot be
-/// compared, which the call as written may not meet, and then the error is not known. Any other
-/// error is met outside the stubs' bodies, where the two runs agree. An error the evaluator
-/// gives for want of memory is treated as not known, since the run as written holds other
-/// values than the run with stubs.
+/// argument holding a function no stub stands for, one a key cannot tell apart or an answer
+/// that cannot be compared, which the call as written may not meet, and then the error is not
+/// known. A run whose result is a function fails where the call as written gives that
+/// function, so that error is not known either. Any other error is met outside the stubs'
+/// bodies, where the two runs agree. An error the evaluator gives for want of memory is treated
+/// as not known, since the run as written holds other values than the run with stubs.
 fn error_as_written(e: KernelError, calls: &Run) -> Option<String> {
     match e {
         KernelError::Port(..) => calls.failed.lock().expect("one thread").take(),
         KernelError::Type(m)
-            if m.ends_with("applied to a function") || m.ends_with("used inside a pure region") =>
+            if m.ends_with("applied to a function")
+                || m.ends_with("used inside a pure region")
+                || m == "the program's result is a function" =>
         {
             None
         }
@@ -1701,24 +1708,18 @@ fn error_as_written(e: KernelError, calls: &Run) -> Option<String> {
     }
 }
 
-/// Whether the value `v` is compared in time linear in the memory it holds, and, as the
-/// arguments of a call when `key`, told apart by the key a port is asked: each leaf is a
-/// boolean, a number (when `key`, other than a float zero, which a key reads as `0.0`
-/// whatever its sign) or a string held as one block, in tuples and keypaths. A join of
-/// strings may be exponentially longer than its nodes, and comparing it reads every byte. A
-/// family's or an atom's parts are not walked.
-fn compared(v: &Value, key: bool) -> bool {
+/// Whether the value `v` is compared in time linear in the memory it holds: each leaf is a
+/// boolean, a number or a string held as one block, in tuples and keypaths. Floats compare by
+/// their bits, so `-0.0` and `0.0` are told apart. A join of strings may be exponentially
+/// longer than its nodes, and comparing it reads every byte. A family's or an atom's parts
+/// are not walked.
+fn compared(v: &Value) -> bool {
     let mut todo = vec![v];
     while let Some(v) = todo.pop() {
         match v {
-            Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) => {}
+            Value::Bool(_) | Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) => {}
             Value::Str(s) => {
                 if !s.is_flat() {
-                    return false;
-                }
-            }
-            Value::Float(x) => {
-                if key && x.get() == 0.0 {
                     return false;
                 }
             }
@@ -1734,9 +1735,11 @@ fn compared(v: &Value, key: bool) -> bool {
 /// once.
 #[derive(Debug)]
 struct Stub {
-    /// The port the lambda reads.
+    /// The port the lambda calls. As the name of an atom it is also the token that stands for
+    /// the function in a key of another stub's table ([`Port::function`]); a written atom's
+    /// name does not start with `#`.
     port: Arc<str>,
-    /// `(#0, .., #n) -> port[(#0, .., #n)]`.
+    /// `(#0, .., #n) -> port(#0, .., #n)`.
     lam: Shared,
     /// The function's name and term.
     name: Arc<str>,
@@ -1750,13 +1753,22 @@ struct Stub {
 }
 
 impl Stub {
-    /// The call of the function at the arguments `key`, under the bindings it reads.
-    fn term_at(&self, key: &Value) -> Term {
+    /// The call of the function at the arguments `key`, under the bindings it reads; each
+    /// argument that is the token of a stub of `with` is that stub's lambda, bound to the
+    /// token's name.
+    fn term_at(&self, key: &Value, with: &[Arc<Stub>]) -> Term {
         let Value::Tuple(args) = key else {
             unreachable!("a stub is asked with the tuple of its arguments")
         };
+        let arg = |v: &Value| match token(v) {
+            Some(port) => Term::Var(port.clone()),
+            None => Term::Lit(v.clone()),
+        };
         let f = Shared::new(Term::Var(self.name.clone()));
-        let call = Term::App(f, args.iter().cloned().map(Term::Lit).collect());
+        let call = Term::App(f, args.iter().map(arg).collect());
+        let call = with.iter().fold(call, |body, s| {
+            Term::Let(s.port.clone(), s.lam.clone(), Shared::new(body))
+        });
         let call = Term::Let(self.name.clone(), self.known.clone(), Shared::new(call));
         self.lets.iter().rev().fold(call, |body, (x, e)| {
             Term::Let(x.clone(), e.clone(), Shared::new(body))
@@ -1771,10 +1783,10 @@ impl Stub {
 /// Puts in `stub`'s table its answer at `key`, and before it each answer that answer needs.
 /// Each run calls the functions it reads through stubs that do not answer a key not yet in
 /// their tables; such a run stops, the missing answer is found first, and the run starts
-/// again, so the runs do not nest.
-fn fill(stub: &Arc<Stub>, key: &Value) {
-    let mut todo = vec![(stub.clone(), key.clone())];
-    while let Some((s, k)) = todo.last().cloned() {
+/// again, so the runs do not nest. `with` are the stubs whose tokens `key` holds.
+fn fill(stub: &Arc<Stub>, key: &Value, with: Vec<Arc<Stub>>) {
+    let mut todo = vec![(stub.clone(), key.clone(), with)];
+    while let Some((s, k, with)) = todo.last().cloned() {
         if s.answer(&k).is_some() {
             todo.pop();
             continue;
@@ -1783,7 +1795,8 @@ fn fill(stub: &Arc<Stub>, key: &Value) {
             stop: true,
             ..Run::default()
         });
-        let out = run_with(s.term_at(&k), &s.reads, &calls);
+        let reads: Vec<Arc<Stub>> = s.reads.iter().chain(&with).cloned().collect();
+        let out = run_with(s.term_at(&k, &with), &reads, &calls);
         match calls.need.lock().expect("one thread").take() {
             Some(need) => todo.push(need),
             None => {
@@ -1795,12 +1808,19 @@ fn fill(stub: &Arc<Stub>, key: &Value) {
     }
 }
 
-/// One run with stubs: the first answer it needed that no table held, when it stops at such an
-/// answer (`stop`), and otherwise each call it made, with its arguments and answer.
+/// An answer a run needed: the stub, the key it was asked at, and the stubs whose tokens the
+/// key holds ([`Port::with`]).
+type Need = (Arc<Stub>, Value, Vec<Arc<Stub>>);
+
+/// One run with stubs: the first answer it needed that no table held, with the stubs whose
+/// tokens its key holds, when it stops at such an answer (`stop`), and otherwise each call it
+/// made, with its arguments and answer, and whether it made a call at an argument holding a
+/// function (`function`), which is not logged: a part's memo asks again only calls at data.
 #[derive(Debug, Default)]
 struct Run {
-    need: Mutex<Option<(Arc<Stub>, Value)>>,
+    need: Mutex<Option<Need>>,
     log: Mutex<Vec<(Probe, Answer)>>,
+    function: AtomicBool,
     stop: bool,
     /// The error as written of the failing call a stub answered, when it is known. A port's
     /// error ends the run, so the run ended at that call.
@@ -1812,31 +1832,80 @@ struct Run {
 struct Port {
     stub: Arc<Stub>,
     run: Arc<Run>,
+    /// The stubs of the run, by port.
+    ports: Arc<BTreeMap<Arc<str>, Arc<Stub>>>,
+}
+
+/// The port named by `v` when it is a stub's token: an atom whose name, the port's, starts
+/// with `#`, which no written atom's does.
+fn token(v: &Value) -> Option<&Arc<str>> {
+    match v {
+        Value::Atom(a) if a.name.starts_with('#') => Some(&a.name),
+        _ => None,
+    }
+}
+
+impl Port {
+    /// The stubs of the run whose tokens are arguments in `key`, or `None` when an argument
+    /// is neither such a token nor compared ([`compared`]).
+    fn with(&self, key: &Value) -> Option<Vec<Arc<Stub>>> {
+        let Value::Tuple(args) = key else {
+            unreachable!("a stub is called with the tuple of its arguments")
+        };
+        let mut with = Vec::new();
+        for a in args.iter() {
+            match token(a) {
+                Some(port) => with.push(self.ports.get(port)?.clone()),
+                None if compared(a) => {}
+                None => return None,
+            }
+        }
+        Some(with)
+    }
 }
 
 impl Lookup for Port {
     fn refuses(&self, key: &Value) -> Option<String> {
-        let plain = compared(key, true);
+        let plain = self.with(key).is_some();
         (!plain).then(|| "an argument a key cannot tell apart".into())
     }
 
+    fn calls(&self) -> bool {
+        true
+    }
+
+    /// The token of the stub whose lambda has the body `body`: `port(#0, .., #n)`.
+    fn function(&self, body: &Term) -> Option<Value> {
+        let Term::App(f, _) = body else {
+            return None;
+        };
+        let Term::Read(port) = &**f else {
+            return None;
+        };
+        self.ports.contains_key(port).then(|| Value::atom(port))
+    }
+
     fn get(&self, key: &Value) -> Result<Value, String> {
+        let with = self.with(key).expect("a key the port takes");
         let answer = match self.stub.answer(key) {
             Some(a) => a,
             None if self.run.stop => {
-                *self.run.need.lock().expect("one thread") = Some((self.stub.clone(), key.clone()));
+                let need = (self.stub.clone(), key.clone(), with);
+                *self.run.need.lock().expect("one thread") = Some(need);
                 return Err("an answer not yet known".into());
             }
             None => {
-                fill(&self.stub, key);
+                fill(&self.stub, key, with.clone());
                 self.stub.answer(key).expect("filled")
             }
         };
         // An answer that cannot be compared is not recorded, and the run fails.
-        if answer.as_ref().is_ok_and(|v| !compared(v, false)) {
+        if answer.as_ref().is_ok_and(|v| !compared(v)) {
             return Err("an answer that cannot be compared".into());
         }
-        if !self.run.stop {
+        if !self.run.stop && !with.is_empty() {
+            self.run.function.store(true, Ordering::Relaxed);
+        } else if !self.run.stop {
             let log = (
                 Probe::Call(self.stub.name.clone(), key.clone()),
                 Answer::Gives(answer.as_ref().ok().cloned()),
@@ -2052,7 +2121,7 @@ impl Mixer {
             _ => false,
         };
         if let Term::Lit(v) = &**k
-            && compared(v, false)
+            && compared(v)
         {
             let next = self.given + 1;
             let b = *self.literals.entry(v.clone()).or_insert(next);
@@ -2170,11 +2239,11 @@ impl Mixer {
         let port: Arc<str> = format!("#stub{}", self.ports).into();
         let arity = e.arity.expect("a function");
         let params: Vec<Arc<str>> = (0..arity).map(|i| format!("#{i}").into()).collect();
-        let key = Term::Prim(Prim::Tuple, params.iter().cloned().map(Term::Var).collect());
-        let read = Term::Prim(Prim::Get, vec![Term::Read(port.clone()), key]);
+        let args = params.iter().cloned().map(Term::Var).collect();
+        let call = Term::App(Shared::new(Term::Read(port.clone())), args);
         Some(Arc::new(Stub {
             port,
-            lam: Shared::new(Term::Lam(params, Shared::new(read))),
+            lam: Shared::new(Term::Lam(params, Shared::new(call))),
             name: e.name.clone(),
             known: k.clone(),
             lets,
@@ -2294,32 +2363,40 @@ impl Mixer {
 
     /// The value of the build-stage term `t`, which reads `free`, under the bindings it
     /// needs ([`Mixer::needs`]). While a part held in a node is mixed, each function bound
-    /// outside the part that `t` reads is called through its stub, and each call, its
+    /// outside the part that `t` reads is called through its stub, and each call at data, its
     /// arguments and its answer, is recorded as what the part asked ([`Probe::Call`]); when
-    /// one of those has no stub, or the run with stubs fails, the part is recorded as
-    /// depending on what each of them is ([`Probe::Same`]), and `t` gives the error as written
-    /// the failed run kept ([`error_as_written`]) or, where that is not known, is evaluated as
-    /// written.
+    /// one of those has no stub, a call's argument holds a function, or the run with stubs
+    /// fails, the part is recorded as depending on what each of them is ([`Probe::Same`]), and
+    /// `t` gives the error as written the failed run kept ([`error_as_written`]) or, where that
+    /// is not known, is evaluated as written.
     // Complexity tradeoff: what is given up is sharing, not exactness. A part that calls a
     // function bound outside it is keyed by what it asked of the function only when the
     // function's calls are shown to end (each function it calls through a name has a stub,
     // and the other bindings it reads are literals, primitives or names), when the calls are
     // made outside a family operation or a `fix` (a pure region, which reads no port), and
-    // when each run succeeds with arguments that hold no float zero, no family, no atom and
-    // no string held in more than one block ([`compared`]); otherwise the part is keyed by what the
-    // function is, its term and the bindings it reads, and is mixed once under each such
-    // function, as before. A call whose answer is not yet known runs the function's term with
-    // its own reads called through their stubs; a run that meets an answer not yet known
-    // stops, that answer is found first, and the run starts again, so a function whose term
-    // asks m new answers runs m + 1 times. Why: whether two functions compute the same values
-    // is undecidable in general, so a part is keyed by the answers it took, which mixing can
-    // compare; a key of `-0.0` reads as `0.0`, a family's entries are keys, and comparing a
-    // join of strings reads every byte, which may take time exponential in its nodes. The runs
-    // start again rather than nest, so the thread's stack does not grow with the depth of the
-    // functions. Trigger: a part shared below `let`s of functions that differ on each path and
-    // are called inside a family operation, through a parameter, or with such an argument;
-    // for the restart, a function that calls many earlier functions at many new arguments in
-    // one run. On the family of the scaling test below (d nested `if c`s whose arms are
+    // when each run succeeds with arguments that hold no family, no atom and no string held
+    // in more than one block ([`compared`]) and with answers of those kinds; otherwise the
+    // part is keyed by what the function is, its term and the bindings it reads, and is mixed
+    // once under each such function, as before. A float is keyed by its bits, so `-0.0` and
+    // `0.0` are two answers, and an argument that is a function bound to a stub by that stub's
+    // token (item STAGE-stub-fast): such a call is answered from the table, and the part
+    // is keyed by what each function is, since the memo asks again only calls at data. What
+    // is still run as written, in time linear in what the run reaches ([`Mixer::run_under`]):
+    // a call inside a pure region, a call whose answer cannot be compared (a family, an atom,
+    // a join, or a function), a call at such an argument or at a function no stub stands for
+    // (a lambda written in place, a primitive), and a call of a function with no stub. A call
+    // whose answer is not yet known runs the function's term with its own reads called
+    // through their stubs; a run that meets an answer not yet known stops, that answer is
+    // found first, and the run starts again, so a function whose term asks m new answers runs
+    // m + 1 times. Why: whether two functions compute the same values is undecidable in
+    // general, so a part is keyed by the answers it took, which mixing can compare; a pure
+    // region reads no port, a family's entries are keys, and comparing a join of strings
+    // reads every byte, which may take time exponential in its nodes. The runs start again
+    // rather than nest, so the thread's stack does not grow with the depth of the functions.
+    // Trigger: a part shared below `let`s of functions that differ on each path and are
+    // called inside a family operation, through a parameter, or with such an argument; for
+    // the restart, a function that calls many earlier functions at many new arguments in one
+    // run. On the family of the scaling test below (d nested `if c`s whose arms are
     // `let f = (y) -> f(y) + 1` and `+ 2` over one body, `f(1)` at the bottom) the mixed term
     // has (3d^2 + 17d - 6)/2 nodes, a quadratic the output itself needs: `c` is run-stage,
     // so every path stays; the `if` at depth k (k = 0 to d - 1) is reached under k + 1
@@ -2330,10 +2407,14 @@ impl Mixer {
     // it is within a constant factor of what the output needs. Tests:
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`,
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_scales` (at d and
-    // 8d), `l01_28_staging::dag::a_call_the_stubs_cannot_answer_is_mixed_as_written`,
-    // `l01_28_staging::differential::a_part_whose_call_no_answer_table_takes_asks_which_function_it_called`
-    // (one part under two functions, keyed by which function it called) and
-    // `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
+    // 8d), `l01_28_staging::dag::a_call_at_minus_zero_is_answered_apart_from_zero`,
+    // `l01_28_staging::differential::a_part_calling_a_function_at_a_float_zero_gives_each_functions_value`
+    // (one part under two functions, keyed by what each gives at `0.0`),
+    // `l01_28_staging::cone::calls_at_minus_zero_of_a_long_chain_are_answered_in_linear_time`,
+    // `l01_28_staging::cone::calls_passing_functions_of_a_long_chain_are_answered_in_linear_time`
+    // (each at n and 8n),
+    // `l01_28_staging::cone::calls_at_float_zeros_and_at_functions_give_what_they_give_as_written`
+    // and `l01_28_staging::mix::an_evaluation_error_is_left_to_run`. COMPLEXITY.md row F83. A
     // complete solution would read a part's calls inside a pure region through a pure lookup,
     // and key a call at an argument holding a family or a join by a hash-consed form of it.
     fn eval(&mut self, t: &Term, free: Set) -> Result<Value, String> {
@@ -2364,6 +2445,10 @@ impl Mixer {
         let log = std::mem::take(&mut *calls.log.lock().expect("one thread"));
         for (p, a) in log {
             self.record(p, a);
+        }
+        // A call at a function's token is keyed by what each function is, as written.
+        if calls.function.load(Ordering::Relaxed) {
+            self.same(&stubs);
         }
         match out.map_err(|e| error_as_written(e, &calls)) {
             Ok(v) => Ok(v),

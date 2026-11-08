@@ -479,11 +479,12 @@ fn mixing_lets_of_composed_functions_over_one_body_scales() {
     });
 }
 
-/// A call whose argument holds a float zero is not answered by the function's stub, since the
-/// key a port is asked reads `-0.0` as `0.0`: the part is evaluated as written, and
-/// `f(-0.0)` is `1.0 / -0.0`, not `1.0 / 0.0`.
+/// A call whose argument holds a float zero is answered by the function's stub, whose table
+/// keys a float by its bits (item STAGE-stub-fast), so `-0.0` and `0.0` are two answers:
+/// `f(-0.0)` is `1.0 / -0.0`, not `1.0 / 0.0`. Before, the stub refused a float zero, since
+/// the key a port is read at takes `-0.0` as `0.0`, and the part was evaluated as written.
 #[test]
-fn a_call_the_stubs_cannot_answer_is_mixed_as_written() {
+fn a_call_at_minus_zero_is_answered_apart_from_zero() {
     let call = Shared::new(Term::App(
         Shared::new(var("f")),
         vec![Term::Lit(Value::float(-0.0))],

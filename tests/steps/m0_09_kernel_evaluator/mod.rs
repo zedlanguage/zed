@@ -954,6 +954,64 @@ fn a_lookup_port_is_read_by_key() {
     assert_eq!(keys, [&Value::tuple(vec![Value::float(0.0), s("usd")])]);
 }
 
+/// A called port: answers with the text of its key, counts the times it is asked, and takes
+/// a function argument only when its body is the variable `z`, at the atom `#z`.
+#[derive(Debug, Default)]
+struct Calls(AtomicUsize);
+
+impl Lookup for Calls {
+    fn get(&self, key: &Value) -> Result<Value, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(Value::str(&format!("answer at {key}")))
+    }
+
+    fn calls(&self) -> bool {
+        true
+    }
+
+    fn function(&self, body: &Term) -> Option<Value> {
+        matches!(body, Term::Var(z) if &**z == "z").then(|| Value::atom("z"))
+    }
+}
+
+/// A called port is asked at the tuple of its arguments as they are: `-0.0` and `0.0` are two
+/// keys, a repeated call is answered from what the wave read, and a function argument is keyed
+/// by the value the port gives it, or stops the wave when the port gives none.
+#[test]
+fn a_called_port_keeps_minus_zero_apart_and_keys_functions() {
+    let call = |args: Vec<Term>| app(Term::Read("p".into()), args);
+    let port = Arc::new(Calls::default());
+    let mut run = Evaluator::new(World::new().source("p", port.clone()));
+    let at = |x: f64| call(vec![lit(Value::float(x)), lit(1)]);
+    let out = run
+        .run(&prim(
+            Prim::Tuple,
+            vec![
+                at(-0.0),
+                at(0.0),
+                at(-0.0),
+                call(vec![lam(&["z"], var("z"))]),
+            ],
+        ))
+        .unwrap();
+    let answer = |k: &str| Value::str(&format!("answer at {k}"));
+    let want = vec![
+        answer("(-0.0, 1)"),
+        answer("(0.0, 1)"),
+        answer("(-0.0, 1)"),
+        answer("(#z,)"),
+    ];
+    assert_eq!(out, Value::tuple(want));
+    assert_eq!(port.0.load(Ordering::SeqCst), 3);
+    let mut run = Evaluator::new(World::new().source("p", port.clone()));
+    let e = run.run(&call(vec![lam(&["y"], var("y"))])).unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("an argument holding a function the port does not take"),
+        "{e}"
+    );
+}
+
 /// A power does not depend on how it is written: `x ** e` gives what `x ** a * x ** b` gives
 /// for `a + b = e`, at sizes far past any machine word, and each square of a power is below the next.
 #[test]

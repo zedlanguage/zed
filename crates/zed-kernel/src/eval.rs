@@ -289,6 +289,21 @@ pub trait Lookup: std::fmt::Debug + Send + Sync {
         let _ = key;
         None
     }
+
+    /// Whether the port is called, `port(a, ..)`, rather than read, `port[k]`: a call asks the
+    /// port at the tuple of its arguments as they are, a `-0.0` kept apart from `0.0`, and an
+    /// argument holding a function at the value [`Lookup::function`] gives it. By default a
+    /// port is read.
+    fn calls(&self) -> bool {
+        false
+    }
+
+    /// The value that stands in a called port's key for an argument holding the function whose
+    /// body is `body`, when the port has one; without one the call stops the wave.
+    fn function(&self, body: &Term) -> Option<Value> {
+        let _ = body;
+        None
+    }
 }
 
 /// The ports a program runs against: one wave of inputs, and the outputs it writes
@@ -1492,6 +1507,7 @@ impl<'t> Machine<'_, 't> {
                 })
             }
             V::Prim(p) => self.prim(*p, args),
+            V::Source(port) if self.ev.world.sources[&**port].calls() => self.call_port(port, args),
             // Until types arrive (step L1.22), the elaboration of `v[k]` cannot tell a family
             // from a function, so a family or a lookup port applied to one key reads it.
             V::Source(_) | V::Data(Value::Family(_)) if args.len() == 1 => {
@@ -1515,6 +1531,46 @@ impl<'t> Machine<'_, 't> {
                 other.kind_type()
             )),
         }
+    }
+
+    /// The answer of the lookup port `port` at the key `k`: the world answers once, and the
+    /// answer is kept.
+    fn ask_port(&mut self, port: &str, k: Cow<'_, Value>) -> R<Step<'t>> {
+        let world = &mut self.ev.world;
+        if let Some(why) = world.sources[port].refuses(&k) {
+            return Err(KernelError::Port(port.to_string(), why).into());
+        }
+        if let Some(v) = world.reads.get(port).and_then(|r| r.get(&*k)) {
+            return give(v.clone());
+        }
+        let v = world.sources[port]
+            .get(&k)
+            .map_err(|why| KernelError::Port(port.to_string(), why))?;
+        let reads = world.reads.entry(port.to_string()).or_default();
+        reads.insert(k.into_owned(), v.clone());
+        give(v)
+    }
+
+    /// The call `port(args)` of a called lookup port ([`Lookup::calls`]): the port is asked at
+    /// the tuple of the arguments as they are, each function among them at the value the port
+    /// gives it.
+    fn call_port(&mut self, port: &str, args: Vec<V<'t>>) -> R<Step<'t>> {
+        self.ev.check_impure(port)?;
+        let source = &self.ev.world.sources[port];
+        let mut key = Vec::with_capacity(args.len());
+        for a in args {
+            let v = match a {
+                V::Data(v) => Some(v),
+                V::Closure(c) => source.function(c.body),
+                _ => None,
+            };
+            let Some(v) = v else {
+                let why = "an argument holding a function the port does not take".into();
+                return Err(KernelError::Port(port.to_string(), why).into());
+            };
+            key.push(v);
+        }
+        self.ask_port(port, Cow::Owned(Value::tuple(key)))
     }
 
     fn call2(&mut self, f: &V<'t>, a: Value, b: Value) -> R<Step<'t>> {
@@ -1577,20 +1633,7 @@ impl<'t> Machine<'_, 't> {
             if let Value::Atom(_) = k {
                 return give(k);
             }
-            let k = as_key(&k);
-            let world = &mut self.ev.world;
-            if let Some(why) = world.sources[&*port].refuses(&k) {
-                return Err(KernelError::Port(port.to_string(), why).into());
-            }
-            if let Some(v) = world.reads.get(&*port).and_then(|r| r.get(&*k)) {
-                return give(v.clone());
-            }
-            let v = world.sources[&*port]
-                .get(&k)
-                .map_err(|why| KernelError::Port(port.to_string(), why))?;
-            let reads = world.reads.entry(port.to_string()).or_default();
-            reads.insert(k.into_owned(), v.clone());
-            return give(v);
+            return self.ask_port(&port, as_key(&k));
         }
         let mut vals = Vec::with_capacity(args.len());
         for a in args {

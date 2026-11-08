@@ -372,9 +372,9 @@ fn a_function_reading_a_literal_that_differs_gives_each_paths_value() {
 }
 
 #[test]
-fn a_part_whose_call_no_answer_table_takes_asks_which_function_it_called() {
-    // `p = f(0.0)`: a float zero is not a key a table of answers tells apart, since `0.0` and
-    // `-0.0` compare equal, so the call runs as written, depending on what `f` is. Below
+fn a_part_calling_a_function_at_a_float_zero_gives_each_functions_value() {
+    // `p = f(0.0)`: a table of answers keys a float by its bits, so `0.0` and `-0.0` are two
+    // answers (item STAGE-stub-fast), and the part is keyed by what `f` gives at `0.0`. Below
     // `f = (y) -> y + 1.0` and `(y) -> y + 2.0`, `p` mixes to each one's value.
     let p = reads_c(call("f", vec![float(0.0)]), float(0.0));
     let path = |k: f64| {
