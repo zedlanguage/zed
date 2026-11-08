@@ -533,3 +533,74 @@ fn an_atom_from_elsewhere_stays_on_the_first_arrow() {
         "((String) -> String | #absent) & ((String | #_) -> String | #_)"
     );
 }
+
+#[test]
+fn an_equality_with_an_atom_narrows_the_name_in_each_branch() {
+    // `x == #nf` leaves `x` without `#nf` where it fails, and `x != #nf` where it holds, as
+    // `x is #nf` does (DESIGN.md sec:type_resolution: "`p is #a`, `p == #a` and `p != #a` add
+    // `#a`"). Before, neither narrowed, so `trim(x)` in the other branch passed `#nf` by and
+    // each result printed `String | #nf` (CLASS-atoms-followups, part c).
+    for (head, body, want) in [
+        (
+            "f(positional x: String | #nf)",
+            "if x == #nf { \"dflt\" } else { trim(x) }",
+            "(String | #nf) -> String",
+        ),
+        (
+            "f(positional x: String | #nf)",
+            "if #nf == x { \"dflt\" } else { trim(x) }",
+            "(String | #nf) -> String",
+        ),
+        (
+            "f(positional x: String | #nf)",
+            "if x != #nf { trim(x) } else { \"dflt\" }",
+            "(String | #nf) -> String",
+        ),
+        (
+            "f(positional x)",
+            "if x == #nf { \"dflt\" } else { trim(x) }",
+            "(String | #nf) -> String",
+        ),
+        (
+            "f(positional x)",
+            "if x != #nf { trim(x) } else { \"dflt\" }",
+            "(String | #nf) -> String",
+        ),
+        (
+            "f(positional x: String | #nf)",
+            "if x == #nf { x } else { \"s\" }",
+            "(String | #nf) -> \"s\" | #nf",
+        ),
+    ] {
+        let text = format!("{head} = {body};\n");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(&text, "f"), want, "{text}");
+    }
+}
+
+#[test]
+fn an_equality_with_a_number_handles_no_atom() {
+    // `x == 3` compares `x` with a plain literal, which narrows it to `int` "as an operand
+    // does" (DESIGN.md sec:type_resolution) and handles no atom; so `f(#nf)` passes `#nf` by
+    // (rule 6, the author's Q1 on bubbling) and the body does not run (part d).
+    let text = "f(positional x) = if x == 3 { \"three\" } else { \"other\" };\n";
+    assert_eq!(sig(text, "f"), "(int) -> \"other\" | \"three\"");
+    assert_eq!(value(&format!("{text}a = f(#nf);\n"), "a"), "#nf");
+    assert_eq!(value(&format!("{text}a = f(3);\n"), "a"), "\"three\"");
+}
+
+#[test]
+fn passing_the_parameter_to_a_function_that_handles_its_atoms_handles_none() {
+    // `f(positional x) = g(x)` writes no `else`, `is`, `==` or `!=`, so `x` takes no atom
+    // (DESIGN.md sec:type_resolution: the atoms a parameter accepts are those that reach a
+    // handler "in the body"), and `f(#nf)` passes `#nf` by although `g` takes it; the
+    // declared twin `f(x: String)` does the same (part b).
+    let text = "g(positional y: String | #nf) = trim(y else \"dflt\");\n\
+                f(positional x) = g(x);\n\
+                l(positional x) = ((y: String | #nf) -> trim(y else \"dflt\"))(x);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    assert_eq!(sig(text, "f"), "(String) -> String");
+    for (call, want) in [("g(#nf)", "\"dflt\""), ("f(#nf)", "#nf"), ("l(#nf)", "#nf")] {
+        assert_eq!(value(&format!("{text}a = {call};\n"), "a"), want, "{call}");
+    }
+}

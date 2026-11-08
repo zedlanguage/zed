@@ -116,3 +116,57 @@ fn many_helpers_narrowing_what_a_use_gives_scale() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+#[test]
+fn a_key_handled_beside_the_read_is_followed_too() {
+    // The key `k` of `args[k]` passes its atoms to the read (rule 6), so `d = k else 0`
+    // handles them for `k` as well. Before, the key was not followed, and the call was
+    // rejected: "`r` applies, does not take #_" (CLASS-atoms-index-key).
+    let helper = "r(fs, args, k) { d = k else 0; return fs[args[k] else \"\"]; }";
+    assert_eq!(read_two("given_key", helper), "hello|missing\n");
+}
+
+#[test]
+fn an_else_on_a_parameter_of_any_value_leaves_no_atom_at_a_call() {
+    // `r else d` on a parameter of any value leaves a value of its own, which a call gives as
+    // the argument without its loose atoms (DESIGN.md sec:failure: "loose atoms ... are
+    // stripped"). Before, it kept the parameter's type variable whole, so `g(args[1])` was
+    // `0 | String | #notFound` and a `Lines` port rejected it (CHECK-else-notfound, QUESTIONS.md
+    // A11's side observation).
+    for (src, want) in [
+        (
+            "g(positional r) = r else 0;\n\
+             main(args: CommandLine) -> (stdout: Lines) { stdout <- \"${g(args[1])}\"; }\n",
+            "0\n",
+        ),
+        (
+            "g(positional r) = r else \"zero\";\n\
+             main(args: CommandLine) -> (stdout: Lines) { stdout <- g(args[1]) ++ \"a\"; }\n",
+            "zeroa\n",
+        ),
+        (
+            "g(positional r) { d = r else 0; return r; }\n\
+             main(args: CommandLine) -> (stdout: Lines) { stdout <- g(\"abc\"); }\n",
+            "abc\n",
+        ),
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        let out = run("given_else_any", src, &["--"]);
+        assert_eq!(out.status, 0, "{}", out.stderr);
+        assert_eq!(out.stdout, want, "{src}");
+    }
+}
+
+#[test]
+fn a_value_left_by_a_test_used_against_the_tested_value_is_rejected_at_the_test() {
+    // `trim(r)` makes `r` a `String`, which holds no atom, so `r else 0` is `r` itself and
+    // `d + 1` cannot take it; the error is at the `else`.
+    let src = "g(positional r) { d = r else 0; e = d + 1; return trim(r); }\n";
+    assert_eq!(
+        type_errors(src),
+        [
+            "the value this test leaves is used as int, and the value it tests as String \
+          [r else 0]"
+        ]
+    );
+}

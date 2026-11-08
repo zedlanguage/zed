@@ -1634,13 +1634,13 @@ impl Resolver<'_> {
 
     /// Records in `region` each use of a name in `e` whose loose atoms pass by rule 6 to the
     /// value of `e` (DESIGN.md sec:type_resolution): the arguments and receiver of a call, the
-    /// family `m` of `m[k]`, the operands of an operator other than `==` and `!=`, the
-    /// branches of an `if`, a block's result and the holes of a string, at any depth. An
-    /// `else` in it starts a region of its own whose value passes on to `region`; its default
-    /// stays in `region`. A tuple, a record or a lambda ends the walk: its value holds the atom
-    /// rather than being it (struct positions follow L2.6b). Every expression is walked by at
-    /// most one region, the innermost holding it, so the regions of a unit cost `O(n)`
-    /// together.
+    /// family `m` and the key `k` of `m[k]`, the operands of an operator other than `==` and
+    /// `!=`, the branches of an `if`, a block's result and the holes of a string, at any
+    /// depth. An `else` in it starts a region of its own whose value passes on to `region`; its
+    /// default stays in `region`. A tuple, a record or a lambda ends the walk: its value holds
+    /// the atom rather than being it (struct positions follow L2.6b). Every expression is
+    /// walked by at most one region, the innermost holding it, so the regions of a unit cost
+    /// `O(n)` together.
     fn flow(&mut self, e: &Expr, region: usize) {
         let mut stack = vec![e];
         while let Some(e) = stack.pop() {
@@ -1648,11 +1648,10 @@ impl Resolver<'_> {
                 ExprKind::Name(_) => self.out.flows.push((e.span, region)),
                 ExprKind::Unary(_, a) | ExprKind::Member { of: a, .. } => stack.push(a),
                 ExprKind::Binary("==" | "!=", ..) => {}
-                // The key of `m[k]` is left out: a parameter given atoms there and also
-                // applied through a function parameter, `fs[args[k] else ""]`, is rejected by
-                // the check of the need at each call, as `{ d = k else 0; fs[args[k] else ""] }`
-                // is on main (CLASS-atoms-index-key).
-                ExprKind::Index(a, _) => stack.push(a),
+                ExprKind::Index(a, k) => {
+                    stack.push(k);
+                    stack.push(a);
+                }
                 ExprKind::Binary(_, a, b) => {
                     stack.push(b);
                     stack.push(a);

@@ -876,7 +876,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::CondOf(e) => {
                 let t = m.take_ty();
                 let sides = self.test_nodes(e);
-                m.ret = Ret::Cond(Cond::of(t, Facts::new(), Facts::new(), sides));
+                let (yes, no) = self.atom_eq(e);
+                m.ret = Ret::Cond(Cond::of(t, yes, no, sides));
             }
             Frame::Logic1 { op, b, span } => {
                 let a = m.take_cond();
@@ -977,8 +978,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ..
                 } = *s;
                 let ids: Vec<Option<usize>> = ids.into_iter().map(Some).collect();
+                self.join_narrowed(level);
+                let strip = self.widened_other(&ids, &tys);
                 let sig = self.handled_sig(params, &ids, tys, result, &f.body);
-                let sig = self.generalize(level, sig);
+                let sig = self.generalize(level, sig, &strip);
                 m.ret = Ret::Sig(sig);
             }
             Frame::AtomArgs(s) => self.atom_step(m, s),
@@ -1085,8 +1088,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 body,
             } => {
                 let result = m.take_ty();
+                self.join_narrowed(level);
+                let strip = self.widened_other(&ids, &tys);
                 let sig = self.handled_sig(names, &ids, tys, result, body);
-                let sig = self.generalize(level, sig);
+                let sig = self.generalize(level, sig, &strip);
                 m.ty(Ty::func(sig));
             }
             Frame::BindDefault(p) => {
@@ -2208,6 +2213,20 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .collect(),
                         curry,
                     };
+                    let got = |a: &ArgSrc| match a {
+                        ArgSrc::Got(x) => (x.ty.clone(), x.at),
+                        ArgSrc::Expr(_) => unreachable!("found above"),
+                    };
+                    let written: Vec<(Ty, Option<Span>)> = s
+                        .receiver
+                        .iter()
+                        .map(|x| (x.ty.clone(), x.at))
+                        .chain(s.args.positional.iter().map(got))
+                        .chain(s.args.named.iter().map(|(_, a)| got(a)))
+                        .collect();
+                    let written: Vec<(&Ty, Option<Span>)> =
+                        written.iter().map(|(t, at)| (t, *at)).collect();
+                    self.note_widened(&kind, &written);
                     let r = self.need(k, kind, true, span);
                     s.out = s.out.union(&r);
                 }
@@ -3499,8 +3518,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The signature `sig` of the function of `level`, which ends: each class of the level
     /// takes its type, a type variable of the signature named in order of appearance. The
     /// uses of a class that is a type variable join the signature as its needs; those of a
-    /// class of one type are checked on it now.
-    fn generalize(&mut self, level: usize, mut sig: Sig) -> Arc<Sig> {
+    /// class of one type are checked on it now. The needs lose the atoms of `strip`
+    /// ([`Self::strip_widened`]).
+    fn generalize(&mut self, level: usize, mut sig: Sig, strip: &[(usize, KType)]) -> Arc<Sig> {
         // The roots of this level, and the classes whose roots have a type by now: each of
         // the latter takes its root's type in `sig`. A class of a function around goes to
         // that function's list.
@@ -3526,7 +3546,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[r].known.clear();
             self.classes[r].data = false;
             match self.classes[r].resolved.clone() {
-                Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(uses),
+                Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(
+                    uses.into_iter()
+                        .map(|(s, n)| (s, self.strip_widened(n, strip))),
+                ),
                 Some(t) => now.extend(uses.into_iter().map(|(_, n)| (n, t.clone()))),
                 None => unreachable!("resolved above"),
             }
@@ -3613,6 +3636,61 @@ impl<'t, 'a> Ck<'t, 'a> {
         Arc::new(sig)
     }
 
+    /// Joins each class of the function of `level` with what a test of it gave
+    /// ([`Class::narrowed_to`]) where either of the two takes a carrier by now: a class of
+    /// carriers holds no atom, so the test removed none of its values, and the uses of either
+    /// restrict both. Two that may still take other values stay apart: the test's need on the
+    /// one gives the other at each call.
+    ///
+    /// A test's class is newer than the class it tests, so the links, taken in the order of
+    /// the classes tested, run from older to newer: one pass from the last link joins each
+    /// class to a carrier class it leads to, and one from the first joins it to a carrier
+    /// class it comes from. Two passes over the links: `O(n log n)` with the merges.
+    fn join_narrowed(&mut self, level: usize) {
+        let mut from: Vec<usize> = Vec::new();
+        for i in 0..self.pending[level].len() {
+            let r = self.find(self.pending[level][i]);
+            if self.classes[r].level == level && !self.classes[r].narrowed_to.is_empty() {
+                from.push(r);
+            }
+        }
+        from.sort_unstable();
+        from.dedup();
+        let mut links: Vec<(usize, usize, Span)> = Vec::new();
+        for &r in &from {
+            self.touch(r);
+            let to = std::mem::take(&mut self.classes[r].narrowed_to);
+            links.extend(to.into_iter().map(|(j, span)| (r, j, span)));
+        }
+        let n = links.len();
+        let mut joined = vec![false; n];
+        for i in (0..n).rev().chain(0..n) {
+            let (k, j, span) = links[i];
+            let (k, j) = (self.find(k), self.find(j));
+            if joined[i]
+                || (k != j
+                    && self.classes[k].mask & OTHER != 0
+                    && self.classes[j].mask & OTHER != 0)
+            {
+                continue;
+            }
+            joined[i] = true;
+            let (kt, jt) = (
+                Ty::of_mask(self.classes[k].mask),
+                Ty::of_mask(self.classes[j].mask),
+            );
+            if !self.merge(k, j, "the value tested", span) {
+                let (kt, jt) = (self.show(&kt), self.show(&jt));
+                self.error(
+                    span,
+                    format!(
+                        "the value this test leaves is used as {jt}, and the value it tests as {kt}"
+                    ),
+                );
+            }
+        }
+    }
+
     /// Merges classes `a` and `b`, as `what` at `span` requires; false, changing nothing, if
     /// they share no carrier. The shorter lists move into the longer, so that each item
     /// moves `O(log n)` times.
@@ -3654,10 +3732,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let binder = self.classes[child].binder;
         let generic = self.classes[child].generic;
         let given = self.classes[child].given;
+        let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
+        let narrows = self.classes[child].narrows;
         self.classes[child].parent = root;
         let c = &mut self.classes[root];
         c.generic &= generic;
         c.given &= given;
+        c.narrowed_to.extend(narrowed_to);
+        c.narrows |= narrows;
         c.binder = match (c.binder, binder) {
             (Some(a), Some(b)) if b.1.start <= a.1.start && a.1.end <= b.1.end => Some(b),
             (a, b) => a.or(b),
@@ -4143,10 +4225,43 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
+    /// The facts `x == #a` makes on the name `x` where it holds and where it fails, either
+    /// side written first, and swapped for `!=`: `x` is `#a` where they are equal and keeps
+    /// its other values where not, as `x is #a` does (DESIGN.md sec:type_resolution: an `==`
+    /// or `!=` handles the atom). Any other condition makes none.
+    fn atom_eq(&mut self, e: &Expr) -> (Facts, Facts) {
+        let ExprKind::Binary(op @ ("==" | "!="), a, b) = &e.kind else {
+            return (Facts::new(), Facts::new());
+        };
+        let (name, atom) = match (&a.kind, &b.kind) {
+            (ExprKind::Name(_), ExprKind::Atom(n)) => (a, n),
+            (ExprKind::Atom(n), ExprKind::Name(_)) => (b, n),
+            _ => return (Facts::new(), Facts::new()),
+        };
+        let (Some(Ref::Bound(ids)), Some((Some(v), _))) =
+            (self.t.res.uses.get(&name.span), self.seen.get(&name.span))
+        else {
+            return (Facts::new(), Facts::new());
+        };
+        if ids.len() != 1 {
+            return (Facts::new(), Facts::new());
+        }
+        let (id, v) = (ids[0], v.clone());
+        let t = Ty::set(KType::atom(atom));
+        let yes = Facts::from([(id, v.meet(&t), e.span)]);
+        let no = Facts::from([(id, self.narrowed(&v, &Narrow::Not(t), e.span), e.span)]);
+        match *op == "==" {
+            true => (yes, no),
+            false => (no, yes),
+        }
+    }
+
     /// What the test at `span` leaves of `v` where it fails, as `narrow` says. A type variable
     /// of a class a need gave ([`Class::given`]) leaves what a need gives, so `args[k] else ""`
     /// in the body of `r(fs, args, k)` holds no `#notFound` at a call that binds `args` to
-    /// `CommandLine` (rule 3 of sec:type_resolution); any other variable is kept whole.
+    /// `CommandLine` (rule 3 of sec:type_resolution). One of a class that may still take other
+    /// values leaves a class of its own the same way, joined back where either of the two
+    /// takes a carrier ([`Ck::join_narrowed`]); any other variable is kept whole.
     fn narrowed(&mut self, v: &Ty, narrow: &Narrow, span: Span) -> Ty {
         let mut out = match narrow {
             Narrow::Loose => v.without_loose(),
@@ -4158,13 +4273,27 @@ impl<'t, 'a> Ck<'t, 'a> {
             Narrow::Not(t) => v.diff_with(t, &|w| self.stale(w)),
         };
         for x in &v.vars {
-            if let Some(k) = self.class_of(&Piece::Var(x.clone()))
-                && self.classes[k].given
-            {
-                out.vars.remove(x);
-                let left = self.need(k, NeedKind::Narrow(narrow.clone()), true, span);
-                out = out.union(&left);
+            let Some(k) = self.class_of(&Piece::Var(x.clone())).map(|k| self.find(k)) else {
+                continue;
+            };
+            let given = self.classes[k].given;
+            if !given && self.classes[k].mask & OTHER == 0 {
+                continue;
             }
+            out.vars.remove(x);
+            let left = self.need(k, NeedKind::Narrow(narrow.clone()), true, span);
+            // A class that may still take other values may yet take a carrier, and so hold
+            // no atom: what the test gives then joins it ([`Ck::join_narrowed`]).
+            if (!given || self.classes[k].narrows)
+                && let Some(j) = self.class_of_ty(&left)
+                && !self.classes[k].narrowed_to.iter().any(|&(i, _)| i == j)
+            {
+                self.touch(k);
+                self.classes[k].narrowed_to.push((j, span));
+                self.touch(j);
+                self.classes[j].narrows = true;
+            }
+            out = out.union(&left);
         }
         out
     }
@@ -4615,7 +4744,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out = out.union(&r);
                 }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
-                    let r = self.need(k, NeedKind::Index(x.ty.clone()), true, span);
+                    let kind = NeedKind::Index(x.ty.clone());
+                    self.note_widened(&kind, &[(&x.ty, x.at)]);
+                    let r = self.need(k, kind, true, span);
                     out = out.union(&r);
                 }
                 Piece::Dyn => self.any("an application", span),

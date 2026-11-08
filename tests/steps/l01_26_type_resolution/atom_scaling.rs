@@ -419,3 +419,66 @@ fn a_parameter_inside_many_nested_handlers_scales() {
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }
+
+/// A function whose parameter of any value is narrowed `n` times in a chain, each `else`
+/// narrowing the value the one before left, the last added to `1`.
+fn chain_of_elses(n: usize) -> String {
+    let elses: String = (1..n)
+        .map(|i| format!("d{i} = d{} else {i}; ", i - 1))
+        .collect();
+    format!(
+        "r(positional x) = {{ d0 = x else 0; {elses}d{} + 1 }};\n",
+        n - 1
+    )
+}
+
+/// A function testing its parameter with `==` against `n` atoms in turn, nested `else if`.
+fn chain_of_equalities(n: usize) -> String {
+    let tests: String = (0..n)
+        .map(|i| format!("if x == #a{i} {{ {i} }} else "))
+        .collect();
+    format!("r(positional x) = {tests}{{ x + 1 }};\n")
+}
+
+/// `n` functions, each handling the key it reads with beside the read, and `main` calling
+/// each once.
+fn keys_handled(n: usize) -> String {
+    let mut src: String = (0..n)
+        .map(|i| format!("r{i}(args, k) {{ d = k else 0; return args[k] else \"\"; }}\n"))
+        .collect();
+    src.push_str("main(args: CommandLine) -> (stdout: Lines) {\n");
+    for i in 0..n {
+        src.push_str(&format!("  a{i} = r{i}(args: args, k: {});\n", i + 1));
+    }
+    src.push_str("  stdout <- a0;\n}\n");
+    src
+}
+
+#[test]
+fn chains_of_tests_that_leave_values_of_their_own_scale() {
+    // Each `else` and each failed `==` on a class that may still take other values leaves a
+    // class of its own, joined with the class it tests where either takes a carrier: two
+    // passes over the links, so a chain of `n` is joined in time linear in `n`. The key of
+    // `args[k]` is followed as an argument is.
+    for (what, text, n, want) in [
+        (
+            "a chain of n elses",
+            chain_of_elses as fn(usize) -> String,
+            300,
+            Some("(int | #_) -> int"),
+        ),
+        ("a chain of n equalities", chain_of_equalities, 300, None),
+        ("n functions handling their key", keys_handled, 100, None),
+    ] {
+        let (i, _) = info(&text(3));
+        assert!(i.errors.is_empty(), "{what}: {:?}", i.errors);
+        if let Some(want) = want {
+            assert_eq!(sig_of(&text(3), "r").to_string(), want, "{what}");
+        }
+        let units = resolved(n, text);
+        scaling::check(what, n, |m| {
+            let info = units[&m].check();
+            assert!(info.errors.is_empty(), "{what}: {:?}", info.errors);
+        });
+    }
+}

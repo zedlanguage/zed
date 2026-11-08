@@ -68,7 +68,9 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
     );
     let s = sig_of("g(r) = r else 0;\n", "g");
     assert_eq!(s.to_string(), "(r: _) -> 0 | _");
-    assert_eq!(s.arrows[0].result.vars, s.arrows[0].params[0].vars);
+    // The `_` of the result is what `else` leaves of `r`: its own variable, which a call
+    // gives as the argument without its atoms (CHECK-else-notfound).
+    assert_ne!(s.arrows[0].result.vars, s.arrows[0].params[0].vars);
     // Only the condition is fixed; the branches stay generic, each its own variable.
     let s = sig_of(
         "pick(positional c, positional a, positional b) = if c { a } else { b };\n",

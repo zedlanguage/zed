@@ -556,6 +556,15 @@ struct Class {
     /// ([`Ck::narrowed`]). Of a merged class, whether both were. A parameter's class is not:
     /// it holds the atoms its uses handle beside it ([`Ck::param_ty`]).
     given: bool,
+    /// The classes of what a test that may leave a value of it gives, `x else d` and the
+    /// branches of `x is #a` ([`Ck::narrowed`]), while it may still take other values: each
+    /// is its own class, of its values without the atoms the test removes. One that takes a
+    /// carrier by the time the function ends joins it ([`Ck::join_narrowed`]): a class of
+    /// carriers holds no atom, so the test removed none of its values. Each with the test.
+    narrowed_to: Vec<(usize, Span)>,
+    /// Whether it is what a test of such a class gave, of [`Self::narrowed_to`] of another:
+    /// a test of it is followed as one of that class is.
+    narrows: bool,
 }
 
 struct Ck<'t, 'a> {
@@ -635,6 +644,12 @@ struct Ck<'t, 'a> {
     /// of [`Self::widened`], by its span, as last found: those a call passing that parameter
     /// no atom may still give. No entry is none.
     outside: HashMap<Span, KType>,
+    /// For each use made in a function with a parameter of [`Self::widened`], the loose
+    /// atoms of each of its arguments that reach it from those parameters only: the atoms
+    /// [`Self::outside`] does not keep. Of uses alike, those all of them hold. A parameter's
+    /// class that may take other values carries an argument's atoms in its type variable, so
+    /// [`Self::generalize`] removes these from the uses that hold it ([`Self::strip_widened`]).
+    widened_only: HashMap<NeedKind, Vec<KType>>,
     /// The loose atoms each call gives from outside, by its span, as [`Self::try_outside`]
     /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
     /// takes the entry.
@@ -698,6 +713,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             handled: handled(t.res),
             widened: HashSet::new(),
             outside: HashMap::new(),
+            widened_only: HashMap::new(),
             tried: HashMap::new(),
             arms: arms::Arms::new(),
             reads: HashMap::new(),
@@ -714,6 +730,96 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             None => v,
         }
+    }
+
+    /// The loose atoms of `t`, the type of the expression at `at`, that reach it only from the
+    /// parameters of [`Self::widened`]: those [`Self::outside`] does not keep.
+    fn widened_atoms(&self, t: &Ty, at: Option<Span>) -> KType {
+        match at.and_then(|at| self.outside.get(&at)) {
+            Some(o) => &t.loose() - o,
+            None => KType::empty(),
+        }
+    }
+
+    /// Records the use `kind`, whose arguments are `args`, each a type and where it was
+    /// written, in [`Self::widened_only`]. One set difference per argument.
+    fn note_widened(&mut self, kind: &NeedKind, args: &[(&Ty, Option<Span>)]) {
+        if self.replaying > 0 || self.widened.is_empty() {
+            return;
+        }
+        let w: Vec<KType> = args
+            .iter()
+            .map(|(t, at)| self.widened_atoms(t, *at))
+            .collect();
+        match self.widened_only.get_mut(kind) {
+            Some(old) => {
+                for (o, n) in old.iter_mut().zip(&w) {
+                    *o = &*o & n;
+                }
+            }
+            None => {
+                self.widened_only.insert(kind.clone(), w);
+            }
+        }
+    }
+
+    /// The class roots of those of the parameters `ids`, of types `tys`, of
+    /// [`Self::widened`] whose class may take other values, each with the atoms its uses
+    /// handle.
+    fn widened_other(&self, ids: &[Option<usize>], tys: &[Ty]) -> Vec<(usize, KType)> {
+        ids.iter()
+            .zip(tys)
+            .filter_map(|(id, t)| {
+                let a = self.handled.get((*id)?)?;
+                let r = self.find(class_id(t.as_var()?)?);
+                (self.classes[r].mask & OTHER != 0).then(|| (r, a.clone()))
+            })
+            .collect()
+    }
+
+    /// The use `n` without the atoms [`Self::widened_only`] records for an argument whose
+    /// type holds the type variable of a class of `strip`, of those that class's uses handle:
+    /// the variable carries the atoms the parameter's argument holds at each call, and the
+    /// atoms its handling added to the parameter's type in the body are none of them.
+    fn strip_widened(&self, n: Need, strip: &[(usize, KType)]) -> Need {
+        let Some(w) = self.widened_only.get(&n.kind) else {
+            return n;
+        };
+        let cut = |t: &Ty, w: &KType| {
+            let mut a = KType::empty();
+            for (r, h) in strip {
+                if t.vars
+                    .iter()
+                    .any(|v| class_id(v).is_some_and(|k| self.find(k) == *r))
+                {
+                    a = &a | &(w & h);
+                }
+            }
+            match a == KType::empty() {
+                true => t.clone(),
+                false => t.without(&a),
+            }
+        };
+        let kind = match &n.kind {
+            NeedKind::Index(t) => NeedKind::Index(cut(t, &w[0])),
+            NeedKind::Call {
+                what,
+                positional,
+                named,
+                curry,
+            } => NeedKind::Call {
+                what: what.clone(),
+                positional: positional.iter().zip(w).map(|(t, w)| cut(t, w)).collect(),
+                named: named
+                    .iter()
+                    .zip(&w[positional.len()..])
+                    .map(|((m, t), w)| (m.clone(), cut(t, w)))
+                    .collect(),
+                curry: *curry,
+            },
+            _ => return n,
+        };
+        Need { kind, ..n }
     }
 
     /// Records the parameter `id` of type `t`, bound to `bound` in the body `body`, as the
@@ -749,8 +855,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// parameters with them. So `if (line else "") == "" { "empty" } else { trim(line) }` is
     /// `((String) -> String) & ((String | #_) -> String | #_)`, and a call passing a `String`
     /// gives a `String` ([`Self::apply`] takes the first arrow that takes the arguments'
-    /// atoms). When a parameter of [`Self::widened`] may hold other values, its atoms reach
-    /// the result on both arrows, and the signature has the one arrow.
+    /// atoms). When a parameter of [`Self::widened`] may hold other values and no atom was
+    /// added, the signature has the one arrow, and the loose atoms its uses handle, which
+    /// [`Self::widened_other`] names, are not in its result (CHECK-else-notfound).
     fn handled_sig(
         &self,
         params: Vec<SParam>,
@@ -776,18 +883,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => wide.push(t.clone()),
             }
         }
-        if !added {
+        if !added && !other {
             return Sig::one(params, tys, result);
         }
         let loose = result.loose();
         let kept = &loose & &self.outside_body(body);
+        let plain = result
+            .without_loose()
+            .union(&result.of_piece(&Piece::Set(kept.clone())));
+        // Each widened parameter may hold other values, so its type variable carries an
+        // argument's atoms to the result, and the atoms its uses handle add none there.
+        if !added {
+            return Sig::one(params, tys, plain);
+        }
         // One difference per function, at its end.
         if other || (&loose - &kept).is_empty() {
             return Sig::one(params, wide, result);
         }
-        let plain = result
-            .without_loose()
-            .union(&result.of_piece(&Piece::Set(kept)));
         let mut sig = Sig::one(params, Vec::new(), Ty::empty());
         sig.arrows = vec![
             Arrow {
@@ -1567,6 +1679,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             binder: None,
             generic: false,
             given: false,
+            narrowed_to: Vec::new(),
+            narrows: false,
         });
         self.pending[self.level].push(id);
         id
