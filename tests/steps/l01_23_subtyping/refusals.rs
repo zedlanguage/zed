@@ -659,3 +659,55 @@ fn a_fork_refusal_is_reached_in_the_size_of_the_pairs() {
     // (REFUSAL-fork-linear) 30.2M and 255.9M instructions at n 8 and 64, 8.5 times.
     refusal_scales("Fork, by n excluded pairs", 8, Refusal::Fork, fork_by);
 }
+
+/// The parts of `forked_differences`: for each `i` up to `n`, the pairs of a list of only `i`s
+/// and a list of `i`'s parity, and the pairs of a list of only `i`s and any list of integers,
+/// which hold them.
+fn forked_pairs(n: usize, tag: &str) -> Vec<(Type, Type)> {
+    let l = list_named(Type::int(), tag);
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    (1..=n)
+        .map(|i| {
+            let only = list_named(lit(i as i64), &format!("{tag}_{i}"));
+            let parity = period_named(2, i % 2, &format!("{tag}_{i}"));
+            (pair(only.clone(), parity), pair(only, l.clone()))
+        })
+        .collect()
+}
+
+#[test]
+fn a_difference_of_forked_unions_is_refused_in_its_size() {
+    // The union of `n` pairs minus the union of `n` pairs that hold them, one each. Measured on
+    // 8874023a, before REFUSAL-narrow-cells: 25.7M, 104M, 470M and 2396M instructions at n 8,
+    // 16, 32 and 64, order n^2: each pair was a candidate for a value, whose narrowing tested
+    // the `n` cells of its components and took the `n` excluded pairs out one by one, and the
+    // search then refined the forked part. Now 4.5M and 35.2M at n 8 and 64 (COMPLEXITY.md K78).
+    refusal_scales(
+        "Fork, by a difference of unions",
+        8,
+        Refusal::Fork,
+        |n, tag| {
+            let (ins, outs): (Vec<Type>, Vec<Type>) = forked_pairs(n, tag).into_iter().unzip();
+            let union = |ts: Vec<Type>| ts.iter().fold(Type::empty(), |u, t| &u | t);
+            &union(ins) - &union(outs)
+        },
+    );
+}
+
+#[test]
+fn a_union_of_forked_differences_is_refused_in_its_size() {
+    // The union of `n` differences, each a pair minus a pair that holds it. Measured on
+    // 8874023a, before REFUSAL-narrow-cells: 64.6M, 264M, 1125M and 5123M instructions at n 8,
+    // 16, 32 and 64, order n^2: the value search took all `2n` pairs on one box. Now 4.1M and
+    // 32.0M at n 8 and 64, one box for each difference (COMPLEXITY.md K78).
+    refusal_scales(
+        "Fork, by a union of differences",
+        8,
+        Refusal::Fork,
+        |n, tag| {
+            forked_pairs(n, tag)
+                .into_iter()
+                .fold(Type::empty(), |u, (a, b)| &u | &(&a - &b))
+        },
+    );
+}

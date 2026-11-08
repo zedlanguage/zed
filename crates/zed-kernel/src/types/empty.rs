@@ -3055,88 +3055,157 @@ impl<'m> Searching<'m> {
             }
             return None;
         }
-        for (len, f) in &p.tuples.lens {
-            if f.union_rows().is_some() {
+        for (len, whole) in &p.tuples.lens {
+            if whole.union_rows().is_some() {
                 continue;
             }
-            let (mut b, mut g) = (self.region(vec![Type::top(); *len], f).await, f.clone());
-            if self.narrow_tuples(&mut b, &mut g).await {
-                continue;
-            }
-            if let Some(v) = self.row_rep(&b.r, f).await {
-                return Some(v);
-            }
-            // A 2-CNF's solution, checked as any candidate is.
-            match self.two_sat(&b, &g).await {
-                Some(None) => continue,
-                Some(Some(row)) => {
+            // A union of parts that share no tuple type is searched one part at a time: a value
+            // of one is a value of the union, and each part's box holds its own tuple types
+            // only, so `n` such parts cost order `n`, not the `n` candidates by `n` cells of one
+            // box over them all (`l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
+            // COMPLEXITY.md K78).
+            let pieces = whole
+                .disjoint_disjuncts()
+                .unwrap_or_else(|| vec![whole.clone()]);
+            for f in &pieces {
+                let (mut b, mut g) = (self.region(vec![Type::top(); *len], f).await, f.clone());
+                if self.narrow_tuples(&mut b, &mut g).await {
+                    continue;
+                }
+                if let Some(v) = self.row_rep(&b.r, f).await {
+                    return Some(v);
+                }
+                // A 2-CNF's solution, checked as any candidate is.
+                match self.two_sat(&b, &g).await {
+                    Some(None) => continue,
+                    Some(Some(row)) => {
+                        if let Some(v) = self.row_rep(&row, f).await {
+                            return Some(v);
+                        }
+                    }
+                    None => {}
+                }
+                if let Some(found) = self.class_rep(&b, &g, *len).await {
+                    match found {
+                        Some(v) => return Some(v),
+                        None => continue,
+                    }
+                }
+                // The tuple types the part excludes: a value in one is in no value of the part.
+                let (_, excluded) = g.forced();
+                let mut refused = vec![false; b.atoms.len()];
+                // For each component and cell, the excluded tuple types that have that cell there.
+                let mut sharing: Vec<Vec<Vec<usize>>> = b
+                    .cells
+                    .iter()
+                    .map(|cs| vec![Vec::new(); cs.len()])
+                    .collect();
+                for a in &excluded {
+                    let e = b.index[a];
+                    refused[e] = true;
+                    for (j, cells) in sharing.iter_mut().enumerate() {
+                        cells[b.cell(e, j)].push(e);
+                    }
+                }
+                // One candidate for each tuple type left, narrowed by what the part says of it. A
+                // candidate inside a tuple type the part excludes holds no value of it, and the
+                // narrowing or the check of its row would say so, so it is skipped: narrowing it tests
+                // every open cell of its components, n candidates by n cells, order n^2 types on the
+                // pairs of `l01_23_subtyping::refusals::fork_by` (COMPLEXITY.md K35). So is a candidate
+                // that lies inside an excluded tuple type in every component, as each pair of
+                // `a_difference_of_forked_unions_is_refused_in_its_size` does (K78).
+                for a in g.distinct_atoms() {
+                    let k = b.index[&a];
+                    if refused[k] || self.inside_excluded(&b, k, &sharing).await {
+                        continue;
+                    }
+                    let mark = b.log.len();
+                    for j in 0..b.r.len() {
+                        if b.is_open(k, j) {
+                            let t = &b.r[j] & &a[j];
+                            b.shrink(j, t);
+                            b.close(j, b.cell(k, j), false);
+                        }
+                    }
+                    let mut h = g.clone();
+                    let row = (!self.narrow_tuples(&mut b, &mut h).await).then(|| b.r.clone());
+                    b.restore(mark);
+                    if let Some(r) = row
+                        && let Some(v) = self.row_rep(&r, f).await
+                    {
+                        return Some(v);
+                    }
+                }
+                // One candidate for each component: the box with that component outside every
+                // tuple type the part excludes, so the tuple is in none of them. Pairs of a list
+                // and an integer without those of lists of only 1s or only 2s hold `([0], 0)`,
+                // whose list is in neither excluded list type.
+                for j in 0..b.r.len() {
+                    let out = excluded.iter().fold(b.r[j].clone(), |t, a| &t - &a[j]);
+                    if out == b.r[j] {
+                        continue;
+                    }
+                    let mut row = b.r.clone();
+                    row[j] = out;
                     if let Some(v) = self.row_rep(&row, f).await {
                         return Some(v);
                     }
                 }
-                None => {}
-            }
-            if let Some(found) = self.class_rep(&b, &g, *len).await {
-                match found {
-                    Some(v) => return Some(v),
-                    None => continue,
-                }
-            }
-            // The tuple types the part excludes: a value in one is in no value of the part.
-            let (_, excluded) = g.forced();
-            let mut refused = vec![false; b.atoms.len()];
-            for a in &excluded {
-                refused[b.index[a]] = true;
-            }
-            // One candidate for each tuple type left, narrowed by what the part says of it. A
-            // candidate inside a tuple type the part excludes holds no value of it, and the
-            // narrowing or the check of its row would say so, so it is skipped: narrowing it tests
-            // every open cell of its components, n candidates by n cells, order n^2 types on the
-            // pairs of `l01_23_subtyping::refusals::fork_by` (COMPLEXITY.md K35).
-            for a in g.distinct_atoms() {
-                let k = b.index[&a];
-                if refused[k] {
+                // Complexity tradeoff: a part on whose box two open tuple types differ in a recursive
+                // component is not refined. Why: refining runs a search for each open tuple type in
+                // each component, and on such a part every search meets the fork again, order `n^2`
+                // in its tuple types (55 times the instructions from 8 to 64 on
+                // `a_union_of_forked_differences_is_refused_in_its_size`). The strict search has
+                // refused such a part already (Fork), and this search only looks for a value before
+                // that refusal stands; what is given up is a value found only by refining a forked
+                // part, which leaves the answer Refused(Fork) where it could be Inhabited. Trigger:
+                // `Region::forks` on the open tuple types of the narrowed box. Tests:
+                // `l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`
+                // and `a_difference_of_forked_unions_is_refused_in_its_size`. COMPLEXITY.md K78. A
+                // complete solution needs the subset construction over the forked rows.
+                let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
+                if (0..b.r.len()).any(|j| b.forks(&open, j)) {
                     continue;
                 }
-                let mark = b.log.len();
-                for j in 0..b.r.len() {
-                    if b.is_open(k, j) {
-                        let t = &b.r[j] & &a[j];
-                        b.shrink(j, t);
-                        b.close(j, b.cell(k, j), false);
-                    }
-                }
-                let mut h = g.clone();
-                let row = (!self.narrow_tuples(&mut b, &mut h).await).then(|| b.r.clone());
-                b.restore(mark);
-                if let Some(r) = row
-                    && let Some(v) = self.row_rep(&r, f).await
+                if let Some(row) = self.refine(*len, f).await
+                    && let Some(v) = self.row_rep(&row, f).await
                 {
                     return Some(v);
                 }
             }
-            // One candidate for each component: the box with that component outside every
-            // tuple type the part excludes, so the tuple is in none of them. Pairs of a list
-            // and an integer without those of lists of only 1s or only 2s hold `([0], 0)`,
-            // whose list is in neither excluded list type.
-            for j in 0..b.r.len() {
-                let out = excluded.iter().fold(b.r[j].clone(), |t, a| &t - &a[j]);
-                if out == b.r[j] {
-                    continue;
-                }
-                let mut row = b.r.clone();
-                row[j] = out;
-                if let Some(v) = self.row_rep(&row, f).await {
-                    return Some(v);
-                }
-            }
-            if let Some(row) = self.refine(*len, f).await
-                && let Some(v) = self.row_rep(&row, f).await
-            {
-                return Some(v);
-            }
         }
         None
+    }
+
+    /// Whether tuple type `k` of the box `b` lies inside an excluded tuple type in every
+    /// component: such a candidate holds no value of the part. Only the excluded tuple types
+    /// that share `k`'s cell on one component are tried, on the component where fewest do: a
+    /// tuple type that holds `k` without sharing a cell with it is not found, and `k` is then
+    /// narrowed into as before.
+    async fn inside_excluded(&'m self, b: &Region, k: usize, sharing: &[Vec<Vec<usize>>]) -> bool {
+        let Some(j) = (0..b.r.len())
+            .map(|j| (sharing[j][b.cell(k, j)].len(), j))
+            .filter(|&(m, _)| m > 0)
+            .min()
+            .map(|(_, j)| j)
+        else {
+            return false;
+        };
+        for &e in &sharing[j][b.cell(k, j)] {
+            let mut inside = true;
+            for i in 0..b.r.len() {
+                if b.cell(k, i) != b.cell(e, i)
+                    && !self.settles(&b.atoms[k][i], &b.atoms[e][i], false).await
+                {
+                    inside = false;
+                    break;
+                }
+            }
+            if inside {
+                return true;
+            }
+        }
+        false
     }
 
     /// A value of the tuple part `g` of length `len` on the box of `b`, sought piece by piece

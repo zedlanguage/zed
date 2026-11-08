@@ -1481,6 +1481,37 @@ impl<A: Literal> Part<A> {
         (taken, refused)
     }
 
+    /// The operands of the unions at the top of the part, when there are two or more and no
+    /// atom stands in two of them. Each operand is walked until an atom met in an earlier one,
+    /// so the cost is the size of the part.
+    pub(super) fn disjoint_disjuncts(&self) -> Option<Vec<Part<A>>> {
+        let (mut seen, mut out) = (HashSet::new(), Vec::new());
+        let mut stack = vec![self];
+        while let Some(p) = stack.pop() {
+            if let Part::Expr(e) = p
+                && let Form::Or(a, b) = &e.form
+            {
+                if seen.insert(e.id) {
+                    stack.push(b);
+                    stack.push(a);
+                }
+                continue;
+            }
+            out.push(p.clone());
+        }
+        if out.len() < 2 {
+            return None;
+        }
+        let mut owner: BTreeMap<&A, usize> = BTreeMap::new();
+        for (i, d) in out.iter().enumerate() {
+            let alone = d.atoms(&mut |a| *owner.entry(a).or_insert(i) == i);
+            if !alone {
+                return None;
+            }
+        }
+        Some(out)
+    }
+
     /// Whether `f` holds of every atom, each node and expression visited once, from a stack:
     /// an expression's first operand before its second. Diagram nodes and expressions share one
     /// set of ids seen, so a diagram under two expressions is visited once.
