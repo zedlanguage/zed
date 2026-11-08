@@ -67,7 +67,7 @@ pub(crate) fn wave(
         match kind {
             PortKind::Lines => match value(cones, swap, arg, map)? {
                 Value::Str(s) => {
-                    lines.insert(name.clone(), s.flat().into_owned().into_bytes());
+                    lines.insert(name.clone(), Arc::from(s.flat().as_bytes()));
                 }
                 v => {
                     return Err(format!(

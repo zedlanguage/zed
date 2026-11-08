@@ -2,6 +2,7 @@
 //! wave again from the record alone.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use zed_kernel::Value;
 use zedc::run::{Record, load};
@@ -62,7 +63,7 @@ fn a_record_round_trips_any_bytes() {
     // A record written before `#ioError` had its payload holds a bare one.
     files.insert(Value::str("old"), Value::atom("ioError"));
     let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), b"\xff 12 34\n\n".to_vec());
+    lines.insert("stdin".to_string(), Arc::from(&b"\xff 12 34\n\n"[..]));
     // No program: a record as written before step L1.19b still reads back.
     let record = Record {
         program: None,

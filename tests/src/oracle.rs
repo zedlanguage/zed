@@ -551,11 +551,12 @@ pub fn program(text: &str, input: &[u8], engines: &[Engine<'_>]) -> (Report, Opt
     let Ok(p) = run::load(text.as_bytes()) else {
         return (r, None);
     };
-    let lines: BTreeMap<String, Vec<u8>> = p
+    let bytes: Arc<[u8]> = Arc::from(input);
+    let lines: BTreeMap<String, Arc<[u8]>> = p
         .inputs()
         .iter()
         .filter(|(_, k)| *k == PortKind::Lines)
-        .map(|(n, _)| (n.clone(), input.to_vec()))
+        .map(|(n, _)| (n.clone(), Arc::clone(&bytes)))
         .collect();
     let text = Value::str(&String::from_utf8_lossy(input));
     let files = |_: &str| -> Arc<dyn Lookup> { Arc::new(Same(text.clone())) };

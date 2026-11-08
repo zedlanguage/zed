@@ -6,6 +6,7 @@ mod files;
 mod lines;
 mod replay;
 mod scaling;
+mod sharing;
 mod writes;
 
 pub(crate) use zed_tests::step_helpers::l01_19_whole_file_ports::{dir, run, zedc};

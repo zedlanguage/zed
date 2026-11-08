@@ -19,8 +19,9 @@ use crate::work::{self, Stage};
 use crate::{docs, interp, source};
 
 /// The front end's result: the statements, elaboration and placed warnings, or the first
-/// rejecting phase's diagnostics.
-pub type Front = Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>>;
+/// rejecting phase's diagnostics. The elaboration is shared, so a program made from it
+/// (`run::program`) holds the same unit.
+pub type Front = Result<(Vec<Stmt>, Arc<Unit>, Vec<Diagnostic>), Vec<Diagnostic>>;
 
 /// A unit's statements and its imports, each with the unit it names, in text order; or the
 /// errors of the first phase that rejects it.
@@ -104,7 +105,7 @@ impl std::fmt::Display for Diagnostic {
 
 /// The statements, elaboration and warnings of the unit `text`, the warnings moved out of the
 /// elaboration and placed in the source, or the diagnostics of the first phase that rejects it.
-pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), Vec<Diagnostic>> {
+pub(crate) fn compile(text: &str) -> Front {
     let lines = source::Lines::new(text.as_bytes());
     let at = |span: lex::Span, message: String| {
         let e = ast::Error {
@@ -150,7 +151,7 @@ pub(crate) fn compile(text: &str) -> Result<(Vec<Stmt>, Unit, Vec<Diagnostic>), 
         Severity::Warning,
         std::mem::take(&mut unit.warnings),
     );
-    Ok((stmts, unit, warnings))
+    Ok((stmts, Arc::new(unit), warnings))
 }
 
 /// The menu of a refused linear question at L1 (DESIGN.md sec:diagnostics, row "Linear question

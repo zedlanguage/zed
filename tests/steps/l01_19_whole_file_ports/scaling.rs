@@ -42,7 +42,7 @@ fn a_wave_reading_the_last_of_many_lines_scales() {
         let src = format!(
             "main(stdin: Lines) -> (stdout: Lines) {{\n  stdout <- stdin[{n}] else \"\";\n}}\n"
         );
-        let input = BTreeMap::from([("stdin".to_string(), lines(n))]);
+        let input = BTreeMap::from([("stdin".to_string(), Arc::from(lines(n)))]);
         (load(src.as_bytes()).unwrap(), input)
     });
     check("a wave over n lines", 20_000, |n| {

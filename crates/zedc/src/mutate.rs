@@ -20,6 +20,8 @@
 //! definition's term replaced, so it costs that definition and the tables that reach it, not
 //! a new parse, check or elaboration.
 
+use std::sync::Arc;
+
 use zed_kernel::num::{TooLarge, bytes_of};
 use zed_kernel::provenance::{Position, child, child_mut};
 use zed_kernel::{Prim, Rat, Shared, Term, Value};
@@ -266,11 +268,11 @@ pub fn apply(term: &Term, at: &Position, to: &Change) -> Term {
 
 /// Each mutant of the unit `unit`, elaborated from `stmts`, with its verdict, in the order of
 /// [`mutants`]. Each row's closed term is run by `map`. The caller has run the tables against
-/// the original, and they pass.
+/// the original, and they pass. The original's program shares `unit`.
 pub fn run(
     text: &str,
     stmts: &[Stmt],
-    unit: &Unit,
+    unit: &Arc<Unit>,
     map: &Through<'_>,
 ) -> Result<Vec<(Mutant, Verdict)>, String> {
     let mutants = mutants(text, stmts, unit)?;
@@ -279,7 +281,7 @@ pub fn run(
         .iter()
         .any(|s| matches!(&s.kind, StmtKind::Function(f) if f.name == "main"));
     let program = if has_main {
-        run::program(stmts, unit.clone()).ok()
+        run::program(stmts, Arc::clone(unit)).ok()
     } else {
         None
     };

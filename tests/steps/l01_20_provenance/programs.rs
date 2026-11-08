@@ -27,7 +27,7 @@ impl Lookup for Disk {
 fn trace(src: &str, stdin: &str, files: &[(&'static str, &'static str)]) -> zed_kernel::Provenance {
     let p = load(src.as_bytes()).unwrap();
     let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), stdin.as_bytes().to_vec());
+    lines.insert("stdin".to_string(), Arc::from(stdin.as_bytes()));
     let disk: Arc<dyn Lookup> = Arc::new(Disk(files.iter().copied().collect()));
     let (_, prov) = p.provenance(&lines, |_| disk.clone()).unwrap();
     assert!(prov.repeated().is_empty(), "{:?}", prov.repeated());

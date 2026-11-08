@@ -31,7 +31,7 @@ pub(crate) fn staged(src: &str) -> (Program, Program, Report) {
 /// What one wave of `p` writes to `stdout` on `stdin`, or its error.
 pub(crate) fn out(p: &Program, stdin: &str) -> String {
     let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), stdin.as_bytes().to_vec());
+    lines.insert("stdin".to_string(), Arc::from(stdin.as_bytes()));
     let files = |_: &str| -> Arc<dyn Lookup> { unreachable!("no `Files` port") };
     match p.run(&lines, files) {
         Ok(w) => w

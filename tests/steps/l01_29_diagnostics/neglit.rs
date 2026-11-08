@@ -70,7 +70,7 @@ fn each_repair_is_accepted_and_prints_its_value() {
     for (e, want) in [("(-1).abs", "offset: 1"), ("-(1.abs)", "offset: -1")] {
         let p = load(printing(e).as_bytes()).unwrap_or_else(|err| panic!("{e}: {err}"));
         let mut lines = BTreeMap::new();
-        lines.insert("stdin".to_string(), Vec::new());
+        lines.insert("stdin".to_string(), Arc::from([]));
         let files = |_: &str| -> Arc<dyn Lookup> { unreachable!("no `Files` port") };
         let wave = p.run(&lines, files).unwrap();
         let (_, bytes) = &wave.writes[0];

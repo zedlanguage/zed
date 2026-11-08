@@ -12,7 +12,7 @@ use zedc::run::load;
 fn run(src: &str, stdin: &str) -> String {
     let p = load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}: rejected: {e}"));
     let mut lines = BTreeMap::new();
-    lines.insert("stdin".to_string(), stdin.as_bytes().to_vec());
+    lines.insert("stdin".to_string(), Arc::from(stdin.as_bytes()));
     let files = |_: &str| -> Arc<dyn Lookup> { unreachable!("no `Files` port") };
     match p.run(&lines, files) {
         Ok(w) => w

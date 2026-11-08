@@ -133,6 +133,10 @@ three ways, all confirmed:
   (`zed-kernel/text.rs:136`), `Type::cmp` (`zed-kernel/types.rs:45`), `Row::cmp`
   (`types.rs:253`), `Premises::extend` and `Premises::eq` (`zedc/store/cell.rs:90`, `:152`),
   `Cx::power` (`preimage.rs:1188`).
+  T11-unit-share added test-only uses: `run::tests` and `l01_19_whole_file_ports::sharing` assert
+  with `Arc::ptr_eq` that a program holds the front end's unit and a record the input's bytes.
+  Zed values are shared and have no identity to compare, so a port of these tests keeps only
+  their bytes-allocated scaling check.
   ERRS-precise added one in a library: `Atoms::zip` (`zed-kernel/types.rs`) walks
   `imbl::OrdMap::diff` of two atom maps, which skips the subtrees the maps share by address, so
   the union that builds a chain's `#errs(E ->? E)` costs the entries that differ, not the

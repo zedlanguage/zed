@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
+use std::sync::Arc;
 
 use zed_kernel::Term;
 
@@ -160,7 +161,9 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
             let mut program = None;
             accepted = Accepted::Yes;
             if main.is_some() {
-                match work::stage(Stage::Program, None, || run::program(stmts, unit.clone())) {
+                match work::stage(Stage::Program, None, || {
+                    run::program(stmts, Arc::clone(unit))
+                }) {
                     Ok(p) => program = Some(p),
                     Err(e) => {
                         // Placed and addressed as the front end's rejections are, with its

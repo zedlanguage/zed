@@ -54,7 +54,8 @@ pub fn direct(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
 
 /// A program ready to run: its elaboration and `main`'s ports.
 pub struct Program {
-    pub(crate) unit: Unit,
+    /// The elaboration, shared with the front end's result it was made from.
+    pub(crate) unit: Arc<Unit>,
     /// `main` closed over the definitions it reaches, made at the first wave.
     main: std::sync::OnceLock<Term>,
     /// The program's content address, or why it could not be taken, at the first wave or
@@ -125,7 +126,7 @@ impl Ports {
     /// record names no program, since ports alone do not say which; the caller names it.
     pub fn run(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         run: impl FnOnce(&mut Evaluator) -> Result<Value, String>,
@@ -165,7 +166,7 @@ impl Ports {
 
     fn wave(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         trace: bool,
@@ -180,7 +181,7 @@ impl Ports {
                         return Err(format!("no input for port `{name}`"));
                     };
                     world = world.input(name, split_lines(name, bytes));
-                    record.lines.insert(name.clone(), bytes.clone());
+                    record.lines.insert(name.clone(), Arc::clone(bytes));
                 }
                 PortKind::Files | PortKind::Env => world = world.source(name, files(name)),
                 PortKind::CommandLine => {
@@ -233,8 +234,8 @@ pub struct Record {
     /// in a record written before step L1.19b, and in the wave of a mutant's `main`, which
     /// is no program's.
     pub program: Option<ContentAddress>,
-    /// The bytes of each `Lines` port.
-    pub lines: BTreeMap<String, Vec<u8>>,
+    /// The bytes of each `Lines` port, shared with the input the wave was given.
+    pub lines: BTreeMap<String, Arc<[u8]>>,
     /// The keys read from each `Files` port (paths) and each environment port (names), and
     /// what each read gave.
     pub files: BTreeMap<String, BTreeMap<Value, Value>>,
@@ -305,7 +306,7 @@ pub(crate) fn write_warnings(
 /// that declaration with each `main` a step of the derivation, and no `main` at the start of
 /// the unit. The caller places the error, so it prints a place and an address as every
 /// rejection does.
-pub(crate) fn program(stmts: &[Stmt], unit: Unit) -> Result<Program, ast::Error> {
+pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::Error> {
     let mains: Vec<(&Stmt, &Function)> = stmts
         .iter()
         .filter_map(|s| match &s.kind {
@@ -438,7 +439,7 @@ impl Program {
     pub fn stage(&self) -> (Program, stage::Report) {
         let (unit, report) = stage::mix(&self.unit, &["main"]);
         let program = Program {
-            unit,
+            unit: Arc::new(unit),
             main: std::sync::OnceLock::new(),
             address: std::sync::OnceLock::new(),
             ports: self.ports.clone(),
@@ -457,7 +458,7 @@ impl Program {
     /// anything is written.
     pub fn run(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
         self.run_args(lines, &[], files)
@@ -467,7 +468,7 @@ impl Program {
     /// `CommandLine` input holds.
     pub fn run_args(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<Wave, String> {
@@ -478,7 +479,7 @@ impl Program {
     /// test runner's way to run a program through another form.
     pub fn run_through(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         map: &Through<'_>,
@@ -491,7 +492,7 @@ impl Program {
     pub fn run_main_through(
         &self,
         main: &Term,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         map: &Through<'_>,
@@ -503,7 +504,7 @@ impl Program {
     /// fact address of every value, the wave stamp 0 first in each keypath.
     pub fn provenance(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         files: impl Fn(&str) -> Arc<dyn Lookup>,
     ) -> Result<(Wave, Provenance), String> {
         let (wave, prov) = self.wave(lines, &[], files, true, &direct, None)?;
@@ -512,7 +513,7 @@ impl Program {
 
     fn wave(
         &self,
-        lines: &BTreeMap<String, Vec<u8>>,
+        lines: &BTreeMap<String, Arc<[u8]>>,
         args: &[String],
         files: impl Fn(&str) -> Arc<dyn Lookup>,
         trace: bool,
@@ -830,7 +831,7 @@ impl Record {
                     record.program = Some(a.ok_or_else(bad)?);
                 }
                 ("lines", [p, b]) => {
-                    record.lines.insert(text(p)?, b.to_vec());
+                    record.lines.insert(text(p)?, Arc::from(*b));
                 }
                 ("text" | "missing" | "error", [p, k, more @ ..]) => {
                     let v = match (kind, more) {
@@ -1092,11 +1093,7 @@ impl<'a> Options<'a> {
 
     /// The bytes of each `Lines` input of `ports`: the file bound to it, or `stdin` for the
     /// port `stdin`.
-    fn read_lines(
-        &self,
-        ports: &Ports,
-        stdin: &mut dyn Read,
-    ) -> Result<BTreeMap<String, Vec<u8>>, (u8, String)> {
+    fn read_lines(&self, ports: &Ports, stdin: &mut dyn Read) -> Result<LineInputs, (u8, String)> {
         let mut lines = BTreeMap::new();
         for (name, kind) in &ports.inputs {
             if *kind != PortKind::Lines {
@@ -1119,7 +1116,7 @@ impl<'a> Options<'a> {
                     ));
                 }
             }
-            lines.insert(name.clone(), bytes);
+            lines.insert(name.clone(), Arc::from(bytes));
         }
         Ok(lines)
     }
@@ -1198,5 +1195,36 @@ pub fn executable(
             let _ = writeln!(stderr, "{why}");
             status
         }
+    }
+}
+
+/// The bytes of each `Lines` input, by port name, as a wave is given them.
+type LineInputs = BTreeMap<String, Arc<[u8]>>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::program;
+    use crate::query::Db;
+
+    #[test]
+    fn a_program_shares_the_unit_of_the_front_end_it_was_made_from() {
+        let front =
+            Db::new().front("main(stdin: Lines) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let Ok((stmts, unit, _)) = &*front else {
+            panic!("the unit is accepted")
+        };
+        let p = program(stmts, Arc::clone(unit)).expect("`main`'s ports are `Lines`");
+        assert!(Arc::ptr_eq(&p.unit, unit));
+        // A refused program leaves the front end's unit for the tables, which still read it.
+        let front =
+            Db::new().front("main(count: int) -> (stdout: Lines) {\n  stdout <- \"x\";\n}\n");
+        let Ok((stmts, unit, _)) = &*front else {
+            panic!("the unit is accepted")
+        };
+        assert!(program(stmts, Arc::clone(unit)).is_err());
+        assert_eq!(Arc::strong_count(unit), 1);
+        assert!(unit.defs.iter().any(|d| d.name == "main"));
     }
 }
