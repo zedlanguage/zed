@@ -6,10 +6,12 @@
 //! one type.
 
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
+use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
 fn r(i: usize) -> Expr {
@@ -475,4 +477,161 @@ fn an_overload_rejected_by_a_decided_check_names_no_cause() {
         );
         assert!(!first.contains("not decided"), "{first}");
     }
+}
+
+// Scaling of each refusal cause (REFUSAL-cost). Each run names its groups apart and forgets
+// the answers kept, so no run reads another's.
+
+/// The lists of elements of `head`, its group named by `tag`.
+fn list_named(head: Type, tag: &str) -> Type {
+    let body = Expr::Union(vec![nil(), cons(Expr::Type(head), r(0))]);
+    Group::new(vec![def(&format!("L{tag}"), body)])
+        .unwrap()
+        .instance(vec![])
+        .remove(0)
+}
+
+/// [`period`] with its group named by `tag`.
+fn period_named(p: usize, k: usize, tag: &str) -> Type {
+    let defs = (0..p)
+        .map(|i| {
+            let body = cons(int(), r((i + 1) % p));
+            let body = if i == k {
+                Expr::Union(vec![nil(), body])
+            } else {
+                body
+            };
+            def(&format!("P{i}{tag}"), body)
+        })
+        .collect();
+    Group::new(defs).unwrap().instance(vec![]).remove(0)
+}
+
+/// The Erdős cover of [`erdos_cover`], each class written `n` times in groups of its own.
+fn erdos_cover_repeated(n: usize, tag: &str) -> Type {
+    let classes = [(2, 0), (3, 0), (4, 1), (6, 5), (12, 7)];
+    (0..n).fold(list_named(Type::int(), tag), |t, j| {
+        classes.iter().fold(t, |t, &(p, k)| {
+            &t - &period_named(p, k, &format!("{tag}_{j}"))
+        })
+    })
+}
+
+/// `n` copies of [`box_cover`] over disjoint values, joined.
+fn box_covers(n: usize) -> Type {
+    let boxes = [
+        [3, 3, 3],
+        [5, 5, 5],
+        [6, 3, 5],
+        [6, 4, 5],
+        [4, 3, 6],
+        [5, 6, 3],
+        [3, 6, 6],
+    ];
+    let at = |m: u8, base: i64| {
+        (1..=3)
+            .filter(|i| m >> (i - 1) & 1 == 1)
+            .fold(Type::empty(), |t, i| &t | &lit(base + i))
+    };
+    (0..n).fold(Type::empty(), |u, j| {
+        let base = 3 * j as i64;
+        let t = boxes
+            .iter()
+            .fold(Type::tuple(vec![at(7, base); 3]), |t, b| {
+                &t - &Type::tuple(b.iter().map(|&m| at(m, base)).collect())
+            });
+        &u | &t
+    })
+}
+
+/// [`morphism_split`] over 1 to `n`: morphisms into `int` in none of those into one of them
+/// and that into the other integers.
+fn morphism_split_by(n: usize) -> Type {
+    let lits = (1..=n as i64).fold(Type::empty(), |t, i| &t | &lit(i));
+    let parts = (1..=n as i64).fold(morphism(&Type::int() - &lits), |t, i| {
+        &t | &morphism(lit(i))
+    });
+    &morphism(Type::int()) - &parts
+}
+
+/// [`morphism_between`] over 1 to `n`: morphisms that must take 1 to `n`.
+fn morphism_between_by(n: usize) -> Type {
+    let lits = (1..=n as i64).fold(Type::empty(), |t, i| &t | &lit(i));
+    Type::morphism(lits, Type::int(), Type::int())
+}
+
+/// Runs `scaling::check` on the verdict of `make(n, tag)`, which must be refused for `cause`.
+fn refusal_scales(
+    what: &str,
+    n: usize,
+    cause: Refusal,
+    make: impl Fn(usize, &str) -> Type + Sync + Send,
+) {
+    big(move || {
+        let tag = AtomicUsize::new(0);
+        scaling::check(what, n, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_rc{}", tag.fetch_add(1, Relaxed));
+            assert_eq!(
+                make(n, &tag).verdict(),
+                Verdict::Refused(cause),
+                "{what} at {n}"
+            );
+        })
+    });
+}
+
+fn big(f: impl FnOnce() + Send) {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(1 << 28)
+            .spawn_scoped(s, f)
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
+
+#[test]
+fn a_residues_refusal_is_reached_in_the_size_of_the_classes() {
+    // Θ(n) groups of periods. Measured on c881d28c: 10.0M instructions at n = 4, 81.9M at 32.
+    refusal_scales(
+        "Residues, by n copies of the classes",
+        4,
+        Refusal::Residues,
+        erdos_cover_repeated,
+    );
+}
+
+#[test]
+fn a_tuple_split_refusal_is_reached_in_the_size_of_the_boxes() {
+    // Θ(n) boxes. Measured on c881d28c: 4.4M instructions at n = 1, 159M at 32.
+    refusal_scales(
+        "TupleSplit, by n box covers",
+        4,
+        Refusal::TupleSplit,
+        |n, _| box_covers(n),
+    );
+}
+
+#[test]
+fn a_morphism_split_refusal_is_reached_in_the_size_of_the_union() {
+    // Θ(n) morphism types. Measured on c881d28c: 0.42M instructions at n = 1, 4.9M at 32.
+    refusal_scales(
+        "MorphismSplit, by n results",
+        8,
+        Refusal::MorphismSplit,
+        |n, _| morphism_split_by(n),
+    );
+}
+
+#[test]
+fn a_no_witness_refusal_is_reached_in_the_size_of_the_keys() {
+    // Θ(n) required keys. Measured on c881d28c: 87K instructions at n = 1, 302K at 32.
+    refusal_scales(
+        "NoWitness, by n required keys",
+        8,
+        Refusal::NoWitness,
+        |n, _| morphism_between_by(n),
+    );
 }
