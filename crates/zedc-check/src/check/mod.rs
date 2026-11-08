@@ -539,6 +539,10 @@ struct Class {
     /// The result of each use in `uses` by its kind and whether it gives a value, the first
     /// recorded of equal ones, so a repeated use is found without a scan of `uses`.
     known: HashMap<(NeedKind, bool), Ty>,
+    /// The index in `uses` of each `NeedKind::Order` use by its word, its side and its site:
+    /// the uses of one site are one use, of the union of their other operands joined one
+    /// shape per length, as `min` and `max` join them (DESIGN.md sec:reduction, item 5).
+    orders: HashMap<(Arc<str>, bool, Span), usize>,
     /// Whether `uses` holds a `NeedKind::Data` use.
     data: bool,
     /// The tuples and functions that flowed into it, each with where: every use is checked
@@ -1674,6 +1678,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             name: None,
             uses: Vec::new(),
             known: HashMap::new(),
+            orders: HashMap::new(),
             data: false,
             flowed: Vec::new(),
             binder: None,

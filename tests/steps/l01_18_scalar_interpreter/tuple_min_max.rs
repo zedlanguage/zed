@@ -47,6 +47,20 @@ fn a_float_part_is_ordered_as_ieee_minimum_and_maximum() {
 }
 
 #[test]
+fn min_of_a_number_and_infinity_is_the_number() {
+    // An infinity made by arithmetic is a float; `f64(#inf)` is the cast of an atom, which
+    // plan row NAN-cast-atoms implements, and until then evaluates to the atom `#inf`.
+    assert_eq!(x("min(2.0, 1.0 / 0.0)"), "2.0");
+    assert_eq!(x("max(2.0, 1.0 / 0.0)"), "inf");
+    assert_eq!(x("min(2.0, -1.0 / 0.0)"), "-inf");
+    // Through a parameter whose class meets the float.
+    assert_eq!(
+        value("m(positional a) = min(a, 1.0 / 0.0);\nx = m(2.0);\n", "x"),
+        "2.0"
+    );
+}
+
+#[test]
 fn tuples_min_and_max_cannot_order_are_refused() {
     assert_eq!(
         errors("x = min((1, 2), (1, 2, 3));\n"),
@@ -432,6 +446,37 @@ fn checking_a_chain_of_n_functions_whose_parameter_meets_a_tuple_scales() {
     zed_tests::scaling::check(
         "checking n functions whose parameter meets a tuple in `min`",
         200,
+        |n| {
+            built[&n].check();
+        },
+    );
+}
+
+#[test]
+fn checking_a_chain_of_n_functions_whose_parameter_meets_a_literal_tuple_scales() {
+    // `g{i}(a) = g{i - 1}(min(a, (i, 0)))`: each operand is a literal tuple of its own type, so
+    // the class of `a` in `g{i}` meets `i + 1` distinct types through the chain. They are joined
+    // into one need per site, as `min` joins the shapes of its operands (DESIGN.md
+    // sec:reduction, item 5), so each function records two needs and each call checks two.
+    // Complexity tradeoff: the result type of `g{i}` still lists `i + 1` tuples, because a call
+    // instantiates the callee's `min` result by plain union rather than by the join of item 5;
+    // the cost grows 2.2x to 3.1x per doubling from 40 to 1280 links (12.5x at 40/320).
+    // Joining it needs the result of `min` to stay a join through substitution (COMPLEXITY F118).
+    let unit = |n: usize| {
+        let mut text = String::from("g0(positional a) = min(a, (0, 0));\n");
+        for i in 1..n {
+            text.push_str(&format!(
+                "g{i}(positional a) = g{}(min(a, ({i}, 0)));\n",
+                i - 1
+            ));
+        }
+        text.push_str(&format!("x = g{}((5, 9));\n", n - 1));
+        checked(&text)
+    };
+    let built = zed_tests::scaling::inputs(40, unit);
+    zed_tests::scaling::check(
+        "checking n functions whose parameter meets a literal tuple in `min`",
+        40,
         |n| {
             built[&n].check();
         },

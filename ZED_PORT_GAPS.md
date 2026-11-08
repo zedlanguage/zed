@@ -2635,6 +2635,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A new variant of the enum `NeedKind` with named fields (`Order { what, word, other, first }`), matched with `..` rest patterns in `tys`, `every_ty`, `into_tys` and `map_tys` | `ty.rs`, `Ck::meet` | None: Zed has sums of records and record patterns with a rest | A member of the need sum |
 | A fixed-size array `[bool; 2]` updated by index inside a loop over `[(a, b), (b, a)].into_iter().enumerate()` | `Ck::min_max_tuples` | Mutation of an array element (gap 11) | A pair of booleans returned by a fold over the two sides |
 | A closure capturing another closure (`only` calls `rest`) | `Ck::min_max_tuples` | None | Two local functions |
+| A `HashMap<(Arc<str>, bool, Span), usize>` field indexing a `Vec` of uses, kept in step with it by `std::mem::take` and a swap at a class merge, and an `if let ... && let Some(&i) = map.get(..)` let chain | `Class::orders`, `Ck::need`, `Ck::merge` | None: a keyed morphism of positions, rebuilt by a fold at the merge | A morphism from (word, side, site) to the use's position |
 
 ## Entries from EMPTY-morphism-next (`crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/empty.rs`)
 

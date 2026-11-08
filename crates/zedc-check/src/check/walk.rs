@@ -3544,6 +3544,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for &r in &own {
             let uses = std::mem::take(&mut self.classes[r].uses);
             self.classes[r].known.clear();
+            self.classes[r].orders.clear();
             self.classes[r].data = false;
             match self.classes[r].resolved.clone() {
                 Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(
@@ -3726,6 +3727,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut reasons = std::mem::take(&mut self.classes[child].reasons);
         let mut uses = std::mem::take(&mut self.classes[child].uses);
         let mut known = std::mem::take(&mut self.classes[child].known);
+        let mut orders = std::mem::take(&mut self.classes[child].orders);
         let data = self.classes[child].data;
         let mut flowed = std::mem::take(&mut self.classes[child].flowed);
         let level = self.classes[child].level;
@@ -3747,8 +3749,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         if c.uses.len() < uses.len() {
             std::mem::swap(&mut c.uses, &mut uses);
             std::mem::swap(&mut c.known, &mut known);
+            std::mem::swap(&mut c.orders, &mut orders);
         }
-        c.uses.extend(uses);
+        // A `min` or `max` use of a site both classes hold is joined into one. Each was
+        // checked on what flowed into the other class above, so nothing is checked again.
+        for (seq, mut n) in uses {
+            if let NeedKind::Order {
+                word, first, other, ..
+            } = &mut n.kind
+            {
+                match c.orders.entry((word.clone(), *first, n.span)) {
+                    Entry::Occupied(at) => {
+                        if let NeedKind::Order { other: kept, .. } = &mut c.uses[*at.get()].1.kind {
+                            *kept = one_shape_per_length(&kept.union(other));
+                        }
+                        continue;
+                    }
+                    Entry::Vacant(at) => {
+                        at.insert(c.uses.len());
+                    }
+                }
+            }
+            c.uses.push((seq, n));
+        }
         // The uses kept first keep their results, as a scan of the joined `uses` finds them.
         for (key, result) in known {
             c.known.entry(key).or_insert(result);
@@ -3805,6 +3828,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             return result.clone();
         }
         let (kind, _) = key;
+        if let NeedKind::Order {
+            word, first, other, ..
+        } = &kind
+            && let Some(&i) = self.classes[r].orders.get(&(word.clone(), *first, span))
+        {
+            return self.join_order(r, i, &kind, other, span);
+        }
         let level = self.classes[r].level;
         let result = gives.then(|| {
             let j = self.class();
@@ -3826,6 +3856,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.needs += 1;
         let seq = self.needs;
         let class = &mut self.classes[r];
+        if let NeedKind::Order { word, first, .. } = &need.kind {
+            let at = class.uses.len();
+            class.orders.insert((word.clone(), *first, span), at);
+        }
         class.uses.push((seq, need.clone()));
         let given = result.clone().unwrap_or_else(Ty::empty);
         class.known.insert((need.kind.clone(), gives), given);
@@ -3834,6 +3868,44 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.check_on(&need, t, *at);
         }
         result.unwrap_or_else(Ty::empty)
+    }
+
+    /// Joins the `min` or `max` use `kind`, at `span`, whose other operand is `other`, into
+    /// the use of class `r` at index `i` of its uses, which has the same word, side and site:
+    /// the class keeps one use per site, whose other operand is the union of theirs, joined
+    /// one shape per length as `min` and `max` join their operands (DESIGN.md sec:reduction,
+    /// item 5), so a value checked against it is checked as against each. A chain of
+    /// functions that passes a parameter on to `min` with a new literal tuple at each link
+    /// then records one use per site, not one per link before it. The values that flowed
+    /// into the class are checked against `kind`, which is what is new.
+    fn join_order(&mut self, r: usize, i: usize, kind: &NeedKind, other: &Ty, span: Span) -> Ty {
+        let NeedKind::Order { other: old, .. } = &self.classes[r].uses[i].1.kind else {
+            unreachable!("`orders` indexes `NeedKind::Order` uses")
+        };
+        let joined = one_shape_per_length(&old.union(other));
+        if joined == *old {
+            return Ty::empty();
+        }
+        let need = Need {
+            on: Ty::var(format!("${r}").into()),
+            kind: kind.clone(),
+            result: None,
+            span,
+        };
+        let mut vars = Vars::default();
+        need.vars_in(&mut vars);
+        let level = self.classes[r].level;
+        self.lower(vars.order, level);
+        self.touch(r);
+        let class = &mut self.classes[r];
+        if let NeedKind::Order { other: old, .. } = &mut class.uses[i].1.kind {
+            *old = joined;
+        }
+        let flowed = class.flowed.clone();
+        for (t, at) in &flowed {
+            self.check_on(&need, t, *at);
+        }
+        Ty::empty()
     }
 
     /// Checks the use `n` of a class on `t`, which flowed into the class at `span` or which
