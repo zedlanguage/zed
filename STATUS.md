@@ -1618,14 +1618,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | ASSOC-fast-study | running | 2026-11-08 03:04 |  |
-| BATCH-70 | running | 2026-11-08 02:45 |  |
 | C2-chain | impl attempt 1 | 2026-11-08 00:07 | ready: 26813684 rebased on e92dcb96, fmt and clippy clean, 202 pieces 0 failed after rebase, board-check-docs silent |
 | CHK-need-bound | impl attempt 1 | 2026-11-05 04:07 | ready 2e11a5f1 on wt/chk-need-bound (origin/main 3203273f), spec 8ef4ca5 on wt/chk-need-bound-spec (DOCS-TODO 30); l01_39a generic 16 tests; affected groups 101 |
-| H10-study | running | 2026-11-08 03:04 |  |
 | KEY-written-addr | impl attempt 1 | 2026-11-08 02:20 | ready 906057f1 on e92dcb96 (batch 70); 26 pieces, random_body timeout under load then passed alone 39.5 s; board-check-docs clean |
 | RUNG2-carrier | impl attempt 1 | 2026-11-08 00:07 | ready: a9976bec, 625 pieces 0 failed with doc tests (load 6.2 to 18.3) |
-| SETS-study | research attempt 1 | 2026-11-07 23:43 | Codex report in (rc 0); Gemini and Claude still running |
-| XST-r2 | research attempt 1 | 2026-11-07 18:56 | Gemini timed out (rc 124 after 5 h) with no R2_GEMINI.md; probes and fetched papers kept; its target/ and build/ deleted; round 2 processed from the Codex and C |
 | XST-r4 | running | 2026-11-08 02:53 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
