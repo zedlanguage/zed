@@ -347,7 +347,9 @@ fn a_parameter_met_with_a_tuple_takes_the_tuples_each_call_gives() {
         v(&format!("{g}h(positional b) = g(b);\nx = h((0, 9));\n")),
         "(0, 9)"
     );
-    assert_eq!(sig(g, "g"), "(_) -> (1, 2) | _");
+    // The result is a variable a call binds to the join of the two operands, which the
+    // unknown `_` shows; `(1, 2) | _` is the same set.
+    assert_eq!(sig(g, "g"), "(_) -> _");
 }
 
 #[test]
@@ -455,13 +457,11 @@ fn checking_a_chain_of_n_functions_whose_parameter_meets_a_tuple_scales() {
 #[test]
 fn checking_a_chain_of_n_functions_whose_parameter_meets_a_literal_tuple_scales() {
     // `g{i}(a) = g{i - 1}(min(a, (i, 0)))`: each operand is a literal tuple of its own type, so
-    // the class of `a` in `g{i}` meets `i + 1` distinct types through the chain. They are joined
-    // into one need per site, as `min` joins the shapes of its operands (DESIGN.md
-    // sec:reduction, item 5), so each function records two needs and each call checks two.
-    // Complexity tradeoff: the result type of `g{i}` still lists `i + 1` tuples, because a call
-    // instantiates the callee's `min` result by plain union rather than by the join of item 5;
-    // the cost grows 2.2x to 3.1x per doubling from 40 to 1280 links (12.5x at 40/320).
-    // Joining it needs the result of `min` to stay a join through substitution (COMPLEXITY F118).
+    // the class of `a` in `g{i}` meets `i + 1` distinct types through the chain. `min` joins
+    // the shapes of its operands (DESIGN.md sec:reduction, item 5): its result is a variable a
+    // call binds to that join, and a `min` of that result joins its operand into the same use,
+    // so each function keeps one use and its result one shape. From 40 to 1280 links the work
+    // grows 2.0 to 2.3 times per doubling, as for a chain whose results do not pass on.
     let unit = |n: usize| {
         let mut text = String::from("g0(positional a) = min(a, (0, 0));\n");
         for i in 1..n {
@@ -480,5 +480,70 @@ fn checking_a_chain_of_n_functions_whose_parameter_meets_a_literal_tuple_scales(
         |n| {
             built[&n].check();
         },
+    );
+}
+
+#[test]
+fn a_call_joins_the_result_of_min_as_min_joins_it() {
+    let g = "g(positional a) = min(a, (1, 2));\n";
+    // The result of `g((0, 5))` is that of `min((0, 5), (1, 2))`, whose type joins the two
+    // tuples of length 2 component by component (DESIGN.md sec:reduction, item 5).
+    assert_eq!(
+        sig(&format!("{g}h() = g((0, 5));\n"), "h"),
+        "() -> (0 | 1, 2 | 5)"
+    );
+    // Through a chain that passes the result on: one tuple, not one per link.
+    let chain = "g0(positional a) = min(a, (0, 0));\n\
+                 g1(positional a) = g0(min(a, (1, 0)));\n\
+                 g2(positional a) = g1(min(a, (2, 0)));\n";
+    assert_eq!(sig(chain, "g2"), "(_) -> _");
+    assert_eq!(
+        sig(&format!("{chain}h() = g2((5, 9));\n"), "h"),
+        "() -> (0 | 1 | 2 | 5, 0 | 9)"
+    );
+    // The operands of a chain are still checked against the argument and each other.
+    assert_eq!(
+        errors(&format!("{chain}x = g2((5, 9, 1));\n")),
+        [
+            "`min` does not take (5, 9, 1) and (0 | 1 | 2, 0): a tuple of 2 components has none of its length to compare with [g2((5, 9, 1))]",
+            "`min` does not take (5, 9, 1) and (0 | 1 | 2, 0): a tuple of 3 components has none of its length to compare with [g2((5, 9, 1))]"
+        ]
+    );
+    assert_eq!(
+        errors("g0(positional a) = min(a, (0, 0));\ng1(positional a) = g0(min(a, (1.0, 0)));\n"),
+        ["`min` does not take (1.0, 0) [g0(min(a, (1.0, 0)))]"]
+    );
+    // `max` of a `min` is one of the three operands as well.
+    assert_eq!(
+        value(
+            "h(positional a) = max(min(a, (0, 0)), (1, 0));\nx = h((5, 9));\n",
+            "x"
+        ),
+        "(1, 0)"
+    );
+}
+
+#[test]
+fn branches_of_an_if_stay_a_union_through_a_call() {
+    // Rule 3 of sec:type_resolution: branch types union, and a call keeps them apart; only
+    // the result of `min` or `max` is joined.
+    let p = "p(positional c) = if c { (0, 5) } else { (1, 2) };\n";
+    assert_eq!(sig(p, "p"), "(bool) -> (0, 5) | (1, 2)");
+    assert_eq!(
+        sig(&format!("{p}h(positional c) = p(c);\n"), "h"),
+        "(bool) -> (0, 5) | (1, 2)"
+    );
+    let g = "g(positional a) = min(a, (1, 2));\n";
+    assert_eq!(
+        sig(
+            &format!("{g}h(positional c) = if c {{ g((0, 5)) }} else {{ (7, 7) }};\n"),
+            "h"
+        ),
+        "(bool) -> (0 | 1, 2 | 5) | (7, 7)"
+    );
+    // An argument that is a union of branches is joined only where `min` takes it.
+    assert_eq!(
+        sig(&format!("{g}{p}h(positional c) = (p(c), g(p(c)));\n"), "h"),
+        "(bool) -> ((0, 5) | (1, 2), (0 | 1, 2 | 5))"
     );
 }

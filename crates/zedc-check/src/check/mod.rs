@@ -513,6 +513,10 @@ impl Drop for Origin<'_> {
     }
 }
 
+/// A `min` or `max` use's key in [`Class::orders`]: its word, whether the class's value is the
+/// first operand, and its site.
+type OrderKey = (Arc<str>, bool, Span);
+
 /// A class of values that must share one carrier: a node of the union-find forest of
 /// docs/thresholds.md, replacement 1. Only a root's fields other than `parent` and `rank`
 /// are read.
@@ -542,7 +546,12 @@ struct Class {
     /// The index in `uses` of each `NeedKind::Order` use by its word, its side and its site:
     /// the uses of one site are one use, of the union of their other operands joined one
     /// shape per length, as `min` and `max` join them (DESIGN.md sec:reduction, item 5).
-    orders: HashMap<(Arc<str>, bool, Span), usize>,
+    orders: HashMap<OrderKey, usize>,
+    /// The `min` or `max` use whose result it is, if it is one and holds nothing else: the class
+    /// of the operand and the use's key in that class's `orders`. Its values are the join of
+    /// the operand's and the use's other operand, so a `min` or `max` of the same word and side
+    /// applied to it joins the new operand into that use (DESIGN.md sec:reduction, item 5).
+    order_of: Option<(usize, OrderKey)>,
     /// Whether `uses` holds a `NeedKind::Data` use.
     data: bool,
     /// The tuples and functions that flowed into it, each with where: every use is checked
@@ -1679,6 +1688,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             uses: Vec::new(),
             known: HashMap::new(),
             orders: HashMap::new(),
+            order_of: None,
             data: false,
             flowed: Vec::new(),
             binder: None,

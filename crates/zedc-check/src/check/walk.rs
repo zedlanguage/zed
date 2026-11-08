@@ -3545,6 +3545,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let uses = std::mem::take(&mut self.classes[r].uses);
             self.classes[r].known.clear();
             self.classes[r].orders.clear();
+            self.classes[r].order_of = None;
             self.classes[r].data = false;
             match self.classes[r].resolved.clone() {
                 Some(t) if t == Ty::var(format!("${r}").into()) => needs.extend(
@@ -3739,6 +3740,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.classes[child].parent = root;
         let c = &mut self.classes[root];
         c.generic &= generic;
+        // Its values are no longer those of one `min` or `max` use only.
+        c.order_of = None;
         c.given &= given;
         c.narrowed_to.extend(narrowed_to);
         c.narrows |= narrows;
@@ -3871,25 +3874,30 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Joins the `min` or `max` use `kind`, at `span`, whose other operand is `other`, into
-    /// the use of class `r` at index `i` of its uses, which has the same word, side and site:
-    /// the class keeps one use per site, whose other operand is the union of theirs, joined
-    /// one shape per length as `min` and `max` join their operands (DESIGN.md sec:reduction,
-    /// item 5), so a value checked against it is checked as against each. A chain of
-    /// functions that passes a parameter on to `min` with a new literal tuple at each link
-    /// then records one use per site, not one per link before it. The values that flowed
-    /// into the class are checked against `kind`, which is what is new.
+    /// the use of class `r` at index `i` of its uses, which has the same word and side: the
+    /// use's other operand becomes the union of theirs, joined one shape per length as `min`
+    /// and `max` join their operands (DESIGN.md sec:reduction, item 5), so a value checked
+    /// against it is checked as against each. A chain of functions that passes a parameter
+    /// on to `min` with a new literal tuple at each link then records one use, not one per
+    /// link before it. The values that flowed into the class are checked against `kind`,
+    /// which is what is new. Gives what the kept use gives.
     fn join_order(&mut self, r: usize, i: usize, kind: &NeedKind, other: &Ty, span: Span) -> Ty {
+        let (on, result) = (
+            &self.classes[r].uses[i].1.on,
+            &self.classes[r].uses[i].1.result,
+        );
+        let (on, result) = (on.clone(), result.clone());
         let NeedKind::Order { other: old, .. } = &self.classes[r].uses[i].1.kind else {
             unreachable!("`orders` indexes `NeedKind::Order` uses")
         };
         let joined = one_shape_per_length(&old.union(other));
         if joined == *old {
-            return Ty::empty();
+            return result.unwrap_or_else(Ty::empty);
         }
         let need = Need {
-            on: Ty::var(format!("${r}").into()),
+            on,
             kind: kind.clone(),
-            result: None,
+            result: result.clone(),
             span,
         };
         let mut vars = Vars::default();
@@ -3905,7 +3913,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (t, at) in &flowed {
             self.check_on(&need, t, *at);
         }
-        Ty::empty()
+        result.unwrap_or_else(Ty::empty)
     }
 
     /// Checks the use `n` of a class on `t`, which flowed into the class at `span` or which
@@ -4539,7 +4547,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `min` or `max`, whose signature is `sig`, applied to `x` and `y`, one of them holding a
     /// tuple (DESIGN.md sec:reduction, item 5): two tuples of one length, each pair of
     /// components two numbers of one kind or two tuples checked the same way, and no atom in a
-    /// component. The result is one of the two, so its type is the union of theirs. The tuple
+    /// component. The result is one of the two, so its type joins the tuple shapes of each
+    /// length of theirs, and where one is a class and nothing else, it is what the class's use
+    /// gives, which a call joins in the same way ([`Ck::order_given`]). The tuple
     /// shapes of one length on each side are joined position by position, so each level is read
     /// once rather than once per pair of shapes, and a pair of component types met again
     /// through shared rows is not read again: the check is linear in the types read.
@@ -4551,7 +4561,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let mut todo = vec![(x.clone(), y.clone())];
         let mut seen = HashSet::new();
+        // What the application gives, where one operand is a class and nothing else and the
+        // other is closed: what the class's use gives ([`Ck::order_given`]).
+        let mut given = None;
         while let Some(pair) = todo.pop() {
+            let outer = seen.is_empty();
             if seen.contains(&pair) {
                 continue;
             }
@@ -4599,7 +4613,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         other: u.clone(),
                         first: i == 0,
                     };
-                    self.need(k, kind, false, span);
+                    if outer && u.closed() && self.class_of_ty(t).is_some() {
+                        given = Some(self.order_given(k, kind, what, sig, span));
+                    } else {
+                        self.need(k, kind, false, span);
+                    }
                 }
             }
             // A side that is classes only, against tuples: the call checks what the classes hold.
@@ -4655,7 +4673,53 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             seen.insert(pair);
         }
-        one_shape_per_length(&x.union(y))
+        given.unwrap_or_else(|| one_shape_per_length(&x.union(y)))
+    }
+
+    /// What `min` or `max`, named `what`, of signature `sig`, gives where one operand is the
+    /// class `k` and nothing else and the other, `kind`'s, is closed: a variable whose values
+    /// are the join of the two operands' tuple shapes (DESIGN.md sec:reduction, item 5), which
+    /// a call binds by checking `kind` on what it binds `k` to. A union would keep each tuple
+    /// shape apart and so grow by one shape at each call a chain passes the result through.
+    ///
+    /// Where `k` is itself what a use of the same word and side gave and holds nothing else,
+    /// `min(min(a, c), d)`, the new operand is joined into that use, which then gives the join
+    /// of `a`, `c` and `d`, and `c` against `d` is checked here: so a chain of calls that
+    /// passes the result on keeps one use, not one per link before it.
+    fn order_given(&mut self, k: usize, kind: NeedKind, what: &str, sig: &Sig, span: Span) -> Ty {
+        let r = self.find(k);
+        let NeedKind::Order {
+            word, other, first, ..
+        } = &kind
+        else {
+            unreachable!("`min_max_tuples` makes an `Order` use")
+        };
+        if let Some((s, key)) = self.classes[r].order_of.clone()
+            && key.0 == *word
+            && key.1 == *first
+        {
+            let s = self.find(s);
+            if let Some(&i) = self.classes[s].orders.get(&key) {
+                let NeedKind::Order { other: old, .. } = &self.classes[s].uses[i].1.kind else {
+                    unreachable!("`orders` indexes `NeedKind::Order` uses")
+                };
+                let old = old.clone();
+                let (x, y) = if *first { (&old, other) } else { (other, &old) };
+                self.min_max_tuples(what, sig, x, y, span);
+                let other = other.clone();
+                return self.join_order(s, i, &kind, &other, span);
+            }
+        }
+        let (word, first) = (word.clone(), *first);
+        let before = self.classes.len();
+        let out = self.need(k, kind, true, span);
+        if let Some(j) = self.class_of_ty(&out)
+            && j >= before
+        {
+            self.touch(j);
+            self.classes[j].order_of = Some((r, (word, first, span)));
+        }
+        out
     }
 
     /// Checks each operand of the bit word or integer machine operation `w` against its domain
