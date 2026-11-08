@@ -1020,10 +1020,79 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
     }
 }
 
-/// A part waiting in [`Machine::release`]: one to drop, or one with the paths kept inside it.
-enum Part<'p> {
+/// A part waiting in [`Machine::release`]: one to drop, or one with its nodes in [`Kept`] on
+/// the way to a kept binder.
+enum Part {
     Drop(Option<usize>),
-    Keep(Option<usize>, Vec<&'p [usize]>),
+    Keep(Option<usize>, Vec<usize>),
+}
+
+/// Where the binders of a match are in the scrutinee: a node for each part [`binder_paths`]
+/// entered, with its parent node and its part index there; node 0 is the whole scrutinee, its
+/// own parent. A binder's path is one node, so no binder copies the path above it: a binder at
+/// each of `d` levels costs `d` nodes, not `d²/2` part indices (HEAP-binder-memory, as
+/// `zed_rt::Paths` for the runtime).
+type Paths = Vec<(usize, usize)>;
+
+/// A node of [`Kept`]: its first child and its next sibling (0 for none: node 0 is no one's
+/// child), whether a kept binder is there, and whether it is on the way to one.
+#[derive(Clone, Default)]
+struct Link {
+    first: usize,
+    next: usize,
+    kept: bool,
+    on: bool,
+}
+
+/// The nodes of a [`Paths`] on the way to the kept binders of a fused release, each with its
+/// children.
+struct Kept<'a> {
+    paths: &'a Paths,
+    links: Vec<Link>,
+}
+
+impl<'a> Kept<'a> {
+    /// O(nodes + kept): each node is marked once, a walk up stopping at a marked node, and the
+    /// marked ones are linked to their parents in one pass from the last.
+    fn new(paths: &'a Paths, kept: &[usize]) -> Self {
+        let mut links = vec![Link::default(); paths.len()];
+        for &k in kept {
+            links[k].kept = true;
+            let mut x = k;
+            while !links[x].on {
+                links[x].on = true;
+                if x == 0 {
+                    break;
+                }
+                x = paths[x].0;
+            }
+        }
+        for x in (1..paths.len()).rev() {
+            if links[x].on {
+                let up = paths[x].0;
+                links[x].next = links[up].first;
+                links[up].first = x;
+            }
+        }
+        Kept { paths, links }
+    }
+
+    /// The children of node `x` on the way to a kept binder.
+    fn kids(&self, x: usize) -> impl Iterator<Item = usize> + '_ {
+        let mut k = self.links[x].first;
+        std::iter::from_fn(move || {
+            (k != 0).then(|| {
+                let at = k;
+                k = self.links[k].next;
+                at
+            })
+        })
+    }
+
+    /// The part index of node `x`, which is not node 0.
+    fn part(&self, x: usize) -> usize {
+        self.paths[x].1
+    }
 }
 
 /// A region the machine is running: its index `at` in the plan, its plan, the occurrence id of
@@ -1474,10 +1543,12 @@ impl<'g> Machine<'g, '_> {
         };
         let sub = self.sub(at, k, i)?;
         let arm = &plan.regions[sub];
-        let mut paths = Vec::new();
+        // Each binder's node in `paths`; a function scrutinee is bound whole, at node 0.
+        let mut paths: Paths = vec![(0, 0)];
+        let mut nodes = Vec::new();
         match &ins[0] {
-            Mv::Data(v, _) => binder_paths(&ps[i], v, &mut Vec::new(), &mut paths),
-            _ => paths.resize(vals.len(), Vec::new()),
+            Mv::Data(v, _) => binder_paths(&ps[i], v, &mut paths, &mut nodes),
+            _ => nodes.resize(vals.len(), 0),
         }
         // A binder of value `v` and cell `cell`; for a function scrutinee, the scrutinee.
         let bound = |v: Value, cell: Option<usize>| {
@@ -1488,20 +1559,24 @@ impl<'g> Machine<'g, '_> {
             }
         };
         let scrut = ins[0].cell();
+        // The cell at each node, from its parent's: a parent comes before its children.
+        let mut cell_of: Vec<Option<usize>> = Vec::with_capacity(paths.len());
+        cell_of.push(scrut);
+        for &(up, i) in &paths[1..] {
+            cell_of.push(cell_of[up].and_then(|c| self.heap[c].kids.get(i).copied().flatten()));
+        }
         let cells: Vec<Option<usize>> = (0..vals.len())
-            .map(|b| paths.get(b).and_then(|p| self.cell_at(scrut, p)))
+            .map(|b| nodes.get(b).and_then(|&n| cell_of[n]))
             .collect();
         let mut args = Vec::new();
         if np.modes[0] == Mode::Owned {
             let kept: Vec<usize> = (0..vals.len())
                 .filter(|b| arm.args[*b] == Mode::Owned)
                 .collect();
-            let kept_paths: Vec<&[usize]> = kept
-                .iter()
-                .filter_map(|b| paths.get(*b).map(Vec::as_slice))
-                .collect();
             if self.plan.fuse {
-                self.release(scrut, &kept_paths)?;
+                let kept_nodes: Vec<usize> =
+                    kept.iter().filter_map(|b| nodes.get(*b).copied()).collect();
+                self.release(scrut, &Kept::new(&paths, &kept_nodes))?;
             } else {
                 for b in &kept {
                     self.inc(cells[*b]);
@@ -1547,22 +1622,25 @@ impl<'g> Machine<'g, '_> {
         Ok(out)
     }
 
-    /// Fused release of the scrutinee `cell`, keeping the cells at `kept`.
+    /// Fused release of the scrutinee `cell`, keeping the cells at the kept binders of `tree`.
+    /// O(cells freed + nodes of the paths): each node on the way to a kept binder is read once,
+    /// where a list of paths read each path from the top, O(d²) for a binder at each of `d`
+    /// levels (HEAP-binder-memory).
     ///
     /// The scrutinee nests as deep as the program, so the parts still to drop or release wait
     /// on a stack, in order (step T2-mid).
-    fn release(&mut self, cell: Option<usize>, kept: &[&[usize]]) -> Result<(), String> {
-        let mut stack = vec![Part::Keep(cell, kept.to_vec())];
+    fn release(&mut self, cell: Option<usize>, tree: &Kept<'_>) -> Result<(), String> {
+        let mut stack = vec![Part::Keep(cell, vec![0])];
         while let Some(part) = stack.pop() {
-            let (cell, kept) = match part {
+            let (cell, at) = match part {
                 Part::Drop(cell) => {
                     self.dec(cell)?;
                     continue;
                 }
-                Part::Keep(cell, kept) => (cell, kept),
+                Part::Keep(cell, at) => (cell, at),
             };
             let Some(c) = cell else { continue };
-            if kept.iter().any(|p| p.is_empty()) {
+            if at.iter().any(|&x| tree.links[x].kept) {
                 continue;
             }
             if self.heap[c].count == 1 {
@@ -1575,9 +1653,19 @@ impl<'g> Machine<'g, '_> {
                     self.refs[*k] -= 1;
                     self.touched.push(*k);
                 }
-                for (i, k) in kids.into_iter().enumerate().rev() {
-                    let sub: Vec<&[usize]> =
-                        kept.iter().filter(|p| p[0] == i).map(|p| &p[1..]).collect();
+                // Each child node goes to the part it reads, in one step.
+                let mut sub = vec![Vec::new(); kids.len()];
+                for kid in at.iter().flat_map(|&x| tree.kids(x)) {
+                    let i = tree.part(kid);
+                    let Some(s) = sub.get_mut(i) else {
+                        return Err(format!(
+                            "memory: a kept path reads part {i} of a cell of {} parts",
+                            kids.len()
+                        ));
+                    };
+                    s.push(kid);
+                }
+                for (k, sub) in kids.into_iter().zip(sub).rev() {
                     stack.push(if sub.is_empty() {
                         Part::Drop(k)
                     } else {
@@ -1585,9 +1673,8 @@ impl<'g> Machine<'g, '_> {
                     });
                 }
             } else {
-                for p in &kept {
-                    let k = self.cell_at(cell, p);
-                    self.inc(k);
+                for &x in &at {
+                    self.inc_kept(c, tree, x);
                 }
                 self.dec(cell)?;
             }
@@ -1595,11 +1682,19 @@ impl<'g> Machine<'g, '_> {
         Ok(())
     }
 
-    fn cell_at(&self, mut c: Option<usize>, path: &[usize]) -> Option<usize> {
-        for &i in path {
-            c = *self.heap[c?].kids.get(i)?;
+    /// Gives each kept binder below node `x` of `tree`, which is at cell `c`, a reference.
+    /// A part with no cell stops the walk below it: nothing below it is counted. Paths nest as
+    /// deep as patterns, so the nodes in progress are on a stack.
+    fn inc_kept(&mut self, c: usize, tree: &Kept<'_>, x: usize) {
+        let mut todo: Vec<(usize, usize)> = tree.kids(x).map(|k| (c, k)).collect();
+        while let Some((holder, k)) = todo.pop() {
+            let part = self.heap[holder].kids.get(tree.part(k)).copied().flatten();
+            if tree.links[k].kept {
+                self.inc(part);
+            } else if let Some(p) = part {
+                todo.extend(tree.kids(k).map(|k| (p, k)));
+            }
         }
-        c
     }
 
     /// Drops each input the node took owned.
@@ -1982,40 +2077,43 @@ fn flat_term(v: &Mv<'_>, lets: &mut Lets) -> Term {
     }
 }
 
-/// The path of child indices to each binder of `p` inside `v`, which `p` matches, in
-/// preorder, appended to `at`.
+/// The node in `paths` of each binder of `p` inside `v`, which `p` matches, in preorder,
+/// appended to `out`; `paths` gets a node for each part entered, below node 0, the whole of `v`.
+/// O(size of `p`): a binder records one node, not a copy of the path above it
+/// (HEAP-binder-memory).
 ///
 /// Patterns nest as deep as the program, so the parts still to visit wait on a stack, each
-/// with the length of the path above it and its index (step T2-mid).
-fn binder_paths(p: &Pattern, v: &Value, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-    let base = at.len();
-    let mut stack: Vec<(usize, Option<usize>, &Pattern, &Value)> = vec![(base, None, p, v)];
-    while let Some((len, i, p, v)) = stack.pop() {
-        at.truncate(len);
-        at.extend(i);
-        let len = at.len();
+/// with its node (step T2-mid).
+fn binder_paths(p: &Pattern, v: &Value, paths: &mut Paths, out: &mut Vec<usize>) {
+    let mut stack: Vec<(usize, &Pattern, &Value)> = vec![(0, p, v)];
+    // The node of part `i` of the value at node `up`.
+    let mut enter = |up: usize, i: usize| {
+        paths.push((up, i));
+        paths.len() - 1
+    };
+    while let Some((at, p, v)) = stack.pop() {
+        let start = stack.len();
         match (p, v) {
-            (Pattern::Bind(_), _) => out.push(at.clone()),
+            (Pattern::Bind(_), _) => out.push(at),
             (Pattern::Tuple(ps), Value::Tuple(xs)) => {
                 let parts = ps.iter().zip(xs.iter()).enumerate();
-                stack.extend(parts.rev().map(|(i, (q, x))| (len, Some(i), q, x)));
+                stack.extend(parts.map(|(i, (q, x))| (enter(at, i), q, x)));
             }
             (Pattern::Atom(_, ps), Value::Atom(a)) => {
                 let parts = ps.iter().zip(a.args.iter()).enumerate();
-                stack.extend(parts.rev().map(|(i, (q, x))| (len, Some(i), q, x)));
+                stack.extend(parts.map(|(i, (q, x))| (enter(at, i), q, x)));
             }
             (Pattern::Fields(_, fs), Value::Atom(a)) => {
-                let parts = fs.iter().filter_map(|(f, q)| {
+                stack.extend(fs.iter().filter_map(|(f, q)| {
                     let i = a.fields.binary_search(f).ok()?;
-                    Some((len, Some(i), q, &a.args[i]))
-                });
-                let parts: Vec<_> = parts.collect();
-                stack.extend(parts.into_iter().rev());
+                    Some((enter(at, i), q, &a.args[i]))
+                }));
             }
             _ => {}
         }
+        // The first part on top, for preorder.
+        stack[start..].reverse();
     }
-    at.truncate(base);
 }
 
 /// Renames each binder of `p`, in preorder, to what `f` gives, on a stack of the parts still
