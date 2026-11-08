@@ -782,6 +782,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 |---|---|---|---|
 | `thread_local!` list of parts waiting to be freed, and a flag for the walk that holds it | `deep::free`, `PARTS` (a `deep::Queue` since T2-types) | Mutation, global state | Removed: the runtime frees values, and must free a deep chain without recursion itself |
 | `thread_local!` queue of families to compare, because `==` is called from inside `imbl` where no stack of ours reaches | `deep::settle`, `COMPARING`, `PAIRS` | Mutation, global state | Zed's map comparison takes the element test as a function, so the queue is a state receiver or goes away |
+| A `thread_local!` flag that makes `==` on families compare shallowly while `imbl`'s `OrdMap::diff` runs, set and cleared by a drop guard, since `diff` takes no comparison function (PROV-family-entries) | `Family::shallow_diff`, `SHALLOW` | Mutation, global state | Zed's map difference takes the element test as a function, so the flag goes away |
 | `impl Drop` on a newtype, with `mem::take` of its `Arc` or map | `Items`, `Family` | None | Removed, with the first row |
 | `slice::Iter` held in a stack frame, a borrow into the value being walked | `walk`, `Copying`, `all_leaves` | None | An index into a shared tuple |
 | `Cow<'_, Value>`, a key borrowed unless it needs a copy | `as_key` in `eval.rs` | None | Zed shares values, so a function returns the key or its normalized copy with no borrow |

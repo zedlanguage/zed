@@ -303,16 +303,18 @@ impl Provenance {
         let Some(v @ Value::Atom(_)) = &self.facts[i].value else {
             return BTreeSet::new();
         };
-        let members: BTreeSet<&Value> = match v.errs() {
-            Some(set) => set.keys().collect(),
-            None => BTreeSet::from([v]),
+        let members = match v.errs() {
+            Some(set) => set.keys().map(|m| (m, None)).collect(),
+            None => BTreeMap::from([(v, None)]),
         };
         let mut held = Held {
-            members: &members,
+            members,
             sets: HashMap::new(),
+            tallies: HashMap::new(),
             seen: HashSet::new(),
             done: HashMap::new(),
             made: HashMap::new(),
+            last: 0,
         };
         // One backward pass over the facts, newest first: a fact's inputs completed before it,
         // so every fact that reaches `j` is taken before `j`. `traced[j]` holds the members
@@ -321,7 +323,7 @@ impl Provenance {
         // persistent maps, and a set found from another shares its nodes, so the common
         // members of two sets are read from their difference when it is short: along a chain
         // of products, each holding one member more than the last, a step costs `O(log n)`.
-        let mut traced: BTreeMap<usize, Found> = BTreeMap::from([(i, held.of(v))]);
+        let mut traced: BTreeMap<usize, Found> = BTreeMap::from([(i, held.of(v).found)]);
         let mut out = BTreeSet::new();
         while let Some((j, at_j)) = traced.pop_last() {
             let mut found = Found::new();
@@ -330,7 +332,7 @@ impl Provenance {
                 let Some(v) = &self.facts[k].value else {
                     continue;
                 };
-                let common = meet(&at_j, &held.of(v));
+                let common = meet(&at_j, &held.of(v).found);
                 if !common.is_empty() {
                     found = join(&found, &common);
                     let t = traced.entry(k).or_default();
@@ -345,10 +347,117 @@ impl Provenance {
     }
 }
 
-/// A set of failures. In the set of a family each failure maps to the number of the family's
-/// entries that hold it, so that a family's set can be found from another family's by the
-/// difference of the two; in other sets the number means nothing.
-type Found<'a> = OrdMap<&'a Value, u32>;
+/// A set of failures; the values mean nothing.
+type Found<'a> = OrdMap<&'a Value, ()>;
+
+/// A set of failures with an id: two sets with one id hold the same failures, so the entries of
+/// a family that hold one set are counted as one set, however many they are. The empty set's
+/// id is 0. An id is drawn from [`Held::last`] in the order the walk finds sets, and is only
+/// tested for equality: nothing in the result depends on its value.
+#[derive(Clone, Default)]
+struct Set<'a> {
+    id: u64,
+    found: Found<'a>,
+}
+
+/// The failures a family's entries hold, counted so that the family's set can be found from
+/// another family's by the difference of the two: entries added, removed or changed. Each count
+/// is over distinct sets, so an entry that holds a set some other entry holds costs `O(log n)`,
+/// and only a set new to the family, or one that leaves it, costs its size.
+#[derive(Clone, Default)]
+struct Tally<'a> {
+    /// The id of each distinct non-empty set the entries hold, with the number of entries that
+    /// hold it.
+    entries: OrdMap<u64, u32>,
+    /// Each failure, with the number of those distinct sets that hold it.
+    sets: OrdMap<&'a Value, u32>,
+    /// The failures: the keys of `sets`.
+    found: Found<'a>,
+}
+
+impl<'a> Tally<'a> {
+    /// One more entry holds `s`.
+    fn enter(&mut self, s: &Set<'a>) {
+        // Complexity tradeoff: a set new to the family is counted member by member, so entries
+        // added one per step, each holding a set that holds the last one's and one failure more,
+        // cost the sum of their sizes, `O(n²)`, as before this tally (COMPLEXITY.md K25, measured). Counting it from a
+        // set it was made from would need that set's counts in this tally; finding the sets oldest
+        // fact first, which sees only additions, would remove the counts.
+        if s.found.is_empty() {
+            return;
+        }
+        let n = self.entries.get(&s.id).copied().unwrap_or(0);
+        self.entries.insert(s.id, n + 1);
+        if n == 0 {
+            self.found = join(&self.found, &s.found);
+            for x in s.found.keys() {
+                let k = self.sets.get(x).copied().unwrap_or(0);
+                self.sets.insert(x, k + 1);
+            }
+        }
+    }
+
+    /// One entry fewer holds `s`.
+    fn leave(&mut self, s: &Set<'a>) {
+        if s.found.is_empty() {
+            return;
+        }
+        let n = self.entries[&s.id];
+        if n > 1 {
+            self.entries.insert(s.id, n - 1);
+            return;
+        }
+        self.entries.remove(&s.id);
+        s.found.keys().for_each(|x| self.less(x));
+    }
+
+    /// An entry that held `old` holds `new`. When `old` leaves the family and `new` enters
+    /// it, the counts change only at the failures in one of the two, which their difference
+    /// lists: a set made from another by adding a member costs `O(log n)`.
+    fn swap(&mut self, old: &Set<'a>, new: &Set<'a>) {
+        if old.id == new.id {
+            return;
+        }
+        let leaves = !old.found.is_empty() && self.entries.get(&old.id) == Some(&1);
+        let enters = !new.found.is_empty() && !self.entries.contains_key(&new.id);
+        if !(leaves && enters) {
+            self.leave(old);
+            self.enter(new);
+            return;
+        }
+        self.entries.remove(&old.id);
+        self.entries.insert(new.id, 1);
+        for d in old.found.diff(&new.found) {
+            match d {
+                DiffItem::Add(x, _) => self.more(x),
+                DiffItem::Remove(x, _) => self.less(x),
+                DiffItem::Update { .. } => {}
+            }
+        }
+    }
+
+    /// One more distinct set holds `x`.
+    fn more(&mut self, x: &'a Value) {
+        let n = self.sets.get(x).copied().unwrap_or(0);
+        self.sets.insert(x, n + 1);
+        if n == 0 {
+            self.found.insert(x, ());
+        }
+    }
+
+    /// One distinct set fewer holds `x`.
+    fn less(&mut self, x: &'a Value) {
+        match self.sets[x] {
+            1 => {
+                self.sets.remove(x);
+                self.found.remove(x);
+            }
+            n => {
+                self.sets.insert(x, n - 1);
+            }
+        }
+    }
+}
 
 /// A non-empty sequence or a family, each named by its id ([`Items::id`], [`Family::id`]). An
 /// id is only tested for equality, as a key of `sets` and `seen`, which are never iterated: no
@@ -376,9 +485,12 @@ enum Task<'a> {
 /// `#errs`, or holds in a tuple, a family or a payload. A value shares its tuples and families
 /// with other values, so the set of each is found once, keyed by its id, and a walk
 /// over a value is `O(distinct parts)`, not `O(paths)`.
-struct Held<'m, 'a> {
-    members: &'m BTreeSet<&'a Value>,
-    sets: HashMap<Part, Found<'a>>,
+struct Held<'a> {
+    /// Each failure, with the set a value equal to it holds once found.
+    members: BTreeMap<&'a Value, Option<Set<'a>>>,
+    sets: HashMap<Part, Set<'a>>,
+    /// The tally of each family whose set is found, by the family's id.
+    tallies: HashMap<Id, Tally<'a>>,
     /// The parts entered: a part is entered once, and its set is found before any part that
     /// holds it, since a value holds no part that holds it.
     seen: HashSet<Part>,
@@ -386,21 +498,28 @@ struct Held<'m, 'a> {
     done: HashMap<Id, &'a Family>,
     /// The families whose sets are found, by the id of the family each was made from.
     made: HashMap<Id, &'a Family>,
+    /// The last id given to a set.
+    last: u64,
 }
 
-impl<'a> Held<'_, 'a> {
-    fn of(&mut self, v: &'a Value) -> Found<'a> {
+impl<'a> Held<'a> {
+    fn of(&mut self, v: &'a Value) -> Set<'a> {
         let mut todo = vec![Task::Enter(v)];
         while let Some(task) = todo.pop() {
             match task {
                 Task::Enter(v) => self.enter(v, &mut todo),
                 Task::Items(xs) => {
-                    let s = xs.iter().fold(Found::new(), |s, x| join(&s, &self.read(x)));
+                    let mut s = Set::default();
+                    for x in xs.iter() {
+                        let r = self.read(x);
+                        s = self.union(s, r);
+                    }
                     self.sets.insert(Part::Items(xs.id()), s);
                 }
                 Task::Family(f, base) => {
-                    let s = self.family(f, base);
+                    let (tally, s) = self.family(f, base);
                     self.sets.insert(Part::Family(f.id()), s);
+                    self.tallies.insert(f.id(), tally);
                     self.done.insert(f.id(), f);
                     if f.from() != 0 {
                         self.made.entry(f.from()).or_insert(f);
@@ -409,6 +528,12 @@ impl<'a> Held<'_, 'a> {
             }
         }
         self.read(v)
+    }
+
+    /// A new id for a set.
+    fn fresh(&mut self) -> u64 {
+        self.last += 1;
+        self.last
     }
 
     /// Plans the sets of the parts of `v` not yet entered.
@@ -448,86 +573,111 @@ impl<'a> Held<'_, 'a> {
     /// entries; otherwise from each entry. The two share all but the nodes the change copied,
     /// which the difference skips, and it is abandoned as soon as it is as long as `f`, so
     /// either way the work is `O(|f|)` items. Only such a pair is compared: the difference of
-    /// two families that share no nodes compares the values at each common key whole, which for
-    /// nested families is as deep as they are.
+    /// two families that share no nodes compares the values at each common key. Those values
+    /// are compared shallowly ([`Family::shallow_diff`]): a family made from another by a
+    /// change `d` levels down differs from it at each of those levels, and reading the two down
+    /// to their difference at each level cost `O(d²)` per change.
     fn base(&self, f: &'a Family) -> Option<FromBase<'a>> {
         let base = match self.done.get(&f.from()) {
             Some(base) if f.from() != 0 => *base,
             _ => *self.made.get(&f.id())?,
         };
-        let mut diff = Vec::new();
-        for d in base.0.diff(&f.0) {
-            if diff.len() >= f.len() {
-                return None;
-            }
-            diff.push(d);
-        }
-        Some((base, diff))
+        Some((base, base.shallow_diff(f, f.len())?))
     }
 
-    fn family(&self, f: &'a Family, base: Option<FromBase<'a>>) -> Found<'a> {
-        let Some((base, diff)) = base else {
-            let mut s = Found::new();
-            for e in f.0.values() {
-                self.read(e).keys().for_each(|x| count(&mut s, x, true));
+    /// The tally and the set of `f`. Entries that hold one set are counted once, so the work
+    /// is the number of entries read, `O(log n)` each, and the size of each distinct set that
+    /// enters or leaves the tally.
+    fn family(&mut self, f: &'a Family, base: Option<FromBase<'a>>) -> (Tally<'a>, Set<'a>) {
+        let (tally, was) = match base {
+            None => {
+                let mut t = Tally::default();
+                for e in f.0.values() {
+                    let s = self.read(e);
+                    t.enter(&s);
+                }
+                (t, None)
             }
-            return s;
-        };
-        let mut s = self.sets[&Part::Family(base.id())].clone();
-        for d in diff {
-            match d {
-                DiffItem::Add(_, e) => self.read(e).keys().for_each(|x| count(&mut s, x, true)),
-                DiffItem::Remove(_, e) => self.read(e).keys().for_each(|x| count(&mut s, x, false)),
-                DiffItem::Update { old, new } => {
-                    let (old, new) = (self.read(old.1), self.read(new.1));
-                    for d in old.diff(&new) {
-                        match d {
-                            DiffItem::Add(x, _) => count(&mut s, x, true),
-                            DiffItem::Remove(x, _) => count(&mut s, x, false),
-                            DiffItem::Update { .. } => {}
+            Some((base, diff)) => {
+                let mut t = self.tallies[&base.id()].clone();
+                for d in diff {
+                    match d {
+                        DiffItem::Add(_, e) => t.enter(&self.read(e)),
+                        DiffItem::Remove(_, e) => t.leave(&self.read(e)),
+                        DiffItem::Update { old, new } => {
+                            let (old, new) = (self.read(old.1), self.read(new.1));
+                            t.swap(&old, &new);
                         }
                     }
                 }
+                (t, Some(&self.sets[&Part::Family(base.id())]))
             }
-        }
-        s
+        };
+        // The set keeps an id it equals: that of the one distinct set the entries hold, or the
+        // base's when the failures are the base's map itself.
+        let id = match (tally.entries.len(), was) {
+            _ if tally.found.is_empty() => 0,
+            (1, _) => *tally.entries.keys().next().expect("one set"),
+            (_, Some(was)) if was.found.ptr_eq(&tally.found) => was.id,
+            _ => self.fresh(),
+        };
+        let found = tally.found.clone();
+        (tally, Set { id, found })
     }
 
-    /// The set of `v`, the sets of its parts found.
-    fn read(&self, v: &'a Value) -> Found<'a> {
+    /// The set of `a` and `b` together, with the id of the larger when the smaller adds
+    /// nothing to it.
+    fn union(&mut self, a: Set<'a>, b: Set<'a>) -> Set<'a> {
+        let (large, small) = match a.found.len() >= b.found.len() {
+            true => (a, b),
+            false => (b, a),
+        };
+        if small.found.is_empty() || small.id == large.id {
+            return large;
+        }
+        let found = join(&large.found, &small.found);
+        match found.len() == large.found.len() {
+            true => large,
+            false => Set {
+                id: self.fresh(),
+                found,
+            },
+        }
+    }
+
+    /// The set of `v`, the sets of its parts found. A value equal to a member holds that
+    /// member too; its set is found once and kept, so that each read of it has one id.
+    fn read(&mut self, v: &'a Value) -> Set<'a> {
         let items = |xs: &Items| match xs.is_empty() {
-            true => Found::new(),
+            true => Set::default(),
             false => self.sets[&Part::Items(xs.id())].clone(),
         };
-        let mut s = match v {
+        let s = match v {
             Value::Atom(a) => items(&a.args),
             Value::Tuple(xs) | Value::Path(xs) => items(xs),
             Value::Family(f) if !f.is_empty() => self.sets[&Part::Family(f.id())].clone(),
-            _ => Found::new(),
+            _ => Set::default(),
         };
-        if let Some(&m) = self.members.get(v)
-            && !s.contains_key(m)
-        {
-            s.insert(m, 1);
+        let fresh = self.last + 1;
+        let Some((&m, own)) = self.members.range_mut::<&Value, _>(v..=v).next() else {
+            return s;
+        };
+        if let Some(own) = own {
+            return own.clone();
         }
-        s
-    }
-}
-
-/// Counts one more entry holding `x`, or one fewer.
-fn count<'a>(s: &mut Found<'a>, x: &&'a Value, more: bool) {
-    let n = s.get(x).copied().unwrap_or(0);
-    match (more, n) {
-        (true, _) => {
-            s.insert(*x, n + 1);
+        let own_set = match s.found.contains_key(m) {
+            true => s,
+            false => {
+                let mut found = s.found;
+                found.insert(m, ());
+                Set { id: fresh, found }
+            }
+        };
+        *own = Some(own_set.clone());
+        if own_set.id == fresh {
+            self.last = fresh;
         }
-        (false, 1) => {
-            s.remove(x);
-        }
-        (false, _) => {
-            debug_assert!(n > 1, "a failure an entry held is counted");
-            s.insert(*x, n - 1);
-        }
+        own_set
     }
 }
 
@@ -535,7 +685,7 @@ fn count<'a>(s: &mut Found<'a>, x: &&'a Value, more: bool) {
 fn short_diff<'s, 'a>(
     from: &'s Found<'a>,
     to: &'s Found<'a>,
-) -> Option<Vec<DiffItem<'s, 's, &'a Value, u32>>> {
+) -> Option<Vec<DiffItem<'s, 's, &'a Value, ()>>> {
     let limit = from.len().min(to.len());
     let mut diff = Vec::new();
     for d in from.diff(to) {
@@ -563,9 +713,9 @@ fn meet<'a>(a: &Found<'a>, b: &Found<'a>) -> Found<'a> {
             out
         }
         None => small
-            .iter()
-            .filter(|(x, _)| large.contains_key(*x))
-            .map(|(x, n)| (*x, *n))
+            .keys()
+            .filter(|x| large.contains_key(*x))
+            .map(|x| (*x, ()))
             .collect(),
     }
 }
@@ -578,15 +728,15 @@ fn join<'a>(a: &Found<'a>, b: &Found<'a>) -> Found<'a> {
     match short_diff(large, small) {
         Some(diff) => {
             for d in diff {
-                if let DiffItem::Add(x, n) = d {
-                    out.insert(*x, *n);
+                if let DiffItem::Add(x, _) = d {
+                    out.insert(*x, ());
                 }
             }
         }
         None => {
-            for (x, n) in small.iter() {
+            for x in small.keys() {
                 if !out.contains_key(x) {
-                    out.insert(*x, *n);
+                    out.insert(*x, ());
                 }
             }
         }

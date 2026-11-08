@@ -474,3 +474,155 @@ fn a_term_shared_by_both_parts_of_the_root_runs_once_at_each_position() {
     assert_eq!(at, [".0.0@(0)", ".0.1@(0)", ".1.0@(0)", ".1.1@(0)"]);
     agrees_with_search(&t);
 }
+
+/// `let e = #m0 * … * #m{m-1} in fam({0, …, n-1}, k -> (k, e))[0].1`: a table of `n` rows, each
+/// holding one `#errs` set of `m` failures.
+fn rows_sharing_one_set(n: usize, m: usize) -> Term {
+    let members: Vec<Term> = (0..m).map(|j| lit(Value::atom(&format!("m{j}")))).collect();
+    let keys = lit(Family::set((0..n as i64).map(Value::Int)));
+    let row = prim(Prim::Tuple, vec![var("k"), var("e")]);
+    let table = fam(keys, "k", row);
+    let_("e", product(&members), nth(get(table, lit(0)), 1))
+}
+
+/// `{0: {0: … {i: #late}}}`, `depth` levels of key 0 above the level of key `i`.
+fn deep_entry(i: usize, depth: usize) -> Value {
+    (0..depth).fold(
+        Value::Family(Family::of([(i as i64, Value::atom("late"))])),
+        |v, _| Value::Family(Family::of([(0i64, v)])),
+    )
+}
+
+/// `let f0 = deep_entry(0) in let f1 = f0 ∪ deep_entry(1) in … f{n}[0]…[0][0]`: a table whose
+/// entry at key 0 is replaced at each of `n` steps by the union of it and a new value `depth`
+/// levels deep.
+fn deep_replacements(n: usize, depth: usize) -> Term {
+    let mut read = var(&format!("f{n}"));
+    for _ in 0..=depth {
+        read = get(read, lit(0));
+    }
+    let body = (1..=n).rev().fold(read, |body, i| {
+        let_(
+            &format!("f{i}"),
+            prim(
+                Prim::Union,
+                vec![var(&format!("f{}", i - 1)), lit(deep_entry(i, depth))],
+            ),
+            body,
+        )
+    });
+    let_("f0", lit(deep_entry(0, depth)), body)
+}
+
+#[test]
+fn each_member_of_a_set_every_row_holds_is_traced_to_its_literal() {
+    let (v, p) = trace(&rows_sharing_one_set(6, 3));
+    assert_eq!(v.errs().map(|e| e.len()), Some(3), "{v}");
+    assert_eq!(origin_terms(&p), ["#m0", "#m1", "#m2"]);
+    agrees_with_search(&rows_sharing_one_set(6, 3));
+}
+
+#[test]
+fn rows_sharing_one_failure_have_its_literal_as_origin() {
+    let (v, p) = trace(&rows_sharing_one_set(6, 1));
+    assert_eq!(v, Value::atom("m0"));
+    assert_eq!(origin_terms(&p), ["#m0"]);
+    agrees_with_search(&rows_sharing_one_set(6, 1));
+}
+
+#[test]
+fn a_table_whose_rows_hold_no_failure_adds_no_origin() {
+    // The table's set is empty; the failure the result holds comes from outside it.
+    let keys = lit(Family::set((0..6).map(Value::Int)));
+    let table = fam(keys, "k", prim(Prim::Tuple, vec![var("k"), var("k")]));
+    let t = mul(nth(get(table, lit(2)), 1), lit(Value::atom("late")));
+    let (v, p) = trace(&t);
+    assert_eq!(v, Value::atom("late"));
+    assert_eq!(origin_terms(&p), ["#late"]);
+    agrees_with_search(&t);
+}
+
+#[test]
+fn a_failure_read_out_of_a_deep_replacement_is_traced_to_each_literal_that_holds_it() {
+    let (v, p) = trace(&deep_replacements(4, 3));
+    assert_eq!(v, Value::atom("late"));
+    assert_eq!(origin_terms(&p).len(), 5);
+    agrees_with_search(&deep_replacements(4, 3));
+}
+
+#[test]
+fn the_sets_of_a_table_changed_entry_by_entry_agree_with_a_search() {
+    // Entries are added, and one nested entry is replaced twice, so the tally of each table is
+    // found from the one before by entries added and changed, with sets that enter, leave and
+    // are held by more than one entry.
+    let a = || Value::atom("a");
+    let pair = Value::Tuple([a(), Value::atom("c")].into_iter().collect());
+    let f0 = Family::of([(0i64, a()), (1, Value::atom("b")), (2, pair)]);
+    let f1 = Family::of([(3i64, Value::atom("b")), (4, Value::atom("d"))]);
+    let f2 = Family::of([(5i64, Value::Family(Family::of([(0i64, Value::atom("c"))])))]);
+    let f3 = Family::of([(5i64, Value::Family(Family::of([(1i64, Value::atom("e"))])))]);
+    let union = |x: &str, y: Family| prim(Prim::Union, vec![var(x), lit(Value::Family(y))]);
+    let read = |k: i64| get(var("t3"), lit(k));
+    let result = [0, 1, 2, 3, 4]
+        .into_iter()
+        .fold(mul(get(read(5), lit(0)), get(read(5), lit(1))), |acc, k| {
+            mul(acc, read(k))
+        });
+    let t = let_(
+        "t0",
+        lit(Value::Family(f0)),
+        let_(
+            "t1",
+            union("t0", f1),
+            let_("t2", union("t1", f2), let_("t3", union("t2", f3), result)),
+        ),
+    );
+    let (v, _) = trace(&t);
+    assert_eq!(v.errs().map(|e| e.len()), Some(5), "{v}");
+    agrees_with_search(&t);
+}
+
+#[test]
+fn the_origins_of_a_set_every_row_holds_scale() {
+    // `n` rows hold one `#errs` set of `n` members. Each row's set was counted member by
+    // member, `O(n·m)`: 4 times the work per doubling of both. Entries that hold a set with
+    // one id are counted once, so the work is `O((n + m) log n)` (COMPLEXITY.md K25). The runs
+    // are recorded before timing.
+    let n = 200;
+    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, trace(&rows_sharing_one_set(m, m)).1))
+        .collect();
+    scaling::check_order(
+        "the origins of n rows sharing one set of n failures, by n",
+        n,
+        1,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert_eq!(p.origins(p.result()).len(), m);
+        },
+    );
+}
+
+#[test]
+fn the_origins_of_a_failure_under_deep_replacements_scale() {
+    // Each of 32 steps replaces the entry at key 0 by a value `d` levels deep, so `d` nested
+    // families change per step, each found from the one it was made from. Comparing their
+    // values fully read each pair down to its difference, `O(d)` per level and `O(d²)` per
+    // step; a shallow comparison makes it `O(d log n)` per step (COMPLEXITY.md K25). The
+    // runs are recorded before timing.
+    let d = 24;
+    let runs: Vec<(usize, Provenance)> = [d, scaling::FACTOR * d]
+        .into_iter()
+        .map(|m| (m, trace(&deep_replacements(32, m)).1))
+        .collect();
+    scaling::check_order(
+        "the origins of a failure under 32 replacements d levels deep, by d",
+        d,
+        1,
+        |m| {
+            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
+            assert_eq!(p.origins(p.result()).len(), 33);
+        },
+    );
+}

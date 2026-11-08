@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use imbl::OrdMap;
-use imbl::ordmap::Iter;
+use imbl::ordmap::{DiffItem, Iter};
 use imbl::shared_ptr::DefaultSharedPtr;
 use num_bigint::{BigInt, BigUint};
 use num_traits::ToPrimitive;
@@ -1077,6 +1077,36 @@ impl Family {
         }
     }
 
+    /// The changes from `self`'s top level to `other`'s, or `None` once there are `limit` of
+    /// them. The walk skips the nodes the two maps share. A value at a key both hold is compared
+    /// shallowly: a family inside it that does not share its map with the one it is compared
+    /// with differs, unread, so an entry listed as changed may be equal. With `==`, each such
+    /// family is read down to its first difference, which on nested families made one from
+    /// another is as deep as they are (COMPLEXITY.md K25).
+    pub(crate) fn shallow_diff<'a>(
+        &'a self,
+        other: &'a Family,
+        limit: usize,
+    ) -> Option<Vec<DiffItem<'a, 'a, Value, Value>>> {
+        /// Clears [`SHALLOW`] when the walk ends.
+        struct Shallow;
+        impl Drop for Shallow {
+            fn drop(&mut self) {
+                SHALLOW.set(false);
+            }
+        }
+        SHALLOW.set(true);
+        let _shallow = Shallow;
+        let mut out = Vec::new();
+        for d in self.0.diff(&other.0) {
+            if out.len() >= limit {
+                return None;
+            }
+            out.push(d);
+        }
+        Some(out)
+    }
+
     /// The number of top-level entries.
     pub fn len(&self) -> usize {
         self.0.len()
@@ -1196,6 +1226,9 @@ thread_local! {
     /// families an identity comparison has queued. Emptied when the outermost one ends.
     static READ: RefCell<HashSet<Read, BuildHasherDefault<KeyHasher>>> =
         RefCell::new(HashSet::default());
+    /// Whether [`Family::shallow_diff`] is running: two families that do not share their map
+    /// are then taken to differ, without reading them.
+    static SHALLOW: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The pairs a comparison reads are kept while it and every comparison it starts run
@@ -1341,6 +1374,7 @@ fn maps<'a>(a: &'a Family, b: &'a Family, r: Relation) -> Step<'a> {
     match r {
         Relation::Identity | Relation::SurfaceEq if a.len() != b.len() => Step::Ends(None),
         Relation::Identity if same => Step::Same,
+        Relation::Identity if SHALLOW.get() => Step::Ends(None),
         // The comparison is the same only if every queued pair is, so a pair queued once is
         // not queued again.
         Relation::Identity if !mark_read(pair, r) => Step::Same,
