@@ -2641,3 +2641,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `Resolver::flow`: a walk of an expression on a `Vec<&Expr>` stack, pushing each recorded use onto `Resolution::flows` | `flow`, `declare` | Mutation of growable vectors (gap 11) | A fold over the expression with the stack and the list of uses as values, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)) |
 | `check::handled`: an iterative Tarjan over edges in compressed rows (`from`, `to` index vectors), with `index`, `low`, `on_stack` vectors and an explicit call stack of `(node, next edge)` | `handled` | Mutation of growable vectors in place (gap 11); indexes as node names | Arrays built once by a fold, the component walk as a fold whose state holds the stacks; the same O(B + R + E) |
 | `Resolver::else_regions: HashMap<Span, usize>`, one region per `else` found by its span | `else_region` | Hashing by a span (gap 1) | A map keyed by the span's two offsets |
+
+## Entries from TEXT-cmp-fast (`crates/zed-kernel/src/text.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The iterator over the blocks as a private `enum` of two states: one block held as `Option<&str>` and given once by `Option::take`, or a tree's walk on its own `Vec<&Text>` stack | `Chunks`, `Walk`, `Text::chunks` | References into values (Rust lifetimes) and early exit (gap 12), as the WRITE-prefix-scale row above | A list of the blocks produced lazily, one block a list of one; the walk as before |
+| Two blocks compared as byte slices, `<[u8] as Ord>::cmp` (one `memcmp` and the lengths) | `compare`, `Text::as_flat` | None | `compare` of two strings of one block is the prelude's string order on the two values; no walk is built |

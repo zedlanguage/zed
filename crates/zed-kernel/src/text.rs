@@ -173,13 +173,29 @@ impl Text {
         matches!(*self.0, Tree::Empty | Tree::Block { .. })
     }
 
-    /// The blocks of the text from left to right, none empty. The walk keeps its own stack,
-    /// of at most `6d + 9` parts for a tree `d` levels deep, allocated once: `O(log n)` for
-    /// the first block, and every block in `O(len)`.
+    /// The blocks of the text from left to right, none empty. A text held as one block is read
+    /// with no walk and allocates nothing; a tree's walk keeps its own stack, of at most
+    /// `6d + 9` parts for a tree `d` levels deep, allocated once: `O(log n)` for the first
+    /// block, and every block in `O(len)`.
     pub fn chunks(&self) -> Chunks<'_> {
-        let mut todo = Vec::with_capacity(6 * self.depth() + 9);
-        todo.push(self);
-        Chunks { todo }
+        Chunks(match &*self.0 {
+            Tree::Empty => Walk::One(None),
+            Tree::Block { block, .. } => Walk::One(Some(block)),
+            Tree::Node { .. } | Tree::Deep { .. } => {
+                let mut todo = Vec::with_capacity(6 * self.depth() + 9);
+                todo.push(self);
+                Walk::Tree(todo)
+            }
+        })
+    }
+
+    /// The text's one block, or `""` for the empty text, when it is held so ([`Text::is_flat`]).
+    fn as_flat(&self) -> Option<&str> {
+        match &*self.0 {
+            Tree::Empty => Some(""),
+            Tree::Block { block, .. } => Some(block),
+            Tree::Node { .. } | Tree::Deep { .. } => None,
+        }
     }
 
     /// The text as one `&str`: a text held as one block is borrowed; a join is written into a
@@ -501,29 +517,43 @@ fn nodes(mut parts: &[Text]) -> Vec<Text> {
 }
 
 /// The blocks of a text from left to right ([`Text::chunks`]).
-pub struct Chunks<'a> {
-    /// The trees and parts still to read, the next on top.
-    todo: Vec<&'a Text>,
+pub struct Chunks<'a>(Walk<'a>);
+
+/// The state of [`Chunks`].
+enum Walk<'a> {
+    /// A text held as one block: the block, until it is read.
+    One(Option<&'a str>),
+    /// A tree: the trees and parts still to read, the next on top.
+    //
+    // A stack held in the iterator, a fixed array of the most any tree needs, `6 · 63 + 9`
+    // parts, allocates nothing but must be filled and moved whole: measured (TEXT-cmp-fast,
+    // release, load 12), a compare of two trees that stops at the first byte took 117 ns
+    // against 42 ns with this stack of the tree's own size on the heap.
+    Tree(Vec<&'a Text>),
 }
 
 impl<'a> Iterator for Chunks<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<&'a str> {
-        while let Some(t) = self.todo.pop() {
+        let todo = match &mut self.0 {
+            Walk::One(block) => return block.take(),
+            Walk::Tree(todo) => todo,
+        };
+        while let Some(t) = todo.pop() {
             match &*t.0 {
                 Tree::Empty => {}
                 Tree::Block { block, .. } => return Some(block),
-                Tree::Node { parts, .. } => self.todo.extend(parts.iter().rev().flatten()),
+                Tree::Node { parts, .. } => todo.extend(parts.iter().rev().flatten()),
                 Tree::Deep {
                     front,
                     middle,
                     back,
                     ..
                 } => {
-                    self.todo.extend(back.iter().rev().flatten());
-                    self.todo.push(middle);
-                    self.todo.extend(front.iter().rev().flatten());
+                    todo.extend(back.iter().rev().flatten());
+                    todo.push(middle);
+                    todo.extend(front.iter().rev().flatten());
                 }
             }
         }
@@ -532,7 +562,11 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 /// The order of the bytes of `a` and `b`, read block by block until the first that differ.
+/// Two texts each held as one block compare as two `str`s, with no walk.
 fn compare(a: &Text, b: &Text) -> Ordering {
+    if let (Some(x), Some(y)) = (a.as_flat(), b.as_flat()) {
+        return x.as_bytes().cmp(y.as_bytes());
+    }
     let (mut xs, mut ys) = (a.chunks(), b.chunks());
     let (mut x, mut y): (&[u8], &[u8]) = (&[], &[]);
     loop {
@@ -965,10 +999,14 @@ mod tests {
             let s = format!("{}{}", pool[i].1, pool[j].1);
             assert_balanced(&t);
             // The walk never needs more than the stack `chunks` allocates.
+            let capacity = |w: &Chunks| match &w.0 {
+                Walk::One(_) => 0,
+                Walk::Tree(todo) => todo.capacity(),
+            };
             let mut walk = t.chunks();
-            let stack = walk.todo.capacity();
+            let stack = capacity(&walk);
             walk.by_ref().for_each(drop);
-            assert_eq!(walk.todo.capacity(), stack, "the walk's stack grew");
+            assert_eq!(capacity(&walk), stack, "the walk's stack grew");
             assert_eq!(t.flat(), s);
             assert_eq!(t, Text::from(s.as_str()));
             pool.push((t, s));
@@ -1243,6 +1281,143 @@ mod tests {
         crate::scaling::check("try_flat of a join of n blocks", 2000, |n| {
             let flat = texts[&n].try_flat().unwrap();
             assert_eq!(flat.chars().count(), PIECE * n);
+        });
+    }
+
+    /// `s` joined from pieces of `k` characters, from the left (`left`) or from the right.
+    fn pieces(s: &str, k: usize, left: bool) -> Text {
+        let chars: Vec<char> = s.chars().collect();
+        let parts: Vec<Text> = chars
+            .chunks(k)
+            .map(|c| Text::from(c.iter().collect::<String>()))
+            .collect();
+        if left {
+            parts.iter().fold(Text::from(""), |t, p| join(&t, p))
+        } else {
+            parts.iter().rev().fold(Text::from(""), |t, p| join(p, &t))
+        }
+    }
+
+    #[test]
+    fn texts_compare_as_their_strs_whatever_their_blocks() {
+        // Texts of the same content held as one block or joined in pieces of different
+        // lengths, from either end, so their blocks end at different bytes: equality and
+        // order are those of the `str`s on every pair, one block or a tree on either side.
+        // A compare of two blocks reads them as two `str`s; any other walks the blocks.
+        let base: String = ['a', 'é', '日', '😀', 'z']
+            .iter()
+            .cycle()
+            .take(250)
+            .collect();
+        let mut contents = vec![
+            String::new(),
+            "a".to_string(),
+            "é".to_string(),
+            base.clone(),
+            base[..base.len() - 'z'.len_utf8()].to_string(),
+            format!("{base}a"),
+            format!("{base}{base}"),
+        ];
+        // One character changed to the least and to the greatest, at the first character,
+        // in the first block of `LEAF` bytes, at its end, in the middle and at the last.
+        for p in [0, 40, 52, 53, 125, 249] {
+            for c in ['A', '\u{10ffff}'] {
+                let s: String = base
+                    .chars()
+                    .enumerate()
+                    .map(|(i, x)| if i == p { c } else { x })
+                    .collect();
+                contents.push(s);
+            }
+        }
+        let mut texts: Vec<(Text, &str)> = Vec::new();
+        for s in &contents {
+            texts.push((Text::from(s.as_str()), s));
+            for k in [1, 5, 50, 130] {
+                for left in [true, false] {
+                    texts.push((pieces(s, k, left), s));
+                }
+            }
+        }
+        let mut kinds = [0usize; 3];
+        for (a, sa) in &texts {
+            for (b, sb) in &texts {
+                kinds[usize::from(!a.is_flat()) + usize::from(!b.is_flat())] += 1;
+                assert_eq!(a.cmp(b), sa.cmp(sb), "{sa:?} against {sb:?}");
+                assert_eq!(a.partial_cmp(b), sa.partial_cmp(sb));
+                assert_eq!(a == b, sa == sb, "{sa:?} against {sb:?}");
+            }
+        }
+        // Every pairing of one block and a tree is compared.
+        assert!(kinds.iter().all(|&k| k > 1000), "{kinds:?}");
+    }
+
+    #[test]
+    fn a_compare_of_two_blocks_allocates_nothing() {
+        // Two texts each held as one block compare, test equal and hash with no allocation,
+        // the empty text too; a block against a tree allocates the tree's stack only.
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let (a, b, c, e, f) = (
+            long('a'),
+            Text::from("a".repeat(PIECE)),
+            Text::from("b"),
+            Text::from(""),
+            Text::from(""),
+        );
+        let hasher = BuildHasherDefault::<DefaultHasher>::default();
+        let before = zed_alloc_count::allocated();
+        for _ in 0..100 {
+            assert_eq!(std::hint::black_box(&a).cmp(&b), Ordering::Equal);
+            assert!(a == b && a < c && e < a && e == f);
+            assert_eq!(hasher.hash_one(&a), hasher.hash_one(&b));
+        }
+        assert_eq!(zed_alloc_count::allocated() - before, 0);
+        let (tree, s) = chain(40, true);
+        let block = Text::from(s.as_str());
+        let before = zed_alloc_count::allocated();
+        assert_eq!(block.cmp(&tree), Ordering::Equal);
+        let stack = (6 * tree.depth() + 9) * size_of::<&Text>();
+        assert_eq!(zed_alloc_count::allocated() - before, stack as u64);
+    }
+
+    #[test]
+    fn a_compare_of_two_blocks_costs_their_length() {
+        // A compare of two equal blocks of n bytes reads both once: order `n`, so 8n may do 24
+        // times the work of n. It allocates nothing (`a_compare_of_two_blocks_allocates_nothing`),
+        // so only the work is measured.
+        let texts = crate::scaling::inputs(4096, |n| {
+            (Text::from("q".repeat(n)), Text::from("q".repeat(n)))
+        });
+        crate::scaling::check_instructions_only(
+            "a compare of two blocks of n bytes",
+            4096,
+            1,
+            |n| {
+                let (a, b) = &texts[&n];
+                for _ in 0..100 {
+                    assert_eq!(std::hint::black_box(a).cmp(b), Ordering::Equal);
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn a_compare_against_a_tree_costs_its_length() {
+        // Two equal texts of n blocks, one a tree joined from the left and one from the right,
+        // and the same text as one block against the tree: each compare reads every block
+        // once, order `n`, and allocates one stack of `O(log n)` per tree, so 8n may do 24
+        // times the work and the bytes of n.
+        let texts = crate::scaling::inputs(500, |n| {
+            let (left, s) = chain(n, true);
+            (left, pieces(&s, PIECE, false), Text::from(s))
+        });
+        crate::scaling::check("a compare of two trees of n blocks", 500, |n| {
+            let (left, right, _) = &texts[&n];
+            assert_eq!(left.cmp(right), Ordering::Equal);
+        });
+        crate::scaling::check("a compare of a block and a tree of n blocks", 500, |n| {
+            let (left, _, block) = &texts[&n];
+            assert_eq!(block.cmp(left), Ordering::Equal);
         });
     }
 }
