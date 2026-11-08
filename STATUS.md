@@ -1607,9 +1607,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | LADDER-study | merge attempt 1 | 2026-11-07 23:26 | done in batch 67, 753fc780 |
 | NARROW-hub-seed-edges | impl attempt 1 | 2026-11-08 01:04 | cause confirmed: '==' makes no star, hub n in the tree, seed loop and Dijkstra pop read its O(k) edges each test; fix limits seed reads to added conjuncts' edge |
-| NUM-print-fast | impl attempt 1 | 2026-11-07 23:21 | committed 4e5a2b1b + STATUS, rebased on origin/main 3b7500e1; baseline 7 pieces on 3b7500e1 pass (l01_24 78, zed_kernel 143+1); final run with doc next; load 10 |
-| Q1-LOCAL | fix attempt 1 | 2026-11-03 12:15 | ready at debd491c on wt/q1-local: pivots, shrink stage, dominated two-term rows; selection 346 pieces 0 failed (baseline 1, deep_let timeout); negative controls |
-| RUNG2-definedness | impl attempt 1 | 2026-11-08 00:07 | follow-up started: union, call key, Scoped path |
 | SETS-study | research attempt 1 | 2026-11-07 23:43 | Codex report in (rc 0); Gemini and Claude still running |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Gemini timed out (rc 124 after 5 h) with no R2_GEMINI.md; probes and fetched papers kept; its target/ and build/ deleted; round 2 processed from the Codex and C |
 | XST-r3 | running | 2026-11-08 00:31 |  |
