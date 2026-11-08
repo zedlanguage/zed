@@ -1568,8 +1568,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CYCLE-known-stale | impl attempt 1 | 2026-11-07 17:44 | ready: 14afb2c6 on wt/cycle-known-stale, rebased on origin/main 373e609a, s_01f_import_graph 16 passed with doc check (load 27.6), clippy and fmt clean |
+| ENV-partial-arrow | impl attempt 1 | 2026-11-07 19:10 | ready c7f73566 on wt/env-partial-arrow; rebased on origin/main (up to date), 13 pieces 0 failed, 718 passed |
+| FAMILY-eq-reserve | impl attempt 1 | 2026-11-07 19:16 | negative controls, run once, not committed: never freeing the kept table fails a_table_of_pairs_is_kept_only_for_a_comparison_of_like_size (capacity 1792, expec |
+| MINMAX-stack | impl attempt 1 | 2026-11-07 18:52 | ready 575c0b8a on wt/minmax-stack |
+| PROV-union-growing | impl attempt 1 | 2026-11-07 19:32 | reproduced on main 373e609a: growing-entries origins n=100,200,400,800,1600: 7.2, 25.1, 99.8, 404.8, 1705.3 ms (4x per doubling, O(n^2)); load 25 |
 | REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
-| XST-r2 | research attempt 1 | 2026-11-07 18:56 | started: three shell jobs (codex, gemini, claude) in /home/luke/Work/wt/xst/r2; end line when the last report is read |
+| REFUSAL-fork-linear | impl attempt 1 | 2026-11-07 17:30 | ready: a2a2682d on wt/refusal-fork-linear, rebased on origin/main 373e609a; 84 pieces, 0 failed (load 26-29); clippy and fmt clean |
+| STAGE-stub-called | impl attempt 1 | 2026-11-07 17:51 | ready at 866e498a on wt/stage-stub-called (origin/main 373e609a, not behind): l01_28_staging 84 passed, zedc_stage 0 tests, doc check passed, fmt and workspace  |
+| XST-r2 | research attempt 1 | 2026-11-07 18:56 | Codex report in (R2_CODEX.md, 49 KB, rc 0); Claude and Gemini still running |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
