@@ -2,6 +2,8 @@
 //! between files (sec:units), and the checked-in tool `imports` builds the graph and names every
 //! cycle (`zed_tools::imports`).
 
+use std::collections::HashSet;
+
 use zed_tests::scaling::check;
 use zed_tools::imports::{self, Graph};
 
@@ -43,6 +45,35 @@ fn cycles(g: &Graph) -> Vec<Vec<&str>> {
 /// the list is empty: S.1f is done once every crate passes the tool.
 const KNOWN_CYCLES: &[&str] = &[];
 
+/// Appends the files of `g`'s import cycles to `found`, each as `crate/path` with `c` the crate.
+fn files_in_cycles(c: &str, g: &Graph, found: &mut Vec<String>) {
+    for component in g.cycles() {
+        for f in component {
+            found.push(format!("{c}/{}", g.files[f]));
+        }
+    }
+}
+
+/// The files of `found` that `known` does not list, and the entries of `known` that name no
+/// file of `found`, each in the order given. An entry of the second kind is stale: its cycle
+/// was broken, or its file moved or deleted, and the list would otherwise keep it forever. Each
+/// file and entry is one hash lookup.
+fn against_known<'k>(known: &[&'k str], found: &[String]) -> (Vec<String>, Vec<&'k str>) {
+    let listed: HashSet<&str> = known.iter().copied().collect();
+    let cyclic: HashSet<&str> = found.iter().map(String::as_str).collect();
+    let new = found
+        .iter()
+        .filter(|f| !listed.contains(f.as_str()))
+        .cloned()
+        .collect();
+    let stale = known
+        .iter()
+        .copied()
+        .filter(|k| !cyclic.contains(k))
+        .collect();
+    (new, stale)
+}
+
 #[test]
 fn no_crate_has_an_import_cycle_but_the_known_ones() {
     let root = zed_tools::impl_root();
@@ -58,24 +89,22 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
         .collect();
     crates.sort();
     assert!(crates.len() >= 5, "{crates:?}");
-    let mut new = Vec::new();
+    let mut found = Vec::new();
     for c in &crates {
         let dir = format!("{root}/crates/{c}/src");
         let files = imports::read_sources(&dir).expect("the crate's sources");
         let g = Graph::of(&files).expect("the crate's graph");
         assert_eq!(g.undeclared, 0, "{c}: {:?}", g.files);
-        for component in g.cycles() {
-            for f in component {
-                let at = format!("{c}/{}", g.files[f]);
-                if !KNOWN_CYCLES.contains(&at.as_str()) {
-                    new.push(at);
-                }
-            }
-        }
+        files_in_cycles(c, &g, &mut found);
     }
+    let (new, stale) = against_known(KNOWN_CYCLES, &found);
     assert!(
         new.is_empty(),
         "files in an import cycle not known to be: {new:?}"
+    );
+    assert!(
+        stale.is_empty(),
+        "KNOWN_CYCLES lists files in no import cycle; remove them: {stale:?}"
     );
     // The graphs are the compiler's, not empty ones: every file is reached, with its imports.
     // The compiler is the crate `zedc` and the crates `zedc-*` it is split into, and none of
@@ -97,6 +126,67 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
         assert_eq!(outcome, Ok(true), "{out}");
         assert!(out.ends_with("no import cycle\n"), "{out}");
     }
+}
+
+#[test]
+fn a_listed_file_outside_every_cycle_is_reported() {
+    // `build.rs` and `more.rs` call each other; `lib.rs` is in no cycle. A list written when
+    // `lib.rs` was in the cycle, and naming a crate since renamed, has two stale entries, and
+    // `more.rs`, which it leaves out, is new.
+    let g = graph(&[
+        ("lib.rs", "mod build;\nmod more;\n"),
+        (
+            "build.rs",
+            "pub struct Builder;\npub fn run(b: &Builder) { b.more(); }\n",
+        ),
+        (
+            "more.rs",
+            "use crate::build::Builder;\nimpl Builder {\n    pub fn more(&self) { crate::build::run(self); }\n}\n",
+        ),
+    ]);
+    let mut found = Vec::new();
+    files_in_cycles("tool", &g, &mut found);
+    assert_eq!(found, ["tool/build.rs", "tool/more.rs"]);
+    let known = ["tool/lib.rs", "tool/build.rs", "old-tool/build.rs"];
+    let (new, stale) = against_known(&known, &found);
+    assert_eq!(new, ["tool/more.rs"]);
+    assert_eq!(stale, ["tool/lib.rs", "old-tool/build.rs"]);
+    // The exact list passes both ways; an empty list with no cycle passes too.
+    let exact = ["tool/more.rs", "tool/build.rs"];
+    assert_eq!(against_known(&exact, &found), (vec![], vec![]));
+    assert_eq!(against_known(&[], &[]), (vec![], vec![]));
+    // Every entry is stale once the cycle is broken.
+    assert_eq!(against_known(&exact, &[]), (vec![], exact.to_vec()));
+}
+
+#[test]
+fn comparing_with_the_known_list_scales_with_its_length() {
+    // Inputs are built before timing: n files in cycles and a list of n entries, half of them
+    // the files, half stale, so both directions are searched in full.
+    let n = 20_000;
+    let sizes = [n, 8 * n];
+    let inputs: Vec<(Vec<String>, Vec<String>)> = sizes
+        .iter()
+        .map(|&m| {
+            let found = (0..m).map(|i| format!("c/f{i}.rs")).collect();
+            let known = (0..m)
+                .map(|i| format!("c/f{}.rs", if i % 2 == 0 { i } else { m + i }))
+                .collect();
+            (found, known)
+        })
+        .collect();
+    let lists: Vec<Vec<&str>> = inputs
+        .iter()
+        .map(|(_, k)| k.iter().map(String::as_str).collect())
+        .collect();
+    check("against_known, by files and entries", n, |m| {
+        let at = sizes
+            .iter()
+            .position(|&s| s == m)
+            .expect("a size that was built");
+        let (new, stale) = against_known(&lists[at], &inputs[at].0);
+        assert_eq!((new.len(), stale.len()), (m / 2, m / 2));
+    });
 }
 
 #[test]
