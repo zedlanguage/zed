@@ -59,7 +59,7 @@ pub(super) enum Ret<'a> {
     /// Nothing yet, or a statement's result, which is nothing.
     None,
     Ty(Ty),
-    Arg(Arg),
+    Arg(Arg<'a>),
     Cond(Cond<'a>),
     Sig(Arc<Sig>),
 }
@@ -264,7 +264,7 @@ pub(super) enum Frame<'a> {
         op: &'static str,
         b: &'a Expr,
         span: Span,
-        x: Box<Arg>,
+        x: Box<Arg<'a>>,
     },
     ArgOf(&'a Expr),
     Scope(Box<ScopeF<'a>>),
@@ -376,7 +376,7 @@ pub(super) struct TestF<'a> {
     sig: Arc<Sig>,
     case: usize,
     exprs: Vec<&'a Expr>,
-    got: Vec<Option<Arg>>,
+    got: Vec<Option<Arg<'a>>>,
     waiting: bool,
 }
 
@@ -412,7 +412,7 @@ pub(super) struct BitsF<'a> {
     named: &'a [(String, Expr)],
     span: Span,
     /// The operands placed so far, by parameter.
-    slots: Vec<Option<(Arg, &'a Expr)>>,
+    slots: Vec<Option<(Arg<'a>, &'a Expr)>>,
     /// Whether every argument so far found a free parameter of its kind.
     fits: bool,
     /// How many arguments have been started; one more than placed while one is checked.
@@ -423,7 +423,7 @@ pub(super) struct BitsF<'a> {
 
 pub(super) struct CallValueF<'a> {
     what: Rc<str>,
-    receiver: Option<Arg>,
+    receiver: Option<Arg<'a>>,
     args: Rc<Args<'a>>,
     curry: bool,
     span: Span,
@@ -440,10 +440,10 @@ pub(super) struct CallValueF<'a> {
 
 pub(super) struct CallSigF<'a> {
     sig: Arc<Sig>,
-    receiver: Option<Arg>,
+    receiver: Option<Arg<'a>>,
     args: Rc<Args<'a>>,
     slots: Vec<Option<At>>,
-    got: Vec<Option<Arg>>,
+    got: Vec<Option<Arg<'a>>>,
     missing: Vec<usize>,
     curry: bool,
     span: Span,
@@ -527,7 +527,7 @@ impl<'a> M<'a> {
         }
     }
 
-    fn take_arg(&mut self) -> Arg {
+    fn take_arg(&mut self) -> Arg<'a> {
         match self.take() {
             Ret::Arg(a) => a,
             _ => unreachable!("the job above gives an argument"),
@@ -923,6 +923,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = m.take_ty();
                 m.ret = Ret::Arg(Arg {
                     at: Some(e.span),
+                    expr: Some(e),
                     parts: parts(e),
                     ..Arg::of(t)
                 });
@@ -982,6 +983,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let strip = self.widened_other(&ids, &tys);
                 let sig = self.handled_sig(params, &ids, tys, result, &f.body);
                 let sig = self.generalize(level, sig, &strip);
+                let sig = self.floors_into(sig, &ids);
                 m.ret = Ret::Sig(sig);
             }
             Frame::AtomArgs(s) => self.atom_step(m, s),
@@ -1092,6 +1094,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let strip = self.widened_other(&ids, &tys);
                 let sig = self.handled_sig(names, &ids, tys, result, body);
                 let sig = self.generalize(level, sig, &strip);
+                let sig = self.floors_into(sig, &ids);
                 m.ty(Ty::func(sig));
             }
             Frame::BindDefault(p) => {
@@ -1459,6 +1462,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 (None, Some(t)) => (t.clone(), Why::Default(t)),
                 (_, None) => {
+                    self.open_params.insert(*id);
                     let k = self.class();
                     (Ty::var(format!("${k}").into()), Why::Untyped(k))
                 }
@@ -1541,6 +1545,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ty: lit_ty(&l.value, l.neg()),
                 lit: Some(l),
                 at: Some(e.span),
+                expr: Some(e),
                 parts: None,
             });
             return;
@@ -1808,8 +1813,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn binary_end(
         &mut self,
         op: &'static str,
-        mut x: Arg,
-        mut y: Arg,
+        mut x: Arg<'a>,
+        mut y: Arg<'a>,
         b: &'a Expr,
         span: Span,
     ) -> Ty {
@@ -1971,7 +1976,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         m: &mut M<'a>,
         w: &'a str,
         positional: &'a [Expr],
-        receiver: Option<Arg>,
+        receiver: Option<Arg<'a>>,
         span: Span,
     ) {
         match receiver {
@@ -1986,7 +1991,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    fn word_end(&mut self, w: &str, x: Arg, span: Span) -> Ty {
+    fn word_end(&mut self, w: &str, x: Arg<'a>, span: Span) -> Ty {
         if w == "sum" {
             return self.sum(x, span);
         }
@@ -2009,7 +2014,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         m: &mut M<'a>,
         w: &'a str,
         p: Prim,
-        receiver: Option<(Arg, &'a Expr)>,
+        receiver: Option<(Arg<'a>, &'a Expr)>,
         positional: &'a [Expr],
         named: &'a [(String, Expr)],
         curry: bool,
@@ -2116,7 +2121,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         m: &mut M<'a>,
         f: &Ty,
         what: Rc<str>,
-        receiver: Option<Arg>,
+        receiver: Option<Arg<'a>>,
         args: Rc<Args<'a>>,
         curry: bool,
         span: Span,
@@ -2264,7 +2269,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         m: &mut M<'a>,
         sig: Arc<Sig>,
         declared: bool,
-        receiver: Option<Arg>,
+        receiver: Option<Arg<'a>>,
         args: Rc<Args<'a>>,
         curry: bool,
         span: Span,
@@ -2459,7 +2464,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.job(Job::Arg(of, Want::default()));
     }
 
-    fn member_end(&mut self, m: &mut M<'a>, s: MemberF<'a>, mut x: Arg) {
+    fn member_end(&mut self, m: &mut M<'a>, s: MemberF<'a>, mut x: Arg<'a>) {
         let MemberF {
             of,
             name,
@@ -2579,7 +2584,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             if let Some(id) = id {
                 let bound = match declared {
                     Some(_) => t.clone(),
-                    None => self.param_ty(id, t.clone()),
+                    None => {
+                        self.open_params.insert(id);
+                        self.param_ty(id, t.clone())
+                    }
                 };
                 self.bind_param(id, &t, &bound, body.span);
                 self.env.insert(id, bound);
@@ -2869,8 +2877,15 @@ impl<'a> Ck<'_, 'a> {
             .vars
             .iter()
             .map(|(x, id)| {
-                let p = match self.env.get(id).and_then(plain) {
+                let ty = self.env.get(id);
+                // A class a use has narrowed to int holds ints only, so a test narrows its
+                // interval as it does a name of type int (CHK-need-bound).
+                let int_class = ty
+                    .and_then(|t| self.class_of_ty(t))
+                    .is_some_and(|k| self.classes[k].mask == Carrier::Int.bit());
+                let p = match ty.and_then(plain) {
                     Some(t) => Product::of_type(t),
+                    None if int_class => Product::of_type(KType::int()),
                     None => Product::top(),
                 };
                 (x.clone(), p)
@@ -3503,7 +3518,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// trial the arguments do not pass leaves the call's atoms from outside unknown, so all
     /// its loose atoms. One more application per call that passes a loose atom inside a
     /// function with a widened parameter.
-    fn try_outside(&mut self, what: &str, sig: &Sig, with: Vec<Option<Arg>>, span: Span) {
+    fn try_outside(&mut self, what: &str, sig: &Sig, with: Vec<Option<Arg<'a>>>, span: Span) {
         let applied = self.applied.take();
         let saved = self.mark();
         self.trying = true;
@@ -3985,6 +4000,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.data(&on, what, span, span);
                 Ty::empty()
             }
+            NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
+            NeedKind::NoInt(d) => {
+                self.no_int(&on, d, span);
+                Ty::empty()
+            }
+            NeedKind::InDomain { .. } => Ty::empty(),
             NeedKind::Into { what, ty } => {
                 self.into(&on, ty, what, span);
                 Ty::empty()
@@ -4045,6 +4066,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) -> Vec<Need> {
         let mut left = Vec::new();
         for n in needs {
+            // A need on a parameter is checked with the call's arguments, by [`Self::floors_at`].
+            if matches!(n.kind, NeedKind::InDomain { .. }) {
+                continue;
+            }
             if !defer.is_empty() {
                 let mut vars = Vars::default();
                 n.vars_in(&mut vars);
@@ -4389,24 +4414,35 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `x ** n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
-    /// expression or the listed `int` values of its type. A class's values are not known here.
-    fn exponent(&mut self, x: &Arg, n: &Arg, e: &'a Expr, span: Span) {
+    /// expression or the listed `int` values of its type. A class's values are not known here:
+    /// an exponent of a type variable takes its ints at least 0 ([`Self::floor`]), and a base
+    /// of one, under an exponent not shown to be at least 0, takes no int (CHK-need-bound).
+    fn exponent(&mut self, x: &Arg<'a>, n: &Arg<'a>, e: &'a Expr, span: Span) {
         let int = KType::int();
         let ns = &n.ty.set & &int;
-        if (&x.ty.set & &int).is_empty() || ns.is_empty() {
+        let x_int = !(&x.ty.set & &int).is_empty();
+        let x_generic = !x.ty.vars.is_empty();
+        if !n.ty.vars.is_empty() && (x_int || x_generic) {
+            let d = IntDomain {
+                what: "`**` on an int takes an exponent in int[0..]".into(),
+                below_two_pow: None,
+            };
+            self.floor(&n.ty, e, d, span);
+        }
+        if ns.is_empty() {
             return;
         }
-        let zero = Value::Int(0);
-        let listed = ns.ints_listed();
         let (ints, narrowed) = self.ints_here(e);
-        let at_least_zero = ints.is_subset(&IntervalSet::range(End::of(0), PosInf))
-            || listed.is_some_and(|vs| {
-                vs.iter().all(|v| {
-                    v.surface_cmp(&zero)
-                        .is_some_and(|o| o != std::cmp::Ordering::Less)
-                })
-            });
-        if !at_least_zero {
+        let at_least_zero =
+            ints.is_subset(&IntervalSet::range(End::of(0), PosInf)) || listed_at_least_zero(&ns);
+        if !at_least_zero && x_generic {
+            let d = IntDomain {
+                what: "`**` with an exponent not shown to be at least 0 takes no int base".into(),
+                below_two_pow: None,
+            };
+            self.no_int_vars(&x.ty, &d, x.at.unwrap_or(span));
+        }
+        if !at_least_zero && x_int {
             let shown = match narrowed {
                 true => format!("int{ints}"),
                 false => self.show(&Ty::set(ns)),
@@ -4421,6 +4457,264 @@ impl<'t, 'a> Ck<'t, 'a> {
                 format!("`**` on an int needs an exponent of at least 0, and this one is {shown}"),
                 notes,
             );
+        }
+    }
+
+    /// Records that the use at `span` takes the ints of the operand `e`, of type `t`, which
+    /// holds a type variable, in the domain `d` (CHK-need-bound): nothing, when the tests the
+    /// walk is in show it; a need of the function on the parameter `e` names, checked at each
+    /// call with the caller's ints ([`Self::floors_at`]); else no int of the variables' values
+    /// outside the domain.
+    fn floor(&mut self, t: &Ty, e: &'a Expr, d: IntDomain, span: Span) {
+        if ints_in(&d, &self.ints_here(e).0) {
+            return;
+        }
+        match self.open_param(e) {
+            // A trial application is undone; the application that stays records the need.
+            Some(_) if self.trying => {}
+            Some(id) => self.floor_on(
+                id,
+                Need {
+                    on: Ty::empty(),
+                    kind: NeedKind::InDomain {
+                        domain: d,
+                        param: 0,
+                        via: None,
+                    },
+                    result: None,
+                    span,
+                },
+            ),
+            None => self.no_int_vars(t, &d, e.span),
+        }
+    }
+
+    /// Records the [`NeedKind::InDomain`] need `n` on the open parameter `id`. The domains are
+    /// nested, `int[0..]` holding every `int[0..<2 ** w]` and a smaller `w` the smaller domain,
+    /// so one need per binder decides each call: the smallest domain, from its first use.
+    fn floor_on(&mut self, id: usize, n: Need) {
+        let width = |n: &Need| match &n.kind {
+            NeedKind::InDomain { domain, .. } => domain.below_two_pow.clone(),
+            _ => None,
+        };
+        let smaller = match (self.floors.get(&id).map(width), width(&n)) {
+            (None, _) => true,
+            (Some(None), Some(_)) => true,
+            (Some(Some(old)), Some(new)) => {
+                new.0.surface_cmp(&old.0) == Some(std::cmp::Ordering::Less)
+            }
+            _ => false,
+        };
+        if smaller {
+            self.floors.insert(id, n);
+        }
+    }
+
+    /// The binder of the parameter of no declared type of a function being checked that `e`
+    /// names, through names bound to names: the value of `e` is the caller's argument.
+    fn open_param(&self, mut e: &'a Expr) -> Option<usize> {
+        let mut seen = HashSet::new();
+        loop {
+            let ExprKind::Name(_) = &e.kind else {
+                return None;
+            };
+            let id = match self.t.res.uses.get(&e.span) {
+                Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+                _ => return None,
+            };
+            if self.open_params.contains(&id) {
+                return Some(id);
+            }
+            if !seen.insert(id) {
+                return None;
+            }
+            e = self.facts.get(&id)?;
+        }
+    }
+
+    /// Checks that a value of `t` holds no int, or only ints listed in the domain `d`, as its
+    /// use at `span` needs (CHK-need-bound): a class takes the need on each of its values.
+    fn no_int(&mut self, t: &Ty, d: &IntDomain, span: Span) {
+        let ints = &t.set & &KType::int();
+        if !ints.is_empty() && !listed_in(d, &ints) {
+            let shown = self.show(&Ty::set(ints));
+            let what = &d.what;
+            let domain = domain_text(d);
+            self.error(
+                span,
+                format!("{what}, and this value may be {shown}, not shown to be in {domain}"),
+            );
+        }
+        self.no_int_vars(t, d, span);
+        if t.dynamic {
+            self.any(&d.what, span);
+        }
+    }
+
+    /// The need of [`Self::no_int`] on each type variable of `t`: on a class, recorded and
+    /// checked on what flows into it; on its type, if it has one by now.
+    fn no_int_vars(&mut self, t: &Ty, d: &IntDomain, span: Span) {
+        for v in &t.vars {
+            let k = class_id(v).filter(|&k| k < self.classes.len());
+            let Some(r) = k.map(|k| self.find(k)) else {
+                let what = &d.what;
+                self.error(
+                    span,
+                    format!(
+                        "{what}, and this value is of the type variable `{v}`, which may be int"
+                    ),
+                );
+                continue;
+            };
+            match self.classes[r].resolved.clone() {
+                Some(t) => self.no_int(&t, d, span),
+                None => {
+                    self.need(r, NeedKind::NoInt(d.clone()), false, span);
+                }
+            }
+        }
+    }
+
+    /// `sig` with the [`NeedKind::InDomain`] needs recorded on its parameters, whose
+    /// binders are `ids`, at their positions; the parameters are no longer open.
+    fn floors_into(&mut self, sig: Arc<Sig>, ids: &[Option<usize>]) -> Arc<Sig> {
+        let mut needs = Vec::new();
+        for (j, id) in ids.iter().enumerate() {
+            let Some(id) = id else { continue };
+            self.open_params.remove(id);
+            if let Some(mut n) = self.floors.remove(id) {
+                if let NeedKind::InDomain { param, .. } = &mut n.kind {
+                    *param = j;
+                }
+                needs.push(n);
+            }
+        }
+        if needs.is_empty() {
+            return sig;
+        }
+        let mut s = (*sig).clone();
+        s.facts = Default::default();
+        s.needs.extend(needs);
+        Arc::new(s)
+    }
+
+    /// Checks each [`NeedKind::InDomain`] need of `sig`, called as `what` at `span`, on the
+    /// argument at its parameter (CHK-need-bound): from the interval of the argument's
+    /// expression and the listed ints of its type, as `**`'s exponent is. A parameter of no
+    /// declared type of the function the call is in takes the need on, with the link of the
+    /// call; a value of another type variable takes no int outside the domain. The parameters
+    /// `leaving` are left to the function a partial call gives.
+    fn floors_at(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        args: &[Option<Arg<'a>>],
+        leaving: &[usize],
+        span: Span,
+    ) {
+        let int = KType::int();
+        for n in &sig.needs {
+            let NeedKind::InDomain { domain, param, via } = &n.kind else {
+                continue;
+            };
+            if leaving.contains(param) {
+                continue;
+            }
+            let p = sig
+                .params
+                .get(*param)
+                .map_or("?".into(), |p| p.name.clone());
+            let takes = format!("{what} takes `{p}` in {}", domain_text(domain));
+            let passed = IntDomain {
+                what: takes.as_str().into(),
+                below_two_pow: domain.below_two_pow.clone(),
+            };
+            // The calls that passed the value on, down to the use: O(calls), so made only for an
+            // error, never at a call that meets the need.
+            let chain = || {
+                let mut chain = Vec::new();
+                let mut v = via.as_deref();
+                while let Some(l) = v {
+                    chain.push(Note {
+                        span: l.at,
+                        text: l.text.to_string(),
+                    });
+                    v = l.next.as_deref();
+                }
+                chain.push(Note {
+                    span: n.span,
+                    text: format!("{} here", domain.what),
+                });
+                chain
+            };
+            let Some(a) = args.get(*param).and_then(Option::as_ref) else {
+                // A parameter left out takes its default, whose value the call does not show.
+                if sig.params.get(*param).is_some_and(|p| p.default.is_some()) {
+                    let message = format!("{takes}, and its default is not shown to be");
+                    self.error_with(span, message, chain());
+                }
+                continue;
+            };
+            let generic = !a.ty.vars.is_empty();
+            let ns = &a.ty.set & &int;
+            let Some(e) = a.expr else {
+                // The check of a need, as of `g(v)` in `ap(g, v) = g(v)`: the type alone.
+                if generic {
+                    self.no_int_vars(&a.ty, &passed, span);
+                }
+                if !ns.is_empty() && !listed_in(domain, &ns) {
+                    let shown = self.show(&Ty::set(ns));
+                    let message = format!("{takes}, and this `{p}` is {shown}");
+                    self.error_with(span, message, chain());
+                }
+                continue;
+            };
+            let at = a.at.unwrap_or(e.span);
+            if generic && !ints_in(domain, &self.ints_here(e).0) {
+                match self.open_param(e) {
+                    Some(_) if self.trying => {}
+                    Some(id) => {
+                        let name = match &e.kind {
+                            ExprKind::Name(name) => name.to_string(),
+                            _ => "this value".into(),
+                        };
+                        let link = Via {
+                            at,
+                            text: format!("`{name}` is passed on as `{p}` of {what} here").into(),
+                            next: via.clone(),
+                        };
+                        let need = Need {
+                            on: Ty::empty(),
+                            kind: NeedKind::InDomain {
+                                domain: domain.clone(),
+                                param: 0,
+                                via: Some(Arc::new(link)),
+                            },
+                            result: None,
+                            span: n.span,
+                        };
+                        self.floor_on(id, need);
+                    }
+                    None => self.no_int_vars(&a.ty, &passed, at),
+                }
+            }
+            let Some(r) = self.int_range(a, e) else {
+                continue;
+            };
+            if range_in(domain, &r) {
+                continue;
+            }
+            let shown = &r.shown;
+            let mut notes = vec![Note {
+                span: at,
+                text: format!("`{p}` is this argument, {shown}"),
+            }];
+            if r.narrowed {
+                notes.extend(self.deciding_notes(e));
+            }
+            self.derive_into(&[at], &mut notes);
+            notes.extend(chain());
+            self.error_with(span, format!("{takes}, and this `{p}` is {shown}"), notes);
         }
     }
 
@@ -4477,7 +4771,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// An ordering: two values of one carrier, or two tuples of one length; atoms pass.
-    fn compare(&mut self, op: &str, x: Arg, y: Arg, span: Span) -> Ty {
+    fn compare(&mut self, op: &str, x: Arg<'a>, y: Arg<'a>, span: Span) -> Ty {
         let what = format!("`{op}`");
         if x.ty.tuples.is_empty() && y.ty.tuples.is_empty() {
             return self
@@ -4728,7 +5022,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// for the `k` of a funnel shift, and a multiple of 8 for the width of `byteSwap`. An operand
     /// is rejected when its int part is not shown to lie in the domain, from its listed values or
     /// the interval of its expression, as `**`'s exponent is.
-    fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg, &'a Expr)], span: Span) {
+    fn bit_domains(&mut self, w: &str, p: Prim, slots: &[(Arg<'a>, &'a Expr)], span: Span) {
         let names = zed_kernel::bits::params(p);
         let shift = matches!(p, Prim::Shl | Prim::Shr);
         let nonneg = IntervalSet::range(End::of(0), PosInf);
@@ -4736,8 +5030,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             slots.iter().map(|(a, e)| self.int_range(a, e)).collect();
         let mut fine = true;
         for (i, (((a, e), r), name)) in slots.iter().zip(&ranges).zip(names).enumerate() {
+            if shift && i == 0 {
+                continue;
+            }
+            if !a.ty.vars.is_empty() {
+                let d = IntDomain {
+                    what: format!("`{w}` takes `{name}` in int[0..]").into(),
+                    below_two_pow: None,
+                };
+                self.floor(&a.ty, e, d, span);
+            }
             let Some(r) = r else { continue };
-            if shift && i == 0 || r.ints.is_subset(&nonneg) {
+            if r.ints.is_subset(&nonneg) {
                 continue;
             }
             fine = false;
@@ -4761,6 +5065,52 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let last = slots.len() - 1;
+        // An operand of a type variable read as `width` digits, under a width of an int type,
+        // takes the ints below `2 ** w`, `w` the smallest width, as a need on its parameter.
+        // The other relations to `width` are between two operands, which a need on one
+        // parameter does not carry: an operand of a type variable in one is rejected here
+        // (CHK-need-bound).
+        let two_pow = zed_kernel::bits::below_two_pow_width(p);
+        let smallest = match slots[last].0.ty.vars.is_empty() {
+            true => (ranges[last].as_ref()).and_then(|r| r.extreme(std::cmp::Ordering::Less)),
+            false => None,
+        };
+        let related = (two_pow.iter().copied())
+            .chain(zed_kernel::bits::below_width(p))
+            .chain([last]);
+        for i in related {
+            let (a, e) = &slots[i];
+            if a.ty.vars.is_empty() {
+                continue;
+            }
+            let (name, at) = (names[i], a.at.unwrap_or(e.span));
+            if let Some(s) = smallest.as_ref().filter(|_| two_pow.contains(&i)) {
+                let d = IntDomain {
+                    what: format!("`{w}` takes `{name}` in int[0..<2 ** width]").into(),
+                    below_two_pow: Some(Width(s.clone())),
+                };
+                self.floor(&a.ty, e, d, span);
+                continue;
+            }
+            let mut notes = vec![Note {
+                span: at,
+                text: format!("`{name}` is this operand, of a type variable"),
+            }];
+            self.derive_into(&[at], &mut notes);
+            let checks = match i == last {
+                true => "its operands".to_string(),
+                false => format!("`{name}`"),
+            };
+            self.error_with(
+                span,
+                format!(
+                    "`{w}` checks {checks} against `width`, and the checker does not follow \
+                     that check through a value of a type variable: declare the type of `{name}`"
+                ),
+                notes,
+            );
+            return;
+        }
         let (wa, we) = &slots[last];
         let Some(rw) = &ranges[last] else {
             return;
@@ -4818,7 +5168,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// show them. The interval is what the text shows (see [`Known`]), met with what the tests
     /// the walk is in show of it ([`Ck::ints_here`]) and with the listed
     /// values, a value past `i64` read as the end of the interval on its side.
-    fn int_range(&mut self, a: &Arg, e: &'a Expr) -> Option<IntRange> {
+    fn int_range(&mut self, a: &Arg<'a>, e: &'a Expr) -> Option<IntRange> {
         let ns = &a.ty.set & &KType::int();
         if ns.is_empty() {
             return None;
@@ -4859,7 +5209,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn partial(
         &mut self,
         sig: &Sig,
-        args: Vec<Option<Arg>>,
+        args: Vec<Option<Arg<'a>>>,
         missing: &[usize],
         section: bool,
         what: &str,
@@ -4879,6 +5229,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .filter(|v| !given.contains(v))
             .collect();
+        self.leaving = missing.to_vec();
         let (result, kept) = self.apply(&format!("`{what}`"), sig, args, false, span);
         let Some((binds, needs)) = self.applied.take() else {
             return result;
@@ -4907,6 +5258,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 result: sig.arrows[k].result.clone(),
             })
             .collect();
+        // A parameter left out keeps its need on its ints, at its place in the rest.
+        let mut needs = needs;
+        for n in &sig.needs {
+            if let NeedKind::InDomain { param, .. } = &n.kind
+                && let Some(i) = missing.iter().position(|j| j == param)
+            {
+                let mut n = n.clone();
+                if let NeedKind::InDomain { param, .. } = &mut n.kind {
+                    *param = i;
+                }
+                needs.push(n);
+            }
+        }
         let mut rest = Sig {
             params,
             arrows,
@@ -4928,7 +5292,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
     /// computed index of each tuple `v` may be.
-    fn at_key(&mut self, v: &Ty, x: Arg, span: Span) -> Ty {
+    fn at_key(&mut self, v: &Ty, x: Arg<'a>, span: Span) -> Ty {
         let mut out = self.passing(v, "a call", span);
         for p in v.pieces() {
             match p {
@@ -4962,7 +5326,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
     /// a family's entry.
-    fn at_index(&mut self, v: &Ty, i: Option<usize>, x: Arg, span: Span) -> Ty {
+    fn at_index(&mut self, v: &Ty, i: Option<usize>, x: Arg<'a>, span: Span) -> Ty {
         let mut out = self.passing(v, "an index", span);
         let shown = x.ty.to_string();
         for p in v.pieces() {
@@ -5148,7 +5512,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
-        args: &[Option<Arg>],
+        args: &[Option<Arg<'a>>],
         pass: bool,
         span: Span,
     ) -> Vec<Note> {
@@ -5213,7 +5577,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
-        args: &[Option<Arg>],
+        args: &[Option<Arg<'a>>],
         (i, ty, at): (usize, Ty, Option<Span>),
         pass: bool,
         span: Span,
@@ -5236,12 +5600,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
-        mut args: Vec<Option<Arg>>,
+        mut args: Vec<Option<Arg<'a>>>,
         pass: bool,
         span: Span,
     ) -> (Ty, Vec<usize>) {
         let mut out = Ty::empty();
         let need_args = self.need_args.take();
+        let leaving = std::mem::take(&mut self.leaving);
+        if (sig.needs.iter()).any(|n| matches!(n.kind, NeedKind::InDomain { .. })) {
+            self.floors_at(what, sig, &args, &leaving, span);
+        }
         if pass {
             let atoms: Vec<Ty> = args
                 .iter()
@@ -5352,7 +5720,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
-        args: &[Option<Arg>],
+        args: &[Option<Arg<'a>>],
         (s, m): (Span, String),
         pass: bool,
         span: Span,
@@ -5385,7 +5753,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         sig: &Sig,
         k: usize,
-        args: &[Option<Arg>],
+        args: &[Option<Arg<'a>>],
         defer: BTreeSet<Arc<str>>,
         span: Span,
     ) -> Result<(Ty, Vec<usize>), String> {
@@ -5669,7 +6037,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         what: &str,
         sig: &Sig,
-        args: &mut [Option<Arg>],
+        args: &mut [Option<Arg<'a>>],
         span: Span,
     ) -> Result<(Ty, Vec<usize>), String> {
         let mut class = None;
@@ -5831,7 +6199,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `sum` of a tuple: its components added in turn, `0` for the empty tuple; atoms pass.
-    fn sum(&mut self, x: Arg, span: Span) -> Ty {
+    fn sum(&mut self, x: Arg<'a>, span: Span) -> Ty {
         let t = &x.ty;
         let mut out = self.passing(t, "`sum`", span);
         let add = op_sig("+");
@@ -5870,7 +6238,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                     out = out.union(&acc);
                 }
                 Piece::Dyn => self.any("`sum`", span),
-                Piece::Var(_) => out = out.union(&Ty::dynamic()),
+                // A class takes the use as a need, checked on each value that flows into it
+                // and at each call of a generic function (CHK-need-bound).
+                Piece::Var(v) => {
+                    let r = class_id(&v).filter(|&k| k < self.classes.len());
+                    let r = r.map(|k| self.find(k));
+                    let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                        Some((_, Some(t))) => self.sum(Arg::of(t), span),
+                        Some((r, None)) => self.need(r, NeedKind::Sum, true, span),
+                        None => Ty::dynamic(),
+                    };
+                    out = out.union(&given);
+                }
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());

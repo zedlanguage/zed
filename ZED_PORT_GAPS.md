@@ -2727,3 +2727,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A `HashMap<usize, Option<(Model, Option<HashMap<Atom, IntervalSet>>)>>` filled for a part the first time one of its factors is reached, through `entry` with a fallible computation in the `Vacant` arm (`?` returns a refusal from inside the match) | `products` | Lazy cells (gap 3), Mutation (gap 11) | Each part's point and hulls computed for all parts that hold a factor before the loop over factors, as a fold over the parts that stops at the first refusal |
 | `Option::insert` into a local declared before the match, so that an arm can return a reference to a hull computed in that arm alongside references into the map | `products` | Lazy cells (gap 3) | The arms return the hull by value; the map's hulls are shared values in Zed, so no copy is made |
+
+## Entries from CHK-need-bound (`crates/zedc-check/src/check/walk.rs`, `check/mod.rs`, `crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A newtype `Width(Value)` with a written `Hash` that hashes only a machine int and a derived `PartialEq`, so a key holding a value that is not `Hash` can be hashed | `ty::Width`, `IntDomain` | None: Zed hashes by value | The record field of type `?int`, hashed with the rest |
+| A `HashMap<usize, Need>` from a parameter's binder to its one need, replaced when a smaller domain comes (`surface_cmp` of two widths), and drained by `remove` when the function's signature is made | `Ck::floors`, `floor_on`, `floors_into` | Mutation (gap 11) | A morphism from binder to need in the walk's state, folded over the uses and read once at the signature |
+| A singly linked list of call links shared by `Arc` (`Via { at, text, next: Option<Arc<Via>> }`), walked by a `while let` into a `Vec` of notes inside a closure that runs only when an error is reported | `Ck::floors_at` | None: shared immutable lists | A list of links; the notes a map over it, made in the error branch |
+| A `loop` over names bound to names with a visited `HashSet<usize>`, left by `return` | `Ck::open_param` | Early exit (gap 12), mutation (gap 11) | A recursive function over the binding facts with the visited set as an argument |

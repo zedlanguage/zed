@@ -1850,6 +1850,104 @@ pub enum NeedKind {
         /// Whether the value is the first operand.
         first: bool,
     },
+    /// A use that takes an int in its domain, as `**`'s exponent and a bit word's operand do,
+    /// of a value whose ints the body shows no bound of and which is no parameter: the value
+    /// holds no int, or only ints listed in the domain (CHK-need-bound).
+    NoInt(IntDomain),
+    /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
+    Sum,
+    /// A use that takes an int in its domain, of the value of the parameter at position
+    /// `param` of the function whose signature holds it: each call shows the ints of its
+    /// argument in the domain, or passes on a parameter of its own, whose calls then show them
+    /// (CHK-need-bound). The need is on the parameter, not on a variable, so its `on` is the
+    /// empty type and its `span` the use.
+    InDomain {
+        /// The use and its domain.
+        domain: IntDomain,
+        /// The parameter's position.
+        param: usize,
+        /// The calls that passed the parameter on, the last first.
+        via: Option<Arc<Via>>,
+    },
+}
+
+/// The ints a use takes, as `**`'s exponent and a bit word's operand do: those at least 0, and
+/// below `2 ** width` for an operand read as `width` binary digits (CHK-need-bound).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IntDomain {
+    /// The use, in words, as an error states it.
+    pub what: Arc<str>,
+    /// The smallest width of the use, for an operand read as that many digits.
+    pub below_two_pow: Option<Width>,
+}
+
+/// The width of a bit word, an int at least 0, kept as its value: `2 ** width` is never built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Width(pub Value);
+
+impl std::hash::Hash for Width {
+    /// A machine int hashes as itself and a wider one as nothing, which equal widths agree on.
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        if let Value::Int(n) = &self.0 {
+            n.hash(h);
+        }
+    }
+}
+
+/// A call that passed its function's parameter on as the argument of a parameter with a
+/// [`NeedKind::InDomain`] need, and the calls that passed that one on before it.
+///
+/// Two are compared one call at a time, and the same chain at once, and only the first call is
+/// hashed, so a chain of `n` calls costs O(1) to hash, not O(n) at each of its `n` links.
+#[derive(Clone, Debug)]
+pub struct Via {
+    /// The call.
+    pub at: Span,
+    /// The call, in words, as an error states it.
+    pub text: Arc<str>,
+    /// The call before it.
+    pub next: Option<Arc<Via>>,
+}
+
+impl PartialEq for Via {
+    fn eq(&self, other: &Via) -> bool {
+        let (mut a, mut b) = (self, other);
+        loop {
+            if std::ptr::eq(a, b) {
+                return true;
+            }
+            if a.at != b.at || a.text != b.text {
+                return false;
+            }
+            match (&a.next, &b.next) {
+                (Some(x), Some(y)) => (a, b) = (x, y),
+                (None, None) => return true,
+                _ => return false,
+            }
+        }
+    }
+}
+
+impl Eq for Via {}
+
+impl std::hash::Hash for Via {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.at.hash(h);
+        self.text.hash(h);
+    }
+}
+
+impl Drop for Via {
+    /// Unlinks the chain one call at a time, so a chain of any length needs no stack as deep.
+    fn drop(&mut self) {
+        let mut next = self.next.take();
+        while let Some(v) = next {
+            next = match Arc::try_unwrap(v) {
+                Ok(mut v) => v.next.take(),
+                Err(_) => None,
+            };
+        }
+    }
 }
 
 /// What a test leaves of a value where it fails (rule 3 of sec:type_resolution).
@@ -1912,6 +2010,13 @@ impl Need {
                     curry: *curry,
                 },
                 NeedKind::Data(what) => NeedKind::Data(what.clone()),
+                NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
+                NeedKind::Sum => NeedKind::Sum,
+                NeedKind::InDomain { domain, param, via } => NeedKind::InDomain {
+                    domain: domain.clone(),
+                    param: *param,
+                    via: via.clone(),
+                },
                 NeedKind::Into { what, ty } => NeedKind::Into {
                     what: what.clone(),
                     ty: ty.clone(),
@@ -1949,6 +2054,9 @@ impl Need {
             NeedKind::Component { .. }
             | NeedKind::Destructure { .. }
             | NeedKind::Data(_)
+            | NeedKind::NoInt(_)
+            | NeedKind::InDomain { .. }
+            | NeedKind::Sum
             | NeedKind::Into { .. }
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(_) => (None, &[], &[]),
@@ -1969,6 +2077,9 @@ impl Need {
         let more: Vec<&Ty> = match &self.kind {
             NeedKind::Destructure { .. }
             | NeedKind::Data(_)
+            | NeedKind::NoInt(_)
+            | NeedKind::InDomain { .. }
+            | NeedKind::Sum
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
@@ -1994,6 +2105,9 @@ impl Need {
         let more: Vec<Ty> = match self.kind {
             NeedKind::Destructure { .. }
             | NeedKind::Data(_)
+            | NeedKind::NoInt(_)
+            | NeedKind::InDomain { .. }
+            | NeedKind::Sum
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }

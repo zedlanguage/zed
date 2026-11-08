@@ -6,6 +6,7 @@
 mod corners;
 mod deep;
 mod errors;
+mod generic;
 mod kept_ends;
 mod narrowing;
 mod reference;

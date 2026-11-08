@@ -73,8 +73,8 @@ use zedc_syntax::lex::{Span, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, EVERY, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape, Sig, Slot,
-    Ty, VarFacts, Vars, atoms, class_id, errs, mask_text, var_name,
+    Arrow, Binds, Carrier, EVERY, IntDomain, Narrow, Need, NeedKind, OTHER, Piece, SParam, Shape,
+    Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, class_id, errs, mask_text, var_name,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -306,20 +306,25 @@ impl Lit {
 
 /// An argument: its type, the literal it is, if it is one, the expression it is, if any, and
 /// the literals written in it, by component, if it is a tuple that holds one at any depth.
+/// `expr` is the expression itself, whose ints a call shows to a parameter with an
+/// [`NeedKind::InDomain`] need; `at` is its span, or that of the expression an argument
+/// rebuilt from it stands for.
 #[derive(Clone)]
-struct Arg {
+struct Arg<'a> {
     ty: Ty,
     lit: Option<Lit>,
     at: Option<Span>,
+    expr: Option<&'a Expr>,
     parts: Option<Rc<[Part]>>,
 }
 
-impl Arg {
-    fn of(ty: Ty) -> Arg {
+impl<'a> Arg<'a> {
+    fn of(ty: Ty) -> Arg<'a> {
         Arg {
             ty,
             lit: None,
             at: None,
+            expr: None,
             parts: None,
         }
     }
@@ -340,7 +345,7 @@ enum Part {
 #[derive(Clone)]
 enum ArgSrc<'a> {
     Expr(&'a Expr),
-    Got(Box<Arg>),
+    Got(Box<Arg<'a>>),
 }
 
 /// The positional and named arguments of a call, shared by the frames that read them.
@@ -638,6 +643,16 @@ struct Ck<'t, 'a> {
     /// variable of the need: only their atoms may pass by to the call around, the first
     /// application taking it.
     need_args: Option<Vec<bool>>,
+    /// The parameters of no declared type of the functions being checked, by binder: a value
+    /// of one whose ints a use takes at least 0 is passed on to the calls (CHK-need-bound).
+    open_params: HashSet<usize>,
+    /// The [`NeedKind::InDomain`] need of each of those parameters that has one, by binder,
+    /// its position not yet filled in: the first use that takes its ints at least 0. The
+    /// signature of the function takes it with the position.
+    floors: HashMap<usize, Need>,
+    /// The parameters the next [`Self::apply`] leaves out for a partial call: their
+    /// [`NeedKind::InDomain`] needs go to the function of the rest, not to a default.
+    leaving: Vec<usize>,
     /// The needs being checked at calls, one inside another.
     open: Vec<Open>,
     /// The variables of the parameters a partial call leaves out: the next application
@@ -719,6 +734,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             refused: Vec::new(),
             need_passed: Vec::new(),
             need_args: None,
+            open_params: HashSet::new(),
+            floors: HashMap::new(),
+            leaving: Vec::new(),
             open: Vec::new(),
             defer: BTreeSet::new(),
             applied: None,
@@ -1460,12 +1478,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// atom: each argument's loose atoms cut to those [`Self::outside`] keeps for its
     /// expression. `None` when no argument holds a loose atom, so that the call gives the same
     /// from outside.
-    fn outside_args(&self, args: &[Option<Arg>]) -> Option<Vec<Option<Arg>>> {
+    fn outside_args(&self, args: &[Option<Arg<'a>>]) -> Option<Vec<Option<Arg<'a>>>> {
         let holds = |a: &Arg| a.at.is_some() && a.ty.loose() != KType::empty();
         if !args.iter().flatten().any(holds) {
             return None;
         }
-        let cut = |a: &Arg| match a.at {
+        let cut = |a: &Arg<'a>| match a.at {
             Some(at) if holds(a) => {
                 let o = self.outside.get(&at).cloned().unwrap_or_else(KType::empty);
                 let kept = &a.ty.loose() & &o;
@@ -3516,7 +3534,7 @@ fn only_tuple(t: &Ty, n: usize) -> Option<&[Ty]> {
 type Side<'a> = (Vec<&'a Ty>, Option<&'a Lit>, Option<&'a [Part]>);
 
 /// The argument `a` as a side of `==`.
-fn side(a: &Arg) -> Side<'_> {
+fn side<'b>(a: &'b Arg<'_>) -> Side<'b> {
     (vec![&a.ty], a.lit.as_ref(), a.parts.as_deref())
 }
 
@@ -3549,7 +3567,7 @@ fn sides<'a>(
 
 /// The components of `a` as arguments when it is exactly one tuple of length `n`: a literal
 /// written there stays one, and a tuple written there keeps its literals.
-fn components(a: &Arg, n: usize) -> Option<Vec<Arg>> {
+fn components<'a>(a: &Arg<'a>, n: usize) -> Option<Vec<Arg<'a>>> {
     let cs = only_tuple(&a.ty, n)?;
     let parts = a.parts.as_ref().filter(|ps| ps.len() == n);
     Some(
@@ -4214,6 +4232,66 @@ struct IntRange {
     shown: String,
     /// Whether a test the walk is in narrowed them.
     narrowed: bool,
+}
+
+/// The ints at least 0, `int[0..]`.
+fn at_least_zero() -> IntervalSet {
+    IntervalSet::range(End::of(0), PosInf)
+}
+
+/// The domain `d` as a type, `int[0..]` or `int[0..<2 ** w]`.
+fn domain_text(d: &IntDomain) -> String {
+    match &d.below_two_pow {
+        None => "int[0..]".into(),
+        Some(w) => format!("int[0..<2 ** {}]", w.0),
+    }
+}
+
+/// Whether the int `v` is in the domain `d`.
+fn value_in(d: &IntDomain, v: &Value) -> bool {
+    v.surface_cmp(&Value::Int(0))
+        .is_some_and(|o| o != std::cmp::Ordering::Less)
+        && (d.below_two_pow.as_ref()).is_none_or(|w| zed_kernel::bits::below_two_pow(v, &w.0))
+}
+
+/// Whether the interval `ints` lies in the domain `d`: below `2 ** w` when its largest value is.
+fn ints_in(d: &IntDomain, ints: &IntervalSet) -> bool {
+    if !ints.is_subset(&at_least_zero()) {
+        return false;
+    }
+    let Some(w) = &d.below_two_pow else {
+        return true;
+    };
+    match ints.bounds() {
+        None => true,
+        Some((_, Fin(h))) => zed_kernel::bits::below_two_pow(&Value::from(h), &w.0),
+        Some(_) => false,
+    }
+}
+
+/// Whether the ints `r` holds are in the domain `d`.
+fn range_in(d: &IntDomain, r: &IntRange) -> bool {
+    match &r.values {
+        Some(vs) => vs.iter().all(|v| value_in(d, v)),
+        None => ints_in(d, &r.ints),
+    }
+}
+
+/// Whether `ints`, an int type, lists its values and each is in the domain `d`.
+fn listed_in(d: &IntDomain, ints: &KType) -> bool {
+    ints.ints_listed()
+        .is_some_and(|vs| vs.iter().all(|v| value_in(d, v)))
+}
+
+/// Whether `ints`, an int type, lists its values and each is at least 0.
+fn listed_at_least_zero(ints: &KType) -> bool {
+    let zero = Value::Int(0);
+    ints.ints_listed().is_some_and(|vs| {
+        vs.iter().all(|v| {
+            v.surface_cmp(&zero)
+                .is_some_and(|o| o != std::cmp::Ordering::Less)
+        })
+    })
 }
 
 /// Whether every value `r` holds is shown to be a multiple of 8: its listed values each are, or
