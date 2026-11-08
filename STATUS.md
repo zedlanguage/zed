@@ -1580,9 +1580,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| EMPTY-morphism-next | impl attempt 1 | 2026-11-07 19:32 | hashed the Type-keyed maps of empty.rs (ids, reps, MEMO, VERDICTS, DECIDING, SHARED, building, waiting, cycles, members) and order's equal set: not-under compar |
-| ROW-eq-deep | impl attempt 1 | 2026-11-07 20:25 | worktree /home/luke/Work/wt/row-eq-deep on wt/row-eq-deep from origin/main 93857183, seeded |
-| UTVPI-greedy-pick | impl attempt 1 | 2026-11-07 19:32 | negative control for (1), old satisfiable_inner: a_disjunction_of_unit_rows, a_round_trip (refused at n=1..4 where decide says false) and the round-trip scaling |
+| BUILD-incr-stale | impl attempt 1 | 2026-11-07 20:50 | repro attempt 1 (seed at b0fdc72b, fdd60abb's provenance.rs, -p zed-tests --test l01_17 then run_tests --workspace build) links and passes: no repro yet; load 3 |
+| EMPTY-morphism-next | impl attempt 1 | 2026-11-07 19:32 | ready 9036889a on wt/empty-morphism-next, rebased on origin/main 8874023a (docs only after the test run on ff2f499a); 130 pieces with doc check, 128 passed (974 |
+| MINMAX-sig-word | impl attempt 1 | 2026-11-07 20:25 | started; worktree /home/luke/Work/wt/minmax-sig-word from origin/main 8874023a |
+| Q1-LOCAL | measure attempt 1 | 2026-11-03 12:15 | start: worktree wt/q1-local from origin/main 8874023a seeded; load 22.21 21.27 20.96 |
+| REFUSAL-narrow-cells | impl attempt 1 | 2026-11-07 20:25 | started; creating worktree from origin/main |
+| ROW-eq-deep | impl attempt 1 | 2026-11-07 20:25 | reproduced on main 93857183 (zedc-types Row/Shape/Sig ==, derived recursion): levels 100000 deep on 2 MiB and tuples 1e6 deep on 8 MiB overflow the stack; two s |
+| UTVPI-greedy-pick | impl attempt 1 | 2026-11-07 19:32 | ready 4673fdd6 on wt/utvpi-greedy-pick, rebased on 8874023a; satisfiable mirrors decide (implied rows); decide vs integer_empty recorded as front-end cost in S4 |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Claude report in (R2_CLAUDE.md, 35 KB, rc 0); Gemini still running |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
