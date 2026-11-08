@@ -87,7 +87,7 @@ fn rows_still_run_when_the_program_is_refused() {
             (
                 1,
                 Some(
-                    "port `count` of `main` is `Lines`, `Files` or `CommandLine` at layer L1"
+                    "port `count` of `main` is `Lines`, `Files`, `CommandLine` or `String ->? String` at layer L1"
                         .to_string()
                 )
             ),

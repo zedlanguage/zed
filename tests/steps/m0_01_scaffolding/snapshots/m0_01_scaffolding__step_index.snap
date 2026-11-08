@@ -23,6 +23,7 @@ l01_18_scalar_interpreter
 l01_19_whole_file_ports
 l01_19a_command_line
 l01_19b_record_address
+l01_19c_environment
 l01_20_provenance
 l01_21_test_runner
 l01_22_type_representation
