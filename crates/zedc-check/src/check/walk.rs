@@ -3911,6 +3911,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
             NeedKind::Narrow(narrow) => self.narrowed(&on, narrow, span),
+            NeedKind::Order {
+                what,
+                word,
+                other,
+                first,
+            } => {
+                let other = b(self, other);
+                let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
+                self.min_max_tuples(what, &word_sig(word), x, y, span)
+            }
         };
         self.replaying -= 1;
         self.need_args = None;
@@ -4462,6 +4472,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// once rather than once per pair of shapes, and a pair of component types met again
     /// through shared rows is not read again: the check is linear in the types read.
     fn min_max_tuples(&mut self, what: &str, sig: &Sig, x: &Ty, y: &Ty, span: Span) -> Ty {
+        // Called through a function value, a message names the word as well as the value.
+        let who = match sig.word.as_deref() {
+            Some(w) if what != format!("`{w}`") => format!("{what}, which is `{w}`,"),
+            _ => what.to_string(),
+        };
         let mut todo = vec![(x.clone(), y.clone())];
         let mut seen = HashSet::new();
         while let Some(pair) = todo.pop() {
@@ -4470,18 +4485,58 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let (a, b) = &pair;
             let atoms = &a.atoms() | &b.atoms();
-            let rest = |t: &Ty| {
+            let rest = |t: &Ty, open: bool| {
                 Ty {
                     tuples: Vec::new(),
+                    vars: if open {
+                        BTreeSet::new()
+                    } else {
+                        t.vars.clone()
+                    },
                     ..t.without_atoms()
                 }
                 .is_empty()
             };
+            // A class met with a tuple may hold a tuple: it keeps the carriers that are not
+            // numbers, as an operand of `<` does (`components`), and records the use, so each
+            // value that flows into it, and each call of the function it belongs to, checks
+            // this application again with what the class then holds. `open[i]` says that
+            // side's variables are all such classes.
+            let mut open = [false; 2];
+            for (i, (t, u)) in [(a, b), (b, a)].into_iter().enumerate() {
+                if u.tuples.is_empty() || t.vars.is_empty() {
+                    continue;
+                }
+                let classes: Option<Vec<usize>> = t
+                    .vars
+                    .iter()
+                    .map(|v| self.class_of(&Piece::Var(v.clone())))
+                    .collect();
+                let Some(classes) = classes else {
+                    continue;
+                };
+                open[i] = true;
+                for k in classes {
+                    if !self.restrict(k, OTHER, what, span) {
+                        open[i] = false;
+                        continue;
+                    }
+                    let kind = NeedKind::Order {
+                        what: what.into(),
+                        word: sig.word.clone().unwrap_or_default(),
+                        other: u.clone(),
+                        first: i == 0,
+                    };
+                    self.need(k, kind, false, span);
+                }
+            }
+            // A side that is classes only, against tuples: the call checks what the classes hold.
+            let only = |t: &Ty, open: bool| open && t.tuples.is_empty() && rest(t, true);
             if !atoms.is_empty() {
                 let atoms = self.text(&Ty::set(atoms));
                 self.error(
                     span,
-                    format!("{what} does not order {atoms} in a tuple; handle it before {what}"),
+                    format!("{who} does not order {atoms} in a tuple; handle it before {what}"),
                 );
             } else if a.tuples.is_empty() && b.tuples.is_empty() {
                 self.apply(
@@ -4491,11 +4546,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                     true,
                     span,
                 );
-            } else if a.tuples.is_empty() || b.tuples.is_empty() || !rest(a) || !rest(b) {
+            } else if only(a, open[0]) || only(b, open[1]) {
+                // Nothing more to check here.
+            } else if a.tuples.is_empty()
+                || b.tuples.is_empty()
+                || !rest(a, open[0])
+                || !rest(b, open[1])
+            {
                 let (s, t) = (self.text(a), self.text(b));
                 self.error(
                     span,
-                    format!("{what} does not take {s} and {t}: it takes two tuples or two numbers"),
+                    format!("{who} does not take {s} and {t}: it takes two tuples or two numbers"),
                 );
             } else {
                 // The components at each position of the shapes of each length.
@@ -4510,7 +4571,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let (s, t) = (self.text(a), self.text(b));
                         self.error(
                             span,
-                            format!("{what} does not take {s} and {t}: a tuple of {n} components has none of its length to compare with"),
+                            format!("{who} does not take {s} and {t}: a tuple of {n} components has none of its length to compare with"),
                         );
                         continue;
                     }
@@ -4715,6 +4776,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             arrows,
             bounds: sig.bounds.clone(),
             data: false,
+            // A word applied to fewer arguments than its arity is not the word: `min` and `max`
+            // take two tuples only when both are given (sec:reduction, item 5).
             word: None,
             needs,
             own: sig.own.clone(),
@@ -4884,7 +4947,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let permuted = Sig {
             bounds: s.bounds.clone(),
             data: s.data,
-            word: None,
+            word: s.word.clone(),
             needs: s.needs.clone(),
             own: s.own.clone(),
             held: s.held.clone(),
@@ -4962,9 +5025,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let word = what
             .strip_prefix('`')
             .and_then(|w| w.strip_suffix('`'))
-            .is_some_and(|w| {
-                zedc_resolve::resolve::prelude_layer(w).is_some() && *word_sig(w) == *sig
-            });
+            .is_some_and(|w| sig.word.as_deref() == Some(w));
         let kept = pass || word;
         for (i, a) in args.iter().enumerate() {
             let Some(Arg {

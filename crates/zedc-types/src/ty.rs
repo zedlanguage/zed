@@ -1837,6 +1837,19 @@ pub enum NeedKind {
     },
     /// A test's narrowing: what is left of the value where the test fails.
     Narrow(Narrow),
+    /// `min` or `max`, the word `word`, named `what`, with the value as one operand and a
+    /// value of `other` as the other, which holds a tuple: the value is the first operand
+    /// if `first` (DESIGN.md sec:reduction, item 5).
+    Order {
+        /// The function called.
+        what: Arc<str>,
+        /// The word, `min` or `max`.
+        word: Arc<str>,
+        /// The other operand's type.
+        other: Ty,
+        /// Whether the value is the first operand.
+        first: bool,
+    },
 }
 
 /// What a test leaves of a value where it fails (rule 3 of sec:type_resolution).
@@ -1908,6 +1921,17 @@ impl Need {
                     slot: slot.clone(),
                 },
                 NeedKind::Narrow(n) => NeedKind::Narrow(n.clone()),
+                NeedKind::Order {
+                    what,
+                    word,
+                    other,
+                    first,
+                } => NeedKind::Order {
+                    what: what.clone(),
+                    word: word.clone(),
+                    other: f(other),
+                    first: *first,
+                },
             },
             result: self.result.as_ref().map(f),
             span: self.span,
@@ -1928,7 +1952,7 @@ impl Need {
             | NeedKind::Into { .. }
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(_) => (None, &[], &[]),
-            NeedKind::Index(k) => (Some(k), &[], &[]),
+            NeedKind::Index(k) | NeedKind::Order { other: k, .. } => (Some(k), &[], &[]),
             NeedKind::Call {
                 positional, named, ..
             } => (None, positional, named),
@@ -1950,6 +1974,7 @@ impl Need {
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
             | NeedKind::Into { ty: t, .. }
+            | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
                 positional, named, ..
@@ -1974,6 +1999,7 @@ impl Need {
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
             | NeedKind::Into { ty: t, .. }
+            | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
                 mut positional,

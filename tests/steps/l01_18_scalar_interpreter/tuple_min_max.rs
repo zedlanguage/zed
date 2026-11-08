@@ -238,10 +238,13 @@ fn min_and_max_through_a_function_value_take_two_tuples() {
         "(0, 9)"
     );
     assert_eq!(v("f = max;\nx = f(f((5, 1), (4, 9)), (5, 0));\n"), "(5, 1)");
-    // It refuses through the name what it refuses by its own.
+    // It refuses through the name what it refuses by its own, and the message names the
+    // word as well as the name.
     assert_eq!(
         errors("f = min;\ny = f((1, 2), 3);\n"),
-        ["`f` does not take (1, 2) and 3: it takes two tuples or two numbers [f((1, 2), 3)]"]
+        [
+            "`f`, which is `min`, does not take (1, 2) and 3: it takes two tuples or two numbers [f((1, 2), 3)]"
+        ]
     );
 }
 
@@ -295,6 +298,140 @@ fn checking_min_of_two_tuples_nested_n_deep_through_shared_parts_scales() {
     zed_tests::scaling::check(
         "checking `min` of two tuples nested n deep through shared parts",
         400,
+        |n| {
+            built[&n].check();
+        },
+    );
+}
+
+#[test]
+fn a_parameter_met_with_a_tuple_takes_the_tuples_each_call_gives() {
+    // `a` is met with a tuple, so it may hold a tuple; each call checks `min` again on what it
+    // gives, by the rule a call of `min` by name follows.
+    let v = |text: &str| value(text, "x");
+    let g = "g(positional a) = min(a, (1, 2));\n";
+    assert_eq!(v(&format!("{g}x = g((0, 9));\n")), "(0, 9)");
+    assert_eq!(v(&format!("{g}x = g((1, 3));\n")), "(1, 2)");
+    assert_eq!(
+        v("g(positional a) = max((1, 2), a);\nx = g((0, 9));\n"),
+        "(1, 2)"
+    );
+    assert_eq!(
+        v("g(positional a) = a.min((1, 2));\nx = g((0, 9));\n"),
+        "(0, 9)"
+    );
+    assert_eq!(
+        v("g(positional a) = min(a, (1, (2, 3)));\nx = g((1, (0, 9)));\n"),
+        "(1, (0, 9))"
+    );
+    assert_eq!(
+        v("g(positional a, positional b) = min(a, (b, 2));\nx = g((0, 9), 1);\n"),
+        "(0, 9)"
+    );
+    // Through a function that passes it on.
+    assert_eq!(
+        v(&format!("{g}h(positional b) = g(b);\nx = h((0, 9));\n")),
+        "(0, 9)"
+    );
+    assert_eq!(sig(g, "g"), "(_) -> (1, 2) | _");
+}
+
+#[test]
+fn a_parameter_met_with_a_tuple_refuses_what_min_refuses() {
+    let g = "g(positional a) = min(a, (1, 2));\n";
+    let e = |call: &str| errors(&format!("{g}x = {call};\n"));
+    assert_eq!(
+        e("g((0, 9, 1))"),
+        [
+            "`min` does not take (0, 9, 1) and (1, 2): a tuple of 2 components has none of its length to compare with [g((0, 9, 1))]",
+            "`min` does not take (0, 9, 1) and (1, 2): a tuple of 3 components has none of its length to compare with [g((0, 9, 1))]"
+        ]
+    );
+    assert_eq!(
+        e("g((#red, 9))"),
+        ["`min` does not order #red in a tuple; handle it before `min` [g((#red, 9))]"]
+    );
+    assert_eq!(
+        e("g((0.5, 1.0))"),
+        [
+            "`min` does not take (0.5, 1) [g((0.5, 1.0))]",
+            "`min` does not take (1.0, 2) [g((0.5, 1.0))]"
+        ]
+    );
+    // A number is not a tuple: the parameter keeps no number carrier.
+    assert_eq!(e("g(3)"), ["`g` does not take (3) [g(3)]"]);
+    assert_eq!(
+        errors("g(positional a) = min(a, (1, (2, 3)));\nx = g((1, 9));\n"),
+        ["`min` does not take 9 and (2, 3): it takes two tuples or two numbers [g((1, 9))]"]
+    );
+    // A value that is a number by its own use is not met with a tuple.
+    assert_eq!(
+        errors("g(positional a) = min(a + 1, (1, 2));\n"),
+        [
+            "`min` does not take _ and (1, 2): it takes two tuples or two numbers [min(a + 1, (1, 2))]"
+        ]
+    );
+}
+
+#[test]
+fn a_generic_function_that_calls_min_on_its_own_parameters_takes_numbers() {
+    // Two parameters met only with each other by `min` take its numbers, as two met by `<` take
+    // its carriers (DESIGN.md sec:type_resolution: a prelude word removes the carriers it does
+    // not take); neither is met with a tuple, so neither may hold one.
+    let g = "g(positional a, positional b) = min(a, b);\n";
+    assert_eq!(sig(g, "g"), "(T, T) -> T for T in int | f64 | rat");
+    assert_eq!(value(&format!("{g}x = g(3, 2);\n"), "x"), "2");
+    assert_eq!(
+        errors(&format!("{g}x = g((1, 2), (0, 9));\n")),
+        ["`g` does not take ((1, 2), (0, 9)) [g((1, 2), (0, 9))]"]
+    );
+}
+
+#[test]
+fn messages_through_a_function_value_name_the_word() {
+    assert_eq!(
+        errors("f = min;\nx = f((1, 2), (1, 2, 3));\n"),
+        [
+            "`f`, which is `min`, does not take (1, 2) and (1, 2, 3): a tuple of 2 components has none of its length to compare with [f((1, 2), (1, 2, 3))]",
+            "`f`, which is `min`, does not take (1, 2) and (1, 2, 3): a tuple of 3 components has none of its length to compare with [f((1, 2), (1, 2, 3))]"
+        ]
+    );
+    assert_eq!(
+        errors(
+            "ap(positional h, positional p, positional q) = h(p, q);\nx = ap(max, (1, 2), 3);\n"
+        ),
+        [
+            "`h`, which is `max`, does not take (1, 2) and 3: it takes two tuples or two numbers [ap(max, (1, 2), 3)]"
+        ]
+    );
+    // By its own name, the word is named once.
+    assert_eq!(
+        errors("x = min((1, 2), 3);\n"),
+        ["`min` does not take (1, 2) and 3: it takes two tuples or two numbers [min((1, 2), 3)]"]
+    );
+}
+
+#[test]
+fn checking_a_chain_of_n_functions_whose_parameter_meets_a_tuple_scales() {
+    // `g{i}(a) = g{i - 1}(min(a, k((i, 0))))`: the use of `a` by `min` is met with the same type
+    // in each function, so each class records it once, and each call checks it once.
+    let unit = |n: usize| {
+        let mut text = String::from(
+            "k(positional p: (int, int)) = p;\ng0(positional a) = min(a, k((0, 0)));\n",
+        );
+        for i in 1..n {
+            text.push_str(&format!(
+                "g{i}(positional a) = g{}(min(a, k(({i}, 0))));\n",
+                i - 1
+            ));
+        }
+        text.push_str(&format!("x = g{}((5, 9));\n", n - 1));
+        checked(&text)
+    };
+    let built = zed_tests::scaling::inputs(200, unit);
+    zed_tests::scaling::check(
+        "checking n functions whose parameter meets a tuple in `min`",
+        200,
         |n| {
             built[&n].check();
         },
