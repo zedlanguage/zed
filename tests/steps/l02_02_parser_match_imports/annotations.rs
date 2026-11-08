@@ -50,12 +50,12 @@ fn malformed_annotations() {
     ]);
 }
 
-/// An annotation on an operand (rule AnnotExpr, layer L10, as in `d = @fpsafe (x - y);`)
+/// An annotation on an operand (rule AnnotExpr, layer L7, as in `d = @fpsafe (x - y);`)
 /// parses, and is refused with its layer until it is built; before, such a unit reached an
 /// `unreachable!` in the builder of `Prefix`.
 #[test]
 fn annotated_operands() {
-    let later = "error: this form (AnnotExpr) is built from layer L10";
+    let later = "error: this form (AnnotExpr) is built from layer L7";
     check(&[
         ("x = @log 1;", later),
         ("d = @fpsafe (x - y);", later),

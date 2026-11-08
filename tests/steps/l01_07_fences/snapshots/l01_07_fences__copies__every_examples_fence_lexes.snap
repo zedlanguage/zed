@@ -480,7 +480,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) ;
   3 | config : Utf8String ->? Utf8String «with» store ( file ( str["app.cfg"] , KeyVal ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 6 L21
-  2 | cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) «with» timeout ( 0.2r «with» units ( str["s"] ) ) ;
+  2 | @timeout ( 0.2r «with» units ( str["s"] ) ) cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) ;
   3 | hit = cache [ key ] «else» fetch ( key ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 7 L7
   3 | main ( args : CommandLine , clock : Stream ( Instant ) «with» period ( 0.01r ) ) -> ( stdout : Lines ) { … }

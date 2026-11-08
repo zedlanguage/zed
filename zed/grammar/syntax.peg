@@ -139,10 +139,10 @@ Additive      = Additive ('+' | '-' | '++') Multiplicative                      
 Multiplicative = Multiplicative ('*' | '/' | 'div' | 'mod') Prefix                 L1
               | ~Prefix                                                            L1
 Prefix        = ('-' | '!') Prefix                                                 L1
-              | AnnotExpr                                                          L10
+              | AnnotExpr                                                          L7
               | ~Power                                                             L1
-AnnotExpr     = ANNOT '(' nest(Args?) ')' Postfix                                  L10
-              | ANNOT Prefix                                                       L10
+AnnotExpr     = ANNOT '(' nest(Args?) ')' !'-' Or                                  L7
+              | ANNOT Or                                                           L7
 Power         = Postfix '**' Prefix                                                L1
               | ~Postfix                                                           L1
 Postfix       = Postfix Suffix                                                     L1

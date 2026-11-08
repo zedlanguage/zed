@@ -802,7 +802,7 @@ config: Utf8String ->? Utf8String with store(file("app.cfg", KeyVal));   // the 
 <!-- EXAMPLES.md:830 layer L21: ring L7, word L21 (store), label none; section [18. Files, stores, and the world] 6 -->
 ```zed
 // [d4] sec:ports, sec:staging — a timeout is declared on the port and adds #timeout to its failure member
-cache: Utf8String ->? [u8] with store(kv(endpoint)) with timeout(0.2r with units("s"));   // lookup: [u8] | #ioError | #timeout | #notFound
+@timeout(0.2r with units("s")) cache: Utf8String ->? [u8] with store(kv(endpoint));   // lookup: [u8] | #ioError | #timeout | #notFound
 hit = cache[key] else fetch(key);                                                   // else strips #timeout with the rest: a read that ran out of time is a miss
 ```
 
