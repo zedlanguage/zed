@@ -1547,15 +1547,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CYCLE-kernel-moves | impl attempt 1 | 2026-11-07 01:22 | bdd/list.rs inlined into bdd.rs (Bdd and Cell are one recursive type); Verdict, Refusal, Surface moved into types.rs; Type::split moved to empty.rs; types.rs an |
+| ADDR-presburger | impl attempt 1 | 2026-11-05 04:07 | start: worktree wt/addr-presburger from origin/main e37d4366 / load 15.32 11.65 13.51 |
+| CYCLE-kernel-moves | impl attempt 1 | 2026-11-07 01:22 | ready at 93d2b24f on 903759e8: zed-kernel import cycle (12 files) broken by moves, KNOWN_CYCLES empty; 87 pieces, 1 failed (deep_types, the same 4 tests fail on |
 | EMPTY-morphism-diff-cost | impl attempt 1 | 2026-11-05 18:48 | started; worktree from origin/main e37d4366 |
-| ENV-port | impl attempt 1 | 2026-11-05 04:07 | started: worktree wt/env-port from origin/main e37d4366 |
-| HEAP-binder-memory | impl attempt 1 | 2026-11-07 18:09 | started; worktree wt/heap-binder-memory from origin/main e37d4366 |
-| MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | ready at 83ef4304 (spec 6dc7b9f): 61 pieces pass incl. 9 new tuple_min_max tests; clippy and fmt clean / load 18.36 23.88 23.08 |
-| PROV-family-entries | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/prov-family-entries from origin/main |
+| ENV-port | impl attempt 1 | 2026-11-05 04:07 | port, Environment lookup, tests done; checker partial-arrow fix tried and reverted (breaks #errs read-back, follow-up); 13 pieces + l01_19c 12 tests pass; load  |
+| FAMILY-eq-fast | impl attempt 1 | 2026-11-07 17:30 | started on 903759e8; worktree /home/luke/Work/wt/family-eq-fast |
+| HEAP-binder-memory | impl attempt 1 | 2026-11-07 18:09 | ready b6d05460 on wt/heap-binder-memory (rebased on 903759e8, STATUS conflict kept both rows): match at a binder per level 7.9x bytes / 8.1-8.2x instructions at |
+| MINMAX-tuples | repair attempt 1 | 2026-11-04 04:45 | cause found: is_min_max compared the signature with word_sig("min"), equal to op_sig of + - * (same 3 arrows, positional(2)); fixed by call identity (Ck::min_ma |
+| PROV-family-entries | impl attempt 1 | 2026-11-05 04:07 | measured on main (load 28): rows sharing one #errs set n=m 50,100,200,400: 1.0,3.5,14.2,58.9 ms (4x per 2x: n*m); deep replacement n=d 16..128: 0.58,3.3,19.8,13 |
 | REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
-| STAGE-stub-fast | impl attempt 1 | 2026-11-07 17:16 | ready at 08b698a6 on 8569447a (rebased, restacked): 93 pieces, 944 tests, 0 failed, doc check passed (load 16.4 to 30.4); fmt and clippy clean |
-| T11-unit-share | impl attempt 1 | 2026-11-05 04:07 | start: worktree wt/t11-unit-share from origin/main e37d4366 / load 16.49 12.02 13.61 |
+| T11-unit-share | impl attempt 1 | 2026-11-05 04:07 | scaling (wave+replay, 20000/160000 lines): 388.4M->3673.8M instr (9.5x), 28.4MB->226.5MB (8.0x); neg controls: record copy + unit deep copy restored -> 3 sharin |
 | UTVPI-model | impl attempt 1 | 2026-11-05 04:07 | start: worktree wt/utvpi-model from origin/main e37d4366 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
