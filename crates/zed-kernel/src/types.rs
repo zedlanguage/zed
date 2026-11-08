@@ -402,11 +402,22 @@ impl std::ops::Deref for Morphism {
     }
 }
 
-/// By guarantee, then permission, then value, in the loop of `bdd::order`; one node is equal
-/// to itself without reading it.
+/// By guarantee, then permission, then value, the order `bdd::order` gives two morphism types;
+/// one node is equal to itself without reading it. Each pair of types is compared by
+/// [`Type::cmp`], by pointer and then by digest before its contents, so that a table of
+/// morphism types, whose lookups compare a key with some `log n` others that nearly always
+/// differ in a field's digest, enters the loop of `bdd::order` only where two digests tie
+/// (EMPTY-morphism-diff-cost: a search through nested morphism types had entered that loop
+/// some 1,900 times a level, and enters it some 170 times).
 impl Ord for Morphism {
     fn cmp(&self, other: &Morphism) -> std::cmp::Ordering {
-        order(Step::Morphisms(self, other))
+        if Arc::ptr_eq(&self.0, &other.0) {
+            return std::cmp::Ordering::Equal;
+        }
+        let (a, b) = (&self.0.key, &other.0.key);
+        (a.guarantee.cmp(&b.guarantee))
+            .then_with(|| a.permission.cmp(&b.permission))
+            .then_with(|| a.value.cmp(&b.value))
     }
 }
 
@@ -1682,6 +1693,9 @@ impl Type {
     }
 
     fn zip(&self, other: &Type, op: Op) -> Type {
+        if let Some(t) = self.zip_at_once(other, op) {
+            return t;
+        }
         let (a, b) = (self.p(), other.p());
         Type::new(Parts {
             digest: 0,
@@ -1701,6 +1715,35 @@ impl Type {
             },
             morphisms: a.morphisms.zip(&b.morphisms, op),
         })
+    }
+
+    /// `self op other` without building a node, when one operand is the result: `a op a` is
+    /// `a`, the empty type joined to `a` or `_` met with it is `a`, and the empty type met with
+    /// `a` or `_` joined to it is that operand. Only nodes of parts are taken, so that a
+    /// recursive type is never given in place of the parts its union or meet would print as.
+    /// EMPTY-morphism-diff-cost: half the unions and meets of a search through nested morphism
+    /// types are of these kinds, and each had built a node equal to an operand.
+    fn zip_at_once(&self, other: &Type, op: Op) -> Option<Type> {
+        let (Node::Parts(..), Node::Parts(..)) = (&*self.0, &*other.0) else {
+            return None;
+        };
+        if Arc::ptr_eq(&self.0, &other.0) {
+            return Some(self.clone());
+        }
+        // The operand that absorbs under `op`, and the one that leaves the other operand.
+        let (absorbs, unit) = match op {
+            Op::Or => (&TOP, &EMPTY),
+            Op::And => (&EMPTY, &TOP),
+        };
+        let is =
+            |t: &Type, k: &'static std::thread::LocalKey<Type>| k.with(|k| Arc::ptr_eq(&t.0, &k.0));
+        if is(self, absorbs) || is(other, unit) {
+            Some(self.clone())
+        } else if is(other, absorbs) || is(self, unit) {
+            Some(other.clone())
+        } else {
+            None
+        }
     }
 
     /// Whether `self & other`, or `self - other` when `both` is false, is empty, when neither

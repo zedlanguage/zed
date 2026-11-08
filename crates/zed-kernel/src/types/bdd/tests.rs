@@ -1176,7 +1176,7 @@ fn the_connectives_on_parts_scale_by_depth() {
 
 /// The entries of this thread's tables of tuple nodes, in all: sets, cells and exclusive ors.
 fn entries() -> usize {
-    Row::table(|t| t.sets.len() + t.cells.len() + t.xors.len())
+    Row::table(|t| t.sets.values().map(Vec::len).sum::<usize>() + t.cells.len() + t.xors.len())
 }
 
 /// The exclusive or of the atoms `base..base + k`.

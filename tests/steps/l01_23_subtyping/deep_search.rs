@@ -1,7 +1,7 @@
 //! The emptiness search decides a type of any depth on a small stack: `is_empty`, `verdict`,
 //! the difference of two deep types and `subtype` of two unequal ones keep their calls on the
-//! heap (COMPLEXITY.md K39). Its own binary, so that the deep searches, some seconds each, do
-//! not lengthen the piece of step L1.23.
+//! heap (COMPLEXITY.md K39). Its own binary, so that the deep searches, some seconds each and the
+//! morphism comparisons some 15, do not lengthen the piece of step L1.23.
 
 use zed_kernel::Value;
 use zed_kernel::types::{Type, Verdict};
@@ -56,9 +56,9 @@ fn a_morphism_type_far_deeper_than_the_stack_is_decided() {
 /// Two types nested `DEEP` deep that differ only at the bottom: the one around `0` is not under
 /// the one around `1`, which the search decides on their difference, and, in a test of its own,
 /// is under the one around `int`, which the simulation of rows shows. Tuples split the box on
-/// their way down, which atoms and morphisms do not; theirs are compared in the scaling tests,
-/// at smaller depths, since a difference of morphisms builds three types at each level, and
-/// 100,000 levels of it take half a minute.
+/// their way down and morphisms meet and subtract their fields at each level; atoms do neither,
+/// and theirs are compared in the scaling tests only. A morphism comparison 100,000 levels deep
+/// took 13.5 s in the optimized test build at load 25 (EMPTY-morphism-diff-cost, 2026-11-07).
 fn compares_deep(shape: fn(usize, Type) -> Type, bottom: Type, under: bool) {
     zed_tests::deep::on_small_stack(move || {
         let t = shape(DEEP, lit(0));
@@ -74,6 +74,16 @@ fn a_deep_tuple_type_is_not_under_one_that_differs_at_the_bottom() {
 #[test]
 fn a_deep_tuple_type_is_under_one_wider_at_the_bottom() {
     compares_deep(tuples, Type::int(), true);
+}
+
+#[test]
+fn a_deep_morphism_type_is_not_under_one_that_differs_at_the_bottom() {
+    compares_deep(morphisms, lit(1), false);
+}
+
+#[test]
+fn a_deep_morphism_type_is_under_one_wider_at_the_bottom() {
+    compares_deep(morphisms, Type::int(), true);
 }
 
 /// Deciding, the verdict and the subtype of types nested `n` and `8n` deep in

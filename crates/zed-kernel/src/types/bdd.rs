@@ -68,7 +68,7 @@ pub(super) struct Tables<A: Literal> {
 impl<A: Literal> Tables<A> {
     pub(super) const fn new() -> Tables<A> {
         Tables {
-            sets: BTreeMap::new(),
+            sets: std::collections::HashMap::with_hasher(std::hash::BuildHasherDefault::new()),
             cells: BTreeMap::new(),
             xors: BTreeMap::new(),
         }

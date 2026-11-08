@@ -53,23 +53,40 @@ pub(in crate::types) struct Set<A: Atom> {
 /// A set: the root, or `None` when empty.
 pub(in crate::types) type Tree<A> = Option<Arc<Set<A>>>;
 
-/// The live nodes of a thread's sets, by literal and children's ids.
-pub(in crate::types) type SetTable<A> =
-    std::collections::BTreeMap<(Key<A>, u64, u64), Weak<Set<A>>>;
+/// The live nodes of a thread's sets, by the hash of the atom, whether it is taken and the
+/// children's ids; nodes whose atoms differ but share a hash share a bucket, and a lookup tells
+/// them apart by the atoms' equality. Hashed rather than ordered by literal, since the table is
+/// never read in order: a lookup in a table ordered by literal compared its key with some
+/// `log N` others, each by the atoms' contents (three types read through their nodes for a
+/// morphism type), which had made half the cost of a search through nested morphism types
+/// (EMPTY-morphism-diff-cost).
+pub(in crate::types) type SetTable<A> = std::collections::HashMap<
+    Slot,
+    Vec<Weak<Set<A>>>,
+    std::hash::BuildHasherDefault<super::KeyHasher>,
+>;
+
+/// The key of a node's bucket in its [`SetTable`]: the hash of its atom, whether the atom is
+/// taken, and its children's ids.
+type Slot = (u64, bool, u64, u64);
+
+/// The bucket of the node of `key` over the children of ids `left` and `right`.
+fn slot<A: Atom>(key: &Key<A>, left: u64, right: u64) -> Slot {
+    (key.0.digest(), key.1, left, right)
+}
 
 /// A set node leaves its thread's table, and its children are freed in a loop (module `deep`),
 /// as a diagram's cells are.
 impl<A: Atom> Drop for Set<A> {
     fn drop(&mut self) {
-        let k = (
-            self.key.clone(),
-            id(self.left.as_ref()),
-            id(self.right.as_ref()),
-        );
+        let k = slot(&self.key, id(self.left.as_ref()), id(self.right.as_ref()));
         A::unsets(|t| {
-            // Another node of the key may have taken the entry since, or none was made here.
-            if t.get(&k).is_some_and(|w| std::ptr::eq(w.as_ptr(), self)) {
-                t.remove(&k);
+            // The node has no entry when it was made on another thread.
+            if let Some(bucket) = t.get_mut(&k) {
+                bucket.retain(|w| !std::ptr::eq(w.as_ptr(), self));
+                if bucket.is_empty() {
+                    t.remove(&k);
+                }
             }
         });
         for c in [self.left.take(), self.right.take()].into_iter().flatten() {
@@ -103,28 +120,36 @@ pub(super) fn len<A: Atom>(t: Option<&Arc<Set<A>>>) -> usize {
 
 /// The node of `key` over `left` and `right`, the one in the table if there is one.
 fn make<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Set<A>> {
-    let k = (key, id(left.as_ref()), id(right.as_ref()));
-    if let Some(s) = A::sets(|t| t.get(&k).and_then(Weak::upgrade)) {
+    let k = slot(&key, id(left.as_ref()), id(right.as_ref()));
+    // The live nodes of the bucket are taken out of the table before their atoms are compared,
+    // as in the tables of live rows and morphism types (`Shared::new`), so that no comparison
+    // or drop runs while the table is borrowed; a bucket nearly always holds one node at most,
+    // which is taken out without allocating. Entries left by nodes dropped on another thread
+    // leave the bucket here.
+    let (first, rest): (_, Vec<Arc<Set<A>>>) = A::sets(|t| {
+        let Some(bucket) = t.get_mut(&k) else {
+            return (None, Vec::new());
+        };
+        bucket.retain(|w| w.strong_count() > 0);
+        let mut live = bucket.iter().filter_map(Weak::upgrade);
+        (live.next(), live.collect())
+    });
+    if let Some(s) = first.into_iter().chain(rest).find(|s| s.key.0 == key.0) {
         return s;
     }
-    let (key, ..) = &k;
     let s = Arc::new(Set {
         id: NEXT.fetch_add(1, Atomic::Relaxed),
         digest: mix(
-            mix(
-                mix(15, key.0.digest() ^ u64::from(key.1)),
-                digest(left.as_ref()),
-            ),
+            mix(mix(15, k.0 ^ u64::from(key.1)), digest(left.as_ref())),
             digest(right.as_ref()),
         ),
-        prio: priority(key),
-        key: key.clone(),
+        prio: priority(&key),
+        key,
         len: 1 + len(left.as_ref()) + len(right.as_ref()),
         left,
         right,
     });
-    // An entry left by a node dropped on another thread is replaced.
-    A::sets(|t| t.insert(k, Arc::downgrade(&s)));
+    A::sets(|t| t.entry(k).or_default().push(Arc::downgrade(&s)));
     s
 }
 
