@@ -3059,19 +3059,38 @@ impl<'m> Searching<'m> {
             if whole.union_rows().is_some() {
                 continue;
             }
-            // A union of parts that share no tuple type is searched one part at a time: a value
-            // of one is a value of the union, and each part's box holds its own tuple types
-            // only, so `n` such parts cost order `n`, not the `n` candidates by `n` cells of one
-            // box over them all (`l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
-            // COMPLEXITY.md K78).
-            let pieces = whole
-                .disjoint_disjuncts()
-                .unwrap_or_else(|| vec![whole.clone()]);
-            for f in &pieces {
-                let (mut b, mut g) = (self.region(vec![Type::top(); *len], f).await, f.clone());
-                if self.narrow_tuples(&mut b, &mut g).await {
-                    continue;
-                }
+            let (mut whole_box, mut narrowed) = (
+                self.region(vec![Type::top(); *len], whole).await,
+                whole.clone(),
+            );
+            if self.narrow_tuples(&mut whole_box, &mut narrowed).await {
+                continue;
+            }
+            // A part that is, on its box, a union of parts that share no tuple type is searched
+            // one part at a time on that box: a value of one in the box is a value of the union,
+            // and each part's own box holds its own tuple types only, so `n` such parts cost
+            // order `n`, not the `n` candidates by `n` cells of one box over them all
+            // (`l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
+            // and `a_pair_type_met_with_forked_differences_is_refused_in_its_size`, whose pair
+            // type holds the box and so drops out; COMPLEXITY.md K80).
+            let split = narrowed.disjoint_disjuncts();
+            let parts = split.clone().unwrap_or_else(|| vec![whole.clone()]);
+            for f in &parts {
+                // Where `refine` starts: a part of the split stands for the union on the box only.
+                let start = match split {
+                    Some(_) => whole_box.r.clone(),
+                    None => vec![Type::top(); *len],
+                };
+                let (mut b, g) = match split {
+                    Some(_) => {
+                        let (mut b, mut g) = (self.region(start.clone(), f).await, f.clone());
+                        if self.narrow_tuples(&mut b, &mut g).await {
+                            continue;
+                        }
+                        (b, g)
+                    }
+                    None => (std::mem::take(&mut whole_box), narrowed.clone()),
+                };
                 if let Some(v) = self.row_rep(&b.r, f).await {
                     return Some(v);
                 }
@@ -3113,12 +3132,15 @@ impl<'m> Searching<'m> {
                 // every open cell of its components, n candidates by n cells, order n^2 types on the
                 // pairs of `l01_23_subtyping::refusals::fork_by` (COMPLEXITY.md K35). So is a candidate
                 // that lies inside an excluded tuple type in every component, as each pair of
-                // `a_difference_of_forked_unions_is_refused_in_its_size` does (K78).
+                // `a_difference_of_forked_unions_is_refused_in_its_size` does (K80). `all_inside`
+                // says whether every candidate was skipped so.
+                let mut all_inside = true;
                 for a in g.distinct_atoms() {
                     let k = b.index[&a];
                     if refused[k] || self.inside_excluded(&b, k, &sharing).await {
                         continue;
                     }
+                    all_inside = false;
                     let mark = b.log.len();
                     for j in 0..b.r.len() {
                         if b.is_open(k, j) {
@@ -3136,6 +3158,21 @@ impl<'m> Searching<'m> {
                         return Some(v);
                     }
                 }
+                // A part with no value outside its candidates, each candidate inside an excluded
+                // tuple type, has no value: the part on the box with every candidate false is
+                // false, and an excluded tuple type holds no value of the part. Neither the
+                // candidates below nor refining would find one, so nothing is given up, and
+                // refining such a part on a fork costs order `n^2`, a search of the whole part for
+                // each tuple type (`a_difference_of_forked_unions_is_refused_in_its_size`,
+                // COMPLEXITY.md K80). A forked part not so proved empty is refined as before, so a
+                // value only refining finds is kept (`a_value_found_by_refining_a_forked_part_is_kept`).
+                if all_inside
+                    && g.restrict(&|a| (!refused[b.index[a]]).then_some(false))
+                        .is_leaf()
+                        == Some(false)
+                {
+                    continue;
+                }
                 // One candidate for each component: the box with that component outside every
                 // tuple type the part excludes, so the tuple is in none of them. Pairs of a list
                 // and an integer without those of lists of only 1s or only 2s hold `([0], 0)`,
@@ -3151,23 +3188,7 @@ impl<'m> Searching<'m> {
                         return Some(v);
                     }
                 }
-                // Complexity tradeoff: a part on whose box two open tuple types differ in a recursive
-                // component is not refined. Why: refining runs a search for each open tuple type in
-                // each component, and on such a part every search meets the fork again, order `n^2`
-                // in its tuple types (55 times the instructions from 8 to 64 on
-                // `a_union_of_forked_differences_is_refused_in_its_size`). The strict search has
-                // refused such a part already (Fork), and this search only looks for a value before
-                // that refusal stands; what is given up is a value found only by refining a forked
-                // part, which leaves the answer Refused(Fork) where it could be Inhabited. Trigger:
-                // `Region::forks` on the open tuple types of the narrowed box. Tests:
-                // `l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`
-                // and `a_difference_of_forked_unions_is_refused_in_its_size`. COMPLEXITY.md K78. A
-                // complete solution needs the subset construction over the forked rows.
-                let open: Vec<usize> = g.distinct_atoms().iter().map(|a| b.index[a]).collect();
-                if (0..b.r.len()).any(|j| b.forks(&open, j)) {
-                    continue;
-                }
-                if let Some(row) = self.refine(*len, f).await
+                if let Some(row) = self.refine(start, f).await
                     && let Some(v) = self.row_rep(&row, f).await
                 {
                     return Some(v);
@@ -3225,15 +3246,16 @@ impl<'m> Searching<'m> {
         Some(found)
     }
 
-    /// A box within the tuple part `f` of length `len`, found by splitting each component, one
-    /// tuple type at a time, into the piece inside that tuple type and the piece outside it,
+    /// A box within the tuple part `f` and the box `start`, found by splitting each component,
+    /// one tuple type at a time, into the piece inside that tuple type and the piece outside it,
     /// and keeping a piece the search shows inhabited, else one it does not prove empty. Each
     /// step is at most two searches, so the searches are at most twice the tuple types times
     /// the components, and the box ends closed on every tuple type: the part then holds all of
     /// it or none.
-    async fn refine(&'m self, len: usize, f: &Part<Row>) -> Option<Vec<Type>> {
+    async fn refine(&'m self, start: Vec<Type>, f: &Part<Row>) -> Option<Vec<Type>> {
         let refuse_forks = std::mem::replace(&mut self.s().refuse_forks, false);
-        let mut g = self.region(vec![Type::top(); len], f).await;
+        let len = start.len();
+        let mut g = self.region(start, f).await;
         let mut h = f.clone();
         let mut empty = self.narrow_tuples(&mut g, &mut h).await;
         for j in 0..len {

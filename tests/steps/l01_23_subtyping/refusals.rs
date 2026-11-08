@@ -681,7 +681,9 @@ fn a_difference_of_forked_unions_is_refused_in_its_size() {
     // 8874023a, before REFUSAL-narrow-cells: 25.7M, 104M, 470M and 2396M instructions at n 8,
     // 16, 32 and 64, order n^2: each pair was a candidate for a value, whose narrowing tested
     // the `n` cells of its components and took the `n` excluded pairs out one by one, and the
-    // search then refined the forked part. Now 4.5M and 35.2M at n 8 and 64 (COMPLEXITY.md K78).
+    // search then refined the forked part, `n` searches of the whole part. Now 3.7M, 7.3M, 14.4M
+    // and 28.8M (release probe): each pair is inside the pair that holds it, and the part, with
+    // no value outside its pairs, is passed over as empty without refining (COMPLEXITY.md K80).
     refusal_scales(
         "Fork, by a difference of unions",
         8,
@@ -698,8 +700,8 @@ fn a_difference_of_forked_unions_is_refused_in_its_size() {
 fn a_union_of_forked_differences_is_refused_in_its_size() {
     // The union of `n` differences, each a pair minus a pair that holds it. Measured on
     // 8874023a, before REFUSAL-narrow-cells: 64.6M, 264M, 1125M and 5123M instructions at n 8,
-    // 16, 32 and 64, order n^2: the value search took all `2n` pairs on one box. Now 4.1M and
-    // 32.0M at n 8 and 64, one box for each difference (COMPLEXITY.md K78).
+    // 16, 32 and 64, order n^2: the value search took all `2n` pairs on one box. Now 4.3M, 8.4M,
+    // 16.7M and 33.4M (release probe), one box for each difference (COMPLEXITY.md K80).
     refusal_scales(
         "Fork, by a union of differences",
         8,
@@ -710,4 +712,63 @@ fn a_union_of_forked_differences_is_refused_in_its_size() {
                 .fold(Type::empty(), |u, (a, b)| &u | &(&a - &b))
         },
     );
+}
+
+#[test]
+fn a_pair_type_met_with_forked_differences_is_refused_in_its_size() {
+    // The union of `a_union_of_forked_differences_is_refused_in_its_size` met with the pairs of
+    // lists of integers, so the union is not at the top of the part. On the box that the pair
+    // type narrows to, the pair type holds every tuple and drops out, and the union is searched
+    // one difference at a time. Release probe, instructions at n 8, 16, 32 and 64: on 3c251cd5,
+    // which split only a union at the top, 33M to 1694M (its report); with that split and
+    // forked parts refined, 75.0M, 342M, 1757M and 10334M; now 11.3M, 22.5M, 44.9M and 89.8M
+    // (COMPLEXITY.md K80).
+    refusal_scales(
+        "Fork, by a pair type met with a union of differences",
+        8,
+        Refusal::Fork,
+        |n, tag| {
+            let l = list_named(Type::int(), tag);
+            let union = forked_pairs(n, tag)
+                .into_iter()
+                .fold(Type::empty(), |u, (a, b)| &u | &(&a - &b));
+            &Type::tuple(vec![l.clone(), l]) & &union
+        },
+    );
+}
+
+/// Pairs of lists of integers less two pairs: those whose first list holds only 1s and whose
+/// second has an even length, and those whose first list holds some other integer and whose
+/// second has an odd length. The two excluded first lists meet nowhere, and the two second
+/// lists cover all lists, so no component alone leaves a value; `([], [0])` is one.
+fn forked_pair_left() -> Type {
+    let l = list(Type::int());
+    let pair = |a: &Type, b: &Type| Type::tuple(vec![a.clone(), b.clone()]);
+    let ones = list(lit(1));
+    let (even, odd) = (period(2, 0), period(2, 1));
+    &(&pair(&l, &l) - &pair(&ones, &even)) - &pair(&(&l - &ones), &odd)
+}
+
+#[test]
+fn a_value_found_by_refining_a_forked_part_is_kept() {
+    // Each type is inhabited, and the strict search stops at the fork in its first component.
+    // No candidate of the search for values holds a value: a value is found only by splitting
+    // the first component at a tuple type and narrowing the second (`Searching::refine`). The
+    // answers are those of d5055bcf; 3c251cd5, which did not refine a forked part, refused all
+    // three for Fork.
+    let l = list(Type::int());
+    let pair = |a: &Type, b: &Type| Type::tuple(vec![a.clone(), b.clone()]);
+    let (ones, twos) = (list(lit(1)), list(lit(2)));
+    let (even, odd) = (period(2, 0), period(2, 1));
+    // Pairs of a list of only 1s or only 2s and any list, without those of only 1s and an even
+    // length and those of only 2s and an odd length: `([1], [0])` is left.
+    let ones_or_twos = &(&pair(&(&ones | &twos), &l) - &pair(&ones, &even)) - &pair(&twos, &odd);
+    // `forked_pair_left` joined with an empty difference of pairs that shares no tuple type
+    // with it, so the union is searched one part at a time.
+    let joined = &forked_pair_left() | &(&pair(&twos, &even) - &pair(&twos, &l));
+    for t in [forked_pair_left(), ones_or_twos, joined] {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+        assert!(!t.is_empty(), "{t}");
+    }
 }
