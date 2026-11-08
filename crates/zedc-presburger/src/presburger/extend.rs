@@ -218,7 +218,7 @@ impl Extending {
     /// body read again: `preimage::Scoped::interface`), so that a link whose point is found
     /// beside a kept part reads that part through its face (`Face`, LOAD-call-summary). The
     /// answers are those [`Extending::defined`] gives, since each face is exact, but that a
-    /// point the faces give ([`Faces::free`]) answers where the conjunction decided whole is
+    /// point the faces give (`Faces::free`) answers where the conjunction decided whole is
     /// refused (LOAD-bound-holes); every formula asked of one `Extending` is read with the same
     /// `iface`.
     pub fn defined_with(

@@ -523,8 +523,13 @@ fn answers_are_those_of_the_whole(src: &str) {
 /// answers of the conjunctions it extends, is the same, refusals too, when each kept part is
 /// read through its face where one is made (`Extending::defined_with`) as when none is
 /// (`Extending::defined`), except that a face may answer where none refuses, and then its
-/// answer is the one found point by point (`enumerated`; LOAD-bound-holes); a face never
-/// refuses where none answers. Each answer is the one the body closed over the definitions it
+/// answer is the one found point by point (`enumerated`; LOAD-bound-holes); a face refuses
+/// where none answers only where the relation decided whole is refused too, and then the
+/// answer without faces is the one found point by point. That answer extends a point the
+/// parts were given in an earlier question, so it depends on the order of the questions: in
+/// `p4(x) = q(x: x) && p3(x: x + 1) && x < 279` of the chain below `x < 29 || x > 43`, it is
+/// refused in the unit's order and answered in the reverse; with faces it is refused in both,
+/// since the points the faces give the links below extend to no point of `p4`. Each answer is the one the body closed over the definitions it
 /// reaches has, decided whole, wherever that is decided: no question decided whole is refused
 /// from parts (LOAD-extend-refuses); in the unit's order and in the reverse. A question the
 /// solver refuses whole may be answered from parts. Returns how many answers the whole gave.
@@ -568,10 +573,21 @@ fn answers_with_faces_are_those_without(src: &str) -> usize {
                             "`{name}` {side} with faces, by points, in\n{src}\n{w}"
                         );
                     }
-                    (Err(_), Ok(_)) => {
-                        panic!(
-                            "`{name}` {side} refused with faces, answered without, in\n{src}\n{w}"
-                        )
+                    (Err(_), Ok(g)) => {
+                        let f = match side == "holds" {
+                            true => expected.body.clone(),
+                            false => Formula::negate(expected.body.clone()),
+                        };
+                        assert!(
+                            whole(&expected, f).is_err(),
+                            "`{name}` {side} refused with faces, answered without and whole, in\n{src}\n{w}"
+                        );
+                        let (holds, fails) = enumerated(&w);
+                        let want = if side == "holds" { holds } else { fails };
+                        assert_eq!(
+                            *g, want,
+                            "`{name}` {side} without faces, by points, in\n{src}\n{w}"
+                        );
                     }
                     _ => assert_eq!(
                         got, without,
