@@ -53,7 +53,7 @@
 //! when the box entails the relation; when it is not, the relation is kept with the box. And a
 //! result that is still not exact over a listed box (every input's set one whose members the
 //! source lists, `x: {0, 1, 2}` and not `x: int[0..=2]` whatever its width, at most one input
-//! with more than one member; [`preimage_listed`]), of a term whose form shows that it ends,
+//! with more than one member; `preimage_listed`), of a term whose form shows that it ends,
 //! is enumerated: the term is run at each point, and the result is the projection of the points
 //! that meet the demand, exact when they form a box. An enumeration that meets a term the
 //! evaluator cannot run removes nothing.
@@ -225,7 +225,7 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 
 /// [`preimage`], the domains of the names in `listed` being sets whose members the source
 /// lists, each holding no member the source does not list: a box over them may be
-/// enumerated ([`enumerate`]).
+/// enumerated (`enumerate`).
 pub fn preimage_listed(
     term: &Term,
     inputs: &Domains,

@@ -213,7 +213,7 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 
 /// [`preimage`], the domains of the names in `listed` being sets whose members the source
 /// lists (`x: {0, 1, 2}`), each holding no member the source does not list: a box over them
-/// may be enumerated ([`enumerate`]). A domain the source gives as a range (`int[0..=2]`) is
+/// may be enumerated (`enumerate`). A domain the source gives as a range (`int[0..=2]`) is
 /// not listed, whatever its width.
 pub fn preimage_listed(
     term: &Term,
