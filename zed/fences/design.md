@@ -582,18 +582,18 @@ exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's sig
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
 ```
 
-<!-- DESIGN.md:3570 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
+<!-- DESIGN.md:3571 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
 ```zed
 // layer L3
 priceOf(positional items, positional id) = items[id]?.price * (1 + taxRate);
 ```
 
-<!-- DESIGN.md:3577 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
+<!-- DESIGN.md:3578 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
 ```zed
 priceOf : (K ->? {price: f64}, K) -> f64 | #notFound
 ```
 
-<!-- DESIGN.md:3589 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
+<!-- DESIGN.md:3590 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
 ```zed
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);

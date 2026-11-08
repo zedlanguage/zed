@@ -484,3 +484,5 @@ Expr ::: ((1,),) ::: (( (( 1 , )) , ))
 Expr ::: (,) ::: ERROR
 Expr ::: match v { (a,) -> a } ::: (match v { ((( a , )) -> a) })
 Expr ::: match v { (a) -> a } ::: ERROR
+Type ::: rat[num 1..=8, den 1..=4] ::: (rat ([ (num (1 ..= 8)) , (den (1 ..= 4)) ]))
+Type ::: rat[den 1..] ::: (rat ([ (den (1 ..)) ]))

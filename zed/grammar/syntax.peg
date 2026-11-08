@@ -275,7 +275,7 @@ TypeNot       = '!' TypeNot                                                     
               | ~TypePostfix                                                       L1
 TypePostfix   = TypePostfix TypeSuffix                                             L10
               | ~TypePrimary                                                       L1
-TypeSuffix    = '[' nest(Refinement) ']'                                           L10
+TypeSuffix    = '[' nest(Refinement % ',' ','?) ']'                                L10
               | 'matching' GrammarBlock                                            L20
 Refinement    = Name ('<=' | '<' | '>=' | '>' | '==') Additive                     L10
               | Name RangeLit                                                      L10

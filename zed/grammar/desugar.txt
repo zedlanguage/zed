@@ -147,7 +147,7 @@ TypeOr        : union
 TypeAnd       : intersection
 TypeNot       : complement
 TypePostfix   : the type with its suffixes applied left to right
-TypeSuffix    : `[r]` a refinement; `matching G` the strings G parses
+TypeSuffix    : `[r]` a refinement, `[r1, r2]` the intersection of both; `matching G` the strings G parses
 Refinement    : the subset of the type a comparison, range or named predicate selects
 RangeLit      : an interval of the type, `_` an open end
 TypePrimary   : the type of its alternative
