@@ -15,8 +15,8 @@ fn annotations_before_declarations() {
             "(annotated (@cost (* n (call log n)) (space: n)) @noalloc (def sort (xs) = xs))",
         ),
         (
-            "@log @strict\nf(x) = x;",
-            "(annotated @log @strict (def f (x) = x))",
+            "@log @exact\nf(x) = x;",
+            "(annotated @log @exact (def f (x) = x))",
         ),
         ("@log()\nf(x) = x;", "(annotated (@log) (def f (x) = x))"),
         (

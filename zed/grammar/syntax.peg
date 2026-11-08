@@ -80,8 +80,10 @@ Proof         = 'proof' Block                                                   
 IndexedDef    = Name ('[' IndexKey ']')+ '=' Expr Boundary? ';'                    L6
 IndexKey      = Name 'in' Expr                                                     L6
               | Expr                                                               L6
-Push          = ~KeyedPush                                                         L7
+Push          = ~AckPush                                                           L7
+              | ~KeyedPush                                                         L7
               | ~WholePush                                                         L1
+AckPush       = Name '=' Name ('[' Expr ']')* '<-' Expr ';'                        L7
 KeyedPush     = Name ('[' Expr ']')+ '<-' Expr ';'                                 L7
 WholePush     = Name '<-' Expr ';'                                                 L1
 Binding       = ~TypedBinding                                                      L10

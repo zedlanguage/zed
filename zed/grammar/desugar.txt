@@ -42,6 +42,7 @@ Proof         : a derivation checked by the proof checker (sec:verification); no
 IndexedDef    : `f[i in D] = e` is fam(⟦D⟧, i -> ⟦e⟧) when e does not read f, the definedness fix(⟦D⟧, step, ev) with `this` = f when it does, and gen when the reads are a bounded number of steps back in a time order, the gen's state being the window of that many frames (sec:generations); several `[ ]` nest; the boundary's entries are defined before the first round
 IndexKey      : `i in D` binds i over the keys of ⟦D⟧; an expression is the key of one case of a piecewise definition
 Push          : a push
+AckPush       : `a = p <- e` is the push `p <- e`, keyed as written, with `a` bound to its acknowledgment (*T-Port*), so the port's failure policy does not apply to it
 KeyedPush     : writes ⟦e⟧ at keypath ⟦k⟧ of a keyed accumulator, whose writes at one keypath are folded by its reducer
 WholePush     : push(p, ⟦e⟧)
 Binding       : the binding of its alternative

@@ -157,6 +157,7 @@ const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"),
 /// Names of the table whose rows are not built, each with the plan row that builds it: the test
 /// holds that each is not yet known, so that row must take it out of this list.
 const PENDING: &[(&str, &str)] = &[
+    ("failure", "PORT-ack-name"),
     ("fpwarn", "FPWARN"),
     ("fpsafe", "FPWARN"),
     ("approx", "L10.3d"),
@@ -258,6 +259,14 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
                     && f.chars().all(char::is_alphanumeric),
                 "the facet `{f}` of {tag} is not a lower-case name"
             );
+            if PENDING.iter().any(|(n, _)| n == f) {
+                assert_eq!(
+                    prelude_layer(f),
+                    None,
+                    "`{f}` is built: remove it from PENDING"
+                );
+                continue;
+            }
             if PROGRAM_FACETS.contains(&(tag.as_str(), f.as_str())) {
                 assert_eq!(prelude_layer(f), None, "the program's facet `{f}`");
             } else {

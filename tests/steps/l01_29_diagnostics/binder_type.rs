@@ -243,6 +243,10 @@ const SITES: &[(&str, Site)] = &[
     ),
     ("IndexedDef", Site::Later("int[i in s] = i;\n")),
     ("IndexKey", Site::Later("f[int in s] = 1;\n")),
+    (
+        "AckPush",
+        Site::Later("main() -> (out: Lines) {\n  int = out <- \"x\";\n}\n"),
+    ),
     ("KeyedPush", Site::NotBinder("a port's name, a use")),
     ("WholePush", Site::NotBinder("a port's name, a use")),
     ("TypedBinding", Site::Later("int: int = 1;\n")),
