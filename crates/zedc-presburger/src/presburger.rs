@@ -44,9 +44,10 @@
 //! none, the splinters of each dark elimination are searched [Omega, sec. 2.3]: for each lower
 //! row `a·x + l >= 0` of the eliminated `x` and `m` its largest upper coefficient, the problem
 //! with `a·x + l == k` for a fresh variable `0 <= k <= (a·m - a - m) / m`. The problem has a
-//! point exactly when the dark shadow or a splinter has one. A splinter that itself takes a
-//! dark shadow with no point is not split again: that, and a system every elimination of which
-//! would add terms and which the box test does not decide, are the refusals ([`Refusal`]),
+//! point exactly when the dark shadow or a splinter has one. A splinter whose own dark shadow
+//! has no point is split again when each of its dark eliminations leaves fewer live variables
+//! than the one it came from, and is refused otherwise: that, and a system every elimination of
+//! which would add terms and which the box test does not decide, are the refusals ([`Refusal`]),
 //! each a property of the system's shape. A
 //! satisfiable problem yields a model, built only when one is wanted: each eliminated variable
 //! takes the value nearest zero that its bounds allow under the values of the variables
@@ -113,8 +114,8 @@ pub enum Refusal {
     /// bounds give its variables, and each of the five points of that box that `box_point`
     /// tries misses some row. A system with three variables left is decided by `live3`.
     Growth,
-    /// The integer points could lie only in a splinter of a splinter: a gray shadow within a
-    /// gray shadow over four variables or more, whose search is exponential in the variables.
+    /// The integer points could lie only in a splinter whose own dark eliminations leave as many
+    /// live variables as the one it came from, four or more: splitting it again need not end.
     Shadows,
     /// The search through the disjunctions found no point and removed no disjunct.
     Disjuncts,
@@ -150,8 +151,9 @@ impl fmt::Display for Refusal {
                  is not decided"
             }
             Refusal::Shadows => {
-                "an integer point of the integer constraints could lie only in a splinter of a \
-                 splinter of their projection, so whether one exists is not decided"
+                "an integer point of the integer constraints could lie only in a splinter of their \
+                 projection that would have to be split again with as many variables left, so \
+                 whether one exists is not decided"
             }
             Refusal::Disjuncts => {
                 "no choice among the disjunctions of the integer constraints was settled"
@@ -4418,18 +4420,20 @@ fn least(held: Option<Refusal>, r: Refusal) -> Refusal {
 /// The Omega test on `base` over `vars` variables of colors `keys`, with the splinters of its
 /// dark eliminations: by Pugh's lemma [Omega, sec. 2.3] the problem has an integer point
 /// exactly when its dark shadow has one or one of the splinters of a dark elimination has one.
-/// The splinters are searched only when the dark shadows have no point, each once, without
-/// splinters of their own. Pugh's lemma holds for either side of an elimination (for the
-/// upper bounds, it is the lemma for `-x`), so the splinters taken are those of the side with
-/// fewer bounds, and of both sides when they have as many, since which side is the lower one
-/// can turn on the sign `quotient` gave a merged variable. The splinters are searched a batch
-/// of dark eliminations at a time, in the order of the batches, and every splinter of a batch
-/// is searched, so the answer does not depend on the order of the variables within a batch:
-/// a point of a splinter is the answer; otherwise the first batch with a dark elimination
-/// none of whose sides has only empty splinters gives the least refusal met in that batch;
-/// otherwise the problem is empty. A refused dark
-/// shadow is the answer likewise: the splinters hold only the points it misses, so they could
-/// turn the refusal into a point but never into an empty answer.
+/// The splinters are searched only when the dark shadows have no point. Pugh's lemma holds for
+/// either side of an elimination (for the upper bounds, it is the lemma for `-x`), so the
+/// splinters taken are those of the side with fewer bounds, and of both sides when they have as
+/// many, since which side is the lower one can turn on the sign `quotient` gave a merged
+/// variable. A splinter whose own dark shadows have no point is split in turn
+/// ([`splinters`]) when each of its dark eliminations leaves fewer variables than the one it
+/// came from; otherwise it is refused with [`Refusal::Shadows`]. The splinters are searched a
+/// batch of dark eliminations at a time, in the order of the batches, and every splinter of a
+/// batch is searched, so the answer does not depend on the order of the variables within a
+/// batch: a point of a splinter is the answer; otherwise the first batch with a dark
+/// elimination none of whose sides has only empty splinters gives the least refusal met in
+/// that batch; otherwise the problem is empty. A refused dark shadow is the answer likewise:
+/// the splinters hold only the points it misses, so they could turn the refusal into a point
+/// but never into an empty answer.
 fn search(
     vars: usize,
     base: &[(Row, Rel)],
@@ -4437,14 +4441,60 @@ fn search(
     want: bool,
     name: &dyn Fn(usize) -> String,
 ) -> Result<Option<Vec<Int>>, Refusal> {
-    let mut top = Omega::new(keys, base, want, true);
+    let mut top = Omega::new(keys, base, want);
     match top.run() {
         Leaf::Point(v) => return Ok(Some(v)),
         Leaf::Empty => {}
         Leaf::Refused(r) => return Err(r),
         Leaf::Tied(t) => return Err(t.written(vars, name)),
     }
-    for batch in &top.gray {
+    splinters(&top, base, vars, name)
+}
+
+/// The splinters of the dark eliminations of `top`, a run of the Omega test on `base` that
+/// ended empty, searched as [`search`] describes. A splinter holds the rows of `base` with one
+/// bound of the eliminated variable fixed within its gap by a fresh variable; when its own run
+/// ends empty after dark shadows, those are split in turn, so a point that lies in a splinter
+/// of a splinter is found.
+///
+/// Complexity tradeoff: a splinter whose dark eliminations are not all at fewer live variables
+/// than the one it came from is not split again; the question gets `Refusal::Shadows` ("not
+/// decided") even when a point lies there. Why: a splinter with a gap of more than one value
+/// adds the fresh variable for the one it eliminates, so splitting it again keeps the count of
+/// variables and need not end (on the example in `omega.rs` it ran 41 levels deep, the rows
+/// growing from 8 to 992); with fewer live variables at each level the depth is at most the
+/// live variables less three, where `live3` decides the rest. Within that depth the search
+/// is a tree: each level multiplies the runs by the bounds of one side, so the cost is
+/// exponential in the depth of the nesting, as in Pugh's Omega test (integer feasibility is
+/// NP-complete). No child system repeats within one search (0 of 10806 measured over chained
+/// rows with coefficient 2 on one side, the form that nests), so no visited set is kept.
+/// Trigger for the refusal: a dark elimination inside a splinter at as many live variables as
+/// the one it splits, which needs a gap of more than one value (a bound coefficient other than
+/// ±1 or 2). Tests: `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
+/// `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
+/// `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`,
+/// `l01_38_presburger::scaling::splinters_of_splinters_scale`. COMPLEXITY.md row S18. A
+/// complete solution would enumerate the gap of each such splinter by value, as Pugh's Omega
+/// test does, at a cost exponential in the coefficients as well as the depth.
+///
+/// Complexity tradeoff: the search ends at the first batch of dark eliminations with a refusal,
+/// and the splinters of later batches, which could hold a point, are not searched; the
+/// question gets the refusal. Why: searching every splinter costs a run of the Omega test for
+/// each, which along a chain of dark eliminations is quadratic in the variables; ending at the
+/// first refusal keeps it linear when that refusal comes early. The batches are given by the
+/// structure, and so is their order, so ending after a whole batch keeps the answer the same
+/// under every naming, which ending inside one would not. Trigger: a dark elimination whose
+/// splinters are refused, before one whose splinters hold a point. Tests:
+/// `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`,
+/// `l01_38_presburger::names::the_splinters_are_searched_a_batch_at_a_time`. COMPLEXITY.md row
+/// NAME-ties.
+fn splinters(
+    top: &Omega,
+    base: &[(Row, Rel)],
+    vars: usize,
+    name: &dyn Fn(usize) -> String,
+) -> Result<Option<Vec<Int>>, Refusal> {
+    for (live, batch) in &top.gray {
         let mut refused: Option<Refusal> = None;
         for &(at, n) in batch {
             let Step::Chosen(j, rows) = &top.steps[at] else {
@@ -4469,42 +4519,33 @@ fn search(
                     .expect("an inexact elimination has both bounds");
                 let mut open: Option<Refusal> = None;
                 for bound in side {
-                    let Some(mut child) = top.splinter(base, at, n, bound, *j, &m) else {
+                    let Some((rows, keys)) = top.splinter(base, at, n, bound, *j, &m) else {
                         continue;
                     };
+                    let mut child = Omega::new(&keys, &rows, top.want);
                     let mut leaf = child.run();
-                    if matches!(leaf, Leaf::Empty) && child.gap {
+                    if matches!(leaf, Leaf::Empty) && !child.gray.is_empty() {
                         // Run again with each gray shadow over three variables decided by
-                        // `live3`, which leaves a gap only where four variables or more are left.
-                        let Some(again) = top.splinter(base, at, n, bound, *j, &m) else {
-                            unreachable!("a splinter built once is built again");
-                        };
-                        child = again;
+                        // `live3`, which leaves gray shadows only where four variables or more
+                        // are left.
+                        child = Omega::new(&keys, &rows, top.want);
                         child.exact3 = true;
                         leaf = child.run();
                     }
-                    match leaf {
+                    let split = match leaf {
                         Leaf::Point(v) => return Ok(Some(v)),
-                        Leaf::Empty if !child.gap => {}
-                        // Complexity tradeoff: a splinter whose own elimination leaves a gray
-                        // shadow (a splinter of a splinter) over four variables or more is not
-                        // searched; the question gets `Refusal::Shadows` ("not decided") even
-                        // when a point lies there. With three variables left, the run again
-                        // above decides the gray shadow by `live3`. Why: each level of
-                        // splinters multiplies the searches by the bounds of one side and their
-                        // coefficients, so nested splinters cost time exponential in the
-                        // variables. Trigger: an inexact elimination inside a splinter with four
-                        // variables or more live, which needs coefficients other than ±1 on
-                        // both sides of a variable at two levels. Tests:
-                        // `l01_38_presburger::omega::each_cause_of_a_refusal_has_its_own_message`,
-                        // `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
-                        // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`.
-                        // COMPLEXITY.md row S18. A complete solution would recurse into nested
-                        // splinters as Pugh's Omega test does, at a cost exponential in the
-                        // depth of the nesting.
-                        Leaf::Empty => open = Some(least(open, Refusal::Shadows)),
-                        Leaf::Refused(r) => open = Some(least(open, r)),
-                        Leaf::Tied(t) => open = Some(least(open, t.written(vars, name))),
+                        Leaf::Empty if child.gray.is_empty() => continue,
+                        Leaf::Empty if child.gray.iter().all(|(l, _)| l < live) => {
+                            splinters(&child, &rows, vars, name)
+                        }
+                        Leaf::Empty => Err(Refusal::Shadows),
+                        Leaf::Refused(r) => Err(r),
+                        Leaf::Tied(t) => Err(t.written(vars, name)),
+                    };
+                    match split {
+                        Ok(Some(v)) => return Ok(Some(v)),
+                        Ok(None) => {}
+                        Err(r) => open = Some(least(open, r)),
                     }
                 }
                 match open {
@@ -4516,18 +4557,6 @@ fn search(
                 refused = Some(least(refused, r));
             }
         }
-        // Complexity tradeoff: the search ends at the first batch of dark eliminations with a
-        // refusal, and the splinters of later batches, which could hold a point, are not
-        // searched; the question gets the refusal. Why: searching every splinter costs a run of
-        // the Omega test for each, which along a chain of dark eliminations is quadratic in the
-        // variables; ending at the first refusal, as the search did before, keeps it linear
-        // when that refusal comes early. The batches are given by the structure, and so is
-        // their order, so ending after a whole batch keeps the answer the same under every
-        // naming, which ending inside one would not. Trigger: a dark elimination whose
-        // splinters are refused, before one whose splinters hold a point. Tests:
-        // `l01_38_presburger::scaling::pughs_example_in_a_chain_scales`,
-        // `l01_38_presburger::names::the_splinters_are_searched_a_batch_at_a_time`.
-        // COMPLEXITY.md row NAME-ties.
         if let Some(r) = refused {
             return Err(r);
         }
@@ -4833,6 +4862,10 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
 /// The coefficients of a row, nonzero, in variable order. Rows are shared, not copied, among
 /// the system, its index and the steps.
 type Coefs = Rc<[Term]>;
+
+/// A splinter (`Omega::splinter`): its rows, each `>= 0` or `== 0`, and the colors of its
+/// variables.
+type Splinter = (Vec<(Row, Rel)>, Vec<usize>);
 
 /// `Σ a[i]·x[i] + k`, compared with zero by `>=`, or by `==` among the equalities.
 #[derive(Clone)]
@@ -6173,16 +6206,12 @@ struct Omega {
     want: bool,
     /// Whether the real shadow was tested, at the first inexact elimination.
     tested: bool,
-    /// Whether the dark eliminations are kept for the search of their splinters; false within a
-    /// splinter.
-    may_splinter: bool,
-    /// The dark eliminations kept, by batch, the batches in the order taken: the place of each
-    /// one's step, and the number of variables then. A batch is the variables
+    /// The dark eliminations kept for the search of their splinters, by batch, the batches in
+    /// the order taken: the live variables when the batch was taken, and for each elimination
+    /// the place of its step and the number of variables then. A batch is the variables
     /// [`System::least`] gave together, which share no row and which nothing but their names
     /// tells apart.
-    gray: Vec<Vec<(usize, usize)>>,
-    /// Whether a dark shadow was taken whose splinters are not searched.
-    gap: bool,
+    gray: Vec<(usize, Vec<(usize, usize)>)>,
     /// Whether a gray shadow with three variables left is decided by `live3` in place of a
     /// dark shadow with a gap: set when a splinter is run again after its first run left one.
     exact3: bool,
@@ -6200,7 +6229,7 @@ struct Omega {
 
 impl Omega {
     /// The test on the rows `base`, each `>= 0` or `== 0`, over variables of the colors `keys`.
-    fn new(keys: &[usize], base: &[(Row, Rel)], want: bool, may_splinter: bool) -> Omega {
+    fn new(keys: &[usize], base: &[(Row, Rel)], want: bool) -> Omega {
         let mut sys = System::new(keys.iter().copied());
         let mut es = Equalities::new(keys.len());
         for (r, rel) in base {
@@ -6216,9 +6245,7 @@ impl Omega {
             pending: Vec::new(),
             want,
             tested: false,
-            may_splinter,
             gray: Vec::new(),
-            gap: false,
             exact3: false,
             loose_tie: None,
             working: Vec::new(),
@@ -6371,19 +6398,14 @@ impl Omega {
                                 None => continue,
                             }
                         }
-                        if self.may_splinter {
-                            self.gray.push(Vec::with_capacity(js.len()));
-                        } else {
-                            self.gap = true;
-                        }
+                        let live = self.sys.live;
+                        let mut batch = Vec::with_capacity(js.len());
                         for j in js {
-                            if self.may_splinter {
-                                let at = (self.steps.len(), self.sys.vars.len());
-                                self.gray.last_mut().expect("a batch").push(at);
-                            }
+                            batch.push((self.steps.len(), self.sys.vars.len()));
                             let rows = self.sys.eliminate(j, true);
                             self.steps.push(Step::Chosen(j, rows));
                         }
+                        self.gray.push((live, batch));
                         continue;
                     }
                     Some((fill, Err(t))) if fill <= 0 => tie = Some(t),
@@ -6580,7 +6602,8 @@ impl Omega {
     /// `vars` variables, for its bound `r >= 0` on `x = x[j]` with coefficient `±a` there, and
     /// `m` the largest coefficient of `x`, in magnitude, among the bounds of the other side:
     /// the problem with `r == k` for a fresh `0 <= k <= (a·m - a - m) / m` [Omega, sec. 2.3;
-    /// for an upper bound, the same of `-x`], or `None` when that range is empty.
+    /// for an upper bound, the same of `-x`], as its rows and the colors of its variables, or
+    /// `None` when that range is empty.
     /// It is built from the given rows and the definitions made before the step, so nothing of
     /// this run's state is copied: its points are points of the problem, and it holds the
     /// points of the splinter of the system at the step, each of which extends to one.
@@ -6592,7 +6615,7 @@ impl Omega {
         bound: &Row,
         j: usize,
         m: &Int,
-    ) -> Option<Omega> {
+    ) -> Option<Splinter> {
         let a = &bound.at(j).abs();
         let top = (&(&(a * m) - a) - m).div_floor(m);
         if top.is_negative() {
@@ -6652,7 +6675,7 @@ impl Omega {
             .map(|v| v.key)
             .chain([usize::MAX])
             .collect();
-        Some(Omega::new(&keys, &rows, self.want, false))
+        Some((rows, keys))
     }
 
     /// Solves the equality in slot `s`: by the unit coefficient of least color where it has

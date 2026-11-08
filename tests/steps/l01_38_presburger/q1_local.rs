@@ -646,7 +646,9 @@ fn chained_blocks_empty(n: usize) -> Vec<Row> {
 // with n). The band was then decided at every size, rows of 4 terms at most, about 13 times
 // the instructions from 64 to 512 without the choice's own cost. Weighted windows (at 64, 128
 // and 512, not at 256) and both kinds of blocks were refused with `Refusal::Shadows`: a
-// splinter of a splinter, which the solver never searches, a fixed depth of one. Grid squares
+// splinter of a splinter, which the solver then never searched (a fixed depth of one, since
+// OMEGA-splinter-cap a splinter is split again while its dark eliminations leave fewer live
+// variables than the one it came from). Grid squares
 // from n = 36 and sparse random rows from n = 16 ran past 60 s (sparse random at n = 8 went
 // from 32 rows to 3,755 in four eliminations), and stay refused by their form.
 

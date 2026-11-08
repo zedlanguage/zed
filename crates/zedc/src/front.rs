@@ -176,7 +176,7 @@ const NON_LINEAR_MENU: [&str; 2] = [
 /// program may be correct; the message is "whether `f` can hold is not decided: <cause>". Why:
 /// the solver decides only the fragment it can decide without exponential search (the
 /// causes, their costs and their triggers are at `presburger::Refusal`'s raise sites:
-/// Growth in `Omega::run`, Shadows in `search`, Disjuncts in `pick`). Tests:
+/// Growth in `Omega::run`, Shadows in `splinters`, Disjuncts in `pick`). Tests:
 /// `l01_38_presburger::checker::a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`,
 /// `l01_38_presburger::checker::a_question_whose_point_lies_past_one_splinter_is_rejected`,
 /// `l01_38_presburger::checker::the_linear_questions_of_a_unit_scale`. COMPLEXITY.md row S18.

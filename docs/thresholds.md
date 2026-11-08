@@ -257,16 +257,18 @@ The plan above was to eliminate a variable only where elimination does not add r
 is what was built, with the input's row count as the bound, plus the dark shadow, and a
 formula with disjunctions is no longer split into all its conjunctions:
 
-- **Elimination** (replaces `INTERMEDIATE`, `VARIABLES`; the splinters stay, one level deep). The Omega test
+- **Elimination** (replaces `INTERMEDIATE`, `VARIABLES`; the splinters stay, split again while the live variables fall). The Omega test
   eliminates, at each step, the variable that leaves the fewest rows, exact eliminations
   first, among those that leave no more rows than the problem was given. Each step removes
   a variable and the rows never pass the input's count, so the work is polynomial in the
   input. An inexact elimination decides the problem when the real shadow, tested once at the
   first such step, is empty (no point), or the dark shadow has a point (that point). Between
-  the two shadows, the splinters of each dark elimination are searched one level deep, those
-  of the side with fewer bounds, one problem per value in a gap (`presburger::search`); a
-  splinter that itself leaves a gray shadow is not searched, and the question is refused
-  (`Refusal::Shadows`; the Complexity tradeoff comment there, COMPLEXITY.md S18). When no
+  the two shadows, the splinters of each dark elimination are searched, those
+  of the side with fewer bounds, one problem per value in a gap (`presburger::splinters`); a
+  splinter that itself leaves a gray shadow is split again when each of its dark eliminations
+  leaves fewer live variables than the one it came from, which bounds the depth by the
+  variables, and otherwise the question is refused (`Refusal::Shadows`; the Complexity
+  tradeoff comment there, COMPLEXITY.md S18). When no
   variable qualifies, the question is refused (`Refusal::Growth`).
 - **Disjunctions** (replaces `KEPT_CONJUNCTIONS`, `ATOMS`). The formula is put in negation
   normal form; its top-level constraints are the base. A disjunct whose own top-level

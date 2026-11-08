@@ -142,7 +142,9 @@ fn each_cause_of_a_refusal_has_its_own_message() {
          would enlarge them, so whether they hold at an integer point is not decided",
     );
     // A splinter of the dark elimination takes a dark shadow of its own that has no point,
-    // over four variables: with three, `live3` decides the splinter's gray shadow.
+    // over four live variables, as many as the elimination it came from: splitting it again
+    // adds a variable for each it removes and need not end (it ran 41 levels deep, the rows
+    // growing from 8 to 992). With three, `live3` decides the splinter's gray shadow.
     refused(
         Formula::and(vec![
             ge(&[("x", 9), ("y", -4), ("w", -8)], -3),
@@ -152,8 +154,9 @@ fn each_cause_of_a_refusal_has_its_own_message() {
             ge(&[("x", -10), ("y", 4), ("z", -6), ("w", -4)], 22),
         ]),
         Refusal::Shadows,
-        "an integer point of the integer constraints could lie only in a splinter of a \
-         splinter of their projection, so whether one exists is not decided",
+        "an integer point of the integer constraints could lie only in a splinter of their \
+         projection that would have to be split again with as many variables left, so whether \
+         one exists is not decided",
     );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
     // search through the disjunctions does not show by propagation. Each task has a row of

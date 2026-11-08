@@ -714,3 +714,88 @@ fn the_point_of_an_expander_of_differences_scales() {
         drop(satisfiable(if m == 256 { &small } else { &large }));
     });
 }
+
+/// Rows `Σ c·x[i] + k >= 0` over six variables whose only points lie in a splinter of a
+/// splinter: the dark shadows have none, and the splinters of the first dark elimination
+/// have none in their own dark shadows, each of whose dark eliminations leaves fewer live
+/// variables, so their splinters are searched in turn and one holds a point.
+pub(super) const SPLIT_TWICE_POINT: [(&[(usize, i64)], i64); 10] = [
+    (&[(0, 2), (1, -3)], 1),
+    (&[(0, -11), (1, 11), (2, 1)], 1),
+    (&[(1, 7), (2, -2)], 2),
+    (&[(1, -2), (2, 9), (3, 2)], 8),
+    (&[(2, 5), (3, -3)], 8),
+    (&[(2, -5), (3, 5)], -4),
+    (&[(0, -3), (3, 9), (4, -11)], 10),
+    (&[(3, -2), (4, 2)], 11),
+    (&[(4, 11), (5, -2)], 12),
+    (&[(4, -11), (5, 7)], -11),
+];
+
+/// Rows as [`SPLIT_TWICE_POINT`] with no integer point, which only the splinters of the
+/// splinters show.
+pub(super) const SPLIT_TWICE_EMPTY: [(&[(usize, i64)], i64); 10] = [
+    (&[(0, 5), (1, -7), (2, -3)], 4),
+    (&[(0, -2), (1, 5)], -2),
+    (&[(1, 11), (2, -5)], 8),
+    (&[(1, -7), (2, 11)], 6),
+    (&[(2, 9), (3, -2)], 2),
+    (&[(2, -2), (3, 2)], 2),
+    (&[(3, 5), (4, -11)], -9),
+    (&[(3, -9), (4, 3)], 7),
+    (&[(4, 2), (5, -3)], -7),
+    (&[(4, -5), (5, 2)], -9),
+];
+
+fn block_at(rows: &[(&[(usize, i64)], i64)], at: usize, r: &mut Vec<Formula>) {
+    for (t, k) in rows {
+        let t: Vec<(usize, i64)> = t.iter().map(|(i, c)| (at + i, *c)).collect();
+        r.push(row(&t, *k, false));
+    }
+}
+
+/// `n` copies of [`SPLIT_TWICE_POINT`], each over variables of its own.
+fn split_twice_copies(n: usize) -> Formula {
+    let mut r = Vec::new();
+    for c in 0..n {
+        block_at(&SPLIT_TWICE_POINT, 6 * c, &mut r);
+    }
+    Formula::and(r)
+}
+
+/// A chain `x[i] <= x[i+1] <= x[i] + 3` for `i <= n` into [`SPLIT_TWICE_POINT`] at `x[n+1]`:
+/// one part, whose point lies in a splinter of a splinter.
+fn split_twice_in_a_chain(n: usize) -> Formula {
+    let mut r = Vec::new();
+    for i in 0..=n {
+        r.push(row(&[(i + 1, 1), (i, -1)], 0, false));
+        r.push(row(&[(i, 1), (i + 1, -1)], 3, false));
+    }
+    block_at(&SPLIT_TWICE_POINT, n + 1, &mut r);
+    Formula::and(r)
+}
+
+#[test]
+fn a_point_in_a_splinter_of_a_splinter_is_found() {
+    for f in [split_twice_copies(1), split_twice_in_a_chain(4)] {
+        assert_eq!(decide(&f), Ok(true), "{f}");
+        let m = satisfiable(&f).expect("answered").expect("a point");
+        assert!(f.holds(&m), "the model {m:?} fails {f}");
+    }
+    let mut r = Vec::new();
+    block_at(&SPLIT_TWICE_EMPTY, 0, &mut r);
+    let f = Formula::and(r);
+    assert_eq!(decide(&f), Ok(false), "{f}");
+    assert_eq!(satisfiable(&f), Ok(None), "{f}");
+}
+
+#[test]
+fn splinters_of_splinters_scale() {
+    decides("copies split twice", 64, Ok(true), split_twice_copies);
+    decides(
+        "a chain into a block split twice",
+        512,
+        Ok(true),
+        split_twice_in_a_chain,
+    );
+}

@@ -57,7 +57,8 @@ const REFUSED: [Refused; 3] = [
         ],
         equality: "x == 4",
     },
-    // Shadows: a point could lie only in a splinter of a splinter.
+    // Shadows: a point could lie only in a splinter that would be split again with as many
+    // variables left.
     Refused {
         name: "shadows",
         rows: [
@@ -285,8 +286,8 @@ fn a_question_whose_point_lies_past_one_splinter_is_rejected() {
         rejection("shadows-alone", &src),
         format!(
             "1:1: whether `ok` can hold is not decided: an integer point of the integer \
-             constraints could lie only in a splinter of a splinter of their projection, so \
-             whether one exists is not decided\n  \
+             constraints could lie only in a splinter of their projection that would have to be \
+             split again with as many variables left, so whether one exists is not decided\n  \
              [1] 1:18: the constraints: 8 * w + 4 * y <= 9 * x - 3 && 9 * w + 5 * x + 11 * y >= \
              9 && 8 * w >= 7 * x + 12 * y + 2 * z + 1 && 9 * x <= 8 * y + 7 * z && 4 * w + 10 * \
              x + 6 * z <= 4 * y + 22\n  {MENU}"
