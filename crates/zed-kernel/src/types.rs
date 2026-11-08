@@ -784,12 +784,7 @@ fn items<'a>(
 /// that needs a nested comparison (an atom's payload, a tuple length's part, the morphism part)
 /// the fields after it are pushed in reverse and the nested comparison above them, so that they
 /// are compared in order.
-fn types<'a>(
-    a: &'a Type,
-    b: &'a Type,
-    steps: &mut Vec<Step<'a>>,
-    equal: &Equal,
-) -> Ordering {
+fn types<'a>(a: &'a Type, b: &'a Type, steps: &mut Vec<Step<'a>>, equal: &Equal) -> Ordering {
     if Arc::ptr_eq(&a.0, &b.0) {
         return Ordering::Equal;
     }
@@ -946,11 +941,7 @@ fn tuple_lens<'a>(
 }
 
 /// One step of [`order`] on two diagrams, expressions or parts of one universe.
-fn walk<'a, A: Ordered>(
-    w: Walk<'a, A>,
-    steps: &mut Vec<Step<'a>>,
-    equal: &Equal,
-) -> Ordering {
+fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal) -> Ordering {
     match w {
         Walk::Parts(Part::Bdd(a), Part::Bdd(b)) => walk(Walk::Bdds(a, b), steps, equal),
         Walk::Parts(Part::Expr(a), Part::Expr(b)) => walk(Walk::Exprs(a, b), steps, equal),

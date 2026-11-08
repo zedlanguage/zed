@@ -58,7 +58,7 @@ fn a_morphism_type_far_deeper_than_the_stack_is_decided() {
 /// is under the one around `int`, which the simulation of rows shows. Tuples split the box on
 /// their way down and morphisms meet and subtract their fields at each level; atoms do neither,
 /// and theirs are compared in the scaling tests only. A morphism comparison 100,000 levels deep
-/// took 13.5 s in the optimized test build at load 25 (EMPTY-morphism-diff-cost, 2026-11-07).
+/// took 9.1 s in the optimized test build at load 22 (EMPTY-morphism-next, 2026-11-07).
 fn compares_deep(shape: fn(usize, Type) -> Type, bottom: Type, under: bool) {
     zed_tests::deep::on_small_stack(move || {
         let t = shape(DEEP, lit(0));

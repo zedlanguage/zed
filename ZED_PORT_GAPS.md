@@ -2619,3 +2619,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A post-order walk of a type on a `Vec` of steps (`enum Step` owning the types) and a `Vec` of results, the joined components of each type taken off with `split_off`, and a `HashMap<Ty, Ty>` of the types already joined, keyed by the type's value through its cached digest | `one_shape_per_length` | Mutation of growable vectors and of a map (gap 11); hashing by a cached digest (gap 1) | A fold with the step stack and the map as values, or plain recursion once Zed's lowering manages the stack (PRE-stack decision (b)); the map keyed by the type's content digest |
 | `Sig::word: Option<Arc<str>>`, the prelude word a signature is, included in its digest, so the checker tells `min` from `+` of the same arrows wherever the function value goes | `Sig`, `word_sig`, `Ck::apply` | None | A field of the signature's record |
+
+## Entries from EMPTY-morphism-next (`crates/zed-kernel/src/types.rs`, `crates/zed-kernel/src/types/empty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashMap`/`HashSet` keyed by `Type` with `BuildHasherDefault<KeyHasher>`, in `Search` fields and in thread-locals built in a `const` block (`const { RefCell::new(..) }`) | `empty.rs` `ByType`, `TypeSet`, `MEMO`, `VERDICTS`, `DECIDING`, `SHARED`, `Search`; `types.rs` `Equal` in `order` | Interfaces (L10) and thread-locals, as in the `list::KeyHasher` entry | A family keyed by the type's digest in the per-thread store, the hash function given as a parameter |
+| A memo keyed by the operands' node addresses that holds the operands, so no address is reused while the entry lives | `Searching::cut` (`cuts`), as `settles` before it | Identity (node addresses) | A key by node id in the per-thread store |

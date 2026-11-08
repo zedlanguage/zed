@@ -68,8 +68,8 @@
 use std::cell::{RefCell, RefMut};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::BuildHasherDefault;
 use std::future::Future;
+use std::hash::BuildHasherDefault;
 use std::ops::{ControlFlow, Range};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -736,9 +736,28 @@ struct Search {
     keys: BTreeSet<Type>,
     /// What is known of each list type met, by the rule on pure cycles.
     cycles: ByType<Option<Cycle>>,
-    /// The meet (`true`) or difference (`false`) of each pair of nodes `settles` tested, built
-    /// once, by the nodes' addresses; the operands are kept with it, so no address is reused.
-    cuts: BTreeMap<(usize, usize, bool), (Type, Type, Type)>,
+    /// The meet, difference or union of each pair of nodes the search built
+    /// ([`Searching::cut`]), built once, by the nodes' addresses; the operands are kept with it,
+    /// so no address is reused.
+    cuts: HashMap<(usize, usize, Cut), (Type, Type, Type), Digests>,
+}
+
+/// What [`Searching::cut`] builds of two types.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Cut {
+    Meet,
+    Minus,
+    Join,
+}
+
+impl Cut {
+    fn of(self, x: &Type, y: &Type) -> Type {
+        match self {
+            Cut::Meet => x & y,
+            Cut::Minus => x - y,
+            Cut::Join => x | y,
+        }
+    }
 }
 
 /// A type of lists: `link` atoms holding (`item`, rest), and one `stop` atom, whose lengths
@@ -1975,18 +1994,30 @@ impl<'m> Searching<'m> {
         if let Some(b) = x.scalar_cell(y, both) {
             return b;
         }
-        let key = (x.node_addr(), y.node_addr(), both);
-        let t = self
-            .s()
-            .cuts
-            .entry(key)
-            .or_insert_with(|| {
-                let t = if both { x & y } else { x - y };
-                (x.clone(), y.clone(), t)
-            })
-            .2
-            .clone();
+        let t = self.cut(x, y, if both { Cut::Meet } else { Cut::Minus });
         self.empty(&t).await
+    }
+
+    /// `x op y`, built once per pair of nodes and kept in `cuts`, as for [`Searching::settles`]:
+    /// the search reads the same morphism types again and again, and the meets and differences
+    /// of their fields were built at each read, each a node of its own that `empty` then looked
+    /// up by its contents (EMPTY-morphism-next). The tradeoff of keying by node is that of
+    /// `settles`.
+    fn cut(&self, x: &Type, y: &Type, op: Cut) -> Type {
+        let key = (x.node_addr(), y.node_addr(), op);
+        (self.s().cuts.entry(key))
+            .or_insert_with(|| (x.clone(), y.clone(), op.of(x, y)))
+            .2
+            .clone()
+    }
+
+    /// The morphisms both `a` and `b` admit, each field built once per pair of nodes.
+    fn meet(&self, a: &Morphism, b: &Morphism) -> Morphism {
+        Morphism::new(
+            self.cut(&a.guarantee, &b.guarantee, Cut::Join),
+            self.cut(&a.permission, &b.permission, Cut::Meet),
+            self.cut(&a.value, &b.value, Cut::Meet),
+        )
     }
 
     /// Tests each changed component of the box against its open cells that have a tuple type
@@ -2487,7 +2518,8 @@ impl<'m> Searching<'m> {
     /// value can be its. A key is promised only when a value is shown in the type: a type not
     /// proved empty may still be empty, and then the empty morphism is admitted.
     async fn no_morphism(&'m self, m: &Morphism) -> bool {
-        self.shown_key(&(&m.guarantee - &m.permission)).await
+        self.shown_key(&self.cut(&m.guarantee, &m.permission, Cut::Minus))
+            .await
             || (self.shown_key(&m.guarantee).await && self.no_value(&m.value).await)
     }
 
@@ -2949,7 +2981,7 @@ impl<'m> Searching<'m> {
             let meets: Vec<(Morphism, Vec<Type>)> = match (whole, p.morphisms.union_rows()) {
                 (true, _) => vec![(
                     match taken.split_first() {
-                        Some((a, rest)) => rest.iter().fold(a.clone(), |r, b| meet(&r, b)),
+                        Some((a, rest)) => rest.iter().fold(a.clone(), |r, b| self.meet(&r, b)),
                         None => top,
                     },
                     taken.iter().map(|a| a.guarantee.clone()).collect(),
@@ -3276,11 +3308,11 @@ impl<'m> Searching<'m> {
     /// empty morphism is the only one, and its domain is the guarantee.
     async fn within(&'m self, m: &Morphism, n: &Morphism) -> bool {
         let no_value = self.no_value(&m.value).await;
-        self.empty(&(&n.guarantee - &m.guarantee)).await
-            && (no_value || self.empty(&(&m.permission - &n.permission)).await)
+        self.settles(&n.guarantee, &m.guarantee, false).await
+            && (no_value || self.settles(&m.permission, &n.permission, false).await)
             && (no_value
                 || self.empty(&m.permission).await
-                || self.empty(&(&m.value - &n.value)).await)
+                || self.settles(&m.value, &n.value, false).await)
     }
 
     /// Whether no morphism `r` admits is in `f`, decided as for tuples: `r` meets the morphism
@@ -3300,7 +3332,7 @@ impl<'m> Searching<'m> {
                 }
                 let mut st: BTreeMap<Morphism, Option<bool>> = BTreeMap::new();
                 for a in f.distinct_atoms() {
-                    let s = if self.no_morphism(&meet(&r, &a)).await {
+                    let s = if self.no_morphism(&self.meet(&r, &a)).await {
                         Some(false)
                     } else if self.within(&r, &a).await {
                         Some(true)
@@ -3321,12 +3353,12 @@ impl<'m> Searching<'m> {
                 }
                 let (taken, _) = settled.forced();
                 if !taken.is_empty() {
-                    r = taken.iter().fold(r, |r, a| meet(&r, a));
+                    r = taken.iter().fold(r, |r, a| self.meet(&r, a));
                     continue;
                 }
                 if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
                     for a in f.distinct_atoms().iter() {
-                        if !self.morphisms(meet(&r, a), f.clone(), false).await {
+                        if !self.morphisms(self.meet(&r, a), f.clone(), false).await {
                             return false;
                         }
                     }
@@ -4351,15 +4383,6 @@ fn list_step(t: &Type) -> Option<Step> {
 /// an assumption the search later drops.
 fn known_empty(k: &Type) -> bool {
     *k == Type::empty() || k.judged() == Some(true)
-}
-
-/// The morphisms both `a` and `b` admit.
-fn meet(a: &Morphism, b: &Morphism) -> Morphism {
-    Morphism::new(
-        &a.guarantee | &b.guarantee,
-        &a.permission & &b.permission,
-        &a.value & &b.value,
-    )
 }
 
 /// Each member's emptiness at `env`'s arguments, as the group's fixed points decide it (module
