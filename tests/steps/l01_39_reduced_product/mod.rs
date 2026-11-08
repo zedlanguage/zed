@@ -16,6 +16,7 @@ mod exact;
 mod finite_from_type;
 mod follow;
 mod helpers;
+mod holes;
 mod hull;
 mod lazy;
 mod linked;
