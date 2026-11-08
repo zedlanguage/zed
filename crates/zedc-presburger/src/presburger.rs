@@ -731,7 +731,7 @@ pub fn decide(f: &Formula) -> Result<bool, Refusal> {
 /// [`decide`] on one path ([`or_old`]).
 fn decide_named(f: &Formula) -> Result<bool, Refusal> {
     match Renamed::of(f) {
-        Naming::Kept => decide_inner(f),
+        Naming::Kept => unit_rows_have_a_point(f).map_or_else(|| decide_inner(f), Ok),
         Naming::Renamed(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
         Naming::Tied(vars, color) => match settle_tied(f, &color, false)? {
             Settled::Empty => Ok(false),
@@ -739,6 +739,48 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
             Settled::Left(p) => Err(unordered(vars, &p)),
         },
     }
+}
+
+/// Whether `f`, a conjunction with no disjunction or negation, has an integer point, when each
+/// of its constraints has at most two terms, each with coefficient 1 or -1 and over a symbol or
+/// an auxiliary variable; `None` for any other formula. Such rows are decided exactly by
+/// [`utvpi::integer_empty`], the search that [`Omega::run`] makes on them at the end of
+/// [`decide_inner`]'s path, so the answer is the same; the path's front end ([`nnf`], [`take`],
+/// [`canonical`], [`quotient`]) is skipped, which on such rows cost 3 to 5 times the search
+/// itself and grew by a factor of `log m` from its ordered maps keyed by [`Atom`] (COMPLEXITY.md
+/// S44, DECIDE-front-cost). An equality is its two rows `t >= 0` and `-t >= 0`; a row of no
+/// term is decided by its constant. One pass over the constraints, each atom numbered through
+/// a hash map: O(m) for `m` terms, plus the search.
+fn unit_rows_have_a_point(f: &Formula) -> Option<bool> {
+    let cons = f.cons();
+    let unit = |(a, k): (&Atom, &Int)| k.is_unit() && !matches!(a, Atom::Product(..));
+    if !(cons.iter()).all(|c| c.lin.terms.len() <= 2 && c.lin.terms.iter().all(unit)) {
+        return None;
+    }
+    let mut ids: HashMap<&Atom, usize> = HashMap::new();
+    let mut rows: Vec<(Vec<Term>, Int)> = Vec::with_capacity(cons.len());
+    for c in &cons {
+        let k = &c.lin.constant;
+        if c.lin.terms.is_empty() {
+            if k.is_negative() || (c.rel == Rel::Eq && !k.is_zero()) {
+                return Some(false);
+            }
+            continue;
+        }
+        let terms: Vec<Term> = (c.lin.terms.iter())
+            .map(|(a, coef)| {
+                let next = ids.len();
+                (*ids.entry(a).or_insert(next), coef.clone())
+            })
+            .collect();
+        if c.rel == Rel::Eq {
+            let neg = terms.iter().map(|(j, coef)| (*j, -coef)).collect();
+            rows.push((neg, -k));
+        }
+        rows.push((terms, k.clone()));
+    }
+    let rows: Vec<(&[Term], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
+    Some(!utvpi::integer_empty(ids.len(), &rows))
 }
 
 /// For each disjunction, the bounds on a linear form that every disjunct's own rows put on

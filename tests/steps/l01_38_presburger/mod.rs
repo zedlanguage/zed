@@ -18,6 +18,7 @@ mod deep;
 mod disj_groups;
 mod entailment;
 mod extend;
+mod front_cost;
 mod ids;
 mod ladder;
 mod live3;

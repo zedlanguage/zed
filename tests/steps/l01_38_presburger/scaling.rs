@@ -10,6 +10,7 @@ use super::stages::Row;
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
+use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
 pub(super) fn x(i: usize) -> Lin {
@@ -159,10 +160,14 @@ fn a_long_rising_chain_scales() {
     scales("the long rising chain", 2048, false, rising);
 }
 
+/// How far [`row`] moves `x[i]`, in `-1000..=1000`.
+fn shift(i: usize) -> i64 {
+    ((i as i64 * 7919 + 13) % 2001) - 1000
+}
+
 /// `Σ c·x[i] + k >= 0` over the pairs `(i, c)`, with each `x[i]` moved by `shift(i)` when
 /// `shifted`, so that neither the origin nor small values stay points.
 fn row(t: &[(usize, i64)], k: i64, shifted: bool) -> Formula {
-    let shift = |i: usize| ((i as i64 * 7919 + 13) % 2001) - 1000;
     let k = if shifted {
         k - t.iter().map(|(i, c)| c * shift(*i)).sum::<i64>()
     } else {
@@ -191,7 +196,16 @@ fn sparse(n: usize) -> Formula {
 
 /// `2n` rows `±x[a] ± x[b] + k >= 0`, shifted, with a point: decided by the parity test.
 fn utvpi(n: usize) -> Formula {
-    let mut r = Vec::new();
+    utvpi_rows(n).0
+}
+
+/// Rows `Σ c·x[i] + k >= 0` as `utvpi::integer_empty` takes them: the terms by variable, and `k`.
+pub(super) type UnitRows = Vec<(Vec<(usize, Int)>, Int)>;
+
+/// [`utvpi`], and its rows as `utvpi::integer_empty` takes them, each with its terms in the order
+/// of the variables.
+pub(super) fn utvpi_rows(n: usize) -> (Formula, UnitRows) {
+    let (mut r, mut rows) = (Vec::new(), Vec::new());
     for i in 0..2 * n {
         let a = (i * 37 + 11) % n;
         let mut b = (i * 53 + 5) % n;
@@ -202,9 +216,13 @@ fn utvpi(n: usize) -> Formula {
             if i % 3 == 0 { -1 } else { 1 },
             if i % 2 == 0 { -1 } else { 1 },
         );
-        r.push(row(&[(a, ca), (b, cb)], (i % 4) as i64, true));
+        let k = (i % 4) as i64;
+        r.push(row(&[(a, ca), (b, cb)], k, true));
+        let mut t = vec![(a, Int::from(ca)), (b, Int::from(cb))];
+        t.sort_by_key(|t| t.0);
+        rows.push((t, Int::from(k - ca * shift(a) - cb * shift(b))));
     }
-    Formula::and(r)
+    (Formula::and(r), rows)
 }
 
 /// `x[0] + x[1] == 1` and `x[i] == x[i+1]` around a cycle of `n`: the rational point `1/2`
