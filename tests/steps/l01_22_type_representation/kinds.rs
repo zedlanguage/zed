@@ -9,7 +9,7 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_13_formatter::fmt;
 use zedc::ast::unit;
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Ty, atoms};
+use zedc::check::ty::{Shape, Ty, atoms};
 use zedc::lex::lex_fence;
 use zedc::parse::{DOTS, TOP, parse};
 use zedc::resolve::resolve;
@@ -152,12 +152,11 @@ fn each_form_is_the_set_it_names_in_the_checker() {
         assert!(m.subtype(&w), "{member} <: {whole}");
         assert!(!w.subtype(&m), "{whole} </: {member}");
     }
-    // A payload's shape lies in any payload. The reverse is not decided here: the checker's set
-    // holds every atom with a payload as `#a(..)` and keeps the shapes beside it, and its
-    // subtyping compares the sets only (a flaw of the checker before L1.40d; the kernel test
-    // above decides both directions).
-    for member in ["#a(int, int)", "#a()"] {
-        assert!(ty(member).subtype(&ty("#a(..)")), "{member} <: #a(..)");
+    // A payload's shape lies in any payload, and any payload in no one shape.
+    for (member, whole) in [("#a(int, int)", "#a(..)"), ("#a()", "#a(..)")] {
+        let (m, w) = (ty(member), ty(whole));
+        assert!(m.subtype(&w), "{member} <: {whole}");
+        assert!(!w.subtype(&m), "{whole} </: {member}");
     }
     for (a, b) in [
         ("#_", "(..)"),
@@ -171,6 +170,61 @@ fn each_form_is_the_set_it_names_in_the_checker() {
     assert!(ty("{..}").subtype(&ty("{..}")));
     // `#a` and `#a()` are different types.
     assert_ne!(ty("#a"), ty("#a()"));
+}
+
+#[test]
+fn subtyping_reads_the_payloads_of_atoms() {
+    // A payload lies in another when its shape does, alone, in a union, or inside a tuple.
+    for (member, whole) in [
+        ("#a(int, int)", "#a(int, int)"),
+        ("#a(int, int)", "#a(int | String, int)"),
+        ("#a(int | String)", "#a(int) | #a(String)"),
+        ("#a(int) | #b(String)", "#a(int | rat) | #b(..)"),
+        ("#a()", "#a() | #a(int)"),
+        ("(#a(int, int),)", "(#a(int | String, int),)"),
+        ("#a(#b(int))", "#a(#b(int | String))"),
+        ("#a(int) | #c", "#a(int) | #c"),
+    ] {
+        assert!(ty(member).subtype(&ty(whole)), "{member} <: {whole}");
+    }
+    // A payload of another shape, of another length, or of any shape is not in it.
+    for (member, whole) in [
+        ("#a(String)", "#a(int, int)"),
+        ("#a(..)", "#a(int, int)"),
+        ("#a(..)", "#a()"),
+        ("#a()", "#a(int)"),
+        ("#a(int, String)", "#a(int, int)"),
+        ("#a(int | String)", "#a(int)"),
+        ("#a(int) | #b(String)", "#a(int) | #b(int)"),
+        ("(#a(String),)", "(#a(int, int),)"),
+        ("#a(#b(String))", "#a(#b(int))"),
+        ("#a(int) | #a(String)", "#a(int)"),
+    ] {
+        assert!(!ty(member).subtype(&ty(whole)), "{member} </: {whole}");
+    }
+}
+
+#[test]
+fn every_tuple_may_hold_a_function() {
+    // `(..)` is every tuple, those that hold a function among them.
+    for text in [
+        "(..)",
+        "(int, (..))",
+        "(..) \\ (int, int)",
+        "{..}",
+        "(..) | int",
+    ] {
+        assert!(!ty(text).first_order(), "{text} may hold a function");
+    }
+    for text in [
+        "(int, int)",
+        "#_",
+        "#a(..)",
+        "int | (String,)",
+        "(int, #a())",
+    ] {
+        assert!(ty(text).first_order(), "{text} holds no function");
+    }
 }
 
 #[test]
@@ -194,7 +248,8 @@ fn each_form_prints_as_written_and_reads_back_as_the_same_type() {
         assert!(again.subtype(&first) && first.subtype(&again), "{text}");
     }
     // The kernel's printer, read back by the checker's reader. An atom with a payload is left
-    // out: the checker's set holds it with any payload (see the test above).
+    // out: the checker's set holds it with any payload, and its payload apart, so the two
+    // types are equal as sets but not as values.
     let pair = tuple(&[Type::int(), Type::int()]);
     for t in [
         atoms(),
@@ -254,5 +309,92 @@ fn narrowing_tuple_shapes_by_a_kind_wide_type_scales() {
         assert_eq!(met.tuples.len(), n - 1);
         let left = t.diff(&w);
         assert_eq!(left.tuples.len(), 1);
+    });
+}
+
+#[test]
+fn a_use_that_takes_data_refuses_every_tuple() {
+    // A block that ends `return h, 1` builds a tuple that holds a function, and `(..)` takes it,
+    // so `==`, interpolation and `String` on a value of `(..)` are refused where they are
+    // written, at any depth, as they are on a value whose function is known.
+    let errors = crate::l01_26_type_resolution::type_errors;
+    let call = "g() = f(x: { h(y) = y; return h, 1; });\n";
+    for (body, what, at) in [
+        ("x == x", "`==`", "x == x"),
+        ("\"a${x}b\"", "interpolation", "x"),
+        ("String(x)", "`String`", "String(x)"),
+    ] {
+        let text = format!("f(x: (..)) = {body};\n{call}");
+        let want =
+            format!("{what} takes data, and this value, of `(..)`, may hold a function [{at}]");
+        assert_eq!(errors(&text), [want], "{text}");
+    }
+    assert_eq!(
+        errors("f(x: (int, (..))) = x == x;\n"),
+        ["`==` takes data, and this value, of `(..)`, may hold a function [x == x]"]
+    );
+    // A tuple whose shape is written holds what its components hold.
+    assert_eq!(errors("f(x: (int, int)) = x == x;\n"), Vec::<String>::new());
+}
+
+/// The atom `#name` with the payloads `shapes`, each of components only.
+fn with_payloads(name: &str, shapes: Vec<Vec<Ty>>) -> Ty {
+    let mut t = Ty::set(Type::atom_with(name, &Type::top()));
+    let shapes = shapes
+        .into_iter()
+        .map(|items| Shape {
+            items,
+            fields: Default::default(),
+        })
+        .collect();
+    t.payloads.insert(name.into(), Some(shapes));
+    t
+}
+
+fn int(i: usize) -> Ty {
+    Ty::lit(&zed_kernel::value::Value::Int(i as i64))
+}
+
+#[test]
+fn payloads_of_many_atoms_are_compared_in_the_size_of_the_union() {
+    // `#a0(0) | … | #a(n-1)(n-1)` against `#ai(int)` for each name, and against the same with
+    // `#a0(String)`: the listed names are taken out and put back in one union each.
+    scaling::check("payloads of n atoms against n atoms", 256, |n| {
+        let each = |f: &dyn Fn(usize) -> Ty| -> Ty {
+            let ts: Vec<Ty> = (0..n)
+                .map(|i| with_payloads(&format!("a{i}"), vec![vec![f(i)]]))
+                .collect();
+            Ty::union_all(&ts)
+        };
+        let small = each(&int);
+        let wide = each(&|_| ty("int"));
+        let other = each(&|i| if i == 0 { ty("String") } else { ty("int") });
+        assert!(small.subtype(&wide));
+        assert!(!small.subtype(&other));
+    });
+}
+
+#[test]
+fn many_payloads_of_one_atom_are_compared_in_the_size_of_the_union() {
+    // `#a(0, 0) | … | #a(n-1, n-1)` against itself and `#a(n, n)`: each payload tried against
+    // each would be n² component checks; the kernel reads both unions once.
+    scaling::check("n payloads of one atom against n + 1", 256, |n| {
+        let pairs = |m: usize| with_payloads("a", (0..m).map(|i| vec![int(i), int(i)]).collect());
+        let (small, big) = (pairs(n), pairs(n + 1));
+        assert!(small.subtype(&big));
+        assert!(!big.subtype(&small));
+    });
+}
+
+#[test]
+fn a_kind_wide_part_deep_in_tuples_is_found_once() {
+    // `((…((..), 0)…), 0)`, n deep: each row keeps the kind-wide part its components hold, so
+    // finding it reads one row, and building the type reads each row once.
+    scaling::check("a kind-wide part n tuples deep", 256, |n| {
+        let mut t = ty("(..)");
+        for _ in 0..n {
+            t = Ty::tuple(vec![t, int(0)]);
+        }
+        assert!(!t.first_order());
     });
 }
