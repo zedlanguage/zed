@@ -2759,3 +2759,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `HashMap<BTreeMap<Atom, Int>, Int>` keyed by a term's variable part, updated in place through `entry().or_insert_with` to keep the nearest bound shown | `preimage::Shown::{above, below}` | Mutation | A map threaded through the fold over the chain's operands, each step returning the updated map |
 | A closure capturing `self` and `p` that returns `Option<[Tid; 2]>` from a `match`, and a work list with a `HashSet` of visited nodes popped in a `while let` | `Walk::defined_chain` | Mutation | A recursive descent over the chain returning the operands and the visited set |
 | `solve(..).ok()??`, two `?` on a `Result<Option<_>>` | `presburger::own_repair` | None | A `match` on the result |
+
+## Entries from ATOM-payload-sub (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A memo `RefCell<HashMap<KType, KType>>` filled inside a `&self` method | `Forms::cut` | Mutation (gap 11) | `cut` takes and returns the memo with the result, or the forms are built in one pass that threads it |
+| Atom names that start with a NUL (`"\0fn 3"`), names no program writes, as marks in a normal form | `mark`, `fields_mark`, `Forms::number_marks` | None | the same strings; the kernel needs no change |
