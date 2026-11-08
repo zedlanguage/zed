@@ -1583,10 +1583,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | BUILD-incr-stale | impl attempt 1 | 2026-11-07 20:50 | repro attempt 1 (seed at b0fdc72b, fdd60abb's provenance.rs, -p zed-tests --test l01_17 then run_tests --workspace build) links and passes: no repro yet; load 3 |
+| CLASS-atoms | impl attempt 1 | 2026-11-03 16:46 | start; worktree wt/class-atoms from origin/main 9f176f5d / load 35.80 30.67 26.78 |
+| EMPTY-level | impl attempt 1 | 2026-11-07 21:19 | started; worktree wt/empty-level from origin/main |
+| FAMILY-eq-cost | impl attempt 1 | 2026-11-07 21:06 | bisect done: only FAMILY-eq-dag, MINMAX-tuples bb07f93b, PROV-family-entries (+0.4M), FAMILY-eq-fast, FAMILY-eq-reserve change counts; own linear-probing pair t |
 | MINMAX-sig-word | impl attempt 1 | 2026-11-07 20:25 | started; worktree /home/luke/Work/wt/minmax-sig-word from origin/main 8874023a |
-| Q1-LOCAL | measure attempt 1 | 2026-11-03 12:15 | start: worktree wt/q1-local from origin/main 8874023a seeded; load 22.21 21.27 20.96 |
-| REFUSAL-narrow-cells | impl attempt 1 | 2026-11-07 20:25 | started; creating worktree from origin/main |
-| ROW-eq-deep | impl attempt 1 | 2026-11-07 20:25 | reproduced on main 93857183 (zedc-types Row/Shape/Sig ==, derived recursion): levels 100000 deep on 2 MiB and tuples 1e6 deep on 8 MiB overflow the stack; two s |
+| ORDER-keypath | impl attempt 2 | 2026-11-05 08:33 | started: A2 answer A (keypath 4th key part); making worktrees wt/order-keypath and order-keypath-spec; load 23.45 30.00 27.70 |
+| PROV-oldest-failing | impl attempt 1 | 2026-11-07 21:06 | started; worktree from origin/main |
+| Q1-LOCAL | measure attempt 1 | 2026-11-03 12:15 | done: 93d423e3 on wt/q1-local; census 30% refused (all Growth, 74% have a point); 10 families refused at every size, time to refusal n log n; equality chain qua |
+| REFUSAL-narrow-cells | impl attempt 1 | 2026-11-07 20:25 | family probe (release, n 8/16/32/64): union of (only_i, parity_i) - (only_i, L) meets L x L: 74M, 343M, 1774M, 10.3G instructions (~n^2.5); difference of unions |
+| ROW-eq-deep | impl attempt 1 | 2026-11-07 20:25 | negative controls (not committed): HEAD 93857183 ty.rs overflows the 8 MiB stack on tuples_built_apart_200000_deep (abort); the fix with union-find off times ou |
+| TESTS-runner-short | impl attempt 1 | 2026-11-07 21:06 | ready 2f487d8a on wt/tests-runner-short, rebased on origin/main 7a44b1eb (plan_dag only); STATUS row added; ledger ready |
+| UTVPI-both-ways | impl attempt 2 | 2026-11-05 19:14 | started: A17 answered (option A, lower Duong's constant); rebasing kept worktree on origin/main |
 | XST-r2 | research attempt 1 | 2026-11-07 18:56 | Claude report in (R2_CLAUDE.md, 35 KB, rc 0); Gemini still running |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
