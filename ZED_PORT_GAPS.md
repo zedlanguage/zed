@@ -2648,3 +2648,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | The iterator over the blocks as a private `enum` of two states: one block held as `Option<&str>` and given once by `Option::take`, or a tree's walk on its own `Vec<&Text>` stack | `Chunks`, `Walk`, `Text::chunks` | References into values (Rust lifetimes) and early exit (gap 12), as the WRITE-prefix-scale row above | A list of the blocks produced lazily, one block a list of one; the walk as before |
 | Two blocks compared as byte slices, `<[u8] as Ord>::cmp` (one `memcmp` and the lengths) | `compare`, `Text::as_flat` | None | `compare` of two strings of one block is the prelude's string order on the two values; no walk is built |
+
+## Entries from ROW-eq-deep (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A node's address (`Arc::as_ptr` cast to `*const ()`) as a key of a `HashMap` with a written `Hasher` (`AddressHasher`), sound only while both operands are borrowed | `Same::root`, `Same::assumed`, `AddressHasher` | Identity (equality shortcuts) | A node id given when the node is made, or the interned node's own key |
+| `Arc::strong_count` read to tell a shared node from one with a single owner, so only shared nodes are recorded | `Same::row`, `Same::shape`, `Same::func` | Identity and reference counts | A sharing flag set when a node gains a second owner, or record every node and accept the table's cost |
+| A union-find in two `Vec<usize>` mutated in place (union by size, path halving), and an explicit stack of borrowed pairs `Vec<(&Ty, &Ty)>` with an `Option` slot for the next pair | `Same` | Mutation (gap 11) and borrowed references | A persistent union-find or an array threaded through the loop's state, and a list as the stack |

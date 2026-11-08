@@ -2,6 +2,8 @@
 //! [`Ty::renamed`], [`Ty::replace_outside`], [`Ty::settle`] and [`Sig::settle`] keep their own
 //! stack (TY-subst-stacks). Each recursed once a level through rows, payload shapes and
 //! functions, and overflowed a 2 MiB stack a few thousand levels deep.
+//!
+//! Comparing two such types built apart, with `==`, keeps its own stack too (ROW-eq-deep).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -175,6 +177,105 @@ fn replacements_in_a_shared_type_take_linear_time_on_a_2_mib_stack() {
             let (tys, held) = made.split_at(5);
             assert!(tys.iter().all(|t| t.tuples.len() == 1), "{n} deep");
             assert_eq!(held[0].fns.len(), 1, "{n} deep");
+        });
+    });
+}
+
+/// A type `n` levels deep with `bottom` at the bottom, a tuple, an atom's payload and a
+/// function's result in turn, each level built anew: two calls share no row, shape or
+/// signature, so `==` cannot take the shortcut of one shared node.
+fn levels(n: usize, bottom: Ty) -> Ty {
+    (0..n).fold(bottom, |t, k| match k % 3 {
+        0 => Ty::tuple(vec![t, z()]),
+        1 => atom(vec![z(), t], z()),
+        _ => func(z(), t),
+    })
+}
+
+/// `((… (bottom, #z) …, #z), #z)`, `n` tuples deep, each built anew.
+fn tuples(n: usize, bottom: Ty) -> Ty {
+    (0..n).fold(bottom, |t, _| Ty::tuple(vec![t, z()]))
+}
+
+#[test]
+fn types_built_apart_compare_by_their_contents() {
+    let y = || Ty::set(Type::atom("y"));
+    for n in 0..7 {
+        assert_eq!(levels(n, z()), levels(n, z()), "{n} deep");
+        assert_eq!(tuples(n, z()), tuples(n, z()), "{n} deep");
+        assert_eq!(shared(n), shared(n), "{n} deep");
+        if n > 0 {
+            assert_ne!(levels(n, z()), levels(n, y()), "{n} deep");
+            assert_ne!(tuples(n, z()), tuples(n, y()), "{n} deep");
+            assert_ne!(levels(n, z()), levels(n - 1, z()), "{n} deep");
+        }
+    }
+    // The field of a payload, a function's parameter and a second component differ.
+    let in_field = |f: Ty| atom(vec![z()], f);
+    assert_ne!(in_field(z()), in_field(y()));
+    assert_ne!(func(z(), z()), func(y(), z()));
+    assert_ne!(Ty::tuple(vec![z(), z()]), Ty::tuple(vec![z(), y()]));
+    assert_ne!(Ty::tuple(vec![z()]), Ty::tuple(vec![z(), z()]));
+}
+
+#[test]
+fn a_value_shared_on_one_side_and_built_twice_on_the_other_compares_each_copy() {
+    // `(x, x)` against `(x1, x2)`: once `x` is found equal to `x1`, the comparison must still
+    // read `x2`, which may differ from both at the bottom.
+    let x = levels(30, z());
+    let one = Ty::tuple(vec![x.clone(), x]);
+    let same = Ty::tuple(vec![levels(30, z()), levels(30, z())]);
+    let other = Ty::tuple(vec![levels(30, z()), levels(30, Ty::set(Type::atom("y")))]);
+    assert_eq!(one, same);
+    assert_eq!(same, one);
+    assert_ne!(one, other);
+    assert_ne!(other, one);
+}
+
+#[test]
+fn types_built_apart_100000_deep_compare_on_a_2_mib_stack() {
+    // `==` recursed once a level through rows, payload shapes and signatures, and overflowed
+    // this stack a few thousand levels deep (ROW-eq-deep).
+    let n = 100_000;
+    let (a, b, c) = (
+        levels(n, z()),
+        levels(n, z()),
+        levels(n, Ty::set(Type::atom("y"))),
+    );
+    on_small_stack(|| {
+        assert!(a == b);
+        assert!(a != c);
+    });
+}
+
+#[test]
+fn tuples_built_apart_200000_deep_compare_on_an_8_mib_stack() {
+    // The recursive `==` overflowed this stack (ROW-eq-deep).
+    let n = 200_000;
+    let (a, b, c) = (
+        tuples(n, z()),
+        tuples(n, z()),
+        tuples(n, Ty::set(Type::atom("y"))),
+    );
+    scaling::on_a_thread(8 << 20, || {
+        assert!(a == b);
+        assert!(a != c);
+    });
+}
+
+#[test]
+fn shared_types_built_apart_compare_in_linear_time() {
+    // Each side holds `2^n` paths through `n` nodes, and no node is shared between the sides:
+    // a comparison that followed the paths took `2^n` time.
+    let n = 2000;
+    let pairs: std::collections::BTreeMap<usize, (Ty, Ty)> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|k| (k, (shared(k), shared(k))))
+        .collect();
+    on_small_stack(|| {
+        scaling::check_order("== on two shared types n deep built apart", n, 1, |k| {
+            let (a, b) = &pairs[&k];
+            assert!(a == b, "{k} deep");
         });
     });
 }
