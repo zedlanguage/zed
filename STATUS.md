@@ -1542,13 +1542,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CYCLE-kernel-moves | impl attempt 1 | 2026-11-07 01:22 | measured on 6640b4cf: same 12-file kernel component (30 files, 102 imports, 87 untyped calls); step 1 done: type order (Step, order) and Literal impls of Row/Mo |
+| CYCLE-kernel-moves | impl attempt 1 | 2026-11-07 01:22 | bdd/list.rs inlined into bdd.rs (Bdd and Cell are one recursive type); Verdict, Refusal, Surface moved into types.rs; Type::split moved to empty.rs; types.rs an |
+| CYCLE-zedc-moves | impl attempt 1 | 2026-11-07 01:22 | ready at 30797fb0 on origin/main 8569447a: no zedc cycle; 358 pieces 1456 passed 0 failed (docs on, load 6-12); after rebase 277 pieces 563 passed 0 failed (loa |
 | FAMILY-eq-dag | impl attempt 1 | 2026-11-05 04:07 | ready 80eb2124 on wt/family-eq-dag (rebased on 6640b4cf, COMPLEXITY row renumbered K72); fmt, clippy clean; 80 pieces / 612 tests pass with doc (m0_09, l01_15,  |
 | LIST-box-overlap | impl attempt 1 | 2026-11-07 09:29 | ready 42f09224 on wt/list-box-overlap: listing at side n 19.0M/162M/1.43G (64/512/4096), was 105M/6.17G (64/512); controls at 512/1024 each n²: no merge 1.99G/7 |
 | LOAD-bound-holes | impl attempt 1 | 2026-11-07 13:11 | ready at db578742, rebased on origin/main; groups 266/266 pass with docs; fmt, clippy and board-check clean; after rebase one faced refusal (p4 holds, reverse o |
 | MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | ready at 83ef4304 (spec 6dc7b9f): 61 pieces pass incl. 9 new tuple_min_max tests; clippy and fmt clean / load 18.36 23.88 23.08 |
 | REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
-| STAGE-stub-fast | impl attempt 1 | 2026-11-07 17:16 | pre-existing flaw reproduced on main's stage: h(g(1), 2) with g = (x) -> f is left to run with 'the program's result is a function' (as written gives 2); test c |
+| STAGE-stub-fast | impl attempt 1 | 2026-11-07 17:16 | ready at 08b698a6 on 8569447a (rebased, restacked): 93 pieces, 944 tests, 0 failed, doc check passed (load 16.4 to 30.4); fmt and clippy clean |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
