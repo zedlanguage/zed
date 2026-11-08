@@ -1587,7 +1587,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | BIGINT-fast-mul | impl attempt 1 | 2026-11-07 15:13 | docs written (COMPLEXITY K78 + Crossovers subsection, ZED_PORT_GAPS entries, STATUS row, num.rs room comments); negative control (Garner carry without t>>64) bu |
-| BUILD-incr-stale | impl attempt 1 | 2026-11-07 20:50 | ready bfd19a12 on wt/build-incr-stale (rebased on d5055bcf): lto off; cause confirmed (ThinLTO keys rewritten through hard link, killed build); control fails be |
 | EMPTY-level | impl attempt 1 | 2026-11-07 21:19 | ready af7812f8: atom-key misfire fixed, ports tested, 117 pieces 0 failed |
 | MINMAX-sig-word | repair attempt 1 | 2026-11-07 20:25 | started: join Order needs per (word, side), literal-chain scaling test, min(a, f64(#inf)) check |
 | PROV-oldest-failing | impl attempt 1 | 2026-11-07 21:06 | ready c4818e1f on wt/prov-oldest-failing, rebased on 67a8ad42; targeted tests 0 failed before and after rebase |
