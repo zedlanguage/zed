@@ -483,15 +483,20 @@ export function buildGraph(inp: Inputs): BoardState {
   return { nodes, problems: [...new Set(problems)], dropped: droppedIds };
 }
 
-// Edges to draw when only direct dependencies are wanted: a need that another
-// need already implies is left out. Ancestors are built once per node, in
-// topological order, so each node is visited once. A need back into a node
-// still on the stack closes a cycle and is not followed.
-export function directNeeds(nodes: { id: string; needs: string[] }[]): Map<string, string[]> {
+// Problems in the shape of the graph: a cycle of needs, and a need that a
+// longer path already implies (the graph must be its own transitive
+// reduction, so the viewer draws every edge). Ancestors are built once per
+// node, in topological order, with an explicit stack; a need back into a node
+// still on the stack closes a cycle, which is reported and not followed.
+// Complexity tradeoff: the ancestor sets cost O(n·a) time and memory for a the
+// mean number of ancestors. No near-linear method is known: transitive
+// reduction is as hard as transitive closure (Aho, Garey and Ullman, 1972).
+export function shapeProblems(nodes: { id: string; needs: string[] }[]): string[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const ancestors = new Map<string, Set<string>>();
   const onStack = new Set<string>();
   const pending: { id: string; next: number }[] = [];
+  const problems: string[] = [];
   for (const root of nodes) {
     if (ancestors.has(root.id)) continue;
     pending.push({ id: root.id, next: 0 });
@@ -501,7 +506,10 @@ export function directNeeds(nodes: { id: string; needs: string[] }[]): Map<strin
       const needs = (byId.get(top.id)?.needs ?? []).filter((n) => byId.has(n));
       if (top.next < needs.length) {
         const need = needs[top.next++];
-        if (!ancestors.has(need) && !onStack.has(need)) {
+        if (onStack.has(need)) {
+          const from = pending.findIndex((p) => p.id === need);
+          problems.push(`CYCLE OF NEEDS: ${pending.slice(from).map((p) => p.id).join(" -> ")} -> ${need}`);
+        } else if (!ancestors.has(need)) {
           pending.push({ id: need, next: 0 });
           onStack.add(need);
         }
@@ -517,10 +525,12 @@ export function directNeeds(nodes: { id: string; needs: string[] }[]): Map<strin
       pending.pop();
     }
   }
-  const out = new Map<string, string[]>();
   for (const n of nodes) {
     const needs = n.needs.filter((x) => byId.has(x));
-    out.set(n.id, needs.filter((x) => !needs.some((y) => y !== x && ancestors.get(y)?.has(x))));
+    for (const x of needs) {
+      const via = needs.find((y) => y !== x && ancestors.get(y)?.has(x));
+      if (via !== undefined) problems.push(`REDUNDANT NEED: ${n.id} needs ${x}, already implied through ${via}; remove the edge`);
+    }
   }
-  return out;
+  return problems;
 }

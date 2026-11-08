@@ -15,7 +15,7 @@ interface Node {
 }
 interface LogLine { at: number; time: string; label: string; text: string }
 interface State {
-  now: number; nodes: Node[]; direct: Record<string, string[]>; log: LogLine[]; warnings: string[];
+  now: number; nodes: Node[]; log: LogLine[]; warnings: string[];
   machine: { load: string; lock: string; origin: string | null; main: string | null; ahead: number };
 }
 interface Point { x: number; y: number }
@@ -84,7 +84,6 @@ document.body.append(top, stage, side);
 
 let current: State | null = null;
 let selected: string | null = null;
-let allEdges = false;
 // The last request the server answered with a layout of exactly that graph,
 // the key of the layout on screen, and why the layout on screen is not current.
 let freshBody = "";
@@ -166,12 +165,6 @@ button("+", "Zoom in", () => { const c = centerOf(); zoomAt(c.x, c.y, 1.3); });
 button("−", "Zoom out", () => { const c = centerOf(); zoomAt(c.x, c.y, 1 / 1.3); });
 button("Fit all", "Show the whole DAG", () => fit());
 button("In progress", "Show the nodes in progress and their neighbors", () => fit(focusIds()));
-const edgesButton = button("Direct edges", "Switch between direct dependencies and every edge", () => {
-  allEdges = !allEdges;
-  edgesButton.textContent = allEdges ? "All edges" : "Direct edges";
-  const s = current;
-  if (s) void relayout(s).then(() => render(s), () => render(s));
-});
 search.addEventListener("input", () => {
   const q = search.value.trim().toLowerCase();
   for (const [id, card] of cards) {
@@ -199,7 +192,7 @@ function focusIds(): string[] {
 function edgesOf(s: State): [string, string][] {
   const out: [string, string][] = [];
   for (const n of s.nodes) {
-    for (const need of allEdges ? n.needs : s.direct[n.id] ?? []) out.push([need, n.id]);
+    for (const need of n.needs) out.push([need, n.id]);
   }
   return out;
 }
@@ -218,7 +211,7 @@ async function relayout(s: State): Promise<void> {
     nodes: s.nodes.map((n) => ({ id: n.id, ...sizeOf(n) })),
     edges: edgesOf(s),
   };
-  const body = JSON.stringify({ mode: allEdges ? "all" : "direct", graph });
+  const body = JSON.stringify({ mode: "all", graph });
   if (body === freshBody) return;
   const res = await fetch("/api/layout", { method: "POST", body });
   if (!res.ok) throw new Error(String(res.status));

@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildGraph, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
+import { buildGraph, shapeProblems, ledgerCommits, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
 import type { Override } from "./state.ts";
 import { Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph } from "./layout.ts";
@@ -103,14 +103,12 @@ async function state() {
     now,
     held: parseQuestions(questionsText),
   });
-  const direct = directNeeds(nodes);
   return {
     now,
     nodes,
-    direct: Object.fromEntries(direct),
     log: log.slice(-60).reverse(),
     warnings: overrideWarnings(overrides),
-    problems,
+    problems: [...problems, ...shapeProblems(nodes)],
     dropped,
     machine: {
       load: loadavg.split(" ").slice(0, 3).join(" "),
@@ -203,8 +201,8 @@ const server = createServer(async (req, res) => {
       case "/api/state":
         return send("application/json", JSON.stringify(await state()));
       case "/api/layout": {
-        // GET /api/layout?mode=direct only reports; see Layouts.status.
-        if (req.method === "GET") return send("application/json", JSON.stringify(layouts.status(url.searchParams.get("mode") ?? "direct")));
+        // GET /api/layout?mode=all only reports; see Layouts.status.
+        if (req.method === "GET") return send("application/json", JSON.stringify(layouts.status(url.searchParams.get("mode") ?? "all")));
         const { mode, graph } = JSON.parse(await body(req)) as { mode: string; graph: Graph };
         return send("application/json", JSON.stringify(layouts.request(mode, graph)));
       }

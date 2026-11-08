@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildGraph, buildNodes, directNeeds, ledgerCommits, overrideWarnings, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shortLabel } from "./state.ts";
+import { buildGraph, buildNodes, ledgerCommits, overrideWarnings, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shapeProblems, shortLabel } from "./state.ts";
 
 const plan = `# Plan
 ## Items by level
@@ -144,28 +144,36 @@ test("an override wins over the log", () => {
   assert.equal(by(buildNodes(inp)).get("A")!.state, "done");
 });
 
-test("directNeeds drops a need that another need implies", () => {
-  const d = directNeeds(parsePlan(plan));
-  assert.deepEqual(d.get("C"), ["B"]);
-  assert.deepEqual(d.get("B"), ["A", "LR2"]);
+test("shapeProblems reports a need that another need implies", () => {
+  const p = shapeProblems([
+    { id: "a", needs: [] },
+    { id: "b", needs: ["a"] },
+    { id: "c", needs: ["a", "b"] },
+  ]);
+  assert.deepEqual(p, ["REDUNDANT NEED: c needs a, already implied through b; remove the edge"]);
 });
 
-test("directNeeds on a shared chain visits each node once", () => {
+test("shapeProblems is empty on a reduced graph", () => {
+  assert.deepEqual(shapeProblems([{ id: "a", needs: [] }, { id: "b", needs: ["a"] }, { id: "c", needs: ["b"] }]), []);
+});
+
+test("shapeProblems on a shared chain visits each node once", () => {
   const nodes = Array.from({ length: 3000 }, (_, i) => ({
     id: `n${i}`,
     needs: i === 0 ? [] : i === 1 ? ["n0"] : [`n${i - 1}`, `n${i - 2}`],
   }));
-  assert.deepEqual(directNeeds(nodes).get("n2999"), ["n2998"]);
+  const p = shapeProblems(nodes);
+  assert.equal(p.length, 2998);
+  assert.ok(p.includes("REDUNDANT NEED: n2999 needs n2997, already implied through n2998; remove the edge"));
 });
 
-test("directNeeds ends on a cycle of needs", () => {
-  const d = directNeeds([
+test("shapeProblems reports a cycle of needs and ends", () => {
+  const p = shapeProblems([
     { id: "a", needs: ["b"] },
     { id: "b", needs: ["a"] },
-    { id: "c", needs: ["a", "b"] },
+    { id: "c", needs: ["a"] },
   ]);
-  assert.deepEqual(d.get("a"), ["b"]);
-  assert.deepEqual(d.get("b"), ["a"]);
+  assert.ok(p.some((x) => x.startsWith("CYCLE OF NEEDS: ")), p.join("; "));
 });
 
 test("override needs and feeds connect an added item", () => {
