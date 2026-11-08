@@ -83,6 +83,12 @@ all = { level = "warn", priority = -1 }
 [profile.dev]
 opt-level = 2
 debug = false
+# No ThinLTO across a crate's codegen units (BUILD-incr-stale). With it, rustc rewrites the previous
+# incremental session's thin-lto-past-keys.bin in place through a hard link; a build killed after
+# that (a timeout, a SIGKILL) leaves new keys beside old objects, and every later build reuses an
+# object naming a `.llvm.<hash>` symbol no longer defined: "undefined hidden symbol" at link.
+# Turning it off also made a one-line zed-kernel rebuild faster and tests no slower (measured).
+lto = "off"
 
 # For perf and gdb only: cargo test --profile profiling. Delete build/cargo/profiling afterward.
 [profile.profiling]
