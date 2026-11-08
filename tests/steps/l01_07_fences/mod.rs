@@ -8,3 +8,4 @@ mod keys;
 mod mathlib;
 mod readme;
 mod scaling;
+mod variants;

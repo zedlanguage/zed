@@ -31,13 +31,13 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "dot-never-mutates",
             "8: this form (ResultType) is built from layer L10".into(),
         ),
-        ("nullable-column-missing-none", none(25)),
+        ("nullable-column-missing-none", none(36)),
         // L1.26b rejects it: 2.0 is an f16 and h an f64.
         (
             "plain-decimal-other-format",
             "4: the line is marked ✗ and the unit is accepted".into(),
         ),
-        ("numeric-is-not-binary-float", none(25)),
+        ("numeric-is-not-binary-float", none(36)),
         (
             // The unit parses from step L2.2; resolution refuses its `type` declaration, which
             // comes before the marked line.
@@ -46,7 +46,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         (
             "taint-reaches-clean-sink",
-            "39: the mark names the row \"Taint at a sink whose parameter does not take it\", \
+            "50: the mark names the row \"Taint at a sink whose parameter does not take it\", \
              and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' \
              or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or \
              'with' or '|'"
@@ -58,7 +58,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "8: this form (ResultType) is built from layer L10".into(),
         ),
         ("unit-mismatch-force-energy", none(49)),
-        ("unit-mismatch-in-sum", none(36)),
+        ("unit-mismatch-in-sum", none(47)),
         (
             "value-binding-has-no-next-generation",
             "8: this form (ResultType) is built from layer L10".into(),
@@ -93,5 +93,5 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
         "6:5: `Point` is not defined"
     );
     let e = rejected("taint-reaches-clean-sink");
-    assert!(e.starts_with("39:1: expected "), "{e}");
+    assert!(e.starts_with("50:1: expected "), "{e}");
 }

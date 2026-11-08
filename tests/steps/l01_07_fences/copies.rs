@@ -136,3 +136,12 @@ fn the_copies_match_the_spec() {
         assert!(ours == theirs, "{copy} is out of date: run the sync tool");
     }
 }
+
+/// Each fixture is its fence with the one commented ✗ line made live, and no other difference
+/// but those `fences::CHANGES` names, so that each fixture follows each edit of its fence
+/// (item VARIANT-sync).
+#[test]
+fn every_variant_agrees_with_its_fence() {
+    let wrong = fences::disagreements(&fences::all(), &fences::variants(), fences::CHANGES);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

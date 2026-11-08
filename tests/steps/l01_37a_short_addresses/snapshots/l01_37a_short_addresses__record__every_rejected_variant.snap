@@ -1,6 +1,6 @@
 ---
 source: tests/steps/l01_37a_short_addresses/record.rs
-expression: out
+expression: without_addresses(&out)
 ---
 constructor-called-by-position
   rejected: [
@@ -29,26 +29,26 @@ dot-never-mutates
 nullable-column-missing-none
   rejected: [
     Diagnostic {
-        line: 40,
+        line: 51,
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 numeric-is-not-binary-float
   rejected: [
     Diagnostic {
-        line: 40,
+        line: 51,
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 25, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 payload-built-by-position
   rejected: [
@@ -92,14 +92,14 @@ plain-decimal-other-format
 taint-reaches-clean-sink
   rejected: [
     Diagnostic {
-        line: 39,
+        line: 50,
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 39, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in no row of the rejection table: expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 taint-through-concatenation
   rejected: [
@@ -140,14 +140,14 @@ unit-mismatch-force-energy
 unit-mismatch-in-sum
   rejected: [
     Diagnostic {
-        line: 40,
+        line: 51,
         col: 1,
         message: "expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'",
         steps: [],
         row: None,
     },
 ]
-  checks: [Outcome { line: 36, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 40, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
+  checks: [Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic") }, Outcome { line: 51, col: 1, failure: Some("expected '&' or '(' or '->' or '->?' or '..' or ';' or '=' or '[' or 'for' or 'matching' or 'where' or 'with' or '|'") }]
 
 value-binding-has-no-next-generation
   rejected: [

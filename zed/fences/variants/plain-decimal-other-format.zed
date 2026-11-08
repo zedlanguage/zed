@@ -1,4 +1,4 @@
 // variant: // bad = h * 2.0;          // ✗ Plain decimal literal whose own format is not the format expected: 2.0 is an f16 and h an f64; no operator converts
-// [d1*] EXAMPLES 3. Numbers — 2.0 is the f16 nearest two, and h is an f64
+// [d4] sec:domains, sec:lexical
 h   = f64(7) / 2n;         // 3.5    a cast is the type applied to the value
 bad = h * 2.0;             // ✗ Plain decimal literal whose own format is not the format expected: 2.0 is an f16 and h an f64; no operator converts
