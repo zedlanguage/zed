@@ -38,25 +38,10 @@ fn cycles(g: &Graph) -> Vec<Vec<&str>> {
 /// The files of the import cycles still open (item S.1f-rest), as `crate/path`. The tool reads
 /// a call of a method written in another file than its type as an import (a Zed port makes that
 /// `impl` block a unit of its own), and these files are in a cycle through such calls or through
-/// paths: in zed-kernel the type algebra in `types`. The compiler (zedc and the crates zedc-* it
-/// is split into) has none since CYCLE-zedc-moves (ZED_PORT_GAPS.md gap 10). The rest are in a
-/// cycle only through calls whose receiver the tool did not type, each read as an import of every
-/// file with a method of that name. S.1f is done when this list is empty and every crate passes
-/// the tool.
-const KNOWN_CYCLES: &[&str] = &[
-    "zed-kernel/num.rs",
-    "zed-kernel/text.rs",
-    "zed-kernel/types.rs",
-    "zed-kernel/types/bdd.rs",
-    "zed-kernel/types/bdd/list.rs",
-    "zed-kernel/types/bes.rs",
-    "zed-kernel/types/debug.rs",
-    "zed-kernel/types/empty.rs",
-    "zed-kernel/types/print.rs",
-    "zed-kernel/types/rec.rs",
-    "zed-kernel/types/rec/walk.rs",
-    "zed-kernel/value.rs",
-];
+/// paths. The compiler (zedc and the crates zedc-* it is split into) has none since
+/// CYCLE-zedc-moves, and zed-kernel none since CYCLE-kernel-moves (ZED_PORT_GAPS.md gap 10), so
+/// the list is empty: S.1f is done once every crate passes the tool.
+const KNOWN_CYCLES: &[&str] = &[];
 
 #[test]
 fn no_crate_has_an_import_cycle_but_the_known_ones() {
@@ -106,10 +91,12 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
     assert!(file_count > 60, "{file_count} files");
     assert!(import_count > file_count, "{import_count} imports");
     // A crate with no open cycle passes the tool itself.
-    let dir = format!("{root}/crates/zed-native/src");
-    let (outcome, out) = tool(imports::run, &[&dir]);
-    assert_eq!(outcome, Ok(true), "{out}");
-    assert!(out.ends_with("no import cycle\n"), "{out}");
+    for name in ["zed-native", "zed-kernel"] {
+        let dir = format!("{root}/crates/{name}/src");
+        let (outcome, out) = tool(imports::run, &[&dir]);
+        assert_eq!(outcome, Ok(true), "{out}");
+        assert!(out.ends_with("no import cycle\n"), "{out}");
+    }
 }
 
 #[test]

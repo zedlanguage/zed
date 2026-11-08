@@ -286,7 +286,7 @@ impl Queue for Morphism {
     }
 }
 
-impl<A: Literal> Vertex for Part<A> {
+impl<A: Literal + Queue> Vertex for Part<A> {
     fn id(&self) -> Option<u64> {
         self.expr_id()
     }
@@ -329,7 +329,7 @@ impl<A: Literal> Vertex for Part<A> {
     }
 }
 
-impl<A: Literal> Vertex for Bdd<A> {
+impl<A: Literal + Queue> Vertex for Bdd<A> {
     fn id(&self) -> Option<u64> {
         self.branch().ok().map(|(id, ..)| id)
     }
@@ -385,13 +385,13 @@ impl fmt::Debug for Morphism {
     }
 }
 
-impl<A: Literal> fmt::Debug for Part<A> {
+impl<A: Literal + Queue> fmt::Debug for Part<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         run(Show::Graph(self), f)
     }
 }
 
-impl<A: Literal> fmt::Debug for Bdd<A> {
+impl<A: Literal + Queue> fmt::Debug for Bdd<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         run(Show::Graph(self), f)
     }

@@ -27,7 +27,7 @@ the form it has may not meet the cost the compiler needs:
 | 7 | Scalar to and from code point | 18 | built (L1.39c) | S.2 | Four L1 words: `codePoint`, `scalar`, `utf8`, `fromUtf8` |
 | 8 | Abort on a broken invariant, and unproved indexing | 229, ~1193 | decided (S.1d: the member) | S.2 | The atom `#bug(message)`, deleted from the type wherever the invariant is proved; `zedc check` lists the rest |
 | 9 | Key range queries on ordered maps | 9 | planned (L5.8a: `upTo`, `from`) | S.3 | `before` and `after` |
-| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f, and the cycles through calls by CYCLE-zedc-moves); `zed-kernel`, `zed-native` open (S.1f-rest) | S.2 | Move shared definitions to a file below both sides; no Zed change |
+| 10 | File import cycles | 9 components in `zedc` at S.1f; 4 left in `zed-kernel` and `zed-native` | fixed in `zedc` (S.1f, and the cycles through calls by CYCLE-zedc-moves), `zed-native` (S.1f-rest) and `zed-kernel` (CYCLE-kernel-moves) | S.2 | Move shared definitions to a file below both sides; no Zed change |
 
 Two more are in the workaround class and matter because of their cost, not their syntax: gap 11
 (mutation, which depends on step L6.13 keeping updates in place, with the report of copies of
@@ -426,14 +426,14 @@ trait methods, so it imports nothing.
 **The cycles that counting reveals, still open** (S.1f-rest, test
 `s_01f_import_graph::no_crate_has_an_import_cycle_but_the_known_ones`, which lists their files).
 The tool reports one component of 32 files in `zedc` (90 files, 370 imports, 212 calls not
-typed) and one of 12 in `zed-kernel` (28 files, 89 imports, 68 calls not typed). The true cycles
-inside them were found by adding the cross-file call edges rustc's MIR gives
-(`--emit=mir`, a scratch check, not committed) to the tool's path edges; the files beyond them
-are in the components only through calls the tool did not type (in `zedc` 23 files through
-`x.get()` read as `Unit::get` in `elab.rs`; in `zed-kernel` `num.rs`, `text.rs`, `value.rs` and
-`bes.rs` through `x.is_empty()` read as `Type::is_empty` in `types/empty.rs`). The MIR call graph
-also tells which cycles a move can break: functions that call each other in a cycle must stay in
-one unit, and only two such groups cross files.
+typed) and one of 12 in `zed-kernel` (28 files, 89 imports, 68 calls not typed; broken since
+by CYCLE-kernel-moves, below). The true cycles inside them were found by adding the cross-file
+call edges rustc's MIR gives (`--emit=mir`, a scratch check, not committed) to the tool's path
+edges; the files beyond them are in the components only through calls the tool did not type
+(in `zedc` 23 files through `x.get()` read as `Unit::get` in `elab.rs`; in `zed-kernel`
+`num.rs`, `text.rs`, `value.rs` and `bes.rs` through `x.is_empty()` read as `Type::is_empty`
+in `types/empty.rs`). The MIR call graph also tells which cycles a move can break: functions
+that call each other in a cycle must stay in one unit, and only two such groups cross files.
 
 | True cycle | Edges | Fix (inferred from the MIR call graph, not built) |
 |---|---|---|
@@ -441,7 +441,6 @@ one unit, and only two such groups cross files.
 | `zedc`: `check/mod`, `check/walk` | 56 functions in one group of mutual recursion, 27 in `check/mod.rs` (`fit_declared`, `compare`, `fits_slot`, `bind_pattern`, …) and 29 in `check/walk.rs` (`call`, `expr_of`, `infer`, `scope`, …) | The group must be one unit: move the 27 into `check/walk.rs` (or the 29 into `check/mod.rs`), the rest of each file importing it |
 | `zedc`: `elab`, `elab/walk` | `Elab::scope` and the walk's methods | No recursive group crosses them: move the methods `elab/walk.rs` calls below it |
 | `zedc`: `store/presburger`, `presburger/deep`, `deep/canon` | `Formula::fold`, `Con::holds`, `canon::Canon`, `Lin::constant`; one recursive group `presburger::witness`, `presburger::holds`, `deep::holds_as` | Move `holds_as` to `presburger.rs` (or `witness` and `holds` to `deep.rs`); the rest by moving the split methods of `Formula`, `Con` and `Lin` to `formula.rs` |
-| `zed-kernel`: `types`, `types/bdd`, `bdd/list`, `types/debug`, `types/empty`, `types/print`, `types/rec`, `rec/walk` | `types.rs` uses `bdd::Form`, `empty::Refusal`, `print::Surface`, `rec::Key` and `Bdd::list`; each of the others uses `Type`, `Row`, `AtomPart`, `Lits`, `Piece` or methods of `Type` written in another of them (`Type::is_empty`, `subtype` and `verdict` in `empty.rs`) | No recursive group of functions crosses these files, though `Type` holds `Bdd<Row>` and `Row` holds `Type`, so the data stay in one unit: move the shared data (`AtomPart`, `Lits`, `Piece`, `Form`, `Part`, `Refusal`, `Verdict`, `Key`, `Queue`, `List`) into `types.rs` or a leaf under it, and each method of `Type` to the file of the algorithm it belongs to, called by path |
 
 These moves touch the files that ZEDC-split (`zedc` into crates) and the kernel `types` branches
 were changing while S.1f-rest ran, so they were left to be made after those merge.
@@ -467,6 +466,24 @@ holding `Value`), so `family.rs` and `error.rs` merged into `value.rs`, and `dee
 `legalize` moved to `legal.rs`, and a run's outcome and the running of generated code to
 `outcome.rs`. `zed-native`, `zed-rt`,
 `zed-cert`, `zed-tools` and `zed-alloc-count` have no cycle.
+
+**The `zed-kernel` row is done (CYCLE-kernel-moves).** At its start the tool reported one
+component of 12 files (`num`, `text`, `types`, `types/bdd`, `bdd/list`, `types/bes`,
+`types/debug`, `types/empty`, `types/print`, `types/rec`, `rec/walk`, `value`; 30 files, 102
+imports, 87 calls not typed); it now reports no cycle (33 files, 98 imports, 30 calls not
+typed), and `s_01f_import_graph` checks that. Each type moved to the module that owns it, with
+no re-export and no copy, and no change in behavior:
+
+| Edge | Move |
+|---|---|
+| `types` and `bdd` call each other's `Literal` methods and the order of diagrams | `impl Literal for Row` and `for Morphism`, their tables, and the order of two diagrams (`Step`, `order`, `walk`, the private trait `Ordered`) moved from `bdd.rs` to `types.rs`; `Op` moved to `bdd.rs`; `Literal` no longer requires `debug::Queue`, which the `Debug` impls in `debug.rs` require instead |
+| `bdd/list` and `bdd` | `bdd/list.rs` is the inline module `list` of `bdd.rs`, as it is one unit with it; the tests of `bdd.rs` moved to `bdd/tests.rs` |
+| `types` uses `empty::{Refusal, Verdict}` and `print::Surface` | the three types are defined in `types.rs` (the `pub use` lines are gone; the paths `zed_kernel::types::{Refusal, Verdict, Surface}` are unchanged); `Type::split` moved to `empty.rs` |
+| `types` and `rec` | `rec` is an inline module of `types.rs`, holding the definitions (`Expr`, `Def`, `Group`, `Checked`, `Node`, `Shape`, `Env`, `Key`, `Rejection`, and REC-canon's `Canon` and `canon`; paths unchanged) and the module `walk`; the checks of a group and its tables went to `rec/group.rs`, the units and the unfolding (`eval`, `Env::member`, `Type::group_members`) to `rec/unfold.rs`; the stored closure `Rec::judge` is gone: `Type::judged` (`empty.rs`) reads the group's decision through `Key::member_at`, and `judge` and `kids` moved from `rec.rs` to `empty.rs` |
+| `num`, `text`, `value`, `bes` and `types` reach `empty.rs` through `x.is_empty()` | not real: the tool did not type the receiver; 21 locals and closure parameters got a written type (for instance `let below: Vec<(u64, BigUint)>` in `num.rs`), which the compiler checks |
+
+The tests of `types.rs` and `empty.rs` moved to `types/tests.rs` and `types/empty/tests.rs`,
+and those of `rec.rs` to `rec/group.rs` (`types::rec::group::tests`).
 
 `zed-kernel` and `zedc` read the shared scaling test through `#[path]` (`zed-kernel` `lib.rs:28`, `zedc` `lib.rs:45`); the tool reports such
 a module and does not read it, since its file is outside the crate.
@@ -1292,8 +1309,8 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `Vec<u32>` stamps and marks overwritten in place, reset by advancing a counter | `bes::Stamp`, `bes::Scratch` | Mutation | A persistent array per pass, or a map from node to the pass that marked it; the counter trick needs mutable arrays |
-| A closure `Box<dyn Fn() -> Option<bool> + Send + Sync>` stored in a recursive type node, computed once through `OnceLock` | `types::Rec::judge`, `rec::Env::judged` | Laziness | An indexed definition `parts[id] = …`, evaluated on demand (gap 3) |
-| Explicit work stack of `(node id, &Arc<Node>)` pairs filling a graph allocated ahead | `rec::judge`, `rec::kids` | Mutation | A fold over the body tree that returns the nodes it adds |
+| Each member's emptiness as its group decides it, computed once for the instance through `OnceLock` and read through the member's key (until CYCLE-kernel-moves a closure `Box<dyn Fn() -> Option<bool> + Send + Sync>` stored in each recursive node, `types::Rec::judge`) | `Type::judged` (`types/empty.rs`), `rec::Key::member_at`, `rec::Env::judged` | Laziness | An indexed definition `parts[id] = …`, evaluated on demand (gap 3) |
+| Explicit work stack of `(node id, &Arc<Node>)` pairs filling a graph allocated ahead | `empty::judge`, `empty::kids` (in `rec.rs` until CYCLE-kernel-moves) | Mutation | A fold over the body tree that returns the nodes it adds |
 | `impl Iterator for Values` holding an odometer `Vec<usize>` advanced in place, and a `BTreeSet` of the tuples given | `types::Values::next` | Mutation, laziness | A lazy stream whose state (box, positions, tuples given) is passed from one value to the next |
 | `std::mem::take` of the lists out of one iterator into the next, in `each_value` | `Type::each_value` | Moves | The lists threaded through a fold over the types in order |
 | Explicit stacks of `Step::Enter`/`Step::Leave` and of slice iterators, with `Vec<Option<Item>>` taken in place as each node is visited | `print::Printer::walk`, `print::Printer::write` | Mutation | A fold over the graph in post-order returning the texts and the order, with the visited set as a persistent map threaded through it |
@@ -2374,7 +2391,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A thread-local unit of work, `RefCell<Unit>`, listing by `Weak` the instances whose recursive members it made, ended by `Type::forget_emptiness` and by its `Drop` at thread exit, and the thread's number, which keys `INSTANCES` | `rec::Unit`, `rec::UNIT`, `rec::thread`, `THREADS`, `rec::end_unit`, `Env::register`, `Env::forget` | Shared tables across pure calls (gap 2); Zed has no weak reference or finalizer | The unit's state struct holds the instances and their members, and is dropped whole at the end of the unit, so no cycle needs breaking |
+| A thread-local unit of work, `RefCell<Unit>`, listing by `Weak` the instances whose recursive members it made, ended by `Type::forget_emptiness` and by its `Drop` at thread exit, and the thread's number, which keys `INSTANCES` | `rec::unfold::{Unit, UNIT, thread, THREADS, end_unit}`, `Env::register`, `Env::forget` (in `rec.rs` until CYCLE-kernel-moves) | Shared tables across pure calls (gap 2); Zed has no weak reference or finalizer | The unit's state struct holds the instances and their members, and is dropped whole at the end of the unit, so no cycle needs breaking |
 | A recursive type's unfolding and an instance's recursive members in `Mutex<Option<Type>>` cells, cleared at the end of a unit and made again when next read | `Rec::body`, `Rec::unfolding`, `Rec::forget_unfolding`, `Env::members`, `Env::member` | Lazy cells and tied recursive types (gap 3) | The unfolding in the unit's memo table keyed by member id |
 | A guard that lends the parts of a node or of a fresh unfolding (`PartsRef`), and an append-only arena of chunks that holds the unfoldings a walk borrows from (`Held`) | `Type::p`, `Type::p_held`, `Held::put`, `classes`, `overlaps`, `Walk::enter` | References into values (Rust lifetimes); a Zed value is not freed while a binding names it | Not needed: the walk binds the unfoldings it reads |
 | An instance named by a counter, never reused, instead of its address | `Env::id`, `ENVS`, `Key::group`, `Type::group` | Identity (gap 1) | The instance's index in the unit's table |

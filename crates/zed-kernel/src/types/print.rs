@@ -18,31 +18,10 @@
 //! as `#a(tuple)` or `#a(struct)` and is marked not exact.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::sync::Arc;
 
 use super::bdd::{Bdd, Form, Part};
-use super::{Lits, Morphism, Node, Row, Tuples, Type};
-
-/// A type in the surface syntax: the definitions it needs, in order, then the type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Surface {
-    /// Each definition's name and body.
-    pub defs: Vec<(String, String)>,
-    /// The type, which may name the definitions.
-    pub root: String,
-    /// Whether every word is in the surface syntax (the module comment names the exceptions).
-    pub exact: bool,
-}
-
-impl fmt::Display for Surface {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (name, body) in &self.defs {
-            write!(f, "type {name} = {body}; ")?;
-        }
-        f.write_str(&self.root)
-    }
-}
+use super::{Lits, Morphism, Node, Row, Surface, Tuples, Type};
 
 impl Type {
     /// The type in the surface syntax (module `print`).
@@ -627,7 +606,7 @@ impl Printer {
             lits(&mut items, name, l);
         }
         if p.atoms.cofinite {
-            let mut except = Vec::new();
+            let mut except: Vec<Text> = Vec::new();
             for (name, part) in p.atoms.names.iter() {
                 self.atom(&mut except, name, &part.not());
             }

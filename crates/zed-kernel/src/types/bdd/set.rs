@@ -40,14 +40,14 @@ pub(in crate::types) type Key<A> = (A, bool);
 /// A node of a set: its literal, and the sets of the literals before and after it.
 pub(in crate::types) struct Set<A: Atom> {
     /// The node's id, unique among the nodes of the process.
-    pub(super) id: u64,
+    pub(in crate::types) id: u64,
     /// A hash of the set's literals, equal for equal sets.
-    pub(super) digest: u64,
+    pub(in crate::types) digest: u64,
     prio: u64,
-    pub(super) key: Key<A>,
+    pub(in crate::types) key: Key<A>,
     len: usize,
-    pub(super) left: Tree<A>,
-    pub(super) right: Tree<A>,
+    pub(in crate::types) left: Tree<A>,
+    pub(in crate::types) right: Tree<A>,
 }
 
 /// A set: the root, or `None` when empty.

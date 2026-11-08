@@ -25,21 +25,18 @@ mod bdd;
 pub mod bes;
 mod debug;
 mod empty;
-pub use empty::{Refusal, Verdict};
 mod hash;
 pub(crate) use bdd::KeyHasher;
 #[cfg(test)]
 use hash::SALT;
 pub(crate) use hash::mix;
 mod print;
-pub mod rec;
-
-pub use print::Surface;
 
 use imbl::ordmap::DiffItem;
 use imbl::{OrdMap, OrdSet};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, Bound, HashMap, HashSet};
 use std::fmt;
 use std::ops::{BitAnd, BitOr, Not, Sub};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -47,7 +44,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use crate::deep;
 use crate::num::Rat;
 use crate::value::{Id, Items, Value};
-use bdd::{Bdd, Form, Part};
+use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
 
 /// A type: the set of values it denotes. Types are ordered by their digests first, so two
 /// types are ordered without reading their contents unless their digests are equal, and then by
@@ -62,7 +59,7 @@ impl Ord for Type {
         }
         self.digest()
             .cmp(&other.digest())
-            .then_with(|| bdd::order(bdd::Step::Types(self, other)))
+            .then_with(|| order(Step::Types(self, other)))
     }
 }
 
@@ -218,12 +215,10 @@ struct Rec {
     #[expect(clippy::type_complexity, reason = "a list of names, each with a flag")]
     names: OnceLock<Option<Vec<(Arc<str>, bool)>>>,
     /// The unfolding, made when first needed. A member's unfolding holds the member, so the
-    /// end of the unit that made it drops it (`rec::end_unit`), and it is made again if the
+    /// end of the unit that made it drops it (`rec::unfold::end_unit`), and it is made again if the
     /// node is used after.
     body: Mutex<Option<Type>>,
     make: Box<dyn Fn() -> Type + Send + Sync>,
-    /// The emptiness its group decides for it, if the group is decided (module `bes`).
-    judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
 }
 
 impl fmt::Debug for Rec {
@@ -266,7 +261,7 @@ impl Rec {
 
 /// The parts of a type ([`Type::p`]): its node's own, or those of a recursive node's
 /// unfolding, which the guard holds, since the end of a unit may drop the node's copy
-/// (`rec::end_unit`) while the parts are read.
+/// (`rec::unfold::end_unit`) while the parts are read.
 enum PartsRef<'a> {
     Node(&'a Parts),
     /// A node of parts, never a recursive node.
@@ -372,7 +367,7 @@ pub struct Arrow {
 /// Equal when the three types are, read in one loop of `bdd::order`.
 impl PartialEq for Arrow {
     fn eq(&self, other: &Arrow) -> bool {
-        bdd::order(bdd::Step::Morphisms(self, other)) == std::cmp::Ordering::Equal
+        order(Step::Morphisms(self, other)) == std::cmp::Ordering::Equal
     }
 }
 
@@ -411,7 +406,7 @@ impl std::ops::Deref for Morphism {
 /// to itself without reading it.
 impl Ord for Morphism {
     fn cmp(&self, other: &Morphism) -> std::cmp::Ordering {
-        bdd::order(bdd::Step::Morphisms(self, other))
+        order(Step::Morphisms(self, other))
     }
 }
 
@@ -478,6 +473,7 @@ impl<K: Tabled> Drop for Shared<K> {
             if let Ok(mut t) = t.try_borrow_mut()
                 && let Some(bucket) = t.get_mut(&self.digest)
             {
+                let bucket: &mut Vec<std::sync::Weak<Shared<K>>> = bucket;
                 bucket.retain(|w| !std::ptr::eq(w.as_ptr(), me));
                 if bucket.is_empty() {
                     t.remove(&self.digest);
@@ -554,7 +550,7 @@ impl Ord for Row {
         self.0
             .digest
             .cmp(&other.0.digest)
-            .then_with(|| bdd::order(bdd::Step::Rows(self, other)))
+            .then_with(|| order(Step::Rows(self, other)))
     }
 }
 
@@ -571,6 +567,447 @@ impl PartialEq for Row {
 }
 
 impl Eq for Row {}
+
+thread_local! {
+    static TUPLES: RefCell<Tables<Row>> = const { RefCell::new(Tables::new()) };
+    static MORPHISMS: RefCell<Tables<Morphism>> = const { RefCell::new(Tables::new()) };
+}
+
+impl Literal for Row {
+    fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
+        hold();
+        TUPLES.with(|t| f(&mut t.borrow_mut()))
+    }
+    fn untable(f: impl FnOnce(&mut Tables<Self>)) {
+        let _ = TUPLES.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
+    }
+    fn digest(&self) -> u64 {
+        Row::digest(self)
+    }
+    fn free(part: Owned<Row>) {
+        free(Freed::Tuples(part));
+    }
+    fn order(w: Walk<'_, Row>) -> std::cmp::Ordering {
+        order(Row::walk(w))
+    }
+}
+
+impl Literal for Morphism {
+    fn table<R>(f: impl FnOnce(&mut Tables<Self>) -> R) -> R {
+        hold();
+        MORPHISMS.with(|t| f(&mut t.borrow_mut()))
+    }
+    fn untable(f: impl FnOnce(&mut Tables<Self>)) {
+        let _ = MORPHISMS.try_with(|t| t.try_borrow_mut().map(|mut t| f(&mut t)));
+    }
+    fn digest(&self) -> u64 {
+        Morphism::digest(self)
+    }
+    fn free(part: Owned<Morphism>) {
+        free(Freed::Morphisms(part));
+    }
+    fn order(w: Walk<'_, Morphism>) -> std::cmp::Ordering {
+        order(Morphism::walk(w))
+    }
+}
+
+/// The steps of [`order`] for the atoms of a universe and the nodes of its diagrams.
+trait Ordered: Literal {
+    /// The step that compares two atoms.
+    fn atoms<'a>(a: &'a Self, b: &'a Self) -> Step<'a>;
+    /// The step that compares two lists, cells, sets, expressions or parts of the universe.
+    fn walk(w: Walk<'_, Self>) -> Step<'_>;
+}
+
+impl Ordered for Row {
+    fn atoms<'a>(a: &'a Row, b: &'a Row) -> Step<'a> {
+        Step::Rows(a, b)
+    }
+    fn walk(w: Walk<'_, Row>) -> Step<'_> {
+        Step::Tuples(w)
+    }
+}
+
+impl Ordered for Morphism {
+    fn atoms<'a>(a: &'a Morphism, b: &'a Morphism) -> Step<'a> {
+        Step::Morphisms(a, b)
+    }
+    fn walk(w: Walk<'_, Morphism>) -> Step<'_> {
+        Step::Arrows(w)
+    }
+}
+
+/// The atom names of a type with their parts.
+type AtomNames = imbl::OrdMap<Arc<str>, AtomPart>;
+
+/// The tuple lengths of a type with their parts.
+type Lens = BTreeMap<usize, Part<Row>>;
+
+/// A pair to compare in [`order`], the rest of two sequences compared in order, the order of two
+/// fields already compared, or two nodes or expressions whose contents compared equal.
+enum Step<'a> {
+    Types(&'a Type, &'a Type),
+    Rows(&'a Row, &'a Row),
+    Morphisms(&'a Arrow, &'a Arrow),
+    Tuples(Walk<'a, Row>),
+    Arrows(Walk<'a, Morphism>),
+    /// The remaining components of two rows.
+    Items(std::slice::Iter<'a, Type>, std::slice::Iter<'a, Type>),
+    /// The atom names of two types after the bound, each with its part: the maps and the last
+    /// name read rather than two iterators, which would make every step five times the size.
+    Names(&'a AtomNames, &'a AtomNames, Bound<&'a Arc<str>>),
+    /// The tuple lengths of two types after the bound, each with its part.
+    Lens(&'a Lens, &'a Lens, Bound<usize>),
+    /// The order of two scalar fields, read when every field before them compared equal.
+    Is(Ordering),
+    Equal(u64, u64),
+}
+
+/// The order of the pair in `first`, the order of contents that `Ord` gives every type, row,
+/// morphism type, part, diagram and expression: two types by digest, then by their parts field
+/// by field (a recursive node after every other, two of them by key, `rec::Key::order`); two
+/// rows by digest, then component by component; two morphism types by guarantee, permission and
+/// value; two diagrams or expressions by digest, then by atom or connective, then by `hi` and
+/// `lo` or by operands, a diagram before an expression; sequences (rows, atom names, tuple
+/// lengths) lexicographically, a prefix first. Two nodes or expressions found equal are kept by node id
+/// and not compared again, so the cost is one step per pair of nodes compared, not one per path
+/// to them, and linear in the size when the two are equal. A loop with its own stack, as a type
+/// can be deeper than the call stack: a row's components are types, whose tuple parts are
+/// diagrams over rows, so where the digests tie (short-addresses build, step L1.37a, or a 64-bit
+/// collision) two types n deep are compared n levels down (SHORT-stack-l01_22).
+fn order(first: Step<'_>) -> Ordering {
+    let mut equal = HashSet::new();
+    // The first step is held apart, so that a comparison its digests decide allocates nothing.
+    let mut steps = Vec::new();
+    let mut next = Some(first);
+    while let Some(step) = next.take().or_else(|| steps.pop()) {
+        let c = match step {
+            Step::Equal(a, b) => {
+                equal.insert((a, b));
+                Ordering::Equal
+            }
+            Step::Is(c) => c,
+            Step::Tuples(w) => walk(w, &mut steps, &equal),
+            Step::Arrows(w) => walk(w, &mut steps, &equal),
+            Step::Types(a, b) => types(a, b, &mut steps, &equal),
+            Step::Rows(a, b) => {
+                if Arc::ptr_eq(&a.0, &b.0) {
+                    continue;
+                }
+                a.digest()
+                    .cmp(&b.digest())
+                    .then_with(|| items(a.iter(), b.iter(), &mut steps, &equal))
+            }
+            Step::Morphisms(a, b) => {
+                if std::ptr::eq(a, b) {
+                    continue;
+                }
+                // Each pair is read at once where its fields decide it, as in [`items`], so that
+                // two morphism types told apart by a digest push nothing; at the first pair that
+                // needs a nested comparison, the pairs after it wait below what it pushed.
+                let pairs = [
+                    (&a.guarantee, &b.guarantee),
+                    (&a.permission, &b.permission),
+                    (&a.value, &b.value),
+                ];
+                let mut c = Ordering::Equal;
+                for (i, &(x, y)) in pairs.iter().enumerate() {
+                    let n = steps.len();
+                    c = types(x, y, &mut steps, &equal);
+                    if c != Ordering::Equal {
+                        break;
+                    }
+                    if steps.len() > n {
+                        let rest = pairs[i + 1..].iter().rev();
+                        steps.splice(n..n, rest.map(|&(x, y)| Step::Types(x, y)));
+                        break;
+                    }
+                }
+                c
+            }
+            Step::Items(x, y) => items(x, y, &mut steps, &equal),
+            Step::Names(p, q, from) => atom_names((p, q), from, &mut steps),
+            Step::Lens(p, q, from) => tuple_lens((p, q), from, &mut steps, &equal),
+        };
+        if c != Ordering::Equal {
+            return c;
+        }
+    }
+    Ordering::Equal
+}
+
+/// One step of [`order`] on the remaining components of two rows: each pair of components is
+/// read at once by [`types`] where its fields decide it, so that two rows told apart without
+/// reading a nested type push nothing; at the first pair that needs one, the rest of the rows is
+/// pushed below what [`types`] pushed. [`types`] calls neither this nor itself, so the depth of
+/// the call stack is fixed.
+fn items<'a>(
+    mut x: std::slice::Iter<'a, Type>,
+    mut y: std::slice::Iter<'a, Type>,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    loop {
+        match (x.next(), y.next()) {
+            (Some(s), Some(t)) => {
+                let n = steps.len();
+                let c = types(s, t, steps, equal);
+                if c != Ordering::Equal {
+                    return c;
+                }
+                if steps.len() > n {
+                    steps.insert(n, Step::Items(x, y));
+                    return Ordering::Equal;
+                }
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
+}
+
+/// One step of [`order`] on two types: the fields in order, each read at once where it can be,
+/// so that two types told apart without reading a nested type push nothing; at the first field
+/// that needs a nested comparison (an atom's payload, a tuple length's part, the morphism part)
+/// the fields after it are pushed in reverse and the nested comparison above them, so that they
+/// are compared in order.
+fn types<'a>(
+    a: &'a Type,
+    b: &'a Type,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    if Arc::ptr_eq(&a.0, &b.0) {
+        return Ordering::Equal;
+    }
+    let c = a.digest().cmp(&b.digest());
+    if c != Ordering::Equal {
+        return c;
+    }
+    let (p, q) = match (&*a.0, &*b.0) {
+        (Node::Parts(p, _), Node::Parts(q, _)) => (p, q),
+        (Node::Parts(..), Node::Rec(_)) => return Ordering::Less,
+        (Node::Rec(_), Node::Parts(..)) => return Ordering::Greater,
+        (Node::Rec(r), Node::Rec(s)) => {
+            // The types inside the keys that tie in digest wait on the stack, in order.
+            let mut ties = Vec::new();
+            let c = r.key.order(&s.key, &mut ties);
+            if c.is_eq() {
+                steps.extend(ties.into_iter().rev().map(|(x, y)| Step::Types(x, y)));
+            }
+            return c;
+        }
+    };
+    let c = (p.digest.cmp(&q.digest))
+        .then(p.bools.cmp(&q.bools))
+        .then_with(|| p.ints.cmp(&q.ints))
+        .then_with(|| p.rats.cmp(&q.rats))
+        .then_with(|| p.floats.cmp(&q.floats))
+        .then_with(|| p.strings.cmp(&q.strings))
+        .then(p.atoms.cofinite.cmp(&q.atoms.cofinite));
+    if c != Ordering::Equal {
+        return c;
+    }
+    let n = steps.len();
+    let names = (&p.atoms.names, &q.atoms.names);
+    let c = atom_names(names, Bound::Unbounded, steps);
+    if c != Ordering::Equal {
+        return c;
+    }
+    let sum = (p.atoms.sum.cmp(&q.atoms.sum)).then(p.tuples.rest.cmp(&q.tuples.rest));
+    let lens = (&p.tuples.lens, &q.tuples.lens);
+    if steps.len() > n {
+        // A payload ties in digest: the fields after the atoms wait below its contents.
+        steps.splice(
+            n..n,
+            [
+                Step::Arrows(Walk::Parts(&p.morphisms, &q.morphisms)),
+                Step::Is(p.structs.cmp(&q.structs)),
+                Step::Lens(lens.0, lens.1, Bound::Unbounded),
+                Step::Is(sum),
+            ],
+        );
+        return Ordering::Equal;
+    }
+    if sum != Ordering::Equal {
+        return sum;
+    }
+    let c = tuple_lens(lens, Bound::Unbounded, steps, equal);
+    if c != Ordering::Equal {
+        return c;
+    }
+    if steps.len() > n {
+        // A part ties in digest: the fields after the tuples wait below its contents.
+        steps.splice(
+            n..n,
+            [
+                Step::Arrows(Walk::Parts(&p.morphisms, &q.morphisms)),
+                Step::Is(p.structs.cmp(&q.structs)),
+            ],
+        );
+        return Ordering::Equal;
+    }
+    p.structs
+        .cmp(&q.structs)
+        .then_with(|| walk(Walk::Parts(&p.morphisms, &q.morphisms), steps, equal))
+}
+
+/// One step of [`order`] on the atom names of two types after `from`, each with its part, read
+/// at once where the names, the bare atoms or the payloads' digests decide them; at the first
+/// payload that ties in digest, the rest of the names is pushed (as the last name read) and the
+/// two payloads above it. Resuming takes `O(log n)` in the names, read only after a nested
+/// comparison.
+fn atom_names<'a>(
+    (p, q): (&'a AtomNames, &'a AtomNames),
+    from: Bound<&'a Arc<str>>,
+    steps: &mut Vec<Step<'a>>,
+) -> Ordering {
+    // Complexity tradeoff: a step resumes by a search, O(log n) in the names, after a nested
+    // comparison of at least that cost, rather than holding two iterators, which made each step
+    // 208 bytes and the bytes a comparison allocates on ties more than 24x at 8n in the pinwheel
+    // tests of `l01_23` (short-addresses build).
+    let (mut x, mut y) = (
+        p.range::<_, Arc<str>>((from, Bound::Unbounded)),
+        q.range::<_, Arc<str>>((from, Bound::Unbounded)),
+    );
+    loop {
+        match (x.next(), y.next()) {
+            (Some((k, u)), Some((l, v))) => {
+                let c = k.cmp(l).then(u.bare.cmp(&v.bare));
+                if c != Ordering::Equal {
+                    return c;
+                }
+                if Arc::ptr_eq(&u.payload.0, &v.payload.0) {
+                    continue;
+                }
+                let c = u.payload.digest().cmp(&v.payload.digest());
+                if c == Ordering::Equal {
+                    steps.extend([
+                        Step::Names(p, q, Bound::Excluded(k)),
+                        Step::Types(&u.payload, &v.payload),
+                    ]);
+                }
+                return c;
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
+}
+
+/// One step of [`order`] on the tuple lengths of two types after `from`, each with its part,
+/// read at once where the lengths or the parts' digests decide them; at the first pair of parts
+/// that ties in digest, the rest of the lengths is pushed (as the last length read) below what
+/// [`walk`] pushed. Resuming takes `O(log n)` in the lengths, read only after a nested
+/// comparison.
+fn tuple_lens<'a>(
+    (p, q): (&'a Lens, &'a Lens),
+    from: Bound<usize>,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    // Complexity tradeoff: as in `atom_names`, O(log n) to resume against a step a fifth the size.
+    let (mut x, mut y) = (
+        p.range((from, Bound::Unbounded)),
+        q.range((from, Bound::Unbounded)),
+    );
+    loop {
+        match (x.next(), y.next()) {
+            (Some((k, s)), Some((l, t))) => {
+                let c = k.cmp(l);
+                if c != Ordering::Equal {
+                    return c;
+                }
+                let n = steps.len();
+                let c = walk(Walk::Parts(s, t), steps, equal);
+                if c != Ordering::Equal {
+                    return c;
+                }
+                if steps.len() > n {
+                    steps.insert(n, Step::Lens(p, q, Bound::Excluded(*k)));
+                    return Ordering::Equal;
+                }
+            }
+            (s, t) => return s.is_some().cmp(&t.is_some()),
+        }
+    }
+}
+
+/// One step of [`order`] on two diagrams, expressions or parts of one universe.
+fn walk<'a, A: Ordered>(
+    w: Walk<'a, A>,
+    steps: &mut Vec<Step<'a>>,
+    equal: &HashSet<(u64, u64)>,
+) -> Ordering {
+    match w {
+        Walk::Parts(Part::Bdd(a), Part::Bdd(b)) => walk(Walk::Bdds(a, b), steps, equal),
+        Walk::Parts(Part::Expr(a), Part::Expr(b)) => walk(Walk::Exprs(a, b), steps, equal),
+        Walk::Parts(Part::Bdd(_), Part::Expr(_)) => Ordering::Less,
+        Walk::Parts(Part::Expr(_), Part::Bdd(_)) => Ordering::Greater,
+        Walk::Bdds(Bdd::Leaf(a), Bdd::Leaf(b)) => a.cmp(b),
+        Walk::Bdds(Bdd::Leaf(_), Bdd::List(..)) => Ordering::Less,
+        Walk::Bdds(Bdd::List(..), Bdd::Leaf(_)) => Ordering::Greater,
+        Walk::Bdds(x @ Bdd::List(a, v), y @ Bdd::List(b, w)) => {
+            let c = x.digest().cmp(&y.digest()).then(v.cmp(w));
+            if c != Ordering::Equal {
+                return c;
+            }
+            walk(Walk::Cells(Some(a), Some(b)), steps, equal)
+        }
+        Walk::Cells(None, None) | Walk::Sets(None, None) => Ordering::Equal,
+        Walk::Cells(None, Some(_)) | Walk::Sets(None, Some(_)) => Ordering::Less,
+        Walk::Cells(Some(_), None) | Walk::Sets(Some(_), None) => Ordering::Greater,
+        Walk::Cells(Some(a), Some(b)) => {
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let c = a.digest.cmp(&b.digest);
+            if c == Ordering::Equal {
+                // A sequence has one shape, so equal digests are compared cell by cell: the
+                // cells before, the blocks, then the cells after, each pushed after the next.
+                steps.extend([
+                    Step::Equal(key.0, key.1),
+                    A::walk(Walk::Cells(a.right.as_deref(), b.right.as_deref())),
+                    A::walk(Walk::Sets(Some(&a.block), Some(&b.block))),
+                    A::walk(Walk::Cells(a.left.as_deref(), b.left.as_deref())),
+                ]);
+            }
+            c
+        }
+        Walk::Sets(Some(a), Some(b)) => {
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let c = a.digest.cmp(&b.digest).then(a.key.1.cmp(&b.key.1));
+            if c == Ordering::Equal {
+                // The atoms are pushed last, so they are compared first, then the left sets.
+                steps.extend([
+                    Step::Equal(key.0, key.1),
+                    A::walk(Walk::Sets(a.right.as_deref(), b.right.as_deref())),
+                    A::walk(Walk::Sets(a.left.as_deref(), b.left.as_deref())),
+                    A::atoms(&a.key.0, &b.key.0),
+                ]);
+            }
+            c
+        }
+        Walk::Exprs(a, b) => {
+            let key = (a.id, b.id);
+            if key.0 == key.1 || equal.contains(&key) {
+                return Ordering::Equal;
+            }
+            let (x, y) = (a.form.operands(), b.form.operands());
+            let c = a.digest.cmp(&b.digest).then_with(|| x.0.cmp(&y.0));
+            if c == Ordering::Equal {
+                steps.push(Step::Equal(key.0, key.1));
+                if let (Some(p), Some(q)) = (x.2, y.2) {
+                    steps.push(A::walk(Walk::Parts(p, q)));
+                }
+                steps.push(A::walk(Walk::Parts(x.1, y.1)));
+            }
+            c
+        }
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Parts {
@@ -716,48 +1153,19 @@ impl Type {
         naming: impl Fn() -> Rope + Send + Sync + 'static,
         make: impl Fn() -> Type + Send + Sync + 'static,
     ) -> Type {
-        Type::rec_with(key, Box::new(naming), Box::new(make), None)
-    }
-
-    /// The node of [`Type::rec`], with its emptiness given by `judge` when there is one.
-    fn rec_with(
-        key: rec::Key,
-        naming: Box<dyn Fn() -> Rope + Send + Sync>,
-        make: Box<dyn Fn() -> Type + Send + Sync>,
-        judge: Option<Box<dyn Fn() -> Option<bool> + Send + Sync>>,
-    ) -> Type {
         Type(Arc::new(Node::Rec(Rec {
             key,
             name: OnceLock::new(),
-            naming,
+            naming: Box::new(naming),
             names: OnceLock::new(),
             body: Mutex::new(None),
-            make,
-            judge,
+            make: Box::new(make),
         })))
-    }
-
-    /// [`Type::rec`], with `judge()` giving its emptiness when its group decides it.
-    fn rec_judged(
-        key: rec::Key,
-        naming: impl Fn() -> Rope + Send + Sync + 'static,
-        make: impl Fn() -> Type + Send + Sync + 'static,
-        judge: impl Fn() -> Option<bool> + Send + Sync + 'static,
-    ) -> Type {
-        Type::rec_with(key, Box::new(naming), Box::new(make), Some(Box::new(judge)))
-    }
-
-    /// The emptiness the group of a recursive node decides for it, if any.
-    pub(crate) fn judged(&self) -> Option<bool> {
-        match &*self.0 {
-            Node::Parts(..) => None,
-            Node::Rec(r) => r.judge.as_ref().and_then(|j| j()),
-        }
     }
 
     /// Whether this is a recursive member of a group, which its group's decider is asked about.
     pub(crate) fn is_member(&self) -> bool {
-        matches!(&*self.0, Node::Rec(r) if r.judge.is_some())
+        matches!(&*self.0, Node::Rec(r) if r.key.member_at().is_some())
     }
 
     /// The group of a recursive member, as a number that two members share exactly when they
@@ -774,14 +1182,6 @@ impl Type {
         match &*self.0 {
             Node::Parts(..) => false,
             Node::Rec(r) => r.key.judged_known(),
-        }
-    }
-
-    /// The recursive members of the group of a recursive member, in definition order.
-    pub(crate) fn group_members(&self) -> Option<Vec<Type>> {
-        match &*self.0 {
-            Node::Parts(..) => None,
-            Node::Rec(r) => r.key.members(),
         }
     }
 
@@ -822,7 +1222,7 @@ impl Type {
         }
     }
 
-    /// Drops the unfolding a recursive node keeps (`rec::end_unit`).
+    /// Drops the unfolding a recursive node keeps (`rec::unfold::end_unit`).
     fn forget_unfolding(&self) {
         if let Node::Rec(r) = &*self.0 {
             r.forget_unfolding();
@@ -1225,11 +1625,11 @@ impl Type {
         };
         let key = |t: &Type, xs: &Items| (t.clone(), xs.id());
         let mut known = HashMap::new();
-        let mut todo = vec![first];
+        let mut todo: Vec<(Type, &Items)> = vec![first];
         loop {
             let (ty, xs) = todo.last().expect("the first test ends the loop");
             let xs = *xs;
-            let waiting = RefCell::new(Vec::new());
+            let waiting: RefCell<Vec<(Type, &Items)>> = RefCell::new(Vec::new());
             let fits = ty.p().tuples.get(xs.len()).eval(&|row: &Row| {
                 let mut fits = true;
                 for (t, x) in row.iter().zip(xs) {
@@ -1246,7 +1646,7 @@ impl Type {
                 }
                 fits
             });
-            let waiting = waiting.into_inner();
+            let waiting: Vec<(Type, &Items)> = waiting.into_inner();
             if !waiting.is_empty() {
                 todo.extend(waiting);
                 continue;
@@ -1326,12 +1726,6 @@ impl Type {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Op {
-    Or,
-    And,
-}
-
 impl Parts {
     fn scalars_only(&self) -> bool {
         self.atoms == Atoms::default()
@@ -1345,7 +1739,7 @@ impl Parts {
         self.bools != 0
             || [&self.ints, &self.rats, &self.floats, &self.strings]
                 .iter()
-                .any(|l| l.cofinite || !l.values.is_empty())
+                .any(|l: &&Lits| l.cofinite || !l.values.is_empty())
     }
 }
 
@@ -1370,7 +1764,7 @@ impl Type {
     /// parts in name order; `None` when it holds the atoms of every name it does not list. A
     /// listed name may hold no value, when its payload type is empty but not built as empty. A
     /// recursive node keeps its unfolding's names, which hold no type, so they outlive the
-    /// unfolding (`rec::end_unit`).
+    /// unfolding (`rec::unfold::end_unit`).
     pub fn atom_names(&self) -> Option<impl Iterator<Item = (&str, bool)>> {
         let (map, list) = match &*self.0 {
             Node::Parts(p, _) => match p.atoms.cofinite {
@@ -1388,41 +1782,6 @@ impl Type {
         };
         let map = map.into_iter().flatten().map(|(n, a)| (&**n, a.bare));
         Some(map.chain(list.into_iter().flatten().map(|(n, b)| (&**n, *b))))
-    }
-
-    /// `self` split into its values of each base type, its atoms and the rest: what `self & t`
-    /// gives for `t` each base type, and then the atoms and the other universes, each made by
-    /// copying one part of `self`, where the meets would build each part of each result.
-    pub fn split(&self) -> Split {
-        let p = self.p();
-        let lits = |l: &Lits, set: fn(&mut Parts, Lits)| {
-            (l.cofinite || !l.values.is_empty()).then(|| Type::with(|q| set(q, l.clone())))
-        };
-        let bools = (p.bools != 0).then(|| Type::with(|q| q.bools = p.bools));
-        let atoms = (p.atoms != Atoms::default())
-            .then(|| Type::with(|q| q.atoms = p.atoms.clone()))
-            .filter(|t| !t.is_empty());
-        let rest =
-            (p.tuples != Tuples::default() || p.structs || p.morphisms.is_leaf() != Some(false))
-                .then(|| {
-                    Type::with(|q| {
-                        q.tuples = p.tuples.clone();
-                        q.structs = p.structs;
-                        q.morphisms = p.morphisms.clone();
-                    })
-                })
-                .filter(|t| !t.is_empty());
-        Split {
-            bases: [
-                bools,
-                lits(&p.ints, |q, l| q.ints = l),
-                lits(&p.rats, |q, l| q.rats = l),
-                lits(&p.floats, |q, l| q.floats = l),
-                lits(&p.strings, |q, l| q.strings = l),
-            ],
-            atoms,
-            rest,
-        }
     }
 }
 
@@ -2027,7 +2386,7 @@ impl Type {
                 Node::Parts(p, _) => t.show(p),
                 Node::Rec(rec) => (rec.naming)(),
             };
-            let missing = SHOWING.with_borrow_mut(|s| {
+            let missing: Vec<Type> = SHOWING.with_borrow_mut(|s| {
                 std::mem::take(&mut s.as_mut().expect("the making is under way").missing)
             });
             if missing.is_empty() {
@@ -2063,6 +2422,7 @@ impl Type {
             ("f64", &p.floats),
             ("String", &p.strings),
         ] {
+            let l: &Lits = l;
             match (l.cofinite, l.values.is_empty()) {
                 (true, true) => items.push(rope![name]),
                 (true, false) => items.push(rope![format!("(\\ {name} {})", spaced(&l.values))]),
@@ -2161,7 +2521,7 @@ fn clauses<A: bdd::Literal>(
         Ok(b) => b,
         Err(form) => {
             let item = |p: &Part<A>| {
-                let mut sub = Vec::new();
+                let mut sub: Vec<Rope> = Vec::new();
                 clauses(&mut sub, all, p, show);
                 match sub.is_empty() {
                     true => rope!["(|)"],
@@ -3010,6 +3370,7 @@ impl Keyed {
     /// under a key of a column whose component is a tuple with components.
     fn extend_at(&self, v: &[Value], tuples: bool, at: &mut Vec<usize>) {
         for (by, x) in self.by.iter().zip(v) {
+            let by: &BTreeMap<Value, Vec<usize>> = by;
             if by.is_empty() || tuples && whole(x) {
                 continue;
             }
@@ -3925,8 +4286,10 @@ impl RowIndex {
         for j in 0..len {
             let by_key = regions_of(&absorbs, j);
             let filing_cost: usize = by_key.keys().map(|k| count[j][k]).sum();
-            let classes: BTreeSet<&Vec<usize>> =
-                by_key.values().filter(|rs| !rs.is_empty()).collect();
+            let classes: BTreeSet<&Vec<usize>> = by_key
+                .values()
+                .filter(|rs: &&Vec<usize>| !rs.is_empty())
+                .collect();
             if classes.len() * rows.len() > filing_cost {
                 for a in &mut absorbs {
                     if a.as_ref().is_some_and(|a| a[j]) {
@@ -4011,7 +4374,7 @@ impl RowIndex {
                         continue;
                     }
                     while levels.len() < chain.len() {
-                        let mut next = Vec::new();
+                        let mut next: Vec<Type> = Vec::new();
                         let mut here: HashSet<Type> = HashSet::new();
                         for t in levels.last().expect("the column type is at depth 0") {
                             firsts(t, false, &mut Vec::new(), |c| {
@@ -4103,9 +4466,11 @@ impl RowIndex {
             regions: v
                 .iter()
                 .zip(regions.iter())
-                .map(|(x, by)| match by.is_empty() || !whole(x) {
-                    true => None,
-                    false => Some(by.get(x).copied().unwrap_or(0)),
+                .map(|(x, by): (&Value, &BTreeMap<Value, usize>)| {
+                    match by.is_empty() || !whole(x) {
+                        true => None,
+                        false => Some(by.get(x).copied().unwrap_or(0)),
+                    }
                 })
                 .collect(),
             shape: match decided.iter().all(Option::is_some) {
@@ -4190,6 +4555,7 @@ impl RowIndex {
         let Some((last, shared)) = changed.split_last() else {
             return graph.root(base, &none, &none);
         };
+        let shared: &[(usize, bool)] = shared;
         let once;
         let under = match under.get_mut(shared) {
             _ if shared.is_empty() => &none,
@@ -4366,135 +4732,1157 @@ impl Iterator for Values {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// The outcomes of a check; each has its own message.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Verdict {
+    /// No value is in the type.
+    Empty,
+    /// A value in the type was built and checked against it.
+    Inhabited,
+    /// Not proved empty, and no value built: nothing is claimed about the type.
+    Refused(Refusal),
+}
 
-    /// Every union of a subset of `lits`, and the complement of each within `within`.
-    fn subsets_and_complements(lits: &[Type], within: &Type) -> Vec<Type> {
-        let finite: Vec<Type> = (0..1u32 << lits.len())
-            .map(|mask| {
-                Type::union_all(
-                    (0..lits.len())
-                        .filter(|i| mask & (1 << i) != 0)
-                        .map(|i| lits[i].clone()),
-                )
-            })
-            .collect();
-        let complements: Vec<Type> = finite.iter().map(|t| within - t).collect();
-        finite.into_iter().chain(complements).collect()
+/// Why a check was refused.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Refusal {
+    /// A tuple part holds two tuple types, both open on one box, that differ in a recursive
+    /// component: following both is the subset construction.
+    Fork,
+    /// Negated lists of periodic lengths: whether they cover the lengths left is the covering
+    /// problem for residues, which is NP-hard.
+    Residues,
+    /// A tuple part that only a split of the box in more than one component at once decides.
+    TupleSplit,
+    /// A morphism part that neither the meets it forces nor a split into its morphism types
+    /// decides.
+    MorphismSplit,
+    /// The search ended with the type not proved empty, and no value of it was built.
+    NoWitness,
+}
+
+impl Refusal {
+    /// What the refusal says to the programmer.
+    pub fn message(self) -> &'static str {
+        match self {
+            Refusal::Fork => {
+                "two tuple types of it differ in a recursive component on one box; deciding it \
+                 would follow both, which is the subset construction"
+            }
+            Refusal::Residues => {
+                "its lengths are residues of periodic lists, and deciding whether the excluded \
+                 lists cover them is the covering problem for residues (NP-hard)"
+            }
+            Refusal::TupleSplit => {
+                "a tuple part is decided only by a case split in more than one component at \
+                 once; write the case split as a union"
+            }
+            Refusal::MorphismSplit => {
+                "a function part is decided neither by the types it forces nor by a split into \
+                 its function types"
+            }
+            Refusal::NoWitness => "it was not proved empty, and no value of it could be built",
+        }
     }
+}
 
-    /// `scalar_cell` decides a meet or a difference of two scalar-only types from their parts;
-    /// each answer must be what the explicit set operation and `is_empty` give.
-    fn agree(all: &[Type]) {
-        for a in all {
-            for b in all {
-                assert_eq!(
-                    a.scalar_cell(b, true),
-                    Some((a & b).is_empty()),
-                    "{a} & {b}"
-                );
-                assert_eq!(
-                    a.scalar_cell(b, false),
-                    Some((a - b).is_empty()),
-                    "{a} - {b}"
-                );
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+/// A type in the surface syntax: the definitions it needs, in order, then the type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Surface {
+    /// Each definition's name and body.
+    pub defs: Vec<(String, String)>,
+    /// The type, which may name the definitions.
+    pub root: String,
+    /// Whether every word is in the surface syntax (the module comment names the exceptions).
+    pub exact: bool,
+}
+
+impl fmt::Display for Surface {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (name, body) in &self.defs {
+            write!(f, "type {name} = {body}; ")?;
+        }
+        f.write_str(&self.root)
+    }
+}
+
+pub mod rec {
+    //! Recursive type definitions (step L1.23, DESIGN.md sec:type_language): a group of mutually
+    //! recursive definitions, checked when it is defined and instantiated at its arguments.
+    //!
+    //! A group is accepted when it is
+    //! - *contractive*: every cycle of recursive occurrences passes through a constructor (a tuple
+    //!   component, an atom payload, or a morphism bound or value), so a type unfolds to its
+    //!   parts in finitely many steps;
+    //! - *regular*: every recursive occurrence passes the group's parameters unchanged, so a type
+    //!   has finitely many components;
+    //! - *of the form the admission check accepts*: no recursive occurrence stands under a
+    //!   complement, to the right of `\`, or in the guarantee of a morphism type whose value type
+    //!   may be empty or mentions the group, since `type T = (T) -> (#a & #b)` is inhabited exactly
+    //!   when it is empty; nor in the guarantee of a morphism type whose guarantee and permission
+    //!   differ, or that stands under `&`, `\`, a complement or differing domain bounds, directly
+    //!   or through a definition named there (cross-review X14: `W = (W) -> int` is accepted,
+    //!   `((W) -> int) & top` and `R0 = (R1) -> int; R1 = (int, R0 & ((empty) -> int))` are not).
+    //!
+    //! The admission check is sufficient for the group's emptiness to be monotone in its members'
+    //! emptiness, not necessary: `((W) -> int) & top` is monotone and refused (X14). So a refusal
+    //! says the type is outside the form the checker accepts, with the reason, the expression where
+    //! it holds and, for a definition narrowed where it is named, the definitions it is named
+    //! through; it says "not monotone" only of a complement or the right of `\`, each of which is
+    //! not monotone in its operand.
+    //!
+    //! A value type that mentions a parameter may be empty when that parameter is: it counts as
+    //! possibly empty when it is empty with every parameter empty, or has a parameter under a
+    //! complement or to the right of `\`, where a larger argument shrinks it.
+
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use super::{Type, bytes, mix};
+    use crate::deep;
+
+    mod group;
+    pub(super) mod unfold;
+
+    mod walk {
+        //! `Clone`, `==` and `Debug` of [`Expr`], and `Debug` of a body's tree ([`Node`]) and `==` of
+        //! its shapes, each keeping its own stack on the heap, so an expression of any depth is copied, compared and
+        //! written on a small stack (COMPLEXITY.md K39). Each costs O(size). `Debug` writes the one line
+        //! a derived `Debug` writes for `{:?}`, under `{:#?}` too.
+
+        use std::fmt;
+        use std::sync::Arc;
+
+        use super::{Expr, Node, Shape};
+
+        /// An expression or tree: its parts below, and what it holds besides them.
+        pub(super) trait Tree: Sized {
+            /// The parts directly below, in order.
+            fn kids(&self) -> impl DoubleEndedIterator<Item = &Self>;
+
+            /// Whether the two hold the same besides their parts below, and as many of those.
+            fn same_head(&self, other: &Self) -> bool;
+
+            /// Writes the text before the parts below, and gives the text after them.
+            fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error>;
+        }
+
+        impl Expr {
+            /// The parts of `self` directly below it, in order.
+            pub(super) fn kids(&self) -> impl DoubleEndedIterator<Item = &Expr> {
+                let (list, boxes): (&[Expr], [Option<&Expr>; 3]) = match self {
+                    Expr::Param(_) | Expr::Type(_) => (&[], [None; 3]),
+                    Expr::Ref(_, xs)
+                    | Expr::Union(xs)
+                    | Expr::And(xs)
+                    | Expr::Tuple(xs)
+                    | Expr::Atom(_, xs) => (xs, [None; 3]),
+                    Expr::Not(a) => (&[], [Some(a), None, None]),
+                    Expr::Diff(a, b) => (&[], [Some(a), Some(b), None]),
+                    Expr::Morphism(l, u, v) => (&[], [Some(l), Some(u), Some(v)]),
+                };
+                list.iter().chain(boxes.into_iter().flatten())
+            }
+        }
+
+        impl Shape {
+            /// The trees directly below `self`, in order.
+            pub(super) fn kids(&self) -> impl DoubleEndedIterator<Item = &Arc<Node>> {
+                let (list, boxes): (&[Arc<Node>], [Option<&Arc<Node>>; 3]) = match self {
+                    Shape::Param(_) | Shape::Type(_) => (&[], [None; 3]),
+                    Shape::Ref(_, xs)
+                    | Shape::Union(xs)
+                    | Shape::And(xs)
+                    | Shape::Tuple(xs)
+                    | Shape::Atom(_, xs) => (xs, [None; 3]),
+                    Shape::Not(a) => (&[], [Some(a), None, None]),
+                    Shape::Diff(a, b) => (&[], [Some(a), Some(b), None]),
+                    Shape::Morphism(l, u, v) => (&[], [Some(l), Some(u), Some(v)]),
+                };
+                list.iter().chain(boxes.into_iter().flatten())
+            }
+
+            pub(super) fn same_head(&self, other: &Shape) -> bool {
+                match (self, other) {
+                    (Shape::Param(i), Shape::Param(j)) => i == j,
+                    (Shape::Ref(i, xs), Shape::Ref(j, ys)) => i == j && xs.len() == ys.len(),
+                    (Shape::Type(s), Shape::Type(t)) => s == t,
+                    (Shape::Union(xs), Shape::Union(ys))
+                    | (Shape::And(xs), Shape::And(ys))
+                    | (Shape::Tuple(xs), Shape::Tuple(ys)) => xs.len() == ys.len(),
+                    (Shape::Atom(m, xs), Shape::Atom(n, ys)) => m == n && xs.len() == ys.len(),
+                    (Shape::Not(_), Shape::Not(_))
+                    | (Shape::Diff(..), Shape::Diff(..))
+                    | (Shape::Morphism(..), Shape::Morphism(..)) => true,
+                    _ => false,
+                }
+            }
+
+            fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
+                Ok(match self {
+                    Shape::Param(i) => {
+                        write!(f, "Param({i:?}")?;
+                        ")"
+                    }
+                    Shape::Type(t) => {
+                        write!(f, "Type({t:?}")?;
+                        ")"
+                    }
+                    Shape::Ref(i, _) => {
+                        write!(f, "Ref({i:?}, [")?;
+                        "])"
+                    }
+                    Shape::Union(_) => {
+                        f.write_str("Union([")?;
+                        "])"
+                    }
+                    Shape::And(_) => {
+                        f.write_str("And([")?;
+                        "])"
+                    }
+                    Shape::Tuple(_) => {
+                        f.write_str("Tuple([")?;
+                        "])"
+                    }
+                    Shape::Atom(name, _) => {
+                        write!(f, "Atom({name:?}, [")?;
+                        "])"
+                    }
+                    Shape::Not(_) => {
+                        f.write_str("Not(")?;
+                        ")"
+                    }
+                    Shape::Diff(..) => {
+                        f.write_str("Diff(")?;
+                        ")"
+                    }
+                    Shape::Morphism(..) => {
+                        f.write_str("Morphism(")?;
+                        ")"
+                    }
+                })
+            }
+        }
+
+        impl Tree for Expr {
+            fn kids(&self) -> impl DoubleEndedIterator<Item = &Expr> {
+                Expr::kids(self)
+            }
+
+            fn same_head(&self, other: &Expr) -> bool {
+                match (self, other) {
+                    (Expr::Param(i), Expr::Param(j)) => i == j,
+                    (Expr::Ref(i, xs), Expr::Ref(j, ys)) => i == j && xs.len() == ys.len(),
+                    (Expr::Type(s), Expr::Type(t)) => s == t,
+                    (Expr::Union(xs), Expr::Union(ys))
+                    | (Expr::And(xs), Expr::And(ys))
+                    | (Expr::Tuple(xs), Expr::Tuple(ys)) => xs.len() == ys.len(),
+                    (Expr::Atom(m, xs), Expr::Atom(n, ys)) => m == n && xs.len() == ys.len(),
+                    (Expr::Not(_), Expr::Not(_))
+                    | (Expr::Diff(..), Expr::Diff(..))
+                    | (Expr::Morphism(..), Expr::Morphism(..)) => true,
+                    _ => false,
+                }
+            }
+
+            fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
+                Ok(match self {
+                    Expr::Param(i) => {
+                        write!(f, "Param({i:?}")?;
+                        ")"
+                    }
+                    Expr::Type(t) => {
+                        write!(f, "Type({t:?}")?;
+                        ")"
+                    }
+                    Expr::Ref(i, _) => {
+                        write!(f, "Ref({i:?}, [")?;
+                        "])"
+                    }
+                    Expr::Union(_) => {
+                        f.write_str("Union([")?;
+                        "])"
+                    }
+                    Expr::And(_) => {
+                        f.write_str("And([")?;
+                        "])"
+                    }
+                    Expr::Tuple(_) => {
+                        f.write_str("Tuple([")?;
+                        "])"
+                    }
+                    Expr::Atom(name, _) => {
+                        write!(f, "Atom({name:?}, [")?;
+                        "])"
+                    }
+                    Expr::Not(_) => {
+                        f.write_str("Not(")?;
+                        ")"
+                    }
+                    Expr::Diff(..) => {
+                        f.write_str("Diff(")?;
+                        ")"
+                    }
+                    Expr::Morphism(..) => {
+                        f.write_str("Morphism(")?;
+                        ")"
+                    }
+                })
+            }
+        }
+
+        impl Tree for Node {
+            fn kids(&self) -> impl DoubleEndedIterator<Item = &Node> {
+                self.e.kids().map(|n| &**n)
+            }
+
+            fn same_head(&self, other: &Node) -> bool {
+                self.digest == other.digest
+                    && self.recursive == other.recursive
+                    && self.open == other.open
+                    && self.e.same_head(&other.e)
+            }
+
+            fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
+                write!(
+                    f,
+                    "Node {{ digest: {:?}, recursive: {:?}, open: {:?}, e: ",
+                    self.digest, self.recursive, self.open
+                )?;
+                Ok(match self.e.open(f)? {
+                    ")" => ") }",
+                    _ => "]) }",
+                })
+            }
+        }
+
+        /// Whether `a` and `b` are equal, part by part, from a stack of pairs. A pair that is one
+        /// value twice is equal unread. A body's tree is a tree, built by `Node::of` from an expression,
+        /// so no pair is met twice.
+        pub(super) fn equal<T: Tree>(a: &T, b: &T) -> bool {
+            let mut pairs = vec![(a, b)];
+            while let Some((a, b)) = pairs.pop() {
+                if std::ptr::eq(a, b) {
+                    continue;
+                }
+                if !a.same_head(b) {
+                    return false;
+                }
+                pairs.extend(a.kids().zip(b.kids()));
+            }
+            true
+        }
+
+        /// What is left to write.
+        enum Task<'a, T> {
+            Text(&'static str),
+            Tree(&'a T),
+        }
+
+        /// Writes `t`, each part when its turn comes, from a stack of what is left.
+        fn show<T: Tree>(t: &T, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut todo = vec![Task::Tree(t)];
+            while let Some(task) = todo.pop() {
+                match task {
+                    Task::Text(s) => f.write_str(s)?,
+                    Task::Tree(t) => {
+                        todo.push(Task::Text(t.open(f)?));
+                        let mut first = true;
+                        for k in t.kids().rev() {
+                            if !first {
+                                todo.push(Task::Text(", "));
+                            }
+                            first = false;
+                            todo.push(Task::Tree(k));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        impl PartialEq for Expr {
+            fn eq(&self, other: &Expr) -> bool {
+                equal(self, other)
+            }
+        }
+
+        impl Eq for Expr {}
+
+        impl PartialEq for Shape {
+            fn eq(&self, other: &Shape) -> bool {
+                self.same_head(other)
+                    && self
+                        .kids()
+                        .zip(other.kids())
+                        .all(|(a, b)| equal(&**a, &**b))
+            }
+        }
+
+        impl fmt::Debug for Expr {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                show(self, f)
+            }
+        }
+
+        impl fmt::Debug for Node {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                show(self, f)
+            }
+        }
+
+        /// The last of the copied parts, boxed.
+        fn last(parts: &mut Vec<Expr>) -> Box<Expr> {
+            Box::new(parts.pop().expect("each part was copied"))
+        }
+
+        impl Clone for Expr {
+            /// Copies the parts in a loop: each expression with parts is rebuilt once they are copied.
+            fn clone(&self) -> Expr {
+                enum Step<'a> {
+                    Copy(&'a Expr),
+                    Rebuild(&'a Expr),
+                }
+                let mut todo = vec![Step::Copy(self)];
+                let mut done: Vec<Expr> = Vec::new();
+                while let Some(step) = todo.pop() {
+                    match step {
+                        Step::Copy(e) => match e {
+                            Expr::Param(i) => done.push(Expr::Param(*i)),
+                            Expr::Type(t) => done.push(Expr::Type(t.clone())),
+                            _ => {
+                                todo.push(Step::Rebuild(e));
+                                todo.extend(e.kids().rev().map(Step::Copy));
+                            }
+                        },
+                        Step::Rebuild(e) => {
+                            let n = e.kids().count();
+                            let mut parts = done.split_off(done.len() - n);
+                            let built = match e {
+                                Expr::Ref(i, _) => Expr::Ref(*i, parts),
+                                Expr::Union(_) => Expr::Union(parts),
+                                Expr::And(_) => Expr::And(parts),
+                                Expr::Tuple(_) => Expr::Tuple(parts),
+                                Expr::Atom(name, _) => Expr::Atom(name.clone(), parts),
+                                Expr::Not(_) => Expr::Not(last(&mut parts)),
+                                Expr::Diff(..) => {
+                                    let b = last(&mut parts);
+                                    Expr::Diff(last(&mut parts), b)
+                                }
+                                Expr::Morphism(..) => {
+                                    let v = last(&mut parts);
+                                    let u = last(&mut parts);
+                                    Expr::Morphism(last(&mut parts), u, v)
+                                }
+                                Expr::Param(_) | Expr::Type(_) => {
+                                    unreachable!("an expression with no parts is copied whole")
+                                }
+                            };
+                            done.push(built);
+                        }
+                    }
+                }
+                done.pop().expect("the copy of the expression")
             }
         }
     }
 
-    #[test]
-    fn scalar_cells_agree_with_explicit_set_operations() {
-        // The 32 types of the old review test: the subsets of 0..4 and their complements in int.
-        let ints: Vec<Type> = (0..4).map(|i| Type::lit(&Value::Int(i)).unwrap()).collect();
-        let all = subsets_and_complements(&ints, &Type::int());
-        assert_eq!(all.len(), 32);
-        agree(&all);
+    /// A type expression in a definition's body. Its `Clone`, `==` and `Debug` are written in
+    /// module `walk`, each in a loop.
+    pub enum Expr {
+        /// The definition's parameter of this index.
+        Param(usize),
+        /// The group's definition of this index, at these arguments.
+        Ref(usize, Vec<Expr>),
+        /// A type that does not mention the group.
+        Type(Type),
+        /// `a | b | …`.
+        Union(Vec<Expr>),
+        /// `a & b & …`.
+        And(Vec<Expr>),
+        /// `!a`.
+        Not(Box<Expr>),
+        /// `a \ b`.
+        Diff(Box<Expr>, Box<Expr>),
+        /// `(a, b, …)`.
+        Tuple(Vec<Expr>),
+        /// `#name(a, b, …)`, whose payload is the tuple of its items.
+        Atom(String, Vec<Expr>),
+        /// The morphism type with this guarantee, permission and value type.
+        Morphism(Box<Expr>, Box<Expr>, Box<Expr>),
     }
 
-    #[test]
-    fn scalar_cells_agree_with_explicit_set_operations_across_carriers() {
-        // One or two literals of each carrier, so that every clause of `scalar_cell` decides
-        // some pair: 128 types, finite and cofinite in each carrier.
-        let half = Rat::decimal("0.5").expect("given").unwrap();
-        let lits: Vec<Type> = [
-            Value::Bool(true),
-            Value::Int(0),
-            Value::rat(half),
-            Value::float(0.5),
-            Value::str("a"),
-            Value::str("b"),
-        ]
-        .iter()
-        .map(|v| Type::lit(v).unwrap())
-        .collect();
-        let scalars = Type::union_all([
-            Type::bool(),
-            Type::int(),
-            Type::rat(),
-            Type::f64(),
-            Type::string(),
-        ]);
-        let all = subsets_and_complements(&lits, &scalars);
-        assert_eq!(all.len(), 128);
-        agree(&all);
+    impl Expr {
+        /// `K -> V`, exact.
+        pub fn exact(key: Expr, value: Expr) -> Expr {
+            Expr::Morphism(Box::new(key.clone()), Box::new(key), Box::new(value))
+        }
+
+        /// Applies `f` to `self` and every expression in it, each before its parts, from a stack.
+        fn walk(&self, f: &mut impl FnMut(&Expr)) {
+            let mut todo = vec![self];
+            while let Some(e) = todo.pop() {
+                f(e);
+                todo.extend(e.kids().rev());
+            }
+        }
     }
 
-    /// [`Atoms::zip`] by the walk over the smaller map alone, as it was before the diff.
-    fn zip_by_walk(a: &Atoms, b: &Atoms, op: Op) -> Atoms {
-        let (large, small) = if a.names.len() >= b.names.len() {
-            (a, b)
-        } else {
-            (b, a)
-        };
-        let mut out = match (op, small.cofinite) {
-            (Op::Or, false) | (Op::And, true) => large.clone(),
-            _ => Atoms::default(),
-        };
-        out.cofinite = match op {
-            Op::Or => a.cofinite || b.cofinite,
-            Op::And => a.cofinite && b.cofinite,
-        };
-        for (n, p) in &small.names {
-            out.set(n, large.get(n).zip(p, op));
-        }
-        out
+    /// A definition `type name(params) = body`.
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub struct Def {
+        /// Its name.
+        pub name: String,
+        /// Its parameters' names.
+        pub params: Vec<String>,
+        /// Its body.
+        pub body: Expr,
     }
 
-    /// The diff of two maps that share nodes gives what the walk gives, for sets grown from
-    /// one another as a chain of merged failures grows them, for unrelated sets, for payloads
-    /// and bare atoms, for complements, and for both operations (ERRS-precise).
-    #[test]
-    fn atoms_combined_by_a_diff_agree_with_the_walk() {
-        let atom = |i: usize| match i % 3 {
-            0 => Type::atom(&format!("a{i}")),
-            1 => Type::atom_with(&format!("a{i}"), &Type::tuple(vec![Type::int()])),
-            _ => Type::atom(&format!("a{i}")) | Type::atom_with(&format!("a{i}"), &Type::top()),
-        };
-        let mut grown = vec![Type::empty()];
-        for i in 0..200 {
-            let last = grown.last().expect("one at least").clone();
-            grown.push(&last | &atom(i));
+    /// A checked group of mutually recursive definitions.
+    #[derive(Clone, Debug)]
+    pub struct Group(pub(in crate::types) Arc<Checked>);
+
+    #[derive(Debug)]
+    pub(in crate::types) struct Checked {
+        /// The group's number in `INSTANCES`: one per distinct definition list (`GROUPS`). It
+        /// counts the groups the process made before, so it only finds a table entry: no digest
+        /// and no order reads it (deterministic checking, repair REC-id-order).
+        number: u64,
+        /// The hash of the definitions (`group::digest`), by which `GROUPS` finds the group; its
+        /// types' digests are made from the canonical form's ([`Canon`]).
+        digest: u64,
+        defs: Vec<Def>,
+        /// Each body as a shared tree.
+        pub(in crate::types) bodies: Vec<Arc<Node>>,
+        /// Whether each definition is plain: on no cycle of the group and naming only plain
+        /// definitions. A plain member is its unfolding, built as an ordinary type, so equal plain
+        /// members of groups built apart are one type.
+        plain: Vec<bool>,
+        /// The plain definitions, each after those it names.
+        order: Vec<usize>,
+        /// The canonical form, made when the group is first instantiated ([`canon`]).
+        canon: OnceLock<Canon>,
+    }
+
+    /// A group's canonical form (item REC-canon): the coarsest partition of its bodies' nodes in
+    /// which two nodes of one class have the same head and, place by place, children of one
+    /// class, a recursive occurrence standing for the body it names. The classes are numbered by
+    /// the structure alone ([`crate::refine`]), so a copy of the group with its definitions
+    /// renamed and listed in another order has the same form, and its members and parts the same
+    /// classes. Two nodes of one class unfold alike to every depth, and so denote one type.
+    #[derive(Debug)]
+    struct Canon {
+        /// A hash of the classes, in order.
+        digest: u64,
+        /// Each class, in order: a node of it, and its children's classes in place order.
+        classes: Vec<(Arc<Node>, Vec<u32>)>,
+        /// The class of each definition's body.
+        member: Vec<u32>,
+        /// The class of each node, by its number (`Node::at`), an occurrence taking its body's;
+        /// `u32::MAX` for an argument of a recursive occurrence, which is not read.
+        at: Vec<u32>,
+        /// A hash of each node's spelling, by its number: its shape with each occurrence by the
+        /// name it is written with, which is what a part kept unevaluated prints as (`Show`).
+        spell: Vec<u64>,
+        /// Each node, by its number; `None` for an argument of a recursive occurrence.
+        node: Vec<Option<Arc<Node>>>,
+    }
+
+    /// An expression as a shared tree, each node knowing whether it mentions the group, so that a
+    /// part kept unevaluated is shared rather than copied, and no node's flag is computed twice.
+    pub(in crate::types) struct Node {
+        /// A hash of the shape, from the children's: equal shapes hash alike.
+        digest: u64,
+        pub(in crate::types) recursive: bool,
+        /// Whether the node names a definition that is not plain.
+        open: bool,
+        /// The node's place in its group: its number in the order the bodies' nodes are left,
+        /// children first, the bodies in order. A part kept unevaluated is known by it ([`Key`]).
+        at: u32,
+        /// The number (`at`) of the first node of its group built with an equal shape: two nodes of
+        /// one group are equal exactly when these are, so two domain bounds are compared in O(1)
+        /// ([`same`]).
+        class: u32,
+        pub(in crate::types) e: Shape,
+    }
+
+    pub(in crate::types) enum Shape {
+        Param(usize),
+        Ref(usize, Vec<Arc<Node>>),
+        Type(Type),
+        Union(Vec<Arc<Node>>),
+        And(Vec<Arc<Node>>),
+        Not(Arc<Node>),
+        Diff(Arc<Node>, Arc<Node>),
+        Tuple(Vec<Arc<Node>>),
+        Atom(String, Vec<Arc<Node>>),
+        Morphism(Arc<Node>, Arc<Node>, Arc<Node>),
+    }
+
+    impl Shape {
+        /// A hash of the top of the shape, without its children.
+        fn tag(&self) -> u64 {
+            match self {
+                Shape::Param(i) => mix(1, *i as u64),
+                Shape::Ref(i, _) => mix(2, *i as u64),
+                Shape::Type(t) => mix(3, t.digest()),
+                Shape::Union(_) => 4,
+                Shape::And(_) => 5,
+                Shape::Not(_) => 6,
+                Shape::Diff(..) => 7,
+                Shape::Tuple(_) => 8,
+                Shape::Atom(name, _) => mix(9, bytes(name.as_bytes())),
+                Shape::Morphism(..) => 10,
+            }
         }
-        let mut sets = grown.clone();
-        // Grown again from a midpoint, so the two lines share their first nodes.
-        let mut other = grown[100].clone();
-        for i in 300..380 {
-            other = &other | &atom(i);
-            sets.push(other.clone());
+
+        /// The top of the shape, without its children or type, for [`Canon::order`] and [`canon`]:
+        /// the kind, the index of a parameter or definition, and an atom's name.
+        fn head(&self) -> (u8, usize, &str) {
+            match self {
+                Shape::Param(i) => (1, *i, ""),
+                Shape::Ref(i, _) => (2, *i, ""),
+                Shape::Type(_) => (3, 0, ""),
+                Shape::Union(_) => (4, 0, ""),
+                Shape::And(_) => (5, 0, ""),
+                Shape::Not(_) => (6, 0, ""),
+                Shape::Diff(..) => (7, 0, ""),
+                Shape::Tuple(_) => (8, 0, ""),
+                Shape::Atom(name, _) => (9, 0, name),
+                Shape::Morphism(..) => (10, 0, ""),
+            }
         }
-        sets.push(Type::union_all((0..150).step_by(2).map(atom)));
-        let complements: Vec<Type> = sets.iter().step_by(17).map(|t| !t).collect();
-        sets.extend(complements);
-        for a in sets.iter().step_by(3) {
-            for b in sets.iter().step_by(5) {
-                for op in [Op::Or, Op::And] {
-                    let (x, y) = (&a.p().atoms, &b.p().atoms);
-                    assert_eq!(x.zip(y, op), zip_by_walk(x, y, op));
-                    assert_eq!(y.zip(x, op), zip_by_walk(y, x, op));
+    }
+
+    /// A part of an expression or tree whose owner is being dropped (module `deep`): an expression
+    /// nested deep is freed in a loop, on any stack.
+    #[expect(dead_code, reason = "a part is held only to be dropped")]
+    enum Freed {
+        Expr(Expr),
+        Exprs(Vec<Expr>),
+        Shape(Shape),
+        Nodes(Vec<Arc<Node>>),
+    }
+
+    thread_local! {
+        /// The parts of expressions and trees waiting to be dropped.
+        static FREED: deep::Queue<Freed> = const { deep::Queue::new() };
+    }
+
+    fn free(part: Freed) {
+        deep::free_in(&FREED, part);
+    }
+
+    /// An expression's parts are freed in a loop, not by recursion.
+    impl Drop for Expr {
+        fn drop(&mut self) {
+            match self {
+                Expr::Param(_) | Expr::Type(_) => {}
+                Expr::Ref(_, xs)
+                | Expr::Union(xs)
+                | Expr::And(xs)
+                | Expr::Tuple(xs)
+                | Expr::Atom(_, xs) => {
+                    if !xs.is_empty() {
+                        free(Freed::Exprs(std::mem::take(xs)));
+                    }
+                }
+                Expr::Not(a) => free(Freed::Expr(std::mem::replace(&mut **a, Expr::Param(0)))),
+                Expr::Diff(a, b) => {
+                    for x in [a, b] {
+                        free(Freed::Expr(std::mem::replace(&mut **x, Expr::Param(0))));
+                    }
+                }
+                Expr::Morphism(l, u, v) => {
+                    for x in [l, u, v] {
+                        free(Freed::Expr(std::mem::replace(&mut **x, Expr::Param(0))));
+                    }
                 }
             }
         }
     }
+
+    /// Queues the shape `n` holds, when `n` is its last owner.
+    fn free_node(n: &mut Arc<Node>) {
+        if let Some(n) = Arc::get_mut(n) {
+            free(Freed::Shape(std::mem::replace(&mut n.e, Shape::Param(0))));
+        }
+    }
+
+    /// A tree's children are freed in a loop, as an expression's are.
+    impl Drop for Shape {
+        fn drop(&mut self) {
+            match self {
+                Shape::Param(_) | Shape::Type(_) => {}
+                Shape::Ref(_, xs)
+                | Shape::Union(xs)
+                | Shape::And(xs)
+                | Shape::Tuple(xs)
+                | Shape::Atom(_, xs) => {
+                    if !xs.is_empty() {
+                        free(Freed::Nodes(std::mem::take(xs)));
+                    }
+                }
+                Shape::Not(a) => free_node(a),
+                Shape::Diff(a, b) => {
+                    free_node(a);
+                    free_node(b);
+                }
+                Shape::Morphism(l, u, v) => {
+                    free_node(l);
+                    free_node(u);
+                    free_node(v);
+                }
+            }
+        }
+    }
+
+    /// Why a group is rejected: the definition at fault and the reason.
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    pub struct Rejection {
+        /// The index of the definition.
+        pub def: usize,
+        /// The reason, naming the definition.
+        pub message: String,
+    }
+
+    /// Whether the domain bounds `l` and `u`, of one group, are written the same: their classes,
+    /// given when the group's trees were built ([`Node::of`]), are equal. O(1) (COMPLEXITY.md K27).
+    fn same(l: &Node, u: &Node) -> bool {
+        l.class == u.class
+    }
+
+    /// What an expression is evaluated in: the arguments, and the group's types at them.
+    pub(in crate::types) struct Env {
+        /// The instance's number among all instances made: never another's, so a group's members
+        /// are told from another instance's after this one is dropped ([`Key::group`]).
+        id: u64,
+        /// The thread that made it, under which it is in `group::INSTANCES`.
+        thread: u64,
+        /// The last unit that made its recursive members, which ends them (`unfold::Unit`).
+        registered: AtomicU64,
+        group: Option<Group>,
+        /// A hash of the group's definitions and the arguments' digests.
+        digest: u64,
+        args: Vec<Type>,
+        /// Each member's type: a plain member's set when the group is instantiated, a recursive
+        /// member's when first read and until the end of the unit that read it ([`Env::forget`]).
+        members: Vec<Mutex<Option<Type>>>,
+        /// Each member's emptiness as the group decides it (`empty::judge`), when first asked.
+        pub(in crate::types) judged: OnceLock<Vec<Option<bool>>>,
+    }
+
+    impl Env {
+        pub(in crate::types) fn group(&self) -> &Group {
+            self.group
+                .as_ref()
+                .expect("a recursive occurrence is in a group")
+        }
+    }
+
+    /// What a recursive node stands for, by which it is hashed and ordered: a member of a group, or
+    /// a part of a body kept unevaluated (by its node's place, `Node::at`), at the group's
+    /// arguments. It is hashed and ordered by the group's canonical form ([`Canon`]), the class
+    /// of the member or part in it, what it prints as (a member's name, a part's spelling) and
+    /// the arguments, so a type's digest and its place in every order do not depend on what the
+    /// process built before it, and checking a program alone or after another agrees
+    /// (deterministic checking, repair REC-id-order); nor on the order the definitions are
+    /// listed in (item REC-canon). Two nodes with equal keys denote one type, since their classes
+    /// unfold alike at equal arguments, and print alike, so which of them a union keeps is never
+    /// seen. The names count for that alone: a copy with its definitions renamed is the same type
+    /// by two-way subtyping, but another node.
+    pub(super) struct Key {
+        digest: u64,
+        env: Arc<Env>,
+        at: At,
+        /// The class of the member or part in its group's canonical form.
+        class: u32,
+    }
+
+    /// Which type of an instance a key names.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum At {
+        /// The member of this index.
+        Member(usize),
+        /// The part kept unevaluated at the body node of this number.
+        Part(u32),
+    }
+
+    impl Key {
+        fn new(env: Arc<Env>, at: At) -> Key {
+            let (group, canon) = (env.group(), env.group().canon());
+            let (class, spell) = match at {
+                At::Member(i) => (
+                    canon.member[i],
+                    mix(15, bytes(group.0.defs[i].name.as_bytes())),
+                ),
+                At::Part(n) => (canon.at[n as usize], canon.spell[n as usize]),
+            };
+            let digest = mix(
+                mix(mix(env.digest, u64::from(class)), u64::from(at.kind())),
+                spell,
+            );
+            Key {
+                digest,
+                env,
+                at,
+                class,
+            }
+        }
+
+        /// The order of two keys of equal class by what they print as: a member by its
+        /// definition's name, a part by its spelling ([`spelled`]).
+        fn spelling(&self, other: &Key) -> std::cmp::Ordering {
+            let (a, b) = (&self.env.group().0, &other.env.group().0);
+            match (self.at, other.at) {
+                (At::Member(i), At::Member(j)) => a.defs[i].name.cmp(&b.defs[j].name),
+                (At::Part(n), At::Part(m)) if !(Arc::ptr_eq(a, b) && n == m) => {
+                    spelled(a.part(n), &a.defs, b.part(m), &b.defs)
+                }
+                _ => std::cmp::Ordering::Equal,
+            }
+        }
+
+        /// Whether the key names a member or a part, and its class: what orders two keys of one
+        /// group after their digests.
+        fn rank(&self) -> (u8, u32) {
+            (self.at.kind(), self.class)
+        }
+
+        pub(super) fn digest(&self) -> u64 {
+            self.digest
+        }
+
+        /// The group of the member the key names, by the number of the instance its members share,
+        /// when the key names a member: equal for two members of one instance of a group, and never
+        /// reused, so a member of an instance made after another is dropped is not taken for one of
+        /// the other's.
+        pub(super) fn group(&self) -> Option<u64> {
+            matches!(self.at, At::Member(_)).then_some(self.env.id)
+        }
+
+        /// Whether the decider of the group (`judge`) has run, which a member's `judged` reads.
+        pub(super) fn judged_known(&self) -> bool {
+            self.env.judged.get().is_some()
+        }
+
+        /// The instance and the index of the member the key names, when it names a member: the
+        /// node is then a recursive member of a group, which its group's decider is asked about.
+        pub(in crate::types) fn member_at(&self) -> Option<(&Arc<Env>, usize)> {
+            match self.at {
+                At::Member(i) => Some((&self.env, i)),
+                At::Part(_) => None,
+            }
+        }
+
+        /// The order of two keys: by digest, kind and class, the groups' canonical forms, the
+        /// spelling and the arguments. What the forms' shapes decide is decided here; the pairs of
+        /// types inside them that tie in digest, then the arguments, are pushed to `types` in the
+        /// order they are to be compared when the rest ties, by the caller's loop (`bdd::order`), so
+        /// that no type is compared by recursion here. Time linear in the classes where the groups
+        /// differ and tie in digest, linear in the part where two parts are spelled alike, and
+        /// constant otherwise.
+        pub(super) fn order<'a>(
+            &'a self,
+            other: &'a Key,
+            types: &mut Vec<(&'a Type, &'a Type)>,
+        ) -> std::cmp::Ordering {
+            let c = self
+                .digest
+                .cmp(&other.digest)
+                .then(self.rank().cmp(&other.rank()));
+            if c.is_ne() {
+                return c;
+            }
+            if Arc::ptr_eq(&self.env, &other.env) {
+                return self.spelling(other);
+            }
+            let (a, b) = (self.env.group(), other.env.group());
+            if !Arc::ptr_eq(&a.0, &b.0) {
+                let c = a.canon().order(b.canon(), types);
+                if c.is_ne() {
+                    return c;
+                }
+            }
+            let c = self.spelling(other);
+            if c.is_ne() {
+                return c;
+            }
+            types.extend(self.env.args.iter().zip(&other.env.args));
+            std::cmp::Ordering::Equal
+        }
+    }
+
+    impl At {
+        fn kind(self) -> u8 {
+            match self {
+                At::Member(_) => 0,
+                At::Part(_) => 1,
+            }
+        }
+    }
+
+    impl Group {
+        /// The canonical form, made on first use.
+        fn canon(&self) -> &Canon {
+            self.0
+                .canon
+                .get_or_init(|| canon(&self.0.bodies, &self.0.defs))
+        }
+    }
+
+    impl Checked {
+        /// The node of number `n`, which a key names, so the form is made.
+        fn part(&self, n: u32) -> &Node {
+            let canon = self.canon.get().expect("a key's group has its form");
+            canon.node[n as usize].as_deref().expect("a part is read")
+        }
+    }
+
+    impl Canon {
+        /// The order of two groups' canonical forms, after their digests: the classes in order, each
+        /// by its head, its children's classes and the type it holds by digest; the pairs of types
+        /// that tie in digest are pushed to `types` ([`Key::order`]). Time linear in the classes.
+        fn order<'a>(
+            &'a self,
+            other: &'a Canon,
+            types: &mut Vec<(&'a Type, &'a Type)>,
+        ) -> std::cmp::Ordering {
+            let c = self
+                .digest
+                .cmp(&other.digest)
+                .then(self.classes.len().cmp(&other.classes.len()));
+            if c.is_ne() {
+                return c;
+            }
+            for ((x, xs), (y, ys)) in self.classes.iter().zip(&other.classes) {
+                let c = x.e.head().cmp(&y.e.head()).then_with(|| xs.cmp(ys));
+                if c.is_ne() {
+                    return c;
+                }
+                if let (Shape::Type(s), Shape::Type(t)) = (&x.e, &y.e) {
+                    match s.digest().cmp(&t.digest()) {
+                        std::cmp::Ordering::Equal => types.push((s, t)),
+                        c => return c,
+                    }
+                }
+            }
+            std::cmp::Ordering::Equal
+        }
+    }
+
+    /// The canonical form of a group whose bodies are `bodies` ([`Canon`]). The graph has a vertex
+    /// for each node of the bodies but a recursive occurrence, and one for each place a node has a
+    /// child at, colored by the place, with an arc from the child to the place and from the place
+    /// to the node; an occurrence of a definition stands for the node of its body, through a chain
+    /// of occurrences, which contractiveness ends. A node starts colored by its head, a type held
+    /// by its order. Refinement by the arcs' tails ([`crate::refine`]) then splits two nodes
+    /// exactly when some place holds children of two colors: its coarsest stable coloring is the
+    /// partition in which nodes of one class unfold alike. O((N + M) log N) for N nodes and M
+    /// children, besides the O(N log N) comparisons of the starting sort, of which those of two
+    /// types cost what [`Type::cmp`] costs.
+    fn canon(bodies: &[Arc<Node>], defs: &[Def]) -> Canon {
+        // The nodes by number, but the arguments of an occurrence, which are not read.
+        let mut nodes: Vec<&Arc<Node>> = Vec::new();
+        let mut todo: Vec<&Arc<Node>> = bodies.iter().collect();
+        while let Some(n) = todo.pop() {
+            nodes.push(n);
+            if !matches!(n.e, Shape::Ref(..)) {
+                todo.extend(n.e.kids());
+            }
+        }
+        let count = nodes.iter().map(|n| n.at as usize + 1).max().unwrap_or(0);
+        // The node each body is, through its chain of occurrences.
+        let mut root: Vec<Option<usize>> = vec![None; bodies.len()];
+        for i in 0..bodies.len() {
+            let mut chain = Vec::new();
+            let mut d = i;
+            let at = loop {
+                if let Some(r) = root[d] {
+                    break r;
+                }
+                chain.push(d);
+                match &bodies[d].e {
+                    Shape::Ref(j, _) => d = *j,
+                    _ => break bodies[d].at as usize,
+                }
+            };
+            for d in chain {
+                root[d] = Some(at);
+            }
+        }
+        let root: Vec<usize> = root
+            .into_iter()
+            .map(|r| r.expect("each body's node"))
+            .collect();
+        // Vertices: the nodes, then the places.
+        let mut vertex = vec![u32::MAX; count];
+        let mut of: Vec<&Arc<Node>> = Vec::new();
+        for n in &nodes {
+            if !matches!(n.e, Shape::Ref(..)) {
+                vertex[n.at as usize] = of.len() as u32;
+                of.push(n);
+            }
+        }
+        let target = |c: &Node| -> usize {
+            let at = match &c.e {
+                Shape::Ref(j, _) => root[*j],
+                _ => c.at as usize,
+            };
+            vertex[at] as usize
+        };
+        let v = of.len();
+        // Each place: the node and the child's vertex.
+        let mut places: Vec<(usize, usize, usize)> = Vec::new();
+        for (u, n) in of.iter().enumerate() {
+            for (k, c) in n.e.kids().enumerate() {
+                places.push((u, k, target(c)));
+            }
+        }
+        let size = v + places.len();
+        let mut color = vec![0; size];
+        let mut sorted: Vec<usize> = (0..v).collect();
+        let head = |a: usize, b: usize| {
+            let (x, y) = (&of[a].e, &of[b].e);
+            x.head()
+                .cmp(&y.head())
+                .then_with(|| x.kids().count().cmp(&y.kids().count()))
+                .then_with(|| match (x, y) {
+                    (Shape::Type(s), Shape::Type(t)) => s.cmp(t),
+                    _ => std::cmp::Ordering::Equal,
+                })
+        };
+        sorted.sort_by(|&a, &b| head(a, b));
+        let mut next = 0;
+        for (i, &a) in sorted.iter().enumerate() {
+            if i > 0 && head(sorted[i - 1], a).is_ne() {
+                next += 1;
+            }
+            color[a] = next;
+        }
+        next += usize::from(v > 0);
+        let widest = places.iter().map(|p| p.1 + 1).max().unwrap_or(0);
+        for (e, &(_, k, _)) in places.iter().enumerate() {
+            color[v + e] = next + k;
+        }
+        next += widest;
+        // The vertices counted when the class of a vertex refines: a child's places, a place's node.
+        let mut start = vec![0; size + 1];
+        for (e, &(_, _, c)) in places.iter().enumerate() {
+            start[c + 1] += 1;
+            start[v + e + 1] = 1;
+        }
+        for x in 0..size {
+            start[x + 1] += start[x];
+        }
+        let mut adj = vec![0; start[size]];
+        let mut cursor = start[..size].to_vec();
+        for (e, &(u, _, c)) in places.iter().enumerate() {
+            adj[cursor[c]] = v + e;
+            cursor[c] += 1;
+            adj[cursor[v + e]] = u;
+        }
+        let degree = (0..size)
+            .map(|x| start[x + 1] - start[x])
+            .max()
+            .unwrap_or(0);
+        let mut refine = crate::refine::Refine::new(color, next, degree);
+        refine.run(&start, &adj);
+        let color = refine.color;
+        // The nodes' colors, numbered from 0 in their order.
+        let mut class = vec![u32::MAX; size];
+        for &c in &color[..v] {
+            class[c] = 0;
+        }
+        let mut classes = 0;
+        for c in &mut class {
+            if *c == 0 {
+                *c = classes;
+                classes += 1;
+            }
+        }
+        let class_of = |u: usize| class[color[u]];
+        let mut reps: Vec<Option<(Arc<Node>, Vec<u32>)>> = vec![None; classes as usize];
+        for (u, n) in of.iter().enumerate() {
+            let rep = &mut reps[class_of(u) as usize];
+            if rep.is_none() {
+                let kids = n.e.kids().map(|c| class_of(target(c))).collect();
+                *rep = Some(((*n).clone(), kids));
+            }
+        }
+        let classes: Vec<(Arc<Node>, Vec<u32>)> = reps
+            .into_iter()
+            .map(|r| r.expect("a node of each class"))
+            .collect();
+        let mut at = vec![u32::MAX; count];
+        for n in &nodes {
+            at[n.at as usize] = class_of(target(n));
+        }
+        let member = root.iter().map(|&r| class_of(vertex[r] as usize)).collect();
+        let digest = classes.iter().fold(14, |h, (n, kids)| {
+            kids.iter()
+                .fold(mix(h, n.e.tag()), |h, &k| mix(h, u64::from(k)))
+        });
+        // The spellings, children first: a node's number is above its children's.
+        let mut node: Vec<Option<Arc<Node>>> = vec![None; count];
+        for n in &nodes {
+            node[n.at as usize] = Some((*n).clone());
+        }
+        let mut spell = vec![0; count];
+        for n in node.iter().flatten() {
+            spell[n.at as usize] = match &n.e {
+                Shape::Ref(j, _) => mix(2, bytes(defs[*j].name.as_bytes())),
+                e => e.kids().fold(e.tag(), |h, c| mix(h, spell[c.at as usize])),
+            };
+        }
+        Canon {
+            digest,
+            classes,
+            member,
+            at,
+            spell,
+            node,
+        }
+    }
+
+    /// The order of two nodes of one class by their spelling ([`Canon::spell`]), `defs` naming the
+    /// definitions each one's occurrences name: by head, an occurrence by the name it is written
+    /// with, then the children in place order, in a loop. The types they hold are not read: two
+    /// nodes of one class hold equal ones. Time linear in the nodes.
+    fn spelled(x: &Node, xs: &[Def], y: &Node, ys: &[Def]) -> std::cmp::Ordering {
+        fn head<'a>(n: &'a Node, defs: &'a [Def]) -> (u8, usize, &'a str) {
+            match &n.e {
+                Shape::Ref(i, _) => (2, 0, defs[*i].name.as_str()),
+                e => e.head(),
+            }
+        }
+        let mut stack: Vec<(&Node, &Node)> = vec![(x, y)];
+        while let Some((x, y)) = stack.pop() {
+            let c = (head(x, xs).cmp(&head(y, ys)))
+                .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
+            if c.is_ne() {
+                return c;
+            }
+            if !matches!(x.e, Shape::Ref(..)) {
+                // The counts are equal, so the pairs from the ends are the pairs in reverse.
+                stack.extend(
+                    x.e.kids()
+                        .rev()
+                        .zip(y.e.kids().rev())
+                        .map(|(p, q)| (&**p, &**q)),
+                );
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
 }
+
+#[cfg(test)]
+mod tests;

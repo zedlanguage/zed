@@ -115,12 +115,12 @@ impl Rat {
     /// the text's length bounds the cost. [`TooLarge`] when the system refuses the memory for
     /// reading the digits, asked before anything is built.
     pub fn decimal(text: &str) -> Result<Option<Self>, TooLarge> {
-        let (mantissa, exp) = match text.find(['e', 'E']) {
+        let (mantissa, exp): (&str, Option<(Sign, &str)>) = match text.find(['e', 'E']) {
             Some(i) => (&text[..i], Some(sign_of(&text[i + 1..]))),
             None => (text, None),
         };
         let (sign, mantissa) = sign_of(mantissa);
-        let (whole, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+        let (whole, frac): (&str, &str) = mantissa.split_once('.').unwrap_or((mantissa, ""));
         let digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
         let read = !(whole.is_empty() && frac.is_empty()) && digits(whole) && digits(frac);
         if !read || exp.is_some_and(|(_, e)| e.is_empty() || !digits(e)) {
@@ -405,7 +405,7 @@ impl Rat {
                 .map(|(p, e)| (*p, e.magnitude().clone()))
                 .collect()
         };
-        let below = others(Sign::Minus);
+        let below: Vec<(u64, BigUint)> = others(Sign::Minus);
         // Complexity tradeoff: the part `m` that is not a power of 10, and every number that is
         // not a decimal, is built and written in full, at a cost proportional to its digits,
         // since the type syntax has no power to write it with. Of a literal, `m` is the
@@ -1653,7 +1653,7 @@ pub fn show_f64(x: f64) -> String {
             format!("{whole}.{frac}")
         }
     } else {
-        let (first, rest) = digits.split_at(1);
+        let (first, rest): (&str, &str) = digits.split_at(1);
         let rest = if rest.is_empty() { "0" } else { rest };
         format!("{first}.{rest}e{exp}")
     };

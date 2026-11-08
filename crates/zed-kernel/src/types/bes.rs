@@ -771,7 +771,7 @@ fn refusal(
 /// dropped. Time linear in nodes and edges.
 fn simplify(g: &Bes, in_sub: &mut [bool]) -> Bes {
     let n = g.len();
-    let mut h = Bes {
+    let mut h: Bes = Bes {
         kind: g.kind.clone(),
         children: vec![Vec::new(); n],
         parents: vec![Vec::new(); n],

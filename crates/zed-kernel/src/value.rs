@@ -958,6 +958,7 @@ impl Family {
     ) -> Result<Self, KernelError> {
         let mut levels = Levels(vec![BTreeMap::new()]);
         for (path, value) in leaves {
+            let path: Keypath = path;
             if path.is_empty() {
                 return Err(KernelError::EmptyKeypath);
             }

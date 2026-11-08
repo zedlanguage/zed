@@ -1,0 +1,129 @@
+use super::*;
+
+/// Every union of a subset of `lits`, and the complement of each within `within`.
+fn subsets_and_complements(lits: &[Type], within: &Type) -> Vec<Type> {
+    let finite: Vec<Type> = (0..1u32 << lits.len())
+        .map(|mask| {
+            Type::union_all(
+                (0..lits.len())
+                    .filter(|i| mask & (1 << i) != 0)
+                    .map(|i| lits[i].clone()),
+            )
+        })
+        .collect();
+    let complements: Vec<Type> = finite.iter().map(|t| within - t).collect();
+    finite.into_iter().chain(complements).collect()
+}
+
+/// `scalar_cell` decides a meet or a difference of two scalar-only types from their parts;
+/// each answer must be what the explicit set operation and `is_empty` give.
+fn agree(all: &[Type]) {
+    for a in all {
+        for b in all {
+            assert_eq!(
+                a.scalar_cell(b, true),
+                Some((a & b).is_empty()),
+                "{a} & {b}"
+            );
+            assert_eq!(
+                a.scalar_cell(b, false),
+                Some((a - b).is_empty()),
+                "{a} - {b}"
+            );
+        }
+    }
+}
+
+#[test]
+fn scalar_cells_agree_with_explicit_set_operations() {
+    // The 32 types of the old review test: the subsets of 0..4 and their complements in int.
+    let ints: Vec<Type> = (0..4).map(|i| Type::lit(&Value::Int(i)).unwrap()).collect();
+    let all = subsets_and_complements(&ints, &Type::int());
+    assert_eq!(all.len(), 32);
+    agree(&all);
+}
+
+#[test]
+fn scalar_cells_agree_with_explicit_set_operations_across_carriers() {
+    // One or two literals of each carrier, so that every clause of `scalar_cell` decides
+    // some pair: 128 types, finite and cofinite in each carrier.
+    let half = Rat::decimal("0.5").expect("given").unwrap();
+    let lits: Vec<Type> = [
+        Value::Bool(true),
+        Value::Int(0),
+        Value::rat(half),
+        Value::float(0.5),
+        Value::str("a"),
+        Value::str("b"),
+    ]
+    .iter()
+    .map(|v| Type::lit(v).unwrap())
+    .collect();
+    let scalars = Type::union_all([
+        Type::bool(),
+        Type::int(),
+        Type::rat(),
+        Type::f64(),
+        Type::string(),
+    ]);
+    let all = subsets_and_complements(&lits, &scalars);
+    assert_eq!(all.len(), 128);
+    agree(&all);
+}
+
+/// [`Atoms::zip`] by the walk over the smaller map alone, as it was before the diff.
+fn zip_by_walk(a: &Atoms, b: &Atoms, op: Op) -> Atoms {
+    let (large, small) = if a.names.len() >= b.names.len() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let mut out = match (op, small.cofinite) {
+        (Op::Or, false) | (Op::And, true) => large.clone(),
+        _ => Atoms::default(),
+    };
+    out.cofinite = match op {
+        Op::Or => a.cofinite || b.cofinite,
+        Op::And => a.cofinite && b.cofinite,
+    };
+    for (n, p) in &small.names {
+        out.set(n, large.get(n).zip(p, op));
+    }
+    out
+}
+
+/// The diff of two maps that share nodes gives what the walk gives, for sets grown from
+/// one another as a chain of merged failures grows them, for unrelated sets, for payloads
+/// and bare atoms, for complements, and for both operations (ERRS-precise).
+#[test]
+fn atoms_combined_by_a_diff_agree_with_the_walk() {
+    let atom = |i: usize| match i % 3 {
+        0 => Type::atom(&format!("a{i}")),
+        1 => Type::atom_with(&format!("a{i}"), &Type::tuple(vec![Type::int()])),
+        _ => Type::atom(&format!("a{i}")) | Type::atom_with(&format!("a{i}"), &Type::top()),
+    };
+    let mut grown = vec![Type::empty()];
+    for i in 0..200 {
+        let last = grown.last().expect("one at least").clone();
+        grown.push(&last | &atom(i));
+    }
+    let mut sets = grown.clone();
+    // Grown again from a midpoint, so the two lines share their first nodes.
+    let mut other = grown[100].clone();
+    for i in 300..380 {
+        other = &other | &atom(i);
+        sets.push(other.clone());
+    }
+    sets.push(Type::union_all((0..150).step_by(2).map(atom)));
+    let complements: Vec<Type> = sets.iter().step_by(17).map(|t| !t).collect();
+    sets.extend(complements);
+    for a in sets.iter().step_by(3) {
+        for b in sets.iter().step_by(5) {
+            for op in [Op::Or, Op::And] {
+                let (x, y) = (&a.p().atoms, &b.p().atoms);
+                assert_eq!(x.zip(y, op), zip_by_walk(x, y, op));
+                assert_eq!(y.zip(x, op), zip_by_walk(y, x, op));
+            }
+        }
+    }
+}

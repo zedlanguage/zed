@@ -632,7 +632,7 @@ impl Hash for Text {
         let mut buf = [0u8; BLOCK];
         let mut used = 0;
         for c in self.chunks() {
-            let mut c = c.as_bytes();
+            let mut c: &[u8] = c.as_bytes();
             while !c.is_empty() {
                 if used == 0 && c.len() >= BLOCK {
                     h.write(&c[..BLOCK]);
@@ -1095,7 +1095,7 @@ mod tests {
         let first = join(&Text::from("m"), &Text::from("l".repeat(PIECE - 1)));
         crate::scaling::check("n prefixes of a log held and compared", 2000, |n| {
             let mut held = Vec::with_capacity(n);
-            let (mut log, mut differs) = (Text::from(""), Text::from(""));
+            let (mut log, mut differs): (Text, Text) = (Text::from(""), Text::from(""));
             for _ in 0..n {
                 log = join(&log, &line);
                 differs = if differs.is_empty() {
