@@ -2778,7 +2778,12 @@ impl<'m, 's> Comparing<'m, 's> {
         // kernel refused, each piece is tried by the rule of one shape, which is sound.
         let mut form: Option<Option<bool>> = None;
         for p in t.pieces() {
+            // A set piece with no kind-wide part, of a `t` that lists no payload, is decided by
+            // the set alone ([`accepts`]): building both sides' kernel types for it cost each
+            // comparison of a large set its size again, with a value built when it fails.
+            let plain = |s: &KType| t.payloads.is_empty() && (s & &wide()).is_empty();
             let decided = match &p {
+                Piece::Set(s) if plain(s) => None,
                 Piece::Set(_) | Piece::Tuple(_) => match form {
                     Some(d) => d,
                     None => *form.insert(self.by_form(t, other).await),
@@ -2885,15 +2890,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// solution would bind the variables by unification over the normal forms, with the
     /// variables as marks.
     async fn payloads_in(&'m self, s: &KType, of: &Ty, t: &Ty, binds: &mut Binds) -> bool {
-        let Some(names) = s.atom_names() else {
-            return true;
-        };
-        for (n, _) in names {
+        // Called once `s` is in `t`'s set, with no carrier holding an atom: an atom of `s`
+        // whose payloads `t` does not list is one whose payloads `t` holds all of. So only the
+        // names `t` lists are read, not each name of `s`, which may be many more.
+        for (n, rs) in &t.payloads {
+            // A payload `t` does not know holds any payload.
+            let Some(rs) = rs else { continue };
             if !holds_payload(s, n) {
                 continue;
             }
-            // A payload `t` does not know holds any payload.
-            let Some(rs) = t.shapes(n) else { continue };
             let Some(ls) = of.shapes(n) else { return false };
             let key = |s: &Shape| (s.items.len(), s.fields.keys().cloned().collect::<Vec<_>>());
             let mut groups: HashMap<_, Vec<&Shape>> = HashMap::new();
@@ -3183,7 +3188,11 @@ impl Forms {
     /// The form of `t`'s scalars, atoms with their payloads, kind-wide part and tuples, its
     /// rows and shapes made, the marks cut from its set.
     fn data(&self, t: &Ty, left: bool) -> KType {
-        let form = |n: Node| n.kept().cloned().or_else(|| self.made.get(&n.key(left)).cloned());
+        let form = |n: Node| {
+            n.kept()
+                .cloned()
+                .or_else(|| self.made.get(&n.key(left)).cloned())
+        };
         let shape = |n: &Arc<str>, s: &Shape| form(Node::Shape(n, s));
         let set = payload_set(&self.cut(&t.set), &t.payloads, shape).expect("each shape is made");
         let rows = (t.tuples.iter()).map(|r| form(Node::Row(r)).expect("each row is made"));

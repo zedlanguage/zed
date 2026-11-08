@@ -467,7 +467,7 @@ fn marks_are_cut_from_sets_of_all_atoms() {
 #[test]
 fn functions_unlike_on_both_sides_at_one_place_are_refused() {
     // Two functions of `t`, equal to none of the expected type's, meet two of its at one place:
-    // which fits which is not compared (COMPLEXITY.md F112), and the clause says so.
+    // which fits which is not compared (COMPLEXITY.md F124), and the clause says so.
     let (t, u) = (
         ty("((int | String) -> int, 1) | ((int | rat) -> int, 2)"),
         ty("((int) -> int, int) | ((String) -> int, int)"),
@@ -565,11 +565,15 @@ fn payloads_that_hold_functions_are_compared_in_the_size_of_the_union() {
             one(n, &|i| n - 1 - i, "String"),
         )
     });
-    scaling::check("n payloads of one atom that hold functions against n", 256, |n| {
-        let (small, same, other) = &inputs[&n];
-        assert!(small.subtype(same));
-        assert!(!small.subtype(other));
-    });
+    scaling::check(
+        "n payloads of one atom that hold functions against n",
+        256,
+        |n| {
+            let (small, same, other) = &inputs[&n];
+            assert!(small.subtype(same));
+            assert!(!small.subtype(other));
+        },
+    );
 }
 
 #[test]
@@ -599,9 +603,12 @@ fn payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_
         assert!(fields.subtype(&whole));
         assert!(!fields.subtype(&not));
     });
-    scaling::check("a tuple that holds a function, held by n shapes", 256, |n| {
-        let (_, tuple, shapes) = &inputs[&n];
-        assert!(tuple.subtype(shapes));
-    });
+    scaling::check(
+        "a tuple that holds a function, held by n shapes",
+        256,
+        |n| {
+            let (_, tuple, shapes) = &inputs[&n];
+            assert!(tuple.subtype(shapes));
+        },
+    );
 }
-
