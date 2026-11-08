@@ -1547,9 +1547,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CYCLE-kernel-moves | impl attempt 1 | 2026-11-07 01:22 | bdd/list.rs inlined into bdd.rs (Bdd and Cell are one recursive type); Verdict, Refusal, Surface moved into types.rs; Type::split moved to empty.rs; types.rs an |
-| MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | dropped from batch 54, back to merging: on its own branch l01_29_diagnostics negative_literals::a_derivation_step_shows_the_negative_literal_as_written fails (the min/max tuple path rejects `(-3, 1) + "a"` as a `+` of tuples); rebase onto CYCLE-zedc-moves (code now in check/walk.rs) and take the next free COMPLEXITY K (K72 REC-canon, K73 FAMILY-eq-dag). Was: ready at 83ef4304 (spec 6dc7b9f): 61 pieces pass incl. 9 new tuple_min_max tests; clippy and fmt clean / load 18.36 23.88 23.08 |
+| EMPTY-morphism-diff-cost | impl attempt 1 | 2026-11-05 18:48 | started; worktree from origin/main e37d4366 |
+| ENV-port | impl attempt 1 | 2026-11-05 04:07 | started: worktree wt/env-port from origin/main e37d4366 |
+| HEAP-binder-memory | impl attempt 1 | 2026-11-07 18:09 | started; worktree wt/heap-binder-memory from origin/main e37d4366 |
+| MINMAX-tuples | impl attempt 1 | 2026-11-04 04:45 | ready at 83ef4304 (spec 6dc7b9f): 61 pieces pass incl. 9 new tuple_min_max tests; clippy and fmt clean / load 18.36 23.88 23.08 |
+| PROV-family-entries | impl attempt 1 | 2026-11-05 04:07 | started; worktree /home/luke/Work/wt/prov-family-entries from origin/main |
 | REFUSAL-cost | impl attempt 1 | 2026-11-05 04:07 | probe on main c881d28c: NoWitness, MorphismSplit, TupleSplit (n disjoint covers), Residues (classes repeated n times) linear 1..32; fork family (n excluded list |
 | STAGE-stub-fast | impl attempt 1 | 2026-11-07 17:16 | ready at 08b698a6 on 8569447a (rebased, restacked): 93 pieces, 944 tests, 0 failed, doc check passed (load 16.4 to 30.4); fmt and clippy clean |
+| T11-unit-share | impl attempt 1 | 2026-11-05 04:07 | start: worktree wt/t11-unit-share from origin/main e37d4366 / load 16.49 12.02 13.61 |
+| UTVPI-model | impl attempt 1 | 2026-11-05 04:07 | start: worktree wt/utvpi-model from origin/main e37d4366 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
