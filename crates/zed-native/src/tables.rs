@@ -149,7 +149,7 @@ impl Tables {
         lambda_at: &mut [Option<usize>],
     ) -> Result<usize, String> {
         let rp = plan.regions.first().ok_or_else(|| {
-            crate::bug("region `r` has no plan; only the root, lambda bodies and arms do")
+            crate::bug::bug("region `r` has no plan; only the root, lambda bodies and arms do")
         })?;
         plans.push(rp);
         self.regions.push(RegionInfo {
@@ -217,7 +217,7 @@ impl Tables {
                                 Op::Lambda => "lambda body",
                                 _ => "arm",
                             };
-                            crate::bug(format_args!(
+                            crate::bug::bug(format_args!(
                                 "{what} `{}.{k}/{i}` has no plan",
                                 plan.path(pat)
                             ))
@@ -279,7 +279,7 @@ impl Tables {
             return Ok(());
         };
         let li = lambda_at.get(want).copied().flatten().ok_or_else(|| {
-            crate::bug(format_args!(
+            crate::bug::bug(format_args!(
                 "{}: the plan calls `{}`, no lambda",
                 self.path(id),
                 plan.path(want)

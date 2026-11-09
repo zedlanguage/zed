@@ -10,26 +10,15 @@
 //! compares two independent implementations, except for strings: both use the kernel's `Text`,
 //! so the oracle does not test it.
 
+mod bug;
 pub mod heap;
 pub mod ports;
 pub mod stack;
 
+pub use bug::bug;
 #[cfg(feature = "counts")]
 pub use heap::Survivor;
 pub use heap::{Heap, Obj, Stats, Word};
 // What `Heap::matches` records and `Heap::release` reads, shared with the counting machine.
 pub use stack::Stack;
 pub use zed_kernel::paths::Paths;
-
-/// The message of a run stopped by a broken invariant of the compiled code, which is a bug in
-/// zedc and not in the program (DESIGN.md sec:diagnostics): `what` says, in the program's terms,
-/// as a verb phrase, what the code zedc made for the program did that it never should, and
-/// `detail` names the runtime's own place for the report, the one part of the message meant
-/// for zedc's developers.
-pub fn bug(what: &str, detail: &str) -> String {
-    format!(
-        "the program stopped because of a bug in zedc, not in the program: the code zedc \
-         made for the program {what}. Please report it to the Zed developers with the \
-         program's source, the input it was given, and this line: {detail}"
-    )
-}

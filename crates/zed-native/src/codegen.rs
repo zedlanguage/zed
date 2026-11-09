@@ -45,7 +45,7 @@ enum Loc {
 }
 
 fn err(e: impl std::fmt::Display) -> String {
-    crate::bug(e)
+    crate::bug::bug(e)
 }
 
 fn args(ws: &[W]) -> Vec<BlockArg> {
@@ -226,7 +226,7 @@ impl<M: Module> Gen<'_, M> {
             .filter(|a| a.is_state())
             .count();
         if region.results.len() != 1 + states {
-            return Err(crate::bug(format_args!(
+            return Err(crate::bug::bug(format_args!(
                 "lambda body `{}` has {} results; a body returns one value and the \
                  states of the {} it takes",
                 self.t.region_path(l.body),
@@ -493,7 +493,7 @@ impl<M: Module> Gen<'_, M> {
                 } else {
                     Expansion::Ge
                 };
-                return Err(crate::bug(format_args!(
+                return Err(crate::bug::bug(format_args!(
                     "`prim {}` has no lowering here; legalization expands it ({}), and \
                      this back end does not declare that expansion",
                     p.printed(),

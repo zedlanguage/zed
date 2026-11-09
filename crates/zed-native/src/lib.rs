@@ -7,6 +7,7 @@
 //! `zedc build` ([`link`], step L1.36a) links that object file, with the program as data and a C
 //! `main`, against this crate built as a static library, the runtime of every executable.
 
+mod bug;
 mod codegen;
 #[cfg(unix)]
 mod exe;
@@ -36,22 +37,12 @@ use zed_rt::Word;
 
 use crate::tables::Tables;
 
+use bug::bug;
 #[cfg(feature = "counts")]
 pub use hooks::{Counted, counted};
 pub use legal::{EXPANSIONS, legalize};
 pub use outcome::Outcome;
 use outcome::call;
-
-/// The message for a failure of zedc's own making of machine code, which is a bug in zedc and
-/// never the program's fault (DESIGN.md sec:diagnostics): `detail` is the one part meant for
-/// zedc's developers.
-pub(crate) fn bug(detail: impl std::fmt::Display) -> String {
-    format!(
-        "zedc could not make machine code for the program because of a bug in zedc, not in the \
-         program. Please report it to the Zed developers with the program's source and this \
-         line: {detail}. Until it is fixed, `zedc run` runs the program without machine code"
-    )
-}
 
 /// Cranelift's `opt_level`, with the register allocator that goes with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

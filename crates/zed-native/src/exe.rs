@@ -106,7 +106,7 @@ impl Program {
 /// Defines, in `m`, the data `data` and a C `main(argc, argv)` that returns
 /// `zed_main(argc, argv, data, its length, root)`.
 pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Result<(), String> {
-    let err = |e: cranelift_module::ModuleError| crate::bug(e);
+    let err = |e: cranelift_module::ModuleError| crate::bug::bug(e);
     let at = m
         .declare_data("zed_program", Linkage::Local, false, false)
         .map_err(err)?;

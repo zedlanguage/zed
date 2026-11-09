@@ -774,7 +774,7 @@ impl Heap {
             for kid in at.iter().flat_map(|&x| tree.kids(x)) {
                 let i = tree.part(kid);
                 let Some(s) = sub.get_mut(i) else {
-                    return Err(crate::bug(
+                    return Err(crate::bug::bug(
                         "released a value and kept a part of it that the value does not have",
                         &format!(
                             "a kept path reads part {i} of a cell of {} parts",
@@ -813,7 +813,7 @@ impl Heap {
             let part = match self.obj(holder)? {
                 Some(o) => o.parts()[tree.part(k)],
                 None => {
-                    return Err(crate::bug(
+                    return Err(crate::bug::bug(
                         "kept a part of a value that has no parts",
                         &format!("a word tagged {} has no parts", holder.tag),
                     ));
@@ -832,7 +832,7 @@ impl Heap {
     pub fn capture(&self, w: Word, i: usize) -> Result<Word, String> {
         match self.obj(w)? {
             Some(Obj::Clo { caps, .. }) => Ok(caps[i]),
-            _ => Err(crate::bug(
+            _ => Err(crate::bug::bug(
                 "called something that is not a function",
                 &format!("a word tagged {} is not a closure", w.tag),
             )),
@@ -1121,7 +1121,7 @@ fn freed(how: Freed, i: usize) -> String {
         ),
         Freed::Dropped => ("released a value's memory twice", "dropped"),
     };
-    crate::bug(
+    crate::bug::bug(
         what,
         &format!("the heap's cell {i} was {did} after it was freed"),
     )
@@ -1129,7 +1129,7 @@ fn freed(how: Freed, i: usize) -> String {
 
 /// The message for a function read where a data value was expected.
 fn closure_as_data() -> String {
-    crate::bug(
+    crate::bug::bug(
         "treated a function as a data value such as a number, a string, a tuple or a family",
         "a closure cell was read as data",
     )
@@ -1137,7 +1137,7 @@ fn closure_as_data() -> String {
 
 /// The message for a word that holds no value read as a data value.
 fn not_data(tag: i64) -> String {
-    crate::bug(
+    crate::bug::bug(
         "treated something that is not a value as a data value",
         &format!("a word tagged {tag} was read as data"),
     )
@@ -1260,7 +1260,7 @@ mod tests {
         let (paths, end) = one_path(&[0, 0]);
         assert_eq!(
             h.release(t, &paths, &[end]).unwrap_err(),
-            crate::bug(
+            crate::bug::bug(
                 "kept a part of a value that has no parts",
                 "a word tagged 0 has no parts"
             )
