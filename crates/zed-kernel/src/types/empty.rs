@@ -171,6 +171,9 @@ fn group_verdicts(members: &[Type]) {
         open_forks: true,
         ..Search::default()
     };
+    // The search in which each closure is taken to have a value, run only for a member that
+    // would be refused, and `None` inside when it showed no values.
+    let mut o: Option<Option<Search>> = None;
     for m in members {
         let v = match m.judged() {
             Some(true) => Verdict::Empty,
@@ -188,6 +191,8 @@ fn group_verdicts(members: &[Type]) {
                 } else if decided
                     && (id.is_some_and(|i| d.witnessed.contains(&i)) || d.rep(m).is_some())
                     || s.rep(m).is_some()
+                    || (o.get_or_insert_with(|| optimistic_values(members)).as_mut())
+                        .is_some_and(|o| o.rep(m).is_some())
                 {
                     Verdict::Inhabited
                 } else {
@@ -216,10 +221,12 @@ fn group_verdicts(members: &[Type]) {
         VERDICTS.with(|k| k.borrow_mut().insert(m.clone(), v));
     }
     // The values built here, kept for the searches that read a member ([`Searching::shared`]):
-    // a member shown inhabited by a value of the search for values, else of the first search.
+    // a member shown inhabited by a value of the search for values, else of the first search,
+    // else of the search in which each closure was taken to have a value.
+    let mut o = o.flatten();
     STORES.with(|st| {
         let mut st = st.borrow_mut();
-        let (first, values) = (st.len(), st.len() + 1);
+        let (first, values, taken) = (st.len(), st.len() + 1, st.len() + 2);
         SHARED.with(|sh| {
             let mut sh = sh.borrow_mut();
             for m in members {
@@ -230,11 +237,16 @@ fn group_verdicts(members: &[Type]) {
                     sh.insert(m.clone(), (values, *r));
                 } else if let Some(Some(r)) = d.reps.get(m) {
                     sh.insert(m.clone(), (first, *r));
+                } else if let Some(Some(r)) = o.as_ref().and_then(|o| o.reps.get(m)) {
+                    sh.insert(m.clone(), (taken, *r));
                 }
             }
         });
         st.push(std::mem::take(&mut d.shown));
         st.push(std::mem::take(&mut s.shown));
+        if let Some(o) = o.as_mut() {
+            st.push(std::mem::take(&mut o.shown));
+        }
     });
     DECIDING.with(|d| {
         let mut d = d.borrow_mut();
@@ -242,6 +254,45 @@ fn group_verdicts(members: &[Type]) {
             d.remove(m);
         }
     });
+}
+
+/// The search for values of `members` in which each closure whose keys are permitted as written
+/// is taken to have a value at once, its value type put on a list; kept only when each type on
+/// the list then has a value built in this same search, and `None` when one has none. The
+/// closures taken then each return a value built of the closures taken, so every value it built
+/// is a value: a function may return a value that holds it. It shows a value where the search
+/// that takes a closure only once its value type has a value ([`Searching::find_rep`]) met the
+/// types in an order that left a value type without one while it was being built
+/// (GROUP-closure-order: x15407 of `group_oracle` needs it in some orders of its definitions).
+/// It is not complete: it builds no value of some meets, such as a member and `(top, top)`
+/// (GROUP-search-meet-values), and it gives up whole when one closure taken has a value type
+/// without a value, even if no member needs that closure. So it does not make the verdicts
+/// independent of order where meets are involved. On the 32,300 random groups of the
+/// GROUP-closure-order runs, the verdicts that differed between orders were the same with it
+/// and without it: x15407 is the only group known to need it.
+// Complexity tradeoff: one more search for values over the group, run only when a member would
+// otherwise be refused, so a refusal costs up to twice the search it cost before; each value
+// type taken is shown to have a value once, read from the kept values after its first build.
+// When one has none the search gives up whole rather than dropping that closure and searching
+// again, which would decide the group exactly (the game DESIGN.md L1.23 refuses) but in time
+// quadratic in it. Trigger: a member of a group the decider refused that the other searches
+// build no value of. Tests: `l01_23_subtyping::group_oracle` (GROUP-closure-order).
+fn optimistic_values(members: &[Type]) -> Option<Search> {
+    let mut o = Search {
+        strict: true,
+        open_forks: true,
+        optimistic: Some(Vec::new()),
+        ..Search::default()
+    };
+    for m in members {
+        o.rep(m);
+    }
+    let mut shown = 0;
+    while let Some(v) = (o.optimistic.as_ref()).and_then(|vs| vs.get(shown).cloned()) {
+        shown += 1;
+        o.rep(&v)?;
+    }
+    Some(o)
 }
 
 impl Type {
@@ -758,6 +809,17 @@ impl Simulation {
     }
 }
 
+/// A type whose value is being built ([`Searching::rep`]).
+struct Building {
+    /// How many builds of it are under way, one inside the other.
+    depth: u32,
+    /// The number of closures taken to have a value when its outermost build began
+    /// ([`Search::assumed`]).
+    since: u64,
+    /// Whether it was built again inside its outermost build.
+    again: bool,
+}
+
 /// One query's state: the types being decided, assumed empty, each with its depth among them;
 /// those decided; the types decided on assumptions still being made, in the order they were
 /// decided, each with the depths of those assumptions; and the depths of the assumptions the
@@ -803,8 +865,16 @@ struct Search {
     /// For each type, the types it read.
     reads: Vec<Vec<usize>>,
     /// The types whose value is being built, and how many closures rest on one of them.
-    building: TypeSet,
+    building: ByType<Building>,
     resting: usize,
+    /// How many closures were taken to have a value while their value type was sought
+    /// ([`Searching::find_rep`]), and the numbers of those still being tested, innermost last.
+    assumed: u64,
+    assuming: Vec<u64>,
+    /// For each type whose kept failure read the missing value of another type, the value of
+    /// `assumed` when the failure was kept, and whether it was already sought again inside a
+    /// closure taken to have a value since ([`Searching::rep`]).
+    provisional: ByType<(u64, bool)>,
     /// The representatives kept, in order, so those resting on a failed build are dropped.
     built: Vec<Type>,
     /// The types whose missing value the build under way has read.
@@ -812,8 +882,6 @@ struct Search {
     /// For each type, the kept failures that read its missing value: they are sought again when
     /// it gets one ([`Searching::retry`]).
     waiting: ByType<Vec<Type>>,
-    /// Whether a closure was tested against a type that holds some morphisms.
-    unsure: bool,
     /// Whether a type was settled in this phase, after answers that read it as inhabited.
     settled: bool,
     /// Whether kept results are left unread and each place a part counts as inhabited with
@@ -858,6 +926,10 @@ struct Search {
     /// ([`Searching::cut`]), built once, by the nodes' addresses; the operands are kept with it,
     /// so no address is reused.
     cuts: HashMap<(usize, usize, Cut), (Type, Type, Type), Digests>,
+    /// With a list, every closure whose keys are permitted as written is taken to have a value
+    /// at once, and its value type is put on the list, to be shown to have a value after the
+    /// search ([`optimistic_values`]).
+    optimistic: Option<Vec<Type>>,
 }
 
 /// What [`Searching::cut`] builds of two types.
@@ -1465,6 +1537,7 @@ impl Search {
         self.reps.retain(|_, r| r.is_some());
         self.waiting.clear();
         self.read.clear();
+        self.provisional.clear();
     }
 
     /// The end of a phase of [`Searching::solve`], once each inhabited answer was tried for a
@@ -2965,7 +3038,10 @@ impl<'m> Searching<'m> {
                 if same {
                     let fits = m.all.iter().all(|&(p, at)| &left % p == BigUint::from(at))
                         && m.none.iter().all(|&(p, at)| &left % p != BigUint::from(at));
-                    return Some(fits && self.member(item, &m.item).await);
+                    if !fits {
+                        return Some(false);
+                    }
+                    return self.member_known(item, &m.item).await;
                 }
             }
             if let Some(before) = seen.insert(x.clone(), left.clone()) {
@@ -2987,7 +3063,9 @@ impl<'m> Searching<'m> {
             // exactly when it is in one of them.
             let mut next: Option<Type> = None;
             for row in f.union_rows()? {
-                if self.member(item, &row[0]).await {
+                // A row whose item type may or may not hold the item leaves the list's
+                // membership not known.
+                if self.member_known(item, &row[0]).await? {
                     match &next {
                         None => next = Some(row[1].clone()),
                         Some(y) if *y == row[1] => {}
@@ -3052,10 +3130,27 @@ impl<'m> Searching<'m> {
         {
             let mut s = self.s();
             if let Some(&r) = s.reps.get(t) {
-                if r.is_none() {
-                    s.read.push(t.clone());
+                // A type being built, met again through a closure taken to have a value since
+                // its build began, is built again inside it: the closure holds no value of its
+                // value type, so the value sought there is not part of the one being built, and
+                // need not be finite apart from it. A failure kept before such a closure was
+                // taken, which read the missing value of another type, is sought again too: it
+                // was kept because that type had no value yet, perhaps only because it was being
+                // built when read, which depends on the order the types are met in, and the
+                // closure may give it one (GROUP-closure-order). Each type is built again so once
+                // in its outermost build, and each kept failure once, which bounds the builds at
+                // three times those without.
+                let nested = r.is_none()
+                    && s.assuming.last().is_some_and(|&a| match s.building.get(t) {
+                        Some(b) => !b.again && a > b.since,
+                        None => (s.provisional.get(t)).is_some_and(|&(at, again)| !again && a > at),
+                    });
+                if !nested {
+                    if r.is_none() {
+                        s.read.push(t.clone());
+                    }
+                    return Stack::ready(r);
                 }
-                return Stack::ready(r);
             }
         }
         let t = t.clone();
@@ -3063,7 +3158,17 @@ impl<'m> Searching<'m> {
             let (mark, resting, outer) = {
                 let mut s = self.s();
                 s.reps.insert(t.clone(), None);
-                s.building.insert(t.clone());
+                let since = s.assumed;
+                let b = s.building.entry(t.clone()).or_insert(Building {
+                    depth: 0,
+                    since,
+                    again: false,
+                });
+                b.again |= b.depth > 0;
+                b.depth += 1;
+                if let Some(p) = s.provisional.get_mut(&t) {
+                    p.1 = true;
+                }
                 (s.built.len(), s.resting, std::mem::take(&mut s.read))
             };
             let past = self.s().past_fork;
@@ -3071,7 +3176,15 @@ impl<'m> Searching<'m> {
             self.s().past_fork = past;
             let again = {
                 let mut s = self.s();
-                s.building.remove(&t);
+                let b = s.building.get_mut(&t).expect("a build under way is listed");
+                b.depth -= 1;
+                if b.depth == 0 {
+                    s.building.remove(&t);
+                }
+                // A value found by the build inside this one, and kept, is a value of `t`, and is
+                // already listed as built.
+                let inner = s.reps.get(&t).copied().flatten().filter(|_| r.is_none());
+                let r = r.or(inner);
                 s.reps.insert(t.clone(), r);
                 let read = std::mem::replace(&mut s.read, outer);
                 if r.is_none() {
@@ -3088,14 +3201,22 @@ impl<'m> Searching<'m> {
                     if again {
                         s.reps.remove(&t);
                     } else {
+                        let at = s.assumed;
+                        let mut provisional = false;
                         for x in read.into_iter().filter(|x| *x != t) {
+                            provisional = true;
                             s.waiting.entry(x).or_default().push(t.clone());
+                        }
+                        if provisional {
+                            s.provisional.entry(t.clone()).or_insert((at, false)).0 = at;
                         }
                         s.read.push(t.clone());
                     }
                     Some(again)
                 } else {
-                    s.built.push(t.clone());
+                    if inner.is_none() {
+                        s.built.push(t.clone());
+                    }
                     None
                 }
             };
@@ -3118,7 +3239,7 @@ impl<'m> Searching<'m> {
         for y in waiting {
             let outer = {
                 let mut s = self.s();
-                if s.reps.get(&y) != Some(&None) || s.building.contains(&y) {
+                if s.reps.get(&y) != Some(&None) || s.building.contains_key(&y) {
                     continue;
                 }
                 s.reps.remove(&y);
@@ -3177,7 +3298,7 @@ impl<'m> Searching<'m> {
         }
         {
             let mut s = self.s();
-            if s.building.contains(v) {
+            if s.building.contains_key(v) {
                 s.resting += 1;
                 return true;
             }
@@ -3301,17 +3422,29 @@ impl<'m> Searching<'m> {
                     }
                     continue;
                 }
-                // What the closure returns may hold the closure, at any depth.
+                {
+                    let mut s = self.s();
+                    if let Some(values) = s.optimistic.as_mut() {
+                        values.push(m.value.clone());
+                        return Some(s.show(Rep::Closure(m.clone())));
+                    }
+                }
+                // What the closure returns may hold the closure, at any depth, and the value
+                // being built that holds the closure ([`Searching::rep`]).
                 let mark = {
                     let mut s = self.s();
                     let mark = s.built.len();
                     let closure = s.show(Rep::Closure(m.clone()));
                     s.reps.insert(t.clone(), Some(closure));
+                    s.assumed += 1;
+                    let a = s.assumed;
+                    s.assuming.push(a);
                     mark
                 };
                 let returns = self.returnable(&m.value).await;
                 {
                     let mut s = self.s();
+                    s.assuming.pop();
                     s.reps.insert(t.clone(), None);
                     if returns {
                         return Some(s.show(Rep::Closure(m.clone())));
@@ -3634,40 +3767,37 @@ impl<'m> Searching<'m> {
     }
 
     /// Whether the tuple whose component `i` is the value numbered `item(search, i)` is in `f`;
-    /// `None` when the membership of a component in a tuple type is not known, since `f` may
-    /// hold that tuple type negated. A component is read by number when it is tested, so a
-    /// tuple among the values shown is read in place while the tests add to the search.
+    /// `None` when that rests on the membership of a component that is not known. A tuple is
+    /// in a tuple type when each component is in its own, and outside it when one component is
+    /// surely outside its own, whichever component that is and whatever is not known of the
+    /// others; `f` is then evaluated in three values ([`Part::eval3`]), so a tuple type whose
+    /// membership is not known decides nothing only where `f`'s value rests on it. Neither
+    /// depends on the order of the components (GROUP-closure-order: a closure whose membership
+    /// is not known, met first, made the reversed tuple unknown where a later component was
+    /// surely outside). A component is read by number when it is tested, so a tuple among the
+    /// values shown is read in place while the tests add to the search.
     async fn holds_known(
         &'m self,
         item: impl Fn(&Search, usize) -> usize,
         f: &Part<Row>,
     ) -> Option<bool> {
-        let outer = std::mem::take(&mut self.s().unsure);
-        let mut fits = BTreeSet::new();
+        let mut known: BTreeMap<Row, Option<bool>> = BTreeMap::new();
         for a in f.distinct_atoms() {
-            let mut all = true;
+            let mut fits = Some(true);
             for (i, y) in a.iter().enumerate() {
                 let v = item(&self.s(), i);
-                if !self.member(v, y).await {
-                    all = false;
-                    break;
+                match self.member_known(v, y).await {
+                    Some(true) => {}
+                    Some(false) => {
+                        fits = Some(false);
+                        break;
+                    }
+                    None => fits = None,
                 }
             }
-            if all {
-                fits.insert(a);
-            }
+            known.insert(a, fits);
         }
-        let b = f.eval(&|a| fits.contains(a));
-        let unsure = std::mem::replace(&mut self.s().unsure, outer);
-        (!unsure).then_some(b)
-    }
-
-    /// Whether the value numbered `v` is in `u`; false, with `unsure` set, when that is not
-    /// known.
-    async fn member(&'m self, v: usize, u: &Type) -> bool {
-        let known = self.member_known(v, u).await;
-        self.s().unsure |= known.is_none();
-        known == Some(true)
+        f.eval3(&|a| known.get(a).copied().flatten())
     }
 
     /// Whether the value numbered `v` is in `u`, or `None` when that is not known. What is not
@@ -3762,13 +3892,22 @@ impl<'m> Searching<'m> {
         may_cover: bool,
     ) -> Deep<'m, bool> {
         self.stack.call(move || async move {
+            // The morphism types `r` was met with, which hold it by construction. Tested again,
+            // such a type may not be found to hold `r`: the search of a value counts a forked
+            // part inhabited, so `r.value - a.value` is not proved empty. It was then forced and
+            // met again, each meet a type of its own, with no end (GROUP-search-hang). Each pass
+            // that meets takes in a morphism type of `f` not yet met, so the passes are at most
+            // the morphism types of `f`, plus one.
+            let mut inside: BTreeSet<Morphism> = BTreeSet::new();
             loop {
                 if self.no_morphism(&r).await {
                     return true;
                 }
                 let mut st: BTreeMap<Morphism, Option<bool>> = BTreeMap::new();
                 for a in f.distinct_atoms() {
-                    let s = if self.no_morphism(&self.meet(&r, &a)).await {
+                    let s = if inside.contains(&a) {
+                        Some(true)
+                    } else if self.no_morphism(&self.meet(&r, &a)).await {
                         Some(false)
                     } else if self.within(&r, &a).await {
                         Some(true)
@@ -3790,6 +3929,7 @@ impl<'m> Searching<'m> {
                 let (taken, _) = settled.forced();
                 if !taken.is_empty() {
                     r = taken.iter().fold(r, |r, a| self.meet(&r, a));
+                    inside.extend(taken);
                     continue;
                 }
                 if may_cover && f.eval3(&|_| Some(false)) == Some(false) {

@@ -28,7 +28,7 @@ use super::bes_families::{self, reference};
 use super::judgments::{bodies, group};
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_kernel::types::{Type, Verdict};
+use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::lex::lex_fence;
@@ -2353,4 +2353,488 @@ fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
     scaling::check("the text of a chain of n shared tuple parts", 64, |n| {
         std::hint::black_box(chains[&n].surface());
     });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Order of the search (GROUP-search-hang, GROUP-closure-order)
+// ---------------------------------------------------------------------------------------------
+
+/// `sys` with its definitions written in `order`: definition k of the result is definition
+/// `order[k]` of `sys`, its references renamed to match.
+fn moved(sys: &[E], order: &[usize]) -> Vec<E> {
+    let mut to = vec![0; order.len()];
+    for (k, &i) in order.iter().enumerate() {
+        to[i] = k;
+    }
+    order.iter().map(|&i| renamed(&sys[i], &to)).collect()
+}
+
+/// `e` with the parts of every tuple in the opposite order.
+fn reversed(e: &E) -> E {
+    let all = |xs: &[E]| xs.iter().map(reversed).collect::<Vec<_>>();
+    let one = |x: &E| Box::new(reversed(x));
+    match e {
+        E::Tup(xs) => E::Tup(all(xs).into_iter().rev().collect()),
+        E::Union(xs) => E::Union(all(xs)),
+        E::And(xs) => E::And(all(xs)),
+        E::Mor(l, u, v) => E::Mor(one(l), one(u), one(v)),
+        E::Diff(a, b) => E::Diff(one(a), one(b)),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top | E::Ref(_) => e.clone(),
+    }
+}
+
+/// `e` with the arms of every union and the parts of every meet in an order drawn from `g`.
+fn shuffled(e: &E, g: &mut Rng) -> E {
+    let all = |xs: &[E], g: &mut Rng, on: bool| {
+        let mut v: Vec<E> = xs.iter().map(|x| shuffled(x, g)).collect();
+        for i in (1..if on { v.len() } else { 0 }).rev() {
+            let j = g.below(i + 1);
+            v.swap(i, j);
+        }
+        v
+    };
+    match e {
+        E::Tup(xs) => E::Tup(all(xs, g, false)),
+        E::Union(xs) => E::Union(all(xs, g, true)),
+        E::And(xs) => E::And(all(xs, g, true)),
+        E::Mor(l, u, v) => E::Mor(
+            Box::new(shuffled(l, g)),
+            Box::new(shuffled(u, g)),
+            Box::new(shuffled(v, g)),
+        ),
+        E::Diff(a, b) => E::Diff(Box::new(shuffled(a, g)), Box::new(shuffled(b, g))),
+        E::Atom(_) | E::Int | E::Bool | E::Empty | E::Top | E::Ref(_) => e.clone(),
+    }
+}
+
+/// Groups of two to five definitions, each a union of up to three arms of `#stop`, tuples of
+/// one or two parts, `(#k, x)` and `(int) -> x`, a part a definition, a meet of two, or a meet
+/// of one with `(top, top)` or with `(int) -> x`: the X14 family with meets.
+fn gen_meets(g: &mut Rng) -> Vec<E> {
+    let n = 2 + g.below(4);
+    let r = |g: &mut Rng| E::Ref(g.below(n));
+    let item = |g: &mut Rng| match g.below(6) {
+        0 | 1 => r(g),
+        2 => E::And(vec![r(g), r(g)]),
+        3 => E::And(vec![r(g), tup(vec![E::Top, E::Top])]),
+        4 => E::And(vec![r(g), exact(E::Int, r(g))]),
+        _ => exact(E::Int, r(g)),
+    };
+    (0..n)
+        .map(|_| {
+            let alts: Vec<E> = (0..1 + g.below(3))
+                .map(|_| match g.below(10) {
+                    0 => E::Atom("stop"),
+                    1 | 2 => tup(vec![item(g)]),
+                    3 | 4 => tup(vec![item(g), item(g)]),
+                    5 => tup(vec![E::Atom("k"), item(g)]),
+                    _ => exact(E::Int, item(g)),
+                })
+                .collect();
+            one_or_union(alts)
+        })
+        .collect()
+}
+
+/// `k` copies of the group that made the search for values run without end (GROUP-search-hang),
+/// in a ring when `ring` holds: with `A`, `B`, `C` definitions `3j`, `3j + 1`, `3j + 2` and `A'`
+/// the next copy's `A`, or its own when `ring` does not hold,
+///
+/// ```text
+/// A = ((int) -> B) | (C,)
+/// B = (C & B,) | (C & A',) | ((int) -> C)
+/// C = (A & B,) | (C,)
+/// ```
+///
+/// One copy is the group the stress run found.
+fn hang_copies(k: usize, ring: bool) -> Vec<E> {
+    let and = |a: usize, b: usize| E::And(vec![r(a), r(b)]);
+    let one = |x: E| tup(vec![x]);
+    let n = 3 * k;
+    (0..k)
+        .flat_map(|j| {
+            let (a, b, c) = (3 * j, 3 * j + 1, 3 * j + 2);
+            let next = if ring { (3 * j + 3) % n } else { a };
+            [
+                E::Union(vec![exact(E::Int, r(b)), one(r(c))]),
+                E::Union(vec![one(and(c, b)), one(and(c, next)), exact(E::Int, r(c))]),
+                E::Union(vec![one(and(a, b)), one(r(c))]),
+            ]
+        })
+        .collect()
+}
+
+/// The group the search for values ran on without end, before the search took each function
+/// type at most once per value it builds (GROUP-search-hang), gets the same verdicts in every
+/// order of its questions and of its definitions, with and without the parts of its tuples
+/// reversed: the decider refuses each member. Each has a value, with `h` a function in both
+/// `A` and `B`: `c = (h,)`, a value of `C`, and `h = λ_. ((c,),)`, whose result is in both `B`
+/// and `C`; `(c,)` is a value of `A`. The search does not build a value of a meet of two
+/// members such as `A & B` (GROUP-search-meet-values).
+#[test]
+fn the_group_that_hung_the_search_is_decided_in_every_order() {
+    let sys = hang_copies(1, false);
+    let want = alone(&kernel(&sys, "hang"));
+    let refused = Some(Verdict::Refused(Refusal::Group));
+    assert_eq!(want, vec![refused; 3], "{}", show_system(&sys));
+    let types = kernel(&sys, "hang");
+    for order in permutations(3) {
+        assert_eq!(
+            in_order(&types, &order),
+            want,
+            "asked in the order {order:?}"
+        );
+        for rev in [false, true] {
+            let mut sys = moved(&sys, &order);
+            if rev {
+                sys = sys.iter().map(reversed).collect();
+            }
+            let got = alone(&kernel(&sys, &format!("hang_{order:?}_{rev}")));
+            assert_eq!(got, want, "{}", show_system(&sys));
+        }
+    }
+}
+
+/// The same group with the one-part tuples written as the atom `#k` with a payload,
+///
+/// ```text
+/// type Q = ((int) -> R) | #k(S)
+/// type R = #k(S & R) | #k(S & Q) | ((int) -> S)
+/// type S = #k(Q & R) | #k(S)
+/// ```
+///
+/// gets the same verdicts in every order of its questions and of its definitions: the decider
+/// refuses each member, as in [`the_group_that_hung_the_search_is_decided_in_every_order`].
+#[test]
+fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
+    let body = |q: &dyn Fn(usize) -> Expr| {
+        let k = |x: Expr| Expr::Atom("k".into(), vec![x]);
+        let and = |a: usize, b: usize| Expr::And(vec![q(a), q(b)]);
+        let f = |x: Expr| Expr::exact(Expr::Type(Type::int()), x);
+        [
+            ("Q", Expr::Union(vec![f(q(1)), k(q(2))])),
+            ("R", Expr::Union(vec![k(and(2, 1)), k(and(2, 0)), f(q(2))])),
+            ("S", Expr::Union(vec![k(and(0, 1)), k(q(2))])),
+        ]
+    };
+    for at in permutations(3) {
+        let mut defs: Vec<Option<Def>> = vec![None, None, None];
+        for (j, (name, body)) in body(&|i| Expr::Ref(at[i], vec![])).into_iter().enumerate() {
+            defs[at[j]] = Some(Def {
+                name: name.into(),
+                params: vec![],
+                body,
+            });
+        }
+        let defs = defs
+            .into_iter()
+            .map(|d| d.expect("every place filled"))
+            .collect();
+        let types = (Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))).instance(vec![]);
+        for order in permutations(3) {
+            Type::forget_emptiness();
+            for &j in &order {
+                assert_eq!(
+                    types[at[j]].verdict(),
+                    Verdict::Refused(Refusal::Group),
+                    "{} with the definitions at {at:?}, asked in the order {order:?}",
+                    ["Q", "R", "S"][j]
+                );
+            }
+        }
+    }
+}
+
+/// The verdicts of every member of `k` copies of the group that hung the search, at k and 8k
+/// copies, in a ring when `ring` holds, the groups built before the runs: each member is
+/// refused, as the one copy is.
+fn verdicts_of_copies_scale(what: &str, ring: bool) {
+    let make = |k: usize| -> Vec<Type> {
+        (kernel(&hang_copies(k, ring), &format!("hang_{ring}_{k}")).into_iter())
+            .map(|t| t.expect("the copies are admitted"))
+            .collect()
+    };
+    let copies = scaling::inputs(32, make);
+    Type::forget_emptiness();
+    for t in &copies[&32] {
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
+    }
+    scaling::check_order(what, 32, 1, |k| {
+        Type::forget_emptiness();
+        for t in &copies[&k] {
+            std::hint::black_box(t.verdict());
+        }
+    });
+}
+
+/// The verdicts of every member of n copies of the group that hung the search, each its own
+/// group, at n and 8n: the search takes each function type at most once for each value it
+/// builds, and builds a value again only once a function taken after its build began holds it,
+/// so each copy costs the same.
+#[test]
+fn verdicts_of_copies_of_the_group_that_hung_the_search_scale() {
+    verdicts_of_copies_scale(
+        "the verdicts of every member of n copies of the group that hung the search",
+        false,
+    );
+}
+
+/// A ring of eight copies of the group that hung the search, one group of 24 definitions, is
+/// decided: each member is refused, as the one copy is.
+#[test]
+fn a_ring_of_the_group_that_hung_the_search_is_refused() {
+    let got = alone(&kernel(&hang_copies(8, true), "hang_ring8"));
+    assert_eq!(got, vec![Some(Verdict::Refused(Refusal::Group)); 24]);
+}
+
+/// The verdicts of every member of a ring of n copies of the group that hung the search, at n
+/// and 8n. Ignored: the time is quadratic in n. Each copy's search tests whether two types
+/// overlap (COMPLEXITY.md K36), and each such test unfolds the members it meets through the
+/// first parts of tuples, so it walks the whole ring: n tests of n types each
+/// (GROUP-overlaps-unfold).
+#[test]
+#[ignore = "quadratic: each overlap test walks the whole ring (GROUP-overlaps-unfold)"]
+fn verdicts_of_a_ring_of_the_group_that_hung_the_search_scale() {
+    verdicts_of_copies_scale(
+        "the verdicts of every member of a ring of n copies of the group that hung the search",
+        true,
+    );
+}
+
+/// The five definitions of cases J and L of GROUP-closure-order, which differ in the last:
+///
+/// ```text
+/// R0 = (R2, R3)
+/// R1 = (R0, R2) | (R0, R3)
+/// R2 = (int) -> R1
+/// R3 = ((int) -> R0) | (R1, R2)
+/// R4 = (#both, R0, R0 & (top, top))        J
+/// R4 = (#both, R0 & (top, top), R0)        L
+/// ```
+///
+/// and the same without `#both`. Each member is inhabited: with `t = λ_. (r0, t)`, a value of
+/// `R2`, and `u = λ_. r0`, a value of `R3`, `r0 = (t, u)` (a function may return a value that
+/// holds it).
+fn cases_j_and_l() -> Vec<(&'static str, Vec<E>)> {
+    let top2 = || tup(vec![E::Top, E::Top]);
+    let met = || E::And(vec![r(0), top2()]);
+    [
+        ("J", tup(vec![E::Atom("both"), r(0), met()])),
+        ("L", tup(vec![E::Atom("both"), met(), r(0)])),
+        ("J2", tup(vec![r(0), met()])),
+        ("L2", tup(vec![met(), r(0)])),
+    ]
+    .into_iter()
+    .map(|(name, both)| {
+        let sys = vec![
+            tup(vec![r(2), r(3)]),
+            E::Union(vec![tup(vec![r(0), r(2)]), tup(vec![r(0), r(3)])]),
+            exact(E::Int, r(1)),
+            E::Union(vec![exact(E::Int, r(0)), tup(vec![r(1), r(2)])]),
+            both,
+        ];
+        (name, sys)
+    })
+    .collect()
+}
+
+/// Cases J and L, refused in some orders of their components and inhabited in others before
+/// GROUP-closure-order, are inhabited in all 120 orders of their definitions, with and without
+/// the parts of their tuples reversed.
+#[test]
+fn cases_j_and_l_are_inhabited_in_every_order() {
+    let mut runs = 0;
+    for (name, sys) in cases_j_and_l() {
+        for (p, order) in permutations(5).iter().enumerate() {
+            for rev in [false, true] {
+                let mut sys = moved(&sys, order);
+                if rev {
+                    sys = sys.iter().map(reversed).collect();
+                }
+                let got = alone(&kernel(&sys, &format!("{name}_{p}_{rev}")));
+                assert_eq!(
+                    got,
+                    vec![Some(Verdict::Inhabited); 5],
+                    "{name}, definitions in the order {order:?}: {}",
+                    show_system(&sys)
+                );
+                runs += 1;
+            }
+        }
+    }
+    assert_eq!(runs, 4 * 120 * 2);
+}
+
+/// Groups the stress runs of GROUP-closure-order found inhabited in some orders and refused in
+/// others, inhabited in every order of their definitions:
+///
+/// - x9014, the group of four that was the fixture of `group_refusal` (`Pair`, `Tree`, `Thunk`,
+///   `Node`), with `p = (t, n)`, `t = λ_. p` and `n = λ_. (p, t)`;
+/// - x15407, five definitions, with `r1 = (r0, r0)`, `r0 = (r2, r3)`, `r2 = λ_. r1` and
+///   `r3 = λ_. (r1, r1)`, read through `r0` itself: `r0` is the pair of two functions, one
+///   returning `(r0, r0)`.
+#[test]
+fn groups_found_inhabited_in_some_orders_are_inhabited_in_all() {
+    let p = |a: usize, b: usize| tup(vec![r(a), r(b)]);
+    let systems = [
+        (
+            "x9014",
+            vec![
+                p(1, 3),
+                E::Union(vec![p(2, 2), p(0, 3)]),
+                exact(E::Int, r(0)),
+                E::Union(vec![exact(E::Int, r(1)), p(1, 2)]),
+            ],
+        ),
+        (
+            "x15407",
+            vec![
+                E::Union(vec![p(1, 1), p(2, 3), p(3, 3)]),
+                p(0, 0),
+                E::Union(vec![p(1, 4), exact(E::Int, r(1))]),
+                exact(E::Int, r(4)),
+                p(1, 1),
+            ],
+        ),
+    ];
+    for (tag, sys) in systems {
+        let n = sys.len();
+        for (k, order) in permutations(n).iter().enumerate() {
+            let sys = moved(&sys, order);
+            let got = alone(&kernel(&sys, &format!("{tag}_{k}")));
+            assert_eq!(
+                got,
+                vec![Some(Verdict::Inhabited); n],
+                "{tag}, definitions in the order {order:?}: {}",
+                show_system(&sys)
+            );
+        }
+    }
+}
+
+/// System 1699 of the meets family, which the group oracle (`truth`) finds empty although each
+/// member has a value, since the oracle does not build values through two functions that hold
+/// each other's values: with `v = (c1, c2)`, `c1 = λ_. (#k, v)` and `c2 = λ_. v`, `v` is a
+/// value of `R2`, `c1` of `R0` and `(#k, v)` of `R1`. The kernel finds those three inhabited,
+/// and `R3 = ((R1 & R0), R2)` empty: `R1` holds pairs and `R0` closures and one-part tuples.
+///
+/// ```text
+/// R0 = ((int) -> R2) | ((R3 & (top, top)),)
+/// R1 = (#k, R2)
+/// R2 = ((R0 & ((int) -> R1)), ((int) -> R2)) | ((int) -> (R3 & ((int) -> R3))) | (#k, R2)
+/// R3 = ((R1 & R0), R2)
+/// ```
+#[test]
+fn a_value_through_two_functions_the_oracle_misses_is_found() {
+    let sys = gen_meets(&mut Rng::new(1699));
+    let tr = truth(&sys, CAP);
+    assert!(tr.exhaustive);
+    assert!(
+        tr.seen.iter().all(|s| matches!(s, Seen::None)),
+        "{}",
+        show_system(&sys)
+    );
+    let inhabited = Some(Verdict::Inhabited);
+    assert_eq!(
+        alone(&kernel(&sys, "meets1699")),
+        vec![inhabited, inhabited, inhabited, Some(Verdict::Empty)],
+        "{}",
+        show_system(&sys)
+    );
+}
+
+/// What two orders of a system may differ in: whether a member is inhabited, and otherwise
+/// whether it is empty or refused, but not the reason of a refusal, when `exact` holds; only
+/// whether it is inhabited when not.
+fn verdict_class(v: Option<Verdict>, exact: bool) -> u8 {
+    match v {
+        None => 0,
+        Some(Verdict::Inhabited) => 1,
+        Some(_) if !exact => 2,
+        Some(Verdict::Empty) => 3,
+        Some(_) => 4,
+    }
+}
+
+/// The verdicts of systems `seeds` of generator `make` agree with those of the same system with
+/// its definitions in four random orders, the parts of its tuples reversed in two of them, and,
+/// when `parts` holds, the arms of its unions and the parts of its meets in random orders; up
+/// to the reason of a refusal, or only in whether a member is inhabited when `exact` does not
+/// hold.
+fn verdicts_agree_across_orders(
+    name: &str,
+    make: fn(&mut Rng) -> Vec<E>,
+    seeds: std::ops::Range<u64>,
+    (parts, exact): (bool, bool),
+) {
+    let class = |vs: &[Option<Verdict>]| -> Vec<u8> {
+        vs.iter().map(|&v| verdict_class(v, exact)).collect()
+    };
+    let mut differ = Vec::new();
+    for seed in seeds {
+        let sys = make(&mut Rng::new(seed));
+        let tag = format!("{name}{seed}");
+        let want = alone(&kernel(&sys, &tag));
+        let n = sys.len();
+        let mut g = Rng::new(seed ^ 0xABCD);
+        for k in 0..4 {
+            let mut order: Vec<usize> = (0..n).collect();
+            for i in (1..n).rev() {
+                let j = g.below(i + 1);
+                order.swap(i, j);
+            }
+            let rev = k % 2 == 1;
+            let moved: Vec<E> = (moved(&sys, &order).iter())
+                .map(|e| {
+                    let e = if parts {
+                        shuffled(e, &mut g)
+                    } else {
+                        e.clone()
+                    };
+                    if rev { reversed(&e) } else { e }
+                })
+                .collect();
+            let got = alone(&kernel(&moved, &format!("{tag}_p{k}")));
+            let back: Vec<_> = order.iter().map(|&i| want[i]).collect();
+            if class(&got) != class(&back) {
+                differ.push(format!(
+                    "{tag}: {back:?} in the order {order:?}{}: {got:?}\n  {}\n  {}",
+                    if rev { " reversed" } else { "" },
+                    show_system(&sys),
+                    show_system(&moved)
+                ));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// Groups of four, five and six definitions of the X14 family give the same verdicts in every
+/// order tried, up to the reason of a refusal (GROUP-closure-order).
+#[test]
+fn x14_groups_agree_across_orders() {
+    verdicts_agree_across_orders("x14_4_", |g| claude_of(g, 4), 0..2000, (true, true));
+    verdicts_agree_across_orders("x14_5_", |g| claude_of(g, 5), 0..600, (true, true));
+    verdicts_agree_across_orders("x14_6_", |g| claude_of(g, 6), 0..250, (true, true));
+}
+
+/// Systems of the other families give the same verdicts in every order tried, up to the reason
+/// of a refusal.
+#[test]
+fn other_families_agree_across_orders() {
+    verdicts_agree_across_orders("claude", gen_claude, 0..200, (true, true));
+    verdicts_agree_across_orders("mixed", gen_mixed, 0..200, (true, true));
+    verdicts_agree_across_orders("layer", gen_layer, 0..200, (true, true));
+    verdicts_agree_across_orders("cells", gen_cells, 0..200, (true, true));
+}
+
+/// Systems of the meets family, with the arms of their unions and the parts of their meets in
+/// their written order, agree in which members are inhabited in every order of their
+/// definitions tried. Whether a member is empty or refused may still depend on the order
+/// (GROUP-empty-order), and with the arms or the parts of meets in other orders whether it is
+/// inhabited too (GROUP-search-meet-values): the search does not build every value of a meet of
+/// two members, or of a tuple and `(top, top)`.
+#[test]
+fn meets_agree_across_orders_in_which_members_are_inhabited() {
+    verdicts_agree_across_orders("meets", gen_meets, 0..800, (false, false));
 }

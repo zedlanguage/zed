@@ -380,15 +380,23 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
     // or left to the search when it reaches a meet or a difference, and never refused
     // ([`Why::recheck`], [`settled`]). So a repair is always offered.
     // The repairs are re-checked in turn up to the first decided, since the last, which holds
-    // this member, is re-checked under a key of its own (GROUP-refusal-reach).
+    // this member, is re-checked under a key of its own (GROUP-refusal-reach). For a member that
+    // reaches a meet or a difference, a repair holding it leaves it to the search, as above, so
+    // once an earlier repair does that too, the one holding it is not re-checked: re-checked,
+    // m such members, each reaching n nodes, cost O(m n) together under their own keys.
     let mut searched = None;
-    let decided = fixes.iter().find(|&w| match why.recheck(i as u32, w) {
-        Recheck::Decided => true,
-        Recheck::Searched => {
-            searched.get_or_insert(w);
-            false
+    let decided = fixes.iter().find(|&w| {
+        if searched.is_some() && why.wide[i] && w.contains(&i) {
+            return false;
         }
-        Recheck::Refused => false,
+        match why.recheck(i as u32, w) {
+            Recheck::Decided => true,
+            Recheck::Searched => {
+                searched.get_or_insert(w);
+                false
+            }
+            Recheck::Refused => false,
+        }
     });
     let set = |w: &BTreeSet<usize>| w.iter().copied().collect::<Vec<_>>();
     let (mut w, effect) = match decided {
