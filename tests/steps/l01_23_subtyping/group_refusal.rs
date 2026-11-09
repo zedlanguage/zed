@@ -139,7 +139,8 @@ fn a_mixed_component_is_refused_with_its_own_message() {
         site.defs,
         [
             "type A = (#k, C & A) | (B & (_, _), (int) -> C)",
-            "type B = ((int) -> C & (_, _)) | (B & ((int) -> C), B) | (A & (_, _),)",
+            // PRINT-fmt-audit: outside a message a body that uses `(_, _)` twice defines it first.
+            "type B = type T1 = (_, _); ((int) -> C & T1) | (B & ((int) -> C), B) | (A & T1,)",
             "type C = (B & (_, _), B) | ((int) -> A)",
         ]
     );

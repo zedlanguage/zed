@@ -6211,7 +6211,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         pass: bool,
         span: Span,
     ) -> (Ty, Vec<usize>) {
-        let demand = match pass || sig.data {
+        let demand = match pass || sig.data || sig.word.is_some() {
             true => Demand::All,
             false => Demand::Body,
         };

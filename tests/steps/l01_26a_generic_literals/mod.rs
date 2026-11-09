@@ -235,7 +235,8 @@ fn a_literal_at_one_declared_carrier_takes_it_exactly_or_not_at_all() {
         type_errors("f(positional x: f64 | rat) = x;\ny = f(1);\n"),
         [
             "the literal `1` can be a `rat` or an `f64` at `rat | f64`, and nothing here \
-             chooses one; write `1r` or `1.0f64` [1]"
+             chooses one; write `1r` or `1.0f64`\n  T1 stands for a part written more than \
+             once:\n    type T1 = rat | f64; [1]"
         ]
     );
 }

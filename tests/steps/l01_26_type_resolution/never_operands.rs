@@ -1,6 +1,7 @@
 //! An operand beside an operand of type `Never` is still checked against what the operator
 //! takes (DESIGN.md L1.26, EMPTY-operand-check). The application takes place on no value, so
-//! its result stays `Never`; a value of the other operand that no arrow of the operator takes
+//! its result stays `Never` (except beside the second operand of `&&` and `||`, which is not
+//! read); a value of the other operand that no arrow of the operator takes
 //! is reported as it is beside an operand that has values.
 
 use zed_tests::scaling;
@@ -27,6 +28,9 @@ fn refused(op: &str, x: &str, y: &str, e: &str) -> String {
 }
 
 const SIG: &str = "((int) -> Never, int, bool, (int) -> int, String) -> Never";
+
+/// [`SIG`] where the operand of type `Never` is the second of `&&` or `||`, which is not read.
+const SIG_BOOL: &str = "((int) -> Never, int, bool, (int) -> int, String) -> bool";
 
 /// Each operator form beside `h(1)`, in either order: the operand it does not take, the type
 /// the message shows for it, and an operand it takes.
@@ -74,10 +78,19 @@ fn an_operand_beside_never_is_checked_against_the_operator() {
             assert_eq!(type_errors(&text), [refused(op, x, y, &e)], "{e}");
             assert_eq!(sig(&text, "f"), SIG, "{e}");
         }
-        for e in [applied(op, "h(1)", good), applied(op, good, "h(1)")] {
+        // `&&` and `||` read their second operand only where the first does not decide, so
+        // `b && h(1)` is `bool` (EMPTY-call-unused, DOCS-TODO 47).
+        let second = match op {
+            "&&" | "||" => SIG_BOOL,
+            _ => SIG,
+        };
+        for (e, want) in [
+            (applied(op, "h(1)", good), SIG),
+            (applied(op, good, "h(1)"), second),
+        ] {
             let text = body(&e);
             assert_eq!(type_errors(&text), Vec::<String>::new(), "{e}");
-            assert_eq!(sig(&text, "f"), SIG, "{e}");
+            assert_eq!(sig(&text, "f"), want, "{e}");
         }
     }
 }
