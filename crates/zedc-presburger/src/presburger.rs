@@ -856,7 +856,14 @@ impl fmt::Display for Relation {
 /// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
 /// after another, as the preimage of a chain of `if` at a point gives, is answered by
 /// propagation alone in time linear in its size (module `forced`, PRES-small-cost), with every
-/// atom of the formula in its point; any other goes to the solver.
+/// atom of the formula in its point; any other goes to the solver. The solver's point may leave
+/// atoms of `f` out, and each atom left out is zero there, as [`Formula::holds`] reads it: an
+/// atom of a disjunction that `absorb` removed where zero lies between its bounds (`repair`), an
+/// atom of a disjunct the search did not take, and an atom of a disjunct it took because its rows
+/// hold with that atom read as zero (`pick`). A caller that needs a value for every atom gives
+/// those left out zero (`l01_38_presburger::model_keys`). A product is read as an atom of its
+/// own, as everywhere in the solver, so its value in the point need not be the product of its
+/// factors' values.
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
     match forced::forced(f) {
         Some(Forced::Empty) => Ok(None),

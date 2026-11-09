@@ -24,6 +24,7 @@ mod ladder;
 mod live3;
 mod mod_symbol;
 mod model;
+mod model_keys;
 mod names;
 mod near;
 mod omega;
