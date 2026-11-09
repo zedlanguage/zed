@@ -105,3 +105,25 @@ codegen-units = 1
 [profile.profiling]
 inherits = "dev"
 debug = true
+# Dependencies as one codegen unit each, in place of part of the inlining ThinLTO gave
+# (PA-lto-cost). Without ThinLTO a function in one unit is not inlined into another. With
+# lto = "off" there is no ThinLTO pass at all, so no thin-lto-past-keys.bin is written whatever the
+# number of units. Instructions of l01_39 `product::arms` (block of 4000 / fees of 1000 / bound
+# block of 4000), least of three runs:
+#   lto = false (ThinLTO, as before 377e39a9)           623 M /   900 M / 815 M
+#   lto = "off", default units (377e39a9)                757 M / 1,077 M / 989 M
+#   these settings                                       719 M / 1,016 M / 944 M
+#   these, and zedc-preimage as 4 units                  700 M /   974 M / 906 M
+#   these, and zedc-preimage as 1 unit                   672 M /   921 M / 864 M
+# Dependencies are rarely rebuilt, so their one unit costs nothing on an edit. Most of what is left
+# is in zedc-preimage, which calls the instances of imbl and imbl-sized-chunks generics it uses
+# (`Chunk::as_slice`, `Chunk::clone`, `Node::lookup`) in other units. Fewer units there would inline
+# them, but a one-line zedc-preimage edit then rebuilt the l01_39 test in 23 to 30 s with 4 units,
+# 34 s with 2 and 64 s with 1, against 11 to 14 s with the default. zed-alloc-count, a workspace
+# member that is almost never edited, also takes one unit: its counting allocator runs on every
+# allocation.
+[profile.dev.package."*"]
+codegen-units = 1
+
+[profile.dev.package.zed-alloc-count]
+codegen-units = 1
