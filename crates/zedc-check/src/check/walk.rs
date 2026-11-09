@@ -5279,54 +5279,100 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Checks that each value of `a` compares with each of `b` (sec:order): two numbers of one
     /// carrier or two values of one other kind, the atoms as data, and two tuples component by
     /// component as far as the shorter goes, since a proper prefix comes first.
+    ///
+    /// Two tuples both reach position `i` exactly when each has more than `i` components, so
+    /// the pairs of components met at `i` are every component `i` of `a`'s tuples against
+    /// every one of `b`'s: the check reads the union of each side's, once, not each pair of
+    /// tuples, which cost `n²` pairs for `n` tuples a side and `n³` for tuples of lengths 1 to
+    /// `n`. A pair of component types met again, as through rows shared by many paths, is not
+    /// read again: `n` levels that each hold the one below twice cost `n`, not `2^n`
+    /// (CHK-components-pairs). The pairs are checked on a heap stack in the order a recursion
+    /// would: a pair's own pieces, then its components position by position, then its rest.
     fn components(&mut self, what: &str, a: &Ty, b: &Ty, span: Span) {
-        let refuse = |ck: &mut Self, p: &Piece, q: &str| {
-            let p = ck.text(&p.ty());
-            ck.error(span, format!("{what} does not compare {p} with {q}"));
-        };
-        for (s, t) in [(a, b), (b, a)] {
-            let atoms = !s.atoms().is_empty();
-            for p in t.pieces() {
-                let ok = match self.class_of(&p) {
-                    Some(k) if !s.tuples.is_empty() => self.restrict(k, OTHER, what, span),
-                    Some(_) => true,
-                    None => match &p {
-                        Piece::Dyn => false,
-                        Piece::Var(_) | Piece::Tuple(_) => true,
-                        _ if !s.tuples.is_empty() => false,
-                        _ => !atoms || p.is_atoms() || p.carrier().is_none(),
-                    },
-                };
-                if !ok {
-                    let q = if s.tuples.is_empty() {
-                        "an atom"
-                    } else {
-                        "a tuple"
-                    };
-                    return refuse(self, &p, q);
-                }
-            }
-        }
-        for s in &a.tuples {
-            for t in &b.tuples {
-                for (c, d) in s.iter().zip(t) {
-                    self.components(what, c, d, span);
-                }
-            }
+        enum Step {
+            Pair(Ty, Ty),
+            Rest(Ty, Ty),
         }
         let rest = |t: &Ty| Ty {
             tuples: Vec::new(),
             ..t.without_atoms()
         };
-        let (x, y) = (rest(a), rest(b));
-        if !x.is_empty() && !y.is_empty() {
-            self.apply(
-                what,
-                &op_sig("<"),
-                vec![Some(Arg::of(x)), Some(Arg::of(y))],
-                true,
-                span,
-            );
+        let mut seen = HashSet::from([(a.clone(), b.clone())]);
+        let mut todo = vec![Step::Pair(a.clone(), b.clone())];
+        while let Some(step) = todo.pop() {
+            let (a, b) = match step {
+                Step::Rest(x, y) => {
+                    self.apply(
+                        what,
+                        &op_sig("<"),
+                        vec![Some(Arg::of(x)), Some(Arg::of(y))],
+                        true,
+                        span,
+                    );
+                    continue;
+                }
+                Step::Pair(a, b) => (a, b),
+            };
+            // Each piece refused is reported once, since a pair here may join many pairs of tuples.
+            let (mut refused, mut said) = (Vec::new(), HashSet::new());
+            for (s, t) in [(&a, &b), (&b, &a)] {
+                let atoms = !s.atoms().is_empty();
+                for p in t.pieces() {
+                    let ok = match self.class_of(&p) {
+                        Some(k) if !s.tuples.is_empty() => self.restrict(k, OTHER, what, span),
+                        Some(_) => true,
+                        None => match &p {
+                            Piece::Dyn => false,
+                            Piece::Var(_) | Piece::Tuple(_) => true,
+                            _ if !s.tuples.is_empty() => false,
+                            _ => !atoms || p.is_atoms() || p.carrier().is_none(),
+                        },
+                    };
+                    if !ok {
+                        let q = if s.tuples.is_empty() {
+                            "an atom"
+                        } else {
+                            "a tuple"
+                        };
+                        let p = self.text(&p.ty());
+                        let message = format!("{what} does not compare {p} with {q}");
+                        if said.insert(message.clone()) {
+                            refused.push(message);
+                        }
+                    }
+                }
+            }
+            if !refused.is_empty() {
+                for message in refused {
+                    self.error(span, message);
+                }
+                continue;
+            }
+            let (x, y) = (rest(&a), rest(&b));
+            if !x.is_empty() && !y.is_empty() {
+                todo.push(Step::Rest(x, y));
+            }
+            // The components at each position, of the tuples of each side long enough to have one.
+            let mut at: Vec<[Vec<&Ty>; 2]> = Vec::new();
+            for (side, t) in [&a, &b].into_iter().enumerate() {
+                for row in &t.tuples {
+                    if at.len() < row.len() {
+                        at.resize_with(row.len(), Default::default);
+                    }
+                    for (i, c) in row.iter().enumerate() {
+                        at[i][side].push(c);
+                    }
+                }
+            }
+            let met = at
+                .into_iter()
+                .filter(|[s, t]| !s.is_empty() && !t.is_empty());
+            for [s, t] in met.rev() {
+                let pair = (Ty::union_all(s), Ty::union_all(t));
+                if seen.insert(pair.clone()) {
+                    todo.push(Step::Pair(pair.0, pair.1));
+                }
+            }
         }
     }
 

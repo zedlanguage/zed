@@ -3068,3 +3068,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `while let` that reads by index a `Vec` the search appends to while it runs, and `?` that leaves the function at the first value type with no value | `optimistic_values` | Mutation (gap 11), early exit (gap 12) | a worklist fold whose result is `None` at the first failure |
 | A `BTreeMap<Row, Option<bool>>` filled per atom and read by `Part::eval3`, with `break` out of the component loop at the first component surely outside | `Searching::holds_known` | Early exit (gap 12) | a fold over the components that stops at `Some(false)`, the map built as a persistent map |
 | `Iterator::find` whose closure returns early (`return false`) for a repair holding a wide member once a repair left it to the search | `refused_site` | Early exit (gap 12), mutation (gap 11) | the recursive function over the repairs of GROUP-refusal-reach, with the skip as one more case |
+
+## Entries from CHK-components-pairs (`crates/zedc-check/src/check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A local `enum Step { Pair, Rest }` pushed on a `Vec` used as a heap stack, so the pairs are checked in the order a recursion would | `Ck::components` | Mutation (gap 11) | A union of the two step shapes and a recursive function over the stack, or a fold over it |
+| `Vec<[Vec<&Ty>; 2]>` grown with `resize_with(.., Default::default)` to the longest tuple and filled in place by position and side | `Ck::components` | Mutation (gap 11) | A map from position to the pair of lists, built by a fold over the rows |
+| A `HashSet` of pairs of types read, and one of messages already given, each tested and filled with `insert` | `Ck::components` | Mutation (gap 11) | A set threaded through the walk |

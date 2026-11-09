@@ -23,6 +23,7 @@ mod named_calls;
 mod narrowing;
 mod never;
 mod never_operands;
+mod ordered_tuples;
 mod partial_maps;
 mod payload_variables;
 mod random;
