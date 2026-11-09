@@ -1793,8 +1793,15 @@ type Apart<'a> = HashMap<(&'a str, usize), Vec<(usize, usize)>>;
 /// `s_01f_import_graph::an_untyped_receiver_imports_only_through_its_type_file`; COMPLEXITY.md
 /// F103. Each (file, name) pair is joined with the type files once, from the smaller side: the
 /// imports of `c` or the type files of `name`. That join is O(p √p) in the worst case, p the
-/// pairs and imports, as listing triangles is, for which no near-linear exact method is known;
-/// every method a call then visits is one it would draw an import of, but for its visibility.
+/// pairs and imports, above O(n log n), because each call asks a triangle question: is there a
+/// file `d` that `c` imports and that defines a type with a method `name` written apart? Over
+/// all calls that is a join of three relations (calls, imports, method definitions), and exact
+/// triangle detection has no known near-linear method; O(p √p) is the worst-case bound for that
+/// join (the AGM bound), and the smaller-side join meets it. Real crates are far from the worst
+/// case: `s_01f_import_graph::untyped_calls_scale_with_the_number_of_files` measures 9.1 times
+/// the work at 8n. Every method a call then visits is one it would draw an import of, but for
+/// its visibility. Plan item IMPORTS-untyped-join: a near-linear method, or a proof that the
+/// question is as hard as triangle detection.
 fn untyped_imports<'a>(
     found: &Found,
     files: usize,
