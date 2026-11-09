@@ -3036,3 +3036,10 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | An optional out-parameter `Option<&mut Vec<Model>>` that a search pushes each checked point into, reborrowed with `as_deref_mut` | `decide_kept`, `project_parts`, `tighten` | Mutation (gap 11) | the search returns its answer and the points it checked, and the caller joins them to its own list |
 | `q.ors.reverse()` on a fresh copy of the disjunctions | `point_with` | Mutation (gap 11) | the disjunctions read through a reversed view |
+
+## Entries from EMPTY-operand-check (`zedc-check/src/check/walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An explicit stack of types and a `HashSet` of tuple rows seen, keyed by the row's address (`Row::addr`), both updated in place | `Ck::compared_alone` | Identity (gap 1), mutation (gap 11) | a fold over the rows in order with a persistent set keyed by the row's content digest |
+| A `Vec` of tuple rows grouped by length in a `BTreeMap` built in place, then the union of each position's components | `Ck::min_max_tuples`, an operand of type `Never` beside a tuple | Mutation (gap 11) | a fold over the rows into a persistent map from length to rows |

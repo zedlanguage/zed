@@ -22,6 +22,7 @@ mod literals;
 mod named_calls;
 mod narrowing;
 mod never;
+mod never_operands;
 mod partial_maps;
 mod payload_variables;
 mod random;

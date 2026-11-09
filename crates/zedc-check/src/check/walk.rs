@@ -5221,8 +5221,47 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let out = self.passing(&x.ty, &what, span);
         let out = out.union(&self.passing(&y.ty, &what, span));
-        self.components(&what, &x.ty.without_loose(), &y.ty.without_loose(), span);
-        out.union(&Ty::carrier(Carrier::Bool))
+        let (a, b) = (x.ty.without_loose(), y.ty.without_loose());
+        // An operand with no value: nothing is compared, and the comparison gives no value, but
+        // each value of the other operand is still checked as `<` takes it.
+        match (a.is_empty(), b.is_empty()) {
+            (true, _) => self.compared_alone(&what, &b, true, span),
+            (_, true) => self.compared_alone(&what, &a, false, span),
+            _ => {
+                self.components(&what, &a, &b, span);
+                return out.union(&Ty::carrier(Carrier::Bool));
+            }
+        }
+        out
+    }
+
+    /// Checks each value of `t`, an operand of the ordering `what` whose other operand has no
+    /// value, the first operand where `none_first` does not hold: each number, string or bool
+    /// at the top or in a component of a tuple at any depth against the arrows of `<`, beside
+    /// `Never`, so that a function among them is rejected. Atoms pass. A row shared by many
+    /// paths is visited once, so the check is linear in the rows of `t`.
+    fn compared_alone(&mut self, what: &str, t: &Ty, none_first: bool, span: Span) {
+        let sig = op_sig("<");
+        let mut rows = HashSet::new();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            for r in (t.tuples.iter()).filter(|r| rows.insert(r.addr())) {
+                stack.extend(r.iter());
+            }
+            let rest = Ty {
+                tuples: Vec::new(),
+                ..t.without_atoms()
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            let args = match none_first {
+                true => [Ty::empty(), rest],
+                false => [rest, Ty::empty()],
+            };
+            let args = args.into_iter().map(|t| Some(Arg::of(t))).collect();
+            self.apply(what, &sig, args, true, span);
+        }
     }
 
     /// Checks that each value of `a` compares with each of `b` (sec:order): two numbers of one
@@ -5381,6 +5420,40 @@ impl<'t, 'a> Ck<'t, 'a> {
                 );
             } else if only(a, open[0]) || only(b, open[1]) {
                 // Nothing more to check here.
+            } else if a.is_empty() || b.is_empty() {
+                // One operand has no value, so nothing is compared, but each value of the other
+                // is still checked as the word takes it: its numbers by the arrows, beside
+                // `Never`, and each tuple's components in turn, joined by length and position
+                // as for two tuples below.
+                let none_first = a.is_empty();
+                let other = if none_first { b } else { a };
+                let pair = |t: Ty| match none_first {
+                    true => (Ty::empty(), t),
+                    false => (t, Ty::empty()),
+                };
+                let numbers = Ty {
+                    tuples: Vec::new(),
+                    ..other.without_atoms()
+                };
+                if !numbers.is_empty() {
+                    let (x, y) = pair(numbers);
+                    self.apply(
+                        what,
+                        sig,
+                        vec![Some(Arg::of(x)), Some(Arg::of(y))],
+                        true,
+                        span,
+                    );
+                }
+                let mut by_len: BTreeMap<usize, Vec<&[Ty]>> = BTreeMap::new();
+                for row in &other.tuples {
+                    by_len.entry(row.len()).or_default().push(row);
+                }
+                for (n, rows) in by_len {
+                    for i in 0..n {
+                        todo.push(pair(Ty::union_all(rows.iter().map(|r| &r[i]))));
+                    }
+                }
             } else if a.tuples.is_empty()
                 || b.tuples.is_empty()
                 || !rest(a, open[0])
@@ -5423,6 +5496,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             seen.insert(pair);
+        }
+        // With an operand of no value the word gives none.
+        if x.is_empty() || y.is_empty() {
+            return Ty::empty();
         }
         given.unwrap_or_else(|| one_shape_per_length(&x.union(y)))
     }
@@ -6724,6 +6801,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => return Ok((Ty::empty(), Vec::new())),
             },
         };
+        // An argument with no value, of type `Never` or of atoms that all pass by, has no piece
+        // and keeps every arrow, so each value of the other arguments is still checked against
+        // the arrows: `h(1) + u` with `h(1)` of type `Never` and `u` of `int | true` is
+        // rejected for `true`. The application then takes place on no value and gives none,
+        // unless the call needs none of those arguments (`unneeded`).
+        let no_value: Vec<bool> = (args.iter())
+            .map(|a| {
+                a.as_ref()
+                    .is_some_and(|a| a.lit.is_none() && a.ty.is_empty())
+            })
+            .collect();
         // The states: the arrows alive, whether a piece was unknown, the class's place, and
         // the first pieces that reached it, by argument.
         type State = (Vec<usize>, bool, ClassAt, Vec<Option<Piece>>);
@@ -6731,8 +6819,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (i, a) in args.iter().enumerate() {
             let pieces: Vec<Option<Piece>> = match a {
                 None => vec![None],
-                // An argument of type `Never` the call does not need keeps every arrow.
-                Some(_) if unneeded[i] => vec![None],
+                // An argument of no value keeps every arrow; an argument of type `Never` the
+                // call does not need is one of them.
+                Some(_) if no_value[i] => vec![None],
                 Some(a) if a.lit.is_some() && class.is_some() => {
                     vec![Some(Piece::Var(format!("${}", class.unwrap()).into()))]
                 }
@@ -6788,10 +6877,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = Ty::empty();
         for (alive, dyn_, at, path) in &states {
             let shown = |ck: &Self| {
-                let shown: Vec<String> = (path.iter().zip(unneeded))
-                    .map(|(p, &u)| match p {
+                let shown: Vec<String> = (path.iter().zip(&no_value))
+                    .map(|(p, &none)| match p {
                         Some(p) => ck.show(&p.ty()),
-                        None if u => ck.show(&Ty::empty()),
+                        None if none => ck.show(&Ty::empty()),
                         None => "_".into(),
                     })
                     .collect();
@@ -6855,7 +6944,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        Ok((out, kept))
+        // With an argument of no value that the call needs, the application never takes place:
+        // it gives no value, whatever its arrows would give. With only arguments of type
+        // `Never` it does not need, it gives what its arrow gives with them bound to `Never`.
+        match (no_value.iter().zip(unneeded)).any(|(&none, &u)| none && !u) {
+            true => Ok((Ty::empty(), kept)),
+            false => Ok((out, kept)),
+        }
     }
 
     /// Reports `sum` at `span` given `shown`, which is not a tuple of numbers.
