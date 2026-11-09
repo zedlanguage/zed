@@ -18,6 +18,7 @@ use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
 use zedc_base::rejection::not_yet;
 use zedc_check::check::{self, Fit, Misfit};
+use zedc_resolve::resolve::tables::recursion;
 use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
 use zedc_stage::defs::Test;
@@ -342,26 +343,11 @@ impl<'a> Elab<'a> {
         let mut order = match self.t.order(&items) {
             Ok(order) => order,
             Err(cycles) => {
-                // Each cycle names its statements by name, and is reported at the first by
-                // name; the declarations of one name keep their written order, so neither
-                // depends on where the items stand in the unit (DESIGN.md L1.29b).
+                // The checker reports each cycle too, in the same words, and checks the rest of
+                // the scope; a unit keeps one copy of each error.
                 for cycle in cycles {
-                    let mut named: Vec<(String, usize)> =
-                        cycle.into_iter().map(|i| (what(items[i]), i)).collect();
-                    named.sort_unstable();
-                    let names: Vec<&str> = named.iter().map(|(n, _)| n.as_str()).collect();
-                    let message = match &names[..] {
-                        [one] => format!("{one} is defined in terms of itself"),
-                        _ => format!("{} are defined in terms of each other", names.join(", ")),
-                    };
-                    self.error::<()>(
-                        items[named[0].1].span,
-                        format!(
-                            "{message}, which is recursion. Recursion is part of the Zed \
-                             language, and this version of zedc does not compile it yet. Write \
-                             the computation without a definition that uses itself."
-                        ),
-                    );
+                    let (span, message) = recursion(&items, &cycle);
+                    self.error::<()>(span, message);
                 }
                 m.ret = Ret::Scope(None);
                 return;
@@ -1928,37 +1914,4 @@ fn lit_span(e: &Expr) -> Option<Span> {
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
     Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
-}
-
-/// How a statement is named in a cycle's error.
-fn what(s: &Stmt) -> String {
-    match &s.kind {
-        StmtKind::Bind { targets, .. } => {
-            let names: Vec<String> = targets
-                .iter()
-                .filter_map(|t| match t {
-                    Target::Name(n, _) => Some(format!("`{n}`")),
-                    Target::Wild => None,
-                })
-                .collect();
-            names.join(" and ")
-        }
-        StmtKind::Function(f) => format!("`{}`", f.name),
-        StmtKind::Push { port, .. } => format!("the push to `{port}`"),
-        StmtKind::Return(_) => "the export".into(),
-        StmtKind::UnitAnnot(a) => format!("the unit item `@{}`", a.name),
-        StmtKind::Struct(_)
-        | StmtKind::Type(_)
-        | StmtKind::Method(_)
-        | StmtKind::Import(_)
-        | StmtKind::Local(_)
-        | StmtKind::Annotated { .. } => {
-            unreachable!("resolve rejects the forms of layer L2")
-        }
-        StmtKind::Mutable(_)
-        | StmtKind::IndexedDef(_)
-        | StmtKind::While(_)
-        | StmtKind::Until(_)
-        | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
-    }
 }

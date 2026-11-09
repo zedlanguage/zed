@@ -18,6 +18,7 @@ mod negative_literals;
 mod neglit;
 mod order;
 mod printed;
+mod recursion;
 mod rejection_addresses;
 mod repairs;
 mod scaling;

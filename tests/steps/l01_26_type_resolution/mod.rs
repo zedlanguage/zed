@@ -8,6 +8,7 @@ mod atom_scaling;
 mod bounds;
 mod calls;
 mod curried_classes;
+mod cycles;
 mod deep_ops;
 mod deep_scaling;
 mod deep_types;

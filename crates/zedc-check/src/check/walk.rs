@@ -17,6 +17,7 @@ use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, Product, Scope};
+use zedc_resolve::resolve::tables::recursion;
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -1225,9 +1226,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => items.push(s),
             }
         }
-        let Ok(order) = self.t.order(&items) else {
-            return m.ty(Ty::dynamic());
-        };
+        // A cycle is a recursion, rejected until layer L6 (`recursion`). Every other statement
+        // is still checked, one that uses a statement of a cycle among them too: stopping at the
+        // cycle left the scope's other definitions with no signature and their errors
+        // unreported. Each name the cycle defines has no value, as a rejected expression gives
+        // (`Frame::Fail`), so a use of it adds no error of its own.
+        let (order, cycles) = self.t.order_around_cycles(&items);
+        for cycle in cycles {
+            let (span, message) = recursion(&items, &cycle);
+            self.error_with(span, message, Vec::new());
+            for &k in &cycle {
+                let st = items[k];
+                match &st.kind {
+                    StmtKind::Function(f) => {
+                        let id = self.id(st.span, &f.name);
+                        self.env.insert(id, Ty::empty());
+                    }
+                    StmtKind::Bind { targets, .. } => {
+                        for t in targets {
+                            if let Target::Name(n, _) = t {
+                                let id = self.id(st.span, n);
+                                self.env.insert(id, Ty::empty());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         let s = ScopeF {
             items,
             order,
@@ -2046,14 +2072,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             return self.atom_step(m, Box::new(s));
         }
-        if let Some(id) = self.declared(callee) {
-            let sig = match self.env.get(&id) {
-                Some(t) => only_fn(t),
-                None => None,
-            };
-            let Some(sig) = sig else {
-                return m.ty(Ty::dynamic());
-            };
+        if let Some(id) = self.declared(callee)
+            && let Some(t) = self.env.get(&id)
+            && let Some(sig) = only_fn(t)
+        {
             let from = self.info.errors.len();
             m.k(Frame::CallAlso {
                 id,

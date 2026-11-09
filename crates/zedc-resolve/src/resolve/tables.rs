@@ -10,7 +10,7 @@ use crate::resolve::{Ref, Resolution};
 use zedc_syntax::ast::{Expr, ExprKind, Function, Param, Stmt, StmtKind, StrPart, Target, Type};
 use zedc_syntax::lex::Span;
 
-use super::topo::topo_joined;
+use super::topo::{topo_around_cycles, topo_joined};
 
 /// The binders of a unit, shared by the checker and elaboration.
 pub struct Tables<'a> {
@@ -265,6 +265,20 @@ impl<'a> Tables<'a> {
     /// A use of an overload set waits on one join node, which waits on the set's statements,
     /// so `U` uses of `K` overloads make `U + K` dependencies, not `U·K`.
     pub fn order(&self, items: &[&'a Stmt]) -> Result<Vec<usize>, Vec<Vec<usize>>> {
+        topo_joined(&self.deps(items), items.len())
+    }
+
+    /// The order of [`Tables::order`] around the cycles: the statements outside a cycle, each
+    /// after those outside a cycle it uses, and the statements of each cycle
+    /// ([`topo_around_cycles`]). The checker checks every statement that is not in a cycle,
+    /// those that use one among them, so that no definition goes unchecked.
+    pub fn order_around_cycles(&self, items: &[&'a Stmt]) -> (Vec<usize>, Vec<Vec<usize>>) {
+        topo_around_cycles(&self.deps(items), items.len())
+    }
+
+    /// The dependency graph of [`Tables::order`]: for each statement, then for each join of
+    /// an overload set, the nodes it waits on.
+    fn deps(&self, items: &[&'a Stmt]) -> Vec<Vec<usize>> {
         let bound: Vec<(usize, usize)> = (items.iter().enumerate())
             .flat_map(|(i, s)| self.binders_of(s).into_iter().map(move |b| (b, i)))
             .collect();
@@ -306,7 +320,7 @@ impl<'a> Tables<'a> {
             d.sort_unstable();
             d.dedup();
         }
-        topo_joined(&deps, items.len())
+        deps
     }
 }
 
@@ -318,4 +332,61 @@ fn in_tests(s: &Stmt, u: Span) -> bool {
     let k = f.tests.partition_point(|(a, _)| a.span.start <= u.start);
     k.checked_sub(1)
         .is_some_and(|k| u.end <= f.tests[k].1.span.end)
+}
+
+/// The rejection of the cycle `cycle` among the statements `items` of one scope, a recursion,
+/// which zedc compiles from layer L6 on: where to report it and the message. The cycle names
+/// its statements by name and is reported at the first by name; the declarations of one name
+/// keep their written order, so neither depends on where the items stand in the unit (DESIGN.md
+/// L1.29b). The checker and elaboration both report it, in the same words, so that a unit
+/// reports it once.
+pub fn recursion(items: &[&Stmt], cycle: &[usize]) -> (Span, String) {
+    let mut named: Vec<(String, usize)> = cycle.iter().map(|&i| (what(items[i]), i)).collect();
+    named.sort_unstable();
+    let names: Vec<&str> = named.iter().map(|(n, _)| n.as_str()).collect();
+    let message = match &names[..] {
+        [one] => format!("{one} is defined in terms of itself"),
+        _ => format!("{} are defined in terms of each other", names.join(", ")),
+    };
+    (
+        items[named[0].1].span,
+        format!(
+            "{message}, which is recursion. Recursion is part of the Zed language, and this \
+             version of zedc does not compile it yet. Write the computation without a definition \
+             that uses itself."
+        ),
+    )
+}
+
+/// How a message names the statement `s`: by the names it binds.
+fn what(s: &Stmt) -> String {
+    match &s.kind {
+        StmtKind::Bind { targets, .. } => {
+            let names: Vec<String> = targets
+                .iter()
+                .filter_map(|t| match t {
+                    Target::Name(n, _) => Some(format!("`{n}`")),
+                    Target::Wild => None,
+                })
+                .collect();
+            names.join(" and ")
+        }
+        StmtKind::Function(f) => format!("`{}`", f.name),
+        StmtKind::Push { port, .. } => format!("the push to `{port}`"),
+        StmtKind::Return(_) => "the export".into(),
+        StmtKind::UnitAnnot(a) => format!("the unit item `@{}`", a.name),
+        StmtKind::Struct(_)
+        | StmtKind::Type(_)
+        | StmtKind::Method(_)
+        | StmtKind::Import(_)
+        | StmtKind::Local(_)
+        | StmtKind::Annotated { .. } => {
+            unreachable!("resolve rejects the forms of layer L2")
+        }
+        StmtKind::Mutable(_)
+        | StmtKind::IndexedDef(_)
+        | StmtKind::While(_)
+        | StmtKind::Until(_)
+        | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
+    }
 }

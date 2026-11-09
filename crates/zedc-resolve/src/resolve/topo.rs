@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BinaryHeap};
 /// counting the dependencies it still waits on, so the order takes `O((n + e) log n)`.
 #[doc(hidden)]
 pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
-    let (order, done) = place(deps, deps.len());
+    let (order, done) = place(deps, deps.len(), &vec![false; deps.len()]);
     if order.len() < deps.len() {
         // Every item left waits on another left: walk to the first in each list.
         return Err(cycle(&done, |i| {
@@ -28,11 +28,37 @@ pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
 /// of their least item, so the set reported does not depend on where the search starts.
 #[doc(hidden)]
 pub fn topo_joined(deps: &[Vec<usize>], items: usize) -> Result<Vec<usize>, Vec<Vec<usize>>> {
-    let (order, done) = place(deps, items);
+    let (order, done) = place(deps, items, &vec![false; deps.len()]);
     if order.len() < items {
         return Err(cycles(deps, items, &done));
     }
     Ok(order)
+}
+
+/// [`topo_joined`] that orders around the cycles: every item outside a cycle, each after
+/// its dependencies outside a cycle, ties by index, as [`topo_joined`] orders the graph with
+/// the items of every cycle taken out; and every cycle, as [`topo_joined`] gives them. An
+/// item that waits on a cycle, directly or through other items, is placed: a cycle passes
+/// through items only, a join waiting on items alone, so taking out the items of every
+/// cycle leaves a graph with none. `O((n + e) log n)`: two placements and one search for
+/// the cycles, each visiting every node and edge once.
+pub fn topo_around_cycles(deps: &[Vec<usize>], items: usize) -> (Vec<usize>, Vec<Vec<usize>>) {
+    let (order, done) = place(deps, items, &vec![false; deps.len()]);
+    if order.len() == items {
+        return (order, Vec::new());
+    }
+    let cycles = cycles(deps, items, &done);
+    let mut out = vec![false; deps.len()];
+    for &i in cycles.iter().flatten() {
+        out[i] = true;
+    }
+    let (order, _) = place(deps, items, &out);
+    debug_assert_eq!(
+        order.len() + cycles.iter().map(Vec::len).sum::<usize>(),
+        items,
+        "every item outside a cycle is placed"
+    );
+    (order, cycles)
 }
 
 /// The strongly connected components of the nodes not `done` that hold a cycle, each as its
@@ -102,18 +128,25 @@ fn cycles(deps: &[Vec<usize>], items: usize, done: &[bool]) -> Vec<Vec<usize>> {
 
 /// The items of `0..items` placed in order, and which nodes are placed or passed. A join is
 /// passed once its last item is placed, before the next item is taken, so the items ready at
-/// each step are those of the graph without joins.
-fn place(deps: &[Vec<usize>], items: usize) -> (Vec<usize>, Vec<bool>) {
+/// each step are those of the graph without joins. A node marked `out` is taken out of the
+/// graph: it is never placed, and nothing waits on it.
+fn place(deps: &[Vec<usize>], items: usize, out: &[bool]) -> (Vec<usize>, Vec<bool>) {
     let n = deps.len();
-    let mut waits: Vec<usize> = deps.iter().map(Vec::len).collect();
+    let mut waits: Vec<usize> = vec![0; n];
     let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
     for (i, ds) in deps.iter().enumerate() {
-        for &d in ds {
+        if out[i] {
+            continue;
+        }
+        for &d in ds.iter().filter(|&&d| !out[d]) {
+            waits[i] += 1;
             users[d].push(i);
         }
     }
-    let mut ready: BinaryHeap<Reverse<usize>> =
-        (0..items).filter(|&i| waits[i] == 0).map(Reverse).collect();
+    let mut ready: BinaryHeap<Reverse<usize>> = (0..items)
+        .filter(|&i| !out[i] && waits[i] == 0)
+        .map(Reverse)
+        .collect();
     let mut passed: Vec<usize> = (items..n).filter(|&j| waits[j] == 0).collect();
     let mut done = vec![false; n];
     let mut order = Vec::with_capacity(items);
