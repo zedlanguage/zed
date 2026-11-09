@@ -2,6 +2,7 @@
 //! program's code (DESIGN.md sec:diagnostics), on programs that read their input.
 
 use super::rejected;
+use zedc::run::load;
 
 /// A program whose `main` reads `n` from the first line of input and then runs `body`.
 fn reading(body: &str) -> String {
@@ -105,5 +106,41 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
         for r in repairs {
             assert!(out.contains(r), "{src}\n{r}\n{out}");
         }
+    }
+}
+
+/// A lambda has no declaration, so the repairs of passing it an argument by name are the ones
+/// that need none: pass it by position, or declare a named function.
+#[test]
+fn a_lambda_passed_an_argument_by_name_offers_only_repairs_that_need_no_declaration() {
+    let src = format!(
+        "scale(positional k: int) = (x: int) -> k * x;\n{}",
+        reading("  stdout <- String(scale(n)(x: 2));")
+    );
+    assert_eq!(
+        rejected(&src),
+        "4:32: this argument is passed by name, as `x: …`, and `x` of `(int) -> int` is \
+         positional, so a call passes it only by position\n  \
+         [1] 4:32: repair: pass `x` by position: remove `x: ` and put the value in `x`'s place \
+         among the arguments\n      \
+         4 |   stdout <- String(scale(n)(x: 2));\n        \
+         |                                ^\n  \
+         [2] 4:32: repair: declare a named function in place of this value, as \
+         `f(x: …) = …;`, and call it by its name; a declared function's parameters are \
+         passed by name unless declared `positional`"
+    );
+    // Each repair, applied, is accepted: the argument by position, and a named function whose
+    // parameters a call passes by name.
+    for fixed in [
+        format!(
+            "scale(positional k: int) = (x: int) -> k * x;\n{}",
+            reading("  stdout <- String(scale(n)(2));")
+        ),
+        format!(
+            "f(k: int, x: int) = k * x;\n{}",
+            reading("  stdout <- String(f(k: n, x: 2));")
+        ),
+    ] {
+        assert!(load(fixed.as_bytes()).is_ok(), "{fixed}");
     }
 }

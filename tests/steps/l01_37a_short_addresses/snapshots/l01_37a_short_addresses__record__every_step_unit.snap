@@ -102,7 +102,7 @@ l01_21_test_runner/zed/labels.zed
     Diagnostic {
         line: 6,
         col: 17,
-        message: "this argument is passed by name, as `name: …`, and `name` of `label` is declared `positional`, so a call passes it only by position",
+        message: "this argument is passed by name, as `name: …`, and `name` of `label` is positional, so a call passes it only by position",
         steps: [
             Step {
                 line: 3,

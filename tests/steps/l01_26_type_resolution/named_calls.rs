@@ -53,7 +53,7 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
     };
     let positional = |p: &str, f: &str, at: &str| {
         format!(
-            "this argument is passed by name, as `{p}: …`, and `{p}` of `{f}` is declared `positional`, so a call passes it only by position [{at}]"
+            "this argument is passed by name, as `{p}: …`, and `{p}` of `{f}` is positional, so a call passes it only by position [{at}]"
         )
     };
     let cases: Vec<(&str, Vec<String>)> = vec![

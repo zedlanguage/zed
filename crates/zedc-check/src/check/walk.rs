@@ -2513,7 +2513,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
                 let menu = misfit
-                    .menu(&who)
+                    .menu(&who, declared)
                     .into_iter()
                     .map(|text| Note { span: at, text });
                 match misfit.row() {
@@ -2531,7 +2531,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.sig_text(sig),
             misfit.message(what)
         );
-        let menu = misfit.menu(what);
+        let menu = misfit.menu(what, false);
         m.k(Frame::Fail(Some((at, message, menu))));
         m.each(args.exprs());
     }

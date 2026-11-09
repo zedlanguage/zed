@@ -829,8 +829,25 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
          #a(1 | 2, _) | #a(int, _), which are told apart only at component 1, where they agree \
          with both, and neither is held by the first of those shapes; which shape holds each \
          decides what the type variables are bound to, and the checker looks through those \
-         shapes for one of the two only; to repair it, write the shapes so that they differ in \
-         a component where the two differ, or test the value with `is` first"
+         shapes for one of the two only; to repair it, give #a(3, 5) a shape of its own, \
+         written just before the shape that should hold it and the same as that shape except \
+         at component 1, where it is 3: `#a(3, …)`, with that shape's other components in place \
+         of each `…`; or test the value with `is` first, so that each test meets one of the two"
+    );
+    // The repair applied: `#a(3, U)` written just before `#a(int, U)`, which holds #a(3, 5).
+    // The comparison is decided and binds `U` as the rule of one shape does.
+    let repaired = with_payloads(
+        "a",
+        vec![
+            vec![ty("1 | 2"), var("T")],
+            vec![int(3), var("U")],
+            vec![ty("int"), var("U")],
+        ],
+    );
+    assert_eq!(l.refused(&repaired), "");
+    assert_eq!(
+        bound(&l, &repaired),
+        Some(vec![("U".into(), "5 | 6".into())])
     );
     // One such payload is decided.
     let one = with_payloads("a", vec![vec![int(3), int(5)]]);
@@ -842,8 +859,70 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
     ]);
     let l = ty("(3, 5) | (4, 6)");
     assert_eq!(bound(&l, &rows), None);
+    let why = l.refused(&rows);
     assert!(
-        l.refused(&rows)
-            .contains("could not decide whether it fits, because the tuples (3, 5) and (4, 6) ")
+        why.contains("could not decide whether it fits, because the tuples (3, 5) and (4, 6) ")
+    );
+    assert!(why.contains(
+        "give (3, 5) a shape of its own, written just before the shape that \
+                          should hold it and the same as that shape except at component 1, \
+                          where it is 3: `(3, …)`"
+    ));
+    let repaired = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![int(3), var("U")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    assert_eq!(l.refused(&repaired), "");
+    assert_eq!(
+        bound(&l, &repaired),
+        Some(vec![("U".into(), "5 | 6".into())])
+    );
+    // The other repair: tested with `is`, each branch meets one of the two, which is decided.
+    for one in [ty("(3, 5)"), ty("(4, 6)")] {
+        assert_eq!(one.refused(&rows), "");
+        assert!(bound(&one, &rows).is_some(), "{one}");
+    }
+}
+
+#[test]
+fn a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_two_apart() {
+    let rows = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    // The two agree at component 1 and differ in carrier at component 2: the shape of its own
+    // is filed by that carrier, and the repair applied is decided.
+    let l = Ty::union_all(&[
+        Ty::tuple(vec![int(3), ty("bool")]),
+        Ty::tuple(vec![int(3), ty("f64")]),
+    ]);
+    assert_eq!(bound(&l, &rows), None);
+    assert!(l.refused(&rows).contains(
+        "to repair it, give (3, bool) a shape of its own, written just before the shape that \
+         should hold it and the same as that shape except at component 2, where it is bool: \
+         `(…, bool)`, with that shape's other components in place of each `…`; or test the \
+         value with `is` first"
+    ));
+    let repaired = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![ty("int"), ty("bool")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    assert_eq!(l.refused(&repaired), "");
+    assert_eq!(bound(&l, &repaired), Some(vec![("U".into(), "f64".into())]));
+    // Here they differ only where neither has a class: no shape of its own is filed apart, so
+    // only the test with `is` is offered.
+    let l = Ty::union_all(&[
+        Ty::tuple(vec![int(3), ty("int | bool")]),
+        Ty::tuple(vec![int(3), ty("f64 | String")]),
+    ]);
+    let why = l.refused(&rows);
+    assert!(
+        why.ends_with(
+            "one of the two only; to repair it, test the value with `is` first, so that each test \
+         meets one of the two"
+        ),
+        "{why}"
     );
 }

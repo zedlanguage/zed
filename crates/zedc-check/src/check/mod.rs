@@ -165,7 +165,7 @@ impl Misfit<'_> {
             ),
             Misfit::Positional(name) => format!(
                 "this argument is passed by name, as `{name}: …`, and `{name}` of `{who}` is \
-                 declared `positional`, so a call passes it only by position"
+                 positional, so a call passes it only by position"
             ),
             Misfit::NoParam(name) => format!(
                 "this argument is passed by the name `{name}`, and `{who}` has no parameter of \
@@ -199,60 +199,93 @@ impl Misfit<'_> {
 
     /// The menu of the misfit (DESIGN.md sec:diagnostics), in the table's order for a misfit
     /// in a row, each entry a `repair:` note's text, for the function called `who`.
-    pub(crate) fn menu(self, who: &str) -> Vec<String> {
-        match self {
-            Misfit::NoReceiver => vec![
+    /// `declared` is whether the call names a declared function: a call through a value, such
+    /// as a lambda, has no declaration to edit, so no entry edits one, and `who` is then the
+    /// value's type, so no entry writes it as code.
+    pub(crate) fn menu(self, who: &str, declared: bool) -> Vec<String> {
+        // How a code form names the function called: its name, or `f` for a value.
+        let (f, where_f) = match declared {
+            true => (who, ""),
+            false => ("f", ", where `f` is the function called here"),
+        };
+        // The repair that a value whose function has no declaration takes in place of editing
+        // the declaration: a named function, whose parameters a call may pass by name.
+        let named_function = |name: &str| {
+            format!(
+                "repair: declare a named function in place of this value, as \
+                 `f({name}: …) = …;`, and call it by its name; a declared function's parameters \
+                 are passed by name unless declared `positional`"
+            )
+        };
+        match (self, declared) {
+            (Misfit::NoReceiver, true) => vec![
                 format!("repair: call it as `{who}()`, with no value before the dot"),
                 format!(
                     "repair: add a first parameter to the declaration of `{who}` for the value \
                      before the dot"
                 ),
             ],
-            Misfit::TooMany(_) => vec![
+            (Misfit::NoReceiver, false) => {
+                vec!["repair: call the function with no value before the dot".into()]
+            }
+            (Misfit::TooMany(_), true) => vec![
                 "repair: remove this argument".into(),
                 format!("repair: add a parameter for it to the declaration of `{who}`"),
             ],
-            Misfit::Named(name) => vec![
+            (Misfit::TooMany(_), false) => vec!["repair: remove this argument".into()],
+            (Misfit::Named(name), true) => vec![
                 format!("repair: pass `{name}` by name, as `{name}: …`"),
                 format!("repair: declare `{name}` `positional` in `{who}`"),
             ],
-            Misfit::Positional(name) => vec![
-                format!(
+            (Misfit::Named(name), false) => {
+                vec![format!("repair: pass `{name}` by name, as `{name}: …`")]
+            }
+            (Misfit::Positional(name), declared) => {
+                let mut menu = vec![format!(
                     "repair: pass `{name}` by position: remove `{name}: ` and put the value in \
                      `{name}`'s place among the arguments"
-                ),
-                format!("repair: remove `positional` from the declaration of `{name}` in `{who}`"),
-            ],
-            Misfit::NoParam(name) => vec![
+                )];
+                menu.push(match declared {
+                    true => format!(
+                        "repair: remove `positional` from the declaration of `{name}` in `{who}`"
+                    ),
+                    false => named_function(name),
+                });
+                menu
+            }
+            (Misfit::NoParam(name), true) => vec![
                 format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
                 "repair: remove this argument".into(),
                 format!("repair: add a parameter `{name}` to the declaration of `{who}`"),
             ],
-            Misfit::Supplied(name) => vec![
+            (Misfit::NoParam(name), false) => {
+                vec!["repair: remove this argument".into(), named_function(name)]
+            }
+            (Misfit::Supplied(name), _) => vec![
                 format!("repair: remove this second value for `{name}`"),
                 format!("repair: remove the first value for `{name}` and keep this one"),
             ],
-            Misfit::CurriedPositional(name) => vec![
+            (Misfit::CurriedPositional(name), _) => vec![
                 "repair: remove the `...`".into(),
                 format!(
                     "repair: leave out the positional `{name}` with a bracket section or a \
-                     lambda, as `({name}) -> {who}({name}, …)`"
+                     lambda, as `({name}) -> {f}({name}, …)`{where_f}"
                 ),
             ],
-            Misfit::NothingLeftOut => vec!["repair: remove the `...`".into()],
-            Misfit::Missing(name, positional) => {
-                let mut menu = vec![
-                    format!("repair: pass a value for `{name}` in this call"),
-                    format!(
+            (Misfit::NothingLeftOut, _) => vec!["repair: remove the `...`".into()],
+            (Misfit::Missing(name, positional), declared) => {
+                let mut menu = vec![format!("repair: pass a value for `{name}` in this call")];
+                if declared {
+                    menu.push(format!(
                         "repair: give `{name}` a default in the declaration of `{who}`, as \
                          `{name} = …`"
-                    ),
-                ];
+                    ));
+                }
                 // `...` leaves out named parameters only (DESIGN.md sec:values_morphisms).
                 if !positional {
                     menu.push(format!(
-                        "repair: end the call in `...`, as `{who}(…, ...)`, so that it gives a \
-                         function that takes `{name}: …` later"
+                        "repair: end the call in `...`, as `{f}(…, ...)`{where_f}, so that it \
+                         gives a function that takes `{name}: …` later"
                     ));
                 }
                 let pass = match positional {
@@ -261,11 +294,11 @@ impl Misfit<'_> {
                 };
                 menu.push(format!(
                     "repair: make a function that takes `{name}` with a lambda, as \
-                     `({name}) -> {who}(…, {pass})`"
+                     `({name}) -> {f}(…, {pass})`{where_f}"
                 ));
                 menu
             }
-            Misfit::OpenDefault(name) => vec![
+            (Misfit::OpenDefault(name), _) => vec![
                 format!("repair: pass a value for `{name}` in this call"),
                 "repair: call the declared function by its name, so that its default fills the \
                  parameter"

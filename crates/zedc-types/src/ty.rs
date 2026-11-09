@@ -3151,15 +3151,67 @@ fn payload_text(n: &str, shapes: Vec<Shape>) -> String {
 
 /// Why two members, `first` and `second`, of a union were refused ([`Comparing::search`]): each
 /// may be held by a later one of the shapes `bucket`, which `apart` describes
-/// ([`Choices::apart`]), and the checker looks through them for one of the two only.
-fn unchosen_text(what: &str, first: &str, second: &str, bucket: &str, apart: &str) -> String {
+/// ([`Choices::apart`]), and the checker looks through them for one of the two only. `own`
+/// is the shape of its own [`own_shape`] gives `first`, when there is one.
+fn unchosen_text(
+    what: &str,
+    first: &str,
+    second: &str,
+    bucket: &str,
+    apart: &str,
+    own: Option<(String, String)>,
+) -> String {
+    let own = match own {
+        // A shape that files `first` under a key of its own is the first shape of its bucket,
+        // so only `second` searches past a first shape, and the comparison is decided.
+        Some((place, shape)) => format!(
+            "give {first} a shape of its own, written just before the shape that should hold \
+             it and the same as that shape except at {place}: `{shape}`, with that shape's \
+             other components in place of each `…`; or "
+        ),
+        None => String::new(),
+    };
     format!(
         "the {what} {first} and {second} may each be held by one of the shapes {bucket}, which \
          {apart}, and neither is held by the first of those shapes; which shape \
          holds each decides what the type variables are bound to, and the checker looks \
-         through those shapes for one of the two only; to repair it, write the shapes so that \
-         they differ in a component where the two differ, or test the value with `is` first"
+         through those shapes for one of the two only; to repair it, {own}test the value with \
+         `is` first, so that each test meets one of the two"
     )
+}
+
+/// A shape of its own for the member whose components are `first`, for a repair: the place of
+/// the first component where `first` has a class ([`class`]) that `second` does not have
+/// there, and the shape with `first`'s component there and `…` elsewhere, written by `write`
+/// from its components. Filed under that key, the shape holds `first` and not `second`.
+/// None when no component tells the two apart so.
+fn own_shape(
+    first: &[&Ty],
+    second: &[&Ty],
+    items: usize,
+    names: &[&Arc<str>],
+    write: impl FnOnce(String) -> String,
+) -> Option<(String, String)> {
+    let key = |c: &Ty| class(c).map(|(k, point)| point.map_or(k, ShapeKey::Point));
+    let j = (0..first.len()).find(|&j| key(first[j]).is_some_and(|k| key(second[j]) != Some(k)))?;
+    let comps: Vec<String> = (0..first.len())
+        .map(|i| {
+            let c = if i == j {
+                first[i].to_string()
+            } else {
+                "…".to_string()
+            };
+            match i.checked_sub(items) {
+                None => c,
+                Some(f) => format!("{}: {c}", names[f]),
+            }
+        })
+        .collect();
+    let place = match j.checked_sub(items) {
+        None => format!("component {}, where it is {}", j + 1, first[j]),
+        Some(f) => format!("field {}, where it is {}", names[f], first[j]),
+    };
+    Some((place, write(comps.join(", "))))
 }
 
 impl<'m, 's> Comparing<'m, 's> {
@@ -3475,12 +3527,17 @@ impl<'m, 's> Comparing<'m, 's> {
                             let second = payload_text(n, vec![l.clone()]);
                             let names: Vec<&Arc<str>> = l.fields.keys().collect();
                             let apart = choices.apart(k, &id, l.items.len(), &names);
+                            let own =
+                                own_shape(&comps(&first), &comps(l), l.items.len(), &names, |cs| {
+                                    format!("#{n}({cs})")
+                                });
                             unchosen_text(
                                 "payloads",
                                 &payload_text(n, vec![first]),
                                 &second,
                                 &payload_text(n, shapes.collect()),
                                 &apart,
+                                own,
                             )
                         });
                         return false;
@@ -3527,12 +3584,16 @@ impl<'m, 's> Comparing<'m, 's> {
                     };
                     let second = Ty::of_row(cs.clone()).to_string();
                     let apart = choices.apart(k, &id, cs.len(), &[]);
+                    let xs: Vec<&Ty> = first.iter().collect();
+                    let ys: Vec<&Ty> = cs.iter().collect();
+                    let own = own_shape(&xs, &ys, cs.len(), &[], |cs| format!("({cs})"));
                     unchosen_text(
                         "tuples",
-                        &Ty::of_row(first).to_string(),
+                        &Ty::of_row(first.clone()).to_string(),
                         &second,
                         &bucket.to_string(),
                         &apart,
+                        own,
                     )
                 });
                 false
