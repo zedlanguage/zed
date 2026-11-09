@@ -1657,18 +1657,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FINITE-type | impl attempt 1 | 2026-11-05 04:07 | affected groups (l01_10, l01_23/24/25/28, l01_39*, m0_05, zed_kernel, zedc_preimage/stage/check/types/lattice, deep_types): 293 pieces, 0 failed, --no-doc / loa |
-| GROUP-admit | impl attempt 1 | 2026-11-05 04:07 | ready d7e4d8ce: 50,000 groups, 0 accepted non-monotone, 28,463 false rejections (follow-up GROUP-admit-precision); empty-group panic fixed |
-| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | judge two runs + Refusal::Group + refusal_site built; running l01_23 |
-| GROUP-setop | impl attempt 1 | 2026-11-05 04:07 | control a (decider reads A & B as A, not committed): a_meet_with_an_empty_operand_is_empty_with_no_search and meets_of_k_members_scale FAIL (Empty, searched 1 v |
-| L2.8 | impl attempt 1 | 2026-11-05 04:07 | pin.rs, Query::Address, pin phase in unit::load written; first build |
-| LIT-bare-spec | impl attempt 1 | 2026-11-09 04:30 | started; worktrees wt/lit-bare-spec (zed) and wt/lit-bare (zed-impl) from origin/main 80b1802 / 0b6bef9e |
-| REFUSE-group-site | running | 2026-11-05 04:07 |  |
+| CARET-spacing | impl attempt 1 | 2026-11-09 04:56 | started; worktree /home/luke/Work/wt/caret from origin/main 766dd0ea; spec branch wt/caret-spec edcd72e |
+| EMPTY-print | impl attempt 1 | 2026-11-05 17:01 | ready: ca3fd999 on wt/empty-print; 203/204 pieces pass, l01_37a fence snapshot fails as on main |
+| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | GROUP-refusal-share control: old per-member re-check on the new test (m=n Box members, ring of n): first runs allocated 63443106 and 3651796982 bytes at 128 and |
+| L2.8 | orch attempt  | 2026-11-05 04:07 | reviewed: ready (bbc904fe, spec e98b3dd); l02_03 failure on main is from A13 Never in DESIGN, sent to EMPTY-print; BUILD-stale-seed logged |
+| LIT-bare-spec | impl attempt 1 | 2026-11-09 04:30 | ready: zed 6d1302c (wt/lit-bare-spec), zed-impl 8b054aaa (wt/lit-bare); 31 pieces 0 failed; LIT-bare opened |
+| REFUSE-group-site | impl attempt 1 | 2026-11-05 04:07 | ready 39d523eb on wt/group-refusal: refused check names the head group and lists its definitions; group_site 3 tests, control fails both pins |
 | SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | reproduced: 8m check with 100 rejections is 30.39e9 instructions, now and then 30.63e9; with getrandom fixed by LD_PRELOAD the outlier repeats exactly for a giv |
-| SCALE-fix-kernel | impl attempt 2 | 2026-11-07 11:37 | negative control (origin/main 505d41ce bdd.rs + set.rs, branch tests), load 22-26: FAIL l01_22 a_union_of_many_tuple_types_scales first runs 12.6 > 12.1; kinds  |
-| SURFACE-cycle | impl attempt 1 | 2026-11-07 16:01 | ready b4f756a1 on 406ab90d: surface() total on all 1364 group_oracle members (503 stopped before); 91 pieces of 12 groups pass, 0 failed, with doc tests; load 4 |
-| T2-ty | impl attempt 1 | 2026-11-03 09:36 | negative control (old ty.rs, not committed): Debug and meet/meets/contains at depth 100000 on 2 MiB stack overflow (rc 134 in 2.4 s and 4.9 s); shared tuples n= |
-| TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl af2e4d70 on 07dca94a, spec ff57e5e on 9bf5aaf; work-counted budget, union-find clause check, 21 tests pass; TRIVIAL-shared-atom left open |
+| SCALE-fix-kernel | impl attempt 2 | 2026-11-07 11:37 | ready fc1cd30b on wt/scale-fix-kernel (origin/main 766dd0ea): m0_03_grammar_tools failed once (plan_dag first paragraph counts did not include the new row SCALE |
+| T2-ty | impl attempt 1 | 2026-11-03 09:36 | follow-up edge fix needs orchestrator overrides: T11-ty notNeeds [TY-pairs-constant, TY-sub-constant]; TY-pairs-constant and TY-sub-constant notNeeds [T2-ty]; c |
+| TRIVIAL-models-study | merge attempt 1 | 2026-11-09 01:16 | back to merging: l22_08 one_large_atom_scales 11.5x > 11.4 bytes limit, deterministic |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
