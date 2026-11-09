@@ -1731,16 +1731,23 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | start: rebase wt/ck-data-memo onto origin/main |
+| A56-spec | impl attempt 1 | 2026-11-09 16:18 | start: apply author's answer to A56 in DESIGN rung 2, int width, HULL-conic/PROOF-alg rows, DOCS-TODO 32 |
+| BLOCKS-remove-local | impl attempt 1 | 2026-11-09 15:18 | started; worktree from origin/main 55b632b9 |
+| CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | rebased onto origin/main 55b632b9 (317 behind): conflicts in ty.rs, check/mod.rs, read.rs, walk.rs, ZED_PORT_GAPS; binds index renamed BindKeys (main added a Ro |
 | CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | ready 611c7ec4 on wt/cx-krows: 477 rows checked, 101 comments added, 67 completed, 9 stale fixed; 80 test pieces and doc pass / load 18.34 |
 | CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
+| GROUP-overlaps-names | impl attempt 1 | 2026-11-09 14:55 | started on 55b632b9, worktree /home/luke/Work/wt/group-overlaps-names |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
 | PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | ready: wt/lto-cost d61b1c8d on origin/main eae094cc; Cargo.toml deps cgu1; 757M->719M / 1077M->1016M / 989M->943M; 54/54 pieces pass; deletes: perf data and scr |
 | PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | negative control (old product.rs/cell.rs, new tests): scaling test fails form 0 at 61.3x bytes; old probe A 113->6800 Minstr (64->512), C 203->6016, B 64: 7086  |
-| PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | baseline run (old solver sources) for l01_38 instruction counts |
+| PRES-each-settle-share | running | 2026-11-09 15:16 |  |
+| PRES-pendants-wider | impl attempt 1 | 2026-11-09 15:16 | started on 55b632b9; load 12.10 11.61 14.86 |
+| PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | a3472585 committed; running the item's test groups (519 pieces) with doc check, load 12.48 11.53 15.04 |
 | PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | ready 4d29be86 on wt/small-front (stacked on wt/pres-small-cost): bounds in propagation + fast-path constant halved; point tried for decide dropped (changed ref |
+| R2-frames-gaps | running | 2026-11-09 15:08 |  |
 | TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | rebased (no conflict) on origin/main eae094cc; commit is fe298ed1; ledger ready |
+| TIGHTEN-each-whole | impl attempt 1 | 2026-11-09 14:19 | started, worktree wt/tighten-each-whole on 55b632b9 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
