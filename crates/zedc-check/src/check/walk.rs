@@ -3624,27 +3624,29 @@ impl<'a> Ck<'_, 'a> {
                         // whose conjuncts are each a bound on a sum of names, of coefficients
                         // one and minus one, with one hub, or with hubs each of whose other
                         // conjuncts is a leaf's, bounds the hub alone or mentions only hubs of
-                        // the leaf (`Conjuncts::star`), such as `n >= m` for the hubs of
-                        // `ai >= n && ai >= m`; such a star is projected with those conjuncts
-                        // (`Conjuncts::core`). So `ai >= n && ai >= m` and `ai >= n + m` under
-                        // `k` tests on `n` and `k` on `m` cost `O(k)`: 0.15, 0.28 and 0.52 s at
-                        // `k` = 96, 192 and 384, and 0.11, 0.18, 0.33 and 1.51 s at `k` = 12,
-                        // 24, 48 and 192 (2026-11-07, load 18); with `n >= m` above them, 0.05,
-                        // 0.11, 0.22 and 0.43 s at `k` = 24 to 192, and 0.08, 0.17, 0.40 and
-                        // 0.81 s at `k` = 12 to 96 for the sum (2026-11-07, load 23), where
-                        // 0.09, 0.31, 1.16 and 4.91 s were `k²` before (wt/narrow-hub-rest at
-                        // 68a03534). What is given up is time, not an answer: a scope that is
-                        // not lazy projects each star of two hubs or more again when a conjunct
-                        // among its hubs comes or goes, `k` stars a test there, about `k²`
-                        // over `k` such tests; a conjunct at a hub that mentions a name no
-                        // star's leaf there has as a hub keeps every leaf there in the forest,
-                        // `k` blocks a test on the hub, as before; and a hub that comes to have
+                        // the leaf and satellites of them, names each of whose conjuncts
+                        // relates it to one other name (`Conjuncts::star`), such as `n >= m`
+                        // for the hubs of `ai >= n && ai >= m`; such a star is projected with
+                        // those conjuncts (`Conjuncts::core`). So `ai >= n && ai >= m` and
+                        // `ai >= n + m` under `k` tests on `n` and `k` on `m` cost `O(k)`: 0.15,
+                        // 0.28 and 0.52 s at `k` = 96, 192 and 384, and 0.11, 0.18, 0.33 and
+                        // 1.51 s at `k` = 12, 24, 48 and 192 (2026-11-07, load 18); with
+                        // `n >= m` above them, 0.05, 0.11, 0.22 and 0.43 s at `k` = 24 to 192,
+                        // and 0.08, 0.17, 0.40 and 0.81 s at `k` = 12 to 96 for the sum
+                        // (2026-11-07, load 23), where 0.09, 0.31, 1.16 and 4.91 s were `k²`
+                        // before (wt/narrow-hub-rest at 68a03534). What is given up is time,
+                        // not an answer: a scope that is not lazy projects each star of two
+                        // hubs or more again when a conjunct among its hubs comes or goes, `k`
+                        // stars a test there, about `k²` over `k` such tests; a conjunct at a
+                        // hub that mentions a name no star's leaf there has as a hub, and that
+                        // is no satellite of them, keeps every leaf there in the forest, `k`
+                        // blocks a test on the hub, as before; and a hub that comes to have
                         // such a leaf counts the names its other conjuncts mention. Why: the
                         // leaf of related hubs lies on a cycle of the relation, so its product
-                        // is the projection of the star with the conjuncts among its hubs, not a
-                        // cut at a box's corner. Trigger: many tests among two hubs that many
+                        // is the projection of the star with the conjuncts among its hubs, not
+                        // a cut at a box's corner. Trigger: many tests among two hubs that many
                         // stars share, in a scope that is not lazy; or a hub related to a name
-                        // that is not a hub of its leaves.
+                        // that is not a hub of its leaves nor a satellite of them.
                         // Test: `l01_39a_bit_words::scaling::related_hubs_settle_in_time_linear_in_the_tests`.
                         // COMPLEXITY.md C26. A complete solution keeps a feasible point and
                         // settles the cone of a read on demand (the design note of

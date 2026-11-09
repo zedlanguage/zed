@@ -1223,3 +1223,37 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
         "`pa_bounds` ran {a} times at k = {n} and {b} at k = {large}: {ratio:.2} times"
     );
 }
+
+/// `k` levels `if ai >= n && ai >= m { … } else { arm(i) }`, the innermost body `0`: each
+/// then-arm makes `ai` the leaf of a star of the two hubs `n` and `m`, and each else-arm makes
+/// it a satellite of them, `ai >= n && ai < m` in one of its cases ([`Conjuncts::star`]).
+fn negated_hub_nest(k: usize, arm: impl Fn(usize) -> String) -> String {
+    let params: Vec<String> = (0..k).map(|i| format!("positional a{i}: int")).collect();
+    let mut body = String::from("0");
+    for i in (0..k).rev() {
+        body = format!(
+            "if a{i} >= n && a{i} >= m {{\n{body}\n}} else {{ {} }}",
+            arm(i)
+        );
+    }
+    with_main(format!(
+        "f(\npositional n: int,\npositional m: int,\n{}\n) =\n{body};\n",
+        params.join(",\n")
+    ))
+}
+
+#[test]
+fn satellites_of_two_hubs_keep_the_stars_of_their_hubs_in_linear_time() {
+    // The else-arm of level `i` gives `ai` conjuncts of both signs, `ai >= n` and `ai < m`, in
+    // one of its cases, so `ai` has no shape and its conjuncts are free at `n` and `m`. Before
+    // item STAR-hub-set the hubs then admitted none of the `k` stars `aj >= n && aj >= m`
+    // above, which went into one block of the forest, projected at each level: 21.5 times the
+    // bytes for 8 times the levels on main at b5a32b5c. `ai` is a satellite now, related to
+    // `n` and `m` alone, which the hubs admit.
+    check_alone(
+        "k levels of stars of two hubs over satellites",
+        24,
+        1,
+        |k| negated_hub_nest(k, |i| format!("#s{i}")),
+    );
+}

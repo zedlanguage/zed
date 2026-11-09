@@ -181,7 +181,8 @@ pub(super) fn partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
 /// constraint `>= 0` of names alone with another name, its coefficient of one sign at all of
 /// them and each hub's of one sign, each hub of more conjuncts than it, and unbounded on the
 /// side away from each conjunct of two hubs or more; with one hub, or with every hub's
-/// conjuncts each the conjunct of such a leaf other than the hub or of the hub alone.
+/// conjuncts each the conjunct of such a leaf other than the hub, of the hub alone, or one
+/// whose other names are each a hub or a satellite whose other related names are hubs.
 pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<Arc<Formula>>> {
     let at = |x: &Arc<str>| -> Vec<Arc<Formula>> {
         c.set()
@@ -229,13 +230,37 @@ pub(super) fn stars_by_definition(c: &Conjuncts) -> BTreeMap<Arc<str>, BTreeSet<
     }
     let owner = |g: &Arc<Formula>| shaped.keys().find(|x| names(g).contains(*x));
     let alone = |g: &Arc<Formula>, h: &Arc<str>| g.atoms().into_iter().eq([Atom::Sym(h.clone())]);
-    // A hub admits a leaf when each conjunct at it is another leaf's, of it alone, or of the
-    // leaf's hubs alone.
+    // The free conjuncts at a name: neither another leaf's nor of it alone.
+    let free = |n: &Arc<str>| -> Vec<Arc<Formula>> {
+        at(n)
+            .into_iter()
+            .filter(|g| !owner(g).is_some_and(|x| x != n) && !alone(g, n))
+            .collect()
+    };
+    // Of a satellite, a name each of whose free conjuncts mentions it and one other name, the
+    // names it relates to; `None` for any other name.
+    let related = |y: &Arc<str>| -> Option<BTreeSet<Arc<str>>> {
+        let mut out = BTreeSet::new();
+        for g in free(y) {
+            let ns = names(&g);
+            if ns.len() != 2 {
+                return None;
+            }
+            out.extend(ns.into_iter().filter(|n| n != y));
+        }
+        Some(out)
+    };
+    // A hub admits a leaf when each other name of each free conjunct at it is a hub of the
+    // leaf, or a satellite whose related names other than the hub are.
     let admits = |h: &Arc<str>, hubs: &BTreeSet<Arc<str>>| {
-        at(h).iter().all(|g| {
-            owner(g).is_some_and(|x| x != h)
-                || alone(g, h)
-                || names(g).iter().all(|n| hubs.contains(n))
+        free(h).iter().all(|g| {
+            names(g)
+                .iter()
+                .filter(|y| *y != h)
+                .all(|y| match related(y) {
+                    Some(s) => s.iter().filter(|z| *z != h).all(|z| hubs.contains(z)),
+                    None => hubs.contains(y),
+                })
         })
     };
     shaped

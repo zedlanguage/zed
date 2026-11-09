@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use zed_kernel::{Prim, Shared, Term};
+use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::names as mentioned;
@@ -98,15 +98,16 @@ fn same(eager: &Scope, lazy: &Scope, all: &[Arc<str>], trace: &[String]) -> usiz
 /// Runs, for each seed of `seeds`, a random sequence of tests drawn by `test`, joins and
 /// bindings from `start`, eagerly and lazily, and checks them the same after each step.
 /// Returns the number of names the lazy scope held unsettled, the number of states with a
-/// star of two hubs, and of those the number with a conjunct of the two hubs.
+/// star of two hubs, and of those the number with a conjunct of the two hubs, and the number
+/// with a satellite of the hubs of such a star ([`satellite_kept`]).
 fn run(
     start: &Scope,
     seeds: std::ops::Range<u64>,
     test: fn(&mut Rng, usize) -> Term,
-) -> (usize, usize, usize) {
+) -> (usize, usize, usize, usize) {
     let p = Premises::new();
     let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
-    let (mut stale, mut two, mut related) = (0, 0, 0);
+    let (mut stale, mut two, mut related, mut kept) = (0, 0, 0, 0);
     for seed in seeds {
         let mut rng = Rng::new(seed);
         let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
@@ -157,18 +158,19 @@ fn run(
                         ns.len() == 2 && ns.iter().all(|n| &**n == "n" || &**n == "m")
                     }),
             );
+            kept += usize::from(multi && satellite_kept(&lazy));
             if eager.bottom {
                 break;
             }
         }
     }
-    (stale, two, related)
+    (stale, two, related, kept)
 }
 
 #[test]
 fn a_lazy_scope_settles_each_name_to_the_eager_product() {
     let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
-    let (stale, _, _) = run(&start, 0..300, test);
+    let (stale, _, _, _) = run(&start, 0..300, test);
     // The lazy scope did leave names unsettled, so the comparison is not of two eager scopes.
     assert!(stale > 0, "the lazy scope settled every name at once");
 }
@@ -191,7 +193,7 @@ fn bounded_hubs() -> Scope {
 
 #[test]
 fn a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product() {
-    let (stale, two, related) = run(&bounded_hubs(), 0..100, wide);
+    let (stale, two, related, _) = run(&bounded_hubs(), 0..100, wide);
     println!(
         "{stale} unsettled names, {two} states with a star of two hubs, {related} with a \
          conjunct of the two"
@@ -210,7 +212,7 @@ fn a_test_between_the_hubs_of_a_star_settles_them_as_the_eager_scope_does() {
     // projected it again, with `n >= m` in the eager scope, which projects the star at once.
     // Each block now keys its parts apart (item NARROW-lazy-settle). `run` panics on the first
     // name the two scopes settle apart.
-    let (_, two, _) = run(&bounded_hubs(), 1109..1110, wide);
+    let (_, two, _, _) = run(&bounded_hubs(), 1109..1110, wide);
     assert!(two > 0, "seed 1109 no longer makes a star of two hubs");
 }
 
@@ -221,6 +223,144 @@ fn seed_3011_a_new_star_settles_its_leaf_as_the_eager_scope_does() {
     // scope kept `a0 >= -4` from the first where the lazy scope, settling `a0`, found
     // `a0 >= -1`, on main before item NARROW-lazy-settle too; with the parts of a star's block
     // keyed apart from the hubs' block, the two agree.
-    let (_, two, _) = run(&bounded_hubs(), 3011..3012, wide);
+    let (_, two, _, _) = run(&bounded_hubs(), 3011..3012, wide);
     assert!(two > 0, "seed 3011 no longer makes a star of two hubs");
+}
+
+/// Whether a star of two hubs or more stands beside a satellite of its hubs: a conjunct of a
+/// hub of the star and one other name, neither a leaf of a star nor a hub of that one.
+fn satellite_kept(s: &Scope) -> bool {
+    let stars = stars_by_definition(&s.relation);
+    stars.iter().any(|(leaf, gs)| {
+        let hubs: BTreeSet<Arc<str>> = gs
+            .iter()
+            .flat_map(|g| mentioned(g))
+            .filter(|n| n != leaf)
+            .collect();
+        hubs.len() > 1
+            && s.relation.set().iter().any(|g| {
+                let ns = mentioned(g);
+                ns.len() == 2
+                    && ns.iter().any(|n| hubs.contains(n))
+                    && ns
+                        .iter()
+                        .any(|n| !hubs.contains(n) && !stars.contains_key(n))
+            })
+    })
+}
+
+/// As [`wide`], and now and then a hub above a leaf, `n - ai >= c`, so that a leaf between the
+/// two hubs (`ai >= n`, `m - ai >= c`) is a satellite of them and leaves the stars of the two
+/// hubs in place.
+fn satellites(rng: &mut Rng, depth: usize) -> Term {
+    if rng.below(4) == 0 {
+        diff_ge(rng.pick(&HUBS), rng.pick(&LEAVES), rng.int(-3, 3))
+    } else {
+        wide(rng, depth)
+    }
+}
+
+#[test]
+fn a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product() {
+    let (stale, two, _, kept) = run(&bounded_hubs(), 0..100, satellites);
+    println!(
+        "{stale} unsettled names, {two} states with a star of two hubs, {kept} with a \
+         satellite of its hubs"
+    );
+    assert!(stale > 0, "the lazy scope settled every name at once");
+    assert!(
+        kept > 0,
+        "no star of two hubs stood beside a satellite of them"
+    );
+}
+
+/// For each name of `all`, the values in `-3..=13` the scope holds of it.
+fn held(s: &Scope, all: &[Arc<str>], lazy: bool) -> Vec<Vec<i64>> {
+    all.iter()
+        .map(|x| {
+            let p = if lazy { s.settled(x) } else { s.get(x) };
+            (-3..=13).filter(|v| p.contains(&Value::Int(*v))).collect()
+        })
+        .collect()
+}
+
+/// For each name, the values in `-3..=13` it takes at the integer points, with `n` and `m` in
+/// `0..=5` and the leaves in `-3..=13`, that meet `a0 >= n + m`, `a0 <= 3`, `n <= a2 <= m - 1`
+/// and, with `sandwich`, `n + m <= a1 <= n + m + 1`.
+fn points(sandwich: bool) -> Vec<Vec<i64>> {
+    let mut out = vec![BTreeSet::new(); 5];
+    let w = -3..=13i64;
+    for n in 0..=5i64 {
+        for m in 0..=5i64 {
+            for a0 in w.clone().filter(|a0| *a0 >= n + m && *a0 <= 3) {
+                for a2 in w.clone().filter(|a2| *a2 >= n && *a2 < m) {
+                    for a1 in w.clone() {
+                        if sandwich && !(n + m..=n + m + 1).contains(&a1) {
+                            continue;
+                        }
+                        for (i, v) in [n, m, a0, a1, a2].into_iter().enumerate() {
+                            out[i].insert(v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.into_iter().map(|s| s.into_iter().collect()).collect()
+}
+
+#[test]
+fn stars_beside_a_satellite_or_a_sandwich_project_exactly() {
+    // A star's core is closed: its conjuncts and the free conjuncts at its hubs, so that
+    // projecting the core gives each of its names exactly. With hubs `n` and `m`, the star
+    // `a0 >= n + m` and the satellite `n <= a2 <= m - 1`, whose conjuncts each relate it to
+    // one hub: the hubs admit `a0` (each relates `a2` to the other hub, which is a hub of
+    // `a0`), and the satellite's conjuncts are free at the hubs, so they are in the core;
+    // projecting the core with `a0 <= 3` meets `n + m <= 3` with `n <= m - 1` and gives `n`
+    // in 0..=1, where the star alone would give 0..=3. Any other conjunct at a name of the
+    // core is of the name alone or another leaf's, which only bounds a hub, so nothing outside
+    // the core relates its names. The sandwich `n + m <= a1 <= n + m + 1` relates `a1` to the
+    // two hubs at once: `a1` is no satellite and no leaf (its sign differs), so the hubs admit
+    // no star of `n` and `m`, `a0` is no star, and the whole block is projected together, as
+    // before satellites.
+    let all = names(&["n", "m", "a0", "a1", "a2"]);
+    let p = Premises::new();
+    for sandwich in [false, true] {
+        let mut t = vec![
+            prim(Prim::Ge, var("n"), int(0)),
+            prim(Prim::Le, var("n"), int(5)),
+            prim(Prim::Ge, var("m"), int(0)),
+            prim(Prim::Le, var("m"), int(5)),
+            sum3("a0", "n", "m", 0, false),
+            diff_ge("a2", "n", 0),
+            diff_ge("m", "a2", 1),
+        ];
+        if sandwich {
+            t.push(sum3("a1", "n", "m", 0, false));
+            t.push(sum3("a1", "n", "m", -1, true));
+        }
+        let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
+        for t in &t {
+            eager = eager.assume(t, true, &p);
+            lazy = lazy.assume(t, true, &p);
+        }
+        let star = stars_by_definition(&lazy.relation).contains_key("a0");
+        assert_eq!(star, !sandwich, "a0 a star with sandwich {sandwich}");
+        assert_eq!(
+            lazy.relation.star("a0").is_some(),
+            star,
+            "the kept stars and the definition disagree on a0"
+        );
+        let cap = prim(Prim::Le, var("a0"), int(3));
+        let (eager, lazy) = (eager.assume(&cap, true, &p), lazy.assume(&cap, true, &p));
+        let want = points(sandwich);
+        assert_eq!(want[0], vec![0, 1], "the points give n in 0..=1");
+        // Without the sandwich `a1` is unbounded, and so held at each value of the window.
+        assert_eq!(
+            held(&eager, &all, false),
+            want,
+            "eager, sandwich {sandwich}"
+        );
+        assert_eq!(held(&lazy, &all, true), want, "lazy, sandwich {sandwich}");
+    }
 }

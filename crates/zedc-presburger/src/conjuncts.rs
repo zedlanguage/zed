@@ -65,14 +65,15 @@ impl<T: Ord + Clone> Uses<T> {
     }
 }
 
-impl Uses<(usize, Arc<str>)> {
-    /// The names kept at `name` with a count in `counts`, in O(log n) and their number.
-    fn within(&self, name: &str, counts: impl RangeBounds<usize>) -> Vec<Arc<str>> {
+impl<T: Ord + Clone + Default> Uses<(usize, T)> {
+    /// The values kept at `name` with a count in `counts`, in O(log n) and their number.
+    fn within(&self, name: &str, counts: impl RangeBounds<usize>) -> Vec<T> {
         let Some(s) = self.0.get(name) else {
             return Vec::new();
         };
-        // The least name, so that `(c, least)` comes before every entry of count `c`.
-        let least: Arc<str> = Arc::from("");
+        // The least value, the empty name or hub set, so that `(c, least)` comes before every
+        // entry of count `c`.
+        let least = T::default();
         let lo = match counts.start_bound() {
             Bound::Included(&c) => Bound::Included((c, least.clone())),
             Bound::Excluded(&c) => Bound::Included((c + 1, least.clone())),
@@ -194,17 +195,24 @@ struct StarIndex {
     solo: Uses<Arc<Formula>>,
     /// The conjuncts at each name in neither `owned` nor `solo`, as last found.
     free: Uses<Arc<Formula>>,
+    /// Of each name, the other names of its `free` conjuncts of two names, each with how many
+    /// mention it: of a satellite ([`Conjuncts::star`]), the names it relates to.
+    ties: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
+    /// Of each name, how many of its `free` conjuncts are of other than two names: a name
+    /// with none is a satellite.
+    wide: OrdMap<Arc<str>, usize>,
     /// The other names each hub's `free` conjuncts mention, each with how many mention it;
     /// kept only at the hubs of `level`, so that a conjunct of many names costs no more than
     /// its names unless they are such hubs.
     near: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
-    /// Of each hub and name of `shapes` of two hubs or more at it, how many of the hub's
-    /// `near` names are the name's hubs: the hub admits the leaf when that is all of them.
-    hits: OrdMap<NamePair, usize>,
-    /// The names of `shapes` of two hubs or more at each hub, by their `hits` there.
-    level: Uses<(usize, Arc<str>)>,
-    /// The names of `shapes` of two hubs or more of each ordered pair of their hubs.
-    pair: OrdMap<NamePair, OrdSet<Arc<str>>>,
+    /// Of each name, the hubs whose `near` holds it.
+    nearby: Uses<Arc<str>>,
+    /// What each hub of `level` needs among the hubs of a leaf to admit it.
+    admit: Admit,
+    /// The leaves of the names of `shapes` of two hubs or more, by their hubs.
+    sets: OrdMap<Hubs, OrdSet<Arc<str>>>,
+    /// Of each hub set of `sets`, how many of its hubs do not admit it.
+    refused: OrdMap<Hubs, usize>,
     /// The stars ([`Conjuncts::star`]): each leaf's block.
     stars: OrdMap<Arc<str>, BlockId>,
     /// The leaves of the stars of two hubs or more of each class ([`Class`]).
@@ -230,8 +238,8 @@ struct StarIndex {
 struct Shape {
     /// Its conjuncts.
     gs: Vec<Arc<Formula>>,
-    /// Its hubs: the other names its conjuncts mention.
-    hubs: Vec<Arc<str>>,
+    /// Its hubs: the other names its conjuncts mention, in order.
+    hubs: Hubs,
     /// The side, the upper one `true`, that some conjunct of two hubs or more needs unbounded.
     far: Option<bool>,
     /// The number of its conjuncts.
@@ -264,6 +272,72 @@ struct Pending {
     free: BTreeSet<Arc<Formula>>,
     /// The conjuncts added, not yet in a block, each with the one it takes the place of.
     placed: Vec<(Arc<Formula>, Option<Arc<Formula>>)>,
+}
+
+/// The hubs of a leaf of two hubs or more ([`Conjuncts::star`]), in order: the key the leaves
+/// of one hub set share at each hub, so that a change at a hub costs its hub sets, not its
+/// leaves.
+type Hubs = Arc<[Arc<str>]>;
+
+/// What each hub of a leaf of two hubs or more needs among the leaf's hubs to admit it
+/// ([`Conjuncts::star`]).
+#[derive(Clone, Debug, Default)]
+struct Admit {
+    /// Of each such hub, the names its `near` names need among a leaf's hubs, each with how
+    /// many need it: a satellite the names it relates to other than the hub, any other name
+    /// itself. The hub admits a leaf whose hubs hold all of them.
+    needs: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
+    /// Of each such hub and hub set at it, how many of the hub's `needs` the set holds.
+    hits: OrdMap<(Arc<str>, Hubs), usize>,
+    /// The hub sets at each such hub, by their `hits` there.
+    level: Uses<(usize, Hubs)>,
+    /// The hub sets at each such hub that hold each other name.
+    pair: OrdMap<NamePair, OrdSet<Hubs>>,
+}
+
+/// The values of [`Admit`] before a change, each recorded when it first moves.
+#[derive(Default)]
+struct Moves {
+    /// Of each hub, its number of `needs`.
+    lens: BTreeMap<Arc<str>, usize>,
+    /// Of each hub and hub set at it, its `hits`.
+    hits: BTreeMap<(Arc<str>, Hubs), usize>,
+}
+
+impl Admit {
+    /// Counts one more (`up`) or one fewer name of hub `h`'s `near` that needs `z`; when `z`
+    /// comes or goes, each hub set at `h` that holds it gains or loses a hit. In O(log n),
+    /// and O(log n) for each such hub set.
+    fn need(&mut self, h: &Arc<str>, z: &Arc<str>, up: bool, log: &mut Moves) {
+        let Some(needs) = self.needs.get_mut(h) else {
+            unreachable!("needs are kept at each hub of a hub set")
+        };
+        let (c, len) = (needs.get(z).copied().unwrap_or(0), needs.len());
+        match (up, c) {
+            (true, _) => {
+                needs.insert(z.clone(), c + 1);
+            }
+            (false, 1) => {
+                needs.remove(z);
+            }
+            (false, _) => {
+                needs.insert(z.clone(), c - 1);
+            }
+        }
+        if c != usize::from(!up) {
+            return;
+        }
+        log.lens.entry(h.clone()).or_insert(len);
+        for hs in self.pair.get(&(h.clone(), z.clone())).into_iter().flatten() {
+            let key = (h.clone(), hs.clone());
+            let k = self.hits[&key];
+            let k2 = if up { k + 1 } else { k - 1 };
+            self.level.remove(h, &(k, hs.clone()));
+            self.level.add(h, &(k2, hs.clone()));
+            log.hits.entry(key.clone()).or_insert(k);
+            self.hits.insert(key, k2);
+        }
+    }
 }
 
 /// Whether `g` is `±x ± y ± … + c >= 0`, a bound on a sum of two names or more, each of
@@ -424,27 +498,38 @@ impl Conjuncts {
     /// mentioned by more conjuncts than `x`, and where a conjunct mentions two hubs or more,
     /// `x` is unbounded on the side away from it ([`Conjuncts::bound`]). The leaf's conjuncts
     /// are a star when it has one hub or each of its hubs admits it: every conjunct at the hub
-    /// is a leaf's, or of the hub alone (`alone`), such as a bound on it, or mentions only
-    /// hubs of `x`, such as `n >= m` for the hubs of `x >= n && x >= m`. A conjunct is the
-    /// leaf's of one name at most, since its hubs have more conjuncts than it.
+    /// is a leaf's, or of the hub alone (`alone`), such as a bound on it, or is free at it
+    /// and each of its other names is a hub of `x`, such as `m` in `n >= m` for the hubs of
+    /// `x >= n && x >= m`, or a satellite whose other related names are hubs of `x`. A
+    /// satellite is a name each of whose free conjuncts, those neither a leaf's nor of it
+    /// alone, mentions it and one other name, the names it relates to: `y` of
+    /// `y >= n && y < m` for the hubs `n` and `m`. A conjunct is the leaf's of one name at
+    /// most, since its hubs have more conjuncts than it.
     ///
     /// A star bounds its leaf on one side only, the side its hubs' least or greatest values
     /// bound it from, and a conjunct of two hubs or more holds for a large enough `x`: the
     /// star's projection onto its hubs is a bound on each hub alone, and so is the projection
-    /// of the leaves' conjuncts at a hub, and its other conjuncts hold of it alone or of the
-    /// leaf's hubs. The hubs of a star of more than one then range over their products and
-    /// the conjuncts among them ([`Conjuncts::core`]), with which the star is projected, and a
+    /// of a leaf's conjuncts at a hub or a satellite, and its other conjuncts hold of it alone,
+    /// or of the leaf's hubs and satellites, as each free conjunct of a satellite relates it to
+    /// a hub at which that conjunct is free. The hubs of a star of more than one then range,
+    /// with the satellites, over their products and the free conjuncts at the hubs
+    /// ([`Conjuncts::core`]), a closed set, with which the star is projected, and a
     /// star of one hub lies on no cycle, so in both the projection onto `x` is the projection
     /// of the whole relation, and a move of a hub changes `x` alone and cuts it to a
-    /// half-line that holds its greatest or least member, which empties nothing. A star is a
-    /// block of its own outside the forest ([`Blocks::detach`]).
+    /// half-line that holds its greatest or least member, which empties nothing. A move of a
+    /// satellite changes the leaves of the stars at the hubs it relates to
+    /// ([`Conjuncts::around`]). A name related to two hubs by one conjunct, such as `y` of
+    /// `n + m <= y <= n + m + 1`, is no satellite, so it keeps the hubs from admitting a
+    /// leaf not of it. A star is a block of its own outside the forest
+    /// ([`Blocks::detach`]).
     pub fn star(&self, x: &str) -> Option<BlockId> {
         self.index.stars.get(x).copied()
     }
 
     /// The conjuncts block `b` is projected with: its own, and when it is a star of two hubs
-    /// or more, the conjuncts among its hubs, which are free at them ([`Conjuncts::star`]).
-    /// In time near their number.
+    /// or more, the free conjuncts at its hubs, which mention only its hubs and the
+    /// satellites they admit, each of whose free conjuncts is among them
+    /// ([`Conjuncts::star`]). In time near their number.
     pub fn core(&self, b: BlockId) -> Vec<Arc<Formula>> {
         let mut gs: BTreeSet<Arc<Formula>> = self.blocks.members(b).cloned().collect();
         if self.blocks.is_apart(b) {
@@ -488,6 +573,11 @@ impl Conjuncts {
     /// The leaves of the stars of class `c`.
     pub fn class_leaves(&self, c: &Class) -> impl Iterator<Item = &Arc<str>> {
         self.index.classes.get(c).into_iter().flatten()
+    }
+
+    /// The class of the star of leaf `x`, when it has two hubs or more.
+    pub fn class_of(&self, x: &str) -> Option<&Class> {
+        self.index.class_of.get(x)
     }
 
     /// Records the star of leaf `x` and conjuncts `gs` in its class, when it has two hubs or
@@ -537,6 +627,25 @@ impl Conjuncts {
     /// The conjuncts of the stars whose hub is `y`.
     pub fn hanging(&self, y: &str) -> impl Iterator<Item = &Arc<Formula>> {
         self.index.hangs.of(y)
+    }
+
+    /// The leaves of the stars of two hubs or more whose projection reads a conjunct at `y`
+    /// ([`Conjuncts::core`]): of a satellite, the stars at the hubs it relates to, which a move
+    /// of `y` changes though no conjunct of theirs mentions it. Of any other name, none but
+    /// the stars whose hub it is, which [`Conjuncts::hanging`] finds: a hub admits a name near
+    /// it that is no satellite only as a hub of the leaf. In time near the hubs `y` is near,
+    /// the classes at them, and the leaves of those classes.
+    pub fn around(&self, y: &str) -> BTreeSet<Arc<str>> {
+        if self.index.wide.get(y).is_some_and(|w| *w > 0) {
+            return BTreeSet::new();
+        }
+        let classes: BTreeSet<&Class> = (self.index.nearby.of(y))
+            .flat_map(|h| self.index.class_at.of(h))
+            .collect();
+        classes
+            .iter()
+            .flat_map(|c| self.class_leaves(c).cloned())
+            .collect()
     }
 
     /// The conjuncts that mention `name` but those of the stars whose hub it is: those a move
@@ -729,26 +838,16 @@ impl Conjuncts {
                 }
                 p.free.insert(g.clone());
             }
-            for h in &old.hubs {
+            for h in old.hubs.iter() {
                 self.index.shaped.remove(h, &(old.count, x.clone()));
             }
-            if old.hubs.len() > 1 {
-                for h in &old.hubs {
-                    if let Some(k) = self.index.hits.remove(&(h.clone(), x.clone())) {
-                        self.index.level.remove(h, &(k, x.clone()));
-                    }
-                    if self.index.level.count(h) == 0 {
-                        self.index.near.remove(h);
-                    }
-                    for y in old.hubs.iter().filter(|y| *y != h) {
-                        let key = (h.clone(), y.clone());
-                        if let Some(s) = self.index.pair.get_mut(&key) {
-                            s.remove(x);
-                            if s.is_empty() {
-                                self.index.pair.remove(&key);
-                            }
-                        }
-                    }
+            if old.hubs.len() > 1
+                && let Some(leaves) = self.index.sets.get_mut(&old.hubs)
+            {
+                leaves.remove(x);
+                if leaves.is_empty() {
+                    self.index.sets.remove(&old.hubs);
+                    self.close(&old.hubs);
                 }
             }
         }
@@ -773,37 +872,15 @@ impl Conjuncts {
                     }
                     p.free.insert(g.clone());
                 }
-                for h in &s.hubs {
+                for h in s.hubs.iter() {
                     self.index.shaped.add(h, &(s.count, x.clone()));
                 }
                 if s.hubs.len() > 1 {
-                    for h in &s.hubs {
-                        // A hub of no such name before: its near names are counted now, from
-                        // its free conjuncts as last found, which `refree` then keeps.
-                        if !self.index.near.contains_key(h) {
-                            let mut near: OrdMap<Arc<str>, usize> = OrdMap::new();
-                            for g in self.index.free.of(h) {
-                                for y in names(g).into_iter().filter(|y| y != h) {
-                                    *near.entry(y).or_default() += 1;
-                                }
-                            }
-                            self.index.near.insert(h.clone(), near);
-                        }
-                        let near = self.index.near.get(h);
-                        let k = s
-                            .hubs
-                            .iter()
-                            .filter(|y| *y != h && near.is_some_and(|m| m.contains_key(*y)))
-                            .count();
-                        self.index.hits.insert((h.clone(), x.clone()), k);
-                        self.index.level.add(h, &(k, x.clone()));
-                        for y in s.hubs.iter().filter(|y| *y != h) {
-                            self.index
-                                .pair
-                                .entry((h.clone(), y.clone()))
-                                .or_default()
-                                .insert(x.clone());
-                        }
+                    let leaves = self.index.sets.entry(s.hubs.clone()).or_default();
+                    let fresh = leaves.is_empty();
+                    leaves.insert(x.clone());
+                    if fresh {
+                        self.open(&s.hubs);
                     }
                 }
                 self.index.shapes.insert(x.clone(), Arc::new(s));
@@ -817,23 +894,187 @@ impl Conjuncts {
         }
     }
 
-    /// Whether hub `h` admits `x`, a name of `shapes` of two hubs or more at it: every name
-    /// its free conjuncts mention is a hub of `x` ([`Conjuncts::star`]).
-    fn admits(&self, h: &Arc<str>, x: &Arc<str>) -> bool {
-        let near = self.index.near.get(h).map_or(0, OrdMap::len);
-        self.index.hits.get(&(h.clone(), x.clone())) == Some(&near)
+    /// Indexes hub set `hs`, of a leaf that is the first of its hubs ([`Admit`]): each hub's
+    /// `near` names are counted, when it had no hub set before, from its free conjuncts as
+    /// last found, which `refree` then keeps. In O(log n) for each hub and pair of hubs, and
+    /// for each hub of no hub set before, as [`Conjuncts::view`] costs.
+    fn open(&mut self, hs: &Hubs) {
+        let mut refused = 0;
+        for h in hs.iter() {
+            self.view(h);
+            let Admit {
+                needs,
+                hits,
+                level,
+                pair,
+            } = &mut self.index.admit;
+            let needs = needs.get(h);
+            let held = |z: &&Arc<str>| *z != h && needs.is_some_and(|m| m.contains_key(*z));
+            let k = hs.iter().filter(held).count();
+            refused += usize::from(k != needs.map_or(0, OrdMap::len));
+            hits.insert((h.clone(), hs.clone()), k);
+            level.add(h, &(k, hs.clone()));
+            for z in hs.iter().filter(|z| *z != h) {
+                pair.entry((h.clone(), z.clone()))
+                    .or_default()
+                    .insert(hs.clone());
+            }
+        }
+        self.index.refused.insert(hs.clone(), refused);
+    }
+
+    /// Forgets hub set `hs`, whose last leaf went ([`Conjuncts::open`]); a hub left with no
+    /// hub set forgets its `near` names. In O(log n) for each hub and pair of hubs, and for
+    /// each `near` name of such a hub.
+    fn close(&mut self, hs: &Hubs) {
+        self.index.refused.remove(hs);
+        for h in hs.iter() {
+            let a = &mut self.index.admit;
+            if let Some(k) = a.hits.remove(&(h.clone(), hs.clone())) {
+                a.level.remove(h, &(k, hs.clone()));
+            }
+            for z in hs.iter().filter(|z| *z != h) {
+                let key = (h.clone(), z.clone());
+                if let Some(s) = a.pair.get_mut(&key) {
+                    s.remove(hs);
+                    if s.is_empty() {
+                        a.pair.remove(&key);
+                    }
+                }
+            }
+            if a.level.count(h) == 0 {
+                a.needs.remove(h);
+                if let Some(near) = self.index.near.remove(h) {
+                    for y in near.keys() {
+                        self.index.nearby.remove(y, h);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Counts hub `h`'s `near` names and their `needs` from its free conjuncts as last found,
+    /// when it has none yet. In O(log n) for each name of each free conjunct at `h`, and for
+    /// each name a satellite among them relates to.
+    ///
+    /// Complexity tradeoff: a satellite near a hub costs the names it relates to, at each
+    /// hub it is near, so that a satellite related to `d` hubs of hub sets holds `d - 1`
+    /// needs at each: O(d²) in its `d` conjuncts. Why: a hub admits a leaf when the leaf's
+    /// hubs hold its needs, counted by name, which a satellite's need of a set of names would
+    /// make a test of one set within another at each hub set at the hub. Trigger: a name of
+    /// `d` free conjuncts of two names each, of one sign, against `d` hubs of leaves of two
+    /// hubs or more, all of more conjuncts than it. Test:
+    /// `l01_39a_bit_words::scaling::satellites_of_two_hubs_keep_the_stars_of_their_hubs_in_linear_time`
+    /// (the case of `d = 2`, in linear time). COMPLEXITY.md row C37. A complete solution
+    /// counts each satellite once per hub set that holds the names it relates to, kept by
+    /// the sizes of those sets.
+    fn view(&mut self, h: &Arc<str>) {
+        if self.index.near.contains_key(h) {
+            return;
+        }
+        let mut near: OrdMap<Arc<str>, usize> = OrdMap::new();
+        for g in self.index.free.of(h) {
+            for y in names(g).into_iter().filter(|y| y != h) {
+                *near.entry(y).or_default() += 1;
+            }
+        }
+        self.index.admit.needs.insert(h.clone(), OrdMap::new());
+        // No hub set is at `h` yet, so no hit moves.
+        let mut log = Moves::default();
+        for y in near.keys() {
+            self.index.nearby.add(y, h);
+            self.contribute(h, y, true, &mut log);
+        }
+        self.index.near.insert(h.clone(), near);
+    }
+
+    /// Counts in (`up`) or out the needs of `y` as a `near` name of hub `h` ([`Admit::needs`]):
+    /// of a satellite, a name of no free conjunct of other than two names, the names it
+    /// relates to other than `h`; of any other name, itself. In O(log n) for each.
+    fn contribute(&mut self, h: &Arc<str>, y: &Arc<str>, up: bool, log: &mut Moves) {
+        let StarIndex {
+            ties, wide, admit, ..
+        } = &mut *self.index;
+        if wide.contains_key(y) {
+            admit.need(h, y, up, log);
+            return;
+        }
+        for z in ties.get(y).into_iter().flat_map(OrdMap::keys) {
+            if z != h {
+                admit.need(h, z, up, log);
+            }
+        }
+    }
+
+    /// Counts the free conjunct of names `ns` in (`up`) or out at `y`, one of them, in its
+    /// `ties` or `wide`; the needs of `y` at each hub it is near move with them
+    /// ([`Conjuncts::contribute`]). In O(log n), and when `y` becomes a satellite or stops
+    /// being one, O(log n) for each name it relates to at each hub it is near.
+    fn tie(&mut self, y: &Arc<str>, ns: &BTreeSet<Arc<str>>, up: bool, log: &mut Moves) {
+        let StarIndex {
+            ties,
+            wide,
+            nearby,
+            admit,
+            ..
+        } = &mut *self.index;
+        let step = |c: usize| if up { c + 1 } else { c - 1 };
+        if ns.len() == 2 {
+            let Some(z) = ns.iter().find(|n| *n != y) else {
+                unreachable!("two names, one of them `y`")
+            };
+            let t = ties.entry(y.clone()).or_default();
+            let c = t.get(z).copied().unwrap_or(0);
+            match step(c) {
+                0 => {
+                    t.remove(z);
+                }
+                c => {
+                    t.insert(z.clone(), c);
+                }
+            }
+            if t.is_empty() {
+                ties.remove(y);
+            }
+            if c == usize::from(!up) && !wide.contains_key(y) {
+                for h in nearby.of(y).filter(|h| *h != z) {
+                    admit.need(h, z, up, log);
+                }
+            }
+            return;
+        }
+        let w = wide.get(y).copied().unwrap_or(0);
+        if w == usize::from(!up) {
+            // `y` stops being a satellite (`up`) or becomes one.
+            for h in nearby.of(y) {
+                for z in ties.get(y).into_iter().flat_map(OrdMap::keys) {
+                    if z != h {
+                        admit.need(h, z, !up, log);
+                    }
+                }
+                admit.need(h, y, up, log);
+            }
+        }
+        match step(w) {
+            0 => {
+                wide.remove(y);
+            }
+            w => {
+                wide.insert(y.clone(), w);
+            }
+        }
     }
 
     /// Finds again whether each conjunct `p` names is free at each of its names, and keeps
-    /// `near`, `hits` and `level` with it: the names of `shapes` of two hubs or more that a
-    /// hub may admit or no longer admit are put in `check`. In O(log n) for each conjunct and
-    /// name of it, and for each hub of `level` among them, O(log n) for each other name; for
-    /// each name a hub's `near` gains or loses, the leaves of both; and for each hub whose
-    /// number of `near` names changes, the leaves it admitted and admits.
+    /// `ties`, `wide`, `near` and the needs of each hub with it ([`Admit`]): the leaves of the
+    /// hub sets whose hubs come to admit them all, or no longer do, are put in `check`. In
+    /// O(log n) for each conjunct and name of it, and as [`Conjuncts::tie`] and
+    /// [`Conjuncts::contribute`] cost; for each hub of hub sets among them, O(log n) for each
+    /// other name; for each need a hub gains or loses, O(log n) for each hub set at the hub
+    /// that holds it; for each hub whose number of needs changes, its hub sets that it
+    /// admitted or admits; and the leaves of the hub sets that come to be admitted or stop.
     fn refree(&mut self, p: &mut Pending, check: &mut BTreeSet<Arc<str>>) {
-        // Whether each pair of names was near, and each hub's number of near names, before.
-        let mut was: BTreeMap<NamePair, bool> = BTreeMap::new();
-        let mut sizes: BTreeMap<Arc<str>, usize> = BTreeMap::new();
+        let mut log = Moves::default();
         for g in std::mem::take(&mut p.free) {
             let ns = names(&g);
             for h in &ns {
@@ -848,13 +1089,12 @@ impl Conjuncts {
                 } else {
                     self.index.free.remove(h, &g);
                 }
-                let Some(near) = self.index.near.get_mut(h) else {
-                    continue;
-                };
-                sizes.entry(h.clone()).or_insert(near.len());
+                self.tie(h, &ns, want, &mut log);
                 for y in ns.iter().filter(|y| *y != h) {
+                    let Some(near) = self.index.near.get_mut(h) else {
+                        break;
+                    };
                     let c = near.get(y).copied().unwrap_or(0);
-                    was.entry((h.clone(), y.clone())).or_insert(c > 0);
                     match (want, c) {
                         (true, _) => {
                             near.insert(y.clone(), c + 1);
@@ -866,37 +1106,68 @@ impl Conjuncts {
                             near.insert(y.clone(), c - 1);
                         }
                     }
+                    if c != usize::from(!want) {
+                        continue;
+                    }
+                    if want {
+                        self.index.nearby.add(y, h);
+                    } else {
+                        self.index.nearby.remove(y, h);
+                    }
+                    self.contribute(h, y, want, &mut log);
                 }
             }
         }
-        for ((h, y), before) in was {
-            let now = self.index.near.get(&h).is_some_and(|m| m.contains_key(&y));
-            if now == before {
-                continue;
-            }
-            let xs: Vec<Arc<str>> = self
-                .index
-                .pair
-                .get(&(h.clone(), y))
-                .into_iter()
-                .flatten()
-                .cloned()
-                .collect();
-            for x in xs {
-                let key = (h.clone(), x.clone());
-                let k = self.index.hits[&key];
-                let k2 = if now { k + 1 } else { k - 1 };
-                self.index.level.remove(&h, &(k, x.clone()));
-                self.index.level.add(&h, &(k2, x.clone()));
-                self.index.hits.insert(key, k2);
-                check.insert(x);
+        self.readmit(&log, check);
+    }
+
+    /// Puts in `check` the leaves of each hub set whose hubs came to admit it all, or no
+    /// longer do, by the moves `log` recorded: a hub admits a hub set when the set holds all
+    /// its needs, so only a hub set whose hits moved, or whose hits equal the old or the new
+    /// number of needs of a hub whose number moved, may change. In O(log n) for each such hub
+    /// set, and the leaves of those that change.
+    fn readmit(&mut self, log: &Moves, check: &mut BTreeSet<Arc<str>>) {
+        let StarIndex {
+            admit,
+            refused,
+            sets,
+            ..
+        } = &mut *self.index;
+        let len = |h: &str| admit.needs.get(h).map_or(0, OrdMap::len);
+        let mut seen: BTreeSet<(Arc<str>, Hubs)> = log.hits.keys().cloned().collect();
+        for (h, &before) in &log.lens {
+            let after = len(h);
+            if after != before {
+                for k in [before, after] {
+                    let at = admit.level.within(h, k..=k);
+                    seen.extend(at.into_iter().map(|hs| (h.clone(), hs)));
+                }
             }
         }
-        for (h, before) in sizes {
-            let after = self.index.near.get(&h).map_or(0, OrdMap::len);
-            if after != before {
-                check.extend(self.index.level.within(&h, before..=before));
-                check.extend(self.index.level.within(&h, after..=after));
+        // Whether each hub set whose hubs' admissions moved was admitted by them all before.
+        let mut was: BTreeMap<Hubs, bool> = BTreeMap::new();
+        for key in seen {
+            let k = admit.hits[&key];
+            let k0 = log.hits.get(&key).copied().unwrap_or(k);
+            let n = len(&key.0);
+            let n0 = log.lens.get(&key.0).copied().unwrap_or(n);
+            let (then, now) = (k0 == n0, k == n);
+            if then == now {
+                continue;
+            }
+            let Some(r) = refused.get_mut(&key.1) else {
+                unreachable!("each hub set at a hub is counted")
+            };
+            was.entry(key.1).or_insert(*r == 0);
+            if now {
+                *r -= 1;
+            } else {
+                *r += 1;
+            }
+        }
+        for (hs, then) in was {
+            if (refused.get(&hs) == Some(&0)) != then {
+                check.extend(sets.get(&hs).into_iter().flatten().cloned());
             }
         }
     }
@@ -968,7 +1239,7 @@ impl Conjuncts {
                 .index
                 .shapes
                 .get(x)
-                .filter(|s| s.hubs.len() == 1 || s.hubs.iter().all(|h| self.admits(h, x)));
+                .filter(|s| s.hubs.len() == 1 || self.index.refused.get(&s.hubs) == Some(&0));
             let old = self.index.stars.get(x).copied();
             if let (Some(b), Some(s)) = (old, shape)
                 && self.blocks.members(b).eq(s.gs.iter())

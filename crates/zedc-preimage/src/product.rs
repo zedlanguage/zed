@@ -1083,9 +1083,9 @@ fn split<'a>(
         .collect();
     eqs.sort_unstable();
     let eqs: Arc<[Con]> = eqs.into();
-    // The constraints on each term, either sign.
+    // The constraints on each term, either sign, which only the other conjuncts read.
     let mut on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>> = BTreeMap::new();
-    for g in &cons {
+    for g in cons.iter().filter(|_| !others.is_empty()) {
         if let Formula::Con(c) = g {
             on.entry(unsigned(c)).or_default().push(c.clone());
         }
@@ -1127,8 +1127,10 @@ struct Block {
     names: Vec<Arc<str>>,
     /// The leaf, when the block is a star ([`Conjuncts::star`]).
     leaf: Option<Arc<str>>,
-    /// The block as a threshold-implication component, when it is one ([`threshold::shape`]).
-    threshold: Option<threshold::Shape>,
+    /// Its conjuncts, of which [`Scope::project_block`] finds the threshold-implication
+    /// component, when it is one ([`threshold::shape`]), only when a part is due: a block
+    /// built to ask whether a leaf is stale ([`Scope::stale`]) does not need it.
+    core: Vec<Arc<Formula>>,
 }
 
 impl Block {
@@ -1141,8 +1143,8 @@ impl Block {
         Block {
             parts: split(gs.iter().map(|g| &**g), leaf.as_ref()),
             names: names.into_iter().collect(),
-            threshold: threshold::shape(&gs),
             leaf,
+            core: gs,
         }
     }
 }
@@ -1398,15 +1400,16 @@ impl Scope {
     ///
     /// The invariant: a lazy scope differs from the eager scope of the same tests only at
     /// stale leaves, the leaves whose star was last projected at other intervals or classes
-    /// of its names than they now have, or with other conjuncts among its hubs
-    /// ([`Conjuncts::core`]), and there settling the leaf, projecting its star with those
-    /// conjuncts and reducing as [`Scope::reduce`] does, gives the eager product. No written constraint
-    /// holds of a leaf, so its product reaches no other name but through its star, whose
-    /// projection onto its hubs is a bound on each alone, through the leaf's greatest or least
-    /// member, which a cut of the leaf by the hubs' moves keeps, so no hub moves; and the cut
-    /// is a half-line that holds that member, so it empties no leaf, and the scope is bottom
-    /// exactly when the eager one is. A star that goes or changes makes its leaf's conjuncts
-    /// due at the next projection, which settles the leaf.
+    /// of its names or of the satellites its hubs admit than they now have, or with other
+    /// free conjuncts at its hubs ([`Conjuncts::core`]), and there settling the leaf,
+    /// projecting its star with those conjuncts and reducing as [`Scope::reduce`] does, gives
+    /// the eager product. No written constraint holds of a leaf, so its product reaches no
+    /// other name but through its star, whose projection onto its hubs is a bound on each
+    /// alone, through the leaf's greatest or least member, which a cut of the leaf by the
+    /// hubs' moves keeps, so no hub moves; and the cut is a half-line that holds that member,
+    /// so it empties no leaf, and the scope is bottom exactly when the eager one is. A star
+    /// that goes or changes makes its leaf's conjuncts due at the next projection, which
+    /// settles the leaf.
     pub fn lazy(mut self) -> Scope {
         self.lazy = true;
         self
@@ -1438,6 +1441,14 @@ impl Scope {
 
     /// Settles the stale leaves among `names` ([`Scope::lazy`]): projects each one's star,
     /// then reduces, which costs the leaves settled.
+    ///
+    /// Two stars of one class have one core but for the name of the leaf
+    /// ([`Conjuncts::class_core`]), so the projection of the second, when its other names and
+    /// its leaf's interval and class are as the first's were, gives its leaf the first's
+    /// projection and moves nothing else, as the first moved nothing else. The stars at hubs
+    /// whose free conjuncts changed, as those of a satellite ([`Conjuncts::star`]), are then
+    /// projected once for the class and not once for each leaf. A projection the solver
+    /// refused in part, which records the leaf's name, is not reused.
     pub fn settle<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
         if !self.lazy || self.bottom {
             return;
@@ -1446,8 +1457,45 @@ impl Scope {
         if blocks.is_empty() {
             return;
         }
+        // Per class, the other names and the leaf's interval and class before its last
+        // projection, and the leaf's interval after.
+        type Before = (Projected, (IntervalSet, Congruence));
+        let mut done: BTreeMap<conjuncts::Class, (Before, IntervalSet)> = BTreeMap::new();
         for b in &blocks {
+            let class = b.leaf.as_ref().and_then(|x| {
+                let c = self.relation.class_of(x)?.clone();
+                Some((x.clone(), c))
+            });
+            let Some((leaf, class)) = class else {
+                self.project_block(b);
+                continue;
+            };
+            let others: Vec<Arc<str>> = b.names.iter().filter(|n| **n != leaf).cloned().collect();
+            let own = |s: &Scope| {
+                let p = s.get(&leaf);
+                (p.ints().clone(), p.cell.congruence.element.clone())
+            };
+            let before: Before = (self.snapshot(&others), own(self));
+            if let Some((_, after)) = done.get(&class).filter(|(was, _)| *was == before) {
+                let after = after.clone();
+                if let Some(p) = self.names.get_mut(&leaf) {
+                    let prem = p.premises();
+                    p.meet_ints(after, &prem);
+                }
+                for (key, with, g) in &b.parts {
+                    let at = self.snapshot(&syms(g));
+                    self.projected.insert(key.clone(), (with.clone(), at));
+                }
+                continue;
+            }
+            let refused = self.refusals.len();
             self.project_block(b);
+            if self.refusals.len() == refused
+                && !self.get(&leaf).ints().is_empty()
+                && self.snapshot(&others) == before.0
+            {
+                done.insert(class, (before, self.get(&leaf).ints().clone()));
+            }
         }
         self.reduce_with(false);
         debug_assert!(!self.bottom, "settling a leaf emptied a scope");
@@ -1585,8 +1633,10 @@ impl Scope {
         }
         // The stars that forgetting `x` takes or changes, and their leaves keep what they
         // have: those at `x` as a hub, and those whose hub it leaves with too few conjuncts
-        // or with one no star holds. No reduction follows to settle them, so they are settled
-        // first, against the relation they were stars of.
+        // or with one no star holds, and those whose projection reads a conjunct at `x`, such as
+        // the stars at the hubs a satellite `x` relates to ([`Conjuncts::around`]). No
+        // reduction follows to settle them, so they are settled first, against the relation
+        // they were stars of.
         let mut after = self.relation.clone();
         after.forget(x);
         let leaves: Vec<Arc<str>> = self
@@ -1597,6 +1647,7 @@ impl Scope {
                 DiffItem::Remove(n, _) | DiffItem::Update { old: (n, _), .. } => Some(n.clone()),
                 DiffItem::Add(..) => None,
             })
+            .chain(self.relation.around(x))
             .filter(|n| n != x)
             .collect();
         if leaves.is_empty() {
@@ -2045,6 +2096,7 @@ impl Scope {
         for side in [&self.relation, &other.relation] {
             for n in &differ {
                 leaves.extend(side.hanging(n).flat_map(|g| conjuncts::names(g)));
+                leaves.extend(side.around(n));
             }
         }
         let (mut a, mut b) = (self.clone(), other.clone());
@@ -2872,6 +2924,16 @@ impl Scope {
                     .moved(n, self.lazy)
                     .filter_map(|g| blocks.of(g)),
             );
+            // A satellite moved changes the stars at the hubs it relates to, whose conjuncts do
+            // not mention it ([`Conjuncts::around`]); a lazy scope finds their leaves stale.
+            if !self.lazy {
+                out.extend(
+                    self.relation
+                        .around(n)
+                        .iter()
+                        .filter_map(|x| self.relation.star(x)),
+                );
+            }
         }
         // A leaf whose star went or changed may be stale ([`Scope::lazy`]) where nothing else
         // makes it due: its conjuncts' blocks now are.
@@ -4142,7 +4204,7 @@ impl Scope {
         // name, tested one at a time. Test:
         // `l01_39_reduced_product::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`
         // (ignored). COMPLEXITY.md row S4-ti.
-        if let Some(shape) = &b.threshold
+        if let Some(shape) = &threshold::shape(&b.core)
             && self.project_threshold(shape)
         {
             for ((key, with, _), ns) in b.parts.iter().zip(&names) {
