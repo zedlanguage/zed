@@ -2759,8 +2759,8 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| A `HashMap<usize, Option<(Model, Option<HashMap<Atom, IntervalSet>>)>>` filled for a part the first time one of its factors is reached, through `entry` with a fallible computation in the `Vacant` arm (`?` returns a refusal from inside the match) | `products` | Lazy cells (gap 3), Mutation (gap 11) | Each part's point and hulls computed for all parts that hold a factor before the loop over factors, as a fold over the parts that stops at the first refusal |
-| `Option::insert` into a local declared before the match, so that an arm can return a reference to a hull computed in that arm alongside references into the map | `products` | Lazy cells (gap 3) | The arms return the hull by value; the map's hulls are shared values in Zed, so no copy is made |
+| A `HashMap<usize, Option<(Model, Option<HashMap<Atom, IntervalSet>>)>>` (since C2-chain-general `HashMap<usize, Option<HashMap<Atom, Ends>>>`) filled for a part the first time one of its factors is reached, through `entry` with a fallible computation in the `Vacant` arm (`?` returns a refusal from inside the match) | `products` | Lazy cells (gap 3), Mutation (gap 11) | Each part's point and hulls computed for all parts that hold a factor before the loop over factors, as a fold over the parts that stops at the first refusal |
+| (Removed by C2-chain-general: `products` reads the bounds from the map and no longer computes a hull in an arm.) `Option::insert` into a local declared before the match, so that an arm can return a reference to a hull computed in that arm alongside references into the map | `products` | Lazy cells (gap 3) | The arms return the hull by value; the map's hulls are shared values in Zed, so no copy is made |
 
 ## Entries from CHK-need-bound (`crates/zedc-check/src/check/walk.rs`, `check/mod.rs`, `crates/zedc-types/src/ty.rs`)
 
@@ -2778,6 +2778,16 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `Option::is_some_and` on a lookup (`HashMap::get`, slice `get`) | `Sig::int_params`, `front::linear_questions` | None | a `match` on the lookup, the missing case `false` |
 | A struct update, `Unit { int_params, ..Unit::default() }` | `elab::lower` | None | a record built with the named field and the others from the default |
 | `return` from the closure passed to `work::stage`, to skip a function | `front::linear_questions` | None | an `if` around the closure's body |
+
+## Entries from C2-chain-general (`crates/zedc-presburger/src/presburger.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Cow<'_, Con>`: a top-level constraint borrowed, or the negation of `t >= 0` built as `-t - 1 >= 0` and owned | `as_row`, `conjunct_bounds`, `part_bounds` | None: Zed values are shared | A function returning `?Con`, the constraint itself or the new one |
+| A lookup passed as `impl Fn(&Atom) -> Option<&'a Ends>`, so that one function reads either one map or a local map that falls back to another | `row_bounds` | None: Zed has closures | A function argument `(Atom) -> ?Ends` |
+| A `HashMap<Atom, Ends>` tightened in place by `entry(..).or_insert_with(..)` and two passes over the rows | `conjunct_bounds`, `meet_bound` | Mutation (gap 11) | A fold over the rows building a new map per pass |
+| A `HashMap<Id, Option<HashMap<Atom, Ends>>>` memo of each shared disjunct, cloned out on each read | `disjunction_bounds` | Identity (gap 1), Shared tables (gap 2) | A memo keyed by the disjunct's structural key; the maps are shared values, so no copy |
+| `Iterator::partition` of references into two `Vec<&Con>` | `part_bounds` | None | `partition` over a list |
 
 ## Entries from PRES-mod-conjuncts (`zedc-preimage/src/preimage.rs`, `zedc-presburger/src/presburger.rs`)
 

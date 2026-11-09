@@ -663,12 +663,18 @@ fn products_of_premises_in_pairs_scale() {
 /// of the premise rows, and each is bounded below by its own constant `i`, which only the chain
 /// gives.
 fn product_chain(k: usize) -> (Relation, Relation) {
+    product_chain_with(k, &[])
+}
+
+/// [`product_chain`] with the rows `extra` added to the premise.
+fn product_chain_with(k: usize, extra: &[String]) -> (Relation, Relation) {
     let names: Vec<String> = (0..k).map(|i| format!("x{i}, y{i}, z{i}")).collect();
     let head = format!("ok({})", names.join(", "));
     let mut premise = vec!["z0 >= 0".to_string()];
     premise.extend((1..k).map(|i| format!("z{i} >= z{} + 1", i - 1)));
     premise.push(format!("z{} <= {}", k - 1, 2 * k));
     premise.extend((0..k).map(|i| format!("x{i} >= z{i} && y{i} >= z{i}")));
+    premise.extend(extra.iter().cloned());
     let goal: Vec<String> = (0..k).map(|i| format!("x{i} * y{i}")).collect();
     let (ps, p) = function(&format!("{head} = {};", premise.join(" && ")));
     let (_, g) = function(&format!("{head} = {} >= 0;", goal.join(" + ")));
@@ -690,6 +696,156 @@ fn products_whose_factors_one_chain_connects_scale() {
         });
     };
     scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_along_a_chain_with_a_general_row_scale() {
+    // The chain of `product_chain` and one row of three atoms, which is not a difference
+    // constraint (C2-chain-general).
+    let n = 16;
+    let built = scaling::inputs(n, |k| {
+        product_chain_with(k, &["z0 + z1 + x0 >= 0".to_string()])
+    });
+    let measure = move || {
+        scaling::check(
+            "a sum of products along a chain with a general row",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_along_a_chain_with_a_general_row_on_each_link_scale() {
+    // The chain of `product_chain` with one general row on each link, a coefficient 2 and
+    // three atoms: k general rows in the one part (C2-chain-general).
+    let n = 16;
+    let built = scaling::inputs(n, |k| {
+        let extra: Vec<String> = (0..k).map(|i| format!("2 * x{i} + y{i} >= z{i}")).collect();
+        product_chain_with(k, &extra)
+    });
+    let measure = move || {
+        scaling::check(
+            "a sum of products along a chain with k general rows",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_along_a_chain_with_a_disjunction_on_each_link_scale() {
+    // The chain of `product_chain` with `abs(x{i} - y{i}) <= z{i} + 1` on each link: the
+    // definition of each `abs` is a disjunction over the link's atoms, so k disjunctions lie
+    // in the one part (C2-chain-general).
+    let n = 16;
+    let built = scaling::inputs(n, |k| {
+        let extra: Vec<String> = (0..k)
+            .map(|i| format!("abs(x{i} - y{i}) <= z{i} + 1"))
+            .collect();
+        product_chain_with(k, &extra)
+    });
+    let measure = move || {
+        scaling::check(
+            "a sum of products along a chain with k disjunctions",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn a_general_row_bounds_a_factor_from_the_bounds_of_its_other_atoms() {
+    // `b >= 7` follows from `a + b >= 10` and `a <= 3` alone; `2 * a == b + 4` with `b >= 0`
+    // gives `a >= 2`, the equality read in both directions and the bound rounded up; and a
+    // bound on one atom with a coefficient, `3 * c >= 7`, gives `c >= 3`.
+    assert_proved(
+        "ok(a, b, c) = a + b >= 10 && a <= 3 && c >= 0;",
+        "ok(a, b, c) = b * c >= 7 * c;",
+    );
+    assert_proved(
+        "ok(a, b, c) = 2 * a == b + 4 && b >= 0 && c >= 0;",
+        "ok(a, b, c) = a * c >= 2 * c;",
+    );
+    assert_proved(
+        "ok(a, c) = 3 * c >= 7 && a >= 0;",
+        "ok(a, c) = a * c >= 3 * a;",
+    );
+    // The bound found through a general row reaches the rest of the part through its
+    // difference rows: `d >= b + 1` gives `d >= 8`.
+    assert_proved(
+        "ok(a, b, c, d) = a + b >= 10 && a <= 3 && d >= b + 1 && c >= 0;",
+        "ok(a, b, c, d) = d * c >= 8 * c;",
+    );
+    // A disjunction among the definitions bounds a side of an atom that each disjunct with a
+    // point bounds, at the widest, and the bound reaches the rest of the part. `abs(a)` is `a`
+    // where `a >= 0` and `-a` where `a < 0`: with no bound on `a` each disjunct gives
+    // `abs(a) >= 0`, so `d >= 0`; and with `a >= b`, `b >= 5` the second has no point and the
+    // first gives `abs(a) >= 5`, so `d >= 5`. The literal in `d <= 1000` makes `d` an `int`.
+    assert_proved(
+        "ok(a, c, d) = abs(a) <= d && d <= 1000 && c >= 0;",
+        "ok(a, c, d) = d * c >= 0;",
+    );
+    assert_proved(
+        "ok(a, b, c, d) = b >= 5 && a >= b && abs(a) <= d && d <= 1000 && c >= 0;",
+        "ok(a, b, c, d) = d * c >= 5 * c;",
+    );
+    // An atom that no difference row names keeps the bounds found for it: `a >= -1000` from
+    // the second disjunct's `a + abs(a) == 0` and `abs(a) <= 1000`, where the point of the
+    // part the shortest paths start from gives `a` no value.
+    assert_proved(
+        "ok(a, c, d) = abs(a) <= d && d <= 1000 && c >= 0;",
+        "ok(a, c, d) = a * c >= -1000 * c;",
+    );
+    // One bound more than the rows give is not proved: `b >= 8` fails at `a = 3, b = 7`.
+    let e = rung2(
+        "ok(a, b, c) = a + b >= 10 && a <= 3 && c >= 0;",
+        "ok(a, b, c) = b * c >= 8 * c;",
+    );
+    assert!(!matches!(e, Entailment::Proved(_)), "{e}");
+}
+
+#[test]
+fn a_bound_that_needs_two_rows_at_once_is_not_found() {
+    // Complexity tradeoff of `part_bounds` (C2-chain-general): `v >= w1`, `v >= w2` and
+    // `w1 + w2 >= 10` give `v >= 5`, but only through two rows at once; each factor's bounds
+    // come from the hulls of the difference rows and one pass over each other row, so no lower
+    // bound of `v` is found, and `v * c >= 5 * c` is not proved. It is not refuted either: the
+    // goal holds, and the obligation passes to the next rung. A disjunction written among the
+    // premises gives no bound either: the parts are formed from the definitions and the
+    // top-level linear constraints only, as before C2-chain-general, so `a >= 5` from
+    // `a >= 5 || a >= 7` is not found.
+    for (premise, goal) in [
+        (
+            "ok(v, w1, w2, c) = v >= w1 && v >= w2 && w1 + w2 >= 10 && c >= 0;",
+            "ok(v, w1, w2, c) = v * c >= 5 * c;",
+        ),
+        (
+            "ok(a, c) = (a >= 5 || a >= 7) && c >= 0;",
+            "ok(a, c) = a * c >= 5 * c;",
+        ),
+    ] {
+        let e = rung2(premise, goal);
+        assert!(
+            matches!(e, Entailment::NotProved(_)),
+            "{premise} to {goal}: {e}"
+        );
+    }
 }
 
 #[test]

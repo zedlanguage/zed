@@ -8174,6 +8174,25 @@ fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal>
 /// [`hull_from`]'s O(log d) questions of the whole group for each atom. The bounds are those
 /// [`hull_from`] finds, exact at any magnitude.
 fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSet>> {
+    let end = |e: Option<Int>, inf: End| e.map_or(inf, |v| End::Fin(Num::from(&v)));
+    Some(
+        difference_ends(cons, m)?
+            .into_iter()
+            .map(|(a, (lo, hi))| {
+                (
+                    a,
+                    IntervalSet::range(end(lo, End::NegInf), end(hi, End::PosInf)),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The least and greatest value of each atom, `None` where there is none.
+type Ends = (Option<Int>, Option<Int>);
+
+/// [`difference_hulls`] with each hull as its two ends.
+fn difference_ends(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, Ends>> {
     // Node 0 is `z`; the atoms follow in order of first use.
     let mut node: HashMap<&Atom, usize> = HashMap::new();
     let mut atoms: Vec<&Atom> = Vec::new();
@@ -8253,16 +8272,237 @@ fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSe
             .iter()
             .enumerate()
             .map(|(k, a)| {
-                let lo = down[k + 1]
-                    .as_ref()
-                    .map_or(End::NegInf, |d| End::Fin(Num::from(&-d)));
-                let hi = up[k + 1]
-                    .as_ref()
-                    .map_or(End::PosInf, |d| End::Fin(Num::from(d)));
-                ((*a).clone(), IntervalSet::range(lo, hi))
+                (
+                    (*a).clone(),
+                    (down[k + 1].as_ref().map(|d| -d), up[k + 1].clone()),
+                )
             })
             .collect(),
     )
+}
+
+/// Whether `c` is a difference constraint or a bound, a row [`difference_ends`] takes.
+fn is_difference(c: &Con) -> bool {
+    let mut ks = c.lin.terms.values();
+    match (ks.next(), ks.next(), ks.next()) {
+        (Some(k), None, None) => k.is_unit(),
+        (Some(j), Some(k), None) => {
+            j.is_unit() && k.is_unit() && j.is_positive() != k.is_positive()
+        }
+        _ => false,
+    }
+}
+
+/// The bounds that the row `lin >= 0` gives each of its atoms from the bounds `b` of the
+/// others, pushed onto `out` as rows `x - lo >= 0` and `hi - x >= 0`: with `M` the greatest
+/// value of the other terms and the constant, `k·x >= -M`, so `x >= ⌈-M/k⌉` for `k > 0` and
+/// `x <= ⌊M/-k⌋` for `k < 0`. An atom for which `b` gives nothing is unbounded. The sum is taken once, so
+/// the cost is linear in the row's terms.
+fn row_bounds<'a>(lin: &Lin, b: impl Fn(&Atom) -> Option<&'a Ends>, out: &mut Vec<Con>) {
+    let most = |a: &Atom, k: &Int| -> Option<Int> {
+        let (lo, hi) = b(a)?;
+        if k.is_positive() {
+            hi.as_ref()
+        } else {
+            lo.as_ref()
+        }
+        .map(|v| k * v)
+    };
+    let tops: Vec<Option<Int>> = lin.terms.iter().map(|(a, k)| most(a, k)).collect();
+    let open = tops.iter().filter(|t| t.is_none()).count();
+    if open > 1 {
+        return;
+    }
+    let sum = tops
+        .iter()
+        .flatten()
+        .fold(lin.constant.clone(), |s, t| &s + t);
+    for ((a, k), top) in lin.terms.iter().zip(&tops) {
+        let rest = match top {
+            Some(t) if open == 0 => &sum - t,
+            Some(_) => continue,
+            None => sum.clone(),
+        };
+        let x = Lin::atom(a.clone());
+        out.push(Con {
+            lin: if k.is_positive() {
+                x.minus(&Lin::constant(-&rest.div_floor(k)))
+            } else {
+                Lin::constant(rest.div_floor(&-k)).minus(&x)
+            },
+            rel: Rel::Ge,
+        });
+    }
+}
+
+/// `g` as one constraint: itself, or for the negation of `t >= 0` the constraint
+/// `-t - 1 >= 0`, as [`nnf`] writes it. The negation of an equality is a disjunction and is not
+/// one constraint.
+fn as_row(g: &Formula) -> Option<std::borrow::Cow<'_, Con>> {
+    use std::borrow::Cow;
+    match g {
+        Formula::Con(c) => Some(Cow::Borrowed(c)),
+        Formula::Not(h) => match &**h {
+            Formula::Con(c) if c.rel == Rel::Ge => Some(Cow::Owned(Con::ge(
+                &Lin::default(),
+                &c.lin.plus(&Lin::constant(1)),
+            ))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The bounds of the atoms of the constraints among the top-level conjuncts of `f` ([`as_row`]),
+/// from the bounds `b` that hold wherever `f` does: each constraint's bounds ([`row_bounds`])
+/// from `b`, then again from `b` met with those, the tightest of each side of each atom kept.
+/// `None` when a lower bound passes an upper one, so that `f` has no point. The cost is linear
+/// in the conjuncts' terms.
+fn conjunct_bounds(f: &Formula, b: &HashMap<Atom, Ends>) -> Option<HashMap<Atom, Ends>> {
+    let cons: Vec<_> = f.conjuncts().into_iter().filter_map(as_row).collect();
+    let mut own: HashMap<Atom, Ends> = HashMap::new();
+    for _pass in 0..2 {
+        let mut rows = Vec::new();
+        for c in &cons {
+            let bound = |a: &Atom| own.get(a).or_else(|| b.get(a));
+            row_bounds(&c.lin, bound, &mut rows);
+            if c.rel == Rel::Eq {
+                row_bounds(&c.lin.times(-1), bound, &mut rows);
+            }
+        }
+        for r in &rows {
+            meet_bound(&mut own, r, b);
+        }
+    }
+    let empty = own
+        .values()
+        .any(|e| matches!(e, (Some(lo), Some(hi)) if lo > hi));
+    (!empty).then_some(own)
+}
+
+/// Meets the bounds in `own` with the bound row `r` ([`one_bound`]); an atom not yet in `own`
+/// starts from its bounds in `b`.
+fn meet_bound(own: &mut HashMap<Atom, Ends>, r: &Con, b: &HashMap<Atom, Ends>) {
+    let (a, lo, hi) = one_bound(r).expect("a bound has one atom");
+    let (l, h) = own
+        .entry(a.clone())
+        .or_insert_with(|| b.get(a).cloned().unwrap_or_default());
+    if let Some(lo) = lo
+        && l.as_ref().is_none_or(|l| lo > *l)
+    {
+        *l = Some(lo);
+    }
+    if let Some(hi) = hi
+        && h.as_ref().is_none_or(|h| hi < *h)
+    {
+        *h = Some(hi);
+    }
+}
+
+/// The bounds that the disjunction of `ds` gives its atoms from the bounds `b`: a side of an
+/// atom that every disjunct with a point bounds ([`conjunct_bounds`]), at the widest of those
+/// bounds. A disjunct shared by several disjunctions is read once, by its key in `seen`.
+fn disjunction_bounds(
+    ds: &[Formula],
+    b: &HashMap<Atom, Ends>,
+    seen: &mut HashMap<Id, Option<HashMap<Atom, Ends>>>,
+    out: &mut Vec<Con>,
+) {
+    let mut acc: Option<HashMap<Atom, Ends>> = None;
+    for d in ds {
+        let own = match d {
+            Formula::Con(_) => conjunct_bounds(d, b),
+            _ => seen
+                .entry(Id::any(d))
+                .or_insert_with(|| conjunct_bounds(d, b))
+                .clone(),
+        };
+        let Some(own) = own else { continue };
+        acc = Some(match acc {
+            None => own,
+            Some(acc) => acc
+                .into_iter()
+                .filter_map(|(a, (lo, hi))| {
+                    let (l, h) = own.get(&a)?;
+                    let lo = lo.zip(l.clone()).map(|(x, y)| x.min(y));
+                    let hi = hi.zip(h.clone()).map(|(x, y)| x.max(y));
+                    (lo.is_some() || hi.is_some()).then_some((a, (lo, hi)))
+                })
+                .collect(),
+        });
+    }
+    for (a, (lo, hi)) in acc.into_iter().flatten() {
+        let x = Lin::atom(a);
+        if let Some(l) = lo {
+            out.push(Con::ge(&x, &Lin::constant(l)));
+        }
+        if let Some(h) = hi {
+            out.push(Con::ge(&Lin::constant(h), &x));
+        }
+    }
+}
+
+/// Bounds of the atoms of `part`, a part of the premises with the point `m`: the hulls of
+/// its difference constraints and bounds ([`difference_ends`]), then those hulls again with
+/// the bounds found from the first hulls added as rows: those each other top-level
+/// constraint gives its atoms ([`row_bounds`]), and those each top-level disjunction gives
+/// from its disjuncts' top-level constraints ([`disjunction_bounds`]). Each bound holds at
+/// every point of the part, since each row added does. The cost is two shortest-path passes
+/// and one pass over the other rows and over each disjunction's disjuncts, O(m log n) for m
+/// rows over n atoms. Where every row is a difference constraint or a bound the bounds are
+/// the hulls [`hull_from`] finds.
+///
+/// Complexity tradeoff: with any other row the bounds may be wider than the hulls: a bound
+/// that needs two rows at once is not found, so from `v >= w1`, `v >= w2` and
+/// `w1 + w2 >= 10` no lower bound of `v` is found, where the hull's is 5; nor one from a
+/// row nested two levels deep, in a disjunction within a disjunct, or under the negation of
+/// an equality or of a conjunction or disjunction. Why:
+/// the hull of every atom of a general integer system is one integer program for each side
+/// of each atom, and asking the solver for each factor cost O(factors × part)
+/// (C2-chain-general). Trigger: a product whose factor's part has a row with a coefficient
+/// other than ±1, three atoms or more, two atoms of one sign, a disjunction or an auxiliary
+/// definition. Test:
+/// `l01_38_presburger::ladder::a_bound_that_needs_two_rows_at_once_is_not_found`.
+/// COMPLEXITY.md row C2. The bounds stay sound, so a goal that needs the hull is not proved
+/// and passes to the next rung.
+fn part_bounds(part: &Formula, m: &Model) -> HashMap<Atom, Ends> {
+    let (mut cons, mut ors) = (Vec::new(), Vec::new());
+    for g in part.conjuncts() {
+        match g {
+            Formula::Or(ds) => ors.push(ds),
+            _ => cons.extend(as_row(g)),
+        }
+    }
+    let (mut rows, other): (Vec<&Con>, Vec<&Con>) =
+        cons.iter().map(|c| &**c).partition(|c| is_difference(c));
+    let Some(first) = difference_ends(&rows, m) else {
+        return HashMap::new();
+    };
+    let mut added = Vec::new();
+    for c in other {
+        row_bounds(&c.lin, |a| first.get(a), &mut added);
+        if c.rel == Rel::Eq {
+            row_bounds(&c.lin.times(-1), |a| first.get(a), &mut added);
+        }
+    }
+    let mut seen = HashMap::new();
+    for ds in ors {
+        disjunction_bounds(ds, &first, &mut seen, &mut added);
+    }
+    if added.is_empty() {
+        return first;
+    }
+    // The point `m` may leave out an atom that no difference row names, and the shortest
+    // paths need its value at each atom of their rows; such an atom is in no other difference
+    // row, so its bounds are those added alone.
+    let (known, loose): (Vec<&Con>, Vec<&Con>) =
+        (added.iter()).partition(|r| r.lin.terms.keys().all(|a| m.get(a).is_some()));
+    rows.extend(known);
+    let mut out = difference_ends(&rows, m).unwrap_or(first);
+    for r in loose {
+        meet_bound(&mut out, r, &HashMap::new());
+    }
+    out
 }
 
 /// Whether `sym` takes arbitrarily large values (`dir` 1) or arbitrarily small ones (`dir`
@@ -8556,20 +8796,12 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
         }
     }
     // What each part gives its factors, found once for the part when its first factor is
-    // reached: `None` when it has no point; otherwise a point and, when its rows are difference
-    // constraints and bounds, the hulls of all its atoms from one shortest-path pass
-    // ([`difference_hulls`], O(m log n) for m rows over n atoms), which are those
-    // [`hull_from`] finds. Asking [`hull_from`] for each factor cost O(factors × part) on one
-    // part (C2-chain,
-    // `l01_38_presburger::ladder::products_whose_factors_one_chain_connects_scale`).
-    // Complexity tradeoff: a part with another row (a coefficient other than ±1, three atoms,
-    // a disjunction, an auxiliary definition such as a remainder's) still asks [`hull_from`]'s
-    // O(log d) questions of the whole part for each of its factors, O(factors × part); why:
-    // the integer hull of every atom of a general linear system at once would need integer
-    // projection onto each atom, an integer program of its own. Trigger: products whose
-    // factors one chain of such rows connects. COMPLEXITY.md row C2.
-    type Given = Option<(Model, Option<HashMap<Atom, IntervalSet>>)>;
-    let mut given: HashMap<usize, Given> = HashMap::new();
+    // reached: `None` when it has no point, and otherwise the bounds of all its atoms
+    // ([`part_bounds`], O(m log n) for m rows over n atoms). Asking [`hull_from`] for each
+    // factor cost O(factors × part) on one part (C2-chain,
+    // `l01_38_presburger::ladder::products_whose_factors_one_chain_connects_scale`, and
+    // C2-chain-general, `products_along_a_chain_with_a_general_row_scale`).
+    let mut given: HashMap<usize, Option<HashMap<Atom, Ends>>> = HashMap::new();
     let mut on: BTreeMap<Factor, Vec<Lin>> = BTreeMap::new();
     let factors: BTreeSet<Factor> = wanted
         .iter()
@@ -8585,39 +8817,21 @@ fn products(premises: &Relation, goal: &Relation) -> Result<Vec<Formula>, Refusa
             Some(&id) if consistent => Some(find(&mut parent, id)),
             _ => None,
         };
-        let mut asked = None;
-        let hull = match root {
-            None => None,
-            Some(root) => {
-                let part = &parts[&root];
-                let found = match given.entry(root) {
-                    Entry::Occupied(e) => e.into_mut(),
-                    Entry::Vacant(e) => e.insert(satisfiable_inner(part)?.map(|m| {
-                        let cons: Option<Vec<&Con>> = (part.conjuncts().into_iter())
-                            .map(|g| match g {
-                                Formula::Con(c) => Some(c),
-                                _ => None,
-                            })
-                            .collect();
-                        let all = cons.and_then(|cs| difference_hulls(&cs, &m));
-                        (m, all)
-                    })),
-                };
-                match &*found {
-                    None => None,
-                    Some((m, all)) => match all.as_ref().and_then(|all| all.get(&atom)) {
-                        Some(h) => Some(h),
-                        None => Some(&*asked.insert(hull_from(part, &atom, m)?)),
-                    },
+        if let Some(root) = root {
+            let part = &parts[&root];
+            let found = match given.entry(root) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    e.insert(satisfiable_inner(part)?.map(|m| part_bounds(part, &m)))
                 }
-            }
-        };
-        if let Some((lo, hi)) = hull.and_then(IntervalSet::bounds) {
-            if let End::Fin(l) = lo {
-                set.push(x.minus(&Lin::constant(l)));
-            }
-            if let End::Fin(h) = hi {
-                set.push(Lin::constant(h).minus(&x));
+            };
+            if let Some((lo, hi)) = found.as_ref().and_then(|b| b.get(&atom)) {
+                if let Some(l) = lo {
+                    set.push(x.minus(&Lin::constant(l.clone())));
+                }
+                if let Some(h) = hi {
+                    set.push(Lin::constant(h.clone()).minus(&x));
+                }
             }
         }
         set.sort();
@@ -9330,6 +9544,67 @@ pub(super) mod tests {
         .collect();
         assert!(difference_hulls(&[&two[0]], &m).is_none());
         assert!(difference_hulls(&[&three[0]], &m).is_none());
+    }
+
+    /// The bounds [`part_bounds`] gives each atom of a part contain the hull the solver finds
+    /// ([`hull_from`]), on random parts of up to 6 rows over 4 names with coefficients from -3
+    /// to 3 and up to three atoms a row, some with a disjunction of two conjunctions of such
+    /// rows; and they are the hull itself for many atoms, so the comparison is not empty.
+    #[test]
+    fn part_bounds_contain_the_hulls_the_solver_finds() {
+        let names = ["a", "b", "c", "d"];
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let row = |rng: &mut Rng| {
+            let terms: Vec<(&str, i128)> = (0..1 + rng.below(3))
+                .map(|_| {
+                    let k = 1 + rng.below(3) as i128;
+                    let k = if rng.below(2) == 0 { k } else { -k };
+                    (names[rng.below(4) as usize], k)
+                })
+                .collect();
+            let rel = if rng.below(5) == 0 { Rel::Eq } else { Rel::Ge };
+            Formula::Con(Con {
+                lin: lin(&terms, rng.below(13) as i128 - 6),
+                rel,
+            })
+        };
+        let (mut compared, mut same) = (0, 0);
+        for _ in 0..1500 {
+            let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
+            if rng.below(3) == 0 {
+                let side = |rng: &mut Rng| {
+                    let n = 1 + rng.below(2);
+                    Formula::and((0..n).map(|_| row(rng)).collect())
+                };
+                let (l, r) = (side(&mut rng), side(&mut rng));
+                parts.push(Formula::or(vec![l, r]));
+            }
+            let whole = Formula::and(parts);
+            let Ok(Some(model)) = satisfiable_inner(&whole) else {
+                continue;
+            };
+            let bounds = part_bounds(&whole, &model);
+            for a in whole.atoms() {
+                let Ok(hull) = hull_from(&whole, &a, &model) else {
+                    continue;
+                };
+                let end =
+                    |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
+                let found = bounds.get(&a).map_or(IntervalSet::top(), |(lo, hi)| {
+                    IntervalSet::range(end(lo, End::NegInf), end(hi, End::PosInf))
+                });
+                assert!(
+                    hull.is_subset(&found),
+                    "{whole} onto {a}: {hull} in {found}"
+                );
+                compared += 1;
+                same += usize::from(hull.hull() == found);
+            }
+        }
+        assert!(
+            compared > 1000 && same > compared / 4,
+            "{same} of {compared}"
+        );
     }
 
     /// Calls `f` with each order of `0..n`, by Heap's method.
