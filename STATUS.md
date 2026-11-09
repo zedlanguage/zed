@@ -1664,11 +1664,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | GROUP-refusal-share control: old per-member re-check on the new test (m=n Box members, ring of n): first runs allocated 63443106 and 3651796982 bytes at 128 and |
+| GROUP-refusal | impl attempt 1 | 2026-11-05 04:07 | GROUP-refusal-share done at 6156609c on wt/group-refusal; GROUP-refusal and REFUSE-group-site ready at 6156609c; 82 pieces 0 failed |
+| GROUP-refusal-share | running | 2026-11-09 05:04 |  |
 | REFUSE-group-site | impl attempt 1 | 2026-11-05 04:07 | ready 39d523eb on wt/group-refusal: refused check names the head group and lists its definitions; group_site 3 tests, control fails both pins |
-| SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | reproduced: 8m check with 100 rejections is 30.39e9 instructions, now and then 30.63e9; with getrandom fixed by LD_PRELOAD the outlier repeats exactly for a giv |
+| SCALE-casts-spread | impl attempt 1 | 2026-11-09 04:01 | ready: wt/scale-casts-spread 47061376 on b4e3e5e8; cause glibc tcache, run_tests.sh sets tcache_count=0, retry removed, spread 0.034% alone / 3.5% in group; cub |
 
-Merged into local main and not yet pushed: none.
+Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
+
 
 ## Open points
 
