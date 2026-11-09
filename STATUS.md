@@ -1724,7 +1724,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
 | MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | ready f7e39a3e on wt/if-shortcut-diff: differential tests, no difference; l01_39+s_01f 59 pieces 0 failed; clippy, fmt, docs (with preimage-ref) clean |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | B2 one-line edit rebuild of l01_39 binary: zedc-preimage 77/92 s, zed-kernel 243/212 s (19 crates) at load 19-32: whole-crate cgu=1 on large workspace crates re |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | baseline lto off one-line edit rebuild of l01_39 binary: zedc-preimage 16.5/17.7 s, zed-kernel 42.9/38.0 s, load 25-30 |
 | PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
 | PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | random test (4000 cases; 60000 once: 49692 points, 46249 leave atoms out, 0 fail holds) finds no soundness bug; atoms lost in absorb/repair (own 49990, other di |
 | PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | differential vs main's tighten/hull_side test by test: 1,078,090 + 25,046 calls identical, 60 differ (all hull_side refusals Growth/Shadows on main now exact bo |
@@ -1733,11 +1733,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
 | PRINT-is-pattern | impl attempt 1 | 2026-11-09 14:57 | started in /home/luke/Work/wt/is-pattern, stacked on wt/group-site-defs a411cea5 |
 | PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
+| Q43-spec | running | 2026-11-09 15:05 |  |
 | R2-frames-limit | impl attempt 1 | 2026-11-09 14:50 | started; worktrees wt/r2-frames and wt/r2-frames-spec made |
 | RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | reopened for IR op rename and sort(desc) shorthand |
 | STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | started in /home/luke/Work/wt/anchor-orders on 5fcc15f1, load 19.83 |
 | TEST-lazy-split | impl attempt 1 | 2026-11-09 13:40 | ready: wt/lazy-split dcdf84a6; lazy 1 piece of 44-47 s -> 16 pieces, slowest 11.7 s at load 40.6; l01_39 + s_01f with docs 68 pieces 0 failed (load 27.9-43.2);  |
-| TEST-runner-one-worktree | impl attempt 1 | 2026-11-09 14:39 | started on origin/main |
+| TEST-runner-one-worktree | impl attempt 1 | 2026-11-09 14:39 | ready 5f1b4307 on wt/runner-one-worktree: flock refusal per log dir; old script reproduced false failures (8 rc=0 lines, failed: 2); fixed: 12/12 + 5/5 concurre |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
