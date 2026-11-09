@@ -657,11 +657,20 @@ const TEST_PRIMES: [u64; 3] = [
     4_611_686_018_427_387_847,
 ];
 
-/// `b = 2^v * o` with `o` odd, and `o` modulo each of [`TEST_PRIMES`].
+/// The bound below the odd primes `q` by which [`OddPart::root`] rejects an index `p` dividing
+/// `q - 1` before it looks for a root wider than one word: if `o == r ^ p` then
+/// `o ^ ((q - 1) / p) == 1` modulo `q` unless `q` divides `o`, and a number that is no `p`-th
+/// power passes one such `q` with chance about `1 / p`, since the `p`-th powers are one in `p`
+/// of the units modulo `q`.
+const FILTER_BOUND: u64 = 1024;
+
+/// `b = 2^v * o` with `o` odd, `o` modulo each of [`TEST_PRIMES`], and, once a root wider than
+/// one word is looked for, `o` modulo each odd prime below [`FILTER_BOUND`].
 struct OddPart {
     v: u64,
     o: BigUint,
     residues: [u64; 3],
+    filter: std::cell::OnceCell<Vec<(u64, u64)>>,
 }
 
 impl OddPart {
@@ -669,7 +678,45 @@ impl OddPart {
         let v = b.trailing_zeros().expect("a base is at least 2");
         let o = b >> v;
         let residues = TEST_PRIMES.map(|q| u64::try_from(&o % q).expect("below q"));
-        OddPart { v, o, residues }
+        OddPart {
+            v,
+            o,
+            residues,
+            filter: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// `(q, o mod q)` for each odd prime `q` below [`FILTER_BOUND`], by one division of `o` per
+    /// product of these primes that fits in a word.
+    fn filter(&self) -> &[(u64, u64)] {
+        self.filter.get_or_init(|| {
+            let prime = odd_primes_below(FILTER_BOUND);
+            let qs: Vec<u64> = (1..FILTER_BOUND / 2)
+                .filter(|&i| prime[i as usize])
+                .map(|i| 2 * i + 1)
+                .collect();
+            let mut out = Vec::with_capacity(qs.len());
+            let mut start = 0;
+            while start < qs.len() {
+                let (mut end, mut m) = (start, 1u64);
+                while let Some(next) = qs.get(end).and_then(|&q| m.checked_mul(q)) {
+                    m = next;
+                    end += 1;
+                }
+                let om = u64::try_from(&self.o % m).expect("below m");
+                out.extend(qs[start..end].iter().map(|&q| (q, om % q)));
+                start = end;
+            }
+            out
+        })
+    }
+
+    /// Whether `o` is a `p`-th power residue modulo each prime of [`OddPart::filter`] that is 1
+    /// modulo `p` and does not divide `o`, as it is when `o` is a `p`-th power.
+    fn passes(&self, p: u64) -> bool {
+        self.filter().iter().all(|&(q, oq)| {
+            oq == 0 || !(q - 1).is_multiple_of(p) || pow_mod(oq, (q - 1) / p, q) == 1
+        })
     }
 
     /// The `r` with `r ^ p == 2^v * o`, for an odd prime `p`, when there is one. Such an `r`
@@ -686,7 +733,28 @@ impl OddPart {
             return Some(BigUint::from(1u32) << shift);
         }
         let n = self.o.bits();
-        let r = odd_root_mod_pow2(&self.o, p, n.div_ceil(p));
+        let s = n.div_ceil(p);
+        if s <= 64 {
+            // A root of at most 64 bits, as for every index above the bits over 64, is found
+            // and filtered in one word, with nothing allocated: the root modulo `2^64` cut to
+            // `s` bits is the one modulo `2^s`.
+            let low = self.o.iter_u64_digits().next().expect("o is odd");
+            let r = odd_root_mod_word(low, p) & (u64::MAX >> (64 - s));
+            let rb = u64::from(u64::BITS - r.leading_zeros());
+            if n <= p * (rb - 1) || n > p * rb {
+                return None;
+            }
+            let agree = TEST_PRIMES
+                .iter()
+                .zip(&self.residues)
+                .all(|(&q, &oq)| pow_mod(r % q, p, q) == oq);
+            let r = BigUint::from(r);
+            return (agree && pow_uint(&r, p) == self.o).then(|| r << shift);
+        }
+        if !self.passes(p) {
+            return None;
+        }
+        let r = odd_root_mod_pow2(&self.o, p, s);
         // r ^ p has more than p * (bits(r) - 1) bits and at most p * bits(r).
         let rb = r.bits();
         if n <= p * (rb - 1) || n > p * rb {
@@ -717,10 +785,13 @@ fn pow_mod(x: u64, mut e: u64, q: u64) -> u64 {
 /// The odd `x < 2^k` with `x ^ p == o` modulo `2^k`, for `o` odd, `p` an odd prime and
 /// `k >= 1`. Since `p` is odd, `x -> x ^ p` permutes the odd residues modulo `2^k`, so there is
 /// exactly one. Newton's method over the 2-adic integers finds it from `x = 1`, right modulo
-/// 2: `p * x ^ (p - 1)` is odd, so each step doubles the bits that are right. The cost is
-/// `O(M(k) log(p k))`, with `M(k)` that of a product of `k` bits.
+/// 2: `p * x ^ (p - 1)` is odd, so each step doubles the bits that are right. The inverse of
+/// that derivative is carried from step to step and refined by one Newton step of its own, so
+/// the cost is `O(M(k) log p)`, with `M(k)` that of a product of `k` bits.
 fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
     let mut x = BigUint::from(1u32);
+    // The inverse of an odd derivative, right modulo 2.
+    let mut z = BigUint::from(1u32);
     let mut j = 1;
     while j < k {
         j = (2 * j).min(k);
@@ -730,8 +801,42 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
         // x ^ p - o, and the derivative p * x ^ (p - 1), modulo 2^j.
         let f = (mul_uint(&y, &x) + &unit - (o & &mask)) & &mask;
         let d = (y * p) & &mask;
-        let step = mul_uint(&f, &inverse_mod_pow2(&d, j)) & &mask;
+        // `x` changed only above the bits that were right at the last step, so `z`, the
+        // inverse of the last derivative to half of those bits, is that of this one too; one
+        // step `z * (2 - d * z)` doubles them, past the `j - j / 2` bits the update reads.
+        z = mul_uint(&z, &((&unit + 2u32 - (mul_uint(&d, &z) & &mask)) & &mask)) & &mask;
+        let step = mul_uint(&f, &z) & &mask;
         x = (x + unit - step) & mask;
+    }
+    x
+}
+
+/// [`odd_root_mod_pow2`] in one word: the odd `x` with `x ^ p == o` modulo `2^64`, for `o` odd
+/// and `p` odd, by six Newton steps from `x = 1`, each doubling the bits that are right.
+fn odd_root_mod_word(o: u64, p: u64) -> u64 {
+    let pow = |mut b: u64, mut e: u64| {
+        let mut out = 1u64;
+        while e > 0 {
+            if e & 1 == 1 {
+                out = out.wrapping_mul(b);
+            }
+            b = b.wrapping_mul(b);
+            e >>= 1;
+        }
+        out
+    };
+    let mut x = 1u64;
+    for _ in 0..6 {
+        let y = pow(x, p - 1);
+        let f = y.wrapping_mul(x).wrapping_sub(o);
+        // The inverse of the odd derivative `p * x ^ (p - 1)`: `d` is its own inverse modulo
+        // 8, and each step `z * (2 - d * z)` doubles the bits that are right.
+        let d = y.wrapping_mul(p);
+        let mut z = d;
+        for _ in 0..5 {
+            z = z.wrapping_mul(2u64.wrapping_sub(d.wrapping_mul(z)));
+        }
+        x = x.wrapping_sub(f.wrapping_mul(z));
     }
     x
 }
@@ -746,21 +851,6 @@ fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
         }
     }
     out
-}
-
-/// The inverse of an odd `d` modulo `2^k`, by Newton's method: `z * (2 - d * z)` is right to
-/// twice the bits of `z`.
-fn inverse_mod_pow2(d: &BigUint, k: u64) -> BigUint {
-    let mut z = BigUint::from(1u32);
-    let mut j = 1;
-    while j < k {
-        j = (2 * j).min(k);
-        let unit = BigUint::from(1u32) << j;
-        let mask = &unit - 1u32;
-        let t = mul_uint(d, &z) & &mask;
-        z = mul_uint(&z, &((unit + 2u32 - t) & &mask)) & mask;
-    }
-    z
 }
 
 /// A coprime base of integers at least 2: integers at least 2, pairwise coprime, such that
@@ -820,8 +910,16 @@ fn exponents_over<'a>(
 /// The multiplicity `k` of `c >= 2` in `rest`, divided out of it: by `c`, `c ^ 2`, `c ^ 4`
 /// and so on while each divides, and then by the same powers in decreasing order, which take
 /// the binary digits of what is left. That is `O(log k)` divisions and squares, of at most
-/// twice the bits of `rest`, where dividing by `c` once per factor would make `k`.
+/// twice the bits of `rest`, where dividing by `c` once per factor would make `k`. For `c` a
+/// power of 2, `2^t`, `k` is the trailing zeros of `rest` over `t`, rounded down, taken out by
+/// one shift.
 fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
+    if c.count_ones() == 1 {
+        let t = c.bits() - 1;
+        let k = rest.trailing_zeros().expect("rest is at least 1") / t;
+        *rest >>= k * t;
+        return k;
+    }
     let mut pows: Vec<Cow<'_, BigUint>> = vec![Cow::Borrowed(c)];
     let mut k = 0u64;
     loop {
@@ -2711,6 +2809,62 @@ mod tests {
             least_root(BigUint::from(1u32) << 4099u32),
             (BigUint::from(2u32), BigUint::from(4099u32))
         );
+    }
+
+    #[test]
+    fn stripping_a_power_of_2_agrees_with_dividing_once_per_factor() {
+        for t in [1u32, 2, 3, 7, 64, 65, 200] {
+            let c = BigUint::from(1u32) << t;
+            for (z, odd) in [
+                (0u32, 1u32),
+                (1, 3),
+                (6, 5),
+                (64, 7),
+                (199, 1),
+                (1000, 9),
+                (1001, 1),
+            ] {
+                let mut rest = BigUint::from(odd) << z;
+                let (mut want, mut k) = (rest.clone(), 0u64);
+                while (&want % &c).is_zero() {
+                    want /= &c;
+                    k += 1;
+                }
+                assert_eq!(strip(&mut rest, &c), k, "t = {t}, z = {z}");
+                assert_eq!(rest, want, "t = {t}, z = {z}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_root_in_one_word_is_the_root_by_big_numbers() {
+        let mut x = 7u64;
+        for p in [3u64, 5, 7, 11, 13, 31, 61, 127, 509, 4093, 65_521] {
+            for _ in 0..200 {
+                x = x.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
+                let o = x | 1;
+                let word = odd_root_mod_word(o, p);
+                for k in [1u64, 2, 17, 63, 64] {
+                    let mask = u64::MAX >> (64 - k);
+                    let big = odd_root_mod_pow2(&BigUint::from(o), p, k);
+                    assert_eq!(BigUint::from(word & mask), big, "o = {o}, p = {p}, k = {k}");
+                    // The one odd root below 2^k.
+                    let m = BigUint::from(1u32) << k;
+                    assert!(big.bit(0) && big < m, "o = {o}, p = {p}, k = {k}");
+                    assert_eq!(big.modpow(&BigUint::from(p), &m), BigUint::from(o) % &m);
+                }
+            }
+        }
+        // Wider roots, by the same test.
+        for (p, k) in [(3u64, 65u64), (3, 1000), (5, 4097), (31, 300), (509, 129)] {
+            for seed in 0..20u32 {
+                let o = (BigUint::from(3u32).pow(2000 + seed) << 1u32) + 1u32;
+                let r = odd_root_mod_pow2(&o, p, k);
+                let m = BigUint::from(1u32) << k;
+                assert!(r.bit(0) && r < m, "p = {p}, k = {k}");
+                assert_eq!(r.modpow(&BigUint::from(p), &m), &o % &m, "p = {p}, k = {k}");
+            }
+        }
     }
 
     #[test]

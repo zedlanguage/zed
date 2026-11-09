@@ -214,7 +214,7 @@ Confirmed: `OnceLock` or `OnceCell`, 27 matches. `Rec` (`zed-kernel/types.rs:142
 `body: OnceLock<Type>` and `make: Box<dyn Fn() -> Type>`, computes a recursive type's parts on
 first use (`Type::p`, line 392), and ties a cycle through closures. `Group::instance`
 (`types/rec.rs:296`), `Cones::free` (`zedc/elab.rs:93`), `Program::main` (`zedc/run.rs:49`),
-`Shown` (types.rs:118) caches in place inside a shared value; `Text` did the same until WRITE-prefix-scale removed its cache. Since T14-rope the native runtime holds its strings as the same `Text` (`zed-rt/src/heap.rs`, `Obj::Str`); `zed-rt`'s own `Rope`, with a second `OnceLock`, is gone.
+`Shown` (types.rs:118) caches in place inside a shared value; `Text` did the same until WRITE-prefix-scale removed its cache. Since T14-rope the native runtime holds its strings as the same `Text` (`zed-rt/src/heap.rs`, `Obj::Str`); `zed-rt`'s own `Rope`, with a second `OnceLock`, is gone. `OddPart::filter` (`zedc-int/src/int.rs`, SCALE-fix-wide) takes the residues of a base modulo the primes below 1024 in a `OnceCell` the first time a root wider than one word is looked for; in Zed the loop over indices computes them at the first such index and carries them along.
 
 Zed values are immutable with no cell, and a function field re-evaluates on each call. Cyclic
 data lives in two sanctioned forms, arenas or regions and id-indexed graphs `Id ->? Node`
