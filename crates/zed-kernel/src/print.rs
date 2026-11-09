@@ -8,7 +8,9 @@
 //! form is whitespace. Binary primitives are written infix and always parenthesized. Negation,
 //! `!`, an index and an atom are written as a program writes them (`-x`, `!x`, `t[0]`, `f[k]`,
 //! `#err(code: 3)`), their operands parenthesized wherever sec:grammar would read the text
-//! otherwise, so the text reads back as the same term.
+//! otherwise, so the text reads back as the same term. A part of the types in its `is` tests
+//! written more than once is declared once, on a line of its own before the term, as a type
+//! printed alone is (module `types::defs`).
 //!
 //! A term is laid out as a sequence of tokens, not a tree, and each pass over it (laying out,
 //! writing, measuring, breaking) is a loop with a stack of its own, so that a term of any depth
@@ -23,6 +25,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
+use crate::types::defs;
 use crate::value::Value;
 
 /// How a name is written: as it is (`None`), or through the function a message gives
@@ -31,9 +34,10 @@ type Names = Option<fn(&str) -> &str>;
 
 /// `t` broken into lines of at most `width` columns where its parts allow.
 pub fn pretty(t: &Term, width: usize) -> String {
+    let local = defs::local();
     let mut out = String::new();
     Doc::of(Piece::Term(t), None).render(width, &mut out);
-    out
+    alone(local, out)
 }
 
 /// `t` on one line as the program wrote it, for a message: each name a variable, a binder or
@@ -43,22 +47,40 @@ pub fn pretty(t: &Term, width: usize) -> String {
 /// the `if` itself reads the operator, which means the same. Otherwise the text is that of
 /// `Display`, and costs the same: linear in the text.
 pub fn written(t: &Term, name: fn(&str) -> &str) -> String {
+    let local = defs::local();
     let mut out = String::new();
     Doc::of(Piece::Term(t), Some(name))
         .write_flat(&mut out)
         .expect("writing to a string does not fail");
-    out
+    alone(local, out)
+}
+
+/// `text`, a term or pattern written while `local` collected the definitions of the types in
+/// its `is` tests, finished as a type printed alone is: each part written more than once
+/// declared on a line of its own before the text (module `defs`). With `local` off, a message
+/// around the text lays its definitions out, and the text is as written.
+fn alone(local: Option<defs::Collecting>, text: String) -> String {
+    match local {
+        Some(_) => defs::plain(&text),
+        None => text,
+    }
 }
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Doc::of(Piece::Term(self), None).write_flat(f)
+        let local = defs::local();
+        let mut out = String::new();
+        Doc::of(Piece::Term(self), None).write_flat(&mut out)?;
+        f.write_str(&alone(local, out))
     }
 }
 
 impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Doc::of(Piece::Pattern(self), None).write_flat(f)
+        let local = defs::local();
+        let mut out = String::new();
+        Doc::of(Piece::Pattern(self), None).write_flat(&mut out)?;
+        f.write_str(&alone(local, out))
     }
 }
 

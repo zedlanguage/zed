@@ -386,16 +386,18 @@ fn nested_body() -> Expr {
 ///
 /// - `L(int | #x)` was `L((| int #x))`
 /// - `L(int ->? int)` was `L((->? int int))`
-/// - `type T1 = int | #x; (T1, T1)` was `(tuple (| int #x) (| int #x))`
-/// - `type T1 = int | #x; #c(int, _) & #c(T1, L(T1))` was
+/// - `(T1, T1)` with `type T1 = int | #x;` was `(tuple (| int #x) (| int #x))`
+/// - `#c(int, _) & #c(T1, L(T1))` with the same `T1` was
 ///   `(#c (& (tuple (| int #x) L((| int #x))) (tuple int _)))`
 /// - `#w() | #w(int, P(int))` was `(#w (| (tuple) (tuple int P(int))))`
 /// - `#c(int, _) & #c(int, M(int))` was `(#c (& (tuple int M(int)) (tuple int _)))`
 /// - `Q(int | #x)` was `Q((| int #x))`
-/// - `type T1 = int | #x; #c(int, _) & #c(T1, (T1, Q(T1)))` was
+/// - `#c(int, _) & #c(T1, (T1, Q(T1)))` with the same `T1` was
 ///   `(#c (& (tuple (| int #x) ((| int #x), Q((| int #x)))) (tuple int _)))`
 ///
-/// `int | (int ->? int)`, `M(int)` and `P(int)` were written so before too. Each text parses as
+/// `int | (int ->? int)`, `M(int)` and `P(int)` were written so before too. `T1` is declared on
+/// a line of its own under the sentence, after a line that says what it stands for, as in a
+/// checker's message (DESIGN sec:diagnostics). Each text parses as
 /// a type and each definition as one; that the printer's text reads back as the same type is
 /// tested at the printer (l01_22 `surface`).
 #[test]
@@ -407,8 +409,8 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
     let p = instance("P", seq_body(), Type::int());
     let q = instance("Q", nested_body(), int_or_x.clone());
     let c_int = Type::atom_with("c", &Type::tuple(vec![Type::int(), Type::top()]));
-    let t1 = "type T1 = int | #x; ";
-    // Each type, the definitions placed first, its text, and whether the text stands
+    let t1 = "type T1 = int | #x;";
+    // Each type, the definitions declared under the sentence, its text, and whether the text stands
     // unparenthesized on the left of `\`.
     for (t, defs, text, primary) in [
         (l.clone(), "", "L(int | #x)", true),
@@ -441,22 +443,39 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
         let message = refusal(
             &["N"],
             &[],
-            vec![diff(Expr::Type(t), atom("b", vec![r(0)]))],
+            vec![diff(Expr::Type(t.clone()), atom("b", vec![r(0)]))],
         );
         let left = match primary {
             true => text.to_string(),
             false => format!("({text})"),
         };
         assert!(
-            message.contains(&format!("in `{defs}{left} \\ #b(N)`")),
+            message.contains(&format!("in `{left} \\ #b(N)`")),
+            "{text}: {message}"
+        );
+        let under = match defs.is_empty() {
+            true => String::new(),
+            false => format!("\n  T1 stands for a part written more than once:\n    {defs}"),
+        };
+        assert!(
+            message.ends_with(&under)
+                && message.matches("stands for").count() == usize::from(!defs.is_empty()),
             "{text}: {message}"
         );
         let tokens = lex_fence(text).unwrap();
         parse(text, &tokens, "Type", TOP).unwrap_or_else(|e| panic!("{text}: {e:?}"));
         if !defs.is_empty() {
-            let defs = defs.trim_end();
             let tokens = lex_fence(defs).unwrap();
             parse(defs, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{defs}: {e:?}"));
+        }
+        // A text with declarations that names no group reads back, after them, as the type.
+        // (A function type reads back as the checker's own function type, not as the kernel's
+        // set, so `int | (int ->? int)` is left to l01_22 `kinds`.)
+        if !defs.is_empty() && !text.contains(['L', 'M', 'P', 'Q']) {
+            let back = zedc::check::read::parse_type(&format!("{defs}\n{text}"))
+                .unwrap_or_else(|e| panic!("{text}: {e}"));
+            let t = zedc::check::ty::Ty::set(t);
+            assert!(back.subtype(&t) && t.subtype(&back), "{text}");
         }
     }
 }

@@ -47,7 +47,7 @@ pub mod walk;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -644,25 +644,7 @@ fn lay_out(message: &mut String, notes: &mut [Note]) {
             n.text = n.text.replace(DECLARE, if code { &declare } else { "" });
         }
     }
-    let Some(((last, _), rest)) = lifted.split_last() else {
-        return;
-    };
-    let names: Vec<&str> = rest.iter().map(|(n, _)| n.as_str()).collect();
-    match names.is_empty() {
-        true => write!(
-            message,
-            "\n  {last} stands for a part written more than once:"
-        ),
-        false => write!(
-            message,
-            "\n  {} and {last} stand for parts written more than once:",
-            names.join(", ")
-        ),
-    }
-    .expect("a String takes any text");
-    for (name, body) in &lifted {
-        write!(message, "\n    type {name} = {body};").expect("a String takes any text");
-    }
+    defs::under(message, &lifted);
 }
 
 /// A use that removed carriers from a class, kept as data until a reported rejection lists

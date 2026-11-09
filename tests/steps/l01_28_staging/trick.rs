@@ -191,3 +191,34 @@ fn the_reason_writes_the_domain_in_type_syntax() {
         Choice::Keep("the domain `int \\ 0` is not known to be finite".into())
     );
 }
+
+/// Item PRINT-group-site-defs: a part the domain writes twice is named, and declared after
+/// the sentence as a checker's message declares it, a line each, as a user writes it. The
+/// declarations and the type in the sentence read back as the domain. Before, the definition
+/// stood inside the backticks: `type T1 = int | #x; (T1, T1)`.
+#[test]
+fn a_part_the_domain_writes_twice_is_declared_after_the_reason() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    use zedc::lex::lex_fence;
+    use zedc::parse::{TOP, parse};
+    let int_or_x = &Type::int() | &Type::atom("x");
+    let t = Type::tuple(vec![int_or_x.clone(), int_or_x]);
+    let Choice::Keep(why) = trick(&Domain::Type(t.clone()), &ints(&[3])) else {
+        panic!("an infinite domain is kept");
+    };
+    assert_eq!(
+        why,
+        "the domain `(T1, T1)` is not known to be finite\n  \
+         T1 stands for a part written more than once:\n    \
+         type T1 = int | #x;"
+    );
+    let root = why.split('`').nth(1).expect("the domain in backticks");
+    let decls: Vec<&str> = (why.lines().skip(2)).map(str::trim).collect();
+    let unit = format!("{}\ntype Printed = {root};", decls.join("\n"));
+    let tokens = lex_fence(&unit).unwrap_or_else(|e| panic!("{unit}: {e:?}"));
+    parse(&unit, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{unit}: {e:?}"));
+    let back = parse_type(&format!("{}\n{root}", decls.join("\n"))).expect("reads back");
+    let t = Ty::set(t);
+    assert!(back.subtype(&t) && t.subtype(&back), "{why}");
+}

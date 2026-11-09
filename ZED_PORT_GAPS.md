@@ -3058,6 +3058,13 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | A `thread_local!` table of the definitions printed while a checker runs, turned on and restored by a drop guard (`Collecting`), so that every type a message writes, through `Display` and other printers that take no extra argument, shares one table | `defs::collect`, `defs::active`, `add`, `reserve`, `fill`, `lift`; `Printer::render`, `Printer::collect`; `check_with`, `operator` | Mutation, global state | The printer takes the table as a parameter (a state receiver) and the checker passes its own; the guard goes away |
 | References written into message text as Unicode noncharacters (`U+FDD5 k U+FDD6`, `U+FDD7` for a definition not placed yet, `U+FDD8` where a repair asks for the declarations), found and replaced by splitting the text | `defs::reference`, `refs`, `rename`, `plain`, `holds`; `DECLARE` and `lay_out` in `check/mod.rs` | None (strings) | A message held as a list of text parts and references, not one string, so no character is reserved |
 
+## Entries from PRINT-group-site-defs (`crates/zed-kernel/src/types/print/defs.rs`, `print.rs`, `empty/refused.rs`, `rec/group.rs`, `zedc-stage/src/stage.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| An `Option<Collecting>` held in a local binding only for its drop, which ends the thread's table when the printer returns, read once with `is_some` to know whether this printer lifts its own definitions | `defs::local`; `print.rs` `pretty`, `written`, `alone`, the term and pattern `Display`; `refusal_site`; `Group::new`; `stage.rs` `trick` | Mutation, global state (as MSG-type-defs-layout) | The table passed as a parameter: a printer called with no table makes one, prints into it and lifts it; one called with a table prints into it and returns the references |
+| `impl fmt::Write` written through by `writeln!`, whose `fmt::Result` a `String` never fails, with `expect` at the sites that write to a `String` | `defs::declare`, `under`, `plain`; `zedc-types` `ty.rs` `write_parts` | None (an error that cannot occur) | A text builder whose append returns nothing |
+
 ## Entries from GROUP-search-hang and GROUP-closure-order (`crates/zed-kernel/src/types/empty.rs`, `empty/refused.rs`)
 
 | Rust construct | Sites | Gap | At the port |

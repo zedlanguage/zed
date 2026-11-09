@@ -400,7 +400,7 @@ fn a_type_used_twice_is_named_once() {
     let s = round_trip(&shared(3));
     assert_eq!(
         s.to_string(),
-        "type T1 = (0, 0); type T2 = (T1, T1); (T2, T2)"
+        "type T1 = (0, 0);\ntype T2 = (T1, T1);\n(T2, T2)"
     );
     for n in [1, 2, 6] {
         round_trip(&shared(n));
@@ -429,10 +429,10 @@ fn list() -> Type {
 fn a_list_type_prints_as_a_definition_that_names_itself() {
     let s = list().surface();
     assert!(s.exact, "{s}");
-    assert_eq!(s.to_string(), "type T1 = #cons(int, T1) | #nil; T1");
+    assert_eq!(s.to_string(), "type T1 = #cons(int, T1) | #nil;\nT1");
     accepts("type T1 = #cons(int, T1) | #nil;", "Unit").unwrap();
     let s = tuple(&[list(), lit(1)]).surface();
-    assert_eq!(s.to_string(), "type T1 = #cons(int, T1) | #nil; (T1, 1)");
+    assert_eq!(s.to_string(), "type T1 = #cons(int, T1) | #nil;\n(T1, 1)");
 }
 
 #[test]
@@ -559,14 +559,14 @@ fn a_type_written_by_name_puts_its_definitions_first() {
         (
             tuple(&[int_or_x.clone(), int_or_x.clone()]),
             TextPlace::Any,
-            "type T1 = int | #x; (T1, T1)",
+            "type T1 = int | #x;\n(T1, T1)",
         ),
         // A part shared at each of three levels is defined once per level. Written out at
         // each use, it was `(((0, 0), (0, 0)), ((0, 0), (0, 0)))`: 2^k leaves for k levels.
         (
             shared(3),
             TextPlace::Any,
-            "type T1 = (0, 0); type T2 = (T1, T1); (T2, T2)",
+            "type T1 = (0, 0);\ntype T2 = (T1, T1);\n(T2, T2)",
         ),
         (partial.clone(), TextPlace::Any, "int ->? int"),
         (partial.clone(), TextPlace::Union, "(int ->? int)"),
@@ -607,7 +607,7 @@ fn a_type_written_by_name_puts_its_definitions_first() {
         (list_of(inner.clone()), "L(L(int | (int ->? int)))"),
         (
             tuple(&[inner.clone(), inner]),
-            "type T1 = L(int | (int ->? int)); (T1, T1)",
+            "type T1 = L(int | (int ->? int));\n(T1, T1)",
         ),
     ] {
         let s = t.surface_by_name(TextPlace::Any);

@@ -265,7 +265,7 @@ fn the_checker_says_when_a_check_was_refused() {
         format!(
             "; this is not proved wrong: the checker could not decide whether it fits, because {}\n  \
              the check reads the recursive type `L`, defined by:\n    \
-             type L = #nil | #cons(int, L)",
+             type L = #nil | #cons(int, L);",
             Refusal::Residues.message()
         )
     );

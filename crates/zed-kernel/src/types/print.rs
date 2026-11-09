@@ -1428,7 +1428,7 @@ mod tests {
     fn a_shared_part_is_a_reference_while_collecting_and_reads_alone_as_before() {
         let t = Type::tuple(vec![defs_abc(), defs_abc(), defs_abc()]);
         let alone = t.surface().to_string();
-        assert_eq!(alone, "type T1 = #a | #b | #c; (T1, T1, T1)");
+        assert_eq!(alone, "type T1 = #a | #b | #c;\n(T1, T1, T1)");
         let _on = collect();
         let s = t.surface();
         assert!(s.defs.is_empty());

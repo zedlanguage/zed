@@ -153,7 +153,7 @@ fn a_key_in_the_permission_alone_may_be_not_found() {
     );
     assert_eq!(
         lookup("int .. int | String -> bool", "int | String"),
-        "type T1 = int | String; (m: int .. T1 -> bool, k: T1) -> bool | #notFound"
+        "type T1 = int | String;\n(m: int .. T1 -> bool, k: T1) -> bool | #notFound"
     );
     assert_eq!(
         sig("f(m: #a .. #a | #b -> int) = m[#b];", "f"),
@@ -223,7 +223,7 @@ fn a_bounded_map_reads_back_in_every_position() {
     // PRINT-fmt-audit gives `int | String`, used twice in it, a definition placed first. Before,
     // the first was `(m: (int .. int | String -> bool, int)) -> (int .. int | String -> bool,
     // int)`.
-    let t1 = "type T1 = int | String; ";
+    let t1 = "type T1 = int | String;\n";
     for (m, shown, signature) in [
         (
             "(int .. int | String -> bool, int)",
@@ -293,7 +293,7 @@ fn checking_and_printing_many_and_deep_bounded_maps_scales() {
     );
     assert_eq!(
         sig(&bounded(2), "g"),
-        "type T1 = int | String; (m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
+        "type T1 = int | String;\n(m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
     );
     let units: std::collections::BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
         .into_iter()

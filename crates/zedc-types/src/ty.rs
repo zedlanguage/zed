@@ -7842,8 +7842,8 @@ impl<'a> Morphism<'a> {
 ///
 /// The kernel sets in the text are written last, all together by name
 /// ([`KType::surfaces_by_name`]), each where it stands: a part used more than once among them
-/// gets a definition `type Tk = …;`, written before the whole text, so the text stays linear in
-/// the sets' graph.
+/// gets a definition `type Tk = …;`, declared on a line of its own before the whole text
+/// ([`zed_kernel::types::defs::declare`]), so the text stays linear in the sets' graph.
 fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
     let base = out.len();
     let mut kernel = Kernel::default();
@@ -7875,11 +7875,7 @@ fn write_parts<'a>(start: Print<'a>, out: &mut String, scope: &mut Scope) {
     let texts = KType::surfaces_by_name(&kernel.sets);
     let rest = out.split_off(base);
     for (name, body) in &texts.defs {
-        out.push_str("type ");
-        out.push_str(name);
-        out.push_str(" = ");
-        out.push_str(body);
-        out.push_str("; ");
+        zed_kernel::types::defs::declare(out, name, body).expect("a String takes any text");
     }
     let mut from = 0;
     for (at, text) in kernel.at.iter().zip(&texts.roots) {

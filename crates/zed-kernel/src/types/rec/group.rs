@@ -10,7 +10,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
 use crate::types::bdd::KeyHasher;
-use crate::types::{Type, bytes, mix};
+use crate::types::{Type, bytes, defs, mix};
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
 /// ([`digest`]). `Def` equality picks the entry, so a digest only narrows the search: equal
@@ -165,9 +165,20 @@ impl Group {
             order,
             canon: OnceLock::new(),
         }));
-        g.regular()?;
-        g.contractive()?;
-        g.monotone()?;
+        {
+            // A part a rejection writes more than once is declared after its sentence, unless
+            // a message around it lays it out (module `defs`).
+            let local = defs::local();
+            let checked = (g.regular())
+                .and_then(|()| g.contractive())
+                .and_then(|()| g.monotone());
+            if let Err(mut r) = checked {
+                if local.is_some() {
+                    defs::finish(&mut r.message);
+                }
+                return Err(r);
+            }
+        }
         // The groups looked at are dropped after the lock is released, as `g` is when an equal
         // one is found.
         let mut seen = Vec::new();

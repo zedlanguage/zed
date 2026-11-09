@@ -128,7 +128,7 @@ fn a_refused_check_names_the_head_of_the_group_it_reads() {
         format!(
             "{FORK}\n  \
              the check reads the recursive type `Ones`, defined by:\n    \
-             type Ones = #nil | #cons(1, Ones)"
+             type Ones = #nil | #cons(1, Ones);"
         )
     );
 }
@@ -143,10 +143,10 @@ fn a_refused_check_lists_every_definition_of_the_head_group() {
         format!(
             "{FORK}\n  \
              the check reads the recursive type `Odd0`, defined by:\n    \
-             type Odd0 = #cons(int, Even1)\n    \
-             type Even0 = #nil | #cons(int, Odd0)\n    \
-             type Even1 = #nil | #cons(int, Odd1)\n    \
-             type Odd1 = #cons(int, Even0)"
+             type Odd0 = #cons(int, Even1);\n    \
+             type Even0 = #nil | #cons(int, Odd0);\n    \
+             type Even1 = #nil | #cons(int, Odd1);\n    \
+             type Odd1 = #cons(int, Even0);"
         )
     );
 }
@@ -169,4 +169,29 @@ fn naming_the_head_group_scales() {
             std::hint::black_box(text);
         },
     );
+}
+
+/// Item PRINT-group-site-defs: the definitions a refusal lists are declarations a user could
+/// write, a line each: they read as the top level of a file, and each name they use is one
+/// of them. That they read back as the same types waits for type declarations in zedc (L2.1),
+/// which refuses them today, and the kernel has no reader of its own.
+#[test]
+fn the_listed_definitions_read_as_declarations() {
+    Type::forget_emptiness();
+    let (a, b) = fork_empty(2);
+    let text = refused(&a, &b);
+    let (_, listed) = text.split_once("defined by:\n").expect("the definitions");
+    let decls: Vec<&str> = listed.lines().map(str::trim).collect();
+    let unit = decls.join("\n");
+    let tokens = zedc::lex::lex_fence(&unit).unwrap_or_else(|e| panic!("{unit}: {e:?}"));
+    zedc::parse::parse(&unit, &tokens, "Unit", zedc::parse::TOP)
+        .unwrap_or_else(|e| panic!("{unit}: {e:?}"));
+    let declared: Vec<&str> = (decls.iter())
+        .map(|d| d["type ".len()..].split_once(' ').expect("a name").0)
+        .collect();
+    assert_eq!(declared, ["Odd0", "Even0", "Even1", "Odd1"]);
+    for word in unit.split(|c: char| !c.is_alphanumeric()) {
+        let named = word.starts_with(['E', 'O']);
+        assert!(!named || declared.contains(&word), "{word} in {unit}");
+    }
 }

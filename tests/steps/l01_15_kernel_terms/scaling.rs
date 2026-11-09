@@ -206,3 +206,29 @@ fn negations_and_indices_print_in_linear_time() {
     assert_eq!(prefix_shape(0, 3).to_string(), "-(-(-x))");
     assert_eq!(prefix_shape(1, 3).to_string(), "x[0][0][0]");
 }
+
+/// Item PRINT-group-site-defs: a term whose n type tests each write a part twice,
+/// `(is (int | #x{k}, int | #x{k}))`, is written with n declarations before it, in time
+/// linear in the term (COMPLEXITY.md K92).
+#[test]
+fn a_term_declaring_its_shared_parts_scales() {
+    use zed_kernel::Pattern;
+    use zed_kernel::types::Type;
+    scaling::check_order(
+        "a term with n type tests that each write a part twice",
+        100,
+        1,
+        |n| {
+            let arms = (0..n)
+                .map(|k| {
+                    let part = &Type::int() | &Type::atom(&format!("x{k}"));
+                    let pair = Type::tuple(vec![part.clone(), part]);
+                    (Pattern::Is(pair), zed_kernel::term::build::lit(k as i64))
+                })
+                .collect();
+            let text = Term::Match(Shared::new(var("v")), arms).to_string();
+            assert_eq!(text.matches("type T").count(), n);
+            std::hint::black_box(text);
+        },
+    );
+}

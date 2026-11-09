@@ -14,7 +14,7 @@ use std::sync::{Arc, PoisonError};
 
 use super::super::bes::{Answer, Bes, Kind, decide};
 use super::super::rec::{self, Env, Group, Recheck, Rechecked, Why};
-use super::super::{GroupSite, Node, Refusal, Type, Verdict};
+use super::super::{GroupSite, Node, Refusal, Type, Verdict, defs};
 use super::settled;
 
 // `Why` and `Recheck` are defined in module `rec`, with the group's instance that keeps them, and
@@ -157,7 +157,30 @@ impl Type {
     /// `self` is or reads, with its group's definitions. `None` when `self` reads no such member. The members are met in a walk of the parts of `self` from
     /// the top, a function of `self` alone. Time linear in the parts walked, and for
     /// `Refusal::Group` in the group, which is built again at most twice to confirm a repair.
+    ///
+    /// Each definition is written as a user declares it, `type name = body;`. Outside a
+    /// checker's message, a part written more than once among them is declared once more
+    /// after them, as `type T1 = …;`, and named by `T1` where it stands; inside one, the
+    /// message around the site lays it out (module `defs`). Time linear in the texts.
     pub fn refusal_site(&self, cause: Refusal) -> Option<GroupSite> {
+        let local = defs::local();
+        let mut site = self.site(cause)?;
+        if local.is_some() {
+            let mut texts: Vec<&mut String> =
+                site.defs.iter_mut().chain(&mut site.detail).collect();
+            let shared = defs::lift(&mut texts, &|_| false);
+            (site.defs).extend(
+                shared
+                    .iter()
+                    .map(|(name, body)| defs::Declaration(name, body).to_string()),
+            );
+        }
+        Some(site)
+    }
+
+    /// [`Type::refusal_site`], with each part written more than once left to the printer's
+    /// table.
+    fn site(&self, cause: Refusal) -> Option<GroupSite> {
         let group = cause == Refusal::Group;
         let m = first_member(self, |t| {
             if group {
@@ -179,7 +202,10 @@ impl Type {
             part.insert(0, i);
             GroupSite {
                 head: defs[i].name.clone(),
-                defs: part.iter().map(|&j| written(env.group(), j)).collect(),
+                defs: part
+                    .iter()
+                    .map(|&j| format!("{};", written(env.group(), j)))
+                    .collect(),
                 detail: None,
             }
         })
@@ -425,7 +451,10 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
     };
     GroupSite {
         head: defs[i].name.clone(),
-        defs: part.iter().map(|&j| written(group, j)).collect(),
+        defs: part
+            .iter()
+            .map(|&j| format!("{};", written(group, j)))
+            .collect(),
         detail: Some(text),
     }
 }

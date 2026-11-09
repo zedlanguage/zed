@@ -3,7 +3,8 @@
 //! define goes into one table for the thread, merged with an equal one already there, and each
 //! use writes a reference to it. A message's texts are finished by [`lift`], which names the
 //! definitions they reach `T1`, `T2`, … in one numbering, and gives them back to be written once,
-//! outside the sentence; [`plain`] finishes one text alone, as `type T1 = …; T1`.
+//! outside the sentence ([`under`]); [`plain`] finishes one text alone, each definition
+//! declared on a line of its own before it ([`declare`]), as `type T1 = …;` and then `T1`.
 //!
 //! A reference is `\u{FDD5}k\u{FDD6}`, `k` the definition's place in the table: Unicode
 //! noncharacters, which no user text in a message holds. The lexer refuses them outside a
@@ -14,6 +15,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Write as _};
 
 use super::names::{Names, fresh_name};
 
@@ -184,8 +186,25 @@ pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(Str
         .collect()
 }
 
-/// `text` alone, finished: its definitions written before it, `type T1 = …; T1`, as a type
-/// printed outside a message is.
+/// Writes the definition of `name` as a user declares it at the top level, `type T1 = …;`, and
+/// ends the line: a type printed alone has its definitions on lines of their own before it
+/// (DESIGN sec:diagnostics, "Types in a message").
+pub fn declare(out: &mut impl fmt::Write, name: &str, body: &str) -> fmt::Result {
+    writeln!(out, "{}", Declaration(name, body))
+}
+
+/// The definition of a name, given with its body, as a user declares it at the top level:
+/// `type T1 = …;`.
+pub struct Declaration<'a>(pub &'a str, pub &'a str);
+
+impl fmt::Display for Declaration<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "type {} = {};", self.0, self.1)
+    }
+}
+
+/// `text` alone, finished: each of its definitions declared on a line of its own
+/// ([`declare`]), then the text, as a type printed outside a message is.
 pub fn plain(text: &str) -> String {
     if !text.contains(REF) {
         return text.into();
@@ -193,10 +212,49 @@ pub fn plain(text: &str) -> String {
     let mut root = text.to_string();
     let mut out = String::new();
     for (name, body) in lift(&mut [&mut root], &|_| false) {
-        out.push_str(&format!("type {name} = {body}; "));
+        declare(&mut out, &name, &body).expect("a String takes any text");
     }
     out.push_str(&root);
     out
+}
+
+/// Writes `defs`, given by [`lift`], after `message`: a line that says what the names stand
+/// for, then each definition on a line of its own, as a user declares it. Nothing when `defs`
+/// is empty.
+pub fn under(message: &mut String, defs: &[(String, String)]) {
+    let Some(((last, _), rest)) = defs.split_last() else {
+        return;
+    };
+    let names: Vec<&str> = rest.iter().map(|(n, _)| n.as_str()).collect();
+    match names.is_empty() {
+        true => write!(
+            message,
+            "\n  {last} stands for a part written more than once:"
+        ),
+        false => write!(
+            message,
+            "\n  {} and {last} stand for parts written more than once:",
+            names.join(", ")
+        ),
+    }
+    .expect("a String takes any text");
+    for (name, body) in defs {
+        write!(message, "\n    {}", Declaration(name, body)).expect("a String takes any text");
+    }
+}
+
+/// Finishes a message made with [`collect`] on outside a checker: [`lift`] names the
+/// definitions it reaches, and [`under`] writes them after it.
+pub fn finish(message: &mut String) {
+    let defs = lift(&mut [message], &|_| false);
+    under(message, &defs);
+}
+
+/// Turns [`collect`] on for a printer that writes a message of its own, unless it is on
+/// already: then the definitions go to the table of the message around it, which lays them
+/// out.
+pub fn local() -> Option<Collecting> {
+    (!active()).then(collect)
 }
 
 /// Whether `text` holds a reference to a definition.

@@ -446,8 +446,8 @@ fn kid_place(s: &Shape, i: usize) -> Place {
 }
 
 /// In the surface syntax, the types the expression holds are written together by name
-/// ([`Type::surfaces_by_name`]): a part used more than once among them gets a definition, written
-/// before the whole expression, so the text is linear in the expression and the types' graph.
+/// ([`Type::surfaces_by_name`]): a part used more than once among them gets a definition, declared
+/// on a line of its own before the whole expression, so the text is linear in the expression and the types' graph.
 impl fmt::Display for Show<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.surface {
@@ -460,7 +460,7 @@ impl fmt::Display for Show<'_> {
         });
         let texts = Type::surfaces_by_name(&leaves);
         for (name, body) in &texts.defs {
-            write!(f, "type {name} = {body}; ")?;
+            crate::types::defs::declare(f, name, body)?;
         }
         let mut roots = texts.roots.into_iter();
         self.rope_with(&mut |_, _| {

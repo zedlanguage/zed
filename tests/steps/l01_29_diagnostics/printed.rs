@@ -245,8 +245,8 @@ fn a_merged_failure_reads_back() {
     // Before, it was written at each use: `#errs(#invalid | #notFound ->? #invalid | #notFound)`.
     // An atom with a payload is written by the compiler, not the kernel, so it gets none.
     for (name, def, want) in [
-        ("f", "type T1 = #invalid | #notFound; ", "#errs(T1 ->? T1)"),
-        ("g", "type T1 = #a | #b | #c; ", "#errs(T1 ->? T1)"),
+        ("f", "type T1 = #invalid | #notFound;\n", "#errs(T1 ->? T1)"),
+        ("g", "type T1 = #a | #b | #c;\n", "#errs(T1 ->? T1)"),
         ("h", "", "#errs(#syntaxError(int) ->? #syntaxError(int))"),
     ] {
         let s = zed_tests::step_helpers::l01_26_type_resolution::sig_of(text, name);
@@ -279,7 +279,7 @@ fn a_partial_map_reads_back_with_its_miss() {
     let shown = built.to_string();
     // Item PRINT-fmt-audit: `#a | #b`, used twice, gets a definition placed first. Before:
     // `#errs(#a | #b ->? #a | #b)`.
-    assert_eq!(shown, "type T1 = #a | #b; #errs(T1 ->? T1)");
+    assert_eq!(shown, "type T1 = #a | #b;\n#errs(T1 ->? T1)");
     assert_eq!(mismatch(&built, &shown), None, "{shown}");
     let errs = back(&shown);
     let family = &errs.payloads["errs"].as_ref().expect("a payload")[0].items[0].fns[0];
@@ -691,7 +691,7 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
         // Before: `int .. int | String -> int .. int | String -> bool`.
         (
             "int .. int | String -> (int .. int | String -> bool)",
-            "type T1 = int | String; int .. T1 -> int .. T1 -> bool",
+            "type T1 = int | String;\nint .. T1 -> int .. T1 -> bool",
         ),
         (
             "(x: int .. int | String -> bool) -> int",
@@ -1005,4 +1005,18 @@ has no arrow that takes them all
     for (t, shown) in &seen {
         assert_eq!(mismatch(t, shown), None, "{shown}");
     }
+}
+
+/// Item PRINT-group-site-defs: a signature printed alone declares the part it uses twice on a
+/// line of its own, as a program declares it, and the text reads back as the signature (zed
+/// DOCS-TODO 55); with no part used twice it is one line.
+#[test]
+fn a_signature_printed_alone_declares_its_shared_part_a_line_before() {
+    use zed_tests::step_helpers::l01_26_type_resolution::sig_of;
+    let s = sig_of("f(positional p: (int | #x, int | #x)) = 0;\n", "f");
+    let shown = s.to_string();
+    assert_eq!(shown, "type T1 = int | #x;\n((T1, T1)) -> 0");
+    assert_eq!(mismatch(&Ty::func(s), &shown), None, "{shown}");
+    let g = sig_of("g(positional p: (int | #x, int | #y)) = 0;\n", "g");
+    assert_eq!(g.to_string(), "((int | #x, int | #y)) -> 0");
 }

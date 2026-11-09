@@ -110,3 +110,35 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
     );
     assert!(!shown.contains("(|") && !shown.contains("(\\"), "{shown}");
 }
+
+/// Item PRINT-group-site-defs: a part a type test writes twice is declared once, on a line of
+/// its own before the term, as a user declares it, and the term after it uses the name. The
+/// declaration reads as the top level of a file, and with the type tested, `(T1, T1)`, reads
+/// back as that type. The term itself is not read back: the kernel writes a type test as
+/// `(is T)`, where sec:grammar has `IsPat`, `Name? is T`, and the parser stops at its `)`
+/// expecting a `,`.
+/// Before, the definition stood inside the pattern: `(is type T1 = int | #x; (T1, T1))`.
+#[test]
+fn a_part_a_type_test_writes_twice_is_declared_before_the_term() {
+    use zed_kernel::Pattern;
+    use zed_kernel::types::Type;
+    let int_or_x = &Type::int() | &Type::atom("x");
+    let pair = Type::tuple(vec![int_or_x.clone(), int_or_x]);
+    let t = Term::Match(
+        zed_tests::kernel::rc(var("v@1")),
+        vec![
+            (Pattern::Is(pair.clone()), lit("pair")),
+            (Pattern::Wild, lit("other")),
+        ],
+    );
+    let want = "type T1 = int | #x;\nmatch v { (is (T1, T1)) -> \"pair\", _ -> \"other\" }";
+    assert_eq!(written(&t, before_at), want);
+    assert_eq!(t.to_string(), want.replace("match v ", "match v@1 "));
+    let (decl, _) = want.split_once('\n').expect("a declaration first");
+    let tokens = zedc::lex::lex_fence(decl).unwrap_or_else(|e| panic!("{decl}: {e:?}"));
+    zedc::parse::parse(decl, &tokens, "Unit", zedc::parse::TOP)
+        .unwrap_or_else(|e| panic!("{decl}: {e:?}"));
+    let back = zedc::check::read::parse_type(&format!("{decl}\n(T1, T1)")).expect("reads back");
+    let pair = zedc::check::ty::Ty::set(pair);
+    assert!(back.subtype(&pair) && pair.subtype(&back), "{back}");
+}

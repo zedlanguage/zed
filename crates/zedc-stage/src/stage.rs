@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use zed_kernel::types::Type;
+use zed_kernel::types::{Type, defs as printed};
 use zed_kernel::{
     Evaluator, Global, Globals, KernelError, Lookup, Pattern, Shared, Term, Value, World,
 };
@@ -1350,10 +1350,14 @@ pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
     let within: Vec<Value> = match d {
         Domain::Type(t) => {
             if !t.finite() {
-                return Choice::Keep(format!(
-                    "the domain `{}` is not known to be finite",
-                    t.surface()
-                ));
+                // A part written more than once is declared after the sentence, as in a
+                // checker's message, unless a message around this one lays it out.
+                let local = printed::local();
+                let mut why = format!("the domain `{}` is not known to be finite", t.surface());
+                if local.is_some() {
+                    printed::finish(&mut why);
+                }
+                return Choice::Keep(why);
             }
             passed.iter().filter(|v| t.contains(v)).cloned().collect()
         }

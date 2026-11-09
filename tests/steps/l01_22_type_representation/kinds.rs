@@ -274,10 +274,13 @@ fn each_form_prints_as_written_and_reads_back_as_the_same_type() {
 /// set was written with its own definitions, which stood in the middle of the compiler's text
 /// where a set was not first:
 ///
-/// - `type T1 = int | #x; ((int) -> int, (T1, T1))` was `((int) -> int, type T1 = int | #x;
-///   (T1, T1))`, which no parser reads
-/// - `type T1 = int | #x; ((int) -> int, T1, T1)` was `((int) -> int, int | #x, int | #x)`: a
-///   part used in two sets is now a part used twice
+/// - `type T1 = int | #x;`, then `((int) -> int, (T1, T1))` on the next line, was
+///   `((int) -> int, type T1 = int | #x; (T1, T1))`, which no parser reads
+/// - `type T1 = int | #x;`, then `((int) -> int, T1, T1)`, was `((int) -> int, int | #x, int | #x)`:
+///   a part used in two sets is now a part used twice
+///
+/// Item PRINT-group-site-defs put each definition on a line of its own, as a user declares it;
+/// before, they shared the line of the type.
 ///
 /// The first version of this item wrote a part used twice at each use, `(int | #x, int | #x)`,
 /// which grows as 2^k for a part shared at k levels (COMPLEXITY.md K91). `int | (int ->? int)`
@@ -295,27 +298,27 @@ fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
     for (t, text, set) in [
         (
             Ty::set(shared.clone()),
-            "type T1 = int | #x; (T1, T1)",
+            "type T1 = int | #x;\n(T1, T1)",
             true,
         ),
         (
             Ty::set(&shared | &Type::atom("y")),
-            "type T1 = int | #x; #y | (T1, T1)",
+            "type T1 = int | #x;\n#y | (T1, T1)",
             true,
         ),
         (
             ty("(bool, bool)").union(&Ty::set(shared.clone())),
-            "type T1 = int | #x; (T1, T1) | (bool, bool)",
+            "type T1 = int | #x;\n(T1, T1) | (bool, bool)",
             true,
         ),
         (
             Ty::tuple(vec![f.clone(), Ty::set(shared.clone())]),
-            "type T1 = int | #x; ((int) -> int, (T1, T1))",
+            "type T1 = int | #x;\n((int) -> int, (T1, T1))",
             false,
         ),
         (
             Ty::tuple(vec![f, Ty::set(int_or_x.clone()), Ty::set(int_or_x)]),
-            "type T1 = int | #x; ((int) -> int, T1, T1)",
+            "type T1 = int | #x;\n((int) -> int, T1, T1)",
             false,
         ),
         (
@@ -347,13 +350,15 @@ fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
     }
 }
 
-/// The definitions `type Tk = body; ` that open `text`, and the type after them.
+/// The definitions `type Tk = body;`, a line each, that open `text`, and the type after them.
 fn split_definitions(text: &str) -> (Vec<(&str, &str)>, &str) {
     let mut defs = Vec::new();
     let mut rest = text;
     while let Some(def) = rest.strip_prefix("type ") {
         let (name, def) = def.split_once(" = ").expect("a definition has a body");
-        let (body, after) = def.split_once("; ").expect("a definition ends with `; `");
+        let (body, after) = def
+            .split_once(";\n")
+            .expect("a definition ends its line with `;`");
         defs.push((name, body));
         rest = after;
     }

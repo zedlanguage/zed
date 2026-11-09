@@ -5105,7 +5105,7 @@ pub enum TextPlace {
 impl fmt::Display for Surface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (name, body) in &self.defs {
-            write!(f, "type {name} = {body}; ")?;
+            defs::declare(f, name, body)?;
         }
         f.write_str(&self.root)
     }
