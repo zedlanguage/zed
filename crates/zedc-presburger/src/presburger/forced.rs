@@ -1,4 +1,5 @@
-//! The answer of a formula whose equations fix every variable one at a time (PRES-small-cost).
+//! The answer of a formula whose constraints fix every variable one at a time
+//! (PRES-small-cost, PRES-small-front).
 //!
 //! A formula such as `((x >= 1 && x == q0) || (!(x >= 1) && q0 == 1)) && x == 6 && y == 4`,
 //! which the preimage of `if x >= 1 { x } else { 1 }` at a point gives, has one point, and
@@ -6,6 +7,8 @@
 //! `x >= 1`, which leaves one disjunct, whose `x == q0` fixes `q0`. [`forced`] reads such a
 //! formula by propagation alone, in time linear in its size, where the whole solver's front
 //! end (normal form, canonical order, coloring, settling) cost 25 to 140 times as much on it.
+//! The inputs may as well be fixed by two rows each, `x >= 6 && 6 >= x`: a forced row with one
+//! variable not yet known bounds it, and a variable whose bounds meet is fixed.
 //!
 //! Each atom is read as a variable of its own, a product of two variables included, as the
 //! solver reads it ([`super::Formula::holds`] reads a product as the product of its factors;
@@ -14,10 +17,11 @@
 //! A part of the formula is *forced* when it holds at every point of the formula: the formula
 //! itself, each operand of a forced conjunction, and the one operand of a forced disjunction
 //! whose other operands are false. A forced equation with one variable whose value is not yet
-//! known fixes that variable, so every value the propagation gives holds at every point of the
-//! formula. The answer is therefore exact:
-//! - a forced part that is false, or a forced equation whose variable would need a value that
-//!   is not an integer, leaves the formula no point;
+//! known fixes that variable; a forced row `t >= 0` with one such variable bounds it, and two
+//! bounds that meet fix it. So every value the propagation gives holds at every point of the
+//! formula, and the answer is exact:
+//! - a forced part that is false, a forced equation whose variable would need a value that is
+//!   not an integer, or bounds of one variable that cross, leave the formula no point;
 //! - a formula that is true at the values given, once each of its variables has one, has that
 //!   point and no other. The whole solver gives the same point, but leaves out the atoms that
 //!   only a disjunction it drops as removing no point reads ([`super::absorb`]), which its
@@ -27,7 +31,9 @@
 //! - anything else is left to the solver, after O(n) work.
 
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 
+use rustc_hash::FxHasher;
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Model, Rel};
@@ -42,12 +48,42 @@ pub(super) enum Forced {
     Holds,
 }
 
+/// A map hashed by [`FxHasher`]: its keys are ids and atoms of one formula, which no one
+/// chooses to collide, and nothing iterates it, so its order reaches no result.
+type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+
 /// The connective of a part of the formula.
 enum Kind<'f> {
     And,
     Or,
     Not,
     Con(&'f Con),
+}
+
+/// A part of the formula, with the state of the propagation at it.
+struct Part<'f> {
+    kind: Kind<'f>,
+    /// Of a compound part, its operands, as a range of `kid_list`; of a constraint, its
+    /// variables and their coefficients, as a range of `terms`.
+    span: (u32, u32),
+    /// The parts that hold it, as a range of `parent_list` (one entry per occurrence).
+    parents: (u32, u32),
+    value: Option<bool>,
+    forced: bool,
+    /// Of a conjunction, its operands not yet true; of a disjunction, its operands not yet
+    /// false; of a constraint, its variables not yet known.
+    left: u32,
+}
+
+/// A variable, with what the propagation knows of it.
+struct Var<'f> {
+    atom: &'f Atom,
+    known: Option<Int>,
+    /// The bounds that forced rows put on it.
+    lo: Option<Int>,
+    hi: Option<Int>,
+    /// The constraints that read it, as a range of `watch_list`.
+    watches: (u32, u32),
 }
 
 /// An event of the propagation.
@@ -63,41 +99,32 @@ enum Event {
 /// The formula as a graph of its parts, each shared part once, with the state of the
 /// propagation.
 struct Graph<'f> {
-    kind: Vec<Kind<'f>>,
-    /// Each part's operands, as a range of `kid_list`.
-    kids: Vec<(u32, u32)>,
+    parts: Vec<Part<'f>>,
     kid_list: Vec<u32>,
-    /// Each part's parents, as a range of `parent_list` (one entry per occurrence).
-    parents: Vec<(u32, u32)>,
     parent_list: Vec<u32>,
-    /// Each variable's atom, and the number of each atom.
-    atoms: Vec<Atom>,
-    numbers: HashMap<Atom, u32>,
-    /// Each constraint's distinct variables, as a range of `var_list`.
-    vars: Vec<(u32, u32)>,
-    var_list: Vec<u32>,
-    /// The constraints that read each variable, as a range of `watch_list`.
-    watches: Vec<(u32, u32)>,
+    /// The variables of each constraint, in the order of its terms, which are distinct, each
+    /// with its coefficient.
+    terms: Vec<(u32, &'f Int)>,
+    /// The number of each atom.
+    numbers: FxMap<&'f Atom, u32>,
+    vars: Vec<Var<'f>>,
     watch_list: Vec<u32>,
-    value: Vec<Option<bool>>,
-    forced: Vec<bool>,
-    /// Of a conjunction, its operands not yet true; of a disjunction, its operands not yet
-    /// false; of a constraint, its variables not yet known.
-    left: Vec<u32>,
-    known: Vec<Option<Int>>,
     events: Vec<Event>,
 }
 
-/// What [`forced`] shows of `f`, or `None` when propagation leaves it undecided. O(n) for `n`
-/// the size of `f` with each shared part counted once, plus hashing each atom.
-pub(super) fn forced(f: &Formula) -> Option<Forced> {
+/// What [`forced`] shows of `f`, or `None` when propagation leaves it undecided; without
+/// `point`, a formula with one point is answered [`Forced::Holds`], its point not built. O(n)
+/// for `n` the size of `f` with each shared part counted once, plus hashing each atom.
+pub(super) fn forced(f: &Formula, point: bool) -> Option<Forced> {
     let mut g = Graph::of(f);
     g.events.push(Event::Force(0));
     if !g.run() {
         return Some(Forced::Empty);
     }
-    match g.value[0] {
-        Some(true) if g.known.iter().all(Option::is_some) => Some(Forced::Point(g.point())),
+    match g.parts[0].value {
+        Some(true) if point && g.vars.iter().all(|v| v.known.is_some()) => {
+            Some(Forced::Point(g.point()))
+        }
         Some(true) => Some(Forced::Holds),
         _ => None,
     }
@@ -108,26 +135,34 @@ impl<'f> Graph<'f> {
     /// with each part that has its value already (a constraint of no variable, an empty
     /// conjunction or disjunction) queued.
     fn of(f: &'f Formula) -> Graph<'f> {
+        // A first walk counts the parts, operands and terms, so each list is allocated once.
+        let (mut parts, mut kids, mut terms) = (0, 0, 0);
+        let mut seen: FxMap<Id, u32> = FxMap::default();
+        let mut stack = vec![(f, 0)];
+        while let Some((h, _)) = stack.pop() {
+            parts += 1;
+            if let Formula::Con(c) = h {
+                terms += c.lin.terms.len();
+            }
+            for k in h.kids() {
+                kids += 1;
+                if Id::of(k).is_none_or(|id| seen.insert(id, 0).is_none()) {
+                    stack.push((k, 0));
+                }
+            }
+        }
+        seen.clear();
         let mut g = Graph {
-            kind: Vec::new(),
-            kids: Vec::new(),
-            kid_list: Vec::new(),
-            parents: Vec::new(),
+            parts: Vec::with_capacity(parts),
+            kid_list: Vec::with_capacity(kids),
             parent_list: Vec::new(),
-            atoms: Vec::new(),
-            numbers: HashMap::new(),
-            vars: Vec::new(),
-            var_list: Vec::new(),
-            watches: Vec::new(),
+            terms: Vec::with_capacity(terms),
+            numbers: FxMap::with_capacity_and_hasher(terms, Default::default()),
+            vars: Vec::with_capacity(terms),
             watch_list: Vec::new(),
-            value: Vec::new(),
-            forced: Vec::new(),
-            left: Vec::new(),
-            known: Vec::new(),
-            events: Vec::new(),
+            events: Vec::with_capacity(parts),
         };
-        let mut seen: HashMap<Id, u32> = HashMap::new();
-        let mut stack = vec![(f, g.add(f))];
+        stack.push((f, g.add(f)));
         while let Some((h, n)) = stack.pop() {
             let start = g.kid_list.len() as u32;
             for k in h.kids() {
@@ -145,85 +180,116 @@ impl<'f> Graph<'f> {
                 };
                 g.kid_list.push(i);
             }
-            g.kids[n as usize] = (start, g.kid_list.len() as u32);
+            if !matches!(h, Formula::Con(_)) {
+                g.parts[n as usize].span = (start, g.kid_list.len() as u32);
+            }
         }
         g.link();
         g
     }
 
-    /// A new part for `f`, with its variables when it is a constraint.
+    /// A new part for `f`, with its variables and coefficients when it is a constraint.
     fn add(&mut self, f: &'f Formula) -> u32 {
-        let n = self.kind.len() as u32;
-        let start = self.var_list.len() as u32;
+        let n = self.parts.len() as u32;
+        let start = self.terms.len() as u32;
         let kind = match f {
             Formula::And(_) => Kind::And,
             Formula::Or(_) => Kind::Or,
             Formula::Not(_) => Kind::Not,
             Formula::Con(c) => {
-                for a in c.lin.terms.keys() {
-                    let v = self.number(a.clone());
-                    self.var_list.push(v);
+                for (a, k) in &c.lin.terms {
+                    let v = self.number(a);
+                    self.terms.push((v, k));
                 }
-                let vs = &mut self.var_list[start as usize..];
-                vs.sort_unstable();
-                let distinct = start as usize + dedup_sorted(vs);
-                self.var_list.truncate(distinct);
                 Kind::Con(c)
             }
         };
-        self.kind.push(kind);
-        self.vars.push((start, self.var_list.len() as u32));
-        self.kids.push((0, 0));
+        self.parts.push(Part {
+            kind,
+            span: (start, self.terms.len() as u32),
+            parents: (0, 0),
+            value: None,
+            forced: false,
+            left: 0,
+        });
         n
     }
 
     /// The number of the variable `a`.
-    fn number(&mut self, a: Atom) -> u32 {
-        let next = self.atoms.len() as u32;
-        *self.numbers.entry(a).or_insert_with_key(|a| {
-            self.atoms.push(a.clone());
+    fn number(&mut self, a: &'f Atom) -> u32 {
+        let next = self.vars.len() as u32;
+        *self.numbers.entry(a).or_insert_with(|| {
+            self.vars.push(Var {
+                atom: a,
+                known: None,
+                lo: None,
+                hi: None,
+                watches: (0, 0),
+            });
             next
         })
     }
 
-    /// The parents and watch lists (counting sorts), the counts of `left`, and the parts that
-    /// have their values already, queued.
+    /// The parents and watch lists (counting sorts, each range filled from its end), the counts
+    /// of `left`, and the parts that have their values already, queued.
     fn link(&mut self) {
-        let parts = self.kind.len();
-        self.parents = ranges(parts, self.kid_list.iter().map(|&k| k as usize));
-        self.parent_list = vec![0; self.kid_list.len()];
-        let mut at: Vec<u32> = self.parents.iter().map(|r| r.0).collect();
-        for (n, &(s, e)) in self.kids.iter().enumerate() {
-            for &k in &self.kid_list[s as usize..e as usize] {
-                self.parent_list[at[k as usize] as usize] = n as u32;
-                at[k as usize] += 1;
+        let Graph {
+            parts,
+            kid_list,
+            parent_list,
+            terms,
+            vars,
+            watch_list,
+            ..
+        } = self;
+        // Each part's number of parents, then the end of its range, then its range.
+        for &k in kid_list.iter() {
+            parts[k as usize].parents.1 += 1;
+        }
+        let mut at = 0;
+        for p in parts.iter_mut() {
+            at += p.parents.1;
+            p.parents = (at, at);
+        }
+        *parent_list = vec![0; kid_list.len()];
+        for n in 0..parts.len() {
+            if matches!(parts[n].kind, Kind::Con(_)) {
+                continue;
+            }
+            let (s, e) = parts[n].span;
+            for &k in &kid_list[s as usize..e as usize] {
+                let r = &mut parts[k as usize].parents;
+                r.0 -= 1;
+                parent_list[r.0 as usize] = n as u32;
             }
         }
-        let vars = self.atoms.len();
-        self.watches = ranges(vars, self.var_list.iter().map(|&v| v as usize));
-        self.watch_list = vec![0; self.var_list.len()];
-        let mut at: Vec<u32> = self.watches.iter().map(|r| r.0).collect();
-        for (n, &(s, e)) in self.vars.iter().enumerate() {
-            for &v in &self.var_list[s as usize..e as usize] {
-                self.watch_list[at[v as usize] as usize] = n as u32;
-                at[v as usize] += 1;
+        // Likewise each variable's watches.
+        for &(v, _) in terms.iter() {
+            vars[v as usize].watches.1 += 1;
+        }
+        let mut at = 0;
+        for v in vars.iter_mut() {
+            at += v.watches.1;
+            v.watches = (at, at);
+        }
+        *watch_list = vec![0; terms.len()];
+        for (n, p) in parts.iter_mut().enumerate() {
+            p.left = p.span.1 - p.span.0;
+            if !matches!(p.kind, Kind::Con(_)) {
+                continue;
+            }
+            for &(v, _) in &terms[p.span.0 as usize..p.span.1 as usize] {
+                let r = &mut vars[v as usize].watches;
+                r.0 -= 1;
+                watch_list[r.0 as usize] = n as u32;
             }
         }
-        self.known = vec![None; vars];
-        self.value = vec![None; parts];
-        self.forced = vec![false; parts];
-        self.left = (0..parts)
-            .map(|n| match self.kind[n] {
-                Kind::Con(_) => self.vars[n].1 - self.vars[n].0,
-                _ => self.kids[n].1 - self.kids[n].0,
-            })
-            .collect();
-        for n in 0..parts {
-            if self.left[n] == 0 {
-                let v = match self.kind[n] {
+        for n in 0..self.parts.len() {
+            if self.parts[n].left == 0 {
+                let v = match self.parts[n].kind {
                     Kind::And => true,
                     Kind::Or => false,
-                    Kind::Con(c) => self.holds(c),
+                    Kind::Con(c) => self.holds(n, c),
                     Kind::Not => unreachable!("a negation has one operand"),
                 };
                 self.set(n as u32, v);
@@ -233,7 +299,7 @@ impl<'f> Graph<'f> {
 
     /// Gives part `n` its value and queues its parents' update.
     fn set(&mut self, n: u32, v: bool) {
-        self.value[n as usize] = Some(v);
+        self.parts[n as usize].value = Some(v);
         self.events.push(Event::Valued(n));
     }
 
@@ -254,26 +320,27 @@ impl<'f> Graph<'f> {
 
     /// Part `n` has its value: its parents learn it.
     fn valued(&mut self, n: u32) -> bool {
-        let v = self.value[n as usize].expect("valued");
-        if self.forced[n as usize] && !v {
+        let part = &self.parts[n as usize];
+        let v = part.value.expect("valued");
+        if part.forced && !v {
             return false;
         }
-        let (s, e) = self.parents[n as usize];
+        let (s, e) = part.parents;
         for i in s..e {
             let p = self.parent_list[i as usize];
-            let pu = p as usize;
-            if self.value[pu].is_some() {
+            let pp = &mut self.parts[p as usize];
+            if pp.value.is_some() {
                 continue;
             }
-            match self.kind[pu] {
+            match pp.kind {
                 Kind::Not => self.set(p, !v),
                 Kind::And if !v => self.set(p, false),
                 Kind::Or if v => self.set(p, true),
                 Kind::And | Kind::Or => {
-                    self.left[pu] -= 1;
-                    if self.left[pu] == 0 {
+                    pp.left -= 1;
+                    if pp.left == 0 {
                         self.set(p, v);
-                    } else if self.left[pu] == 1 && self.forced[pu] {
+                    } else if pp.left == 1 && pp.forced {
                         self.force_last(p);
                     }
                 }
@@ -285,23 +352,24 @@ impl<'f> Graph<'f> {
 
     /// Part `n` holds at every point.
     fn force(&mut self, n: u32) -> bool {
-        let nu = n as usize;
-        if self.forced[nu] {
+        let part = &mut self.parts[n as usize];
+        if part.forced {
             return true;
         }
-        self.forced[nu] = true;
-        if let Some(v) = self.value[nu] {
+        part.forced = true;
+        if let Some(v) = part.value {
             return v;
         }
-        match self.kind[nu] {
+        match part.kind {
             Kind::And => {
-                let (s, e) = self.kids[nu];
-                for i in s..e {
-                    let k = self.kid_list[i as usize];
-                    self.events.push(Event::Force(k));
-                }
+                let (s, e) = part.span;
+                (self.events).extend(
+                    self.kid_list[s as usize..e as usize]
+                        .iter()
+                        .map(|&k| Event::Force(k)),
+                );
             }
-            Kind::Or if self.left[nu] == 1 => self.force_last(n),
+            Kind::Or if part.left == 1 => self.force_last(n),
             Kind::Or | Kind::Not => {}
             Kind::Con(c) => return self.solve(n, c),
         }
@@ -311,13 +379,14 @@ impl<'f> Graph<'f> {
     /// Forces the one operand of the forced disjunction or conjunction `p` not yet decided
     /// the other way. For a conjunction every operand is forced already.
     fn force_last(&mut self, p: u32) {
-        if !matches!(self.kind[p as usize], Kind::Or) {
+        let part = &self.parts[p as usize];
+        if !matches!(part.kind, Kind::Or) {
             return;
         }
-        let (s, e) = self.kids[p as usize];
-        let last = (s..e)
-            .map(|i| self.kid_list[i as usize])
-            .find(|&k| self.value[k as usize] != Some(false));
+        let (s, e) = part.span;
+        let last = (self.kid_list[s as usize..e as usize].iter())
+            .copied()
+            .find(|&k| self.parts[k as usize].value != Some(false));
         if let Some(k) = last {
             self.events.push(Event::Force(k));
         }
@@ -325,69 +394,93 @@ impl<'f> Graph<'f> {
 
     /// Variable `x` has its value: each constraint that reads it learns it.
     fn known_var(&mut self, x: u32) -> bool {
-        let (s, e) = self.watches[x as usize];
+        let (s, e) = self.vars[x as usize].watches;
         for i in s..e {
             let c = self.watch_list[i as usize];
-            let cu = c as usize;
-            if self.value[cu].is_some() {
+            let part = &mut self.parts[c as usize];
+            if part.value.is_some() {
                 continue;
             }
-            self.left[cu] -= 1;
-            let Kind::Con(con) = self.kind[cu] else {
+            part.left -= 1;
+            let Kind::Con(con) = part.kind else {
                 unreachable!("a watch is a constraint")
             };
-            if self.left[cu] == 0 {
-                let v = self.holds(con);
+            if part.left == 0 {
+                let v = self.holds(c as usize, con);
                 self.set(c, v);
-            } else if self.left[cu] == 1 && self.forced[cu] && !self.solve(c, con) {
+            } else if part.left == 1 && part.forced && !self.solve(c, con) {
                 return false;
             }
         }
         true
     }
 
-    /// When the forced constraint `n` is an equation with one variable not yet known, which it
-    /// reads linearly, gives that variable its value; `false` when the value is not an integer.
+    /// When the forced constraint `n` has one variable not yet known: an equation gives it its
+    /// value, a row `t >= 0` bounds it, and bounds that meet give it its value. `false` when the
+    /// value is not an integer or the bounds cross.
     fn solve(&mut self, n: u32, c: &Con) -> bool {
-        let nu = n as usize;
-        if c.rel != Rel::Eq || self.left[nu] != 1 {
+        let part = &self.parts[n as usize];
+        if part.left != 1 {
             return true;
         }
-        let (s, e) = self.vars[nu];
-        let Some(x) = (s..e)
-            .map(|i| self.var_list[i as usize])
-            .find(|&v| self.known[v as usize].is_none())
-        else {
-            return true;
-        };
-        // `a·x + b == 0`.
-        let mut a = Int::ZERO;
+        // `a·x + b` with `x` the variable not yet known.
+        let (mut x, mut a) = (None, &Int::ZERO);
         let mut b = c.lin.constant.clone();
-        for (atom, k) in &c.lin.terms {
-            match &self.known[self.numbers[atom] as usize] {
-                Some(v) => b = &b + &(k * v),
-                None => a = &a + k,
+        for i in part.span.0 as usize..part.span.1 as usize {
+            let (v, k) = self.terms[i];
+            match &self.vars[v as usize].known {
+                Some(value) => b = &b + &(k * value),
+                None => (x, a) = (Some(v), k),
             }
         }
+        // All known: the `Known` event of the last one evaluates it.
+        let Some(x) = x else {
+            return true;
+        };
         if a.is_zero() {
             return true;
         }
-        let nb = -&b;
-        if !nb.mod_floor(&a).is_zero() {
-            return false;
+        let var = &mut self.vars[x as usize];
+        match c.rel {
+            Rel::Eq => {
+                let nb = -&b;
+                if !nb.mod_floor(a).is_zero() {
+                    return false;
+                }
+                var.known = Some(nb.div_floor(a));
+            }
+            // `a·x >= -b`: `x >= ceil(-b / a)` for `a > 0`, `x <= floor(b / -a)` for `a < 0`.
+            Rel::Ge => {
+                if a.is_positive() {
+                    let lo = -&b.div_floor(a);
+                    if var.lo.as_ref().is_none_or(|l| *l < lo) {
+                        var.lo = Some(lo);
+                    }
+                } else {
+                    let hi = b.div_floor(&-a);
+                    if var.hi.as_ref().is_none_or(|h| hi < *h) {
+                        var.hi = Some(hi);
+                    }
+                }
+                match (&var.lo, &var.hi) {
+                    (Some(lo), Some(hi)) if lo > hi => return false,
+                    (Some(lo), Some(hi)) if lo == hi => var.known = Some(lo.clone()),
+                    _ => return true,
+                }
+            }
         }
-        self.known[x as usize] = Some(nb.div_floor(&a));
         self.events.push(Event::Known(x));
         true
     }
 
-    /// Whether `c` holds at the known values, all of its variables known.
-    fn holds(&self, c: &Con) -> bool {
+    /// Whether the constraint `c` of part `n` holds at the known values, all of its variables
+    /// known.
+    fn holds(&self, n: usize, c: &Con) -> bool {
+        let (s, e) = self.parts[n].span;
         let mut v = c.lin.constant.clone();
-        for (atom, k) in &c.lin.terms {
-            let x = self.known[self.numbers[atom] as usize]
-                .as_ref()
-                .expect("known");
+        for i in s as usize..e as usize {
+            let (x, k) = self.terms[i];
+            let x = self.vars[x as usize].known.as_ref().expect("known");
             v = &v + &(k * x);
         }
         if c.rel == Rel::Eq {
@@ -399,37 +492,10 @@ impl<'f> Graph<'f> {
 
     /// The point: every atom with its value.
     fn point(&self) -> Model {
-        (self.atoms.iter().cloned())
-            .zip(self.known.iter().map(|v| v.clone().expect("known")))
-            .collect()
-    }
-}
-
-/// Moves the distinct values of sorted `xs` to its front; gives how many there are.
-fn dedup_sorted(xs: &mut [u32]) -> usize {
-    let mut w = 0;
-    for r in 0..xs.len() {
-        if w == 0 || xs[r] != xs[w - 1] {
-            xs[w] = xs[r];
-            w += 1;
+        let mut m = Model::new();
+        for v in &self.vars {
+            m.insert(v.atom.clone(), v.known.clone().expect("known"));
         }
+        m
     }
-    w
-}
-
-/// The ranges of a counting sort of `keys` into `n` buckets.
-fn ranges(n: usize, keys: impl Iterator<Item = usize>) -> Vec<(u32, u32)> {
-    let mut count = vec![0u32; n];
-    for k in keys {
-        count[k] += 1;
-    }
-    let mut at = 0;
-    count
-        .into_iter()
-        .map(|c| {
-            let r = (at, at + c);
-            at += c;
-            r
-        })
-        .collect()
 }

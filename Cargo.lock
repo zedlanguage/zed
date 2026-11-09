@@ -1183,6 +1183,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "perf-event2",
+ "rustc-hash",
  "rustix",
  "stacker",
  "zed-alloc-count",

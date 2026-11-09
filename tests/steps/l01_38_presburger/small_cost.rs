@@ -1,4 +1,4 @@
-//! The cost of `satisfiable` and `decide` on small formulas (PRES-small-cost).
+//! The cost of `satisfiable` and `decide` on small formulas (PRES-small-cost, PRES-small-front).
 
 use std::sync::Arc;
 
@@ -33,10 +33,21 @@ fn max_def(g: &Lin, c: i64, v: &Lin, q: &Lin) -> Formula {
     ])
 }
 
+/// How [`defs`] gives its inputs `x` and `y`.
+#[derive(Clone, Copy, Debug)]
+enum Inputs {
+    /// By equations, `x == 6 && y == 4`.
+    Fixed,
+    /// By two rows each whose bounds meet, `x >= 6 && 6 >= x`.
+    Bounded,
+    /// By two rows each that leave two values, `x >= 6 && 7 >= x`: not a point, so left to the
+    /// solver.
+    Ranged,
+}
+
 /// `n` definitions, each a `max` of the one before (or of `x`, or of `y`) and a constant,
-/// as the preimages of chains of `if` give, with the inputs fixed by `x == 6 && y == 4`
-/// (`fixed`) or bounded to the same values by two rows each.
-fn defs(n: u32, fixed: bool) -> Formula {
+/// as the preimages of chains of `if` give, with the inputs given as `inputs` says.
+fn defs(n: u32, inputs: Inputs) -> Formula {
     let mut fs = Vec::new();
     for i in 0..n {
         let v = match i % 3 {
@@ -46,13 +57,18 @@ fn defs(n: u32, fixed: bool) -> Formula {
         };
         fs.push(max_def(&v, i64::from(i % 5) - 2, &v, &q(i)));
     }
-    if fixed {
-        fs.push(eq(&sym("x"), &k(6)));
-        fs.push(eq(&sym("y"), &k(4)));
-    } else {
-        for (x, v) in [("x", 6), ("y", 4)] {
-            fs.push(ge(&sym(x), &k(v)));
-            fs.push(ge(&k(v), &sym(x)));
+    for (x, v) in [("x", 6), ("y", 4)] {
+        match inputs {
+            Inputs::Fixed => fs.push(eq(&sym(x), &k(v))),
+            Inputs::Bounded | Inputs::Ranged => {
+                let top = if let Inputs::Ranged = inputs {
+                    v + 1
+                } else {
+                    v
+                };
+                fs.push(ge(&sym(x), &k(v)));
+                fs.push(ge(&k(top), &sym(x)));
+            }
         }
     }
     Formula::and(fs)
@@ -82,13 +98,13 @@ fn bench_small_formulas() {
         let d = least(&mut meter, &|| drop(std::hint::black_box(decide(f))));
         eprintln!("{what}: satisfiable {s}, decide {d}  {f}");
     }
-    for fixed in [true, false] {
+    for inputs in [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged] {
         for n in [1, 2, 4, 7, 8, 16, 32, 64] {
-            let f = defs(n, fixed);
+            let f = defs(n, inputs);
             let s = least(&mut meter, &|| drop(std::hint::black_box(satisfiable(&f))));
             let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
             eprintln!(
-                "fixed {fixed} n {n}: satisfiable {s} ({}/def), decide {d}; {:?}",
+                "{inputs:?} n {n}: satisfiable {s} ({}/def), decide {d}; {:?}",
                 s / u64::from(n),
                 satisfiable(&f).map(|m| m.map(|m| m.len()))
             );
@@ -98,46 +114,51 @@ fn bench_small_formulas() {
 
 #[test]
 fn a_chain_of_definitions_at_a_point_costs_its_size() {
-    // Each definition is decided by propagation from the one before, O(1) each.
-    let built = scaling::inputs(64, |n| defs(n as u32, true));
-    for f in built.values() {
-        let m = satisfiable(f).expect("answered").expect("a point");
-        assert_eq!(m[&Atom::Sym(Arc::from("x"))], 6.into(), "{f}");
+    // Each definition is decided by propagation from the one before, O(1) each, whether the
+    // inputs are fixed by equations or by two rows whose bounds meet.
+    for inputs in [Inputs::Fixed, Inputs::Bounded] {
+        let built = scaling::inputs(64, |n| defs(n as u32, inputs));
+        for f in built.values() {
+            let m = satisfiable(f).expect("answered").expect("a point");
+            assert_eq!(m[&Atom::Sym(Arc::from("x"))], 6.into(), "{f}");
+        }
+        scaling::check_order(
+            &format!("a chain of definitions at a point ({inputs:?}), its point found"),
+            64,
+            1,
+            |n| {
+                std::hint::black_box(satisfiable(&built[&n]).is_ok());
+            },
+        );
+        scaling::check_order(
+            &format!("a chain of definitions at a point ({inputs:?}), decided"),
+            64,
+            1,
+            |n| {
+                std::hint::black_box(decide(&built[&n]).is_ok());
+            },
+        );
     }
-    scaling::check_order(
-        "a chain of definitions at a point, its point found",
-        64,
-        1,
-        |n| {
-            std::hint::black_box(satisfiable(&built[&n]).is_ok());
-        },
-    );
-    scaling::check_order("a chain of definitions at a point, decided", 64, 1, |n| {
-        std::hint::black_box(decide(&built[&n]).is_ok());
-    });
 }
 
 #[test]
 fn a_chain_of_definitions_at_a_point_is_not_settled_by_the_whole_solver() {
-    // The same chain with its inputs bounded by two rows each, which propagation does not read,
-    // goes to the whole solver; fixed by equations it is read by propagation alone, at a small
-    // part of that cost (about 1/45 at eight definitions when measured).
+    // Inputs bounded by two rows whose bounds meet are read by propagation as if fixed by
+    // equations, at about the same cost (within 5% at eight definitions when measured). Inputs
+    // left two values each are not a point, and the same chain takes the whole solver, at about
+    // 100 times that cost.
     let mut meter = Meter::new();
-    let (fixed, bounded) = (defs(8, true), defs(8, false));
+    let [fixed, bounded, ranged] =
+        [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged].map(|i| defs(8, i));
     assert_eq!(
         satisfiable(&fixed).expect("answered"),
         satisfiable(&bounded).expect("answered")
     );
-    let fast = least(&mut meter, &|| {
-        drop(std::hint::black_box(satisfiable(&fixed)))
-    });
-    let slow = least(&mut meter, &|| {
-        drop(std::hint::black_box(satisfiable(&bounded)))
-    });
+    let [fixed, bounded, ranged] = [&fixed, &bounded, &ranged]
+        .map(|f| least(&mut meter, &|| drop(std::hint::black_box(satisfiable(f)))));
+    let unit = meter.unit();
     assert!(
-        fast * 8 < slow,
-        "fixed: {fast} {}, bounded: {slow} {}",
-        meter.unit(),
-        meter.unit()
+        bounded < 2 * fixed && fixed * 8 < ranged,
+        "fixed {fixed} {unit}, bounded {bounded} {unit}, ranged {ranged} {unit}"
     );
 }
