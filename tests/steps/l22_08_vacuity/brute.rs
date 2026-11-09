@@ -5,7 +5,8 @@
 use zed_tests::instances::Rng;
 
 use super::trivial::{
-    Choice, End, Mode, Rel, Report, Term, Theory, choices, in_forest_fragment, render, report,
+    Choice, End, Formula, Mode, Rel, Report, Term, Theory, choices, in_forest_fragment, render,
+    report,
 };
 
 /// The value of `term` when each field `f` is the function `choice[f]` and the binders are
@@ -29,20 +30,27 @@ fn satisfies(t: &Theory, choice: &[Choice], carrier: u32) -> bool {
         let v = law.binders.len() as u32;
         (0..carrier.pow(v)).all(|code| {
             let binding: Vec<u32> = (0..v).map(|i| code / carrier.pow(i) % carrier).collect();
-            law.body.iter().any(|conj| {
-                conj.iter().all(|a| {
-                    let (l, r) = (
-                        eval(t, a.lhs, choice, &binding),
-                        eval(t, a.rhs, choice, &binding),
-                    );
-                    match a.rel {
-                        Rel::Eq => l == r,
-                        Rel::Ne => l != r,
-                    }
-                })
-            })
+            holds(t, &law.body, choice, &binding)
         })
     })
+}
+
+/// The value of a law body at one binding, by evaluating every atom.
+fn holds(t: &Theory, f: &Formula, choice: &[Choice], binding: &[u32]) -> bool {
+    match f {
+        Formula::Atom(a) => {
+            let (l, r) = (
+                eval(t, a.lhs, choice, binding),
+                eval(t, a.rhs, choice, binding),
+            );
+            match a.rel {
+                Rel::Eq => l == r,
+                Rel::Ne => l != r,
+            }
+        }
+        Formula::And(fs) => fs.iter().all(|f| holds(t, f, choice, binding)),
+        Formula::Or(fs) => fs.iter().any(|f| holds(t, f, choice, binding)),
+    }
 }
 
 /// Every model on two values, as the choice of every field, in mixed-radix order.
@@ -143,8 +151,20 @@ fn random_term(rng: &mut Rng, t: &Theory, binders: &[&str], depth: usize) -> Str
     format!("{}({})", field.name, args.join(", "))
 }
 
+/// A random comparison of two terms, sometimes negated with `!`.
+fn random_atom(rng: &mut Rng, t: &Theory, binders: &[&str]) -> String {
+    let rel = if rng.below(6) == 0 { "!=" } else { "==" };
+    let l = random_term(rng, t, binders, 2);
+    let r = random_term(rng, t, binders, 2);
+    if rng.below(8) == 0 {
+        format!("!({l} {rel} {r})")
+    } else {
+        format!("{l} {rel} {r}")
+    }
+}
+
 /// A random theory of one to five fields of at most two arguments and one to four laws, with
-/// `||` and `&&` now and then.
+/// `||`, `&&`, `!` and `implies` now and then.
 pub fn random_theory(rng: &mut Rng) -> Theory {
     let mut t = Theory::new("Random");
     let n = 1 + rng.below(5);
@@ -168,26 +188,34 @@ pub fn random_theory(rng: &mut Rng) -> Theory {
         for _ in 0..if rng.below(5) == 0 { 2 } else { 1 } {
             let mut atoms = Vec::new();
             for _ in 0..if rng.below(5) == 0 { 2 } else { 1 } {
-                let rel = if rng.below(6) == 0 { "!=" } else { "==" };
-                let l = random_term(rng, &t, binders, 2);
-                let r = random_term(rng, &t, binders, 2);
-                atoms.push(format!("{l} {rel} {r}"));
+                atoms.push(random_atom(rng, &t, binders));
             }
             disjuncts.push(atoms.join(" && "));
         }
-        t.law(
-            &format!("l{l}"),
-            &binders.join(" "),
-            &disjuncts.join(" || "),
-        );
+        let body = match rng.below(8) {
+            // `(a && b).implies(c)`, or the negation of a whole `||`.
+            0 => format!(
+                "({}).implies({})",
+                disjuncts.join(" || "),
+                random_atom(rng, &t, binders)
+            ),
+            1 => format!("!({})", disjuncts.join(" || ")),
+            _ => disjuncts.join(" || "),
+        };
+        t.law(&format!("l{l}"), &binders.join(" "), &body);
     }
     t
 }
 
 /// Checks every report of `t` against brute force, and returns the dead ends of the exhaustive
 /// search.
-fn check(t: &Theory) -> u64 {
+pub fn check(t: &Theory) -> u64 {
     let full = report(t, Mode::Exhaustive);
+    assert!(
+        full.refused.is_empty(),
+        "a small law was refused\n{}",
+        describe(t)
+    );
     let mut want = models(t);
     want.sort();
     let got = expand(t, &full);
@@ -211,6 +239,7 @@ fn check(t: &Theory) -> u64 {
             End::Complete => assert_eq!(s.models, g.models, "{}", text()),
             End::Several => assert!(s.models.len() == 2, "{}", text()),
             End::Stopped(_) => assert!(g.dead_ends > 0, "{}", text()),
+            End::Refused(_) => unreachable!("no law is refused"),
         }
         // A search with no dead end tries only choices that lead to a model, so it makes at most
         // one choice per field per model.
@@ -254,4 +283,81 @@ fn the_report_agrees_with_brute_force_on_random_theories() {
          outside it ({other_dead} with a dead end)"
     );
     assert!(forest >= 500, "too few theories in the fragment: {forest}");
+}
+
+/// A law as written: name, binders and body.
+type Written = (&'static str, &'static str, &'static str);
+
+/// Laws written with `!` and `.implies(..)`, as theories state them, against brute force: the
+/// report reads `!` by swapping `==` and `!=` and moving it onto the comparisons, and
+/// `(a).implies(b)` as `!a || b`.
+#[test]
+fn laws_with_not_and_implies_agree_with_brute_force() {
+    let theories: [(&str, &[Written]); 5] = [
+        (
+            "zero one mul/2 inv/1",
+            &[
+                ("inverse", "a", "(a != zero).implies(mul(a, inv(a)) == one)"),
+                ("nonTrivial", "", "!(one == zero)"),
+                ("mulOne", "a", "mul(a, one) == a"),
+            ],
+        ),
+        (
+            "f/1 g/1",
+            &[
+                ("notBoth", "a", "!(f(a) == a && g(a) == a)"),
+                ("either", "a b", "(f(a) == f(b)).implies(g(a) == g(b))"),
+            ],
+        ),
+        (
+            "e mul/2",
+            &[
+                (
+                    "cancel",
+                    "a b c",
+                    "(mul(a, b) == mul(a, c)).implies(b == c)",
+                ),
+                ("unit", "a", "!(mul(e, a) != a)"),
+            ],
+        ),
+        (
+            "f/2 k",
+            &[(
+                "nested",
+                "a b",
+                "!((f(a, b) == k).implies(!(f(b, a) == k))) || a == b",
+            )],
+        ),
+        (
+            "p/2 q/1",
+            &[
+                (
+                    "twice",
+                    "x",
+                    "((p(x, x) == x).implies(q(x) == x)).implies(q(q(x)) == x)",
+                ),
+                (
+                    "noConst",
+                    "x y",
+                    "!(p(x, y) == p(y, x) && q(x) == q(y)) || x == y",
+                ),
+            ],
+        ),
+    ];
+    let mut with_models = 0;
+    for (fields, laws) in theories {
+        let mut t = Theory::new("Written");
+        for f in fields.split(' ') {
+            let (name, arity) = f.split_once('/').unwrap_or((f, "0"));
+            t.field(name, arity.parse().expect("an arity"));
+        }
+        for &(name, binders, body) in laws {
+            t.law(name, binders, body);
+        }
+        check(&t);
+        let count = models(&t).len();
+        eprintln!("{fields}: {count} models on two values");
+        with_models += usize::from(count > 0);
+    }
+    assert!(with_models >= 4, "only {with_models} theories have a model");
 }

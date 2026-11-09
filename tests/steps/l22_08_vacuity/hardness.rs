@@ -6,13 +6,16 @@
 //! `a || b || !c` is the law `p_a(x, p_b(x, p_c(y, x))) == x`: the left side reaches `x` exactly
 //! when some literal of the clause is true, and otherwise ends at `y`. So the trivial models of
 //! the theory are the satisfying assignments of the formula. A second family needs no equation:
-//! fields of no arguments with the laws `a != b || b != c`, one per triple, are the 2-colourings
-//! of a 3-uniform hypergraph, which is NP-complete to decide (Lovász 1973).
+//! fields of no arguments with the laws `a != b || b != c`, one per triple, are the 2-colorings
+//! of a 3-uniform hypergraph, which is NP-complete to decide (Lovász 1973). A third needs no
+//! field: one law that is an `||` of `&&`s holds exactly when a 3-CNF is unsatisfiable
+//! (`unsat_law`), so deciding one law is coNP-complete, and the report refuses such a law once
+//! its conjunctive normal form is past the compile-time budget.
 
 use zed_tests::instances::Rng;
 
-use super::brute::describe;
-use super::trivial::{End, Mode, Theory, render, report};
+use super::brute::{check, describe};
+use super::trivial::{BUDGET, End, Mode, Theory, render, report};
 
 /// A clause as its literals, each a variable and whether it is negated.
 type Clause = Vec<(usize, bool)>;
@@ -100,8 +103,8 @@ fn clause_laws_have_one_model_per_satisfying_assignment() {
     assert!(with_dead_ends > 0);
 }
 
-/// The Fano plane: seven points and seven lines of three, which no 2-colouring leaves
-/// without a line of one colour.
+/// The Fano plane: seven points and seven lines of three, which no 2-coloring leaves
+/// without a line of one color.
 fn fano() -> Theory {
     let mut t = Theory::new("Fano");
     for i in 1..=7 {
@@ -216,4 +219,124 @@ fn dead_ends_on_random_3_cnf() {
     for w in means.windows(2) {
         assert!(w[1] > w[0], "dead ends {means:?}");
     }
+}
+
+/// The law that holds exactly when the CNF `clauses` over `n` variables is unsatisfiable, with
+/// no field when `side` is a binder and one field when it is a field of no arguments. Variable
+/// `i` is the binder `x{i}`, true when it equals `side`; the law is the `||` over the clauses of
+/// the `&&` of their literals made false. On two values every assignment is some binding, so the
+/// law holds at every binding exactly when every assignment falsifies some clause. Deciding a
+/// law of this shape is therefore coNP-complete in its size.
+fn unsat_law(n: usize, clauses: &[Clause], side: &str) -> Theory {
+    let mut t = Theory::new("Unsat");
+    let mut binders: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    if side == "c" {
+        t.field("c", 0);
+    } else {
+        binders.insert(0, side.to_string());
+    }
+    let body: Vec<String> = clauses
+        .iter()
+        .map(|clause| {
+            let falsified: Vec<String> = clause
+                .iter()
+                .map(|&(v, negated)| format!("x{v} {} {side}", if negated { "==" } else { "!=" }))
+                .collect();
+            format!("({})", falsified.join(" && "))
+        })
+        .collect();
+    t.law("unsat", &binders.join(" "), &body.join(" || "));
+    t
+}
+
+/// A law that is an `||` of `&&`s states any CNF, so the report decides it through its
+/// conjunctive normal form while writing that form out stays within `BUDGET` steps, agreeing
+/// with brute force, and refuses it with its own message when the work reaches the limit. A law
+/// that needs no multiplying out spends no steps and is never refused, whatever its size.
+#[test]
+fn an_or_of_ands_is_refused() {
+    // All eight clauses over three variables: unsatisfiable. Without the last: satisfiable.
+    let all: Vec<Clause> = (0..8)
+        .map(|bits| (0..3).map(|v| (v, (bits >> v) & 1 == 1)).collect())
+        .collect();
+    let mut rng = Rng::new(0x0a_d5);
+    let mut cases = vec![all.clone(), all[..7].to_vec()];
+    for _ in 0..40 {
+        let m = 1 + rng.below(7);
+        cases.push(random_cnf(&mut rng, 4, m));
+    }
+    for cnf in &cases {
+        let n = cnf.iter().flatten().map(|&(v, _)| v + 1).max().unwrap_or(0);
+        for side in ["z", "c"] {
+            let t = unsat_law(n, cnf, side);
+            check(&t);
+            let r = report(&t, Mode::Exhaustive);
+            let holds = if side == "z" {
+                r.closed_fail.is_empty()
+            } else {
+                r.groups.iter().all(|g| !g.models.is_empty())
+            };
+            assert_eq!(holds, count_sat(n, cnf) == 0, "{}", describe(&t));
+        }
+    }
+    // Twelve clauses: 3^12 clauses of 12 atoms each, past the budget.
+    let big = random_cnf(&mut rng, 6, 12);
+    for side in ["z", "c"] {
+        let t = unsat_law(6, &big, side);
+        assert!(t.laws[0].refused());
+        let r = report(&t, Mode::Default);
+        assert_eq!(r.refused, vec![0]);
+        let text = render(&t, &r);
+        eprint!("{text}");
+        assert!(text.contains(&format!(
+            "law unsat ({}) is not checked: the checker reached its compile-time work limit \
+             ({BUDGET} steps) on this law.",
+            t.laws[0].text
+        )));
+        assert!(text.contains(
+            "To have it checked, split it into separate laws whose `||`s hold no `&&`s (for \
+             example `(a && b) || c` is the two laws `a || c` and `b || c`), or state it as a \
+             theorem and give its proof."
+        ));
+        if side == "c" {
+            assert!(matches!(r.groups[0].end, End::Refused(0)), "{text}");
+            assert!(
+                text.contains("not decided, since law unsat is not checked."),
+                "{text}"
+            );
+        }
+    }
+}
+
+/// The work limit counts steps of multiplying out, not the size of the law: one `||` of more
+/// comparisons than `BUDGET` is joined with nothing multiplied out and is not refused, while
+/// `&&`s of `(a && b) || c`, six atoms written each, are refused exactly when the steps pass
+/// the limit.
+#[test]
+fn the_work_limit_is_not_a_size_limit() {
+    let n = BUDGET as usize + 2;
+    let mut t = Theory::new("Long");
+    let body: Vec<String> = (0..n).map(|i| format!("x{i} != x{}", i + 1)).collect();
+    let binders: Vec<String> = (0..=n).map(|i| format!("x{i}")).collect();
+    t.law("long", &binders.join(" "), &body.join(" || "));
+    assert!(!t.laws[0].refused());
+    assert_eq!(t.laws[0].clauses().len(), 1);
+    assert_eq!(t.laws[0].clauses()[0].len(), n);
+    // Each conjunct writes its two-clause `&&` once (2 steps), then joins `y == z` to each of
+    // its two clauses (4 steps).
+    let many = |m: usize| {
+        let mut t = Theory::new("Many");
+        let body: Vec<String> = (0..m)
+            .map(|i| format!("((x{i} == y && x{i} != z) || y == z)"))
+            .collect();
+        let mut binders: Vec<String> = (0..m).map(|i| format!("x{i}")).collect();
+        binders.extend(["y".to_string(), "z".to_string()]);
+        t.law("many", &binders.join(" "), &body.join(" && "));
+        t
+    };
+    let m = BUDGET as usize / 6;
+    let t = many(m);
+    assert!(!t.laws[0].refused());
+    assert_eq!(t.laws[0].clauses().len(), 2 * m);
+    assert!(many(m + 1).laws[0].refused());
 }

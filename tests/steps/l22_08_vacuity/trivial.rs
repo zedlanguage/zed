@@ -12,8 +12,11 @@
 //! constant or the same binder, and `t1 != t2` holds at every binding exactly when the two sides
 //! end at two different constants. A law whose body is one equation or one inequation is
 //! therefore the set of "cubes" over its fields: partial choices under which both sides end
-//! at the same symbol. A law that is a conjunction is one such set per conjunct; a law with `||`
-//! is checked whole, once all but one of its fields are chosen.
+//! at the same symbol. A law body is read in negation normal form (`!` pushed onto the atoms,
+//! `a.implies(b)` read as `!a || b`) and then as a conjunction of clauses, each an `||` of
+//! atoms. A clause of one atom is a set of cubes; a clause of several is checked whole once all
+//! but one of its fields are chosen, by a union-find with parities over the symbols its atoms end
+//! at, in time linear in the clause.
 //!
 //! The models are the product over the groups of fields that a common law links; a field no law
 //! names is free and is not enumerated. Within a group a depth-first search assigns the fields in
@@ -56,25 +59,135 @@ pub struct Atom {
     pub rhs: usize,
 }
 
-/// A law member: a disjunction of conjunctions of atoms over its binders.
+/// A law body in negation normal form: `!` is pushed onto the atoms and `a.implies(b)` is read
+/// as `!a || b`.
+#[derive(Clone, Debug)]
+pub enum Formula {
+    Atom(Atom),
+    And(Vec<Formula>),
+    Or(Vec<Formula>),
+}
+
+impl Formula {
+    /// The negation, by De Morgan's laws: linear in the formula.
+    fn negate(self) -> Formula {
+        match self {
+            Formula::Atom(a) => Formula::Atom(Atom {
+                rel: match a.rel {
+                    Rel::Eq => Rel::Ne,
+                    Rel::Ne => Rel::Eq,
+                },
+                ..a
+            }),
+            Formula::And(fs) => Formula::Or(fs.into_iter().map(Formula::negate).collect()),
+            Formula::Or(fs) => Formula::And(fs.into_iter().map(Formula::negate).collect()),
+        }
+    }
+
+    /// The atoms, in the order written.
+    pub fn atoms(&self) -> Vec<Atom> {
+        let mut out = Vec::new();
+        let mut stack = vec![self];
+        while let Some(f) = stack.pop() {
+            match f {
+                Formula::Atom(a) => out.push(*a),
+                Formula::And(fs) | Formula::Or(fs) => stack.extend(fs.iter().rev()),
+            }
+        }
+        out
+    }
+
+    /// The conjunctive normal form, written out: each clause an `||` of atoms. `work` counts the
+    /// atoms written by distributing an `||` over an `&&`, the only step that is not linear in
+    /// the law; `None` when the next such step would take the count past [`BUDGET`], before
+    /// that step is taken.
+    fn cnf(&self, work: &mut u64) -> Option<Vec<Vec<Atom>>> {
+        match self {
+            Formula::Atom(a) => Some(vec![vec![*a]]),
+            Formula::And(fs) => {
+                let mut out = Vec::new();
+                for f in fs {
+                    out.extend(f.cnf(work)?);
+                }
+                Some(out)
+            }
+            Formula::Or(fs) => {
+                let mut acc: Vec<Vec<Atom>> = vec![Vec::new()];
+                for f in fs {
+                    let mut right = f.cnf(work)?;
+                    if acc.len() == 1 && right.len() == 1 {
+                        // One clause on each side: the operands are joined, nothing is copied.
+                        acc[0].append(&mut right[0]);
+                        continue;
+                    }
+                    // Each clause of the product joins one clause of each side, so each side's
+                    // atoms are written once per clause of the other.
+                    let atoms = |c: &[Vec<Atom>]| c.iter().map(Vec::len).sum::<usize>() as u64;
+                    let step = atoms(&acc) * right.len() as u64 + atoms(&right) * acc.len() as u64;
+                    *work = work.saturating_add(step);
+                    if *work > BUDGET {
+                        return None;
+                    }
+                    acc = acc
+                        .iter()
+                        .flat_map(|l| {
+                            right.iter().map(move |r| {
+                                let mut c = l.clone();
+                                c.extend_from_slice(r);
+                                c
+                            })
+                        })
+                        .collect();
+                }
+                Some(acc)
+            }
+        }
+    }
+}
+
+/// The steps of work the report may spend writing out one law's conjunctive normal form, each
+/// step one atom written by distributing an `||` over an `&&`: the stand-in in this prototype
+/// for the compile-time budget of QUESTIONS A54 (plan row MIX-budget), the one limit the
+/// standing rules allow. A law with no `||` over an `&&` spends no steps, whatever its size.
+pub const BUDGET: u64 = 1 << 20;
+
+/// A law member.
 pub struct Law {
     pub name: String,
     pub binders: Vec<String>,
     /// The body as written, for the report.
     pub text: String,
-    pub body: Vec<Vec<Atom>>,
+    pub body: Formula,
+    /// The body as a conjunction of clauses, each an `||` of atoms; `None` when writing it
+    /// out reached [`BUDGET`], and the report does not check the law.
+    pub cnf: Option<Vec<Vec<Atom>>>,
+}
+
+impl Law {
+    /// Whether the report does not check this law: writing out its conjunctive normal form
+    /// reached [`BUDGET`].
+    pub fn refused(&self) -> bool {
+        self.cnf.is_none()
+    }
+
+    /// The clauses of a law that is not refused.
+    pub fn clauses(&self) -> &[Vec<Atom>] {
+        self.cnf.as_deref().expect("a refused law has no clauses")
+    }
 }
 
 /// An interface with law members.
 pub struct Theory {
     pub name: String,
     pub fields: Vec<Field>,
+    /// Each field's index by name, so a law's names are read in O(1) each.
+    field_index: HashMap<String, usize>,
     pub laws: Vec<Law>,
     pub terms: Vec<Term>,
 }
 
 /// The symbol a term ends at under a choice of every field it reaches.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Sym {
     Const(u32),
     Var(usize),
@@ -82,6 +195,109 @@ pub enum Sym {
 
 /// The choice of a field on two values: `0` is `#a`, `1` is `#b`, `2 + i` projects argument `i`.
 pub type Choice = u32;
+
+/// A side of an atom reduced until its first call of a field: the end symbol it reaches, or the
+/// term of that call.
+type Reached = Result<Sym, usize>;
+
+/// The parity a clause's negated atom asks of its two sides' symbols: `==` negated is
+/// "different" (1), `!=` negated is "equal" (0).
+fn negated(rel: Rel) -> u8 {
+    match rel {
+        Rel::Eq => 1,
+        Rel::Ne => 0,
+    }
+}
+
+/// A union-find with the parity of each node to its root, on two values: parity 0 is "equal",
+/// 1 "different". Union without ranks, with path compression: O(log) amortized per operation.
+#[derive(Default)]
+struct Parities {
+    parent: Vec<usize>,
+    parity: Vec<u8>,
+}
+
+impl Parities {
+    /// A new node, its own root.
+    fn add(&mut self) -> usize {
+        self.parent.push(self.parent.len());
+        self.parity.push(0);
+        self.parent.len() - 1
+    }
+
+    /// The root of `x` and the parity of `x` to it.
+    fn find(&mut self, x: usize) -> (usize, u8) {
+        let (mut root, mut p) = (x, 0);
+        while self.parent[root] != root {
+            p ^= self.parity[root];
+            root = self.parent[root];
+        }
+        // Path compression: each node on the path then points at the root, with its parity.
+        let (mut y, mut py) = (x, p);
+        while y != root {
+            let (next, pn) = (self.parent[y], py ^ self.parity[y]);
+            self.parent[y] = root;
+            self.parity[y] = py;
+            y = next;
+            py = pn;
+        }
+        (root, p)
+    }
+
+    /// Records that `x` and `y` have parity `want`; false when that contradicts what is
+    /// recorded.
+    fn relate(&mut self, x: usize, y: usize, want: u8) -> bool {
+        let ((rx, px), (ry, py)) = (self.find(x), self.find(y));
+        if rx == ry {
+            return px ^ py == want;
+        }
+        self.parent[rx] = ry;
+        self.parity[rx] = px ^ py ^ want;
+        true
+    }
+}
+
+/// The symbols `#a`, `#b` and the binders a clause's sides end at, as nodes of a union-find
+/// with parities: `#a` and `#b` are nodes 0 and 1, different; a binder gets a node when first
+/// met, so the scratch is linear in the clause rather than in the law's binders.
+struct Symbols {
+    nodes: Parities,
+    binder: HashMap<usize, usize>,
+}
+
+impl Default for Symbols {
+    fn default() -> Self {
+        let mut nodes = Parities::default();
+        let (a, b) = (nodes.add(), nodes.add());
+        nodes.relate(b, a, 1);
+        Symbols {
+            nodes,
+            binder: HashMap::new(),
+        }
+    }
+}
+
+impl Symbols {
+    fn node(&mut self, s: Sym) -> usize {
+        match s {
+            Sym::Const(c) => c as usize,
+            Sym::Var(v) => *self.binder.entry(v).or_insert_with(|| self.nodes.add()),
+        }
+    }
+
+    /// The root of symbol `s` and its parity to it.
+    fn find_sym(&mut self, s: Sym) -> (usize, u8) {
+        let x = self.node(s);
+        self.nodes.find(x)
+    }
+
+    /// Records that `x` and `y` have parity `want`; false when that contradicts what is
+    /// recorded.
+    fn relate(&mut self, x: Sym, y: Sym, want: u8) -> bool {
+        let (x, y) = (self.node(x), self.node(y));
+        self.nodes.relate(x, y, want)
+    }
+}
 
 /// The number of choices of a field of `arity` arguments.
 pub fn choices(arity: usize) -> u32 {
@@ -93,6 +309,7 @@ impl Theory {
         Theory {
             name: name.to_string(),
             fields: Vec::new(),
+            field_index: HashMap::new(),
             laws: Vec::new(),
             terms: Vec::new(),
         }
@@ -100,6 +317,8 @@ impl Theory {
 
     /// Adds a field of `arity` arguments.
     pub fn field(&mut self, name: &str, arity: usize) -> &mut Self {
+        let prior = self.field_index.insert(name.to_string(), self.fields.len());
+        assert!(prior.is_none(), "field {name} declared twice");
         self.fields.push(Field {
             name: name.to_string(),
             arity,
@@ -108,7 +327,8 @@ impl Theory {
     }
 
     /// Adds a law with the binders named in `binders` (separated by spaces or commas) and the
-    /// body `body`, written with `==`, `!=`, `&&`, `||`, field applications and binders.
+    /// body `body`, written with `==`, `!=`, `&&`, `||`, `!`, `(a).implies(b)`, parentheses,
+    /// field applications and binders.
     pub fn law(&mut self, name: &str, binders: &str, body: &str) -> &mut Self {
         let binders: Vec<String> = binders
             .split([' ', ','])
@@ -116,26 +336,51 @@ impl Theory {
             .map(str::to_string)
             .collect();
         let tokens = tokenize(body);
+        let index: HashMap<&str, usize> = binders
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.as_str(), i))
+            .collect();
+        assert_eq!(
+            index.len(),
+            binders.len(),
+            "law {name}: a binder named twice"
+        );
         let mut p = Parser {
             theory: self,
-            binders: &binders,
+            binders: index,
             tokens: &tokens,
             at: 0,
         };
-        let parsed = p.body();
+        let parsed = p.or();
         assert_eq!(p.at, tokens.len(), "law {name}: text after the body");
+        // Complexity tradeoff: a law is decided through its conjunctive normal form, linear in
+        // the law when no `||` has an `&&` among its operands, and the product of the
+        // operands' clause counts when one has. What is given up: writing the form out is
+        // charged against BUDGET, the stand-in for A54's compile-time budget, which plan row
+        // MIX-budget replaces. The charge is the work done, one step per atom written by
+        // distributing an `||` over an `&&`, so a law with no such `||` is never refused,
+        // whatever its size. A law whose writing reaches the budget is refused with its own
+        // message (`render`), not checked. Why it cannot be avoided: deciding a law of the shape
+        // `(..&&..) || (..&&..) || ...` on two values is coNP-complete in its size
+        // (`hardness::an_or_of_ands_is_refused` gives the reduction from 3-SAT), so every method
+        // is exponential on some law of that shape. Structural trigger: an `||` whose operands
+        // include several `&&`s. Tests: `hardness::an_or_of_ands_is_refused`,
+        // `hardness::the_work_limit_is_not_a_size_limit`; COMPLEXITY.md C31.
+        let cnf = parsed.cnf(&mut 0);
         self.laws.push(Law {
             name: name.to_string(),
             binders,
             text: body.to_string(),
             body: parsed,
+            cnf,
         });
         self
     }
 
     /// The field of this name.
     pub fn field_id(&self, name: &str) -> Option<usize> {
-        self.fields.iter().position(|f| f.name == name)
+        self.field_index.get(name).copied()
     }
 
     /// The symbol `t` ends at when each field `f` it reaches is `choice(f)`.
@@ -156,12 +401,15 @@ impl Theory {
 
     /// The fields law `l` names, in declaration order, each once.
     pub fn law_scope(&self, l: usize) -> Vec<usize> {
+        self.atoms_scope(&self.laws[l].body.atoms())
+    }
+
+    /// The fields some atom of `atoms` names, each once, in declaration order.
+    fn atoms_scope(&self, atoms: &[Atom]) -> Vec<usize> {
         let mut out = Vec::new();
-        for conj in &self.laws[l].body {
-            for a in conj {
-                self.term_fields(a.lhs, &mut out);
-                self.term_fields(a.rhs, &mut out);
-            }
+        for a in atoms {
+            self.term_fields(a.lhs, &mut out);
+            self.term_fields(a.rhs, &mut out);
         }
         out.sort_unstable();
         out.dedup();
@@ -169,12 +417,7 @@ impl Theory {
     }
 
     fn atom_scope(&self, a: &Atom) -> Vec<usize> {
-        let mut out = Vec::new();
-        self.term_fields(a.lhs, &mut out);
-        self.term_fields(a.rhs, &mut out);
-        out.sort_unstable();
-        out.dedup();
-        out
+        self.atoms_scope(std::slice::from_ref(a))
     }
 
     /// Pushes the fields `t` names onto `out`, by an explicit stack.
@@ -191,69 +434,121 @@ impl Theory {
         }
     }
 
-    /// Whether law `l` holds at every binding on two values when each field `f` is `choice(f)`.
-    /// The binders the sides end at are enumerated, `2^m` bindings for `m` of them: a law with
-    /// `||` over binders is checked as the program wrote it, binding by binding.
+    /// Whether law `l` holds at every binding on two values when each field `f` is `choice(f)`:
+    /// whether each clause of its conjunctive normal form does. The law must not be refused.
     pub fn law_holds(&self, l: usize, choice: impl Fn(usize) -> Choice + Copy) -> bool {
-        let law = &self.laws[l];
-        let ends: Vec<Vec<(Rel, Sym, Sym)>> = law
-            .body
-            .iter()
-            .map(|conj| {
-                conj.iter()
-                    .map(|a| {
-                        (
-                            a.rel,
-                            self.reduce(a.lhs, choice),
-                            self.reduce(a.rhs, choice),
-                        )
-                    })
-                    .collect()
-            })
-            .collect();
-        let mut vars: Vec<usize> = ends
-            .iter()
-            .flatten()
-            .flat_map(|&(_, l, r)| [l, r])
-            .filter_map(|s| match s {
-                Sym::Var(v) => Some(v),
-                Sym::Const(_) => None,
-            })
-            .collect();
-        vars.sort_unstable();
-        vars.dedup();
-        // Complexity tradeoff: a law with `||` is checked at each of the 2^m bindings of the m
-        // binders its sides end at. What is given up: nothing; the cost is exponential in the
-        // binders of one law as written, which is the work the law asks for on a two-value
-        // carrier (a `test` table over the domain). Structural trigger: a law body with `||`.
-        // Test: `hardness::nae_fano_has_no_model`; COMPLEXITY.md C31. A
-        // complete solution would decide validity of the disjunction of equalities directly,
-        // which is coNP-complete in the size of the law.
-        let value = |s: Sym, bits: u64| match s {
-            Sym::Const(c) => c as u64,
-            Sym::Var(v) => {
-                let i = vars
-                    .binary_search(&v)
-                    .expect("every ended-at binder is listed");
-                (bits >> i) & 1
-            }
-        };
-        (0..1u64 << vars.len()).all(|bits| {
-            ends.iter().any(|conj| {
-                conj.iter().all(|&(rel, l, r)| match rel {
-                    Rel::Eq => value(l, bits) == value(r, bits),
-                    Rel::Ne => value(l, bits) != value(r, bits),
-                })
-            })
+        (0..self.laws[l].clauses().len()).all(|k| self.clause_holds(l, k, choice))
+    }
+
+    /// Whether clause `k` of law `l`, an `||` of atoms, holds at every binding on two values
+    /// when each field `f` is `choice(f)`. It fails exactly when some binding makes every atom
+    /// false, that is when the negated atoms can all hold together: each says that two of the
+    /// symbols `#a`, `#b` and the binders are equal or different, which a union-find with the
+    /// parity of each node to its root decides, with `#a` and `#b` different. Time linear in the
+    /// clause up to a log factor: O(c log c) for a clause of c atoms.
+    pub fn clause_holds(
+        &self,
+        l: usize,
+        k: usize,
+        choice: impl Fn(usize) -> Choice + Copy,
+    ) -> bool {
+        let mut symbols = Symbols::default();
+        self.laws[l].clauses()[k].iter().any(|a| {
+            let (x, y) = (self.reduce(a.lhs, choice), self.reduce(a.rhs, choice));
+            !symbols.relate(x, y, negated(a.rel))
         })
     }
 
-    /// Whether law `l` holds on one value: some alternative has only equations.
+    /// The choices of field `f` among those `alive` allows under which clause `k` of law `l`
+    /// fails, when every other field `g` is `choice(g)`. The atoms whose paths do not reach `f`
+    /// are related once; for each choice of `f` only the atoms whose paths reach it are, each from
+    /// where it reaches `f`, in a second union-find over the roots of the first. Each such atom
+    /// holds a call of `f` with all its arguments, and the choices continue into different
+    /// arguments, so the work is linear in the clause up to a log factor, however many arguments
+    /// `f` takes; evaluating the whole clause once per choice would be the choices times the
+    /// clause (`scaling::one_wide_field_scales`).
+    pub fn clause_fails_for(
+        &self,
+        l: usize,
+        k: usize,
+        f: usize,
+        alive: impl Fn(Choice) -> bool,
+        choice: impl Fn(usize) -> Choice + Copy,
+    ) -> Vec<Choice> {
+        let mut base = Symbols::default();
+        // The atoms whose paths reach `f`: each side's symbol, or the call of `f` it reaches.
+        let mut reach: Vec<(Reached, Reached, u8)> = Vec::new();
+        for a in &self.laws[l].clauses()[k] {
+            let want = negated(a.rel);
+            match (
+                self.reduce_until(a.lhs, choice, f),
+                self.reduce_until(a.rhs, choice, f),
+            ) {
+                (Ok(x), Ok(y)) => {
+                    if !base.relate(x, y, want) {
+                        // The clause holds whatever `f` is.
+                        return Vec::new();
+                    }
+                }
+                (x, y) => reach.push((x, y, want)),
+            }
+        }
+        let with = |v: Choice| move |g: usize| if g == f { v } else { choice(g) };
+        let end = |side: Reached, v: Choice| match side {
+            Ok(s) => s,
+            Err(_) if v < 2 => Sym::Const(v),
+            Err(t) => match &self.terms[t] {
+                Term::App { args, .. } => self.reduce(args[(v - 2) as usize], with(v)),
+                Term::Var(_) => unreachable!("a call of f is an application"),
+            },
+        };
+        (0..choices(self.fields[f].arity))
+            .filter(|&v| alive(v))
+            .filter(|&v| {
+                // The second union-find, over the roots of the first: the clause fails under
+                // `v` when the negated atoms that reach `f` agree with the rest.
+                let mut local = Parities::default();
+                let mut id: HashMap<usize, usize> = HashMap::new();
+                reach.iter().all(|&(x, y, want)| {
+                    let (rx, px) = base.find_sym(end(x, v));
+                    let (ry, py) = base.find_sym(end(y, v));
+                    let mut node = |r: usize| *id.entry(r).or_insert_with(|| local.add());
+                    let (lx, ly) = (node(rx), node(ry));
+                    local.relate(lx, ly, want ^ px ^ py)
+                })
+            })
+            .collect()
+    }
+
+    /// The symbol `t` ends at when each field `g` it reaches is `choice(g)`, or the first call
+    /// of field `f` its path reaches.
+    fn reduce_until(&self, mut t: usize, choice: impl Fn(usize) -> Choice, f: usize) -> Reached {
+        loop {
+            match &self.terms[t] {
+                Term::Var(v) => return Ok(Sym::Var(*v)),
+                Term::App { field, .. } if *field == f => return Err(t),
+                Term::App { field, args } => {
+                    let c = choice(*field);
+                    if c < 2 {
+                        return Ok(Sym::Const(c));
+                    }
+                    t = args[(c - 2) as usize];
+                }
+            }
+        }
+    }
+
+    /// Whether law `l` holds on one value, where every two terms are equal: its body with each
+    /// `==` true and each `!=` false.
     pub fn law_holds_on_one_value(&self, l: usize) -> bool {
-        self.laws[l]
-            .body
-            .iter()
-            .any(|conj| conj.iter().all(|a| a.rel == Rel::Eq))
+        fn eval(f: &Formula) -> bool {
+            match f {
+                Formula::Atom(a) => a.rel == Rel::Eq,
+                Formula::And(fs) => fs.iter().all(eval),
+                Formula::Or(fs) => fs.iter().any(eval),
+            }
+        }
+        eval(&self.laws[l].body)
     }
 
     /// The paths of `t`: each symbol it may end at with the choices that make it end there.
@@ -288,30 +583,145 @@ impl Theory {
         out
     }
 
-    /// The cubes of one atom: the partial choices under which it holds at every binding.
-    // Complexity tradeoff: the cubes pair the paths of the two sides, so one atom costs the
-    // product of its sides' path counts, each at most twice its side's size. What is given up:
-    // nothing, the set is exact. Structural trigger: an atom with many paths on both sides, as
-    // two large terms. Test: `scaling::the_report_scales`; COMPLEXITY.md C31. A
-    // complete solution groups the paths by symbol and keeps them as a product of two lists
-    // rather than their pairs, which the arc-consistency step would then read per symbol.
-    fn cubes(&self, a: &Atom) -> Vec<Vec<(usize, Choice)>> {
-        let (left, right) = (self.exits(a.lhs), self.exits(a.rhs));
-        let mut out = Vec::new();
-        for (ls, lc) in &left {
-            for (rs, rc) in &right {
-                let good = match (a.rel, ls, rs) {
-                    (Rel::Eq, _, _) => ls == rs,
-                    (Rel::Ne, Sym::Const(x), Sym::Const(y)) => x != y,
-                    (Rel::Ne, Sym::Var(_), _) | (Rel::Ne, _, Sym::Var(_)) => false,
-                };
-                if good && let Some(m) = merge(lc, rc) {
-                    out.push(m);
+    /// One atom as constraints. Each side's paths are sorted by the symbol they end at, keyed so
+    /// that the atom holds exactly when the two keys agree: for `==` the symbol itself, for `!=`
+    /// the left constant and the other constant on the right, and no key for a binder. Then
+    /// the sides are joined on the key, in O(p log p) for p paths.
+    fn atom_form(&self, a: &Atom) -> AtomForm {
+        let key = |side: Vec<(Sym, Vec<(usize, Choice)>)>, flip: bool| {
+            let mut out: Vec<(Sym, Vec<(usize, Choice)>)> = side
+                .into_iter()
+                .filter_map(|(s, cond)| match (a.rel, s) {
+                    (Rel::Eq, _) => Some((s, cond)),
+                    (Rel::Ne, Sym::Const(c)) => {
+                        Some((Sym::Const(if flip { 1 - c } else { c }), cond))
+                    }
+                    (Rel::Ne, Sym::Var(_)) => None,
+                })
+                .collect();
+            out.sort_by_key(|&(s, _)| s);
+            out
+        };
+        let (left, right) = (key(self.exits(a.lhs), false), key(self.exits(a.rhs), true));
+        let (mut lf, mut rf) = (Vec::new(), Vec::new());
+        self.term_fields(a.lhs, &mut lf);
+        self.term_fields(a.rhs, &mut rf);
+        lf.sort_unstable();
+        lf.dedup();
+        rf.sort_unstable();
+        rf.dedup();
+        let shared = {
+            let (mut i, mut j, mut any) = (0, 0, false);
+            while i < lf.len() && j < rf.len() && !any {
+                match lf[i].cmp(&rf[j]) {
+                    std::cmp::Ordering::Less => i += 1,
+                    std::cmp::Ordering::Greater => j += 1,
+                    std::cmp::Ordering::Equal => any = true,
+                }
+            }
+            any
+        };
+        // The runs of equal keys on each side, walked together.
+        let runs = |side: &[(Sym, Vec<(usize, Choice)>)]| {
+            let mut out: Vec<(Sym, std::ops::Range<usize>)> = Vec::new();
+            for (i, (s, _)) in side.iter().enumerate() {
+                match out.last_mut() {
+                    Some((t, r)) if t == s => r.end = i + 1,
+                    _ => out.push((*s, i..i + 1)),
+                }
+            }
+            out
+        };
+        let (lr, rr) = (runs(&left), runs(&right));
+        let mut common: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> = Vec::new();
+        let (mut i, mut j) = (0, 0);
+        while i < lr.len() && j < rr.len() {
+            match lr[i].0.cmp(&rr[j].0) {
+                std::cmp::Ordering::Less => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal => {
+                    common.push((lr[i].1.clone(), rr[j].1.clone()));
+                    i += 1;
+                    j += 1;
                 }
             }
         }
-        out
+        if !shared && !common.is_empty() {
+            // The sides name different fields, so every pair of paths is consistent and the
+            // atom is exactly "the left side ends at s and the right side ends at s" for one
+            // end symbol s: two constraints joined by s, linear in the paths. The field–constraint
+            // graph gains the path left fields – s – right fields, with no cycle, so arc
+            // consistency is as strong as on the pairs.
+            let mut l = Vec::new();
+            let mut r = Vec::new();
+            for (v, (lrange, rrange)) in common.iter().enumerate() {
+                l.extend(
+                    left[lrange.clone()]
+                        .iter()
+                        .map(|(_, c)| (v as u32, c.clone())),
+                );
+                r.extend(
+                    right[rrange.clone()]
+                        .iter()
+                        .map(|(_, c)| (v as u32, c.clone())),
+                );
+            }
+            return AtomForm::Split {
+                dom: common.len() as u32,
+                left: (lf, l),
+                right: (rf, r),
+            };
+        }
+        // Complexity tradeoff: when the two sides of an atom name a common field, the atom is
+        // the pairs of paths whose ends agree and whose choices of the common fields agree, and
+        // these pairs are written out: O(p log p) for the join plus the pairs, at most the
+        // product of the sides' path counts, each pair as long as its two paths together.
+        // `f1(..fd(x)..) == fd(..f1(x)..)` with fields of one argument has d^2 + d + 1 pairs and
+        // about 2 d^3 / 3 choices in them, cubic in the atom (measured: d = 100 and 200, 10,101
+        // and 40,201 pairs, 686,700 and 5,413,400 choices, 58 ms and 447 ms for the report).
+        // What is given up: time and space cubic in an atom whose two sides are long and share
+        // fields; the set is exact. The split by end symbol alone, used when the sides share no
+        // field, loses the common fields' agreement: tried here, it gives the forest fragment
+        // of `brute` dead ends and Lattice 2. Structural trigger: an atom whose sides share a
+        // field and have many paths each. Test: `brute` and the corpus; the cubic growth is
+        // pinned by `scaling::a_shared_field_atom_is_cubic`, not yet a scaling test;
+        // COMPLEXITY.md C31; plan row TRIVIAL-shared-atom.
+        let mut out = Vec::new();
+        for (lrange, rrange) in common {
+            for (_, lc) in &left[lrange] {
+                for (_, rc) in &right[rrange.clone()] {
+                    if let Some(m) = merge(lc, rc) {
+                        out.push(m);
+                    }
+                }
+            }
+        }
+        AtomForm::Cubes(out)
     }
+}
+
+impl Theory {
+    /// For an atom whose sides name a common field, the count of pairs of paths that agree and
+    /// of the choices they hold; `None` for an atom split by end symbol.
+    pub fn shared_atom_size(&self, a: &Atom) -> Option<(usize, usize)> {
+        match self.atom_form(a) {
+            AtomForm::Split { .. } => None,
+            AtomForm::Cubes(cubes) => Some((cubes.len(), cubes.iter().map(Vec::len).sum())),
+        }
+    }
+}
+
+/// One side of a split atom: its fields, and its paths, each with the value of the end symbol it
+/// ends at.
+type Side = (Vec<usize>, Vec<(u32, Vec<(usize, Choice)>)>);
+
+/// An atom as the engine checks it.
+enum AtomForm {
+    /// Sides that name no common field: an end symbol of `dom` values, and for each side its
+    /// fields and its paths, each with the value of the end symbol it ends at.
+    Split { dom: u32, left: Side, right: Side },
+    /// Sides that name a common field: the partial choices under which the atom holds.
+    Cubes(Vec<Vec<(usize, Choice)>>),
 }
 
 /// The union of two sorted partial choices, or `None` when they choose one field two ways.
@@ -353,6 +763,8 @@ enum Token {
     Ne,
     And,
     Or,
+    Not,
+    Dot,
 }
 
 fn tokenize(s: &str) -> Vec<Token> {
@@ -370,6 +782,8 @@ fn tokenize(s: &str) -> Vec<Token> {
             (_, Some("!=")) => (out.push(Token::Ne), i += 2).1,
             (_, Some("&&")) => (out.push(Token::And), i += 2).1,
             (_, Some("||")) => (out.push(Token::Or), i += 2).1,
+            (b'!', _) => (out.push(Token::Not), i += 1).1,
+            (b'.', _) => (out.push(Token::Dot), i += 1).1,
             (c, _) if c.is_ascii_alphanumeric() || c == b'_' => {
                 let start = i;
                 while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
@@ -387,7 +801,8 @@ fn tokenize(s: &str) -> Vec<Token> {
 /// recurses on the nesting of that text.
 struct Parser<'a> {
     theory: &'a mut Theory,
-    binders: &'a [String],
+    /// Each binder's index by name.
+    binders: HashMap<&'a str, usize>,
     tokens: &'a [Token],
     at: usize,
 }
@@ -401,20 +816,51 @@ impl Parser<'_> {
         hit
     }
 
-    fn body(&mut self) -> Vec<Vec<Atom>> {
-        let mut out = vec![self.conj()];
+    /// `a || b || ...`.
+    fn or(&mut self) -> Formula {
+        let mut out = vec![self.and()];
         while self.eat(&Token::Or) {
-            out.push(self.conj());
+            out.push(self.and());
         }
-        out
+        flatten(out, false)
     }
 
-    fn conj(&mut self) -> Vec<Atom> {
-        let mut out = vec![self.atom()];
+    /// `a && b && ...`.
+    fn and(&mut self) -> Formula {
+        let mut out = vec![self.unary()];
         while self.eat(&Token::And) {
-            out.push(self.atom());
+            out.push(self.unary());
         }
-        out
+        flatten(out, true)
+    }
+
+    /// `!a`, `(a)`, `(a).implies(b)` or an atom.
+    fn unary(&mut self) -> Formula {
+        if self.eat(&Token::Not) {
+            return self.unary().negate();
+        }
+        if !self.eat(&Token::Open) {
+            return Formula::Atom(self.atom());
+        }
+        let mut f = self.or();
+        assert!(self.eat(&Token::Close), "expected ) at token {}", self.at);
+        while self.eat(&Token::Dot) {
+            assert_eq!(
+                self.tokens.get(self.at),
+                Some(&Token::Name("implies".to_string())),
+                "expected implies at token {}",
+                self.at
+            );
+            self.at += 1;
+            assert!(self.eat(&Token::Open), "expected ( after implies");
+            let then = self.or();
+            assert!(
+                self.eat(&Token::Close),
+                "expected ) after the argument of implies"
+            );
+            f = flatten(vec![f.negate(), then], false);
+        }
+        f
     }
 
     fn atom(&mut self) -> Atom {
@@ -438,7 +884,7 @@ impl Parser<'_> {
             panic!("expected a name at token {}", self.at);
         };
         self.at += 1;
-        let term = if let Some(v) = self.binders.iter().position(|b| *b == name) {
+        let term = if let Some(v) = self.binders.get(name.as_str()).copied() {
             Term::Var(v)
         } else {
             let field = self
@@ -465,6 +911,22 @@ impl Parser<'_> {
         };
         self.theory.terms.push(term);
         self.theory.terms.len() - 1
+    }
+}
+
+/// One `&&` (`and`) or `||` of `parts`, with nested ones of the same kind merged into it.
+fn flatten(parts: Vec<Formula>, and: bool) -> Formula {
+    let mut out = Vec::new();
+    for p in parts {
+        match (p, and) {
+            (Formula::And(fs), true) | (Formula::Or(fs), false) => out.extend(fs),
+            (p, _) => out.push(p),
+        }
+    }
+    match (out.len(), and) {
+        (1, _) => out.pop().expect("one part"),
+        (_, true) => Formula::And(out),
+        (_, false) => Formula::Or(out),
     }
 }
 
@@ -539,13 +1001,15 @@ pub fn split(t: &Theory) -> Split {
 
 /// How a constraint is checked.
 enum Check {
-    /// One equation or inequation: the cubes under which it holds.
-    Cubes(Vec<Vec<(usize, Choice)>>),
-    /// A law with `||`, checked whole once at most one of its fields is open.
-    Whole,
+    /// The partial choices under which it holds, kept in the engine: one atom, or one side of
+    /// an atom with its end symbol.
+    Cubes,
+    /// Clause `k` of the law, an `||` of several atoms, checked whole once at most one of its
+    /// fields is open.
+    Whole(usize),
 }
 
-/// A constraint: one atom of a law without `||`, or a whole law with `||`.
+/// A constraint over variables: the fields, then one end symbol for each atom split in two.
 struct Constraint {
     law: usize,
     scope: Vec<usize>,
@@ -569,77 +1033,253 @@ struct Conflict {
     field: Option<usize>,
 }
 
-/// The constraints of a theory and the choices left for each field, with a trail to undo them.
+/// The constraints of a theory and the choices left for each variable, with a trail to undo them.
+/// The variables are the fields, then the end symbols, which the search never chooses: once
+/// every field of an atom is chosen, each side has one path left, which fixes its end symbol.
+///
+/// A constraint of cubes is kept arc consistent incrementally. A cube that does not mention a
+/// variable of the scope allows every choice of it, so a choice is supported while some live cube
+/// uses it or some live cube does not mention its variable. Each choice counts the live cubes that
+/// use it, each variable of the scope the live cubes that mention it, and each constraint its live
+/// cubes. Removing a choice removes the cubes that use it and lowers these counts; a choice left
+/// unsupported is removed in turn. The variables of a constraint are kept ordered by how many
+/// live cubes mention them, so those that every live cube mentions are found without a scan. So
+/// along one descent of the search each cube is removed at most once, and the work is linear in
+/// the cubes, however many choices the descent makes.
 struct Engine<'t> {
     theory: &'t Theory,
+    /// The number of values of each variable.
+    dom: Vec<u32>,
     cons: Vec<Constraint>,
-    cons_of: Vec<Vec<usize>>,
     cons_of_law: Vec<Vec<usize>>,
+    /// The constraints of whole clauses each variable is in.
+    whole_of: Vec<Vec<usize>>,
+    /// For each whole clause, how many of its fields still have more than one choice.
+    open: Vec<u32>,
     offset: Vec<usize>,
     alive: Vec<bool>,
     size: Vec<u32>,
-    trail: Vec<(usize, Choice, Reason)>,
+    /// The removals, in order: variable, choice, reason, and the length of `killed` then.
+    trail: Vec<(usize, Choice, Reason, usize)>,
+    /// The removals of `trail` whose cubes are already removed.
+    head: usize,
+    /// Every cube: its constraint and its choices, each with its count in `count` and the slot
+    /// of its variable.
+    cube_con: Vec<usize>,
+    cube_start: Vec<usize>,
+    cube_lits: Vec<(usize, Choice, usize, usize)>,
+    cube_alive: Vec<bool>,
+    /// The cubes removed, in order, to undo them.
+    killed: Vec<usize>,
+    /// For each choice of each variable, by index like `alive`: the cubes that use it.
+    uses: Vec<Vec<usize>>,
+    /// For each constraint of cubes and each choice of a variable in its scope: the live cubes
+    /// that use it.
+    count: Vec<u32>,
+    /// A slot is a variable in the scope of a constraint of cubes: its variable and the index in
+    /// `count` of its first choice. `slots_of[c]` is the range of constraint `c`.
+    slot_var: Vec<(usize, usize)>,
+    slots_of: Vec<std::ops::Range<usize>>,
+    /// For each slot, the live cubes of its constraint that mention its variable.
+    mention: Vec<u32>,
+    /// For each constraint, its live cubes.
+    live: Vec<u32>,
+    /// The slots of each constraint, in `slots_of[c]`, ordered by `mention`; `pos` is the
+    /// place of each slot in `order`. `bin[bin_of[c] + m]` is the first place in `order` of a
+    /// slot of `c` with `mention` at least `m`, for `m` up to the cubes of `c` plus one.
+    order: Vec<usize>,
+    pos: Vec<usize>,
+    bin: Vec<usize>,
+    bin_of: Vec<usize>,
+    /// The slots of the cube being removed, marked while it is.
+    marked: Vec<bool>,
     queue: VecDeque<usize>,
     queued: Vec<bool>,
-    // Scratch of one revision, indexed like `alive` and by field.
-    support: Vec<bool>,
-    mentions: Vec<u32>,
-    /// Revisions done, for the tests' count of work.
-    revisions: u64,
+    /// The work done, for the tests: cubes removed and clauses checked.
+    work: u64,
 }
 
 impl<'t> Engine<'t> {
     fn new(theory: &'t Theory) -> Self {
         let mut cons = Vec::new();
+        let mut dom: Vec<u32> = theory.fields.iter().map(|f| choices(f.arity)).collect();
+        let mut cubes_of: Vec<Vec<Vec<(usize, Choice)>>> = Vec::new();
+        let mut push = |cons: &mut Vec<Constraint>, c: Constraint, cubes| {
+            cons.push(c);
+            cubes_of.push(cubes);
+        };
         for (l, law) in theory.laws.iter().enumerate() {
-            match law.body.as_slice() {
-                [conj] => {
-                    for a in conj {
-                        cons.push(Constraint {
+            for (k, clause) in law.cnf.iter().flatten().enumerate() {
+                match clause.as_slice() {
+                    [a] => match theory.atom_form(a) {
+                        AtomForm::Cubes(cubes) => push(
+                            &mut cons,
+                            Constraint {
+                                law: l,
+                                scope: theory.atom_scope(a),
+                                check: Check::Cubes,
+                            },
+                            cubes,
+                        ),
+                        AtomForm::Split {
+                            dom: values,
+                            left,
+                            right,
+                        } => {
+                            let end = dom.len();
+                            dom.push(values);
+                            for (mut scope, paths) in [left, right] {
+                                scope.push(end);
+                                let cubes = paths
+                                    .into_iter()
+                                    .map(|(v, mut cube)| {
+                                        cube.push((end, v));
+                                        cube
+                                    })
+                                    .collect();
+                                push(
+                                    &mut cons,
+                                    Constraint {
+                                        law: l,
+                                        scope,
+                                        check: Check::Cubes,
+                                    },
+                                    cubes,
+                                );
+                            }
+                        }
+                    },
+                    _ => push(
+                        &mut cons,
+                        Constraint {
                             law: l,
-                            scope: theory.atom_scope(a),
-                            check: Check::Cubes(theory.cubes(a)),
-                        });
-                    }
+                            scope: theory.atoms_scope(clause),
+                            check: Check::Whole(k),
+                        },
+                        Vec::new(),
+                    ),
                 }
-                _ => cons.push(Constraint {
-                    law: l,
-                    scope: theory.law_scope(l),
-                    check: Check::Whole,
-                }),
             }
         }
-        let mut cons_of = vec![Vec::new(); theory.fields.len()];
-        let mut cons_of_law = vec![Vec::new(); theory.laws.len()];
-        for (c, con) in cons.iter().enumerate() {
-            for &f in &con.scope {
-                cons_of[f].push(c);
-            }
-            cons_of_law[con.law].push(c);
-        }
-        let mut offset = Vec::with_capacity(theory.fields.len() + 1);
+        let mut offset = Vec::with_capacity(dom.len() + 1);
         let mut total = 0;
-        for f in &theory.fields {
+        for &d in &dom {
             offset.push(total);
-            total += choices(f.arity) as usize;
+            total += d as usize;
         }
         offset.push(total);
-        let size = theory.fields.iter().map(|f| choices(f.arity)).collect();
+        let mut cons_of_law = vec![Vec::new(); theory.laws.len()];
+        let mut whole_of = vec![Vec::new(); dom.len()];
+        let mut open = vec![0; cons.len()];
+        let (mut slot_var, mut slots_of) = (Vec::new(), Vec::with_capacity(cons.len()));
+        let mut n_counts = 0;
+        let (mut cube_con, mut cube_start, mut cube_lits) = (Vec::new(), vec![0], Vec::new());
+        let mut uses = vec![Vec::new(); total];
+        let (mut live, mut bin, mut bin_of) = (vec![0; cons.len()], Vec::new(), Vec::new());
+        // The slot of each variable in the constraint being built.
+        let mut slot = vec![usize::MAX; dom.len()];
+        for (c, con) in cons.iter().enumerate() {
+            cons_of_law[con.law].push(c);
+            let first_slot = slot_var.len();
+            bin_of.push(bin.len());
+            match con.check {
+                Check::Whole(_) => {
+                    for &f in &con.scope {
+                        whole_of[f].push(c);
+                    }
+                    open[c] = con.scope.iter().filter(|&&f| dom[f] > 1).count() as u32;
+                }
+                Check::Cubes => {
+                    for &f in &con.scope {
+                        slot[f] = slot_var.len();
+                        slot_var.push((f, n_counts));
+                        n_counts += dom[f] as usize;
+                    }
+                    for cube in &cubes_of[c] {
+                        let id = cube_con.len();
+                        cube_con.push(c);
+                        for &(f, v) in cube {
+                            let s = slot[f];
+                            cube_lits.push((f, v, slot_var[s].1 + v as usize, s));
+                            uses[offset[f] + v as usize].push(id);
+                        }
+                        cube_start.push(cube_lits.len());
+                    }
+                    for &f in &con.scope {
+                        slot[f] = usize::MAX;
+                    }
+                    live[c] = cubes_of[c].len() as u32;
+                }
+            }
+            slots_of.push(first_slot..slot_var.len());
+            // One bin for each count of mentions, 0 to the cubes, and one past the last.
+            if matches!(con.check, Check::Cubes) {
+                bin.extend(std::iter::repeat_n(0, cubes_of[c].len() + 2));
+            }
+        }
+        let mut count = vec![0; n_counts];
+        let mut mention = vec![0; slot_var.len()];
+        for &(_, _, i, s) in &cube_lits {
+            count[i] += 1;
+            mention[s] += 1;
+        }
+        // Order the slots of each constraint by `mention`, a counting sort.
+        let mut order = vec![0; slot_var.len()];
+        let mut pos = vec![0; slot_var.len()];
+        for (c, range) in slots_of.iter().enumerate() {
+            if !matches!(cons[c].check, Check::Cubes) {
+                continue;
+            }
+            let b = bin_of[c];
+            let n = live[c] as usize;
+            for s in range.clone() {
+                bin[b + mention[s] as usize + 1] += 1;
+            }
+            bin[b] = range.start;
+            for m in 1..=n + 1 {
+                bin[b + m] += bin[b + m - 1];
+            }
+            let mut next = bin[b..=b + n].to_vec();
+            for s in range.clone() {
+                let m = mention[s] as usize;
+                order[next[m]] = s;
+                pos[s] = next[m];
+                next[m] += 1;
+            }
+        }
         let n_cons = cons.len();
+        let n_cubes = cube_con.len();
         Engine {
             theory,
+            size: dom.clone(),
+            dom,
             cons,
-            cons_of,
             cons_of_law,
+            whole_of,
+            open,
             offset,
             alive: vec![true; total],
-            size,
             trail: Vec::new(),
+            head: 0,
+            cube_con,
+            cube_start,
+            cube_lits,
+            cube_alive: vec![true; n_cubes],
+            killed: Vec::new(),
+            uses,
+            count,
+            marked: vec![false; slot_var.len()],
+            slot_var,
+            slots_of,
+            mention,
+            live,
+            order,
+            pos,
+            bin,
+            bin_of,
             queue: VecDeque::new(),
             queued: vec![false; n_cons],
-            support: vec![false; total],
-            mentions: vec![0; theory.fields.len()],
-            revisions: 0,
+            work: 0,
         }
     }
 
@@ -652,20 +1292,46 @@ impl<'t> Engine<'t> {
         debug_assert!(self.alive[i], "removing a choice twice");
         self.alive[i] = false;
         self.size[f] -= 1;
-        self.trail.push((f, c, why));
+        if self.size[f] == 1 {
+            for &w in &self.whole_of[f] {
+                self.open[w] -= 1;
+            }
+        }
+        self.trail.push((f, c, why, self.killed.len()));
     }
 
+    /// Undoes the removals after the first `mark`, which must be a point where every removal
+    /// before it had its cubes removed: the start of a choice or of a group.
     fn undo_to(&mut self, mark: usize) {
+        if let Some(&(_, _, _, killed)) = self.trail.get(mark) {
+            while self.killed.len() > killed {
+                let k = self.killed.pop().expect("the list is longer than its mark");
+                self.cube_alive[k] = true;
+                let c = self.cube_con[k];
+                self.live[c] += 1;
+                for j in self.cube_start[k]..self.cube_start[k + 1] {
+                    let (_, _, i, s) = self.cube_lits[j];
+                    self.count[i] += 1;
+                    self.raise(c, s);
+                }
+            }
+        }
         while self.trail.len() > mark {
-            let (f, c, _) = self.trail.pop().expect("the trail is longer than the mark");
+            let (f, c, _, _) = self.trail.pop().expect("the trail is longer than the mark");
             self.alive[self.offset[f] + c as usize] = true;
             self.size[f] += 1;
+            if self.size[f] == 2 {
+                for &w in &self.whole_of[f] {
+                    self.open[w] += 1;
+                }
+            }
         }
+        self.head = self.head.min(mark);
     }
 
     /// The one choice left for `f`, which must have exactly one.
     fn only(&self, f: usize) -> Choice {
-        (0..choices(self.theory.fields[f].arity))
+        (0..self.dom[f])
             .find(|&c| self.is_alive(f, c))
             .expect("a chosen field keeps one choice")
     }
@@ -677,136 +1343,213 @@ impl<'t> Engine<'t> {
         }
     }
 
-    /// Revises constraints until none removes a choice, or one leaves a field with none.
-    fn propagate(&mut self) -> Result<(), Conflict> {
-        while let Some(c) = self.queue.pop_front() {
-            self.queued[c] = false;
-            match self.revise(c) {
-                Ok(changed) => {
-                    for f in changed {
-                        for i in 0..self.cons_of[f].len() {
-                            let d = self.cons_of[f][i];
-                            if d != c {
-                                self.enqueue(d);
-                            }
-                        }
-                    }
+    /// Starts constraint `c`: a choice no cube of it uses is removed, and a whole clause is
+    /// queued.
+    fn start(&mut self, c: usize) -> Result<(), Conflict> {
+        match self.cons[c].check {
+            Check::Whole(_) => self.enqueue(c),
+            Check::Cubes => {
+                if self.slots_of[c].is_empty() && self.live[c] == 0 {
+                    return Err(Conflict {
+                        constraint: c,
+                        field: None,
+                    });
                 }
-                Err(conflict) => {
-                    while let Some(d) = self.queue.pop_front() {
-                        self.queued[d] = false;
+                for s in self.slots_of[c].clone() {
+                    if self.mention[s] == self.live[c] {
+                        self.remove_unused(c, s)?;
                     }
-                    return Err(conflict);
                 }
             }
         }
         Ok(())
     }
 
-    /// Removes the choices of constraint `c`'s fields that no allowed combination supports, and
-    /// returns the fields that lost one. For cubes this is generalized arc consistency, in time
-    /// linear in the cubes and the scope's choices.
-    fn revise(&mut self, c: usize) -> Result<Vec<usize>, Conflict> {
-        self.revisions += 1;
-        let con = &self.cons[c];
-        let mut changed = Vec::new();
-        match &con.check {
-            Check::Cubes(cubes) => {
-                for &f in &con.scope {
-                    self.mentions[f] = 0;
-                    let (lo, hi) = (self.offset[f], self.offset[f + 1]);
-                    self.support[lo..hi].fill(false);
+    /// Removes the cubes of each removed choice and the choices left with no cube, and checks
+    /// the whole clauses with at most one open field, until nothing changes or a variable is
+    /// left with no choice.
+    fn propagate(&mut self) -> Result<(), Conflict> {
+        let result = self.run();
+        if result.is_err() {
+            self.clear_queue();
+        }
+        result
+    }
+
+    fn clear_queue(&mut self) {
+        while let Some(d) = self.queue.pop_front() {
+            self.queued[d] = false;
+        }
+    }
+
+    fn run(&mut self) -> Result<(), Conflict> {
+        loop {
+            if self.head < self.trail.len() {
+                let (f, v, _, _) = self.trail[self.head];
+                self.head += 1;
+                let i = self.offset[f] + v as usize;
+                for u in 0..self.uses[i].len() {
+                    let k = self.uses[i][u];
+                    if self.cube_alive[k] {
+                        self.kill(k)?;
+                    }
                 }
-                let mut alive_cubes = 0u32;
-                for cube in cubes {
-                    if cube
-                        .iter()
-                        .all(|&(f, v)| self.alive[self.offset[f] + v as usize])
-                    {
-                        alive_cubes += 1;
-                        for &(f, v) in cube {
-                            self.support[self.offset[f] + v as usize] = true;
-                            self.mentions[f] += 1;
+                // A whole clause is checked again only when one of its fields is fixed: once at
+                // most one is open, the choices it allows the open field do not change as that
+                // field loses others, so checking it again then would be the choices times the
+                // clause (`scaling::one_wide_field_scales`).
+                if self.size[f] <= 1 {
+                    for w in 0..self.whole_of[f].len() {
+                        let c = self.whole_of[f][w];
+                        if self.open[c] <= 1 {
+                            self.enqueue(c);
                         }
                     }
                 }
-                if alive_cubes == 0 && con.scope.is_empty() {
+            } else if let Some(c) = self.queue.pop_front() {
+                self.queued[c] = false;
+                self.check_clause(c)?;
+            } else {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Removes cube `k` and every choice it leaves unsupported.
+    fn kill(&mut self, k: usize) -> Result<(), Conflict> {
+        self.work += 1;
+        self.cube_alive[k] = false;
+        self.killed.push(k);
+        let c = self.cube_con[k];
+        let lits = self.cube_start[k]..self.cube_start[k + 1];
+        // Every count first, so that an undo, which restores them all, finds them all lowered.
+        self.live[c] -= 1;
+        for j in lits.clone() {
+            let (_, _, i, s) = self.cube_lits[j];
+            self.count[i] -= 1;
+            self.lower(c, s);
+            self.marked[s] = true;
+        }
+        // The slots every live cube now mentions are last in `order`. Those `k` did not mention
+        // were mentioned by every live cube but `k`, and have just lost the support `k` gave all
+        // their choices; those `k` mentioned are visited once for each choice of `k`.
+        let top = self.bin[self.bin_of[c] + self.live[c] as usize];
+        let mut result = Ok(());
+        for p in top..self.slots_of[c].end {
+            let s = self.order[p];
+            if !self.marked[s] {
+                result = self.remove_unused(c, s);
+                if result.is_err() {
+                    break;
+                }
+            }
+        }
+        for j in lits.clone() {
+            self.marked[self.cube_lits[j].3] = false;
+        }
+        result?;
+        for j in lits {
+            let (f, v, i, s) = self.cube_lits[j];
+            if self.count[i] == 0 && self.mention[s] == self.live[c] && self.is_alive(f, v) {
+                self.remove(f, v, Reason::Law(c));
+                if self.size[f] == 0 {
+                    return Err(Conflict {
+                        constraint: c,
+                        field: Some(f),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the choices of slot `s` of constraint `c` that no live cube uses, once every
+    /// live cube of `c` mentions its variable.
+    fn remove_unused(&mut self, c: usize, s: usize) -> Result<(), Conflict> {
+        let (f, base) = self.slot_var[s];
+        for v in 0..self.dom[f] {
+            if self.count[base + v as usize] == 0 && self.is_alive(f, v) {
+                self.remove(f, v, Reason::Law(c));
+                if self.size[f] == 0 {
+                    return Err(Conflict {
+                        constraint: c,
+                        field: Some(f),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Lowers `mention[s]` by one, keeping `order` sorted: `s` moves to the first place of its
+    /// bin, which then becomes the last place of the bin below.
+    fn lower(&mut self, c: usize, s: usize) {
+        let b = self.bin_of[c] + self.mention[s] as usize;
+        let first = self.bin[b];
+        self.swap(s, first);
+        self.bin[b] += 1;
+        self.mention[s] -= 1;
+    }
+
+    /// Raises `mention[s]` by one, the reverse of `lower`.
+    fn raise(&mut self, c: usize, s: usize) {
+        let b = self.bin_of[c] + self.mention[s] as usize + 1;
+        let last = self.bin[b] - 1;
+        self.swap(s, last);
+        self.bin[b] -= 1;
+        self.mention[s] += 1;
+    }
+
+    /// Moves slot `s` to place `p` of `order`, and the slot there to the place of `s`.
+    fn swap(&mut self, s: usize, p: usize) {
+        let other = self.order[p];
+        let q = self.pos[s];
+        self.order.swap(p, q);
+        self.pos[other] = q;
+        self.pos[s] = p;
+    }
+
+    /// Checks whole clause `c` once at most one of its fields is open: with none open, whether
+    /// it holds; with one, which of that field's choices it allows.
+    fn check_clause(&mut self, c: usize) -> Result<(), Conflict> {
+        let Check::Whole(k) = self.cons[c].check else {
+            unreachable!("only whole clauses are queued")
+        };
+        if self.open[c] > 1 {
+            return Ok(());
+        }
+        self.work += 1;
+        let law = self.cons[c].law;
+        let open = self.cons[c]
+            .scope
+            .iter()
+            .copied()
+            .find(|&f| self.size[f] > 1);
+        match open {
+            None => {
+                if !self.theory.clause_holds(law, k, |g| self.only(g)) {
                     return Err(Conflict {
                         constraint: c,
                         field: None,
                     });
                 }
-                let scope = con.scope.clone();
-                for f in scope {
-                    if alive_cubes > self.mentions[f] {
-                        continue;
-                    }
-                    let mut lost = false;
-                    for v in 0..choices(self.theory.fields[f].arity) {
-                        let i = self.offset[f] + v as usize;
-                        if self.alive[i] && !self.support[i] {
-                            self.remove(f, v, Reason::Law(c));
-                            lost = true;
-                        }
-                    }
-                    if self.size[f] == 0 {
-                        return Err(Conflict {
-                            constraint: c,
-                            field: Some(f),
-                        });
-                    }
-                    if lost {
-                        changed.push(f);
-                    }
-                }
             }
-            Check::Whole => {
-                let law = con.law;
-                let open: Vec<usize> = con
-                    .scope
-                    .iter()
-                    .copied()
-                    .filter(|&f| self.size[f] > 1)
-                    .collect();
-                match open.as_slice() {
-                    [] => {
-                        if !self.theory.law_holds(law, |g| self.only(g)) {
-                            return Err(Conflict {
-                                constraint: c,
-                                field: None,
-                            });
-                        }
-                    }
-                    [f] => {
-                        let f = *f;
-                        let mut failing = Vec::new();
-                        for v in 0..choices(self.theory.fields[f].arity) {
-                            if self.is_alive(f, v)
-                                && !self
-                                    .theory
-                                    .law_holds(law, |g| if g == f { v } else { self.only(g) })
-                            {
-                                failing.push(v);
-                            }
-                        }
-                        for &v in &failing {
-                            self.remove(f, v, Reason::Law(c));
-                        }
-                        if self.size[f] == 0 {
-                            return Err(Conflict {
-                                constraint: c,
-                                field: Some(f),
-                            });
-                        }
-                        if !failing.is_empty() {
-                            changed.push(f);
-                        }
-                    }
-                    [_, _, ..] => {}
+            Some(f) => {
+                let theory = self.theory;
+                let failing =
+                    theory.clause_fails_for(law, k, f, |v| self.is_alive(f, v), |g| self.only(g));
+                for v in failing {
+                    self.remove(f, v, Reason::Law(c));
+                }
+                if self.size[f] == 0 {
+                    return Err(Conflict {
+                        constraint: c,
+                        field: Some(f),
+                    });
                 }
             }
         }
-        Ok(changed)
+        Ok(())
     }
 }
 
@@ -828,6 +1571,8 @@ pub enum End {
     /// The default report reached a choice that leads to no model and stopped; the text says
     /// which choices it had made and which laws left a field with nothing.
     Stopped(String),
+    /// The group has a law the report does not check (`Law::refused`); this is the first.
+    Refused(usize),
 }
 
 /// The search of one group.
@@ -843,8 +1588,8 @@ pub struct GroupReport {
     pub nodes: u64,
     /// The choices tried that left some field with nothing.
     pub dead_ends: u64,
-    /// The constraint revisions done, a count of the work.
-    pub revisions: u64,
+    /// The constraint work done: cubes removed and clauses checked.
+    pub work: u64,
 }
 
 /// The trivial-model report of a theory.
@@ -853,6 +1598,8 @@ pub struct Report {
     pub one_value_fails: Option<usize>,
     /// The laws that name no field and fail on two values.
     pub closed_fail: Vec<usize>,
+    /// The laws not checked, since writing out their conjunctive normal form reached `BUDGET`.
+    pub refused: Vec<usize>,
     pub free: Vec<usize>,
     pub groups: Vec<GroupReport>,
 }
@@ -861,22 +1608,38 @@ pub struct Report {
 pub fn report(t: &Theory, mode: Mode) -> Report {
     let one_value_fails = (0..t.laws.len()).find(|&l| !t.law_holds_on_one_value(l));
     let split = split(t);
+    let refused: Vec<usize> = (0..t.laws.len()).filter(|&l| t.laws[l].refused()).collect();
     let closed_fail = split
         .closed
         .iter()
         .copied()
-        .filter(|&l| !t.law_holds(l, |_| 0))
+        .filter(|&l| !t.laws[l].refused() && !t.law_holds(l, |_| 0))
         .collect();
     let mut engine = Engine::new(t);
     let groups = split
         .groups
         .iter()
         .zip(&split.group_laws)
-        .map(|(fields, laws)| search(&mut engine, fields, laws, mode))
+        .map(
+            |(fields, laws)| match laws.iter().find(|&&l| t.laws[l].refused()) {
+                Some(&l) => GroupReport {
+                    fields: fields.clone(),
+                    laws: laws.clone(),
+                    models: Vec::new(),
+                    end: End::Refused(l),
+                    refuted: None,
+                    nodes: 0,
+                    dead_ends: 0,
+                    work: 0,
+                },
+                None => search(&mut engine, fields, laws, mode),
+            },
+        )
         .collect();
     Report {
         one_value_fails,
         closed_fail,
+        refused,
         free: split.free,
         groups,
     }
@@ -892,7 +1655,7 @@ struct Frame {
 
 fn search(engine: &mut Engine, fields: &[usize], laws: &[usize], mode: Mode) -> GroupReport {
     let root = engine.trail.len();
-    let revisions_before = engine.revisions;
+    let work_before = engine.work;
     let mut out = GroupReport {
         fields: fields.to_vec(),
         laws: laws.to_vec(),
@@ -901,19 +1664,17 @@ fn search(engine: &mut Engine, fields: &[usize], laws: &[usize], mode: Mode) -> 
         refuted: None,
         nodes: 0,
         dead_ends: 0,
-        revisions: 0,
+        work: 0,
     };
     // Every constraint of the group's laws, those that name no field included.
-    for &l in laws {
-        for i in 0..engine.cons_of_law[l].len() {
-            let c = engine.cons_of_law[l][i];
-            engine.enqueue(c);
-        }
-    }
-    if let Err(conflict) = engine.propagate() {
+    let started = laws.iter().try_for_each(|&l| {
+        (0..engine.cons_of_law[l].len()).try_for_each(|i| engine.start(engine.cons_of_law[l][i]))
+    });
+    if let Err(conflict) = started.and_then(|()| engine.propagate()) {
+        engine.clear_queue();
         out.refuted = Some(explain(engine, root, conflict));
         engine.undo_to(root);
-        out.revisions = engine.revisions - revisions_before;
+        out.work = engine.work - work_before;
         return out;
     }
     let mut stack: Vec<Frame> = Vec::new();
@@ -955,10 +1716,6 @@ fn search(engine: &mut Engine, fields: &[usize], laws: &[usize], mode: Mode) -> 
                     engine.remove(f, w, Reason::Chosen);
                 }
             }
-            for i in 0..engine.cons_of[f].len() {
-                let c = engine.cons_of[f][i];
-                engine.enqueue(c);
-            }
             match engine.propagate() {
                 Ok(()) => {
                     from = pos + 1;
@@ -975,7 +1732,7 @@ fn search(engine: &mut Engine, fields: &[usize], laws: &[usize], mode: Mode) -> 
         }
     }
     engine.undo_to(root);
-    out.revisions = engine.revisions - revisions_before;
+    out.work = engine.work - work_before;
     out
 }
 
@@ -986,7 +1743,7 @@ fn explain(engine: &Engine, root: usize, conflict: Conflict) -> String {
     let trail = &engine.trail[root..];
     // The laws that removed choices of each field, read off the trail once.
     let mut removed_by: HashMap<usize, Vec<usize>> = HashMap::new();
-    for &(f, _, why) in trail {
+    for &(f, _, why, _) in trail {
         match why {
             Reason::Law(c) => removed_by.entry(f).or_default().push(c),
             Reason::Chosen => {}
@@ -1013,14 +1770,14 @@ fn explain(engine: &Engine, root: usize, conflict: Conflict) -> String {
     let mut chosen: Vec<String> = Vec::new();
     let mut i = 0;
     while i < trail.len() {
-        let (f, _, why) = trail[i];
+        let (f, _, why, _) = trail[i];
         let mut j = i;
         while j < trail.len() && trail[j].0 == f && trail[j].2 == why {
             j += 1;
         }
         if why == Reason::Chosen {
-            let mut removed = vec![false; choices(t.fields[f].arity) as usize];
-            for &(_, v, _) in &trail[i..j] {
+            let mut removed = vec![false; engine.dom[f] as usize];
+            for &(_, v, _, _) in &trail[i..j] {
                 removed[v as usize] = true;
             }
             let made = removed
@@ -1034,7 +1791,11 @@ fn explain(engine: &Engine, root: usize, conflict: Conflict) -> String {
     if !chosen.is_empty() {
         let _ = writeln!(out, "with {}", chosen.join(", "));
     }
-    for &(f, v, why) in &engine.trail[root..] {
+    for &(f, v, why, _) in &engine.trail[root..] {
+        // An end symbol is the engine's own variable, not written in the program.
+        if f >= t.fields.len() {
+            continue;
+        }
         if let (true, Reason::Law(c)) = (involved.contains(&f), why) {
             let law = &t.laws[engine.cons[c].law];
             let _ = writeln!(
@@ -1048,10 +1809,10 @@ fn explain(engine: &Engine, root: usize, conflict: Conflict) -> String {
         }
     }
     match conflict.field {
-        Some(f) => {
+        Some(f) if f < t.fields.len() => {
             let _ = writeln!(out, "so no choice is left for {}", t.fields[f].name);
         }
-        None => {
+        _ => {
             let law = &t.laws[engine.cons[conflict.constraint].law];
             let _ = writeln!(out, "so law {}: {} does not hold", law.name, law.text);
         }
@@ -1120,6 +1881,22 @@ pub fn render(t: &Theory, r: &Report) -> String {
         }
     }
     let _ = writeln!(out, "  on two values, #a | #b:");
+    for &l in &r.refused {
+        let law = &t.laws[l];
+        let _ = writeln!(
+            out,
+            "    law {} ({}) is not checked: the checker reached its compile-time work limit \
+             ({BUDGET} steps) on this law. It checks a law as an `&&` of `||`s of \
+             comparisons, and an `||` whose operands are `&&`s must be multiplied out to get \
+             that form, as `(a && b) || (c && d)` is `(a || c) && (a || d) && (b || c) && \
+             (b || d)`; this law multiplies out to more than the limit. Laws of this shape can \
+             state any propositional formula, so no method checks all of them quickly. To have \
+             it checked, split it into separate laws whose `||`s hold no `&&`s (for example \
+             `(a && b) || c` is the two laws `a || c` and `b || c`), or state it as a \
+             theorem and give its proof.",
+            law.name, law.text
+        );
+    }
     for &l in &r.closed_fail {
         let _ = writeln!(
             out,
@@ -1129,7 +1906,7 @@ pub fn render(t: &Theory, r: &Report) -> String {
     }
     // The count of models on two values, as a product of factors, when every list is complete.
     let mut factors: BTreeMap<u64, u64> = BTreeMap::new();
-    let mut complete = r.closed_fail.is_empty();
+    let mut complete = r.closed_fail.is_empty() && r.refused.is_empty();
     for g in &r.groups {
         let law_names: Vec<&str> = g.laws.iter().map(|&l| t.laws[l].name.as_str()).collect();
         let s = if g.laws.len() == 1 { "" } else { "s" };
@@ -1170,6 +1947,14 @@ pub fn render(t: &Theory, r: &Report) -> String {
                     );
                 }
                 *factors.entry(g.models.len() as u64).or_default() += 1;
+            }
+            End::Refused(l) => {
+                complete = false;
+                let _ = writeln!(
+                    out,
+                    "{head} not decided, since law {} is not checked.",
+                    t.laws[*l].name
+                );
             }
             End::Several => {
                 complete = false;
@@ -1272,11 +2057,11 @@ pub fn in_forest_fragment(t: &Theory) -> bool {
         x
     }
     for law in &t.laws {
-        if law.body.len() != 1 {
+        if law.refused() || law.clauses().iter().any(|clause| clause.len() != 1) {
             return false;
         }
-        for a in &law.body[0] {
-            let scope = t.atom_scope(a);
+        for clause in law.clauses() {
+            let scope = t.atom_scope(&clause[0]);
             // A forest: no edge closes a cycle. The atom is a node joined to each of its fields.
             let atom = parent.len();
             parent.push(atom);

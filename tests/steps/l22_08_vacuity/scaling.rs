@@ -83,6 +83,74 @@ fn star(k: usize) -> Theory {
     t
 }
 
+/// A balanced tree of the fields `{prefix}0` to `{prefix}{n - 1}`, each of two arguments, with
+/// `x` at the leaves: written by a loop over the levels, so its text nests only to depth log n.
+fn tree(prefix: &str, n: usize) -> String {
+    // Level by level from the leaves: each node takes two terms of the level below.
+    let mut level: Vec<String> = vec!["x".to_string(); n + 1];
+    let mut next_field = 0;
+    while level.len() > 1 {
+        let mut up = Vec::with_capacity(level.len() / 2 + 1);
+        let mut it = level.into_iter();
+        while let Some(a) = it.next() {
+            match it.next() {
+                Some(b) => {
+                    up.push(format!("{prefix}{next_field}({a}, {b})"));
+                    next_field += 1;
+                }
+                None => up.push(a),
+            }
+        }
+        level = up;
+    }
+    assert_eq!(next_field, n, "a tree of n fields has n + 1 leaves");
+    level.pop().expect("one root")
+}
+
+/// One law, one atom: two trees of `k / 2` fields each, `f` on the left and `g` on the right,
+/// with `f(..) == g(..)`. Each side has about `3k / 2` paths, so the pairs of paths are about
+/// `k^2`; the sides name different fields, so the atom is split at its end symbol.
+fn one_large_atom(k: usize) -> Theory {
+    let mut t = Theory::new("Large");
+    for i in 0..k / 2 {
+        t.field(&format!("f{i}"), 2);
+    }
+    for i in 0..k / 2 {
+        t.field(&format!("g{i}"), 2);
+    }
+    let body = format!("{} == {}", tree("f", k / 2), tree("g", k / 2));
+    t.law("large", "x", &body);
+    t
+}
+
+/// k constants, not all equal: one law, an `||` of k - 1 comparisons, so one clause.
+fn one_long_or(k: usize) -> Theory {
+    let mut t = Theory::new("LongOr");
+    for i in 0..k {
+        t.field(&format!("c{i}"), 0);
+    }
+    let body: Vec<String> = (1..k).map(|i| format!("c{} != c{i}", i - 1)).collect();
+    t.law("notAllEqual", "", &body.join(" || "));
+    t
+}
+
+/// k / 2 constants and, declared last, one field `w` of k / 2 arguments, in one clause:
+/// `w(c0, ..) != c0 || c0 != c1 || ..`. Once the constants are chosen `w` is the clause's one
+/// open field, and k / 2 of its k / 2 + 2 choices fail the clause.
+fn one_wide_field(k: usize) -> Theory {
+    let mut t = Theory::new("WideField");
+    let m = k / 2;
+    for i in 0..m {
+        t.field(&format!("c{i}"), 0);
+    }
+    t.field("w", m);
+    let args: Vec<String> = (0..m).map(|i| format!("c{i}")).collect();
+    let mut body = vec![format!("w({}) != c0", args.join(", "))];
+    body.extend((1..m).map(|i| format!("c{} != c{i}", i - 1)));
+    t.law("wide", "", &body.join(" || "));
+    t
+}
+
 fn run(t: &Theory, mode: Mode) {
     let r = report(t, mode);
     std::hint::black_box(render(t, &r));
@@ -110,6 +178,39 @@ fn the_report_scales() {
 fn the_default_report_scales_on_one_large_group() {
     let inputs = scaling::inputs(1000, star);
     scaling::check("a star, Default, by fields", 1000, |n| {
+        run(&inputs[&n], Mode::Default)
+    });
+}
+
+/// One atom of k fields: the report builds the atom in O(k log k), not as the k^2 pairs of
+/// paths, and its default search, which chooses every field, removes each choice and each path
+/// at most once per descent.
+#[test]
+fn one_large_atom_scales() {
+    let inputs = scaling::inputs(1000, one_large_atom);
+    scaling::check("one large atom, Default, by fields", 1000, |n| {
+        run(&inputs[&n], Mode::Default)
+    });
+}
+
+/// One clause of k atoms: the report checks it only once at most one of its fields is open,
+/// each time in O(k log k), not after every choice.
+#[test]
+fn one_long_or_scales() {
+    let inputs = scaling::inputs(1000, one_long_or);
+    scaling::check("one long `||`, Default, by fields", 1000, |n| {
+        run(&inputs[&n], Mode::Default)
+    });
+}
+
+/// One clause whose last open field has k / 2 arguments: the report checks the clause once per
+/// choice of that field only on the atoms whose paths reach it, and not again as the field's
+/// choices are removed, so the work is linear, not the choices times the clause. Default report
+/// only: the constants have exponentially many models, which `@exhaustive` would list.
+#[test]
+fn one_wide_field_scales() {
+    let inputs = scaling::inputs(1000, one_wide_field);
+    scaling::check("one wide field in an `||`, Default, by fields", 1000, |n| {
         run(&inputs[&n], Mode::Default)
     });
 }
@@ -158,4 +259,35 @@ fn the_families_report_what_they_should() {
         text.ends_with("  models on two values: 2^2 * 3^2.\n"),
         "{text}"
     );
+}
+
+/// The family of plan row TRIVIAL-shared-atom: `f1(..fd(x)..) == fd(..f1(x)..)` over fields of
+/// one argument. Its sides share every field, so the atom is written as the pairs of paths that
+/// agree: d^2 + d + 1 pairs, holding about 2 d^3 / 3 choices, cubic in the atom. This test pins
+/// those counts; when the row finds an O(p log p) form it becomes a scaling test at d and 8d.
+#[test]
+fn a_shared_field_atom_is_cubic() {
+    let atom_size = |d: usize| {
+        let mut t = Theory::new("Shared");
+        for i in 1..=d {
+            t.field(&format!("f{i}"), 1);
+        }
+        let nest = |order: &mut dyn Iterator<Item = usize>| {
+            let names: Vec<String> = order.map(|i| format!("f{i}")).collect();
+            format!("{}(x{}", names.join("("), ")".repeat(d))
+        };
+        let body = format!("{} == {}", nest(&mut (1..=d)), nest(&mut (1..=d).rev()));
+        t.law("shared", "x", &body);
+        let atom = t.laws[0].clauses()[0][0];
+        t.shared_atom_size(&atom).expect("the sides share fields")
+    };
+    let sizes: Vec<(usize, usize)> = [25, 50, 100].into_iter().map(atom_size).collect();
+    for (&d, &(pairs, _)) in [25, 50, 100].iter().zip(&sizes) {
+        assert_eq!(pairs, d * d + d + 1);
+    }
+    assert_eq!(
+        sizes.iter().map(|s| s.1).collect::<Vec<_>>(),
+        [11_675, 88_350, 686_700]
+    );
+    eprintln!("a shared-field atom at d = 25, 50, 100: {sizes:?} (pairs, choices)");
 }
