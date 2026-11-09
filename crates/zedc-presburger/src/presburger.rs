@@ -182,12 +182,41 @@ pub struct Written<'a> {
     /// What comes after them: `;` for a function, ` }` for one that ends its block with them,
     /// empty for a test.
     pub tail: &'a str,
-    /// The function's name, which the split repair renames; `None` for a test.
-    pub name: Option<&'a str>,
+    /// The function the split repair divides; `None` for a test.
+    pub split: Option<Split<'a>>,
     /// The operands of the conditions' outermost `&&`, in order, as written.
     pub conjuncts: &'a [&'a str],
     /// The variables of the conditions a program can fix, in written order.
     pub names: &'a [&'a str],
+}
+
+/// A function whose conditions the split repair divides between two new functions.
+pub struct Split<'a> {
+    /// Its name.
+    pub name: &'a str,
+    /// What follows its name in [`Written::head`]: `(x, y) = ` for `ok(x, y) = `.
+    pub rest: &'a str,
+    /// The names of the two new functions, which the program does not use:
+    /// [`free_names`] of the name.
+    pub into: [&'a str; 2],
+}
+
+/// The two names the split repair of function `f` gives its new functions: `{f}1` and `{f}2`,
+/// or, where `taken` holds either, `f` with the two least numbers from 1 up that `taken` does
+/// not hold, so a program that already has `ok1` gets `ok2` and `ok3`. `taken` holds every
+/// name the program writes, so a new top-level function shadows none of its names and none of
+/// its local names hides one at a call. Each candidate is one lookup in `taken`, and at most
+/// two more are tried than `taken` holds names of the form `f` and a number.
+pub fn free_names(f: &str, taken: &HashSet<&str>) -> [String; 2] {
+    let mut k = 0usize;
+    let mut next = || loop {
+        k += 1;
+        let candidate = format!("{f}{k}");
+        if !taken.contains(candidate.as_str()) {
+            return candidate;
+        }
+    };
+    [next(), next()]
 }
 
 /// The words of `text` that name variables, each once, in the order they first occur: a word
@@ -257,7 +286,7 @@ impl Refusal {
                 w.head, w.tail
             ));
         }
-        if let (Some(f), true) = (w.name, w.conjuncts.len() >= 2) {
+        if let (Some(split), true) = (&w.split, w.conjuncts.len() >= 2) {
             // Alike variables go to separate functions, which ends their tie; with none, the
             // conditions are halved.
             let (first, second): (Vec<&str>, Vec<&str>) = match tied[..] {
@@ -271,16 +300,16 @@ impl Refusal {
                 }
             };
             if !first.is_empty() && !second.is_empty() {
-                let head = |k: u8| w.head.replacen(f, &format!("{f}{k}"), 1);
+                // The head is the name and `rest`, so the new names replace the name's token
+                // and nothing else the head writes.
+                let (f, rest, [a, b]) = (split.name, split.rest, split.into);
                 out.push(format!(
-                    "repair: split the conditions between two functions, `{f}1` and `{f}2`, \
-                     and where `{f}` is called, call `{f}1(…) && {f}2(…)` with the same \
+                    "repair: split the conditions between two functions, `{a}` and `{b}`, \
+                     and where `{f}` is called, call `{a}(…) && {b}(…)` with the same \
                      arguments; each asks a smaller question, and a function whose body joins \
-                     them asks the joined question again: `{}{}{}` and `{}{}{}`",
-                    head(1),
+                     them asks the joined question again: `{a}{rest}{}{}` and `{b}{rest}{}{}`",
                     first.join(" && "),
                     w.tail,
-                    head(2),
                     second.join(" && "),
                     w.tail
                 ));

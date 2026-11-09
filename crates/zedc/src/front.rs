@@ -141,7 +141,7 @@ pub(crate) fn compile(text: &str) -> Front {
         }
     };
     let refused = work::stage(Stage::Linear, None, || {
-        linear_questions(text, &stmts, &unit)
+        linear_questions(text, &tokens, &stmts, &unit)
     });
     if !refused.is_empty() {
         return Err(all(refused));
@@ -187,6 +187,30 @@ fn conjuncts(text: &str, e: &ast::Expr) -> Vec<String> {
                 } else {
                     written.to_string()
                 });
+            }
+        }
+    }
+    out
+}
+
+/// Every name `tokens` write, those in the holes of strings included, borrowed from the
+/// tokens: the names a new top-level function must not take, since it would then be a second
+/// definition of one of the program's names, and one written inside a function, a parameter
+/// or a local, would hide it there. A walk with an explicit stack, O(the tokens).
+fn names_written(tokens: &[lex::Token]) -> std::collections::HashSet<&str> {
+    let mut out = std::collections::HashSet::new();
+    let mut stack = vec![tokens];
+    while let Some(tokens) = stack.pop() {
+        for t in tokens {
+            match &t.tok {
+                lex::Tok::Name(n) => {
+                    out.insert(n.as_str());
+                }
+                lex::Tok::Str(parts) => stack.extend(parts.iter().filter_map(|p| match p {
+                    lex::Part::Hole { tokens, .. } => Some(tokens.as_slice()),
+                    lex::Part::Text(_) => None,
+                })),
+                _ => {}
             }
         }
     }
@@ -254,8 +278,19 @@ fn grouped(written: &str) -> bool {
 /// loading the unit of 64 functions there costs 3.5 times its questions, so a scaling test that
 /// times the whole load cannot see a quadratic here (COMPLEXITY.md F85).
 #[doc(hidden)]
-pub fn linear_questions(text: &str, stmts: &[Stmt], unit: &Unit) -> Vec<ast::Error> {
+pub fn linear_questions(
+    text: &str,
+    tokens: &[lex::Token],
+    stmts: &[Stmt],
+    unit: &Unit,
+) -> Vec<ast::Error> {
     use crate::store::{preimage, presburger};
+    // The names the program writes, which the split repair's new functions must not take
+    // (`presburger::free_names`): read from `tokens` at the first refused question, once for
+    // the unit, and the split's names once for each function name refused.
+    let mut taken: Option<std::collections::HashSet<&str>> = None;
+    let mut split_names: std::collections::HashMap<&str, [String; 2]> =
+        std::collections::HashMap::new();
     // The functions of the unit by name and written parameter names, so each overload of a name
     // finds its own definition; overloads alike in both, which differ in types only, are matched
     // to their definitions in the order of the unit's definitions. A kernel name is the written
@@ -385,11 +420,25 @@ pub fn linear_questions(text: &str, stmts: &[Stmt], unit: &Unit) -> Vec<ast::Err
                             .collect();
                         let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
                         let what = format!("`{}`", f.name);
+                        let into = split_names.entry(f.name.as_str()).or_insert_with(|| {
+                            let taken = taken.get_or_insert_with(|| names_written(tokens));
+                            presburger::free_names(&f.name, taken)
+                        });
+                        // A function's statement begins with its name (`Function = Name '('`
+                        // in sec:grammar); were it not to, no split is offered rather than one
+                        // that renames another word.
+                        let split =
+                            head.strip_prefix(f.name.as_str())
+                                .map(|rest| presburger::Split {
+                                    name: &f.name,
+                                    rest,
+                                    into: [&into[0], &into[1]],
+                                });
                         let written = presburger::Written {
                             what: &what,
                             head: &head,
                             tail: &tail,
-                            name: Some(&f.name),
+                            split,
                             conjuncts: &parts,
                             names: &names,
                         };

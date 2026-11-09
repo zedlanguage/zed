@@ -1264,7 +1264,7 @@ impl Refused {
             what,
             head: "",
             tail: "",
-            name: None,
+            split: None,
             conjuncts: &[joined.as_str()],
             names: &names,
         });

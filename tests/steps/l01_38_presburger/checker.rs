@@ -45,8 +45,8 @@ fn repairs(printed: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The definitions a repair writes out: its code spans that define `ok`, `ok1` or `ok2` whole,
-/// up to the `;` or `}` that ends them.
+/// The definitions a repair writes out: its code spans that define `ok` or a function named
+/// `ok` and a number whole, up to the `;` or `}` that ends them.
 fn definitions(repair: &str) -> Vec<&str> {
     (repair.split('`').skip(1).step_by(2))
         .filter(|c| {
@@ -58,14 +58,20 @@ fn definitions(repair: &str) -> Vec<&str> {
 }
 
 /// The program [`program`] gives at `args` once `repair` is followed as it says: a
-/// definition of `ok` in place of `ok`'s, or two definitions `ok1` and `ok2` whose results
-/// are joined where `ok` was called.
+/// definition of `ok` in place of `ok`'s, or two definitions, `ok1` and `ok2` or the names
+/// the repair gives, whose results are joined where `ok` was called.
 fn repaired(repair: &str, args: &str) -> String {
+    repaired_beside("", repair, args)
+}
+
+/// [`repaired`] in a program that defines `defs` before the repair's definitions.
+fn repaired_beside(defs: &str, repair: &str, args: &str) -> String {
+    let name = |d: &str| d.split_once('(').expect("a definition").0.to_string();
     match definitions(repair)[..] {
-        [d] => program(d, args),
+        [d] => program(&format!("{defs}{d}"), args),
         [d1, d2] => program_testing(
-            &format!("{d1}\n{d2}"),
-            &format!("ok1({args}) && ok2({args})"),
+            &format!("{defs}{d1}\n{d2}"),
+            &format!("{}({args}) && {}({args})", name(d1), name(d2)),
         ),
         _ => panic!("a repair with no definitions to follow: {repair}"),
     }
@@ -267,6 +273,55 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
     }
 }
 
+/// A program that already defines `ok1`, or `ok1` and `ok2`, with the parameters of `ok`, gets
+/// a split repair whose two functions take the first names after `ok` and a number that the
+/// program leaves free; followed as printed, beside the program's own definitions, it makes
+/// the program check and run. Named `ok1` and `ok2` there, the repair would define a function
+/// a second time with the same parameter types, which is an error (DESIGN.md, the binding
+/// rule of the syntax table).
+#[test]
+fn the_split_repair_names_functions_the_program_does_not_define() {
+    let [first, second] = REFUSED[2].rows;
+    let def = format!("ok(x, y, z, w) = {first} && {second};");
+    let args = "x: a, y: a, z: a, w: a";
+    let cases = [
+        ("taken-1", "ok1(x, y, z, w) = x <= y;\n", ["ok2", "ok3"]),
+        (
+            "taken-2",
+            "ok1(x, y, z, w) = x <= y;\nok2(x, y, z, w) = y <= z;\n",
+            ["ok3", "ok4"],
+        ),
+    ];
+    for (name, defs, [a, b]) in cases {
+        let printed = rejection(name, &program(&format!("{defs}{def}"), args));
+        let menu = repairs(&printed);
+        let split = *menu.last().expect("a menu");
+        // Followed as printed, beside the program's definitions, the split checks and runs:
+        // the tie's cycle holds at input 5 and not at 0.
+        let src = repaired_beside(defs, split, args);
+        for (input, out) in [("0\n", "out\n"), ("5\n", "in\n")] {
+            let o = run(&format!("{name}-split"), &src, input, &[]);
+            assert_eq!(
+                (o.status, o.stdout.as_str(), o.stderr.as_str()),
+                (0, out, ""),
+                "{name} at {input}{src}"
+            );
+        }
+        assert!(
+            split.starts_with(&format!(
+                "split the conditions between two functions, `{a}` and `{b}`, and where `ok` \
+                 is called, call `{a}(…) && {b}(…)` with the same arguments"
+            )),
+            "{name}: {split}"
+        );
+        let heads: Vec<&str> = (definitions(split).iter())
+            .map(|d| d.split_once(" = ").expect("a definition").0)
+            .collect();
+        let want = [a, b].map(|f| format!("{f}(x, y, z, w)"));
+        assert_eq!(heads, want, "{name}: {split}");
+    }
+}
+
 #[test]
 fn a_function_that_joins_the_split_questions_asks_the_joined_question_again() {
     // The second half of the split repair's line: joining `first` and `second` in a function
@@ -452,12 +507,13 @@ fn the_linear_questions_of_a_unit_scale() {
         .map(|m| {
             let src = unit(m);
             let program = zedc::run::load(src.as_bytes()).unwrap();
-            (m, (zed_tests::deep::statements(&src), program, src))
+            let tokens = zedc::lex::lex_fence(&src).unwrap();
+            (m, (zed_tests::deep::statements(&src), tokens, program, src))
         })
         .collect();
     zed_tests::scaling::check("the linear questions of a unit", 64, |m| {
-        let (stmts, program, src) = &units[&m];
-        let refused = zedc::front::linear_questions(src, stmts, program.unit());
+        let (stmts, tokens, program, src) = &units[&m];
+        let refused = zedc::front::linear_questions(src, tokens, stmts, program.unit());
         assert!(refused.is_empty(), "{refused:?}");
     });
 }
