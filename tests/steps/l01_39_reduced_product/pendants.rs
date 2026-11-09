@@ -1402,6 +1402,65 @@ fn shuffle<T>(r: &mut Rng, xs: &mut [T]) {
     }
 }
 
+/// `c` with each coefficient and its constant multiplied by `m`, and for an inequality `j` of
+/// `0..m` added to its constant: `m·t + j >= 0` has the integer points of `t >= 0`, since
+/// `m·t >= -j > -m` gives `t > -1`.
+fn times(c: &Cmp, m: i64, j: i64) -> Cmp {
+    Cmp {
+        terms: c.terms.iter().map(|(n, k)| (n.clone(), m * k)).collect(),
+        constant: m * c.constant + if c.eq { 0 } else { j },
+        eq: c.eq,
+    }
+}
+
+/// `items` written another way with the same points: each constraint, in the disjunctions
+/// and under `!` too, multiplied by 1, 2 or 3 and, if an inequality, with a constant below
+/// that factor added (`2 * a >= 2 * b - 1` for `a >= b`); each equation negated or not and
+/// held once or twice, the second time negated; and the items, the arms of each disjunction
+/// and the constraints of each arm in a random order.
+fn scaled(r: &mut Rng, items: &[Item]) -> Formula {
+    let one = |r: &mut Rng, c: &Cmp| {
+        let m = 1 + r.int(0, 2);
+        let j = r.int(0, m - 1);
+        times(c, m, j)
+    };
+    let mut parts = Vec::new();
+    for i in items {
+        match i {
+            Item::Con(c) => {
+                let c = one(r, c);
+                let c = if c.eq && r.below(2) == 0 {
+                    negated(&c)
+                } else {
+                    c
+                };
+                if c.eq && r.below(2) == 0 {
+                    parts.push(con(&negated(&one(r, &c))));
+                }
+                parts.push(con(&c));
+            }
+            Item::Ne(c) => {
+                let c = one(r, c);
+                parts.push(Formula::Not(Shared::new(con(&c))));
+            }
+            Item::Or(arms) => {
+                let mut arms: Vec<Formula> = arms
+                    .iter()
+                    .map(|a| {
+                        let mut cs: Vec<Formula> = a.iter().map(|c| con(&one(r, c))).collect();
+                        shuffle(r, &mut cs);
+                        Formula::and(cs)
+                    })
+                    .collect();
+                shuffle(r, &mut arms);
+                parts.push(Formula::or(arms));
+            }
+        }
+    }
+    shuffle(r, &mut parts);
+    Formula::and(parts)
+}
+
 /// The names `items` mention, in order: those of a formula that is `false` as written too.
 fn item_names(items: &[Item]) -> Vec<Atom> {
     let mut names = std::collections::BTreeSet::new();
@@ -1545,30 +1604,65 @@ fn parts_once_answered_by_how_they_were_written_give_one_answer() {
     );
 }
 
-/// Random parts, each also written with its equations negated or held twice with opposite
-/// signs, its inequalities held twice, some equations split into two inequalities, and its
-/// items, arms and constraints in a random order: the projection of the whole part and the
-/// projection by pendants are the same as for the part as written (cases `from..to` of seed
-/// 0xca17).
-fn rewritten_parts_give_one_answer(from: usize, to: usize) {
+/// A random part of seed 0xca17, its boxes, and six other writings of it with the same
+/// points: four by [`rewritten`] (its equations negated or held twice with opposite signs, its
+/// inequalities held twice, some equations split into two inequalities, with `split`) and
+/// two by [`scaled`] (each constraint with a common factor), each with its items, arms and
+/// constraints in a random order.
+struct Rewrites {
+    case: usize,
+    items: Vec<Item>,
+    bs: BTreeMap<String, Vec<Piece>>,
+    rewrites: Vec<Formula>,
+}
+
+/// The parts `from..to` of seed 0xca17 and their rewrites ([`Rewrites`]). The scaled
+/// writings draw from a sequence of their own (seed 0x5ca1e), so the parts and their other
+/// writings are those of seed 0xca17 alone.
+fn random_rewrites(from: usize, to: usize) -> Vec<Rewrites> {
     let mut r = Rng::new(0xca17);
-    let mut wrong = Vec::new();
+    let mut rs = Rng::new(0x5ca1e);
+    let mut out = Vec::new();
     for case in 0..to {
         let nz = 2 + r.below(5);
         let items = random_part(&mut r, nz);
         let bs = random_boxes(&mut r, nz);
-        let rewrites: Vec<Formula> = [false, false, true, true]
+        let mut rewrites: Vec<Formula> = [false, false, true, true]
             .into_iter()
             .map(|split| rewritten(&mut r, &items, split))
             .collect();
-        if case < from {
-            continue;
+        rewrites.extend((0..2).map(|_| scaled(&mut rs, &items)));
+        if case >= from {
+            out.push(Rewrites {
+                case,
+                items,
+                bs,
+                rewrites,
+            });
         }
+    }
+    out
+}
+
+/// Random parts, each also written six other ways ([`random_rewrites`]): the projection of
+/// the whole part and the projection by pendants are the same as for the part as written
+/// (cases `from..to` of seed 0xca17).
+fn rewritten_parts_give_one_answer(from: usize, to: usize) {
+    let mut wrong = Vec::new();
+    let mut n = 0;
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(from, to)
+    {
         let s = scope(&bs);
         let syms = item_names(&items);
         let f = formula(&items);
         let want = (each_answer(&s, &f, &syms), hung(&s, &f));
         for g in rewrites {
+            n += 1;
             let got = (each_answer(&s, &g, &syms), hung(&s, &g));
             if got != want {
                 wrong.push(format!(
@@ -1579,9 +1673,8 @@ fn rewritten_parts_give_one_answer(from: usize, to: usize) {
     }
     assert!(
         wrong.is_empty(),
-        "{} of {} rewrites differ:\n{}",
+        "{} of {n} rewrites differ:\n{}",
         wrong.len(),
-        4 * (to - from),
         wrong.join("\n")
     );
 }
@@ -1594,4 +1687,91 @@ fn rewritten_parts_give_one_answer_first_half() {
 #[test]
 fn rewritten_parts_give_one_answer_second_half() {
     rewritten_parts_give_one_answer(150, 300);
+}
+
+/// Whether `f` within the boxes of `s` has a point, as `presburger::decide` and
+/// `presburger::satisfiable` answer, refusals included.
+fn decided(s: &Scope, f: &Formula, syms: &[Atom]) -> String {
+    let mut parts: Vec<Formula> = syms
+        .iter()
+        .map(|a| match a {
+            Atom::Sym(n) => presburger::member(a, s.get(n).ints()),
+            _ => unreachable!("a name"),
+        })
+        .collect();
+    parts.push(f.clone());
+    let f = Formula::and(parts);
+    format!(
+        "decide {:?}, satisfiable {:?}",
+        presburger::decide(&f),
+        presburger::satisfiable(&f).map(|m| m.is_some())
+    )
+}
+
+/// The parts of [`rewritten_parts_give_one_answer`], each written seven ways, with duplicate,
+/// negated, split and scaled rows and in other orders: `decide` and `satisfiable` give each
+/// the same answer, refusals included (item PROJECT-canon-decide).
+#[test]
+fn rewritten_parts_are_decided_alike() {
+    let mut wrong = Vec::new();
+    let mut n = 0;
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(0, 300)
+    {
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = decided(&s, &f, &syms);
+        for g in rewrites {
+            n += 1;
+            let got = decided(&s, &g, &syms);
+            if got != want {
+                wrong.push(format!(
+                    "case {case}\n  {f}\n  {g}\n  boxes {bs:?}\n  want {want}\n  got  {got}"
+                ));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of {n} rewrites differ:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+}
+
+/// Case 14 of seed 0xca17 with its equation written with a common factor,
+/// `2 * b + 2 * c + 2 * z4 == -16` for `b + c + z4 == -8`, and an inequality with one and
+/// a constant below it added, `2 * z0 >= 2 * z3 + 5` for `z0 >= z3 + 3`: both projections
+/// give the answer of the rows divided by it, where the projection by pendants, which reads
+/// a pendant's coefficient, declined before (item PROJECT-canon-gcd). And an equation whose
+/// constant the factor does not divide, `2 * b == 2 * c + 1`, leaves no point.
+#[test]
+fn rows_with_a_common_factor_give_the_answer_of_the_rows_divided_by_it() {
+    let part = "!(b + z1 == c + 7) && 2 * b + c + z0 >= -10 && b + c + z4 == -8 && z0 >= z3 + 3";
+    let bx = "b=[0,7] c=[-inf,-6] z0=[-6,7] z1=[-5,-3] z3=[-inf,inf] z4=[-10,inf]";
+    let want = "b=[0,7] c=[-31,-6] z0=[-6,7] z1=[-5,-3] z3=[-inf,4] z4=[-9,16] left out: []";
+    let factored = part
+        .replace("b + c + z4 == -8", "2 * b + 2 * c + 2 * z4 == -16")
+        .replace("z0 >= z3 + 3", "2 * z0 >= 2 * z3 + 5");
+    assert_ne!(factored, part);
+    let by_pendants: BTreeMap<String, String> = bracketed(want)
+        .into_iter()
+        .map(|(n, x)| (n, format!("[{x}]")))
+        .collect();
+    for text in [part, &factored] {
+        let (each, hung) = written_four_ways(text, bx);
+        assert_eq!(each, want, "{text}");
+        assert_eq!(hung.as_ref(), Some(&by_pendants), "{text}");
+    }
+    let odd = format!("{part} && 2 * b == 2 * c + 1");
+    let (each, _) = written_four_ways(&odd, bx);
+    assert_eq!(
+        each, "b=[] c=[] z0=[] z1=[] z3=[] z4=[] left out: []",
+        "{odd}"
+    );
 }

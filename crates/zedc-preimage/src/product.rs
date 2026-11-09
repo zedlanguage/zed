@@ -4359,6 +4359,15 @@ impl Scope {
     // of disjunctions.
     pub fn project_by_pendants(&self, part: &Formula) -> Option<Vec<(Arc<str>, IntervalSet)>> {
         let tops = distinct_conjuncts(part);
+        if tops.contains(&Formula::bottom()) {
+            // A conjunct is `false` (`2t == 1`), so `part` has no point and each name is empty.
+            return Some(
+                conjuncts::names(part)
+                    .into_iter()
+                    .map(|n| (n, IntervalSet::empty()))
+                    .collect(),
+            );
+        }
         let mut count: BTreeMap<Arc<str>, usize> = BTreeMap::new();
         for t in &tops {
             for n in conjuncts::names(t) {
@@ -5864,12 +5873,15 @@ fn one_disjunction(t: &Formula) -> Option<usize> {
     }
 }
 
-/// The top-level conjuncts of `part`, each once and in an order of their own: an equation
-/// and its negation, `t == 0` and `-t == 0`, are one, written with the lesser of `t` and `-t`,
-/// and so inside a negation; `t >= 0` and `-t >= 0` together are `t == 0`; and a conjunct held
+/// The top-level conjuncts of `part`, each once and in an order of their own: each constraint
+/// divided by the greatest common divisor of its coefficients ([`Con::reduced`], so `2t == 0`
+/// is `t == 0`, `2t == 1` is `false` and `2t + 1 >= 0` is `t >= 0`); an equation and its
+/// negation, `t == 0` and `-t == 0`, are one, written with the lesser of `t` and `-t`, and so
+/// inside a negation; `t >= 0` and `-t >= 0` together are `t == 0`; and a conjunct held
 /// twice is held once. So the conjuncts, which names are pendants and which disjunctions are
 /// counted ([`Scope::project_by_pendants`]) do not depend on how an equal set of them is
-/// written (item PROJECT-each-canon). In time O(n log n) for n conjuncts.
+/// written (items PROJECT-each-canon and PROJECT-canon-gcd). In time O(n log n) for n
+/// conjuncts.
 fn distinct_conjuncts(part: &Formula) -> BTreeSet<Formula> {
     let unsigned = |c: &Con| {
         let neg = c.lin.times(-1);
@@ -5878,19 +5890,35 @@ fn distinct_conjuncts(part: &Formula) -> BTreeSet<Formula> {
             rel: Rel::Eq,
         })
     };
+    // The constraint reduced, an equation unsigned.
+    let row = |c: &Con| match c.reduced() {
+        Some(r) => match &r {
+            Formula::Con(e) if e.rel == Rel::Eq => unsigned(e),
+            _ => r,
+        },
+        None if c.rel == Rel::Eq => unsigned(c),
+        None => Formula::Con(c.clone()),
+    };
     let mut tops: BTreeSet<Formula> = BTreeSet::new();
     let mut stack = vec![part];
     while let Some(f) = stack.pop() {
         match f {
             Formula::And(gs) => stack.extend(gs.iter()),
-            Formula::Con(c) if c.rel == Rel::Eq => {
-                tops.insert(unsigned(c));
-            }
+            Formula::Con(c) => match row(c) {
+                // `2t == 1` is `false`, and so is the whole conjunction, however written.
+                r @ Formula::Or(_) => return BTreeSet::from([r]),
+                r => {
+                    tops.insert(r);
+                }
+            },
             Formula::Not(n) if matches!(&**n, Formula::Con(c) if c.rel == Rel::Eq) => {
                 let Formula::Con(c) = &**n else {
                     unreachable!("an equation")
                 };
-                tops.insert(Formula::Not(presburger::Shared::new(unsigned(c))));
+                // `!(2t == 1)` is `!false`, which holds everywhere and is no conjunct.
+                if let r @ Formula::Con(_) = row(c) {
+                    tops.insert(Formula::Not(presburger::Shared::new(r)));
+                }
             }
             f => {
                 tops.insert(f.clone());

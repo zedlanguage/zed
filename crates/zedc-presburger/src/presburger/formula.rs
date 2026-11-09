@@ -483,6 +483,37 @@ impl Con {
         }
     }
 
+    /// The constraint divided by the greatest common divisor `g` of its coefficients, when `g`
+    /// is more than one: an equation whose constant `g` does not divide is `false`, and an
+    /// inequality's constant is rounded down, which at integer points changes no point
+    /// (`2x - 1 >= 0` is `x - 1 >= 0`, `2x == 1` is `false`). `None` when `g` is one or the
+    /// constraint has no term, so that a constraint written so already is kept as it is.
+    pub fn reduced(&self) -> Option<Formula> {
+        let mut g = Int::ZERO;
+        for k in self.lin.terms.values() {
+            g = g.gcd(k);
+            if g.is_unit() {
+                return None;
+            }
+        }
+        if g.is_zero() {
+            return None;
+        }
+        let k = &self.lin.constant;
+        if self.rel == Rel::Eq && !k.mod_floor(&g).is_zero() {
+            // `false`, written here rather than as `Formula::bottom`, which is defined in the
+            // file above this one.
+            return Some(Formula::Or(Shared::new(Vec::new())));
+        }
+        let lin = Lin {
+            terms: (self.lin.terms.iter())
+                .map(|(a, c)| (a.clone(), c.div_floor(&g)))
+                .collect(),
+            constant: k.div_floor(&g),
+        };
+        Some(Formula::Con(Con { lin, rel: self.rel }))
+    }
+
     /// Whether the constraint holds at `values` ([`Formula::holds`]).
     pub(super) fn holds(&self, values: &Model) -> bool {
         let v = self.lin.eval(values);

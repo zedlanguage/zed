@@ -1012,7 +1012,7 @@ type Counts = (
 
 const GUARDED: [Counts; 16] = [
     (0, (0, 0, 53), (10, &[]), 0),
-    (250, (0, 3, 40), (9, &[]), 0),
+    (250, (0, 3, 41), (9, &[]), 0),
     (500, (0, 0, 45), (8, &[]), 0),
     (750, (0, 0, 46), (11, &[]), 0),
     (1000, (0, 0, 53), (14, &[]), 0),
@@ -1176,6 +1176,10 @@ guarded_ranges!(
 /// longer exact), each sound. So the first half counts as many boxes made exact as on main
 /// (378), the second 3 fewer (412). Of cases 3750 to 4000, the box before of `i [2..]` is now
 /// `i [2..=2, 5..]` where it was `i [0..]`, so the split over many periods is listed as wider.
+///
+/// Since PROJECT-canon-gcd, which divides each row by the gcd of its coefficients, one more
+/// box of the transfer before, which shares the solver, is exact, in cases 250 to 500 (379,
+/// was 378); no result of the transfer changes.
 #[test]
 fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     let sum = |rows: &[Counts]| {
@@ -1196,7 +1200,7 @@ fn random_guarded_chains_sum_to_the_counts_of_each_half() {
     for (row, &(from, ..)) in GUARDED.iter().enumerate() {
         assert_eq!(from, 250 * row, "row {row} does not follow the one before");
     }
-    assert_eq!(sum(&GUARDED[..8]), (0, 6, 378, 81, vec![], 0));
+    assert_eq!(sum(&GUARDED[..8]), (0, 6, 379, 81, vec![], 0));
     assert_eq!(
         sum(&GUARDED[8..]),
         (

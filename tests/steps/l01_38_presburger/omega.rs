@@ -9,7 +9,7 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
     Atom, Con, Entailment, Formula, Lin, Refusal, Relation, Shared, decide, entails, project,
-    satisfiable,
+    project_each, satisfiable,
 };
 
 fn sym(s: &str) -> Atom {
@@ -713,4 +713,105 @@ fn a_box_around_the_origin_has_a_checked_point_or_a_stated_refusal() {
     }
     println!("boxes around the origin: {points} points, {refused} refused");
     assert_eq!(points + refused, 1000);
+}
+
+/// The rows of `l01_25_preimage_catalog::s22` case 236 of row 1000 (`if (i == -3) { .. }`
+/// over `i mod 3`), with the names `name` gives and the equations `flip` picks negated: `i` is
+/// `-4`, `0` or `4`. A remainder `q1`, `q2` to `q6` the arms' values, and a disjunction for
+/// each `if`.
+fn arms_of_case_236(name: &dyn Fn(&str) -> String, flip: &dyn Fn(usize) -> bool) -> Formula {
+    let mut k = 0;
+    let mut e = |terms: &[(&str, i128)], c: i128| {
+        k += 1;
+        let s = if flip(k) { -1 } else { 1 };
+        let t: Vec<(String, i128)> = terms.iter().map(|(n, x)| (name(n), x * s)).collect();
+        let t: Vec<(&str, i128)> = t.iter().map(|(n, x)| (n.as_str(), *x)).collect();
+        eq(&t, c * s)
+    };
+    let g = |terms: &[(&str, i128)], c: i128| {
+        let t: Vec<(String, i128)> = terms.iter().map(|(n, x)| (name(n), *x)).collect();
+        let t: Vec<(&str, i128)> = t.iter().map(|(n, x)| (n.as_str(), *x)).collect();
+        ge(&t, c)
+    };
+    let not = |f: Formula| Formula::Not(Shared::new(f));
+    let both = |a: Formula, b: Formula| Formula::and(vec![a, b]);
+    let def = e(&[("i", 1), ("q0", -3), ("q1", -1)], 0);
+    let mut arms = Vec::new();
+    for q in ["q2", "q3"] {
+        let (a, b) = (e(&[("i", 1)], -8), e(&[("i", 1)], -8));
+        let (yes, no) = (e(&[("i", 1), (q, 1)], 0), e(&[("i", 5), (q, 1)], 0));
+        arms.push(Formula::or(vec![both(not(a), no), both(b, yes)]));
+    }
+    for q in ["q4", "q5"] {
+        let (a, b) = (e(&[("q1", 1)], -1), e(&[("q1", 1)], -1));
+        let (yes, no) = (e(&[("q2", 1), (q, -1)], 0), e(&[("q3", 1), (q, 1)], 0));
+        arms.push(Formula::or(vec![both(a, yes), both(not(b), no)]));
+    }
+    let (a, b) = (e(&[("i", 1)], 3), e(&[("i", 1)], 3));
+    let (yes, no) = (
+        e(&[("q4", 1), ("q6", 1)], 6),
+        e(&[("q5", 1), ("q6", -1)], 0),
+    );
+    arms.push(Formula::or(vec![both(a, yes), both(not(b), no)]));
+    let i0 = e(&[("i", 1)], 0);
+    Formula::and(
+        [
+            vec![def, g(&[("q1", 1)], 0), g(&[("q1", -1)], 2)],
+            arms,
+            vec![
+                Formula::or(vec![
+                    both(g(&[("i", 1)], 5), g(&[("i", -1)], -3)),
+                    i0,
+                    both(g(&[("i", 1)], -4), g(&[("i", -1)], 5)),
+                ]),
+                Formula::or(vec![
+                    both(g(&[("q6", 1)], 26), g(&[("q6", -1)], -17)),
+                    both(g(&[("q6", 1)], 4), g(&[("q6", -1)], 1)),
+                ]),
+            ],
+        ]
+        .concat(),
+    )
+}
+
+/// [`arms_of_case_236`] written 60 ways, its names permuted and its equations negated at
+/// random: `project_each` gives `i` the same set in every writing, one that holds each of its
+/// points, `{-4, 0, 4}` (found by asking each `i` in `[-6, 6]`). The set is `[-4, -3]`, `0`,
+/// `4`, not the points alone: the greedy search finds a point, so the search over disjuncts
+/// (`probe`) does not run and a disjunct with no point is kept (COMPLEXITY.md row
+/// PROJECT-canon-precision, where running it always is measured and found not `O(n log n)`).
+#[test]
+fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
+    let mut rng = Rng::new(0x236);
+    let plain = arms_of_case_236(&|n| n.to_string(), &|_| false);
+    let mut points = IntervalSet::empty();
+    for v in -6..=6i64 {
+        let one = Formula::and(vec![plain.clone(), eq(&[("i", 1)], -(v as i128))]);
+        if satisfiable(&one).expect("decided").is_some() {
+            points = points.join(&IntervalSet::single(v));
+        }
+    }
+    assert_eq!(points.to_string(), "[-4..=-4, 0..=0, 4..=4]");
+    for w in 0..60 {
+        let mut perm: Vec<usize> = (0..7).collect();
+        for k in (1..7).rev() {
+            perm.swap(k, rng.below(k + 1));
+        }
+        let flips: Vec<bool> = (0..32).map(|_| rng.below(2) == 0).collect();
+        let i = if w % 2 == 0 { "i" } else { "m" };
+        let name = |n: &str| match n {
+            "i" => i.to_string(),
+            q => format!("q{}", perm[q[1..].parse::<usize>().expect("a number")]),
+        };
+        let f = arms_of_case_236(&name, &|k| flips[k]);
+        let (each, skipped) = project_each(&f, &[sym(i)]).expect("projected");
+        assert!(skipped.is_empty(), "writing {w}: {f}");
+        let got = each[0].as_ref().expect("a set");
+        assert_eq!(got.join(&points), *got, "writing {w}: {f}");
+        assert_eq!(
+            got.to_string(),
+            "[-4..=-3, 0..=0, 4..=4]",
+            "writing {w}: {f}"
+        );
+    }
 }

@@ -1194,15 +1194,17 @@ thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
 }
 
-/// `f` written one way whatever way an equal formula was written (item PROJECT-each-canon):
-/// each equation `t == 0` with the sign of `t` whose first coefficient is positive, or, with
-/// `both`, held with both signs ([`equation`]), and in each conjunction, `t >= 0` beside
-/// `-t >= 0` as `t == 0`, so that an equation written with either sign, twice with opposite
-/// signs, or as two inequalities is one constraint, and [`Formula::and`] holds it once. Each
-/// later step reads the signs of the rows (the colors of [`stable_colors`] and the order of
-/// [`canonical`] among them), and a question that one writing answered another refused with
-/// [`Refusal::Growth`]. In time O(n log n) in the size of `f`; a node that is written so
-/// already is kept, with its id.
+/// `f` written one way whatever way an equal formula was written (items PROJECT-each-canon and
+/// PROJECT-canon-gcd): each constraint divided by the greatest common divisor of its
+/// coefficients ([`Con::reduced`]: `2t == 0` as `t == 0`, `2t == 1` as `false`, `2t + 1 >= 0`
+/// as `t >= 0`); each equation `t == 0` with the sign of `t` whose first coefficient is
+/// positive, or, with `both`, held with both signs ([`equation`]); and in each conjunction,
+/// `t >= 0` beside `-t >= 0`, after the division, as `t == 0`, so that an equation written
+/// with either sign, with a common factor, twice with opposite signs, or as two inequalities
+/// is one constraint, and [`Formula::and`] holds it once. Each later step reads the signs of
+/// the rows (the colors of [`stable_colors`] and the order of [`canonical`] among them), and
+/// a question that one writing answered another refused with [`Refusal::Growth`]. In time
+/// O(n log n) in the size of `f`; a node that is written so already is kept, with its id.
 ///
 /// Neither writing answers every question the other does: the solver refuses some systems with
 /// one sign of an equation and answers them with the other, and [`project_each`] asks with the
@@ -1214,17 +1216,27 @@ fn signed(f: &Formula, both: bool) -> Formula {
         false,
         |g, negated| negated != matches!(g, Formula::Not(_)),
         |g, negated, parts: Vec<Option<Formula>>| match g {
-            Formula::Con(c) if c.rel == Rel::Eq => equation(c, negated, both),
-            Formula::Con(_) => None,
+            Formula::Con(c) => match c.reduced() {
+                Some(r) => Some(match &r {
+                    Formula::Con(e) if e.rel == Rel::Eq => equation(e, negated, both).unwrap_or(r),
+                    _ => r,
+                }),
+                None if c.rel == Rel::Eq => equation(c, negated, both),
+                None => None,
+            },
             Formula::And(gs) => {
-                // Each `t >= 0` whose `-t >= 0` is a part too, as the equation, in its place,
-                // so that the parts keep their places ([`Formula::rebuild`]).
-                let paired = opposite_rows(gs);
+                // Each `t >= 0` whose `-t >= 0` is a part too, both as reduced, as the
+                // equation, in its place, so that the parts keep their places
+                // ([`Formula::rebuild`]).
+                let rows: Vec<&Formula> = (gs.iter().zip(&parts))
+                    .map(|(k, p)| p.as_ref().unwrap_or(k))
+                    .collect();
+                let paired = opposite_rows(&rows);
                 if paired.is_empty() && parts.iter().all(Option::is_none) {
                     return None;
                 }
-                let kids = (gs.iter().zip(parts).enumerate())
-                    .map(|(i, (k, p))| match k {
+                let kids = (rows.iter().enumerate())
+                    .map(|(i, k)| match k {
                         Formula::Con(c) if paired.contains(&i) => {
                             let eq = Con {
                                 lin: c.lin.clone(),
@@ -1232,7 +1244,7 @@ fn signed(f: &Formula, both: bool) -> Formula {
                             };
                             equation(&eq, negated, both).unwrap_or(Formula::Con(eq))
                         }
-                        k => p.unwrap_or_else(|| k.clone()),
+                        k => (*k).clone(),
                     })
                     .collect();
                 Some(g.rebuild(kids))
@@ -1253,7 +1265,7 @@ fn signed(f: &Formula, both: bool) -> Formula {
 
 /// The places of the rows `t >= 0` among `gs` whose opposite `-t >= 0` is among them too, found
 /// by a hash that `t` and `-t` share, so that no row is copied.
-fn opposite_rows(gs: &[Formula]) -> BTreeSet<usize> {
+fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
     use std::hash::{Hash, Hasher};
     let mut by: HashMap<u64, Vec<usize>> = HashMap::new();
     for (i, g) in gs.iter().enumerate() {
