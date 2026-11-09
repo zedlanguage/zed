@@ -75,7 +75,7 @@ impl Hasher for Last {
     }
 }
 
-fn digest(t: &Type) -> u64 {
+pub(super) fn digest(t: &Type) -> u64 {
     let mut h = Last::default();
     t.hash(&mut h);
     h.finish()

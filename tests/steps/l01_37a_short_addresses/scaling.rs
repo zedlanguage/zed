@@ -97,13 +97,26 @@ fn numbering_the_definitions_of_a_unit_scales() {
 fn rows_and_morphism_types_that_tie_in_digest_are_found_and_dropped_in_log_time() {
     // `n` tuple types `(aᵢ)` and morphism types `(aᵢ ⊆ dom ⊆ aᵢ) -> aᵢ` over distinct atoms,
     // each made twice, the second found in the tables, then all dropped. With
-    // `short-addresses` the digests keep 8 bits, so each bucket of the tables of live rows,
-    // morphism types and set nodes holds about n/256 nodes, and a lookup or a drop that read
-    // its whole bucket made the run quadratic; in the full build each bucket holds one node.
+    // `short-addresses` the digests keep 8 bits. The atoms are chosen so that their digests
+    // all tie, so every tuple type, every morphism type and every set node over them ties too:
+    // one bucket of each table holds all n of them, and a lookup or a drop that read its whole
+    // bucket would make the run quadratic. In the full build the filter keeps one name in 256
+    // and each bucket holds one node.
+    //
+    // Atoms taken in order spread over many buckets instead, each of a fixed fraction b of n,
+    // so a lookup costs about 2 ln(bn) comparisons of about 2,000 instructions each: n log n,
+    // but with log(bn) in place of log n the ratio between n and 8n exceeds the limit at every
+    // size that runs in 60 s. That input took 13.1 times the work from 2,000 to 16,000 against
+    // the limit 11.2, with 5.5, 9.8 and 13.8 comparisons per lookup at 2,000, 16,000 and
+    // 128,000 (SCALE-fix-37a-digest). With one bucket it takes 10.3 times; a lookup that
+    // compares one node in 64 of its bucket besides its path takes 43 times.
     let n = 2000;
+    let tie = super::collide::digest(&Type::atom("a0")) & 0xff;
     let atoms = inputs(n, |k| {
-        (0..k)
+        (0..)
             .map(|i| Type::atom(&format!("a{i}")))
+            .filter(|a| super::collide::digest(a) & 0xff == tie)
+            .take(k)
             .collect::<Vec<_>>()
     });
     check_order(
