@@ -1731,31 +1731,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | worktree wt/cx-krows branched from wt/cx-tradeoff-review 1373f81f (review not on main; avoids a second copy of its table); 7 forks checking ~400 COMPLEXITY.md r |
+| CK-data-memo | impl attempt 2 | 2026-11-07 23:45 | start: rebase wt/ck-data-memo onto origin/main |
+| CX-tradeoff-krows | impl attempt 1 | 2026-11-09 15:42 | ready 611c7ec4 on wt/cx-krows: 477 rows checked, 101 comments added, 67 completed, 9 stale fixed; 80 test pieces and doc pass / load 18.34 |
 | CX-tradeoff-review | impl attempt 1 | 2026-11-09 15:11 | ready wt/cx-tradeoff-review 1373f81f: 48 partial + 2 stale tradeoff comments fixed, comments only; K-row search for missing comments left; fmt, clippy, doc, s_0 |
-| GROUP-overlaps-unfold | running | 2026-11-09 12:48 | deletes: none run, tried or canceled in this task; files I want removed (scratchpad): old_overlaps.rs new_overlaps.rs new_overlaps2.rs overlaps_doc.txt overlaps |
 | GROUP-refusal-share | running | 2026-11-09 05:04 |  |
-| MSG-fresh-name-clash | running | 2026-11-09 13:30 | noted for batch 88 (DOCS-TODO 54 and COMPLEXITY F140 renumber); deletes: none |
-| MSG-growth-projection-cause | impl attempt 1 | 2026-11-09 12:41 | ready at 2e4d1da9 on wt/growth-cause; 491 test pieces pass, load 17 to 37; deletes: none |
 | PA-if-shortcut-diff | impl attempt 1 | 2026-11-09 13:49 | repair ready b9a464bd: reference walk now same order as the walk, quadratic copy deleted after 8,000-seed agreement; walk's own superlinear forms (a)-(c) open f |
-| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | back to back: main profile preimage edit 11.4-13.6 s, kernel 33.5-47.5 s (load 21-32); C4 preimage 23.1-30.0 s, kernel 42.9-64.1 s (load 9-25); C4's extra 2.5-4 |
-| PA-read-cache-free | impl attempt 1 | 2026-11-09 13:49 | negative control on merged 5fcc15f1: new test deep_let::the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block fails, 1000 blocks peak 6.53 MB left 6 |
-| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | baseline Minstr: A d64/128/256/512 = 131/497/1931/7603; B d16/32/64 = 203/1208/8117; C d64/128/256/512 = 243/656/1995/6708 (load 19.6) |
-| PRES-model-keys | impl attempt 1 | 2026-11-09 14:43 | ready wt/model-keys 851e8143: not a soundness bug (linear); doc + seeded test model_keys 3/3; 499 pieces 0 failed; no code change, instruction counts unchanged; |
-| PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | started; worktree wt/product-parity from origin/main 3ec05d03 |
-| PRES-project-each-cost | impl attempt 1 | 2026-11-09 13:30 | deletes: none run, tried or canceled in this task; scratch files left for the orchestrator (listed in report) / load 23.14 |
-| PRES-small-cost | impl attempt 1 | 2026-11-09 13:18 | ready cf7cdd28 on wt/pres-small-cost (rebased on 5414631a); 490 pieces 0 failed, load 17-57; follow-ups PRES-small-front, PRES-model-keys queued |
+| PA-lto-cost | impl attempt 1 | 2026-11-09 13:48 | ready: wt/lto-cost d61b1c8d on origin/main eae094cc; Cargo.toml deps cgu1; 757M->719M / 1077M->1016M / 989M->943M; 54/54 pieces pass; deletes: perf data and scr |
+| PA-walk-nest-cost | impl attempt 1 | 2026-11-09 15:39 | negative control (old product.rs/cell.rs, new tests): scaling test fails form 0 at 61.3x bytes; old probe A 113->6800 Minstr (64->512), C 203->6016, B 64: 7086  |
+| PRES-product-parity | impl attempt 1 | 2026-11-09 15:51 | baseline run (old solver sources) for l01_38 instruction counts |
 | PRES-small-front | impl attempt 1 | 2026-11-09 14:43 | ready 4d29be86 on wt/small-front (stacked on wt/pres-small-cost): bounds in propagation + fast-path constant halved; point tried for decide dropped (changed ref |
-| PRINT-group-site-defs | impl attempt 1 | 2026-11-09 13:49 | first run of affected groups after the printer change (182 pieces), load 39.18 34.46 27.64 |
-| PRINT-is-pattern | impl attempt 1 | 2026-11-09 14:57 | ready c53d32f4 on wt/is-pattern (stacked on wt/group-site-defs a411cea5): kernel prints `is T`; 361 pieces pass with doc check, load 11.8 to 21.3; now 20.33 20. |
-| PROJECT-hull-credit-lower | impl attempt 1 | 2026-11-09 12:10 | ready: wt/hull-credit 9664b8b9 rebased on origin/main 98d5d23d, 493/493 pieces pass, load 15-51; ledger ready + TIGHTEN-each-whole |
-| Q43-spec | impl attempt 1 | 2026-11-09 15:05 | ready: wt/q43-spec 1f505cf (DESIGN e0c5877, QUESTIONS 4e0eb4a, 1f505cf); cite rc 0; sync --check rc 1 from fence line shifts only (control rc 0); load 15.28 20. |
-| R2-frames-limit | impl attempt 1 | 2026-11-09 14:50 | started; worktrees wt/r2-frames and wt/r2-frames-spec made |
-| RENAME-orderedValues | impl attempt 1 | 2026-11-09 14:20 | deletes: none run (delete freeze); scratch files left for the orchestrator (listed in report) / load 21.25 |
-| STAR-anchor-orders | impl attempt 1 | 2026-11-09 13:40 | ready wt/anchor-orders e25eb59c: random-order needs test (<= 3(d+1), all seeds hold), random build 10.0x linear; controls repick-no-anchor and contribute-no-rea |
-| TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | started |
-| TEST-lazy-split | impl attempt 1 | 2026-11-09 13:40 | ready: wt/lazy-split dcdf84a6; lazy 1 piece of 44-47 s -> 16 pieces, slowest 11.7 s at load 40.6; l01_39 + s_01f with docs 68 pieces 0 failed (load 27.9-43.2);  |
-| TEST-runner-one-worktree | impl attempt 1 | 2026-11-09 14:39 | ready 5f1b4307 on wt/runner-one-worktree: flock refusal per log dir; old script reproduced false failures (8 rc=0 lines, failed: 2); fixed: 12/12 + 5/5 concurre |
+| TEST-group-oracle-enum | impl attempt 1 | 2026-11-09 15:42 | rebased (no conflict) on origin/main eae094cc; commit is fe298ed1; ledger ready |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
