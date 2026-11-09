@@ -2271,6 +2271,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | An `FnMut` closure passed to `by_halves` that captures the disjunctions by `&mut` and a `removed` flag, removes disjuncts with `Vec::retain`, and returns rows that `by_halves` adds to the projections still to run | `drop_jointly_empty` | Mutation (gap 11); closures capturing by mutable reference | `by_halves` as a fold whose leaf takes and returns its state (the disjunctions left and the flag) with the rows to add |
+| An `FnMut` closure passed to `by_halves` that writes each leaf's projection into a vector of `Option<Linked>` captured by `&mut`, one slot per disjunction of the stage | `stage_kernels` (PROJECT-dead2-quadratic) | Mutation (gap 11); closures capturing by mutable reference | `by_halves` as a fold whose leaf returns its index and projection, the list of projections built from the pairs it returns |
 | `Err(())` returned from the leaf as an early exit, read as "no point" by the caller | `drop_jointly_empty` | Error as control flow | The fold's state carries "no point", and the fold stops on it |
 | `std::slice::from_ref` to pass one disjunction as a slice of one | `drop_jointly_empty` | References | A list of one |
 
