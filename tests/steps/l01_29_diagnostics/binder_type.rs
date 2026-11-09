@@ -71,11 +71,10 @@ fn a_statement_target_named_for_a_type_is_rejected_and_its_cast_is_not_reported_
 a binder may not name a type in scope
   [1] 2:3: the binding target `String`, which binds `String` in this scope
       2 |   String = y + 1;
-        |   ^^^^^^^^^^^^^^^
+        |   ^^^^^^ [2]
+        |   ^^^^^^^^^^^^^^^ [1]
   [2] 2:3: repair: rename the binder; where a cast was meant, write the type application \
-`String(…)`
-      2 |   String = y + 1;
-        |   ^^^^^^"
+`String(…)`"
     );
 }
 
@@ -138,10 +137,9 @@ fn an_output_port_named_for_its_type_is_rejected_with_the_one_repair() {
 binder may not name a type in scope
   [1] 1:12: the output port `Lines`, which binds `Lines` in this scope
       1 | main() -> (Lines: Lines) {
-        |            ^^^^^^^^^^^^
-  [2] 1:12: repair: rename the binder
-      1 | main() -> (Lines: Lines) {
-        |            ^^^^^"
+        |            ^^^^^ [2]
+        |            ^^^^^^^^^^^^ [1]
+  [2] 1:12: repair: rename the binder"
     );
 }
 
@@ -439,9 +437,8 @@ fn a_parameter_named_never_is_rejected_with_the_one_repair() {
 binder may not name a type in scope
   [1] 1:3: the parameter `Never`, which binds `Never` in this scope
       1 | f(positional Never: int) = Never;
-        |   ^^^^^^^^^^^^^^^^^^^^^
-  [2] 1:14: repair: rename the binder
-      1 | f(positional Never: int) = Never;
-        |              ^^^^^"
+        |   ^^^^^^^^^^^^^^^^^^^^^ [1]
+        |              ^^^^^ [2]
+  [2] 1:14: repair: rename the binder"
     );
 }

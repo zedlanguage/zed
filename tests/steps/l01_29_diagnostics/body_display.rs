@@ -47,13 +47,11 @@ brace there is a block, so this is a block whose value is that lambda, while `{ 
 one-entry map; write the reading you mean
   [1] 4:14: the brace follows a match arm's `->`, so it is a block whatever it contains (sec:lexical)
       4 |   #open(id:) -> { id -> #insert(0) },
-        |              ^^
+        |              ^^ [1]
+        |                 ^^^^^^^^^^^^^^^^^^^^ [3, 4]
+        |                   ^^^^^^^^^^^^^^^^ [2]
   [2] 4:19: `id -> #insert(0)` reads as a map entry `key -> value`; in a block it is a lambda, and the block's value
-      4 |   #open(id:) -> { id -> #insert(0) },
-        |                   ^^^^^^^^^^^^^^^^
   [3] 4:17: repair: `({ id -> #insert(0) })`, the map display in parentheses
-      4 |   #open(id:) -> { id -> #insert(0) },
-        |                 ^^^^^^^^^^^^^^^^^^^^
   [4] 4:17: repair: `{ (id -> #insert(0)) }`, the block whose value is the lambda");
 }
 
@@ -64,13 +62,10 @@ fn a_fallback_whose_default_is_a_set_is_rejected_with_both_readings() {
 it contains, and `{ \"none\", \"all\" }` reads as a set display; write the reading you mean
   [1] 1:35: the brace follows a fallback's `else`, so it is a block whatever it contains (sec:lexical)
       1 | tags(positional s) = s.split(\",\") else { \"none\", \"all\" };
-        |                                   ^^^^
+        |                                   ^^^^ [1]     ^ [2]
+        |                                        ^^^^^^^^^^^^^^^^^ [3, 4]
   [2] 1:48: a comma at the top level of the brace separates the entries of a display; a block separates its statements with `;`
-      1 | tags(positional s) = s.split(\",\") else { \"none\", \"all\" };
-        |                                                ^
   [3] 1:40: repair: `({ \"none\", \"all\" })`, the set display in parentheses
-      1 | tags(positional s) = s.split(\",\") else { \"none\", \"all\" };
-        |                                        ^^^^^^^^^^^^^^^^^
   [4] 1:40: repair: `{ (\"none\", \"all\") }`, the block whose value is the tuple");
 }
 
@@ -81,13 +76,10 @@ fn a_function_body_written_as_a_record_is_rejected() {
 contains, and `{ x: 0.0, y: 0.0 }` reads as a record display; write the reading you mean
   [1] 1:8: the brace follows a signature, so it is a block whatever it contains (sec:lexical)
       1 | origin() { x: 0.0, y: 0.0 }
-        |        ^
+        |        ^ [1]     ^ [2]
+        |          ^^^^^^^^^^^^^^^^^^ [3, 4]
   [2] 1:18: a comma at the top level of the brace separates the entries of a display; a block separates its statements with `;`
-      1 | origin() { x: 0.0, y: 0.0 }
-        |                  ^
   [3] 1:10: repair: `({ x: 0.0, y: 0.0 })`, the record display in parentheses
-      1 | origin() { x: 0.0, y: 0.0 }
-        |          ^^^^^^^^^^^^^^^^^^
   [4] 1:10: repair: a block, its statements ended by `;` and its value one expression written last; an entry `name: value` or `key -> value` is not an expression");
 }
 

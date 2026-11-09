@@ -42,13 +42,11 @@ chain binds tighter than the `-`, so this is `-(1.abs)`, which is -1, not `(-1).
 Write the grouping you mean.
   [1] 2:13: the chain starts at the numeric literal `1`
       2 |   offset = -1.abs;
-        |             ^
+        |            ^^^^^^ [3, 4, 5]
+        |             ^ [1]
+        |             ^^^^^ [2]
   [2] 2:13: the postfix chain `1.abs` binds tighter than a prefix `-` (precedence tiers 1 and 3)
-      2 |   offset = -1.abs;
-        |             ^^^^^
   [3] 2:12: so the `-` applies to the whole chain: `-(1.abs)`, which is -1
-      2 |   offset = -1.abs;
-        |            ^^^^^^
   [4] 2:12: repair: `(-1).abs`, the chain started at `-1`, which is 1
   [5] 2:12: repair: `-(1.abs)`, the meaning as written, which is -1"
     );

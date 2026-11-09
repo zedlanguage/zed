@@ -2945,3 +2945,11 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A worklist over arm nodes with a `HashSet` of nodes seen, both updated in place, returning at the first node some state reaches | `Ck::no_state_reaches` | Mutation (gap 11), early exit (gap 12) | a fold over the nodes in order with a persistent set of those seen, whose state carries the first reached node as its result |
 | A loop over the cases of a test that returns the first case some state reaches (`cases` with `any`) | `Scope::reaches`, `Scope::cases` | Early exit (gap 12) | a fold over the cases whose state carries the first reached case |
+
+## Entries from MSG-line-quote-cost (`crates/zedc/src/front.rs`, the diagnostic renderer)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| The display width of each character from the crate `unicode-width` (`UnicodeWidthChar::width`: 2 for wide East Asian characters, 0 for combining marks), a tab shown as four columns | `shown` | Code points and text tables (gap 7) | A width table in Zed, as for the other `unicode-*` tables, or a built-in for now; `codePoint` gives the key |
+| A `HashMap` from a source line to the numbers of its steps, built in one pass so each line is quoted once, at its first step | `Display for Diagnostic` | Mutation (gap 11) | A map built by one fold over the steps |
+| A `BinaryHeap<Reverse<(usize, usize)>>` of rows of underlines by their first free column, and the rows as `Vec`s pushed in place (interval partitioning) | `underlines` | Mutation (gap 11) | A persistent priority queue (a pairing or leftist heap) and a persistent list of rows threaded through a fold over the spans |

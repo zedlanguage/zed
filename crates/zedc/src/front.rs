@@ -4,6 +4,8 @@
 //! (`crate::query`) memoize both, and the package loader (`crate::unit`) and the commands
 //! (`crate::run`) read them through the queries, so this file is below all three.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 use zed_kernel::{Shared, Term};
@@ -57,19 +59,23 @@ pub struct Diagnostic {
 pub struct Step {
     /// The line.
     pub line: usize,
-    /// The column.
+    /// The column, counted in characters.
     pub col: usize,
     /// What holds there.
     pub text: String,
-    /// The source line.
-    pub source: String,
+    /// The source line, one copy shared by every step on it.
+    pub source: Arc<str>,
     /// How many characters of the source line the step covers, at least 1.
     pub width: usize,
 }
 
 impl std::fmt::Display for Diagnostic {
-    /// The message on one line; then each step numbered, with its source line and the text
-    /// it covers underlined, a source line shown once for consecutive steps on one place.
+    /// The message on one line; then each step numbered. The first step on a line is followed
+    /// by that line, shown once for all the steps of the diagnostic on it (`shown`), with the
+    /// text each covers underlined (`underlines`). Each line of the source is shown once and each
+    /// row of underlines is at most as long as it and the numbers in the row, so k steps on one
+    /// line of L characters print O(k log k + L·r) characters, r the rows of underlines, not
+    /// O(k·L).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}: {}", self.line, self.col, self.message)?;
         let gutter = self
@@ -80,7 +86,12 @@ impl std::fmt::Display for Diagnostic {
             .unwrap_or(0);
         let number = self.steps.len().to_string().len();
         let pad = " ".repeat(number + 4);
-        let mut last = None;
+        let margin = format!("\n{pad} {:>gutter$} | ", "");
+        // The numbers of the steps on each line, in order.
+        let mut on: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, s) in self.steps.iter().enumerate() {
+            on.entry(s.line).or_default().push(i + 1);
+        }
         for (i, s) in self.steps.iter().enumerate() {
             let n = format!("[{}]", i + 1);
             write!(
@@ -91,21 +102,134 @@ impl std::fmt::Display for Diagnostic {
                 s.text,
                 w = number + 2
             )?;
-            if last == Some((s.line, s.col, s.width)) {
-                continue;
+            if let Some(here) = on.get(&s.line)
+                && here[0] == i + 1
+            {
+                let (text, at) = shown(&s.source);
+                write!(f, "\n{pad} {:>gutter$} | {text}", s.line)?;
+                underlines(f, &margin, &at, &self.steps, here)?;
             }
-            last = Some((s.line, s.col, s.width));
-            write!(f, "\n{pad} {:>gutter$} | {}", s.line, s.source)?;
-            write!(
-                f,
-                "\n{pad} {:>gutter$} | {}{}",
-                "",
-                " ".repeat(s.col - 1),
-                "^".repeat(s.width)
-            )?;
         }
         Ok(())
     }
+}
+
+/// The line `source` as a diagnostic quotes it, each tab shown as four spaces so that every
+/// character has a known column, and the column, counted from 0, at which each character
+/// starts, then the column after the line. A character takes as many columns as it does on a
+/// terminal: none for a combining mark, two for a wide character. O(L) for L characters.
+fn shown(source: &str) -> (String, Vec<usize>) {
+    use unicode_width::UnicodeWidthChar;
+    let mut text = String::with_capacity(source.len());
+    let mut at = Vec::with_capacity(source.len() + 1);
+    let mut column = 0;
+    for c in source.chars() {
+        at.push(column);
+        if c == '\t' {
+            text.push_str("    ");
+            column += 4;
+        } else {
+            text.push(c);
+            column += c.width().unwrap_or(0);
+        }
+    }
+    at.push(column);
+    (text, at)
+}
+
+/// Writes, each row after `margin`, the underlines of the steps numbered `numbers` (counted
+/// from 1 in `steps`), all on one line whose characters start at the columns `at` (`shown`).
+/// Steps that cover the same text share one underline. When the steps cover one stretch of the
+/// line, it is underlined alone; otherwise each underline is followed by the numbers of its
+/// steps, `[2]` or `[2, 5]`. An underline and its numbers go on the first row free from one
+/// column before its start, so neither overlaps another (interval partitioning, which uses as
+/// few rows as the most underlines and numbers over one column). A step that ends past the line
+/// gets a caret for each character it lacks; one that covers only combining marks gets one,
+/// under the character they combine with. O(s log s + C) for s steps and C characters written.
+fn underlines(
+    f: &mut std::fmt::Formatter<'_>,
+    margin: &str,
+    at: &[usize],
+    steps: &[Step],
+    numbers: &[usize],
+) -> std::fmt::Result {
+    let end = at.len() - 1;
+    let column = |i: usize| at.get(i).copied().unwrap_or(at[end] + i - end);
+    // Each stretch some step covers: its first character, its length in characters, and the
+    // numbers of the steps that cover it.
+    let mut spans: Vec<(usize, usize, usize)> = numbers
+        .iter()
+        .map(|&n| {
+            let s = &steps[n - 1];
+            (s.col - 1, s.width.max(1), n)
+        })
+        .collect();
+    spans.sort_unstable();
+    let mut covered: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    for (start, width, n) in spans {
+        match covered.last_mut() {
+            Some((s, w, ns)) if (*s, *w) == (start, width) => ns.push(n),
+            _ => covered.push((start, width, vec![n])),
+        }
+    }
+    let labeled = covered.len() > 1;
+    // Each underline: its first column, its columns, and the numbers after it. The columns grow
+    // with the characters, so these stay in the order of their starts.
+    let marks: Vec<(usize, usize, String)> = covered
+        .into_iter()
+        .map(|(start, width, ns)| {
+            // A step on combining marks alone is marked under the character they combine with.
+            let (from, to) = match (column(start), column(start + width)) {
+                (from, to) if to > from => (from, to),
+                (from, _) => (from.saturating_sub(1), from.max(1)),
+            };
+            let label = if labeled {
+                let ns: Vec<String> = ns.iter().map(usize::to_string).collect();
+                format!(" [{}]", ns.join(", "))
+            } else {
+                String::new()
+            };
+            (from, to - from, label)
+        })
+        .collect();
+    // Complexity tradeoff: underlines that nest go on rows of their own, so a line with steps
+    // nested d deep prints d rows of up to L columns: O(L·d + s log s), which is O(s + L) for
+    // steps that are disjoint or nested a bounded depth, but O(s·L) for a chain nested on one line
+    // as deep as it is long, such as a sum `a0 + a1 + … + an` whose every partial sum is a step.
+    // What is given up: that chain's output stays quadratic in its length, though each nested step
+    // prints one row and not the line again (COMPLEXITY.md, MSG-line-quote-cost). Why: a step's
+    // underline under each character it covers is what shows its extent, and underlines that
+    // overlap cannot share a row, so any layout that draws each nested extent in full prints the
+    // sum of their widths. A complete solution would show nested extents by their ends, not in
+    // full; whether that reads as clearly is open (MSG-line-quote-nested). Tested by
+    // `l01_29_diagnostics::layout`.
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    // Each row by the first column after its last underline, its numbers and one space.
+    let mut free: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new();
+    for (k, (from, width, label)) in marks.iter().enumerate() {
+        let row = match free.peek() {
+            Some(&Reverse((after, row))) if after <= *from => {
+                free.pop();
+                row
+            }
+            _ => {
+                rows.push(Vec::new());
+                rows.len() - 1
+            }
+        };
+        rows[row].push(k);
+        free.push(Reverse((from + width + label.len() + 1, row)));
+    }
+    for row in &rows {
+        f.write_str(margin)?;
+        let mut done = 0;
+        for &k in row {
+            let (from, width, label) = &marks[k];
+            write!(f, "{:gap$}{:^<width$}{label}", "", "", gap = from - done)?;
+            done = from + width + label.len();
+        }
+    }
+    Ok(())
 }
 
 /// The statements, elaboration and warnings of the unit `text`, the warnings moved out of the
@@ -501,15 +625,20 @@ pub(crate) fn placed(
     errors: Vec<ast::Error>,
 ) -> Vec<Diagnostic> {
     let addresses = suppress::addresses(text, stmts, severity, &errors);
+    let mut read = Read {
+        text,
+        lines,
+        seen: HashMap::new(),
+    };
     errors
         .into_iter()
         .zip(addresses)
         .map(|(e, address)| {
-            let (line, col) = lines.line_col(text.as_bytes(), e.span.start);
+            let (line, col) = read.place(e.span.start);
             Diagnostic {
                 line,
                 col,
-                steps: e.notes.into_iter().map(|n| step(text, lines, n)).collect(),
+                steps: e.notes.into_iter().map(|n| read.step(n)).collect(),
                 message: e.message,
                 row: e.row,
                 address,
@@ -518,25 +647,79 @@ pub(crate) fn placed(
         .collect()
 }
 
-/// The step a note is in `text`: its line and column, the source line, and the characters of
-/// the note's span on that line.
-fn step(text: &str, lines: &source::Lines, n: ast::Note) -> Step {
-    let (line, col) = lines.line_col(text.as_bytes(), n.span.start);
-    let begin = lines.line_start(n.span.start).0;
-    let end = text[n.span.start..]
-        .find(['\n', '\r'])
-        .map_or(text.len(), |i| n.span.start + i);
-    let width = text[n.span.start..n.span.end.clamp(n.span.start, end)]
-        .chars()
-        .count();
-    Step {
-        line,
-        col,
-        text: n.text,
-        source: text[begin..end].to_string(),
-        width: width.max(1),
+/// The lines of `text` that diagnostics are placed on, each read once, so that placing a step
+/// costs a search for its line and O(1) after it, not a decoding of the line up to it, and the
+/// steps on one line share one copy of it: k steps on a line of L bytes cost O(L + k log n)
+/// for n lines, not O(k·L).
+struct Read<'t> {
+    /// The text.
+    text: &'t str,
+    /// Its line starts.
+    lines: &'t source::Lines,
+    /// Each line read, by the byte it starts at.
+    seen: HashMap<usize, Line>,
+}
+
+/// A line of the source.
+struct Line {
+    /// Its 1-based number.
+    number: usize,
+    /// Its text, without its line break.
+    source: Arc<str>,
+    /// For each byte of it and the end, the number of characters before it.
+    chars: Vec<usize>,
+}
+
+impl Read<'_> {
+    /// The line holding byte `offset`, read the first time it is asked for, and its first byte.
+    fn line(&mut self, offset: usize) -> (&Line, usize) {
+        let (begin, number) = self.lines.line_start(offset);
+        let text = self.text;
+        let line = self.seen.entry(begin).or_insert_with(|| {
+            let end = text[begin..]
+                .find(['\n', '\r'])
+                .map_or(text.len(), |i| begin + i);
+            let source = &text[begin..end];
+            let mut chars = Vec::with_capacity(source.len() + 1);
+            let mut count = 0;
+            for b in source.bytes() {
+                chars.push(count);
+                // A byte that is not a continuation byte starts a character.
+                count += usize::from(b & 0xC0 != 0x80);
+            }
+            chars.push(count);
+            Line {
+                number,
+                source: source.into(),
+                chars,
+            }
+        });
+        (line, begin)
+    }
+
+    /// The 1-based line and column of byte `offset`, the column counted in characters.
+    fn place(&mut self, offset: usize) -> (usize, usize) {
+        let (line, begin) = self.line(offset);
+        (line.number, line.chars[offset - begin] + 1)
+    }
+
+    /// The step a note is: its line and column, the source line, and the characters of the
+    /// note's span on that line.
+    fn step(&mut self, n: ast::Note) -> Step {
+        let (line, begin) = self.line(n.span.start);
+        let end = begin + line.source.len();
+        let first = line.chars[n.span.start - begin];
+        let width = line.chars[n.span.end.clamp(n.span.start, end) - begin] - first;
+        Step {
+            line: line.number,
+            col: first + 1,
+            text: n.text,
+            source: Arc::clone(&line.source),
+            width: width.max(1),
+        }
     }
 }
+
 /// An error at `span` with no derivation.
 pub(crate) fn error(span: Span, message: String) -> Error {
     Error {

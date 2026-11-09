@@ -93,7 +93,7 @@ fn a_warning_prints_the_same_address_on_every_run() {
     assert_eq!(printed(&first), [want.as_str()]);
     // The address follows the warning's derivation, on a line of its own.
     assert!(
-        first.ends_with(&format!("^^^^^^^^^^^\n  address: {want}\n")),
+        first.ends_with(&format!("k at most 64\n  address: {want}\n")),
         "{first}"
     );
     assert_eq!(zedc(&["run", &file]).2, first);
@@ -312,7 +312,7 @@ fn an_address_is_printed_only_under_addresses() {
     let (status, out, quiet) = plain(&["run", &file]);
     assert_eq!(status, 0);
     assert!(!quiet.contains("address"), "{quiet}");
-    assert!(quiet.ends_with("^^^^^^^^^^^\n"), "{quiet}");
+    assert!(quiet.ends_with("k at most 64\n"), "{quiet}");
     let (_, _, loud) = zedc(&["run", &file]);
     let a = printed(&loud)[0].to_string();
     assert_eq!(loud, format!("{quiet}  address: {a}\n"));

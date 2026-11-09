@@ -31,6 +31,9 @@ zedc-preimage.workspace = true
 zedc-check.workspace = true
 zedc-zir.workspace = true
 zedc-elab.workspace = true
+# The columns a character takes on a terminal, so a diagnostic underlines wide characters under
+# them (front::Diagnostic).
+unicode-width.workspace = true
 
 [dev-dependencies]
 # Counts the bytes the unit tests allocate (run::tests: a bound file is read into its block once).

@@ -18,45 +18,34 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
         r#"4:13: `++` does not take ("total: ", int): these are the types of its arguments here, and `++` has no arrow that takes them all
   [1]  4:13: this expression is "total: "
        4 |   stdout <- "total: " ++ total;
-         |             ^^^^^^^^^
+         |             ^^^^^^^^^ [1]
+         |             ^^^^^^^^^^^^^^^^^^ [14]
+         |                          ^^^^^ [2, 15]
   [2]  4:26: `total` is int here
-       4 |   stdout <- "total: " ++ total;
-         |                          ^^^^^
   [3]  3:11: `total` is defined as this expression, int
        3 |   total = n * 2;
-         |           ^^^^^
+         |           ^ [5]
+         |           ^^^^^ [3, 4]
+         |               ^ [13]
   [4]  3:11: this `*` gives int
   [5]  3:11: `n` is int here
-       3 |   total = n * 2;
-         |           ^
   [6]  2:7: `n` is defined as this expression, int
        2 |   n = int(stdin[1]) else 0;
-         |       ^^^^^^^^^^^^^^^^^^^^
+         |       ^^^^^^^^^^^^^ [8]
+         |       ^^^^^^^^^^^^^^^^^^^^ [6, 7]
+         |           ^^^^^ [10]     ^ [12]
+         |           ^^^^^^^^ [9]
   [7]  2:7: this `else` gives int
   [8]  2:7: this call of `int` gives int | #invalid | #notFound | #ioError(op: String, path: String, why: String)
-       2 |   n = int(stdin[1]) else 0;
-         |       ^^^^^^^^^^^^^
   [9]  2:11: this expression gives String | #notFound | #ioError(op: String, path: String, why: String)
-       2 |   n = int(stdin[1]) else 0;
-         |           ^^^^^^^^
   [10] 2:11: `stdin` is ((int) -> String | #notFound | #ioError(op: String, path: String, why: String)) here
-       2 |   n = int(stdin[1]) else 0;
-         |           ^^^^^
   [11] 1:6: `stdin` is declared `Lines`
        1 | main(stdin: Lines) -> (stdout: Lines) {
          |      ^^^^^^^^^^^^
   [12] 2:26: this literal, 0, is 0
-       2 |   n = int(stdin[1]) else 0;
-         |                          ^
   [13] 3:15: this literal, 2, is 2
-       3 |   total = n * 2;
-         |               ^
   [14] 4:13: `++` takes (String, String) -> String
-       4 |   stdout <- "total: " ++ total;
-         |             ^^^^^^^^^^^^^^^^^^
-  [15] 4:26: repair: write `String(total)`; the checker accepts that
-       4 |   stdout <- "total: " ++ total;
-         |                          ^^^^^"#
+  [15] 4:26: repair: write `String(total)`; the checker accepts that"#
     );
 }
 
@@ -277,28 +266,18 @@ fn a_rejected_nested_tuple_shows_each_tuple_and_its_type() {
         r#"1:5: `++` does not take ("pair: ", ((1, 2.5), "a")): these are the types of its arguments here, and `++` has no arrow that takes them all
   [1] 1:5: this expression is "pair: "
       1 | x = "pair: " ++ ((1, 2.5), "a");
-        |     ^^^^^^^^
+        |     ^^^^^^^^ [1] ^^^^^^^^ [3]
+        |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ [7]
+        |                 ^^^^^^^^^^^^^^^ [2, 8]
+        |                   ^ [4]    ^^^ [6]
+        |                      ^^^ [5]
   [2] 1:17: this expression gives ((1, 2.5), "a")
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |                 ^^^^^^^^^^^^^^^
   [3] 1:18: this expression gives (1, 2.5)
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |                  ^^^^^^^^
   [4] 1:19: this literal, 1, is 1
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |                   ^
   [5] 1:22: this literal, 2.5, is 2.5
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |                      ^^^
   [6] 1:28: this expression is "a"
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |                            ^^^
   [7] 1:5: `++` takes (String, String) -> String
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  [8] 1:17: repair: wrap this in `String(…)`; the checker accepts that
-      1 | x = "pair: " ++ ((1, 2.5), "a");
-        |                 ^^^^^^^^^^^^^^^"#
+  [8] 1:17: repair: wrap this in `String(…)`; the checker accepts that"#
     );
 }
 
@@ -328,21 +307,19 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
         "3:8: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
   [1] 3:8: `boxed` is #box(((int) -> int)) here
       3 | same = boxed == boxed;
-        |        ^^^^^
+        |        ^^^^^ [1]
+        |        ^^^^^^^^^^^^^^ [7, 8]
   [2] 2:9: `boxed` is defined as this expression, #box(((int) -> int))
       2 | boxed = #box(inc);
-        |         ^^^^^^^^^
+        |         ^^^^^^^^^ [2, 3]
+        |              ^^^ [4]
   [3] 2:9: this atom `#box` with its payload gives #box(((int) -> int))
   [4] 2:14: `inc` is ((int) -> int) here
-      2 | boxed = #box(inc);
-        |              ^^^
   [5] 1:7: `inc` is defined as this expression, ((int) -> int)
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
   [6] 1:7: this expression is ((int) -> int)
   [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
-      3 | same = boxed == boxed;
-        |        ^^^^^^^^^^^^^^
   [8] 3:8: repair: keep the function under its own name, out of the value"
     );
 }
@@ -364,10 +341,9 @@ s = g(h);
         "4:5: `==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth
   [1] 3:36: `g` needs this of its argument here
       3 | g(positional x) { p = f(x); return p == p; }
-        |                                    ^^^^^^
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
+        |                                    ^^^^^^ [1]
   [2] 3:1: `g` is declared here, `(_) -> bool`
-      3 | g(positional x) { p = f(x); return p == p; }
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [3] 4:5: repair: call the function before the value gets here, so that the value holds its result and not the function
       4 | s = g(h);
         |     ^^^^

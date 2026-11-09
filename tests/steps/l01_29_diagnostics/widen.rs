@@ -37,20 +37,16 @@ fn the_area_of_a_large_square_warns_with_its_derivation() {
 3:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer
   [1] 3:10: this `*` gives 9223372037000250000, past i64
       3 |   area = side * side;
-        |          ^^^^^^^^^^^
+        |          ^^^^ [2]
+        |          ^^^^^^^^^^^ [1, 6]
+        |                 ^^^^ [5]
   [2] 3:10: `side` is 3037000500 here
-      3 |   area = side * side;
-        |          ^^^^
   [3] 2:10: `side` is defined as this expression, 3037000500
       2 |   side = 3037000500;
         |          ^^^^^^^^^^
   [4] 2:10: this literal is 3037000500
   [5] 3:17: `side` is 3037000500 here
-      3 |   area = side * side;
-        |                 ^^^^
-  [6] 3:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64
-      3 |   area = side * side;
-        |          ^^^^^^^^^^^"
+  [6] 3:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64"
     );
 }
 
@@ -203,32 +199,22 @@ fn an_if_gives_the_interval_of_its_branches() {
 3:8: `sq` widens past a machine word: this `*` of an i64 and an i64 gives a big integer
   [1]  3:8: this `*` gives int[100..=9223372037000250000], past i64
        3 |   sq = n * n;
-         |        ^^^^^
+         |        ^ [2]
+         |        ^^^^^ [1, 10]
+         |            ^ [9]
   [2]  3:8: `n` is int[10..=3037000500] here
-       3 |   sq = n * n;
-         |        ^
   [3]  2:7: `n` is defined as this expression, int[10..=3037000500]
        2 |   n = if stdin[1] == \"x\" { 10 } else { 3037000500 };
-         |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+         |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3, 4]
+         |                          ^^^^^^ [5]    ^^^^^^^^^^ [8]
+         |                            ^^ [6]    ^^^^^^^^^^^^^^ [7]
   [4]  2:7: this `if` gives int[10..=3037000500]
   [5]  2:26: this block gives 10
-       2 |   n = if stdin[1] == \"x\" { 10 } else { 3037000500 };
-         |                          ^^^^^^
   [6]  2:28: this literal is 10
-       2 |   n = if stdin[1] == \"x\" { 10 } else { 3037000500 };
-         |                            ^^
   [7]  2:38: this block gives 3037000500
-       2 |   n = if stdin[1] == \"x\" { 10 } else { 3037000500 };
-         |                                      ^^^^^^^^^^^^^^
   [8]  2:40: this literal is 3037000500
-       2 |   n = if stdin[1] == \"x\" { 10 } else { 3037000500 };
-         |                                        ^^^^^^^^^^
   [9]  3:12: `n` is int[10..=3037000500] here
-       3 |   sq = n * n;
-         |            ^
-  [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64
-       3 |   sq = n * n;
-         |        ^^^^^"
+  [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64"
     );
 }
 

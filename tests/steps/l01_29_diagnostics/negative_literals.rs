@@ -109,10 +109,16 @@ fn an_operand_and_an_argument_at_a_fixed_class_point_at_the_minus() {
 fn a_derivation_step_shows_the_negative_literal_as_written() {
     let out = rejected("f(positional x: f64) = x;\ny = f(-3 + 1);\n");
     assert!(
+        out.contains("  [2] 2:7: this literal, -3, is -3\n"),
+        "{out}"
+    );
+    // The line is shown once, under its first step; the literal's underline is labeled [2].
+    assert!(
         out.contains(
-            "  [2] 2:7: this literal, -3, is -3
-      2 | y = f(-3 + 1);
-        |       ^^"
+            "      2 | y = f(-3 + 1);
+        |     ^^^^^^^^^ [4]
+        |       ^^ [2]
+"
         ),
         "{out}"
     );
@@ -132,10 +138,16 @@ main(stdin: Lines) -> (stdout: Lines) {
 ",
     );
     assert!(
+        out.contains("  [7] 1:34: the literal -2n takes int | f64 | rat\n"),
+        "{out}"
+    );
+    // The line is shown once, under its first step; the literal's underline is labeled [5, 7].
+    assert!(
         out.contains(
-            "the literal -2n takes int | f64 | rat
-      1 | badge(positional x) = \"#\" ++ x * -2n;
-        |                                  ^^^"
+            "      1 | badge(positional x) = \"#\" ++ x * -2n;
+        |       ^^^^^^^^^^^^ [4]       ^ [3]
+        |                       ^^^ [1]    ^^^ [5, 7]
+"
         ),
         "{out}"
     );

@@ -72,20 +72,16 @@ fn zedc_test_prints_the_warning_zedc_run_prints() {
 {file}:4:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer
   [1] 4:10: this `*` gives 9223372037000250000, past i64
       4 |   area = side * side;
-        |          ^^^^^^^^^^^
+        |          ^^^^ [2]
+        |          ^^^^^^^^^^^ [1, 6]
+        |                 ^^^^ [5]
   [2] 4:10: `side` is 3037000500 here
-      4 |   area = side * side;
-        |          ^^^^
   [3] 3:10: `side` is defined as this expression, 3037000500
       3 |   side = 3037000500;
         |          ^^^^^^^^^^
   [4] 3:10: this literal is 3037000500
   [5] 4:17: `side` is 3037000500 here
-      4 |   area = side * side;
-        |                 ^^^^
   [6] 4:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64
-      4 |   area = side * side;
-        |          ^^^^^^^^^^^
   address: {address}
 "
         )

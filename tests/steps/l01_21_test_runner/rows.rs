@@ -160,13 +160,10 @@ fn a_positional_argument_after_a_named_one_names_its_row() {
 positional arguments first, then its named ones.
   [1] 2:9: the first named argument, `rate`
       2 | f = fee(rate: 3, 5);
-        |         ^^^^
+        |     ^^^^^^^^^^^^^^^ [2]
+        |         ^^^^ [1] ^ [3]
   [2] 2:5: the call
-      2 | f = fee(rate: 3, 5);
-        |     ^^^^^^^^^^^^^^^
-  [3] 2:18: repair: pass this argument before `rate`, the positional arguments first
-      2 | f = fee(rate: 3, 5);
-        |                  ^"
+  [3] 2:18: repair: pass this argument before `rate`, the positional arguments first"
     );
 }
 
@@ -206,13 +203,11 @@ fn a_positional_parameter_after_a_named_one_names_its_row() {
 declaration lists its positional parameters first.
   [1] 1:11: the first named parameter, `rate`
       1 | surcharge(rate: int, positional base: int) = base * rate;
-        |           ^^^^^^^^^
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
+        |           ^^^^^^^^^ [1]
+        |                      ^^^^^^^^^^^^^^^^^^^^ [3]
   [2] 1:1: the declaration
-      1 | surcharge(rate: int, positional base: int) = base * rate;
-        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  [3] 1:22: repair: declare `base` before `rate`, the positional parameters first
-      1 | surcharge(rate: int, positional base: int) = base * rate;
-        |                      ^^^^^^^^^^^^^^^^^^^^"
+  [3] 1:22: repair: declare `base` before `rate`, the positional parameters first"
     );
 }
 

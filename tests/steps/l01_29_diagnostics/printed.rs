@@ -718,10 +718,9 @@ fn a_rejection_writes_the_empty_type_as_never() {
 has no arrow that takes them all
   [1] 2:10: this literal, 1, is 1
       2 | r = take(1);
-        |          ^
+        |     ^^^^^^^ [2]
+        |          ^ [1]
   [2] 2:5: `take` takes (Never) -> Never
-      2 | r = take(1);
-        |     ^^^^^^^
   [3] 1:1: `take` is declared here, `(Never) -> Never`
       1 | take(positional x: Never) = x;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
@@ -772,16 +771,13 @@ fn a_rejection_writes_an_empty_product_as_never() {
 has no arrow that takes them all
   [1] 2:7: this expression gives (1, 2)
       2 | r = f((1, 2));
-        |       ^^^^^^
+        |     ^^^^^^^^^ [4]
+        |       ^^^^^^ [1]
+        |        ^ [2]
+        |           ^ [3]
   [2] 2:8: this literal, 1, is 1
-      2 | r = f((1, 2));
-        |        ^
   [3] 2:11: this literal, 2, is 2
-      2 | r = f((1, 2));
-        |           ^
   [4] 2:5: `f` takes (Never) -> Never
-      2 | r = f((1, 2));
-        |     ^^^^^^^^^
   [5] 1:1: `f` is declared here, `(Never) -> Never`
       1 | f(positional x: (Never, int)) = x;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
