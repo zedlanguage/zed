@@ -2896,3 +2896,12 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 | `async fn` methods on a struct holding a `frames::Stack` and a `&RefCell<HashMap<K, V>>` memo, generic over the key and answer (`Pairs<'m, K, V>`), one `impl` per operation, each call that is not answered at once or from the memo on a heap frame (`Pairs::kept`) | `Ty::meet`, `Ty::meets`, `Ty::contains`, `Pairs::{meet, meets, contains, kept}` | Missing (no coroutines or `async`), interior mutability, as for `types/empty.rs` | Removed: the port's runtime must run deep recursion without overflowing; the memo a map threaded through the calls |
 | Memo keys made of raw addresses, `(*const Ty, *const Ty)` and `(*const Ty, *const Value)`, sound only while both operands are borrowed | `Pairs` | Identity (gap 1) | Keys by digest or node id |
 | A stack of items to write (`Dbg<'a>`) holding `&dyn fmt::Debug` for the leaves, so one loop writes types, rows, shapes, signatures and needs | `write_debug`, `debug_list`, `debug_map`, `debug_ty`, `debug_sig`, `debug_need` | Trait objects | A sum type of the things written, one case per kind, in a state receiver's list |
+
+## Entries from TRIVIAL-models-study (`tests/steps/l22_08_vacuity/trivial.rs`, a prototype that L22.8 moves into the checker)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| Counts of alive cubes, removed-value flags and a trail of removals with their reasons, all updated in place and undone by popping the trail | `Engine::propagate`, `Engine::revise`, `search` | Mutation (gap 11) | a persistent map of the domains per choice, kept on the search's stack, so undoing is dropping the frame; the counts become a map threaded through the revision |
+| An iterative depth-first search over explicit frames that returns once two models are listed or a choice leads to no model | `search` | Early exit (gap 12) | a fold over the frames whose state carries the end reached, with the stop as its result |
+| The bindings of a law's binders as the bits of a `u64`, read by `>>` and `& 1` | `Theory::law_holds`, called by the `Check::Whole` case of `Engine::revise` | Bit operations (gap 4, built) | the bit words of L1.39a |
+| A `HashMap` from field and value to the reason it was removed, built once to write the explanation | `explain` | Mutation (gap 11) | a map built by one fold over the trail |

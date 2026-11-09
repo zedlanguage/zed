@@ -184,6 +184,9 @@ path = "steps/l06_01_parser/mod.rs"
 name = "l07_03_unit_log_off"
 path = "steps/l07_03_unit_log_off/mod.rs"
 [[test]]
+name = "l22_08_vacuity"
+path = "steps/l22_08_vacuity/mod.rs"
+[[test]]
 name = "l25_08_mutate"
 path = "steps/l25_08_mutate/mod.rs"
 [[test]]
