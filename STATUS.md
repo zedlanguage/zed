@@ -1645,15 +1645,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| C2-chain-general | impl attempt 2 | 2026-11-08 02:58 | review items started: name-tie test, top-level // in products, Tier::Local sharing |
-| MSG-audit-check | impl attempt 1 | 2026-11-09 00:16 | in progress: commit d629cdea (rebased on origin/main, includes l01_21 fix: Row::LoopedAlternatives + sync unescape); affected-group run 5 going; next: missing-a |
-| MSG-audit-front | impl attempt 1 | 2026-11-09 00:16 | started: worktree /home/luke/Work/wt/msg-audit-front on 89c189c0 |
-| MSG-audit-solve-rt | repair attempt 1 | 2026-11-09 00:16 | red: new test the_split_repair_names_functions_the_program_does_not_define fails on 21528083 (ok1 already declared with these parameter types); fix: free_names  |
-| REFUSAL-nfa-refuse | impl attempt 1 | 2026-11-07 17:30 | checker groups 662 pieces: 661 pass, l01_36b_link_identity failed once at load 48-65, passed 3 times alone (load 19-26), does not reach the type checker: timing |
-| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | returned at cd875d85a49c693bdf3b639b207f6caef4d440b1: cube and equality fixed, 8 returned with evidence; load 17.52 23.82 25.89 |
-| TABLE-short-scan | impl attempt fix | 2026-11-07 12:26 | ready 9b959ecd on 780e1e1d: join worst case explained (triangle question, AGM bound) at site and F103; plan row IMPORTS-untyped-join feeds SCALE-cover, plan exi |
+| SCALE-fix-crossover | impl attempt 1 | 2026-11-07 12:13 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
+| SCALE-fix-preimage | impl attempt 1 | 2026-11-07 11:37 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
+| SCALE-fix-strip-odd | impl attempt 1 | 2026-11-07 12:13 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
+| SCALE-fix-wide | impl attempt 1 | 2026-11-07 11:37 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
+| SCALE-ratio | impl attempt 1 | 2026-11-07 11:08 | ready 672c3618 on wt/scale-chain: 30 tests ignored with open rows, deep_types fixed, targeted groups pass; load 8.12 8.78 13.08 |
 | TEST-audit | audit attempt 1 | 2026-11-08 13:02 | done: REPORT.md complete (Part 1: 156 checks, 89 committed, 46 partial, 13 missing; Part 2: 93.9% lines, 93.6% regions, 718 never-run functions; Part 3: 882 beh |
-| TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl 0cc90c14+a3f52b58 on 881d52b6 (14 tests pass), spec 076234e on zed 9bf5aaf (sec:theories item 3, L22.8, DOCS-TODO 36); check OK, spec groups 23 piec |
+| TESTS-L1.17-wide-edges | impl attempt 1 | 2026-11-08 23:59 | ready 19f13623 on wt/tests-l117-edges (origin/main 60991c11): 11 edge tests, 1 ignored (SPEC-zero-order queued); checker panic on i64::MIN mod -1 fixed in widen |
+| TESTS-L1.39a-f64bits-nan | impl attempt 1 | 2026-11-08 23:59 | ready db6cc22e on wt/tests-l139a-nan; clippy workspace clean; l01_39a_bit_words 46 pieces 0 failed with doc check (load 18-19); STATUS row, plan Done:, ledger r |
+| TRIVIAL-models-study | impl attempt 1 | 2026-11-09 01:16 | ready: impl af2e4d70 on 07dca94a, spec ff57e5e on 9bf5aaf; work-counted budget, union-find clause check, 21 tests pass; TRIVIAL-shared-atom left open |
+| TY-diff-meet | impl attempt 1 | 2026-11-09 02:15 | ready 6778f711 on wt/ty-diff-meet (rebased on 60991c11), COMPLEXITY F127, STATUS, ZED_PORT_GAPS, plan_dag Done; not pushed |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
