@@ -3157,7 +3157,8 @@ fn unchosen_text(what: &str, first: &str, second: &str, bucket: &str, apart: &st
         "the {what} {first} and {second} may each be held by one of the shapes {bucket}, which \
          {apart}, and neither is held by the first of those shapes; which shape \
          holds each decides what the type variables are bound to, and the checker looks \
-         through those shapes for one of the two only"
+         through those shapes for one of the two only; to repair it, write the shapes so that \
+         they differ in a component where the two differ, or test the value with `is` first"
     )
 }
 
@@ -4366,7 +4367,7 @@ impl Ty {
             return undecided(why);
         }
         if let Some(why) = self.unchosen(other) {
-            return format!(" (not decided: {why})");
+            return undecided(&why);
         }
         match self.verdict(other) {
             Verdict::Refused(r) => undecided(&r.message()),

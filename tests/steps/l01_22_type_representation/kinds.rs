@@ -824,11 +824,13 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
     assert_eq!(bound(&l, &r), None);
     assert_eq!(
         l.refused(&r),
-        " (not decided: the payloads #a(3, 5) and #a(4, 6) may each be held by one of the \
-         shapes #a(1 | 2, _) | #a(int, _), which are told apart only at component 1, where \
-         they agree with both, and neither is held by the first of those shapes; which shape \
-         holds each decides what the type variables are bound to, and the checker looks \
-         through those shapes for one of the two only)"
+        "; this is not proved wrong: the checker could not decide whether it fits, because the \
+         payloads #a(3, 5) and #a(4, 6) may each be held by one of the shapes \
+         #a(1 | 2, _) | #a(int, _), which are told apart only at component 1, where they agree \
+         with both, and neither is held by the first of those shapes; which shape holds each \
+         decides what the type variables are bound to, and the checker looks through those \
+         shapes for one of the two only; to repair it, write the shapes so that they differ in \
+         a component where the two differ, or test the value with `is` first"
     );
     // One such payload is decided.
     let one = with_payloads("a", vec![vec![int(3), int(5)]]);
@@ -842,6 +844,6 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
     assert_eq!(bound(&l, &rows), None);
     assert!(
         l.refused(&rows)
-            .starts_with(" (not decided: the tuples (3, 5) and (4, 6) ")
+            .contains("could not decide whether it fits, because the tuples (3, 5) and (4, 6) ")
     );
 }
