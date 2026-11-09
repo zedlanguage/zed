@@ -1204,6 +1204,16 @@ impl Type {
         matches!(&*self.0, Node::Rec(_))
     }
 
+    /// Whether this is a recursive member on a cycle of its group, or a part kept unevaluated: a
+    /// type that may unfold to itself. A member on no cycle unfolds, in a bounded number of steps,
+    /// to types none of which is it.
+    fn on_cycle(&self) -> bool {
+        match &*self.0 {
+            Node::Parts(..) => false,
+            Node::Rec(r) => r.key.on_cycle(),
+        }
+    }
+
     /// The parts, unfolding a recursive node, and its unfolding while that is recursive too.
     fn p(&self) -> PartsRef<'_> {
         match &*self.0 {
@@ -4811,8 +4821,11 @@ pub enum Verdict {
 /// Why a check was refused.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Refusal {
-    /// A tuple part holds two tuple types, both open on one box, that differ in a recursive
-    /// component: following both is the subset construction.
+    /// A tuple part holds two tuple types open on one box that differ in a recursive
+    /// component, or two that narrowing takes out of one component with different recursive
+    /// types there, each on a cycle of its group (`Type::on_cycle`); and no value was found.
+    /// Following both is the subset construction, exponential in the recursive types (NFA
+    /// universality, PSPACE-complete).
     Fork,
     /// Negated lists of periodic lengths: whether they cover the lengths left is the covering
     /// problem for residues, which is NP-hard.
@@ -4835,8 +4848,10 @@ impl Refusal {
     pub fn message(self) -> String {
         let text = match self {
             Refusal::Fork => {
-                "two tuple types of it differ in a recursive component on one box; deciding it \
-                 would follow both, which is the subset construction"
+                "no value of it was found, and two tuple types in it differ in one component, \
+                 where each holds a recursive type that contains itself again; deciding it would \
+                 follow both together with every set of their tails, a number of cases that \
+                 grows exponentially with these types"
             }
             Refusal::Residues => {
                 "its lengths are residues of periodic lists, and deciding whether the excluded \
@@ -5342,6 +5357,8 @@ pub mod rec {
         /// definitions. A plain member is its unfolding, built as an ordinary type, so equal plain
         /// members of groups built apart are one type.
         plain: Vec<bool>,
+        /// Whether each definition is on a cycle of the group: names itself through the group.
+        cyclic: Vec<bool>,
         /// The plain definitions, each after those it names.
         order: Vec<usize>,
         /// The canonical form, made when the group is first instantiated ([`canon`]).
@@ -5654,6 +5671,15 @@ pub mod rec {
         /// the other's.
         pub(super) fn group(&self) -> Option<u64> {
             matches!(self.at, At::Member(_)).then_some(self.env.id)
+        }
+
+        /// Whether the key names a member on a cycle of its group, or a part, which is taken as on
+        /// one.
+        pub(super) fn on_cycle(&self) -> bool {
+            match self.at {
+                At::Member(i) => self.env.group().0.cyclic[i],
+                At::Part(_) => true,
+            }
         }
 
         /// Whether the decider of the group (`judge`) has run, which a member's `judged` reads.

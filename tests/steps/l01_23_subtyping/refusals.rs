@@ -118,6 +118,12 @@ fn fork_empty() -> Type {
     .fold(pair(l.clone(), l.clone()), |t, x| &t - x)
 }
 
+/// The lists of integers against those with a 1 at place 1 or 2 from the end, one further on,
+/// or none: empty, but the decision would follow both places at once.
+fn nfa() -> Type {
+    &list_named(Type::int(), "_nfa") - &by_place_from_the_end(2, None, "_nfa")
+}
+
 /// The integers 1, 2 and 3 named by the bits of `m`.
 fn small(m: u8) -> Type {
     (1..=3)
@@ -180,6 +186,7 @@ fn each_refusal_names_its_cause() {
     for (t, why) in [
         (erdos_cover(), Refusal::Residues),
         (fork_empty(), Refusal::Fork),
+        (nfa(), Refusal::Fork),
         (morphism_split(), Refusal::MorphismSplit),
         (box_cover(), Refusal::TupleSplit),
         (morphism_between(), Refusal::NoWitness),
@@ -828,5 +835,183 @@ fn a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size() {
                 );
             },
         )
+    });
+}
+
+/// The lists of integers with a 1 at each place `i` from the end, for `i` up to `n`, except
+/// `skip`; with a 1 at a place beyond `n`; or with no 1: `R{k}` is the lists of length `k`,
+/// `G{i}` those with a 1 at place `i` from the end, `A{k}` those of length at least `k`, and
+/// `H` those with a 1 at a place beyond `n`. Every list is one of them when `skip` is none.
+/// Read from the front, a list may still be in any of the `G{i}`, so a decision that follows
+/// them all meets one set of places for each set the list's 1s leave: the subset construction.
+fn by_place_from_the_end(n: usize, skip: Option<usize>, tag: &str) -> Type {
+    let mut defs = vec![def(&format!("R0{tag}"), nil())];
+    defs.extend((1..=n).map(|k| def(&format!("R{k}{tag}"), cons(int(), r(k - 1)))));
+    defs.extend((1..=n).map(|i| {
+        let body = Expr::Union(vec![
+            cons(int(), r(n + i)),
+            cons(Expr::Type(lit(1)), r(i - 1)),
+        ]);
+        def(&format!("G{i}{tag}"), body)
+    }));
+    let a = 2 * n + 1;
+    let all = Expr::Union(vec![nil(), cons(int(), r(a))]);
+    defs.push(def(&format!("A0{tag}"), all));
+    defs.extend((1..=n).map(|k| def(&format!("A{k}{tag}"), cons(int(), r(a + k - 1)))));
+    let far = Expr::Union(vec![
+        cons(int(), r(a + n + 1)),
+        cons(Expr::Type(lit(1)), r(a + n)),
+    ]);
+    defs.push(def(&format!("H{tag}"), far));
+    let ts = Group::new(defs).unwrap().instance(vec![]);
+    let no_one = list_named(&Type::int() - &lit(1), &format!("N{tag}"));
+    (1..=n)
+        .filter(|&i| Some(i) != skip)
+        .map(|i| &ts[n + i])
+        .chain([&ts[a + n + 1], &no_one])
+        .fold(Type::empty(), |u, t| &u | t)
+}
+
+/// The lists of integers with a 1 at each place `i` from the front, for `i` up to `n`, except
+/// `skip`, or with no 1 among the first `n` places: `F{i}` and `M{k}` (no 1 among the first `k`
+/// places). Every list is one of them when `skip` is none. Read from the front, the places a
+/// list may still meet move by one with each element and one tuple type is open on each, so
+/// no two recursive tuple types are taken out of one component: no fork.
+fn by_place_from_the_front(n: usize, skip: Option<usize>, tag: &str) -> Type {
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
+    let not_one = Expr::Type(&Type::int() - &lit(1));
+    defs.extend((1..=n).map(|k| {
+        let rest = if k == 1 { r(0) } else { r(n + k - 1) };
+        let body = Expr::Union(vec![nil(), cons(not_one.clone(), rest)]);
+        def(&format!("M{k}{tag}"), body)
+    }));
+    let ts = Group::new(defs).unwrap().instance(vec![]);
+    (1..=n)
+        .filter(|&i| Some(i) != skip)
+        .map(|i| &ts[i])
+        .chain([&ts[2 * n]])
+        .fold(Type::empty(), |u, t| &u | t)
+}
+
+/// The lists of integers with a 1 at place `n` from the front, or with no 1 there (shorter
+/// lists too); with `two`, the lists with a 2 there are left out of the second. Read from the
+/// front, the two tuple types taken out of the tail at each element are of `F{n-1}` and
+/// `P{n-1}`, recursive types on no cycle, so they are no fork, and the search decides the
+/// difference one place at a time.
+fn by_one_place_from_the_front(n: usize, two: bool, tag: &str) -> Type {
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(int(), r(0))]),
+    )];
+    defs.push(def(&format!("F1{tag}"), cons(Expr::Type(lit(1)), r(0))));
+    defs.extend((2..=n).map(|i| def(&format!("F{i}{tag}"), cons(int(), r(i - 1)))));
+    let mut other = &Type::int() - &lit(1);
+    if two {
+        other = &other - &lit(2);
+    }
+    defs.push(def(
+        &format!("P1{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(other), r(0))]),
+    ));
+    defs.extend((2..=n).map(|k| {
+        let body = Expr::Union(vec![nil(), cons(int(), r(n + k - 1))]);
+        def(&format!("P{k}{tag}"), body)
+    }));
+    let ts = Group::new(defs).unwrap().instance(vec![]);
+    &list_named(Type::int(), tag) - &(&ts[n] | &ts[2 * n])
+}
+
+#[test]
+fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
+    // The lists of integers against those with a 1 at each place from the end up to `n`, with
+    // one beyond `n`, or with none: every list. Deciding it follows every `G{i}` at once, one
+    // type for each set of places a list's 1s leave (the subset construction): on a70df51b this
+    // cost 26.6M, 310M and 15.5G instructions at n 1, 4 and 8 and no answer at 16 within 30 s.
+    // Now the `G{i}` are taken out of the tail together, two cyclic recursive types in one
+    // component, and the decision refuses there (COMPLEXITY.md K35).
+    refusal_scales(
+        "Fork, by the place of a 1 from the end",
+        8,
+        Refusal::Fork,
+        |n, tag| &list_named(Type::int(), tag) - &by_place_from_the_end(n, None, tag),
+    );
+}
+
+#[test]
+fn a_list_by_one_place_from_the_front_is_decided_in_its_size() {
+    // Two recursive types on no cycle taken out of one tail are no fork: decided at each size,
+    // in time linear in `n`.
+    for (two, verdict) in [(false, Verdict::Empty), (true, Verdict::Inhabited)] {
+        big(move || {
+            scaling::check("a 1 at place n from the front, or none", 8, |n| {
+                Type::forget_emptiness();
+                let tag = format!("_of{n}{two}");
+                let t = by_one_place_from_the_front(n, two, &tag);
+                assert_eq!(t.verdict(), verdict, "at {n}");
+            })
+        });
+    }
+}
+
+#[test]
+fn lists_by_the_place_of_a_one_are_decided_or_refused_by_their_cycles() {
+    for n in [1, 2, 4] {
+        Type::forget_emptiness();
+        let tag = format!("_cyc{n}");
+        let l = list_named(Type::int(), &tag);
+        // From the front, the places left move by one with each element; the types taken out
+        // of a tail are on no cycle but `L`, so every difference is decided.
+        let front = &l - &by_place_from_the_front(n, None, &tag);
+        assert_eq!(front.verdict(), Verdict::Empty, "front at {n}");
+        assert!(front.is_empty(), "front at {n}");
+        let skip = &l - &by_place_from_the_front(n, Some(n), &format!("{tag}s"));
+        assert_eq!(skip.verdict(), Verdict::Inhabited, "front less {n} at {n}");
+        // From the end, `G{i}` and `H` are cyclic: refused, even at 1, where the old search
+        // proved it empty.
+        let end = &l - &by_place_from_the_end(n, None, &format!("{tag}e"));
+        assert_eq!(end.verdict(), Verdict::Refused(Refusal::Fork), "end at {n}");
+        // `is_empty` stops at the same fork and counts the type as inhabited, so `<:` fails.
+        assert!(!end.is_empty(), "end at {n}");
+        assert!(!l.subtype(&by_place_from_the_end(n, None, &format!("{tag}e"))));
+        // With `G1` left out, `[1]` is a value: found at 1, where the decision has no fork;
+        // refused above it, where the fork comes first and the value search does not follow
+        // the fork into a candidate's tail.
+        let skip = &l - &by_place_from_the_end(n, Some(1), &format!("{tag}e1"));
+        let want = if n == 1 {
+            Verdict::Inhabited
+        } else {
+            Verdict::Refused(Refusal::Fork)
+        };
+        assert_eq!(skip.verdict(), want, "end less 1 at {n}");
+    }
+}
+
+#[test]
+fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
+    // `is_empty` meets the fork `verdict` refuses and counts the type as inhabited, in time
+    // linear in `n`; on a70df51b it followed the fork: 8 ms, 277 ms and 32.5 s at `n` 1, 4 and
+    // 6. The lists by one place from the front have no fork and are proved empty.
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("emptiness, a 1 at a place from the end", 8, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_ie{}", tag.fetch_add(1, Relaxed));
+            let t = &list_named(Type::int(), &tag) - &by_place_from_the_end(n, None, &tag);
+            assert!(!t.is_empty(), "at {n}");
+        });
+        let tag = AtomicUsize::new(0);
+        scaling::check("emptiness, a 1 at one place from the front", 8, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_if{}", tag.fetch_add(1, Relaxed));
+            assert!(
+                by_one_place_from_the_front(n, false, &tag).is_empty(),
+                "at {n}"
+            );
+        });
     });
 }

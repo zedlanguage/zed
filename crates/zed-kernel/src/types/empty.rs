@@ -46,8 +46,11 @@
 //! A query goes in this order, each step a function of the query alone: the simulation proves
 //! `a <: b` for unions written without negation; a value built from the rows as written shows a
 //! type inhabited; the residue rule speaks for pure cycles; a union of rows is empty row by row;
-//! the search decides the rest. `Type::verdict` stops the search at a fork, two rows open on one
-//! box that differ in a recursive column, and answers `Refused`.
+//! the search decides the rest. The search stops at a fork, two rows open on one box that differ
+//! in a recursive column, or two rows taken out of one column with different recursive types
+//! there, each on a cycle of its group: `Type::verdict` then seeks a value without following
+//! the fork and, finding none, answers `Refused(Fork)`, and `is_empty` counts the type as
+//! inhabited. Following the fork is the subset construction, exponential in the recursive types.
 //!
 //! The answer is least on tuples and greatest on morphism values: a value is a finite closed
 //! term, and each cycle in it passes through a closure, so `S = (int) -> S` is inhabited and
@@ -157,8 +160,11 @@ fn group_verdicts(members: &[Type]) {
         })
         .collect();
     let mut found = found.into_iter();
+    // The search for values does not stop at a fork, as the one before a refusal in
+    // [`Type::verdict_alone`] does not.
     let mut s = Search {
         strict: true,
+        open_forks: true,
         ..Search::default()
     };
     for m in members {
@@ -242,7 +248,8 @@ impl Type {
         env.judged.get_or_init(|| judge(env))[i]
     }
 
-    /// Whether no value is in `self`.
+    /// Whether no value is in `self`, as far as the search proves it: a type it does not prove
+    /// empty, as one whose search meets a fork, counts as inhabited.
     pub fn is_empty(&self) -> bool {
         // A type of scalars alone is empty when its parts list none, which costs less than
         // finding the type among those kept.
@@ -254,8 +261,24 @@ impl Type {
         if let Some(b) = MEMO.with(|m| m.borrow().get(self).copied()) {
             return b;
         }
-        let mut s = Search::default();
+        // Complexity tradeoff: a fork of recursive tuple types (`Searching::narrow_tuples`,
+        // `Searching::tuples_on`) ends the search, and `self` counts as inhabited, as for
+        // `Type::verdict`, which refuses it. Why: following both tuple types of a fork is the
+        // subset construction, exponential in the recursive types (the lists of int against
+        // lists with a 1 at each place from the end up to `n`: 8 ms, 277 ms and 32.5 s at `n`
+        // 1, 4 and 6 when the search followed it). Trigger: a fork met in the search. Tests:
+        // `l01_23_subtyping::refusals::emptiness_counts_a_fork_as_inhabited_in_its_size`.
+        // COMPLEXITY.md K35. A complete solution needs the subset construction over the forked
+        // tuple types; deciding whether such a union holds every list is NFA universality,
+        // PSPACE-complete. The answers of a search a fork ended may rest on it, so none is kept.
+        let mut s = Search {
+            refuse_forks: true,
+            ..Search::default()
+        };
         let b = s.solve(self);
+        if s.refused.is_some() {
+            return false;
+        }
         MEMO.with(|m| {
             m.borrow_mut()
                 .extend(s.types.iter().cloned().zip(s.answer.iter().copied()))
@@ -446,12 +469,14 @@ impl Type {
             Verdict::Inhabited
         } else if (Search {
             strict: true,
+            open_forks: true,
             ..Search::default()
         })
         .rep(self)
         .is_some()
         {
-            // Before a refusal, a value is sought by a search that does not stop at a fork.
+            // Before a refusal, a value is sought by a search that does not stop at a fork: it
+            // takes a forked part as inhabited and keeps a value only once it is checked.
             Verdict::Inhabited
         } else {
             // Complexity tradeoff: a type the search neither proved empty nor showed inhabited by
@@ -719,9 +744,20 @@ struct Search {
     /// Whether kept results are left unread and each place a part counts as inhabited with
     /// nothing shown is noted, for a caller that takes `Refused`.
     strict: bool,
-    /// Whether a fork of recursive rows ends the search; set for the decision of a verdict, not
-    /// for the search of a value after it.
+    /// Whether a fork of recursive rows ends the search; set for the decision of a verdict and
+    /// for [`Type::is_empty`], not for the search of a value after a refused decision.
     refuse_forks: bool,
+    /// Whether a fork of recursive rows counts as inhabited with nothing shown, before the box
+    /// is narrowed; set for the search of a value after a refused decision, which so follows
+    /// no fork ([`Searching::tuples_on`]).
+    open_forks: bool,
+    /// How many times the search of a value kept a component whole at a fork
+    /// ([`Searching::narrow_tuples`]), so that [`Searching::find_rep`] knows a narrowing met one.
+    kept_forks: usize,
+    /// Whether the value being sought is a component of a candidate tried past a fork: its own
+    /// parts that meet a fork are then tried with no candidate of their own
+    /// ([`Searching::find_rep`]). Kept for each value sought ([`Searching::rep`]).
+    past_fork: bool,
     /// Why the search stopped, when it met a fork; set only when `refuse_forks`.
     refused: Option<Refusal>,
     /// The first place the search let a part count as inhabited with nothing shown: the cause
@@ -2059,9 +2095,27 @@ impl<'m> Searching<'m> {
         }
     }
 
+    /// Notes a fork met in the decision of a verdict: against the type being decided in a search
+    /// with several roots, else as the refusal that ends the search.
+    fn refuse_fork(&self) {
+        let mut guard = self.s();
+        let s = &mut *guard;
+        match (&mut s.blame, s.current) {
+            (Some(blame), Some(c)) => blame.push((c, Refusal::Fork)),
+            // Complexity tradeoff: a fork met while no type is being decided cannot be put on
+            // the roots that read it, so it ends the search and refuses every root the decider
+            // left open, as it refuses the one root of a search of its own. Trigger: `current`
+            // is none at a fork. COMPLEXITY.md K61.
+            _ => s.refused = Some(Refusal::Fork),
+        }
+    }
+
     /// Narrows the box and the part `f` to what `f` forces on it: a tuple type in every value
     /// of `f` meets the box, and a tuple type in none is taken out of the box when it holds the
-    /// box in every component but one. True when `f` is proved empty on the box.
+    /// box in every component but one. True when `f` is proved empty on the box. Two tuple types
+    /// it would take out of one component with different recursive types there, each on a
+    /// cycle of its group, are a fork: the decision of a verdict refuses there, and the search
+    /// of a value keeps that component.
     async fn narrow_tuples(&'m self, g: &mut Region, f: &mut Part<Row>) -> bool {
         loop {
             if self.any_empty(&g.r).await {
@@ -2098,10 +2152,54 @@ impl<'m> Searching<'m> {
             if !shrunk.is_empty() {
                 self.retest(g).await;
             }
+            // Complexity tradeoff: two tuple types taken out of one component with different
+            // recursive types there, each on a cycle of its group (`Type::on_cycle`; one on no
+            // cycle unfolds to others in a bounded number of steps and is decided as before),
+            // are a fork, as two open tuple types that differ in a recursive component are
+            // (`tuples_on`): the decision of a verdict refuses the part, and the search of a
+            // value keeps the component whole there, counting it inhabited.
+            // Why: the component less both is a new type, whose decision takes out what each
+            // leaves of its tail, and so on, one type for each set of tails met: the subset
+            // construction, exponential in the recursive types (the lists of int against lists
+            // with a 1 at each place from the end up to `n`, and beyond it, cost 13.2G
+            // instructions at `n` 8; whether such a union holds every list is NFA universality,
+            // PSPACE-complete). Trigger: two tuple types this pass takes out of one component
+            // with different recursive types on a cycle there, in the decision of a verdict or
+            // the search of a value after it. Tests:
+            // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+            // and `each_refusal_names_its_cause` (`nfa`). COMPLEXITY.md K35. A complete solution
+            // needs the subset construction over the forked tuple types, exponential in them.
+            let (refuse, open) = {
+                let s = self.s();
+                (s.refuse_forks && !s.seeding, s.open_forks)
+            };
+            let mut forked = BTreeSet::new();
+            if refuse || open {
+                let mut first: BTreeMap<usize, &Type> = BTreeMap::new();
+                for a in &refused {
+                    let k = g.index[a];
+                    let (loose, at) = g.loose[k];
+                    if g.missed[k] == 0 && loose == 1 && a[at].on_cycle() {
+                        let t = *first.entry(at).or_insert(&a[at]);
+                        if *t != a[at] {
+                            forked.insert(at);
+                        }
+                    }
+                }
+            }
+            if !forked.is_empty() {
+                if refuse {
+                    self.refuse_fork();
+                    return true;
+                }
+                let mut s = self.s();
+                s.give_up(Refusal::Fork);
+                s.kept_forks += 1;
+            }
             for a in &refused {
                 let k = g.index[a];
                 let (loose, at) = g.loose[k];
-                if g.missed[k] == 0 && loose == 1 {
+                if g.missed[k] == 0 && loose == 1 && !forked.contains(&at) {
                     g.shrink(at, &g.r[at] - &a[at]);
                     if g.is_open(k, at) {
                         g.close(at, g.cell(k, at), true);
@@ -2141,6 +2239,24 @@ impl<'m> Searching<'m> {
     /// [`Searching::tuples`] on the box `g`, decided on a frame of its own for each piece.
     async fn tuples_on(&'m self, g: &mut Region, mut f: Part<Row>, may_cover: bool) -> bool {
         loop {
+            if self.s().open_forks {
+                let open: Vec<usize> = f.distinct_atoms().iter().map(|a| g.index[a]).collect();
+                if (0..g.r.len()).any(|j| g.forks(&open, j)) {
+                    // Complexity tradeoff: the search of a value after a refused decision counts
+                    // a part whose open tuple types fork as inhabited, before narrowing, and so
+                    // builds no value in it from this box. Why: narrowing takes the forked tuple
+                    // types out of a component, and deciding what is left of it is the subset
+                    // construction (the tradeoff in `narrow_tuples`); the decision of a value's
+                    // check by its own walk stays exact. Trigger: `open_forks` and a component on
+                    // which the open tuple types fork. Tests:
+                    // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+                    // and `a_value_found_by_refining_a_forked_part_is_kept`. COMPLEXITY.md K35.
+                    // A complete solution needs the subset construction over the forked tuple
+                    // types.
+                    self.s().give_up(Refusal::Fork);
+                    return false;
+                }
+            }
             if self.narrow_tuples(g, &mut f).await {
                 return true;
             }
@@ -2156,7 +2272,7 @@ impl<'m> Searching<'m> {
                 // Complexity tradeoff: `verdict` refuses a part in which two open tuple types
                 // differ in a recursive component on one box, instead of following both. Why:
                 // following both is the subset construction, exponential in the recursive types;
-                // `is_empty` goes on and counts what it cannot settle as inhabited. Trigger: a
+                // `is_empty` stops here too and counts the type as inhabited. Trigger: a
                 // component on which the open tuple types fork, outside seeding. Tests:
                 // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`fork_empty`) and
                 // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
@@ -2165,16 +2281,7 @@ impl<'m> Searching<'m> {
                 // determinized on demand), exponential in the rows of the fork. A search with
                 // several roots refuses only those that read the type being decided
                 // (`Search::causes`).
-                let mut guard = self.s();
-                let s = &mut *guard;
-                match (&mut s.blame, s.current) {
-                    (Some(blame), Some(c)) => blame.push((c, Refusal::Fork)),
-                    // Complexity tradeoff: a fork met while no type is being decided cannot be
-                    // put on the roots that read it, so it ends the search and refuses every root
-                    // the decider left open, as it refuses the one root of a search of its own.
-                    // Trigger: `current` is none at a fork. COMPLEXITY.md K61.
-                    _ => s.refused = Some(Refusal::Fork),
-                }
+                self.refuse_fork();
                 return true;
             }
             if let Some(found) = self.two_sat(g, &f).await {
@@ -2863,7 +2970,9 @@ impl<'m> Searching<'m> {
                 s.building.insert(t.clone());
                 (s.built.len(), s.resting, std::mem::take(&mut s.read))
             };
+            let past = self.s().past_fork;
             let r = self.find_rep(&t).await;
+            self.s().past_fork = past;
             let again = {
                 let mut s = self.s();
                 s.building.remove(&t);
@@ -3144,10 +3253,12 @@ impl<'m> Searching<'m> {
             }
             return None;
         }
+        let past = self.s().past_fork;
         for (len, whole) in &p.tuples.lens {
             if whole.union_rows().is_some() {
                 continue;
             }
+            let forks = self.s().kept_forks;
             let (mut whole_box, mut narrowed) = (
                 self.region(vec![Type::top(); *len], whole).await,
                 whole.clone(),
@@ -3165,6 +3276,7 @@ impl<'m> Searching<'m> {
             let split = narrowed.disjoint_disjuncts();
             let parts = split.clone().unwrap_or_else(|| vec![whole.clone()]);
             for f in &parts {
+                self.s().past_fork = past;
                 // Where `refine` starts: a part of the split stands for the union on the box only.
                 let start = match split {
                     Some(_) => whole_box.r.clone(),
@@ -3211,6 +3323,26 @@ impl<'m> Searching<'m> {
                         Some(v) => return Some(v),
                         None => continue,
                     }
+                }
+                // Complexity tradeoff: past a fork, a value is sought through one candidate
+                // per tuple type left, once on each path: in a part that met a fork while a
+                // value is sought for a candidate past another, no candidate is tried, and the
+                // part counts as having none. Why: each candidate seeks values of its
+                // components, each a new difference that meets the fork again one element
+                // further on, so the search went as deep as the forked lists are long, each
+                // level testing every tuple type left: order n^2 on the lists against a 1 at
+                // each place from the end up to `n` (63,634 `cuts` at `n` 64; now 1,578).
+                // Trigger: a narrowing of this part kept a component whole at a fork while
+                // `past_fork`. Tests:
+                // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+                // and `a_value_is_sought_before_a_refusal` (`fork`, found by a candidate past
+                // the first fork). COMPLEXITY.md K35. A complete solution needs the subset
+                // construction over the forked tuple types.
+                if self.s().kept_forks > forks {
+                    if past {
+                        continue;
+                    }
+                    self.s().past_fork = true;
                 }
                 // The tuple types the part excludes: a value in one is in no value of the part.
                 let (_, excluded) = g.forced();

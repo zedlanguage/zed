@@ -137,7 +137,7 @@ impl Group {
     /// Equal definitions give one group: the one accepted first.
     pub fn new(defs: Vec<Def>) -> Result<Group, Rejection> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let (plain, order) = plain(&defs);
+        let (plain, order, cyclic) = plain(&defs);
         // The numbering, and its hold on the first node of each class, ends with the trees.
         let mut numbering = Numbering::default();
         let bodies: Vec<Arc<Node>> = defs
@@ -152,6 +152,7 @@ impl Group {
             defs,
             bodies,
             plain,
+            cyclic,
             order,
             canon: OnceLock::new(),
         }));
@@ -682,10 +683,10 @@ fn on_cycle(edges: &[Vec<usize>]) -> Vec<bool> {
     cyclic
 }
 
-/// Whether each of `defs` is plain: on no cycle and naming only plain definitions; and the
-/// plain definitions, each after those it names. A depth-first search with an explicit stack
+/// Whether each of `defs` is plain: on no cycle and naming only plain definitions; the plain
+/// definitions, each after those it names; and whether each is on a cycle. A depth-first search with an explicit stack
 /// settles each definition after those it names, reading each edge once.
-fn plain(defs: &[Def]) -> (Vec<bool>, Vec<usize>) {
+fn plain(defs: &[Def]) -> (Vec<bool>, Vec<usize>, Vec<bool>) {
     let edges: Vec<Vec<usize>> = defs
         .iter()
         .map(|d| {
@@ -727,7 +728,11 @@ fn plain(defs: &[Def]) -> (Vec<bool>, Vec<usize>) {
             }
         }
     }
-    (plain.into_iter().map(|p| p == Some(true)).collect(), order)
+    (
+        plain.into_iter().map(|p| p == Some(true)).collect(),
+        order,
+        cyclic,
+    )
 }
 
 /// The definitions `e` names outside every constructor.
