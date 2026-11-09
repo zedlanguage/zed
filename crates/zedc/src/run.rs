@@ -1295,17 +1295,15 @@ impl<'a> Options<'a> {
             }
             let bytes = match self.binds.get(name) {
                 Some(path) => read_file(path).map_err(|e| (2, unreadable(path, &e)))?,
-                None if name == "stdin" => {
-                    read_shared(stdin, 0).map_err(|e| {
-                        let why = io_reason(&e);
-                        let why = format!(
-                            "zedc could not read standard input, which the port `stdin` \
+                None if name == "stdin" => read_shared(stdin, 0).map_err(|e| {
+                    let why = io_reason(&e);
+                    let why = format!(
+                        "zedc could not read standard input, which the port `stdin` \
                              reads: {why}. Give zedc a standard input it may read, or name a \
                              file for the port as `stdin=<path>`."
-                        );
-                        (2, why)
-                    })?
-                }
+                    );
+                    (2, why)
+                })?,
                 None => {
                     return Err((
                         2,

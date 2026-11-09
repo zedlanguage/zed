@@ -88,7 +88,7 @@ pub fn undefined_type(name: &str) -> String {
     )
 }
 
-/// Whether `message` reports a form or a link this zedc does not compile yet ([`not_yet`],
+/// Whether `message` reports a form or a link this zedc does not compile yet ([`not_yet()`],
 /// [`not_linked`] and [`IMPORT_NOT_YET`]).
 pub fn is_not_yet(message: &str) -> bool {
     message.contains("this version of zedc does not compile it yet")

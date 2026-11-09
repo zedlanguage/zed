@@ -333,6 +333,20 @@ fn an_address_is_printed_only_under_addresses() {
     let printed = String::from_utf8(out).unwrap() + &String::from_utf8(err).unwrap();
     assert!(printed.contains("`area` widens"), "{printed}");
     assert!(!printed.contains("address"), "{printed}");
+    // A problem of the package, reported before the front end runs, prints its address under
+    // `--addresses` only, as the others do.
+    let package = unit(
+        "suppress",
+        "quiet_import.zed",
+        &format!("import nowhere.thing;\n{}", area()),
+    );
+    let (status, _, quiet) = plain(&["run", &package]);
+    assert_eq!(status, 1, "{quiet}");
+    assert!(quiet.contains("cannot be imported"), "{quiet}");
+    assert!(!quiet.contains("address"), "{quiet}");
+    let (_, _, loud) = zedc(&["run", &package]);
+    assert!(loud.contains("cannot be imported"), "{loud}");
+    assert!(loud.contains("\n  address: "), "{loud}");
 }
 
 #[test]
