@@ -43,12 +43,13 @@ const NOT_MODES: &[&str] = &[
     "s",
     "t",
     "5", //
-    // "build" as a verb: "to build", "can build", "also build".
+    // "build" as a verb: "to build", "can build", "also build", "does not build".
     "to",
     "can",
     "will",
     "also",
     "never",
+    "not",
     "then",
     "and",
     "are",
